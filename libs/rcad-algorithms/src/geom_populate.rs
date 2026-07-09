@@ -1,8 +1,8 @@
+use std::sync::Arc;
 use crate::tolerance::*;
 
 use glam::DVec3;
-use rcad_kernel::topods;
-use rcad_kernel::PCurve;
+use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::geom::*;
 
 use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;
@@ -12,56 +12,65 @@ use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;
 /// After this call, every edge has a `Curve3::Line` and every face has a `Surface3::Plane`.
 /// Precondition: brep was created by `BRep::from_primitive(Box{..})`.
 pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
-    let geom = &mut brep.geom;
-    geom.curves.clear();
-    geom.edge_curve.clear();
-    geom.edge_curve_range.clear();
-    geom.edge_degenerated.clear();
-    geom.surfaces.clear();
-    geom.face_surface.clear();
-
-    // Edges → Line3
-    for edge in &brep.edges {
-        let p0 = brep.vertices[edge.start].point;
-        let p1 = brep.vertices[edge.end].point;
+    // Set line curves on all edge tshapes that don't have one.
+    for ts in &mut brep.tshapes {
+        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
+        if ed.curve.is_some() {
+            continue;
+        }
+        let p0 = brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
+        let p1 = brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
         let delta = p1 - p0;
         let len = delta.length();
         let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
-        let curve_idx = geom.curves.len();
-        geom.curves.push(Curve3::Line(Line3 {
-            origin: p0,
-            direction: dir,
-        }));
-        geom.edge_curve.push(Some(curve_idx));
-        // t_range: project endpoints onto the line
-        let t0 = 0.0_f64;
-        let t1 = (p1 - p0).dot(dir); // = len
-        geom.edge_curve_range.push(Some([t0, t1]));
-        geom.edge_degenerated.push(len <= TOLERANCE_LEN_MIN);
+        ed.curve = Some(Curve3::Line(Line3 { origin: p0, direction: dir }));
+        ed.range = [0.0, len.max(TOLERANCE_LEN_MIN)];
+        ed.degenerated = len <= TOLERANCE_LEN_MIN;
     }
 
-    // Faces → Plane
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                // Use the first wire vertex rather than face.triangles (triangles
-                // are rendering metadata and must not be used in modeling code).
-                let origin = face
-                    .outer_wire
-                    .edges
-                    .first()
-                    .and_then(|we| brep.edges.get(we.idx))
-                    .map(|e| brep.vertices[e.start].point)
-                    .unwrap_or(DVec3::ZERO);
-                let surf_idx = geom.surfaces.len();
-                geom.surfaces.push(Surface3::Plane(Plane {
-                    origin,
-                    normal: face.normal,
-                }));
-                geom.face_surface.push(Some(surf_idx));
+    // Set plane surfaces on all face tshapes that don't have one.
+    for ts in &mut brep.tshapes {
+        let TShape::Face(fd) = Arc::make_mut(ts) else { continue };
+        if fd.surface.is_some() {
+            continue;
+        }
+        // Compute a plane from the first three distinct wire vertices.
+        let (origin, normal) = compute_face_plane_from_wire(brep, fd);
+        fd.surface = Some(Surface3::Plane(Plane { origin, normal }));
+    }
+}
+
+/// Compute a plane (origin, normal) from the first three distinct vertices
+/// of a face's outer wire.
+fn compute_face_plane_from_wire(brep: &rcad_kernel::BRep, fd: &topods::TFaceData) -> (DVec3, DVec3) {
+    let get_wire_pts = |sr: &topods::ShapeRef| -> Vec<DVec3> {
+        let mut pts = Vec::new();
+        let Some(wire_ts) = brep.tshapes.get(sr.index) else { return pts };
+        let TShape::Wire(wd) = wire_ts.as_ref() else { return pts };
+        for er in &wd.edges {
+            let Some(edge_ts) = brep.tshapes.get(er.index) else { continue };
+            let TShape::Edge(ed) = edge_ts.as_ref() else { continue };
+            let p = brep.vertex_point(ed.first.index);
+            if let Some(pt) = p {
+                if !pts.iter().any(|q: &DVec3| (*q - pt).length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE) {
+                    pts.push(pt);
+                }
             }
         }
+        pts
+    };
+
+    let pts = get_wire_pts(&fd.outer_wire);
+    if pts.len() >= 3 {
+        let e1 = (pts[1] - pts[0]).normalize_or_zero();
+        let e2 = (pts[2] - pts[0]).normalize_or_zero();
+        let n = e1.cross(e2).normalize_or_zero();
+        if n.length_squared() > 0.5 {
+            return (pts[0], n);
+        }
     }
+    // Fallback
+    (pts.first().copied().unwrap_or(DVec3::ZERO), DVec3::Z)
 }
 
 /// Fixes stale plane surface origins in `geom` after boolean operations.
@@ -75,61 +84,46 @@ pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
 /// Non-plane surfaces (cylinders, spheres, cones, tori) are left untouched.
 /// Existing edge curves are preserved; only missing straight-line curves are added.
 pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
-    // --- Fix plane surface origins ---
-    // Collect new origin for each face in flat iteration order.
-    let mut face_origins: Vec<DVec3> = Vec::new();
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                let origin = face
-                    .outer_wire
-                    .edges
-                    .first()
-                    .and_then(|we| brep.edges.get(we.idx))
-                    .map(|e| brep.vertices[e.start].point)
-                    .unwrap_or(DVec3::ZERO);
-                face_origins.push(origin);
-            }
-        }
+    // Collect face indices and their recomputed origins.
+    let mut face_origins: Vec<(usize, DVec3)> = Vec::new();
+    for (fi, ts) in brep.tshapes.iter().enumerate() {
+        let TShape::Face(fd) = ts.as_ref() else { continue };
+        // Compute origin from the first vertex of the outer wire.
+        let origin = (|| -> Option<DVec3> {
+            let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
+            let TShape::Wire(wd) = wire_ts.as_ref()?;
+            let first_edge_ref = wd.edges.first()?;
+            let edge_ts = brep.tshapes.get(first_edge_ref.index)?;
+            let TShape::Edge(ed) = edge_ts.as_ref()?;
+            brep.vertex_point(ed.first.index)
+        })().unwrap_or(DVec3::ZERO);
+        face_origins.push((fi, origin));
     }
 
-    // Update only Plane origins; leave all other surface types untouched.
-    let n = face_origins.len().min(brep.geom.face_surface.len());
-    for i in 0..n {
-        let Some(surf_idx) = brep.geom.face_surface[i] else { continue };
-        let Some(surf) = brep.geom.surfaces.get_mut(surf_idx) else { continue };
+    // Update only Plane surface origins; leave all other surface types untouched.
+    for (fi, origin) in &face_origins {
+        let ts = &mut brep.tshapes[*fi];
+        let TShape::Face(fd) = Arc::make_mut(ts) else { continue };
+        let Some(surf) = &mut fd.surface else { continue };
         if let Surface3::Plane(p) = surf {
-            p.origin = face_origins[i];
+            p.origin = *origin;
         }
     }
 
-    // --- Add straight-line edge curves only where missing ---
-    // Preserve existing curves (e.g. circles on cylinder intersection edges).
-    let n_edges = brep.edges.len();
-    if brep.geom.edge_curve.len() < n_edges {
-        brep.geom.edge_curve.resize(n_edges, None);
-    }
-    if brep.geom.edge_curve_range.len() < n_edges {
-        brep.geom.edge_curve_range.resize(n_edges, None);
-    }
-    if brep.geom.edge_degenerated.len() < n_edges {
-        brep.geom.edge_degenerated.resize(n_edges, false);
-    }
-
-    for (ei, edge) in brep.edges.iter().enumerate() {
-        if brep.geom.edge_curve[ei].is_some() {
+    // Add straight-line edge curves only where missing.
+    for ts in &mut brep.tshapes {
+        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
+        if ed.curve.is_some() {
             continue; // already has a curve
         }
-        let p0 = brep.vertices[edge.start].point;
-        let p1 = brep.vertices[edge.end].point;
+        let p0 = brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
+        let p1 = brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
         let delta = p1 - p0;
         let len = delta.length();
         let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
-        let curve_idx = brep.geom.curves.len();
-        brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
-        brep.geom.edge_curve[ei] = Some(curve_idx);
-        brep.geom.edge_curve_range[ei] = Some([0.0, (p1 - p0).dot(dir)]);
-        brep.geom.edge_degenerated[ei] = len <= TOLERANCE_LEN_MIN;
+        ed.curve = Some(Curve3::Line(Line3 { origin: p0, direction: dir }));
+        ed.range = [0.0, (p1 - p0).dot(dir)];
+        ed.degenerated = len <= TOLERANCE_LEN_MIN;
     }
 }
 
@@ -145,79 +139,57 @@ pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
 /// (e.g. parametric queries, STEP export of trimmed surfaces).
 pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
     // Collect all (edge_idx, face_idx) pairs where the face has a curved surface.
-    // Use solids[0].shells[0] like the rest of the algorithms library.
-    let face_indices: Vec<(usize, usize)> = {
-        let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
-            return;
-        };
-        shell
-            .faces
-            .iter()
-            .enumerate()
-            .flat_map(|(fi, face)| {
-                face.outer_wire
-                    .edges
-                    .iter()
-                    .map(move |we| (we.idx, fi))
-                    .chain(face.inner_wires.iter().flat_map(move |iw| {
-                        iw.edges.iter().map(move |we| (we.idx, fi))
-                    }))
-            })
-            .collect()
-    };
+    // Face index = tshapes index of the TShape::Face.
+    let face_surfaces: Vec<(usize, Surface3)> = brep.tshapes.iter().enumerate().filter_map(|(fi, ts)| {
+        let TShape::Face(fd) = ts.as_ref() else { return None };
+        fd.surface.clone().map(|s| (fi, s))
+    }).collect();
 
-    // Ensure edge_pcurves is large enough.
-    let n_edges = brep.edges.len();
-    if brep.geom.edge_pcurves.len() < n_edges {
-        brep.geom.edge_pcurves.resize(n_edges, Vec::new());
-    }
+    let face_edge_pairs: Vec<(usize, usize, Surface3)> = face_surfaces.iter().flat_map(|(fi, surf)| {
+        let ts = &brep.tshapes[*fi];
+        let TShape::Face(fd) = ts.as_ref() else { return Vec::new() };
+        // Get edge refs from outer wire and inner wires
+        let mut edge_refs = Vec::new();
+        if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+            if let TShape::Wire(wd) = wts.as_ref() {
+                for er in &wd.edges {
+                    edge_refs.push(er.index);
+                }
+            }
+        }
+        for iw in &fd.inner_wires {
+            if let Some(wts) = brep.tshapes.get(iw.index) {
+                if let TShape::Wire(wd) = wts.as_ref() {
+                    for er in &wd.edges {
+                        edge_refs.push(er.index);
+                    }
+                }
+            }
+        }
+        edge_refs.into_iter().map(move |ei| (ei, *fi, surf.clone()))
+    }).collect();
 
-    for (edge_idx, face_idx) in face_indices {
-        // Look up surface for this face.
-        let surf_idx = match brep
-            .geom
-            .face_surface
-            .get(face_idx)
-            .and_then(|&si| si)
-        {
-            Some(si) => si,
-            None => continue,
-        };
-        let surface = match brep.geom.surfaces.get(surf_idx) {
-            Some(s) => s.clone(),
-            None => continue,
-        };
+    for (edge_idx, face_idx, surface) in face_edge_pairs {
         // Only fill for curved surfaces.
         if matches!(surface, Surface3::Plane(_)) {
             continue;
         }
 
-        // Check if a PCurve for this surface already exists on this edge.
-        let already_has = brep.geom.edge_pcurves[edge_idx]
-            .iter()
-            .any(|pc| pc.surface_idx == surf_idx);
+        // Check if a PCurve for this face already exists on this edge.
+        let already_has = {
+            let Some(ts) = brep.tshapes.get(edge_idx) else { continue };
+            let TShape::Edge(ed) = ts.as_ref() else { continue };
+            ed.pcurves.contains_key(&face_idx)
+        };
         if already_has {
             continue;
         }
 
-        // Need a 3D curve or at least the two endpoint vertices to project.
-        let (curve_opt, t_range_opt): (Option<Curve3>, Option<[f64; 2]>) = match brep
-            .geom
-            .edge_curve
-            .get(edge_idx)
-            .and_then(|&ci| ci)
-            .and_then(|ci| brep.geom.curves.get(ci))
-        {
-            Some(c) => {
-                let r = brep
-                    .geom
-                    .edge_curve_range
-                    .get(edge_idx)
-                    .and_then(|r| *r)
-                    .unwrap_or_else(|| c.default_domain());
-                (Some(c.clone()), Some(r))
-            }
-            None => (None, None),
+        // Get the curve and range from the edge.
+        let (curve_opt, t_range_opt): (Option<Curve3>, Option<[f64; 2]>) = {
+            let Some(ts) = brep.tshapes.get(edge_idx) else { continue };
+            let TShape::Edge(ed) = ts.as_ref() else { continue };
+            (ed.curve.clone(), Some(ed.range))
         };
 
         // Derive the 2D PCurve.
@@ -225,15 +197,10 @@ pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
             fallback_pcurve_by_projection(&curve, &t_range, &surface)
         } else {
             // No analytic curve: sample from vertex endpoints as a straight line.
-            let Some(edge) = brep.edges.get(edge_idx) else {
-                continue;
-            };
-            let Some(p0) = brep.vertices.get(edge.start).map(|v| v.point) else {
-                continue;
-            };
-            let Some(p1) = brep.vertices.get(edge.end).map(|v| v.point) else {
-                continue;
-            };
+            let Some(ts) = brep.tshapes.get(edge_idx) else { continue };
+            let TShape::Edge(ed) = ts.as_ref() else { continue };
+            let Some(p0) = brep.vertex_point(ed.first.index) else { continue };
+            let Some(p1) = brep.vertex_point(ed.last.index) else { continue };
             if (p1 - p0).length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
                 continue; // degenerate
             }
@@ -249,14 +216,11 @@ pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
             }
         };
 
-        // Store in geom.
-        let curve2d_idx = brep.geom.curve2ds.len();
-        brep.geom.curve2ds.push(pcurve2d);
-        brep.geom.edge_pcurves[edge_idx].push(PCurve {
-            surface_idx: surf_idx,
-            curve2d_idx,
-        });
+        // Store in the edge's pcurves map, keyed by face index.
+        let ts = &mut brep.tshapes[edge_idx];
+        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
+        // Use a reasonable default parameter range for the pcurve.
+        let prange = t_range_opt.unwrap_or([0.0, 1.0]);
+        ed.pcurves.insert(face_idx, (pcurve2d, prange[0], prange[1]));
     }
 }
-
-

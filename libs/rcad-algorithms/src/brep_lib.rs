@@ -26,9 +26,10 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{topods, Curve3, Surface3};
+use rcad_kernel::{Curve3, Surface3};
+use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::geom::{any_perpendicular, CurveEval, SurfaceEval};
-use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
+use rcad_kernel::topology::{Wire, WireEdge};
 
 // =============================================================================
 // Error Types
@@ -135,27 +136,25 @@ pub fn find_surface_through_edges(
  let samples_per_edge = 10;
 
  for &edge_idx in edge_indices {
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.edge_count() {
  return Err(BRepLibError::InvalidIndex {
  kind: "edge",
  index: edge_idx,
- max: brep.edges.len(),
+ max: brep.edge_count(),
  });
  }
 
  // Get edge vertices
- let edge = &brep.edges[edge_idx];
- let start_pt = brep.vertices[edge.start].point;
- let end_pt = brep.vertices[edge.end].point;
+ let ed = match &*brep.tshapes[edge_idx] {
+ TShape::Edge(ed) => ed,
+ _ => unreachable!(),
+ };
+ let start_pt = brep.vertex_point(ed.first.index).unwrap();
+ let end_pt = brep.vertex_point(ed.last.index).unwrap();
 
  // Try to sample from the curve if available
- if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
- && let Some(curve) = brep.geom.curves.get(curve_idx) {
- // Get parameter range
- let range = brep.geom.edge_curve_range.get(edge_idx)
- .copied()
- .flatten()
- .unwrap_or_else(|| curve.default_domain());
+ if let Some(curve) = &ed.curve {
+ let range = ed.range;
 
  // Sample along the curve
  for i in 0..samples_per_edge {
@@ -904,10 +903,13 @@ pub fn sort_faces_by_distance(brep: &rcad_kernel::BRep, reference: DVec3) -> Vec
 /// Check if two faces share the same underlying surface geometry.
 ///
 /// Two faces share the same domain if:
-/// 1. They reference the same surface index, OR
+/// 1. They reference the same surface, OR
 /// 2. Their surfaces are geometrically equivalent within tolerance
 pub fn faces_share_surface(brep: &rcad_kernel::BRep, face1_idx: usize, face2_idx: usize) -> Result<bool, BRepLibError> {
- let n_faces = count_faces(brep);
+ let faces: Vec<&Surface3> = brep.tshapes.iter().filter_map(|ts| {
+ if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+ }).collect();
+ let n_faces = faces.len();
  if face1_idx >= n_faces {
  return Err(BRepLibError::InvalidIndex {
  kind: "face",
@@ -923,21 +925,11 @@ pub fn faces_share_surface(brep: &rcad_kernel::BRep, face1_idx: usize, face2_idx
  });
  }
 
- // Check if they reference the same surface index
- let surf1 = brep.geom.face_surface.get(face1_idx).and_then(|s| *s);
- let surf2 = brep.geom.face_surface.get(face2_idx).and_then(|s| *s);
+ let s1 = faces[face1_idx];
+ let s2 = faces[face2_idx];
 
- match (surf1, surf2) {
- (Some(s1), Some(s2)) => {
- // Same surface index
- if s1 == s2 {
- return Ok(true);
- }
  // Check geometric equivalence
- surfaces_equivalent(&brep.geom.surfaces[s1], &brep.geom.surfaces[s2])
- }
- _ => Ok(false),
- }
+ surfaces_equivalent(s1, s2)
 }
 
 /// Check if two surfaces are geometrically equivalent within tolerance.
@@ -994,43 +986,23 @@ pub fn add_edge_with_curve(
  start_vertex: usize,
  end_vertex: usize,
 ) -> Result<usize, BRepLibError> {
- if start_vertex >= brep.vertices.len() {
+ if start_vertex >= brep.vertex_count() {
  return Err(BRepLibError::InvalidIndex {
  kind: "vertex",
  index: start_vertex,
- max: brep.vertices.len(),
+ max: brep.vertex_count(),
  });
  }
- if end_vertex >= brep.vertices.len() {
+ if end_vertex >= brep.vertex_count() {
  return Err(BRepLibError::InvalidIndex {
  kind: "vertex",
  index: end_vertex,
- max: brep.vertices.len(),
+ max: brep.vertex_count(),
  });
  }
 
- // Add curve to geometry store
- let curve_idx = brep.geom.curves.len();
- brep.geom.curves.push(curve);
-
- // Create edge
- let edge_idx = brep.edges.len();
- brep.edges.push(Edge {
- start: start_vertex,
- end: end_vertex,
- });
-
- // Link edge to curve
- while brep.geom.edge_curve.len() <= edge_idx {
- brep.geom.edge_curve.push(None);
- }
- brep.geom.edge_curve[edge_idx] = Some(curve_idx);
-
- // Initialize pcurves vector
- while brep.geom.edge_pcurves.len() <= edge_idx {
- brep.geom.edge_pcurves.push(Vec::new());
- }
-
+ let domain = curve.default_domain();
+ let edge_idx = brep.add_edge_flat(start_vertex, end_vertex, Some(curve), domain);
  Ok(edge_idx)
 }
 
@@ -1046,52 +1018,79 @@ pub fn add_face_with_surface(
  surface: Surface3,
  wires: Vec<Wire>,
 ) -> Result<usize, BRepLibError> {
+ use std::sync::Arc;
+ use rcad_kernel::topods::ShapeRef;
+
  if wires.is_empty() {
  return Err(BRepLibError::InvalidWire("Face must have at least one wire".into()));
  }
 
+ // Convert each old-style Wire to a tshape wire (ShapeRef chain of edges)
+ let mut tshape_wires: Vec<ShapeRef> = Vec::with_capacity(wires.len());
+ for w in wires {
+ let edge_refs: Vec<ShapeRef> = w.edges.into_iter().map(|we| {
+ let ts = &brep.tshapes[we.idx];
+ ShapeRef {
+ ptr_id: Arc::as_ptr(ts) as u64,
+ index: we.idx,
+ orientation: if we.forward { Orientation::Forward } else { Orientation::Reversed },
+ location: 0,
+ }
+ }).collect();
+ tshape_wires.push(brep.add_twire(edge_refs));
+ }
+
+ // First wire is outer, rest are inner
+ let outer_wire = tshape_wires.swap_remove(0);
+ let inner_wires = tshape_wires;
+
+ let uv_domain = Some(surface.default_domain());
+ let face_ref = brep.add_tface(Some(surface), outer_wire, inner_wires, None, uv_domain, Vec::new(), false);
+ let face_idx = face_ref.index;
+
  // Ensure we have a solid/shell structure
- if brep.solids.is_empty() {
- brep.solids.push(rcad_kernel::topology::Solid {
- shells: vec![rcad_kernel::topology::Shell { faces: vec![] }],
- });
+ if brep.solid_count() == 0 {
+ brep.add_tsolid(Vec::new());
  }
 
- // Get flat face index before adding
- let face_idx = count_faces(brep);
-
- let solid = &mut brep.solids[0];
- if solid.shells.is_empty() {
- solid.shells.push(rcad_kernel::topology::Shell { faces: vec![] });
+ // Find the first solid and add the face to its first shell
+ let mut solid_idx = None;
+ for (i, ts) in brep.tshapes.iter().enumerate() {
+ if let TShape::Solid(_) = &**ts {
+ solid_idx = Some(i);
+ break;
  }
-
- // Add surface to geometry store
- let surface_idx = brep.geom.surfaces.len();
- brep.geom.surfaces.push(surface);
-
- // Compute face normal from surface
- let normal = compute_surface_normal(&brep.geom.surfaces[surface_idx]);
-
- // Create face
- let outer_wire = wires.into_iter().next().unwrap();
- let face = Face {
- outer_wire,
- inner_wires: Vec::new(),
- normal,
- triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
+ }
+ if let Some(si) = solid_idx {
+ // Check if the solid already has shells
+ let has_shells = {
+ let ts = &brep.tshapes[si];
+ match &**ts {
+ TShape::Solid(sd) => !sd.shells.is_empty(),
+ _ => false,
+ }
  };
-
- // Add face
- solid.shells[0].faces.push(face);
-
- // Link face to surface
- while brep.geom.face_surface.len() <= face_idx {
- brep.geom.face_surface.push(None);
+ if has_shells {
+ // Get the first shell's tshape index
+ let sh_idx = {
+ let ts = &brep.tshapes[si];
+ match &**ts {
+ TShape::Solid(sd) => sd.shells[0].index,
+ _ => unreachable!(),
  }
- brep.geom.face_surface[face_idx] = Some(surface_idx);
+ };
+ // Add face to existing shell
+ if let TShape::Shell(shd) = &mut *std::sync::Arc::make_mut(&mut brep.tshapes[sh_idx]) {
+ shd.faces.push(face_ref);
+ }
+ } else {
+ // Create a shell with this face
+ let shell_ref = brep.add_tshell(vec![face_ref]);
+ if let TShape::Solid(sd) = &mut *std::sync::Arc::make_mut(&mut brep.tshapes[si]) {
+ sd.shells.push(shell_ref);
+ }
+ }
+ }
 
  Ok(face_idx)
 }
@@ -1157,41 +1156,32 @@ pub fn make_wire_from_edges(edges: Vec<(usize, bool)>) -> Wire {
 ///
 /// Returns `[t_min, t_max]` for the edge's parameter range.
 pub fn compute_edge_bounds(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<[f64; 2], BRepLibError> {
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.edge_count() {
  return Err(BRepLibError::InvalidIndex {
  kind: "edge",
  index: edge_idx,
- max: brep.edges.len(),
+ max: brep.edge_count(),
  });
  }
 
- // Check for explicit range
- if let Some(Some(range)) = brep.geom.edge_curve_range.get(edge_idx) {
- return Ok(*range);
- }
+ let ed = match &*brep.tshapes[edge_idx] {
+ TShape::Edge(ed) => ed,
+ _ => unreachable!(),
+ };
 
- // Get curve and use its default domain
- let curve_idx = brep.geom.edge_curve.get(edge_idx)
- .and_then(|c| *c)
- .ok_or(BRepLibError::MissingGeometry {
- kind: "curve",
- index: edge_idx,
- })?;
-
- let curve = brep.geom.curves.get(curve_idx)
- .ok_or(BRepLibError::MissingGeometry {
- kind: "curve",
- index: curve_idx,
- })?;
-
- Ok(curve.default_domain())
+ // Use edge's stored range
+ Ok(ed.range)
 }
 
 /// Compute the parameter bounds of a face's surface.
 ///
 /// Returns `[u_min, u_max, v_min, v_max]` for the face's parameter range.
 pub fn compute_face_bounds(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<[f64; 4], BRepLibError> {
- let n_faces = count_faces(brep);
+ // Collect face surfaces in flat order (iterate tshapes for TShape::Face)
+ let face_surfaces: Vec<Option<[f64; 4]>> = brep.tshapes.iter().filter_map(|ts| {
+ if let TShape::Face(fd) = &**ts { Some(fd.uv_domain) } else { None }
+ }).collect();
+ let n_faces = face_surfaces.len();
  if face_idx >= n_faces {
  return Err(BRepLibError::InvalidIndex {
  kind: "face",
@@ -1200,26 +1190,23 @@ pub fn compute_face_bounds(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<
  });
  }
 
- // Check for explicit range
- if let Some(Some(range)) = brep.geom.face_surface_range.get(face_idx) {
- return Ok(*range);
+ // Use stored uv_domain, or compute from surface
+ if let Some(domain) = face_surfaces[face_idx] {
+ return Ok(domain);
  }
 
- // Get surface and use its default domain
- let surface_idx = brep.geom.face_surface.get(face_idx)
- .and_then(|s| *s)
- .ok_or(BRepLibError::MissingGeometry {
+ // Get face and use surface's default domain
+ let faces: Vec<Option<&Surface3>> = brep.tshapes.iter().filter_map(|ts| {
+ if let TShape::Face(fd) = &**ts { Some(fd.surface.as_ref()) } else { None }
+ }).collect();
+ if let Some(Some(surface)) = faces.get(face_idx) {
+ Ok(surface.default_domain())
+ } else {
+ Err(BRepLibError::MissingGeometry {
  kind: "surface",
  index: face_idx,
- })?;
-
- let surface = brep.geom.surfaces.get(surface_idx)
- .ok_or(BRepLibError::MissingGeometry {
- kind: "surface",
- index: surface_idx,
- })?;
-
- Ok(surface.default_domain())
+ })
+ }
 }
 
 // =============================================================================
@@ -1227,58 +1214,54 @@ pub fn compute_face_bounds(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<
 // =============================================================================
 
 /// Count the total number of faces in a BRep.
+/// Count the total number of faces in a BRep.
 fn count_faces(brep: &rcad_kernel::BRep) -> usize {
- brep.solids.iter()
- .flat_map(|s| &s.shells)
- .map(|sh| sh.faces.len())
- .sum()
+ brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+}
+
+/// Collect vertex points from a face's outer wire via tshape structure.
+fn collect_face_wire_vertices(brep: &rcad_kernel::BRep, face_ts_idx: usize) -> Vec<DVec3> {
+ let mut points = Vec::new();
+ let fd = match &*brep.tshapes[face_ts_idx] {
+ TShape::Face(fd) => fd,
+ _ => return points,
+ };
+ let outer_wire = &fd.outer_wire;
+ if let TShape::Wire(twd) = &*brep.tshapes[outer_wire.index] {
+ for &edge_ref in &twd.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[edge_ref.index] {
+ let (first_pt, last_pt) = (
+ brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO),
+ brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO),
+ );
+ match edge_ref.orientation {
+ Orientation::Forward => points.push(first_pt),
+ Orientation::Reversed => points.push(last_pt),
+ _ => {
+ points.push(first_pt);
+ points.push(last_pt);
+ }
+ }
+ }
+ }
+ }
+ points
 }
 
 /// Compute the approximate surface area of a face.
 fn compute_face_area(brep: &rcad_kernel::BRep, face_idx: usize) -> f64 {
- // Get face vertices and compute polygon area approximation
- let (face, _) = match get_face_by_flat_index(brep, face_idx) {
- Ok(f) => f,
- Err(_) => return 0.0,
+ // Find the face by flat index
+ let face_ts_idx = match brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_))).nth(face_idx) {
+ Some((idx, _)) => idx,
+ None => return 0.0,
  };
 
- // Sum area of triangles
- let mut area = 0.0;
- for tri in &face.triangles {
- if tri.len() >= 3 {
- let v0 = brep.vertices.get(tri[0]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- let v1 = brep.vertices.get(tri[1]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- let v2 = brep.vertices.get(tri[2]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- area += 0.5 * (v1 - v0).cross(v2 - v0).length();
- }
- }
-
- // If no triangles, estimate from wire
- if area < TOLERANCE_LINEAR_ULTRA_STRICT {
- area = estimate_wire_area(brep, &face.outer_wire);
- }
-
- area
-}
-
-fn estimate_wire_area(brep: &rcad_kernel::BRep, wire: &Wire) -> f64 {
- // Get wire vertices
- let mut points = Vec::new();
- for we in &wire.edges {
- let edge = &brep.edges[we.idx];
- if we.forward {
- points.push(brep.vertices[edge.start].point);
- } else {
- points.push(brep.vertices[edge.end].point);
- }
- }
-
+ let points = collect_face_wire_vertices(brep, face_ts_idx);
  if points.len() < 3 {
  return 0.0;
  }
 
- // Compute 2D convex hull area (approximation)
- // Use shoelace formula in the plane of the points
+ // Approximate area from wire polygon
  let centroid = points.iter().sum::<DVec3>() / points.len() as f64;
  let mut sum = 0.0;
  for i in 0..points.len() {
@@ -1290,18 +1273,14 @@ fn estimate_wire_area(brep: &rcad_kernel::BRep, wire: &Wire) -> f64 {
 
 /// Compute the bounding box of a face.
 fn compute_face_bounding_box(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<[DVec3; 2]> {
- let (face, _) = get_face_by_flat_index(brep, face_idx).ok()?;
+ let face_ts_idx = brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_))).nth(face_idx)?.0;
+ let points = collect_face_wire_vertices(brep, face_ts_idx);
 
  let mut min_pt = DVec3::splat(f64::INFINITY);
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-
- // Get vertices from outer wire
- for we in &face.outer_wire.edges {
- let edge = &brep.edges[we.idx];
- min_pt = min_pt.min(brep.vertices[edge.start].point);
- max_pt = max_pt.max(brep.vertices[edge.start].point);
- min_pt = min_pt.min(brep.vertices[edge.end].point);
- max_pt = max_pt.max(brep.vertices[edge.end].point);
+ for &p in &points {
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
  }
 
  if min_pt.x.is_finite() {
@@ -1313,51 +1292,20 @@ fn compute_face_bounding_box(brep: &rcad_kernel::BRep, face_idx: usize) -> Optio
 
 /// Compute the centroid of a face.
 fn compute_face_centroid(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<DVec3> {
- let (face, _) = get_face_by_flat_index(brep, face_idx).ok()?;
+ let face_ts_idx = brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_))).nth(face_idx)?.0;
+ let points = collect_face_wire_vertices(brep, face_ts_idx);
 
- let mut sum = DVec3::ZERO;
- let mut count = 0;
-
- for we in &face.outer_wire.edges {
- let edge = &brep.edges[we.idx];
- sum += brep.vertices[edge.start].point;
- sum += brep.vertices[edge.end].point;
- count += 2;
+ if points.is_empty() {
+ return None;
  }
-
- if count > 0 {
- Some(sum / count as f64)
- } else {
- None
- }
-}
-
-/// Get a face by its flat index.
-fn get_face_by_flat_index(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<(&Face, usize), BRepLibError> {
- let mut current_idx = 0;
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- if face_idx < current_idx + shell.faces.len() {
- let local_idx = face_idx - current_idx;
- return Ok((&shell.faces[local_idx], face_idx));
- }
- current_idx += shell.faces.len();
- }
- }
-
- Err(BRepLibError::InvalidIndex {
- kind: "face",
- index: face_idx,
- max: current_idx,
- })
+ Some(points.iter().sum::<DVec3>() / points.len() as f64)
 }
 
 /// Compute a default normal for a surface.
 fn compute_surface_normal(surface: &Surface3) -> DVec3 {
  match surface {
  Surface3::Plane(p) => p.normal,
- Surface3::Sphere(_s) => DVec3::Z, // Default, actual normal varies by point
+ Surface3::Sphere(_s) => DVec3::Z,
  Surface3::Cylinder(c) => c.axis.normalize_or(DVec3::Z),
  Surface3::Cone(c) => c.axis.normalize_or(DVec3::Z),
  Surface3::Torus(t) => t.axis.normalize_or(DVec3::Z),
@@ -1376,8 +1324,7 @@ pub fn total_volume(brep: &rcad_kernel::BRep) -> f64 {
 
 /// Total volume of a topods::BRep.
 pub fn total_volume_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
-    let old = rcad_kernel::BRep::from_topods(brep);
-    rcad_kernel::volume(&old)
+    rcad_kernel::volume(brep)
 }
 
 /// Total surface area of an old BRep.
@@ -1387,8 +1334,7 @@ pub fn total_surface_area(brep: &rcad_kernel::BRep) -> f64 {
 
 /// Total surface area of a topods::BRep.
 pub fn total_surface_area_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
-    let old = rcad_kernel::BRep::from_topods(brep);
-    rcad_kernel::surface_area(&old)
+    rcad_kernel::surface_area(brep)
 }
 
 // =============================================================================

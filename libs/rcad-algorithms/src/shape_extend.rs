@@ -9,10 +9,8 @@
 //! - `ShapeExtend_Explorer`: Extended shape exploration utilities
 
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topology::{Face, Wire};
-use rcad_kernel::{topods, vertex_indices};
-
-use crate::brep_tools::ShapeType;
+use rcad_kernel::topods::{self, TShape, ShapeType};
+use rcad_kernel::vertex_indices;
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // ShapeExtend_WireData - Extended Wire Data
@@ -205,28 +203,38 @@ impl WireData {
  let first_edge_idx = self.edges[0].0;
  let last_edge_idx = self.edges[self.edges.len() - 1].0;
 
- if first_edge_idx >= brep.edges.len() || last_edge_idx >= brep.edges.len() {
- return false;
- }
+ let edge_endpoints = |ei: usize| -> Option<(usize, usize)> {
+  let ts = brep.tshapes.get(ei)?;
+  match &**ts {
+   TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+   _ => None,
+  }
+ };
 
- let first_edge = &brep.edges[first_edge_idx];
- let last_edge = &brep.edges[last_edge_idx];
+ let (first_start, first_end) = match edge_endpoints(first_edge_idx) {
+  Some(ep) => ep,
+  None => return false,
+ };
+ let (last_start, last_end) = match edge_endpoints(last_edge_idx) {
+  Some(ep) => ep,
+  None => return false,
+ };
 
  let first_orient = self.edges[0].1;
  let last_orient = self.edges[self.edges.len() - 1].1;
 
  // First vertex of wire
  let first_vertex = if first_orient {
- first_edge.start
+ first_start
  } else {
- first_edge.end
+ first_end
  };
 
  // Last vertex of wire
  let last_vertex = if last_orient {
- last_edge.end
+ last_end
  } else {
- last_edge.start
+ last_start
  };
 
  first_vertex == last_vertex
@@ -252,24 +260,28 @@ impl WireData {
  let mut total = 0.0;
 
  for &(edge_idx, _orientation) in &self.edges {
- if edge_idx >= brep.edges.len() {
- continue;
- }
+ let ts = match brep.tshapes.get(edge_idx) {
+  Some(ts) => ts,
+  None => continue,
+ };
+ let ed = match &**ts {
+  TShape::Edge(ed) => ed,
+  _ => continue,
+ };
 
- // Try to get curve bounds from geometry store
- if let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r)
- && let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
- && let Some(curve) = brep.geom.curves.get(curve_idx) {
- // Approximate length by sampling
- let steps = 10;
- let du = (range[1] - range[0]) / steps as f64;
- for i in 0..steps {
- let u = range[0] + du * i as f64;
- let u_next = range[0] + du * (i + 1) as f64;
- let p1 = curve.point_at(u);
- let p2 = curve.point_at(u_next);
- total += (p2 - p1).length();
- }
+ // Try to get curve bounds from edge data
+ if let Some(ref curve) = ed.curve {
+  let range = ed.range;
+  // Approximate length by sampling
+  let steps = 10;
+  let du = (range[1] - range[0]) / steps as f64;
+  for i in 0..steps {
+   let u = range[0] + du * i as f64;
+   let u_next = range[0] + du * (i + 1) as f64;
+   let p1 = curve.point_at(u);
+   let p2 = curve.point_at(u_next);
+   total += (p2 - p1).length();
+  }
  }
  }
 
@@ -868,38 +880,24 @@ impl ShapeMessageRegistrator {
 pub struct ShapeExplorer;
 
 impl ShapeExplorer {
- /// Helper to iterate over all faces in a BRep.
- fn iter_faces(brep: &rcad_kernel::BRep) -> impl Iterator<Item = (usize, &Face)> {
- brep.solids.iter()
- .flat_map(|solid| solid.shells.iter())
- .flat_map(|shell| shell.faces.iter())
- .enumerate()
- }
-
- /// Helper to iterate over all wires in a face (outer and inner).
- fn iter_wires(face: &Face) -> impl Iterator<Item = &Wire> {
- std::iter::once(&face.outer_wire).chain(face.inner_wires.iter())
- }
-
- /// Explore all subshapes of a given shape.
- ///
- /// # Arguments
- /// * `brep` - The BRep to explore.
- /// * `shape_idx` - The shape index (solid index in this simplified implementation).
- ///
- /// # Returns
- /// Vector of shell indices for the given solid.
- ///
- /// # Note
- /// In this simplified implementation, shape_idx is interpreted as:
- /// - For a solid: returns the shell indices (0-based, consecutive)
- pub fn explore_shape(brep: &rcad_kernel::BRep, shape_idx: usize) -> Vec<usize> {
- if shape_idx < brep.solids.len() {
- // Return shell count for this solid
- (0..brep.solids[shape_idx].shells.len()).collect()
- } else {
- Vec::new()
- }
+ /// Helper to collect edge indices from a face's wires.
+ fn face_edge_indices(brep: &rcad_kernel::BRep, face_ref: topods::ShapeRef) -> Vec<usize> {
+  let mut indices = Vec::new();
+  let fd = match brep.tshapes.get(face_ref.index) {
+   Some(ts) => match &**ts { TShape::Face(fd) => fd, _ => return indices },
+   None => return indices,
+  };
+  // Collect from outer wire
+  if let Some(wd) = brep.tshapes.get(fd.outer_wire.index).and_then(|ts| match &**ts { TShape::Wire(wd) => Some(wd), _ => None }) {
+   for er in &wd.edges { indices.push(er.index); }
+  }
+  // Collect from inner wires
+  for iw in &fd.inner_wires {
+   if let Some(wd) = brep.tshapes.get(iw.index).and_then(|ts| match &**ts { TShape::Wire(wd) => Some(wd), _ => None }) {
+    for er in &wd.edges { indices.push(er.index); }
+   }
+  }
+  indices
  }
 
  /// Count subshapes of a given type in a BRep.
@@ -911,33 +909,17 @@ impl ShapeExplorer {
  /// # Returns
  /// Number of shapes of the given type.
  pub fn count_subshapes(brep: &rcad_kernel::BRep, shape_type: ShapeType) -> usize {
- match shape_type {
- ShapeType::Vertex => vertex_indices(brep).len(),
- ShapeType::Edge => brep.edges.len(),
- ShapeType::Wire => {
- // Count all wires (outer and inner) across all faces
- brep.solids.iter()
- .flat_map(|solid| solid.shells.iter())
- .flat_map(|shell| shell.faces.iter())
- .map(|face| 1 + face.inner_wires.len())
- .sum()
- }
- ShapeType::Face => {
- brep.solids.iter()
- .flat_map(|solid| solid.shells.iter())
- .map(|shell| shell.faces.len())
- .sum()
- }
- ShapeType::Shell => {
- brep.solids.iter()
- .map(|solid| solid.shells.len())
- .sum()
- }
- ShapeType::Solid => brep.solids.len(),
- ShapeType::CompSolid => brep.compsolid.as_ref().map_or(1, |_| 1),
- ShapeType::Compound => brep.compound.as_ref().map_or(1, |_| 1),
- ShapeType::Empty => 0,
- }
+  match shape_type {
+  ShapeType::Vertex => brep.nb_vertices(),
+  ShapeType::Edge => brep.nb_edges(),
+  ShapeType::Wire => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Wire(_))).count(),
+  ShapeType::Face => brep.face_count(),
+  ShapeType::Shell => brep.nb_shells(),
+  ShapeType::Solid => brep.solid_count(),
+  ShapeType::CompSolid => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::CompSolid(_))).count(),
+  ShapeType::Compound => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Compound(_))).count(),
+  ShapeType::Shape => 1,
+  }
  }
 
  /// Get all unique edge indices in the BRep.
@@ -948,25 +930,17 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of all edge indices referenced in wires.
  pub fn all_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
- let mut edges: Vec<usize> = Vec::new();
-
- // Collect edges from all faces through the topology hierarchy
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for wire in Self::iter_wires(face) {
- for wire_edge in &wire.edges {
- edges.push(wire_edge.idx);
- }
- }
- }
- }
- }
-
- // Sort and deduplicate
- edges.sort();
- edges.dedup();
- edges
+  let mut edges: Vec<usize> = Vec::new();
+  for ts in &brep.tshapes {
+   if let TShape::Wire(wd) = ts.as_ref() {
+    for er in &wd.edges {
+     edges.push(er.index);
+    }
+   }
+  }
+  edges.sort();
+  edges.dedup();
+  edges
  }
 
  /// Get all unique vertex indices in the BRep.
@@ -977,7 +951,7 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of all vertex indices used by edges.
  pub fn all_vertices(brep: &rcad_kernel::BRep) -> Vec<usize> {
- vertex_indices(brep)
+  vertex_indices(brep)
  }
 
  /// Find faces that share a given edge.
@@ -989,24 +963,19 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of face indices (0-based global face index) that reference the given edge.
  pub fn faces_sharing_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
- let mut faces = Vec::new();
- let mut face_counter = 0;
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- for _face in &shell.faces {
- // Check if this face contains the edge
- let has_edge = Self::iter_wires(_face)
- .any(|wire| wire.edges.iter().any(|we| we.idx == edge_idx));
- if has_edge {
- faces.push(face_counter);
- }
- face_counter += 1;
- }
- }
- }
-
- faces
+  let mut faces = Vec::new();
+  let mut face_counter = 0;
+  for ts in &brep.tshapes {
+   if let TShape::Face(fd) = ts.as_ref() {
+    let has_edge = Self::face_edge_indices(brep, topods::ShapeRef::synthetic(fd.outer_wire.index))
+     .contains(&edge_idx);
+    if has_edge {
+     faces.push(face_counter);
+    }
+    face_counter += 1;
+   }
+  }
+  faces
  }
 
  /// Find edges that share a given vertex.
@@ -1018,15 +987,15 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of edge indices that reference the given vertex.
  pub fn edges_sharing_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
- let mut edges = Vec::new();
-
- for (edge_idx, edge) in brep.edges.iter().enumerate() {
- if edge.start == vertex_idx || edge.end == vertex_idx {
- edges.push(edge_idx);
- }
- }
-
- edges
+  let mut edges = Vec::new();
+  for (ei, ts) in brep.tshapes.iter().enumerate() {
+   if let TShape::Edge(ed) = ts.as_ref() {
+    if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
+     edges.push(ei);
+    }
+   }
+  }
+  edges
  }
 
  /// Find the boundary edges of a shell or solid.
@@ -1037,25 +1006,19 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of edge indices that appear exactly once (boundary edges).
  pub fn boundary_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
- let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for wire in Self::iter_wires(face) {
- for wire_edge in &wire.edges {
- *edge_counts.entry(wire_edge.idx).or_insert(0) += 1;
- }
- }
- }
- }
- }
-
- edge_counts
- .into_iter()
- .filter(|(_, count)| *count == 1)
- .map(|(idx, _)| idx)
- .collect()
+  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+  for ts in &brep.tshapes {
+   if let TShape::Wire(wd) = ts.as_ref() {
+    for er in &wd.edges {
+     *edge_counts.entry(er.index).or_insert(0) += 1;
+    }
+   }
+  }
+  edge_counts
+  .into_iter()
+  .filter(|(_, count)| *count == 1)
+  .map(|(idx, _)| idx)
+  .collect()
  }
 
  /// Find non-manifold edges in the BRep.
@@ -1068,25 +1031,19 @@ impl ShapeExplorer {
  /// # Returns
  /// Vector of non-manifold edge indices.
  pub fn non_manifold_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
- let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for wire in Self::iter_wires(face) {
- for wire_edge in &wire.edges {
- *edge_counts.entry(wire_edge.idx).or_insert(0) += 1;
- }
- }
- }
- }
- }
-
- edge_counts
- .into_iter()
- .filter(|(_, count)| *count > 2)
- .map(|(idx, _)| idx)
- .collect()
+  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+  for ts in &brep.tshapes {
+   if let TShape::Wire(wd) = ts.as_ref() {
+    for er in &wd.edges {
+     *edge_counts.entry(er.index).or_insert(0) += 1;
+    }
+   }
+  }
+  edge_counts
+  .into_iter()
+  .filter(|(_, count)| *count > 2)
+  .map(|(idx, _)| idx)
+  .collect()
  }
 
  /// Get a summary of the BRep topology.
@@ -1097,19 +1054,15 @@ impl ShapeExplorer {
  /// # Returns
  /// A string describing the topology.
  pub fn topology_summary(brep: &rcad_kernel::BRep) -> String {
- let face_count = Self::count_subshapes(brep, ShapeType::Face);
- let shell_count = Self::count_subshapes(brep, ShapeType::Shell);
- let wire_count = Self::count_subshapes(brep, ShapeType::Wire);
-
- format!(
- "BRep topology: {} vertices, {} edges, {} wires, {} faces, {} shells, {} solids",
- vertex_indices(brep).len(),
- brep.edges.len(),
- wire_count,
- face_count,
- shell_count,
- brep.solids.len()
- )
+  format!(
+  "BRep topology: {} vertices, {} edges, {} wires, {} faces, {} shells, {} solids",
+  brep.nb_vertices(),
+  brep.nb_edges(),
+  Self::count_subshapes(brep, ShapeType::Wire),
+  brep.face_count(),
+  brep.nb_shells(),
+  brep.solid_count()
+  )
  }
 }
 

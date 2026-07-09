@@ -24,13 +24,85 @@
 
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{TShape, ShapeRef, Orientation};
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
-use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::topology::{Face, Shell, Wire, WireEdge};
 
 use crate::tolerance::*;
 use crate::triangulate::{TessellationParams, mesh_brep};
+
+// ---------------------------------------------------------------------------
+// Backward-compat helpers for accessing new topods::BRep data
+// ---------------------------------------------------------------------------
+
+/// Get vertex point by flat tshape index (replaces brep.vertices[vi].point).
+fn brep_vertex_point(brep: &rcad_kernel::BRep, idx: usize) -> Option<DVec3> {
+    brep.vertex_point(idx)
+}
+
+/// Get edge endpoint indices by flat tshape index (replaces brep.edges[ei]).
+fn brep_edge_endpoints(brep: &rcad_kernel::BRep, idx: usize) -> Option<(usize, usize)> {
+    brep.tshapes.get(idx).and_then(|ts| match ts.as_ref() {
+        TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+        _ => None,
+    })
+}
+
+/// Get face surface by flat face index in the first shell (replaces brep.geom.face_surface + brep.geom.surfaces).
+fn brep_face_surface(brep: &rcad_kernel::BRep, flat_idx: usize) -> Option<Surface3> {
+    let solid_idx = brep.tshapes.iter().position(|ts| matches!(ts.as_ref(), TShape::Solid(_)))?;
+    let sd = match &*brep.tshapes[solid_idx] { TShape::Solid(sd) => sd, _ => return None };
+    let shell_sr = sd.shells.first()?;
+    let shelld = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => return None };
+    shelld.faces.get(flat_idx).and_then(|face_sr| {
+        match &*brep.tshapes[face_sr.index] { TShape::Face(fd) => fd.surface.clone(), _ => None }
+    })
+}
+
+/// Get first shell faces vec from a topods BRep (replaces brep.solids[0].shells[0].faces).
+fn first_shell_face_count(brep: &rcad_kernel::BRep) -> Option<usize> {
+    let solid_idx = brep.tshapes.iter().position(|ts| matches!(ts.as_ref(), TShape::Solid(_)))?;
+    let sd = match &*brep.tshapes[solid_idx] { TShape::Solid(sd) => sd, _ => return None };
+    let shell_sr = sd.shells.first()?;
+    let shelld = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => return None };
+    Some(shelld.faces.len())
+}
+
+/// Build an old-style Shell from topods::BRep, extracting face/wire/edge data
+/// with normals computed from face surfaces.
+fn shell_from_brep(brep: &rcad_kernel::BRep) -> Option<Shell> {
+    let solid_idx = brep.tshapes.iter().position(|ts| matches!(ts.as_ref(), TShape::Solid(_)))?;
+    let sd = match &*brep.tshapes[solid_idx] { TShape::Solid(sd) => sd, _ => return None };
+    let shell_sr = sd.shells.first()?;
+    let shelld = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => return None };
+    let mut faces = Vec::new();
+    for face_sr in &shelld.faces {
+        let fd = match &*brep.tshapes[face_sr.index] { TShape::Face(fd) => fd, _ => continue };
+        let wd = match &*brep.tshapes[fd.outer_wire.index] { TShape::Wire(w) => w, _ => continue };
+        let outer_edges: Vec<WireEdge> = wd.edges.iter().map(|e_sr| {
+            WireEdge::new(e_sr.index, e_sr.orientation == Orientation::Forward)
+        }).collect();
+        let inner_wires: Vec<Wire> = fd.inner_wires.iter().map(|iw_sr| {
+            if iw_sr.index >= brep.tshapes.len() { return Wire { edges: Vec::new() }; }
+            let iwd = match &*brep.tshapes[iw_sr.index] { TShape::Wire(w) => w, _ => return Wire { edges: Vec::new() } };
+            Wire { edges: iwd.edges.iter().map(|e_sr| {
+                WireEdge::new(e_sr.index, e_sr.orientation == Orientation::Forward)
+            }).collect() }
+        }).collect();
+        let normal = fd.surface.as_ref().map(|s| s.normal_at(0.0, 0.0)).unwrap_or(DVec3::Z);
+        faces.push(Face {
+            outer_wire: Wire { edges: outer_edges },
+            inner_wires,
+            normal,
+            triangles: Vec::new(),
+            sample_point: fd.sample_point,
+            mesh_dirty: true,
+            surface_idx: Some(face_sr.index),
+        });
+    }
+    Some(Shell { faces })
+}
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Result Types
@@ -186,7 +258,7 @@ pub fn select_faces_for_removal(
  brep: &rcad_kernel::BRep,
  strategy: &FaceSelectionStrategy,
 ) -> Vec<usize> {
- let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
+ let shell = match shell_from_brep(brep) {
  Some(s) => s,
  None => return Vec::new(),
  };
@@ -200,7 +272,7 @@ pub fn select_faces_for_removal(
  area_ratio_threshold,
  parallel_angle_tolerance,
  } => {
- select_faces_for_thin_wall(shell, brep, *area_ratio_threshold, *parallel_angle_tolerance)
+ select_faces_for_thin_wall(&shell, brep, *area_ratio_threshold, *parallel_angle_tolerance)
  }
 
  FaceSelectionStrategy::ByConnectivity {
@@ -209,7 +281,7 @@ pub fn select_faces_for_removal(
  sharp_edge_angle,
  } => {
  select_faces_by_connectivity(
- shell,
+ &shell,
  brep,
  seed_faces,
  *max_faces,
@@ -218,21 +290,21 @@ pub fn select_faces_for_removal(
  }
 
  FaceSelectionStrategy::ByArea { count } => {
- select_faces_by_area(shell, brep, *count)
+ select_faces_by_area(&shell, brep, *count)
  }
 
  FaceSelectionStrategy::ByNormal {
  direction,
  angle_tolerance,
  } => {
- select_faces_by_normal(shell, direction, *angle_tolerance)
+ select_faces_by_normal(&shell, direction, *angle_tolerance)
  }
 
  FaceSelectionStrategy::PlanarOnly { include_planar } => {
  if *include_planar {
- select_planar_faces(shell, brep)
+ select_planar_faces(&shell, brep)
  } else {
- select_non_planar_faces(shell, brep)
+ select_non_planar_faces(&shell, brep)
  }
  }
  }
@@ -405,11 +477,8 @@ fn select_planar_faces(shell: &Shell, brep: &rcad_kernel::BRep) -> Vec<usize> {
  .iter()
  .enumerate()
  .filter(|(fi, _)| {
- brep.geom.face_surface
- .get(*fi)
- .and_then(|s| *s)
- .map(|si| matches!(brep.geom.surfaces.get(si), Some(Surface3::Plane(_))))
- .unwrap_or(false)
+ brep_face_surface(brep, *fi)
+ .is_some_and(|s| matches!(s, Surface3::Plane(_)))
  })
  .map(|(i, _)| i)
  .collect()
@@ -421,11 +490,8 @@ fn select_non_planar_faces(shell: &Shell, brep: &rcad_kernel::BRep) -> Vec<usize
  .iter()
  .enumerate()
  .filter(|(fi, _)| {
- brep.geom.face_surface
- .get(*fi)
- .and_then(|s| *s)
- .map(|si| !matches!(brep.geom.surfaces.get(si), Some(Surface3::Plane(_))))
- .unwrap_or(true)
+ !brep_face_surface(brep, *fi)
+ .is_some_and(|s| matches!(s, Surface3::Plane(_)))
  })
  .map(|(i, _)| i)
  .collect()
@@ -435,9 +501,8 @@ fn select_non_planar_faces(shell: &Shell, brep: &rcad_kernel::BRep) -> Vec<usize
 fn compute_face_area(face: &Face, brep: &rcad_kernel::BRep) -> f64 {
  let vertices: Vec<DVec3> = face.outer_wire.edges
  .iter()
- .filter_map(|we| brep.edges.get(we.idx))
- .filter_map(|e| brep.vertices.get(e.start))
- .map(|v| v.point)
+ .filter_map(|we| brep_edge_endpoints(brep, we.idx))
+ .filter_map(|(start, _end)| brep_vertex_point(brep, start))
  .collect();
 
  if vertices.len() < 3 {
@@ -710,7 +775,7 @@ pub fn analyze_self_intersection(
  brep: &rcad_kernel::BRep,
  thickness: f64,
 ) -> SelfIntersectionAnalysis {
- let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
+ let shell = match shell_from_brep(brep) {
  Some(s) => s,
  None => {
  return SelfIntersectionAnalysis {
@@ -764,9 +829,11 @@ fn compute_face_centroid(face: &Face, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0;
  for we in &face.outer_wire.edges {
- if let Some(e) = brep.edges.get(we.idx) {
- sum += brep.vertices[e.start].point;
+ if let Some((st, _en)) = brep_edge_endpoints(brep, we.idx) {
+ if let Some(pt) = brep_vertex_point(brep, st) {
+ sum += pt;
  count += 1;
+ }
  }
  }
  if count > 0 { sum / count as f64 } else { DVec3::ZERO }
@@ -851,44 +918,36 @@ impl ThickeningOptions {
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
 fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
- let idx = brep.vertices.len();
- brep.vertices.push(Vertex { point });
- idx
+ brep.add_tvertex(point).index
 }
 
 fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
- let idx = brep.edges.len();
- brep.edges.push(Edge { start: v0, end: v1 });
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(curve);
- while brep.geom.edge_curve.len() <= idx { brep.geom.edge_curve.push(None); }
- while brep.geom.edge_curve_range.len() <= idx { brep.geom.edge_curve_range.push(None); }
- while brep.geom.edge_degenerated.len() <= idx { brep.geom.edge_degenerated.push(false); }
- brep.geom.edge_curve[idx] = Some(ci);
- brep.geom.edge_curve_range[idx] = Some([t0, t1]);
- idx
+ brep.add_edge_flat(v0, v1, Some(curve), [t0, t1])
 }
 
-fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
- if brep.solids.is_empty() {
- brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
- }
- if brep.solids[0].shells.is_empty() {
- brep.solids[0].shells.push(Shell { faces: Vec::new() });
- }
- let idx = brep.solids[0].shells[0].faces.len();
- let normal = surface.normal_at(0.0, 0.0);
- brep.solids[0].shells[0].faces.push(Face {
- outer_wire: outer, inner_wires: inner, normal, triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
- while brep.geom.face_surface.len() <= idx { brep.geom.face_surface.push(None); }
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(surface);
- brep.geom.face_surface[idx] = Some(si);
- idx
+fn add_face(
+ brep: &mut rcad_kernel::BRep,
+ surface: Surface3,
+ outer: Wire,
+ inner: Vec<Wire>,
+ shell_sr: ShapeRef,
+) -> usize {
+ let outer_edge_refs: Vec<ShapeRef> = outer.edges.iter().map(|we| {
+  let orientation = if we.forward { Orientation::Forward } else { Orientation::Reversed };
+  ShapeRef::synthetic_with_orientation(we.idx, orientation)
+ }).collect();
+ let outer_wire = brep.add_twire(outer_edge_refs);
+ let inner_wires: Vec<ShapeRef> = inner.iter().map(|w| {
+  let edge_refs: Vec<ShapeRef> = w.edges.iter().map(|we| {
+   let orientation = if we.forward { Orientation::Forward } else { Orientation::Reversed };
+   ShapeRef::synthetic_with_orientation(we.idx, orientation)
+  }).collect();
+  brep.add_twire(edge_refs)
+ }).collect();
+ let face_sr = brep.add_tface(Some(surface), outer_wire, inner_wires, None, None, vec![], true);
+ brep.shell_mut(shell_sr).faces.push(face_sr);
+ brep.shell_mut(shell_sr).my_shapes.push(face_sr);
+ face_sr.index
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -945,8 +1004,8 @@ fn vertex_normal(shell: &Shell, brep: &rcad_kernel::BRep, vidx: usize) -> DVec3 
  let mut count = 0;
  for face in &shell.faces {
  let uses = face.outer_wire.edges.iter().any(|we| {
- let e = &brep.edges[we.idx];
- e.start == vidx || e.end == vidx
+ let ed = match &*brep.tshapes[we.idx] { TShape::Edge(e) => e, _ => return false, };
+ ed.first.index == vidx || ed.last.index == vidx
  });
  if uses { n += face.normal; count += 1; }
  }
@@ -965,8 +1024,8 @@ fn vertex_normal_with_thickness(
 
  for (fi, face) in shell.faces.iter().enumerate() {
  let uses = face.outer_wire.edges.iter().any(|we| {
- let e = &brep.edges[we.idx];
- e.start == vidx || e.end == vidx
+ let ed = match &*brep.tshapes[we.idx] { TShape::Edge(e) => e, _ => return false, };
+ ed.first.index == vidx || ed.last.index == vidx
  });
 
  if uses {
@@ -988,7 +1047,7 @@ fn vertex_normal_with_thickness(
 // Edge chaining
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-fn chain_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize>> {
+fn chain_edges(edge_indices: &[usize], edges: &[(usize, usize)]) -> Vec<Vec<usize>> {
  if edge_indices.is_empty() { return vec![]; }
  let mut remaining: HashSet<usize> = edge_indices.iter().copied().collect();
  let mut loops = Vec::new();
@@ -996,18 +1055,18 @@ fn chain_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize>> {
  while let Some(&start_idx) = remaining.iter().next() {
  remaining.remove(&start_idx);
  let mut chain = vec![start_idx];
- let mut current_end = edges[start_idx].end;
+ let mut current_end = edges[start_idx].1;
 
  loop {
  let next = remaining.iter().find(|&&ei| {
- edges[ei].start == current_end || edges[ei].end == current_end
+ edges[ei].0 == current_end || edges[ei].1 == current_end
  }).copied();
  match next {
  Some(ei) => {
  remaining.remove(&ei);
  chain.push(ei);
- let e = &edges[ei];
- current_end = if e.start == current_end { e.end } else { e.start };
+ let (e_st, e_en) = edges[ei];
+ current_end = if e_st == current_end { e_en } else { e_st };
  }
  None => break,
  }
@@ -1029,7 +1088,7 @@ fn chain_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize>> {
 /// - Variable thickness
 /// - Self-intersection handling
 pub fn thicken_solid(brep: &rcad_kernel::BRep, options: &ThickeningOptions) -> Option<ThickeningResult> {
- let shell = brep.solids.first()?.shells.first()?;
+ let shell = shell_from_brep(brep)?;
  if shell.faces.is_empty() {
  return None;
  }
@@ -1122,25 +1181,28 @@ pub fn thicken_solid(brep: &rcad_kernel::BRep, options: &ThickeningOptions) -> O
 
  let new_pts: Vec<DVec3> = if let Some(ref var) = options.variable_thickness {
  // Variable thickness: use weighted normals
- brep.vertices.iter().enumerate().map(|(i, _)| {
+ (0..brep.vertex_count()).map(|i| {
+ let pt = brep.vertex_point(i).unwrap();
  let n = vertex_normal_with_thickness(&kept_shell, brep, i, &face_thicknesses, var.default_thickness);
  let face_thickness = find_dominant_face_thickness(i, &kept_shell, brep, &face_thicknesses, var.default_thickness);
- brep.vertices[i].point + n * face_thickness
+ pt + n * face_thickness
  }).collect()
  } else {
- brep.vertices.iter().enumerate().map(|(i, _)| {
+ (0..brep.vertex_count()).map(|i| {
+ let pt = brep.vertex_point(i).unwrap();
  let n = vertex_normal(&kept_shell, brep, i);
- brep.vertices[i].point + n * d
+ pt + n * d
  }).collect()
  };
 
- // Build result BRep
+ // Build result BRep with topods API
  let mut out = rcad_kernel::BRep::new();
- out.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
+ let out_shell = out.add_tshell(vec![]);
+ let _out_solid = out.add_tsolid(vec![out_shell]);
 
  let mut orig_vidx: Vec<usize> = Vec::new();
- for v in &brep.vertices {
- orig_vidx.push(add_vertex(&mut out, v.point));
+ for i in 0..brep.vertex_count() {
+ orig_vidx.push(add_vertex(&mut out, brep.vertex_point(i).unwrap()));
  }
  let mut off_vidx: Vec<usize> = Vec::new();
  for &p in &new_pts {
@@ -1150,41 +1212,41 @@ pub fn thicken_solid(brep: &rcad_kernel::BRep, options: &ThickeningOptions) -> O
  // Offset kept faces
  let mut offset_face_count = 0;
  for &(fi, face) in &kept_faces {
- let surf_idx = match brep.geom.face_surface.get(fi).and_then(|o| *o) {
- Some(s) => s,
- None => continue,
- };
- let surf = &brep.geom.surfaces[surf_idx];
-
- // Use face-specific thickness if variable
+ let off_surf = match brep_face_surface(brep, fi) {
+ Some(s) => {
  let face_d = face_thicknesses.get(&fi).copied().unwrap_or(d);
- let off_surf = match offset_surface(surf, face_d) {
- Some(s) => s,
+ match offset_surface(&s, face_d) {
+ Some(os) => os,
  None => {
  warnings.push(ThickeningWarning::DegenerateSurface {
  face_index: fi,
- surface_type: format!("{:?}", surf),
+ surface_type: format!("{:?}", s),
  });
  continue;
  }
+ }
+ }
+ None => continue,
  };
 
  let mut wire_edges = Vec::new();
  for we in &face.outer_wire.edges {
- let e = &brep.edges[we.idx];
- let vs = off_vidx[e.start];
- let ve = off_vidx[e.end];
- let dir = (out.vertices[ve].point - out.vertices[vs].point).normalize_or(DVec3::X);
- let len = (out.vertices[ve].point - out.vertices[vs].point).length();
+ let ed = match &*brep.tshapes[we.idx] { TShape::Edge(e) => e, _ => continue, };
+ let vs = off_vidx[ed.first.index];
+ let ve = off_vidx[ed.last.index];
+ let pvs = out.vertex_point(vs).unwrap();
+ let pve = out.vertex_point(ve).unwrap();
+ let dir = (pve - pvs).normalize_or(DVec3::X);
+ let len = (pve - pvs).length();
  let curve = Curve3::Line(Line3 {
- origin: out.vertices[vs].point,
+ origin: pvs,
  direction: dir,
  });
  let eidx = add_edge(&mut out, curve, 0.0, len, vs, ve);
  wire_edges.push(WireEdge::fwd(eidx));
  }
 
- add_face(&mut out, off_surf, Wire { edges: wire_edges }, Vec::new());
+ add_face(&mut out, off_surf, Wire { edges: wire_edges }, Vec::new(), out_shell);
  offset_face_count += 1;
  }
 
@@ -1195,13 +1257,18 @@ pub fn thicken_solid(brep: &rcad_kernel::BRep, options: &ThickeningOptions) -> O
  // Create lateral faces
  let mut lateral_count = 0;
  if options.lateral_faces.create {
+ // Build flat edge data from topods BRep
+ let edges_flat: Vec<(usize, usize)> = (0..brep.edge_count()).map(|ei| {
+ match &*brep.tshapes[ei] { TShape::Edge(ed) => (ed.first.index, ed.last.index), _ => (usize::MAX, usize::MAX) }
+ }).collect();
  lateral_count = create_lateral_faces(
  &mut out,
  &boundary_edges,
- &brep.edges,
+ &edges_flat,
  &orig_vidx,
  &off_vidx,
  options,
+ out_shell,
  );
  }
 
@@ -1236,8 +1303,8 @@ fn find_dominant_face_thickness(
  let mut max_thickness = default;
  for (fi, face) in shell.faces.iter().enumerate() {
  let uses = face.outer_wire.edges.iter().any(|we| {
- let e = &brep.edges[we.idx];
- e.start == vidx || e.end == vidx
+ let ed = match &*brep.tshapes[we.idx] { TShape::Edge(e) => e, _ => return false, };
+ ed.first.index == vidx || ed.last.index == vidx
  });
  if uses {
  let t = thickness_map.get(&fi).copied().unwrap_or(default);
@@ -1253,25 +1320,26 @@ fn find_dominant_face_thickness(
 fn create_lateral_faces(
  out: &mut rcad_kernel::BRep,
  boundary_edges: &[usize],
- edges: &[Edge],
+ edges: &[(usize, usize)],
  orig_vidx: &[usize],
  off_vidx: &[usize],
  options: &ThickeningOptions,
+ shell_sr: ShapeRef,
 ) -> usize {
  let loops = chain_edges(boundary_edges, edges);
  let mut lateral_count = 0;
 
  for loop_edges in &loops {
  for &eidx in loop_edges {
- let e = &edges[eidx];
- let o_vs = orig_vidx[e.start];
- let o_ve = orig_vidx[e.end];
- let f_vs = off_vidx[e.start];
- let f_ve = off_vidx[e.end];
+ let (e_start, e_end) = edges[eidx];
+ let o_vs = orig_vidx[e_start];
+ let o_ve = orig_vidx[e_end];
+ let f_vs = off_vidx[e_start];
+ let f_ve = off_vidx[e_end];
 
- let p0 = out.vertices[o_vs].point;
- let p1 = out.vertices[o_ve].point;
- let p3 = out.vertices[f_vs].point;
+ let p0 = out.vertex_point(o_vs).unwrap();
+ let p1 = out.vertex_point(o_ve).unwrap();
+ let p3 = out.vertex_point(f_vs).unwrap();
 
  let normal = (p1 - p0).cross(p3 - p0).normalize_or(DVec3::Z);
  if normal.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
@@ -1291,22 +1359,22 @@ fn create_lateral_faces(
  if should_split {
  // Split into two lateral faces
  let mid_orig = (p0 + p1) * 0.5;
- let mid_off = (p3 + out.vertices[f_ve].point) * 0.5;
+ let mid_off = (p3 + out.vertex_point(f_ve).unwrap()) * 0.5;
 
  let mid_orig_vidx = add_vertex(out, mid_orig);
  let mid_off_vidx = add_vertex(out, mid_off);
 
  // First half
  lateral_count += create_single_lateral_face(
- out, o_vs, mid_orig_vidx, mid_off_vidx, f_vs, normal
+ out, o_vs, mid_orig_vidx, mid_off_vidx, f_vs, normal, shell_sr
  );
  // Second half
  lateral_count += create_single_lateral_face(
- out, mid_orig_vidx, o_ve, f_ve, mid_off_vidx, normal
+ out, mid_orig_vidx, o_ve, f_ve, mid_off_vidx, normal, shell_sr
  );
  } else {
  lateral_count += create_single_lateral_face(
- out, o_vs, o_ve, f_ve, f_vs, normal
+ out, o_vs, o_ve, f_ve, f_vs, normal, shell_sr
  );
  }
  }
@@ -1323,8 +1391,9 @@ fn create_single_lateral_face(
  v2: usize,
  v3: usize,
  normal: DVec3,
+ shell_sr: ShapeRef,
 ) -> usize {
- let p0 = out.vertices[v0].point;
+ let p0 = out.vertex_point(v0).unwrap();
 
  let surf = Surface3::Plane(rcad_kernel::geom::Plane {
  origin: p0,
@@ -1336,16 +1405,18 @@ fn create_single_lateral_face(
  for i in 0..4 {
  let s = vseq[i];
  let en = vseq[(i + 1) % 4];
- let dir = (out.vertices[en].point - out.vertices[s].point).normalize_or(DVec3::X);
- let len = (out.vertices[en].point - out.vertices[s].point).length();
+ let ps = out.vertex_point(s).unwrap();
+ let pe = out.vertex_point(en).unwrap();
+ let dir = (pe - ps).normalize_or(DVec3::X);
+ let len = (pe - ps).length();
  let curve = Curve3::Line(Line3 {
- origin: out.vertices[s].point,
+ origin: ps,
  direction: dir,
  });
  edges.push(WireEdge::fwd(add_edge(out, curve, 0.0, len, s, en)));
  }
 
- add_face(out, surf, Wire { edges }, Vec::new());
+ add_face(out, surf, Wire { edges }, Vec::new(), shell_sr);
  1
 }
 
@@ -1376,8 +1447,7 @@ pub fn thick_solid_with_removed_faces(
 /// Computes the minimum distance between non-adjacent face centroids.
 /// If `thickness > min_distance / 2`, the offset faces will self-intersect.
 fn detect_self_intersection(brep: &rcad_kernel::BRep, thickness: f64) -> bool {
- let shell = brep.solids.first().and_then(|s| s.shells.first());
- let shell = match shell {
+ let shell = match shell_from_brep(brep) {
  Some(s) => s,
  None => return false,
  };
@@ -1423,7 +1493,7 @@ fn detect_self_intersection(brep: &rcad_kernel::BRep, thickness: f64) -> bool {
 pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<ThickeningResult> {
  if thickness.abs() < TOLERANCE_LEN_MIN { return None; }
 
- let shell = brep.solids.first()?.shells.first()?;
+ let shell = shell_from_brep(brep)?;
  if shell.faces.is_empty() { return None; }
 
  let d = thickness;
@@ -1441,18 +1511,20 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
  .collect();
 
  // Compute offset vertex positions
- let new_pts: Vec<DVec3> = brep.vertices.iter().enumerate().map(|(i, _)| {
- let n = vertex_normal(shell, brep, i);
- brep.vertices[i].point + n * d
+ let new_pts: Vec<DVec3> = (0..brep.vertex_count()).map(|i| {
+ let pt = brep.vertex_point(i).unwrap();
+ let n = vertex_normal(&shell, brep, i);
+ pt + n * d
  }).collect();
 
- // Build result BRep with original + offset vertices
+ // Build result BRep with topods API
  let mut out = rcad_kernel::BRep::new();
- out.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
+ let out_shell = out.add_tshell(vec![]);
+ let _out_solid = out.add_tsolid(vec![out_shell]);
 
  let mut orig_vidx: Vec<usize> = Vec::new();
- for v in &brep.vertices {
- orig_vidx.push(add_vertex(&mut out, v.point));
+ for i in 0..brep.vertex_count() {
+ orig_vidx.push(add_vertex(&mut out, brep.vertex_point(i).unwrap()));
  }
  let mut off_vidx: Vec<usize> = Vec::new();
  for &p in &new_pts {
@@ -1461,29 +1533,31 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
 
  // Offset faces
  let mut offset_face_count = 0;
- for (fi, face) in shell.faces.iter().enumerate() {
- let surf_idx = match brep.geom.face_surface.get(fi).and_then(|o| *o) {
- Some(s) => s, None => continue,
+ for (fi, _face) in shell.faces.iter().enumerate() {
+ let off_surf = match brep_face_surface(brep, fi) {
+ Some(s) => match offset_surface(&s, d) {
+ Some(os) => os, None => continue,
+ },
+ None => continue,
  };
- let surf = &brep.geom.surfaces[surf_idx];
- let off_surf = match offset_surface(surf, d) {
- Some(s) => s, None => continue,
- };
+ let face = &shell.faces[fi];
 
  // Build wire from offset vertices
  let mut wire_edges = Vec::new();
  for we in &face.outer_wire.edges {
- let e = &brep.edges[we.idx];
- let vs = off_vidx[e.start];
- let ve = off_vidx[e.end];
- let dir = (out.vertices[ve].point - out.vertices[vs].point).normalize_or(DVec3::X);
- let len = (out.vertices[ve].point - out.vertices[vs].point).length();
- let curve = Curve3::Line(Line3 { origin: out.vertices[vs].point, direction: dir });
+ let ed = match &*brep.tshapes[we.idx] { TShape::Edge(e) => e, _ => continue, };
+ let vs = off_vidx[ed.first.index];
+ let ve = off_vidx[ed.last.index];
+ let pvs = out.vertex_point(vs).unwrap();
+ let pve = out.vertex_point(ve).unwrap();
+ let dir = (pve - pvs).normalize_or(DVec3::X);
+ let len = (pve - pvs).length();
+ let curve = Curve3::Line(Line3 { origin: pvs, direction: dir });
  let eidx = add_edge(&mut out, curve, 0.0, len, vs, ve);
  wire_edges.push(WireEdge::fwd(eidx));
  }
 
- add_face(&mut out, off_surf, Wire { edges: wire_edges }, Vec::new());
+ add_face(&mut out, off_surf, Wire { edges: wire_edges }, Vec::new(), out_shell);
  offset_face_count += 1;
  }
 
@@ -1491,19 +1565,22 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
 
  // Lateral faces along boundary edges
  let mut lateral_count = 0;
- let loops = chain_edges(&boundary_edges, &brep.edges);
+ let edges_flat: Vec<(usize, usize)> = (0..brep.edge_count()).map(|ei| {
+ match &*brep.tshapes[ei] { TShape::Edge(ed) => (ed.first.index, ed.last.index), _ => (usize::MAX, usize::MAX) }
+ }).collect();
+ let loops = chain_edges(&boundary_edges, &edges_flat);
 
  for loop_edges in &loops {
  for &eidx in loop_edges {
- let e = &brep.edges[eidx];
- let o_vs = orig_vidx[e.start];
- let o_ve = orig_vidx[e.end];
- let f_vs = off_vidx[e.start];
- let f_ve = off_vidx[e.end];
+ let (e_st, e_en) = edges_flat[eidx];
+ let o_vs = orig_vidx[e_st];
+ let o_ve = orig_vidx[e_en];
+ let f_vs = off_vidx[e_st];
+ let f_ve = off_vidx[e_en];
 
- let p0 = out.vertices[o_vs].point;
- let p1 = out.vertices[o_ve].point;
- let p3 = out.vertices[f_vs].point;
+ let p0 = out.vertex_point(o_vs).unwrap();
+ let p1 = out.vertex_point(o_ve).unwrap();
+ let p3 = out.vertex_point(f_vs).unwrap();
 
  let normal = (p1 - p0).cross(p3 - p0).normalize_or(DVec3::Z);
  if normal.length() < TOLERANCE_LINEAR_ULTRA_STRICT { continue; }
@@ -1516,13 +1593,15 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
  for i in 0..4 {
  let s = vseq[i];
  let en = vseq[(i + 1) % 4];
- let dir = (out.vertices[en].point - out.vertices[s].point).normalize_or(DVec3::X);
- let len = (out.vertices[en].point - out.vertices[s].point).length();
- let curve = Curve3::Line(Line3 { origin: out.vertices[s].point, direction: dir });
+ let ps = out.vertex_point(s).unwrap();
+ let pe = out.vertex_point(en).unwrap();
+ let dir = (pe - ps).normalize_or(DVec3::X);
+ let len = (pe - ps).length();
+ let curve = Curve3::Line(Line3 { origin: ps, direction: dir });
  edges.push(WireEdge::fwd(add_edge(&mut out, curve, 0.0, len, s, en)));
  }
 
- add_face(&mut out, surf, Wire { edges }, Vec::new());
+ add_face(&mut out, surf, Wire { edges }, Vec::new(), out_shell);
  lateral_count += 1;
  }
  }

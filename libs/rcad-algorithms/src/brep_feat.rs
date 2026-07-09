@@ -14,11 +14,11 @@
 //! - **Draft**: Apply draft angle to faces for moldability
 
 
+use std::sync::Arc;
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, ShapeRef, TShape, Orientation};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::{BooleanError, BooleanOpType, boolean_op};
 
@@ -253,74 +253,71 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  let mut brep = rcad_kernel::BRep::new();
 
  // Add vertices: bot[0..n] then top[0..n]
+ let mut verts: Vec<ShapeRef> = Vec::with_capacity(2 * n);
  for &p in bot {
- brep.vertices.push(Vertex { point: p });
+ verts.push(brep.add_tvertex(p));
  }
  for &p in top {
- brep.vertices.push(Vertex { point: p });
+ verts.push(brep.add_tvertex(p));
  }
 
- fn add_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize) -> usize {
- let p0 = brep.vertices[start].point;
- let p1 = brep.vertices[end].point;
+ fn add_line_edge(brep: &mut rcad_kernel::BRep, verts: &[ShapeRef], start: usize, end: usize) -> ShapeRef {
+ let p0 = brep.vertex_point(verts[start].index).unwrap();
+ let p1 = brep.vertex_point(verts[end].index).unwrap();
  let d = p1 - p0;
  let len = d.length();
  let dir_vec = if len > 0.0 { d / len } else { DVec3::X };
- let ei = brep.edges.len();
- brep.edges.push(Edge { start, end });
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir_vec }));
- brep.geom.edge_curve.push(Some(ci));
- brep.geom.edge_curve_range.push(Some([0.0, len]));
- brep.geom.edge_degenerated.push(false);
- ei
+ brep.add_tedge(
+ Some(Curve3::Line(Line3 { origin: p0, direction: dir_vec })),
+ verts[start],
+ ShapeRef::synthetic_with_orientation(verts[end].index, Orientation::Reversed),
+ [0.0, len],
+ )
  }
 
  // Bottom-cap edges
- let bot_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, (i + 1) % n)).collect();
+ let bot_edges: Vec<ShapeRef> = (0..n).map(|i| add_line_edge(&mut brep, &verts, i, (i + 1) % n)).collect();
  // Top-cap edges
- let top_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, n + i, n + (i + 1) % n)).collect();
+ let top_edges: Vec<ShapeRef> = (0..n).map(|i| add_line_edge(&mut brep, &verts, n + i, n + (i + 1) % n)).collect();
  // Vertical edges
- let vert_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, n + i)).collect();
+ let vert_edges: Vec<ShapeRef> = (0..n).map(|i| add_line_edge(&mut brep, &verts, i, n + i)).collect();
 
- let mut faces = Vec::with_capacity(n + 2);
+ let mut face_refs: Vec<ShapeRef> = Vec::with_capacity(n + 2);
 
  // Bottom cap (outward normal = -dir)
  {
- let wire_edges: Vec<WireEdge> = (0..n)
- .map(|i| WireEdge { idx: bot_edges[n - 1 - i], forward: false })
+ let wire_edge_refs: Vec<ShapeRef> = (0..n)
+ .map(|i| ShapeRef::synthetic_with_orientation(bot_edges[n - 1 - i].index, Orientation::Reversed))
  .collect();
- faces.push(Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: -dir,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot[0], normal: -dir }));
- brep.geom.face_surface.push(Some(si));
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: bot[0], normal: -dir })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
  }
 
  // Top cap (outward normal = +dir)
  {
- let wire_edges: Vec<WireEdge> = (0..n)
- .map(|i| WireEdge { idx: top_edges[i], forward: true })
+ let wire_edge_refs: Vec<ShapeRef> = (0..n)
+ .map(|i| ShapeRef::synthetic_with_orientation(top_edges[i].index, Orientation::Forward))
  .collect();
- faces.push(Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: dir,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top[0], normal: dir }));
- brep.geom.face_surface.push(Some(si));
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: top[0], normal: dir })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
  }
 
  // Lateral quad faces
@@ -335,27 +332,27 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  let nv = ab.cross(ac);
  if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { -dir.cross(ab).normalize_or(DVec3::X) }
  };
- let wire_edges = vec![
- WireEdge { idx: bot_edges[i], forward: true },
- WireEdge { idx: vert_edges[j], forward: true },
- WireEdge { idx: top_edges[i], forward: false },
- WireEdge { idx: vert_edges[i], forward: false },
+ let wire_edge_refs = vec![
+ ShapeRef::synthetic_with_orientation(bot_edges[i].index, Orientation::Forward),
+ ShapeRef::synthetic_with_orientation(vert_edges[j].index, Orientation::Forward),
+ ShapeRef::synthetic_with_orientation(top_edges[i].index, Orientation::Reversed),
+ ShapeRef::synthetic_with_orientation(vert_edges[i].index, Orientation::Reversed),
  ];
- faces.push(Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: face_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane { origin: a, normal: face_normal }));
- brep.geom.face_surface.push(Some(si));
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: a, normal: face_normal })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
  }
 
- brep.solids.push(Solid { shells: vec![Shell { faces }] });
+ let shell_sr = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell_sr]);
  Ok(brep)
 }
 
@@ -368,14 +365,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
  let n = profile_verts.len();
  let mut brep = rcad_kernel::BRep::new();
 
- for &p in profile_verts {
- brep.vertices.push(Vertex { point: p });
- }
-
- for i in 0..n {
- let j = (i + 1) % n;
- brep.edges.push(Edge { start: i, end: j });
- }
+ let verts: Vec<ShapeRef> = profile_verts.iter().map(|&p| brep.add_tvertex(p)).collect();
 
  let normal = {
  let a = profile_verts[0];
@@ -388,23 +378,42 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
  n_vec.normalize()
  };
 
- let face = Face {
- outer_wire: Wire {
- edges: (0..n).map(WireEdge::fwd).collect(),
- },
- inner_wires: vec![],
- normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
+ // Build edges for the polygon loop
+ let edge_refs: Vec<ShapeRef> = (0..n)
+ .map(|i| {
+ let j = (i + 1) % n;
+ let p0 = profile_verts[i];
+ let p1 = profile_verts[j];
+ let d = p1 - p0;
+ let len = d.length();
+ let dir_vec = if len > 0.0 { d / len } else { DVec3::X };
+ brep.add_tedge(
+ Some(Curve3::Line(Line3 { origin: p0, direction: dir_vec })),
+ verts[i],
+ ShapeRef::synthetic_with_orientation(verts[j].index, Orientation::Reversed),
+ [0.0, len],
+ )
+ })
+ .collect();
 
- brep.solids.push(Solid {
- shells: vec![Shell { faces: vec![face] }],
- });
+ // Wire with all edges Forward
+ let wire_edge_refs: Vec<ShapeRef> = edge_refs.iter()
+ .map(|e| ShapeRef::synthetic_with_orientation(e.index, Orientation::Forward))
+ .collect();
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: profile_verts[0], normal })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
 
-    Ok(brep.to_topods())
+ let shell_sr = brep.add_tshell(vec![face_sr]);
+ brep.add_tsolid(vec![shell_sr]);
+ Ok(brep)
 }
 
 // ===========================================================?
@@ -466,8 +475,8 @@ pub fn make_rib(
  // Build a thick prism for the rib
  let rib_solid = build_rib_solid(&profile_offset_neg, &profile_offset_pos, dir, thickness)?;
 
- // Fuse with target
- let t = boolean_op(BooleanOpType::Union, target, &rib_solid)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ // Fuse with target — boolean_op already returns topods::BRep
+ Ok(boolean_op(BooleanOpType::Union, target, &rib_solid)?)
 }
 
 /// Create a linear rib from a profile with specified height.
@@ -510,7 +519,7 @@ pub fn make_linear_rib(
  let rib_solid = build_prism_from_sections(&bottom, &top, dir)?;
 
  // Fuse with target
- let t = boolean_op(BooleanOpType::Union, target, &rib_solid)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(BooleanOpType::Union, target, &rib_solid)?)
 }
 
 /// Build a solid rib from two offset profile sections.
@@ -562,7 +571,7 @@ pub fn make_groove(
  let groove_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
  // Subtract from target
- let t = boolean_op(BooleanOpType::Difference, target, &groove_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(BooleanOpType::Difference, target, &groove_tool)?)
 }
 
 /// Create a through groove (slot) that goes through the entire shape.
@@ -600,18 +609,24 @@ pub fn make_through_groove(
  let groove_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
  // Subtract from target
- let t = boolean_op(BooleanOpType::Difference, target, &groove_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(BooleanOpType::Difference, target, &groove_tool)?)
 }
 
 /// Compute the axis-aligned bounding box of a BRep.
 fn compute_bounding_box(brep: &rcad_kernel::BRep) -> (DVec3, DVec3) {
- if brep.vertices.is_empty() {
+ let vcount = brep.vertex_count();
+ if vcount == 0 {
  return (DVec3::ZERO, DVec3::ZERO);
  }
 
- let min_pt = brep.vertices.iter().fold(DVec3::INFINITY, |acc, v| acc.min(v.point));
- let max_pt = brep.vertices.iter().fold(DVec3::NEG_INFINITY, |acc, v| acc.max(v.point));
-
+ let mut min_pt = DVec3::INFINITY;
+ let mut max_pt = DVec3::NEG_INFINITY;
+ for ts in &brep.tshapes {
+ if let TShape::Vertex(vd) = ts.as_ref() {
+ min_pt = min_pt.min(vd.point);
+ max_pt = max_pt.max(vd.point);
+ }
+ }
  (min_pt, max_pt)
 }
 
@@ -659,7 +674,7 @@ pub fn make_prism_feature(
 
  // Apply boolean operation based on fuse mode
  let op = BooleanOpType::from(fuse_mode);
- let t = boolean_op(op, target, &prism_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(op, target, &prism_tool)?)
 }
 
 // ===========================================================?
@@ -708,11 +723,9 @@ pub fn make_revol_feature(
  // Create the revolution
  let revol_tool = rcad_modeling::revolve(&profile_brep, 0, axis, axis_dir, angle)?;
 
- // Apply boolean operation based on fuse mode
+ // Apply boolean operation based on fuse mode — both target and revol_tool are topods::BRep
  let op = BooleanOpType::from(fuse_mode);
- let target_old = rcad_kernel::BRep::from_topods(target);
- let tool_old = rcad_kernel::BRep::from_topods(&revol_tool);
- Ok(boolean_op(op, &target_old, &tool_old)?)
+ Ok(boolean_op(op, target, &revol_tool)?)
 }
 
 // ===========================================================?
@@ -752,7 +765,7 @@ pub fn make_pipe_feature(
 
  // Apply boolean operation based on fuse mode
  let op = BooleanOpType::from(fuse_mode);
- let t = boolean_op(op, target, &pipe_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(op, target, &pipe_tool)?)
 }
 
 /// Build a pipe solid by sweeping a profile along a spine.
@@ -820,70 +833,56 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFe
  let num_sections = sections.len();
 
  // Add all vertices
+ let mut verts: Vec<ShapeRef> = Vec::with_capacity(num_sections * n);
  for si in 0..num_sections {
  for &p in &sections[si] {
- brep.vertices.push(Vertex { point: p });
+ verts.push(brep.add_tvertex(p));
  }
  }
 
- // Add edges and faces
- // Create edges between consecutive vertices in each section (caps)
- // and between sections (lateral faces)
+ // Helper: add a line edge between two vertex indices
+ let add_line_edge = |brep: &mut rcad_kernel::BRep, start: usize, end: usize| -> ShapeRef {
+ let p0 = brep.vertex_point(verts[start].index).unwrap();
+ let p1 = brep.vertex_point(verts[end].index).unwrap();
+ let d = p1 - p0;
+ let len = d.length();
+ let dir_vec = if len > 0.0 { d / len } else { DVec3::X };
+ brep.add_tedge(
+ Some(Curve3::Line(Line3 { origin: p0, direction: dir_vec })),
+ verts[start],
+ ShapeRef::synthetic_with_orientation(verts[end].index, Orientation::Reversed),
+ [0.0, len],
+ )
+ };
 
  // Build edge tables
  // Cap edges for each section
- let mut cap_edges: Vec<Vec<usize>> = Vec::with_capacity(num_sections);
+ let mut cap_edges: Vec<Vec<ShapeRef>> = Vec::with_capacity(num_sections);
  for si in 0..num_sections {
  let base = si * n;
- let mut edges: Vec<usize> = Vec::with_capacity(n);
+ let mut edges: Vec<ShapeRef> = Vec::with_capacity(n);
  for i in 0..n {
- let start = base + i;
- let end = base + (i + 1) % n;
- let p0 = brep.vertices[start].point;
- let p1 = brep.vertices[end].point;
- let d = p1 - p0;
- let len = d.length();
- let dir = if len > 0.0 { d / len } else { DVec3::X };
- let ei = brep.edges.len();
- brep.edges.push(Edge { start, end });
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
- brep.geom.edge_curve.push(Some(ci));
- brep.geom.edge_curve_range.push(Some([0.0, len]));
- brep.geom.edge_degenerated.push(false);
- edges.push(ei);
+ let ed = add_line_edge(&mut brep, base + i, base + (i + 1) % n);
+ edges.push(ed);
  }
  cap_edges.push(edges);
  }
 
  // Lateral edges
- let mut lateral_edges: Vec<Vec<usize>> = Vec::with_capacity(num_sections - 1);
+ let mut lateral_edges: Vec<Vec<ShapeRef>> = Vec::with_capacity(num_sections - 1);
  for si in 0..num_sections - 1 {
  let base0 = si * n;
  let base1 = (si + 1) * n;
- let mut edges: Vec<usize> = Vec::with_capacity(n);
+ let mut edges: Vec<ShapeRef> = Vec::with_capacity(n);
  for i in 0..n {
- let start = base0 + i;
- let end = base1 + i;
- let p0 = brep.vertices[start].point;
- let p1 = brep.vertices[end].point;
- let d = p1 - p0;
- let len = d.length();
- let dir = if len > 0.0 { d / len } else { DVec3::X };
- let ei = brep.edges.len();
- brep.edges.push(Edge { start, end });
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
- brep.geom.edge_curve.push(Some(ci));
- brep.geom.edge_curve_range.push(Some([0.0, len]));
- brep.geom.edge_degenerated.push(false);
- edges.push(ei);
+ let ed = add_line_edge(&mut brep, base0 + i, base1 + i);
+ edges.push(ed);
  }
  lateral_edges.push(edges);
  }
 
  // Build faces
- let mut faces = Vec::new();
+ let mut face_refs = Vec::new();
 
  // Bottom cap
  let bottom_normal = {
@@ -892,18 +891,22 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFe
  let c = sections[0][2];
  (b - a).cross(c - a).normalize_or(DVec3::Z)
  };
- let bottom_wire: Vec<WireEdge> = (0..n)
- .map(|i| WireEdge { idx: cap_edges[0][n - 1 - i], forward: false })
+ {
+ let wire_edge_refs: Vec<ShapeRef> = (0..n)
+ .map(|i| ShapeRef::synthetic_with_orientation(cap_edges[0][n - 1 - i].index, Orientation::Reversed))
  .collect();
- faces.push(Face {
- outer_wire: Wire { edges: bottom_wire },
- inner_wires: vec![],
- normal: bottom_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: sections[0][0], normal: bottom_normal })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
+ }
 
  // Top cap
  let top_normal = {
@@ -912,25 +915,27 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFe
  let c = sections[num_sections - 1][2];
  (b - a).cross(c - a).normalize_or(DVec3::Z)
  };
- let top_wire: Vec<WireEdge> = (0..n)
- .map(|i| WireEdge { idx: cap_edges[num_sections - 1][i], forward: true })
+ {
+ let wire_edge_refs: Vec<ShapeRef> = (0..n)
+ .map(|i| ShapeRef::synthetic_with_orientation(cap_edges[num_sections - 1][i].index, Orientation::Forward))
  .collect();
- faces.push(Face {
- outer_wire: Wire { edges: top_wire },
- inner_wires: vec![],
- normal: top_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: sections[num_sections - 1][0], normal: top_normal })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
+ }
 
  // Lateral faces (quads between sections)
  for si in 0..num_sections - 1 {
  for i in 0..n {
  let j = (i + 1) % n;
- let _base0 = si * n;
- let _base1 = (si + 1) * n;
 
  // Compute face normal
  let p0 = sections[si][i];
@@ -938,26 +943,29 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFe
  let p2 = sections[si + 1][j];
  let normal = (p1 - p0).cross(p2 - p0).normalize_or(top_normal);
 
- let wire_edges = vec![
- WireEdge { idx: cap_edges[si][i], forward: true },
- WireEdge { idx: lateral_edges[si][j], forward: true },
- WireEdge { idx: cap_edges[si + 1][i], forward: false },
- WireEdge { idx: lateral_edges[si][i], forward: false },
+ let wire_edge_refs = vec![
+ ShapeRef::synthetic_with_orientation(cap_edges[si][i].index, Orientation::Forward),
+ ShapeRef::synthetic_with_orientation(lateral_edges[si][j].index, Orientation::Forward),
+ ShapeRef::synthetic_with_orientation(cap_edges[si + 1][i].index, Orientation::Reversed),
+ ShapeRef::synthetic_with_orientation(lateral_edges[si][i].index, Orientation::Reversed),
  ];
 
- faces.push(Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
+ let wire_sr = brep.add_twire(wire_edge_refs);
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: p0, normal })),
+ wire_sr,
+ vec![],
+ None,
+ None,
+ vec![],
+ true,
+ );
+ face_refs.push(face_sr);
  }
  }
 
- brep.solids.push(Solid { shells: vec![Shell { faces }] });
+ let shell_sr = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell_sr]);
  Ok(brep)
 }
 
@@ -986,6 +994,50 @@ impl Default for DraftFeatureParams {
  }
 }
 
+/// Collect all vertex points from a BRep into a Vec<DVec3> indexed by vertex ordinal.
+fn collect_vertex_points(brep: &rcad_kernel::BRep) -> Vec<DVec3> {
+ brep.tshapes.iter().filter_map(|ts| {
+ if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.point) } else { None }
+ }).collect()
+}
+
+/// Get the first solid's first shell's face list, along with the face count.
+/// This mirrors the old `brep.solids[0].shells[0].faces` pattern.
+fn first_shell_faces(brep: &rcad_kernel::BRep) -> Option<Vec<ShapeRef>> {
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = ts.as_ref() {
+ let shell_sr = sd.shells.first()?;
+ if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ return Some(shd.faces.clone());
+ }
+ }
+ }
+ None
+}
+
+/// Extract edge data (first vertex index, last vertex index) from a BRep edge at a given index.
+fn edge_vertex_indices(brep: &rcad_kernel::BRep, idx: usize) -> Option<(usize, usize)> {
+ let ts = brep.tshapes.get(idx)?;
+ if let TShape::Edge(ed) = ts.as_ref() {
+ Some((ed.first.index, ed.last.index))
+ } else {
+ None
+ }
+}
+
+/// Get the wire edge refs for a given face's outer wire.
+fn face_outer_wire_edges(brep: &rcad_kernel::BRep, face_sr: &ShapeRef) -> Option<Vec<ShapeRef>> {
+ let ts = brep.tshapes.get(face_sr.index)?;
+ if let TShape::Face(fd) = ts.as_ref() {
+ let wire_sr = fd.outer_wire;
+ let wts = brep.tshapes.get(wire_sr.index)?;
+ if let TShape::Wire(wd) = wts.as_ref() {
+ return Some(wd.edges.clone());
+ }
+ }
+ None
+}
+
 /// Apply draft angle to specified faces.
 ///
 /// Draft angle is applied to allow parts to be removed from molds. The draft
@@ -1012,24 +1064,36 @@ pub fn apply_draft_feature(
  return Err(BRepFeatError::InvalidDraftAngle { angle_rad: angle });
  }
 
- let shell = target.solids.first()
- .and_then(|s| s.shells.first())
+ let faces = first_shell_faces(target)
  .ok_or_else(|| BRepFeatError::InvalidInput("target has no solids".to_string()))?;
 
  // Validate face indices
  for &fi in face_indices {
- if fi >= shell.faces.len() {
+ if fi >= faces.len() {
  return Err(BRepFeatError::FaceNotFound { face_index: fi });
  }
  }
 
- // If no faces specified, apply draft to all vertical faces
+ // If no faces specified, apply draft to all non-horizontal faces
  let faces_to_draft: Vec<usize> = if face_indices.is_empty() {
- // Find all faces that are not horizontal (have a component perpendicular to Z)
- shell.faces.iter().enumerate()
- .filter(|(_, face)| {
- let normal = face.normal.normalize_or(DVec3::Z);
- normal.dot(DVec3::Z).abs() < 0.99
+ // Find all faces that appear non-horizontal
+ // Use surface normal heuristic from target data
+ faces.iter().enumerate()
+ .filter(|(_, face_sr)| {
+ if let Some(wire_edges) = face_outer_wire_edges(target, face_sr) {
+ // Check first edge to guess face orientation
+ if let Some(edge_idx) = wire_edges.first().map(|e| e.index) {
+ if let Some(TShape::Edge(ed)) = target.tshapes.get(edge_idx).map(|ts| ts.as_ref()) {
+ // Rough check: if the first edge's start and end vertices have different Z,
+ // the face is likely non-horizontal
+ let p0 = target.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
+ let p1 = target.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
+ let edge_dir = (p1 - p0).normalize_or(DVec3::Z);
+ return edge_dir.dot(DVec3::Z).abs() < 0.99;
+ }
+ }
+ }
+ false
  })
  .map(|(i, _)| i)
  .collect()
@@ -1047,17 +1111,17 @@ pub fn apply_draft_feature(
  let tan_angle = angle.tan();
 
  // Compute new vertex positions
- let mut new_positions: Vec<DVec3> = target.vertices.iter().map(|v| v.point).collect();
+ let vcount = target.vertex_count();
+ let mut new_positions: Vec<DVec3> = collect_vertex_points(target);
 
  for &fi in &faces_to_draft {
- let face = &shell.faces[fi];
-
- // Get vertices belonging to this face
- for we in &face.outer_wire.edges {
- if let Some(edge) = target.edges.get(we.idx) {
- for &vi in &[edge.start, edge.end] {
- if vi < target.vertices.len() {
- let v = target.vertices[vi].point;
+ if let Some(face_sr) = faces.get(fi) {
+ if let Some(wire_edges) = face_outer_wire_edges(target, face_sr) {
+ for we in &wire_edges {
+ if let Some((vi_start, vi_end)) = edge_vertex_indices(target, we.index) {
+ for &vi in &[vi_start, vi_end] {
+ if vi < vcount {
+ if let Some(v) = target.vertex_point(vi) {
  let h = (v - neutral_plane).dot(pull_dir);
  // Apply draft displacement
  let radial_dir = (v - neutral_plane).reject_from(pull_dir).normalize_or(DVec3::ZERO);
@@ -1069,15 +1133,18 @@ pub fn apply_draft_feature(
  }
  }
  }
+ }
+ }
+ }
 
  // Build the new BRep with modified vertex positions
- build_drafted_brep(target, &new_positions, &shell.faces)
+ build_drafted_brep(target, &new_positions)
 }
 
 /// OCCT DRAW `depouille` / `BRepOffsetAPI_DraftAngle` approximation: one pull direction and a
 /// sequence of per-face blocks `(face_index, angle_rad, neutral_point, neutral_plane_normal)`.
 ///
-/// Face indices match `rcad-kernel` box face order (see `occt-test-gen` OCCT `bx_1` bx_6` map).
+/// Face indices match `rcad-kernel` box face order (see `occt-test-gen` OCCT `bx_1` `bx_6` map).
 ///
 /// Multi-face blocks: each vertex displacement is the **average** of the per-face draft
 /// suggestions (from the original vertex position). This avoids double-counting edge vertices
@@ -1092,12 +1159,12 @@ pub fn apply_depouille(
  return Err(BRepFeatError::ZeroVector("pull_direction"));
  }
 
- let shell = target.solids.first()
- .and_then(|s| s.shells.first())
+ let faces = first_shell_faces(target)
  .ok_or_else(|| BRepFeatError::InvalidInput("target has no solids".to_string()))?;
 
- let mut sum_disp = vec![DVec3::ZERO; target.vertices.len()];
- let mut contrib = vec![0u32; target.vertices.len()];
+ let vcount = target.vertex_count();
+ let mut sum_disp = vec![DVec3::ZERO; vcount];
+ let mut contrib = vec![0u32; vcount];
 
  for &(face_index, angle, neutral_point, neutral_normal) in blocks {
  if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
@@ -1107,17 +1174,18 @@ pub fn apply_depouille(
  if n.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
  return Err(BRepFeatError::ZeroVector("neutral_normal"));
  }
- if face_index >= shell.faces.len() {
+ if face_index >= faces.len() {
  return Err(BRepFeatError::FaceNotFound { face_index });
  }
 
  let tan_a = angle.tan();
- let face = &shell.faces[face_index];
- for we in &face.outer_wire.edges {
- if let Some(edge) = target.edges.get(we.idx) {
- for &vi in &[edge.start, edge.end] {
- if vi < target.vertices.len() {
- let v0 = target.vertices[vi].point;
+ if let Some(face_sr) = faces.get(face_index) {
+ if let Some(wire_edges) = face_outer_wire_edges(target, face_sr) {
+ for we in &wire_edges {
+ if let Some((vi_start, vi_end)) = edge_vertex_indices(target, we.index) {
+ for &vi in &[vi_start, vi_end] {
+ if vi < vcount {
+ if let Some(v0) = target.vertex_point(vi) {
  let disp = draft_vertex_displacement_occt(v0, neutral_point, n, pull, tan_a);
  sum_disp[vi] += disp;
  contrib[vi] += 1;
@@ -1126,10 +1194,12 @@ pub fn apply_depouille(
  }
  }
  }
+ }
+ }
+ }
 
- let new_positions: Vec<DVec3> = target
- .vertices
- .iter()
+ let new_positions: Vec<DVec3> = collect_vertex_points(target)
+ .into_iter()
  .enumerate()
  .map(|(i, v)| {
  let d = if contrib[i] > 0 {
@@ -1137,10 +1207,10 @@ pub fn apply_depouille(
  } else {
  DVec3::ZERO
  };
- v.point + d
+ v + d
  })
  .collect();
- build_drafted_brep(target, &new_positions, &shell.faces)
+ build_drafted_brep(target, &new_positions)
 }
 
 /// Draft displacement for one vertex: neutral plane \((P,\hat n)\), pull \(\hat D\), angle \(\theta\).
@@ -1179,12 +1249,20 @@ fn draft_vertex_displacement_occt(
 fn build_drafted_brep(
  original: &rcad_kernel::BRep,
  new_positions: &[DVec3],
- _faces: &[Face],
 ) -> Result<rcad_kernel::BRep, BRepFeatError> {
  let mut brep = original.clone();
- for (i, p) in new_positions.iter().enumerate() {
- if let Some(v) = brep.vertices.get_mut(i) {
- v.point = *p;
+ // Find vertex TShape indices and update their points
+ let mut vi = 0;
+ for ts in &mut brep.tshapes {
+ let shape = Arc::make_mut(ts);
+ match shape {
+ TShape::Vertex(vd) => {
+ if vi < new_positions.len() {
+ vd.point = new_positions[vi];
+ }
+ vi += 1;
+ }
+ _ => {}
  }
  }
  Ok(brep)
@@ -1250,7 +1328,7 @@ pub fn make_drafted_prism(
  let prism_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
  let op = BooleanOpType::from(fuse_mode);
- let t = boolean_op(op, target, &prism_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(op, target, &prism_tool)?)
 }
 
 /// Create a multi-profile pipe (loft) feature.
@@ -1286,11 +1364,9 @@ pub fn make_loft_feature(
  let loft_tool = build_loft_solid(profiles)?;
 
  let op = BooleanOpType::from(fuse_mode);
- let t = boolean_op(op, target, &loft_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ Ok(boolean_op(op, target, &loft_tool)?)
 }
 
 // ===========================================================?
 // Tests
 // ===========================================================?
-
-

@@ -31,6 +31,7 @@
 
 
 use crate::tolerance::*;
+use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::topology::Face;
 pub use crate::brep_tools::ShapeType;
 
@@ -44,78 +45,68 @@ pub use crate::brep_tools::ShapeType;
 #[derive(Debug, Clone)]
 pub struct FaceAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    face_idx: usize,
-    shell_idx: usize,
-    solid_idx: usize,
+    face_idx: usize,  // tshape index of TShape::Face
 }
 
 impl<'a> FaceAdaptor<'a> {
     /// Create a new face adaptor.
-    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize, shell_idx: usize, solid_idx: usize) -> Self {
-        Self {
-            brep,
-            face_idx,
-            shell_idx,
-            solid_idx,
-        }
+    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Self {
+        Self { brep, face_idx }
     }
 
-    /// Returns the face index in the flattened face list.
+    /// Returns the face index (tshape index of the TShape::Face).
     pub fn index(&self) -> usize {
         self.face_idx
     }
 
-    /// Returns the shell index containing this face.
+    /// Returns the shell index containing this face (always 0 in flat TShape model).
     pub fn shell_index(&self) -> usize {
-        self.shell_idx
+        0
     }
 
-    /// Returns the solid index containing this face.
+    /// Returns the solid index containing this face (always 0 in flat TShape model).
     pub fn solid_index(&self) -> usize {
-        self.solid_idx
+        0
     }
 
-    /// Returns a reference to the face topology.
-    pub fn face(&self) -> Option<&'a Face> {
-        self.brep.solids.get(self.solid_idx)
-            .and_then(|s| s.shells.get(self.shell_idx))
-            .and_then(|sh| sh.faces.get(self.face_idx))
-    }
-
-    /// Returns the surface index for this face, if available.
-    pub fn surface_index(&self) -> Option<usize> {
-        // Compute the flattened face index
-        let mut flat_idx = 0usize;
-        for (si, solid) in self.brep.solids.iter().enumerate() {
-            for (shi, shell) in solid.shells.iter().enumerate() {
-                for fi in 0..shell.faces.len() {
-                    if si == self.solid_idx && shi == self.shell_idx && fi == self.face_idx {
-                        return self.brep.geom.face_surface.get(flat_idx).copied().flatten();
-                    }
-                    flat_idx += 1;
-                }
-            }
+    fn get_face_data(&self) -> Option<&topods::TFaceData> {
+        let ts = self.brep.tshapes.get(self.face_idx)?;
+        match ts.as_ref() {
+            TShape::Face(fd) => Some(fd),
+            _ => None,
         }
+    }
+
+    /// Returns a reference to the face topology (always None in the new TShape model).
+    pub fn face(&self) -> Option<&'a Face> {
         None
+    }
+
+    /// Returns the surface index for this face, if available (now returns tshape index itself).
+    pub fn surface_index(&self) -> Option<usize> {
+        self.get_face_data().and_then(|fd| {
+            fd.surface.as_ref().map(|_| self.face_idx)
+        })
     }
 
     /// Returns the number of edges in the outer wire.
     pub fn edge_count(&self) -> usize {
-        self.face()
-            .map(|f| f.outer_wire.edges.len())
-            .unwrap_or(0)
+        self.get_face_data().and_then(|fd| {
+            let wts = self.brep.tshapes.get(fd.outer_wire.index)?;
+            match wts.as_ref() {
+                TShape::Wire(wd) => Some(wd.edges.len()),
+                _ => None,
+            }
+        }).unwrap_or(0)
     }
 
     /// Returns the number of inner wires (holes).
     pub fn inner_wire_count(&self) -> usize {
-        self.face()
-            .map(|f| f.inner_wires.len())
-            .unwrap_or(0)
+        self.get_face_data().map(|fd| fd.inner_wires.len()).unwrap_or(0)
     }
 
     /// Returns the face tolerance.
     pub fn tolerance(&self) -> f64 {
-        // Default tolerance, could be extended to read from GeomStore
         TOLERANCE_MESH_LEGACY
     }
 }
@@ -130,60 +121,68 @@ impl<'a> FaceAdaptor<'a> {
 #[derive(Debug, Clone)]
 pub struct EdgeAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    edge_idx: usize,
+    edge_idx: usize,  // tshape index of TShape::Edge
 }
 
 impl<'a> EdgeAdaptor<'a> {
+    fn get_edge_data(&self) -> Option<&topods::TEdgeData> {
+        let ts = self.brep.tshapes.get(self.edge_idx)?;
+        match ts.as_ref() {
+            TShape::Edge(ed) => Some(ed),
+            _ => None,
+        }
+    }
+
     /// Create a new edge adaptor.
     pub fn new(brep: &'a rcad_kernel::BRep, edge_idx: usize) -> Self {
         Self { brep, edge_idx }
     }
 
-    /// Returns the edge index.
+    /// Returns the edge index (tshape index).
     pub fn index(&self) -> usize {
         self.edge_idx
     }
 
-    /// Returns the edge topology (start and end vertex indices).
+    /// Returns the edge topology (start and end vertex indices) — not available in new model.
     pub fn edge(&self) -> Option<rcad_kernel::topology::Edge> {
-        self.brep.edges.get(self.edge_idx).copied()
+        None
     }
 
     /// Returns the start vertex index.
     pub fn start_vertex(&self) -> Option<usize> {
-        self.brep.edges.get(self.edge_idx).map(|e| e.start)
+        self.get_edge_data().map(|ed| ed.first.index)
     }
 
     /// Returns the end vertex index.
     pub fn end_vertex(&self) -> Option<usize> {
-        self.brep.edges.get(self.edge_idx).map(|e| e.end)
+        self.get_edge_data().map(|ed| ed.last.index)
     }
 
-    /// Returns the 3D curve index for this edge, if available.
+    /// Returns the 3D curve reference, if available.
     pub fn curve_index(&self) -> Option<usize> {
-        self.brep.geom.edge_curve.get(self.edge_idx).copied().flatten()
+        // In the new model, curves are stored directly on TEdgeData.
+        // Return the edge index if a curve exists, None otherwise.
+        self.get_edge_data().and_then(|ed| ed.curve.as_ref().map(|_| self.edge_idx))
     }
 
     /// Returns the parameter range for this edge.
     pub fn parameter_range(&self) -> Option<[f64; 2]> {
-        self.brep.geom.edge_curve_range.get(self.edge_idx).copied().flatten()
+        self.get_edge_data().map(|ed| ed.range)
     }
 
     /// Returns true if this edge is degenerate.
     pub fn is_degenerate(&self) -> bool {
-        self.brep.geom.edge_degenerated.get(self.edge_idx).copied().unwrap_or(false)
+        self.get_edge_data().map(|ed| ed.degenerated).unwrap_or(false)
     }
 
     /// Returns true if this edge is closed (start == end vertex).
     pub fn is_closed(&self) -> bool {
-        self.brep.edges.get(self.edge_idx)
-            .map(|e| e.start == e.end)
-            .unwrap_or(false)
+        self.get_edge_data().map(|ed| ed.first.index == ed.last.index).unwrap_or(false)
     }
 
     /// Returns the edge tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.brep.geom.edge_tolerance.get(self.edge_idx).copied().unwrap_or(TOLERANCE_MESH_LEGACY)
+        self.get_edge_data().map(|ed| ed.tolerance).filter(|&t| t > 0.0).unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 
@@ -197,7 +196,7 @@ impl<'a> EdgeAdaptor<'a> {
 #[derive(Debug, Clone)]
 pub struct VertexAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    vertex_idx: usize,
+    vertex_idx: usize,  // tshape index of TShape::Vertex
 }
 
 impl<'a> VertexAdaptor<'a> {
@@ -206,19 +205,21 @@ impl<'a> VertexAdaptor<'a> {
         Self { brep, vertex_idx }
     }
 
-    /// Returns the vertex index.
+    /// Returns the vertex index (tshape index).
     pub fn index(&self) -> usize {
         self.vertex_idx
     }
 
     /// Returns the 3D point location of the vertex.
     pub fn point(&self) -> Option<glam::DVec3> {
-        self.brep.vertices.get(self.vertex_idx).map(|v| v.point)
+        self.brep.vertex_point(self.vertex_idx)
     }
 
     /// Returns the vertex tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.brep.geom.vertex_tolerance.get(self.vertex_idx).copied().unwrap_or(TOLERANCE_MESH_LEGACY)
+        self.brep.tshapes.get(self.vertex_idx).and_then(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.tolerance) } else { None }
+        }).filter(|&t| t > 0.0).unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 
@@ -250,10 +251,7 @@ impl<'a> VertexAdaptor<'a> {
 #[derive(Debug, Clone)]
 pub struct FaceExplorer<'a> {
     brep: &'a rcad_kernel::BRep,
-    solid_idx: usize,
-    shell_idx: usize,
-    face_idx: usize,
-    flat_idx: usize,
+    tshape_idx: usize,
     current: Option<FaceAdaptor<'a>>,
 }
 
@@ -262,53 +260,25 @@ impl<'a> FaceExplorer<'a> {
     pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
-            solid_idx: 0,
-            shell_idx: 0,
-            face_idx: 0,
-            flat_idx: 0,
+            tshape_idx: 0,
             current: None,
         }
     }
 
-    /// Advance to the next face and return its flattened index.
+    /// Advance to the next face and return its tshape index.
     ///
     /// Returns `None` when all faces have been visited.
     pub fn next(&mut self) -> Option<usize> {
-        loop {
-            // Try to get current solid
-            let solid = self.brep.solids.get(self.solid_idx)?;
-
-            // Try to get current shell
-            let shell = solid.shells.get(self.shell_idx);
-
-            match shell {
-                Some(sh) => {
-                    // Try to get current face
-                    if self.face_idx < sh.faces.len() {
-                        let flat_idx = self.flat_idx;
-                        self.current = Some(FaceAdaptor::new(
-                            self.brep,
-                            self.face_idx,
-                            self.shell_idx,
-                            self.solid_idx,
-                        ));
-                        self.face_idx += 1;
-                        self.flat_idx += 1;
-                        return Some(flat_idx);
-                    } else {
-                        // Move to next shell
-                        self.shell_idx += 1;
-                        self.face_idx = 0;
-                    }
-                }
-                None => {
-                    // Move to next solid
-                    self.solid_idx += 1;
-                    self.shell_idx = 0;
-                    self.face_idx = 0;
-                }
+        while let Some(ts) = self.brep.tshapes.get(self.tshape_idx) {
+            let idx = self.tshape_idx;
+            self.tshape_idx += 1;
+            if matches!(ts.as_ref(), TShape::Face(_)) {
+                self.current = Some(FaceAdaptor::new(self.brep, idx));
+                return Some(idx);
             }
         }
+        self.current = None;
+        None
     }
 
     /// Returns the adaptor for the current face.
@@ -320,10 +290,7 @@ impl<'a> FaceExplorer<'a> {
 
     /// Reset the explorer to start from the beginning.
     pub fn reset(&mut self) {
-        self.solid_idx = 0;
-        self.shell_idx = 0;
-        self.face_idx = 0;
-        self.flat_idx = 0;
+        self.tshape_idx = 0;
         self.current = None;
     }
 }
@@ -338,7 +305,7 @@ impl<'a> FaceExplorer<'a> {
 #[derive(Debug, Clone)]
 pub struct EdgeExplorer<'a> {
     brep: &'a rcad_kernel::BRep,
-    edge_idx: usize,
+    tshape_idx: usize,
     current: Option<EdgeAdaptor<'a>>,
 }
 
@@ -347,24 +314,25 @@ impl<'a> EdgeExplorer<'a> {
     pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
-            edge_idx: 0,
+            tshape_idx: 0,
             current: None,
         }
     }
 
-    /// Advance to the next edge and return its index.
+    /// Advance to the next edge and return its tshape index.
     ///
     /// Returns `None` when all edges have been visited.
     pub fn next(&mut self) -> Option<usize> {
-        if self.edge_idx < self.brep.edges.len() {
-            let idx = self.edge_idx;
-            self.current = Some(EdgeAdaptor::new(self.brep, idx));
-            self.edge_idx += 1;
-            Some(idx)
-        } else {
-            self.current = None;
-            None
+        while let Some(ts) = self.brep.tshapes.get(self.tshape_idx) {
+            let idx = self.tshape_idx;
+            self.tshape_idx += 1;
+            if matches!(ts.as_ref(), TShape::Edge(_)) {
+                self.current = Some(EdgeAdaptor::new(self.brep, idx));
+                return Some(idx);
+            }
         }
+        self.current = None;
+        None
     }
 
     /// Returns the adaptor for the current edge.
@@ -376,7 +344,7 @@ impl<'a> EdgeExplorer<'a> {
 
     /// Reset the explorer to start from the beginning.
     pub fn reset(&mut self) {
-        self.edge_idx = 0;
+        self.tshape_idx = 0;
         self.current = None;
     }
 }
@@ -391,7 +359,7 @@ impl<'a> EdgeExplorer<'a> {
 #[derive(Debug, Clone)]
 pub struct VertexExplorer<'a> {
     brep: &'a rcad_kernel::BRep,
-    vertex_idx: usize,
+    tshape_idx: usize,
 }
 
 impl<'a> VertexExplorer<'a> {
@@ -399,26 +367,27 @@ impl<'a> VertexExplorer<'a> {
     pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
-            vertex_idx: 0,
+            tshape_idx: 0,
         }
     }
 
-    /// Advance to the next vertex and return its index.
+    /// Advance to the next vertex and return its tshape index.
     ///
     /// Returns `None` when all vertices have been visited.
     pub fn next(&mut self) -> Option<usize> {
-        if self.vertex_idx < self.brep.vertices.len() {
-            let idx = self.vertex_idx;
-            self.vertex_idx += 1;
-            Some(idx)
-        } else {
-            None
+        while let Some(ts) = self.brep.tshapes.get(self.tshape_idx) {
+            let idx = self.tshape_idx;
+            self.tshape_idx += 1;
+            if matches!(ts.as_ref(), TShape::Vertex(_)) {
+                return Some(idx);
+            }
         }
+        None
     }
 
     /// Reset the explorer to start from the beginning.
     pub fn reset(&mut self) {
-        self.vertex_idx = 0;
+        self.tshape_idx = 0;
     }
 }
 
@@ -476,7 +445,7 @@ pub struct WireExplorer<'a> {
 impl<'a> WireExplorer<'a> {
     /// Create a new wire explorer for a specific face.
     ///
-    /// `face_idx` is the flattened face index across all solids/shells.
+    /// `face_idx` is the tshape index of the TShape::Face.
     pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Self {
         Self {
             brep,
@@ -487,40 +456,43 @@ impl<'a> WireExplorer<'a> {
         }
     }
 
-    /// Get the face topology for the current face index.
-    fn get_face(&self) -> Option<&'a Face> {
-        let mut flat_idx = 0;
-        for solid in &self.brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    if flat_idx == self.face_idx {
-                        return Some(face);
-                    }
-                    flat_idx += 1;
-                }
-            }
+    /// Get the edge refs for a given wire ShapeRef.
+    fn get_wire_edges(&self, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
+        let Some(wts) = self.brep.tshapes.get(wire_ref.index) else { return Vec::new() };
+        let TShape::Wire(wd) = wts.as_ref() else { return Vec::new() };
+        wd.edges.iter().map(|er| {
+            let forward = er.orientation == topods::Orientation::Forward;
+            (er.index, forward)
+        }).collect()
+    }
+
+    /// Get all wire edge groups for the face: first outer wire, then inner wires.
+    fn get_face_wires(&self) -> Vec<Vec<(usize, bool)>> {
+        let Some(ts) = self.brep.tshapes.get(self.face_idx) else { return Vec::new() };
+        let TShape::Face(fd) = ts.as_ref() else { return Vec::new() };
+        let mut wires = Vec::new();
+        wires.push(self.get_wire_edges(&fd.outer_wire));
+        for inner in &fd.inner_wires {
+            wires.push(self.get_wire_edges(inner));
         }
-        None
+        wires
     }
 
     /// Advance to the next edge and return its oriented reference.
     ///
     /// Returns `None` when all edges (outer and inner wires) have been visited.
     pub fn next(&mut self) -> Option<OrientedEdge> {
-        let face = self.get_face()?;
+        let wires = self.get_face_wires();
+        if wires.is_empty() {
+            return None;
+        }
 
         loop {
-            // Determine which wire we're on
-            let wire = if self.wire_idx == 0 {
-                &face.outer_wire
-            } else {
-                face.inner_wires.get(self.wire_idx - 1)?
-            };
+            let wire = wires.get(self.wire_idx)?;
 
-            // Try to get current edge
-            if self.edge_idx < wire.edges.len() {
-                let we = &wire.edges[self.edge_idx];
-                self.current = Some(OrientedEdge::new(we.idx, we.forward));
+            if self.edge_idx < wire.len() {
+                let (idx, forward) = wire[self.edge_idx];
+                self.current = Some(OrientedEdge::new(idx, forward));
                 self.edge_idx += 1;
                 return self.current;
             } else {
@@ -636,207 +608,120 @@ impl<'a> Iterator for ShapeIterator<'a> {
             return None;
         }
 
-        match self.shape_type {
+        // Fast path: iterate tshapes by shape type, returning tshape indices.
+        let candidates: Vec<usize> = self.brep.tshapes.iter().enumerate()
+            .filter(|(_, ts)| match self.shape_type {
+                ShapeType::Vertex => matches!(ts.as_ref(), TShape::Vertex(_)),
+                ShapeType::Edge => matches!(ts.as_ref(), TShape::Edge(_)),
+                ShapeType::Wire => matches!(ts.as_ref(), TShape::Wire(_)),
+                ShapeType::Face => matches!(ts.as_ref(), TShape::Face(_)),
+                ShapeType::Shell => matches!(ts.as_ref(), TShape::Shell(_)),
+                ShapeType::Solid => matches!(ts.as_ref(), TShape::Solid(_)),
+                ShapeType::Compound | ShapeType::CompSolid | ShapeType::Empty => false,
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
+        // Use the appropriate counter based on shape type
+        let next_idx = match self.shape_type {
             ShapeType::Vertex => {
-                if self.state.vertex_idx < self.brep.vertices.len() {
-                    let idx = self.state.vertex_idx;
+                if self.state.vertex_idx < candidates.len() {
+                    let idx = candidates[self.state.vertex_idx];
                     self.state.vertex_idx += 1;
                     Some(idx)
                 } else {
-                    self.done = true;
                     None
                 }
             }
             ShapeType::Edge => {
-                if self.state.edge_idx < self.brep.edges.len() {
-                    let idx = self.state.edge_idx;
+                if self.state.edge_idx < candidates.len() {
+                    let idx = candidates[self.state.edge_idx];
                     self.state.edge_idx += 1;
                     Some(idx)
                 } else {
-                    self.done = true;
                     None
                 }
             }
             ShapeType::Face => {
-                // Iterate over faces in order
-                loop {
-                    let solid = self.brep.solids.get(self.state.solid_idx)?;
-                    let shell = solid.shells.get(self.state.shell_idx);
-
-                    match shell {
-                        Some(sh) => {
-                            if self.state.face_idx < sh.faces.len() {
-                                // Compute flattened index
-                                let flat_idx = self.compute_flat_face_index();
-                                self.state.face_idx += 1;
-                                return Some(flat_idx);
-                            } else {
-                                self.state.shell_idx += 1;
-                                self.state.face_idx = 0;
-                            }
-                        }
-                        None => {
-                            self.state.solid_idx += 1;
-                            self.state.shell_idx = 0;
-                            self.state.face_idx = 0;
-                        }
-                    }
+                if self.state.face_idx < candidates.len() {
+                    let idx = candidates[self.state.face_idx];
+                    self.state.face_idx += 1;
+                    Some(idx)
+                } else {
+                    None
                 }
             }
             ShapeType::Shell => {
-                // Iterate over shells
-                loop {
-                    let solid = self.brep.solids.get(self.state.solid_idx)?;
-                    if self.state.shell_idx < solid.shells.len() {
-                        // Compute flattened shell index
-                        let flat_idx = self.compute_flat_shell_index();
-                        self.state.shell_idx += 1;
-                        return Some(flat_idx);
-                    } else {
-                        self.state.solid_idx += 1;
-                        self.state.shell_idx = 0;
-                    }
+                if self.state.shell_idx < candidates.len() {
+                    let idx = candidates[self.state.shell_idx];
+                    self.state.shell_idx += 1;
+                    Some(idx)
+                } else {
+                    None
                 }
             }
             ShapeType::Solid => {
-                if self.state.solid_idx < self.brep.solids.len() {
-                    let idx = self.state.solid_idx;
+                if self.state.solid_idx < candidates.len() {
+                    let idx = candidates[self.state.solid_idx];
                     self.state.solid_idx += 1;
                     Some(idx)
                 } else {
-                    self.done = true;
                     None
                 }
             }
             ShapeType::Wire => {
-                // Iterate over all wires (outer + inner) in face order
-                loop {
-                    // Get current face
-                    let face = self.get_current_face()?;
-
-                    // Determine which wire
-                    if self.state.wire_idx == 0 {
-                        // Outer wire
-                        let wire_idx = self.compute_flat_wire_index();
-                        self.state.wire_idx += 1;
-                        return Some(wire_idx);
-                    } else if self.state.wire_idx - 1 < face.inner_wires.len() {
-                        // Inner wire
-                        let wire_idx = self.compute_flat_wire_index();
-                        self.state.wire_idx += 1;
-                        return Some(wire_idx);
-                    } else {
-                        // Move to next face
-                        self.advance_face();
-                        self.state.wire_idx = 0;
-                    }
+                // Wires are TShape::Wire entries in tshapes.
+                if self.state.wire_idx < candidates.len() {
+                    let idx = candidates[self.state.wire_idx];
+                    self.state.wire_idx += 1;
+                    Some(idx)
+                } else {
+                    None
                 }
             }
-            ShapeType::Compound | ShapeType::CompSolid | ShapeType::Empty => {
-                self.done = true;
-                None
-            }
-        }
-    }
-}
-
-impl<'a> ShapeIterator<'a> {
-    /// Compute the flattened face index for the current state.
-    fn compute_flat_face_index(&self) -> usize {
-        let mut flat_idx = 0;
-        for (si, solid) in self.brep.solids.iter().enumerate() {
-            for (shi, shell) in solid.shells.iter().enumerate() {
-                if si < self.state.solid_idx
-                    || (si == self.state.solid_idx && shi < self.state.shell_idx)
-                {
-                    flat_idx += shell.faces.len();
-                } else if si == self.state.solid_idx && shi == self.state.shell_idx {
-                    flat_idx += self.state.face_idx;
-                    break;
-                }
-            }
-        }
-        flat_idx
-    }
-
-    /// Compute the flattened shell index for the current state.
-    fn compute_flat_shell_index(&self) -> usize {
-        let mut flat_idx = 0;
-        for (si, solid) in self.brep.solids.iter().enumerate() {
-            if si < self.state.solid_idx {
-                flat_idx += solid.shells.len();
-            } else if si == self.state.solid_idx {
-                flat_idx += self.state.shell_idx;
-                break;
-            }
-        }
-        flat_idx
-    }
-
-    /// Compute the flattened wire index for the current state.
-    fn compute_flat_wire_index(&self) -> usize {
-        let mut flat_idx = 0;
-        for (si, solid) in self.brep.solids.iter().enumerate() {
-            for (shi, shell) in solid.shells.iter().enumerate() {
-                for (fi, face) in shell.faces.iter().enumerate() {
-                    if si < self.state.solid_idx
-                        || (si == self.state.solid_idx && shi < self.state.shell_idx)
-                        || (si == self.state.solid_idx
-                            && shi == self.state.shell_idx
-                            && fi < self.state.face_idx)
-                    {
-                        flat_idx += 1 + face.inner_wires.len(); // outer + inner wires
-                    } else if si == self.state.solid_idx
-                        && shi == self.state.shell_idx
-                        && fi == self.state.face_idx
-                    {
-                        flat_idx += self.state.wire_idx;
-                        break;
-                    }
-                }
-            }
-        }
-        flat_idx
-    }
-
-    /// Get the current face based on iterator state.
-    fn get_current_face(&self) -> Option<&'a Face> {
-        self.brep.solids.get(self.state.solid_idx)
-            .and_then(|s| s.shells.get(self.state.shell_idx))
-            .and_then(|sh| sh.faces.get(self.state.face_idx))
-    }
-
-    /// Advance to the next face.
-    fn advance_face(&mut self) {
-        let solid = match self.brep.solids.get(self.state.solid_idx) {
-            Some(s) => s,
-            None => return,
+            ShapeType::Compound | ShapeType::CompSolid | ShapeType::Empty => None,
         };
 
-        let shell = match solid.shells.get(self.state.shell_idx) {
-            Some(sh) => sh,
-            None => return,
-        };
-
-        if self.state.face_idx + 1 < shell.faces.len() {
-            self.state.face_idx += 1;
-        } else if self.state.shell_idx + 1 < solid.shells.len() {
-            self.state.shell_idx += 1;
-            self.state.face_idx = 0;
-        } else if self.state.solid_idx + 1 < self.brep.solids.len() {
-            self.state.solid_idx += 1;
-            self.state.shell_idx = 0;
-            self.state.face_idx = 0;
-        } else {
-            // End of iteration - advance past the last face so get_current_face returns None
-            self.state.face_idx += 1;
+        if next_idx.is_none() {
+            self.done = true;
         }
+        next_idx
     }
 }
 
 // =============================================================================
-// Topology Queries
+// Topology Queries (tshape-based)
 // =============================================================================
+
+/// Returns the edge indices from all wires of a face (by tshape index).
+fn collect_face_edge_indices(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    let ts = match brep.tshapes.get(face_idx) {
+        Some(ts) => ts,
+        None => return result,
+    };
+    let TShape::Face(fd) = ts.as_ref() else { return result };
+
+    // Collect from outer wire
+    if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+        if let TShape::Wire(wd) = wts.as_ref() {
+            for er in &wd.edges {
+                result.push(er.index);
+            }
+        }
+    }
+    // Collect from inner wires
+    for iw in &fd.inner_wires {
+        if let Some(wts) = brep.tshapes.get(iw.index) {
+            if let TShape::Wire(wd) = wts.as_ref() {
+                for er in &wd.edges {
+                    result.push(er.index);
+                }
+            }
+        }
+    }
+    result
+}
 
 /// Returns all edge indices referenced by a face (including inner wires).
 ///
@@ -856,31 +741,7 @@ impl<'a> ShapeIterator<'a> {
 /// assert_eq!(edges.len(), 4);
 /// ```
 pub fn edges_of_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<usize> {
-    let mut result = Vec::new();
-    let mut flat_idx = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                if flat_idx == face_idx {
-                    // Add edges from outer wire
-                    for we in &face.outer_wire.edges {
-                        result.push(we.idx);
-                    }
-                    // Add edges from inner wires
-                    for inner in &face.inner_wires {
-                        for we in &inner.edges {
-                            result.push(we.idx);
-                        }
-                    }
-                    return result;
-                }
-                flat_idx += 1;
-            }
-        }
-    }
-
-    result
+    collect_face_edge_indices(brep, face_idx)
 }
 
 /// Returns all face indices that reference the given edge.
@@ -903,41 +764,33 @@ pub fn edges_of_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<usize> {
 /// ```
 pub fn faces_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
     let mut result = Vec::new();
-    let mut flat_idx = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                // Check outer wire
-                for we in &face.outer_wire.edges {
-                    if we.idx == edge_idx {
-                        result.push(flat_idx);
+    for (fi, ts) in brep.tshapes.iter().enumerate() {
+        let TShape::Face(fd) = ts.as_ref() else { continue };
+        // Check outer wire edges
+        if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+            if let TShape::Wire(wd) = wts.as_ref() {
+                if wd.edges.iter().any(|er| er.index == edge_idx) {
+                    result.push(fi);
+                    continue;
+                }
+            }
+        }
+        // Check inner wire edges
+        for iw in &fd.inner_wires {
+            if let Some(wts) = brep.tshapes.get(iw.index) {
+                if let TShape::Wire(wd) = wts.as_ref() {
+                    if wd.edges.iter().any(|er| er.index == edge_idx) {
+                        result.push(fi);
                         break;
                     }
                 }
-                // Check inner wires (if not already found in outer)
-                if !result.contains(&flat_idx) {
-                    for inner in &face.inner_wires {
-                        for we in &inner.edges {
-                            if we.idx == edge_idx {
-                                result.push(flat_idx);
-                                break;
-                            }
-                        }
-                        if result.contains(&flat_idx) {
-                            break;
-                        }
-                    }
-                }
-                flat_idx += 1;
             }
         }
     }
-
     result
 }
 
-/// Returns the (start, end) vertex indices of an edge.
+/// Returns the (start, end) vertex indices (tshape indices) of an edge.
 ///
 /// # Example
 ///
@@ -954,10 +807,13 @@ pub fn faces_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
 /// assert!(end < 8);
 /// ```
 pub fn vertices_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> (usize, usize) {
-    brep.edges
-        .get(edge_idx)
-        .map(|e| (e.start, e.end))
-        .unwrap_or((usize::MAX, usize::MAX))
+    match brep.tshapes.get(edge_idx) {
+        Some(ts) => match ts.as_ref() {
+            TShape::Edge(ed) => (ed.first.index, ed.last.index),
+            _ => (usize::MAX, usize::MAX),
+        },
+        None => (usize::MAX, usize::MAX),
+    }
 }
 
 /// Returns all edge indices that reference the given vertex.
@@ -977,12 +833,14 @@ pub fn vertices_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> (usize, us
 /// assert_eq!(edges.len(), 3);
 /// ```
 pub fn edges_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
-    brep.edges
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.start == vertex_idx || e.end == vertex_idx)
-        .map(|(ei, _)| ei)
-        .collect()
+    brep.tshapes.iter().enumerate().filter_map(|(ei, ts)| {
+        if let TShape::Edge(ed) = ts.as_ref() {
+            if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
+                return Some(ei);
+            }
+        }
+        None
+    }).collect()
 }
 
 /// Returns all faces that share the given vertex (through their edges).
@@ -1021,26 +879,17 @@ pub fn faces_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize
 
 /// Returns the number of faces in a BRep.
 pub fn face_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
 }
 
 /// Returns the number of shells in a BRep.
 pub fn shell_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.iter().map(|s| s.shells.len()).sum()
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count()
 }
 
 /// Returns the number of wires in a BRep (including inner wires).
 pub fn wire_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .map(|f| 1 + f.inner_wires.len())
-        .sum()
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Wire(_))).count()
 }
 
 // =============================================================================

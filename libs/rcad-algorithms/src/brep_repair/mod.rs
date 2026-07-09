@@ -17,8 +17,10 @@
 //! original unchanged.
 
 
+use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::topods;
+use rcad_kernel::topods::{BRep, ShapeRef, TShape, Orientation, TVertexData, TEdgeData, TFaceData, TShellData, TSolidData, TWireData};
 use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::SurfaceEval;
@@ -31,6 +33,202 @@ use crate::tolerance::{
  TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_RETRY_LADDER_COARSE,
  TOLERANCE_RETRY_LADDER_MID,
 };
+
+// ---------------------------------------------------------------------------
+// Transitional helpers — bridge old flat-index topology patterns to topods BRep.
+// ---------------------------------------------------------------------------
+
+/// Get TEdgeData by flat index (panics if not an edge).
+fn ed(brep: &BRep, ei: usize) -> &TEdgeData {
+    match &*brep.tshapes[ei] { TShape::Edge(ed) => ed, _ => unreachable!() }
+}
+
+/// Get TEdgeData by flat index (option).
+fn ed_opt(brep: &BRep, ei: usize) -> Option<&TEdgeData> {
+    brep.tshapes.get(ei).and_then(|ts| if let TShape::Edge(ed) = &**ts { Some(ed) } else { None })
+}
+
+/// Get mutable TEdgeData by flat index (panics if not an edge).
+fn ed_mut(brep: &mut BRep, ei: usize) -> &mut TEdgeData {
+    match &mut *Arc::get_mut(&mut brep.tshapes[ei]).expect("ed_mut: Arc shared") { TShape::Edge(ed) => ed, _ => unreachable!() }
+}
+
+/// Get TVertexData by flat index (panics if not a vertex).
+fn vd(brep: &BRep, vi: usize) -> &TVertexData {
+    match &*brep.tshapes[vi] { TShape::Vertex(vd) => vd, _ => unreachable!() }
+}
+
+/// Get mutable TVertexData by flat index.
+fn vd_mut(brep: &mut BRep, vi: usize) -> &mut TVertexData {
+    match &mut *Arc::get_mut(&mut brep.tshapes[vi]).expect("vd_mut: Arc shared") { TShape::Vertex(vd) => vd, _ => unreachable!() }
+}
+
+/// Get TSolidData by flat index.
+fn sd(brep: &BRep, si: usize) -> &TSolidData {
+    match &*brep.tshapes[si] { TShape::Solid(sd) => sd, _ => unreachable!() }
+}
+
+/// Get mutable TSolidData by flat index.
+fn sd_mut(brep: &mut BRep, si: usize) -> &mut TSolidData {
+    match &mut *Arc::get_mut(&mut brep.tshapes[si]).expect("sd_mut: Arc shared") { TShape::Solid(sd) => sd, _ => unreachable!() }
+}
+
+/// Iterate edges – yields (index, &TEdgeData).
+fn each_edge(brep: &BRep) -> impl Iterator<Item = (usize, &TEdgeData)> + '_ {
+    brep.tshapes.iter().enumerate().filter_map(|(i, ts)| {
+        if let TShape::Edge(ed) = &**ts { Some((i, ed)) } else { None }
+    })
+}
+
+/// Iterate vertices – yields (index, &TVertexData).
+fn each_vertex(brep: &BRep) -> impl Iterator<Item = (usize, &TVertexData)> + '_ {
+    brep.tshapes.iter().enumerate().filter_map(|(i, ts)| {
+        if let TShape::Vertex(vd) = &**ts { Some((i, vd)) } else { None }
+    })
+}
+
+/// Iterate solids – yields (index, &TSolidData).
+fn each_solid(brep: &BRep) -> impl Iterator<Item = (usize, &TSolidData)> + '_ {
+    brep.tshapes.iter().enumerate().filter_map(|(i, ts)| {
+        if let TShape::Solid(sd) = &**ts { Some((i, sd)) } else { None }
+    })
+}
+
+/// Vertex point by flat index.
+fn vpoint(brep: &BRep, vi: usize) -> DVec3 {
+    brep.vertex_point(vi).unwrap_or(DVec3::ZERO)
+}
+
+/// Get the start vertex index of an edge.
+fn edge_start(brep: &BRep, ei: usize) -> usize {
+    ed(brep, ei).first.index
+}
+
+/// Get the end vertex index of an edge.
+fn edge_end(brep: &BRep, ei: usize) -> usize {
+    ed(brep, ei).last.index
+}
+
+/// Get start/end vertex indices as a tuple.
+fn edge_verts(brep: &BRep, ei: usize) -> (usize, usize) {
+    let e = ed(brep, ei);
+    (e.first.index, e.last.index)
+}
+
+/// Get the shape type tag of a tshape at flat index.
+fn shape_type_at(brep: &BRep, idx: usize) -> topods::ShapeType {
+    brep.tshapes.get(idx).map_or(topods::ShapeType::Shape, |ts| ts.shape_type())
+}
+
+/// Count all faces across all shells/solids.
+fn count_faces(brep: &BRep) -> usize {
+    let mut n = 0usize;
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = &**ts {
+            for sr in &sd.shells {
+                if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                    n += shd.faces.len();
+                }
+            }
+        }
+    }
+    n
+}
+
+/// Walk TShape tree from solids down to faces and collect face data.
+/// For each face yields its flat index and TFaceData reference.
+fn each_face(brep: &BRep) -> impl Iterator<Item = (usize, &TFaceData)> + '_ {
+    brep.tshapes.iter().enumerate().filter_map(|(fi, ts)| {
+        if let TShape::Face(fd) = &**ts { Some((fi, fd)) } else { None }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Batch extraction / rebuild helpers — convert tshape BRep to old-style Vecs
+// and back.  Lets internal code keep using the old flat-index logic.
+// ---------------------------------------------------------------------------
+
+/// Collect all vertex points into a Vec (parallel to tshape index).
+fn collect_vpoints(brep: &BRep) -> Vec<DVec3> {
+    brep.tshapes.iter().filter_map(|ts| {
+        if let TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+    }).collect()
+}
+
+/// Collect edge start/end pairs by tshape index.
+fn collect_edges_flat(brep: &BRep) -> Vec<(usize, usize)> {
+    brep.tshapes.iter().filter_map(|ts| {
+        if let TShape::Edge(ed) = &**ts { Some((ed.first.index, ed.last.index)) } else { None }
+    }).collect()
+}
+
+/// Build a new BRep with vertices from a Vec of points and edges from a Vec of (start,end) pairs.
+/// NOTE: no geometry curves, pcurves, or solid hierarchy is rebuilt — this is
+/// a minimal reconstruction sufficient for merge/remove repair functions.
+fn build_brep_from_flat(vpts: &[DVec3], edges: &[(usize, usize)]) -> BRep {
+    let mut b = BRep::new();
+    // Map old index → new ShapeRef via index rotation
+    for &pt in vpts {
+        b.add_tvertex(pt);
+    }
+    for &(s, e) in edges {
+        b.add_edge_flat(s, e, None, [0.0, 1.0]);
+    }
+    b
+}
+
+/// Walk TShape tree from solids down to faces and collect face data
+/// preserving the solid/shell nesting.
+/// Yields (solid_idx, shell_idx, face_idx) for each face.
+fn each_face_nested(brep: &BRep) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+    let mut results: Vec<(usize, usize, usize)> = Vec::new();
+    for (si, ts) in brep.tshapes.iter().enumerate() {
+        if let TShape::Solid(sd) = &**ts {
+            for (shi, sr) in sd.shells.iter().enumerate() {
+                if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                    for fi in 0..shd.faces.len() {
+                        results.push((si, shi, fi));
+                    }
+                }
+            }
+        }
+    }
+    results.into_iter()
+}
+
+/// Collect edge indices referenced by a face's outer wire.
+fn face_wire_edge_indices(brep: &BRep, fi: usize) -> Vec<usize> {
+    if let TShape::Face(fd) = &*brep.tshapes[fi] {
+        if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+            return wd.edges.iter().map(|er| er.index).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Collect wire edge indices from a Wire ShapeRef.
+fn wire_edge_indices(brep: &BRep, wire_ref: ShapeRef) -> Vec<usize> {
+    if let TShape::Wire(wd) = &*brep.tshapes[wire_ref.index] {
+        wd.edges.iter().map(|er| er.index).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Walk a face's outer wire edges and yield each edge's start/end vertex indices.
+fn face_edge_verts(brep: &BRep, fi: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    if let TShape::Face(fd) = &*brep.tshapes[fi] {
+        if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+            for er in &wd.edges {
+                if let TShape::Edge(ed) = &*brep.tshapes[er.index] {
+                    out.push((ed.first.index, ed.last.index));
+                }
+            }
+        }
+    }
+    out
+}
 
 fn make_connected_has_future_tolerance_increase(
  pass_idx: usize,
@@ -454,8 +652,8 @@ pub struct CoverageAssessment {
 
 /// Assess coverage of seed vertices over the BRep.
 pub fn assess_coverage(brep: &rcad_kernel::BRep, seed_vertices: &[usize]) -> CoverageAssessment {
- let n_vertices = brep.vertices.len().max(1);
- let n_edges = brep.edges.len().max(1);
+ let n_vertices = brep.vertex_count().max(1);
+ let n_edges = brep.edge_count().max(1);
 
  let seed_set: std::collections::HashSet<usize> = seed_vertices.iter().copied().collect();
 
@@ -463,39 +661,20 @@ pub fn assess_coverage(brep: &rcad_kernel::BRep, seed_vertices: &[usize]) -> Cov
  let vertex_coverage = seed_vertices.len() as f64 / n_vertices as f64;
 
  // Edge coverage: at least one endpoint in seeds
- let covered_edges = brep
- .edges
- .iter()
- .filter(|e| seed_set.contains(&e.start) || seed_set.contains(&e.end))
+ let covered_edges = each_edge(brep)
+ .filter(|&(_ei, ed)| seed_set.contains(&ed.first.index) || seed_set.contains(&ed.last.index))
  .count();
  let edge_coverage = covered_edges as f64 / n_edges as f64;
 
  // Face coverage: at least one boundary vertex in seeds
  let mut covered_faces = 0usize;
- let total_faces = brep
- .solids
- .iter()
- .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- .count();
+ let total_faces = count_faces(brep);
 
- for face in brep
- .solids
- .iter()
- .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- {
- let has_seed = face
- .outer_wire
- .edges
- .iter()
- .flat_map(|we| {
- brep.edges
- .get(we.idx)
- .map(|e| vec![e.start, e.end])
- .unwrap_or_default()
- })
- .any(|v| seed_set.contains(&v));
+ for (_fi, fd) in each_face(brep) {
+ let wire_edges = face_wire_edge_indices(brep, _fi);
+ let has_seed = wire_edges.iter().flat_map(|&ei| {
+ ed_opt(brep, ei).map(|ed| vec![ed.first.index, ed.last.index]).unwrap_or_default()
+ }).any(|v| seed_set.contains(&v));
  if has_seed {
  covered_faces += 1;
  }
@@ -522,7 +701,7 @@ pub fn assess_coverage(brep: &rcad_kernel::BRep, seed_vertices: &[usize]) -> Cov
 fn get_edge_adjacent_faces_brep(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
  let mut faces = Vec::new();
  let mut face_idx = 0usize;
- for solid in &brep.solids {
+ for (si, solid) in each_solid(brep) {
  for shell in &solid.shells {
  for _face in &shell.faces {
  // Check if this face references the edge
@@ -543,7 +722,7 @@ fn get_edge_adjacent_faces_brep(brep: &rcad_kernel::BRep, edge_idx: usize) -> Ve
 fn get_face_normal(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<DVec3> {
  // First, try to get from face's stored normal
  let mut current_idx = 0usize;
- for solid in &brep.solids {
+ for (si, solid) in each_solid(brep) {
  for shell in &solid.shells {
  for face in &shell.faces {
  if current_idx == face_idx {
@@ -565,8 +744,8 @@ pub fn detect_seeds_for_scoped_cleanup(
  let mut result = SeedDetectionResult::default();
  let mut vertex_set = std::collections::HashSet::new();
  let mut edge_set = std::collections::HashSet::new();
- let n_vertices = brep.vertices.len();
- let n_edges = brep.edges.len();
+ let n_vertices = brep.vertex_count();
+ let n_edges = brep.edge_count();
 
  match config.strategy {
  SeedDetectionStrategy::AllVertices => {
@@ -576,7 +755,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  result.strategy_counts.insert("all_vertices".to_string(), n_vertices);
  }
  SeedDetectionStrategy::ShortEdgeEndpoints => {
- for (ei, edge) in brep.edges.iter().enumerate() {
+ for (ei, edge) in each_edge(brep).enumerate() {
  let start = brep.vertices.get(edge.start).map(|v| v.point);
  let end = brep.vertices.get(edge.end).map(|v| v.point);
  if let (Some(s), Some(e)) = (start, end) {
@@ -594,7 +773,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  let edge_tolerances = &brep.geom.edge_tolerance;
  for (ei, &tol) in edge_tolerances.iter().enumerate() {
  if tol > config.high_tolerance_threshold && ei < n_edges {
- let edge = &brep.edges[ei];
+ let edge = &ed(brep, ei);
  vertex_set.insert(edge.start);
  vertex_set.insert(edge.end);
  edge_set.insert(ei);
@@ -605,7 +784,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  SeedDetectionStrategy::NearDuplicateVertices => {
  for i in 0..n_vertices {
  for j in (i + 1)..n_vertices {
- let dist = (brep.vertices[i].point - brep.vertices[j].point).length();
+ let dist = (vpoint(brep, i) - vpoint(brep, j)).length();
  if dist < config.near_duplicate_distance {
  vertex_set.insert(i);
  vertex_set.insert(j);
@@ -617,7 +796,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  SeedDetectionStrategy::SeamCandidates => {
  // Strategy 1: Edges referenced by multiple faces (potential seams)
  let mut edge_face_count = vec![0usize; n_edges];
- for solid in &brep.solids {
+ for (si, solid) in each_solid(brep) {
  for shell in &solid.shells {
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
@@ -630,7 +809,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  }
  for (ei, &count) in edge_face_count.iter().enumerate() {
  if count > 2
- && let Some(edge) = brep.edges.get(ei) {
+ && let Some(edge) = ed_opt(brep, ei) {
  vertex_set.insert(edge.start);
  vertex_set.insert(edge.end);
  edge_set.insert(ei);
@@ -641,7 +820,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
  if pcurves.len() > 1 {
  // Multi-PCurve edge is a seam candidate (e.g., seam on cylinder/sphere/torus)
- if let Some(edge) = brep.edges.get(ei) {
+ if let Some(edge) = ed_opt(brep, ei) {
  vertex_set.insert(edge.start);
  vertex_set.insert(edge.end);
  edge_set.insert(ei);
@@ -650,7 +829,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  }
 
  // Strategy 3: Detect edges where adjacent face normals have large angle (> 45 degrees)
- for (ei, edge) in brep.edges.iter().enumerate() {
+ for (ei, edge) in each_edge(brep).enumerate() {
  let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
  if adj_faces.len() == 2
  && let (Some(n1), Some(n2)) = (
@@ -688,7 +867,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  // High tolerance
  for (ei, &tol) in brep.geom.edge_tolerance.iter().enumerate() {
  if tol > config.high_tolerance_threshold && ei < n_edges {
- let edge = &brep.edges[ei];
+ let edge = &ed(brep, ei);
  combined.insert(edge.start);
  combined.insert(edge.end);
  }
@@ -697,7 +876,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  // Near duplicates
  for i in 0..n_vertices.min(1000) {
  for j in (i + 1)..n_vertices.min(i + 100) {
- let dist = (brep.vertices[i].point - brep.vertices[j].point).length();
+ let dist = (vpoint(brep, i) - vpoint(brep, j)).length();
  if dist < config.near_duplicate_distance {
  combined.insert(i);
  combined.insert(j);
@@ -707,7 +886,7 @@ pub fn detect_seeds_for_scoped_cleanup(
 
  // Seam candidate Strategy 1: Edges referenced by multiple faces (potential seams)
  let mut edge_face_count = vec![0usize; n_edges];
- for solid in &brep.solids {
+ for (si, solid) in each_solid(brep) {
  for shell in &solid.shells {
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
@@ -720,7 +899,7 @@ pub fn detect_seeds_for_scoped_cleanup(
  }
  for (ei, &count) in edge_face_count.iter().enumerate() {
  if count > 2
- && let Some(edge) = brep.edges.get(ei) {
+ && let Some(edge) = ed_opt(brep, ei) {
  combined.insert(edge.start);
  combined.insert(edge.end);
  }
@@ -729,14 +908,14 @@ pub fn detect_seeds_for_scoped_cleanup(
  // Seam candidate Strategy 2: Edges with multiple PCurves
  for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
  if pcurves.len() > 1
- && let Some(edge) = brep.edges.get(ei) {
+ && let Some(edge) = ed_opt(brep, ei) {
  combined.insert(edge.start);
  combined.insert(edge.end);
  }
  }
 
  // Seam candidate Strategy 3: Edges with large face normal angle (> 45 degrees)
- for (ei, edge) in brep.edges.iter().enumerate() {
+ for (ei, edge) in each_edge(brep).enumerate() {
  let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
  if adj_faces.len() == 2
  && let (Some(n1), Some(n2)) = (
@@ -1153,7 +1332,7 @@ fn merge_close_vertices_scoped(
  tolerance: f64,
  scope_vertices: &std::collections::HashSet<usize>,
 ) -> (rcad_kernel::BRep, usize, std::collections::HashMap<usize, usize>) {
- let n = brep.vertices.len();
+ let n = brep.vertex_count();
  let mut parent: Vec<usize> = (0..n).collect();
 
  fn find(parent: &mut [usize], mut x: usize) -> usize {
@@ -1182,7 +1361,7 @@ fn merge_close_vertices_scoped(
  if !(scope_vertices.contains(&i) || scope_vertices.contains(&j)) {
  continue;
  }
- let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+ let d2 = (vpoint(brep, i) - vpoint(brep, j)).length_squared();
  if d2 <= tol2 {
  union(&mut parent, i, j);
  }
@@ -1269,7 +1448,7 @@ fn remove_small_edges_scoped(
 ) -> (rcad_kernel::BRep, usize, std::collections::HashMap<usize, usize>) {
  let mut out = brep.clone();
  let mut total_removed = 0usize;
- let mut remap_track: Vec<usize> = (0..brep.vertices.len()).collect();
+ let mut remap_track: Vec<usize> = (0..brep.vertex_count()).collect();
 
  loop {
  let edge_count = out.edges.len();
@@ -1571,8 +1750,8 @@ fn edges_similar_geometry(brep: &rcad_kernel::BRep, e1: usize, e2: usize, tol: f
  }
  _ => {
  // No curve data - use vertex-based check
- let edge1 = &brep.edges[e1];
- let edge2 = &brep.edges[e2];
+ let edge1 = &ed(brep, e1);
+ let edge2 = &ed(brep, e2);
  let p1_start = brep.vertices[edge1.start].point;
  let p1_end = brep.vertices[edge1.end].point;
  let p2_start = brep.vertices[edge2.start].point;
@@ -1711,10 +1890,10 @@ pub fn detect_shared_topology_advanced(brep: &rcad_kernel::BRep, tolerance: f64)
  // Count shared vertices (near-coincident vertices with different indices)
  // This is done first so it works even for single-face BReps
  let tol_sq = tol * tol;
- let n_verts = brep.vertices.len();
+ let n_verts = brep.vertex_count();
  for i in 0..n_verts {
  for j in (i + 1)..n_verts {
- let dist_sq = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+ let dist_sq = (vpoint(brep, i) - vpoint(brep, j)).length_squared();
  if dist_sq <= tol_sq {
  report.shared_vertex_pairs += 1;
  }
@@ -1833,8 +2012,8 @@ fn analyze_shared_edge_pair(
  e2: usize,
  tolerance: f64,
 ) -> Option<SharedEdgeInfo> {
- let edge1 = brep.edges.get(e1)?;
- let edge2 = brep.edges.get(e2)?;
+ let edge1 = ed_opt(brep, e1)?;
+ let edge2 = ed_opt(brep, e2)?;
 
  let curve1 = brep.geom.curves.get(e1);
  let curve2 = brep.geom.curves.get(e2);

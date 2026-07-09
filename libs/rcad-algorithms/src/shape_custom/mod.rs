@@ -24,6 +24,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
+use std::sync::Arc;
 use rcad_kernel::{
     Curve3, Surface3,
     geom::{
@@ -36,6 +37,7 @@ use rcad_kernel::{
         line_to_bspline, circle_to_bspline, ellipse_to_bspline,
         plane_to_bspline, cylinder_to_bspline, sphere_to_bspline,
     },
+    topods::{TShape},
     Face, Edge,
 };
 use std::f64::consts::PI;
@@ -716,33 +718,42 @@ pub fn restrict_geometry(
     let mut result = brep.clone();
     let mut report = ConversionReport::default();
 
-    // Convert curves
+    // Convert curves on edges
     if restrictions.curves_to_bspline {
-        for curve in &mut result.geom.curves {
-            let needs_conversion = !matches!(curve, Curve3::BSpline(_));
-            let is_offset = matches!(curve, Curve3::Offset(_));
-            let is_bezier = matches!(curve, Curve3::Bezier(_));
+        let n_samples = restrictions.curve_samples;
+        for ts in &mut result.tshapes {
+            if let TShape::Edge(ed) = &mut *Arc::make_mut(ts) {
+                if let Some(ref mut curve) = ed.curve {
+                    let needs_conversion = !matches!(curve, Curve3::BSpline(_));
+                    let is_offset = matches!(curve, Curve3::Offset(_));
+                    let is_bezier = matches!(curve, Curve3::Bezier(_));
 
-            if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_curves) {
-                let bspline = curve_to_bspline(curve, restrictions.curve_samples);
-                *curve = Curve3::BSpline(bspline);
-                report.curves_converted += 1;
+                    if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_curves) {
+                        let bspline = curve_to_bspline(curve, n_samples);
+                        *curve = Curve3::BSpline(bspline);
+                        report.curves_converted += 1;
+                    }
+                }
             }
         }
     }
 
-    // Convert surfaces
+    // Convert surfaces on faces
     if restrictions.surfaces_to_bspline {
-        for surface in &mut result.geom.surfaces {
-            let needs_conversion = !matches!(surface, Surface3::BSpline(_));
-            let is_offset = matches!(surface, Surface3::Offset(_));
-            let is_bezier = matches!(surface, Surface3::Bezier(_));
+        let (n_u, n_v) = restrictions.surface_samples;
+        for ts in &mut result.tshapes {
+            if let TShape::Face(fd) = &mut *Arc::make_mut(ts) {
+                if let Some(ref mut surface) = fd.surface {
+                    let needs_conversion = !matches!(surface, Surface3::BSpline(_));
+                    let is_offset = matches!(surface, Surface3::Offset(_));
+                    let is_bezier = matches!(surface, Surface3::Bezier(_));
 
-            if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_surfaces) {
-                let (n_u, n_v) = restrictions.surface_samples;
-                let bspline = surface_to_bspline(surface, n_u, n_v);
-                *surface = Surface3::BSpline(bspline);
-                report.surfaces_converted += 1;
+                    if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_surfaces) {
+                        let bspline = surface_to_bspline(surface, n_u, n_v);
+                        *surface = Surface3::BSpline(bspline);
+                        report.surfaces_converted += 1;
+                    }
+                }
             }
         }
     }
@@ -755,24 +766,32 @@ pub fn restrict_geometry(
             ..Default::default()
         };
 
-        for curve in &mut result.geom.curves {
-            if let Curve3::BSpline(bspline) = curve {
-                let result = simplify_bspline_curve(bspline, &simplify_opts);
-                if result.was_simplified {
-                    *bspline = result.geometry;
-                    report.bspline_curves_simplified += 1;
-                    report.max_deviation = report.max_deviation.max(result.max_deviation);
+        for ts in &mut result.tshapes {
+            if let TShape::Edge(ed) = &mut *Arc::make_mut(ts) {
+                if let Some(curve) = ed.curve.as_mut() {
+                    if let Curve3::BSpline(bspline) = curve {
+                        let res = simplify_bspline_curve(bspline, &simplify_opts);
+                        if res.was_simplified {
+                            *bspline = res.geometry;
+                            report.bspline_curves_simplified += 1;
+                            report.max_deviation = report.max_deviation.max(res.max_deviation);
+                        }
+                    }
                 }
             }
         }
 
-        for surface in &mut result.geom.surfaces {
-            if let Surface3::BSpline(bspline) = surface {
-                let result = simplify_bspline_surface(bspline, &simplify_opts);
-                if result.was_simplified {
-                    *bspline = result.geometry;
-                    report.bspline_surfaces_simplified += 1;
-                    report.max_deviation = report.max_deviation.max(result.max_deviation);
+        for ts in &mut result.tshapes {
+            if let TShape::Face(fd) = &mut *Arc::make_mut(ts) {
+                if let Some(surface) = fd.surface.as_mut() {
+                    if let Surface3::BSpline(bspline) = surface {
+                        let res = simplify_bspline_surface(bspline, &simplify_opts);
+                        if res.was_simplified {
+                            *bspline = res.geometry;
+                            report.bspline_surfaces_simplified += 1;
+                            report.max_deviation = report.max_deviation.max(res.max_deviation);
+                        }
+                    }
                 }
             }
         }
@@ -875,22 +894,22 @@ pub fn surface_to_bspline_from_face(
     face_idx: usize,
     brep: &rcad_kernel::BRep,
 ) -> BSplineSurface {
-    // Get the surface index for this face
-    let surface_idx = brep.geom.face_surface.get(face_idx).and_then(|&idx| idx);
+    // Access the face TShape directly — surface lives on TFaceData.
+    let fd = match brep.tshapes.get(face_idx) {
+        Some(ts) => match &**ts { TShape::Face(fd) => fd, _ => return fallback_bspline_surface() },
+        None => return fallback_bspline_surface(),
+    };
+    let surface = match fd.surface.as_ref() {
+        Some(s) => s,
+        None => return fallback_bspline_surface(),
+    };
 
-    match surface_idx {
-        Some(idx) if idx < brep.geom.surfaces.len() => {
-            let surface = &brep.geom.surfaces[idx];
+    // UV domain from TFaceData (if set)
+    let trim = fd.uv_domain;
 
-            // Check if there's a trim domain
-            let trim = brep.geom.face_surface_range.get(face_idx).and_then(|r| *r);
-
-            match surface {
+    match surface {
                 Surface3::BSpline(b) => {
-                    // If there's a trim, we may need to extract a sub-surface
-                    // For now, return a clone
                     if let Some([u0, u1, v0, v1]) = trim {
-                        // Sample and re-fit within the trim bounds
                         let n_u = 16;
                         let n_v = 16;
                         let mut ctrl: Vec<Vec<DVec3>> = Vec::new();
@@ -941,21 +960,21 @@ pub fn surface_to_bspline_from_face(
                 Surface3::Sphere(s) => sphere_to_bspline(s),
                 _ => surface_to_bspline(surface, 16, 16),
             }
-        }
-        _ => {
-            // Fallback: create a unit plane BSpline
-            BSplineSurface {
-                degree_u: 1,
-                degree_v: 1,
-                knots_u: vec![0.0, 0.0, 1.0, 1.0],
-                knots_v: vec![0.0, 0.0, 1.0, 1.0],
-                control_points: vec![
-                    vec![DVec3::ZERO, DVec3::Y],
-                    vec![DVec3::X, DVec3::X + DVec3::Y],
-                ],
-                weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
-            }
-        }
+}
+
+
+/// Fallback BSpline surface used when no valid face surface is found.
+fn fallback_bspline_surface() -> BSplineSurface {
+    BSplineSurface {
+        degree_u: 1,
+        degree_v: 1,
+        knots_u: vec![0.0, 0.0, 1.0, 1.0],
+        knots_v: vec![0.0, 0.0, 1.0, 1.0],
+        control_points: vec![
+            vec![DVec3::ZERO, DVec3::Y],
+            vec![DVec3::X, DVec3::X + DVec3::Y],
+        ],
+        weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
     }
 }
 
@@ -977,51 +996,27 @@ pub fn surface_to_bspline_from_face(
 /// let bspline = curve_to_bspline_from_edge(&edge, 0, &brep);
 /// ```
 pub fn curve_to_bspline_from_edge(
-    edge: &Edge,
+    _edge: &Edge,
     edge_idx: usize,
     brep: &rcad_kernel::BRep,
 ) -> BSplineCurve3 {
-    // Get the curve index for this edge
-    let curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|&idx| idx);
+    // Access the edge TShape directly — curve lives on TEdgeData.
+    let ed = match brep.tshapes.get(edge_idx) {
+        Some(ts) => match &**ts { TShape::Edge(ed) => ed, _ => return fallback_bspline_curve(brep, edge_idx) },
+        None => return fallback_bspline_curve(brep, edge_idx),
+    };
 
-    match curve_idx {
-        Some(idx) if idx < brep.geom.curves.len() => {
-            let curve = &brep.geom.curves[idx];
+    let curve = match ed.curve.as_ref() {
+        Some(c) => c,
+        None => return fallback_bspline_curve(brep, edge_idx),
+    };
 
-            // Get the parameter range
-            let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
-
-            // Convert to BSpline
-            
-
-            // If there's a parameter range, we may need to extract a segment
-            // For now, return the full BSpline
-            match curve {
-                Curve3::BSpline(b) => b.clone(),
-                Curve3::Line(l) => {
-                    if let Some([t0, t1]) = range {
-                        let p0 = l.point_at(t0);
-                        let p1 = l.point_at(t1);
-                        BSplineCurve3 {
-                            degree: 1,
-                            knots: vec![0.0, 0.0, 1.0, 1.0],
-                            control_points: vec![p0, p1],
-                            weights: vec![1.0, 1.0],
-                        }
-                    } else {
-                        line_to_bspline(l)
-                    }
-                }
-                Curve3::Circle(c) => circle_to_bspline(c),
-                Curve3::Ellipse(e) => ellipse_to_bspline(e),
-                Curve3::Bezier(b) => bezier_curve_to_bspline(b),
-                _ => curve_to_bspline(curve, 32),
-            }
-        }
-        _ => {
-            // Fallback: create a line between vertices
-            let p0 = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or(DVec3::ZERO);
-            let p1 = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or(DVec3::X);
+    let range = ed.range;
+    match curve {
+        Curve3::BSpline(b) => b.clone(),
+        Curve3::Line(l) => {
+            let p0 = l.point_at(range[0]);
+            let p1 = l.point_at(range[1]);
             BSplineCurve3 {
                 degree: 1,
                 knots: vec![0.0, 0.0, 1.0, 1.0],
@@ -1029,6 +1024,30 @@ pub fn curve_to_bspline_from_edge(
                 weights: vec![1.0, 1.0],
             }
         }
+        Curve3::Circle(c) => circle_to_bspline(c),
+        Curve3::Ellipse(e) => ellipse_to_bspline(e),
+        Curve3::Bezier(b) => bezier_curve_to_bspline(b),
+        _ => curve_to_bspline(curve, 32),
+    }
+}
+
+/// Fallback BSpline curve created from edge's vertex positions.
+fn fallback_bspline_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> BSplineCurve3 {
+    let p0 = brep.tshapes.get(edge_idx).and_then(|ts| {
+        if let TShape::Edge(ed) = &**ts {
+            brep.vertex_point(ed.first.index)
+        } else { None }
+    }).unwrap_or(DVec3::ZERO);
+    let p1 = brep.tshapes.get(edge_idx).and_then(|ts| {
+        if let TShape::Edge(ed) = &**ts {
+            brep.vertex_point(ed.last.index)
+        } else { None }
+    }).unwrap_or(DVec3::X);
+    BSplineCurve3 {
+        degree: 1,
+        knots: vec![0.0, 0.0, 1.0, 1.0],
+        control_points: vec![p0, p1],
+        weights: vec![1.0, 1.0],
     }
 }
 
@@ -1206,33 +1225,32 @@ pub fn convert_to_canonical_with_options(
     let mut result = brep.clone();
     let tol = options.tolerance;
 
-    for surface in &mut result.geom.surfaces {
-        let canonical = identify_canonical_form(surface, tol);
+    for ts in &mut result.tshapes {
+        if let TShape::Face(fd) = &mut *Arc::make_mut(ts) {
+            let surface = match fd.surface.as_mut() {
+                Some(s) => s,
+                None => continue,
+            };
+            let _canonical = identify_canonical_form(surface, tol);
 
-        match surface {
-            Surface3::Plane(p) if options.convert_planes => {
-                // Planes are already in their optimal form
-                // We could transform them to canonical planes, but that would
-                // require transforming all referenced geometry as well
-                let _ = canonical; // Already identified
+            match surface {
+                Surface3::Plane(_) if options.convert_planes => {
+                    // Planes are already in their optimal form
+                }
+                Surface3::Cylinder(_) if options.convert_revolution_surfaces => {
+                    // Cylinder is already optimal for its frame
+                }
+                Surface3::Sphere(_) if options.convert_spheres => {
+                    // Sphere is already optimal
+                }
+                Surface3::Cone(_) if options.convert_revolution_surfaces => {
+                    // Cone is already optimal
+                }
+                Surface3::Torus(_) if options.convert_tori => {
+                    // Torus is already optimal
+                }
+                _ => {}
             }
-            Surface3::Cylinder(c) if options.convert_revolution_surfaces => {
-                // Cylinder is already optimal for its frame
-                let _ = c;
-            }
-            Surface3::Sphere(s) if options.convert_spheres => {
-                // Sphere is already optimal
-                let _ = s;
-            }
-            Surface3::Cone(c) if options.convert_revolution_surfaces => {
-                // Cone is already optimal
-                let _ = c;
-            }
-            Surface3::Torus(t) if options.convert_tori => {
-                // Torus is already optimal
-                let _ = t;
-            }
-            _ => {}
         }
     }
 
@@ -1759,19 +1777,21 @@ fn try_detect_torus(surface: &BSplineSurface, tolerance: f64) -> Option<Toroidal
 pub fn simplify_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> rcad_kernel::BRep {
     let mut result = brep.clone();
 
-    for surface in &mut result.geom.surfaces {
-        if let Surface3::BSpline(bspline) = surface
-            && let Some(analytic) = try_convert_to_analytic(bspline, tolerance) {
-                *surface = analytic;
-            }
+    for ts in &mut result.tshapes {
+        if let TShape::Face(fd) = &mut *Arc::make_mut(ts) {
+            let surface = match fd.surface.as_mut() {
+                Some(s) => s,
+                None => continue,
+            };
+            if let Surface3::BSpline(bspline) = surface
+                && let Some(analytic) = try_convert_to_analytic(bspline, tolerance) {
+                    *surface = analytic;
+                }
+        }
     }
 
     result
 }
-
-// =============================================================================
-// Direct Faces Conversion
-// =============================================================================
 
 /// Convert indirect faces to direct faces.
 ///
@@ -1788,13 +1808,22 @@ pub fn simplify_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> rcad_kerne
 pub fn make_direct_faces(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
     let mut result = brep.clone();
 
-    for surface in &mut result.geom.surfaces {
-        *surface = resolve_to_direct_surface(surface);
+    // Resolve surfaces on faces
+    for ts in &mut result.tshapes {
+        if let TShape::Face(fd) = &mut *Arc::make_mut(ts) {
+            if let Some(ref mut surface) = fd.surface {
+                *surface = resolve_to_direct_surface(surface);
+            }
+        }
     }
 
-    // Also resolve curves
-    for curve in &mut result.geom.curves {
-        *curve = resolve_to_direct_curve(curve);
+    // Resolve curves on edges
+    for ts in &mut result.tshapes {
+        if let TShape::Edge(ed) = &mut *Arc::make_mut(ts) {
+            if let Some(ref mut curve) = ed.curve {
+                *curve = resolve_to_direct_curve(curve);
+            }
+        }
     }
 
     result
@@ -1930,8 +1959,14 @@ pub fn customize_shape(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel
 
 /// Count how many surfaces were converted to canonical form.
 fn count_canonical_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
+    let surfaces_before: Vec<&Surface3> = before.tshapes.iter().filter_map(|ts| {
+        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+    }).collect();
+    let surfaces_after: Vec<&Surface3> = after.tshapes.iter().filter_map(|ts| {
+        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+    }).collect();
     let mut count = 0;
-    for (s_before, s_after) in before.geom.surfaces.iter().zip(after.geom.surfaces.iter()) {
+    for (s_before, s_after) in surfaces_before.iter().zip(surfaces_after.iter()) {
         let form_before = identify_canonical_form(s_before, TOLERANCE_MESH_LEGACY);
         let form_after = identify_canonical_form(s_after, TOLERANCE_MESH_LEGACY);
         if form_before != form_after && form_after != CanonicalForm::NonCanonical {
@@ -1943,8 +1978,14 @@ fn count_canonical_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::
 
 /// Count how many BSpline surfaces were converted to analytic.
 fn count_analytic_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
+    let surfaces_before: Vec<&Surface3> = before.tshapes.iter().filter_map(|ts| {
+        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+    }).collect();
+    let surfaces_after: Vec<&Surface3> = after.tshapes.iter().filter_map(|ts| {
+        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+    }).collect();
     let mut count = 0;
-    for (s_before, s_after) in before.geom.surfaces.iter().zip(after.geom.surfaces.iter()) {
+    for (s_before, s_after) in surfaces_before.iter().zip(surfaces_after.iter()) {
         if matches!(s_before, Surface3::BSpline(_)) && !matches!(s_after, Surface3::BSpline(_)) {
             count += 1;
         }
@@ -1954,7 +1995,10 @@ fn count_analytic_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::B
 
 /// Count indirect faces (faces with Offset/Trimmed surfaces).
 fn count_indirect_faces(brep: &rcad_kernel::BRep) -> usize {
-    brep.geom.surfaces.iter()
+    brep.tshapes.iter()
+        .filter_map(|ts| {
+            if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+        })
         .filter(|s| matches!(s, Surface3::Offset(_) | Surface3::Trimmed(_)))
         .count()
 }

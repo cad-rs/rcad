@@ -11,6 +11,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::topods;
+use rcad_kernel::topology;
 use rcad_kernel::geom::{any_perpendicular, Curve3, CurveEval, Surface3, SurfaceEval};
 use std::collections::HashMap;
 
@@ -637,48 +638,28 @@ fn sample_wire_polygon_points(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topo
  if !seen_edge_indices.insert(we.idx) {
  continue;
  }
- let Some(edge) = brep.edges.get(we.idx) else {
+ let Some(topods::TShape::Edge(ed)) = brep.tshapes.get(we.idx).map(|ts| ts.as_ref()) else {
  continue;
  };
- let topo_closed = edge.start == edge.end;
+ let topo_closed = ed.first.index == ed.last.index;
 
- let start_idx = if we.forward { edge.start } else { edge.end };
- let end_idx = if we.forward { edge.end } else { edge.start };
+ let start_idx = if we.forward { ed.first.index } else { ed.last.index };
+ let end_idx = if we.forward { ed.last.index } else { ed.first.index };
 
- let p_start = match brep.vertices.get(start_idx) {
- Some(v) => v.point,
+ let p_start = match brep.vertex_point(start_idx) {
+ Some(pt) => pt,
  None => continue,
  };
- let p_end = match brep.vertices.get(end_idx) {
- Some(v) => v.point,
+ let p_end = match brep.vertex_point(end_idx) {
+ Some(pt) => pt,
  None => continue,
  };
- let edge_tol = brep
- .geom
- .edge_tolerance
- .get(we.idx)
- .copied()
- .unwrap_or(0.0)
- .max(0.0);
+ let edge_tol = ed.tolerance.max(0.0);
 
  let mut sampled = false;
- if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v)
- && let Some(curve) = brep.geom.curves.get(ci)
+ if let Some(curve) = &ed.curve
  && !matches!(curve, Curve3::Line(_)) {
- let Some([r0, r1]) = brep
- .geom
- .edge_curve_range
- .get(we.idx)
- .and_then(|v| *v)
- .or(match curve {
- Curve3::Circle(_) | Curve3::Ellipse(_) => {
- Some([0.0, 2.0 * std::f64::consts::PI])
- }
- _ => None,
- })
- else {
- continue;
- };
+ let [r0, r1] = ed.range;
 
  let mut t0 = r0;
  let mut t1 = r1;
@@ -1030,97 +1011,86 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
 pub fn mesh_brep(brep: &mut rcad_kernel::BRep, params: &TessellationParams) {
  let mut face_flat_idx = 0usize;
 
- for solid_idx in 0..brep.solids.len() {
- for shell_idx in 0..brep.solids[solid_idx].shells.len() {
- let n_faces = brep.solids[solid_idx].shells[shell_idx].faces.len();
- for face_idx in 0..n_faces {
- // Skip faces whose cached triangulation is still valid.
+ // Collect all Face TShape indices in flat order.
+ let face_tsi: Vec<usize> = brep.tshapes.iter().enumerate()
+ .filter_map(|(i, ts)| if matches!(ts.as_ref(), topods::TShape::Face(_)) { Some(i) } else { None })
+ .collect();
+
+ // Collect vertex points to add (to avoid borrow conflicts with immutable tshapes iteration).
+ let mut new_verts: Vec<DVec3> = Vec::new();
+
  {
- let face = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
- if face.mesh_is_clean() {
+ for ts in &brep.tshapes {
+ let topods::TShape::Solid(sd) = ts.as_ref() else { continue };
+ for sr in &sd.shells {
+ let Some(shd) = (if sr.index < brep.tshapes.len() {
+ match &*brep.tshapes[sr.index] { topods::TShape::Shell(sh) => Some(sh), _ => None }
+ } else { None }) else { continue };
+ for _fr in &shd.faces {
+ let tsi = face_tsi.get(face_flat_idx).copied().unwrap_or(usize::MAX);
+ let Some(face_data) = (if tsi != usize::MAX {
+ match &*brep.tshapes[tsi] { topods::TShape::Face(fd) => Some(fd), _ => None }
+ } else { None }) else {
  face_flat_idx += 1;
  continue;
- }
- }
+ };
 
- // Resolve surface and UV domain.
- let surf_and_domain: Option<(Surface3, [f64; 4])> = brep
- .geom
- .face_surface
- .get(face_flat_idx)
- .and_then(|o| *o)
- .and_then(|si| brep.geom.surfaces.get(si).cloned())
- .map(|surf| {
- let domain = brep
- .geom
- .face_surface_range
- .get(face_flat_idx)
- .and_then(|o| *o)
- .unwrap_or_else(|| surf.default_domain());
+ // Resolve surface and UV domain from TFaceData.
+ let surf_and_domain: Option<(Surface3, [f64; 4])> = face_data.surface.clone().map(|surf| {
+ let domain = face_data.uv_domain.unwrap_or_else(|| surf.default_domain());
  (surf, domain)
  });
-
- brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .triangles
- .clear();
 
  let mut filled = false;
 
  if let Some((surf, domain)) = surf_and_domain {
  let [u0, u1, v0, v1] = domain;
 
- // Clamp infinite domains (e.g. cylinder v-range) using
- // vertex projections.
+ // Clamp infinite domains using vertex projections.
  let (u0, u1, v0, v1) = clamp_domain_to_vertices(
  brep, face_flat_idx, &surf, u0, u1, v0, v1,
  );
 
  let is_plane = matches!(surf, Surface3::Plane(_));
- // Scale-aware UV closure tolerance (phase C): min extent grows with
- // domain size, bounded by historic mesh-tier cap.
  let uv_domain_min = uv_polyline_trim_closed_len_sq(u1 - u0, v1 - v0).sqrt();
  let plane_analytic_ok = !is_plane
  || (u1 - u0).abs() * (v1 - v0).abs() >= uv_domain_min * uv_domain_min;
 
  let domain_ok = (u1 - u0).abs() >= uv_domain_min
  && (v1 - v0).abs() >= uv_domain_min;
- let has_inner_wires = !brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .inner_wires
- .is_empty();
- // `triangulate_surface` currently emits a domain patch and does not carve
- // hole loops. For faces with inner wires, force wire-based fallback path.
- // Imported planar faces frequently have concave boundaries / holes.
- // Prefer wire-based triangulation for planes to preserve trims exactly.
+ let has_inner_wires = !face_data.inner_wires.is_empty();
+
  if domain_ok && plane_analytic_ok && !has_inner_wires && !is_plane {
  let mesh = triangulate_surface(&surf, [u0, u1], [v0, v1], params);
  if !mesh.triangles.is_empty() {
- // Append new vertices and remap triangle indices.
- let base = brep.vertices.len();
- for &pt in &mesh.nodes {
- brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
- }
- let tris: Vec<[usize; 3]> = mesh
- .triangles
- .iter()
- .map(|&[a, b, c]| [base + a, base + b, base + c])
- .collect();
- brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .triangles = tris;
+ new_verts.extend_from_slice(&mesh.nodes);
  filled = true;
  }
  }
  }
 
  if !filled {
- // Faces without a surface, degenerate UV trim, or analytic tessellation that
- // collapsed (e.g. plane caps bounded by a single circle edge =hull from corner
- // vertices is a sliver; weld removes all triangles): sample the full outer
- // wire (including curved edges) and ear-clip.
- let face_ref = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
- let outer_pts = sample_wire_polygon_points(brep, &face_ref.outer_wire);
- let hole_pts: Vec<Vec<DVec3>> = face_ref
- .inner_wires
- .iter()
+ // Wire-based triangulation fallback.
+ let outer_we: Vec<topology::WireEdge> = (if face_data.outer_wire.index < brep.tshapes.len() {
+ match &*brep.tshapes[face_data.outer_wire.index] {
+ topods::TShape::Wire(wd) => wd.edges.iter().map(|e| topology::WireEdge::new(e.index, e.orientation.is_forward())).collect(),
+ _ => Vec::new(),
+ }
+ } else { Vec::new() });
+ let outer_wire = topology::Wire { edges: outer_we };
+
+ let inner_wires: Vec<topology::Wire> = face_data.inner_wires.iter().map(|iw_sr| {
+ let edges = (if iw_sr.index < brep.tshapes.len() {
+ match &*brep.tshapes[iw_sr.index] {
+ topods::TShape::Wire(wd) => wd.edges.iter().map(|e| topology::WireEdge::new(e.index, e.orientation.is_forward())).collect(),
+ _ => Vec::new(),
+ }
+ } else { Vec::new() });
+ topology::Wire { edges }
+ }).collect();
+
+ let outer_pts = sample_wire_polygon_points(brep, &outer_wire);
+ let hole_pts: Vec<Vec<DVec3>> = inner_wires.iter()
  .map(|wire| sample_wire_polygon_points(brep, wire))
  .filter(|pts| pts.len() >= 3)
  .collect();
@@ -1129,45 +1099,33 @@ pub fn mesh_brep(brep: &mut rcad_kernel::BRep, params: &TessellationParams) {
  for hole in &hole_pts {
  poly_pts.extend_from_slice(hole);
  }
- let fallback_normal =
- estimate_polygon_normal(&outer_pts).unwrap_or(face_ref.normal);
  let local_tris = if hole_pts.is_empty() {
- triangulate_polygon(&outer_pts, fallback_normal)
+ triangulate_polygon(&outer_pts, DVec3::Z)
  } else {
- triangulate_polygon_with_holes(&outer_pts, &hole_pts, fallback_normal)
+ triangulate_polygon_with_holes(&outer_pts, &hole_pts, DVec3::Z)
  };
  if std::env::var("RCAD_DEBUG_FACE_TRI").is_ok() && !hole_pts.is_empty() {
  eprintln!(
  "[rcad-tri][debug] face_flat={} outer_pts={} holes={} hole_pts_total={} tris={}",
- face_flat_idx,
- outer_pts.len(),
- hole_pts.len(),
- hole_pts.iter().map(|h| h.len()).sum::<usize>(),
- local_tris.len()
+ face_flat_idx, outer_pts.len(), hole_pts.len(),
+ hole_pts.iter().map(|h| h.len()).sum::<usize>(), local_tris.len()
  );
  }
  if !local_tris.is_empty() {
- let base = brep.vertices.len();
- for &pt in &poly_pts {
- brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
- }
- let tris: Vec<[usize; 3]> = local_tris
- .iter()
- .map(|&[a, b, c]| [base + a, base + b, base + c])
- .collect();
- brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .triangles = tris;
+ new_verts.extend_from_slice(&poly_pts);
  }
  }
  }
-
- // Mark the face mesh as clean.
- brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .mesh_dirty = false;
 
  face_flat_idx += 1;
  }
  }
+ }
+ }
+
+ // Add collected vertices to the BRep.
+ for pt in &new_verts {
+ brep.add_tvertex(*pt);
  }
 }
 
@@ -1340,28 +1298,38 @@ fn clamp_domain_to_vertices(
 
  // Collect sampled wire points for this face so curved boundaries
  // (e.g. cylinder/cone circles) contribute to UV hull estimation.
- let face = brep
- .solids
- .iter()
- .flat_map(|s| s.shells.iter())
- .flat_map(|sh| sh.faces.iter())
- .nth(face_flat_idx);
-
- let Some(face) = face else {
+ // Find Face at face_flat_idx in TShape order.
+ let face_tsi: Vec<usize> = brep.tshapes.iter().enumerate()
+ .filter_map(|(i, ts)| if matches!(ts.as_ref(), topods::TShape::Face(_)) { Some(i) } else { None })
+ .collect();
+ let Some(&face_tsi) = face_tsi.get(face_flat_idx) else {
+ return (u0, u1, v0, v1);
+ };
+ let topods::TShape::Face(fd) = &*brep.tshapes[face_tsi] else {
  return (u0, u1, v0, v1);
  };
 
- let mut pts = sample_wire_polygon_points(brep, &face.outer_wire);
+ // Build a dangling topology::Wire from the outer_wire ShapeRef for sampling.
+ let outer_we: Vec<topology::WireEdge> = (if fd.outer_wire.index < brep.tshapes.len() {
+ match &*brep.tshapes[fd.outer_wire.index] {
+ topods::TShape::Wire(wd) => wd.edges.iter().map(|e| topology::WireEdge::new(e.index, e.orientation.is_forward())).collect(),
+ _ => Vec::new(),
+ }
+ } else { Vec::new() });
+ let outer_wire_w = topology::Wire { edges: outer_we };
+
+ let mut pts = sample_wire_polygon_points(brep, &outer_wire_w);
  if pts.is_empty() {
  // Fallback to topological endpoints when wire sampling is unavailable.
- pts = face
- .outer_wire
+ pts = outer_wire_w
  .edges
  .iter()
  .filter_map(|we| {
- brep.edges.get(we.idx).and_then(|e| {
- let vi = if we.forward { e.start } else { e.end };
- brep.vertices.get(vi).map(|v| v.point)
+ brep.tshapes.get(we.idx).and_then(|ts| {
+ if let topods::TShape::Edge(ed) = ts.as_ref() {
+ let vi = if we.forward { ed.first.index } else { ed.last.index };
+ brep.vertex_point(vi)
+ } else { None }
  })
  })
  .collect();

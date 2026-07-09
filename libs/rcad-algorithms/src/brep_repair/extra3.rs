@@ -1,4 +1,4 @@
-﻿/// Handle degenerate points on periodic surfaces.
+/// Handle degenerate points on periodic surfaces.
 ///
 /// This function identifies and handles degenerate points such as:
 /// - Sphere poles (V=0 and V= ?
@@ -41,7 +41,7 @@ pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (rc
 
  // Check vertices for degeneracy
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
+ if let Some(edge) = ed_opt(brep, we.idx) {
  let vi = if we.forward { edge.start } else { edge.end };
  if let Some(vertex) = brep.vertices.get(vi)
  && is_vertex_at_degenerate_point(
@@ -189,11 +189,11 @@ pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -
  let j_starts_near_period = (uv_start_j.x - u_period).abs() < seam_proximity;
 
  // Check if they share a 3D vertex (required for merging)
- let edge_i = match brep.edges.get(ei) {
+ let edge_i = match ed_opt(brep, ei) {
  Some(e) => e,
  None => continue,
  };
- let edge_j = match brep.edges.get(ej) {
+ let edge_j = match ed_opt(brep, ej) {
  Some(e) => e,
  None => continue,
  };
@@ -424,7 +424,7 @@ fn compute_curvature_adjusted_tolerance(brep: &rcad_kernel::BRep, base_tolerance
 fn compute_face_area(brep: &rcad_kernel::BRep, face: &Face) -> f64 {
  let mut pts: Vec<DVec3> = Vec::new();
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
+ if let Some(edge) = ed_opt(brep, we.idx) {
  let vi = if we.forward { edge.start } else { edge.end };
  if let Some(v) = brep.vertices.get(vi) {
  pts.push(v.point);
@@ -1258,7 +1258,7 @@ impl ClosureReport {
 pub fn check_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep) -> ClosureReport {
  use std::collections::{HashMap, HashSet};
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let face_count = shell.faces.len();
 
  // Collect unique edges and count edge-face references
@@ -1295,7 +1295,7 @@ pub fn check_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep) -> ClosureRe
  // Collect unique vertices from unique edges
  let mut unique_verts: HashSet<usize> = HashSet::new();
  for &ei in &unique_edges {
- if let Some(edge) = brep.edges.get(ei) {
+ if let Some(edge) = ed_opt(brep, ei) {
  unique_verts.insert(edge.start);
  unique_verts.insert(edge.end);
  }
@@ -1428,7 +1428,7 @@ fn compute_shell_centroid(shell: &Shell, brep: &rcad_kernel::BRep) -> DVec3 {
 
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
+ if let Some(edge) = ed_opt(brep, we.idx) {
  let vi = if we.forward { edge.start } else { edge.end };
  if let Some(v) = brep.vertices.get(vi) {
  sum += v.point;
@@ -1451,7 +1451,7 @@ fn compute_face_centroid(wire: &Wire, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut count = 0usize;
 
  for we in &wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
+ if let Some(edge) = ed_opt(brep, we.idx) {
  let vi = if we.forward { edge.start } else { edge.end };
  if let Some(v) = brep.vertices.get(vi) {
  sum += v.point;
@@ -1479,7 +1479,7 @@ struct ManifoldReport {
 fn analyze_shell_manifoldness(shell: &Shell, brep: &rcad_kernel::BRep) -> ManifoldReport {
  use std::collections::{HashMap, HashSet};
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
 
  // Count edge-face references
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
@@ -1508,7 +1508,7 @@ fn analyze_shell_manifoldness(shell: &Shell, brep: &rcad_kernel::BRep) -> Manifo
  // Find non-manifold vertices
  let mut vertex_edge_count: HashMap<usize, HashSet<usize>> = HashMap::new();
  for &ei in edge_face_count.keys() {
- if let Some(edge) = brep.edges.get(ei) {
+ if let Some(edge) = ed_opt(brep, ei) {
  vertex_edge_count.entry(edge.start).or_default().insert(ei);
  vertex_edge_count.entry(edge.end).or_default().insert(ei);
  }
@@ -1743,7 +1743,7 @@ pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &rcad_kernel::BRep) -
  return (fixed_shell, report);
  }
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let mut edge_faces: HashMap<usize, Vec<(usize, bool)>> = HashMap::new();
 
  for (face_idx, face) in shell.faces.iter().enumerate() {
@@ -1844,7 +1844,7 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
  tolerance_used: tolerance,
  };
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
@@ -1873,8 +1873,8 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
  let mut extended = false;
  for &oe in &open_edges {
  if visited.contains(&oe) { continue; }
- let last = brep.edges.get(chain[chain.len() - 1]);
- let curr = brep.edges.get(oe);
+ let last = ed_opt(brep, chain[chain.len() - 1]);
+ let curr = ed_opt(brep, oe);
  if let (Some(l), Some(c)) = (last, curr)
  && (l.end == c.start || l.end == c.end || l.start == c.start || l.start == c.end) {
  chain.push(oe);
@@ -1888,8 +1888,8 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
 
  if chain.len() >= 3 {
  let is_closed_loop = {
- let first = brep.edges.get(chain[0]);
- let last = brep.edges.get(chain[chain.len() - 1]);
+ let first = ed_opt(brep, chain[0]);
+ let last = ed_opt(brep, chain[chain.len() - 1]);
  if let (Some(f), Some(l)) = (first, last) {
  l.end == f.start || l.start == f.start || l.end == f.end || l.start == f.end
  } else { false }
@@ -1924,7 +1924,7 @@ fn estimate_chain_area(chain: &[usize], brep: &rcad_kernel::BRep) -> f64 {
  if chain.len() < 3 { return 0.0; }
  let mut nodes: Vec<DVec3> = Vec::new();
  for &ei in chain {
- if let Some(edge) = brep.edges.get(ei)
+ if let Some(edge) = ed_opt(brep, ei)
  && let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
  if nodes.is_empty() { nodes.push(s.point); }
  nodes.push(e.point);

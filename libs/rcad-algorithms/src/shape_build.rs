@@ -1033,14 +1033,77 @@ impl BRepBuilder {
 
  /// Build and return the final BRep.
  pub fn build(self) -> rcad_kernel::BRep {
- rcad_kernel::BRep {
- vertices: self.vertices,
- edges: self.edges,
- solids: self.solids,
- geom: self.geom,
- compound: None,
- compsolid: None,
+ use rcad_kernel::topods::{self, ShapeRef, Orientation};
+ let mut brep = topods::BRep::new();
+
+ // Map old vertex flat index -> ShapeRef
+ let vrefs: Vec<ShapeRef> = self.vertices.iter()
+  .map(|v| brep.add_tvertex(v.point))
+  .collect();
+
+ // Map old edge flat index -> ShapeRef
+ let erefs: Vec<ShapeRef> = self.edges.iter().enumerate().map(|(i, e)| {
+  let v1 = vrefs.get(e.start).copied().unwrap_or(ShapeRef::NULL);
+  let v2 = vrefs.get(e.end).copied().unwrap_or(ShapeRef::NULL);
+  let curve = self.geom.edge_curve.get(i)
+   .and_then(|&opt| opt)
+   .and_then(|ci| self.geom.curves.get(ci).cloned());
+  let range = self.geom.edge_curve_range.get(i)
+   .and_then(|&opt| opt)
+   .unwrap_or([0.0, 1.0]);
+  let er = brep.add_tedge(curve, v1, v2, range);
+  if let Some(&true) = self.geom.edge_degenerated.get(i) {
+   brep.edge_mut(er).degenerated = true;
+  }
+  if let Some(&tol) = self.geom.edge_tolerance.get(i) {
+   if tol > 0.0 { brep.edge_mut(er).tolerance = tol; }
+  }
+  er
+ }).collect();
+
+ // Walk solid/shell/face hierarchy and build TShapes
+ for solid in &self.solids {
+  let mut shell_refs = Vec::new();
+  for shell in &solid.shells {
+   let mut face_refs = Vec::new();
+   for face in &shell.faces {
+    // Build outer wire
+    let outer_edge_refs: Vec<ShapeRef> = face.outer_wire.edges.iter()
+     .map(|we| ShapeRef::synthetic_with_orientation(
+      erefs.get(we.idx).map(|e| e.index).unwrap_or(usize::MAX),
+      if we.forward { Orientation::Forward } else { Orientation::Reversed },
+     ))
+     .collect();
+    let outer_wire = brep.add_twire(outer_edge_refs);
+
+    // Build inner wires
+    let inner_wires: Vec<ShapeRef> = face.inner_wires.iter()
+     .map(|wire| {
+      let wire_edge_refs: Vec<ShapeRef> = wire.edges.iter()
+       .map(|we| ShapeRef::synthetic_with_orientation(
+        erefs.get(we.idx).map(|e| e.index).unwrap_or(usize::MAX),
+        if we.forward { Orientation::Forward } else { Orientation::Reversed },
+       ))
+       .collect();
+      brep.add_twire(wire_edge_refs)
+     })
+     .collect();
+
+    // Surface from GeomStore
+    let surface = self.geom.surfaces.first().cloned();
+    let uv_domain = surface.as_ref().map(|s| s.default_domain());
+
+    let face_ref = brep.add_tface(surface, outer_wire, inner_wires,
+     face.sample_point, uv_domain, Vec::new(), true);
+    face_refs.push(face_ref);
+   }
+   let shell_ref = brep.add_tshell(face_refs);
+   shell_refs.push(shell_ref);
+  }
+  brep.add_tsolid(shell_refs);
  }
+
+ brep
  }
 }
 

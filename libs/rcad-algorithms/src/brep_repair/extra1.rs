@@ -1,4 +1,4 @@
-﻿/// Get curvature at a parameter value on a curve.
+/// Get curvature at a parameter value on a curve.
 fn curve_curvature_at(curve: &rcad_kernel::Curve3, t: f64) -> Option<f64> {
  use rcad_kernel::CurveEval;
 
@@ -59,7 +59,7 @@ fn analyze_shared_face_pair(
  .edges
  .iter()
  .flat_map(|we| {
- let edge = brep.edges.get(we.idx)?;
+ let edge = ed_opt(brep, we.idx)?;
  if we.forward {
  Some(vec![edge.start, edge.end])
  } else {
@@ -74,7 +74,7 @@ fn analyze_shared_face_pair(
  .edges
  .iter()
  .flat_map(|we| {
- let edge = brep.edges.get(we.idx)?;
+ let edge = ed_opt(brep, we.idx)?;
  if we.forward {
  Some(vec![edge.start, edge.end])
  } else {
@@ -241,8 +241,8 @@ impl ConnectivityStrength {
 pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
  let mut graph = ConnectivityGraph::default();
 
- let n_vertices = brep.vertices.len();
- let n_edges = brep.edges.len();
+ let n_vertices = brep.vertex_count();
+ let n_edges = brep.edge_count();
 
  graph.vertex_count = n_vertices;
  graph.edge_count = n_edges;
@@ -253,7 +253,7 @@ pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
  graph.edge_vertices = Vec::with_capacity(n_edges);
 
  // Build vertex adjacency via edges
- for edge in brep.edges.iter() {
+ for edge in each_edge(brep) {
  graph.edge_vertices.push((edge.start, edge.end));
 
  // Add bidirectional vertex adjacency
@@ -269,7 +269,7 @@ pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
 
  // Build edge adjacency via shared vertices
  let mut vertex_to_edges: Vec<Vec<usize>> = vec![Vec::new(); n_vertices];
- for (ei, edge) in brep.edges.iter().enumerate() {
+ for (ei, edge) in each_edge(brep).enumerate() {
  if edge.start < n_vertices {
  vertex_to_edges[edge.start].push(ei);
  }
@@ -554,9 +554,9 @@ fn compute_face_center(brep: &rcad_kernel::BRep, face_flat_idx: usize) -> Option
  let mut count = 0;
 
  for we in &face.outer_wire.edges {
- let edge = brep.edges.get(we.idx)?;
+ let edge = ed_opt(brep, we.idx)?;
  let v = if we.forward { edge.start } else { edge.end };
- if v < brep.vertices.len() {
+ if v < brep.vertex_count() {
  center += brep.vertices[v].point;
  count += 1;
  }
@@ -597,12 +597,12 @@ fn classify_gap_type(brep: &rcad_kernel::BRep, fa: usize, fb: usize, distance: f
  if normal_dot < 0.1 {
  // Check if edges are close
  for we_a in &face_a.outer_wire.edges {
- if let Some(edge_a) = brep.edges.get(we_a.idx) {
+ if let Some(edge_a) = ed_opt(brep, we_a.idx) {
  let pa_s = brep.vertices.get(edge_a.start).map(|v| v.point);
  let pa_e = brep.vertices.get(edge_a.end).map(|v| v.point);
  if let (Some(pas), Some(pae)) = (pa_s, pa_e) {
  for we_b in &face_b.outer_wire.edges {
- if let Some(edge_b) = brep.edges.get(we_b.idx) {
+ if let Some(edge_b) = ed_opt(brep, we_b.idx) {
  let pb_s = brep.vertices.get(edge_b.start).map(|v| v.point);
  let pb_e = brep.vertices.get(edge_b.end).map(|v| v.point);
  if let (Some(pbs), Some(pbe)) = (pb_s, pb_e) {
@@ -920,7 +920,7 @@ fn merge_gap_by_geometry(
 
 /// Merge two specific vertices in a brep.
 fn merge_specific_vertices(brep: &rcad_kernel::BRep, drop_vi: usize, keep_vi: usize) -> rcad_kernel::BRep {
- if drop_vi == keep_vi || drop_vi >= brep.vertices.len() || keep_vi >= brep.vertices.len() {
+ if drop_vi == keep_vi || drop_vi >= brep.vertex_count() || keep_vi >= brep.vertex_count() {
  return brep.clone();
  }
 
@@ -1497,7 +1497,7 @@ pub fn fix_same_range_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) -> (rc
 /// Analogous to `BRepOffsetAPI_Sewing` vertex merging or
 /// `ShapeFix_Wire::FixSameParameter`.
 pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
- let n = brep.vertices.len();
+ let n = brep.vertex_count();
  // Union-find: parent[i] = canonical representative of vertex i
  let mut parent: Vec<usize> = (0..n).collect();
 
@@ -1527,7 +1527,7 @@ pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
  // OCCT-aligned: compute degenerate edge vertex pairs to skip merging.
  // OCCT uses distinct TopoDS_Vertex for deg edge ends at the same point.
  let deg_skip: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::from_iter(
- brep.edges.iter().enumerate().filter_map(|(ei, e)| {
+ each_edge(brep).enumerate().filter_map(|(ei, e)| {
  if brep.geom.edge_degenerated.get(ei).copied().unwrap_or(false) {
  Some((e.start.min(e.end), e.start.max(e.end)))
  } else { None }
@@ -1703,7 +1703,7 @@ pub fn remove_degenerate_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, 
  .edges
  .iter()
  .filter_map(|we| {
- brep.edges.get(we.idx).and_then(|e| {
+ ed_opt(brep, we.idx).and_then(|e| {
  let vidx = if we.forward { e.start } else { e.end };
  brep.vertices.get(vidx).map(|v| v.point)
  })
@@ -1763,7 +1763,7 @@ pub fn recompute_face_normals(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, u
  .edges
  .iter()
  .filter_map(|we| {
- brep.edges.get(we.idx).and_then(|e| {
+ ed_opt(brep, we.idx).and_then(|e| {
  let vidx = if we.forward { e.start } else { e.end };
  brep.vertices.get(vidx).map(|v| v.point)
  })
@@ -1940,11 +1940,11 @@ fn fix_wire(wire: &Wire, brep: &rcad_kernel::BRep, tol2: f64) -> (Wire, usize) {
 
  for i in 0..n {
  let next = (i + 1) % n;
- let e_curr = match brep.edges.get(edges[i].idx) {
+ let e_curr = match ed_opt(brep, edges[i].idx) {
  Some(e) => e,
  None => continue,
  };
- let e_next = match brep.edges.get(edges[next].idx) {
+ let e_next = match ed_opt(brep, edges[next].idx) {
  Some(e) => e,
  None => continue,
  };

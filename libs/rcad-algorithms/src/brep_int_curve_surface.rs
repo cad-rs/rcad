@@ -7,7 +7,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
-use rcad_kernel::Face;
+use rcad_kernel::topods::{self, TShape};
 use crate::bvh::{Aabb, Bvh};
 use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
@@ -513,8 +513,7 @@ pub fn ray_cast(
         .into_iter()
         .filter(|i| i.param > TOLERANCE_ABS)
         .filter_map(|i| {
-            let face = get_face(brep, i.face_index);
-            let normal = face.map_or(DVec3::Z, |f| f.normal);
+            let normal = get_face_normal(brep, i.face_index);
 
             Some(RayHit {
                 point: i.point,
@@ -636,45 +635,44 @@ pub fn is_point_inside_by_ray(point: DVec3, brep: &rcad_kernel::BRep) -> bool {
 // Helper Functions
 // =============================================================================
 
-/// Collect all face indices from a BRep.
+/// Collect all face indices from a BRep (tshape indices of TShape::Face entries).
 fn collect_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
-    let mut indices = Vec::new();
-    let mut count = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for _ in &shell.faces {
-                indices.push(count);
-                count += 1;
-            }
-        }
-    }
-
-    indices
+    brep.tshapes.iter().enumerate()
+        .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
+        .map(|(fi, _)| fi)
+        .collect()
 }
 
-/// Get a face by its flat index.
-fn get_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<&Face> {
-    let mut count = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                if count == face_idx {
-                    return Some(face);
-                }
-                count += 1;
-            }
-        }
-    }
-
-    None
+/// Compute an approximate face normal from the face's surface, evaluated at the
+/// center of the surface domain.  Returns `DVec3::Z` if no surface is available.
+fn get_face_normal(brep: &rcad_kernel::BRep, face_idx: usize) -> DVec3 {
+    let ts = match brep.tshapes.get(face_idx) {
+        Some(ts) => ts,
+        None => return DVec3::Z,
+    };
+    let TShape::Face(fd) = ts.as_ref() else { return DVec3::Z };
+    let Some(surf) = &fd.surface else { return DVec3::Z };
+    let dom = surf.default_domain();
+    let u = (dom[0] + dom[1]) * 0.5;
+    let v = (dom[2] + dom[3]) * 0.5;
+    if u.is_finite() && v.is_finite() { surf.normal_at(u, v) } else { DVec3::Z }
 }
 
-/// Get the surface for a face by its index.
+/// Collect wire edge refs (tshape index, forward) from a ShapeRef pointing to a TShape::Wire.
+fn get_wire_edge_refs(brep: &rcad_kernel::BRep, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
+    let Some(wts) = brep.tshapes.get(wire_ref.index) else { return Vec::new() };
+    let TShape::Wire(wd) = wts.as_ref() else { return Vec::new() };
+    wd.edges.iter().map(|er| {
+        let forward = er.orientation == topods::Orientation::Forward;
+        (er.index, forward)
+    }).collect()
+}
+
+/// Get the surface for a face by its tshape index.
 fn get_face_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface3> {
-    let surface_idx = brep.geom.face_surface.get(face_idx).copied().flatten()?;
-    brep.geom.surfaces.get(surface_idx).cloned()
+    let ts = brep.tshapes.get(face_idx)?;
+    let TShape::Face(fd) = ts.as_ref() else { return None };
+    fd.surface.clone()
 }
 
 /// Get the default domain for a curve.
@@ -929,23 +927,27 @@ fn compute_uv_for_point(surface: &Surface3, point: DVec3) -> DVec2 {
 ///
 /// Uses point-in-polygon test with the face's outer wire vertices.
 fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, face_idx: usize, tol: f64) -> bool {
-    let face = match get_face(brep, face_idx) {
+    let fd = match brep.tshapes.get(face_idx).and_then(|ts| {
+        if let TShape::Face(f) = ts.as_ref() { Some(f) } else { None }
+    }) {
         Some(f) => f,
-        None => return true, // No face bounds info, assume inside
+        None => return true,
     };
 
-    if face.outer_wire.edges.is_empty() {
+    // Get outer wire edges via ShapeRef
+    let outer_wire_edges = get_wire_edge_refs(brep, &fd.outer_wire);
+    if outer_wire_edges.is_empty() {
         return true;
     }
 
     // Get the surface for this face to project onto
     let surface = match get_face_surface(brep, face_idx) {
         Some(s) => s,
-        None => return true, // Can't check without surface
+        None => return true,
     };
 
-    // Collect the wire vertices in order
-    let wire_vertices = collect_wire_vertices(brep, &face.outer_wire);
+    // Collect the wire vertices in order from tshape data
+    let wire_vertices = collect_wire_vertices_from_edges(brep, &outer_wire_edges);
     if wire_vertices.len() < 3 {
         return true;
     }
@@ -955,11 +957,12 @@ fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, f
 
     // Also check against inner wires (holes) - point must be outside all inner wires
     if is_inside {
-        for inner_wire in &face.inner_wires {
-            let inner_vertices = collect_wire_vertices(brep, inner_wire);
+        for inner_wire_ref in &fd.inner_wires {
+            let inner_edges = get_wire_edge_refs(brep, inner_wire_ref);
+            let inner_vertices = collect_wire_vertices_from_edges(brep, &inner_edges);
             if inner_vertices.len() >= 3
                 && point_in_polygon_on_surface(&surface, point, &inner_vertices, tol) {
-                    return false; // Point is inside a hole
+                    return false;
                 }
         }
 
@@ -1005,19 +1008,18 @@ fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, f
     is_inside
 }
 
-/// Collect 3D vertex positions from a wire in traversal order.
-fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+/// Collect 3D vertex positions from wire edge refs in traversal order.
+fn collect_wire_vertices_from_edges(brep: &rcad_kernel::BRep, edge_refs: &[(usize, bool)]) -> Vec<DVec3> {
     let mut vertices = Vec::new();
-    for wire_edge in &wire.edges {
-        let edge = match brep.edges.get(wire_edge.idx) {
-            Some(e) => e,
+    for &(ei, forward) in edge_refs {
+        let ts = match brep.tshapes.get(ei) {
+            Some(ts) => ts,
             None => continue,
         };
-
-        // Get the starting vertex of this edge (based on traversal direction)
-        let vertex_idx = if wire_edge.forward { edge.start } else { edge.end };
-        if let Some(v) = brep.vertices.get(vertex_idx) {
-            vertices.push(v.point);
+        let TShape::Edge(ed) = ts.as_ref() else { continue };
+        let vertex_idx = if forward { ed.first.index } else { ed.last.index };
+        if let Some(p) = brep.vertex_point(vertex_idx) {
+            vertices.push(p);
         }
     }
     vertices

@@ -129,6 +129,7 @@ impl GlueFaceCache {
 
  /// Build the cache for a BRep by computing face centers, normals, and areas.
  pub fn build(&mut self, brep: &rcad_kernel::BRep, cell_size: f64) {
+ use rcad_kernel::topods::TShape;
  self.face_centers.clear();
  self.face_normals.clear();
  self.face_areas.clear();
@@ -136,23 +137,27 @@ impl GlueFaceCache {
  self.compatibility_cache.clear();
 
  let mut face_idx = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = ts.as_ref() {
+ for &sh_ref in &sd.shells {
+ let shell = brep.shell(sh_ref);
+ for &f_ref in &shell.faces {
+ let face = brep.face(f_ref);
+
  // Compute face center and area from boundary vertices
  let mut center = DVec3::ZERO;
  let mut area = 0.0;
  let mut count = 0usize;
 
- for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- center += brep.vertices[edge.start].point;
+ let wire = brep.wire(face.outer_wire);
+ for we_ref in &wire.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[we_ref.index] {
+ if let Some(p) = brep.vertex_point(ed.first.index) {
+ center += p;
  count += 1;
  }
- if edge.end < brep.vertices.len() {
- center += brep.vertices[edge.end].point;
+ if let Some(p) = brep.vertex_point(ed.last.index) {
+ center += p;
  count += 1;
  }
  }
@@ -165,16 +170,13 @@ impl GlueFaceCache {
  // Approximate area from bounding box
  let mut min_pt = DVec3::splat(f64::INFINITY);
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
- for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- let p = brep.vertices[edge.start].point;
+ for we_ref in &wire.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[we_ref.index] {
+ if let Some(p) = brep.vertex_point(ed.first.index) {
  min_pt = min_pt.min(p);
  max_pt = max_pt.max(p);
  }
- if edge.end < brep.vertices.len() {
- let p = brep.vertices[edge.end].point;
+ if let Some(p) = brep.vertex_point(ed.last.index) {
  min_pt = min_pt.min(p);
  max_pt = max_pt.max(p);
  }
@@ -183,8 +185,12 @@ impl GlueFaceCache {
  let diag = max_pt - min_pt;
  area = diag.x * diag.y + diag.y * diag.z + diag.z * diag.x;
 
+ let normal = face.surface.as_ref()
+ .map(|s| face_normal(s, face.uv_domain))
+ .unwrap_or(DVec3::Z);
+
  self.face_centers.push(center);
- self.face_normals.push(face.normal);
+ self.face_normals.push(normal);
  self.face_areas.push(area);
 
  // Add to spatial hash
@@ -192,6 +198,7 @@ impl GlueFaceCache {
  self.spatial_hash.entry(cell).or_default().push(face_idx);
 
  face_idx += 1;
+ }
  }
  }
  }
@@ -277,29 +284,32 @@ pub fn detect_glue_faces(
  cache_b.build(brep_b, cell_size);
 
  // Get face counts
- let faces_a: Vec<(usize, DVec3, DVec3, f64)> = brep_a.solids.iter()
- .flat_map(|s| s.shells.iter())
- .flat_map(|sh| sh.faces.iter().enumerate())
- .enumerate()
- .map(|(idx, (_, face))| {
- let center = cache_a.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
- let normal = face.normal;
- let area = cache_a.face_areas.get(idx).copied().unwrap_or(0.0);
- (idx, center, normal, area)
- })
- .collect();
+ use rcad_kernel::topods::TShape;
+ let collect_faces = |brep: &rcad_kernel::BRep, cache: &GlueFaceCache| -> Vec<(usize, DVec3, DVec3, f64)> {
+ let mut faces = Vec::new();
+ let mut face_idx = 0usize;
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = ts.as_ref() {
+ for &sh_ref in &sd.shells {
+ let shell = brep.shell(sh_ref);
+ for &f_ref in &shell.faces {
+ let face = brep.face(f_ref);
+ let center = cache.face_centers.get(face_idx).copied().unwrap_or(DVec3::ZERO);
+ let normal = face.surface.as_ref()
+ .map(|s| face_normal(s, face.uv_domain))
+ .unwrap_or(DVec3::Z);
+ let area = cache.face_areas.get(face_idx).copied().unwrap_or(0.0);
+ faces.push((face_idx, center, normal, area));
+ face_idx += 1;
+ }
+ }
+ }
+ }
+ faces
+ };
 
- let faces_b: Vec<(usize, DVec3, DVec3, f64)> = brep_b.solids.iter()
- .flat_map(|s| s.shells.iter())
- .flat_map(|sh| sh.faces.iter().enumerate())
- .enumerate()
- .map(|(idx, (_, face))| {
- let center = cache_b.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
- let normal = face.normal;
- let area = cache_b.face_areas.get(idx).copied().unwrap_or(0.0);
- (idx, center, normal, area)
- })
- .collect();
+ let faces_a = collect_faces(brep_a, &cache_a);
+ let faces_b = collect_faces(brep_b, &cache_b);
 
  // Early normal filter threshold
  let normal_threshold = -0.95;
@@ -464,91 +474,69 @@ pub fn compute_adaptive_glue_tolerance(
  brep_b: &rcad_kernel::BRep,
  base_tolerance: f64,
 ) -> f64 {
+ use rcad_kernel::topods::TShape;
+
  let mut min_feature_size = f64::INFINITY;
 
- // Analyze edge lengths
- for edge in &brep_a.edges {
- if edge.start < brep_a.vertices.len() && edge.end < brep_a.vertices.len() {
- let p1 = brep_a.vertices[edge.start].point;
- let p2 = brep_a.vertices[edge.end].point;
+ // Helper: analyze edge lengths in a BRep
+ let analyze_edge_lengths = |brep: &rcad_kernel::BRep| -> f64 {
+ let mut min_sz = f64::INFINITY;
+ for ts in &brep.tshapes {
+ if let TShape::Edge(ed) = ts.as_ref() {
+ if let (Some(p1), Some(p2)) = (brep.vertex_point(ed.first.index), brep.vertex_point(ed.last.index)) {
  let length = (p2 - p1).length();
  if length > TOLERANCE_LINEAR_ULTRA_STRICT {
- min_feature_size = min_feature_size.min(length);
+ min_sz = min_sz.min(length);
  }
  }
  }
- for edge in &brep_b.edges {
- if edge.start < brep_b.vertices.len() && edge.end < brep_b.vertices.len() {
- let p1 = brep_b.vertices[edge.start].point;
- let p2 = brep_b.vertices[edge.end].point;
- let length = (p2 - p1).length();
- if length > TOLERANCE_LINEAR_ULTRA_STRICT {
- min_feature_size = min_feature_size.min(length);
  }
- }
- }
+ min_sz
+ };
 
- // Analyze face areas (approximate from bounding box)
- for solid in &brep_a.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ // Analyze edge lengths
+ let ea = analyze_edge_lengths(brep_a);
+ let eb = analyze_edge_lengths(brep_b);
+ if ea < min_feature_size { min_feature_size = ea; }
+ if eb < min_feature_size { min_feature_size = eb; }
+
+ // Helper: analyze face areas from bounding box
+ let analyze_face_sizes = |brep: &rcad_kernel::BRep| -> f64 {
+ let mut min_feat = f64::INFINITY;
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = ts.as_ref() {
+ for &sh_ref in &sd.shells {
+ let shell = brep.shell(sh_ref);
+ for &f_ref in &shell.faces {
+ let face = brep.face(f_ref);
+ let wire = brep.wire(face.outer_wire);
  let mut min_pt = DVec3::splat(f64::INFINITY);
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
- for we in &face.outer_wire.edges {
- if we.idx < brep_a.edges.len() {
- let edge = &brep_a.edges[we.idx];
- if edge.start < brep_a.vertices.len() {
- let p = brep_a.vertices[edge.start].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
- if edge.end < brep_a.vertices.len() {
- let p = brep_a.vertices[edge.end].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
+ for we_ref in &wire.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[we_ref.index] {
+ if let Some(p) = brep.vertex_point(ed.first.index) { min_pt = min_pt.min(p); max_pt = max_pt.max(p); }
+ if let Some(p) = brep.vertex_point(ed.last.index) { min_pt = min_pt.min(p); max_pt = max_pt.max(p); }
  }
  }
  let diag = max_pt - min_pt;
  let size = diag.x.min(diag.y).min(diag.z);
  if size > TOLERANCE_LINEAR_ULTRA_STRICT {
- min_feature_size = min_feature_size.min(size);
+ min_feat = min_feat.min(size);
  }
  }
  }
  }
- for solid in &brep_b.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- let mut min_pt = DVec3::splat(f64::INFINITY);
- let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
- for we in &face.outer_wire.edges {
- if we.idx < brep_b.edges.len() {
- let edge = &brep_b.edges[we.idx];
- if edge.start < brep_b.vertices.len() {
- let p = brep_b.vertices[edge.start].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
  }
- if edge.end < brep_b.vertices.len() {
- let p = brep_b.vertices[edge.end].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
- }
- }
- let diag = max_pt - min_pt;
- let size = diag.x.min(diag.y).min(diag.z);
- if size > TOLERANCE_LINEAR_ULTRA_STRICT {
- min_feature_size = min_feature_size.min(size);
- }
- }
- }
- }
+ min_feat
+ };
+
+ let fa = analyze_face_sizes(brep_a);
+ let fb = analyze_face_sizes(brep_b);
+ if fa < min_feature_size { min_feature_size = fa; }
+ if fb < min_feature_size { min_feature_size = fb; }
 
  // Compute adaptive tolerance
  let adaptive_tol = if min_feature_size.is_finite() && min_feature_size > 0.0 {
- // Use a fraction of minimum feature size, but at least base tolerance
  let feature_based = min_feature_size * 0.01;
  base_tolerance.max(feature_based).min(min_feature_size * 0.1)
  } else {
@@ -698,4 +686,19 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 //  ?seam  ?IC  椤?= seam  ?  seam  椤? ?shifted pcurve ?
 // rcad: collect_face_edge_segments  ?seam  椤?椤??second_pcurve,
 // midpoint UV U=0  ?U=TAU  閵?= = 閳?
+
+/// Compute a representative normal for a face surface.
+/// For Plane surfaces the normal is exact; for others computes at UV center.
+fn face_normal(surf: &rcad_kernel::Surface3, uv_domain: Option<[f64; 4]>) -> DVec3 {
+    use rcad_kernel::geom::SurfaceEval;
+    match surf {
+        rcad_kernel::Surface3::Plane(p) => p.normal,
+        _ => {
+            let domain = uv_domain.unwrap_or([0.0, 1.0, 0.0, 1.0]);
+            let u = (domain[0] + domain[1]) * 0.5;
+            let v = (domain[2] + domain[3]) * 0.5;
+            surf.normal_at(u, v)
+        }
+    }
+}
 

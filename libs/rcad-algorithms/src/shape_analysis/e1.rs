@@ -2,13 +2,24 @@
 /// Compute the flat face index from solid/shell/face indices.
 fn compute_flat_face_idx(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
     let mut idx = 0usize;
-    for s in 0..solid_idx {
-        for sh in &brep.solids[s].shells {
-            idx += sh.faces.len();
+    let mut found_solid = 0usize;
+    'tshapes: for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            if found_solid > solid_idx {
+                break;
+            }
+            for (shi, sh_sr) in sd.shells.iter().enumerate() {
+                if found_solid == solid_idx && shi >= shell_idx {
+                    break 'tshapes;
+                }
+                if found_solid < solid_idx || shi < shell_idx {
+                    if let TShape::Shell(ref sh_data) = &**brep.tshapes[sh_sr.index] {
+                        idx += sh_data.faces.len();
+                    }
+                }
+            }
+            found_solid += 1;
         }
-    }
-    for sh in 0..shell_idx {
-        idx += brep.solids[solid_idx].shells[sh].faces.len();
     }
     idx + face_idx
 }

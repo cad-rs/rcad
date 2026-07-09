@@ -1,4 +1,4 @@
-﻿/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
+/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
 fn newell_normal(pts: &[DVec3]) -> DVec3 {
  let n = pts.len();
  let mut normal = DVec3::ZERO;
@@ -550,10 +550,10 @@ pub fn analyze_tolerances(brep: &rcad_kernel::BRep, default_tolerance: f64) -> T
  let mut report = ToleranceAnalysisReport::default();
 
  // Collect vertex tolerances
- let vertex_tols: Vec<f64> = if brep.geom.vertex_tolerance.len() >= brep.vertices.len() {
+ let vertex_tols: Vec<f64> = if brep.geom.vertex_tolerance.len() >= brep.vertex_count() {
  brep.geom.vertex_tolerance.clone()
  } else {
- let mut tols = vec![default_tolerance; brep.vertices.len()];
+ let mut tols = vec![default_tolerance; brep.vertex_count()];
  for (i, &t) in brep.geom.vertex_tolerance.iter().enumerate() {
  if i < tols.len() {
  tols[i] = t;
@@ -564,10 +564,10 @@ pub fn analyze_tolerances(brep: &rcad_kernel::BRep, default_tolerance: f64) -> T
  report.vertices = ToleranceStats::from_tolerances(&vertex_tols);
 
  // Collect edge tolerances
- let edge_tols: Vec<f64> = if brep.geom.edge_tolerance.len() >= brep.edges.len() {
+ let edge_tols: Vec<f64> = if brep.geom.edge_tolerance.len() >= brep.edge_count() {
  brep.geom.edge_tolerance.clone()
  } else {
- let mut tols = vec![default_tolerance; brep.edges.len()];
+ let mut tols = vec![default_tolerance; brep.edge_count()];
  for (i, &t) in brep.geom.edge_tolerance.iter().enumerate() {
  if i < tols.len() {
  tols[i] = t;
@@ -578,7 +578,7 @@ pub fn analyze_tolerances(brep: &rcad_kernel::BRep, default_tolerance: f64) -> T
  report.edges = ToleranceStats::from_tolerances(&edge_tols);
 
  // Collect face tolerances
- let n_faces: usize = brep.solids.iter()
+ let n_faces: usize = each_solid(brep)
  .flat_map(|s| s.shells.iter())
  .map(|sh| sh.faces.len())
  .sum();
@@ -608,8 +608,8 @@ pub fn analyze_tolerances(brep: &rcad_kernel::BRep, default_tolerance: f64) -> T
  }
 
  // Check array completeness
- report.arrays_complete = brep.geom.vertex_tolerance.len() >= brep.vertices.len()
- && brep.geom.edge_tolerance.len() >= brep.edges.len()
+ report.arrays_complete = brep.geom.vertex_tolerance.len() >= brep.vertex_count()
+ && brep.geom.edge_tolerance.len() >= brep.edge_count()
  && brep.geom.face_tolerance.len() >= n_faces;
 
  report
@@ -665,8 +665,8 @@ pub fn limit_tolerances(brep: &rcad_kernel::BRep, max_tol: f64) -> rcad_kernel::
 /// the deviation. This implementation matches the same sampling strategy.
 pub fn update_edge_tolerance(brep: &mut rcad_kernel::BRep, edge_idx: usize, tol_floor: f64) -> f64 {
  let floor = tol_floor.max(TOLERANCE_ABS);
- let n_verts = brep.vertices.len();
- let n_edges = brep.edges.len();
+ let n_verts = brep.vertex_count();
+ let n_edges = brep.edge_count();
 
  // Ensure tolerance arrays are sized.
  if brep.geom.edge_tolerance.len() < n_edges {
@@ -676,7 +676,7 @@ pub fn update_edge_tolerance(brep: &mut rcad_kernel::BRep, edge_idx: usize, tol_
  brep.geom.vertex_tolerance.resize(n_verts, floor);
  }
 
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.edge_count() {
  return floor;
  }
 
@@ -760,7 +760,7 @@ pub fn update_all_edge_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) 
  let floor = tol_floor.max(TOLERANCE_ABS);
  let mut max_tol = floor;
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  for edge_idx in 0..n_edges {
  let t = update_edge_tolerance(brep, edge_idx, floor);
  max_tol = max_tol.max(t);
@@ -782,7 +782,7 @@ pub fn update_face_tolerance(brep: &mut rcad_kernel::BRep, flat_face_idx: usize,
  // Find the face by flat index.
  let mut cur = 0usize;
  let mut found_face: Option<(usize, usize, usize)> = None; // (solid, shell, face)
- for (si, solid) in brep.solids.iter().enumerate() {
+ for (si, solid) in each_solid(brep).enumerate() {
  for (shi, shell) in solid.shells.iter().enumerate() {
  let nf = shell.faces.len();
  if flat_face_idx < cur + nf {
@@ -815,7 +815,7 @@ pub fn update_face_tolerance(brep: &mut rcad_kernel::BRep, flat_face_idx: usize,
  }
 
  // Ensure face_tolerance array is sized.
- let n_faces: usize = brep.solids.iter()
+ let n_faces: usize = each_solid(brep)
  .flat_map(|s| s.shells.iter())
  .map(|sh| sh.faces.len())
  .sum();
@@ -866,7 +866,7 @@ pub fn update_all_face_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) 
 /// the range of each PCurve, and reparameterizes PCurves when they differ.
 /// This function extends or trims the PCurve range to match the 3D range.
 pub fn ensure_same_range(brep: &mut rcad_kernel::BRep, edge_idx: usize) -> bool {
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
 
  // Ensure arrays are sized.
  if brep.geom.edge_curve_range.len() < n_edges {
@@ -935,7 +935,7 @@ pub fn ensure_same_range(brep: &mut rcad_kernel::BRep, edge_idx: usize) -> bool 
 ///  ?OCCT = : BRepLib.cxx  ?SameRange (lines 75-120).
 pub fn ensure_all_same_range(brep: &mut rcad_kernel::BRep) -> usize {
  let mut count = 0usize;
- for edge_idx in 0..brep.edges.len() {
+ for edge_idx in 0..brep.edge_count() {
  if ensure_same_range(brep, edge_idx) {
  count += 1;
  }
@@ -971,14 +971,14 @@ pub fn ensure_normal_consistency(brep: &mut rcad_kernel::BRep) -> usize {
  for fi in 0..brep.solids[si].shells[shi].faces.len() {
  let face = &brep.solids[si].shells[shi].faces[fi];
  for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
+ if we.idx < brep.edge_count() {
  solid_verts.insert(brep.edges[we.idx].start);
  solid_verts.insert(brep.edges[we.idx].end);
  }
  }
  for wire in &face.inner_wires {
  for we in &wire.edges {
- if we.idx < brep.edges.len() {
+ if we.idx < brep.edge_count() {
  solid_verts.insert(brep.edges[we.idx].start);
  solid_verts.insert(brep.edges[we.idx].end);
  }
@@ -1015,7 +1015,7 @@ pub fn ensure_normal_consistency(brep: &mut rcad_kernel::BRep) -> usize {
  let mut face_centroid = DVec3::ZERO;
  let mut n_face_pts = 0usize;
  for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
+ if we.idx < brep.edge_count() {
  let vi = if we.forward {
  brep.edges[we.idx].start
  } else {
@@ -1100,9 +1100,9 @@ pub struct UpdateTolerancesReport {
 pub fn update_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) -> UpdateTolerancesReport {
  let same_range_fixed = ensure_all_same_range(brep);
  update_all_edge_tolerances(brep, tol_floor);
- let edges_updated = brep.edges.len(); // Count how many had tolerance computed.
+ let edges_updated = brep.edge_count(); // Count how many had tolerance computed.
  update_all_face_tolerances(brep, tol_floor);
- let faces_updated: usize = brep.solids.iter()
+ let faces_updated: usize = each_solid(brep)
  .flat_map(|s| s.shells.iter())
  .map(|sh| sh.faces.len())
  .sum();
@@ -1167,7 +1167,7 @@ struct WireGapInfo {
 fn collect_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> Vec<WireGapInfo> {
  let mut gaps = Vec::new();
 
- for (si, solid) in brep.solids.iter().enumerate() {
+ for (si, solid) in each_solid(brep).enumerate() {
  for (shi, shell) in solid.shells.iter().enumerate() {
  for (fi, face) in shell.faces.iter().enumerate() {
  // Check outer wire
@@ -1208,9 +1208,9 @@ fn find_wire_gap(wire: &Wire, brep: &rcad_kernel::BRep, tolerance: f64, max_gap:
  }
 
  for (i, we) in wire.edges.iter().enumerate() {
- let edge = brep.edges.get(we.idx)?;
+ let edge = ed_opt(brep, we.idx)?;
  let next_i = (i + 1) % wire.edges.len();
- let next_edge = brep.edges.get(wire.edges[next_i].idx)?;
+ let next_edge = ed_opt(brep, wire.edges[next_i].idx)?;
 
  let this_end = if we.forward { edge.end } else { edge.start };
  let next_start = if wire.edges[next_i].forward {
@@ -2000,7 +2000,7 @@ pub fn split_edge_at_seam(
  let mut result = brep.clone();
  let mut split_performed = false;
 
- let edge = match brep.edges.get(seam_info.edge_idx) {
+ let edge = match ed_opt(brep, seam_info.edge_idx) {
  Some(e) => e,
  None => return (result, false),
  };

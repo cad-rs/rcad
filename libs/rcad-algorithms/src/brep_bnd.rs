@@ -1,4 +1,4 @@
-﻿//! BRepBndLib-style bounding box utilities for BRep topology.
+//! BRepBndLib-style bounding box utilities for BRep topology.
 //!
 //! This module provides utilities analogous to OCCT's `BRepBndLib` class:
 //!
@@ -30,7 +30,8 @@
 //! ```
 
 use glam::DVec3;
-use rcad_kernel::{topods, Curve3, Surface3};
+use rcad_kernel::topods::TShape;
+use rcad_kernel::{Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 // =============================================================================
@@ -355,8 +356,10 @@ impl BoundingBox {
 /// ```
 pub fn add_brep_to_bbox(brep: &rcad_kernel::BRep, bbox: &mut BoundingBox) {
     // Add all vertices
-    for vertex in &brep.vertices {
-        bbox.add_point(vertex.point);
+    for ts in &brep.tshapes {
+        if let TShape::Vertex(vd) = &**ts {
+            bbox.add_point(vd.point);
+        }
     }
 
     // Add all faces (sample surfaces for accurate bounds)
@@ -366,7 +369,7 @@ pub fn add_brep_to_bbox(brep: &rcad_kernel::BRep, bbox: &mut BoundingBox) {
     }
 
     // Add edges that might not be part of faces
-    for edge_idx in 0..brep.edges.len() {
+    for edge_idx in 0..brep.edge_count() {
         add_edge_to_bbox(brep, edge_idx, bbox);
     }
 }
@@ -376,43 +379,41 @@ pub fn add_brep_to_bbox(brep: &rcad_kernel::BRep, bbox: &mut BoundingBox) {
 /// Samples the face's surface at grid points to get accurate bounds
 /// for curved surfaces.
 pub fn add_face_to_bbox(brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut BoundingBox) {
-    // Get the face and its surface
-    let (face, surface_idx) = match get_face_and_surface_idx(brep, face_idx) {
+    // Get the face tshape data by flat index
+    let (fd, _) = match get_tshape_face_by_flat_index(brep, face_idx) {
         Some(result) => result,
         None => return,
     };
 
     // Add points from the surface
-    if let Some(surface) = brep.geom.surfaces.get(surface_idx) {
-        add_surface_to_bbox(surface, brep, face_idx, bbox);
+    if let Some(surface) = &fd.surface {
+        // Use uv_domain or surface default
+        let domain = fd.uv_domain.unwrap_or_else(|| surface.default_domain());
+        add_surface_to_bbox_with_domain(surface, &domain, bbox);
     }
 
-    // Also add vertices from the face boundary
-    for wire_edge in &face.outer_wire.edges {
-        if wire_edge.idx < brep.edges.len() {
-            let edge = &brep.edges[wire_edge.idx];
-            if edge.start < brep.vertices.len() {
-                bbox.add_point(brep.vertices[edge.start].point);
-            }
-            if edge.end < brep.vertices.len() {
-                bbox.add_point(brep.vertices[edge.end].point);
+    // Helper: add vertices from a wire ShapeRef
+    let add_wire_vertices = |wire_ref: &rcad_kernel::topods::ShapeRef, brep: &rcad_kernel::BRep, bbox: &mut BoundingBox| {
+        if let TShape::Wire(twd) = &*brep.tshapes[wire_ref.index] {
+            for &edge_ref in &twd.edges {
+                if let TShape::Edge(ed) = &*brep.tshapes[edge_ref.index] {
+                    if let Some(pt) = brep.vertex_point(ed.first.index) {
+                        bbox.add_point(pt);
+                    }
+                    if let Some(pt) = brep.vertex_point(ed.last.index) {
+                        bbox.add_point(pt);
+                    }
+                }
             }
         }
-    }
+    };
+
+    // Add vertices from outer wire
+    add_wire_vertices(&fd.outer_wire, brep, bbox);
 
     // Add vertices from inner wires
-    for inner_wire in &face.inner_wires {
-        for wire_edge in &inner_wire.edges {
-            if wire_edge.idx < brep.edges.len() {
-                let edge = &brep.edges[wire_edge.idx];
-                if edge.start < brep.vertices.len() {
-                    bbox.add_point(brep.vertices[edge.start].point);
-                }
-                if edge.end < brep.vertices.len() {
-                    bbox.add_point(brep.vertices[edge.end].point);
-                }
-            }
-        }
+    for inner_wire in &fd.inner_wires {
+        add_wire_vertices(inner_wire, brep, bbox);
     }
 }
 
@@ -420,56 +421,49 @@ pub fn add_face_to_bbox(brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut Bo
 ///
 /// Samples the edge's 3D curve to get accurate bounds for curved edges.
 pub fn add_edge_to_bbox(brep: &rcad_kernel::BRep, edge_idx: usize, bbox: &mut BoundingBox) {
-    if edge_idx >= brep.edges.len() {
+    if edge_idx >= brep.edge_count() {
         return;
     }
 
-    let edge = &brep.edges[edge_idx];
+    let ed = match &*brep.tshapes[edge_idx] {
+        TShape::Edge(ed) => ed,
+        _ => return,
+    };
 
     // Add edge vertices
-    if edge.start < brep.vertices.len() {
-        bbox.add_point(brep.vertices[edge.start].point);
+    if let Some(pt) = brep.vertex_point(ed.first.index) {
+        bbox.add_point(pt);
     }
-    if edge.end < brep.vertices.len() {
-        bbox.add_point(brep.vertices[edge.end].point);
+    if let Some(pt) = brep.vertex_point(ed.last.index) {
+        bbox.add_point(pt);
     }
 
     // Sample points along the curve if available
-    if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
-        && let Some(curve) = brep.geom.curves.get(curve_idx) {
-            let range = brep.geom.edge_curve_range.get(edge_idx)
-                .copied()
-                .flatten()
-                .unwrap_or_else(|| curve.default_domain());
+    if let Some(curve) = &ed.curve {
+        let range = ed.range;
 
-            // Sample along the curve
-            let samples = 10;
-            for i in 0..=samples {
-                let t = range[0] + (range[1] - range[0]) * (i as f64) / (samples as f64);
-                let p = curve.point_at(t);
-                if p.is_finite() {
-                    bbox.add_point(p);
-                }
+        // Sample along the curve
+        let samples = 10;
+        for i in 0..=samples {
+            let t = range[0] + (range[1] - range[0]) * (i as f64) / (samples as f64);
+            let p = curve.point_at(t);
+            if p.is_finite() {
+                bbox.add_point(p);
             }
         }
+    }
 }
 
 /// Add a vertex to a bounding box.
 pub fn add_vertex_to_bbox(brep: &rcad_kernel::BRep, vertex_idx: usize, bbox: &mut BoundingBox) {
-    if vertex_idx < brep.vertices.len() {
-        bbox.add_point(brep.vertices[vertex_idx].point);
+    if let Some(pt) = brep.vertex_point(vertex_idx) {
+        bbox.add_point(pt);
     }
 }
 
-/// Add surface geometry to bounding box with face-specific parameter range.
-fn add_surface_to_bbox(surface: &Surface3, brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut BoundingBox) {
-    // Get the parameter range for this face
-    let domain = brep.geom.face_surface_range.get(face_idx)
-        .copied()
-        .flatten()
-        .unwrap_or_else(|| surface.default_domain());
-
-    let [u_min, u_max, v_min, v_max] = domain;
+/// Add surface geometry to bounding box with explicit parameter range.
+fn add_surface_to_bbox_with_domain(surface: &Surface3, domain: &[f64; 4], bbox: &mut BoundingBox) {
+    let [u_min, u_max, v_min, v_max] = *domain;
 
     // Sample a grid on the surface
     let n_u = 5;
@@ -570,33 +564,17 @@ pub fn curve_bounds_default(curve: &Curve3) -> BoundingBox {
 
 /// Count the total number of faces in a BRep.
 fn count_brep_faces(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
 }
 
-/// Get a face and its surface index by flat index.
-fn get_face_and_surface_idx(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<(&rcad_kernel::topology::Face, usize)> {
-    let mut current_idx = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            if face_idx < current_idx + shell.faces.len() {
-                let local_idx = face_idx - current_idx;
-                let face = &shell.faces[local_idx];
-
-                // Get the surface index
-                let surface_idx = brep.geom.face_surface.get(face_idx)
-                    .and_then(|s| *s)?;
-
-                return Some((face, surface_idx));
-            }
-            current_idx += shell.faces.len();
+/// Get a TFaceData reference and its tshape index by flat face index.
+fn get_tshape_face_by_flat_index<'a>(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Option<(&'a rcad_kernel::topods::TFaceData, usize)> {
+    brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_))).nth(face_idx).map(|(idx, ts)| {
+        match &**ts {
+            TShape::Face(fd) => (fd, idx),
+            _ => unreachable!(),
         }
-    }
-
-    None
+    })
 }
 
 // =============================================================================

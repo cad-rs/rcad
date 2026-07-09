@@ -147,10 +147,8 @@ impl MakerVolume {
     /// Build a solid from an explicit cell index list.
     pub fn build_from_indices(&self, indices: &[usize]) -> Result<topods::BRep, MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        // Bridge: general_fuse still uses old BRep
-        let old_parts: Vec<_> = parts.iter().map(|p| rcad_kernel::BRep::from_topods(p)).collect();
-        let old_result = general_fuse(&old_parts)?;
-        Ok(old_result.to_topods())
+        let result = general_fuse(&parts)?;
+        Ok(result)
     }
 
     /// Build a solid and per-step history from an explicit cell index list.
@@ -159,9 +157,8 @@ impl MakerVolume {
         indices: &[usize],
     ) -> Result<(topods::BRep, GeneralFuseHistory), MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        let old_parts: Vec<_> = parts.iter().map(|p| rcad_kernel::BRep::from_topods(p)).collect();
-        let (old_result, hist) = general_fuse_with_history(&old_parts)?;
-        Ok((old_result.to_topods(), hist))
+        let (result, hist) = general_fuse_with_history(&parts)?;
+        Ok((result, hist))
     }
 
     /// Convert a region mask into a validated selection report.
@@ -226,9 +223,8 @@ pub fn make_solid_from_region(
     cells: &[rcad_kernel::BRep],
     region_mask: &[bool],
 ) -> Result<rcad_kernel::BRep, MakerVolumeError> {
-    let cells_t: Vec<_> = cells.iter().map(|c| c.to_topods()).collect();
-    let result_t = MakerVolume::from_cells(cells_t).build_from_region_mask(region_mask)?;
-    Ok(rcad_kernel::BRep::from_topods(&result_t))
+    let cells_t: Vec<_> = cells.to_vec();
+    MakerVolume::from_cells(cells_t).build_from_region_mask(region_mask)
 }
 
 /// Convenience helper: assemble a solid from a region mask and report history.
@@ -236,9 +232,8 @@ pub fn make_solid_from_region_with_history(
     cells: &[rcad_kernel::BRep],
     region_mask: &[bool],
 ) -> Result<(rcad_kernel::BRep, GeneralFuseHistory), MakerVolumeError> {
-    let cells_t: Vec<_> = cells.iter().map(|c| c.to_topods()).collect();
-    let (result_t, hist) = MakerVolume::from_cells(cells_t).build_from_region_mask_with_history(region_mask)?;
-    Ok((rcad_kernel::BRep::from_topods(&result_t), hist))
+    let cells_t: Vec<_> = cells.to_vec();
+    MakerVolume::from_cells(cells_t).build_from_region_mask_with_history(region_mask)
 }
 
 /// Convenience helper: assemble a solid from explicit cell indices.
@@ -246,9 +241,8 @@ pub fn make_solid_from_cell_indices(
     cells: &[rcad_kernel::BRep],
     indices: &[usize],
 ) -> Result<rcad_kernel::BRep, MakerVolumeError> {
-    let cells_t: Vec<_> = cells.iter().map(|c| c.to_topods()).collect();
-    let result_t = MakerVolume::from_cells(cells_t).build_from_indices(indices)?;
-    Ok(rcad_kernel::BRep::from_topods(&result_t))
+    let cells_t: Vec<_> = cells.to_vec();
+    MakerVolume::from_cells(cells_t).build_from_indices(indices)
 }
 
 fn unique_cell_indices(indices: &[usize]) -> Vec<usize> {

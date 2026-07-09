@@ -65,7 +65,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::{
  edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
- vertex_tolerance as kernel_vertex_tolerance, CONFUSION,
+ vertex_tolerance as kernel_vertex_tolerance, topods, CONFUSION,
 };
 use tracing::debug;
 
@@ -603,10 +603,12 @@ pub fn compute_model_scale(brep: &rcad_kernel::BRep) -> f64 {
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
  let mut has_vertices = false;
 
- for vertex in &brep.vertices {
- min_pt = min_pt.min(vertex.point);
- max_pt = max_pt.max(vertex.point);
+ for ts in &brep.tshapes {
+ if let topods::TShape::Vertex(vd) = ts.as_ref() {
+ min_pt = min_pt.min(vd.point);
+ max_pt = max_pt.max(vd.point);
  has_vertices = true;
+ }
  }
 
  if !has_vertices {
@@ -637,11 +639,17 @@ pub fn compute_scale_from_points(points: &[DVec3]) -> f64 {
 
 /// Face count in BRep traversal order (matches `geom.face_tolerance` / `face_surface` flat indices).
 pub fn flat_face_count(brep: &rcad_kernel::BRep) -> usize {
- brep.solids
- .iter()
- .flat_map(|s| &s.shells)
- .map(|sh| sh.faces.len())
- .sum()
+ let mut count = 0;
+ for ts in &brep.tshapes {
+ if let topods::TShape::Solid(sd) = ts.as_ref() {
+ for sr in &sd.shells {
+ if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ count += shd.faces.len();
+ }
+ }
+ }
+ }
+ count
 }
 
 /// Maximum positive finite `geom.face_tolerance` entry for the first [`flat_face_count`] slots.
@@ -649,13 +657,13 @@ pub fn flat_face_count(brep: &rcad_kernel::BRep) -> usize {
 /// If the array is missing entries or has no valid values, returns [`TOLERANCE_ABS`].
 /// Use to derive mesh / triangle-soup intersection epsilons when geometry came from this BRep.
 pub fn max_face_tolerance_or_abs(brep: &rcad_kernel::BRep) -> f64 {
- let n = flat_face_count(brep);
  let mut m = TOLERANCE_ABS;
- let ft = &brep.geom.face_tolerance;
- for i in 0..n.min(ft.len()) {
- let t = ft[i];
+ for ts in &brep.tshapes {
+ if let topods::TShape::Face(fd) = ts.as_ref() {
+ let t = fd.tolerance;
  if t.is_finite() && t > 0.0 {
  m = m.max(t);
+ }
  }
  }
  m

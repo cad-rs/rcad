@@ -12,9 +12,9 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topology::Face;
+use rcad_kernel::topology::{Face, Wire, WireEdge};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -661,6 +661,27 @@ fn min_triangle_angle(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 // BRep Meshing
 // ============================================================================
 
+/// Build a flat `Face` struct from TFaceData for backward-compat mesh APIs.
+fn build_flat_face(brep: &rcad_kernel::BRep, fd: &topods::TFaceData) -> Face {
+    let mut outer_edges = Vec::new();
+    if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+        if let TShape::Wire(wd) = wts.as_ref() {
+            for sr in &wd.edges {
+                outer_edges.push(WireEdge::fwd(sr.index));
+            }
+        }
+    }
+    Face {
+        outer_wire: Wire { edges: outer_edges },
+        inner_wires: vec![],
+        normal: DVec3::Z,
+        triangles: vec![],
+        sample_point: fd.sample_point,
+        mesh_dirty: true,
+        surface_idx: None,
+    }
+}
+
 /// Mesh an entire BRep shape.
 ///
 /// Generates per-face meshes for all faces in the BRep.
@@ -675,29 +696,21 @@ fn min_triangle_angle(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 pub fn mesh_brep(brep: &rcad_kernel::BRep, params: &MeshParams) -> BRepMesh {
     let mut brep_mesh = BRepMesh::new();
 
-    // Collect all faces
-    let mut face_idx = 0usize;
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                // Get the surface for this face
-                if let Some(surface_idx) = brep.geom.face_surface.get(face_idx).and_then(|o| *o) {
-                    if let Some(surface) = brep.geom.surfaces.get(surface_idx) {
-                        let mesh = mesh_face(face, surface, params);
-                        brep_mesh.face_meshes.push(mesh);
-                        brep_mesh.face_normals.push(face.normal);
-                    } else {
-                        brep_mesh.face_meshes.push(Mesh::new());
-                        brep_mesh.face_normals.push(face.normal);
-                    }
-                } else {
-                    // No surface - try fallback wire triangulation
-                    let mesh = mesh_face_from_wire(brep, face, params);
-                    brep_mesh.face_meshes.push(mesh);
-                    brep_mesh.face_normals.push(face.normal);
-                }
-                face_idx += 1;
-            }
+    for ts in &brep.tshapes {
+        let TShape::Face(fd) = ts.as_ref() else { continue };
+
+        // Build a flat Face struct for the existing mesh_face / mesh_face_from_wire API.
+        let flat_face = build_flat_face(brep, fd);
+
+        if let Some(surface) = &fd.surface {
+            let mesh = mesh_face(&flat_face, surface, params);
+            brep_mesh.face_meshes.push(mesh);
+            brep_mesh.face_normals.push(DVec3::Z);
+        } else {
+            // No surface - try fallback wire triangulation
+            let mesh = mesh_face_from_wire(brep, &flat_face, params);
+            brep_mesh.face_meshes.push(mesh);
+            brep_mesh.face_normals.push(DVec3::Z);
         }
     }
 
@@ -742,47 +755,50 @@ fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshPara
     // Sample points from the outer wire
     let mut poly_pts: Vec<DVec3> = Vec::new();
     for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            let start_idx = if we.forward { edge.start } else { edge.end };
-            let end_idx = if we.forward { edge.end } else { edge.start };
+        // Access edge data via tshapes
+        let ed = match brep.tshapes.get(we.idx).and_then(|ts| {
+            if let TShape::Edge(e) = ts.as_ref() { Some(e) } else { None }
+        }) {
+            Some(e) => e,
+            None => continue,
+        };
 
-            if let Some(v) = brep.vertices.get(start_idx)
-                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > TOLERANCE_COORD_SUB) {
-                    poly_pts.push(v.point);
-                }
+        let start_idx = if we.forward { ed.first.index } else { ed.last.index };
+        let end_idx = if we.forward { ed.last.index } else { ed.first.index };
 
-            // Sample edge curve if present
-            if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v)
-                && let Some(curve) = brep.geom.curves.get(ci) {
-                    let range = brep.geom.edge_curve_range.get(we.idx)
-                        .and_then(|v| *v)
-                        .unwrap_or_else(|| curve.default_domain());
+        // Add start point
+        if let Some(pt) = brep.vertex_point(start_idx)
+            && (poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB) {
+                poly_pts.push(pt);
+            }
 
-                    let (t0, t1) = if we.forward {
-                        (range[0], range[1])
-                    } else {
-                        (range[1], range[0])
-                    };
+        // Sample edge curve if present
+        if let Some(curve) = &ed.curve {
+            let range = ed.range;
+            let (t0, t1) = if we.forward {
+                (range[0], range[1])
+            } else {
+                (range[1], range[0])
+            };
 
-                    let span = (t1 - t0).abs();
-                    if span > TOLERANCE_LEN_MIN {
-                        let n_segs = estimate_curve_segments(curve, span);
-                        for i in 1..=n_segs {
-                            let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
-                            let pt = curve.point_at(t);
-                            if poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB {
-                                poly_pts.push(pt);
-                            }
-                        }
+            let span = (t1 - t0).abs();
+            if span > TOLERANCE_LEN_MIN {
+                let n_segs = estimate_curve_segments(curve, span);
+                for i in 1..=n_segs {
+                    let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
+                    let pt = curve.point_at(t);
+                    if poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB {
+                        poly_pts.push(pt);
                     }
                 }
-
-            // Add end point
-            if let Some(v) = brep.vertices.get(end_idx)
-                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > TOLERANCE_COORD_SUB) {
-                    poly_pts.push(v.point);
-                }
+            }
         }
+
+        // Add end point
+        if let Some(pt) = brep.vertex_point(end_idx)
+            && (poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB) {
+                poly_pts.push(pt);
+            }
     }
 
     // Remove duplicate closing point
