@@ -1616,7 +1616,6 @@ fn try_planar_face_area_shoelace(
  if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
  let ei = w.edges[0].idx;
  if let (Some(ci), Some(e)) = (brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten(), brep.flat_edges().get(ei)) {
- if let Some(Curve3::Circle(c)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  let (p0, p1) = (brep.vertices.get(e.start), brep.vertices.get(e.end));
  if let (Some(v0), Some(v1)) = (p0, p1) {
  let d0 = (v0.point - c.center).normalize();
