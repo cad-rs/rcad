@@ -60,11 +60,24 @@ fn circle3_x_dir_default() -> Vec3 { DVec3::X }
 fn circle3_y_dir_default() -> Vec3 { DVec3::Y }
 
 impl Circle3 {
+    /// OCCT-aligned: construct a circle with orthonormal frame.
     pub fn new(center: Point3, normal: Vec3, radius: f64) -> Self {
+        let normal = normal.normalize_or_zero();
         let x_dir = stable_x_dir(normal);
         let y_dir = normal.cross(x_dir).normalize();
         Self { center, normal, x_dir, y_dir, radius }
     }
+
+    /// OCCT-aligned: gp_Circ::Distance(gp_Pnt) — min distance from point to circle curve.
+    pub fn distance(&self, point: DVec3) -> f64 {
+        let d = point - self.center;
+        let axis_dist = d.dot(self.normal);
+        let planar = d - axis_dist * self.normal;
+        let planar_dist = planar.length();
+        let radial_diff = (planar_dist - self.radius).abs();
+        (axis_dist * axis_dist + radial_diff * radial_diff).sqrt()
+    }
+
     pub fn rotate_frame(&mut self, angle: f64) {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
@@ -2701,13 +2714,19 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
             origin: loc.transform_point3(l.origin),
             direction: loc.transform_vector3(l.direction),
         }),
-        Curve3::Circle(c) => Curve3::Circle(Circle3 {
-            center: loc.transform_point3(c.center),
-            normal: loc.transform_vector3(c.normal).normalize_or_zero(),
-            x_dir: loc.transform_vector3(c.x_dir).normalize_or_zero(),
-            y_dir: loc.transform_vector3(c.y_dir).normalize_or_zero(),
-            radius: c.radius * loc.transform_vector3(c.normal).length().max(1e-12),
-        }),
+        Curve3::Circle(c) => {
+            let center = loc.transform_point3(c.center);
+            let normal = loc.transform_vector3(c.normal).normalize_or_zero();
+            let x_dir = loc.transform_vector3(c.x_dir).normalize_or_zero();
+            let y_dir = loc.transform_vector3(c.y_dir).normalize_or_zero();
+            // OCCT-aligned: radius scales by sqrt(scale_in_plane),
+            // NOT by normal length.  Use average of x_dir and y_dir
+            // transform lengths (in-plane scale factors).
+            let sx = loc.transform_vector3(c.x_dir).length().max(1e-12);
+            let sy = loc.transform_vector3(c.y_dir).length().max(1e-12);
+            let radius = c.radius * (sx * sy).sqrt(); // geometric mean = area scale
+            Curve3::Circle(Circle3 { center, normal, x_dir, y_dir, radius })
+        }
         Curve3::BSpline(bs) => Curve3::BSpline(BSplineCurve3 {
             degree: bs.degree,
             knots: bs.knots.clone(),
