@@ -122,19 +122,23 @@ impl MakeFaceStub {
     }
 }
 
-/// Stub: BRepBuilderAPI_MakeWire equivalent
+/// Stub: BRepBuilderAPI_MakeWire equivalent — builds a wire from edges.
 pub struct MakeWireStub {
     edges: Vec<topods::ShapeRef>,
+    built_wire: Option<topods::ShapeRef>,
 }
 
 impl MakeWireStub {
-    pub fn new() -> Self { Self { edges: Vec::new() } }
-    pub fn add_edge(&mut self, _edge_sr: topods::ShapeRef) {}
-    pub fn add_edges(&mut self, _edges: &[topods::ShapeRef]) {}
-    pub fn build(&self, _brep: &mut topods::BRep) -> topods::ShapeRef {
-        // TODO: implement wire building
-        _brep.add_twire(self.edges.clone())
+    pub fn new() -> Self { Self { edges: Vec::new(), built_wire: None } }
+    pub fn add_edge(&mut self, edge_sr: topods::ShapeRef) { self.edges.push(edge_sr); }
+    pub fn add_edges(&mut self, edges: &[topods::ShapeRef]) { self.edges.extend_from_slice(edges); }
+    pub fn build(&mut self, brep: &mut topods::BRep) -> topods::ShapeRef {
+        let wire = brep.add_twire(self.edges.clone());
+        self.built_wire = Some(wire);
+        wire
     }
+    pub fn is_done(&self) -> bool { !self.edges.is_empty() }
+    pub fn shape(&self) -> Option<topods::ShapeRef> { self.built_wire }
 }
 
 /// Transform a BRep by applying an affine transform to all vertex positions.
@@ -252,19 +256,47 @@ impl SolidClassifierStub {
     pub fn is_done(&self) -> bool { self.performed }
 }
 
-/// Stub: BRepExtrema_DistShapeShape
+/// Stub: BRepExtrema_DistShapeShape — distance between edge and vertex.
+///
+/// Computes minimum distance from point to line segment for linear edges.
+/// For curved edges falls back to 0.0 (unimplemented for non-linear).
 pub struct DistShapeShapeStub {
-    _value: f64,
-    _done: bool,
+    value: f64,
+    done: bool,
 }
 
 impl DistShapeShapeStub {
-    pub fn new_edge_vertex(_edge_brep: &topods::BRep, _vert_pos: DVec3, _tol: f64) -> Self {
-        Self { _value: 0.0, _done: false }
+    pub fn new_edge_vertex(edge_brep: &topods::BRep, vert_pos: DVec3, _tol: f64) -> Self {
+        // Find the first edge and its vertices
+        for ts in &edge_brep.tshapes {
+            if let topods::TShape::Edge(ed) = ts.as_ref() {
+                // Get start/end vertex positions
+                let p1 = edge_brep.tshapes.get(ed.first.index)
+                    .and_then(|ts2| if let topods::TShape::Vertex(vd) = ts2.as_ref() { Some(vd.point) } else { None });
+                let p2 = edge_brep.tshapes.get(ed.last.index)
+                    .and_then(|ts2| if let topods::TShape::Vertex(vd) = ts2.as_ref() { Some(vd.point) } else { None });
+                if let (Some(a), Some(b)) = (p1, p2) {
+                    let dist = point_to_segment_distance(vert_pos, a, b);
+                    return Self { value: dist, done: true };
+                }
+            }
+        }
+        Self { value: 0.0, done: false }
     }
-    pub fn is_done(&self) -> bool { self._done }
-    pub fn value(&self) -> f64 { self._value }
-    pub fn nb_solution(&self) -> usize { 0 }
+
+    pub fn is_done(&self) -> bool { self.done }
+    pub fn value(&self) -> f64 { self.value }
+    pub fn nb_solution(&self) -> usize { if self.done { 1 } else { 0 } }
+}
+
+/// Minimum distance from a point P to line segment AB.
+fn point_to_segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
+    let ab = b - a;
+    let ap = p - a;
+    let t = ap.dot(ab) / ab.length_squared();
+    let clamped_t = t.clamp(0.0, 1.0);
+    let closest = a + ab * clamped_t;
+    (p - closest).length()
 }
 
 /// Stub: PrincipalProperties / symmetry axis
@@ -440,9 +472,65 @@ mod make_wire_tests {
 
     #[test]
     fn occ27552_add_edges_and_list_of_edges() {
-        let mut _mw = MakeWireStub::new();
-        // Just verify the stub doesn't crash
-        assert!(true, "Wire builder created successfully");
+        let mut b = topods::BRep::new();
+        let v1 = b.add_tvertex(DVec3::new(0.0, 0.0, 0.0));
+        let v2 = b.add_tvertex(DVec3::new(5.0, 0.0, 0.0));
+        let v3 = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
+
+        let e1 = MakeEdgeStub::from_points(DVec3::new(0.0, 0.0, 0.0), DVec3::new(5.0, 0.0, 0.0));
+        let e1_ref = e1.brep().tshapes.iter().enumerate()
+            .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .unwrap();
+        let e2 = MakeEdgeStub::from_points(DVec3::new(5.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0));
+        let e2_ref = e2.brep().tshapes.iter().enumerate()
+            .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .unwrap();
+
+        // Build wire with individually added edges
+        let mut mw = MakeWireStub::new();
+        // Edges from separate BReps can't easily share a BRep — just test the wire builder logic
+        mw.add_edge(e1_ref);
+        mw.add_edge(e2_ref);
+        assert!(mw.is_done(), "Wire builder with edges should indicate done");
+
+        // Build into a proper BRep
+        let mut brep = topods::BRep::new();
+        // Copy edges into the BRep
+        let c1 = brep.add_tedge(
+            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X * 5.0 })),
+            v1, v2, [0.0, 5.0],
+        );
+        let c2 = brep.add_tedge(
+            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::new(5.0, 0.0, 0.0), direction: DVec3::X * 5.0 })),
+            v2, v3, [0.0, 5.0],
+        );
+
+        let mut mw2 = MakeWireStub::new();
+        mw2.add_edge(c1);
+        mw2.add_edge(c2);
+        let wire = mw2.build(&mut brep);
+        assert!(wire.index < brep.tshapes.len(), "Wire should be built");
+        if let topods::TShape::Wire(wd) = &*brep.tshapes[wire.index] {
+            assert_eq!(wd.edges.len(), 2, "Wire should contain 2 edges");
+        } else {
+            panic!("Wire shape expected");
+        }
+
+        // Test adding edges as a list (4 edges with branch)
+        let v4 = brep.add_tvertex(DVec3::new(10.0, 0.05, 0.0));
+        let v5 = brep.add_tvertex(DVec3::new(10.0, -0.05, 0.0));
+        let v6 = brep.add_tvertex(DVec3::new(10.0, 2.0, 0.0));
+        let v7 = brep.add_tvertex(DVec3::new(10.0, -2.0, 0.0));
+
+        let e3 = brep.add_tedge(None, v4, v6, [0.0, 2.0]);
+        let e4 = brep.add_tedge(None, v5, v7, [0.0, 2.0]);
+
+        let mut mw3 = MakeWireStub::new();
+        mw3.add_edges(&[e3, e4]);
+        let wire2 = mw3.build(&mut brep);
+        assert!(wire2.index < brep.tshapes.len(), "Second wire should be built");
     }
 }
 
@@ -586,11 +674,13 @@ mod dist_shape_shape_tests {
 
     #[test]
     fn buc60870_edge_to_vertex_minimum_distance() {
-        let edge = MakeEdgeStub::from_points(DVec3::ZERO, DVec3::new(0.0, 1.0, 0.0));
+        // Edge from (0,0,0) to (0,1,0); vertex at (0,0.3,1)
+        // Minimum distance should be 1.0 (perpendicular from point to line segment)
+        let edge = MakeEdgeStub::from_points(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0));
         let dist = DistShapeShapeStub::new_edge_vertex(edge.brep(), DVec3::new(0.0, 0.3, 1.0), 2.0);
-        // Stub returns done=false and value=0.0
-        // Real minimum distance should be 1.0
-        assert!(!dist.is_done() || dist.value() >= 0.0, "Distance should be non-negative");
+        assert!(dist.is_done(), "Distance computation should succeed");
+        assert!((dist.value() - 1.0).abs() < 0.01, "Minimum distance should be 1.0, got {}", dist.value());
+        assert_eq!(dist.nb_solution(), 1, "Should have 1 solution");
     }
 }
 
@@ -711,17 +801,23 @@ mod thru_sections_tests {
 
     #[test]
     fn occ10006_loft_and_fusion() {
-        // ThruSections requires lofting which rcad doesn't have yet
-        assert!(true, "ThruSections loft+fuse test (stub)");
+        // Requires BRepOffsetAPI_ThruSections (lofting) which rcad doesn't have.
+        // OCCT: creates 2 lofted shapes from 4-sided polygons, then boolean-fuses them.
+        // Skip: rcad lacks lofting.
+        assert!(true, "ThruSections loft+fuse test (requires lofting, not yet implemented)");
     }
 
     #[test]
     fn bspline_profiles_with_different_pole_count() {
-        assert!(true, "BSpline profiles with different pole count (stub)");
+        // Requires ThruSections with 5 closed BSpline sections (31-33 poles each).
+        // rcad doesn't have ThruSections.
+        assert!(true, "BSpline profiles with different pole count (requires ThruSections)");
     }
 
     #[test]
     fn occ895_two_circular_arc_wires_no_twist() {
-        assert!(true, "Two circular arc wires no twist (stub)");
+        // Requires ThruSections with circular arc wires; verifies surface area ≈ 18.1614.
+        // rcad doesn't have ThruSections.
+        assert!(true, "Two circular arc wires no twist (requires ThruSections)");
     }
 }
