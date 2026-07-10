@@ -148,7 +148,7 @@ impl MakerVolume {
     pub fn build_from_indices(&self, indices: &[usize]) -> Result<topods::BRep, MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
         let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
-            if acc.solids.is_empty() { Ok(part) }
+            if acc.tshapes.is_empty() { Ok(part) }
             else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
         })?;
         Ok(result)
@@ -161,7 +161,7 @@ impl MakerVolume {
     ) -> Result<(topods::BRep, ()), MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
         let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
-            if acc.solids.is_empty() { Ok(part) }
+            if acc.tshapes.is_empty() { Ok(part) }
             else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
 
         })?;

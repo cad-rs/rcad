@@ -13,6 +13,7 @@
 
 use rcad_kernel::topods;
 use rcad_kernel::topods::BRep;
+use crate::brep_algo_api::brep_ext::BRepExt;
 use crate::tolerance::TOLERANCE_ABS;
 use crate::brep_tools::{get_shape_type, ShapeType};
 use crate::bopds::checker_si::CheckerSI;
@@ -671,7 +672,7 @@ impl ArgumentAnalyzer {
     fn prepare(&mut self) -> bool {
         // OCCT: Check if shapes are empty
         let shape1_ok = self.shape1.as_ref().map_or(false, |s| {
-            !s.solids.is_empty() || !s.edges.is_empty() || !s.vertices.is_empty()
+            !s.solids().solids().is_empty() || !s.edges().edges().is_empty() || !s.vertices().vertices().is_empty()
         });
         let shape2_present = self.shape2.is_some();
 
@@ -683,7 +684,7 @@ impl ArgumentAnalyzer {
                     .as_ref()
                     .map(|s| {
                         let mut v = Vec::new();
-                        for si in 0..s.solids.len() {
+                        for si in 0..s.solids().solids().len() {
                             v.push(si);
                         }
                         v
@@ -870,7 +871,7 @@ impl ArgumentAnalyzer {
         // Check shape1 edges
         if let Some(s1) = self.shape1.as_ref() {
             let mut small_edges1 = Vec::new();
-            for (edge_idx, _edge) in s1.edges.iter().enumerate() {
+            for (edge_idx, _edge) in s1.edges().edges().iter().enumerate() {
                 let len = self.compute_edge_length(s1, edge_idx);
                 if len < threshold {
                     small_edges1.push(edge_idx);
@@ -890,7 +891,7 @@ impl ArgumentAnalyzer {
         // Check shape2 edges
         if let Some(s2) = self.shape2.as_ref() {
             let mut small_edges2 = Vec::new();
-            for (edge_idx, _edge) in s2.edges.iter().enumerate() {
+            for (edge_idx, _edge) in s2.edges().edges().iter().enumerate() {
                 let len = self.compute_edge_length(s2, edge_idx);
                 if len < threshold {
                     small_edges2.push(edge_idx);
@@ -909,7 +910,7 @@ impl ArgumentAnalyzer {
     ///
     /// ✅ OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
     fn compute_edge_length(&self, brep: &BRep, edge_idx: usize) -> f64 {
-        let Some(edge) = brep.edges.get(edge_idx) else {
+        let Some(edge) = brep.edges().get(edge_idx) else {
             return 0.0;
         };
         let start_pt = brep
@@ -970,7 +971,7 @@ impl ArgumentAnalyzer {
         let mut faulty: Vec<usize> = Vec::new();
         let mut global_face_idx: usize = 0;
 
-        for (solid_idx, solid) in brep.solids.iter().enumerate() {
+        for (solid_idx, solid) in brep.solids().iter().enumerate() {
             for (shell_idx, shell) in solid.shells.iter().enumerate() {
                 for (_face_idx, face) in shell.faces.iter().enumerate() {
                     let needs_rebuild = !self.face_rebuildable(brep, global_face_idx, face);
@@ -1021,8 +1022,8 @@ impl ArgumentAnalyzer {
             None => return false,
         };
 
-        let first_edge_data = brep.edges.get(first_edge.idx);
-        let last_edge_data = brep.edges.get(last_edge.idx);
+        let first_edge_data = brep.edges().get(first_edge.idx);
+        let last_edge_data = brep.edges().get(last_edge.idx);
 
         match (first_edge_data, last_edge_data) {
             (Some(fe), Some(le)) => {
@@ -1048,7 +1049,7 @@ impl ArgumentAnalyzer {
 
         // Check that all referenced edges exist
         for wire_edge in &wire.edges {
-            if wire_edge.idx >= brep.edges.len() {
+            if wire_edge.idx >= brep.edges().len() {
                 return false;
             }
         }
@@ -1134,9 +1135,9 @@ impl ArgumentAnalyzer {
         if is_vertex {
             // Check shape1 vertices against shape2 vertices
             let mut faulty1: Vec<usize> = Vec::new();
-            for (i, v1) in s1.vertices.iter().enumerate() {
+            for (i, v1) in s1.vertices().vertices().iter().enumerate() {
                 let mut matches = 0usize;
-                for v2 in &s2.vertices {
+                for v2 in &s2.vertices() {
                     let dist = (v1.point - v2.point).length();
                     if dist < merge_tol {
                         matches += 1;
@@ -1159,9 +1160,9 @@ impl ArgumentAnalyzer {
 
             // Check shape2 vertices against shape1 vertices
             let mut faulty2: Vec<usize> = Vec::new();
-            for (i, v2) in s2.vertices.iter().enumerate() {
+            for (i, v2) in s2.vertices().vertices().iter().enumerate() {
                 let mut matches = 0usize;
-                for v1 in &s1.vertices {
+                for v1 in &s1.vertices() {
                     let dist = (v2.point - v1.point).length();
                     if dist < merge_tol {
                         matches += 1;
@@ -1181,14 +1182,14 @@ impl ArgumentAnalyzer {
         } else {
             // Edge merge test
             let mut faulty1: Vec<usize> = Vec::new();
-            for (i, _e1) in s1.edges.iter().enumerate() {
+            for (i, _e1) in s1.edges().edges().iter().enumerate() {
                 let mid1 = self.edge_midpoint(s1, i);
                 if mid1.is_none() {
                     continue;
                 }
                 let mid1 = mid1.unwrap();
                 let mut matches = 0usize;
-                for (j, _e2) in s2.edges.iter().enumerate() {
+                for (j, _e2) in s2.edges().edges().iter().enumerate() {
                     let mid2 = self.edge_midpoint(s2, j);
                     if let Some(m2) = mid2 {
                         let dist = (mid1 - m2).length();
@@ -1213,14 +1214,14 @@ impl ArgumentAnalyzer {
             }
 
             let mut faulty2: Vec<usize> = Vec::new();
-            for (i, _e2) in s2.edges.iter().enumerate() {
+            for (i, _e2) in s2.edges().edges().iter().enumerate() {
                 let mid2 = self.edge_midpoint(s2, i);
                 if mid2.is_none() {
                     continue;
                 }
                 let mid2 = mid2.unwrap();
                 let mut matches = 0usize;
-                for (j, _e1) in s1.edges.iter().enumerate() {
+                for (j, _e1) in s1.edges().edges().iter().enumerate() {
                     let mid1 = self.edge_midpoint(s1, j);
                     if let Some(m1) = mid1 {
                         let dist = (mid2 - m1).length();
@@ -1245,9 +1246,9 @@ impl ArgumentAnalyzer {
 
     /// Compute the midpoint of an edge from its start/end vertex positions.
     fn edge_midpoint(&self, brep: &BRep, edge_idx: usize) -> Option<DVec3> {
-        let edge = brep.edges.get(edge_idx)?;
-        let start = brep.vertices.get(edge.start)?;
-        let end = brep.vertices.get(edge.end)?;
+        let edge = brep.edges().get(edge_idx)?;
+        let start = brep.vertices().get(edge.start)?;
+        let end = brep.vertices().get(edge.end)?;
         Some((start.point + end.point) * 0.5)
     }
 

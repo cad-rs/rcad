@@ -19,7 +19,7 @@
 //!
 //! let mut section = Section::new(a, b);
 //! if let Ok(result) = section.perform() {
-//!     println!("Section produced {} edges", result.edges.len());
+//!     println!("Section produced {} edges", result.edges().len());
 //! }
 //! ```
 
@@ -31,6 +31,7 @@ use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};
 use rcad_kernel::topods;
+use crate::brep_algo_api::brep_ext::BRepExt;
 use rcad_kernel::topods::BRep;
 use rcad_kernel::geom::Line3;
 
@@ -169,7 +170,7 @@ impl Section {
         // after PaveFiller has computed all face-face intersection curves.
         let (brep, edge_map) = Self::build_section_edges(&ds);
 
-        if brep.edges.is_empty() {
+        if brep.edges().is_empty() {
             // Fallback: no intersection curves from PaveFiller (e.g. planar
             // face intersections that were handled via EE/EF interferences).
             // Use the general brep_section which handles all surface types
@@ -288,19 +289,19 @@ impl Section {
             let sv = e.start_vertex;
             let ev = e.end_vertex;
             if sv >= ds.vertices.len() || ev >= ds.vertices.len() { continue; }
-            let vi_a = result.vertices.len();
-            result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[sv].point });
-            let vi_b = result.vertices.len();
-            result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[ev].point });
-            let edge_idx = result.edges.len();
-            result.edges.push(rcad_kernel::topology::Edge { start: vi_a, end: vi_b });
-            let curve_idx = result.geom.curves.len();
-            result.geom.curves.push(e.curve.clone());
-            while result.geom.edge_curve.len() <= edge_idx { result.geom.edge_curve.push(None); }
-            while result.geom.edge_curve_range.len() <= edge_idx { result.geom.edge_curve_range.push(None); }
-            while result.geom.edge_degenerated.len() <= edge_idx { result.geom.edge_degenerated.push(false); }
-            result.geom.edge_curve[edge_idx] = Some(curve_idx);
-            result.geom.edge_curve_range[edge_idx] = Some(e.t_range);
+            let vi_a = result.vertices().len();
+            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[sv].point });
+            let vi_b = result.vertices().len();
+            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[ev].point });
+            let edge_idx = result.edges().len();
+            result.edges().push(rcad_kernel::topology::Edge { start: vi_a, end: vi_b });
+            let curve_idx = result.edges().len();
+            // geom.curves.push(e.curve.clone());
+            while // geom.edge_curve.len() <= edge_idx { // geom.edge_curve.push(None); }
+            while // geom.edge_curve_range.len() <= edge_idx { // geom.edge_curve_range.push(None); }
+            while // geom.edge_degenerated.len() <= edge_idx { // geom.edge_degenerated.push(false); }
+            // geom.edge_curve[] = Some(curve_idx);
+            // geom.edge_curves_range[] = Some(e.t_range);
             edge_to_ic.push(ei);
         }
 
@@ -312,8 +313,8 @@ impl Section {
                 ds.edges.get(ei).map_or(false, |e| e.start_vertex == vi || e.end_vertex == vi)
             }) {
                 if added_verts.insert(vi) {
-                    let _v_idx = result.vertices.len();
-                    result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[vi].point });
+                    let _v_idx = result.vertices().len();
+                    result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[vi].point });
                     // OCCT adds isolated vertices as standalone shapes in a compound
                     // rcad: vertex edges are empty (no edge connected)
                 }
@@ -325,7 +326,7 @@ impl Section {
 
     /// Ensure geometry is populated for primitive shapes.
     fn ensure_geometry(&self, brep: &BRep) -> BRep {
-        if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
+        if brep.geom.surfaces.is_empty() && !brep.solids().is_empty() {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
             result
@@ -381,7 +382,7 @@ impl Section {
         let Some(ref result) = self.result else {
             return false;
         };
-        if edge_idx >= result.edges.len() {
+        if edge_idx >= result.edges().len() {
             return false;
         }
         // ✅ OCCT-aligned: All section edges result from face-face
@@ -397,7 +398,7 @@ impl Section {
         let Some(ref result) = self.result else {
             return false;
         };
-        if edge_idx >= result.edges.len() {
+        if edge_idx >= result.edges().len() {
             return false;
         }
         // ✅ OCCT-aligned: Same reasoning as has_ancestor_face_on_1

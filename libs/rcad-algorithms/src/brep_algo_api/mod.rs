@@ -6,6 +6,7 @@
 #![allow(non_camel_case_types)]
 
 pub mod argument_analyzer;
+pub mod brep_ext;
 pub mod builder_operation;
 pub mod section;
 

@@ -323,7 +323,7 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
  }
 
  let indices: Vec<usize> = (0..face_aabbs.len()).collect();
- bvh::Bvh::build(indices, face_aabbs)
+ bvh::DsBvh::build(indices, face_aabbs)
 }
 
 /// `use_bvh`: match [`crate::bop_occt_union::boolean_op_generic`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
