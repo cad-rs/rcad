@@ -194,10 +194,12 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
 
-            // OCCT L283-287: PBsIn --curves_sc, PBsOn --curves_on.
-            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty()
-                || !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
-            let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
+            // OCCT L283-287: aNbPBIn = myDS->PaveBlocksIn(i).Extent();
+            //                  aNbPBSc = myDS->PaveBlocksSc(i).Extent();  // PAVE BLOCKS, not curves
+            //                  aNbPBOn = myDS->PaveBlocksOn(i).Extent();
+            //                  aNbAV   = myDS->AloneVertices(i).Extent();
+            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
+            let has_pb_sc = !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
 
             // OCCT L293-296: if (!aNbPBIn && !aNbPBOn && !aNbPBSc && !aNbAV) continue.
@@ -841,8 +843,31 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L362-366: if (iFlag) { aShD.Closed(...); aBB.Add(theDraftSolid, aShD); }
+            // rcad: convert result face indices to DS face indices before storing,
+            // since classify_point accesses DS geometry by DS face index.
+            // rcad stores a result-face-based shell in a_sh_d; below we translate
+            // each result face index back to its source DS face index for the
+            // draft-solid face set used by classify_faces.
             if i_flag && !a_sh_d.is_empty() {
-                draft_shells.push(a_sh_d);
+                // Map result face indices -> DS face indices for classify_point.
+                let mut ds_sh = Vec::with_capacity(a_sh_d.len());
+                for &rfi in &a_sh_d {
+                    let dfi_opt = match result.face_origins.get(rfi) {
+                        Some(FaceOrigin::FromA(sfi)) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                        Some(FaceOrigin::FromB(sfi)) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                        _ => None,
+                    };
+                    if let Some(dfi) = dfi_opt {
+                        if !ds_sh.contains(&dfi) {
+                            ds_sh.push(dfi);
+                        }
+                    }
+                }
+                if !ds_sh.is_empty() {
+                    draft_shells.push(ds_sh);
+                }
             }
         }
 
