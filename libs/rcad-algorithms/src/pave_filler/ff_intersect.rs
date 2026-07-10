@@ -372,8 +372,12 @@ impl<'a> super::PaveFiller<'a> {
  );
  if new_tol > TOLERANCE_ABS {
  let vt = new_tol.min(TOLERANCE_MESH_LEGACY);
- self.ds.vertices[sv].geom_tol = self.ds.vertices[sv].geom_tol.max(vt);
- self.ds.vertices[ev].geom_tol = self.ds.vertices[ev].geom_tol.max(vt);
+ if sv < self.ds.vertices.len() {
+   self.ds.vertices[sv].geom_tol = self.ds.vertices[sv].geom_tol.max(vt);
+ }
+ if ev < self.ds.vertices.len() {
+   self.ds.vertices[ev].geom_tol = self.ds.vertices[ev].geom_tol.max(vt);
+ }
  }
  }
  // PrepareLines3D  ?split closed curves
