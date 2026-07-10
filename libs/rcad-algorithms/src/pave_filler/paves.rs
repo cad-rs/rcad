@@ -81,6 +81,13 @@ impl<'a> super::PaveFiller<'a> {
  let edge_pb_counts: Vec<usize> = self.ds.edges.iter().map(|e| e.pave_blocks.len()).collect();
  // Compute phase: ShrunkRange (no borrow on self)
  let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
+ // OCCT-aligned: skip degenerated edges (BRep_Tool::Degenerated).
+ // OCCT BRepLib::FindValidRange returns false immediately for
+ // degenerated edges, avoiding the billion-iteration loop in
+ // find_nearest_valid_point on a zero-direction line curve.
+ if self.ds.is_edge_degenerated(*ei) {
+ return (None, false);
+ }
  let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
  sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
  sr.perform(&ec[*ei]);

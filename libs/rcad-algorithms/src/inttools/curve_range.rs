@@ -69,17 +69,7 @@ fn find_nearest_valid_point(curve: &Curve3, t_start: f64, t_end: f64, center: DV
     let tol_sq = tol * tol;
     let mut t = t_start;
     let dir = if t_end > t_start { 1.0 } else { -1.0 };
-    let range = (t_end - t_start).abs();
-    // Clamp step to at most 1/1000 of range, preventing billion-iteration loops
-    // on degenerated edges (zero-direction lines, step ≈ 1e-8, range ≈ 3.14 → 314M iters).
-    let step = if range > step * 1000.0 { range / 1000.0 } else { step };
-    let step = step * dir;
-    // Safety bound: at most 1M iterations (the clamp should give ≤1000, but guard
-    // against step=0 degenerate cases).
-    let max_iter = 1_000_000usize;
-    let mut iter = 0usize;
-    while (t - t_start).signum() == (t_end - t_start).signum() && iter < max_iter {
-        iter += 1;
+    while (t - t_start).signum() == (t_end - t_start).signum() {
         if (curve.point_at(t) - center).length_squared() >= tol_sq {
             let mut lo = if dir > 0.0 { t - step } else { t + step };
             let mut hi = t;

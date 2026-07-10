@@ -328,7 +328,7 @@ impl<'a> PaveFiller<'a> {
         let b_si_check_mode = b_si_check_mode;
 
         let per_face_pairs: Vec<Vec<(usize, usize, usize)>> = (0..n_faces)
-            .into_iter()
+            .into_par_iter()
             .map(|nf| {
                 let mut ctx = crate::inttools::context::Context::new(n_faces, context_tol);
                 let fi = &ds.faces[nf].face_info;
