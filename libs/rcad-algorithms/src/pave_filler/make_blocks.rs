@@ -297,8 +297,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L814: FilterPavesOnCurves  ?remove bad paves across all curves
  self.filter_paves_on_curves(curves_of_ff);
 
- // OCCT L816-844: Second loop over curves  ?Stick/EF/Bound paves
- let a_nb_c_single = a_nb_c; // OCCT L823: check if only one curve
+ // Second loop over curves
  for (j, &ci) in curves_of_ff.iter().enumerate() {
  if ci >= self.ds.intersection_curves.len() { continue; }
  // OCCT L821: PutStickPavesOnCurve(aF1, aF2, aMI, aVC, j, aMVStick, aMVTol, aDMVLV)
@@ -423,13 +422,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L847-851: PutClosingPaveOnCurve for each curve
  for &ci in curves_of_ff {
  if ci >= self.ds.intersection_curves.len() { continue; }
- let is_closed = matches!(&self.ds.intersection_curves[ci].curve, Curve3::Circle(_));
- if is_closed {
- if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
- let mut ext_paves: Vec<_> = pb.0.read().unwrap().ext_paves.iter().map(|p| (p.param, p.vertex_idx)).collect();
- put_closing_pave_on_curve(&mut ext_paves, true);
- }
- }
+ self.put_closing_pave_on_curve(ci);
  }
 
  // OCCT L854-875: BOPTools_BoxTree setup
