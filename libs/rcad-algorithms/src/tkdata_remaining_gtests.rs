@@ -2135,10 +2135,5 @@ mod tkdata_tkgeombase_tests {
         assert!((pt - Point2::new(5.0, 0.0)).length() < 1e-7);
     }
 
-    // AdvApp2Var — no rcad equivalent (advanced approximation with adaptive refinement)
-    
-    
-    
-    
-    
+    // AdvApp2Var -- covered in adv_app2_var.rs tests
 }
