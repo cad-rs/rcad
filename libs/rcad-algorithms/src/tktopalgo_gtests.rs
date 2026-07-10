@@ -19,10 +19,7 @@
 
 use glam::{DAffine3, DMat3, DVec3};
 use rcad_kernel::topods;
-use rcad_kernel::{surface_area, volume};
 use rcad_kernel::topo_query::{face_count, edge_count};
-
-const TOL: f64 = 1e-6;
 
 // =============================================================================
 // Stub types for OCCT APIs not yet in rcad

@@ -30,12 +30,6 @@ pub fn m_matrix(classe: i32, mat: &mut [f64]) {
     }
 }
 
-/// Fill the inverse mass matrix (size classe × classe).
-pub fn inv_m_matrix(_classe: i32, _mat: &mut [f64]) {
-    // OCCT stores hard-coded precomputed values for classes 2..24.
-    // For simplicity, we compute via formula — OCCT uses optimized look-up tables.
-}
-
 /// Fill the Bernstein evaluation matrix at Gauss points.
 pub fn v_bernstein(classe: i32, nb_pts: i32, mat: &mut [f64]) {
     let n = classe - 1;
@@ -59,10 +53,8 @@ mod app_cont_tests {
     #[test]
     fn m_matrix_is_symmetric_positive_definite() {
         let classe = 4;
-        let n = (classe * classe) as usize;
-        let mut mat = vec![0.0; n];
+        let mut mat = vec![0.0; (classe * classe) as usize];
         m_matrix(classe, &mut mat);
-        // Check symmetry
         for i in 0..classe {
             for j in 0..classe {
                 assert!(
@@ -71,12 +63,8 @@ mod app_cont_tests {
                 );
             }
         }
-        // Check diagonal positive
         for i in 0..classe {
-            assert!(
-                mat[(i * classe + i) as usize] > 0.0,
-                "M matrix diagonal at {i} should be positive"
-            );
+            assert!(mat[(i * classe + i) as usize] > 0.0, "M matrix diagonal at {i} should be positive");
         }
     }
 
@@ -87,12 +75,10 @@ mod app_cont_tests {
         let mut mat = vec![0.0; n];
         m_matrix(classe, &mut mat);
         // Degree 1: M(0,0)=1/3, M(1,1)=1/3, M(0,1)=M(1,0)=1/6
-        let expected: f64 = 1.0 / 3.0;
-        let off: f64 = 1.0 / 6.0;
-        assert!((mat[0] - expected).abs() < 1e-15, "M00={}, expected {}", mat[0], expected);
-        assert!((mat[3] - expected).abs() < 1e-15, "M11={}, expected {}", mat[3], expected);
-        assert!((mat[1] - off).abs() < 1e-15, "M01={}, expected {}", mat[1], off);
-        assert!((mat[2] - off).abs() < 1e-15, "M10={}, expected {}", mat[2], off);
+        assert!((mat[0] - 1.0 / 3.0).abs() < 1e-15, "M00={}", mat[0]);
+        assert!((mat[3] - 1.0 / 3.0).abs() < 1e-15, "M11={}", mat[3]);
+        assert!((mat[1] - 1.0 / 6.0).abs() < 1e-15, "M01={}", mat[1]);
+        assert!((mat[2] - 1.0 / 6.0).abs() < 1e-15, "M10={}", mat[2]);
     }
 
     #[test]
