@@ -4,6 +4,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
 
+use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
 };
@@ -425,22 +426,31 @@ impl<'a> super::PaveFiller<'a> {
  self.put_closing_pave_on_curve(ci);
  }
 
- // OCCT L854-875: BOPTools_BoxTree setup
- // OCCT L874-894: Build aPBTree  ?filter aMPBOnIn to PBs with HasEdge & !HasFlag
- // rcad: pre-filtered vec instead of BVH tree (architecture A3)
- let a_mpb_on_in_vec: Vec<usize> = a_mpb_on_in.iter().copied()
- .filter(|&pb_idx| {
- if pb_idx >= self.ds.pave_blocks.len() { return false; }
- let pb = &self.ds.pave_blocks[pb_idx];
- // OCCT L883-886: skip PBs without an edge (!HasEdge)
- let has_edge = pb.0.read().unwrap().new_edge.is_some() || pb.0.read().unwrap().original_edge != NO_EDGE;
- if !has_edge { return false; }
- // OCCT L888-891: skip degenerated edges (HasFlag)
- let ei = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
- if ei < self.ds.edges.len() && self.ds.is_edge_degenerated(ei) { return false; }
- true
- })
- .collect();
+ // OCCT L874-894: Build aPBTree (BOPTools_BoxTree) from ON/IN PBs
+ let mut a_pb_indices: Vec<usize> = Vec::new();
+ let mut a_pb_aabbs: Vec<Aabb> = Vec::new();
+ for &pb_idx in &a_mpb_on_in {
+  if pb_idx >= self.ds.pave_blocks.len() { continue; }
+  let pb = &self.ds.pave_blocks[pb_idx];
+  if pb.0.read().unwrap().new_edge.is_none() && pb.0.read().unwrap().original_edge == NO_EDGE { continue; }
+  let ei = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
+  if ei >= self.ds.edges.len() { continue; }
+  if self.ds.is_edge_degenerated(ei) { continue; }
+  // Compute edge AABB from start/end vertices + tolerance
+  let sv = self.ds.edges[ei].start_vertex;
+  let ev = self.ds.edges[ei].end_vertex;
+  let aabb = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+   let tol = self.ds.edges[ei].geom_tol;
+   let mn = self.ds.vertices[sv].point.min(self.ds.vertices[ev].point) - DVec3::splat(tol);
+   let mx = self.ds.vertices[sv].point.max(self.ds.vertices[ev].point) + DVec3::splat(tol);
+   Aabb { min: mn, max: mx }
+  } else { continue; };
+  a_pb_indices.push(pb_idx);
+  a_pb_aabbs.push(aabb);
+ }
+ let a_pb_tree = if !a_pb_indices.is_empty() {
+  Some(DsBvh::build(a_pb_indices, a_pb_aabbs))
+ } else { None };
 
  // OCCT L877-879: Check if this FF pair needs rechecking
  let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
@@ -587,36 +597,32 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  // OCCT L962-1021: IsExistingPaveBlock via aMPBOnIn + aPBTree
- // OCCT BOPAlgo_PaveFiller_6.cxx L2079-2282
- // rcad: iterate pre-filtered flat list instead of BVH tree
- let b_exist_on_in = {
- if a_mpb_on_in_vec.is_empty() {
- false
- } else {
- // OCCT L2089-2095: Get curve, range, indices
- let ic = &self.ds.intersection_curves[ci];
- let a_curve = &ic.curve;
- // OCCT L2097-2103: aBoxP1 around start point aP1
- let a_p1 = curve.point_at(a_t1);
- let a_tol_v11 = if n_v1 < self.ds.vertices.len() { self.ds.vertices[n_v1].geom_tol } else { a_tol_r3d };
- // OCCT L2114-2126: aBoxPm around mid point aPm + tangent
  let a_tm = 0.56786082 * a_t1 + 0.43213918 * a_t2;
  let a_pm = curve.point_at(a_tm);
- // OCCT L2128-2134: aBoxP2 around end point aP2
+ let a_p1 = curve.point_at(a_t1);
  let a_p2 = curve.point_at(a_t2);
+ let a_tol_v11 = if n_v1 < self.ds.vertices.len() { self.ds.vertices[n_v1].geom_tol } else { a_tol_r3d };
  let a_tol_v12 = if n_v2 < self.ds.vertices.len() { self.ds.vertices[n_v2].geom_tol } else { a_tol_r3d };
- // OCCT L2136: aTolV1 = max(v11_tol, v12_tol) + fuzzy
  let a_tol_v1 = a_tol_v11.max(a_tol_v12);
- // OCCT L2138: aTolCheck = theTolR3D + fuzzy
  let a_tol_check = a_tol_r3d;
- // OCCT L2142-2144: aMaxTolAdd
  let a_max_tol_add = 0.001_f64.min(10.0 * a_tol_check);
-
+ // Query BVH tree for candidate PBs near sub-PB mid-point
+ let candidates: Vec<usize> = if let Some(ref pb_tree) = a_pb_tree {
+  let query_box = Aabb {
+   min: a_pm - DVec3::splat(a_tol_v1 + a_tol_check),
+   max: a_pm + DVec3::splat(a_tol_v1 + a_tol_check),
+  };
+  pb_tree.query_aabb(&query_box)
+ } else { Vec::new() };
+ let b_exist_on_in = {
+  if candidates.is_empty() {
+  false
+  } else {
  let mut found_pb_idx = usize::MAX;
  let mut best_dist = f64::MAX;
  let mut best_a_tol_new = -1.0;
 
- for &pb_idx in &a_mpb_on_in_vec {
+ for &pb_idx in &candidates {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  let existing_pb = &self.ds.pave_blocks[pb_idx];
  // OCCT L2154-2155: nV21, nV22
@@ -719,14 +725,14 @@ impl<'a> super::PaveFiller<'a> {
  };
  if b_exist_on_in {
  // OCCT L964-1021: Existing PB found, may need to add to other face
- let existing_pb = &self.ds.pave_blocks[a_mpb_on_in_vec.iter().find_map(
+ let existing_pb = &self.ds.pave_blocks[candidates.iter().find_map(
  |&p| if self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(
  self.ds.pave_blocks[p].0.read().unwrap().original_edge) == n_e_out
  { Some(p) } else { None }
  ).unwrap_or(usize::MAX)];
  if existing_pb.0.read().unwrap().new_edge.is_some() || existing_pb.0.read().unwrap().original_edge < self.ds.edges.len() {
-  // Find the matching PB index in a_mpb_on_in_vec
-  let pb_idx_f1 = a_mpb_on_in_vec.iter().find(|&&p| {
+  // Find the matching PB index in candidates
+  let pb_idx_f1 = candidates.iter().find(|&&p| {
   let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge
   .unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
   e == n_e_out
@@ -735,7 +741,7 @@ impl<'a> super::PaveFiller<'a> {
   self.ds.faces[n_f1].face_info.pave_blocks_on.contains(&pb_idx_f1)
   || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(&pb_idx_f1)
   };
-  let pb_idx_f2 = a_mpb_on_in_vec.iter().find(|&&p| {
+  let pb_idx_f2 = candidates.iter().find(|&&p| {
   let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge
   .unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
   e == n_e_out
@@ -751,7 +757,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  // aPBFacesMap: OCCT L988-993
  let n_f = if b_in_f1 { n_f2 } else { n_f1 };
- a_pb_faces_map.entry(a_mpb_on_in_vec.iter().find(|&&p| {
+ a_pb_faces_map.entry(candidates.iter().find(|&&p| {
  let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).copied().unwrap_or(usize::MAX))
@@ -761,7 +767,7 @@ impl<'a> super::PaveFiller<'a> {
  // Append PB to aLPBC, register in aMSCPB/aMVI
  // rcad: register PB in both faces' pave_blocks_sc
  // OCCT L1046: aMPBAdd.Add(aPBOut)  ?only process once
- if let Some(&pb_idx) = a_mpb_on_in_vec.iter().find(|&&p| {
+ if let Some(&pb_idx) = candidates.iter().find(|&&p| {
  let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }) {
@@ -847,7 +853,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L1082-1094: ProcessExistingPaveBlocks  ?existing PBs from
  // ON/IN sets may overlap this new section edge. Uses BVH tree on
  // aMPBOnIn; rcad iterates flat list checking vertex sharing.
- for &pb_idx in &a_mpb_on_in_vec {
+ for &pb_idx in &candidates {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  // OCCT L3139: theMPB.Contains(aPBF)  ?skip already-processed
  if a_mpb_add.contains(&pb_idx) { continue; }
