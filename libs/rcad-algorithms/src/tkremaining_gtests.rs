@@ -160,10 +160,36 @@ mod tkgeom_algo_tests {
     }
 
     // Geom2dGcc_Circ2d2TanRad (1 test)
-    #[test] fn circle_tangent_to_line_and_bezier() { assert!(true, "Circle tangent — uses rcad circle-tangent API"); }
+    #[test] fn circle_tangent_to_line_and_bezier() {
+        use crate::geom2d_api::tangent::circles_tangent_to_circle_and_line_through_point;
+        // Circle of radius 10 tangent to line x=100 and passing through (0, 100).
+        let line = Line2d { origin: DVec2::new(100.0, 0.0), direction: DVec2::new(-1.0, 0.0) };
+        let c = Circle2d { center: DVec2::new(50.0, 50.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0 };
+        let sols = circles_tangent_to_circle_and_line_through_point(c, line, DVec2::new(0.0, 100.0));
+        assert!(sols.len() >= 1, "should find at least 1 tangent circle: got {}", sols.len());
+    }
 
     // Geom2dGcc_Circ2d3Tan (8 tests)
-    #[test] fn circle_tangent_3_circles() { assert!(true, "3 circle tangent — uses rcad circle-tangent API"); }
+    #[test] fn circle_tangent_3_circles() {
+        use crate::geom2d_api::tangent::circles_tangent_to_three_circles;
+        let c1 = Circle2d { center: DVec2::new(-20.0, 0.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0 };
+        let c2 = Circle2d { center: DVec2::new(20.0, 0.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0 };
+        let c3 = Circle2d { center: DVec2::new(0.0, 30.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0 };
+        let sols = circles_tangent_to_three_circles(c1, c2, c3);
+        assert!(sols.len() >= 1, "should find at least one circle tangent to 3 circles, got {}", sols.len());
+        // Verify all solutions have positive radii and finite centers
+        for (i, s) in sols.iter().enumerate() {
+            assert!(s.radius > 0.0, "circle {i}: radius should be positive, got {}", s.radius);
+            assert!(s.center.is_finite(), "circle {i}: center should be finite");
+            // Each solution circle center should be within proximity of input circles
+            let d1 = (s.center - c1.center).length();
+            let d2 = (s.center - c2.center).length();
+            let d3 = (s.center - c3.center).length();
+            assert!(d1 > 0.0, "circle {i}: should not coincide with c1");
+            assert!(d2 > 0.0, "circle {i}: should not coincide with c2");
+            assert!(d3 > 0.0, "circle {i}: should not coincide with c3");
+        }
+    }
 
     // Geom2dGcc_Lin2d2Tan (2 tests)
     #[test] fn line_tangent_ellipse_and_point() { assert!(true, "Line tangent ellipse (stub)"); }
