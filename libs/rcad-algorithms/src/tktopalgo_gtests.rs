@@ -66,9 +66,15 @@ impl MakeEdgeStub {
     }
 }
 
-/// Stub: Edge length via linear properties
-pub fn edge_length(brep: &topods::BRep, _edge_idx: usize) -> f64 {
-    // TODO: implement proper edge length computation
+/// Edge length via arc_length computation
+pub fn edge_length(brep: &topods::BRep, edge_idx: usize) -> f64 {
+    if edge_idx < brep.tshapes.len() {
+        if let topods::TShape::Edge(ed) = &*brep.tshapes[edge_idx] {
+            if let Some(ref curve) = ed.curve {
+                return crate::gcpnts::arc_length(curve, ed.range[0], ed.range[1]);
+            }
+        }
+    }
     0.0
 }
 
@@ -142,14 +148,19 @@ pub fn copy_brep(brep: &topods::BRep) -> topods::BRep {
 }
 
 /// Stub: center of mass
-pub fn center_of_mass(_brep: &topods::BRep) -> DVec3 {
-    DVec3::ZERO
-}
+pub fn center_of_mass(brep: &topods::BRep) -> DVec3 { rcad_kernel::centroid(brep) }
 
-/// Stub: total edge length (LinearProperties)
+/// Total edge length (LinearProperties)
 pub fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
-    // Count edges and estimate
-    edge_count(brep) as f64 * 10.0
+    let mut total = 0.0;
+    for i in 0..brep.tshapes.len() {
+        if let topods::TShape::Edge(ed) = &*brep.tshapes[i] {
+            if let Some(ref curve) = ed.curve {
+                total += crate::gcpnts::arc_length(curve, ed.range[0], ed.range[1]);
+            }
+        }
+    }
+    total
 }
 
 /// Stub: BRepClass3d_SolidClassifier
@@ -184,9 +195,7 @@ impl DistShapeShapeStub {
 }
 
 /// Stub: PrincipalProperties / symmetry axis
-pub fn has_symmetry_axis(_brep: &topods::BRep) -> bool {
-    false
-}
+pub fn has_symmetry_axis(_brep: &topods::BRep) -> bool { false }
 
 // =============================================================================
 // Helper: create a simple unit box BRep
