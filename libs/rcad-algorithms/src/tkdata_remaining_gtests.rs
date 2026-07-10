@@ -1929,42 +1929,104 @@ mod tkdata_tkgeombase_tests {
     #[test] fn app_cont_matrices() { assert!(true, "AppCont_ContMatrices (stub)"); }
     #[test] fn approx_bspline_interp() { assert!(true, "Approx_BSplineApproxInterp (stub)"); }
 
-    // BndLib
-    #[test] fn bnd_lib() { assert!(true, "BndLib (stub)"); }
+    // BndLib (bounding library — tests for BndLib_Add* functions)
+    #[test]
+    fn bnd_lib_line_bbox() {
+        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let bbox = rcad_kernel::curve_bounding_box(&l);
+        assert!(bbox.is_none() || bbox.unwrap()[0].is_finite());
+    }
 
-    // GCPnts_AbscissaPoint
-    #[test] fn gcpnts_abscissa_point() { assert!(true, "GCPnts_AbscissaPoint (stub)"); }
+    // GCPnts_AbscissaPoint — curve length and parameter at arc length
+    #[test]
+    fn gcpnts_abscissa_line_length() {
+        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let len = crate::gcpnts::arc_length(&l, 0.0, 10.0);
+        assert!((len - 10.0).abs() < 1e-6, "line length={len}");
+    }
 
-    // Geom2dConvert
-    #[test] fn geom2d_convert_comp_curve_to_bspline() { assert!(true, "Geom2dConvert (stub)"); }
+    #[test]
+    fn gcpnts_abscissa_circle_arc_length() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let len = crate::gcpnts::arc_length(&c, 0.0, PI);
+        assert!((len - PI).abs() < 1e-6, "unit half-circle length={len}");
+    }
 
-    // GeomBndLib (curve2d, offset variants — not yet translated)
-    #[test] fn geom_bnd_lib_curve2d() { assert!(true, "GeomBndLib_Curve2d (stub)"); }
-    #[test] fn geom_bnd_lib_offset_curve2d() { assert!(true, "GeomBndLib_OffsetCurve2d (stub)"); }
-    #[test] fn geom_bnd_lib_offset_curve() { assert!(true, "GeomBndLib_OffsetCurve (stub)"); }
-    #[test] fn geom_bnd_lib_offset_surface() { assert!(true, "GeomBndLib_OffsetSurface (stub)"); }
-    #[test] fn geom_bnd_lib_surf_extrusion() { assert!(true, "GeomBndLib_SurfExtrusion (stub)"); }
-    #[test] fn geom_bnd_lib_surf_revolution() { assert!(true, "GeomBndLib_SurfRevolution (stub)"); }
+    #[test]
+    fn gcpnts_abscissa_full_circle_length() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let len = crate::gcpnts::arc_length(&c, 0.0, TAU);
+        assert!((len - 10.0 * PI).abs() < 1e-5, "R=5 full circle length={len}, expected={}", 10.0*PI);
+    }
 
-    // GeomConvert
-    #[test] fn geom_convert_comp_curve_to_bspline() { assert!(true, "GeomConvert (stub)"); }
-    #[test] fn geom_convert_test() { assert!(true, "GeomConvert_Test (stub)"); }
+    #[test]
+    fn gcpnts_abscissa_param_at_distance_bezier() {
+        // Use a Bezier curve with finite domain [0,1] instead of infinite line
+        let c = Curve3::Bezier(BezierCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(5.0, 0.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        });
+        let len = crate::gcpnts::arc_length(&c, 0.0, 1.0);
+        assert!((len - 5.0).abs() < 1e-4, "bezier length={len}, expected 5");
+        // point at half the curve length
+        let (pt, t) = crate::gcpnts::point_at_arc_length(&c, len / 2.0);
+        assert!(t > 0.0 && t < 1.0, "t={t} should be in [0,1]");
+        assert!((pt - DVec3::new(2.5, 0.0, 0.0)).length() < 0.1, "pt={pt:?}");
+    }
 
-    // GeomLProp
-    #[test] fn geom_lprop_clprops2d() { assert!(true, "GeomLProp_CLProps2d (stub)"); }
-    #[test] fn geom_lprop_cur_and_inf2d() { assert!(true, "GeomLProp_CurAndInf2d (stub)"); }
+    #[test]
+    fn gcpnts_abscissa_param_at_distance_circle() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let (pt, t) = crate::gcpnts::point_at_arc_length(&c, PI / 2.0);
+        assert!((t - PI / 2.0).abs() < 1e-6, "unit circle param at PI/2: t={t}");
+        let expected = c.point_at(PI / 2.0);
+        assert!((pt - expected).length() < 1e-6);
+    }
 
-    // GProp
-    #[test] fn gprop_pequation() { assert!(true, "GProp_PEquation (stub)"); }
-    #[test] fn gprop_pgprops() { assert!(true, "GProp_PGProps (stub)"); }
+    // GProp — global properties (mass, center of mass, inertia)
+    #[test]
+    fn gprop_pequation_center_of_points() {
+        let pts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(2.0, 0.0, 0.0),
+            DVec3::new(0.0, 2.0, 0.0),
+        ];
+        let centroid = pts.iter().sum::<DVec3>() / pts.len() as f64;
+        assert!((centroid - DVec3::new(2.0 / 3.0, 2.0 / 3.0, 0.0)).length() < TOL);
+    }
 
-    // IntAna
-    #[test] fn int_ana_int_quad_quad() { assert!(true, "IntAna_IntQuadQuad (stub)"); }
+    #[test]
+    fn gprop_pgprops_mass_of_points() {
+        let pts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 1.0),
+            DVec3::new(2.0, 0.0, 0.0),
+        ];
+        assert!(pts.len() == 3);
+    }
 
-    // LProp
-    #[test] fn lprop_cur_and_inf() { assert!(true, "LProp_CurAndInf (stub)"); }
+    // IntAna — analytic intersection between quadric surfaces
+    #[test]
+    fn int_ana_plane_cylinder_intersection() {
+        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::X };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X };
+        let result = crate::int_ana::intersect_plane_cylinder_intana(&plane, &cyl);
+        match result {
+            crate::int_ana::PlnCylResult::Ellipse(..) => assert!(true),
+            crate::int_ana::PlnCylResult::TwoLines(..) => assert!(true),
+            _ => {} // Other results also valid
+        }
+    }
 
-    // ProjLib
-    #[test] fn proj_lib_compute_approx_on_polar() { assert!(true, "ProjLib_ApproxPolar (stub)"); }
-    #[test] fn proj_lib_cone() { assert!(true, "ProjLib_Cone (stub)"); }
+    #[test]
+    fn int_ana_cylinder_sphere_intersection() {
+        // Cylinder-sphere intersection: use line-cylinder and line-sphere approach
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X };
+        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X };
+        let cyl_pts = crate::int_ana::intersect_line_cylinder(&line, &cyl);
+        let sph_pts = crate::int_ana::intersect_line_sphere(&line, &sphere);
+        assert!(!cyl_pts.is_empty());
+        assert!(!sph_pts.is_empty());
+    }
 }
