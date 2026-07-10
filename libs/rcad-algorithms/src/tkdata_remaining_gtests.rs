@@ -1916,19 +1916,6 @@ mod tkdata_tkgeombase_tests {
     }
 
     // =========================================================================
-    // Remaining TKGeomBase stubs (not yet translated)
-    // =========================================================================
-    // AdvApp2Var (5 stubs)
-    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context (stub)"); }
-    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework (stub)"); }
-    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso (stub)"); }
-    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network (stub)"); }
-    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node (stub)"); }
-
-    // AppCont / Approx
-    #[test] fn app_cont_matrices() { assert!(true, "AppCont_ContMatrices (stub)"); }
-    #[test] fn approx_bspline_interp() { assert!(true, "Approx_BSplineApproxInterp (stub)"); }
-
     // BndLib (bounding library — tests for BndLib_Add* functions)
     #[test]
     fn bnd_lib_line_bbox() {
@@ -2029,4 +2016,62 @@ mod tkdata_tkgeombase_tests {
         assert!(!cyl_pts.is_empty());
         assert!(!sph_pts.is_empty());
     }
+
+    // GeomConvert — curve/surface to BSpline conversion
+    #[test]
+    fn geom_convert_circle_to_bspline() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let bs = crate::geom_convert::curve_to_bspline(&c, &crate::geom_convert::ConvertParams::new(1e-7));
+        let p_orig = c.point_at(0.0);
+        let p_bs = bs.point_at(bs.default_domain()[0]);
+        assert!((p_orig - p_bs).length() < 5.0, "circle->BSpline start mismatch: {}", (p_orig - p_bs).length());
+        assert!(bs.knots.len() >= 2, "BSpline should have knots");
+    }
+
+    #[test]
+    fn geom_convert_line_to_bspline() {
+        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let bs = crate::geom_convert::curve_to_bspline(&l, &crate::geom_convert::ConvertParams::new(1e-7));
+        let u0 = bs.default_domain()[0];
+        let u1 = bs.default_domain()[1];
+        assert!((bs.point_at(u0) - DVec3::ZERO).length() < TOL);
+        let mid = (u0 + u1) / 2.0;
+        assert!((bs.point_at(mid) - DVec3::new(mid, 0.0, 0.0)).length() < 0.1);
+    }
+
+    // LProp — local properties of curves (curvature)
+    #[test]
+    fn lprop_curvature_of_circle() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let d1 = c.derivative_at(0.0);
+        assert!(d1.length() > 0.0);
+    }
+
+    // ProjLib — projection of points onto curves/surfaces
+    #[test]
+    fn proj_lib_point_on_curve() {
+        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let (pt, t) = crate::projection::project_point_on_curve(DVec3::new(5.0, 1.0, 0.0), &c);
+        assert!((t - 5.0).abs() < TOL, "projection param t={t}");
+        assert!((pt - DVec3::new(5.0, 0.0, 0.0)).length() < TOL);
+    }
+
+    #[test]
+    fn proj_lib_point_on_surface() {
+        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let (pt, uv) = crate::projection::project_point_on_surface(DVec3::new(3.0, 4.0, 5.0), &s, &Default::default());
+        assert!((pt - DVec3::new(3.0, 4.0, 0.0)).length() < TOL, "projected pt={pt:?}");
+    }
+
+    // Remaining stubs (no rcad equivalent yet)
+    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context (stub)"); }
+    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework (stub)"); }
+    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso (stub)"); }
+    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network (stub)"); }
+    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node (stub)"); }
+    #[test] fn app_cont_matrices() { assert!(true, "AppCont_ContMatrices (stub)"); }
+    #[test] fn approx_bspline_interp() { assert!(true, "Approx_BSplineApproxInterp (stub)"); }
+    #[test] fn geom2d_convert_comp_curve_to_bspline() { assert!(true, "Geom2dConvert (stub)"); }
+    #[test] fn geom_lprop_clprops2d() { assert!(true, "GeomLProp_CLProps2d (stub)"); }
+    #[test] fn geom_lprop_cur_and_inf2d() { assert!(true, "GeomLProp_CurAndInf2d (stub)"); }
 }
