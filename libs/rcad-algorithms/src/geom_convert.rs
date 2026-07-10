@@ -24,13 +24,13 @@
 //! - [`approx_surface_to_bspline`] - Approximate any surface with BSplineSurface
 
 use crate::tolerance::*;
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
 use rcad_kernel::geom::{
-    any_perpendicular, BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3,
-    ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface,
+    any_perpendicular, BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3,
+    BezierSurface, Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3,
+    Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface,
 };
 use rcad_kernel::fit::interpolate_points;
 
@@ -1007,6 +1007,117 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
     }
 
     result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2D BSpline → Bezier decomposition (Geom2dConvert analog)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Insert a knot into a 2D BSpline curve (Boehm's algorithm, DVec2 version).
+fn insert_knot_2d(
+    degree: usize,
+    knots: &mut Vec<f64>,
+    ctrl_pts: &mut Vec<DVec2>,
+    weights: &mut Vec<f64>,
+    u: f64,
+) {
+    let n = knots.len();
+    if n < 2 { return; }
+
+    let mut k = degree;
+    for i in degree..n - degree {
+        if knots[i] > u + TOLERANCE_LINEAR_ULTRA_STRICT { break; }
+        k = i;
+    }
+
+    let alpha = |i: usize| -> f64 {
+        let denom = knots[i + degree] - knots[i];
+        if denom.abs() < TOLERANCE_FLOAT_DEDUP { 0.0 } else { (u - knots[i]) / denom }
+    };
+
+    let mut new_ctrl = Vec::with_capacity(ctrl_pts.len() + 1);
+    let mut new_weights = Vec::with_capacity(weights.len() + 1);
+
+    for i in 0..=k - degree {
+        new_ctrl.push(ctrl_pts[i]);
+        new_weights.push(weights[i]);
+    }
+    for i in (k - degree + 1)..=k {
+        let a = alpha(i);
+        new_ctrl.push((1.0 - a) * ctrl_pts[i - 1] + a * ctrl_pts[i]);
+        new_weights.push((1.0 - a) * weights[i - 1] + a * weights[i]);
+    }
+    for i in (k + 1)..ctrl_pts.len() {
+        new_ctrl.push(ctrl_pts[i]);
+        new_weights.push(weights[i]);
+    }
+
+    let mut new_knots = Vec::with_capacity(knots.len() + 1);
+    new_knots.extend_from_slice(&knots[..=k]);
+    new_knots.push(u);
+    new_knots.extend_from_slice(&knots[k + 1..]);
+
+    *knots = new_knots;
+    *ctrl_pts = new_ctrl;
+    *weights = new_weights;
+}
+
+/// Decompose a `BSplineCurve2` into a vector of `BezierCurve2` segments.
+///
+/// This is the 2D analog of [`bspline_to_bezier`], corresponding to
+/// OCCT `Geom2dConvert::SplitBSplineCurveToBezierCurve`.
+pub fn bspline_to_bezier_2d(spline: &BSplineCurve2) -> Vec<BezierCurve2> {
+    let degree = spline.degree;
+    if degree == 0 || spline.control_points.is_empty() {
+        return vec![];
+    }
+
+    // Count unique interior knots
+    let unique_knots: Vec<(f64, usize)> = {
+        let mut result = Vec::new();
+        let mut i = 0;
+        while i < spline.knots.len() {
+            let knot = spline.knots[i];
+            let mut mult = 0;
+            while i < spline.knots.len() && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
+                mult += 1;
+                i += 1;
+            }
+            if knot > spline.knots[0] + TOLERANCE_LINEAR_ULTRA_STRICT
+                && knot < spline.knots[spline.knots.len() - 1] - TOLERANCE_LINEAR_ULTRA_STRICT
+            {
+                result.push((knot, mult));
+            }
+        }
+        result
+    };
+
+    let mut knots = spline.knots.clone();
+    let mut ctrl_pts = spline.control_points.clone();
+    let mut weights = spline.weights.clone();
+
+    for (knot, mult) in &unique_knots {
+        let needed = degree.saturating_sub(*mult);
+        for _ in 0..needed {
+            insert_knot_2d(degree, &mut knots, &mut ctrl_pts, &mut weights, *knot);
+        }
+    }
+
+    let n_spans = (knots.len() - degree - 1) / degree;
+    let mut beziers = Vec::with_capacity(n_spans);
+
+    for i in 0..n_spans {
+        let start_idx = i * degree;
+        let end_idx = start_idx + degree + 1;
+        if end_idx <= ctrl_pts.len() {
+            beziers.push(BezierCurve2 {
+                control_points: ctrl_pts[start_idx..end_idx].to_vec(),
+                weights: weights[start_idx..end_idx].to_vec(),
+            });
+        }
+    }
+
+    beziers
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

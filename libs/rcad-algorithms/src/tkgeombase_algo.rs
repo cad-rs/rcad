@@ -331,10 +331,14 @@ fn reverse_bspline3(c: &BSplineCurve3) -> BSplineCurve3 {
 fn reverse_bspline2(c: &BSplineCurve2) -> BSplineCurve2 {
     let mut poles = c.control_points.clone();
     poles.reverse();
+    let max_k = c.knots[c.knots.len() - 1];
+    let min_k = c.knots[0];
+    let mut knots: Vec<f64> = c.knots.iter().map(|k| min_k + max_k - k).collect();
+    knots.reverse();
     let mut weights: Vec<f64> = c.weights.iter().rev().copied().collect();
     BSplineCurve2 {
         degree: c.degree,
-        knots: vec![],
+        knots,
         control_points: poles,
         weights,
     }

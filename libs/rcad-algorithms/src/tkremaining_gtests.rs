@@ -46,8 +46,48 @@ mod tkgeom_algo_tests {
     #[test] fn degenerate_x_range_falls_back() { assert!(true, "BSpline fit x-range (stub)"); }
     #[test] fn degenerate_explicit_params_reset_done() { assert!(true, "BSpline fit params (stub)"); }
 
-    // Geom2dConvert_BSplineCurveToBezierCurve (1 test)
-    #[test] fn bspline_to_bezier_conversion() { assert!(true, "BSpline->Bezier conv (stub)"); }
+    // Geom2dConvert_BSplineCurveToBezierCurve (1 test) + CompCurveToBSplineCurve
+    #[test] fn bspline_to_bezier_conversion() {
+        // Linear 2D BSpline with 2 spans → 2 Bezier segments
+        use rcad_kernel::geom::{BSplineCurve2, Curve2dEval, BezierCurve2};
+        use glam::DVec2;
+
+        let spline = BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 0.5, 1.0, 1.0],
+            control_points: vec![DVec2::ZERO, DVec2::X, DVec2::new(2.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let beziers = crate::geom_convert::bspline_to_bezier_2d(&spline);
+        assert_eq!(beziers.len(), 2, "should produce 2 bezier segments");
+        assert_eq!(beziers[0].control_points.len(), 2, "degree 1 → 2 ctrl pts");
+        let p_end = beziers[1].point_at(1.0);
+        assert!((p_end - DVec2::new(2.0, 0.0)).length() < 1e-10, "end at (2,0)");
+    }
+
+    #[test] fn concat_two_linear_bsplines_2d() {
+        use rcad_kernel::geom::{BSplineCurve2, Curve2dEval};
+        use glam::DVec2;
+
+        let c1 = BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec2::ZERO, DVec2::new(5.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        };
+        let c2 = BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec2::new(5.0, 0.0), DVec2::new(10.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        };
+        let result = crate::tkgeombase_algo::concat_bsplines_2d(&c1, &c2, 1e-7);
+        assert!(result.is_some(), "should concatenate continuous curves");
+        let combined = result.unwrap();
+        // Verify the concatenated curve has the expected structure
+        assert!(combined.degree >= 1, "degree should be preserved");
+        assert!(!combined.control_points.is_empty(), "should have control points");
+    }
 
     // Geom2dGcc_Circ2d2TanRad (1 test)
     #[test] fn circle_tangent_to_line_and_bezier() { assert!(true, "Circle tangent (stub)"); }
