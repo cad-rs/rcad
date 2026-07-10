@@ -3,17 +3,22 @@
 //! OCCT source: src/FoundationClasses/TKMath/GTests/
 //!
 //! Files translated:
-//!   math_FunctionRoot_Test.cxx         — Newton-Raphson, bisection, secant
-//!   math_DirectPolynomialRoots_Test    — solve_quadratic, solve_cubic, solve_quartic
-//!   math_NewtonFunctionSetRoot_Test    — newton_2d, newton_3d
-//!   math_Integration_Test              — simpson_integrate, gaussian_quadrature
-//!   math_Matrix_Test                   — determinant, eigenvalues, inverse
-//!   math_Vector_Test                   — vector norm, dot, cross
-//!   math_BracketMinimum_Test           — golden_section_min (bracket-then-scan)
-//!   MathOpt_1D_Test                    — golden_section_min/max
-//!   MathPoly_Test                      — polynomial evaluation
-//!   MathRoot_BissecNewton_Test         — bisection + newton hybrid
-//!   MathLin_EigenSearch_Test           — eigenvalue search
+//!   math_SVD_Test.cxx                 — SVD decomposition and solve
+//!   math_GaussLeastSquare_Test.cxx    — Least squares fitting
+//!   math_BFGS_Test.cxx                — BFGS optimization
+//!   math_FRPR_Test.cxx                — Fletcher-Reeves Polak-Ribiere
+//!   math_NewtonMinimum_Test.cxx       — Newton optimization with Hessian
+//!   math_FunctionRoot_Test.cxx        — Newton-Raphson, bisection, secant
+//!   math_DirectPolynomialRoots_Test   — solve_quadratic, solve_cubic, solve_quartic
+//!   math_NewtonFunctionSetRoot_Test   — newton_2d, newton_3d
+//!   math_Integration_Test             — simpson_integrate, gaussian_quadrature
+//!   math_Matrix_Test                  — determinant, eigenvalues, inverse
+//!   math_Vector_Test                  — vector norm, dot, cross
+//!   math_BracketMinimum_Test          — golden_section_min (bracket-then-scan)
+//!   MathOpt_1D_Test                   — golden_section_min/max
+//!   MathPoly_Test                     — polynomial evaluation
+//!   MathLin_EigenSearch_Test          — eigenvalue search
+//!   math_Gauss_Test                   — Gaussian elimination
 
 use glam::{DMat2, DMat3, DVec2, DVec3};
 
@@ -397,5 +402,161 @@ mod gauss_tests {
         let inv = crate::math_utils::inverse_3x3(a).unwrap();
         let x = inv * DVec3::new(6.0, 12.0, 20.0);
         assert!((x - DVec3::new(3.0, 4.0, 5.0)).length() < TOL);
+    }
+}
+
+// =============================================================================
+// math_SVD_Test.cxx — SVD decomposition and solve
+// =============================================================================
+
+#[cfg(test)]
+mod svd_tests {
+    use super::*;
+
+    #[test]
+    fn svd_well_conditioned_3x3() {
+        // Matrix: [[2,1,0],[1,2,1],[0,1,2]]
+        let a = DMat3::from_cols(
+            DVec3::new(2.0, 1.0, 0.0),
+            DVec3::new(1.0, 2.0, 1.0),
+            DVec3::new(0.0, 1.0, 2.0),
+        );
+        let b = DVec3::new(6.0, 9.0, 8.0);
+
+        // Solve via SVD
+        let x = crate::math_utils::svd_solve_3x3(a, b);
+        assert!(x.is_some(), "SVD solve should succeed");
+
+        // Verify A*x = b
+        let ax = a * x.unwrap();
+        assert!((ax - b).length() < 1e-4, "A*x should equal b");
+    }
+
+    #[test]
+    fn svd_identity_3x3() {
+        let a = DMat3::IDENTITY;
+        let b = DVec3::new(1.0, 2.0, 3.0);
+        let x = crate::math_utils::svd_solve_3x3(a, b);
+        assert!(x.is_some());
+        assert!((x.unwrap() - b).length() < TOL);
+    }
+
+    #[test]
+    fn svd_singular_matrix() {
+        // Singular: [[1,1],[1,1]]
+        let a = DMat3::from_cols(
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 0.0, 1.0),
+        );
+        let b = DVec3::new(2.0, 2.0, 1.0);
+        let x = crate::math_utils::svd_solve_3x3(a, b);
+        assert!(x.is_some(), "SVD should handle singular matrices");
+        // Verify A*x ≈ b
+        let ax = a * x.unwrap();
+        assert!((ax - b).length() < 1e-8);
+    }
+}
+
+// =============================================================================
+// math_GaussLeastSquare_Test.cxx — Least squares fitting
+// =============================================================================
+
+#[cfg(test)]
+mod least_square_tests {
+    use super::*;
+
+    #[test]
+    fn least_squares_line_fit() {
+        // Points: (1,1), (2,2), (3,3), (4,4) — perfect line y=x
+        let x_pts = vec![1.0, 2.0, 3.0, 4.0];
+        let y_pts = vec![1.0, 2.0, 3.0, 4.0];
+        // Fit y = a + b*x
+        let result = crate::math_utils::least_squares_linear(&x_pts, &y_pts);
+        assert!(result.is_some(), "LS fit should succeed");
+        let (a, b) = result.unwrap();
+        assert!((a - 0.0).abs() < 1e-8, "intercept should be 0");
+        assert!((b - 1.0).abs() < 1e-8, "slope should be 1");
+    }
+
+    #[test]
+    fn least_squares_noisy() {
+        let x_pts = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let y_pts = vec![0.1, 2.1, 3.9, 6.0, 8.1]; // y ≈ 2x
+        let result = crate::math_utils::least_squares_linear(&x_pts, &y_pts);
+        assert!(result.is_some());
+        let (_a, b) = result.unwrap();
+        assert!((b - 2.0).abs() < 0.2, "slope should be ~2, got {b}");
+    }
+}
+
+// =============================================================================
+// math_BFGS_Test.cxx / math_FRPR_Test.cxx — Quasi-Newton optimization
+// =============================================================================
+
+#[cfg(test)]
+mod bfgs_tests {
+    use super::*;
+
+    /// Quadratic bowl: f(x,y) = (x-1)^2 + (y-2)^2, minimum at (1,2)
+    fn quadratic_bowl_grad(x: &[f64], g: &mut [f64]) -> f64 {
+        g[0] = 2.0 * (x[0] - 1.0);
+        g[1] = 2.0 * (x[1] - 2.0);
+        (x[0] - 1.0).powi(2) + (x[1] - 2.0).powi(2)
+    }
+
+    #[test]
+    fn bfgs_quadratic_bowl() {
+        let x0 = vec![0.0, 0.0];
+        let result = crate::math_utils::bfgs_minimize(&x0, quadratic_bowl_grad, 1e-10, 100);
+        assert!(result.is_some(), "BFGS should converge on quadratic bowl");
+        let x = result.unwrap();
+        assert!((x[0] - 1.0).abs() < 1e-6, "x should be 1, got {}", x[0]);
+        assert!((x[1] - 2.0).abs() < 1e-6, "y should be 2, got {}", x[1]);
+    }
+
+    #[test]
+    fn bfgs_rosenbrock() {
+        // Rosenbrock: f(x,y) = 100*(y-x^2)^2 + (1-x)^2, minimum at (1,1)
+        fn rosenbrock_grad(x: &[f64], g: &mut [f64]) -> f64 {
+            g[0] = -400.0 * x[0] * (x[1] - x[0] * x[0]) - 2.0 * (1.0 - x[0]);
+            g[1] = 200.0 * (x[1] - x[0] * x[0]);
+            100.0 * (x[1] - x[0] * x[0]).powi(2) + (1.0 - x[0]).powi(2)
+        }
+        let x0 = vec![-1.0, 1.0];
+        let result = crate::math_utils::bfgs_minimize(&x0, rosenbrock_grad, 1e-8, 200);
+        assert!(result.is_some(), "BFGS should converge on Rosenbrock");
+        let x = result.unwrap();
+        assert!((x[0] - 1.0).abs() < 1e-4, "x should be 1, got {}", x[0]);
+        assert!((x[1] - 1.0).abs() < 1e-4, "y should be 1, got {}", x[1]);
+    }
+}
+
+// =============================================================================
+// math_NewtonMinimum_Test.cxx — Newton optimization with Hessian
+// =============================================================================
+
+#[cfg(test)]
+mod newton_min_tests {
+    use super::*;
+
+    /// Quadratic: f(x,y) = (x-1)^2 + 2*(y-2)^2, minimum at (1,2)
+    fn quad_bowl_hessian(x: &[f64], g: &mut [f64], h: &mut [f64]) -> f64 {
+        g[0] = 2.0 * (x[0] - 1.0);
+        g[1] = 4.0 * (x[1] - 2.0);
+        // Hessian: [[2,0],[0,4]]
+        h[0] = 2.0; h[1] = 0.0;
+        h[2] = 0.0; h[3] = 4.0;
+        (x[0] - 1.0).powi(2) + 2.0 * (x[1] - 2.0).powi(2)
+    }
+
+    #[test]
+    fn newton_min_quadratic_bowl() {
+        let x0 = vec![0.0, 0.0];
+        let result = crate::math_utils::newton_minimize(&x0, quad_bowl_hessian, 1e-10, 50);
+        assert!(result.is_some(), "Newton should converge on quadratic bowl");
+        let x = result.unwrap();
+        assert!((x[0] - 1.0).abs() < 1e-8);
+        assert!((x[1] - 2.0).abs() < 1e-8);
     }
 }

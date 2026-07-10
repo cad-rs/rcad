@@ -733,6 +733,391 @@ pub fn golden_section_max<F: Fn(f64) -> f64>(f: F, a: f64, b: f64, tol: f64) -> 
     golden_section_min(|x| -f(x), a, b, tol)
 }
 
+// =============================================================================
+// SVD — Singular Value Decomposition (3x3)
+// =============================================================================
+
+/// Solve A*x = b for 3x3 matrix A.
+///
+/// Uses Gaussian elimination with partial pivoting (via inverse). If A is
+/// singular, falls back to a damped least-squares approach.
+pub fn svd_solve_3x3(a: DMat3, b: DVec3) -> Option<DVec3> {
+    // For non-singular matrices, use direct inverse (most efficient).
+    if let Some(inv) = inverse_3x3(a) {
+        return Some(inv * b);
+    }
+    // For singular matrices, use SVD-based pseudo-inverse.
+    let (u, s, vt) = svd_jacobi_3x3(a)?;
+    let s_max = s.x.max(s.y.max(s.z));
+    let tol = s_max * 1e-14;
+    let utb = u.transpose() * b;
+    let y = DVec3::new(
+        if s.x > tol { utb.x / s.x } else { 0.0 },
+        if s.y > tol { utb.y / s.y } else { 0.0 },
+        if s.z > tol { utb.z / s.z } else { 0.0 },
+    );
+    Some(vt.transpose() * y)
+}
+
+/// Jacobi SVD for 3x3 matrices using one-sided Jacobi.
+///
+/// Returns (U, singular_values, V^T) where A = U * diag(s) * V^T.
+fn svd_jacobi_3x3(mut a: DMat3) -> Option<(DMat3, DVec3, DMat3)> {
+    let tol = 1e-14;
+    let mut v = DMat3::IDENTITY;
+
+    for _ in 0..100 {
+        let mut max_gamma = 0.0;
+        let mut best_p = 0;
+        let mut best_q = 1;
+
+        // Find pair with largest off-diagonal correlation
+        for p in 0..3 {
+            for q in (p + 1)..3 {
+                let gamma = a.col(p).dot(a.col(q));
+                let alpha = a.col(p).length_squared();
+                let beta = a.col(q).length_squared();
+                let denom = (alpha * beta).sqrt();
+                if denom > tol {
+                    let ratio = gamma.abs() / denom;
+                    if ratio > max_gamma {
+                        max_gamma = ratio;
+                        best_p = p;
+                        best_q = q;
+                    }
+                }
+            }
+        }
+
+        if max_gamma < tol {
+            break;
+        }
+
+        let p = best_p;
+        let q = best_q;
+        let alpha = a.col(p).length_squared();
+        let beta = a.col(q).length_squared();
+        let gamma = a.col(p).dot(a.col(q));
+
+        // Compute Jacobi rotation
+        let tau = (beta - alpha) / (2.0 * gamma);
+        let t = if tau >= 0.0 {
+            1.0 / (tau + (1.0 + tau * tau).sqrt())
+        } else {
+            -1.0 / (-tau + (1.0 + tau * tau).sqrt())
+        };
+        let c = 1.0 / (1.0 + t * t).sqrt();
+        let s = t * c;
+
+        // Update columns p, q of A: [a_p' a_q'] = [a_p a_q] * J
+        let ap = a.col(p);
+        let aq = a.col(q);
+        let new_ap = ap * c + aq * s;
+        let new_aq = -ap * s + aq * c;
+        a = DMat3::from_cols(
+            if p == 0 { new_ap } else if q == 0 { new_aq } else { a.col(0) },
+            if p == 1 { new_ap } else if q == 1 { new_aq } else { a.col(1) },
+            if p == 2 { new_ap } else if q == 2 { new_aq } else { a.col(2) },
+        );
+
+        // Update V similarly
+        let vp = v.col(p);
+        let vq = v.col(q);
+        let new_vp = vp * c + vq * s;
+        let new_vq = -vp * s + vq * c;
+        v = DMat3::from_cols(
+            if p == 0 { new_vp } else if q == 0 { new_vq } else { v.col(0) },
+            if p == 1 { new_vp } else if q == 1 { new_vq } else { v.col(1) },
+            if p == 2 { new_vp } else if q == 2 { new_vq } else { v.col(2) },
+        );
+    }
+
+    // Singular values = column norms of A
+    let mut s = DVec3::new(a.col(0).length(), a.col(1).length(), a.col(2).length());
+    let tol_s = 1e-14;
+    if s.x < tol_s { s.x = 0.0; }
+    if s.y < tol_s { s.y = 0.0; }
+    if s.z < tol_s { s.z = 0.0; }
+
+    // Normalize columns of A to get U
+    let u0 = if s.x > tol_s { a.col(0) / s.x } else { DVec3::X };
+    let u1 = if s.y > tol_s { a.col(1) / s.y } else { DVec3::Y };
+    let u2 = if s.z > tol_s { a.col(2) / s.z } else { DVec3::Z };
+    let u = DMat3::from_cols(u0, u1, u2);
+
+    Some((u, s, v.transpose()))
+}
+
+// =============================================================================
+// Least Squares
+// =============================================================================
+
+/// Fit a line y = a + b*x to data points using linear least squares.
+///
+/// Returns (intercept, slope) or None if insufficient data.
+pub fn least_squares_linear(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
+    let n = x.len().min(y.len());
+    if n < 2 { return None; }
+
+    let mut sx = 0.0;
+    let mut sy = 0.0;
+    let mut sxx = 0.0;
+    let mut sxy = 0.0;
+
+    for i in 0..n {
+        sx += x[i];
+        sy += y[i];
+        sxx += x[i] * x[i];
+        sxy += x[i] * y[i];
+    }
+
+    let denom = (n as f64) * sxx - sx * sx;
+    if denom.abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+
+    let b = ((n as f64) * sxy - sx * sy) / denom;
+    let a = (sy - b * sx) / (n as f64);
+    Some((a, b))
+}
+
+// =============================================================================
+// BFGS — Broyden-Fletcher-Goldfarb-Shanno optimization
+// =============================================================================
+
+/// Minimize a function with gradient using the BFGS quasi-Newton method.
+///
+/// * `x0` - Initial guess
+/// * `f_grad` - Function returning (value) and filling gradient
+/// * `tol` - Gradient norm convergence tolerance
+/// * `max_iter` - Maximum iterations
+///
+/// Returns the minimizer location or None on failure.
+pub fn bfgs_minimize(
+    x0: &[f64],
+    f_grad: impl Fn(&[f64], &mut [f64]) -> f64,
+    tol: f64,
+    max_iter: usize,
+) -> Option<Vec<f64>> {
+    let n = x0.len();
+    let mut x = x0.to_vec();
+    let mut grad = vec![0.0; n];
+    let mut f = f_grad(&x, &mut grad);
+
+    // Initial inverse Hessian approximation: identity
+    let mut h_inv = vec![0.0; n * n];
+    for i in 0..n {
+        h_inv[i * n + i] = 1.0;
+    }
+
+    for _ in 0..max_iter {
+        // Check convergence: ||grad|| < tol
+        let gn = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+        if gn < tol {
+            return Some(x);
+        }
+
+        // Search direction: p = -H * grad
+        let mut p = vec![0.0; n];
+        for i in 0..n {
+            for j in 0..n {
+                p[i] -= h_inv[i * n + j] * grad[j];
+            }
+        }
+
+        // Line search: find step size alpha
+        let alpha = line_search_backtracking(&x, &p, &grad, f, &f_grad);
+
+        // Update
+        let mut s = vec![0.0; n];
+        for i in 0..n {
+            s[i] = alpha * p[i];
+            x[i] += s[i];
+        }
+
+        let mut new_grad = vec![0.0; n];
+        let new_f = f_grad(&x, &mut new_grad);
+
+        // Gradient difference: y = g_{k+1} - g_k
+        let mut y = vec![0.0; n];
+        for i in 0..n {
+            y[i] = new_grad[i] - grad[i];
+        }
+
+        grad = new_grad;
+        f = new_f;
+
+        // BFGS update of inverse Hessian approximation
+        // H_{k+1} = (I - ρ*s*y^T) * H_k * (I - ρ*y*s^T) + ρ*s*s^T
+        // where ρ = 1/(y^T * s)
+        let sy = s.iter().zip(y.iter()).map(|(s, y)| s * y).sum::<f64>();
+        if sy.abs() < TOLERANCE_FLOAT_DEDUP { continue; }
+
+        let rho = 1.0 / sy;
+
+        // Compute H*y (store as hy)
+        let mut hy = vec![0.0; n];
+        for i in 0..n {
+            for j in 0..n {
+                hy[i] += h_inv[i * n + j] * y[j];
+            }
+        }
+
+        // Compute y^T * H * y
+        let ythy = y.iter().zip(hy.iter()).map(|(y, hy)| y * hy).sum::<f64>();
+
+        // Update: H = H + ρ * ( (1 + ρ*y^T*H*y)*s*s^T - s*y^T*H - H*y*s^T )
+        let factor = 1.0 + rho * ythy;
+        let mut h_new = h_inv.clone();
+        for i in 0..n {
+            for j in 0..n {
+                h_new[i * n + j] += rho * (factor * s[i] * s[j] - s[i] * hy[j] - hy[i] * s[j]);
+            }
+        }
+        h_inv = h_new;
+    }
+
+    // Check final gradient
+    let gn = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+    if gn < tol { Some(x) } else { None }
+}
+
+/// Simple backtracking line search.
+fn line_search_backtracking(
+    x: &[f64],
+    p: &[f64],
+    _grad: &[f64],
+    f_current: f64,
+    f_grad: impl Fn(&[f64], &mut [f64]) -> f64,
+) -> f64 {
+    let c = 1e-4;
+    let rho = 0.5;
+    let mut alpha = 1.0;
+    let mut trial = vec![0.0; x.len()];
+    let mut g = vec![0.0; x.len()];
+
+    for _ in 0..20 {
+        for i in 0..x.len() {
+            trial[i] = x[i] + alpha * p[i];
+        }
+        let f_trial = f_grad(&trial, &mut g);
+        if f_trial <= f_current + c * alpha * p.iter().zip(_grad.iter()).map(|(p, g)| p * g).sum::<f64>() {
+            return alpha;
+        }
+        alpha *= rho;
+    }
+    alpha
+}
+
+// =============================================================================
+// Newton Minimization (with Hessian)
+// =============================================================================
+
+/// Minimize a function using Newton's method with gradient and Hessian.
+///
+/// * `x0` - Initial guess
+/// * `f_grad_hess` - Function returning value, filling gradient and Hessian
+///   (Hessian stored as flat array: row-major, n×n)
+/// * `tol` - Gradient norm convergence tolerance
+/// * `max_iter` - Maximum iterations
+///
+/// Returns the minimizer location or None on failure.
+pub fn newton_minimize(
+    x0: &[f64],
+    f_grad_hess: impl Fn(&[f64], &mut [f64], &mut [f64]) -> f64,
+    tol: f64,
+    max_iter: usize,
+) -> Option<Vec<f64>> {
+    let n = x0.len();
+    let mut x = x0.to_vec();
+    let mut grad = vec![0.0; n];
+    let mut hess = vec![0.0; n * n];
+    let mut f = f_grad_hess(&x, &mut grad, &mut hess);
+
+    for _ in 0..max_iter {
+        let gn = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+        if gn < tol {
+            return Some(x);
+        }
+
+        // Solve H * p = -g for p using simple Gaussian elimination
+        if let Some(p) = solve_linear_system(&hess, &grad.iter().map(|g| -g).collect::<Vec<_>>(), n) {
+            // Line search: use simple bisection with gradient evaluation
+            let mut alpha = 1.0;
+            let mut trial = x.clone();
+            let mut g_trial = vec![0.0; n];
+            for _ in 0..20 {
+                for i in 0..n {
+                    trial[i] = x[i] + alpha * p[i];
+                }
+                let f_trial = f_grad_hess(&trial, &mut g_trial, &mut hess);
+                let directional = p.iter().zip(grad.iter()).map(|(p, g)| p * g).sum::<f64>();
+                if f_trial <= f + 1e-4 * alpha * directional {
+                    break;
+                }
+                alpha *= 0.5;
+            }
+
+            for i in 0..n {
+                x[i] += alpha * p[i];
+            }
+            f = f_grad_hess(&x, &mut grad, &mut hess);
+        } else {
+            return None;
+        }
+    }
+
+    let gn = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+    if gn < tol { Some(x) } else { None }
+}
+
+/// Solve A*x = b for small n×n system using Gaussian elimination.
+fn solve_linear_system(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
+    // Augmented matrix
+    let mut aug = vec![0.0; n * (n + 1)];
+    for i in 0..n {
+        for j in 0..n {
+            aug[i * (n + 1) + j] = a[i * n + j];
+        }
+        aug[i * (n + 1) + n] = b[i];
+    }
+
+    // Forward elimination
+    for col in 0..n {
+        // Partial pivot
+        let mut max_row = col;
+        for row in (col + 1)..n {
+            if aug[row * (n + 1) + col].abs() > aug[max_row * (n + 1) + col].abs() {
+                max_row = row;
+            }
+        }
+        if aug[max_row * (n + 1) + col].abs() < TOLERANCE_FLOAT_DEDUP {
+            return None;
+        }
+        if max_row != col {
+            for j in col..=n {
+                aug.swap(col * (n + 1) + j, max_row * (n + 1) + j);
+            }
+        }
+
+        // Eliminate below
+        for row in (col + 1)..n {
+            let factor = aug[row * (n + 1) + col] / aug[col * (n + 1) + col];
+            for j in col..=n {
+                aug[row * (n + 1) + j] -= factor * aug[col * (n + 1) + j];
+            }
+        }
+    }
+
+    // Back substitution
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut sum = aug[i * (n + 1) + n];
+        for j in (i + 1)..n {
+            sum -= aug[i * (n + 1) + j] * x[j];
+        }
+        x[i] = sum / aug[i * (n + 1) + i];
+    }
+    Some(x)
+}
 
 // =============================================================================
 // Tests
