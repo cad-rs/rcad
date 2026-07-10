@@ -292,38 +292,7 @@ fn optional_bvhs(a: &topods::BRep, b: &topods::BRep) -> (Option<bvh::Bvh>, Optio
 
 /// Build a simple BVH from a topods::BRep by computing face AABBs from wire vertices.
 fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
- use crate::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
- let mut face_aabbs = Vec::new();
-
- for ts in &brep.tshapes {
- if let topods::TShape::Face(fd) = ts.as_ref() {
- let mut aabb = Aabb::empty();
- let wire = &brep.wire(fd.outer_wire);
- for edge_sr in &wire.edges {
- if let topods::TShape::Edge(ed) = brep.tshapes[edge_sr.index].as_ref() {
- let vd = brep.vertex(ed.first);
- aabb.expand_point(vd.point);
- let vd2 = brep.vertex(ed.last);
- aabb.expand_point(vd2.point);
- }
- }
- // Expand for surface type
- if let Some(ref surf) = fd.surface {
- match surf {
- Surface3::Sphere(s) => {
- let r = s.radius.abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
- aabb.expand_point(s.center - glam::DVec3::splat(r));
- aabb.expand_point(s.center + glam::DVec3::splat(r));
- }
- _ => {}
- }
- }
- face_aabbs.push(aabb);
- }
- }
-
- let indices: Vec<usize> = (0..face_aabbs.len()).collect();
- bvh::DsBvh::build(indices, face_aabbs)
+ bvh::Bvh::build(brep)
 }
 
 /// `use_bvh`: match [`crate::bop_occt_union::boolean_op_generic`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]

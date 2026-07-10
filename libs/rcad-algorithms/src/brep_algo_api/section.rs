@@ -31,7 +31,6 @@ use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};
 use rcad_kernel::topods;
-use crate::brep_algo_api::brep_ext::BRepExt;
 use rcad_kernel::topods::BRep;
 use rcad_kernel::geom::Line3;
 
@@ -135,7 +134,7 @@ impl Section {
         self.edge_to_ic = Vec::new();
 
         // ✅ OCCT-aligned: Check for empty inputs
-        if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
+        if self.shape_a.solids().is_empty() || self.shape_b.solids().is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
             return Err(BooleanError::EmptyInput);
@@ -146,13 +145,13 @@ impl Section {
         let b = self.ensure_geometry(&self.shape_b);
 
         // ✅ OCCT-aligned: Build BOPDS_DS
-        let a_t = a.to_topods();
-        let b_t = b.to_topods();
+        let a_t = a;
+        let b_t = b;
         let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
 
         // ✅ OCCT-aligned: Build BVH for acceleration
-        let bvh_a = Bvh::build(&a);
-        let bvh_b = Bvh::build(&b);
+        let bvh_a = Bvh::build(&a_t);
+        let bvh_b = Bvh::build(&b_t);
 
         // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         // This is the core intersection computation — it handles:
@@ -178,7 +177,7 @@ impl Section {
             // ⏳ Architecture diff: OCCT BOPAlgo_Section extracts section
             // edges from the builder's internal DS images. The fallback here
             // uses a separate intersection pipeline (brep_section).
-            let section_brep = crate::section::brep_section(&a, &b);
+            let section_brep = crate::section::brep_section(&a_t, &b_t);
             self.ds = Some(ds);
             self.edge_to_ic = Vec::new();
             self.result = Some(section_brep);
@@ -297,11 +296,7 @@ impl Section {
             result.edges().push(rcad_kernel::topology::Edge { start: vi_a, end: vi_b });
             let curve_idx = result.edges().len();
             // geom.curves.push(e.curve.clone());
-            while // geom.edge_curve.len() <= edge_idx { // geom.edge_curve.push(None); }
-            while // geom.edge_curve_range.len() <= edge_idx { // geom.edge_curve_range.push(None); }
-            while // geom.edge_degenerated.len() <= edge_idx { // geom.edge_degenerated.push(false); }
-            // geom.edge_curve[] = Some(curve_idx);
-            // geom.edge_curves_range[] = Some(e.t_range);
+            // Edge curves stored on TEdgeData (legacy geom sync removed).
             edge_to_ic.push(ei);
         }
 
@@ -326,7 +321,7 @@ impl Section {
 
     /// Ensure geometry is populated for primitive shapes.
     fn ensure_geometry(&self, brep: &BRep) -> BRep {
-        if brep.geom.surfaces.is_empty() && !brep.solids().is_empty() {
+        if !brep.solids().is_empty() {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
             result
@@ -415,7 +410,7 @@ impl Section {
 
     /// Get the number of section edges in the result.
     pub fn num_edges(&self) -> usize {
-        self.result.as_ref().map_or(0, |r| r.edges.len())
+        self.result.as_ref().map_or(0, |r| r.edges().len())
     }
 
     /// Get the number of intersection curves found.
