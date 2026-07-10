@@ -306,14 +306,16 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // Has IN or SC pave blocks --full BuilderFace::Perform (TopoDS path).
-            // OCCT-aligned: record source face split in myImages.
+            // OCCT L501-504: accumulate BuilderFace tasks in aVBF (batching).
+            // Record source face key for later myImages registration.
             let sf_idx = self.ds.faces[fi].source_face_idx;
             let f_base = self.ds.vertices.len() + self.ds.edges.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
-            self.my_images.borrow_mut()
-                .entry(self.brep_sr(f_base + side_offset + sf_idx))
-                .or_insert_with(Vec::new);
+            let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
             // OCCT L353-494: Build edge list aLE (boundary + split + IN + SC edges).
+            // NOTE: brep_data borrow is temporary (not &'a), so BuilderFace
+            // is created AND executed inside this scope (no batching across
+            // faces — OCCT accumulates aVBF for parallel execution).
             if let Some(ref brep_data) = *self.brep.borrow() {
                 let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
                 let mut a_le: Vec<topods::ShapeRef> = Vec::new();
@@ -375,7 +377,6 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
                 // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aF)
-                // Computes pcurves for edges of aLE on the planar face aFF.
                 if !self.my_non_destructive {
                     let t2: &topods::BRep = &*t;
                     if face_sr.index < t2.tshapes.len() {
@@ -385,9 +386,7 @@ impl<'a> BooleanBuilder<'a> {
                                     if e_sr.index < t2.tshapes.len() {
                                         if let topods::TShape::Edge(ed) = &*t2.tshapes[e_sr.index] {
                                             if !ed.pcurves.contains_key(&face_sr.index) {
-                                                // pcurve missing on planar face — would be
-                                                // computed via projection.  In practice rcad's
-                                                // MakeBlocks already sets pcurves on both faces.
+                                                // rcad: MakeBlocks already sets pcurves on both faces.
                                             }
                                         }
                                     }
@@ -396,8 +395,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
-
-                // OCCT L501-504: Create BuilderFace with aLE
+                // OCCT L501-504: create BuilderFace and perform immediately (no batching).
                 let mut bf = crate::builder::BuilderFace::new(
                     self.ds,
                     &brep_data.0,
@@ -408,9 +406,17 @@ impl<'a> BooleanBuilder<'a> {
                     is_a,
                 );
                 bf.set_shapes(a_le);
-                bf.perform(result, t);
-            }
-        }
+                // OCCT L121-147: Perform (no result parameter)
+                bf.perform(t);
+                // OCCT L527-552: transfer myAreas to myImages
+                for &area_sr in bf.areas() {
+                    self.my_images.borrow_mut()
+                        .entry(f_sr)
+                        .or_default()
+                        .push(area_sr);
+                }
+            }  // close if let ref brep_data
+        }  // close for i (source shape iteration)
     }
 
     /// --OCCT-aligned: FillInternalVertices (Builder_2.cxx L929-1008).
