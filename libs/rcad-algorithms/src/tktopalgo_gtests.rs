@@ -789,7 +789,7 @@ mod brep_lib_make_wire_tests {
 }
 
 // =============================================================================
-// BRepOffsetAPI_ThruSections_Test.cxx (3 tests — stubs only)
+// BRepOffsetAPI_ThruSections_Test.cxx (3 tests — rcad: brep_feat::build_loft_solid)
 // =============================================================================
 
 #[cfg(test)]
@@ -798,23 +798,58 @@ mod thru_sections_tests {
 
     #[test]
     fn occ10006_loft_and_fusion() {
-        // Requires BRepOffsetAPI_ThruSections (lofting) which rcad doesn't have.
         // OCCT: creates 2 lofted shapes from 4-sided polygons, then boolean-fuses them.
-        // Skip: rcad lacks lofting.
-        assert!(true, "ThruSections loft+fuse test (requires lofting, not yet implemented)");
+        // rcad: build_loft_solid with two 4-vertex rectangular profiles
+        let profiles: Vec<Vec<DVec3>> = vec![
+            vec![
+                DVec3::new(-5.0, -5.0, 0.0),
+                DVec3::new(5.0, -5.0, 0.0),
+                DVec3::new(5.0, 5.0, 0.0),
+                DVec3::new(-5.0, 5.0, 0.0),
+            ],
+            vec![
+                DVec3::new(-5.0, -5.0, 10.0),
+                DVec3::new(5.0, -5.0, 10.0),
+                DVec3::new(5.0, 5.0, 10.0),
+                DVec3::new(-5.0, 5.0, 10.0),
+            ],
+        ];
+        let result = crate::brep_feat::build_loft_solid(&profiles);
+        assert!(result.is_ok(), "Loft from 4-sided polygons should succeed");
     }
 
     #[test]
     fn bspline_profiles_with_different_pole_count() {
-        // Requires ThruSections with 5 closed BSpline sections (31-33 poles each).
-        // rcad doesn't have ThruSections.
-        assert!(true, "BSpline profiles with different pole count (requires ThruSections)");
+        // OCCT: ThruSections with 5 closed BSpline sections (31-33 poles each).
+        // rcad: build_loft_solid with 5 circular profiles (32 points each)
+        let profiles: Vec<Vec<DVec3>> = (0..5).map(|si| {
+            let z = si as f64 * 5.0;
+            let r = 10.0 + si as f64 * 0.5;
+            (0..32).map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 32.0;
+                DVec3::new(angle.cos() * r, angle.sin() * r, z)
+            }).collect()
+        }).collect();
+        let result = crate::brep_feat::build_loft_solid(&profiles);
+        assert!(result.is_ok(), "Loft from multiple circular profiles should succeed");
     }
 
     #[test]
     fn occ895_two_circular_arc_wires_no_twist() {
-        // Requires ThruSections with circular arc wires; verifies surface area ≈ 18.1614.
-        // rcad doesn't have ThruSections.
-        assert!(true, "Two circular arc wires no twist (requires ThruSections)");
+        // OCCT: ThruSections with circular arc wires; verifies surface area ≈ 18.1614.
+        // rcad: build_loft_solid with two circular profiles
+        let profiles: Vec<Vec<DVec3>> = vec![
+            (0..64).map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 64.0;
+                DVec3::new(angle.cos() * 5.0, angle.sin() * 5.0, 0.0)
+            }).collect(),
+            (0..64).map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 64.0;
+                DVec3::new(angle.cos() * 5.0, angle.sin() * 5.0, 10.0)
+            }).collect(),
+        ];
+        let result = crate::brep_feat::build_loft_solid(&profiles);
+        assert!(result.is_ok(), "Two circular section loft should succeed");
+        // OCCT additionally verifies surface area ≈ 18.1614.
     }
 }

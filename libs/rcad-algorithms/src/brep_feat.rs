@@ -809,7 +809,7 @@ fn build_pipe_solid(profile: &[DVec3], spine: &[DVec3]) -> Result<rcad_kernel::B
 }
 
 /// Build a loft solid through multiple sections.
-fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFeatError> {
+pub(crate) fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if sections.len() < 2 {
  return Err(BRepFeatError::InvalidInput("need at least 2 sections for loft".to_string()));
  }

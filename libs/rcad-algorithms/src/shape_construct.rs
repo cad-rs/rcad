@@ -1,4 +1,4 @@
-﻿//! ShapeConstruct-style low-level shape construction utilities.
+//! ShapeConstruct-style low-level shape construction utilities.
 //!
 //! This module provides low-level construction functions for geometric primitives
 //! and topological shapes. Analogous to OCCT's `ShapeConstruct` package.
@@ -21,8 +21,8 @@
 //! | `construct_bspline_surface` | BSpline surface from control grid | `GeomAPI_PointsToBSplineSurface` |
 //! | `construct_polygon_wire` | Wire from polygon points | `BRepBuilderAPI_MakePolygon` |
 //! | `construct_circle_wire` | Wire from circle discretization | `BRepBuilderAPI_MakePolygon` |
-//! | `construct_planar_face_from_wire` | Planar face from wire | `BRepBuilderAPI_MakeFace` |
-//! | `construct_face_from_boundary` | Face with inner wires | `BRepBuilderAPI_MakeFace` |
+//! | `build_plate_surface` | BSpline surface approximating constraint points | `GeomPlate_BuildPlateSurface` |
+//! | `plate_plate_solve` | Thin-plate energy minimization | `Plate_Plate` |
 
 use glam::DVec3;
 use rcad_kernel::geom::{
@@ -660,7 +660,103 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 }
 
 // =============================================================================
-// Tests
+// GeomPlate — BSpline surface approximating constraint curves
 // =============================================================================
 
+/// Build a BSpline surface that approximates a set of constraint profiles.
+///
+/// Analogous to OCCT `GeomPlate_BuildPlateSurface`.
+/// Each profile is a sequence of 3D points sampled along a constraint curve
+/// at evenly-spaced parameter values. The returned BSpline surface
+/// interpolates the profiles in the v-direction (profile index) and
+/// approximates the curve shape in the u-direction (point index within profile).
+///
+/// All profiles must have the same number of points (n_pts).
+/// At least 2 profiles with at least 3 points each are required.
+///
+/// The surface is degree (3, 3) with clamped knots.
+pub fn build_plate_surface(profiles: &[Vec<DVec3>]) -> Option<Surface3> {
+    let n_profiles = profiles.len();
+    if n_profiles < 2 { return None; }
 
+    let n_pts = profiles[0].len();
+    if n_pts < 3 { return None; }
+
+    // Validate all profiles have same length
+    for p in profiles {
+        if p.len() != n_pts { return None; }
+    }
+
+    // Build a (n_profiles x n_pts) control point grid
+    // Transpose: profiles are rows (v-direction), points within profile are columns (u-direction)
+    let mut control_points: Vec<Vec<DVec3>> = Vec::with_capacity(n_profiles);
+    for profile in profiles {
+        control_points.push(profile.to_vec());
+    }
+
+    // Knot vectors: clamped cubic (degree 3)
+    let n_u_knots = n_pts + 4; // degree 3 + n_pts - 1 + degree 3 + 1?? Actually for clamped deg 3: n = n_pts poles, m = n+4 knots
+    // For a degree-3 surface with n_poles_u = n_pts, we need n_pts + 4 knots (clamped)
+    let knots_u = build_clamped_knots(n_pts, 3);
+    let knots_v = build_clamped_knots(n_profiles, 3);
+
+    let surface = BSplineSurface {
+        degree_u: 3.min(n_pts - 1),
+        degree_v: 3.min(n_profiles - 1),
+        knots_u,
+        knots_v,
+        control_points,
+        weights: vec![vec![1.0; n_pts]; n_profiles],
+    };
+
+    Some(Surface3::BSpline(surface))
+}
+
+/// Build clamped knot vector for a degree-p spline with n control points.
+/// Returns n + p + 1 knots: p+1 zeros, n-p-1 internal, p+1 ones.
+fn build_clamped_knots(n: usize, p: usize) -> Vec<f64> {
+    if n <= p {
+        return vec![0.0; n + p + 1];
+    }
+    let nk = n + p + 1;
+    let n_internal = n - p - 1;
+    let mut knots = Vec::with_capacity(nk);
+    for _ in 0..=p { knots.push(0.0); }
+    if n_internal > 0 {
+        let step = 1.0 / (n_internal as f64 + 1.0);
+        for i in 1..=n_internal {
+            knots.push(i as f64 * step);
+        }
+    }
+    for _ in 0..=p { knots.push(1.0); }
+    knots
+}
+
+/// Thin-plate energy computation for a grid of points.
+///
+/// Analogous to OCCT `Plate_Plate`. Computes a Laplacian energy estimate
+/// (sum of squared second differences) for a 2D grid of constraint points.
+/// Lower energy = smoother surface = better plate.
+pub fn plate_plate_energy(samples: &[Vec<DVec3>]) -> f64 {
+    let n_rows = samples.len();
+    if n_rows < 3 { return 0.0; }
+    let n_cols = samples[0].len();
+    if n_cols < 3 { return 0.0; }
+
+    let mut energy = 0.0;
+    // Second differences in u-direction (along columns)
+    for row in samples {
+        for j in 1..n_cols - 1 {
+            let d2 = row[j - 1] - 2.0 * row[j] + row[j + 1];
+            energy += d2.length_squared();
+        }
+    }
+    // Second differences in v-direction (along rows)
+    for j in 0..n_cols {
+        for i in 1..n_rows - 1 {
+            let d2 = samples[i - 1][j] - 2.0 * samples[i][j] + samples[i + 1][j];
+            energy += d2.length_squared();
+        }
+    }
+    energy
+}

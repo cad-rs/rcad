@@ -8,6 +8,7 @@
 pub mod argument_analyzer;
 pub mod builder_operation;
 pub mod section;
+pub mod thru_sections;
 
 use std::collections::HashMap;
 

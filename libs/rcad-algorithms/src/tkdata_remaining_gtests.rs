@@ -137,22 +137,15 @@ mod tkdata_tkbrep_tests {
         assert!(v.index < b.tshapes.len(), "vertex should exist");
     }
 
-    #[test] fn brep_graph_deferred() {
-        // rcad has BRepGraph with basic graph-topology support.
+    #[test] fn brep_graph() {
         use rcad_kernel::BRepGraph;
         let (brep, _) = topods::BRep::build_unit_cube();
         let graph = BRepGraph::from_brep(&brep);
         assert_eq!(graph.face_count, 6, "cube has 6 faces");
         assert!(graph.edge_count >= 12, "cube has 12+ edges, got {}", graph.edge_count);
         assert!(graph.vertex_count >= 8, "cube has 8+ vertices, got {}", graph.vertex_count);
-        // Test adjacency tables are populated
         let has_edges = (0..graph.edge_count).any(|ei| !graph.edge_adjacent_faces(ei).is_empty());
         assert!(has_edges, "at least one edge should have face adjacency");
-        // Test manifold + closed flags
-        let manifold = graph.is_manifold();
-        let closed = graph.is_closed();
-        // Note: build_unit_cube uses BRepBuilder which may not fully populate
-        // wire->face adjacency, so manifold may be false. Verify graph crate is valid.
         assert!(graph.face_count > 0 && graph.edge_count > 0, "BRepGraph should have valid counts");
     }
 }
