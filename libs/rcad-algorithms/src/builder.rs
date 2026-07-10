@@ -53,6 +53,7 @@ pub(crate) use builder_utils::{
  check_and_add_split_vertex, collect_face_edge_segments,
  annotate_history_from_ds, annotate_shell_and_solid_history,
  aggregate_face_region_origin, aggregate_shell_region_origin,
+ point_in_polygon_2d,
 };
 
 pub struct BooleanBuilder<'a> {

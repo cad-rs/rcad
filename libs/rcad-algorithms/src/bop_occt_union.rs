@@ -356,7 +356,30 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh
 /// Larger means a **less** closed manifold shell.
 /// Union: DS --PaveFiller --BooleanBuilder(Union) --recompute plane surfaces.
 ///
+/// Same phases as [`boolean_op_generic`], returns history.
+pub(crate) fn boolean_op_with_history_generic(
+ op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, true, &mut brep);
+ let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+ let (result_brep, hist) = builder.build_with_history()?;
+ Ok((result_brep, hist))
+}
+
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
+pub fn boolean_op_generic(
+ op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
+) -> Result<topods::BRep, BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, true, &mut brep);
+ let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+ let (result, _history) = builder.build_with_history_topods()?;
+ Ok(result)
+}
+
 pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }

@@ -789,3 +789,14 @@ pub use triangulate::{
     MeshQualityMetrics, MeshSimplifier, SurfaceMesh, TessellationParams, compute_mesh_quality,
     mesh_brep, triangulate_surface,
 };
+
+pub use boolean::{
+    BooleanOptions, BooleanRetryPolicy, BooleanRobustOptions,
+    ExtremeGeometryRetryConfig, ExtremeGeometryRetryPolicy,
+};
+pub(crate) use bop_occt_union::boolean_op_generic as boolean_op;
+pub(crate) use bop_occt_union::boolean_op_with_history_generic as boolean_op_with_history;
+pub(crate) use bop_occt_union::boolean_op_generic as boolean_op_robust;
+pub use rcad_kernel::topods::BRep;
+pub use boolean::{GeneralFuseHistory, general_fuse, general_fuse_with_history, boolean_op_pave_fill_build};
+pub use boolean::shape_analysis;

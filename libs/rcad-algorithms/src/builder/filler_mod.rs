@@ -12,7 +12,8 @@ use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};
 use crate::builder::types::*;
-use crate::builder::wire_splitter::{EdgeInfo, build_closed_wires};
+use crate::builder::wire_splitter::{EdgeInfo, build_closed_wires, world_to_uv};
+use super::ResultBuilder;
 use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
 use crate::inttools::context::Context;
 use crate::inttools::edge_face::plane_local_basis;
@@ -285,9 +286,9 @@ impl<'a> BooleanBuilder<'a> {
             let image_rfis: Vec<usize> = result.face_origins.iter().enumerate()
                 .filter(|(_, origin)| match origin {
                     FaceOrigin::FromA(sfi) =>
-                        ds_face.origin == ShapeOrigin::ShapeA && ds_face.source_face_idx == sfi,
+                        ds_face.origin == ShapeOrigin::ShapeA && ds_face.source_face_idx == *sfi,
                     FaceOrigin::FromB(sfi) =>
-                        ds_face.origin == ShapeOrigin::ShapeB && ds_face.source_face_idx == sfi,
+                        ds_face.origin == ShapeOrigin::ShapeB && ds_face.source_face_idx == *sfi,
                     _ => false,
                 })
                 .map(|(rfi, _)| rfi)
@@ -324,9 +325,9 @@ impl<'a> BooleanBuilder<'a> {
                     // OCCT L972: classify against split face aFIm.
                     let ds_fi_for_classify = match &result.face_origins[rfi] {
                         FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == sfi),
+                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
                         FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == sfi),
+                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
                         _ => None,
                     };
                     let Some(cfi) = ds_fi_for_classify else { continue };
@@ -377,8 +378,8 @@ impl<'a> BooleanBuilder<'a> {
             };
             let ds_fi = self.ds.faces.iter().position(|f| {
                 f.origin == origin && f.source_face_idx == match &result.face_origins[fi] {
-                    FaceOrigin::FromA(sfi) => sfi,
-                    FaceOrigin::FromB(sfi) => sfi,
+                    FaceOrigin::FromA(sfi) => *sfi,
+                    FaceOrigin::FromB(sfi) => *sfi,
                     _ => unreachable!(),
                 }
             })?;
@@ -403,8 +404,8 @@ impl<'a> BooleanBuilder<'a> {
         // source DS face has no FF interference (not in aFIVec).
         let face_origin_pair = |fi: usize| -> (bool, usize) {
             match &result.face_origins[fi] {
-                FaceOrigin::FromA(sfi) => (true, sfi),
-                FaceOrigin::FromB(sfi) => (false, sfi),
+                FaceOrigin::FromA(sfi) => (true, *sfi),
+                FaceOrigin::FromB(sfi) => (false, *sfi),
                 _ => (false, usize::MAX),
             }
         };
@@ -472,9 +473,9 @@ impl<'a> BooleanBuilder<'a> {
         let ds_face_idx = |rfi: usize| -> Option<usize> {
             match &result.face_origins[rfi] {
                 FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == sfi),
+                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
                 FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == sfi),
+                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
                 _ => None,
             }
         };
@@ -600,8 +601,8 @@ impl<'a> BooleanBuilder<'a> {
                 let source_fi = self.ds.faces[dsfi].source_face_idx;
                 for (rfi, fo) in result.face_origins.iter().enumerate() {
                     let matches = match (fo, origin) {
-                        (FaceOrigin::FromA(s), crate::bopds::ds::ShapeOrigin::ShapeA) => s == source_fi,
-                        (FaceOrigin::FromB(s), crate::bopds::ds::ShapeOrigin::ShapeB) => s == source_fi,
+                        (FaceOrigin::FromA(s), crate::bopds::ds::ShapeOrigin::ShapeA) => *s == source_fi,
+                        (FaceOrigin::FromB(s), crate::bopds::ds::ShapeOrigin::ShapeB) => *s == source_fi,
                         _ => false,
                     };
                     if matches {
@@ -680,8 +681,8 @@ impl<'a> BooleanBuilder<'a> {
                         let sfi = self.ds.faces[dsfi].source_face_idx;
                         for (rfi, fo) in result.face_origins.iter().enumerate() {
                             let matches = match (fo, origin) {
-                                (FaceOrigin::FromA(s), ShapeOrigin::ShapeA) => s == sfi,
-                                (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => s == sfi,
+                                (FaceOrigin::FromA(s), ShapeOrigin::ShapeA) => *s == sfi,
+                                (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => *s == sfi,
                                 _ => false,
                             };
                             if matches {
@@ -791,8 +792,8 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L303: if (myImages.IsBound(aF)) --check if face has split images.
                 let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
                     .filter(|(_, fo)| match fo {
-                        FaceOrigin::FromA(sfi) => dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == sfi,
-                        FaceOrigin::FromB(sfi) => dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == sfi,
+                        FaceOrigin::FromA(sfi) => dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == *sfi,
+                        FaceOrigin::FromB(sfi) => dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == *sfi,
                         _ => false,
                     })
                     .map(|(i, _)| i)
@@ -804,9 +805,9 @@ impl<'a> BooleanBuilder<'a> {
                     for &a_fx in &result_faces {
                         let a_fx_dfi_opt = match &result.face_origins[a_fx] {
                             FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
-                                f.origin == ShapeOrigin::ShapeA && f.source_face_idx == s),
+                                f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *s),
                             FaceOrigin::FromB(s) => self.ds.faces.iter().position(|f|
-                                f.origin == ShapeOrigin::ShapeB && f.source_face_idx == s),
+                                f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *s),
                             _ => None,
                         };
                         let is_sd = a_fx_dfi_opt.map_or(false, |fx_dfi|
@@ -920,9 +921,9 @@ impl<'a> BooleanBuilder<'a> {
             if fi < result.face_origins.len() {
                 let dfi_opt = match &result.face_origins[fi] {
                     FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                        f.origin == ShapeOrigin::ShapeA && f.source_face_idx == sfi),
+                        f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
                     FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                        f.origin == ShapeOrigin::ShapeB && f.source_face_idx == sfi),
+                        f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
                     _ => None,
                 };
                 if let Some(dfi) = dfi_opt {
@@ -1061,14 +1062,14 @@ impl<'a> BooleanBuilder<'a> {
                 (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => sfi,
                 _ => return None,
             };
-            self.ds.faces.iter().position(|f| f.origin == expected_origin && f.source_face_idx == sfi)
+            self.ds.faces.iter().position(|f| f.origin == expected_origin && f.source_face_idx == *sfi)
         };
         // Inverse: DS face index --result face index
         let ds_to_result = |dfi: usize| -> Option<usize> {
             let dsf = self.ds.faces.get(dfi)?;
             result.face_origins.iter().position(|fo| match (dsf.origin, fo) {
-                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == sfi,
-                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == sfi,
+                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == *sfi,
+                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == *sfi,
                 _ => false,
             })
         };
@@ -1098,8 +1099,8 @@ impl<'a> BooleanBuilder<'a> {
                         let dsf = &self.ds.faces[dsfi];
                         result.face_origins.iter().enumerate()
                             .filter(|(_, fo)| match (dsf.origin, fo) {
-                                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == sfi,
-                                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == sfi,
+                                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == *sfi,
+                                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == *sfi,
                                 _ => false,
                             })
                             .map(|(fi, _)| fi)
