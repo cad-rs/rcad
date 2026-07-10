@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use crate::bopds::ds::DS;
 use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::history::BooleanHistory;
+use crate::pave_filler;
 
 #[derive(Debug, Clone)]
 pub struct BooleanApiOptions {
@@ -88,8 +89,22 @@ macro_rules! def_boolean_op {
                 self.result = None; self.error = None; self.history = BRepHistory::new();
                 let shape1_t = self.shape1;
                 let shape2_t = self.shape2;
-                let ds = DS::new_from_topods(&shape1_t, &shape2_t, self.options.fuzzy_value);
-                let builder = BooleanBuilder::new(&ds, $op);
+                let mut ds = DS::new_from_topods(&shape1_t, &shape2_t, self.options.fuzzy_value);
+                let fuzzy_tol = ds.fuzzy_tol;
+                // Run PaveFiller to populate intersection data (OCCT-aligned).
+                let mut brep = rcad_kernel::topods::BRep::new();
+                let (face_refs, ic_edge_map) = {
+                    let mut filler = pave_filler::PaveFiller::new(&mut ds);
+                    filler.brep = Some(&mut brep);
+                    filler.set_run_parallel(false);
+                    filler.configure_fuzzy(fuzzy_tol);
+                    filler.set_non_destructive(false);
+                    filler.configure_glue(false, crate::tolerance::TOLERANCE_ABS);
+                    filler.set_use_obb(false);
+                    filler.perform();
+                    (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+                };
+                let builder = BooleanBuilder::with_brep(&ds, $op, brep, face_refs, ic_edge_map);
                 match builder.build_with_history_topods() {
                     Ok((t, h)) => {
                         self.result = Some((t).clone());
