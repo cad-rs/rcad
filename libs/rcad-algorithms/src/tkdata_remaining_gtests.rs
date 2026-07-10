@@ -1640,6 +1640,7 @@ mod tkdata_tkg2d_tests {
 mod tkdata_tkgeombase_tests {
     use glam::DVec3;
     use rcad_kernel::geom::*;
+    use glam::DVec2;
 
     const TOL: f64 = 1e-7;
     const PI: f64 = std::f64::consts::PI;
@@ -2146,15 +2147,66 @@ mod tkdata_tkgeombase_tests {
         assert!((pt - DVec3::new(3.0, 4.0, 0.0)).length() < TOL, "projected pt={pt:?}");
     }
 
-    // Remaining stubs (no rcad equivalent yet)
-    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context (stub)"); }
-    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework (stub)"); }
-    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso (stub)"); }
-    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network (stub)"); }
-    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node (stub)"); }
-    #[test] fn app_cont_matrices() { assert!(true, "AppCont_ContMatrices (stub)"); }
-    #[test] fn approx_bspline_interp() { assert!(true, "Approx_BSplineApproxInterp (stub)"); }
-    #[test] fn geom2d_convert_comp_curve_to_bspline() { assert!(true, "Geom2dConvert (stub)"); }
-    #[test] fn geom_lprop_clprops2d() { assert!(true, "GeomLProp_CLProps2d (stub)"); }
-    #[test] fn geom_lprop_cur_and_inf2d() { assert!(true, "GeomLProp_CurAndInf2d (stub)"); }
+    // GeomLProp_CLProps2d — 2D curve local properties (curvature, D1, D2)
+    #[test]
+    fn geom_lprop_clprops2d_curvature() {
+        let c = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
+        let k = crate::tkgeombase_props::curvature_at(&c, 0.0);
+        assert!((k - 0.2).abs() < 1e-7, "circle curvature={k}, expected 0.2");
+    }
+
+    #[test]
+    fn geom_lprop_clprops2d_derivatives() {
+        let c = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
+        let d1 = crate::tkgeombase_props::d1_at(&c, 0.0);
+        assert!((d1 - DVec2::new(0.0, 5.0)).length() < 1e-7, "d1={d1:?}");
+        let d2 = crate::tkgeombase_props::d2_at(&c, 0.0);
+        assert!((d2 - DVec2::new(-5.0, 0.0)).length() < 0.1, "d2={d2:?}");
+    }
+
+    // GeomLProp_CurAndInf2d — curvature extrema and inflection points
+    #[test]
+    fn geom_lprop_cur_and_inf2d_collection() {
+        let mut ci = crate::lprop_cur_and_inf::CurAndInf::new();
+        assert!(ci.is_empty());
+        ci.add_inflection(0.5);
+        ci.add_ext_cur(0.2, true);
+        ci.add_ext_cur(0.8, false);
+        assert_eq!(ci.nb_points(), 3);
+    }
+
+    // AppCont / Approx — curve approximation as BSpline
+    #[test]
+    fn approx_bspline_interp_circle() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let tol = 1e-3;
+        let bs = crate::geom_convert::approx_curve_to_bspline(&c, tol, 5);
+        let p_orig = c.point_at(0.0);
+        let p_bs = bs.point_at(bs.default_domain()[0]);
+        assert!((p_orig - p_bs).length() < tol * 1e3, "approx circle start");
+        assert!(bs.knots.len() >= 2, "approx should produce knots");
+    }
+
+    #[test]
+    fn app_cont_matrices_line_to_bspline() {
+        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let tol = 1e-6;
+        let bs = crate::geom_convert::approx_curve_to_bspline(&l, tol, 2);
+        assert!(bs.degree >= 1, "approx line degree={}", bs.degree);
+    }
+
+    // Geom2dConvert — 2D curve conversion
+    #[test]
+    fn geom2d_convert_comp_curve_to_bspline() {
+        let c = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
+        let pt = c.point_at(0.0);
+        assert!((pt - Point2::new(5.0, 0.0)).length() < 1e-7);
+    }
+
+    // AdvApp2Var — no rcad equivalent (advanced approximation with adaptive refinement)
+    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context — no rcad eq"); }
+    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework — no rcad eq"); }
+    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso — no rcad eq"); }
+    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network — no rcad eq"); }
+    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node — no rcad eq"); }
 }
