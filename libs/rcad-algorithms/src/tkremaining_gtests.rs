@@ -245,7 +245,7 @@ mod tkgeom_algo_tests {
     #[test] fn curve_surface_intersection_point() {
         // Test basic 3D point + UV parameter tuple used for curve-surface intersection
         let pt = DVec3::new(1.0, 2.0, 3.0);
-        let u = 0.5; let v = 0.6; let w = 0.7;
+        let u: f64 = 0.5; let v: f64 = 0.6; let w: f64 = 0.7;
         assert!((pt - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-15);
         assert!((u - 0.5).abs() < 1e-15);
         assert!((v - 0.6).abs() < 1e-15);
