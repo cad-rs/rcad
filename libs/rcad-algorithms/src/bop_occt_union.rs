@@ -3,17 +3,17 @@
 //! This module is the dedicated entry for [`crate::BooleanOpType::Union`]. The steps mirror
 //! OCCTâ€™s `BOPAlgo_Builder` / `BRepAlgoAPI_Fuse` control flow:
 //!
-//! 1. **Prepare arguments** â€?build the interference descriptor from both operands
+//! 1. **Prepare arguments** --build the interference descriptor from both operands
 //! ([`bopds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
-//! 2. **Intersection and paving** â€?[`crate::pave_filler::PaveFiller::perform`], analogous to
+//! 2. **Intersection and paving** --[`crate::pave_filler::PaveFiller::perform`], analogous to
 //! `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
-//! 3. **Build fuse result** â€?[`crate::builder::BooleanBuilder`] with
+//! 3. **Build fuse result** --[`crate::builder::BooleanBuilder`] with
 //! [`crate::BooleanOpType::Union`], analogous to building the fused solid from classified
 //! pieces.
-//! 4. **Post-process** (serial `fuse` only) â€?[`crate::geom_populate::recompute_plane_surfaces`]
+//! 4. **Post-process** (serial `fuse` only) --[`crate::geom_populate::recompute_plane_surfaces`]
 //! then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
 //! [`crate::unify_same_domain_faces`] pass to merge coplanar box fragments (OCCT
-//! `UnifySameDomain` + same-domain analog; wire order can still leave analytic area ~5â€?0% low
+//! `UnifySameDomain` + same-domain analog; wire order can still leave analytic area ~5--0% low
 //! on some merged planes until the kernelâ€™s planar integrator is tightened).
 //!
 //! History and parallel-history APIs intentionally skip step 4 to match the existing behavior
@@ -45,7 +45,7 @@ use rcad_kernel::geom::Surface3;
 use rcad_kernel::topods;
 use crate::bvh::{Bvh, Aabb};
 
-/// DSU (Union-Find) for building connected SameDomain groups â€?equivalent to OCCT FillMap + MakeBlocks.
+/// DSU (Union-Find) for building connected SameDomain groups --equivalent to OCCT FillMap + MakeBlocks.
 struct DSU {
  parent: Vec<usize>,
  rank: Vec<u32>,
@@ -71,7 +71,7 @@ impl DSU {
 
 /// Operands must be usable as boolean arguments: non-empty face set and **index-consistent**
 /// topology (plus finite vertex coordinates). We intentionally do **not** require a watertight
-/// shell here â€?downstream feature code may pass intermediate shapes that are not yet
+/// shell here --downstream feature code may pass intermediate shapes that are not yet
 /// `brep_check`â€‘clean.
 /// Invariants on the BOP DS after prepare ([`DS::new`]) and after paving ([`PaveFiller::perform`]).
 fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
@@ -325,33 +325,10 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
  let indices: Vec<usize> = (0..face_aabbs.len()).collect();
  bvh::Bvh::build(indices, face_aabbs)
 }
- let has_faces_a = a
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
- let has_faces_b = b
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
- (
- if has_faces_a {
- Some(bvh::Bvh::build(a))
- } else {
- None
- },
- if has_faces_b {
- Some(bvh::Bvh::build(b))
- } else {
- None
- },
- )
-}
 
 /// `use_bvh`: match [`crate::boolean_op`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
-/// when BVH acceleration is toggled off (`false` â†?plain [`pave_filler::PaveFiller::new`]).
-/// âœ?OCCT-aligned: PaveFiller creation + configuration + Perform.
+/// when BVH acceleration is toggled off (`false` --plain [`pave_filler::PaveFiller::new`]).
+/// --OCCT-aligned: PaveFiller creation + configuration + Perform.
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
 fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
  brep: &mut rcad_kernel::topods::BRep) -> (Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)
@@ -377,14 +354,14 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh
 
 /// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].
 /// Larger means a **less** closed manifold shell.
-/// Union: DS â†?PaveFiller â†?BooleanBuilder(Union) â†?recompute plane surfaces.
+/// Union: DS --PaveFiller --BooleanBuilder(Union) --recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
 pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }
 
-/// âœ?OCCT-aligned: DS â†?PaveFiller â†?BooleanBuilder(Union) â†?result.
+/// --OCCT-aligned: DS --PaveFiller --BooleanBuilder(Union) --result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
  let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
@@ -435,21 +412,3 @@ pub(crate) fn fuse_with_history_par_bvh(
  let (result_brep, hist) = builder.build_with_history()?;
  Ok((result_brep, hist))
 }
-
-/// âœ?OCCT : edge set (BOPTools_Set)  ã€?
-/// OCCT  : BOPAlgo_Builder_2.cxx L571-L832 (FillSameDomainFaces)
-///
-/// (  OCCT):
-/// 1. edge key set ( , )
-/// 2. edge key set â†?anESetFaces
-/// 3.  â‰? ,  SameDomain:
-/// a.  (Plane/planar BSpline) â†?(OCCT L697-701:  )
-/// b.  (Cylinder+Cylinder  ) â†?(OCCT L703-708)
-/// c. â†?TODO: AreFacesSameDomain (OCCT L703-708)
-/// 4. MakeBlocks: Faceâ†’Face (OCCT L741: BOPAlgo_Tools::MakeBlocks)
-/// 5.  :  ( DS ) >  ,  flat index
-/// (OCCT L758-788: nFMin â†?myDS->Index(aF) >= 0  )
-/// 6.  ,  geom slots
-///
-///  ( ) ã€?
-#
