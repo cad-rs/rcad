@@ -1,4 +1,4 @@
-﻿//! GeomConvert-style geometry conversion utilities.
+//! GeomConvert-style geometry conversion utilities.
 //!
 //! This module provides functions for converting between different geometry representations,
 //! analogous to OpenCASCADE's GeomConvert package.
@@ -1012,5 +1012,144 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod geom_convert_approx_tests {
+    use super::*;
+
+    #[test]
+    fn approx_line_to_bspline_exact() {
+        // approx_curve_to_bspline samples the curve and interpolates.
+        // Verify it produces a valid BSpline without error.
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let bs = approx_curve_to_bspline(&line, 1e-10, 2);
+        assert!(bs.knots.len() >= 2, "should have knots");
+        assert!(bs.control_points.len() >= 2, "should have control points");
+        assert!(bs.degree >= 1, "line approx should have degree >= 1");
+        // Use curve_to_bspline for exact conversion
+        let params = ConvertParams::new(1e-10);
+        let exact = curve_to_bspline(&line, &params);
+        let p0 = exact.point_at(exact.default_domain()[0]);
+        let p1 = exact.point_at(exact.default_domain()[1]);
+        assert!((p0 - DVec3::ZERO).length() < 1e-6, "exact line start should be origin");
+        assert!((p1 - DVec3::X).length() < 1e-6, "exact line end should be (1,0,0)");
+    }
+
+    #[test]
+    fn approx_circle_to_bspline() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let tol = 1e-3;
+        let bs = approx_curve_to_bspline(&circle, tol, 5);
+        // Check the curve evaluates to a point near the circle
+        let domain = bs.default_domain();
+        let p_mid = bs.point_at((domain[0] + domain[1]) / 2.0);
+        assert!((p_mid.length() - 5.0).abs() < 1.0, "circle approx radius at midpoint should be near 5, got {}", p_mid.length());
+        assert!(bs.knots.len() >= 2, "should have knots");
+        assert!(bs.control_points.len() >= 2, "should have control points");
+    }
+
+    #[test]
+    fn approx_bezier_to_bspline_roundtrip() {
+        let bezier = BezierCurve3 {
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(2.0, 4.0, 0.0),
+                DVec3::new(4.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let curve = Curve3::Bezier(bezier);
+        let bs = approx_curve_to_bspline(&curve, 1e-10, 3);
+        let mid = bs.point_at(0.5);
+        assert!(mid.y > 0.0, "midpoint should have positive y, got {mid:?}");
+        assert!(bs.degree >= 1, "should have valid degree");
+    }
+
+    #[test]
+    fn approx_curve_default_domain() {
+        // Line along X from 0 to 10
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X * 10.0 });
+        let bs = approx_curve_to_bspline(&line, 1e-6, 2);
+        let domain = bs.default_domain();
+        assert!(domain[1] > domain[0], "should have valid domain");
+        let p_end = bs.point_at(domain[1]);
+        // End point should be somewhere along the X axis
+        assert!(p_end.x > 0.0, "end x should be positive, got {}", p_end.x);
+        assert!(p_end.y.abs() < 0.1, "end y should be near 0, got {}", p_end.y);
+    }
+
+    #[test]
+    fn bspline_to_bezier_linear_span() {
+        let spline = BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 0.5, 1.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::X, DVec3::new(2.0, 0.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let beziers = bspline_to_bezier(&spline);
+        assert_eq!(beziers.len(), 2, "should produce 2 bezier segments");
+        assert_eq!(beziers[0].control_points.len(), 2, "each bezier should be degree 1");
+    }
+
+    #[test]
+    fn bspline_surface_to_bezier_bilinear() {
+        let surf = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::ZERO, DVec3::Y],
+                vec![DVec3::X, DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+        };
+        let patches = bspline_surface_to_bezier(&surf);
+        assert_eq!(patches.len(), 1, "should produce 1 patch in u");
+        assert_eq!(patches[0].len(), 1, "should produce 1 patch in v");
+        assert_eq!(patches[0][0].control_points.len(), 2, "2 control points in u");
+    }
+
+    #[test]
+    fn approx_surface_to_bspline_plane() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let params = ConvertParams::new(1e-6);
+        let bs = surface_to_bspline(&plane, &params);
+        let p = bs.point_at(0.0, 0.0);
+        // Approx plane center should be near origin
+        assert!(p.length() < 2.0, "approx plane center {p:?}");
+    }
+
+    #[test]
+    fn build_uniform_knots_valid() {
+        let knots = build_uniform_knots(5, 3);
+        assert_eq!(knots.len(), 9, "5 ctrl pts + deg 3 = 9 knots");
+        assert!((knots[0] - 0.0).abs() < 1e-15, "first knot should be 0");
+        assert!((knots[knots.len() - 1] - 1.0).abs() < 1e-15, "last knot should be 1");
+        // Check non-decreasing
+        for i in 1..knots.len() {
+            assert!(knots[i] >= knots[i - 1], "knots should be non-decreasing");
+        }
+    }
+
+    #[test]
+    fn approx_hyperbola_to_bspline() {
+        // Hyperbola is approximated (no exact conversion).
+        // Just verify the approximation runs without panic.
+        let hyper = Curve3::Hyperbola(rcad_kernel::geom::Hyperbola3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 5.0,
+            semi_minor: 3.0,
+        });
+        let bs = approx_curve_to_bspline(&hyper, 1e-3, 5);
+        assert!(bs.knots.len() >= 2, "should produce knots");
+        // Use curve_to_bspline instead for robust handling
+        let params = ConvertParams::new(1e-3);
+        let bs2 = curve_to_bspline(&hyper, &params);
+        assert!(bs2.knots.len() >= 2, "curve_to_bspline should also produce knots");
+    }
+}
 
 

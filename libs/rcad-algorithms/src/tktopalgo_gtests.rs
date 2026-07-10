@@ -17,7 +17,7 @@
 //!
 //! Missing rcad APIs are stubbed as `unimplemented!()` or `todo!()` for future implementation.
 
-use glam::DVec3;
+use glam::{DAffine3, DMat3, DVec3};
 use rcad_kernel::topods;
 use rcad_kernel::{surface_area, volume};
 use rcad_kernel::topo_query::{face_count, edge_count};
@@ -137,9 +137,39 @@ impl MakeWireStub {
     }
 }
 
-/// Stub: BRepBuilderAPI_Transform equivalent
-pub fn transform_brep_translate(brep: &topods::BRep, _offset: DVec3) -> topods::BRep {
-    brep.clone()
+/// Transform a BRep by applying an affine transform to all vertex positions.
+pub fn transform_brep(brep: &topods::BRep, xf: &DAffine3) -> topods::BRep {
+    let mut out = brep.clone();
+    for ts in &mut out.tshapes {
+        if let topods::TShape::Vertex(vd) = std::sync::Arc::make_mut(ts) {
+            vd.point = xf.transform_point3(vd.point);
+        }
+    }
+    out
+}
+
+/// Stub: BRepBuilderAPI_Transform — translate by offset vector.
+pub fn transform_brep_translate(brep: &topods::BRep, offset: DVec3) -> topods::BRep {
+    transform_brep(brep, &DAffine3::from_translation(offset))
+}
+
+/// Stub: BRepBuilderAPI_Transform — rotate around axis through origin.
+pub fn transform_brep_rotate(brep: &topods::BRep, axis: DVec3, angle_rad: f64) -> topods::BRep {
+    let rot = DMat3::from_axis_angle(axis.normalize_or_zero(), angle_rad);
+    transform_brep(brep, &DAffine3::from_mat3_translation(rot, DVec3::ZERO))
+}
+
+/// Stub: BRepBuilderAPI_Transform — scale uniformly about origin.
+pub fn transform_brep_scale(brep: &topods::BRep, factor: f64) -> topods::BRep {
+    transform_brep(brep, &DAffine3::from_scale(DVec3::splat(factor)))
+}
+
+/// Mirror across a plane through origin with given normal.
+pub fn transform_brep_mirror(brep: &topods::BRep, normal: DVec3) -> topods::BRep {
+    let n = normal.normalize_or_zero();
+    // Householder reflection
+    let refl = DMat3::IDENTITY - 2.0 * DMat3::from_cols(n * n.x, n * n.y, n * n.z);
+    transform_brep(brep, &DAffine3::from_mat3_translation(refl, DVec3::ZERO))
 }
 
 /// Stub: BRepBuilderAPI_Copy equivalent
@@ -163,20 +193,63 @@ pub fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
     total
 }
 
-/// Stub: BRepClass3d_SolidClassifier
+/// Stub: BRepClass3d_SolidClassifier — wraps real classify::SolidClassifier.
+///
+/// Stores the BRep by value to avoid lifetime coupling, and creates a
+/// temporary classifier on each perform call.
 pub struct SolidClassifierStub {
-    _brep: topods::BRep,
+    brep: topods::BRep,
+    solid_ref: topods::ShapeRef,
+    state: TopAbsState,
+    performed: bool,
+}
+
+/// Convert crate::classify::Classification to TopAbsState
+fn classify_to_state(c: crate::classify::Classification) -> TopAbsState {
+    match c {
+        crate::classify::Classification::In => TopAbsState::In,
+        crate::classify::Classification::Out => TopAbsState::Out,
+        crate::classify::Classification::On => TopAbsState::On,
+    }
 }
 
 impl SolidClassifierStub {
-    pub fn new(brep: &topods::BRep) -> Self { Self { _brep: brep.clone() } }
-    pub fn perform(&mut self, _point: DVec3, _tol: f64) -> TopAbsState {
-        TopAbsState::Unknown
+    /// Find the first solid ShapeRef in a BRep.
+    fn find_solid_ref(brep: &topods::BRep) -> topods::ShapeRef {
+        brep.tshapes.iter().enumerate()
+            .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .expect("BRep must contain a solid")
     }
+
+    pub fn new(brep: &topods::BRep) -> Self {
+        let solid_ref = Self::find_solid_ref(brep);
+        Self {
+            brep: brep.clone(),
+            solid_ref,
+            state: TopAbsState::Unknown,
+            performed: false,
+        }
+    }
+
+    pub fn perform(&mut self, point: DVec3, tol: f64) -> TopAbsState {
+        let mut classifier = crate::classify::SolidClassifier::new(&self.brep, self.solid_ref);
+        classifier.perform(point, tol);
+        self.state = classify_to_state(classifier.state());
+        self.performed = true;
+        self.state
+    }
+
     pub fn perform_infinite_point(&mut self, _tol: f64) -> TopAbsState {
+        // Infinite point is always outside
+        self.state = TopAbsState::Out;
+        self.performed = true;
         TopAbsState::Out
     }
-    pub fn state(&self) -> TopAbsState { TopAbsState::Unknown }
+
+    pub fn state(&self) -> TopAbsState { self.state }
+
+    pub fn is_done(&self) -> bool { self.performed }
 }
 
 /// Stub: BRepExtrema_DistShapeShape
@@ -380,40 +453,70 @@ mod make_wire_tests {
 #[cfg(test)]
 mod transform_tests {
     use super::*;
+    use rcad_kernel::topo_query::{edge_count, face_count, topological_vertex_count};
 
     #[test]
     fn translate() {
         let b = make_box(10.0, 10.0, 10.0);
-        let _t = transform_brep_translate(&b, DVec3::new(100.0, 0.0, 0.0));
-        assert!(true, "Translate should produce a shape");
+        let t = transform_brep_translate(&b, DVec3::new(100.0, 0.0, 0.0));
+        assert_eq!(face_count(&t), face_count(&b), "translate should preserve face count");
+        assert_eq!(topological_vertex_count(&t), topological_vertex_count(&b), "translate should preserve vertex count");
+        // Verify vertices actually moved using bounding box
+        let orig_bb = b.bounding_box().expect("original should have bbox");
+        let trans_bb = t.bounding_box().expect("transformed should have bbox");
+        assert!((trans_bb[0].x - orig_bb[0].x - 100.0).abs() < 1e-10,
+            "min x should shift by 100: {} vs {}", trans_bb[0].x, orig_bb[0].x + 100.0);
     }
 
     #[test]
     fn rotate() {
         let b = make_box(10.0, 10.0, 10.0);
-        let _t = transform_brep_translate(&b, DVec3::ZERO);
-        assert!(true, "Rotate stub should not crash");
+        let t = transform_brep_rotate(&b, DVec3::Z, std::f64::consts::FRAC_PI_2);
+        assert_eq!(face_count(&t), face_count(&b), "rotate should preserve face count");
+        assert_eq!(topological_vertex_count(&t), topological_vertex_count(&b), "rotate should preserve vertex count");
+        // After 90° rotation about Z, x-extent should match y-extent
+        let t_bb = t.bounding_box().expect("should have bbox");
+        let x_ext = (t_bb[1].x - t_bb[0].x).abs();
+        let y_ext = (t_bb[1].y - t_bb[0].y).abs();
+        let b_bb = b.bounding_box().expect("original should have bbox");
+        let orig_y_ext = (b_bb[1].y - b_bb[0].y).abs();
+        assert!((x_ext - orig_y_ext).abs() < 1e-10, "x ext {x_ext} should match orig y ext {orig_y_ext}");
+        assert!((y_ext - (b_bb[1].x - b_bb[0].x)).abs() < 1e-10, "y ext {y_ext} should match orig x ext");
     }
 
     #[test]
     fn scale() {
         let b = make_box(10.0, 10.0, 10.0);
-        let _t = transform_brep_translate(&b, DVec3::ZERO);
-        assert!(true, "Scale stub should not crash");
+        let t = transform_brep_scale(&b, 2.0);
+        assert_eq!(face_count(&t), face_count(&b), "scale should preserve face count");
+        let orig_bb = b.bounding_box().expect("original should have bbox");
+        let scaled_bb = t.bounding_box().expect("transformed should have bbox");
+        let x_ext_orig = orig_bb[1].x - orig_bb[0].x;
+        let x_ext_scaled = scaled_bb[1].x - scaled_bb[0].x;
+        assert!((x_ext_scaled - x_ext_orig * 2.0).abs() < 1e-10, "x should double");
+        assert!(((scaled_bb[1].y - scaled_bb[0].y) - (orig_bb[1].y - orig_bb[0].y) * 2.0).abs() < 1e-10, "y should double");
+        assert!(((scaled_bb[1].z - scaled_bb[0].z) - (orig_bb[1].z - orig_bb[0].z) * 2.0).abs() < 1e-10, "z should double");
     }
 
     #[test]
     fn mirror() {
         let b = make_box(10.0, 10.0, 10.0);
-        let _t = transform_brep_translate(&b, DVec3::ZERO);
-        assert!(true, "Mirror stub should not crash");
+        // Mirror across X=0 plane (normal DVec3::X)
+        let t = transform_brep_mirror(&b, DVec3::X);
+        assert_eq!(face_count(&t), face_count(&b), "mirror should preserve face count");
+        let orig_bb = b.bounding_box().expect("original should have bbox");
+        let mir_bb = t.bounding_box().expect("transformed should have bbox");
+        // Original min x was 0, should become -10 after mirror
+        assert!((mir_bb[0].x + orig_bb[1].x).abs() < 1e-10,
+            "mirror min x {} should be -orig max x {}", mir_bb[0].x, orig_bb[1].x);
     }
 
     #[test]
     fn shape_validity() {
         let b = make_box(10.0, 10.0, 10.0);
-        let _t = transform_brep_translate(&b, DVec3::new(50.0, 50.0, 50.0));
-        assert!(true, "Transformed shape should be valid");
+        let t = transform_brep_translate(&b, DVec3::new(50.0, 50.0, 50.0));
+        assert!(face_count(&t) > 0, "Transformed shape should have faces");
+        assert!(edge_count(&t) > 0, "Transformed shape should have edges");
     }
 }
 
@@ -429,40 +532,46 @@ mod solid_classifier_tests {
     fn point_inside_box() {
         let b = make_box(10.0, 10.0, 10.0);
         let mut cls = SolidClassifierStub::new(&b);
-        cls.perform(DVec3::new(5.0, 5.0, 5.0), TOL);
-        // Stub returns Unknown — real impl would return In
-        assert!(true, "Point (5,5,5) should be inside the box");
+        let st = cls.perform(DVec3::new(5.0, 5.0, 5.0), 1e-6);
+        assert!(
+            matches!(st, TopAbsState::In) || matches!(st, TopAbsState::On),
+            "Point (5,5,5) should be inside the box, got {st:?}"
+        );
     }
 
     #[test]
     fn point_outside_box() {
         let b = make_box(10.0, 10.0, 10.0);
         let mut cls = SolidClassifierStub::new(&b);
-        cls.perform(DVec3::new(20.0, 20.0, 20.0), TOL);
-        assert!(true, "Point (20,20,20) should be outside the box");
+        let st = cls.perform(DVec3::new(20.0, 20.0, 20.0), 1e-6);
+        assert_eq!(st, TopAbsState::Out, "Point (20,20,20) should be outside the box");
     }
 
     #[test]
     fn point_on_face_box() {
         let b = make_box(10.0, 10.0, 10.0);
         let mut cls = SolidClassifierStub::new(&b);
-        cls.perform(DVec3::new(5.0, 5.0, 0.0), TOL);
-        assert!(true, "Point (5,5,0) should be on the bottom face");
+        // Z=0 is on the bottom face of the box (origin at 0)
+        let st = cls.perform(DVec3::new(5.0, 5.0, 0.0), 0.1);
+        assert_eq!(st, TopAbsState::On, "Point (5,5,0) should be on the bottom face");
     }
 
     #[test]
     fn point_inside_sphere() {
         let s = make_sphere(10.0);
         let mut cls = SolidClassifierStub::new(&s);
-        cls.perform(DVec3::ZERO, TOL);
-        assert!(true, "Origin should be inside the sphere");
+        let st = cls.perform(DVec3::ZERO, 1e-6);
+        assert!(
+            matches!(st, TopAbsState::In) || matches!(st, TopAbsState::On),
+            "Origin should be inside the sphere, got {st:?}"
+        );
     }
 
     #[test]
     fn perform_infinite_point() {
         let b = make_box(10.0, 10.0, 10.0);
         let mut cls = SolidClassifierStub::new(&b);
-        let st = cls.perform_infinite_point(TOL);
+        let st = cls.perform_infinite_point(1e-6);
         assert_eq!(st, TopAbsState::Out, "Infinite point should be outside");
     }
 }

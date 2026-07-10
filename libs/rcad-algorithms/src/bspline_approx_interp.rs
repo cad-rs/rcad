@@ -1,4 +1,4 @@
-﻿//! BSpline curve approximation and interpolation from scattered points.
+//! BSpline curve approximation and interpolation from scattered points.
 //!
 //! ✅ OCCT-aligned: Approx_BSplineApproxInterp
 
@@ -132,5 +132,105 @@ impl BSplineApproxInterp {
 // =============================================================================
 // Tests — translated from Approx_BSplineApproxInterp_Test.cxx
 // =============================================================================
+
+#[cfg(test)]
+mod bspline_approx_interp_tests {
+    use super::*;
+
+    #[test]
+    fn approx_three_collinear_points() {
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(5.0, 0.0, 0.0),
+            DVec3::new(10.0, 0.0, 0.0),
+        ];
+        let mut approx = BSplineApproxInterp::new(3, 2, 2);
+        approx.load_points(&pts);
+        let result = approx.perform_auto();
+        assert!(result.is_done(), "should complete");
+        let max_err = result.max_error();
+        assert!(max_err < 1e-10, "collinear points should fit exactly, max_err={max_err}");
+    }
+
+    #[test]
+    fn approx_quadratic_curve_points() {
+        let pts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(2.0, 4.0, 0.0),
+            DVec3::new(4.0, 0.0, 0.0),
+        ];
+        let mut approx = BSplineApproxInterp::new(3, 2, 2);
+        approx.load_points(&pts);
+        let result = approx.perform_auto();
+        assert!(result.is_done(), "should complete");
+        let crv = result.curve().expect("curve should exist");
+        assert_eq!(crv.degree, 2, "should be degree 2");
+        assert!(crv.control_points.len() >= 3, "should have 3+ control points");
+    }
+
+    #[test]
+    fn interpolate_endpoints_exactly() {
+        // Two-point interpolation → degree 1 line
+        let pts = vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0)];
+        let mut approx = BSplineApproxInterp::new(2, 1, 0);
+        approx.load_points(&pts);
+        approx.interpolate_point(0, false);
+        approx.interpolate_point(1, false);
+        let result = approx.perform_auto();
+        assert!(result.is_done(), "should complete");
+        let crv = result.curve().expect("curve should exist");
+        let p0 = crv.point_at(0.0);
+        let p1 = crv.point_at(1.0);
+        assert!((p0 - DVec3::ZERO).length() < 1e-10, "start point should match");
+        assert!(
+            (p1 - DVec3::new(10.0, 0.0, 0.0)).length() < 1e-10,
+            "end point should match"
+        );
+    }
+
+    #[test]
+    fn chord_length_params_are_monotonic() {
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(3.0, 4.0, 0.0),
+            DVec3::new(6.0, 8.0, 0.0),
+            DVec3::new(10.0, 0.0, 0.0),
+        ];
+        let params = chord_length_params(&pts);
+        assert_eq!(params.len(), 4);
+        assert!((params[0] - 0.0).abs() < 1e-15, "first param should be 0");
+        assert!((params[3] - 1.0).abs() < 1e-15, "last param should be 1");
+        for i in 1..params.len() {
+            assert!(params[i] >= params[i - 1], "params should be non-decreasing");
+        }
+    }
+
+    #[test]
+    fn five_point_approx_degree_3() {
+        let pts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(2.0, 3.0, 1.0),
+            DVec3::new(4.0, 5.0, -1.0),
+            DVec3::new(6.0, 3.0, 2.0),
+            DVec3::new(8.0, 0.0, 0.0),
+        ];
+        let mut approx = BSplineApproxInterp::new(5, 3, 2);
+        approx.load_points(&pts);
+        let result = approx.perform_auto();
+        assert!(result.is_done(), "should complete");
+        let max_err = result.max_error();
+        assert!(max_err < 10.0, "max error should be bounded, got {max_err}");
+    }
+
+    #[test]
+    fn is_done_before_perform_is_false() {
+        let mut approx = BSplineApproxInterp::new(3, 2, 2);
+        assert!(!approx.is_done(), "should not be done before load_points");
+        approx.load_points(&[DVec3::ZERO, DVec3::X, DVec3::new(2.0, 0.0, 0.0)]);
+        assert!(!approx.is_done(), "should not be done before perform");
+        approx.perform_auto();
+        assert!(approx.is_done(), "should be done after perform");
+    }
+}
 
 
