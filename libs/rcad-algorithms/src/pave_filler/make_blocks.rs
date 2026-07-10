@@ -313,9 +313,27 @@ impl<'a> super::PaveFiller<'a> {
  let a_tol_r3d = ic_geom_tol.max(crate::tolerance::TOLERANCE_ABS);
  let a_t = [ic_t_range[0], ic_t_range[1]];
  let a_p = [ic_curve.point_at(a_t[0]), ic_curve.point_at(a_t[1])];
- // Ensure pave_block1 exists
+ // Ensure pave_block1 exists (InitPaveBlock1 equivalent).
+ // OCCT BOPAlgo_PaveFiller_6.cxx L2437-2456: InitPaveBlock1 allocates a
+ // PaveBlock with the curve's t_range and sv/ev endpoints, enabling
+ // subsequent put_pave_on_curve to append ext_paves.  Without this,
+ // analytical curves never acquire pave blocks and the section-edge
+ // pipeline processes nothing.
  if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
- 
+ let local_sv = self.ds.intersection_curves[ci].start_vertex;
+ let local_ev = self.ds.intersection_curves[ci].end_vertex;
+ if local_sv < self.ds.vertices.len() && local_ev < self.ds.vertices.len() {
+ let mut pb = crate::bopds::pave::PaveBlock::new(
+ crate::bopds::pave::NO_EDGE,
+ crate::bopds::pave::Pave { vertex_idx: local_sv, param: ic_t_range[0] },
+ crate::bopds::pave::Pave { vertex_idx: local_ev, param: ic_t_range[1] },
+ );
+ pb.curve = Some(ic_curve.clone());
+ self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));
+ } else if std::env::var("RCAD_DBG_MB").is_ok() {
+ eprintln!("[MB] InitPaveBlock1 skip: sv={} ev={} nV={} ci={}",
+ local_sv, local_ev, self.ds.vertices.len(), ci);
+ }
  }
  // getBoundPaves: check which endpoints already have vertices
  // by comparing ext_pave positions and IC sv/ev against bound points.

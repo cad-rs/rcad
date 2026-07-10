@@ -321,7 +321,15 @@ impl<'a> super::PaveFiller<'a> {
   int_patch.perform(&s1, &s2, self.fuzzy_tolerance, self.fuzzy_tolerance);
   for ic in int_patch.to_intersection_curves() {
   let curve_idx = self.ds.intersection_curves.len();
+  // Clip infinite-range analytical curves to face UV boundaries.
+  // int_pp produces IntPatchLine with t_range: [-1e10, 1e10]
+  // and start/end_vertex = usize::MAX.  Without finite range and
+  // valid endpoints, make_blocks cannot create pave blocks.
+  let is_analytic = ic.start_vertex == usize::MAX && ic.end_vertex == usize::MAX;
   self.ds.intersection_curves.push(ic);
+  if is_analytic {
+  self.clip_curve_to_face_uv(f1, f2, curve_idx);
+  }
   // ✅ Push FF interference entry (OCCT BOPAlgo_PaveFiller_6.cxx L540-550)
   self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
   f1, f2,
@@ -432,10 +440,16 @@ impl<'a> super::PaveFiller<'a> {
  for &ci in &post_ff_curves {
  if ci < self.ds.intersection_curves.len() {
  let ic = &self.ds.intersection_curves[ci];
+ // Only add valid vertex indices to vertices_in.  Unclipped
+ // analytical curves may still have usize::MAX endpoints.
+ if ic.start_vertex < self.ds.vertices.len() {
  self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
- self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
  self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
+ }
+ if ic.end_vertex < self.ds.vertices.len() {
+ self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
  self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
+ }
  // Register curve endpoints as vertices_on if they match face boundary vertices
  let bv1 = self.ds.faces[f1].boundary_verts.clone();
  let bv2 = self.ds.faces[f2].boundary_verts.clone();
@@ -736,6 +750,110 @@ impl<'a> super::PaveFiller<'a> {
  .map(|(i, _)| i)
  .collect()
  }
+
+ /// OCCT-aligned: clip infinite-range analytical intersection curves to
+ /// face UV boundaries.  int_pp produces IntPatchLine with t_range:
+ /// [-1e10, 1e10] and start/end_vertex = usize::MAX.  Without finite
+ /// range and valid endpoints, the subsequent make_blocks / InitPaveBlock1
+ /// pipeline cannot create pave blocks for face-face section curves.
+ ///
+ /// For a plane face with surface P(u,v) = base + u*X + v*Y,
+ /// the 3D line L(t) = origin + t*direction projects to UV as:
+ ///   u(t) = (origin - base + t*direction)·X
+ ///   v(t) = (origin - base + t*direction)·Y
+ /// The valid t-range satisfies u_min ≤ u(t) ≤ u_max and v_min ≤ v(t) ≤ v_max
+ /// for BOTH faces simultaneously.
+ pub(crate) fn clip_curve_to_face_uv(&mut self, f1: usize, f2: usize, ci: usize) {
+  if ci >= self.ds.intersection_curves.len() { return; }
+  let (ic_curve, ic_t_range) = {
+  let ic = &self.ds.intersection_curves[ci];
+  (ic.curve.clone(), ic.t_range)
+  };
+  // Only handle Line curves with very large (infinite) range
+  let (line_origin, line_dir) = match &ic_curve {
+  rcad_kernel::geom::Curve3::Line(l) => (l.origin, l.direction),
+  _ => return,
+  };
+  if ic_t_range[0] > -1e9 || ic_t_range[1] < 1e9 { return; }
+  if !line_dir.is_finite() || line_dir.length_squared() < 1e-30 { return; }
+  let dir = line_dir;
+
+  // Compute common t-range across both faces
+  let mut t_min = f64::NEG_INFINITY;
+  let mut t_max = f64::INFINITY;
+
+  for &fi in &[f1, f2] {
+  if fi >= self.ds.faces.len() { continue; }
+  let face = &self.ds.faces[fi];
+  let (base, x_axis, y_axis) = match &face.surface {
+  rcad_kernel::geom::Surface3::Plane(p) => {
+  let abs = p.normal.abs();
+  let candidate = if abs.x <= abs.y && abs.x <= abs.z { glam::DVec3::X }
+  else if abs.y <= abs.z { glam::DVec3::Y }
+  else { glam::DVec3::Z };
+  let x = p.normal.cross(candidate).normalize();
+  let y = p.normal.cross(x);
+  (p.origin, x, y)
+  }
+  _ => continue,
+  };
+  // UV bounds from boundary vertices
+  let mut u_min = f64::MAX; let mut u_max = f64::NEG_INFINITY;
+  let mut v_min = f64::MAX; let mut v_max = f64::NEG_INFINITY;
+  let mut has_uv = false;
+  for &vi in &face.boundary_verts {
+  if vi < self.ds.vertices.len() {
+  let pt = self.ds.vertices[vi].point;
+  let u = (pt - base).dot(x_axis);
+  let v = (pt - base).dot(y_axis);
+  u_min = u_min.min(u); u_max = u_max.max(u);
+  v_min = v_min.min(v); v_max = v_max.max(v);
+  has_uv = true;
+  }
+  }
+  if !has_uv || !(u_max > u_min + 1e-12) || !(v_max > v_min + 1e-12) { continue; }
+  // u(t) = u0 + t*du, v(t) = v0 + t*dv
+  let d_base = line_origin - base;
+  let u0 = d_base.dot(x_axis);
+  let du = dir.dot(x_axis);
+  let v0 = d_base.dot(y_axis);
+  let dv = dir.dot(y_axis);
+  if du.abs() > 1e-30 {
+  let t_lo = (u_min - u0) / du;
+  let t_hi = (u_max - u0) / du;
+  t_min = t_min.max(t_lo.min(t_hi)); t_max = t_max.min(t_lo.max(t_hi));
+  } else if u0 < u_min - 1e-12 || u0 > u_max + 1e-12 { return; }
+  if dv.abs() > 1e-30 {
+  let t_lo = (v_min - v0) / dv;
+  let t_hi = (v_max - v0) / dv;
+  t_min = t_min.max(t_lo.min(t_hi)); t_max = t_max.min(t_lo.max(t_hi));
+  } else if v0 < v_min - 1e-12 || v0 > v_max + 1e-12 { return; }
+  }
+
+  if !t_min.is_finite() || !t_max.is_finite() || t_max <= t_min + 1e-12 { return; }
+  let tol = crate::tolerance::TOLERANCE_ABS;
+  let p_start = ic_curve.point_at(t_min);
+  let p_end = ic_curve.point_at(t_max);
+  if !p_start.is_finite() || !p_end.is_finite() { return; }
+  let v_start = self.ds.add_vertex(p_start);
+  let v_end = self.ds.add_vertex(p_end);
+  self.ds.vertices[v_start].geom_tol = tol;
+  self.ds.vertices[v_end].geom_tol = tol;
+  self.ds.intersection_curves[ci].start_vertex = v_start;
+  self.ds.intersection_curves[ci].end_vertex = v_end;
+  self.ds.intersection_curves[ci].t_range = [t_min, t_max];
+  // Compute pcurves for both faces (required by BuilderFace for
+  // wire segment creation).  Without pcurves, make_section_edge
+  // cannot build face representations.
+  let line = rcad_kernel::geom::Line3 { origin: line_origin, direction: dir };
+  for (fi, side) in [(f1, 0), (f2, 1)] {
+  if fi >= self.ds.faces.len() { continue; }
+  if let rcad_kernel::geom::Surface3::Plane(p) = &self.ds.faces[fi].surface {
+  let pc = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line, p);
+  if side == 0 { self.ds.intersection_curves[ci].pcurve_on_a = Some(pc); }
+  else { self.ds.intersection_curves[ci].pcurve_on_b = Some(pc); }
+  }
+  }
+ }
+
 }
-
-

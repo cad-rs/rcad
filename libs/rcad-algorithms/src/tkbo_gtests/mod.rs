@@ -157,7 +157,28 @@ mod bop_algo_direct_tests {
     fn direct_common_overlapping_boxes() {
         let b1 = (make_box(DVec3::ZERO, 2.0, 2.0, 2.0).clone());
         let b2 = (make_box(DVec3::new(1.0, 1.0, 1.0).clone(), 2.0, 2.0, 2.0));
-        let result = perform_bop(&b1, &b2, BooleanOpType::Intersection);
+
+        // Debug: inline the full pipeline to check intermediate state
+        let mut ds = DS::new_from_topods(&b1, &b2, TOLERANCE_ABS);
+        let bvh_a = Bvh::build(&b1);
+        let bvh_b = Bvh::build(&b2);
+        let mut brep = rcad_kernel::topods::BRep::new();
+        {
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.set_run_parallel(false);
+            filler.perform();
+        }
+        let n_pb: usize = ds.intersection_curves.iter().map(|ic| ic.pave_blocks.len()).sum();
+        let n_pb_sc: usize = ds.faces.iter().map(|f| f.face_info.pave_blocks_sc.len()).sum();
+        eprintln!("DEBUG: n_ic={} n_pb={} n_pb_sc={}", ds.intersection_curves.len(), n_pb, n_pb_sc);
+        for (i, ic) in ds.intersection_curves.iter().enumerate() {
+            if !ic.pave_blocks.is_empty() {
+                eprintln!("  curve[{}]: sv={} ev={} t=[{:.4},{:.4}] {} pb",
+                    i, ic.start_vertex, ic.end_vertex, ic.t_range[0], ic.t_range[1], ic.pave_blocks.len());
+            }
+        }
+
+        let result = crate::bop_occt_union::boolean_op_generic(BooleanOpType::Intersection, &b1, &b2).expect("Common failed");
         validate_result(&result, -1.0, 1.0, false);
     }
 
