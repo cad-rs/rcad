@@ -193,7 +193,7 @@ impl BooleanOp {
         ds.build_container_images();
 
         // 鉁?OCCT-aligned: Build result
-        let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
+        let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);

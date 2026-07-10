@@ -332,7 +332,7 @@ pub(crate) fn boolean_op_with_history_generic(
  let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, true, &mut brep);
- let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
  Ok((result_brep, hist))
 }
@@ -344,7 +344,7 @@ pub fn boolean_op_generic(
  let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, true, &mut brep);
- let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (result, _history) = builder.build_with_history_topods()?;
  Ok(result)
 }
@@ -359,7 +359,7 @@ pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -
  let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
- let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result, _history) = builder.build_with_history_topods()?;
  Ok(result)
 }
@@ -380,7 +380,7 @@ pub(crate) fn fuse_with_history_bvh(
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
  validate_ds_invariants(&ds)?;
- let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
  Ok((result_brep, hist))
 }
@@ -400,7 +400,7 @@ pub(crate) fn fuse_with_history_par_bvh(
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
  validate_ds_invariants(&ds)?;
- let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
  Ok((result_brep, hist))
 }

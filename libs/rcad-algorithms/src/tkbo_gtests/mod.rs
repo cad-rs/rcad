@@ -217,7 +217,7 @@ mod bop_algo_two_step_tests {
             filler.perform();
             (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
-        let builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
         let (result, _history) = builder.build_with_history_topods().expect("Two-step BOP failed");
         result
     }

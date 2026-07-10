@@ -1116,6 +1116,26 @@ use rcad_kernel::PCurve;
  self.ds.faces[fi].face_info.vertices_in.contains(&vi)
  }
 
+ /// OCCT-aligned: IsExistingVertex (PaveFiller_6.cxx L1200-1245).
+ /// Checks if a 3D point `theP` coincides with any vertex in theMVOnIn
+ /// within `theTol + vertex.geom_tol` distance.
+ pub(crate) fn is_existing_vertex_at_point(
+  &self,
+  the_p: glam::DVec3,
+  the_tol: f64,
+  the_mv_on_in: &std::collections::HashSet<usize>,
+ ) -> bool {
+  for &n_v in the_mv_on_in {
+   if n_v >= self.ds.vertices.len() { continue; }
+   let a_pnt = self.ds.vertices[n_v].point;
+   let a_tol_v = self.ds.vertices[n_v].geom_tol;
+   if a_pnt.distance(the_p) < the_tol + a_tol_v {
+    return true;
+   }
+  }
+  false
+ }
+
  pub(crate) fn is_existing_vertex(&self, ci: usize, param: f64) -> bool {
  let ic = &self.ds.intersection_curves[ci];
  let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;

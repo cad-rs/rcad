@@ -657,7 +657,7 @@ impl<'a> BooleanBuilder<'a> {
  max_err.is_finite() && max_err <= TOLERANCE_ADAPTIVE_MAX
  }
 
- pub fn build(&self) -> Result<topods::BRep, BooleanError> {
+ pub fn build(&mut self) -> Result<topods::BRep, BooleanError> {
  let (t, _) = self.build_with_history()?;
  Ok(t)
  }
@@ -851,16 +851,15 @@ impl<'a> BooleanBuilder<'a> {
  /// Structural difference: L425-429 setup done in constructor, re-affirmed here.
  /// L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
  /// clears solids from t_brep (non-Union) =equivalent to OCCT removing from myShape.
- pub fn build_with_history(&self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ pub fn build_with_history(&mut self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  self.build_with_history_topods()
  }
 
  /// Same as build_with_history but returns topods::BRep directly (OCCT-aligned).
- pub fn build_with_history_topods(&self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
- // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
- // rcad equivalents are already assigned in new(); re-affirm the form.
- let _fuzzy_value = self.ds.fuzzy_tol;
- let _non_destructive = self.my_non_destructive;
+ pub fn build_with_history_topods(&mut self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ // SKIP: OCCT L425-429 copies (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive)
+ // from theFiller argument.  rcad builds with_brep() which sets these in the constructor --
+ // no re-assignment at the start of build_with_history_topods is needed.
 
  // OCCT L431-436: CheckData =validates arguments and merges PaveFiller report.
  // Populate my_arguments from DS source shapes (OCCT: SetArguments).
@@ -933,7 +932,9 @@ impl<'a> BooleanBuilder<'a> {
  // OCCT L472-475: FillImagesFaces  ?BuildResult(FACE)
  // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
  // Remaining unsplit faces already have pre-created TShapes from pre_create_source_shapes.
- self.fill_images_faces(&mut result, &a_faces, &b_faces);
+ // OCCT L498-502: FillImagesFaces(aPS.Next(...)) -- takes progress range only.
+ // OCCT form: no external parameters; reads all data from this->myDS, this->myImages.
+ self.fill_images_faces();
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  // BuildResult(FACE)  ?generic loop over my_arguments, adds originals/splits to result.
  self.build_result(topods::ShapeType::Face, &mut result);
@@ -964,10 +965,9 @@ impl<'a> BooleanBuilder<'a> {
  // OCCT L502-504: PrepareHistory
  let mut history = self.prepare_history(&mut result);
 
- // OCCT L506-508: PostTreat
- // rcad: PostTreat (tolerance correction) is skipped here — the old-to-topods
- // round-trip lost all tolerance data, making it a no-op.
- // TODO: reimplement PostTreat directly on topods::BRep.
+ // OCCT L506-508: PostTreat(aPS.Next(...))
+ // Corrects tolerances of the result shape (CorrectTolerances + CorrectShapeTolerances).
+ self.post_treat();
  let result_brep = self.my_shape.borrow().clone();
 
  Ok((result_brep, history))

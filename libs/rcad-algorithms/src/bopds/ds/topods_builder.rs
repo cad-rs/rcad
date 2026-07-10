@@ -31,6 +31,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  interf_fz: Vec::new(),
  interf_zz: Vec::new(),
  intersection_curves: Vec::new(),
+ ff_points: Vec::new(),
  section_edge_refs: Vec::new(),
  fuzzy_tol: tol,
  a_vertex_count: 0,

@@ -17,6 +17,10 @@ pub(crate) struct BuilderFace<'a> {
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
     face_idx: usize,
     is_a: bool,
+    /// OCCT-aligned: aLE edge list (BOPAlgo_Builder_2.cxx L360-494).
+    /// Set by BuildSplitFaces; when populated, perform() uses it instead
+    /// of deriving edges from the DS segments.
+    shapes: Option<Vec<ShapeRef>>,
 }
 
 impl<'a> BuilderFace<'a> {
@@ -29,7 +33,13 @@ impl<'a> BuilderFace<'a> {
         face_idx: usize,
         is_a: bool,
     ) -> Self {
-        Self { ds, brep, face_refs, ic_edge_map, my_face_refs, face_idx, is_a }
+        Self { ds, brep, face_refs, ic_edge_map, my_face_refs, face_idx, is_a, shapes: None }
+    }
+
+    /// OCCT-aligned: SetShapes (BOPAlgo_Builder_2.cxx L504).
+    /// Sets the pre-collected edge list from BuildSplitFaces.
+    pub fn set_shapes(&mut self, shapes: Vec<ShapeRef>) {
+        self.shapes = Some(shapes);
     }
 
     /// ✅ OCCT-aligned: Perform — main entry (BuilderFace.cxx Perform).

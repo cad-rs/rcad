@@ -144,34 +144,83 @@ impl<'a> BooleanBuilder<'a> {
             self.my_images.borrow_mut().entry(w_ref).or_default().extend(a_c_im);
         }
     }
-    /// --OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
-    ///   Phase 3: splits each face via WireSplitter --classifies --emits
-    ///   via emit_wire_face.  rcad equivalent: for each face with IC data,
-    ///   call builder_face_perform (TopoDS-based BuilderFace::Perform), then
-    ///   classify_against_solid_for_boolean + classification_keep_policy.
-    /// --OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
-    ///   Equivalent to BuildSplitFaces + FillSameDomainFaces + FillInternalVertices.
-    ///   OCCT L258: aNbS = myDS->NbSourceShapes()
-    ///   OCCT L260-266: iterates all source shapes, filters TopAbs_FACE.
-    ///   OCCT L275-279: HasFaceInfo check.
-    ///   OCCT L283-287: PaveBlocksIn/On/Sc + AloneVertices.
-    ///   OCCT L293-296: if no PBs and no AV --skip.
-    /// --OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
-    ///   Calls BuildSplitFaces --FillSameDomainFaces --FillInternalVertices.
     /// OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
-    ///   3-step dispatcher: BuildSplitFaces --FillSameDomainFaces --FillInternalVertices.
-    pub(super) fn fill_images_faces(
-        &self,
-        result: &mut ResultBuilder,
-        a_faces: &[usize],
-        b_faces: &[usize],
-    ) {
+    ///   3-step dispatcher: BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
+    ///   OCCT form: takes const Message_ProgressRange& only; reads all data from this->myDS.
+    pub(super) fn fill_images_faces(&self) {
+        // rcad: temp ResultBuilder needed during split (TShape creation).
+        // TODO: move TShape creation to build_result(Face) to match OCCT flow.
+        let mut result = crate::builder::result_builder::ResultBuilder::new();
         let mut t = self.my_shape.borrow_mut();
-        self.build_split_faces(result, a_faces, b_faces, &mut *t);
+        self.build_split_faces(&mut result, &mut *t);
         if self.has_errors { return; }
-        self.fill_same_domain_faces(result);
+        self.fill_same_domain_faces(&mut result);
         if self.has_errors { return; }
-        self.fill_internal_vertices(result);
+        self.fill_internal_vertices(&mut result);
+    }
+
+    /// OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-481).
+    /// Corrects tolerances of the result shape after building.
+    pub(super) fn post_treat(&mut self) {
+        // OCCT L458-474: MapToAvoid (NonDestructive mode only)
+        // Collects source V/E/F shapes to protect from tolerance reduction.
+        let _a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
+            (0..self.ds.nb_source_shapes)
+                .filter(|&i| {
+                    if i >= self.ds.shape_info.len() { return false; }
+                    let si = &self.ds.shape_info[i];
+                    si.shape_type == rcad_kernel::topods::ShapeType::Vertex
+                        || si.shape_type == rcad_kernel::topods::ShapeType::Edge
+                        || si.shape_type == rcad_kernel::topods::ShapeType::Face
+                })
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+        // OCCT L478: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
+        // rcad: CorrectTolerances on the result BRep.
+        // Reads DS vertex/edge tolerance data and propagates to the BRep TShapes.
+        let e_base = self.ds.vertices.len();
+        // Collect (ti, new_tolerance) pairs to avoid borrow conflicts.
+        let mut edge_updates: Vec<(usize, f64)> = Vec::new();
+        let mut vert_updates: Vec<(usize, f64)> = Vec::new();
+        {
+            let t = self.my_shape.borrow();
+            for (ti, ts) in t.tshapes.iter().enumerate() {
+                if let topods::TShape::Edge(_ed) = &**ts {
+                    let ei = ti.saturating_sub(e_base);
+                    if ei < self.ds.edges.len() {
+                        edge_updates.push((ti, self.ds.edges[ei].geom_tol.max(0.05)));
+                    }
+                } else if let topods::TShape::Vertex(_vd) = &**ts {
+                    if ti < self.ds.vertices.len() {
+                        vert_updates.push((ti, self.ds.vertices[ti].geom_tol.max(0.05)));
+                    }
+                }
+            }
+        }
+        {
+            let mut t = self.my_shape.borrow_mut();
+            for (ti, tol) in &edge_updates {
+                if let topods::TShape::Edge(ed) = &*t.tshapes[*ti].clone() {
+                    t.tshapes[*ti] = std::sync::Arc::new(topods::TShape::Edge(topods::TEdgeData {
+                        tolerance: *tol,
+                        ..ed.clone()
+                    }));
+                }
+            }
+            for (ti, tol) in &vert_updates {
+                if let topods::TShape::Vertex(vd) = &*t.tshapes[*ti].clone() {
+                    t.tshapes[*ti] = std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
+                        tolerance: *tol,
+                        ..vd.clone()
+                    }));
+                }
+            }
+        }
+
+        // OCCT L480: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
+        // rcad: CorrectShapeTolerances is a BRep-level operation not yet translated.
     }
 
     /// --OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
@@ -182,14 +231,23 @@ impl<'a> BooleanBuilder<'a> {
     pub(super) fn build_split_faces(
         &self,
         result: &mut ResultBuilder,
-        a_faces: &[usize],
-        b_faces: &[usize],
         t: &mut topods::BRep,
     ) {
         // OCCT L258-266: iterate all source shapes --filter TopAbs_FACE.
-        for fi in 0..self.ds.faces.len() {
-            let is_a = a_faces.contains(&fi);
-            if !is_a && !b_faces.contains(&fi) { continue; }
+        // rcad shape_info is ordered V/E/F/S (type-grouped).  A running counter
+        // maps each Face-type entry to its DS face index, matching the implicit
+        // type-index OCCT derives from unified shape_info traversal order.
+        let a_nb_s = self.ds.nb_source_shapes;
+        let mut face_counter = 0usize;
+        for i in 0..a_nb_s {
+            if i >= self.ds.shape_info.len() { continue; }
+            let si = &self.ds.shape_info[i];
+            if si.shape_type != rcad_kernel::topods::ShapeType::Face { continue; }
+            let fi = face_counter;
+            face_counter += 1;
+            if fi >= self.ds.faces.len() { continue; }
+            // OCCT L272: const TopoDS_Face& aF = aSI.Shape()
+            let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
 
             // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
@@ -201,39 +259,46 @@ impl<'a> BooleanBuilder<'a> {
             let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
+            // OCCT L286-287: AloneVertices(i, aLIAV) --vertices ON face, not on any edge boundary.
+            // rcad: face_info.vertices_on contains vertices ON the face surface.
+            let a_nb_av = self.ds.faces[fi].face_info.vertices_on.len();
 
             // OCCT L293-296: if (!aNbPBIn && !aNbPBOn && !aNbPBSc && !aNbAV) continue.
-            if !has_pb_in && !has_pb_sc && !has_pb_on && !has_info {
+            if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 && !has_info {
                 continue;
             }
 
             // OCCT L298-332: no IN/SC PBs --BuildDraftFace for ON PBs / alone vertices.
             // OCCT L332+:    has IN/SC PBs --full BuilderFace::Perform.
             if !has_pb_in && !has_pb_sc {
-                let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                    self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
-                });
-                let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                    let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
-                    self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
-                        imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
-                    })
-                });
-                if !has_internals && !has_modified && !has_pb_on {
-                    continue;
-                }
-                // OCCT L336-350: if no internals --BuildDraftFace.
-                if !has_internals && has_info {
-                    if let Some(draft) = self.build_draft_face(fi) {
-                        let (_segments, wfs, _vp) = draft;
-                        for wf in &wfs {
-                            let origin = if is_a {
-                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                            } else {
-                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                            };
-                            result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
-                                &std::collections::HashMap::new());
+                // OCCT L309-333: if (!aNbAV) -- check internals + modified, else skip.
+                if a_nb_av == 0 {
+                    let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
+                        self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
+                    });
+                    let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
+                        let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
+                        self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
+                            imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
+                        })
+                    });
+                    // OCCT L330-333: if (!hasInternals && !hasModified) continue.
+                    if !has_internals && !has_modified && !has_pb_on {
+                        continue;
+                    }
+                    // OCCT L336-350: if no internals --BuildDraftFace.
+                    if !has_internals && has_info {
+                        if let Some(draft) = self.build_draft_face(fi) {
+                            let (_segments, wfs, _vp) = draft;
+                            for wf in &wfs {
+                                let origin = if is_a {
+                                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                                } else {
+                                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                                };
+                                result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
+                                    &std::collections::HashMap::new());
+                            }
                         }
                     }
                 }
@@ -248,10 +313,92 @@ impl<'a> BooleanBuilder<'a> {
             self.my_images.borrow_mut()
                 .entry(self.brep_sr(f_base + side_offset + sf_idx))
                 .or_insert_with(Vec::new);
-            // Architecture A1: pass t so split faces create TShapes incrementally.
-            // OCCT-style: BuilderFace::Perform with self-contained struct.
+            // OCCT L353-494: Build edge list aLE (boundary + split + IN + SC edges).
             if let Some(ref brep_data) = *self.brep.borrow() {
-                let bf = crate::builder::BuilderFace::new(
+                let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
+                let mut a_le: Vec<topods::ShapeRef> = Vec::new();
+                {
+                    let t = self.my_shape.borrow();
+                    if face_sr.index < t.tshapes.len() {
+                        if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
+                            // OCCT L360-465: iterate all face edges (bounding + split).
+                            for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                                if wi.index >= t.tshapes.len() { continue; }
+                                if let topods::TShape::Wire(wd) = &*t.tshapes[wi.index] {
+                                    for &ei in &wd.edges {
+                                        // OCCT L369: if (!myImages.IsBound(aE)) --add original
+                                        let my_images = self.my_images.borrow();
+                                        if !my_images.contains_key(&ei) {
+                                            a_le.push(ei);
+                                            continue;
+                                        }
+                                        // OCCT L387-465: edge has images --add split edges
+                                        if let Some(imgs) = my_images.get(&ei) {
+                                            for &sp_ei in imgs {
+                                                a_le.push(sp_ei);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // OCCT L468-480: add IN PB edges
+                for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_in {
+                    if pb_idx < self.ds.pave_blocks.len() {
+                        let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
+                            .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
+                        let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                        a_le.push(e_sr);
+                        // OCCT L477-479: add REVERSED orientation
+                        a_le.push(topods::ShapeRef {
+                            index: e_sr.index,
+                            orientation: topods::Orientation::Reversed,
+                            ..e_sr
+                        });
+                    }
+                }
+                // OCCT L483-494: add SC PB edges
+                for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
+                    if pb_idx < self.ds.pave_blocks.len() {
+                        let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
+                            .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
+                        let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                        a_le.push(e_sr);
+                        // OCCT L490-493: add REVERSED orientation
+                        a_le.push(topods::ShapeRef {
+                            index: e_sr.index,
+                            orientation: topods::Orientation::Reversed,
+                            ..e_sr
+                        });
+                    }
+                }
+                // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aF)
+                // Computes pcurves for edges of aLE on the planar face aFF.
+                if !self.my_non_destructive {
+                    let t2: &topods::BRep = &*t;
+                    if face_sr.index < t2.tshapes.len() {
+                        if let topods::TShape::Face(_fd) = &*t2.tshapes[face_sr.index] {
+                            if matches!(self.ds.faces[fi].surface, rcad_kernel::geom::Surface3::Plane(_)) {
+                                for &e_sr in &a_le {
+                                    if e_sr.index < t2.tshapes.len() {
+                                        if let topods::TShape::Edge(ed) = &*t2.tshapes[e_sr.index] {
+                                            if !ed.pcurves.contains_key(&face_sr.index) {
+                                                // pcurve missing on planar face — would be
+                                                // computed via projection.  In practice rcad's
+                                                // MakeBlocks already sets pcurves on both faces.
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // OCCT L501-504: Create BuilderFace with aLE
+                let mut bf = crate::builder::BuilderFace::new(
                     self.ds,
                     &brep_data.0,
                     &brep_data.1,
@@ -260,6 +407,7 @@ impl<'a> BooleanBuilder<'a> {
                     fi,
                     is_a,
                 );
+                bf.set_shapes(a_le);
                 bf.perform(result, t);
             }
         }

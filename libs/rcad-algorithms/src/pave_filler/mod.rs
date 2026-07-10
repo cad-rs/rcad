@@ -369,13 +369,8 @@ impl<'a> PaveFiller<'a> {
  if !skip_ff {
  self.perform_ff();
 
- //  ?OCCT-aligned: InitPaveBlock1 for each IC (BOPDS_Curve::InitPaveBlock1
- // is called during PerformFF in OCCT).  rcad ICs are created with empty
- // pave_blocks; this gives them the default PB needed by
- // make_section_edges (inside make_blocks).
- for ci in 0..self.ds.intersection_curves.len() {
- 
- }
+ // OCCT L330: InitPaveBlock1 is called per-curve inside MakeBlocks (PaveFiller_6.cxx L800).
+ // rcad ICs start with empty pave_blocks; MakeBlocks::InitPaveBlock1 creates them.
 
  // =OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
  // After FF, create shared SD vertices for same-domain (coplanar) face

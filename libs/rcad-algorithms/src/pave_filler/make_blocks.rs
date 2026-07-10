@@ -23,8 +23,8 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  // OCCT L657-659: Collect FF interferences (InterfFF)
- let ff_interfs: Vec<(usize, usize, Vec<usize>)> = self.ds.interf_ff.iter()
- .map(|ff| (ff.f1, ff.f2, ff.curves.clone()))
+ let ff_interfs: Vec<(usize, usize, Vec<usize>, Vec<usize>)> = self.ds.interf_ff.iter()
+ .map(|ff| (ff.f1, ff.f2, ff.curves.clone(), ff.points.clone()))
  .collect();
 
  // OCCT L660-663: Early return when no FF interferences
@@ -40,6 +40,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut n_v2: usize;
  let mut a_t1: f64;
  let mut a_t2: f64;
+ let mut b_exist: bool; // OCCT L668: bExist, reused across points/curves
 
  // OCCT L681-683: Edge shape (skip  ?rcad uses DSEdge, not TopoDS_Edge)
 
@@ -96,12 +97,14 @@ impl<'a> super::PaveFiller<'a> {
  n_f1 = n_f1_val;
  n_f2 = n_f2_val;
  let curves_of_ff = &ff_interfs[cur_ind].2;
+ let points_of_ff = &ff_interfs[cur_ind].3;
 
  // OCCT L738-745: Get points and curves of this FF pair
  let a_nb_c = curves_of_ff.len();
- // OCCT L738: aVP = aFF.ChangePoints (skip  ?rcad doesn't have BOPDS_Point)
- // OCCT L740: aVC = aFF.ChangeCurves  ?curves_of_ff
- if a_nb_c == 0 {
+ let a_nb_p = points_of_ff.len();
+ // OCCT L738: aVP = aFF.ChangePoints
+ // OCCT L740: aVC = aFF.ChangeCurves
+ if a_nb_p == 0 && a_nb_c == 0 {
  continue; // OCCT L742-744: skip if no points AND no curves
  }
 
@@ -177,7 +180,25 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // OCCT L773-791: Treat Points  ?SKIP (rcad has no BOPDS_Point)
+ // OCCT L775-793: Treat Points
+ for j in 0..a_nb_p {
+  // OCCT L781-782: BOPDS_Point& aNP = aVP.ChangeValue(j);
+  // OCCT: const gp_Pnt& aP = aNP.Pnt();
+  if points_of_ff[j] >= self.ds.ff_points.len() { continue; }
+  let a_p = self.ds.ff_points[points_of_ff[j]];
+
+  // OCCT L784: IsExistingVertex(aP, aTolFF, aMVOnIn)
+  b_exist = self.is_existing_vertex_at_point(a_p, a_tol_ff, &a_mv_on_in);
+
+  if !b_exist {
+   // OCCT L787: BOPTools_AlgoTools::MakeNewVertex(aP, aTolFF, aV)
+   let n_v = self.ds.add_vertex(a_p);
+   self.ds.vertices[n_v].geom_tol = a_tol_ff;
+
+   // SKIP: rcad has no aMSCPB (CoupleOfPaveBlocks map) equivalent yet.
+   // OCCT L789-791: aCPB.SetIndexInterf(i); aCPB.SetIndex(j); aMSCPB.Add(aV, aCPB)
+  }
+ }
 
  // OCCT L793: GetStickVertices(nF1, nF2, aMVStick, aMVEF, aMI)
  // OCCT BOPAlgo_PaveFiller_6.cxx L2879-2937
@@ -253,8 +274,12 @@ impl<'a> super::PaveFiller<'a> {
  let aMI_ref = &aMI;
  for &ci in curves_of_ff {
  if ci >= self.ds.intersection_curves.len() { continue; }
- // OCCT L799: aNC.InitPaveBlock1()
- 
+ // OCCT L799-800: aNC.InitPaveBlock1()
+ // ensures at least one PaveBlock exists for PutPavesOnCurve to add ext_paves to.
+ if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
+  let pb = crate::bopds::pave::PaveBlock::new_curve_block();
+  self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));
+ }
 
  // OCCT L802-808: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
  self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &aMI, &a_mv_ef);
@@ -1013,7 +1038,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L1114-1120: PostTreatFF(aMSCPB, aDMExEdges, aDMNewSD, aMicroPB,
  // aVertsOnRejectedPB, aAllocator, theRange)
  // Post-process section edges: create missing PBs, register in face info.
- // rcad already registers PBs in section_edge_refs above.
+ self.post_treat_ff();
 
  // OCCT L1125-1126: CorrectToleranceOfSE()
  // Reduce tolerance of section edges where appropriate.
@@ -1086,10 +1111,33 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // OCCT-aligned: InitPaveBlock1 for all curves
- for ci in 0..self.ds.intersection_curves.len() {
- 
+ // OCCT-aligned: InitPaveBlock1 is called per-curve in the first loop above.
+ // The empty loop here is removed -- its purpose was served.
  }
+}
+
+/// OCCT-aligned: PostTreatFF (BOPAlgo_PaveFiller_6.cxx L1197-?).
+/// Post-processes section edges created by MakeBlocks.
+/// Creates missing PBs, registers in face info, and handles
+/// technological vertices.  Currently a stub -- the full ~2000-line
+/// OCCT function body will be translated in a subsequent alignment pass.
+impl<'a> super::PaveFiller<'a> {
+ pub(super) fn post_treat_ff(&mut self) {
+  // OCCT L1208-1212: aNbS = theMSCPB.Extent(); if (!aNbS) return;
+  // rcad: section edges are registered in section_edge_refs.
+  let total_section_edges: usize = self.ds.section_edge_refs.iter().map(|v| v.len()).sum();
+  if total_section_edges == 0 {
+   return;
+  }
+  // OCCT PostTreatFF body (PaveFiller_6.cxx L1197-?).
+  // Handles: registering section edges in face info, creating
+  // SD vertices for micro edges, cleaning technological vertices,
+  // and fixing up pave blocks for same-domain face pairs.
+  //
+  // rcad: the core registration is already done in the third loop
+  // (Make section edges) above via section_edge_refs and
+  // pave_blocks_sc.  Additional passes (technological vertices,
+  // multi-face section edge propagation) are deferred.
  }
 }
 

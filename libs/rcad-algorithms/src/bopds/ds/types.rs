@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 use rcad_kernel::PCurve;
 use rcad_kernel::topods;
@@ -624,6 +624,10 @@ pub struct DS {
   pub interf_zz: Vec<InterferenceZZ>,
 
  pub intersection_curves: Vec<IntersectionCurve>,
+ /// OCCT-aligned: BOPDS_Point array (Interf.hxx L398-443).
+ /// Stores 3D intersection points from FaceFace intersection that have no
+ /// associated curve (point contacts).  Referenced by InterferenceFF::points.
+ pub ff_points: Vec<glam::DVec3>,
  /// Mapping: intersection curve index -> DSEdge indices created by make_section_edges_from_curve_pbs.
  /// Populated during PaveFiller::make_section_edges_from_curve_pbs.
  /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
