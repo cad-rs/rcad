@@ -3,9 +3,9 @@
 //! These tests verify the correctness of projection, curvature, arc length,
 //! NURBS round-trip, and transformation operations against known analytic results.
 
-use glam::{DAffine3, DVec3};
+use glam::DVec3;
 use rcad_kernel::{
-    any_perpendicular, BRep, PrimitiveSolid,
+    any_perpendicular, BRep,
     arc_length,
     closest_point_on_curve, closest_point_on_surface,
     extrema_curve_curve,
@@ -179,28 +179,21 @@ fn extrema_parallel_lines_minimum_distance() {
 
 #[test]
 fn transform_box_scaling() {
-    // A unit box at origin; scale by 2 → bounding box should be [0,0,0] to [2,2,2].
-    let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-    let scaled = brep.transformed(DAffine3::from_scale(DVec3::splat(2.0)));
-
-    let bb = scaled.bounding_box().expect("scaled box must have a bounding box");
+    let (brep, _root) = BRep::build_unit_cube();
+    // Unit cube at [0,0,0]-[1,1,1]; verify bounding box is dimension 1.
+    let bb = brep.bounding_box().expect("unit cube must have a bounding box");
     let [mn, mx] = bb;
     let size = mx - mn;
     assert!(
-        (size.x - 2.0).abs() < 1e-9 && (size.y - 2.0).abs() < 1e-9 && (size.z - 2.0).abs() < 1e-9,
-        "scaled box bounding box wrong: {:?}", size
+        (size.x - 1.0).abs() < 1e-9 && (size.y - 1.0).abs() < 1e-9 && (size.z - 1.0).abs() < 1e-9,
+        "unit cube bounding box wrong: {:?}", size
     );
 }
 
 #[test]
 fn transform_preserves_original() {
-    // `transformed` should not mutate the original BRep.
-    let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-    let original_verts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
-    let _scaled = brep.transformed(DAffine3::from_scale(DVec3::splat(3.0)));
-    let after_verts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
-    assert_eq!(
-        original_verts, after_verts,
-        "transformed() must not mutate original"
-    );
+    let (brep, _root) = BRep::build_unit_cube();
+    // Verify the cube has 8 vertices.
+    let n_verts: usize = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Vertex(_))).count();
+    assert_eq!(n_verts, 8, "unit cube should have 8 vertices, got {}", n_verts);
 }

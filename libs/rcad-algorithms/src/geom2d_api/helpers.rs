@@ -2,8 +2,10 @@
 // Internal helper functions
 // =============================================================================
 
+use super::*;
+
 /// Get the domain for a 2D curve, handling special cases.
-fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
+pub(crate) fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
     match curve {
         Curve2d::Line(_) => [-1e6, 1e6], // Clamp infinite lines
         Curve2d::Circle(_) => [0.0, 2.0 * PI],
@@ -27,17 +29,19 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
         Curve2d::Bezier(_) => [0.0, 1.0],
         Curve2d::Trimmed(tc) => curve2d_domain(tc.curve.as_ref()),
         Curve2d::Offset(c) => curve2d_domain(c.basis.as_ref()),
+        Curve2d::AHTBezier(_) => [0.0, 1.0],
+        Curve2d::TBezier(c) => [0.0, std::f64::consts::PI / c.alpha],
     }
 }
 
 /// Compute the first derivative of a 2D curve using finite differences.
-fn curve2d_derivative(curve: &Curve2d, t: f64) -> DVec2 {
+pub(crate) fn curve2d_derivative(curve: &Curve2d, t: f64) -> DVec2 {
     const H: f64 = TOLERANCE_ABS;
     (curve.point_at(t + H) - curve.point_at(t - H)) / (2.0 * H)
 }
 
 /// Compute the second derivative of a 2D curve using finite differences.
-fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
+pub(crate) fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
     const H: f64 = TOLERANCE_MESH_LEGACY;
     let d_plus = curve2d_derivative(curve, t + H);
     let d_minus = curve2d_derivative(curve, t - H);
@@ -45,14 +49,14 @@ fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
 }
 
 /// Compute the unit tangent vector of a 2D curve.
-fn curve2d_tangent(curve: &Curve2d, t: f64) -> DVec2 {
+pub(crate) fn curve2d_tangent(curve: &Curve2d, t: f64) -> DVec2 {
     let d = curve2d_derivative(curve, t);
     let len = d.length();
     if len < TOLERANCE_FLOAT_DEDUP { DVec2::X } else { d / len }
 }
 
 /// Newton refinement for curve-curve intersection.
-fn refine_curve2d_intersection(
+pub(crate) fn refine_curve2d_intersection(
     curve1: &Curve2d,
     curve2: &Curve2d,
     domain1: [f64; 2],
@@ -110,7 +114,7 @@ fn refine_curve2d_intersection(
 }
 
 /// Newton refinement for point-to-curve distance.
-fn refine_point_curve2d_distance(
+pub(crate) fn refine_point_curve2d_distance(
     curve: &Curve2d,
     domain: [f64; 2],
     point: DVec2,
@@ -149,7 +153,7 @@ fn refine_point_curve2d_distance(
 }
 
 /// Newton refinement for curve-to-curve distance.
-fn refine_curve2d_distance(
+pub(crate) fn refine_curve2d_distance(
     curve1: &Curve2d,
     curve2: &Curve2d,
     domain1: [f64; 2],
@@ -166,7 +170,7 @@ fn refine_curve2d_distance(
 // =============================================================================
 
 /// Chord-length parameterization for 2D points, normalized to [0, 1].
-fn chord_length_params_2d(pts: &[DVec2]) -> Vec<f64> {
+pub(crate) fn chord_length_params_2d(pts: &[DVec2]) -> Vec<f64> {
     let n = pts.len();
     let mut params = Vec::with_capacity(n);
     params.push(0.0_f64);
@@ -185,7 +189,7 @@ fn chord_length_params_2d(pts: &[DVec2]) -> Vec<f64> {
 }
 
 /// Clamped knot vector derived from parameters.
-fn clamped_knots_from_params(params: &[f64], degree: usize) -> Vec<f64> {
+pub(crate) fn clamped_knots_from_params(params: &[f64], degree: usize) -> Vec<f64> {
     let n = params.len();
     let m = n + degree + 1;
     let mut knots = vec![0.0_f64; m];
@@ -212,7 +216,7 @@ fn clamped_knots_from_params(params: &[f64], degree: usize) -> Vec<f64> {
 }
 
 /// Solve the interpolation system for 2D points.
-fn solve_interpolation_2d(
+pub(crate) fn solve_interpolation_2d(
     params: &[f64],
     knots: &[f64],
     degree: usize,

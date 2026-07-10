@@ -232,7 +232,7 @@ pub fn linear_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -265,7 +265,7 @@ pub fn circular_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroAxis)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -295,7 +295,7 @@ pub fn mirror_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroPlaneNormal)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -367,7 +367,7 @@ pub fn rectangular_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -447,7 +447,7 @@ pub fn variable_spacing_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -486,7 +486,7 @@ pub fn distance_spacing_pattern(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -532,7 +532,7 @@ pub fn path_pattern(
  return Err(PatternError::InvalidParameter);
  }
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -604,7 +604,7 @@ pub fn pattern_with_suppression(
  return Err(PatternError::EmptyTransforms);
  }
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -644,7 +644,7 @@ pub fn linear_pattern_with_suppression(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -673,7 +673,7 @@ pub fn circular_pattern_with_suppression(
  .try_normalize()
  .ok_or(PatternError::ZeroAxis)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -700,7 +700,7 @@ pub fn pattern_with_instance_transforms(
  return Err(PatternError::EmptyTransforms);
  }
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -749,7 +749,7 @@ pub fn pattern_within_boundary(
  .try_normalize()
  .ok_or(PatternError::ZeroDirection)?;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return Err(PatternError::NoSolids);
  }
 
@@ -880,105 +880,70 @@ fn append_transformed_brep(
  source: &BRep,
  mat: &DMat4,
 ) -> Result<(), PatternError> {
- let v_offset = target.vertices.len();
- let e_offset = target.edges.len();
- let curve_offset = target.geom.curves.len();
- let surface_offset = target.geom.surfaces.len();
+ use crate::geom::{transform_curve, transform_surface};
+ let da = glam::DAffine3::from_mat4(*mat);
+ // Build vertex/edge index maps: old index -> new ShapeRef
+ let mut v_map: Vec<topods::ShapeRef> = Vec::new();
+ let mut e_map: Vec<topods::ShapeRef> = Vec::new();
 
- // Transform and copy vertices
- for v in &source.vertices {
- let p = mat.transform_point3(v.point);
- target.vertices.push(Vertex {
- point: DVec3::new(p.x, p.y, p.z),
- });
+ // Pass 1: copy vertices
+ for ts in &source.tshapes {
+  if let topods::TShape::Vertex(vd) = &**ts {
+  let new_pt = da.transform_point3(vd.point);
+  let sr = target.add_tvertex(new_pt);
+  v_map.push(sr);
+  }
  }
 
- // Transform and copy curves
- for curve in &source.geom.curves {
- target.geom.curves.push(transform_curve(curve, mat));
+ // Pass 2: copy edges
+ for ts in &source.tshapes {
+  if let topods::TShape::Edge(ed) = &**ts {
+  let first = *v_map.get(ed.first.index).unwrap_or(&topods::ShapeRef::NULL);
+  let last = *v_map.get(ed.last.index).unwrap_or(&topods::ShapeRef::NULL);
+  let curve = ed.curve.as_ref().map(|c| transform_curve(c, &da));
+  let sr = target.add_tedge(curve, first, last, ed.range);
+  e_map.push(sr);
+  }
  }
 
- // Transform and copy surfaces
- for surface in &source.geom.surfaces {
- target.geom.surfaces.push(transform_surface(surface, mat));
- }
-
- // Copy edges with remapped vertex indices
- for e in &source.edges {
- target.edges.push(Edge {
- start: e.start + v_offset,
- end: e.end + v_offset,
- });
- }
-
- // Remap edge geometry references
- for &ec in &source.geom.edge_curve {
- target
- .geom
- .edge_curve
- .push(ec.map(|c| c + curve_offset));
- }
- for &ecr in &source.geom.edge_curve_range {
- target.geom.edge_curve_range.push(ecr);
- }
- for &ed in &source.geom.edge_degenerated {
- target.geom.edge_degenerated.push(ed);
- }
-
- // Copy faces with remapped edge indices
- for solid in &source.solids {
- let mut shell = Shell { faces: Vec::new() };
- for face in &solid.shells[0].faces {
- let wire_edges: Vec<WireEdge> = face
- .outer_wire
- .edges
- .iter()
- .map(|we| WireEdge {
- idx: we.idx + e_offset,
- forward: we.forward,
- })
- .collect();
-
- // Remap inner wire edge indices too
- let inner_wires: Vec<Wire> = face
- .inner_wires
- .iter()
- .map(|wire| Wire {
- edges: wire
- .edges
- .iter()
- .map(|we| WireEdge {
- idx: we.idx + e_offset,
- forward: we.forward,
- })
- .collect(),
- })
- .collect();
-
- shell.faces.push(Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires,
- normal: {
- let rotated = mat.transform_vector3(face.normal);
- DVec3::new(rotated.x, rotated.y, rotated.z).normalize_or(face.normal)
- },
- triangles: face.triangles.iter().map(|[i, j, k]| [i + v_offset, j + v_offset, k + v_offset]).collect(),
- sample_point: face.sample_point,
- mesh_dirty: face.mesh_dirty,
- surface_idx: None,
- });
- }
- target.solids.push(Solid {
- shells: vec![shell],
- });
- }
-
- // Remap face_surface references
- for &fs in &source.geom.face_surface {
- target
- .geom
- .face_surface
- .push(fs.map(|s| s + surface_offset));
+ // Pass 3: copy solids with shells/faces/wires
+ for ts in &source.tshapes {
+  let topods::TShape::Solid(sd) = &**ts else { continue };
+  let mut shell_refs = Vec::new();
+  for sr in &sd.shells {
+  if let topods::TShape::Shell(shd) = &*source.tshapes[sr.index] {
+   let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+   for fsr in &shd.faces {
+   if let topods::TShape::Face(fd) = &*source.tshapes[fsr.index] {
+    // Outer wire
+    let outer_edges: Vec<topods::ShapeRef> = {
+     if let topods::TShape::Wire(wd) = &*source.tshapes[fd.outer_wire.index] {
+     wd.edges.iter().map(|esr| {
+      let ne = *e_map.get(esr.index).unwrap_or(&topods::ShapeRef::NULL);
+      topods::ShapeRef::synthetic_with_orientation(ne.index, esr.orientation)
+     }).collect()
+     } else { Vec::new() }
+    };
+    let outer_wire = target.add_twire(outer_edges);
+    // Inner wires
+    let mut inner_wires = Vec::new();
+    for iwsr in &fd.inner_wires {
+     if let topods::TShape::Wire(iwd) = &*source.tshapes[iwsr.index] {
+     let ies: Vec<topods::ShapeRef> = iwd.edges.iter().map(|esr| {
+      let ne = *e_map.get(esr.index).unwrap_or(&topods::ShapeRef::NULL);
+      topods::ShapeRef::synthetic_with_orientation(ne.index, esr.orientation)
+     }).collect();
+     inner_wires.push(target.add_twire(ies));
+     }
+    }
+    let surface = fd.surface.as_ref().map(|s| transform_surface(s, &da));
+    target.add_tface(surface, outer_wire, inner_wires, fd.sample_point, fd.uv_domain, Vec::new(), true);
+   }
+   }
+  }
+  // TODO: push face_refs to shell_refs when topods Shell/face tracking is available
+  }
+  target.add_tsolid(shell_refs);
  }
 
  Ok(())

@@ -1,4 +1,10 @@
 
+use super::*;
+use super::helpers::{
+    curve2d_domain, curve2d_tangent, curve2d_derivative, curve2d_second_derivative,
+    refine_point_curve2d_distance, refine_curve2d_distance,
+};
+
 // =============================================================================
 // ProjectPointOnCurve - Project point on 2D curve
 // =============================================================================

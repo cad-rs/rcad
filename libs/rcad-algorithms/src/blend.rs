@@ -1,4 +1,4 @@
-﻿//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
+//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
 //!
 //! # Overview
 //!
@@ -40,12 +40,13 @@
 
 use glam::DVec3;
 use rcad_kernel::{
- any_perpendicular, BRep,
+ any_perpendicular,
  SurfaceEval, CurveEval,
  geom::{Curve3, Surface3, Line3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
- topology::{Edge, Face, Shell, Solid, Vertex, Wire},
+ topods::{self, TShape},
 };
 use crate::tolerance::*;
+use std::sync::Arc;
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Error Types
@@ -820,56 +821,58 @@ fn compute_blend_boundary_curve(
 /// For edge blends, the spine is offset from the edge along the bisector
 /// of the adjacent face normals.
 pub fn compute_spine_curve(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  _radius: f64,
  params: &BlendParams,
 ) -> Result<Curve3, BlendError> {
- let edge = brep.edges.get(edge_idx).ok_or_else(|| {
- BlendError::SpineComputationFailed {
- reason: format!("edge index {} out of range", edge_idx),
- }
+ let ed = match brep.tshapes.get(edge_idx) {
+  Some(ts) => match ts.as_ref() {
+   TShape::Edge(e) => e,
+   _ => return Err(BlendError::SpineComputationFailed {
+    reason: format!("edge index {} out of range", edge_idx),
+   }),
+  },
+  _ => return Err(BlendError::SpineComputationFailed {
+   reason: format!("edge index {} out of range", edge_idx),
+  }),
+ };
+
+ let p0 = brep.vertex_point(ed.first.index).ok_or_else(|| {
+  BlendError::SpineComputationFailed {
+   reason: "vertex index out of range".to_string(),
+  }
+ })?;
+ let p1 = brep.vertex_point(ed.last.index).ok_or_else(|| {
+  BlendError::SpineComputationFailed {
+   reason: "vertex index out of range".to_string(),
+  }
  })?;
 
- let v0 = brep.vertices.get(edge.start).ok_or_else(|| {
- BlendError::SpineComputationFailed {
- reason: "vertex index out of range".to_string(),
- }
- })?;
- let v1 = brep.vertices.get(edge.end).ok_or_else(|| {
- BlendError::SpineComputationFailed {
- reason: "vertex index out of range".to_string(),
- }
- })?;
-
- let p0 = v0.point;
- let p1 = v1.point;
-
- // Get edge curve if available
- let edge_curve = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c);
- let curve = edge_curve.and_then(|ci| brep.geom.curves.get(ci).cloned());
+ // Get edge curve directly from TEdgeData
+ let curve = ed.curve.clone();
 
  // If we have a curve, use it directly
  if let Some(curve) = curve {
- // Sample and offset the curve along the bisector
- let domain = curve.default_domain();
- let n_samples = 50;
- let mut spine_points = Vec::with_capacity(n_samples);
+  // Sample and offset the curve along the bisector
+  let domain = curve.default_domain();
+  let n_samples = 50;
+  let mut spine_points = Vec::with_capacity(n_samples);
 
- for i in 0..n_samples {
- let t = domain[0] + (i as f64 / (n_samples - 1) as f64) * (domain[1] - domain[0]);
- let pt = curve.point_at(t);
- spine_points.push(pt);
- }
+  for i in 0..n_samples {
+   let t = domain[0] + (i as f64 / (n_samples - 1) as f64) * (domain[1] - domain[0]);
+   let pt = curve.point_at(t);
+   spine_points.push(pt);
+  }
 
- return interpolate_curve_through_points(&spine_points, params.tolerance);
+  return interpolate_curve_through_points(&spine_points, params.tolerance);
  }
 
  // Otherwise, create a line from vertex to vertex
  let direction = (p1 - p0).normalize_or(DVec3::X);
  Ok(Curve3::Line(Line3 {
- origin: p0,
- direction,
+  origin: p0,
+  direction,
  }))
 }
 
@@ -937,82 +940,74 @@ pub fn compute_guide_curves(
 /// * `face_idx` - Index of the face to blend to
 /// * `params` - Blend parameters
 pub fn blend_edge_to_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  face_idx: usize,
  params: &BlendParams,
 ) -> Result<BlendResult, BlendError> {
- let edge = brep.edges.get(edge_idx).ok_or_else(|| {
- BlendError::EdgeFaceBlendFailed {
- edge_index: edge_idx,
- face_index: face_idx,
- reason: "edge index out of range".to_string(),
- }
- })?;
+ let ed = match brep.tshapes.get(edge_idx) {
+  Some(ts) => match ts.as_ref() {
+   TShape::Edge(e) => e,
+   _ => return Err(BlendError::EdgeFaceBlendFailed {
+    edge_index: edge_idx,
+    face_index: face_idx,
+    reason: "edge index out of range".to_string(),
+   }),
+  },
+  _ => return Err(BlendError::EdgeFaceBlendFailed {
+   edge_index: edge_idx,
+   face_index: face_idx,
+   reason: "edge index out of range".to_string(),
+  }),
+ };
 
- let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or_else(|| {
- BlendError::EdgeFaceBlendFailed {
- edge_index: edge_idx,
- face_index: face_idx,
- reason: "no shell found".to_string(),
- }
- })?;
-
- let face = shell.faces.get(face_idx).ok_or_else(|| {
- BlendError::EdgeFaceBlendFailed {
- edge_index: edge_idx,
- face_index: face_idx,
- reason: "face index out of range".to_string(),
- }
- })?;
+ // Get the face surface from TFaceData
+ let face_surface = brep.tshapes.get(face_idx).and_then(|ts| {
+  if let TShape::Face(fd) = ts.as_ref() { fd.surface.clone() } else { None }
+ });
 
  // Get the edge vertices
- let v0 = brep.vertices.get(edge.start).ok_or_else(|| {
- BlendError::EdgeFaceBlendFailed {
- edge_index: edge_idx,
- face_index: face_idx,
- reason: "vertex index out of range".to_string(),
- }
+ let p0 = brep.vertex_point(ed.first.index).ok_or_else(|| {
+  BlendError::EdgeFaceBlendFailed {
+   edge_index: edge_idx,
+   face_index: face_idx,
+   reason: "vertex index out of range".to_string(),
+  }
  })?;
- let v1 = brep.vertices.get(edge.end).ok_or_else(|| {
- BlendError::EdgeFaceBlendFailed {
- edge_index: edge_idx,
- face_index: face_idx,
- reason: "vertex index out of range".to_string(),
- }
+ let p1 = brep.vertex_point(ed.last.index).ok_or_else(|| {
+  BlendError::EdgeFaceBlendFailed {
+   edge_index: edge_idx,
+   face_index: face_idx,
+   reason: "vertex index out of range".to_string(),
+  }
  })?;
 
- // Get the edge curve
- let edge_curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c);
- let edge_curve = edge_curve_idx.and_then(|ci| brep.geom.curves.get(ci).cloned());
-
- // Get the face surface
- let face_surf_idx = brep.geom.face_surface.get(face_idx).and_then(|s| *s);
- let face_surface = face_surf_idx.and_then(|si| brep.geom.surfaces.get(si).cloned());
+ // Get the edge curve directly from TEdgeData
+ let edge_curve = ed.curve.clone();
 
  // Create edge curve if not present
  let edge_curve = edge_curve.unwrap_or_else(|| {
- Curve3::Line(Line3 {
- origin: v0.point,
- direction: (v1.point - v0.point).normalize_or(DVec3::X),
- })
+  Curve3::Line(Line3 {
+   origin: p0,
+   direction: (p1 - p0).normalize_or(DVec3::X),
+  })
  });
 
- // Create face surface if not present (use face normal)
+ // Create face surface if not present (use Z-up plane as fallback)
  let face_surface = face_surface.unwrap_or({
- Surface3::Plane(Plane {
- origin: v0.point,
- normal: face.normal,
- })
+  Surface3::Plane(Plane {
+   origin: p0,
+   normal: DVec3::Z,
+  })
  });
 
  // Compute the blend
  blend_two_surfaces(
- &face_surface,
- &face_surface, // Use same surface for simplicity
- &edge_curve,
- &edge_curve,
- params,
+  &face_surface,
+  &face_surface, // Use same surface for simplicity
+  &edge_curve,
+  &edge_curve,
+  params,
  )
 }
 
@@ -1029,32 +1024,29 @@ pub fn blend_edge_to_face(
 /// * `radius` - Blend radius
 /// * `params` - Blend parameters
 pub fn blend_vertex(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  vertex_idx: usize,
  radius: f64,
  params: &BlendParams,
 ) -> Result<BlendResult, BlendError> {
- let vertex = brep.vertices.get(vertex_idx).ok_or_else(|| {
- BlendError::VertexBlendFailed {
- vertex_index: vertex_idx,
- reason: "vertex index out of range".to_string(),
- }
+ let center = brep.vertex_point(vertex_idx).ok_or_else(|| {
+  BlendError::VertexBlendFailed {
+   vertex_index: vertex_idx,
+   reason: "vertex index out of range".to_string(),
+  }
  })?;
 
- let _shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or_else(|| {
- BlendError::VertexBlendFailed {
- vertex_index: vertex_idx,
- reason: "no shell found".to_string(),
- }
- })?;
-
- // Find all edges connected to this vertex
- let connected_edges: Vec<usize> = brep.edges
- .iter()
- .enumerate()
- .filter(|(_, e)| e.start == vertex_idx || e.end == vertex_idx)
- .map(|(i, _)| i)
- .collect();
+ // Find all edges connected to this vertex (via tshape iteration)
+ let connected_edges: Vec<usize> = brep.tshapes.iter().enumerate()
+  .filter(|(_, ts)| {
+   if let TShape::Edge(ed) = ts.as_ref() {
+    ed.first.index == vertex_idx || ed.last.index == vertex_idx
+   } else {
+    false
+   }
+  })
+  .map(|(i, _)| i)
+  .collect();
 
  if connected_edges.len() < 2 {
  return Err(BlendError::VertexBlendFailed {
@@ -1064,7 +1056,6 @@ pub fn blend_vertex(
  }
 
  // For a corner blend, create a spherical patch
- let center = vertex.point;
  let sphere = Surface3::Sphere(SphericalSurface {
  center,
  axis: DVec3::Z,
@@ -1487,69 +1478,62 @@ fn compute_blend_quality(surface: &Surface3, target_radius: f64, tol: f64) -> Bl
 // BRep Builder Helpers
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-/// Helper to add a vertex to a BRep and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
- let idx = brep.vertices.len();
- brep.vertices.push(Vertex { point });
- idx
+/// Helper to add a vertex to a BRep using topods builder API.
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
+ brep.add_tvertex(point).index
 }
 
-/// Helper to add an edge to a BRep and return its index.
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
- let idx = brep.edges.len();
- brep.edges.push(Edge { start: v0, end: v1 });
-
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(curve);
-
- while brep.geom.edge_curve.len() <= idx {
- brep.geom.edge_curve.push(None);
- }
- while brep.geom.edge_curve_range.len() <= idx {
- brep.geom.edge_curve_range.push(None);
- }
- while brep.geom.edge_degenerated.len() <= idx {
- brep.geom.edge_degenerated.push(false);
- }
-
- brep.geom.edge_curve[idx] = Some(ci);
- brep.geom.edge_curve_range[idx] = Some([t0, t1]);
- idx
+/// Helper to add an edge to a BRep using topods builder API.
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+ // Create vertex ShapeRefs using synthetic references
+ let first_sr = topods::ShapeRef::synthetic(v0);
+ let last_sr = topods::ShapeRef::synthetic(v1);
+ brep.add_tedge(Some(curve), first_sr, last_sr, [t0, t1]).index
 }
 
-/// Helper to add a face to a BRep and return its index.
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
- if brep.solids.is_empty() {
- brep.solids.push(Solid {
- shells: vec![Shell { faces: Vec::new() }],
- });
+/// Helper to add a face to a BRep using topods builder API.
+/// Returns the tshape index of the new face.
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Vec<topods::ShapeRef>, inner: Vec<Vec<topods::ShapeRef>>) -> usize {
+ // Create the outer wire from edge refs
+ let outer_wire = brep.add_twire(outer);
+ // Create inner wires
+ let inner_wires: Vec<topods::ShapeRef> = inner.into_iter().map(|edge_refs| brep.add_twire(edge_refs)).collect();
+ // Create the face
+ let face_sr = brep.add_tface(Some(surface), outer_wire, inner_wires, None, None, vec![], true);
+ // Add the face to the first Solid's first Shell
+ // First ensure a shell exists, then add the face
+ let solid_idx = brep.tshapes.iter().position(|ts| matches!(ts.as_ref(), TShape::Solid(_)));
+ if let Some(si) = solid_idx {
+  // Ensure the solid has at least one shell
+  let needs_shell = {
+   let ts = &brep.tshapes[si];
+   if let TShape::Solid(sd) = ts.as_ref() { sd.shells.is_empty() } else { false }
+  };
+  if needs_shell {
+   let shell_sr = brep.add_tshell(vec![]);
+   let arc = &mut brep.tshapes[si];
+   if let TShape::Solid(sd) = &mut *Arc::get_mut(arc).unwrap() {
+    sd.shells.push(shell_sr);
+   }
+  }
+  // Now add the face to the first shell
+  let shell_ref = {
+   let ts = &brep.tshapes[si];
+   if let TShape::Solid(sd) = ts.as_ref() {
+    sd.shells.first().copied()
+   } else {
+    None
+   }
+  };
+  if let Some(sh_sr) = shell_ref {
+   let arc_sh = &mut brep.tshapes[sh_sr.index];
+   if let TShape::Shell(sh) = &mut *Arc::get_mut(arc_sh).unwrap() {
+    sh.faces.push(face_sr);
+    sh.my_shapes.push(face_sr);
+   }
+  }
  }
- if brep.solids[0].shells.is_empty() {
- brep.solids[0].shells.push(Shell { faces: Vec::new() });
- }
-
- let idx = brep.solids[0].shells[0].faces.len();
- let normal = surface.normal_at(0.0, 0.0);
-
- brep.solids[0].shells[0].faces.push(Face {
- outer_wire: outer,
- inner_wires: inner,
- normal,
- triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
-
- while brep.geom.face_surface.len() <= idx {
- brep.geom.face_surface.push(None);
- }
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(surface);
- brep.geom.face_surface[idx] = Some(si);
-
- idx
+ face_sr.index
 }
 
 /// Apply blend to a BRep edge, modifying the shape in place.
@@ -1557,7 +1541,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
 /// This function creates a blend surface along an edge and integrates
 /// it into the B-Rep model.
 pub fn apply_blend_to_edge(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_idx: usize,
  params: &BlendParams,
 ) -> Result<usize, BlendError> {
@@ -1566,11 +1550,8 @@ pub fn apply_blend_to_edge(
 
  // Add the blend surface as a new face
  let surface = result.surface;
- let outer_wire = Wire {
- edges: Vec::new(), // Would need to create proper boundary edges
- };
 
- let face_idx = add_face(brep, surface, outer_wire, Vec::new());
+ let face_idx = add_face(brep, surface, Vec::new(), Vec::new());
  Ok(face_idx)
 }
 

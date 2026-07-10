@@ -1,14 +1,14 @@
-﻿//! ShapeAlgo-style additional shape algorithms.
+//! ShapeAlgo-style additional shape algorithms.
 //!
 //! Provides utilities for shape analysis and geometry extraction, analogous to
 //! OCCT `ShapeAlgo` package. This module includes:
 //!
 //! - `AlgoContainer`: Container for pluggable shape algorithms
-//! - `GetBoxGeometry`: Extract box dimensions from a BRep
-//! - `GetCylinderGeometry`: Extract cylinder parameters from a BRep
-//! - `GetSphereGeometry`: Extract sphere parameters from a BRep
-//! - `GetConeGeometry`: Extract cone parameters from a BRep
-//! - `GetTorusGeometry`: Extract torus parameters from a BRep
+//! - `GetBoxGeometry`: Extract box dimensions from a rcad_kernel::BRep
+//! - `GetCylinderGeometry`: Extract cylinder parameters from a rcad_kernel::BRep
+//! - `GetSphereGeometry`: Extract sphere parameters from a rcad_kernel::BRep
+//! - `GetConeGeometry`: Extract cone parameters from a rcad_kernel::BRep
+//! - `GetTorusGeometry`: Extract torus parameters from a rcad_kernel::BRep
 //! - `IsPrimitive`: Check if a shape matches a primitive type
 
 use crate::tolerance::*;
@@ -16,8 +16,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
-use rcad_kernel::BRep;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{TShape, BRep, ShapeRef};
 use std::collections::HashMap;
 
 // =============================================================================
@@ -100,15 +99,15 @@ pub struct TorusGeometry {
 /// Trait for pluggable shape algorithms.
 ///
 /// Algorithms implementing this trait can be registered with an `AlgoContainer`
-/// and executed on BRep shapes.
+/// and executed on rcad_kernel::BRep shapes.
 pub trait ShapeAlgorithm: Send + Sync {
     /// Get the name of this algorithm.
     fn name(&self) -> &str;
 
-    /// Execute the algorithm on the given BRep.
+    /// Execute the algorithm on the given rcad_kernel::BRep.
     ///
     /// Returns `true` if the algorithm succeeded, `false` otherwise.
-    fn execute(&self, brep: &BRep) -> bool;
+    fn execute(&self, brep: &rcad_kernel::BRep) -> bool;
 }
 
 // =============================================================================
@@ -118,7 +117,7 @@ pub trait ShapeAlgorithm: Send + Sync {
 /// Container for pluggable shape algorithms.
 ///
 /// Provides a registry for algorithms that can be looked up by name and
-/// executed on BRep shapes. Analogous to OCCT `ShapeAlgo_AlgoContainer`.
+/// executed on rcad_kernel::BRep shapes. Analogous to OCCT `ShapeAlgo_AlgoContainer`.
 ///
 /// # Example
 ///
@@ -189,30 +188,61 @@ impl Default for AlgoContainer {
 // Geometry Extraction Functions
 // =============================================================================
 
-/// Extract box geometry from a BRep.
+/// Collect all face surfaces from the BRep by iterating TShape hierarchy.
+///
+/// In the new topods::BRep API, surfaces live directly on TShape::Face data.
+fn collect_face_surfaces(brep: &BRep) -> Vec<&Surface3> {
+    let mut surfaces = Vec::new();
+    for ts in &brep.tshapes {
+        if let TShape::Face(fd) = ts.as_ref() {
+            if let Some(ref surf) = fd.surface {
+                surfaces.push(surf);
+            }
+        }
+    }
+    surfaces
+}
+
+/// Iterate face ShapeRefs for all shells in the first solid of the BRep.
+fn first_solid_face_refs(brep: &BRep) -> Vec<ShapeRef> {
+    let mut face_refs = Vec::new();
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            for sh_ref in &sd.shells {
+                if let TShape::Shell(ref sh_data) = *brep.tshapes[sh_ref.index] {
+                    face_refs.extend(sh_data.faces.iter().copied());
+                }
+            }
+            break; // Only first solid
+        }
+    }
+    face_refs
+}
+
+/// Extract box geometry from a rcad_kernel::BRep.
 ///
 /// A box is recognized as a solid with 6 planar faces arranged in 3 pairs
 /// of parallel faces with appropriate normals.
 ///
 /// Returns `None` if the shape is not a valid box.
-pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
-    // Must have exactly one solid with one shell
-    if brep.solids.len() != 1 {
+pub fn get_box_geometry(brep: &rcad_kernel::BRep) -> Option<BoxGeometry> {
+    // Must have exactly one solid
+    if brep.solid_count() != 1 {
         return None;
     }
-    let solid = &brep.solids[0];
-    if solid.shells.len() != 1 {
+    // Must have exactly one shell
+    let shell_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count();
+    if shell_count != 1 {
         return None;
     }
-    let shell = &solid.shells[0];
 
     // A box has exactly 6 faces
-    if shell.faces.len() != 6 {
+    if brep.face_count() != 6 {
         return None;
     }
 
     // Get all face surfaces
-    let surfaces = get_face_surfaces(brep, shell);
+    let surfaces = collect_face_surfaces(brep);
     if surfaces.len() != 6 {
         return None;
     }
@@ -237,7 +267,7 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
         let normal = plane.normal.normalize_or_zero();
         let found = normal_groups.iter_mut().find(|(n, _)| {
             let dot = n.dot(normal).abs();
-            dot > 0.999 // Nearly parallel or anti-parallel
+            dot > 0.999
         });
 
         if let Some((_, group)) = found {
@@ -259,7 +289,6 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
     }
 
     // Compute box dimensions and origin
-    // The origin is the minimum corner, dimensions are the extent along each axis
     let bbox = brep.bounding_box()?;
     let min_pt = bbox[0];
     let max_pt = bbox[1];
@@ -271,7 +300,6 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
     // Verify the planes correspond to the bounding box
     let tolerance = TOLERANCE_MESH_LEGACY;
     for plane in &planes {
-        // Each plane should pass through one of the bbox corners
         let d = plane.normal.dot(plane.origin);
         let d_min = plane.normal.dot(min_pt);
         let d_max = plane.normal.dot(max_pt);
@@ -292,33 +320,32 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
     })
 }
 
-/// Extract cylinder geometry from a BRep.
+/// Extract cylinder geometry from a rcad_kernel::BRep.
 ///
 /// A cylinder is recognized as a solid with:
 /// - One cylindrical lateral face
 /// - Two planar end caps (optional for partial cylinders)
 ///
 /// Returns `None` if the shape is not a valid cylinder.
-pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
-    // Must have exactly one solid with one shell
-    if brep.solids.len() != 1 {
+pub fn get_cylinder_geometry(brep: &rcad_kernel::BRep) -> Option<CylinderGeometry> {
+    // Must have exactly one solid
+    if brep.solid_count() != 1 {
         return None;
     }
-    let solid = &brep.solids[0];
-    if solid.shells.len() != 1 {
+    // Must have exactly one shell
+    let shell_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count();
+    if shell_count != 1 {
         return None;
     }
-    let shell = &solid.shells[0];
 
     // Get all face surfaces
-    let surfaces = get_face_surfaces(brep, shell);
+    let surfaces = collect_face_surfaces(brep);
 
     // Find the cylindrical surface
     let mut cyl_surf: Option<&CylindricalSurface> = None;
     for surf in &surfaces {
         if let Surface3::Cylinder(c) = surf {
             if cyl_surf.is_some() {
-                // Multiple cylinders - not a simple cylinder
                 return None;
             }
             cyl_surf = Some(c);
@@ -332,7 +359,7 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
         match surf {
             Surface3::Cylinder(_) => {}
             Surface3::Plane(_) => {}
-            _ => return None, // Non-cylindrical, non-planar surface
+            _ => return None,
         }
     }
 
@@ -342,17 +369,9 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
     let min_pt = bbox[0];
     let max_pt = bbox[1];
 
-    // Project bbox corners onto the axis to find extent
     let mut min_proj = f64::INFINITY;
     let mut max_proj = f64::NEG_INFINITY;
 
-    for corner in &[min_pt, max_pt, DVec3::new(min_pt.x, min_pt.y, max_pt.z)] {
-        let proj = corner.dot(axis);
-        min_proj = min_proj.min(proj);
-        max_proj = max_proj.max(proj);
-    }
-
-    // Also check all combinations of bbox corners
     for i in 0..2 {
         for j in 0..2 {
             for k in 0..2 {
@@ -373,10 +392,8 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
     // Determine the actual bottom of the cylinder
     let origin_proj = cyl.origin.dot(axis);
     let origin = if (origin_proj - min_proj).abs() < TOLERANCE_MESH_LEGACY {
-        // Cylinder origin is at the bottom
         cyl.origin
     } else {
-        // Compute bottom center
         cyl.origin + axis * (min_proj - origin_proj)
     };
 
@@ -388,24 +405,19 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
     })
 }
 
-/// Extract sphere geometry from a BRep.
+/// Extract sphere geometry from a rcad_kernel::BRep.
 ///
 /// A sphere is recognized as a solid with a single spherical face.
 ///
 /// Returns `None` if the shape is not a valid sphere.
-pub fn get_sphere_geometry(brep: &BRep) -> Option<SphereGeometry> {
-    // Must have exactly one solid with one shell
-    if brep.solids.len() != 1 {
+pub fn get_sphere_geometry(brep: &rcad_kernel::BRep) -> Option<SphereGeometry> {
+    // Must have exactly one solid
+    if brep.solid_count() != 1 {
         return None;
     }
-    let solid = &brep.solids[0];
-    if solid.shells.len() != 1 {
-        return None;
-    }
-    let shell = &solid.shells[0];
 
     // Get all face surfaces
-    let surfaces = get_face_surfaces(brep, shell);
+    let surfaces = collect_face_surfaces(brep);
 
     // For a sphere, we expect exactly one spherical surface
     let mut sphere_surf: Option<&SphericalSurface> = None;
@@ -413,12 +425,11 @@ pub fn get_sphere_geometry(brep: &BRep) -> Option<SphereGeometry> {
         match surf {
             Surface3::Sphere(s) => {
                 if sphere_surf.is_some() {
-                    // Multiple spheres - not a simple sphere
                     return None;
                 }
                 sphere_surf = Some(s);
             }
-            _ => return None, // Non-spherical surface
+            _ => return None,
         }
     }
 
@@ -430,33 +441,27 @@ pub fn get_sphere_geometry(brep: &BRep) -> Option<SphereGeometry> {
     })
 }
 
-/// Extract cone geometry from a BRep.
+/// Extract cone geometry from a rcad_kernel::BRep.
 ///
 /// A cone is recognized as a solid with:
 /// - One conical lateral face
 /// - Optionally one planar base cap
 ///
 /// Returns `None` if the shape is not a valid cone.
-pub fn get_cone_geometry(brep: &BRep) -> Option<ConeGeometry> {
-    // Must have exactly one solid with one shell
-    if brep.solids.len() != 1 {
+pub fn get_cone_geometry(brep: &rcad_kernel::BRep) -> Option<ConeGeometry> {
+    // Must have exactly one solid
+    if brep.solid_count() != 1 {
         return None;
     }
-    let solid = &brep.solids[0];
-    if solid.shells.len() != 1 {
-        return None;
-    }
-    let shell = &solid.shells[0];
 
     // Get all face surfaces
-    let surfaces = get_face_surfaces(brep, shell);
+    let surfaces = collect_face_surfaces(brep);
 
     // Find the conical surface
     let mut cone_surf: Option<&ConicalSurface> = None;
     for surf in &surfaces {
         if let Surface3::Cone(c) = surf {
             if cone_surf.is_some() {
-                // Multiple cones - not a simple cone
                 return None;
             }
             cone_surf = Some(c);
@@ -470,7 +475,7 @@ pub fn get_cone_geometry(brep: &BRep) -> Option<ConeGeometry> {
         match surf {
             Surface3::Cone(_) => {}
             Surface3::Plane(_) => {}
-            _ => return None, // Non-conical, non-planar surface
+            _ => return None,
         }
     }
 
@@ -482,24 +487,19 @@ pub fn get_cone_geometry(brep: &BRep) -> Option<ConeGeometry> {
     Some(ConeGeometry { apex, axis, angle })
 }
 
-/// Extract torus geometry from a BRep.
+/// Extract torus geometry from a rcad_kernel::BRep.
 ///
 /// A torus is recognized as a solid with a single toroidal face.
 ///
 /// Returns `None` if the shape is not a valid torus.
-pub fn get_torus_geometry(brep: &BRep) -> Option<TorusGeometry> {
-    // Must have exactly one solid with one shell
-    if brep.solids.len() != 1 {
+pub fn get_torus_geometry(brep: &rcad_kernel::BRep) -> Option<TorusGeometry> {
+    // Must have exactly one solid
+    if brep.solid_count() != 1 {
         return None;
     }
-    let solid = &brep.solids[0];
-    if solid.shells.len() != 1 {
-        return None;
-    }
-    let shell = &solid.shells[0];
 
     // Get all face surfaces
-    let surfaces = get_face_surfaces(brep, shell);
+    let surfaces = collect_face_surfaces(brep);
 
     // For a torus, we expect exactly one toroidal surface
     let mut torus_surf: Option<&ToroidalSurface> = None;
@@ -507,12 +507,11 @@ pub fn get_torus_geometry(brep: &BRep) -> Option<TorusGeometry> {
         match surf {
             Surface3::Torus(t) => {
                 if torus_surf.is_some() {
-                    // Multiple tori - not a simple torus
                     return None;
                 }
                 torus_surf = Some(t);
             }
-            _ => return None, // Non-toroidal surface
+            _ => return None,
         }
     }
 
@@ -530,68 +529,31 @@ pub fn get_torus_geometry(brep: &BRep) -> Option<TorusGeometry> {
 // Primitive Detection Functions
 // =============================================================================
 
-/// Check if a BRep represents a box.
-pub fn is_box(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a box.
+pub fn is_box(brep: &rcad_kernel::BRep) -> bool {
     get_box_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a cylinder.
-pub fn is_cylinder(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a cylinder.
+pub fn is_cylinder(brep: &rcad_kernel::BRep) -> bool {
     get_cylinder_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a sphere.
-pub fn is_sphere(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a sphere.
+pub fn is_sphere(brep: &rcad_kernel::BRep) -> bool {
     get_sphere_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a cone.
-pub fn is_cone(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a cone.
+pub fn is_cone(brep: &rcad_kernel::BRep) -> bool {
     get_cone_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a torus.
-pub fn is_torus(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a torus.
+pub fn is_torus(brep: &rcad_kernel::BRep) -> bool {
     get_torus_geometry(brep).is_some()
-}
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-/// Get all surface references for faces in a shell.
-fn get_face_surfaces<'a>(brep: &'a BRep, shell: &rcad_kernel::topology::Shell) -> Vec<&'a Surface3> {
-    let mut surfaces = Vec::new();
-
-    // Count faces before this shell
-    let mut face_offset = 0;
-    for solid in &brep.solids {
-        for s in &solid.shells {
-            if std::ptr::eq(s, shell) {
-                break;
-            }
-            face_offset += s.faces.len();
-        }
-    }
-
-    for (i, _face) in shell.faces.iter().enumerate() {
-        let face_idx = face_offset + i;
-        if let Some(&Some(surf_idx)) = brep.geom.face_surface.get(face_idx)
-            && let Some(surf) = brep.geom.surfaces.get(surf_idx) {
-                surfaces.push(surf);
-            }
-    }
-
-    surfaces
-}
-
-/// Check if a BRep has valid geometry data.
-fn has_geometry(brep: &BRep) -> bool {
-    !brep.geom.surfaces.is_empty() || !brep.geom.curves.is_empty()
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
-
-

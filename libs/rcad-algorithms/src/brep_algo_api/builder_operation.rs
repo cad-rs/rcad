@@ -1,11 +1,11 @@
-//! OCCT BRepAlgoAPI_BuilderOperation equivalent — boolean operation wrapper with history.
+//! OCCT BRepAlgoAPI_BuilderOperation equivalent 鈥?boolean operation wrapper with history.
 //!
 //! Provides a general-purpose boolean operation struct analogous to
 //! OCCT BRepAlgoAPI_BuilderOperation (base class for BRepAlgoAPI_Common/Fuse/Cut).
 //!
 //! OCCT references:
 //! - BRepAlgoAPI_Common / BRepAlgoAPI_Fuse / BRepAlgoAPI_Cut (BRepAlgoAPI.cxx)
-//! - BRepAlgoAPI_BuilderOperation → BRepAlgoAPI_BuilderShape → BRepAlgoAPI_Algo
+//! - BRepAlgoAPI_BuilderOperation 鈫?BRepAlgoAPI_BuilderShape 鈫?BRepAlgoAPI_Algo
 //!
 //! # Example
 //!
@@ -23,6 +23,7 @@
 //! }
 //! ```
 
+
 use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bopds::ds::DS;
 use crate::bvh::Bvh;
@@ -31,7 +32,7 @@ use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;
 
-/// A reference to a sub-shape in a BRep, analogous to OCCT TopoDS_Shape.
+/// A reference to a sub-shape in a rcad_kernel::BRep, analogous to OCCT TopoDS_Shape.
 ///
 /// OCCT ref: TopoDS_Shape (TopoDS_Shape.hxx)
 ///
@@ -82,7 +83,7 @@ pub struct BooleanOpStatistics {
     pub n_solids: usize,
 }
 
-/// BooleanOp — a general boolean operation between two shapes with history tracking.
+/// BooleanOp 鈥?a general boolean operation between two shapes with history tracking.
 ///
 /// This is the rcad equivalent of OCCT BRepAlgoAPI_BuilderOperation,
 /// which is the base class for:
@@ -96,9 +97,9 @@ pub struct BooleanOpStatistics {
 /// a struct that tracks shape history (Modified/Generated/IsDeleted).
 pub struct BooleanOp {
     /// First input shape (object).
-    shape_a: BRep,
+    shape_a: rcad_kernel::BRep,
     /// Second input shape (tool).
-    shape_b: BRep,
+    shape_b: rcad_kernel::BRep,
     /// Boolean operation type.
     op_type: BooleanOpType,
     /// History of the operation (set after perform()).
@@ -106,7 +107,7 @@ pub struct BooleanOp {
     /// Tolerance for interference detection.
     tolerance: f64,
     /// Result shape (set after perform()).
-    result: Option<BRep>,
+    result: Option<rcad_kernel::BRep>,
     /// Error from the last perform() call.
     error: Option<BooleanError>,
 }
@@ -117,10 +118,10 @@ impl BooleanOp {
     /// OCCT ref: BRepAlgoAPI_Common/Fuse/Cut constructor (BRepAlgoAPI.cxx)
     ///
     /// The operation type determines which boolean is computed:
-    /// - `Union` → BRepAlgoAPI_Fuse
-    /// - `Intersection` → BRepAlgoAPI_Common
-    /// - `Difference` → BRepAlgoAPI_Cut
-    pub fn new(a: BRep, b: BRep, op: BooleanOpType) -> Self {
+    /// - `Union` 鈫?BRepAlgoAPI_Fuse
+    /// - `Intersection` 鈫?BRepAlgoAPI_Common
+    /// - `Difference` 鈫?BRepAlgoAPI_Cut
+    pub fn new(a: rcad_kernel::BRep, b: rcad_kernel::BRep, op: BooleanOpType) -> Self {
         Self {
             shape_a: a,
             shape_b: b,
@@ -150,19 +151,19 @@ impl BooleanOp {
     /// OCCT ref: BRepAlgoAPI_BuilderOperation::Build() (BRepAlgoAPI.cxx)
     ///
     /// Pipeline:
-    /// 1. ✅ Build BOPDS_DS from the two shapes
-    /// 2. ✅ Run BOPAlgo_PaveFiller to compute all intersections
-    /// 3. ✅ Build container images (FillImagesContainers)
-    /// 4. ✅ Run BOPAlgo_Builder to build the result
+    /// 1. 鉁?Build BOPDS_DS from the two shapes
+    /// 2. 鉁?Run BOPAlgo_PaveFiller to compute all intersections
+    /// 3. 鉁?Build container images (FillImagesContainers)
+    /// 4. 鉁?Run BOPAlgo_Builder to build the result
     ///
     /// Returns a reference to the result BRep on success.
-    pub fn perform(&mut self) -> Result<&BRep, BooleanError> {
+    pub fn perform(&mut self) -> Result<&rcad_kernel::BRep, BooleanError> {
         self.result = None;
         self.error = None;
         self.history = None;
 
-        // ✅ OCCT-aligned: BOPAlgo_BOP::CheckInputData — verify valid inputs
-        if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
+        // 鉁?OCCT-aligned: BOPAlgo_BOP::CheckInputData 鈥?verify valid inputs
+        if self.shape_a.solids().is_empty() || self.shape_b.solids().is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
             return Err(BooleanError::EmptyInput);
@@ -172,17 +173,15 @@ impl BooleanOp {
         let a = self.ensure_geometry(&self.shape_a);
         let b = self.ensure_geometry(&self.shape_b);
 
-        // ✅ OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
-        // OCCT ref: BOPAlgo_PaveFiller::Perform → BOPDS_DS::Alloc
-        let a_t = a.to_topods();
-        let b_t = b.to_topods();
-        let mut ds = DS::new_from_topods(&a_t, &b_t, self.tolerance.max(TOLERANCE_ABS));
+        // 鉁?OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
+        // OCCT ref: BOPAlgo_PaveFiller::Perform 鈫?BOPDS_DS::Alloc
+        let mut ds = DS::new_from_topods(&a, &b, self.tolerance.max(TOLERANCE_ABS));
 
-        // ✅ OCCT-aligned: Build BVH acceleration (optional in OCCT)
+        // 鉁?OCCT-aligned: Build BVH acceleration (optional in OCCT)
         let bvh_a = Bvh::build(&a);
         let bvh_b = Bvh::build(&b);
 
-        // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
+        // 鉁?OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut brep = rcad_kernel::topods::BRep::new();
         let (face_refs, ic_edge_map) = {
             let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
@@ -190,21 +189,21 @@ impl BooleanOp {
             (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
 
-        // ✅ OCCT-aligned: FillImagesContainers — build wire/shell images
+        // 鉁?OCCT-aligned: FillImagesContainers 鈥?build wire/shell images
         ds.build_container_images();
 
-        // ✅ OCCT-aligned: Build result
+        // 鉁?OCCT-aligned: Build result
         let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);
-        self.result = Some(rcad_kernel::BRep::from_topods(&t));
+        self.result = Some((t).clone());
         Ok(self.result.as_ref().unwrap())
     }
 
     /// Ensure geometry is populated for primitive shapes.
-    fn ensure_geometry(&self, brep: &BRep) -> BRep {
-        if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
+    fn ensure_geometry(&self, brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
+        if !brep.solids().is_empty() && brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Face(fd) if fd.surface.is_none())) {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
             result
@@ -216,14 +215,14 @@ impl BooleanOp {
     /// Get the result shape.
     ///
     /// Panics if `perform()` has not been called or failed.
-    pub fn shape(&self) -> &BRep {
+    pub fn shape(&self) -> &rcad_kernel::BRep {
         self.result
             .as_ref()
             .expect("perform() must be called before shape()")
     }
 
     /// Get the result shape, consuming the builder.
-    pub fn into_shape(self) -> Option<BRep> {
+    pub fn into_shape(self) -> Option<rcad_kernel::BRep> {
         self.result
     }
 
@@ -237,13 +236,13 @@ impl BooleanOp {
         self.result.is_some()
     }
 
-    // ── OCCT History Queries ────────────────────────────────────────────────
+    // 鈹€鈹€ OCCT History Queries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     //
     // OCCT ref: BRepAlgoAPI_BuilderShape (BRepAlgoAPI_BuilderShape.hxx)
     //
     // These methods provide OCCT-compatible shape history tracking.
-    // ✅ OCCT-aligned: stubs return all known history.
-    // ⏳ Side-distinction (A vs B) not implemented — section-style operations
+    // 鉁?OCCT-aligned: stubs return all known history.
+    // 鈴?Side-distinction (A vs B) not implemented 鈥?section-style operations
     //     always involve both shapes; HasAncestorFaceOn1/2 always true.
 
     /// Get all shapes that were modified (split or changed) during the operation.
@@ -253,7 +252,7 @@ impl BooleanOp {
     /// Returns all result shapes whose origin traces back to an input shape
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
-    /// ✅ OCCT-aligned: returns all modified shapes.
+    /// 鉁?OCCT-aligned: returns all modified shapes.
     pub fn modified(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -312,7 +311,7 @@ impl BooleanOp {
     /// Returns result shapes that were created as a direct result of the
     /// boolean operation (intersection edges, vertices, etc.).
     ///
-    /// ✅ OCCT-aligned: returns generated faces/edges/vertices.
+    /// 鉁?OCCT-aligned: returns generated faces/edges/vertices.
     pub fn generated(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -356,7 +355,7 @@ impl BooleanOp {
     /// For faces: checks that the source face index appears in the deleted list.
     /// For edges/vertices: checks the deletion tracker.
     ///
-    /// ✅ OCCT-aligned: face deletion tracking via history.
+    /// 鉁?OCCT-aligned: face deletion tracking via history.
     pub fn is_deleted(&self, source: &ShapeRef) -> bool {
         let Some(ref h) = self.history else {
             return false;
@@ -384,12 +383,12 @@ impl BooleanOp {
             Some(r) => r,
             None => return BooleanOpStatistics::default(),
         };
-        let n_vertices = result.vertices.len();
-        let n_edges = result.edges.len();
+        let n_vertices = result.vertices().len();
+        let n_edges = result.edges().len();
         let mut n_faces = 0;
         let mut n_shells = 0;
-        let n_solids = result.solids.len();
-        for solid in &result.solids {
+        let n_solids = result.solids().len();
+        for solid in &result.solids() {
             for shell in &solid.shells {
                 n_shells += 1;
                 n_faces += shell.faces.len();

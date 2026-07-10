@@ -1,9 +1,11 @@
 //! Conversion between OASIS geometry and RCAD kernel types.
 
-use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::{BRep, Edge, Face, Vertex, Wire, WireEdge};
+use rcad_kernel::topods::{ShapeRef, TShape};
 
 use crate::{OasCell, OasError, OasLibrary, OasPath, OasPolygon};
 use crate::layer_config::LayerConfig;
+use std::collections::HashMap;
 
 /// Build a flat-faced BRep from a polygon at a given Z offset.
 fn polygon_to_brep_face(
@@ -17,86 +19,120 @@ fn polygon_to_brep_face(
  }
 
  let mut brep = BRep::default();
- let n_edges = points.len();
+ let n = points.len();
 
  // Vertices at z_offset
- let vi_start = brep.vertices.len();
- for pt in points.iter().take(n_edges) {
- brep.vertices.push(Vertex {
- point: glam::DVec3::new(pt.x, pt.y, z_offset),
- });
+ let mut vert_refs = Vec::with_capacity(n);
+ for pt in points {
+ vert_refs.push(brep.add_tvertex(glam::DVec3::new(pt.x, pt.y, z_offset)));
  }
 
  // Edges
- let ei_start = brep.edges.len();
- for i in 0..n_edges {
- brep.edges.push(Edge {
- start: vi_start + i,
- end: vi_start + (i + 1) % n_edges,
- });
+ let mut edge_refs = Vec::with_capacity(n);
+ for i in 0..n {
+ let sr = brep.add_tedge(
+ None,
+ vert_refs[i],
+ vert_refs[(i + 1) % n],
+ [0.0, 1.0],
+ );
+ edge_refs.push(sr);
  }
 
  // Wire
- let wire = Wire {
- edges: (0..n_edges)
- .map(|i| WireEdge::fwd(ei_start + i))
- .collect(),
- };
+ let wire_sr = brep.add_twire(edge_refs);
 
- let face = Face {
- outer_wire: wire,
- inner_wires: Vec::new(),
- normal: glam::DVec3::Z,
- triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
+ // Face (flat, no surface data)
+ let face_sr = brep.add_tface(
+ None, wire_sr, vec![], None, None, vec![], false,
+ );
 
- let shell = Shell { faces: vec![face] };
- brep.solids.push(Solid { shells: vec![shell] });
+ // Shell
+ let shell_sr = brep.add_tshell(vec![face_sr]);
+
+ // Solid
+ brep.add_tsolid(vec![shell_sr]);
 
  Ok(brep)
 }
 
-/// Merge all vertices, edges, and solids from `src` into `dst`,
-/// offsetting vertex and edge indices.
-fn merge_into(dst: &mut BRep, src: &BRep) {
- let _v_off = dst.vertices.len();
- let e_off = dst.edges.len();
-
- dst.vertices.extend_from_slice(&src.vertices);
- dst.edges.extend_from_slice(&src.edges);
-
- for solid in &src.solids {
- let mut new_solid = Solid { shells: Vec::new() };
- for shell in &solid.shells {
- let mut new_shell = Shell { faces: Vec::new() };
- for face in &shell.faces {
- let mut new_face = face.clone();
- let outer = Wire {
- edges: new_face.outer_wire.edges.iter()
- .map(|we| WireEdge {
- idx: we.idx + e_off,
- forward: we.forward,
- })
- .collect(),
+/// Recursively clone a shape (by its tshape index in `src`) into `dst`,
+/// returning the new `ShapeRef`. Uses `map` to avoid cloning already-copied shapes.
+fn clone_shape_into(
+ dst: &mut BRep,
+ src: &BRep,
+ src_idx: usize,
+ map: &mut HashMap<usize, ShapeRef>,
+) -> ShapeRef {
+ if let Some(&sr) = map.get(&src_idx) {
+ return sr;
+ }
+ let ts = &src.tshapes[src_idx];
+ let sr = match &**ts {
+ TShape::Vertex(vd) => dst.add_tvertex(vd.point),
+ TShape::Edge(ed) => {
+ let first = clone_shape_into(dst, src, ed.first.index, map);
+ let last = clone_shape_into(dst, src, ed.last.index, map);
+ dst.add_tedge(ed.curve.clone(), first, last, ed.range)
+ }
+ TShape::Wire(wd) => {
+ let edges: Vec<ShapeRef> = wd.edges.iter()
+ .map(|e| clone_shape_into(dst, src, e.index, map))
+ .collect();
+ dst.add_twire(edges)
+ }
+ TShape::Face(fd) => {
+ let outer = clone_shape_into(dst, src, fd.outer_wire.index, map);
+ let inner: Vec<ShapeRef> = fd.inner_wires.iter()
+ .map(|w| clone_shape_into(dst, src, w.index, map))
+ .collect();
+ let internal: Vec<ShapeRef> = fd.internal_vertices.iter()
+ .map(|v| clone_shape_into(dst, src, v.index, map))
+ .collect();
+ dst.add_tface(fd.surface.clone(), outer, inner, fd.sample_point, fd.uv_domain, internal, fd.natural_restriction)
+ }
+ TShape::Shell(sd) => {
+ let faces: Vec<ShapeRef> = sd.faces.iter()
+ .map(|f| clone_shape_into(dst, src, f.index, map))
+ .collect();
+ dst.add_tshell(faces)
+ }
+ TShape::Solid(sd) => {
+ let shells: Vec<ShapeRef> = sd.shells.iter()
+ .map(|s| clone_shape_into(dst, src, s.index, map))
+ .collect();
+ dst.add_tsolid(shells)
+ }
+ TShape::CompSolid(cs) => {
+ let solids: Vec<ShapeRef> = cs.iter()
+ .map(|s| clone_shape_into(dst, src, s.index, map))
+ .collect();
+ dst.add_tcompsolid(solids)
+ }
+ TShape::Compound(c) => {
+ let shapes: Vec<ShapeRef> = c.iter()
+ .map(|s| clone_shape_into(dst, src, s.index, map))
+ .collect();
+ dst.add_tcompound(shapes)
+ }
  };
- let inner: Vec<Wire> = new_face.inner_wires.iter().map(|w| Wire {
- edges: w.edges.iter()
- .map(|we| WireEdge {
- idx: we.idx + e_off,
- forward: we.forward,
- })
- .collect(),
- }).collect();
- new_face.outer_wire = outer;
- new_face.inner_wires = inner;
- new_shell.faces.push(new_face);
+ map.insert(src_idx, sr);
+ sr
+}
+
+/// Merge all solids from `src` into `dst`, cloning all dependent shapes.
+fn merge_into(dst: &mut BRep, src: &BRep) {
+ let solid_indices: Vec<usize> = src.tshapes.iter().enumerate()
+ .filter_map(|(i, ts)| match &**ts { TShape::Solid(_) => Some(i), _ => None })
+ .collect();
+
+ if solid_indices.is_empty() {
+ return;
  }
- new_solid.shells.push(new_shell);
- }
- dst.solids.push(new_solid);
+
+ let mut map = HashMap::new();
+ for &idx in &solid_indices {
+ clone_shape_into(dst, src, idx, &mut map);
  }
 }
 
@@ -291,11 +327,10 @@ impl OasConverter {
  let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
  if ls.thickness > 0.0 {
- let flat_t = flat.to_topods();
  match rcad_modeling::builder::ops::extrude(
- &flat_t, 0, glam::DVec3::Z, ls.thickness,
+ &flat, 0, glam::DVec3::Z, ls.thickness,
  ) {
- Ok(extruded) => merge_into(&mut result, &rcad_kernel::BRep::from_topods(&extruded)),
+ Ok(extruded) => merge_into(&mut result, &extruded),
  Err(_) => merge_into(&mut result, &flat),
  }
  } else {
@@ -310,11 +345,10 @@ impl OasConverter {
  let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
  if ls.thickness > 0.0 {
- let flat_t = flat.to_topods();
  match rcad_modeling::builder::ops::extrude(
- &flat_t, 0, glam::DVec3::Z, ls.thickness,
+ &flat, 0, glam::DVec3::Z, ls.thickness,
  ) {
- Ok(extruded) => merge_into(&mut result, &rcad_kernel::BRep::from_topods(&extruded)),
+ Ok(extruded) => merge_into(&mut result, &extruded),
  Err(_) => merge_into(&mut result, &flat),
  }
  } else {
@@ -422,8 +456,8 @@ mod tests {
  let brep = converter.cell_to_brep(&cell).unwrap();
 
  // Should have 2 solids (one per polygon/path)
- assert_eq!(brep.solids.len(), 2);
- assert!(!brep.vertices.is_empty());
+ assert_eq!(brep.solid_count(), 2);
+ assert!(brep.vertex_count() > 0);
  }
 
  #[test]
@@ -442,8 +476,8 @@ mod tests {
  let config = LayerConfig::new().with_layer(1, LayerSettings::new(5.0));
 
  let brep = library.to_brep("TOP", &config).unwrap();
- assert!(!brep.solids.is_empty());
- assert!(!brep.vertices.is_empty());
+ assert!(brep.solid_count() > 0);
+ assert!(brep.vertex_count() > 0);
  }
 
  #[test]

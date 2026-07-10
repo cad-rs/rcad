@@ -272,7 +272,7 @@ fn same_range_2d(
  dst_t2: f64,
 ) -> Option<rcad_kernel::geom::Curve2d> {
  use rcad_kernel::geom::Curve2d;
- let tol = rcad_kernel::tolerance::P_CONFUSION;
+ let tol = rcad_kernel::tolerance::CONFUSION;
 
  // OCCT L850-858: if range endpoints within tolerance, return as-is
  if (src_t2 - dst_t2).abs() <= tol && (src_t1 - dst_t1).abs() <= tol {

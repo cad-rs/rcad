@@ -1,4 +1,4 @@
-﻿//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
+//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
 //!
 //! This module provides comprehensive sweep operations analogous to OCCT's BRepSweep:
 //! - **LinearSweep**: Extrude profiles along a direction
@@ -21,16 +21,16 @@
 //! let result = linear_sweep(&profile_pts, DVec3::Z, 2.0);
 //! ```
 
+
 use crate::tolerance::*;
 use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{
  Circle3, Curve3, Line3, Plane, Surface3,
 };
-use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Error Types
@@ -313,44 +313,26 @@ fn centroid(pts: &[DVec3]) -> DVec3 {
 // BRep Builder Helpers
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-/// Internal helper to add a vertex and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
- let idx = brep.vertices.len();
- brep.vertices.push(Vertex { point });
- idx
+/// Internal helper to add a vertex and return its tshape index.
+fn add_vertex(brep: &mut topods::BRep, point: DVec3) -> usize {
+ brep.add_tvertex(point).index
 }
 
-/// Internal helper to add a linear edge and return its index.
-fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
- let p0 = brep.vertices[start].point;
- let p1 = brep.vertices[end].point;
+/// Internal helper to add a linear edge and return its tshape index.
+fn add_line_edge(brep: &mut topods::BRep, start: usize, end: usize) -> usize {
+ let p0 = brep.vertex_point(start).unwrap();
+ let p1 = brep.vertex_point(end).unwrap();
  let d = p1 - p0;
  let len = d.length();
  let dir = if len > EPS { d / len } else { DVec3::X };
 
- let ei = brep.edges.len();
- brep.edges.push(Edge { start, end });
-
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
- brep.geom.edge_curve.push(Some(ci));
- brep.geom.edge_curve_range.push(Some([0.0, len]));
- brep.geom.edge_degenerated.push(false);
- ei
+ brep.add_edge_flat(start, end, Some(Curve3::Line(Line3 { origin: p0, direction: dir })), [0.0, len])
 }
 
-/// Internal helper to add a circular arc edge.
-fn add_arc_edge(brep: &mut BRep, circle: Circle3, start_angle: f64, end_angle: f64,
+/// Internal helper to add a circular arc edge and return its tshape index.
+fn add_arc_edge(brep: &mut topods::BRep, circle: Circle3, start_angle: f64, end_angle: f64,
  start_v: usize, end_v: usize) -> usize {
- let ei = brep.edges.len();
- brep.edges.push(Edge { start: start_v, end: end_v });
-
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(Curve3::Circle(circle));
- brep.geom.edge_curve.push(Some(ci));
- brep.geom.edge_curve_range.push(Some([start_angle, end_angle]));
- brep.geom.edge_degenerated.push(false);
- ei
+ brep.add_edge_flat(start_v, end_v, Some(Curve3::Circle(circle)), [start_angle, end_angle])
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -376,7 +358,7 @@ pub fn linear_sweep(
  profile_pts: &[DVec3],
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = linear_sweep_with_history(profile_pts, direction, distance)?;
  Ok(brep)
 }
@@ -386,7 +368,7 @@ pub fn linear_sweep_with_history(
  profile_pts: &[DVec3],
  direction: DVec3,
  distance: f64,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  linear_sweep_with_options(profile_pts, direction, distance, SweepOptions::default())
 }
 
@@ -396,7 +378,7 @@ pub fn linear_sweep_with_options(
  direction: DVec3,
  distance: f64,
  _options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_pts.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -416,14 +398,7 @@ pub fn linear_sweep_with_options(
  // Compute profile normal
  let profile_normal = polygon_normal(profile_pts);
 
- let mut brep = BRep {
- vertices: Vec::with_capacity(2 * n),
- edges: Vec::new(),
- solids: Vec::new(),
- geom: rcad_kernel::GeomStore::default(),
- compound: None,
- compsolid: None,
- };
+ let mut brep = topods::BRep::new();
 
  // Add vertices: start[0..n], then end[0..n]
  let start_vi: Vec<usize> = profile_pts.iter()
@@ -433,67 +408,45 @@ pub fn linear_sweep_with_options(
  .map(|&p| add_vertex(&mut brep, p))
  .collect();
 
- let mut faces = Vec::with_capacity(n + 2);
+ let mut face_refs = Vec::with_capacity(n + 2);
  let mut history = SweepHistory::default();
 
  // Start cap (normal pointing outward = -dir for solid interior)
  {
- let mut wire_edges = Vec::with_capacity(n);
+ let mut edge_refs = Vec::with_capacity(n);
  for i in 0..n {
  let j = (i + 1) % n;
  let ei = add_line_edge(&mut brep, start_vi[i], start_vi[j]);
- wire_edges.push(WireEdge::fwd(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Forward));
  }
  let cap_normal = -dir;
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: cap_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: profile_pts[0], normal: cap_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.start_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: profile_pts[0],
- normal: cap_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
  // End cap (normal pointing outward = +dir)
  {
- let mut wire_edges = Vec::with_capacity(n);
+ let mut edge_refs = Vec::with_capacity(n);
  for i in 0..n {
  let j = (i + 1) % n;
  let ei = add_line_edge(&mut brep, end_vi[i], end_vi[j]);
  // Reverse for correct winding (CCW from +dir view)
- wire_edges.push(WireEdge::rev(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Reversed));
  }
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: dir,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: end_pts[0], normal: dir })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.end_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: end_pts[0],
- normal: dir,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
  // Lateral faces: one quad per profile edge
@@ -513,40 +466,51 @@ pub fn linear_sweep_with_options(
  let e_top = add_line_edge(&mut brep, end_vi[j], end_vi[i]);
  let e_left = add_line_edge(&mut brep, end_vi[i], start_vi[i]);
 
- let wire_edges = vec![
- WireEdge::fwd(e_bot),
- WireEdge::fwd(e_right),
- WireEdge::fwd(e_top),
- WireEdge::fwd(e_left),
+ let edge_refs = vec![
+ topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
  ];
-
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: lat_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: a, normal: lat_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.lateral_faces.push(fi);
  history.profile_edge_to_lateral.insert(i, fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: a,
- normal: lat_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
- brep.solids.push(Solid {
- shells: vec![Shell { faces }],
- });
+ // Build shell and solid
+ let shell = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell]);
 
  Ok((brep, history))
+}
+
+/// Extract boundary vertex points of a face given its flat index.
+/// Navigates the topods TShape hierarchy to find the first solid's first shell's face.
+fn get_face_boundary_pts(brep: &topods::BRep, face_idx: usize) -> Option<Vec<DVec3>> {
+ use topods::{Orientation, TShape};
+ let sd = brep.tshapes.iter().find_map(|ts| {
+ if let TShape::Solid(sd) = &**ts { Some(sd) } else { None }
+ })?;
+ let shell_ts = brep.tshapes.get(sd.shells.first()?.index)?;
+ let TShape::Shell(shd) = &**shell_ts else { return None; };
+ let face_sr = shd.faces.get(face_idx)?;
+ let face_ts = brep.tshapes.get(face_sr.index)?;
+ let TShape::Face(fd) = &**face_ts else { return None; };
+ let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
+ let TShape::Wire(wd) = &**wire_ts else { return None; };
+ Some(wd.edges.iter().filter_map(|edge_sr| {
+ let edge_ts = brep.tshapes.get(edge_sr.index)?;
+ if let TShape::Edge(ed) = &**edge_ts {
+ let vi = if edge_sr.orientation == Orientation::Forward { ed.first.index } else { ed.last.index };
+ brep.vertex_point(vi)
+ } else { None }
+ }).collect())
 }
 
 /// Extrude an existing BRep face along a direction.
@@ -557,24 +521,13 @@ pub fn linear_sweep_with_options(
 /// * `direction` - Extrusion direction
 /// * `distance` - Extrusion distance
 pub fn linear_sweep_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
- // Extract the face boundary points
- let face = brep.solids.first()
- .and_then(|s| s.shells.first())
- .and_then(|sh| sh.faces.get(face_idx))
+) -> Result<rcad_kernel::BRep, SweepError> {
+ let pts = get_face_boundary_pts(brep, face_idx)
  .ok_or(SweepError::InvalidParameter("face_idx out of range"))?;
-
- let pts: Vec<DVec3> = face.outer_wire.edges.iter()
- .filter_map(|we| {
- let edge = brep.edges.get(we.idx)?;
- let vi = if we.forward { edge.start } else { edge.end };
- brep.vertices.get(vi).map(|v| v.point)
- })
- .collect();
 
  linear_sweep(&pts, direction, distance)
 }
@@ -587,24 +540,13 @@ pub fn linear_sweep_face(
 /// * `direction` - Extrusion direction
 /// * `distance` - Extrusion distance
 pub fn linear_sweep_wire(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire_idx: usize,
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
- // For simplicity, extract from face's outer wire
- let face = brep.solids.first()
- .and_then(|s| s.shells.first())
- .and_then(|sh| sh.faces.get(wire_idx))
+) -> Result<rcad_kernel::BRep, SweepError> {
+ let pts = get_face_boundary_pts(brep, wire_idx)
  .ok_or(SweepError::InvalidParameter("wire_idx out of range"))?;
-
- let pts: Vec<DVec3> = face.outer_wire.edges.iter()
- .filter_map(|we| {
- let edge = brep.edges.get(we.idx)?;
- let vi = if we.forward { edge.start } else { edge.end };
- brep.vertices.get(vi).map(|v| v.point)
- })
- .collect();
 
  linear_sweep(&pts, direction, distance)
 }
@@ -631,7 +573,7 @@ pub fn rotational_sweep(
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = rotational_sweep_with_history(profile_pts, axis_origin, axis_dir, angle)?;
  Ok(brep)
 }
@@ -642,7 +584,7 @@ pub fn rotational_sweep_with_history(
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  rotational_sweep_with_options(profile_pts, axis_origin, axis_dir, angle, SweepOptions::default())
 }
 
@@ -653,7 +595,7 @@ pub fn rotational_sweep_with_options(
  axis_dir: DVec3,
  angle: f64,
  _options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_pts.len() < 2 {
  return Err(SweepError::InsufficientVertices {
  minimum: 2,
@@ -676,14 +618,7 @@ pub fn rotational_sweep_with_options(
  .map(|&p| rotate_point(p, axis_origin, axis_dir, angle))
  .collect();
 
- let mut brep = BRep {
- vertices: Vec::new(),
- edges: Vec::new(),
- solids: Vec::new(),
- geom: rcad_kernel::GeomStore::default(),
- compound: None,
- compsolid: None,
- };
+ let mut brep = topods::BRep::new();
 
  // Add start vertices
  let start_vi: Vec<usize> = profile_pts.iter()
@@ -699,7 +634,7 @@ pub fn rotational_sweep_with_options(
  .collect()
  };
 
- let mut faces = Vec::new();
+ let mut face_refs = Vec::new();
  let mut history = SweepHistory::default();
 
  // Profile normal
@@ -709,63 +644,41 @@ pub fn rotational_sweep_with_options(
  if !full_revolution {
  // Start cap
  {
- let mut wire_edges = Vec::with_capacity(n);
+ let mut edge_refs = Vec::with_capacity(n);
  for i in 0..n {
  let j = (i + 1) % n;
  let ei = add_line_edge(&mut brep, start_vi[i], start_vi[j]);
- wire_edges.push(WireEdge::fwd(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Forward));
  }
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: profile_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: profile_pts[0], normal: profile_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.start_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: profile_pts[0],
- normal: profile_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
  // End cap
  {
- let mut wire_edges = Vec::with_capacity(n);
+ let mut edge_refs = Vec::with_capacity(n);
  for i in 0..n {
  let j = (i + 1) % n;
  let ei = add_line_edge(&mut brep, end_vi[i], end_vi[j]);
- wire_edges.push(WireEdge::rev(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Reversed));
  }
  let rot_normal = rotate_point(profile_normal, axis_origin, axis_dir, angle)
  - axis_origin;
  let rot_normal = rot_normal.normalize_or(profile_normal);
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: rot_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: rot_pts[0], normal: rot_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.end_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: rot_pts[0],
- normal: rot_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
  }
 
@@ -785,74 +698,52 @@ pub fn rotational_sweep_with_options(
  let e_top = add_line_edge(&mut brep, end_vi[j], end_vi[i]);
  let e_left = add_line_edge(&mut brep, end_vi[i], start_vi[i]);
 
- let wire_edges = vec![
- WireEdge::fwd(e_bot),
- WireEdge::fwd(e_right),
- WireEdge::fwd(e_top),
- WireEdge::fwd(e_left),
+ let edge_refs = vec![
+ topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
  ];
-
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: lat_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: p0, normal: lat_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.lateral_faces.push(fi);
  history.profile_edge_to_lateral.insert(i, fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: p0,
- normal: lat_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
- brep.solids.push(Solid {
- shells: vec![Shell { faces }],
- });
+ // Build shell and solid
+ let shell = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell]);
 
  Ok((brep, history))
 }
 
 /// Revolve a BRep face around an axis.
 pub fn rotational_sweep_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
- let face = brep.solids.first()
- .and_then(|s| s.shells.first())
- .and_then(|sh| sh.faces.get(face_idx))
+) -> Result<rcad_kernel::BRep, SweepError> {
+ let pts = get_face_boundary_pts(brep, face_idx)
  .ok_or(SweepError::InvalidParameter("face_idx out of range"))?;
-
- let pts: Vec<DVec3> = face.outer_wire.edges.iter()
- .filter_map(|we| {
- let edge = brep.edges.get(we.idx)?;
- let vi = if we.forward { edge.start } else { edge.end };
- brep.vertices.get(vi).map(|v| v.point)
- })
- .collect();
 
  rotational_sweep(&pts, axis_origin, axis_dir, angle)
 }
 
 /// Revolve a BRep wire around an axis.
 pub fn rotational_sweep_wire(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire_idx: usize,
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  rotational_sweep_face(brep, wire_idx, axis_origin, axis_dir, angle)
 }
 
@@ -876,7 +767,7 @@ pub fn pipe_sweep(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  _mode: SweepMode,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = pipe_sweep_with_history(profile_2d, spine)?;
  Ok(brep)
 }
@@ -885,7 +776,7 @@ pub fn pipe_sweep(
 pub fn pipe_sweep_with_history(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  pipe_sweep_with_options(profile_2d, spine, SweepOptions::pipe_frenet())
 }
 
@@ -894,7 +785,7 @@ pub fn pipe_sweep_with_options(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_2d.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -1008,7 +899,7 @@ fn compute_frenet_frames(tangents: &[DVec3], is_frenet: bool) -> Result<Vec<Fren
 }
 
 /// Build a solid by lofting between cross-sections.
-fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, SweepHistory), SweepError> {
+fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if sections.len() < 2 {
  return Err(SweepError::InsufficientSpinePoints {
  minimum: 2,
@@ -1029,14 +920,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
  }
  }
 
- let mut brep = BRep {
- vertices: Vec::new(),
- edges: Vec::new(),
- solids: Vec::new(),
- geom: rcad_kernel::GeomStore::default(),
- compound: None,
- compsolid: None,
- };
+ let mut brep = topods::BRep::new();
 
  // Add all vertices
  let vi: Vec<Vec<usize>> = sections.iter()
@@ -1045,69 +929,47 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
  })
  .collect();
 
- let mut faces = Vec::new();
+ let mut face_refs = Vec::new();
  let mut history = SweepHistory::default();
 
  // Start cap
  {
  let pts = &sections[0];
  let normal = -polygon_normal(pts);
- let mut wire_edges = Vec::with_capacity(n_verts);
+ let mut edge_refs = Vec::with_capacity(n_verts);
  for i in 0..n_verts {
  let j = (i + 1) % n_verts;
  let ei = add_line_edge(&mut brep, vi[0][i], vi[0][j]);
- wire_edges.push(WireEdge::fwd(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Forward));
  }
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: pts[0], normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.start_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: pts[0],
- normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
  // End cap
  {
  let pts = &sections[n_sections - 1];
  let normal = polygon_normal(pts);
- let mut wire_edges = Vec::with_capacity(n_verts);
+ let mut edge_refs = Vec::with_capacity(n_verts);
  for i in 0..n_verts {
  let j = (i + 1) % n_verts;
  let ei = add_line_edge(&mut brep, vi[n_sections - 1][i], vi[n_sections - 1][j]);
- wire_edges.push(WireEdge::rev(ei));
+ edge_refs.push(topods::ShapeRef::synthetic_with_orientation(ei, topods::Orientation::Reversed));
  }
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: pts[0], normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.end_cap.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: pts[0],
- normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
 
  // Lateral faces between consecutive sections
@@ -1129,38 +991,26 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
  let e_top = add_line_edge(&mut brep, vi[sec + 1][j], vi[sec + 1][i]);
  let e_left = add_line_edge(&mut brep, vi[sec + 1][i], vi[sec][i]);
 
- let wire_edges = vec![
- WireEdge::fwd(e_bot),
- WireEdge::fwd(e_right),
- WireEdge::fwd(e_top),
- WireEdge::fwd(e_left),
+ let edge_refs = vec![
+ topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
+ topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
  ];
-
- let face = Face {
- outer_wire: Wire { edges: wire_edges },
- inner_wires: vec![],
- normal: lat_normal,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let fi = faces.len();
- faces.push(face);
+ let wire = brep.add_twire(edge_refs);
+ let fi = face_refs.len();
+ let face_sr = brep.add_tface(
+ Some(Surface3::Plane(Plane { origin: a, normal: lat_normal })),
+ wire, vec![], None, None, vec![], true,
+ );
+ face_refs.push(face_sr);
  history.lateral_faces.push(fi);
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: a,
- normal: lat_normal,
- }));
- brep.geom.face_surface.push(Some(si));
  }
  }
 
- brep.solids.push(Solid {
- shells: vec![Shell { faces }],
- });
+ // Build shell and solid
+ let shell = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell]);
 
  Ok((brep, history))
 }
@@ -1169,7 +1019,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
 pub fn pipe_sweep_wire(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  pipe_sweep(profile_2d, spine, SweepMode::Pipe)
 }
 
@@ -1177,7 +1027,7 @@ pub fn pipe_sweep_wire(
 pub fn pipe_with_rotation(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let options = SweepOptions {
  mode: SweepMode::Pipe,
  is_frenet: true,
@@ -1205,7 +1055,7 @@ pub fn handle_pipe_corners(
  spine: &[DVec3],
  profile_2d: &[DVec2],
  corner_radius: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if spine.len() < 3 {
  return Err(SweepError::InsufficientSpinePoints {
  minimum: 3,
@@ -1450,7 +1300,7 @@ pub fn linear_law_sweep<L: Law>(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  law: L,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if profile_2d.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -1497,7 +1347,7 @@ pub fn linear_law_sweep<L: Law>(
 pub fn variable_section_sweep(
  profiles: &[Vec<DVec2>],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if profiles.len() != spine.len() {
  return Err(SweepError::InvalidParameter(
  "profiles and spine must have the same length"

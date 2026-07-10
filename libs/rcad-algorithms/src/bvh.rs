@@ -1,4 +1,4 @@
-﻿//! Bounding Volume Hierarchy (BVH) for spatial acceleration.
+//! Bounding Volume Hierarchy (BVH) for spatial acceleration.
 //!
 //! Built with the SAH (Surface Area Heuristic) to speed up:
 //! - Ray picking
@@ -7,9 +7,9 @@
 //!
 //! Analogous to OCCT `BVH_Tree` / `BVH_Builder`.
 
+
 use glam::DVec3;
-use rcad_kernel::BRep;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 use crate::tolerance::*;
@@ -132,7 +132,7 @@ impl BvhNode {
  }
 }
 
-/// BVH over the faces of one `BRep`.
+/// BVH over the faces of one `rcad_kernel::BRep`.
 ///
 /// After construction, supports accelerated ray casts, nearest-face queries, etc.
 pub struct Bvh {
@@ -167,31 +167,45 @@ impl Bvh {
  ///
  /// Sampling: each face uses boundary vertices plus a small grid of interior samples
  /// on curved patches so the AABB conservatively covers the face.
- pub fn build(brep: &BRep) -> Self {
- let faces = &brep.solids[0].shells[0].faces;
- let n_faces = faces.len();
+ pub fn build(brep: &rcad_kernel::BRep) -> Self {
+ // Collect face tshape indices.
+ let face_ts_indices: Vec<usize> = brep.tshapes.iter().enumerate()
+ .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
+ .map(|(fi, _)| fi)
+ .collect();
+ let n_faces = face_ts_indices.len();
 
  let mut face_aabbs = Vec::with_capacity(n_faces);
  let mut face_centers = Vec::with_capacity(n_faces);
 
- for (fi, face) in faces.iter().enumerate() {
+ for &fi in &face_ts_indices {
+ let ts = &brep.tshapes[fi];
+ let TShape::Face(fd) = ts.as_ref() else { continue };
  let mut aabb = Aabb::empty();
 
- // Seed AABB from boundary vertices
- for &wire_edge in &face.outer_wire.edges {
- let edge = &brep.edges[wire_edge.idx];
- let v0 = brep.vertices[edge.start].point;
- let v1 = brep.vertices[edge.end].point;
- aabb.expand_point(v0);
- aabb.expand_point(v1);
+ // Seed AABB from boundary vertices via outer wire edges.
+ if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+ if let TShape::Wire(wd) = wts.as_ref() {
+ for er in &wd.edges {
+ if let Some(ets) = brep.tshapes.get(er.index) {
+ if let TShape::Edge(ed) = ets.as_ref() {
+ if let Some(p0) = brep.vertex_point(ed.first.index) {
+ aabb.expand_point(p0);
+ }
+ if let Some(p1) = brep.vertex_point(ed.last.index) {
+ aabb.expand_point(p1);
+ }
+ }
+ }
+ }
+ }
  }
 
- // ✅ OCCT : BRepBndLib::Add (BRepBndLib.cxx L83+) — AABB。
+ // ✅ OCCT : rcad_kernel::BRepBndLib::Add (rcad_kernel::BRepBndLib.cxx L83+) — AABB。
  // OCCT BndLib_AddSurface (BndLib_AddSurface.cxx L275-306):
  // Sphere: ± (L299-306); Cylinder/Cone/Torus: BndLib (L287-297)
  // Plane: 4 (L278-286); BSpline/Bezier:  /  (L315-316)
- if let Some(surf_idx) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
- if let Some(surf) = brep.geom.surfaces.get(surf_idx) {
+ if let Some(surf) = &fd.surface {
  match surf {
  Surface3::Sphere(s) => {
  let r = s.radius.abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
@@ -259,7 +273,6 @@ impl Bvh {
  }
  }
  }
- }
 
  // Degenerate faces: nudge AABB to non-zero extent
  let size = aabb.max - aabb.min;
@@ -281,10 +294,11 @@ impl Bvh {
  face_centers.push(center);
  }
 
- let face_indices: Vec<usize> = (0..n_faces).collect();
+ // Rebuild ordered face index array (sequential, matching the collected face order).
+ let ordered_indices: Vec<usize> = (0..n_faces).collect();
  let mut bvh = Bvh {
  nodes: Vec::new(),
- face_indices,
+ face_indices: ordered_indices,
  face_aabbs,
  face_centers,
  };

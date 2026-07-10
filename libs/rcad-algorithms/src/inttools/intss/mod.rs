@@ -31,6 +31,7 @@ use rcad_kernel::geom::{
  BSplineCurve3, Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3,
  Hyperbola3, Line3, Parabola3, Plane, SphericalSurface, Surface3, CurveEval, SurfaceEval,
 };
+use rcad_kernel::PCurve;
 
 use crate::inttools::{
  cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},

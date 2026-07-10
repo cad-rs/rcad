@@ -21,7 +21,7 @@ mod geom2d_line_tests {
     use super::*;
 
     fn make_line() -> Curve2d {
-        Curve2d::Line(Line2d { origin: Point2::ZERO, direction: Vec2::X })
+        Curve2d::Line(Line2d::new(Point2::ZERO, Vec2::X))
     }
 
     #[test]
@@ -49,9 +49,73 @@ mod geom2d_line_tests {
     #[test]
     fn line_diagonal_value() {
         let d = Vec2::new(1.0, 1.0).normalize();
-        let l = Curve2d::Line(Line2d { origin: Point2::ZERO, direction: d });
+        let l = Curve2d::Line(Line2d::new(Point2::ZERO, d));
         let p = l.point_at(2.0f64.sqrt());
         assert!((p - Point2::new(1.0, 1.0)).length() < TOL);
+    }
+
+    #[test]
+    fn line_distance() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        // Point (5, 3) has perpendicular distance 3 from X-axis line
+        let d = l.distance(Point2::new(5.0, 3.0));
+        assert!((d - 3.0).abs() < TOL, "Distance should be 3, got {d}");
+        // Point on the line has distance 0
+        let d = l.distance(Point2::new(0.0, 0.0));
+        assert!(d < TOL, "Point on line should have distance 0, got {d}");
+    }
+
+    #[test]
+    fn line_not_closed_not_periodic() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        assert!(!l.is_closed(), "Line should not be closed");
+        assert!(!l.is_periodic(), "Line should not be periodic");
+    }
+
+    #[test]
+    fn line_reversed_parameter() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        assert!((l.reversed_parameter(5.0) - (-5.0)).abs() < TOL);
+    }
+
+    #[test]
+    fn line_set_direction() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = l.with_direction(Vec2::Y);
+        assert!((l.direction - Vec2::Y).length() < TOL);
+    }
+
+    #[test]
+    fn line_set_location() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = l.with_origin(Point2::new(3.0, 4.0));
+        assert!((l.origin - Point2::new(3.0, 4.0)).length() < TOL);
+    }
+
+    #[test]
+    fn line_copy() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let c = l; // Copy (Line2d is Copy)
+        assert!((c.direction - Vec2::X).length() < TOL);
+        // Verify independence: modifying copy doesn't affect original
+        let c = c.with_direction(Vec2::Y);
+        assert!((l.direction - Vec2::X).length() < TOL, "Original should be unchanged");
+    }
+
+    #[test]
+    fn line_transform_translation() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = l.translate(Point2::new(5.0, 10.0));
+        assert!((l.origin - Point2::new(5.0, 10.0)).length() < TOL);
+    }
+
+    #[test]
+    fn line_transform_rotation() {
+        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        // Rotate 90 degrees around origin: horizontal becomes vertical
+        let l = l.rotate(Point2::ZERO, PI / 2.0);
+        assert!((l.direction.x).abs() < TOL, "Direction X should be ~0");
+        assert!((l.direction.y - 1.0).abs() < TOL, "Direction Y should be ~1");
     }
 }
 

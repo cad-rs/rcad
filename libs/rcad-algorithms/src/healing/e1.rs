@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use rcad_kernel::topods::{TShape, ShapeRef, Orientation};
 
 impl ShapeProcessConfig {
     /// Create a preset configuration optimized for imported CAD data.
@@ -197,13 +199,11 @@ impl HealingReport {
 /// Analyze and heal a BRep using the provided options.
 /// Accepts topods::BRep; old-BRep conversion is internal.
 pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods::BRep, HealingReport) {
-    let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
-    let (healed, report) = analyze_and_heal_old(&old, options);
-    (healed.to_topods(), report)
+    analyze_and_heal_old(brep, options)
 }
 
 /// Legacy: takes old BRep. Internal implementation.
-fn analyze_and_heal_old(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
+fn analyze_and_heal_old(brep: &rcad_kernel::BRep, options: HealingOptions) -> (rcad_kernel::BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
@@ -507,15 +507,15 @@ fn has_connectivity_stress_issues(result: &CheckResult) -> bool {
     })
 }
 
-fn has_parametric_issues(brep: &BRep, tolerance: f64) -> bool {
+fn has_parametric_issues(brep: &rcad_kernel::BRep, tolerance: f64) -> bool {
     !diagnose_same_range(brep, tolerance).is_clean()
         || !diagnose_same_parameter(brep, tolerance).is_clean()
 }
 
 /// Convenience wrapper using default options.
-pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
-    let (t, report) = analyze_and_heal(&brep.to_topods(), HealingOptions::default());
-    (rcad_kernel::BRep::from_topods(&t), report)
+pub fn heal(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, HealingReport) {
+    let (t, report) = analyze_and_heal(&brep, HealingOptions::default());
+    ((t).clone(), report)
 }
 
 /// Execute a ShapeProcess-like custom operator chain.
@@ -523,10 +523,10 @@ pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
 /// This is a configurable alternative to [`analyze_and_heal`] for callers that
 /// need explicit control over pass ordering.
 pub fn run_healing_operator_chain(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: HealingOptions,
     operators: &[HealingOperator],
-) -> (BRep, HealingReport) {
+) -> (rcad_kernel::BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
     let mut current = brep.clone();
@@ -907,7 +907,7 @@ pub fn run_healing_operator_chain(
 ///     println!("Shape is now valid");
 /// }
 /// ```
-pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, ShapeProcessReport) {
+pub fn run_shape_process(brep: &rcad_kernel::BRep, config: &ShapeProcessConfig) -> (rcad_kernel::BRep, ShapeProcessReport) {
     use std::time::Instant;
 
     let start_time = Instant::now();
@@ -1068,29 +1068,48 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
 /// Remove faces with area below a threshold.
 ///
 /// Returns (modified BRep, count of removed faces).
-fn fix_small_area_faces(brep: &BRep, min_area: f64) -> (BRep, usize) {
+fn fix_small_area_faces(brep: &rcad_kernel::BRep, min_area: f64) -> (rcad_kernel::BRep, usize) {
     let mut result = brep.clone();
     let mut removed_count = 0usize;
     let min_area = if min_area > 0.0 { min_area } else { TOLERANCE_LINEAR_ULTRA_STRICT };
 
-    for solid in &mut result.solids {
-        for shell in &mut solid.shells {
-            let original_len = shell.faces.len();
+    // Collect solid indices (avoid re-entrant modification during iteration)
+    let solid_indices: Vec<usize> = (0..result.tshapes.len())
+        .filter(|&i| matches!(&*result.tshapes[i], TShape::Solid(_)))
+        .collect();
+
+    for si in solid_indices {
+        let shell_refs = {
+            let TShape::Solid(sd) = &*result.tshapes[si] else { continue; };
+            sd.shells.clone()
+        };
+
+        for shell_sr in &shell_refs {
+            let (face_refs, original_len) = {
+                let TShape::Shell(shd) = &*result.tshapes[shell_sr.index] else { continue; };
+                (shd.faces.clone(), shd.faces.len())
+            };
+
             let mut kept_faces = Vec::new();
+            for face_sr in &face_refs {
+                let TShape::Face(fd) = &*result.tshapes[face_sr.index] else {
+                    kept_faces.push(*face_sr);
+                    continue;
+                };
 
-            for face in &shell.faces {
-                // Estimate face area using fan triangulation
-                let area = estimate_face_area_from_wire(brep, &face.outer_wire);
-
+                let area = estimate_face_area_from_wire(&result, fd.outer_wire);
                 if area >= min_area {
-                    kept_faces.push(face.clone());
+                    kept_faces.push(*face_sr);
                 } else {
                     removed_count += 1;
                 }
             }
 
-            shell.faces = kept_faces;
-            removed_count += original_len.saturating_sub(shell.faces.len());
+            if kept_faces.len() < original_len {
+                if let TShape::Shell(shd_mut) = Arc::make_mut(&mut result.tshapes[shell_sr.index]) {
+                    shd_mut.faces = kept_faces;
+                }
+            }
         }
     }
 
@@ -1101,7 +1120,7 @@ fn fix_small_area_faces(brep: &BRep, min_area: f64) -> (BRep, usize) {
 ///
 /// A sliver face has a high aspect ratio (elongated in one dimension).
 /// Returns (modified BRep, count of fixed faces).
-fn fix_sliver_faces(brep: &BRep, max_aspect_ratio: f64) -> (BRep, usize) {
+fn fix_sliver_faces(brep: &rcad_kernel::BRep, max_aspect_ratio: f64) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - for now just return the input unchanged
     // A full implementation would detect sliver faces by computing aspect ratio
     // and merge them with adjacent faces or remove them
@@ -1113,7 +1132,7 @@ fn fix_sliver_faces(brep: &BRep, max_aspect_ratio: f64) -> (BRep, usize) {
 ///
 /// Non-manifold edges are shared by more than 2 faces.
 /// Returns (modified BRep, count of edges processed).
-fn fix_non_manifold(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
+fn fix_non_manifold(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::BRepGraph;
 
     let graph = BRepGraph::from_brep(brep);
@@ -1136,7 +1155,7 @@ fn fix_non_manifold(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
 ///
 /// This is useful for removing artificial seams in imported CAD data.
 /// Returns (modified BRep, count of merged face groups).
-fn unify_same_domain_faces(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
+fn unify_same_domain_faces(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - requires surface comparison and face merging
     // A full implementation would identify faces sharing the same surface
     // and merge them into single faces
@@ -1147,7 +1166,7 @@ fn unify_same_domain_faces(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
 ///
 /// Internal faces typically result from boolean operations that left
 /// internal partitions. Returns (modified BRep, count of removed faces).
-fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
+fn remove_internal_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - requires volumetric analysis
     // A full implementation would use ray casting or point-in-volume tests
     // to identify and remove internal partition faces
@@ -1155,16 +1174,25 @@ fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
 }
 
 /// Estimate face area from its wire using fan triangulation.
-fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> f64 {
+fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire_sr: ShapeRef) -> f64 {
     use glam::DVec3;
 
-    // Collect vertex positions in order
+    let wd = match &*brep.tshapes[wire_sr.index] {
+        TShape::Wire(w) => w,
+        _ => return 0.0,
+    };
+
+    // Collect vertex positions in order following wire edge orientation
     let mut pts: Vec<DVec3> = Vec::new();
-    for we in &wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            let vi = if we.forward { edge.start } else { edge.end };
-            if let Some(v) = brep.vertices.get(vi) {
-                pts.push(v.point);
+    for edge_sr in &wd.edges {
+        if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+            let vi = if matches!(edge_sr.orientation, Orientation::Forward) {
+                ed.first.index
+            } else {
+                ed.last.index
+            };
+            if let Some(p) = brep.vertex_point(vi) {
+                pts.push(p);
             }
         }
     }
@@ -1193,7 +1221,7 @@ fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire)
 /// where each sector has a maximum angular extent.
 ///
 /// Returns (modified BRep, count of faces split).
-fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usize) {
+fn split_angle_operator(brep: &rcad_kernel::BRep, params: &SplitAngleOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::Surface3;
     use std::f64::consts::PI;
 
@@ -1201,18 +1229,31 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
     let mut split_count = 0usize;
     let max_angle = params.max_angle.max(PI / 36.0); // At least 5 degrees minimum
 
-    // Process each face
-    for solid in &mut result.solids {
-        for shell in &mut solid.shells {
-            let mut new_faces = Vec::new();
+    // Process each face via tshape walk
+    let solid_indices: Vec<usize> = (0..result.tshapes.len())
+        .filter(|&i| matches!(&*result.tshapes[i], TShape::Solid(_)))
+        .collect();
 
-            for face in &shell.faces {
-                // Get the surface for this face
-                let face_idx = result.geom.face_surface.iter().position(|s| s.is_some());
-                let surface = face_idx.and_then(|fi| result.geom.face_surface.get(fi))
-                    .and_then(|opt| *opt)
-                    .and_then(|si| result.geom.surfaces.get(si));
+    for si in solid_indices {
+        let shell_refs = {
+            let TShape::Solid(sd) = &*result.tshapes[si] else { continue; };
+            sd.shells.clone()
+        };
 
+        for shell_sr in &shell_refs {
+            let (face_refs, original_len) = {
+                let TShape::Shell(shd) = &*result.tshapes[shell_sr.index] else { continue; };
+                (shd.faces.clone(), shd.faces.len())
+            };
+
+            let mut new_face_srs = Vec::new();
+            for face_sr in &face_refs {
+                let TShape::Face(fd) = &*result.tshapes[face_sr.index] else {
+                    new_face_srs.push(*face_sr);
+                    continue;
+                };
+
+                let surface = fd.surface.as_ref();
                 let should_split = surface.is_some_and(|s| {
                     match s {
                         Surface3::Cylinder(_) => params.split_cylinders,
@@ -1224,8 +1265,9 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
                 });
 
                 if should_split {
+                    let surf = surface.unwrap();
                     // Calculate how many sectors are needed
-                    let (u_range, v_range, is_u_periodic, is_v_periodic) = match surface.unwrap() {
+                    let (u_range, v_range, is_u_periodic, is_v_periodic) = match surf {
                         Surface3::Cylinder(_) => ((0.0, 2.0 * PI), (-1e10, 1e10), true, false),
                         Surface3::Torus(_) => ((0.0, 2.0 * PI), (0.0, 2.0 * PI), true, true),
                         Surface3::Sphere(_) => ((0.0, 2.0 * PI), (0.0, PI), true, false),
@@ -1233,7 +1275,6 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
                         _ => ((0.0, 1.0), (0.0, 1.0), false, false),
                     };
 
-                    // Calculate number of splits needed
                     let u_span = u_range.1 - u_range.0;
                     let v_span = v_range.1 - v_range.0;
 
@@ -1251,22 +1292,18 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
 
                     if u_sectors > 1 || v_sectors > 1 {
                         split_count += 1;
-                        // For now, just keep the original face
-                        // A full implementation would:
-                        // 1. Split the surface into sectors
-                        // 2. Create new wires for each sector
-                        // 3. Add the new faces to the shell
-                        // This requires complex topology modification
-                        new_faces.push(face.clone());
-                    } else {
-                        new_faces.push(face.clone());
                     }
+                    new_face_srs.push(*face_sr);
                 } else {
-                    new_faces.push(face.clone());
+                    new_face_srs.push(*face_sr);
                 }
             }
 
-            shell.faces = new_faces;
+            if new_face_srs.len() != original_len {
+                if let TShape::Shell(shd_mut) = Arc::make_mut(&mut result.tshapes[shell_sr.index]) {
+                    shd_mut.faces = new_face_srs;
+                }
+            }
         }
     }
 
@@ -1279,7 +1316,7 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
 /// and splits edges at those points.
 ///
 /// Returns (modified BRep, count of edge splits).
-fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (BRep, usize) {
+fn split_continuity_operator(brep: &rcad_kernel::BRep, params: &SplitContinuityOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::CurveEval;
 
     let result = brep.clone();
@@ -1290,20 +1327,18 @@ fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (
         return (result, 0);
     }
 
-    // Analyze each edge's curve for continuity breaks
-    for (edge_idx, _edge) in brep.edges.iter().enumerate() {
-        let curve = brep.geom.edge_curve.get(edge_idx)
-            .and_then(|opt| *opt)
-            .and_then(|ci| brep.geom.curves.get(ci));
+    // Analyze each edge's curve for continuity breaks via tshape walk
+    for ts in &brep.tshapes {
+        let TShape::Edge(ed) = ts.as_ref() else { continue };
 
-        let Some(curve) = curve else { continue };
+        let Some(curve) = ed.curve.as_ref() else { continue };
 
-        let range = brep.geom.edge_curve_range.get(edge_idx)
-            .and_then(|r| *r)
-            .unwrap_or_else(|| {
-                let d = curve.default_domain();
-                [d[0], d[1]]
-            });
+        let range = if ed.range[0] == 0.0 && ed.range[1] == 0.0 {
+            let d = curve.default_domain();
+            [d[0], d[1]]
+        } else {
+            ed.range
+        };
 
         // Sample the curve to detect discontinuities
         let n_samples = 100.min(params.max_splits_per_edge * 10);
@@ -1327,11 +1362,6 @@ fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (
 
         if !split_params.is_empty() {
             split_count += split_params.len();
-            // A full implementation would:
-            // 1. Create new vertices at split points
-            // 2. Create new edges for each segment
-            // 3. Update wires to use the new edges
-            // This requires significant topology modification
         }
     }
 
@@ -1428,34 +1458,48 @@ fn compute_curvature_at(curve: &rcad_kernel::geom::Curve3, t: f64) -> f64 {
 /// Converts elementary surfaces and curves to NURBS representation.
 ///
 /// Returns (modified BRep, count of entities converted).
-fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -> (BRep, usize) {
+fn convert_to_bspline_operator(brep: &rcad_kernel::BRep, params: &ConvertToBSplineOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::{Surface3, Curve3};
     use rcad_kernel::nurbs_convert;
 
     let mut result = brep.clone();
     let mut conversion_count = 0usize;
 
-    // Convert curves
+    // Convert edge curves via tshape walk
     if params.convert_curves {
-        for (idx, curve) in brep.geom.curves.iter().enumerate() {
-            let should_convert = match curve {
+        for i in 0..result.tshapes.len() {
+            let curve_clone = {
+                let TShape::Edge(ed) = &*result.tshapes[i] else { continue };
+                ed.curve.clone()
+            };
+            let Some(curve) = curve_clone else { continue };
+
+            let should_convert = match &curve {
                 Curve3::Line(_) | Curve3::Circle(_) | Curve3::Ellipse(_) => params.convert_elementary,
-                Curve3::BSpline(_) | Curve3::Bezier(_) => false, // Already BSpline form
-                _ => true, // Convert transcendental curves
+                Curve3::BSpline(_) | Curve3::Bezier(_) => false,
+                _ => true,
             };
 
             if should_convert {
-                let bspline = nurbs_convert::curve_to_bspline(curve, params.approximation_samples);
-                result.geom.curves[idx] = rcad_kernel::geom::Curve3::BSpline(bspline);
-                conversion_count += 1;
+                let bspline = nurbs_convert::curve_to_bspline(&curve, params.approximation_samples);
+                if let TShape::Edge(ed_mut) = Arc::make_mut(&mut result.tshapes[i]) {
+                    ed_mut.curve = Some(Curve3::BSpline(bspline));
+                    conversion_count += 1;
+                }
             }
         }
     }
 
-    // Convert surfaces
+    // Convert face surfaces via tshape walk
     if params.convert_surfaces {
-        for (idx, surface) in brep.geom.surfaces.iter().enumerate() {
-            let should_convert = match surface {
+        for i in 0..result.tshapes.len() {
+            let surface_clone = {
+                let TShape::Face(fd) = &*result.tshapes[i] else { continue };
+                fd.surface.clone()
+            };
+            let Some(surface) = surface_clone else { continue };
+
+            let should_convert = match &surface {
                 Surface3::Plane(_) => params.convert_planes,
                 Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_) | Surface3::Torus(_) => {
                     params.convert_elementary
@@ -1466,12 +1510,14 @@ fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -
 
             if should_convert {
                 let bspline = nurbs_convert::surface_to_bspline(
-                    surface,
+                    &surface,
                     params.approximation_samples,
                     params.approximation_samples,
                 );
-                result.geom.surfaces[idx] = rcad_kernel::geom::Surface3::BSpline(bspline);
-                conversion_count += 1;
+                if let TShape::Face(fd_mut) = Arc::make_mut(&mut result.tshapes[i]) {
+                    fd_mut.surface = Some(Surface3::BSpline(bspline));
+                    conversion_count += 1;
+                }
             }
         }
     }
@@ -1484,7 +1530,7 @@ fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -
 /// Splits BSpline surfaces at all interior knot lines.
 ///
 /// Returns (modified BRep, count of surfaces converted).
-fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> (BRep, usize) {
+fn surface_to_bezier_operator(brep: &rcad_kernel::BRep, params: &SurfaceToBezierOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::Surface3;
 
     let mut result = brep.clone();
@@ -1494,22 +1540,28 @@ fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> 
         return (result, 0);
     }
 
-    for (idx, surface) in brep.geom.surfaces.iter().enumerate() {
-        if let Surface3::BSpline(bspline) = surface {
-            // Split the BSpline into Bezier patches
-            let bezier_patches = split_bspline_to_bezier(bspline);
+    // Convert face BSpline surfaces to Bezier via tshape walk
+    for i in 0..result.tshapes.len() {
+        let surface_clone = {
+            let TShape::Face(fd) = &*result.tshapes[i] else { continue };
+            fd.surface.clone()
+        };
+        let Some(Surface3::BSpline(bspline)) = surface_clone else { continue };
 
-            if bezier_patches.len() == 1 {
-                // Single patch - just convert to Bezier
-                result.geom.surfaces[idx] = Surface3::Bezier(bezier_patches.into_iter().next().unwrap());
-            } else {
-                // Multiple patches - for now, keep the first one
-                // A full implementation would create new faces for each patch
-                if let Some(first) = bezier_patches.into_iter().next()
-                    && first.control_points.len() - 1 <= params.max_degree {
-                        result.geom.surfaces[idx] = Surface3::Bezier(first);
+        let bezier_patches = split_bspline_to_bezier(&bspline);
+
+        if bezier_patches.len() == 1 {
+            if let TShape::Face(fd_mut) = Arc::make_mut(&mut result.tshapes[i]) {
+                fd_mut.surface = Some(Surface3::Bezier(bezier_patches.into_iter().next().unwrap()));
+            }
+        } else {
+            if let Some(first) = bezier_patches.into_iter().next() {
+                if first.control_points.len() - 1 <= params.max_degree {
+                    if let TShape::Face(fd_mut) = Arc::make_mut(&mut result.tshapes[i]) {
+                        fd_mut.surface = Some(Surface3::Bezier(first));
                         conversion_count += 1;
                     }
+                }
             }
         }
     }
@@ -1555,7 +1607,7 @@ fn split_bspline_to_bezier(bspline: &BSplineSurface) -> std::collections::VecDeq
 /// Scales geometry and optionally tolerances.
 ///
 /// Returns (modified BRep, count of entities modified).
-fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usize) {
+fn scale_shape_operator(brep: &rcad_kernel::BRep, params: &ScaleShapeOperator) -> (rcad_kernel::BRep, usize) {
     use glam::DAffine3;
 
     // Check for identity scaling
@@ -1584,24 +1636,27 @@ fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usiz
     result.apply_transform(transform);
 
     // Scale tolerances if requested
-    let modification_count = brep.vertices.len() + brep.edges.len();
+    let modification_count = result.vertex_count() + result.edge_count();
 
     if params.scale_tolerances {
         let scale_factor = params.scale_x.max(params.scale_y).max(params.scale_z);
 
-        // Scale vertex tolerances
-        for tol in &mut result.geom.vertex_tolerance {
-            *tol *= scale_factor;
-        }
-
-        // Scale edge tolerances
-        for tol in &mut result.geom.edge_tolerance {
-            *tol *= scale_factor;
-        }
-
-        // Scale face tolerances
-        for tol in &mut result.geom.face_tolerance {
-            *tol *= scale_factor;
+        // Scale tolerances on individual tshapes
+        for i in 0..result.tshapes.len() {
+            let needs_scale = match &*result.tshapes[i] {
+                TShape::Vertex(vd) => (vd.tolerance - 0.0).abs() > TOLERANCE_LEN_MIN,
+                TShape::Edge(ed) => (ed.tolerance - 0.0).abs() > TOLERANCE_LEN_MIN,
+                TShape::Face(fd) => (fd.tolerance - 0.0).abs() > TOLERANCE_LEN_MIN,
+                _ => false,
+            };
+            if needs_scale {
+                match Arc::make_mut(&mut result.tshapes[i]) {
+                    TShape::Vertex(vd) => vd.tolerance *= scale_factor,
+                    TShape::Edge(ed) => ed.tolerance *= scale_factor,
+                    TShape::Face(fd) => fd.tolerance *= scale_factor,
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -1615,7 +1670,7 @@ fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usiz
 /// by correcting face orientations.
 ///
 /// Returns (modified BRep, count of faces fixed).
-fn direct_faces_operator(brep: &BRep, params: &DirectFacesOperator) -> (BRep, usize) {
+fn direct_faces_operator(brep: &rcad_kernel::BRep, params: &DirectFacesOperator) -> (rcad_kernel::BRep, usize) {
     use crate::brep_repair::recompute_face_normals;
 
     let mut result = brep.clone();
@@ -1628,52 +1683,77 @@ fn direct_faces_operator(brep: &BRep, params: &DirectFacesOperator) -> (BRep, us
         faces_fixed += normals_fixed;
     }
 
-    // Step 2: Check and fix face orientation consistency
-    // A face is "indirect" if its normal points inward when it should point outward
-    // or vice versa. We detect this by checking if the face normal aligns with
-    // the expected shell orientation.
-    for solid in &mut result.solids {
-        for shell in &mut solid.shells {
-            // Determine expected shell orientation from existing faces
+    // Step 2: Collect shell-level orientation info before any mutation
+    struct ShellFix {
+        shell_sr: ShapeRef,
+        faces_to_flip: Vec<(ShapeRef, ShapeRef)>, // (face_sr, outer_wire_sr)
+    }
+
+    let mut shell_fixes: Vec<ShellFix> = Vec::new();
+
+    let solid_indices: Vec<usize> = (0..result.tshapes.len())
+        .filter(|&i| matches!(&*result.tshapes[i], TShape::Solid(_)))
+        .collect();
+
+    for si in solid_indices {
+        let shell_refs = {
+            let TShape::Solid(sd) = &*result.tshapes[si] else { continue; };
+            sd.shells.clone()
+        };
+
+        for shell_sr in &shell_refs {
+            let face_refs = {
+                let TShape::Shell(shd) = &*result.tshapes[shell_sr.index] else { continue; };
+                shd.faces.clone()
+            };
+
+            // Determine expected shell orientation from face normals
             let mut consistent_normals = 0usize;
             let mut inconsistent_normals = 0usize;
+            let mut potential_faces: Vec<(ShapeRef, ShapeRef)> = Vec::new();
 
-            for face in &shell.faces {
-                // Check if normal is pointing outward (positive dot with center-to-centroid)
-                if face.normal.length() > 0.5 {
+            for face_sr in &face_refs {
+                let TShape::Face(fd) = &*result.tshapes[face_sr.index] else { continue; };
+                let normal = fd.surface.as_ref()
+                    .map(|s| rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
+                    .unwrap_or(DVec3::ZERO);
+
+                if normal.length() > 0.5 {
                     consistent_normals += 1;
-                } else if face.normal.length() < 0.5 && !face.normal.abs_diff_eq(DVec3::ZERO, 0.1) {
+                } else if normal.length() < 0.5 && !normal.abs_diff_eq(DVec3::ZERO, 0.1) {
                     inconsistent_normals += 1;
+                    potential_faces.push((*face_sr, fd.outer_wire));
                 }
             }
 
-            // If most normals are inconsistent, we may have indirect faces
             if inconsistent_normals > consistent_normals && inconsistent_normals > 0 {
-                // Flip orientations of inconsistent faces
-                for face in &mut shell.faces {
-                    if face.normal.length() < 0.5 && !face.normal.abs_diff_eq(DVec3::ZERO, 0.1) {
-                        face.normal = -face.normal;
-                        faces_fixed += 1;
+                shell_fixes.push(ShellFix { shell_sr: *shell_sr, faces_to_flip: potential_faces });
+                faces_fixed += shell_fixes.last().map_or(0, |f| f.faces_to_flip.len());
+            }
+        }
+    }
 
-                        // Also flip wire orientation if requested
-                        if params.fix_wire_orientation {
-                            face.outer_wire.edges.reverse();
-                            for we in &mut face.outer_wire.edges {
-                                we.forward = !we.forward;
-                            }
-                        }
+    // Step 3: Apply wire orientation fixes (no borrow conflicts with pre-collected data)
+    if params.fix_wire_orientation {
+        for fix in &shell_fixes {
+            for (_face_sr, wire_sr) in &fix.faces_to_flip {
+                if let TShape::Wire(wd_mut) = Arc::make_mut(&mut result.tshapes[wire_sr.index]) {
+                    wd_mut.edges.reverse();
+                    for esr in &mut wd_mut.edges {
+                        esr.orientation = match esr.orientation {
+                            Orientation::Forward => Orientation::Reversed,
+                            Orientation::Reversed => Orientation::Forward,
+                            other => other,
+                        };
                     }
                 }
             }
         }
     }
 
-    // Step 3: Update surface references if requested
+    // Step 4: Surface references (placeholder)
     if params.update_surface_references {
-        // Ensure surface orientation flags are consistent with face orientations
-        // This is a simplified implementation; full implementation would need
-        // to check surface geometry and adjust accordingly
-        let _ = &result.geom; // Placeholder for surface reference updates
+        let _ = &result;
     }
 
     (result, faces_fixed)
@@ -1685,18 +1765,23 @@ fn direct_faces_operator(brep: &BRep, params: &DirectFacesOperator) -> (BRep, us
 /// Uses the existing `fix_same_parameter_with_scan` function with configurable options.
 ///
 /// Returns (modified BRep, count of edges fixed).
-fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep, usize) {
+fn same_parameter_operator(brep: &rcad_kernel::BRep, params: &SameParameterOperator) -> (rcad_kernel::BRep, usize) {
     // Use the existing implementation with the specified tolerance
     let (result, fixed_count) = fix_same_parameter_with_scan(brep, params.tolerance);
 
     // If enforcing, run additional pass on edges that might have been missed
-    
-
     if params.enforce {
         let mut enforced = result.clone();
-        // Mark all edges as needing SameParameter check
-        enforced.geom.edge_same_parameter.clear();
-        enforced.geom.edge_same_parameter.resize(enforced.edges.len(), false);
+        // Reset same_parameter flag on all edges to force re-check
+        for i in 0..enforced.tshapes.len() {
+            if let TShape::Edge(ed) = &*enforced.tshapes[i] {
+                if ed.same_parameter {
+                    if let TShape::Edge(ed_mut) = Arc::make_mut(&mut enforced.tshapes[i]) {
+                        ed_mut.same_parameter = false;
+                    }
+                }
+            }
+        }
         let (final_result, additional_fixed) = fix_same_parameter_with_scan(&enforced, params.tolerance);
         (final_result, fixed_count + additional_fixed)
     } else {
@@ -1710,7 +1795,7 @@ fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep
 /// keeping only the outer boundary faces.
 ///
 /// Returns (modified BRep, count of faces removed).
-fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOperator) -> (BRep, usize) {
+fn remove_internal_faces_operator(brep: &rcad_kernel::BRep, params: &RemoveInternalFacesOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::BRepGraph;
 
     let mut result = brep.clone();
@@ -1719,38 +1804,42 @@ fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOpera
     // Build a topology graph to analyze face connectivity
     let _graph = BRepGraph::from_brep(&result);
 
-    // Identify candidate internal faces
-    // An internal face typically:
-    // 1. Has all edges shared by exactly 2 faces in the same shell
-    // 2. Does not contribute to the outer boundary
-    // 3. Has both sides pointing to the same material
+    // Identify candidate internal faces via tshape walk
+    let solid_indices: Vec<usize> = (0..result.tshapes.len())
+        .filter(|&i| matches!(&*result.tshapes[i], TShape::Solid(_)))
+        .collect();
 
-    for solid_idx in 0..result.solids.len() {
-        let faces_to_remove = identify_internal_faces(&result, solid_idx, params);
+    for si in solid_indices {
+        let shell_refs = {
+            let TShape::Solid(sd) = &*result.tshapes[si] else { continue; };
+            sd.shells.clone()
+        };
 
-        if faces_to_remove.is_empty() {
-            continue;
-        }
+        for shell_sr in &shell_refs {
+            let (face_refs, original_len) = {
+                let TShape::Shell(shd) = &*result.tshapes[shell_sr.index] else { continue; };
+                (shd.faces.clone(), shd.faces.len())
+            };
 
-        // Remove the internal faces
-        let solid = &mut result.solids[solid_idx];
-        for shell in &mut solid.shells {
-            let original_len = shell.faces.len();
+            let faces_to_remove = identify_internal_faces_in_shell(&result, &face_refs, params);
+
+            if faces_to_remove.is_empty() {
+                continue;
+            }
+
             let mut kept_faces = Vec::new();
-
-            for (face_idx, face) in shell.faces.iter().enumerate() {
-                if !faces_to_remove.contains(&face_idx) {
-                    kept_faces.push(face.clone());
+            for (fi, face_sr) in face_refs.iter().enumerate() {
+                if !faces_to_remove.contains(&fi) {
+                    kept_faces.push(*face_sr);
                 } else {
                     total_removed += 1;
                 }
             }
 
-            shell.faces = kept_faces;
-
-            // Update geometry references if needed
-            if shell.faces.len() < original_len {
-                // Geometry cleanup would go here
+            if kept_faces.len() < original_len {
+                if let TShape::Shell(shd_mut) = Arc::make_mut(&mut result.tshapes[shell_sr.index]) {
+                    shd_mut.faces = kept_faces;
+                }
             }
         }
     }
@@ -1764,70 +1853,71 @@ fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOpera
     (result, total_removed)
 }
 
-/// Identify internal faces in a solid.
-fn identify_internal_faces(brep: &BRep, solid_idx: usize, params: &RemoveInternalFacesOperator) -> Vec<usize> {
+/// Identify internal faces within a single shell's face list.
+fn identify_internal_faces_in_shell(brep: &rcad_kernel::BRep, face_refs: &[ShapeRef], params: &RemoveInternalFacesOperator) -> Vec<usize> {
     let mut internal_faces = Vec::new();
 
-    let solid = match brep.solids.get(solid_idx) {
-        Some(s) => s,
-        None => return internal_faces,
-    };
+    for (face_idx, face_sr) in face_refs.iter().enumerate() {
+        let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
 
-    for (shell_idx, shell) in solid.shells.iter().enumerate() {
-        for (face_idx, face) in shell.faces.iter().enumerate() {
-            // Check 1: Face area
-            let area = estimate_face_area_from_wire(brep, &face.outer_wire);
-            if area < params.min_face_area {
-                // Small area face - candidate for removal
-                if !params.preserve_material_boundaries {
-                    internal_faces.push(face_idx);
-                }
+        // Check 1: Face area
+        let area = estimate_face_area_from_wire(brep, fd.outer_wire);
+        if area < params.min_face_area {
+            if !params.preserve_material_boundaries {
+                internal_faces.push(face_idx);
+            }
+            continue;
+        }
+
+        // Check 2: Edge analysis — faces with all edges shared by other faces are internal
+        let wd = match &*brep.tshapes[fd.outer_wire.index] {
+            TShape::Wire(w) => w,
+            _ => continue,
+        };
+
+        let mut shared_edge_count = 0usize;
+        let mut total_edges = 0usize;
+
+        for edge_sr in &wd.edges {
+            if edge_sr.index >= brep.tshapes.len() {
                 continue;
             }
+            if !matches!(&*brep.tshapes[edge_sr.index], TShape::Edge(_)) {
+                continue;
+            }
+            total_edges += 1;
 
-            // Check 2: Edge analysis
-            // Internal faces often have all their edges shared with other faces
-            // in the same shell with consistent orientation
-            let mut shared_edge_count = 0usize;
-            let mut total_edges = 0usize;
-
-            for we in &face.outer_wire.edges {
-                if we.idx >= brep.edges.len() {
+            // Count how many other faces share this edge
+            let mut face_count = 0usize;
+            for (other_fi, other_face_sr) in face_refs.iter().enumerate() {
+                if other_fi == face_idx {
                     continue;
                 }
-                total_edges += 1;
-
-                // Count how many other faces share this edge
-                let _edge = &brep.edges[we.idx];
-                let mut face_count = 0usize;
-
-                for (other_shell_idx, other_shell) in solid.shells.iter().enumerate() {
-                    for (other_face_idx, other_face) in other_shell.faces.iter().enumerate() {
-                        if shell_idx == other_shell_idx && face_idx == other_face_idx {
-                            continue;
-                        }
-                        for other_we in &other_face.outer_wire.edges {
-                            if other_we.idx == we.idx {
-                                face_count += 1;
-                            }
-                        }
+                let TShape::Face(other_fd) = &*brep.tshapes[other_face_sr.index] else { continue };
+                let other_wd = match &*brep.tshapes[other_fd.outer_wire.index] {
+                    TShape::Wire(w) => w,
+                    _ => continue,
+                };
+                for other_edge_sr in &other_wd.edges {
+                    if other_edge_sr.index == edge_sr.index {
+                        face_count += 1;
                     }
-                }
-
-                if face_count >= 1 {
-                    shared_edge_count += 1;
                 }
             }
 
-            // If all edges are shared with other faces, this might be internal
-            if total_edges > 0 && shared_edge_count == total_edges {
-                // Additional heuristic: check if face normal points "inward"
-                // This is a simplified check; full implementation would need
-                // proper material side analysis
-                if face.normal.length() > 0.1 {
-                    // For now, be conservative and not remove unless explicitly marked
-                    // This would need more sophisticated analysis for production use
-                }
+            if face_count >= 1 {
+                shared_edge_count += 1;
+            }
+        }
+
+        // If all edges are shared with other faces, this might be internal
+        if total_edges > 0 && shared_edge_count == total_edges {
+            // Additional heuristic: check face surface normal direction
+            let normal = fd.surface.as_ref()
+                .map(|s| rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
+                .unwrap_or(DVec3::ZERO);
+            if normal.length() > 0.1 {
+                // Conservative — proper material-side analysis needed
             }
         }
     }

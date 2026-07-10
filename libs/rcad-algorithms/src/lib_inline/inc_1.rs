@@ -1,4 +1,6 @@
 
+
+
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
 pub struct SimplifyOptions {
@@ -275,7 +277,7 @@ pub struct BooleanExecutionReport {
  /// Full face/edge/vertex history when [`BooleanOptions::include_history`] was enabled.
  ///
  /// Populated from the boolean builder **before** optional healing / simplify; if those change
- /// topology, indices may not match the final [`BRep`] (same caveat as derived label fields).
+ /// topology, indices may not match the final [`rcad_kernel::BRep`] (same caveat as derived label fields).
  pub boolean_history: Option<BooleanHistory>,
  /// Per-attempt diagnostics recorded by `boolean_op_robust`.
  pub robust_attempts: Vec<BooleanRobustAttemptReport>,
@@ -552,7 +554,7 @@ impl BooleanRobustOptions {
  /// Preset for **FEA-oriented** booleans: scale-aware fuzzy/glue, glue, healing,
  /// make-connected, and **bottom-up `propagate_tolerances`** enabled. Use with
  /// [`boolean_op_robust`] for mesh-friendly watertight recovery.
- pub fn for_fea(a: &BRep, b: &BRep) -> Self {
+ pub fn for_fea(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  let ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
  let glue = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
@@ -575,7 +577,7 @@ impl BooleanRobustOptions {
 
  /// Preset for **mechanical multi-scale** assemblies: relaxed starting fuzzy, wider retry
  /// ladder, and geometry-aware extreme-geometry escalation.
- pub fn for_mechanical_multiscale(a: &BRep, b: &BRep) -> Self {
+ pub fn for_mechanical_multiscale(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  let ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy = ctx.adaptive_linear(tolerance::ToleranceLevel::Relaxed);
  let glue = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
@@ -602,7 +604,7 @@ impl BooleanRobustOptions {
 ///
 /// Values below [`tolerance::TOLERANCE_ABS`] clamp up to that floor. Use this for diagnostics
 /// ([`BooleanExecutionReport::effective_fuzzy_tol`]) so reports match runtime behavior when
-/// [`BooleanOptions::fuzzy_tol`] is `0.0` (“default fuzzy”).
+/// [`BooleanOptions::fuzzy_tol`] is `0.0` (閳ユ竸efault fuzzy閳?.
 #[inline]
 pub fn resolved_boolean_fuzzy_tol_for_ds(configured_fuzzy: f64) -> f64 {
  configured_fuzzy.max(tolerance::TOLERANCE_ABS)
@@ -615,8 +617,8 @@ pub fn resolved_boolean_fuzzy_tol_for_ds(configured_fuzzy: f64) -> f64 {
 /// same linear floor as glue / make-connected and [`resolved_boolean_fuzzy_tol_for_ds`], avoiding
 /// repair passes that stay tighter than the pave / fuzzy context.
 ///
-/// Idempotent (`max`). Call at binary boolean entry whenever both [`BRep`] operands are known.
-fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a: &BRep, b: &BRep) {
+/// Idempotent (`max`). Call at binary boolean entry whenever both [`rcad_kernel::BRep`] operands are known.
+fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) {
  let base_ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy_user = options.fuzzy_tol.max(0.0);
  let ctx = tolerance::ToleranceContext::new(base_ctx.adaptive, fuzzy_user);
@@ -669,8 +671,8 @@ fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a
 /// through [`BooleanOptions`] (for example [`boolean_op_healed_with_options`] or split imprint steps).
 pub fn align_healing_options_with_boolean_operands(
  healing: &mut HealingOptions,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  fuzzy_tol: f64,
 ) {
  let mut bridge = BooleanOptions::default();
@@ -682,11 +684,11 @@ pub fn align_healing_options_with_boolean_operands(
 
 /// Like [`align_healing_options_with_boolean_operands`], but uses
 /// [`BooleanExecutionReport::configured_fuzzy_tol`] so post-boolean healing stays consistent
-/// with the attempt’s workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
+/// with the attempt閳ユ獨 workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
 pub fn align_healing_options_after_boolean_execution(
  healing: &mut HealingOptions,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  execution: &BooleanExecutionReport,
 ) {
  align_healing_options_with_boolean_operands(
@@ -1055,84 +1057,6 @@ fn tune_boolean_options_for_retry_class(
 
 /// Tune boolean options for a specific detailed failure class.
 ///
-/// This provides targeted recovery strategies based on the specific failure type,
-/// complementing the broader `tune_boolean_options_for_retry_class` function.
-pub fn tune_boolean_options_for_failure_class(
- options: &mut BooleanOptions,
- failure_class: BooleanFailureClass,
- retry_round: usize,
-) -> RecoveryStrategy {
- let base_tol = options
- .make_connected_tolerance
- .max(options.glue_tolerance)
- .max(tolerance::TOLERANCE_ABS);
-
- match failure_class {
- BooleanFailureClass::DegenerateTopology => {
- // Run MakeConnected cleanup with increased aggressiveness
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(5 + retry_round * 2);
- options.make_connected_tolerance = options
- .make_connected_tolerance
- .max(base_tol * (5.0 + retry_round as f64));
- options.make_connected_tolerance_growth = options
- .make_connected_tolerance_growth
- .max(2.0 + retry_round as f64);
-
- RecoveryStrategy::MakeConnectedCleanup
- }
- BooleanFailureClass::NumericalInstability => {
- // Increase fuzzy tolerance significantly
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 50.0 * (1.0 + retry_round as f64));
-
- RecoveryStrategy::IncreaseFuzzyTolerance
- }
- BooleanFailureClass::InvalidResult => {
- // Try different algorithm variant - enable glue and increase tolerances
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 20.0 * (1.0 + retry_round as f64));
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(4 + retry_round);
-
- RecoveryStrategy::AlgorithmVariant
- }
- BooleanFailureClass::IncompleteIntersection => {
- // Enable Glue mode for better intersection handling
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 10.0 * (1.0 + retry_round as f64));
-
- RecoveryStrategy::EnableGlueMode
- }
- BooleanFailureClass::SelfIntersection => {
- // Run MakeConnected cleanup with higher aggressiveness
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(6 + retry_round * 2);
- options.make_connected_tolerance = options
- .make_connected_tolerance
- .max(base_tol * (10.0 + retry_round as f64 * 5.0));
- options.make_connected_tolerance_growth = options
- .make_connected_tolerance_growth
- .max(3.0 + retry_round as f64);
-
- RecoveryStrategy::MakeConnectedCleanup
- }
- BooleanFailureClass::InvalidInput | BooleanFailureClass::Unknown => {
- // No recovery possible
- RecoveryStrategy::None
- }
- }
-}
-
 fn merge_make_connected_reports(
  mut initial: MakeConnectedReport,
  fallback: MakeConnectedReport,
@@ -1147,11 +1071,11 @@ fn merge_make_connected_reports(
 }
 
 fn run_make_connected_for_boolean_output(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  history: Option<&BooleanHistory>,
  options: &BooleanOptions,
  report: &mut BooleanExecutionReport,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  let global_fallback_tolerance = options
  .make_connected_tolerance
  .max(tolerance::TOLERANCE_ABS)
@@ -1220,10 +1144,11 @@ fn run_make_connected_for_boolean_output(
  report.make_connected_scope_seed_edge_labels =
  make_connected_seed_edge_labels(brep, &scope_seed_edges);
  report.make_connected_scope_seed_edges = scope_seed_edges;
- let seed_edge_coverage = if brep.edges.is_empty() {
+ let edge_count = brep.edge_count();
+ let seed_edge_coverage = if edge_count == 0 {
  0.0
  } else {
- report.make_connected_scope_seed_edges.len() as f64 / brep.edges.len() as f64
+ report.make_connected_scope_seed_edges.len() as f64 / edge_count as f64
  };
  report.make_connected_scope_seed_edge_coverage = Some(seed_edge_coverage);
  let mut seed_face_set = std::collections::BTreeSet::new();
@@ -1510,52 +1435,46 @@ impl std::fmt::Display for SplitterError {
 
 impl std::error::Error for SplitterError {}
 
-fn brep_shell_face_count(brep: &BRep) -> usize {
- brep.solids
- .iter()
- .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- .count()
+fn brep_shell_face_count(brep: &rcad_kernel::BRep) -> usize {
+ rcad_kernel::face_count(brep)
 }
 
-/// OCCT `BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
+/// OCCT `rcad_kernel::BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
 /// `box` definitions in `bopcut`). Match that without forcing every `DegenerateResult` from the
-/// builder to mean “empty”.
+/// builder to mean 閳ユ竼mpty閳?
 /// True when every face has geometry and every face surface is a plane (e.g. `make_box_brep` solids).
 ///
-/// Used to gate “planar zero-volume sliver ⇒ empty intersection” heuristics: operands that include
-/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume ≈ 0`; we must not
-/// collapse those to empty or OCCT sphere–box cases regress to `total_surface_area == 0`.
-fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
+/// Used to gate 閳ユ笡lanar zero-volume sliver 閳?empty intersection閳?heuristics: operands that include
+/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume 閳?0`; we must not
+/// collapse those to empty or OCCT sphere閳ユ彽ox cases regress to `total_surface_area == 0`.
+fn brep_is_pure_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  let nf = face_count_of(brep);
  if nf == 0 {
  return false;
  }
- if brep.geom.face_surface.len() != nf {
- return false;
- }
- for slot in &brep.geom.face_surface {
- let Some(si) = *slot else {
- return false;
- };
- match brep.geom.surfaces.get(si) {
- Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
+ // Check all face TShapes are planar surfaces
+ let mut planar_count = 0usize;
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(_)) => planar_count += 1,
  _ => return false,
  }
  }
- true
+ }
+ planar_count == nf
 }
 
-/// True when every face normal is (approximately) ±X, ±Y, or ±Z in world space.
+/// True when every face normal is (approximately) 鍗, 鍗, or 鍗 in world space.
 ///
 /// Gates post-intersection [`orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces`]:
 /// True when every face normal is (approximately) +/-X, +/-Y, or +/-Z in world space.
 /// Used to gate axis-aligned optimization: for two world-axis-aligned planar solids,
-/// **smaller** 2D bbox on a shared plane, but in nested **box∩box** the smaller patch is often the
-/// true external face and the larger one is the untrimmed remainder — yielding too-low
+/// **smaller** 2D bbox on a shared plane, but in nested **box閳倻ox** the smaller patch is often the
+/// true external face and the larger one is the untrimmed remainder 閳?yielding too-low
 /// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)
 /// still need the cleanup, so we only skip when **both** sides satisfy this predicate.
-fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
+fn brep_is_world_axis_aligned_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  let is_axis_unit = |n: glam::DVec3| -> bool {
  let n = n.normalize_or_zero();
  if n.length_squared() < tolerance::TOLERANCE_VEC_SQ_MIN {
@@ -1569,11 +1488,23 @@ fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
  if !brep_is_pure_plane_solid(brep) {
  return false;
  }
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- if !is_axis_unit(face.normal) {
+ // Walk all face TShapes via solid/shell/face hierarchy
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for face_sr in &shd.faces {
+ if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+ // Use surface normal from TFaceData
+ let normal = match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(p)) => p.normal,
+ _ => glam::DVec3::ZERO,
+ };
+ if !is_axis_unit(normal) {
  return false;
+ }
+ }
+ }
  }
  }
  }
@@ -1581,7 +1512,7 @@ fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
  true
 }
 
-fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
+fn boolean_difference_empty_coincident(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> bool {
  if brep_shell_face_count(a) != brep_shell_face_count(b) {
  return false;
  }
@@ -1596,19 +1527,21 @@ fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
  if (amin - bmin).length() > tol || (amax - bmax).length() > tol {
  return false;
  }
- // Bbox + face count is not sufficient — an inscribed rotated box shares
+ // Bbox + face count is not sufficient 閳?an inscribed rotated box shares
  // the same bbox as its container (e.g. bopcut_simple/F5).
  // Also check that vertex sets match (identical shapes have identical vertices).
- if a.vertices.len() != b.vertices.len() {
+ let a_vi = rcad_kernel::vertex_indices(a);
+ let b_vi = rcad_kernel::vertex_indices(b);
+ if a_vi.len() != b_vi.len() {
  return false;
  }
- let a_pts: Vec<glam::DVec3> = a.vertices.iter().map(|v| v.point).collect();
- let b_pts: Vec<glam::DVec3> = b.vertices.iter().map(|v| v.point).collect();
+ let a_pts: Vec<glam::DVec3> = a_vi.iter().filter_map(|&v| a.vertex_point(v)).collect();
+ let b_pts: Vec<glam::DVec3> = b_vi.iter().filter_map(|&v| b.vertex_point(v)).collect();
  a_pts.iter().all(|pa| b_pts.iter().any(|pb| (pa - pb).length() <= tol))
  && b_pts.iter().all(|pb| a_pts.iter().any(|pa| (pa - pb).length() <= tol))
 }
 
-fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep) -> bool {
+fn intersection_planar_sliver_should_be_empty(result: &rcad_kernel::BRep, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> bool {
  let nf = face_count_of(result);
  if nf == 0 {
  return true;
@@ -1626,19 +1559,18 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
  return false;
  }
 
- // Require one surface slot per face and all planes — `Iterator::all` on an empty iterator is
- // `true`, and skipping `None` slots could wrongly classify incomplete geom as “all planes”.
- if result.geom.face_surface.len() != nf {
- return false;
- }
- for slot in &result.geom.face_surface {
- let Some(si) = *slot else {
- return false;
- };
- match result.geom.surfaces.get(si) {
- Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
+ // Check all face TShapes are planar surfaces
+ let mut planar_count = 0usize;
+ for ts in &result.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(_)) => planar_count += 1,
  _ => return false,
  }
+ }
+ }
+ if planar_count != nf {
+ return false;
  }
  true
 }
@@ -1646,20 +1578,21 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
 /// Check if an intersection result is degenerate: all faces planar and
 /// all vertices co-planar (zero thickness), meaning the solids only touch
 /// at a face without volumetric overlap.
-fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
- let nf = result.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
+fn intersection_result_is_degenerate_sliver(result: &rcad_kernel::BRep) -> bool {
+ let nf = face_count_of(result);
  if nf == 0 { return false; }
- // All faces must be planar
- if result.geom.face_surface.len() < nf { return false; }
- for slot in result.geom.face_surface.iter().take(nf) {
- let Some(si) = *slot else { return false };
- match result.geom.surfaces.get(si) {
+ // All faces must be planar — check TFaceData surfaces
+ for ts in &result.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
  Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
  _ => return false,
  }
  }
+ }
  // Check all vertices are co-planar
- let verts: Vec<glam::DVec3> = result.vertices.iter().map(|v| v.point).collect();
+ let vi = rcad_kernel::vertex_indices(result);
+ let verts: Vec<glam::DVec3> = vi.iter().filter_map(|&v| result.vertex_point(v)).collect();
  if verts.len() < 3 { return false; }
  // Find first 3 non-collinear vertices to define a reference plane
  let mut ref_normal = glam::DVec3::ZERO;
@@ -1688,91 +1621,35 @@ fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
 /// matching [`boolean_op_pave_fill_build`].
 pub(crate) fn boolean_postprocess_pave_result(
  _op: BooleanOpType,
- _a: &BRep,
- _b: &BRep,
- result: BRep,
-) -> Result<BRep, BooleanError> {
- // rcad-specific post-processing removed: recompute_plane_surfaces, coplanar clipping,
- // redundant face removal, spurious face removal, and degenerate sliver detection.
+ _a: &rcad_kernel::BRep,
+ _b: &rcad_kernel::BRep,
+ result: rcad_kernel::BRep,
+) -> Result<rcad_kernel::BRep, BooleanError> {
  // OCCT does not perform any post-processing after the Builder.
- // If these were needed, the root cause is in the Builder/PaveFiller pipeline.
- if !result.solids.is_empty() && !result.solids[0].shells.is_empty() {
- eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
- if std::env::var("RCAD_DEBUG_RESULT_FACES").is_ok() {
- let mut flat_idx = 0usize;
- for solid in &result.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- let surf_name = result
- .geom
- .face_surface
- .get(flat_idx)
- .and_then(|entry| *entry)
- .and_then(|surface_idx| result.geom.surfaces.get(surface_idx))
- .map(|surface| match surface {
- rcad_kernel::geom::Surface3::Plane(_) => "Plane",
- rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
- rcad_kernel::geom::Surface3::Cone(_) => "Cone",
- rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
- rcad_kernel::geom::Surface3::Torus(_) => "Torus",
- rcad_kernel::geom::Surface3::BSpline(_) => "BSpline",
- _ => "Other",
- })
- .unwrap_or("None");
- let area = rcad_kernel::properties::face_surface_area(&result, face, flat_idx);
- let uv_range = result
- .geom
- .face_surface_range
- .get(flat_idx)
- .and_then(|entry| *entry)
- .map(|[u0, u1, v0, v1]| {
- format!(" uv=[{u0:.4},{u1:.4}]x[{v0:.4},{v1:.4}]")
- })
- .unwrap_or_default();
- let sample = face
- .sample_point
- .map(|p| format!(" sample=({:.4},{:.4},{:.4})", p.x, p.y, p.z))
- .unwrap_or_default();
- eprintln!(
- "[RESULT_FACE] face[{flat_idx}] surf={surf_name} area={area:.6} outer_edges={} inner_wires={} tris={}{}{}",
- face.outer_wire.edges.len(),
- face.inner_wires.len(),
- face.triangles.len(),
- uv_range,
- sample,
- );
- flat_idx += 1;
- }
- }
- }
- }
- }
  Ok(result)
 }
 
 /// Topods variant: no-op post-process, returns result as-is (debug logging removed).
-/// The old function only did debug logging — this variant skips it.
+/// The old function only did debug logging 閳?this variant skips it.
 pub(crate) fn boolean_postprocess_pave_result_topods(
- _op: BooleanOpType, _a: &BRep, _b: &BRep,
+ _op: BooleanOpType, _a: &rcad_kernel::BRep, _b: &rcad_kernel::BRep,
  result: topods::BRep,
 ) -> Result<topods::BRep, BooleanError> {
  Ok(result)
 }
 
-/// DS → [`pave_filler::PaveFiller`] → [`builder::BooleanBuilder`] → plane surface recompute.
+/// DS 閳?[`pave_filler::PaveFiller`] 閳?[`builder::BooleanBuilder`] 閳?plane surface recompute.
 ///
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
-/// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
+/// difference branches (e.g. cylinder 閳?loft frustum after `cone 閳?cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
-pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
  boolean_op_pave_fill_build(op, a, b)
 }
 
-pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
 
  let mut brep = rcad_kernel::topods::BRep::new();
@@ -1798,65 +1675,4 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (result, _history) = builder.build_with_history_topods()?;
  Ok(result)
-}
-///
-/// (removed try_fast_path macro — OCCT has no fast-path shortcuts)
-
-/// Convert cylinder sub-faces to per-face BSpline surfaces.
-///
-/// OCCT ref: ShapeCustom_ConvertToBSpline converts per-face surfaces from
-/// analytic to BSpline, then ShapeCustom_SweptToElementary detects planar strips.
-/// Merge duplicate edges: when two or more edges connect the same vertex pair
-/// (start, end), remap all face wire references to use a single canonical edge.
-/// (removed from main boolean pipeline — OCCT PostTreat does not do this)
-pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
- use std::collections::HashMap;
- use rcad_kernel::topology::WireEdge;
-
- if brep.edges.len() < 2 { return brep; }
-
- // ✅ OCCT :  + 。 , ( 
- // seam IC  ) (TopoDS_Edge  )。 。
- // OCCT: edge uniqueness is curve-based, not vertex-pair-based.
- let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
- let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
- for ei in 0..brep.edges.len() {
- if let Some(e) = brep.edges.get(ei) {
- let key = if e.start < e.end { (e.start, e.end) } else { (e.end, e.start) };
- let ci = brep.geom.edge_curve.get(ei).copied().flatten();
- if let Some(&existing) = canon.get(&key) {
- let cj = brep.geom.edge_curve.get(existing).copied().flatten();
- if ci == cj {
- remap[ei] = existing;
- }
- // else: different curves → keep as separate edge (OCCT unique)
- } else {
- canon.insert(key, ei);
- }
- }
- }
-
- // Remap wire edges in all faces (only once, no trimming).
- let mut changed = false;
- for solid in &mut brep.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- fn do_remap(edges: &mut [WireEdge], remap: &[usize], changed: &mut bool) {
- for we in edges.iter_mut() {
- let new = remap[we.idx];
- if new != we.idx { *changed = true; we.idx = new; }
- }
- }
- do_remap(&mut face.outer_wire.edges, &remap, &mut changed);
- for wire in &mut face.inner_wires {
- do_remap(&mut wire.edges, &remap, &mut changed);
- }
- }
- }
- }
-
- // No edge trimming needed (keeping all edges preserves vertex indices).
- // The remap ensures edges are SHARED between adjacent faces, which fixes
- // the 2× EDGE_CURVE count in the STEP output for PaveFiller results.
- brep
 }

@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::{
     DS, DSEdge, DSCurveRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
@@ -206,13 +206,13 @@ pub(crate) fn find_valid_range(
 ) -> Option<(f64, f64)> {
     use rcad_kernel::geom::CurveEval;
     // OCCT L184-187: range must be wider than PConfusion
-    if (t1 - t0).abs() < rcad_kernel::tolerance::P_CONFUSION { return None; }
+    if (t1 - t0).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
     // OCCT L191-199: aMaxPar for Epsilon computation
     let abs_max = t0.abs().max(t1.abs()).max(1.0);
     // OCCT L201-202: anEps = max(curve.Resolution(theTolE * 0.1), Epsilon(aMaxPar), Precision::PConfusion())
     let eps = curve_resolution(curve, (t0 + t1) * 0.5, theTolE * 0.1)
         .max(abs_max * f64::EPSILON)
-        .max(rcad_kernel::tolerance::P_CONFUSION);
+        .max(rcad_kernel::tolerance::CONFUSION);
 
     // OCCT L204-225: start point — infinite → pass through; otherwise findNearestValidPoint
     let first = if t0.is_infinite() { t0 } else {

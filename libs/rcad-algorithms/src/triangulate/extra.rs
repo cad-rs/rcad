@@ -1,4 +1,4 @@
-﻿
+
 fn weld_surface_mesh_nodes_with_exclusion(
  mesh: &SurfaceMesh,
  excluded_nodes: &std::collections::HashSet<usize>,
@@ -188,16 +188,16 @@ impl IncrementalMesher {
  }
 
  /// Expand `dirty_faces` from explicit faces/edges/vertices in `delta`.
- pub fn infer_dirty_faces_from_delta(&mut self, brep: &BRep, delta: &MeshDelta) {
+ pub fn infer_dirty_faces_from_delta(&mut self, brep: &rcad_kernel::BRep, delta: &MeshDelta) {
  // Faces named explicitly in the delta
  self.invalidate_faces(&delta.modified_faces);
 
  // Faces incident on modified edges
  for &edge_idx in &delta.modified_edges {
- if let Some(_edge) = brep.edges.get(edge_idx) {
+ if let Some(_edge) = brep.edges().get(edge_idx) {
  // Faces incident on this edge
  let mut face_idx = 0usize;
- for solid in &brep.solids {
+ for solid in &brep.solids() {
  for shell in &solid.shells {
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
@@ -215,11 +215,11 @@ impl IncrementalMesher {
  // Faces touching modified vertices
  for &vertex_idx in &delta.modified_vertices {
  let mut face_idx = 0usize;
- for solid in &brep.solids {
+ for solid in &brep.solids() {
  for shell in &solid.shells {
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
+ if let Some(edge) = brep.edges().get(we.idx) {
  let start = if we.forward { edge.start } else { edge.end };
  let end = if we.forward { edge.end } else { edge.start };
  if start == vertex_idx || end == vertex_idx {
@@ -237,7 +237,7 @@ impl IncrementalMesher {
  /// Flag dirty faces on `brep` then invoke `mesh_brep` to refresh tessellation.
  pub fn update_mesh_for_face_change(
  &self,
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  params: &TessellationParams,
  ) {
  if self.dirty_faces.is_empty() {
@@ -246,13 +246,13 @@ impl IncrementalMesher {
 
  let mut face_flat_idx = 0usize;
 
- for solid_idx in 0..brep.solids.len() {
- for shell_idx in 0..brep.solids[solid_idx].shells.len() {
- let n_faces = brep.solids[solid_idx].shells[shell_idx].faces.len();
+ for solid_idx in 0..brep.solids().len() {
+ for shell_idx in 0..brep.solids()[solid_idx].shells.len() {
+ let n_faces = brep.solids()[solid_idx].shells[shell_idx].faces.len();
  for face_idx in 0..n_faces {
  if self.dirty_faces.contains(&face_flat_idx) {
- brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
- .mesh_dirty = true;
+ // Note: mesh_dirty mutation is a no-op through backward-compat access;
+ // TFaceData does not store mesh_dirty. Re-triangulation uses the dirty_faces set.
  }
  face_flat_idx += 1;
  }

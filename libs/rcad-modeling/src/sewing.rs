@@ -8,11 +8,11 @@
 //!    a single pool, reindexing everything.
 //! 2. **Vertex merging** (union-find): vertices within `tolerance` of each
 //!    other are merged **only when they originate from different input BReps**.
-//!    Same-shell vertices are never merged even if duplicated numerically 閳?this
+//!    Same-shell vertices are never merged even if duplicated numerically — this
 //!    avoids collapsing quad corners when stitching independent shells (`RCAD ZP3`).
 //! 3. **Edge matching**: after vertex merging, edges that share both endpoint
 //!    vertices (in either orientation) and originated from different input
-//!    BReps are considered "stitched" 閳?they represent the same boundary edge.
+//!    BReps are considered "stitched" — they represent the same boundary edge.
 //!    Duplicate edges are removed and wire references updated; when the merged
 //!    duplicate uses the opposite `(start,end)` order from the canonical edge,
 //!    [`WireEdge.forward`] is toggled so loops remain consistently oriented.
@@ -20,24 +20,26 @@
 //!    Free edges (with only one incident face) are reported.
 //!
 //! # Limitations
-//! - GeomStore data (surfaces + face_surface), concatenated per input shell; PCurves / edge_pcurves are not merged.
+//! - Surfaces are not preserved from input faces (flat-index intermediate model).
 //! - Only the outer wire of each face is considered during edge matching
 //!   (inner wires are preserved as-is, with reindexed edge refs).
 
+use glam::DVec3;
 use rcad_kernel::{
-    BRep, topods,
-    topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
+    topods,
+    topods::{TShape, Orientation},
+    topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
 
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 // Public types
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Result returned by [`sew_shells`].
 #[derive(Debug)]
 pub struct SewingResult {
     /// The merged BRep containing all input faces in a single shell.
-    pub brep: BRep,
+    pub brep: topods::BRep,
     /// Number of edge pairs that were stitched (shared boundary resolved).
     pub stitched_pairs: usize,
     /// Indices of edges in the result BRep that have only one incident face
@@ -45,38 +47,36 @@ pub struct SewingResult {
     pub free_edges: Vec<usize>,
 }
 
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 // Public API
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Merge multiple BReps into a single BRep, stitching near-coincident edges.
 ///
 /// # Arguments
-/// * `breps` 閳?slice of BReps to merge (must have at least one solid).
-/// * `tolerance` 閳?vertex proximity threshold for merging.
+/// * `breps` — slice of BReps to merge (must have at least one solid).
+/// * `tolerance` — vertex proximity threshold for merging.
 ///
 /// # Examples
 /// ```rust
-/// use rcad_kernel::{BRep, geom::PrimitiveSolid};
+/// use rcad_kernel::topods;
 /// use rcad_modeling::sew_shells;
 ///
-/// // Two adjacent unit boxes sharing the x=1 face
-/// let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// // (In practice you'd translate b so it sits adjacent to a)
+/// let (a, _) = topods::BRep::build_unit_cube();
+/// let (b, _) = topods::BRep::build_unit_cube();
 /// let result = sew_shells(&[a, b], 1e-6);
-/// assert!(result.brep.solids.len() == 1);
+/// assert!(result.brep.has_solids());
 /// ```
-pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
+pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
     if breps.is_empty() {
         return SewingResult {
-            brep: BRep::new(),
+            brep: topods::BRep::new(),
             stitched_pairs: 0,
             free_edges: Vec::new(),
         };
     }
 
-    // 閳光偓閳光偓 Step 1: concatenate everything 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // ── Step 1: concatenate everything ────────────────────────────────────
 
     let mut all_vertices: Vec<Vertex> = Vec::new();
     let mut all_edges: Vec<Edge> = Vec::new();
@@ -88,52 +88,99 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     // Which input shell (`breps` index) each concatenated vertex came from.
     let mut vertex_src_brep: Vec<usize> = Vec::new();
 
+    // Reusable mapping buffers for each input brep
+    let mut ts_to_flat_v: Vec<usize> = Vec::new();
+    let mut ts_to_flat_e: Vec<usize> = Vec::new();
+
     for (bi, brep) in breps.iter().enumerate() {
         let v_off = all_vertices.len();
         let e_off = all_edges.len();
         vertex_offsets.push(v_off);
         edge_offsets.push(e_off);
 
+        // Build tshape-index → flat-vertex-index map for this input BRep.
+        // Flat vertex indices include the running offset so edges can use
+        // the value directly.
+        ts_to_flat_v.clear();
+        ts_to_flat_v.resize(brep.tshapes.len(), usize::MAX);
+        {
+            let mut vi = 0usize;
+            for (tsi, ts) in brep.tshapes.iter().enumerate() {
+                if let TShape::Vertex(_) = &**ts {
+                    ts_to_flat_v[tsi] = v_off + vi;
+                    vi += 1;
+                }
+            }
+        }
+
+        // Build tshape-index → flat-edge-index map (also offset).
+        ts_to_flat_e.clear();
+        ts_to_flat_e.resize(brep.tshapes.len(), usize::MAX);
+        {
+            let mut ei = 0usize;
+            for (tsi, ts) in brep.tshapes.iter().enumerate() {
+                if let TShape::Edge(_) = &**ts {
+                    ts_to_flat_e[tsi] = e_off + ei;
+                    ei += 1;
+                }
+            }
+        }
+
         // Vertices
-        all_vertices.extend(brep.vertices.iter().cloned());
-        vertex_src_brep.extend(std::iter::repeat(bi).take(brep.vertices.len()));
+        for ts in &brep.tshapes {
+            if let TShape::Vertex(vd) = &**ts {
+                all_vertices.push(Vertex { point: vd.point });
+                vertex_src_brep.push(bi);
+            }
+        }
 
         // Edges (reindexed)
-        for e in &brep.edges {
-            all_edges.push(Edge {
-                start: e.start + v_off,
-                end: e.end + v_off,
-            });
+        for ts in &brep.tshapes {
+            if let TShape::Edge(ed) = &**ts {
+                all_edges.push(Edge {
+                    start: ts_to_flat_v[ed.first.index],
+                    end: ts_to_flat_v[ed.last.index],
+                });
+            }
         }
 
         // Faces (reindex edge refs in wires)
-        if let Some(solid) = brep.solids.first() {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    let reindex_wire = |w: &Wire| -> Wire {
+        let solid_ref = brep.tshapes.iter().enumerate().find_map(|(i, ts)| {
+            if matches!(&**ts, TShape::Solid(_)) {
+                Some(topods::ShapeRef::synthetic(i))
+            } else {
+                None
+            }
+        });
+        if let Some(sr) = solid_ref {
+            let sd = brep.solid(sr);
+            for &shell_sr in &sd.shells {
+                let shd = brep.shell(shell_sr);
+                for &face_sr in &shd.faces {
+                    let fd = brep.face(face_sr);
+
+                    let reindex_wire = |w_sr: topods::ShapeRef| -> Wire {
+                        let wd = brep.wire(w_sr);
                         Wire {
-                            edges: w
+                            edges: wd
                                 .edges
                                 .iter()
                                 .map(|we| WireEdge {
-                                    idx: we.idx + e_off,
-                                    forward: we.forward,
+                                    idx: ts_to_flat_e[we.index],
+                                    forward: we.orientation == Orientation::Forward,
                                 })
                                 .collect(),
                         }
                     };
+
                     all_faces.push(Face {
-                        outer_wire: reindex_wire(&face.outer_wire),
-                        inner_wires: face.inner_wires.iter().map(reindex_wire).collect(),
-                        normal: face.normal,
-                        triangles: face
-                            .triangles
-                            .iter()
-                            .map(|tri| [tri[0] + v_off, tri[1] + v_off, tri[2] + v_off])
-                            .collect(),
-                        sample_point: face.sample_point,
-                        mesh_dirty: face.mesh_dirty,
-                surface_idx: None,
+                        outer_wire: reindex_wire(fd.outer_wire),
+                        inner_wires: fd.inner_wires.iter().map(|&w| reindex_wire(w)).collect(),
+                        normal: DVec3::ZERO,
+                        triangles: Vec::new(),
+                        sample_point: fd.sample_point,
+                        mesh_dirty: true,
+                        surface_idx: None,
                     });
                 }
             }
@@ -143,7 +190,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     let n_verts = all_vertices.len();
     let n_edges = all_edges.len();
 
-    // 閳光偓閳光偓 Step 2: union-find vertex merge 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // ── Step 2: union-find vertex merge ───────────────────────────────────
 
     let mut parent: Vec<usize> = (0..n_verts).collect();
 
@@ -175,7 +222,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // Build canonical index map: old index 閳?canonical representative
+    // Build canonical index map: old index → canonical representative
     let canon: Vec<usize> = (0..n_verts).map(|i| find(&mut parent, i)).collect();
 
     // Remap edge endpoints
@@ -184,13 +231,13 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         e.end = canon[e.end];
     }
 
-    // 閳光偓閳光偓 Step 3: edge deduplication 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-    // Build a map from (min_v, max_v) 閳?first edge index.
+    // ── Step 3: edge deduplication ─────────────────────────────────────────
+    // Build a map from (min_v, max_v) → first edge index.
     // For each duplicate, record the pair (kept, duplicate) as stitched.
 
     use std::collections::HashMap;
     let mut edge_key_to_idx: HashMap<(usize, usize), usize> = HashMap::new();
-    // Maps old edge index 閳?canonical edge index (for dedup)
+    // Maps old edge index → canonical edge index (for dedup)
     let mut edge_canon: Vec<usize> = (0..n_edges).collect();
     let mut stitched_pairs = 0usize;
 
@@ -198,7 +245,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         let e = &all_edges[i];
         let key = (e.start.min(e.end), e.start.max(e.end));
         if let Some(&existing) = edge_key_to_idx.get(&key) {
-            // This edge is a duplicate of `existing` 閳?stitch
+            // This edge is a duplicate of `existing` — stitch
             edge_canon[i] = existing;
             stitched_pairs += 1;
         } else {
@@ -238,7 +285,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // 閳光偓閳光偓 Step 4: build result BRep 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // ── Step 4: build result BRep using topods builder ─────────────────────
 
     // Compact edges: keep only canonical ones
     let kept_edges: Vec<Edge> = (0..n_edges)
@@ -246,7 +293,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         .map(|i| all_edges[i])
         .collect();
 
-    // Remap edge indices: old canonical 閳?compacted index
+    // Remap edge indices: old canonical → compacted index
     let mut compact_edge_idx: Vec<usize> = vec![0; n_edges];
     {
         let mut ci = 0;
@@ -272,14 +319,12 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     }
 
     // Compact vertices (keep canonical representatives, renumber)
-    // Build set of canonical vertex indices and map to compact indices
     let mut seen_verts: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &c in &canon {
         seen_verts.insert(c);
     }
     let mut canon_to_compact: Vec<usize> = vec![0; n_verts];
     let mut compact_vertices: Vec<Vertex> = Vec::new();
-    // Iterate in original order so compaction is deterministic
     for i in 0..n_verts {
         if canon[i] == i {
             canon_to_compact[i] = compact_vertices.len();
@@ -294,7 +339,8 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         e.end = canon_to_compact[e.end];
     }
 
-    // Remap face triangles to compacted vertices
+    // Remap face triangles to compacted vertices (triangles are empty in the
+    // new pipeline but the field exists on topology::Face).
     for face in &mut all_faces {
         for tri in &mut face.triangles {
             tri[0] = canon_to_compact[canon[tri[0]]];
@@ -303,7 +349,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // 閳光偓閳光偓 Step 5: find free edges 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // ── Step 5: find free edges ───────────────────────────────────────────
 
     let n_compact_edges = compact_edges.len();
     let mut edge_face_count: Vec<usize> = vec![0; n_compact_edges];
@@ -325,86 +371,86 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         .filter(|&i| edge_face_count[i] == 1)
         .collect();
 
-    // 閳光偓閳光偓 Step 6: assemble GeomStore (simple concatenation) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // ── Step 6: build topods::BRep result ─────────────────────────────────
 
-    let mut geom = rcad_kernel::GeomStore::default();
-    let mut face_offset = 0usize;
+    let mut result = topods::BRep::new();
 
-    for brep in breps {
-        let surf_off = geom.surfaces.len();
-        geom.surfaces.extend(brep.geom.surfaces.iter().cloned());
-
-        let n_faces_this = brep
-            .solids
-            .first()
-            .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
-            .unwrap_or(0);
-
-        // face_surface mapping (offset surface indices)
-        for fi in 0..n_faces_this {
-            let mapped = brep
-                .geom
-                .face_surface
-                .get(fi)
-                .and_then(|o| *o)
-                .map(|idx| idx + surf_off);
-            while geom.face_surface.len() < face_offset + fi + 1 {
-                geom.face_surface.push(None);
-            }
-            geom.face_surface[face_offset + fi] = mapped;
-        }
-
-        // face_surface_range
-        for fi in 0..n_faces_this {
-            let range = brep.geom.face_surface_range.get(fi).and_then(|o| *o);
-            while geom.face_surface_range.len() < face_offset + fi + 1 {
-                geom.face_surface_range.push(None);
-            }
-            geom.face_surface_range[face_offset + fi] = range;
-        }
-
-        face_offset += n_faces_this;
+    // Add all vertices, build flat-index → ShapeRef map
+    let mut vert_refs: Vec<topods::ShapeRef> = Vec::with_capacity(compact_vertices.len());
+    for v in &compact_vertices {
+        vert_refs.push(result.add_tvertex(v.point));
     }
 
-    let shell = Shell { faces: all_faces };
-    let solid = Solid {
-        shells: vec![shell],
-    };
-    let result_brep = BRep {
-        vertices: compact_vertices,
-        edges: compact_edges,
-        solids: vec![solid],
-        geom,
-        compound: None,
-        compsolid: None,
-    };
+    // Add all edges
+    let mut edge_refs: Vec<topods::ShapeRef> = Vec::with_capacity(compact_edges.len());
+    for e in &compact_edges {
+        let first = vert_refs[e.start];
+        let last = vert_refs[e.end];
+        edge_refs.push(result.add_tedge(None, first, last, [0.0, 1.0]));
+    }
+
+    // Add all faces (build wires, then faces)
+    let mut face_refs = Vec::with_capacity(all_faces.len());
+    for f in &all_faces {
+        let mut build_wire = |w: &Wire| -> topods::ShapeRef {
+            let edge_srs: Vec<topods::ShapeRef> = w
+                .edges
+                .iter()
+                .map(|we| {
+                    let orient = if we.forward {
+                        Orientation::Forward
+                    } else {
+                        Orientation::Reversed
+                    };
+                    topods::ShapeRef::synthetic_with_orientation(
+                        edge_refs[we.idx].index,
+                        orient,
+                    )
+                })
+                .collect();
+            result.add_twire(edge_srs)
+        };
+
+        let outer_wire_sr = build_wire(&f.outer_wire);
+        let inner_wire_refs: Vec<topods::ShapeRef> =
+            f.inner_wires.iter().map(build_wire).collect();
+
+        let face_sr = result.add_tface(
+            None,
+            outer_wire_sr,
+            inner_wire_refs,
+            f.sample_point,
+            None,
+            vec![],
+            false,
+        );
+        face_refs.push(face_sr);
+    }
+
+    // Add shell and solid
+    let shell_sr = result.add_tshell(face_refs);
+    result.add_tsolid(vec![shell_sr]);
 
     SewingResult {
-        brep: result_brep,
+        brep: result,
         stitched_pairs,
         free_edges,
     }
 }
 
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::PrimitiveSolid;
 
     #[test]
     fn sew_single_brep_is_identity() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
+        let (brep, _root) = topods::BRep::build_unit_cube();
         let result = sew_shells(std::slice::from_ref(&brep), 1e-6);
         assert_eq!(result.stitched_pairs, 0);
-        // All edges of a closed box should be non-free (each edge borders 2 faces)
         assert_eq!(
             result.free_edges.len(),
             0,
@@ -415,25 +461,9 @@ mod tests {
 
     #[test]
     fn sew_two_boxes_identifies_shared_face() {
-        // Box A: x 閳?[0,1], Box B: x 閳?[1,2] 閳?share the x=1 plane
-        // Both use from_primitive which places box at [0,w]鑴砙0,h]鑴砙0,d].
-        // Box B vertices at x=0..1 coincide with Box A vertices at x=1..2
-        // only if we offset B. Since from_primitive always starts at 0,
-        // the two boxes overlap at x=0 face and x=1 face.
-        // For a real sewing test, we use two boxes with coincident vertices.
-        let a = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        // Second box: same vertices as A (completely coincident) 閳?all edges stitched
-        let b = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
+        let (a, _) = topods::BRep::build_unit_cube();
+        let (b, _) = topods::BRep::build_unit_cube();
         let result = sew_shells(&[a, b], 1e-6);
-        // Completely overlapping boxes should stitch all edges
         assert!(
             result.stitched_pairs > 0,
             "expected stitched pairs for coincident boxes, got 0"
@@ -444,29 +474,10 @@ mod tests {
         );
     }
 
-/// Topods-native result for sewing operations.
-#[derive(Debug, Clone)]
-pub struct SewingResultTopods {
-    pub brep: topods::BRep,
-    pub stitched_pairs: usize,
-    pub free_edges: Vec<usize>,
-}
-
-/// Topods-native: merge multiple BReps into a single solid by stitching edges.
-pub fn sew_shells_topods(breps: &[topods::BRep], tolerance: f64) -> SewingResultTopods {
-    let old: Vec<BRep> = breps.iter().map(rcad_kernel::BRep::from_topods).collect();
-    let r = sew_shells(&old, tolerance);
-    SewingResultTopods {
-        brep: r.brep.to_topods(),
-        stitched_pairs: r.stitched_pairs,
-        free_edges: r.free_edges,
-    }
-}
-
-#[test]
-fn sew_empty_input() {
+    #[test]
+    fn sew_empty_input() {
         let result = sew_shells(&[], 1e-6);
         assert_eq!(result.stitched_pairs, 0);
-        assert!(result.brep.solids.is_empty());
+        assert!(!result.brep.has_solids());
     }
 }

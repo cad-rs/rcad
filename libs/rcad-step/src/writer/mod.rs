@@ -35,7 +35,7 @@ pub enum StepProtocol {
  /// ISO 10303-242 "Managed Model Based 3D Engineering".
  Ap242,
 }
-use self::flat::{BRep, Face};
+use self::flat::Face;
 use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, CurveEval, Surface3, topods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
@@ -2498,7 +2498,8 @@ impl Part21Writer {
  let vec = self.vector("pc_vec", dir, 1e-9);
  self.line("pcurve_line", p, vec)
  }
- Some(Curve2d::Parabola(_)) | Some(Curve2d::Hyperbola(_)) => {
+ Some(Curve2d::Parabola(_)) | Some(Curve2d::Hyperbola(_)) | Some(Curve2d::Offset(_))
+ | Some(Curve2d::AHTBezier(_)) | Some(Curve2d::TBezier(_)) => {
  let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
  let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
  let vec = self.vector("pc_vec", dir, 1e-9);

@@ -6,13 +6,17 @@ use glam::DVec2;
 use crate::tolerance::*;
 
 // Circle/curve tangent geometry (~850 lines)
-include!("tangent_inc.rs");
+pub mod tangent;
+pub use self::tangent::*;
 // 2D curve intersection (~75 lines)
-include!("intersect_inc.rs");
+pub mod intersect;
+pub use self::intersect::*;
 // BSpline2D creation (~55 lines)
-include!("bspline_inc.rs");
+pub mod bspline;
+pub use self::bspline::*;
 // Projection, distance, angle queries (~160 lines)
-include!("query_inc.rs");
+pub mod query;
+pub use self::query::*;
 // Internal helpers (~355 lines)
-include!("helpers_inc.rs");
+pub(crate) mod helpers;
 

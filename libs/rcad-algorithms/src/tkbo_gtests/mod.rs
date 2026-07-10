@@ -3,28 +3,28 @@
 //! OCCT source: src/ModelingAlgorithms/TKBO/GTests/
 //!
 //! Files translated in this module:
-//!   BRepAlgoAPI_BuilderAlgo_Test.cxx  — Non-copyability traits (C++ → Rust: trivially pass)
-//!   BOPAlgo_BOP_Test.cxx              — Direct and two-step BOP operations
-//!   BOPAlgo_PaveFiller_Test.cxx       — PaveFiller regression tests (degenerated edges)
-//!   IntTools_FaceFace_Test.cxx         — Face-face intersection
-//!   BRepAlgoAPI_Common_Test.cxx       — Common operation tests
+//!   rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx  鈥?Non-copyability traits (C++ 鈫?Rust: trivially pass)
+//!   BOPAlgo_BOP_Test.cxx              鈥?Direct and two-step BOP operations
+//!   BOPAlgo_PaveFiller_Test.cxx       鈥?PaveFiller regression tests (degenerated edges)
+//!   IntTools_FaceFace_Test.cxx         鈥?Face-face intersection
+//!   rcad_kernel::BRepAlgoAPI_Common_Test.cxx       鈥?Common operation tests
 //!
 //!
-//! NOTE: BRepAlgoAPI_Fuse_Test.cxx, BRepAlgoAPI_Cut_Test.cxx, and Cut_Test_1.cxx
+//! NOTE: rcad_kernel::BRepAlgoAPI_Fuse_Test.cxx, rcad_kernel::BRepAlgoAPI_Cut_Test.cxx, and Cut_Test_1.cxx
 //! (bfuse_simple / bcut_simple DRAW series) overlap with the existing
 //! DRAW-derived generated OCCT tests (tests/occt/tests/generated_occt_boolean_bfuse_simple.rs
-//! and generated_occt_boolean_bcut_simple.rs). Those test series are NOT re-translated
-//! here to avoid duplication.
+//! and generated_occt_boolean_bcut_simple.rs). Those test series are covered by
+//! the tkremaining_gtests module as stubs to avoid duplication.
 
 use glam::DVec3;
-use rcad_kernel::{surface_area, volume, BRep};
+use rcad_kernel::{surface_area, volume};
 use rcad_kernel::topods;
 
 const TOL: f64 = 1.0e-6;
 const SA_TOLERANCE: f64 = 5000.0;
 
 // =============================================================================
-// Helper utilities — BOPTest_Utilities equivalent
+// Helper utilities 鈥?BOPTest_Utilities equivalent
 // =============================================================================
 
 fn make_unit_box() -> topods::BRep {
@@ -57,19 +57,19 @@ fn make_cone(base_radius: f64, height: f64) -> topods::BRep {
         .expect("Cone creation failed")
 }
 
-fn is_empty(brep: &BRep) -> bool {
+fn is_empty(brep: &rcad_kernel::BRep) -> bool {
     surface_area(brep) <= TOL
 }
 
-fn get_surface_area(brep: &BRep) -> f64 {
+fn get_surface_area(brep: &rcad_kernel::BRep) -> f64 {
     surface_area(brep)
 }
 
-fn get_volume(brep: &BRep) -> f64 {
+fn get_volume(brep: &rcad_kernel::BRep) -> f64 {
     volume(brep)
 }
 
-fn validate_result(result: &BRep, expected_sa: f64, expected_vol: f64, expected_empty: bool) {
+fn validate_result(result: &rcad_kernel::BRep, expected_sa: f64, expected_vol: f64, expected_empty: bool) {
     if expected_empty {
         assert!(is_empty(result), "Result should be empty");
         return;
@@ -88,12 +88,12 @@ fn validate_result(result: &BRep, expected_sa: f64, expected_vol: f64, expected_
 }
 
 #[allow(dead_code)]
-fn validate_result_sa(result: &BRep, expected_sa: f64) {
+fn validate_result_sa(result: &rcad_kernel::BRep, expected_sa: f64) {
     validate_result(result, expected_sa, -1.0, false);
 }
 
 // =============================================================================
-// BRepAlgoAPI_BuilderAlgo_Test.cxx — C++ type traits
+// rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx 鈥?C++ type traits
 // =============================================================================
 
 #[cfg(test)]
@@ -115,7 +115,7 @@ mod builder_algo_tests {
 }
 
 // =============================================================================
-// BOPAlgo_BOP_Test.cxx — Direct and two-step BOP operations
+// BOPAlgo_BOP_Test.cxx 鈥?Direct and two-step BOP operations
 // =============================================================================
 
 #[cfg(test)]
@@ -123,22 +123,22 @@ mod bop_algo_direct_tests {
     use super::*;
     use crate::BooleanOpType;
 
-    fn perform_bop(a: &BRep, b: &BRep, op: BooleanOpType) -> BRep {
-        BRep::from_topods(&crate::boolean_op(op, a, b).expect("BOP operation failed"))
+    fn perform_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
+        crate::boolean_op(op, a, b).expect("BOP operation failed")
     }
 
     #[test]
     fn direct_cut_sphere_minus_box() {
-        let sphere_b = BRep::from_topods(&make_unit_sphere());
-        let box_b = BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
         let result = perform_bop(&sphere_b, &box_b, BooleanOpType::Difference);
         assert!(get_surface_area(&result) > 0.0);
     }
 
     #[test]
     fn direct_fuse_sphere_plus_box() {
-        let sphere_b = BRep::from_topods(&make_unit_sphere());
-        let box_b = BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
         let result = perform_bop(&sphere_b, &box_b, BooleanOpType::Union);
         let vol = get_volume(&result);
         assert!(vol > get_volume(&sphere_b));
@@ -147,35 +147,44 @@ mod bop_algo_direct_tests {
 
     #[test]
     fn direct_common_overlapping_boxes() {
-        let b1 = BRep::from_topods(&make_box(DVec3::ZERO, 2.0, 2.0, 2.0));
-        let b2 = BRep::from_topods(&make_box(DVec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0));
+        let b1 = (make_box(DVec3::ZERO, 2.0, 2.0, 2.0).clone());
+        let b2 = (make_box(DVec3::new(1.0, 1.0, 1.0).clone(), 2.0, 2.0, 2.0));
         let result = perform_bop(&b1, &b2, BooleanOpType::Intersection);
         validate_result(&result, -1.0, 1.0, false);
     }
 
     #[test]
     fn direct_tuc_identical_boxes() {
-        let b1 = BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
-        let b2 = BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
+        let b1 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
+        let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
         let result = perform_bop(&b2, &b1, BooleanOpType::Difference);
         validate_result(&result, -1.0, -1.0, true);
     }
 }
 
 // =============================================================================
-// BOPAlgo_PaveFiller_Test.cxx — Degenerated edge handling
+// BOPAlgo_PaveFiller_Test.cxx -- Degenerated edge handling
+//
+// Not yet translatable:
+//   - FuseConeLoftWithBox_DegeneratedEdge: requires loft (BRepOffsetAPI_ThruSections)
+//   - FuseTwoLofts_RobustnessCheck: requires loft
+//   - FuseConeWithRemovedPCurve_NullPCurveHandling: requires manual BRep_Builder
+//     manipulation (creating edges without pcurves)
 // =============================================================================
 
 #[cfg(test)]
 mod pave_filler_tests {
     use super::*;
 
+    /// OCCT: FuseConeWithBox_DegeneratedEdge
+    /// Cone (R1=10, R2=0, H=20) fused with box near apex.
+    /// Tests that degenerated edge at cone apex doesn't crash FillPaves().
     #[test]
     fn fuse_cone_with_box_degenerated_edge() {
         let cone = make_cone(10.0, 20.0);
         let box_ = make_box(DVec3::new(-5.0, -5.0, 15.0), 10.0, 10.0, 10.0);
-        let cone_b = BRep::from_topods(&cone);
-        let box_b = BRep::from_topods(&box_);
+        let cone_b = (cone).clone();
+        let box_b = (box_).clone();
 
         let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&cone_b, &box_b);
         assert!(fuser.build(), "Boolean fuse of cone and box should succeed");
@@ -184,8 +193,8 @@ mod pave_filler_tests {
 
     #[test]
     fn fuse_sphere_with_box() {
-        let sphere_b = BRep::from_topods(&make_unit_sphere());
-        let box_b = BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
 
         let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&sphere_b, &box_b);
         assert!(fuser.build(), "Boolean fuse should succeed");
@@ -194,12 +203,20 @@ mod pave_filler_tests {
 }
 
 // =============================================================================
-// IntTools_FaceFace_Test.cxx — Face-face intersection
+// IntTools_FaceFace_Test.cxx -- Face-face intersection
+//
+// Not yet translatable (require boundary-aware face-face intersection):
+//   - HalfCylinderOutsideCircularPlane_NoIntersection
+//   - HalfCylinderInsideCircularPlane_HasIntersection
+//   - OppositeHalfInsideCircle_HasIntersection
+//   - PartialCrossing_ProperlyTrimmed
+//   - BothHalvesCompletelyOutside_NoIntersection
 // =============================================================================
 
 #[cfg(test)]
 mod int_tools_face_face_tests {
     use super::*;
+    use crate::inttools::face_face::intersect_faces;
     use crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo;
     use crate::inttools::int_surf_quadric::Quadric;
 
@@ -244,10 +261,61 @@ mod int_tools_face_face_tests {
         qq.perform_plane_cylinder(&q_pl, &q_cyl, 1e-10, 1e-10, 10.0);
         assert!(qq.is_done(), "Cylinder-plane intersection should complete");
     }
+
+    /// OCCT: PerpendicularCylinderBoundaryTouch_OrderIndependent
+    /// Two perpendicular cylinders whose analytical intersection should not
+    /// depend on argument order (curve and point counts must match).
+    #[test]
+    fn cylinder_cylinder_order_independent() {
+        // Cylinder 1: axis Z, radius 2
+        let s1 = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 2.0,
+        });
+        // Cylinder 2: axis X, radius 0.5, offset to touch cylinder 1 at (0,2,0)
+        let s2 = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(0.0, 2.0, 0.0),
+            axis: DVec3::X,
+            ref_dir: DVec3::Y,
+            radius: 0.5,
+        });
+
+        let c12 = intersect_faces(&s1, &s2, 1e-7, 1e-7);
+        let c21 = intersect_faces(&s2, &s1, 1e-7, 1e-7);
+
+        assert_eq!(c12.len(), c21.len(),
+            "Intersection curve count should not depend on argument order: {} vs {}",
+            c12.len(), c21.len());
+    }
+
+    /// OCCT: OCC24005_PlaneCylinderIntersection
+    /// Slightly off-angle plane intersecting a cylinder.
+    /// Original OCCT regression test: must complete quickly (no hang) and
+    /// produce at least one intersection result.
+    #[test]
+    fn occ24005_plane_cylinder_intersection() {
+        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(-72.948737453424499, 754.30437716359393, 259.52151854671678),
+            normal: DVec3::new(6.2471473085930200e-007, -0.99999999999980493, 0.0).normalize(),
+        });
+        let cyl_s = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(-6.4812490053250649, 753.39408794522092, 279.16400974257465),
+            axis: DVec3::X,
+            ref_dir: DVec3::Y,
+            radius: 19.712534607908712,
+        });
+
+        let curves = intersect_faces(&plane_s, &cyl_s, 1e-7, 1e-7);
+
+        assert!(!curves.is_empty(),
+            "Expected at least one intersection curve for plane-cylinder");
+    }
 }
 
 // =============================================================================
-// BRepAlgoAPI_Common_Test.cxx
+// rcad_kernel::BRepAlgoAPI_Common_Test.cxx
 // =============================================================================
 
 #[cfg(test)]
@@ -256,11 +324,12 @@ mod bop_common_simple_tests {
 
     #[test]
     fn identical_boxes_a1() {
-        let b1 = BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
-        let b2 = BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
+        let b1 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
+        let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
 
         let mut common = crate::brep_algo_api::BRepAlgoAPI_Common::new(&b1, &b2);
         assert!(common.build(), "Common operation should succeed");
         assert!(get_surface_area(common.shape()) > 0.0);
     }
 }
+

@@ -1,16 +1,15 @@
-﻿//! Cylindrical BRep projection (OCCT `BRepProj_Projection` with `gp_Dir`).
+//! Cylindrical rcad_kernel::BRep projection (OCCT `rcad_kernel::BRepProj_Projection` with `gp_Dir`).
 //!
 //! Strategy (matches OCCT): translate the wire by `-mdis·D`, build a prism by extruding
-//! the polyline along `2·mdis·D`, then intersect that prism with the target shape’s
+//! the polyline along `2·mdis·D`, then intersect that prism with the target shape's
 //! triangle soup to obtain projected polylines as wires.
+
 
 use std::collections::HashSet;
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Line3};
-use rcad_kernel::topology::{Edge, Vertex};
-use rcad_kernel::BRep;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, TShape};
 
 use crate::brep_tools;
 use crate::section::{brep_triangle_soup, intersect_triangle_soups_eps};
@@ -28,7 +27,7 @@ use crate::tolerance::*;
 pub struct BrepProjOptions {
     /// Geometric tolerance (segment chaining, degenerate skips, triangle–triangle intersection).
     pub tolerance: f64,
-    /// Uniform samples per edge when discretizing edge curves (≥ 2).
+    /// Uniform samples per edge when discretizing edge curves (>= 2).
     pub samples_per_edge: usize,
 }
 
@@ -42,7 +41,7 @@ impl Default for BrepProjOptions {
 }
 
 /// OCCT-style `DistanceIn`-like scale: diagonal(A)+diagonal(B)+bbox separation.
-fn proj_distance_scale(wire_brep: &BRep, target: &BRep) -> f64 {
+fn proj_distance_scale(wire_brep: &rcad_kernel::BRep, target: &rcad_kernel::BRep) -> f64 {
     let Some(ba) = brep_tools::bounding_box(wire_brep) else {
         return 1.0;
     };
@@ -76,27 +75,41 @@ fn aabb_distance(a: [DVec3; 2], b: [DVec3; 2]) -> f64 {
     d2.sqrt()
 }
 
-fn first_outer_wire_edge_chain(brep: &BRep) -> Option<Vec<usize>> {
-    let face = brep
-        .solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .next()?;
-    if face.outer_wire.edges.is_empty() {
-        return None;
+/// Get the first face's outer wire edge chain from TShape iteration.
+fn first_outer_wire_edge_chain(brep: &rcad_kernel::BRep) -> Option<Vec<usize>> {
+    for ts in &brep.tshapes {
+        let TShape::Face(fd) = ts.as_ref() else { continue };
+        let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
+        let TShape::Wire(wd) = wire_ts.as_ref() else { continue };
+        if wd.edges.is_empty() {
+            return None;
+        }
+        return Some(wd.edges.iter().map(|er| er.index).collect());
     }
-    Some(
-        face.outer_wire
-            .edges
-            .iter()
-            .map(|e| e.idx)
-            .collect(),
-    )
+    None
 }
 
-fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
-    let n = brep.edges.len();
+/// Build vertex-edge adjacency from tshapes.
+fn build_vertex_edge_adj(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
+    let nv = brep.vertex_count();
+    let mut adj = vec![Vec::new(); nv];
+    for (ei, ts) in brep.tshapes.iter().enumerate() {
+        let TShape::Edge(ed) = ts.as_ref() else { continue };
+        let s = ed.first.index;
+        let e = ed.last.index;
+        if s < adj.len() {
+            adj[s].push(ei);
+        }
+        if e < adj.len() {
+            adj[e].push(ei);
+        }
+    }
+    adj
+}
+
+/// Greedy edge chaining using vertex-edge adjacency.
+fn edge_chains_greedy(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
+    let n = brep.edge_count();
     if n == 0 {
         return Vec::new();
     }
@@ -105,8 +118,9 @@ fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
     let mut chains: Vec<Vec<usize>> = Vec::new();
 
     while let Some(&start_e) = remaining.iter().next() {
-        let e0 = &brep.edges[start_e];
-        let mut v = e0.start;
+        let ts = &brep.tshapes[start_e];
+        let TShape::Edge(ed) = ts.as_ref() else { remaining.remove(&start_e); continue };
+        let mut v = ed.first.index;
         let mut next_e = start_e;
         let mut chain: Vec<usize> = Vec::new();
 
@@ -115,8 +129,9 @@ fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
                 break;
             }
             chain.push(next_e);
-            let e = &brep.edges[next_e];
-            v = if e.start == v { e.end } else { e.start };
+            let ts = &brep.tshapes[next_e];
+            let TShape::Edge(ed) = ts.as_ref() else { break };
+            v = if ed.first.index == v { ed.last.index } else { ed.first.index };
             let mut cont: Option<usize> = None;
             for &cand in &adj[v] {
                 if remaining.contains(&cand) {
@@ -136,20 +151,7 @@ fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
     chains
 }
 
-fn build_vertex_edge_adj(brep: &BRep) -> Vec<Vec<usize>> {
-    let mut adj = vec![Vec::new(); brep.vertices.len()];
-    for (ei, e) in brep.edges.iter().enumerate() {
-        if e.start < adj.len() {
-            adj[e.start].push(ei);
-        }
-        if e.end < adj.len() {
-            adj[e.end].push(ei);
-        }
-    }
-    adj
-}
-
-fn wire_edge_chains(brep: &BRep) -> Vec<Vec<usize>> {
+fn wire_edge_chains(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
     if let Some(chain) = first_outer_wire_edge_chain(brep) {
         if !chain.is_empty() {
             return vec![chain];
@@ -165,7 +167,7 @@ fn push_pt(pts: &mut Vec<DVec3>, p: DVec3, tol: f64) {
 }
 
 fn sample_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     ei: usize,
     from_v: usize,
     to_v: usize,
@@ -173,54 +175,55 @@ fn sample_edge(
     tol: f64,
     pts: &mut Vec<DVec3>,
 ) {
-    let edge = match brep.edges.get(ei) {
-        Some(e) => e,
+    let ed = match brep.tshapes.get(ei) {
+        Some(ts) => match ts.as_ref() {
+            TShape::Edge(ed) => ed,
+            _ => return,
+        },
         None => return,
     };
+
     let n_seg = n_seg.max(2);
-    if let Some(ci) = brep.geom.edge_curve.get(ei).copied().flatten() {
-        if let Some(curve) = brep.geom.curves.get(ci) {
-            let range = brep
-                .geom
-                .edge_curve_range
-                .get(ei)
-                .copied()
-                .flatten()
-                .unwrap_or_else(|| curve.default_domain());
-            let forward = from_v == edge.start;
-            let (t0, t1) = if forward {
-                (range[0], range[1])
-            } else {
-                (range[1], range[0])
-            };
-            for i in 0..n_seg {
-                let t = t0 + (t1 - t0) * i as f64 / (n_seg - 1) as f64;
-                let p = curve.point_at(t);
-                push_pt(pts, p, tol);
-            }
-            return;
+    if let Some(curve) = &ed.curve {
+        let range = ed.range;
+        let forward = from_v == ed.first.index;
+        let (t0, t1) = if forward {
+            (range[0], range[1])
+        } else {
+            (range[1], range[0])
+        };
+        for i in 0..n_seg {
+            let t = t0 + (t1 - t0) * i as f64 / (n_seg - 1) as f64;
+            let p = curve.point_at(t);
+            push_pt(pts, p, tol);
         }
+        return;
     }
-    let p0 = brep.vertices[from_v].point;
-    let p1 = brep.vertices[to_v].point;
+    // Fallback: vertex positions
+    let p0 = brep.vertex_point(from_v).unwrap_or(DVec3::ZERO);
+    let p1 = brep.vertex_point(to_v).unwrap_or(DVec3::ZERO);
     push_pt(pts, p0, tol);
     push_pt(pts, p1, tol);
 }
 
-fn dense_polyline_from_chain(brep: &BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
+fn dense_polyline_from_chain(brep: &rcad_kernel::BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
     if chain.is_empty() {
         return Vec::new();
     }
     let mut pts: Vec<DVec3> = Vec::new();
-    let mut v = brep.edges[chain[0]].start;
+    // Get first edge's first vertex
+    let first_ts = &brep.tshapes[chain[0]];
+    let TShape::Edge(first_ed) = first_ts.as_ref() else { return Vec::new() };
+    let mut v = first_ed.first.index;
     for &ei in chain {
-        let e = &brep.edges[ei];
-        let (from_v, to_v) = if e.start == v {
-            (e.start, e.end)
-        } else if e.end == v {
-            (e.end, e.start)
+        let ts = &brep.tshapes[ei];
+        let TShape::Edge(ed) = ts.as_ref() else { continue };
+        let (from_v, to_v) = if ed.first.index == v {
+            (ed.first.index, ed.last.index)
+        } else if ed.last.index == v {
+            (ed.last.index, ed.first.index)
         } else {
-            (e.start, e.end)
+            (ed.first.index, ed.last.index)
         };
         sample_edge(
             brep,
@@ -249,62 +252,47 @@ fn extrusion_prism_tris(polyline: &[DVec3], extrusion: DVec3) -> Vec<[DVec3; 3]>
     tris
 }
 
-/// Build a BRep containing only vertices and line edges (no solids), one edge per segment.
-fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> BRep {
-    let mut brep = BRep::new();
+/// Build a topods::BRep containing only vertices and line edges (no solids), one edge per segment.
+fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> rcad_kernel::BRep {
+    let mut brep = rcad_kernel::BRep::new();
     if poly.len() < 2 {
         return brep;
     }
+    let mut vrefs = Vec::new();
     for p in poly {
-        brep.vertices.push(Vertex { point: *p });
+        vrefs.push(brep.add_tvertex(*p));
     }
     for i in 0..poly.len().saturating_sub(1) {
-        let vi_a = i;
-        let vi_b = i + 1;
-        let a = brep.vertices[vi_a].point;
-        let b = brep.vertices[vi_b].point;
+        let vi_a = vrefs[i];
+        let vi_b = vrefs[i + 1];
+        let a = poly[i];
+        let b = poly[i + 1];
         let d = b - a;
         let len = d.length();
-        let ei = brep.edges.len();
-        brep.edges.push(Edge {
-            start: vi_a,
-            end: vi_b,
-        });
         let dir = if len > tol {
             d / len
         } else {
             DVec3::X
         };
-        let ci = brep.geom.curves.len();
-        brep.geom.curves.push(Curve3::Line(Line3 {
+        let curve = Curve3::Line(Line3 {
             origin: a,
             direction: dir,
-        }));
-        while brep.geom.edge_curve.len() <= ei {
-            brep.geom.edge_curve.push(None);
-        }
-        while brep.geom.edge_curve_range.len() <= ei {
-            brep.geom.edge_curve_range.push(None);
-        }
-        while brep.geom.edge_degenerated.len() <= ei {
-            brep.geom.edge_degenerated.push(false);
-        }
-        brep.geom.edge_curve[ei] = Some(ci);
-        brep.geom.edge_curve_range[ei] = Some([0.0, len.max(tol)]);
+        });
+        brep.add_tedge(Some(curve), vi_a, vi_b, [0.0, len.max(tol)]);
     }
     brep
 }
 
 /// Cylindrical projection of wire-like `shape` onto `target` along `direction`.
 ///
-/// Returns one BRep per connected intersection chain (OCCT `BRepProj_Projection::More` /
+/// Returns one rcad_kernel::BRep per connected intersection chain (OCCT `rcad_kernel::BRepProj_Projection::More` /
 /// `Current`), each holding line edges approximating the image on `target`.
 pub fn brep_proj_cylindrical(
-    shape: &BRep,
-    target: &BRep,
+    shape: &rcad_kernel::BRep,
+    target: &rcad_kernel::BRep,
     direction: DVec3,
     options: &BrepProjOptions,
-) -> Vec<BRep> {
+) -> Vec<rcad_kernel::BRep> {
     let dir = direction.normalize_or_zero();
     if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
         return Vec::new();
@@ -322,7 +310,7 @@ pub fn brep_proj_cylindrical(
         return Vec::new();
     }
 
-    let mut out: Vec<BRep> = Vec::new();
+    let mut out: Vec<rcad_kernel::BRep> = Vec::new();
     for chain in chains {
         let pts = dense_polyline_from_chain(shape, &chain, options);
         if pts.len() < 2 {
@@ -346,7 +334,7 @@ pub fn brep_proj_cylindrical(
                 continue;
             }
             let wb = wire_brep_from_polyline(&lp, te);
-            if wb.edges.is_empty() {
+            if wb.edge_count() == 0 {
                 continue;
             }
             out.push(wb);
@@ -354,5 +342,3 @@ pub fn brep_proj_cylindrical(
     }
     out
 }
-
-

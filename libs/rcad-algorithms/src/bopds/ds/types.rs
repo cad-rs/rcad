@@ -1,5 +1,6 @@
 ﻿use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
+use rcad_kernel::PCurve;
 use rcad_kernel::topods;
 
 use crate::bopds::common_block::CommonBlock;

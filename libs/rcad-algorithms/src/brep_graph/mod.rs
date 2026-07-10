@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::persistent_naming::{
     PersistentId, PersistentNamingEngine, NamingStabilityReport,
@@ -54,18 +54,23 @@ pub struct TopoGraph {
 }
 
 impl TopoGraph {
-    pub fn from_brep(brep: &BRep) -> Self {
+    pub fn from_brep(brep: &topods::BRep) -> Self {
+        let old = brep;
+        Self::from_old_brep(&old)
+    }
+
+    fn from_old_brep(brep: &rcad_kernel::BRep) -> Self {
         let mut g = Self::default();
         g.record("from_brep");
 
-        for vi in 0..brep.vertices.len() {
+        for vi in 0..brep.vertices().len() {
             g.add_node(TopoNode {
                 kind: NodeKind::Vertex,
                 index: vi,
             });
         }
 
-        for (ei, e) in brep.edges.iter().enumerate() {
+        for (ei, e) in brep.edges().iter().enumerate() {
             let en = TopoNode {
                 kind: NodeKind::Edge,
                 index: ei,
@@ -92,7 +97,7 @@ impl TopoGraph {
         let mut face_idx = 0usize;
         let mut wire_idx = 0usize;
 
-        for (si, solid) in brep.solids.iter().enumerate() {
+        for (si, solid) in brep.solids().iter().enumerate() {
             let sn = TopoNode {
                 kind: NodeKind::Solid,
                 index: si,
@@ -136,7 +141,7 @@ impl TopoGraph {
                                 kind: NodeKind::Edge,
                                 index: we.idx,
                             };
-                            if we.idx < brep.edges.len() {
+                            if we.idx < brep.edges().len() {
                                 g.connect(wn, en);
                                 if !g.wire_edges[wire_idx].contains(&we.idx) {
                                     g.wire_edges[wire_idx].push(we.idx);
@@ -366,9 +371,9 @@ impl TopoGraph {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // BRepGraphHistory: Persistent Naming Integration
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Enhanced history with persistent naming integration for cross-operation stability.
 ///
@@ -630,7 +635,7 @@ pub struct NamedGraph {
 
 impl NamedGraph {
     /// Create a new named graph from a BRep.
-    pub fn from_brep(brep: &BRep) -> Self {
+    pub fn from_brep(brep: &topods::BRep) -> Self {
         let graph = TopoGraph::from_brep(brep);
         let mut history = BRepGraphHistory::new();
 
@@ -722,9 +727,9 @@ impl NamedGraph {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Cross-Operation Naming Stability Analysis
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Metrics measuring naming stability for a single operation.
 #[derive(Debug, Clone)]
@@ -1310,9 +1315,9 @@ impl BRepGraphHistory {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Enhanced Persistent Naming Semantics
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A scoped identifier for a topological entity within a naming context.
 ///

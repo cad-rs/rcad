@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, Surface3, topods};
-use super::{BRep, Face};
+use super::Face;
 
 #[derive(Clone, Copy)]
 pub(super) struct OrientedEdgeExport {
@@ -501,6 +501,7 @@ pub(super) fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVe
         | Surface3::Bezier(_)
         | Surface3::Offset(_) => None,
         Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
+        Surface3::Offset(_) => None,
     }
 }
 

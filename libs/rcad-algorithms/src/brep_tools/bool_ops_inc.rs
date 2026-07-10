@@ -12,293 +12,15 @@
 /// This function rebuilds the BRep using only vertices and edges that are
 /// referenced by at least one face wire, producing a minimal self-contained
 /// copy with correct bounding box.
-pub(crate) fn compact_brep(brep: &BRep) -> BRep {
- // Preserve multi-solid structure: compact each solid separately.
- if brep.solids.len() > 1 {
- let mut flat_idx = 0usize;
- let mut comps = Vec::new();
- for solid in &brep.solids {
- let face_count: usize = solid.shells.iter().map(|sh| sh.faces.len()).sum();
- if face_count > 0 {
- let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
- let subset = extract_brep_subset(brep, &indices);
- if collect_flat_face_indices(&subset).len() > 0 {
- comps.push(subset);
- }
- }
- flat_idx += face_count;
- }
- return BRep::compound_from_shapes(&comps);
- }
-
- let all_faces: Vec<usize> = collect_flat_face_indices(brep);
- if all_faces.is_empty() {
- return BRep::new();
- }
- extract_brep_subset(brep, &all_faces)
+pub(crate) fn compact_brep(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
+ crate::brep_tools::compact_brep_topods(brep)
 }
 
 /// Create a new self-contained BRep containing only the specified flat face
 /// indices from the source BRep.  Vertices, edges, and geometry referenced by
 /// the selected faces are copied into the new BRep with dense index renumbering.
-fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
- use std::collections::{HashMap, HashSet};
-
- use rcad_kernel::topology::{Edge, Shell, Solid, Wire, WireEdge};
-
- if face_indices.is_empty() {
- return BRep::new();
- }
-
- // Build flat-face index  ?(solid_idx, shell_idx, local_face_idx) lookup
- let mut flat_index_map: Vec<(usize, usize, usize)> = Vec::new(); // (solid, shell, local_face)
- for (si, solid) in source.solids.iter().enumerate() {
- for (shi, shell) in solid.shells.iter().enumerate() {
- for fi in 0..shell.faces.len() {
- flat_index_map.push((si, shi, fi));
- }
- }
- }
-
- // Collect unique edge indices referenced by the selected faces.
- // Also save face topology for later (before remapping).
- let mut edge_set: HashSet<usize> = HashSet::new();
- #[derive(Clone)]
- struct FaceTopo {
- surface_idx: Option<usize>,
- outer: Vec<WireEdge>,
- inner: Vec<Vec<WireEdge>>,
- normal: DVec3,
- triangles: Vec<[usize; 3]>,
- }
- let mut face_topos: Vec<FaceTopo> = Vec::with_capacity(face_indices.len());
-
- for &fi in face_indices.iter() {
- if fi >= flat_index_map.len() {
- continue;
- }
- let (si, shi, lfi) = flat_index_map[fi];
- let face = &source.solids[si].shells[shi].faces[lfi];
-
- for we in &face.outer_wire.edges {
- edge_set.insert(we.idx);
- }
- for wire in &face.inner_wires {
- for we in &wire.edges {
- edge_set.insert(we.idx);
- }
- }
- face_topos.push(FaceTopo {
- surface_idx: face.surface_idx,
- outer: face.outer_wire.edges.clone(),
- inner: face.inner_wires.iter().map(|w| w.edges.clone()).collect(),
- normal: face.normal,
- triangles: face.triangles.clone(),
- });
- }
-
- // Collect vertex indices from the selected edges.
- let mut vertex_set: HashSet<usize> = HashSet::new();
- for &ei in &edge_set {
- if ei < source.edges.len() {
- vertex_set.insert(source.edges[ei].start);
- vertex_set.insert(source.edges[ei].end);
- }
- }
-
- // Collect geometry indices referenced by edges and faces.
- let mut curve_set: HashSet<usize> = HashSet::new();
- let mut surface_set: HashSet<usize> = HashSet::new();
- let mut curve2d_set: HashSet<usize> = HashSet::new();
-
- for &ei in &edge_set {
- if let Some(Some(ci)) = source.geom.edge_curve.get(ei) {
- curve_set.insert(*ci);
- }
- if let Some(pcurves) = source.geom.edge_pcurves.get(ei) {
- for pc in pcurves {
- surface_set.insert(pc.surface_idx);
- curve2d_set.insert(pc.curve2d_idx);
- }
- }
- }
- for &fi in face_indices.iter() {
- if let Some(Some(si)) = source.geom.face_surface.get(fi) {
- surface_set.insert(*si);
- }
- }
-
- // Build sorted remap tables: old  ?new dense indices.
- let make_remap = |set: &HashSet<usize>| -> (Vec<usize>, HashMap<usize, usize>) {
- let mut sorted: Vec<usize> = set.iter().copied().collect();
- sorted.sort();
- let map: HashMap<usize, usize> =
- sorted.iter().enumerate().map(|(n, &o)| (o, n)).collect();
- (sorted, map)
- };
-
- let (sorted_vertices, v_remap) = make_remap(&vertex_set);
- let (sorted_edges, e_remap) = make_remap(&edge_set);
- let (sorted_curves, c_remap) = make_remap(&curve_set);
- let (sorted_surfaces, s_remap) = make_remap(&surface_set);
- let (sorted_curve2ds, k_remap) = make_remap(&curve2d_set);
-
- let mut result = BRep::new();
-
- // --- vertices ---
- for &old in &sorted_vertices {
- result.vertices.push(source.vertices[old]);
- result
- .geom
- .vertex_tolerance
- .push(source.geom.vertex_tolerance.get(old).copied().unwrap_or(CONFUSION));
- }
-
- // --- edges ---
- for &old in &sorted_edges {
- let e = &source.edges[old];
- result.edges.push(Edge {
- start: v_remap[&e.start],
- end: v_remap[&e.end],
- });
-
- result.geom.edge_curve.push(
- source
- .geom
- .edge_curve
- .get(old)
- .and_then(|o| o.map(|c| c_remap[&c])),
- );
- result.geom.edge_pcurves.push(
- source
- .geom
- .edge_pcurves
- .get(old)
- .map(|v| {
- v.iter()
- .map(|p| rcad_kernel::PCurve {
- surface_idx: s_remap[&p.surface_idx],
- curve2d_idx: k_remap[&p.curve2d_idx],
- })
- .collect()
- })
- .unwrap_or_default(),
- );
- result
- .geom
- .edge_curve_range
- .push(source.geom.edge_curve_range.get(old).copied().flatten());
- result
- .geom
- .edge_degenerated
- .push(*source.geom.edge_degenerated.get(old).unwrap_or(&false));
- result
- .geom
- .edge_same_parameter
- .push(*source.geom.edge_same_parameter.get(old).unwrap_or(&true));
- result
- .geom
- .edge_same_range
- .push(*source.geom.edge_same_range.get(old).unwrap_or(&true));
- result
- .geom
- .edge_tolerance
- .push(*source.geom.edge_tolerance.get(old).unwrap_or(&CONFUSION));
- }
-
- // --- geometry pools ---
- for &old in &sorted_curves {
- result.geom.curves.push(source.geom.curves[old].clone());
- }
- for &old in &sorted_surfaces {
- result.geom.surfaces.push(source.geom.surfaces[old].clone());
- }
- for &old in &sorted_curve2ds {
- result.geom.curve2ds.push(source.geom.curve2ds[old].clone());
- result
- .geom
- .curve2d_range
- .push(source.geom.curve2d_range.get(old).copied().flatten());
- }
-
- // --- faces (topology + face-level geom) ---
- let mut new_faces: Vec<Face> = Vec::with_capacity(face_topos.len());
- for (i, &fi) in face_indices.iter().enumerate() {
- let ft = &face_topos[i];
-
- let remap_wire_edges = |wes: &[WireEdge]| -> Vec<WireEdge> {
- wes.iter()
- .map(|we| WireEdge {
- idx: e_remap[&we.idx],
- forward: we.forward,
- })
- .collect()
- };
-
- new_faces.push(Face {
- outer_wire: Wire {
- edges: remap_wire_edges(&ft.outer),
- },
- inner_wires: ft
- .inner
- .iter()
- .map(|w| Wire {
- edges: remap_wire_edges(w),
- })
- .collect(),
- normal: ft.normal,
- triangles: ft
- .triangles
- .iter()
- .map(|&[a, b, c]| {
- [
- v_remap.get(&a).copied().unwrap_or(0),
- v_remap.get(&b).copied().unwrap_or(0),
- v_remap.get(&c).copied().unwrap_or(0),
- ]
- })
- .collect(),
- // ✅ OCCT : face sample_point。compact_brep  
- // None,  pipeline  →  In→ 。
- // OCCT BRep_Builder::UpdateFace sample_point。
- sample_point: source
- .solids
- .get(flat_index_map[fi].0)
- .and_then(|s| s.shells.get(flat_index_map[fi].1))
- .and_then(|sh| sh.faces.get(flat_index_map[fi].2))
- .and_then(|f| f.sample_point),
- mesh_dirty: true,
- surface_idx: ft.surface_idx.and_then(|si| s_remap.get(&si).copied()),
- });
-
- // face-level geometry
- result
- .geom
- .face_surface
- .push(source.geom.face_surface.get(fi).copied().flatten().map(|si| s_remap[&si]));
- result
- .geom
- .face_surface_range
- .push(source.geom.face_surface_range.get(fi).copied().flatten());
- result
- .geom
- .face_tolerance
- .push(*source.geom.face_tolerance.get(fi).unwrap_or(&CONFUSION));
- // ✅ OCCT : face_internal_vertices (FillInternalVertices)
- let old_ivs: &[usize] = source.geom.face_internal_vertices.get(fi).map_or(&[], |v| v.as_slice());
- let new_ivs: Vec<usize> = old_ivs.iter().filter_map(|&ov| v_remap.get(&ov).copied()).collect();
- result.geom.face_internal_vertices.push(new_ivs);
- }
-
- // Wrap in solid/shell topology.
- result.solids.push(Solid {
- shells: vec![Shell { faces: new_faces }],
- });
-
- // Copy compound structure if source is a compound.
- // NOTE: We don't try to rebuild the compound  ?each extracted subset is
- // a standalone self-contained BRep with one Solid.
- result
+fn extract_brep_subset(source: &rcad_kernel::BRep, face_indices: &[usize]) -> rcad_kernel::BRep {
+ compact_brep_face_subset(source, face_indices)
 }
 
 /// Extract each solid from a (possibly compound) BRep as a separate
@@ -306,20 +28,8 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
 ///
 /// Each returned BRep has only the vertices, edges, and geometry belonging
 /// to that solid, with indices renumbered from 0.
-pub fn extract_solids(brep: &BRep) -> Vec<BRep> {
- let mut results = Vec::new();
- let mut flat_idx = 0;
-
- for solid in &brep.solids {
- let face_count: usize = solid.shells.iter().map(|sh| sh.faces.len()).sum();
- if face_count > 0 {
- let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
- results.push(extract_brep_subset(brep, &indices));
- }
- flat_idx += face_count;
- }
-
- results
+pub fn extract_solids(brep: &rcad_kernel::BRep) -> Vec<rcad_kernel::BRep> {
+ crate::brep_tools::extract_solids_topods(brep)
 }
 
 /// Extract each shell from a BRep as a separate self-contained BRep.
@@ -327,22 +37,8 @@ pub fn extract_solids(brep: &BRep) -> Vec<BRep> {
 ///
 /// Each returned BRep has only the vertices, edges, and geometry belonging
 /// to that shell, with indices renumbered from 0.
-pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
- let mut results = Vec::new();
- let mut flat_idx = 0;
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- let face_count = shell.faces.len();
- if face_count > 0 {
- let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
- results.push(extract_brep_subset(brep, &indices));
- }
- flat_idx += face_count;
- }
- }
-
- results
+pub fn extract_shells(brep: &rcad_kernel::BRep) -> Vec<rcad_kernel::BRep> {
+ crate::brep_tools::extract_shells_topods(brep)
 }
 
 /// Partition objects by tools using boolean-subset decomposition.
@@ -359,7 +55,7 @@ pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
 ///
 /// The number of boolean operations per call is O(objects.len() 2^n_tools n_tools),
 /// so this is suitable only for small numbers of tools ( ?10).
-pub fn n_ary_partition(objects: &[BRep], tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+pub fn n_ary_partition(objects: &[rcad_kernel::BRep], tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  let mut all_cells = Vec::new();
 
  for obj in objects {
@@ -471,7 +167,7 @@ fn box_complement_of_bbox(
 
 /// Check whether a BRep is a simple axis-aligned box (its volume matches its
 /// bounding-box volume within tolerance).
-fn is_box_like(brep: &BRep) -> bool {
+fn is_box_like(brep: &rcad_kernel::BRep) -> bool {
  let vol = crate::total_volume(brep);
  if vol <= 0.0 {
  return false;
@@ -489,7 +185,7 @@ fn is_box_like(brep: &BRep) -> bool {
 }
 
 /// Partition a solid object by tools, expanding face tools into half-space solids.
-fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+fn partition_solid_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  // Detect face-like tools (planar faces used as dividing surfaces).
  let face_tool_info: Vec<Option<rcad_kernel::geom::Plane>> = tools
  .iter()
@@ -506,7 +202,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  //
  // For solid tools (non-face), expanded_complements[i] = None  ?those
  // may need the complement-box fallback or Diff.
- let mut expanded_tools: Vec<BRep> = Vec::new();
+ let mut expanded_tools: Vec<rcad_kernel::BRep> = Vec::new();
  #[allow(clippy::type_complexity)]
  let mut expanded_complements: Vec<Option<usize>> = Vec::new();
 
@@ -527,8 +223,8 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  if let Some(ref plane) = face_tool_info[ti] {
  if let Some(b) = bbox {
  let h_plus_idx = expanded_tools.len();
-  let h_plus = rcad_kernel::BRep::from_topods(&make_face_half_space(plane, &b, true));
-  let h_minus = rcad_kernel::BRep::from_topods(&make_face_half_space(plane, &b, false));
+  let h_plus = make_face_half_space(plane, &b, true);
+  let h_minus = make_face_half_space(plane, &b, false);
  expanded_tools.push(h_plus);
  expanded_tools.push(h_minus);
  // h_plus  ?h_minus: each is the "outside" of the other.
@@ -581,14 +277,14 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
 
  if inside {
  match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, tool) {
- Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); },
+ Ok(r) => { cell = compact_brep(&r); },
  Err(_) => { failed = true; break; }
  }
  } else if let Some(complement_idx) = expanded_complements[i] {
  // Half-space: "outside" = Intersection with complementary half-space.
  let complement = &expanded_tools[complement_idx];
  match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, complement) {
- Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); },
+ Ok(r) => { cell = compact_brep(&r); },
  Err(_) => { failed = true; break; }
  }
  } else {
@@ -604,7 +300,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  let comp_boxes =
  box_complement_of_bbox(&tool_bbox, &cell_bbox);
  if comp_boxes.is_empty() {
- cell = BRep::new();
+ cell = rcad_kernel::BRep::new();
  break;
  }
  let cell_solids = extract_solids(&cell);
@@ -613,26 +309,26 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
   let Ok(comp_box) =
   rcad_modeling::make_box_brep(*origin, *u_dir, *v_dir, *w, *h, *d)
   else { continue; };
-  let comp_box_old = rcad_kernel::BRep::from_topods(&comp_box);
+  let comp_box_old = comp_box;
   for cell_part in &cell_solids {
   if let Ok(part) =
   crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box_old)
  {
- let p = rcad_kernel::BRep::from_topods(&part);
+ let p = part;
  if count_faces(&p) > 0 {
  parts.push(p);
  }
  }
  }
  }
- cell = BRep::compound_from_shapes(&parts);
+ cell = rcad_kernel::BRep::compound_from_shapes(&parts);
  first_tool = false;
  continue;
  }
  }
  // Subsequent tool or non-box tool: use Diff.
  match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Difference, &cell, tool) {
- Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); }
+ Ok(r) => { cell = compact_brep(&r); }
  Err(_) => { failed = true; break; }
  }
  }
@@ -664,9 +360,9 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
 }
 
 /// Partition a face-like object by tools using split_shape and centroid classification.
-fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+fn partition_face_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  // Collect solid (non-face) tools.
- let solid_tools: Vec<BRep> = tools.iter().filter(|t| !is_face_like(t)).cloned().collect();
+ let solid_tools: Vec<rcad_kernel::BRep> = tools.iter().filter(|t| !is_face_like(t)).cloned().collect();
 
  if solid_tools.is_empty() || count_faces(obj) == 0 {
  return Ok(vec![obj.clone()]);
@@ -681,23 +377,24 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
  _ => (DVec3::ZERO, DVec3::Z, "other"),
  });
 
- /// Collect flat face indices whose surface matches the original plane.
- let collect_on_plane = |brep: &BRep| -> Vec<usize> {
+ let collect_on_plane = |brep: &rcad_kernel::BRep| -> Vec<usize> {
  let Some((plane_origin, plane_normal, _)) = orig_surface_info else { return vec![] };
  let mut out = Vec::new();
  let mut fi = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for _ in &shell.faces {
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for _ in &shd.faces {
  if let Ok(Surface3::Plane(p)) = get_surface(brep, fi) {
- // Check coplanarity: normals same direction AND candidate origin
- // lies on the original plane (plane-relative distance ~0).
  let dist = (p.origin - plane_origin).dot(plane_normal).abs();
  if dist < 1e-6 && p.normal.dot(plane_normal) > 0.9999 {
  out.push(fi);
  }
  }
  fi += 1;
+ }
+ }
  }
  }
  }
@@ -709,13 +406,13 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
  let mut remaining = obj.clone();
  for tool in &solid_tools {
  let inside_t = crate::boolean_op(crate::BooleanOpType::Intersection, &remaining, tool)?;
- let inside = rcad_kernel::BRep::from_topods(&inside_t);
+ let inside = inside_t;
  let in_faces = collect_on_plane(&inside);
  if !in_faces.is_empty() {
  cells.push(extract_brep_subset(&inside, &in_faces));
  }
  let remaining_t = crate::boolean_op(crate::BooleanOpType::Difference, &remaining, tool)?;
- remaining = rcad_kernel::BRep::from_topods(&remaining_t);
+ remaining = remaining_t;
  }
  let out_faces = collect_on_plane(&remaining);
  if !out_faces.is_empty() {
@@ -726,7 +423,7 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
 }
 
 /// Check if a BRep represents a single planar face and extract its plane.
-fn try_as_planar_face(brep: &BRep) -> Option<rcad_kernel::geom::Plane> {
+fn try_as_planar_face(brep: &rcad_kernel::BRep) -> Option<rcad_kernel::geom::Plane> {
  if count_faces(brep) != 1 {
  return None;
  }
@@ -741,22 +438,25 @@ fn try_as_planar_face(brep: &BRep) -> Option<rcad_kernel::geom::Plane> {
 /// A BRep is face-like if every shell contains exactly one planar face. Proper 3D
 /// solids always have at least 4 faces per shell (minimum tetrahedron), except
 /// analytic primitives like spheres/cones/cylinders which may have only 1-3 faces.
-fn is_face_like(brep: &BRep) -> bool {
+fn is_face_like(brep: &rcad_kernel::BRep) -> bool {
  if count_faces(brep) == 0 {
  return false;
  }
  let mut flat_idx = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- if shell.faces.len() != 1 {
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ if shd.faces.len() != 1 {
  return false;
  }
- // The single face must be planar  ?spheres with 1 face are NOT face-like.
  let surface = get_surface(brep, flat_idx).ok();
  if !matches!(surface, Some(Surface3::Plane(_))) {
  return false;
  }
  flat_idx += 1;
+ }
+ }
  }
  }
  true
@@ -804,79 +504,48 @@ pub fn make_face_half_space(plane: &rcad_kernel::geom::Plane, bbox: &[DVec3; 2],
  .expect("make_face_half_space: box construction should not fail")
 }
 
-/// Compute centroid from a face's triangle mesh.
-///
-/// Unlike [`average_vertex_of_face`], this works even when the face's
-/// `WireEdge.idx` values are local indices that don't reference BRep edges.
-fn face_triangle_centroid(face: &Face) -> DVec3 {
+/// Compute the average vertex position of a face's boundary using topods access.
+fn average_vertex_of_face(brep: &rcad_kernel::BRep, face_sr: &rcad_kernel::topods::ShapeRef) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
- for tri in &face.triangles {
- let _local_vert_id = |vi: usize| {
- // tri[x] is a flat-face vertex index; decode it.
- vi
+ if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+ let walk_edges = |wire_sr: &rcad_kernel::topods::ShapeRef, sum: &mut DVec3, count: &mut usize| {
+ if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
+ for e_sr in &wd.edges {
+ if let rcad_kernel::topods::TShape::Edge(ed) = &*brep.tshapes[e_sr.index] {
+ if let rcad_kernel::topods::TShape::Vertex(vd) = &*brep.tshapes[ed.first.index] {
+ *sum += vd.point;
+ *count += 1;
+ }
+ if let rcad_kernel::topods::TShape::Vertex(vd) = &*brep.tshapes[ed.last.index] {
+ *sum += vd.point;
+ *count += 1;
+ }
+ }
+ }
+ }
  };
- // Triangles store flat vertex indices. We use the raw indices but
- // check they don't overflow the triangles vec itself.
- if face.triangles.is_empty() {
- break;
- }
- sum += tri.iter().map(|&_vi| {
- // The triangle indices reference positions from the boundary/wire.
- // This is a fallback  ?we just average them.
- DVec3::ZERO
- }).sum::<DVec3>();
- count += 3;
- }
- if count > 0 { sum / count as f64 } else { DVec3::ZERO }
-}
-
-/// Compute the average vertex position of a face's boundary.
-fn average_vertex_of_face(brep: &BRep, face: &Face) -> DVec3 {
- let mut sum = DVec3::ZERO;
- let mut count = 0usize;
-
- for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- sum += brep.vertices[edge.start].point;
- count += 1;
- }
- if edge.end < brep.vertices.len() {
- sum += brep.vertices[edge.end].point;
- count += 1;
+ walk_edges(&fd.outer_wire, &mut sum, &mut count);
+ for iw_sr in &fd.inner_wires {
+ walk_edges(iw_sr, &mut sum, &mut count);
  }
  }
- }
- for wire in &face.inner_wires {
- for we in &wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- sum += brep.vertices[edge.start].point;
- count += 1;
- }
- if edge.end < brep.vertices.len() {
- sum += brep.vertices[edge.end].point;
- count += 1;
- }
- }
- }
- }
-
  if count > 0 { sum / count as f64 } else { DVec3::ZERO }
 }
 
 /// Collect flat face indices for all faces in a BRep.
-fn collect_flat_face_indices(brep: &BRep) -> Vec<usize> {
+fn collect_flat_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut indices = Vec::new();
  let mut flat_idx = 0;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for _ in &shell.faces {
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for _ in &shd.faces {
  indices.push(flat_idx);
  flat_idx += 1;
+ }
+ }
  }
  }
  }
@@ -884,8 +553,8 @@ fn collect_flat_face_indices(brep: &BRep) -> Vec<usize> {
 }
 
 /// Find connected components of a set of flat face indices within a BRep.
-/// Two faces are connected if they share at least one edge (same edge index).
-fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usize>> {
+/// Two faces are connected if they share at least one edge (same edge tshape index).
+fn connected_face_components(brep: &rcad_kernel::BRep, face_indices: &[usize]) -> Vec<Vec<usize>> {
  use std::collections::{HashMap, HashSet};
 
  let face_set: HashSet<usize> = face_indices.iter().copied().collect();
@@ -893,34 +562,36 @@ fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usi
  return Vec::new();
  }
 
- // Build edge  ?face list for our faces of interest.
+ // Build edge → face list for our faces of interest.
  let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
  let mut flat_idx: usize = 0;
 
- for solid in &brep.solids {
- for shell in &solid.shells {
- for lfi in 0..shell.faces.len() {
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for lfi in 0..shd.faces.len() {
  let global_fi = flat_idx + lfi;
  if face_set.contains(&global_fi) {
- if let Some(face) = shell.faces.get(lfi) {
- for wire_edge in &face.outer_wire.edges {
- edge_to_faces
- .entry(wire_edge.idx)
- .or_default()
- .push(global_fi);
+ let face_sr = &shd.faces[lfi];
+ if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+ let collect_edges = |wire_sr: &rcad_kernel::topods::ShapeRef, e2f: &mut HashMap<usize, Vec<usize>>| {
+ if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
+ for e_sr in &wd.edges {
+ e2f.entry(e_sr.index).or_default().push(global_fi);
  }
- for wire in &face.inner_wires {
- for wire_edge in &wire.edges {
- edge_to_faces
- .entry(wire_edge.idx)
- .or_default()
- .push(global_fi);
  }
+ };
+ collect_edges(&fd.outer_wire, &mut edge_to_faces);
+ for iw_sr in &fd.inner_wires {
+ collect_edges(iw_sr, &mut edge_to_faces);
  }
  }
  }
  }
- flat_idx += shell.faces.len();
+ flat_idx += shd.faces.len();
+ }
+ }
  }
  }
 

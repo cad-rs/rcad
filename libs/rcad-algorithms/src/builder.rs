@@ -4,8 +4,10 @@ use indexmap::IndexMap;
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
 use rcad_kernel::topods;
+use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
+use rcad_kernel::topology::Face;
 
 use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::ds::*;
@@ -861,6 +863,12 @@ impl<'a> BooleanBuilder<'a> {
  let _non_destructive = self.my_non_destructive;
 
  // OCCT L431-436: CheckData =validates arguments and merges PaveFiller report.
+ // Populate my_arguments from DS source shapes (OCCT: SetArguments).
+ let mut args = self.my_arguments.borrow_mut();
+ args.clear();
+ args.push(rcad_kernel::topods::ShapeRef::synthetic(0));
+ args.push(rcad_kernel::topods::ShapeRef::synthetic(1));
+ drop(args);
  let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
  let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
  self.check_data()?;

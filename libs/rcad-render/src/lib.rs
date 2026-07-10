@@ -1,14 +1,14 @@
-﻿mod environment;
+mod environment;
 mod light;
 
 pub use environment::{Environment, EnvironmentType, HdriEnvironment, SkyEnvironment};
 pub use light::{Light, LightId, LightType};
 
 use rcad_kernel::{
- BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
+ BRep, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
  salient_vertex_indices, periodic_seam_edge_indices, vertex_adjacent_edges,
 };
-use rcad_kernel::topology::WireEdge;
+use rcad_kernel::topods::TShape;
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
@@ -401,19 +401,47 @@ pub fn pick_face(
  let mut best: Option<(f32, usize)> = None;
 
  let mut face_idx = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for tri in &face.triangles {
- let a = to_vec3(brep.vertices.get(tri[0])?.point);
- let b = to_vec3(brep.vertices.get(tri[1])?.point);
- let c = to_vec3(brep.vertices.get(tri[2])?.point);
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { face_idx += 1; continue };
+ // Build face triangles from outer wire edges (fan triangulation)
+ let outer_verts: Vec<glam::Vec3> = (if fd.outer_wire.index < brep.tshapes.len() {
+ match &*brep.tshapes[fd.outer_wire.index] {
+ TShape::Wire(wd) => {
+ let mut pts = Vec::new();
+ for esr in &wd.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
+ if let Some(p) = brep.vertex_point(ed.first.index) {
+ pts.push(to_vec3(p));
+ }
+ if let Some(p) = brep.vertex_point(ed.last.index) {
+ let last_pt = to_vec3(p);
+ if pts.last().map_or(true, |&last| (glam::vec3(last[0], last[1], last[2]) - last_pt).length_squared() > 1e-10) {
+ pts.push(last_pt);
+ }
+ }
+ }
+ }
+ pts
+ }
+ _ => Vec::new(),
+ }
+ } else { Vec::new() });
+ if outer_verts.len() >= 3 {
+ for i in 1..(outer_verts.len() - 1) {
+ let a = outer_verts[0];
+ let b = outer_verts[i];
+ let c = outer_verts[i + 1];
  if let Some(t) = ray_triangle_intersection(ray.0, ray.1, a, b, c)
  && t > 0.0
  {
  match best {
  Some((best_t, _)) if t >= best_t => {}
  _ => best = Some((t, face_idx)),
+ }
  }
  }
  }
@@ -440,7 +468,7 @@ pub fn pick_edge(
  viewport_size,
  cursor_pos,
  max_distance_px,
- 0..brep.edges.len(),
+ 0..brep.edge_count(),
  )
 }
 
@@ -465,9 +493,9 @@ where
  let mut best: Option<(f32, f32, usize)> = None;
 
  for idx in candidates {
- let edge = brep.edges.get(idx)?;
- let p0 = to_vec3(brep.vertices.get(edge.start)?.point);
- let p1 = to_vec3(brep.vertices.get(edge.end)?.point);
+ let TShape::Edge(ed) = &*brep.tshapes[idx] else { continue };
+ let Some(p0) = brep.vertex_point(ed.first.index).map(to_vec3) else { continue };
+ let Some(p1) = brep.vertex_point(ed.last.index).map(to_vec3) else { continue };
 
  let s0 = project_to_screen(vp, p0, viewport_size)?;
  let s1 = project_to_screen(vp, p1, viewport_size)?;
@@ -506,7 +534,7 @@ pub fn pick_vertex(
  let mut best: Option<(f32, f32, usize)> = None;
 
  for vi in salient_vertex_indices(brep) {
- let p = to_vec3(brep.vertices.get(vi)?.point);
+ let Some(p) = brep.vertex_point(vi).map(to_vec3) else { continue };
  let s = project_to_screen(vp, p, viewport_size)?;
  let dx = cursor_pos[0] - s[0];
  let dy = cursor_pos[1] - s[1];
@@ -584,14 +612,36 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
  let mut current = 0usize;
  let mut indices: Vec<u32> = Vec::new();
 
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { current += 1; continue };
  if selected.contains(&current) {
- for tri in &face.triangles {
- indices.push(tri[0] as u32);
- indices.push(tri[1] as u32);
- indices.push(tri[2] as u32);
+ // Build fan triangles from outer wire vertices
+ let outer_verts: Vec<u32> = (if fd.outer_wire.index < brep.tshapes.len() {
+ match &*brep.tshapes[fd.outer_wire.index] {
+ TShape::Wire(wd) => {
+ let mut vi = Vec::new();
+ for esr in &wd.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
+ if vi.last() != Some(&(ed.first.index as u32)) {
+ vi.push(ed.first.index as u32);
+ }
+ }
+ }
+ vi
+ }
+ _ => Vec::new(),
+ }
+ } else { Vec::new() });
+ if outer_verts.len() >= 3 {
+ for i in 1..(outer_verts.len() - 1) {
+ indices.push(outer_verts[0]);
+ indices.push(outer_verts[i]);
+ indices.push(outer_verts[i + 1]);
+ }
  }
  }
  current += 1;
@@ -603,10 +653,9 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
  return None;
  }
 
- let nodes: Vec<[f32; 3]> = brep
- .vertices
- .iter()
- .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
+ let nodes: Vec<[f32; 3]> = (0..brep.tshapes.len())
+ .filter_map(|i| brep.vertex_point(i))
+ .map(|p| [p.x as f32, p.y as f32, p.z as f32])
  .collect();
 
  Some(Mesh {
@@ -627,15 +676,14 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
  return None;
  }
 
- let mut nodes: Vec<[f32; 3]> = brep
- .vertices
- .iter()
- .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
+ let mut nodes: Vec<[f32; 3]> = (0..brep.tshapes.len())
+ .filter_map(|i| brep.vertex_point(i))
+ .map(|p| [p.x as f32, p.y as f32, p.z as f32])
  .collect();
  let mut dummy_normals: Vec<[f32; 3]> = vec![[0.0; 3]; nodes.len()];
  let mut indices: Vec<u32> = Vec::with_capacity(edge_indices.len() * 2);
  for &edge_index in edge_indices {
- let edge = brep.edges.get(edge_index)?;
+ let TShape::Edge(ed) = &*brep.tshapes[edge_index] else { continue };
  if let Some(pts) = sample_edge_curve_points(brep, edge_index) {
  let base = nodes.len() as u32;
  let n = pts.len();
@@ -646,8 +694,8 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
  }
  nodes.extend_from_slice(&pts);
  } else {
- indices.push(edge.start as u32);
- indices.push(edge.end as u32);
+ indices.push(ed.first.index as u32);
+ indices.push(ed.last.index as u32);
  }
  }
  drop(dummy_normals);
@@ -673,22 +721,39 @@ pub fn build_faces_selection_outline_mesh(brep: &BRep, face_indices: &[usize]) -
  let selected: std::collections::HashSet<usize> = face_indices.iter().copied().collect();
  let mut seen_edge = std::collections::HashSet::new();
 
- let mut nodes: Vec<[f32; 3]> = brep
- .vertices
- .iter()
- .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
+ let mut nodes: Vec<[f32; 3]> = (0..brep.tshapes.len())
+ .filter_map(|i| brep.vertex_point(i))
+ .map(|p| [p.x as f32, p.y as f32, p.z as f32])
  .collect();
  let mut indices: Vec<u32> = Vec::new();
 
  let mut face_i = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { face_i += 1; continue };
  if selected.contains(&face_i) {
- for wire in std::iter::once(&face.outer_wire).chain(face.inner_wires.iter()) {
- for we in &wire.edges {
- if seen_edge.insert(we.idx) {
- append_wire_edge_as_line_list(brep, *we, &mut nodes, &mut indices);
+ // Outer wire edges
+ if fd.outer_wire.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ if seen_edge.insert(esr.index) {
+ append_edge_as_line_list(brep, esr.index, esr.orientation.is_forward(), &mut nodes, &mut indices);
+ }
+ }
+ }
+ }
+ // Inner wire edges
+ for iw_sr in &fd.inner_wires {
+ if iw_sr.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+ for esr in &wd.edges {
+ if seen_edge.insert(esr.index) {
+ append_edge_as_line_list(brep, esr.index, esr.orientation.is_forward(), &mut nodes, &mut indices);
+ }
+ }
  }
  }
  }
@@ -711,17 +776,16 @@ pub fn build_faces_selection_outline_mesh(brep: &BRep, face_indices: &[usize]) -
  }
 }
 
-fn append_wire_edge_as_line_list(
+fn append_edge_as_line_list(
  brep: &BRep,
- we: WireEdge,
+ edge_idx: usize,
+ forward: bool,
  nodes: &mut Vec<[f32; 3]>,
  indices: &mut Vec<u32>,
 ) {
- let Some(edge) = brep.edges.get(we.idx) else {
- return;
- };
- if let Some(mut pts) = sample_edge_curve_points(brep, we.idx) {
- if !we.forward {
+ let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else { return };
+ if let Some(mut pts) = sample_edge_curve_points(brep, edge_idx) {
+ if !forward {
  pts.reverse();
  }
  let base = nodes.len() as u32;
@@ -731,10 +795,10 @@ fn append_wire_edge_as_line_list(
  }
  nodes.extend_from_slice(&pts);
  } else {
- let (a, b) = if we.forward {
- (edge.start, edge.end)
+ let (a, b) = if forward {
+ (ed.first.index, ed.last.index)
  } else {
- (edge.end, edge.start)
+ (ed.last.index, ed.first.index)
  };
  indices.push(a as u32);
  indices.push(b as u32);
@@ -794,7 +858,7 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
 /// This is used by Creator overlays to make edge endpoint targeting easier.
 /// Only topological edge endpoints are considered; sampled polyline points are excluded.
 pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
- if brep.vertices.is_empty() {
+ if brep.vertex_count() == 0 {
  return None;
  }
  const MAX_VERTEX_DOTS: usize = 20_000;
@@ -806,10 +870,8 @@ pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
  let mut min = glam::Vec3::splat(f32::INFINITY);
  let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
  for &vi in &feature_indices {
- let Some(v) = brep.vertices.get(vi) else {
- continue;
- };
- let p = glam::Vec3::new(v.point.x as f32, v.point.y as f32, v.point.z as f32);
+ let Some(pt) = brep.vertex_point(vi) else { continue };
+ let p = glam::Vec3::new(pt.x as f32, pt.y as f32, pt.z as f32);
  min = min.min(p);
  max = max.max(p);
  }
@@ -830,10 +892,8 @@ pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
  if nodes.len() >= dot_count * 6 {
  break;
  }
- let Some(v) = brep.vertices.get(vi) else {
- continue;
- };
- let c = glam::Vec3::new(v.point.x as f32, v.point.y as f32, v.point.z as f32);
+ let Some(pt) = brep.vertex_point(vi) else { continue };
+ let c = glam::Vec3::new(pt.x as f32, pt.y as f32, pt.z as f32);
  let px = c + glam::Vec3::X * r;
  let mx = c - glam::Vec3::X * r;
  let py = c + glam::Vec3::Y * r;
@@ -1042,40 +1102,27 @@ pub fn shader_widget_projection_aspect_and_depth_target(
 /// (including both endpoints). Returns `None` for straight lines or missing geometry,
 /// signalling the caller to fall back to a single-chord segment.
 fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]>> {
- let ci = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v)?;
- let curve = brep.geom.curves.get(ci)?;
- let mut range = brep
- .geom
- .edge_curve_range
- .get(edge_idx)
- .and_then(|v| *v)
- .or_else(|| match curve {
- Curve3::Circle(_) | Curve3::Ellipse(_) => Some([0.0, 2.0 * std::f64::consts::PI]),
+ let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else { return None };
+ let curve = ed.curve.as_ref()?;
+ let mut range = ed.range;
+ // Fallback: for periodic curves without a valid stored range, use default domain.
+ if range[0] == 0.0 && range[1] == 0.0 {
+ let default_domain = match curve {
+ Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, 2.0 * std::f64::consts::PI],
  _ => {
  let [a, b] = curve.default_domain();
  if a.is_finite() && b.is_finite() {
  let span = (b - a).abs();
- if span > 1e-12 {
- Some([a, b])
- } else {
- None
+ if span > 1e-12 { [a, b] } else { return None; }
+ } else { return None; }
  }
- } else {
- None
+ };
+ range = default_domain;
  }
- }
- })?;
- let edge = brep.edges.get(edge_idx)?;
- let p_start = brep.vertices.get(edge.start)?.point;
- let p_end = brep.vertices.get(edge.end)?.point;
- let topo_closed = edge.start == edge.end;
- let edge_tol = brep
- .geom
- .edge_tolerance
- .get(edge_idx)
- .copied()
- .unwrap_or(0.0)
- .max(0.0);
+ let p_start = brep.vertex_point(ed.first.index)?;
+ let p_end = brep.vertex_point(ed.last.index)?;
+ let topo_closed = ed.first.index == ed.last.index;
+ let edge_tol = ed.tolerance.max(0.0);
 
  let two_pi = 2.0 * std::f64::consts::PI;
  if matches!(curve, Curve3::Circle(_) | Curve3::Ellipse(_)) {
@@ -1297,28 +1344,9 @@ pub struct Tessellator;
 
 impl Tessellator {
  fn invalidate_cached_sphere_torus_faces(brep: &mut BRep) -> usize {
- let mut marked = 0usize;
- let mut flat_fi = 0usize;
- for solid in &mut brep.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- let should_force_rebuild = brep
- .geom
- .face_surface
- .get(flat_fi)
- .and_then(|surface_idx| *surface_idx)
- .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx))
- .map(|surface| matches!(surface, Surface3::Sphere(_) | Surface3::Torus(_)))
- .unwrap_or(false);
- if should_force_rebuild && !face.mesh_dirty {
- face.mesh_dirty = true;
- marked += 1;
- }
- flat_fi += 1;
- }
- }
- }
- marked
+ // mesh_brep now tessellates all faces unconditionally; no dirty tracking needed.
+ let _ = brep;
+ 0
  }
 
  /// Build a render [`Mesh`] from an already-tessellated `BRep` (uses existing face triangles).
@@ -1333,65 +1361,109 @@ impl Tessellator {
 
  /// Same as [`tessellate`](Self::tessellate); `line` is ignored (API compatibility).
  pub fn tessellate_with_line_options(brep: &BRep, line: &TessellateLineOptions) -> Mesh {
- let mut flat_verts: Vec<[f32; 3]> = brep
- .vertices
- .iter()
- .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
- .collect();
+ let mut vert_tsi_to_dense: Vec<Option<u32>> = vec![None; brep.tshapes.len()];
+ let mut flat_verts: Vec<[f32; 3]> = Vec::new();
+ for (i, ts) in brep.tshapes.iter().enumerate() {
+ if let TShape::Vertex(v) = ts.as_ref() {
+ vert_tsi_to_dense[i] = Some(flat_verts.len() as u32);
+ flat_verts.push([v.point.x as f32, v.point.y as f32, v.point.z as f32]);
+ }
+ }
 
  let n_verts = flat_verts.len();
  let mut indices: Vec<u32> = Vec::new();
- let mut line_indices: Vec<u32> = Vec::with_capacity(brep.edges.len() * 2);
+ let n_edges = brep.edge_count();
+ let mut line_indices: Vec<u32> = Vec::with_capacity(n_edges * 2);
  let mut seam_line_indices: Vec<u32> = Vec::with_capacity(32);
 
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for tri in &face.triangles {
- indices.push(tri[0] as u32);
- indices.push(tri[1] as u32);
- indices.push(tri[2] as u32);
+ // Build triangle indices from face wire data (fan triangulation of outer wire)
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
+ // Collect outer wire vertex dense indices for fan triangulation
+ if fd.outer_wire.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ let mut dense_verts: Vec<u32> = Vec::new();
+ for esr in &wd.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
+ if let Some(di) = vert_tsi_to_dense.get(ed.first.index).and_then(|o| *o) {
+ if dense_verts.last() != Some(&di) {
+ dense_verts.push(di);
+ }
+ }
+ if let Some(di) = vert_tsi_to_dense.get(ed.last.index).and_then(|o| *o) {
+ if dense_verts.last() != Some(&di) {
+ dense_verts.push(di);
+ }
+ }
+ }
+ }
+ if dense_verts.len() >= 3 {
+ for i in 1..(dense_verts.len() - 1) {
+ indices.push(dense_verts[0]);
+ indices.push(dense_verts[i]);
+ indices.push(dense_verts[i + 1]);
+ }
+ }
+ }
  }
  }
  }
  }
 
- //  € € Per-node smooth normal computation (area-weighted face normal avg)  € €
  let mut normal_accum = vec![[0.0f64; 3]; n_verts];
- let mut face_flat_idx = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- let face_surface = brep
- .geom
- .face_surface
- .get(face_flat_idx)
- .and_then(|value| *value)
- .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx));
-
- for tri in &face.triangles {
- let a = brep.vertices[tri[0]].point;
- let b = brep.vertices[tri[1]].point;
- let c = brep.vertices[tri[2]].point;
+ {
+ // Compute normals from face surfaces via fan triangles from outer wire
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
+ let surface = fd.surface.as_ref();
+ if fd.outer_wire.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ let mut dense_verts: Vec<u32> = Vec::new();
+ for esr in &wd.edges {
+ if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
+ if let Some(di) = vert_tsi_to_dense.get(ed.first.index).and_then(|o| *o) {
+ if dense_verts.last() != Some(&di) { dense_verts.push(di); }
+ }
+ if let Some(di) = vert_tsi_to_dense.get(ed.last.index).and_then(|o| *o) {
+ if dense_verts.last() != Some(&di) { dense_verts.push(di); }
+ }
+ }
+ }
+ if dense_verts.len() >= 3 {
+ for i in 1..(dense_verts.len() - 1) {
+ let i0 = dense_verts[0] as usize;
+ let i1 = dense_verts[i] as usize;
+ let i2 = dense_verts[i + 1] as usize;
+ let a = glam::DVec3::new(flat_verts[i0][0] as f64, flat_verts[i0][1] as f64, flat_verts[i0][2] as f64);
+ let b = glam::DVec3::new(flat_verts[i1][0] as f64, flat_verts[i1][1] as f64, flat_verts[i1][2] as f64);
+ let c = glam::DVec3::new(flat_verts[i2][0] as f64, flat_verts[i2][1] as f64, flat_verts[i2][2] as f64);
  let e1 = b - a;
  let e2 = c - a;
- // Area-weighted face normal (magnitude = 2  triangle area)
  let fn_ = e1.cross(e2);
  let weight = fn_.length().max(1e-12);
- for &vi in tri.iter() {
- if vi < n_verts {
- let analytic = face_surface.and_then(|surface| {
- analytic_surface_normal_at_point(surface, brep.vertices[vi].point)
- });
+ for &di in &[i0, i1, i2] {
+ if di < n_verts {
+ let pt = glam::DVec3::new(flat_verts[di][0] as f64, flat_verts[di][1] as f64, flat_verts[di][2] as f64);
+ let analytic = surface.and_then(|s| analytic_surface_normal_at_point(s, pt));
  let contribution = analytic.unwrap_or(fn_.normalize_or_zero()) * weight;
- normal_accum[vi][0] += contribution.x;
- normal_accum[vi][1] += contribution.y;
- normal_accum[vi][2] += contribution.z;
+ normal_accum[di][0] += contribution.x;
+ normal_accum[di][1] += contribution.y;
+ normal_accum[di][2] += contribution.z;
  }
  }
  }
-
- face_flat_idx += 1;
+ }
+ }
+ }
+ }
  }
  }
  }
@@ -1417,17 +1489,27 @@ impl Tessellator {
 
  // Some closed periodic faces (notably primitive spheres) represent the
  // seam by repeating the same edge index in the face wire.
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- let mut counts: std::collections::HashMap<usize, usize> =
- std::collections::HashMap::new();
- for we in &face.outer_wire.edges {
- *counts.entry(we.idx).or_insert(0) += 1;
+ for ts in &brep.tshapes {
+ let TShape::Solid(sd) = ts.as_ref() else { continue };
+ for shell_sr in &sd.shells {
+ let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
+ let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+ if fd.outer_wire.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ *counts.entry(esr.index).or_insert(0) += 1;
  }
- for wire in &face.inner_wires {
- for we in &wire.edges {
- *counts.entry(we.idx).or_insert(0) += 1;
+ }
+ }
+ for iw_sr in &fd.inner_wires {
+ if iw_sr.index < brep.tshapes.len() {
+ if let TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+ for esr in &wd.edges {
+ *counts.entry(esr.index).or_insert(0) += 1;
+ }
+ }
  }
  }
  for (edge_idx, count) in counts {
@@ -1439,7 +1521,8 @@ impl Tessellator {
  }
  }
 
- for (edge_idx, edge) in brep.edges.iter().enumerate() {
+ for (edge_idx, ts) in brep.tshapes.iter().enumerate() {
+ let TShape::Edge(ed) = ts.as_ref() else { continue };
  let is_seam = seam_edges.contains(&edge_idx);
  if let Some(pts) = sample_edge_curve_points(brep, edge_idx) {
  let base = flat_verts.len() as u32;
@@ -1457,11 +1540,11 @@ impl Tessellator {
  }
  flat_verts.extend_from_slice(&pts);
  } else {
- line_indices.push(edge.start as u32);
- line_indices.push(edge.end as u32);
+ line_indices.push(ed.first.index as u32);
+ line_indices.push(ed.last.index as u32);
  if is_seam {
- seam_line_indices.push(edge.start as u32);
- seam_line_indices.push(edge.end as u32);
+ seam_line_indices.push(ed.first.index as u32);
+ seam_line_indices.push(ed.last.index as u32);
  }
  }
  }
@@ -1501,58 +1584,9 @@ impl Tessellator {
  ///
  /// Returns the number of faces that were newly marked dirty.
  pub fn invalidate_cache_for_edits(brep: &mut BRep, edits: &EditedModelDelta) -> usize {
- if edits.is_empty() {
- return 0;
- }
-
- let graph = BRepGraph::from_brep(brep);
- let face_count: usize = brep
- .solids
- .iter()
- .flat_map(|s| s.shells.iter())
- .map(|sh| sh.faces.len())
- .sum();
- if face_count == 0 {
- return 0;
- }
-
- let mut dirty_faces = vec![false; face_count];
-
- for &fi in &edits.modified_faces {
- if fi < face_count {
- dirty_faces[fi] = true;
- }
- }
- for &ei in &edits.modified_edges {
- for &fi in graph.edge_adjacent_faces(ei) {
- if fi < face_count {
- dirty_faces[fi] = true;
- }
- }
- }
- for &vi in &edits.modified_vertices {
- for &fi in graph.vertex_adjacent_faces(vi) {
- if fi < face_count {
- dirty_faces[fi] = true;
- }
- }
- }
-
- let mut newly_marked = 0usize;
- let mut flat_fi = 0usize;
- for solid in &mut brep.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- if dirty_faces[flat_fi] && !face.mesh_dirty {
- face.mesh_dirty = true;
- newly_marked += 1;
- }
- flat_fi += 1;
- }
- }
- }
-
- newly_marked
+ // mesh_brep now tessellates all faces unconditionally; no dirty tracking needed.
+ let _ = (brep, edits);
+ 0
  }
 
  /// Convenience helper: invalidate affected faces from edit delta, then tessellate.

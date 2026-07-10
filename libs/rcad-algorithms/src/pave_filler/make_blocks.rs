@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
+use rcad_kernel::PCurve;
 
 use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, Interference, IntersectionCurve, ShapeOrigin,

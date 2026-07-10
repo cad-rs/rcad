@@ -300,9 +300,6 @@ impl FlatBRep {
     }
 }
 
-/// Type alias so STEP writer can use `BRep` directly.
-pub type BRep = FlatBRep;
-
 /// STEP export uncertainty for FlatBRep (analogous to `rcad_kernel::tolerance::step_export_uncertainty`).
 pub fn step_export_uncertainty(brep: &FlatBRep) -> f64 {
     // Use max of vertex/edge tolerances if populated, else default 1e-6.

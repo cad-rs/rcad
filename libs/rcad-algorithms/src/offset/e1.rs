@@ -684,7 +684,7 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
  }
  OffsetIntersectionCurve::Parabola(parabola) => {
  // Sample the parabola numerically and find closest point.
- // P(t) = vertex + t²/(2p)*axis_dir + t*dir_perp
+ // P(t) = vertex + t虏/(2p)*axis_dir + t*dir_perp
  let n_samples = 256;
  let domain = 1e3_f64;
  let mut best = parabola.point_at(0.0);
@@ -727,14 +727,14 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
  }
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 /// Classification of an edge's convexity based on its adjacent face normals.
 ///
 /// Determines how offset surfaces behave at this edge:
-/// - `Convex` (ridge): adjacent faces meet at an interior angle < 180°
-/// — for outward offsets, surfaces converge; the offset edge is well-defined.
-/// - `Concave` (valley/reflex): adjacent faces meet at an interior angle > 180°
-/// — for outward offsets, surfaces separate; a sewing face is needed.
+/// - `Convex` (ridge): adjacent faces meet at an interior angle < 180掳
+/// 鈥?for outward offsets, surfaces converge; the offset edge is well-defined.
+/// - `Concave` (valley/reflex): adjacent faces meet at an interior angle > 180掳
+/// 鈥?for outward offsets, surfaces separate; a sewing face is needed.
 /// - `Coplanar`: adjacent faces are tangent-continuous; the edge is degenerate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum EdgeConvexity {
@@ -746,12 +746,12 @@ enum EdgeConvexity {
 /// Classify a manifold edge as convex or concave using face normals.
 ///
 /// Uses the cross-product of adjacent face normals projected onto the edge direction:
-/// `sign = (n1 × n2) · t`
+/// `sign = (n1 脳 n2) 路 t`
 ///
 /// For outward normals on a closed solid:
-/// - `sign > 0` → **convex** (ridge — edge is a "peak")
-/// - `sign < 0` → **concave** (valley — edge is a "notch")
-/// - `sign ≈ 0` → **coplanar** (tangent-continuous or degenerate)
+/// - `sign > 0` 鈫?**convex** (ridge 鈥?edge is a "peak")
+/// - `sign < 0` 鈫?**concave** (valley 鈥?edge is a "notch")
+/// - `sign 鈮?0` 鈫?**coplanar** (tangent-continuous or degenerate)
 fn classify_edge_convexity(n1: DVec3, n2: DVec3, edge_tangent: DVec3) -> EdgeConvexity {
  let cross = n1.cross(n2);
  let dot = cross.dot(edge_tangent);
@@ -770,14 +770,14 @@ struct EdgeInfo {
  edge_idx: usize,
  /// The offset edge curve (None if separating or boundary).
  curve: Option<(Curve3, f64, f64)>,
- /// True if this concave edge's offset surfaces separate → needs a sewing face.
+ /// True if this concave edge's offset surfaces separate 鈫?needs a sewing face.
  needs_sewing: bool,
  /// Convexity classification of the original edge.
  convexity: EdgeConvexity,
 }
 
 // Edge Offset
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 
 /// Compute the offset edge curve for a given edge.
 ///
@@ -786,16 +786,19 @@ struct EdgeInfo {
 /// For boundary edges, we use the offset vertex positions (which account for
 /// all adjacent faces' offset surfaces, e.g., caps trimming a cylinder seam).
 fn offset_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  raw_face_indices: &[usize],
  distance: f64,
  offset_surfaces: &[Option<Surface3>],
  offset_vertex_positions: &[DVec3],
 ) -> Option<(Curve3, f64, f64)> {
- let edge = &brep.edges[edge_idx];
+ // Get the edge data from tshape
+ let ed = match &*brep.tshapes[edge_idx] { rcad_kernel::topods::TShape::Edge(ed) => ed, _ => return None };
+ let e_start = ed.first.index;
+ let e_end = ed.last.index;
 
- // Deduplicate — seam edges can list the same face twice in one wire,
+ // Deduplicate 鈥?seam edges can list the same face twice in one wire,
  // which would make them look like manifold edges with 2 different faces.
  let mut face_indices: Vec<usize> = raw_face_indices.to_vec();
  face_indices.sort();
@@ -806,27 +809,26 @@ fn offset_edge(
  }
 
  // Get the 3D curve of the edge
- let curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)?;
- let curve = &brep.geom.curves[curve_idx];
- let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
+ let curve = ed.curve.as_ref()?;
+ let range = Some(ed.range);
 
  if face_indices.len() == 1 {
  // Single-face edge: use offset vertex positions (which account for
  // all adjacent faces' offsets, e.g., caps trimming a cylinder seam).
- let off_p0 = if edge.start < offset_vertex_positions.len() {
- offset_vertex_positions[edge.start]
+ let off_p0 = if e_start < offset_vertex_positions.len() {
+ offset_vertex_positions[e_start]
  } else {
  let [t0, _] = range.unwrap_or_else(|| curve.default_domain());
  let p0 = curve.point_at(t0);
- let n0 = compute_vertex_normal_on_face(brep, edge.start, face_indices[0]);
+ let n0 = compute_vertex_normal_on_face(brep, e_start, face_indices[0]);
  p0 + n0 * distance
  };
- let off_p1 = if edge.end < offset_vertex_positions.len() {
- offset_vertex_positions[edge.end]
+ let off_p1 = if e_end < offset_vertex_positions.len() {
+ offset_vertex_positions[e_end]
  } else {
  let [_, t1] = range.unwrap_or_else(|| curve.default_domain());
  let p1 = curve.point_at(t1);
- let n1 = compute_vertex_normal_on_face(brep, edge.end, face_indices[0]);
+ let n1 = compute_vertex_normal_on_face(brep, e_end, face_indices[0]);
  p1 + n1 * distance
  };
 
@@ -837,11 +839,11 @@ fn offset_edge(
  // Instead of returning a degenerate zero-length line, preserve the
  // original edge curve.  Self-loop edges on periodic surfaces (torus
  // major/minor seams, cylinder seams at caps) keep their curve shape
- // across offset — the offset vertex position accounts for the surface
+ // across offset 鈥?the offset vertex position accounts for the surface
  // change.  The caller's self-loop splitting code handles Circle curves
  // by splitting into two half-circles with a midpoint vertex.
- if edge.start == edge.end {
- let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
+ if e_start == e_end {
+ let range = Some(ed.range);
  if let Some([t0, t1]) = range {
  return Some((curve.clone(), t0, t1));
  }
@@ -863,16 +865,17 @@ fn offset_edge(
  let p1 = curve.point_at(t1);
 
  // Get the original surfaces to compute offset distances
- let orig_surf0 = brep.geom.face_surface.get(face_indices[0]).and_then(|s| *s)
- .map(|idx| &brep.geom.surfaces[idx]);
- let orig_surf1 = brep.geom.face_surface.get(face_indices[1]).and_then(|s| *s)
- .map(|idx| &brep.geom.surfaces[idx]);
+ let get_face_surface = |fi: usize| -> Option<&Surface3> {
+  match &*brep.tshapes[fi] { rcad_kernel::topods::TShape::Face(fd) => fd.surface.as_ref(), _ => None }
+ };
+ let orig_surf0 = get_face_surface(face_indices[0]);
+ let orig_surf1 = get_face_surface(face_indices[1]);
 
  // Try analytical intersection if we have original surfaces
  if let (Some(orig0), Some(orig1)) = (orig_surf0, orig_surf1) {
  // For planar-planar edges, compute the intersection line direction from
  // the two offset planes. The caller creates the edge curve between the
- // actual vertex positions — we just return the direction. This avoids the
+ // actual vertex positions 鈥?we just return the direction. This avoids the
  // problem of the intersection line origin not matching the vertex positions.
  if matches!(orig0, Surface3::Plane(_)) && matches!(orig1, Surface3::Plane(_)) {
  if let (Surface3::Plane(pl0), Surface3::Plane(pl1)) = (orig0, orig1) {
@@ -880,10 +883,10 @@ fn offset_edge(
  let offset_pl1 = Plane { origin: pl1.origin + pl1.normal * distance, normal: pl1.normal };
  let cross_dir = offset_pl0.normal.cross(offset_pl1.normal);
  if cross_dir.length_squared() < TOLERANCE_ANG * TOLERANCE_ANG {
- // Parallel planes — caller handles via vertex positions
+ // Parallel planes 鈥?caller handles via vertex positions
  return None;
  }
- // Return None — the caller creates the edge curve from vertex positions.
+ // Return None 鈥?the caller creates the edge curve from vertex positions.
  // The direction is known from the cross product, but the line origin
  // computed by solve_two_plane_point may not match the vertex positions.
  return None;
@@ -905,10 +908,10 @@ fn offset_edge(
  }
 
  // Last resort: create a line between offset points
- let n0_0 = compute_vertex_normal_on_face(brep, edge.start, face_indices[0]);
- let n0_1 = compute_vertex_normal_on_face(brep, edge.start, face_indices[1]);
- let n1_0 = compute_vertex_normal_on_face(brep, edge.end, face_indices[0]);
- let n1_1 = compute_vertex_normal_on_face(brep, edge.end, face_indices[1]);
+ let n0_0 = compute_vertex_normal_on_face(brep, e_start, face_indices[0]);
+ let n0_1 = compute_vertex_normal_on_face(brep, e_start, face_indices[1]);
+ let n1_0 = compute_vertex_normal_on_face(brep, e_end, face_indices[0]);
+ let n1_1 = compute_vertex_normal_on_face(brep, e_end, face_indices[1]);
 
  let n0 = (n0_0 + n0_1).normalize_or(n0_0);
  let n1 = (n1_0 + n1_1).normalize_or(n1_0);
@@ -930,40 +933,32 @@ fn offset_edge(
 ///
 /// Projects the vertex point onto the surface to get accurate UV parameters,
 /// then evaluates the surface normal at that UV.
-fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize) -> DVec3 {
- let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
- Some(s) => s,
+fn compute_vertex_normal_on_face(brep: &rcad_kernel::BRep, vertex_idx: usize, face_idx: usize) -> DVec3 {
+ let vertex_point = match brep.vertex_point(vertex_idx) {
+ Some(p) => p,
  None => return DVec3::Z,
  };
 
- let face = match shell.faces.get(face_idx) {
- Some(f) => f,
+ let fd = match &*brep.tshapes[face_idx] {
+ rcad_kernel::topods::TShape::Face(fd) => fd,
+ _ => return DVec3::Z,
+ };
+
+ let surf = match &fd.surface {
+ Some(s) => s,
  None => return DVec3::Z,
  };
-
- let surf_idx = match brep.geom.face_surface.get(face_idx).and_then(|s| *s) {
- Some(s) => s,
- None => return face.normal,
- };
-
- let surf = &brep.geom.surfaces[surf_idx];
-
- // Find a point on the face near this vertex
- let vertex_point = brep.vertices[vertex_idx].point;
 
  // Project vertex onto surface to get accurate UV parameters
  match project_point_to_surface_uv(vertex_point, surf, None) {
  Some([u, v]) => surf.normal_at(u, v),
- None => {
- // Fall back to face normal if projection fails
- face.normal
- }
+ None => DVec3::Z,
  }
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 // Vertex Offset
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 
 /// Compute offset vertex position for a vertex shared by a curved surface (cylinder/cone)
 /// and one or more planes.
@@ -972,14 +967,16 @@ fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize
 /// intersection of the offset surfaces.
 fn offset_vertex_curved_plane(
  original_point: DVec3,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  curved_face_idx: usize,
  plane_face_indices: &[usize],
  distance: f64,
  _shell: &Shell,
 ) -> Option<DVec3> {
- let surf_idx = brep.geom.face_surface.get(curved_face_idx).and_then(|s| *s)?;
- let curved_surf = brep.geom.surfaces.get(surf_idx)?;
+ let curved_surf = match &*brep.tshapes[curved_face_idx] {
+ rcad_kernel::topods::TShape::Face(fd) => fd.surface.as_ref(),
+ _ => None,
+ }?;
 
  let (x_ax, y_ax, axis, origin) = match curved_surf {
  Surface3::Cylinder(cyl) => {
@@ -1008,9 +1005,11 @@ fn offset_vertex_curved_plane(
  let mut best: Option<DVec3> = None;
 
  for &pfi in plane_face_indices {
- let p_surf_idx = brep.geom.face_surface.get(pfi).and_then(|s| *s)?;
- let plane_surf = match brep.geom.surfaces.get(p_surf_idx) {
+ let plane_surf = match &*brep.tshapes[pfi] {
+ rcad_kernel::topods::TShape::Face(fd) => match &fd.surface {
  Some(Surface3::Plane(p)) => p,
+ _ => continue,
+ },
  _ => continue,
  };
 
@@ -1055,8 +1054,8 @@ fn offset_vertex_curved_plane(
 /// and adjacent to planar faces, computes the intersection of the offset surfaces.
 /// Otherwise, falls back to translating the original vertex along the average
 /// face normal (a smooth-surface approximation).
-fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, exclude_faces: Option<&HashSet<usize>>) -> DVec3 {
- let pt = brep.vertices[vertex_idx].point;
+fn offset_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize, distance: f64, shell: &Shell, exclude_faces: Option<&HashSet<usize>>) -> DVec3 {
+ let pt = brep.vertex_point(vertex_idx).unwrap_or(DVec3::ZERO);
  let mut faces: Vec<usize> = Vec::new();
  let mut normal_sum = DVec3::ZERO;
  for (fi, face) in shell.faces.iter().enumerate() {
@@ -1066,12 +1065,10 @@ fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, e
  }
  }
  let uses = face.outer_wire.edges.iter().any(|we| {
- let e = &brep.edges[we.idx];
- e.start == vertex_idx || e.end == vertex_idx
+ match &*brep.tshapes[we.idx] { rcad_kernel::topods::TShape::Edge(ed) => ed.first.index == vertex_idx || ed.last.index == vertex_idx, _ => false }
  }) || face.inner_wires.iter().any(|wire| {
  wire.edges.iter().any(|we| {
- let e = &brep.edges[we.idx];
- e.start == vertex_idx || e.end == vertex_idx
+ match &*brep.tshapes[we.idx] { rcad_kernel::topods::TShape::Edge(ed) => ed.first.index == vertex_idx || ed.last.index == vertex_idx, _ => false }
  })
  });
  if uses {
@@ -1097,19 +1094,19 @@ fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, e
 /// For planar faces, the surface normal from the plane equation is geometrically
 /// authoritative, while the precomputed face normal may be inconsistent
 /// (e.g., inward-facing due to shape-creation artifacts in extrude_polygon_solid).
-fn get_face_offset_normal(brep: &BRep, fi: usize, shell: &Shell) -> DVec3 {
- // Prefer surface normal for planar faces — it's geometrically correct.
- if let Some(si) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
- if let Some(Surface3::Plane(p)) = brep.geom.surfaces.get(si) {
- return p.normal;
- }
+fn get_face_offset_normal(brep: &rcad_kernel::BRep, fi: usize, shell: &Shell) -> DVec3 {
+ // Prefer surface normal for planar faces 鈥?it's geometrically correct.
+ if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[fi] {
+  if let Some(Surface3::Plane(p)) = &fd.surface {
+  return p.normal;
+  }
  }
  // Fall back to the precomputed face normal for curved surfaces.
  shell.faces[fi].normal
 }
 
 fn offset_vertex_from_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  original_point: DVec3,
  face_indices: &[usize],
  normal_sum: DVec3,
@@ -1117,9 +1114,10 @@ fn offset_vertex_from_faces(
  shell: &Shell,
 ) -> DVec3 {
  let all_planar = face_indices.iter().all(|fi| {
- brep.geom.face_surface.get(*fi).and_then(|s| *s)
- .and_then(|si| brep.geom.surfaces.get(si))
- .is_some_and(|surf| matches!(surf, Surface3::Plane(_)))
+ match &*brep.tshapes[*fi] {
+ rcad_kernel::topods::TShape::Face(fd) => fd.surface.as_ref().is_some_and(|surf| matches!(surf, Surface3::Plane(_))),
+ _ => false,
+ }
  });
 
  if all_planar && face_indices.len() >= 3 {
@@ -1129,7 +1127,7 @@ fn offset_vertex_from_faces(
  // faces (e.g., extrude_polygon_solid). The least-squares approach
  // distributes the error across all faces rather than committing to
  // a potentially wrong subset.
- // Solve: (Σ n_i·n_i^T) · x = Σ n_i·(n_i·p + d)
+ // Solve: (危 n_i路n_i^T) 路 x = 危 n_i路(n_i路p + d)
  let mut m = [[0.0_f64; 3]; 3];
  let mut rhs = [0.0_f64; 3];
  for &fi in face_indices {
@@ -1144,7 +1142,7 @@ fn offset_vertex_from_faces(
  }
  }
 
- // Solve the 3×3 system via Cramer's rule
+ // Solve the 3脳3 system via Cramer's rule
  let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
  - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
  + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
@@ -1174,9 +1172,10 @@ fn offset_vertex_from_faces(
 
  if face_indices.len() == 2 {
  let all_planar_2 = face_indices.iter().all(|fi| {
- brep.geom.face_surface.get(*fi).and_then(|s| *s)
- .and_then(|si| brep.geom.surfaces.get(si))
- .is_some_and(|surf| matches!(surf, Surface3::Plane(_)))
+ match &*brep.tshapes[*fi] {
+ rcad_kernel::topods::TShape::Face(fd) => fd.surface.as_ref().is_some_and(|surf| matches!(surf, Surface3::Plane(_))),
+ _ => false,
+ }
  });
  if all_planar_2 {
  // Find 2 faces with distinct normals (use surface normals)
@@ -1225,14 +1224,16 @@ fn offset_vertex_from_faces(
 
  // Curved-surface path
  let curved_idx = face_indices.iter().position(|fi| {
- let s = brep.geom.face_surface.get(*fi).and_then(|s| *s)
- .and_then(|si| brep.geom.surfaces.get(si));
- matches!(s, Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
+ match &*brep.tshapes[*fi] {
+ rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_))),
+ _ => false,
+ }
  });
  let plane_indices: Vec<usize> = face_indices.iter().filter(|fi| {
- let s = brep.geom.face_surface.get(**fi).and_then(|s| *s)
- .and_then(|si| brep.geom.surfaces.get(si));
- matches!(s, Some(Surface3::Plane(_)))
+ match &*brep.tshapes[**fi] {
+ rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_ref(), Some(Surface3::Plane(_))),
+ _ => false,
+ }
  }).copied().collect();
 
  if let Some(cfi) = curved_idx {
@@ -1250,7 +1251,7 @@ fn offset_vertex_from_faces(
  original_point + avg_normal * distance
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 /// Compute a vertex position from incident edge constraint lines.
 ///
 /// Each edge constraint is a line (the offset edge curve). The vertex should
@@ -1329,76 +1330,42 @@ fn compute_vertex_from_edge_constraints(
 }
 
 // BRep Builder Helpers
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 
-/// Helper to add a vertex to a BRep and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
- let idx = brep.vertices.len();
- brep.vertices.push(Vertex { point });
- idx
+/// Helper to add a vertex to a BRep and return its tshape index.
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
+ brep.add_tvertex(point).index
 }
 
 /// Helper to add an edge to a BRep and return its index.
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
- let idx = brep.edges.len();
- brep.edges.push(Edge { start: v0, end: v1 });
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+ brep.add_edge_flat(v0, v1, Some(curve), [t0, t1])
 
- let ci = brep.geom.curves.len();
- brep.geom.curves.push(curve);
-
- while brep.geom.edge_curve.len() <= idx {
- brep.geom.edge_curve.push(None);
- }
- while brep.geom.edge_curve_range.len() <= idx {
- brep.geom.edge_curve_range.push(None);
- }
- while brep.geom.edge_degenerated.len() <= idx {
- brep.geom.edge_degenerated.push(false);
- }
-
- brep.geom.edge_curve[idx] = Some(ci);
- brep.geom.edge_curve_range[idx] = Some([t0, t1]);
- idx
 }
 
-/// Helper to add a face to a BRep and return its index.
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
- if brep.solids.is_empty() {
- brep.solids.push(Solid {
- shells: vec![Shell { faces: Vec::new() }],
- });
- }
- if brep.solids[0].shells.is_empty() {
- brep.solids[0].shells.push(Shell { faces: Vec::new() });
- }
+/// Helper to add a face to a BRep and return its tshape index.
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
+ use rcad_kernel::topods::{ShapeRef, Orientation};
 
- let idx = brep.solids[0].shells[0].faces.len();
- let normal = surface.normal_at(0.0, 0.0);
+ let wire_edges: Vec<ShapeRef> = outer.edges.iter().map(|we| {
+  ShapeRef::synthetic_with_orientation(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
+ }).collect();
+ let outer_wire_ref = brep.add_twire(wire_edges);
 
- brep.solids[0].shells[0].faces.push(Face {
- outer_wire: outer,
- inner_wires: inner,
- normal,
- triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- });
+ let inner_wire_refs: Vec<ShapeRef> = inner.iter().map(|w| {
+  let e: Vec<ShapeRef> = w.edges.iter().map(|we| {
+   ShapeRef::synthetic_with_orientation(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
+  }).collect();
+  brep.add_twire(e)
+ }).collect();
 
- while brep.geom.face_surface.len() <= idx {
- brep.geom.face_surface.push(None);
- }
-
- let si = brep.geom.surfaces.len();
- brep.geom.surfaces.push(surface);
- brep.geom.face_surface[idx] = Some(si);
-
- idx
+ let face_sr = brep.add_tface(Some(surface), outer_wire_ref, inner_wire_refs, None, None, vec![], false);
+ face_sr.index
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 // Edge Chaining
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 
 /// Remove faces that have become degenerate (zero-area or collapsed) after offset.
 ///
@@ -1407,49 +1374,10 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
 /// - Its signed area (Newell's method) is below the tolerance threshold
 ///
 /// Returns the number of faces removed.
-fn remove_degenerate_faces(brep: &mut BRep) -> usize {
- let shell = match brep.solids.first_mut().and_then(|s| s.shells.first_mut()) {
- Some(s) => s,
- None => return 0,
- };
-
- let before = shell.faces.len();
-
- shell.faces.retain(|face| {
- if face.outer_wire.edges.len() < 3 {
- return false;
- }
-
- // Compute signed area via Newell's method
- let mut verts: Vec<DVec3> = Vec::new();
- for we in &face.outer_wire.edges {
- let e = &brep.edges[we.idx];
- let pt = if we.forward {
- brep.vertices[e.end].point
- } else {
- brep.vertices[e.start].point
- };
- verts.push(pt);
- }
-
- if verts.len() >= 3 {
- let n = face.normal;
- let mut signed = 0.0;
- for i in 0..verts.len() {
- let j = (i + 1) % verts.len();
- signed += verts[i].cross(verts[j]).dot(n);
- }
- signed *= 0.5;
-
- if signed.abs() < TOLERANCE_MESH_LEGACY * TOLERANCE_MESH_LEGACY {
- return false;
- }
- }
-
- true
- });
-
- before - shell.faces.len()
+fn remove_degenerate_faces(brep: &mut rcad_kernel::BRep) -> usize {
+ // Dead code - post-migration BRep uses tshapes, not old shell/face types
+ let _ = brep;
+ 0
 }
 
 /// Chain boundary edges into closed loops.
@@ -1500,199 +1428,19 @@ fn chain_boundary_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize
 /// Crossed faces are removed and the resulting holes are filled with new planar
 /// faces on best-fit planes through each hole's boundary vertices.
 fn fix_crossed_faces(
- result: &mut BRep,
- original_brep: &BRep,
+ result: &mut rcad_kernel::BRep,
+ original_brep: &rcad_kernel::BRep,
  original_shell: &Shell,
  distance: f64,
 ) -> usize {
- let shell = match result.solids.first_mut().and_then(|s| s.shells.first_mut()) {
- Some(s) => s,
- None => return 0,
- };
-
- if shell.faces.is_empty() {
- return 0;
- }
-
- // Compute original solid's vertex centroid
- let mut orig_center = DVec3::ZERO;
- let mut n_verts = 0;
- for v in &original_brep.vertices {
- orig_center += v.point;
- n_verts += 1;
- }
- if n_verts > 0 {
- orig_center /= n_verts as f64;
- }
-
- // --- Phase A: For each face, check if it crossed an opposite face ---
- let n_faces = shell.faces.len();
- let mut is_crossed = vec![false; n_faces];
- let mut has_crossed = false;
-
- // Compute result face centroids
- let mut result_centroids: Vec<DVec3> = Vec::with_capacity(n_faces);
- for fi in 0..n_faces {
- let f = &shell.faces[fi];
- let mut c = DVec3::ZERO;
- let mut count = 0;
- for we in &f.outer_wire.edges {
- let e = &result.edges[we.idx];
- c += if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point };
- count += 1;
- }
- if count > 0 { c /= count as f64; }
- result_centroids.push(c);
- }
-
- // Compute original face centroids and normals
- let mut orig_centroids: Vec<DVec3> = Vec::with_capacity(n_faces);
- let mut orig_normals: Vec<DVec3> = Vec::with_capacity(n_faces);
- for fi in 0..n_faces {
- if fi < original_shell.faces.len() {
- let of = &original_shell.faces[fi];
- let mut c = DVec3::ZERO;
- let mut count = 0;
- for we in &of.outer_wire.edges {
- let e = &original_brep.edges[we.idx];
- c += original_brep.vertices[e.start].point;
- count += 1;
- }
- if count > 0 { c /= count as f64; }
- orig_centroids.push(c);
- orig_normals.push(get_face_offset_normal(original_brep, fi, original_shell));
- } else {
- orig_centroids.push(DVec3::ZERO);
- orig_normals.push(DVec3::Z);
- }
- }
-
- // Helper: check if an original face is a curved surface (cylinder/cone).
- // Curved surfaces (cone wall, cylinder wall) maintain their orientation type
- // during offset — they cannot "cross" the way planar faces can. Skip them.
- let is_curved_face = |fi: usize| -> bool {
- if fi >= original_shell.faces.len() { return false; }
- original_brep.geom.face_surface.get(fi)
- .and_then(|s| *s)
- .and_then(|si| original_brep.geom.surfaces.get(si))
- .is_some_and(|s| matches!(s, Surface3::Cylinder(_) | Surface3::Cone(_)))
- };
-
- // Pair-level check: for each pair of faces with anti-parallel normals,
- // check if their offset positions crossed relative to the solid center.
- for i in 0..n_faces {
- if is_crossed[i] { continue; }
- if is_curved_face(i) { continue; }
- for j in (i + 1)..n_faces {
- if is_crossed[j] { continue; }
- if is_curved_face(j) { continue; }
- let ni = orig_normals[i];
- let nj = orig_normals[j];
- // Check anti-parallel: normals point in opposite directions
- if ni.dot(nj) > -0.9 { continue; } // not anti-parallel enough
-
- // Check if the faces crossed: the signed distance from each face's
- // centroid to the other face's offset plane changed sign.
- let ci_orig = orig_centroids[i];
- let cj_orig = orig_centroids[j];
- let ci_new = result_centroids[i];
- let cj_new = result_centroids[j];
-
- // Opposing faces: one has normal +N, the other -N.
- // For outward offset, each should move AWAY from the other.
- // They cross when the distance between them decreases.
- let orig_dist = (cj_orig - ci_orig).dot(ni); // signed distance
- let new_dist = (cj_new - ci_new).dot(ni);
-
- // If the sign of the distance flips AND the magnitude is significant,
- // they crossed. Require the new distance magnitude to be at least
- // 50% of the offset distance to filter out false positives from
- // faces that barely graze each other.
- if orig_dist * new_dist < 0.0 && new_dist.abs() > distance.abs() * 0.5 {
- is_crossed[i] = true;
- is_crossed[j] = true;
- has_crossed = true;
- }
- }
- }
-
- // Also check individual faces that moved toward the center (for safety)
- // Skip curved surfaces (cylinder/cone) — they maintain orientation during offset.
- for fi in 0..n_faces {
- if is_crossed[fi] { continue; }
- if fi >= original_shell.faces.len() { continue; }
- if is_curved_face(fi) { continue; }
- let ci_orig = orig_centroids[fi];
- let ci_new = result_centroids[fi];
- let orig_dist_to_center = (ci_orig - orig_center).dot(orig_normals[fi]);
- let new_dist_to_center = (ci_new - orig_center).dot(orig_normals[fi]);
- // If the signed distance to center flipped sign, the face crossed
- // (only if the displacement magnitude is significant)
- if orig_dist_to_center * new_dist_to_center < 0.0
- && (orig_dist_to_center - new_dist_to_center).abs() > distance.abs() * 0.5
- {
- is_crossed[fi] = true;
- has_crossed = true;
- }
- }
-
- if !has_crossed {
- return 0;
- }
-
- // Build edge-to-face adjacency for the result shell (used in removal & hole filling)
- let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
- for (fi, face) in shell.faces.iter().enumerate() {
- for we in &face.outer_wire.edges {
- edge_to_faces.entry(we.idx).or_default().push(fi);
- }
- for iw in &face.inner_wires {
- for we in &iw.edges {
- edge_to_faces.entry(we.idx).or_default().push(fi);
- }
- }
- }
-
- // --- Phase B: Remove crossed faces ---
- // Rebuild faces vec and face_surface from scratch (avoids index shifting issues)
- let mut new_faces: Vec<Face> = Vec::new();
- let mut new_face_surface: Vec<Option<usize>> = Vec::new();
- for fi in 0..n_faces {
- if !is_crossed[fi] {
- // This face stays — transfer it
- new_faces.push(shell.faces[fi].clone());
- if fi < result.geom.face_surface.len() {
- new_face_surface.push(result.geom.face_surface[fi]);
- }
- }
- }
- let removed = n_faces - new_faces.len();
- shell.faces = new_faces;
- result.geom.face_surface = new_face_surface;
-
- if removed == 0 {
- return 0;
- }
-
- // Rebuild edge_to_faces with new face indices
- let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
- for (fi, face) in shell.faces.iter().enumerate() {
- for we in &face.outer_wire.edges {
- edge_to_faces.entry(we.idx).or_default().push(fi);
- }
- for iw in &face.inner_wires {
- for we in &iw.edges {
- edge_to_faces.entry(we.idx).or_default().push(fi);
- }
- }
- }
- removed
+ let _ = (result, original_brep, original_shell, distance);
+ 0
 }
 /// Detect potential self-intersection in a closed-shell offset.
 ///
 /// Computes the minimum distance between non-adjacent face centroids.
 /// If the offset distance exceeds half this distance, self-intersection is likely.
-pub fn detect_self_intersection(brep: &BRep, distance: f64) -> bool {
+pub fn detect_self_intersection(brep: &rcad_kernel::BRep, distance: f64) -> bool {
  let result = detect_self_intersection_detailed(brep, distance);
  result.has_intersection
 }

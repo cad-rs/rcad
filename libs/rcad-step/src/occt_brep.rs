@@ -19,7 +19,6 @@ use rcad_kernel::geom::{
     Line3, OffsetCurve3, OffsetSurface, Parabola3, Plane, SphericalSurface, Surface3,
     ToroidalSurface, TrimmedSurface,
 };
-use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -936,218 +935,209 @@ fn triangle_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
 
 fn build_brep(
     curves: Vec<Curve3>,
-    curve2ds: Vec<Curve2d>,
+    _curve2ds: Vec<Curve2d>,
     surfaces: Vec<Surface3>,
-    tris: Vec<Triangulation>,
+    _tris: Vec<Triangulation>,
     shapes: Vec<TShape>,
 ) -> Result<BRep, OcctBrepError> {
-    let _ = curve2ds;
     let n = shapes.len();
     if n == 0 {
         return Err(OcctBrepError::EmptyResult("no TShapes".into()));
     }
 
-    let mut shape_vertex: Vec<Option<usize>> = vec![None; n];
-    let mut shape_edge: Vec<Option<usize>> = vec![None; n];
-    let mut shape_wire: Vec<Option<usize>> = vec![None; n];
-    let mut shape_face: Vec<Option<usize>> = vec![None; n];
-    let mut shape_shell: Vec<Option<usize>> = vec![None; n];
+    let mut brep = BRep::new();
 
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut edges: Vec<Edge> = Vec::new();
-    let mut wires: Vec<Wire> = Vec::new();
-    let mut faces: Vec<Face> = Vec::new();
-    let mut shells: Vec<Shell> = Vec::new();
-    let mut solids_out: Vec<Solid> = Vec::new();
+    // shape_refs[i] = ShapeRef for the TShape with parsed index i
+    let mut shape_refs: Vec<Option<topods::ShapeRef>> = vec![None; n];
 
+    // Pass 1: Create all vertex TShapes
     for (i, s) in shapes.iter().enumerate() {
-        if let TShapeKind::Vertex { p, .. } = &s.kind {
-            shape_vertex[i] = Some(vertices.len());
-            vertices.push(Vertex { point: *p });
+        if let TShapeKind::Vertex { p, tol } = &s.kind {
+            let r = brep.add_tvertex(*p);
+            brep.vertex_mut(r).tolerance = *tol;
+            shape_refs[i] = Some(r);
         }
     }
 
+    // Pass 2: Create all edge TShapes
     for (i, s) in shapes.iter().enumerate() {
-        if let TShapeKind::Edge { v0, v1, .. } = &s.kind {
+        if let TShapeKind::Edge {
+            curve3d, v0, v1, tol, ..
+        } = &s.kind
+        {
             let i0 = shape_index(n, v0.1);
             let i1 = shape_index(n, v1.1);
-            let vs0 = shape_vertex[i0].ok_or_else(|| {
-                OcctBrepError::EmptyResult("edge references missing vertex".into())
-            })?;
-            let vs1 = shape_vertex[i1].ok_or_else(|| {
-                OcctBrepError::EmptyResult("edge references missing vertex".into())
-            })?;
-            shape_edge[i] = Some(edges.len());
-            edges.push(Edge {
-                start: vs0,
-                end: vs1,
-            });
+            let vr0 = shape_refs[i0]
+                .ok_or_else(|| OcctBrepError::EmptyResult("edge references missing vertex".into()))?;
+            let vr1 = shape_refs[i1]
+                .ok_or_else(|| OcctBrepError::EmptyResult("edge references missing vertex".into()))?;
+
+            let (edge_curve, edge_range) = if let Some((ci, u0, u1)) = curve3d {
+                if *ci > 0 && *ci <= curves.len() {
+                    (Some(curves[*ci - 1].clone()), [*u0, *u1])
+                } else {
+                    (None, [0.0, 0.0])
+                }
+            } else {
+                (None, [0.0, 0.0])
+            };
+
+            let e = brep.add_tedge(edge_curve, vr0, vr1, edge_range);
+            brep.edge_mut(e).tolerance = *tol;
+            shape_refs[i] = Some(e);
         }
     }
 
+    // Pass 3: Create all wire TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Wire { edges: wrefs } = &s.kind {
-            let mut we = Vec::with_capacity(wrefs.len());
-            for (o, back, _) in wrefs {
+            let mut edge_srs = Vec::with_capacity(wrefs.len());
+            for (o, back, _loc) in wrefs {
                 let si = shape_index(n, *back);
-                let ei = shape_edge[si]
-                    .ok_or_else(|| OcctBrepError::EmptyResult("wire references non-edge".into()))?;
-                let fwd = *o == '+' || *o == 'i' || *o == 'e';
-                we.push(WireEdge {
-                    idx: ei,
-                    forward: fwd,
-                });
+                let esr = shape_refs[si].ok_or_else(|| {
+                    OcctBrepError::EmptyResult("wire references non-edge".into())
+                })?;
+                // Apply orientation from the reference character
+                let orient = match o {
+                    '+' => topods::Orientation::Forward,
+                    '-' => topods::Orientation::Reversed,
+                    'i' => topods::Orientation::Internal,
+                    'e' => topods::Orientation::External,
+                    _ => topods::Orientation::Forward,
+                };
+                edge_srs.push(topods::ShapeRef::synthetic_with_orientation(esr.index, orient));
             }
-            shape_wire[i] = Some(wires.len());
-            wires.push(Wire { edges: we });
+            let w = brep.add_twire(edge_srs);
+            // Set flags from the parsed shape flags
+            if s.flags.len() == 7 {
+                let parsed = u16::from_str_radix(&s.flags, 2).unwrap_or(0);
+                brep.wire_mut(w).flags = parsed;
+            }
+            shape_refs[i] = Some(w);
         }
     }
 
-    let mut geom = rcad_kernel::GeomStore::default();
-    geom.curves = curves;
-    geom.surfaces = surfaces;
-
-    for _ in 0..edges.len() {
-        geom.edge_curve.push(None);
-        geom.edge_pcurves.push(Vec::new());
-        geom.edge_curve_range.push(None);
-        geom.edge_degenerated.push(false);
-        geom.edge_tolerance.push(1e-7);
-        geom.edge_same_parameter.push(true);
-        geom.edge_same_range.push(true);
-    }
-
-    for (i, s) in shapes.iter().enumerate() {
-        if let TShapeKind::Edge { curve3d, .. } = &s.kind {
-            let ei = shape_edge[i].unwrap();
-            if let Some((ci, u0, u1)) = curve3d {
-                if *ci > 0 && *ci <= geom.curves.len() {
-                    geom.edge_curve[ei] = Some(ci - 1);
-                    geom.edge_curve_range[ei] = Some([*u0, *u1]);
-                }
-            }
-        }
-    }
-
+    // Pass 4: Create all face TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Face {
-            surface,
-            triangulation,
+            natural,
             tol,
+            surface,
+            triangulation: _tri,
             ..
         } = &s.kind
         {
-            let mut v_local = vertices.clone();
-            let mut tris_out: Vec<[usize; 3]> = Vec::new();
-            if let Some(ti) = triangulation {
-                if *ti == 0 || *ti > tris.len() {
-                    return Err(OcctBrepError::Unsupported(
-                        "bad face triangulation index".into(),
-                    ));
-                }
-                let td = &tris[*ti - 1];
-                let base = v_local.len();
-                v_local.extend(td.nodes.iter().map(|p| Vertex { point: *p }));
-                for [a, b, cc] in &td.triangles {
-                    tris_out.push([base + a, base + b, base + cc]);
-                }
-            }
-            let nml = if tris_out.len() >= 1 {
-                let t0 = tris_out[0];
-                triangle_normal(
-                    v_local[t0[0]].point,
-                    v_local[t0[1]].point,
-                    v_local[t0[2]].point,
-                )
+            let face_surface = if *surface > 0 && *surface <= surfaces.len() {
+                Some(surfaces[*surface - 1].clone())
             } else {
-                face_normal(&geom.surfaces, *surface)
-            };
-            let outer = if s.children.is_empty() {
-                return Err(OcctBrepError::EmptyResult("face has no wires".into()));
-            } else {
-                let wsi = shape_index(n, s.children[0].1);
-                wires[shape_wire[wsi]
-                    .ok_or_else(|| OcctBrepError::EmptyResult("face outer is not a wire".into()))?]
-                .clone()
-            };
-            let mut inner_wires = Vec::new();
-            for ch in s.children.iter().skip(1) {
-                let wsi = shape_index(n, ch.1);
-                inner_wires.push(
-                    wires[shape_wire[wsi].ok_or_else(|| {
-                        OcctBrepError::EmptyResult("face inner is not a wire".into())
-                    })?]
-                    .clone(),
-                );
-            }
-            shape_face[i] = Some(faces.len());
-            geom.face_surface.push(if *surface == 0 {
                 None
-            } else {
-                Some(surface - 1)
-            });
-            geom.face_surface_range.push(None);
-            geom.face_tolerance.push(*tol);
-            let mesh_dirty = tris_out.is_empty();
-            faces.push(Face {
-                outer_wire: outer,
-                inner_wires,
-                normal: nml,
-                triangles: tris_out,
-                sample_point: None,
-                mesh_dirty,
-                surface_idx: None,
-            });
-            vertices = v_local;
+            };
+
+            // Outer wire from first child
+            if s.children.is_empty() {
+                return Err(OcctBrepError::EmptyResult("face has no wires".into()));
+            }
+            let wsi = shape_index(n, s.children[0].1);
+            let outer_wire_sr = shape_refs[wsi].ok_or_else(|| {
+                OcctBrepError::EmptyResult("face outer is not a wire".into())
+            })?;
+
+            // Inner wires from remaining children
+            let mut inner_wire_srs = Vec::new();
+            for ch in s.children.iter().skip(1) {
+                let wsi2 = shape_index(n, ch.1);
+                let iw_sr = shape_refs[wsi2].ok_or_else(|| {
+                    OcctBrepError::EmptyResult("face inner is not a wire".into())
+                })?;
+                // Apply orientation from the reference
+                let orient = match ch.0 {
+                    '+' => topods::Orientation::Forward,
+                    '-' => topods::Orientation::Reversed,
+                    'i' => topods::Orientation::Internal,
+                    'e' => topods::Orientation::External,
+                    _ => topods::Orientation::Forward,
+                };
+                inner_wire_srs.push(topods::ShapeRef::synthetic_with_orientation(iw_sr.index, orient));
+            }
+
+            let natural_flag = *natural != 0;
+            let f = brep.add_tface(
+                face_surface,
+                outer_wire_sr,
+                inner_wire_srs,
+                None,   // sample_point
+                None,   // uv_domain
+                vec![], // internal_vertices
+                natural_flag,
+            );
+            brep.face_mut(f).tolerance = *tol;
+            shape_refs[i] = Some(f);
         }
     }
 
+    // Pass 5: Create all shell TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Shell { faces: frefs } = &s.kind {
-            let mut fl = Vec::with_capacity(frefs.len());
-            for (_o, back, _) in frefs {
+            let mut face_srs = Vec::with_capacity(frefs.len());
+            for (_o, back, _loc) in frefs {
                 let fi = shape_index(n, *back);
-                fl.push(
-                    faces[shape_face[fi].ok_or_else(|| {
-                        OcctBrepError::EmptyResult("shell references non-face".into())
-                    })?]
-                    .clone(),
-                );
+                let fsr = shape_refs[fi].ok_or_else(|| {
+                    OcctBrepError::EmptyResult("shell references non-face".into())
+                })?;
+                face_srs.push(fsr);
             }
-            shape_shell[i] = Some(shells.len());
-            shells.push(Shell { faces: fl });
+            let sh = brep.add_tshell(face_srs);
+            shape_refs[i] = Some(sh);
         }
     }
 
+    // Pass 6: Create all solid TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Solid { shells: srefs } = &s.kind {
-            let mut sl = Vec::with_capacity(srefs.len());
-            for (_o, back, _) in srefs {
+            let mut shell_srs = Vec::with_capacity(srefs.len());
+            for (_o, back, _loc) in srefs {
                 let shi = shape_index(n, *back);
-                sl.push(
-                    shells[shape_shell[shi].ok_or_else(|| {
-                        OcctBrepError::EmptyResult("solid references non-shell".into())
-                    })?]
-                    .clone(),
-                );
+                let ssr = shape_refs[shi].ok_or_else(|| {
+                    OcctBrepError::EmptyResult("solid references non-shell".into())
+                })?;
+                shell_srs.push(ssr);
             }
-            solids_out.push(Solid { shells: sl });
-            let _ = i;
+            brep.add_tsolid(shell_srs);
+            // No need to store shape_refs for solids — we don't need to reference them further
         }
     }
 
-    if solids_out.is_empty() {
+    // Handle CompSolid and Compound shapes (referenced by other top-level shapes)
+    for (i, s) in shapes.iter().enumerate() {
+        if let TShapeKind::CompSolid { children: refs } = &s.kind {
+            let mut child_srs = Vec::with_capacity(refs.len());
+            for (_o, back, _loc) in refs {
+                let ci = shape_index(n, *back);
+                if let Some(csr) = shape_refs[ci] {
+                    child_srs.push(csr);
+                }
+            }
+            brep.add_tcompsolid(child_srs);
+        }
+    }
+    for (i, s) in shapes.iter().enumerate() {
+        if let TShapeKind::Compound { children: refs } = &s.kind {
+            let mut child_srs = Vec::with_capacity(refs.len());
+            for (_o, back, _loc) in refs {
+                let ci = shape_index(n, *back);
+                if let Some(csr) = shape_refs[ci] {
+                    child_srs.push(csr);
+                }
+            }
+            brep.add_tcompound(child_srs);
+        }
+    }
+
+    if brep.solid_count() == 0 {
         return Err(OcctBrepError::EmptyResult("no solid found in BREP".into()));
     }
 
-    Ok(BRep {
-        vertices,
-        edges,
-        solids: solids_out,
-        geom,
-        compound: None,
-        compsolid: None,
-    })
+    Ok(brep)
 }
 
 /// Reader for OCCT ASCII `.brep` files.

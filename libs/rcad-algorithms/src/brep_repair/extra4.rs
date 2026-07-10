@@ -1,12 +1,12 @@
-fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> Option<Face> {
+fn create_face_from_boundary(chain: &[usize], brep: &rcad_kernel::BRep, _tolerance: f64) -> Option<Face> {
  if chain.len() < 3 { return None; }
  let mut wire_edges: Vec<WireEdge> = Vec::new();
  let mut nodes: Vec<DVec3> = Vec::new();
  for (i, &ei) in chain.iter().enumerate() {
- let edge = brep.edges.get(ei)?;
+ let e = ed_opt(brep, ei)?;
  wire_edges.push(WireEdge::fwd(ei));
- if i == 0 { nodes.push(brep.vertices.get(edge.start)?.point); }
- nodes.push(brep.vertices.get(edge.end)?.point);
+ if i == 0 { nodes.push(vpoint(brep, e.first.index)); }
+ nodes.push(vpoint(brep, e.last.index));
  }
  let mut normal = DVec3::ZERO;
  for i in 0..nodes.len() {
@@ -21,7 +21,7 @@ fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> O
 }
 
 /// Repair non-manifold edges in a shell.
-pub fn repair_non_manifold_edges(shell: &Shell, brep: &BRep) -> ManifoldRepairResult {
+pub fn repair_non_manifold_edges(shell: &Shell, brep: &rcad_kernel::BRep) -> ManifoldRepairResult {
  use std::collections::HashMap;
 
  let mut result = ManifoldRepairResult {
@@ -34,7 +34,7 @@ pub fn repair_non_manifold_edges(shell: &Shell, brep: &BRep) -> ManifoldRepairRe
  is_manifold: false,
  edge_details: vec![],
  };
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let mut edge_faces: HashMap<usize, Vec<usize>> = HashMap::new();
 
  for (face_idx, face) in shell.faces.iter().enumerate() {
@@ -67,12 +67,12 @@ pub fn repair_non_manifold_edges(shell: &Shell, brep: &BRep) -> ManifoldRepairRe
 }
 
 /// Validate shell topology comprehensively.
-pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationReport {
+pub fn validate_shell_topology(shell: &Shell, brep: &rcad_kernel::BRep) -> ShellValidationReport {
  use std::collections::{HashMap, HashSet};
 
  let mut report = ShellValidationReport::default();
- let n_edges = brep.edges.len();
- let n_verts = brep.vertices.len();
+ let n_edges = brep.edge_count();
+ let n_verts = brep.vertex_count();
 
  report.face_count = shell.faces.len();
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
@@ -90,9 +90,9 @@ pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationRep
  report.edge_count = unique_edges.len();
  let mut unique_verts: HashSet<usize> = HashSet::new();
  for &ei in &unique_edges {
- if let Some(edge) = brep.edges.get(ei) {
- if edge.start < n_verts { unique_verts.insert(edge.start); }
- if edge.end < n_verts { unique_verts.insert(edge.end); }
+ if let Some(e) = ed_opt(brep, ei) {
+ if e.first.index < n_verts { unique_verts.insert(e.first.index); }
+ if e.last.index < n_verts { unique_verts.insert(e.last.index); }
  }
  }
  report.vertex_count = unique_verts.len();
@@ -112,11 +112,11 @@ pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationRep
  for (face_idx, face) in shell.faces.iter().enumerate() {
  for we in &face.outer_wire.edges {
  if we.idx < n_edges
- && let Some(edge) = brep.edges.get(we.idx) {
- vertex_edges.entry(edge.start).or_default().insert(we.idx);
- vertex_edges.entry(edge.end).or_default().insert(we.idx);
- vertex_faces.entry(edge.start).or_default().insert(face_idx);
- vertex_faces.entry(edge.end).or_default().insert(face_idx);
+ && let Some(e) = ed_opt(brep, we.idx) {
+ vertex_edges.entry(e.first.index).or_default().insert(we.idx);
+ vertex_edges.entry(e.last.index).or_default().insert(we.idx);
+ vertex_faces.entry(e.first.index).or_default().insert(face_idx);
+ vertex_faces.entry(e.last.index).or_default().insert(face_idx);
  }
  }
  }
@@ -244,26 +244,26 @@ impl SolidFixReport {
 ///
 /// # Arguments
 /// * `solid` - The solid to analyze.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A `SolidClosureReport` with closure status and shell classification.
 ///
 /// # Example
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::check_solid_closure;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let report = check_solid_closure(solid, &brep);
+/// let report = check_solid_closure(solid, &rcad_kernel::BRep);
 /// assert!(report.is_closed);
 /// assert_eq!(report.outer_shell_count, 1);
 /// ```
-pub fn check_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureReport {
+pub fn check_solid_closure(solid: &Solid, brep: &rcad_kernel::BRep) -> SolidClosureReport {
  let mut report = SolidClosureReport::default();
 
  // Check each shell for closure
@@ -344,7 +344,7 @@ pub fn check_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureReport {
 }
 
 /// Compute the approximate volume of a shell.
-fn compute_shell_volume(shell: &Shell, brep: &BRep) -> f64 {
+fn compute_shell_volume(shell: &Shell, brep: &rcad_kernel::BRep) -> f64 {
  // Use the divergence theorem: volume = (1/6) * sum of (face centroid dot face normal * face area)
  // This works for closed shells
 
@@ -362,17 +362,17 @@ fn compute_shell_volume(shell: &Shell, brep: &BRep) -> f64 {
 }
 
 /// Compute the axis-aligned bounding box of a shell.
-fn compute_shell_bounds(shell: &Shell, brep: &BRep) -> (DVec3, DVec3) {
+fn compute_shell_bounds(shell: &Shell, brep: &rcad_kernel::BRep) -> (DVec3, DVec3) {
  let mut min_bound = DVec3::splat(f64::INFINITY);
  let mut max_bound = DVec3::splat(f64::NEG_INFINITY);
 
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
- for &vi in &[edge.start, edge.end] {
- if let Some(v) = brep.vertices.get(vi) {
- min_bound = min_bound.min(v.point);
- max_bound = max_bound.max(v.point);
+ if let Some(e) = ed_opt(brep, we.idx) {
+ for &vi in &[e.first.index, e.last.index] {
+ if let Some(pt) = brep.vertex_point(vi) {
+ min_bound = min_bound.min(pt);
+ max_bound = max_bound.max(pt);
  }
  }
  }
@@ -394,13 +394,13 @@ fn compute_shell_bounds(shell: &Shell, brep: &BRep) -> (DVec3, DVec3) {
 ///
 /// # Arguments
 /// * `solid` - The solid to repair.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A tuple of (repaired solid, report).
 ///
 /// Analogous to OCCT `ShapeFix_Solid::FixOrientation()`.
-pub fn fix_solid_orientation(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
+pub fn fix_solid_orientation(solid: &Solid, brep: &rcad_kernel::BRep) -> (Solid, SolidFixReport) {
  let mut report = SolidFixReport::default();
  let mut fixed_solid = solid.clone();
 
@@ -493,7 +493,7 @@ pub fn fix_solid_orientation(solid: &Solid, brep: &BRep) -> (Solid, SolidFixRepo
 }
 
 /// Check if a solid has consistent orientation across all shells.
-fn check_solid_orientability(solid: &Solid, brep: &BRep) -> bool {
+fn check_solid_orientability(solid: &Solid, brep: &rcad_kernel::BRep) -> bool {
  for shell in &solid.shells {
  if !check_shell_orientability(shell, brep) {
  return false;
@@ -511,13 +511,13 @@ fn check_solid_orientability(solid: &Solid, brep: &BRep) -> bool {
 ///
 /// # Arguments
 /// * `solid` - The solid to repair.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A tuple of (repaired solid, report).
 ///
 /// Analogous to OCCT `ShapeFix_Solid::Perform()`.
-pub fn fix_solid(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
+pub fn fix_solid(solid: &Solid, brep: &rcad_kernel::BRep) -> (Solid, SolidFixReport) {
  let mut current_solid = solid.clone();
  let mut report = SolidFixReport::default();
 
@@ -687,25 +687,25 @@ impl SolidClosureVerificationReport {
 ///
 /// # Arguments
 /// * `solid` - The solid to verify.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A `SolidClosureVerificationReport` with detailed closure analysis.
 ///
 /// # Example
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::verify_solid_closure;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let report = verify_solid_closure(solid, &brep);
+/// let report = verify_solid_closure(solid, &rcad_kernel::BRep);
 /// assert!(report.is_valid());
 /// ```
-pub fn verify_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureVerificationReport {
+pub fn verify_solid_closure(solid: &Solid, brep: &rcad_kernel::BRep) -> SolidClosureVerificationReport {
  let mut report = SolidClosureVerificationReport {
  shell_count: solid.shells.len(),
  ..Default::default()
@@ -808,7 +808,7 @@ pub fn verify_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureVerificat
 }
 
 /// Determine the volume sign for a shell based on volume and normal orientation.
-fn determine_volume_sign(volume: f64, shell: &Shell, brep: &BRep) -> VolumeSign {
+fn determine_volume_sign(volume: f64, shell: &Shell, brep: &rcad_kernel::BRep) -> VolumeSign {
  const VOLUME_TOLERANCE: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
  if volume.abs() < VOLUME_TOLERANCE {
@@ -855,7 +855,7 @@ fn analyze_shell_containment(
  solid: &Solid,
  shell_bounds: &[(DVec3, DVec3)],
  volume_signs: &[VolumeSign],
- _brep: &BRep,
+ _brep: &rcad_kernel::BRep,
 ) -> Vec<ShellContainmentInfo> {
  let n_shells = solid.shells.len();
  let mut containment = Vec::with_capacity(n_shells);
@@ -998,25 +998,25 @@ impl SolidOrientationReport {
 ///
 /// # Arguments
 /// * `solid` - The solid whose shells should be oriented.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A tuple of (oriented solid, orientation report).
 ///
 /// # Example
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::orient_solid_shells;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let (oriented, report) = orient_solid_shells(solid, &brep);
+/// let (oriented, report) = orient_solid_shells(solid, &rcad_kernel::BRep);
 /// assert!(report.is_clean());
 /// ```
-pub fn orient_solid_shells(solid: &Solid, brep: &BRep) -> (Solid, SolidOrientationReport) {
+pub fn orient_solid_shells(solid: &Solid, brep: &rcad_kernel::BRep) -> (Solid, SolidOrientationReport) {
  let mut report = SolidOrientationReport::default();
  let mut oriented_solid = solid.clone();
 
@@ -1198,25 +1198,25 @@ impl SolidValidationReport {
 ///
 /// # Arguments
 /// * `solid` - The solid to validate.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A `SolidValidationReport` with all validation results.
 ///
 /// # Example
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::validate_solid_topology;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let report = validate_solid_topology(solid, &brep);
+/// let report = validate_solid_topology(solid, &rcad_kernel::BRep);
 /// assert!(report.is_valid);
 /// ```
-pub fn validate_solid_topology(solid: &Solid, brep: &BRep) -> SolidValidationReport {
+pub fn validate_solid_topology(solid: &Solid, brep: &rcad_kernel::BRep) -> SolidValidationReport {
  let mut report = SolidValidationReport::default();
 
  // Step 1: Closure verification
@@ -1354,7 +1354,7 @@ fn verify_material_side_consistency(
  solid: &Solid,
  closure_report: &SolidClosureVerificationReport,
  errors: &mut Vec<SolidValidationError>,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
 ) -> bool {
  let mut consistent = true;
 
@@ -1462,7 +1462,7 @@ impl SolidRepairResult {
 ///
 /// # Arguments
 /// * `solid` - The solid to repair.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 /// * `tolerance` - Tolerance for geometric operations.
 ///
 /// # Returns
@@ -1471,18 +1471,18 @@ impl SolidRepairResult {
 /// # Example
 /// ```rust
 /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::repair_solid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
+/// let result = repair_solid(solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 /// assert!(result.success);
 /// ```
-pub fn repair_solid(solid: &Solid, brep: &BRep, tolerance: f64) -> SolidRepairResult {
+pub fn repair_solid(solid: &Solid, brep: &rcad_kernel::BRep, tolerance: f64) -> SolidRepairResult {
  let mut result = SolidRepairResult {
  solid: solid.clone(),
  success: false,
@@ -1658,50 +1658,48 @@ impl Default for UvGapRepairConfig {
 /// * `solid_idx` - Index of the solid containing the face.
 /// * `shell_idx` - Index of the shell containing the face.
 /// * `face_idx` - Index of the face to repair.
-/// * `brep` - The BRep structure.
+/// * `brep` - The brep structure.
 /// * `config` - Configuration for the repair operation.
 ///
 /// # Returns
 ///
-/// A tuple of (modified BRep, repair report).
+/// A tuple of (modified brep, repair report).
 ///
 /// # Example
 ///
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_algorithms::brep_repair::{fix_uv_gaps, UvGapRepairConfig};
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
 /// radius: 1.0,
 /// height: 2.0,
 /// });
 /// let config = UvGapRepairConfig::default();
-/// let (repaired, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
+/// let (repaired, report) = fix_uv_gaps(0, 0, 0, &rcad_kernel::BRep, &config);
 /// println!("Gaps repaired: {}", report.gaps_repaired);
 /// ```
 pub fn fix_uv_gaps(
  solid_idx: usize,
  shell_idx: usize,
  face_idx: usize,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &UvGapRepairConfig,
-) -> (BRep, UvGapRepairReport) {
+) -> (rcad_kernel::BRep, UvGapRepairReport) {
  let mut result = brep.clone();
  let mut report = UvGapRepairReport::default();
-
- let Some(solid) = brep.solids.get(solid_idx) else { return (result, report); };
- let Some(shell) = solid.shells.get(shell_idx) else { return (result, report); };
- let Some(_face) = shell.faces.get(face_idx) else { return (result, report); };
 
  // Compute flat face index for geometry lookup
  let flat_face_idx = compute_flat_face_idx_for_repair(brep, solid_idx, shell_idx, face_idx);
 
- let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+ // Get the face from tshapes instead of brep.solids/shells/faces
+ let Some(fd) = brep.tshapes.get(flat_face_idx).and_then(|ts| {
+ if let TShape::Face(fd) = &**ts { Some(fd) } else { None }
+}) else { return (result, report); };
+ let Some(surface) = &fd.surface else {
  return (result, report);
  };
- let Some(surface) = brep.geom.surfaces.get(surface_idx) else {
- return (result, report);
- };
+ let _surface = surface; // used below
 
  report.faces_processed = 1;
 
@@ -1714,8 +1712,6 @@ pub fn fix_uv_gaps(
 
  // Get surface properties
  let domain = surface.default_domain();
- let _is_u_periodic = matches!(surface, rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Cone(_) | rcad_kernel::geom::Surface3::Torus(_) | rcad_kernel::geom::Surface3::Revolution(_) | rcad_kernel::geom::Surface3::Helicoid(_));
- let _is_v_periodic = matches!(surface, rcad_kernel::geom::Surface3::Torus(_));
 
  // Process each detected gap
  for gap in gap_report.u_min_gaps.iter().chain(&gap_report.u_max_gaps)
@@ -1742,7 +1738,8 @@ pub fn fix_uv_gaps(
  }
 
  // Attempt to repair the gap by extending the PCurve
- let repair_result = repair_single_gap(&mut result, gap, surface_idx, surface, &domain, config);
+ // Use flat_face_idx as the face key for pcurve lookup in TEdgeData
+ let repair_result = repair_single_gap(&mut result, gap, flat_face_idx, surface, &domain, config);
 
  match repair_result {
  Ok(extended) => {
@@ -1769,7 +1766,7 @@ pub fn fix_uv_gaps(
  continue;
  }
 
- let seam_result = repair_periodic_seam_gap(&mut result, gap, surface_idx, surface, &domain, config);
+ let seam_result = repair_periodic_seam_gap(&mut result, gap, flat_face_idx, surface, &domain, config);
 
  match seam_result {
  Ok(adjusted) => {
@@ -1792,15 +1789,29 @@ pub fn fix_uv_gaps(
 }
 
 /// Compute flat face index for geometry lookup.
-fn compute_flat_face_idx_for_repair(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_idx_for_repair(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut idx = 0usize;
- for s in 0..solid_idx {
- for sh in &brep.solids[s].shells {
- idx += sh.faces.len();
+ let mut cur_solid = 0usize;
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = &**ts {
+ if cur_solid < solid_idx {
+ for sr in &sd.shells {
+ if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ idx += shd.faces.len();
  }
  }
- for sh in 0..shell_idx {
- idx += brep.solids[solid_idx].shells[sh].faces.len();
+ cur_solid += 1;
+ } else if cur_solid == solid_idx {
+ for (shi, sr) in sd.shells.iter().enumerate() {
+ if shi < shell_idx {
+ if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ idx += shd.faces.len();
+ }
+ }
+ }
+ break;
+ }
+ }
  }
  idx + face_idx
 }
@@ -1809,31 +1820,21 @@ use crate::shape_analysis::{EndpointGap, PeriodicGap};
 
 /// Repair a single endpoint gap.
 fn repair_single_gap(
- result: &mut BRep,
+ result: &mut rcad_kernel::BRep,
  gap: &EndpointGap,
- surface_idx: usize,
+ face_idx: usize,
  surface: &rcad_kernel::geom::Surface3,
  domain: &[f64; 4],
  config: &UvGapRepairConfig,
 ) -> Result<bool, GapRepairFailureReason> {
- // Get the PCurve for this edge
- let Some(pcurves) = result.geom.edge_pcurves.get(gap.edge_idx) else {
+ // Get the PCurve for this edge from TEdgeData.pcurves (keyed by face index)
+ let Some((curve2d, t_min, t_max)) = (|| -> Option<(&rcad_kernel::Curve2d, f64, f64)> {
+ let e = ed_opt(result, gap.edge_idx)?;
+ e.pcurves.get(&face_idx).map(|(c, mn, mx)| (c, *mn, *mx))
+ })() else {
  return Err(GapRepairFailureReason::NoExtensionMethod);
  };
-
- let pc_idx = pcurves.iter().position(|pc| pc.surface_idx == surface_idx);
- let Some(pc_idx) = pc_idx else {
- return Err(GapRepairFailureReason::NoExtensionMethod);
- };
-
- let curve2d_idx = pcurves[pc_idx].curve2d_idx;
- let Some(curve2d) = result.geom.curve2ds.get(curve2d_idx) else {
- return Err(GapRepairFailureReason::NoExtensionMethod);
- };
-
- let range = result.geom.curve2d_range.get(curve2d_idx)
- .and_then(|r| *r)
- .unwrap_or([0.0, 1.0]);
+ let range = [t_min, t_max];
 
  // Determine the target UV coordinate (surface boundary)
  let target_uv = gap.boundary_uv;
@@ -1884,16 +1885,13 @@ fn repair_single_gap(
 
  match extended {
  Some(new_curve) => {
- // Add the new curve
- let new_idx = result.geom.curve2ds.len();
- result.geom.curve2ds.push(new_curve);
-
- // Update the PCurve reference
- if let Some(pcs) = result.geom.edge_pcurves.get_mut(gap.edge_idx)
- && let Some(pc) = pcs.iter_mut().find(|p| p.surface_idx == surface_idx) {
- pc.curve2d_idx = new_idx;
+ // Update the PCurve in TEdgeData using Arc::make_mut
+ if let Some(ts) = result.tshapes.get(gap.edge_idx) {
+ let edge_arc = ts.clone(); // clone Arc to avoid ownership issue
+ if let TShape::Edge(ed) = &mut *Arc::make_mut(&mut result.tshapes[gap.edge_idx]) {
+ ed.pcurves.insert(face_idx, (new_curve, t_min, t_max));
  }
-
+ }
  Ok(true)
  }
  None => Err(GapRepairFailureReason::NoExtensionMethod),
@@ -2006,7 +2004,25 @@ fn extend_pcurve_to_boundary(
  t_max: tc.t_max,
  }))
  }
- Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) => None,
+ Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) | Curve2d::AHTBezier(_) | Curve2d::TBezier(_) => None,
  }
 }
+
+/// Simple triangle-fan face area approximation from outer wire vertices.
+fn compute_face_area(brep: &rcad_kernel::BRep, face: &Face) -> f64 {
+    let verts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
+        brep.tshapes.get(we.idx).and_then(|ts| {
+            if let rcad_kernel::topods::TShape::Edge(ed) = ts.as_ref() {
+                brep.vertex_point(ed.first.index)
+            } else { None }
+        })
+    }).collect();
+    if verts.len() < 3 { return 0.0; }
+    let mut area = 0.0;
+    for i in 1..verts.len() - 1 {
+        area += (verts[i] - verts[0]).cross(verts[i + 1] - verts[0]).length() * 0.5;
+    }
+    area
+}
+
 

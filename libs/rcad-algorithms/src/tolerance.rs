@@ -1,4 +1,4 @@
-﻿//! Geometric tolerances, adaptive context, and small predicate helpers.
+//! Geometric tolerances, adaptive context, and small predicate helpers.
 //!
 //! # Roadmap
 //!
@@ -65,7 +65,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::{
  edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
- vertex_tolerance as kernel_vertex_tolerance, BRep, CONFUSION,
+ vertex_tolerance as kernel_vertex_tolerance, topods, CONFUSION,
 };
 use tracing::debug;
 
@@ -238,13 +238,13 @@ impl AdaptiveTolerance {
  }
 
  /// Create a new adaptive tolerance from a BRep's bounding box.
- pub fn from_brep(brep: &BRep) -> Self {
+ pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
  let scale = compute_model_scale(brep);
  Self::from_scale(scale)
  }
 
  /// Create a new adaptive tolerance from two BReps' combined bounding box.
- pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
+ pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  let scale_a = compute_model_scale(a);
  let scale_b = compute_model_scale(b);
  Self::from_scale(scale_a.max(scale_b))
@@ -345,11 +345,11 @@ impl ToleranceContext {
  Self::new(adaptive, 0.0)
  }
 
- pub fn from_brep(brep: &BRep) -> Self {
+ pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
  Self::from_adaptive(AdaptiveTolerance::from_brep(brep))
  }
 
- pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
+ pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  Self::from_adaptive(AdaptiveTolerance::from_two_breps(a, b))
  }
 
@@ -399,9 +399,9 @@ pub fn combined_linear_tol_for_faces(
  ctx: &ToleranceContext,
  level: ToleranceLevel,
  use_workspace: bool,
- brep_a: &BRep,
+ brep_a: &rcad_kernel::BRep,
  face_a: Option<usize>,
- brep_b: &BRep,
+ brep_b: &rcad_kernel::BRep,
  face_b: Option<usize>,
 ) -> f64 {
  let base = if use_workspace {
@@ -425,8 +425,8 @@ pub fn combined_linear_tol_models(
  ctx: &ToleranceContext,
  level: ToleranceLevel,
  use_workspace: bool,
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
 ) -> f64 {
  let base = if use_workspace {
  ctx.workspace_linear(level)
@@ -464,8 +464,8 @@ pub fn intss_geom_tol_floor(baseline_linear: f64, participant_tolerance_max: f64
 #[inline]
 pub fn intss_geom_tol_floor_for_brep_bounds(
  baseline_linear: f64,
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
 ) -> f64 {
  intss_geom_tol_floor(
  baseline_linear,
@@ -476,7 +476,7 @@ pub fn intss_geom_tol_floor_for_brep_bounds(
 /// Triangle-soup pair/merge epsilon derived from **[`AdaptiveTolerance::from_brep`]** at
 /// [`ToleranceLevel::Relaxed`], at least [`TOLERANCE_MESH_LEGACY`], folded with [`model_tolerance`].
 #[inline]
-pub fn tessellation_merge_linear_from_brep(brep: &BRep) -> f64 {
+pub fn tessellation_merge_linear_from_brep(brep: &rcad_kernel::BRep) -> f64 {
  let adaptive = AdaptiveTolerance::from_brep(brep);
  let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
  effective_linear_with_geom_tol(base, model_tolerance(brep))
@@ -485,7 +485,7 @@ pub fn tessellation_merge_linear_from_brep(brep: &BRep) -> f64 {
 /// Like [`tessellation_merge_linear_from_brep`] using [`AdaptiveTolerance::from_two_breps`] and
 /// `max(model_tolerance(a), model_tolerance(b))` for the topological fold.
 #[inline]
-pub fn tessellation_merge_linear_from_two_breps(brep_a: &BRep, brep_b: &BRep) -> f64 {
+pub fn tessellation_merge_linear_from_two_breps(brep_a: &rcad_kernel::BRep, brep_b: &rcad_kernel::BRep) -> f64 {
  let adaptive = AdaptiveTolerance::from_two_breps(brep_a, brep_b);
  let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
  let geom = model_tolerance(brep_a).max(model_tolerance(brep_b));
@@ -531,9 +531,9 @@ pub fn combined_linear_tol_for_edges(
  ctx: &ToleranceContext,
  level: ToleranceLevel,
  use_workspace: bool,
- brep_a: &BRep,
+ brep_a: &rcad_kernel::BRep,
  edge_a: Option<usize>,
- brep_b: &BRep,
+ brep_b: &rcad_kernel::BRep,
  edge_b: Option<usize>,
 ) -> f64 {
  let base = if use_workspace {
@@ -556,9 +556,9 @@ pub fn combined_linear_tol_for_vertices(
  ctx: &ToleranceContext,
  level: ToleranceLevel,
  use_workspace: bool,
- brep_a: &BRep,
+ brep_a: &rcad_kernel::BRep,
  vertex_a: Option<usize>,
- brep_b: &BRep,
+ brep_b: &rcad_kernel::BRep,
  vertex_b: Option<usize>,
 ) -> f64 {
  let base = if use_workspace {
@@ -598,15 +598,17 @@ pub fn boolean_fuzzy_ladder_scaled(initial_fuzzy: f64, extra_coarse_base: Option
 
 /// Compute the characteristic scale of a model from its bounding box.
 /// Returns the diagonal of the bounding box, or 1.0 if the model is empty.
-pub fn compute_model_scale(brep: &BRep) -> f64 {
+pub fn compute_model_scale(brep: &rcad_kernel::BRep) -> f64 {
  let mut min_pt = DVec3::splat(f64::INFINITY);
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
  let mut has_vertices = false;
 
- for vertex in &brep.vertices {
- min_pt = min_pt.min(vertex.point);
- max_pt = max_pt.max(vertex.point);
+ for ts in &brep.tshapes {
+ if let topods::TShape::Vertex(vd) = ts.as_ref() {
+ min_pt = min_pt.min(vd.point);
+ max_pt = max_pt.max(vd.point);
  has_vertices = true;
+ }
  }
 
  if !has_vertices {
@@ -636,26 +638,32 @@ pub fn compute_scale_from_points(points: &[DVec3]) -> f64 {
 }
 
 /// Face count in BRep traversal order (matches `geom.face_tolerance` / `face_surface` flat indices).
-pub fn flat_face_count(brep: &BRep) -> usize {
- brep.solids
- .iter()
- .flat_map(|s| &s.shells)
- .map(|sh| sh.faces.len())
- .sum()
+pub fn flat_face_count(brep: &rcad_kernel::BRep) -> usize {
+ let mut count = 0;
+ for ts in &brep.tshapes {
+ if let topods::TShape::Solid(sd) = ts.as_ref() {
+ for sr in &sd.shells {
+ if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ count += shd.faces.len();
+ }
+ }
+ }
+ }
+ count
 }
 
 /// Maximum positive finite `geom.face_tolerance` entry for the first [`flat_face_count`] slots.
 ///
 /// If the array is missing entries or has no valid values, returns [`TOLERANCE_ABS`].
 /// Use to derive mesh / triangle-soup intersection epsilons when geometry came from this BRep.
-pub fn max_face_tolerance_or_abs(brep: &BRep) -> f64 {
- let n = flat_face_count(brep);
+pub fn max_face_tolerance_or_abs(brep: &rcad_kernel::BRep) -> f64 {
  let mut m = TOLERANCE_ABS;
- let ft = &brep.geom.face_tolerance;
- for i in 0..n.min(ft.len()) {
- let t = ft[i];
+ for ts in &brep.tshapes {
+ if let topods::TShape::Face(fd) = ts.as_ref() {
+ let t = fd.tolerance;
  if t.is_finite() && t > 0.0 {
  m = m.max(t);
+ }
  }
  }
  m
@@ -663,7 +671,7 @@ pub fn max_face_tolerance_or_abs(brep: &BRep) -> f64 {
 
 /// [`max_face_tolerance_or_abs`] applied to both inputs; suitable for mesh intersection of two sources.
 #[inline]
-pub fn max_face_tolerance_or_abs_pair(a: &BRep, b: &BRep) -> f64 {
+pub fn max_face_tolerance_or_abs_pair(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> f64 {
  max_face_tolerance_or_abs(a).max(max_face_tolerance_or_abs(b))
 }
 

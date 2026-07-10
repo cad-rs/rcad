@@ -12,7 +12,8 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{topods, BRep, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
+use rcad_kernel::{topods, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
+use rcad_kernel::topods::TShape;
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -33,14 +34,14 @@ use std::f64::consts::PI;
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// let adaptor = EdgeAdaptor::new(&brep, 0);
 /// let domain = adaptor.domain();
 /// let midpoint = adaptor.point_at((domain[0] + domain[1]) / 2.0);
 /// ```
 #[derive(Debug, Clone)]
 pub struct EdgeAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     edge_idx: usize,
     /// Cached curve reference (if available).
     curve: Option<&'a Curve3>,
@@ -60,20 +61,13 @@ impl<'a> EdgeAdaptor<'a> {
     ///
     /// Does not panic; returns a default adaptor if the edge index is out of bounds
     /// or the edge has no associated curve.
-    pub fn new(brep: &'a BRep, edge_idx: usize) -> Self {
-        let curve = brep
-            .geom
-            .edge_curve
-            .get(edge_idx)
-            .and_then(|opt| opt.as_ref())
-            .and_then(|&curve_idx| brep.geom.curves.get(curve_idx));
-
-        let range = if let Some(r) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
-            r
-        } else if let Some(c) = curve {
-            c.default_domain()
-        } else {
-            [0.0, 1.0]
+    pub fn new(brep: &'a rcad_kernel::BRep, edge_idx: usize) -> Self {
+        let (curve, range) = match brep.tshapes.get(edge_idx) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Edge(ed) => (ed.curve.as_ref(), ed.range),
+                _ => (None, [0.0, 1.0]),
+            },
+            None => (None, [0.0, 1.0]),
         };
 
         Self {
@@ -174,10 +168,13 @@ impl<'a> EdgeAdaptor<'a> {
     ///
     /// A closed edge forms a loop, such as a circle or ellipse.
     pub fn is_closed(&self) -> bool {
-        let Some(edge) = self.brep.edges.get(self.edge_idx) else {
-            return false;
-        };
-        edge.start == edge.end
+        match self.brep.tshapes.get(self.edge_idx) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Edge(ed) => ed.first.index == ed.last.index,
+                _ => false,
+            },
+            None => false,
+        }
     }
 
     /// Return the period of the edge's curve if it is periodic.
@@ -221,36 +218,36 @@ impl<'a> EdgeAdaptor<'a> {
 
     /// Fall back to vertex-based point evaluation when no curve is available.
     fn point_from_vertices(&self, t: f64) -> DVec3 {
-        let Some(edge) = self.brep.edges.get(self.edge_idx) else {
-            return DVec3::ZERO;
+        let (v0_idx, v1_idx) = match self.brep.tshapes.get(self.edge_idx) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Edge(ed) => (ed.first.index, ed.last.index),
+                _ => return DVec3::ZERO,
+            },
+            None => return DVec3::ZERO,
         };
-        let Some(v_start) = self.brep.vertices.get(edge.start) else {
-            return DVec3::ZERO;
-        };
-        let Some(v_end) = self.brep.vertices.get(edge.end) else {
-            return DVec3::ZERO;
-        };
+        let p0 = self.brep.vertex_point(v0_idx).unwrap_or(DVec3::ZERO);
+        let p1 = self.brep.vertex_point(v1_idx).unwrap_or(DVec3::ZERO);
 
         if self.reversed {
-            v_end.point.lerp(v_start.point, t)
+            p1.lerp(p0, t)
         } else {
-            v_start.point.lerp(v_end.point, t)
+            p0.lerp(p1, t)
         }
     }
 
     /// Fall back to vertex-based tangent when no curve is available.
     fn tangent_from_vertices(&self) -> DVec3 {
-        let Some(edge) = self.brep.edges.get(self.edge_idx) else {
-            return DVec3::X;
+        let (v0_idx, v1_idx) = match self.brep.tshapes.get(self.edge_idx) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Edge(ed) => (ed.first.index, ed.last.index),
+                _ => return DVec3::X,
+            },
+            None => return DVec3::X,
         };
-        let Some(v_start) = self.brep.vertices.get(edge.start) else {
-            return DVec3::X;
-        };
-        let Some(v_end) = self.brep.vertices.get(edge.end) else {
-            return DVec3::X;
-        };
+        let p0 = self.brep.vertex_point(v0_idx).unwrap_or(DVec3::X);
+        let p1 = self.brep.vertex_point(v1_idx).unwrap_or(DVec3::X);
 
-        let dir = (v_end.point - v_start.point).normalize_or_zero();
+        let dir = (p1 - p0).normalize_or_zero();
         if self.reversed {
             -dir
         } else {
@@ -260,21 +257,23 @@ impl<'a> EdgeAdaptor<'a> {
 
     /// Get the first vertex index of this edge.
     pub fn first_vertex(&self) -> Option<usize> {
-        let edge = self.brep.edges.get(self.edge_idx)?;
+        let ts = self.brep.tshapes.get(self.edge_idx)?;
+        let TShape::Edge(ed) = ts.as_ref() else { return None };
         if self.reversed {
-            Some(edge.end)
+            Some(ed.last.index)
         } else {
-            Some(edge.start)
+            Some(ed.first.index)
         }
     }
 
     /// Get the last vertex index of this edge.
     pub fn last_vertex(&self) -> Option<usize> {
-        let edge = self.brep.edges.get(self.edge_idx)?;
+        let ts = self.brep.tshapes.get(self.edge_idx)?;
+        let TShape::Edge(ed) = ts.as_ref() else { return None };
         if self.reversed {
-            Some(edge.start)
+            Some(ed.first.index)
         } else {
-            Some(edge.end)
+            Some(ed.last.index)
         }
     }
 }
@@ -297,7 +296,7 @@ impl<'a> EdgeAdaptor<'a> {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 /// let adaptor = FaceAdaptor::new(&brep, 0);
 /// let domain = adaptor.domain();
 /// let center = adaptor.point_at(
@@ -307,7 +306,7 @@ impl<'a> EdgeAdaptor<'a> {
 /// ```
 #[derive(Debug, Clone)]
 pub struct FaceAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     face_idx: usize,
     /// Cached surface reference (if available).
     surface: Option<&'a Surface3>,
@@ -326,25 +325,19 @@ impl<'a> FaceAdaptor<'a> {
     ///
     /// Does not panic; returns a default adaptor if the face index is out of bounds
     /// or the face has no associated surface.
-    pub fn new(brep: &'a BRep, face_idx: usize) -> Self {
-        let surface = brep
-            .geom
-            .face_surface
-            .get(face_idx)
-            .and_then(|opt| opt.as_ref())
-            .and_then(|&surf_idx| brep.geom.surfaces.get(surf_idx));
-
-        let range = if let Some(r) = brep
-            .geom
-            .face_surface_range
-            .get(face_idx)
-            .and_then(|r| *r)
-        {
-            r
-        } else if let Some(s) = surface {
-            s.default_domain()
-        } else {
-            [0.0, 1.0, 0.0, 1.0]
+    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Self {
+        let (surface, range) = match brep.tshapes.get(face_idx) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Face(fd) => {
+                    let s = fd.surface.as_ref();
+                    let r = fd.uv_domain.unwrap_or_else(|| {
+                        s.map(|surf| surf.default_domain()).unwrap_or([0.0, 1.0, 0.0, 1.0])
+                    });
+                    (s, r)
+                }
+                _ => (None, [0.0, 1.0, 0.0, 1.0]),
+            },
+            None => (None, [0.0, 1.0, 0.0, 1.0]),
         };
 
         Self {
@@ -379,12 +372,11 @@ impl<'a> FaceAdaptor<'a> {
         let mut normal = surface.normal_at(u, v);
 
         // Check if face orientation should flip the normal.
-        // In this implementation, we use the stored face normal direction
-        // to determine the correct orientation.
-        if let Some(face) = self.get_face()
-            && normal.dot(face.normal) < 0.0 {
-                normal = -normal;
-            }
+        // Approximate: evaluate surface normal at domain center.
+        let surface_normal = self.normal_from_face();
+        if surface_normal.length_squared() > 0.5 && normal.dot(surface_normal) < 0.0 {
+            normal = -normal;
+        }
 
         normal
     }
@@ -628,42 +620,43 @@ impl<'a> FaceAdaptor<'a> {
         self.v_period().is_some()
     }
 
-    /// Get the Face struct for this adaptor's face index.
-    fn get_face(&self) -> Option<&rcad_kernel::Face> {
-        let mut flat_idx = 0usize;
-        for solid in &self.brep.solids {
-            for shell in &solid.shells {
-                for (fi, face) in shell.faces.iter().enumerate() {
-                    if flat_idx + fi == self.face_idx {
-                        return Some(face);
-                    }
-                }
-                flat_idx += shell.faces.len();
-            }
+    /// Get the TFaceData for this adaptor's face index.
+    fn get_face_data(&self) -> Option<&topods::TFaceData> {
+        let ts = self.brep.tshapes.get(self.face_idx)?;
+        match ts.as_ref() {
+            TShape::Face(fd) => Some(fd),
+            _ => None,
         }
-        None
     }
 
     /// Fall back to vertex-based point when no surface is available.
     fn point_from_vertices(&self) -> DVec3 {
-        let Some(face) = self.get_face() else {
-            return DVec3::ZERO;
+        let fd = match self.get_face_data() {
+            Some(f) => f,
+            None => return DVec3::ZERO,
         };
 
-        // Return centroid of outer wire vertices.
+        // Get outer wire edges and compute centroid from their vertex positions.
+        let wire_ts = match self.brep.tshapes.get(fd.outer_wire.index) {
+            Some(ts) => ts,
+            None => return DVec3::ZERO,
+        };
+        let TShape::Wire(wd) = wire_ts.as_ref() else { return DVec3::ZERO };
+
         let mut sum = DVec3::ZERO;
         let mut count = 0usize;
-        for we in &face.outer_wire.edges {
-            let edge = match self.brep.edges.get(we.idx) {
-                Some(e) => e,
+        for er in &wd.edges {
+            let edge_ts = match self.brep.tshapes.get(er.index) {
+                Some(ts) => ts,
                 None => continue,
             };
-            if let Some(v) = self.brep.vertices.get(edge.start) {
-                sum += v.point;
+            let TShape::Edge(ed) = edge_ts.as_ref() else { continue };
+            if let Some(p) = self.brep.vertex_point(ed.first.index) {
+                sum += p;
                 count += 1;
             }
-            if let Some(v) = self.brep.vertices.get(edge.end) {
-                sum += v.point;
+            if let Some(p) = self.brep.vertex_point(ed.last.index) {
+                sum += p;
                 count += 1;
             }
         }
@@ -674,21 +667,25 @@ impl<'a> FaceAdaptor<'a> {
         }
     }
 
-    /// Fall back to stored face normal when no surface is available.
+    /// Fall back to DVec3::Z when no surface is available.
     fn normal_from_face(&self) -> DVec3 {
-        let Some(face) = self.get_face() else {
-            return DVec3::Z;
+        // No separate normal stored on TFaceData; evaluate from surface
+        let fd = match self.get_face_data() {
+            Some(f) => f,
+            None => return DVec3::Z,
         };
-        face.normal
+        let Some(surf) = &fd.surface else { return DVec3::Z };
+        let dom = surf.default_domain();
+        let u = (dom[0] + dom[1]) * 0.5;
+        let v = (dom[2] + dom[3]) * 0.5;
+        if u.is_finite() && v.is_finite() { surf.normal_at(u, v) } else { DVec3::Z }
     }
 
     /// Get the tolerance for this face.
     pub fn tolerance(&self) -> f64 {
-        self.brep
-            .geom
-            .face_tolerance
-            .get(self.face_idx)
-            .copied()
+        self.get_face_data()
+            .map(|fd| fd.tolerance)
+            .filter(|&t| t > 0.0)
             .unwrap_or(TOLERANCE_ABS)
     }
 }
@@ -727,7 +724,7 @@ struct WireSegment {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// // Get the outer wire of face 0.
 /// let wire = brep.solids[0].shells[0].faces[0].outer_wire.clone();
 /// let adaptor = WireAdaptor::new(&brep, &wire, 0);
@@ -735,7 +732,7 @@ struct WireSegment {
 /// let edge_at_mid = adaptor.edge_at(0.5);
 /// ```
 pub struct WireAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     wire: &'a Wire,
     /// Face index for pcurve lookups (if available).
     face_idx: Option<usize>,
@@ -771,7 +768,7 @@ impl<'a> WireAdaptor<'a> {
     ///
     /// The wire's edges are preprocessed to compute arc-lengths for
     /// parameterization by cumulative length fraction.
-    pub fn new(brep: &'a BRep, wire: &'a Wire, face_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, wire: &'a Wire, face_idx: usize) -> Self {
         let mut segments = Vec::with_capacity(wire.edges.len());
         let mut total_length = 0.0f64;
 
@@ -823,7 +820,7 @@ impl<'a> WireAdaptor<'a> {
     /// Create a wire adaptor without a face context.
     ///
     /// This constructor is used when the wire is not associated with a specific face.
-    pub fn without_face(brep: &'a BRep, wire: &'a Wire) -> Self {
+    pub fn without_face(brep: &'a rcad_kernel::BRep, wire: &'a Wire) -> Self {
         let mut adaptor = Self::new(brep, wire, 0);
         adaptor.face_idx = None;
         adaptor
@@ -937,33 +934,22 @@ impl<'a> WireAdaptor<'a> {
     }
 
     /// Compute the approximate arc-length of an edge.
-    fn compute_edge_length(brep: &BRep, edge_idx: usize) -> f64 {
-        // Try to compute from curve.
-        if let Some(&curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|o| o.as_ref())
-            && let Some(curve) = brep.geom.curves.get(curve_idx) {
-                let range = brep
-                    .geom
-                    .edge_curve_range
-                    .get(edge_idx)
-                    .and_then(|r| *r)
-                    .unwrap_or_else(|| curve.default_domain());
-
-                // Use numerical integration for arc-length.
-                return Self::arc_length_numerical(curve, range[0], range[1]);
+    fn compute_edge_length(brep: &rcad_kernel::BRep, edge_idx: usize) -> f64 {
+        // Try to compute from curve on TEdgeData.
+        if let Some(ts) = brep.tshapes.get(edge_idx) {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                if let Some(curve) = &ed.curve {
+                    let range = ed.range;
+                    // Use numerical integration for arc-length.
+                    return Self::arc_length_numerical(curve, range[0], range[1]);
+                }
+                // Fall back to vertex distance.
+                let p0 = brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
+                let p1 = brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
+                return (p1 - p0).length();
             }
-
-        // Fall back to vertex distance.
-        let Some(edge) = brep.edges.get(edge_idx) else {
-            return 0.0;
-        };
-        let Some(v_start) = brep.vertices.get(edge.start) else {
-            return 0.0;
-        };
-        let Some(v_end) = brep.vertices.get(edge.end) else {
-            return 0.0;
-        };
-
-        (v_end.point - v_start.point).length()
+        }
+        0.0
     }
 
     /// Numerical integration for arc-length using Gauss-Legendre quadrature.
@@ -1006,7 +992,7 @@ impl<'a> WireAdaptor<'a> {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// let mut array = CurveAdaptorArray::new();
 /// for i in 0..brep.edges.len() {
 ///     array.push(EdgeAdaptor::new(&brep, i));
@@ -1078,9 +1064,10 @@ impl<'a> CurveAdaptorArray<'a> {
     /// Create an array from a BRep's edges.
     ///
     /// Creates an adaptor for each edge in the BRep.
-    pub fn from_brep(brep: &'a BRep) -> Self {
-        let mut array = Self::with_capacity(brep.edges.len());
-        for i in 0..brep.edges.len() {
+    pub fn from_brep(brep: &'a rcad_kernel::BRep) -> Self {
+        let n = brep.edge_count();
+        let mut array = Self::with_capacity(n);
+        for i in 0..n {
             array.push(EdgeAdaptor::new(brep, i));
         }
         array

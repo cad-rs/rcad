@@ -23,28 +23,41 @@ macro_rules! trace {
 /// Count unique DS vertex indices used by result edges in the final BRep.
 pub fn count_used_vertices(result: &rcad_kernel::BRep) -> usize {
     let mut used = BTreeSet::new();
-    for s in &result.solids {
-        for sh in &s.shells {
-            for f in &sh.faces {
-                for we in &f.outer_wire.edges {
-                    if let Some(e) = result.edges.get(we.idx) {
-                        used.insert(e.start);
-                        used.insert(e.end);
-                    }
-                }
-                for w in &f.inner_wires {
-                    for we in &w.edges {
-                        if let Some(e) = result.edges.get(we.idx) {
-                            used.insert(e.start);
-                            used.insert(e.end);
+    for ts in &result.tshapes {
+        if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let rcad_kernel::topods::TShape::Shell(shd) = &*result.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        if let rcad_kernel::topods::TShape::Face(fd) = &*result.tshapes[face_sr.index] {
+                            // outer wire
+                            if let rcad_kernel::topods::TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
+                                for e_sr in &wd.edges {
+                                    if let rcad_kernel::topods::TShape::Edge(ed) = &*result.tshapes[e_sr.index] {
+                                        used.insert(ed.first.index);
+                                        used.insert(ed.last.index);
+                                    }
+                                }
+                            }
+                            // inner wires
+                            for iw_sr in &fd.inner_wires {
+                                if let rcad_kernel::topods::TShape::Wire(wd) = &*result.tshapes[iw_sr.index] {
+                                    for e_sr in &wd.edges {
+                                        if let rcad_kernel::topods::TShape::Edge(ed) = &*result.tshapes[e_sr.index] {
+                                            used.insert(ed.first.index);
+                                            used.insert(ed.last.index);
+                                        }
+                                    }
+                                }
+                            }
+                            // internal vertices
+                            for iv_sr in &fd.internal_vertices {
+                                used.insert(iv_sr.index);
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    for fiv in &result.geom.face_internal_vertices {
-        used.extend(fiv);
     }
     used.len()
 }
@@ -52,16 +65,21 @@ pub fn count_used_vertices(result: &rcad_kernel::BRep) -> usize {
 /// Print result topology summary.
 pub fn dump_result_topo(result: &rcad_kernel::BRep, label: &str) {
     let n_verts_used = count_used_vertices(result);
-    let n_verts_total = result.vertices.len();
-    let n_edges = result.edges.len();
-    let n_faces: usize = result.solids.iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum();
-    let n_shells: usize = result.solids.iter()
-        .flat_map(|s| &s.shells)
-        .count();
-    let n_solids = result.solids.len();
+    let n_verts_total = result.vertex_count();
+    let n_edges = result.edge_count();
+    let mut n_faces = 0usize;
+    let mut n_shells = 0usize;
+    for ts in &result.tshapes {
+        if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let rcad_kernel::topods::TShape::Shell(shd) = &*result.tshapes[shell_sr.index] {
+                    n_shells += 1;
+                    n_faces += shd.faces.len();
+                }
+            }
+        }
+    }
+    let n_solids = result.solid_count();
     eprintln!("[TRACE] {}: verts_total={} verts_used={} edges={} faces={} shells={} solids={}",
         label, n_verts_total, n_verts_used, n_edges, n_faces, n_shells, n_solids);
 }

@@ -571,6 +571,7 @@ impl<'a> super::PaveFiller<'a> {
  aT: &mut f64,
  ) -> bool {
  use rcad_kernel::projection::closest_point_on_curve;
+use rcad_kernel::PCurve;
  let ic = &self.ds.intersection_curves[curve_idx];
  let vp = self.ds.vertices[nV].point;
  let aFirst = ic.t_range[0];

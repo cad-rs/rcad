@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 // =============================================================================
 // ENHANCED DEFEATURE: THROUGH-HOLE vs BLIND-HOLE DETECTION
 // =============================================================================
@@ -50,10 +52,32 @@ pub struct CylindricalFeatureExtended {
 /// 2. Check if the adjacent faces at each end are planar (indicating a through-hole)
 /// 3. Check for conical or spherical bottom faces (indicating blind hole)
 /// 4. Analyze edge connectivity to determine hole termination
-pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> CylindricalFeatureExtended {
+pub fn classify_hole_type(brep: &rcad_kernel::BRep, feature: &CylindricalFeature) -> CylindricalFeatureExtended {
     let si = 0;
     let shi = 0;
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+
+    // Walk TShape hierarchy to find the first shell
+    let Some(shell_ts_idx) = brep.tshapes.iter().find_map(|ts| {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            sd.shells.first().copied()
+        } else {
+            None
+        }
+    })
+    .map(|sr| sr.index)
+    else {
+        return CylindricalFeatureExtended {
+            base: feature.clone(),
+            hole_type: HoleType::Unknown,
+            has_flat_bottom: false,
+            has_conical_bottom: false,
+            blind_depth: 0.0,
+            bottom_face_index: None,
+            top_adjacent_faces: Vec::new(),
+            bottom_adjacent_faces: Vec::new(),
+        };
+    };
+    let TShape::Shell(shd) = &*brep.tshapes[shell_ts_idx] else {
         return CylindricalFeatureExtended {
             base: feature.clone(),
             hole_type: HoleType::Unknown,
@@ -66,15 +90,21 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
         };
     };
 
-    // Build edge -> face adjacency map
+    // Build edge -> face adjacency map (edge tshape index -> [local face index])
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, face) in shell.faces.iter().enumerate() {
-        for we in &face.outer_wire.edges {
-            edge_to_faces.entry(we.idx).or_default().push(fi);
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                edge_to_faces.entry(we.idx).or_default().push(fi);
+    for (fi, face_sr) in shd.faces.iter().enumerate() {
+        if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+            if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                for edge_sr in &wd.edges {
+                    edge_to_faces.entry(edge_sr.index).or_default().push(fi);
+                }
+            }
+            for inner_sr in &fd.inner_wires {
+                if let TShape::Wire(iwd) = &*brep.tshapes[inner_sr.index] {
+                    for edge_sr in &iwd.edges {
+                        edge_to_faces.entry(edge_sr.index).or_default().push(fi);
+                    }
+                }
             }
         }
     }
@@ -87,9 +117,14 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
     // Collect all edges from the cylindrical wall faces
     let mut wall_edges: HashSet<usize> = HashSet::new();
     for &fi in &feature.face_indices {
-        let face = &shell.faces[fi];
-        for we in &face.outer_wire.edges {
-            wall_edges.insert(we.idx);
+        if let Some(face_sr) = shd.faces.get(fi) {
+            if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                    for edge_sr in &wd.edges {
+                        wall_edges.insert(edge_sr.index);
+                    }
+                }
+            }
         }
     }
 
@@ -104,12 +139,12 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
 
                 // Determine if this face is at top or bottom of the cylinder
                 // by analyzing the vertex positions of the shared edge
-                if let Some(edge) = brep.edges.get(ei) {
-                    let mid_point = if let (Some(v1), Some(v2)) = (
-                        brep.vertices.get(edge.start),
-                        brep.vertices.get(edge.end),
+                if let TShape::Edge(ed) = &*brep.tshapes[ei] {
+                    let mid_point = if let (Some(p1), Some(p2)) = (
+                        brep.vertex_point(ed.first.index),
+                        brep.vertex_point(ed.last.index),
                     ) {
-                        (v1.point + v2.point) * 0.5
+                        (p1 + p2) * 0.5
                     } else {
                         continue;
                     };
@@ -140,13 +175,10 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
 
     // Check for planar bottom face (blind hole indicator)
     let check_faces = if top_adjacent.is_empty() && !bottom_adjacent.is_empty() {
-        // Likely bottom of hole
         &bottom_adjacent
     } else if !top_adjacent.is_empty() && bottom_adjacent.is_empty() {
-        // Likely top of hole
         &top_adjacent
     } else {
-        // Check both
         &bottom_adjacent
     };
 
@@ -179,13 +211,10 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
         let depth = feature.height();
         (HoleType::BlindHole, depth)
     } else if top_adjacent.is_empty() && bottom_adjacent.is_empty() {
-        // No adjacent faces at either end -> through-hole
         (HoleType::ThroughHole, 0.0)
     } else if top_adjacent.len() > 1 && bottom_adjacent.len() > 1 {
-        // Multiple adjacent faces at both ends -> through-hole
         (HoleType::ThroughHole, 0.0)
     } else {
-        // Default to through-hole if uncertain
         (HoleType::ThroughHole, 0.0)
     };
 
@@ -205,7 +234,7 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
 ///
 /// Returns extended features with hole type classification.
 pub fn detect_cylindrical_features_extended(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_hole_radius: f64,
     max_boss_radius: f64,
 ) -> Vec<CylindricalFeatureExtended> {
@@ -315,9 +344,9 @@ impl PostSuppressionHealingOptions {
 /// This function repairs the topology after feature suppression operations,
 /// addressing gaps, dangling edges, and tolerance mismatches.
 pub fn heal_after_suppression(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &PostSuppressionHealingOptions,
-) -> (BRep, PostSuppressionHealingReport) {
+) -> (rcad_kernel::BRep, PostSuppressionHealingReport) {
     let mut current = brep.clone();
     let mut report = PostSuppressionHealingReport::default();
 
@@ -384,69 +413,86 @@ pub fn heal_after_suppression(
 /// Fill topology gaps by analyzing edge connectivity.
 ///
 /// Gaps can occur after boolean operations when faces don't align perfectly.
-fn fill_topology_gaps(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+fn fill_topology_gaps(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
     let mut gaps_filled = 0usize;
     let mut current = brep.clone();
 
-    // Find edges that are shared by exactly one face (potential gaps)
-    let Some(shell) = current.solids.first().and_then(|s| s.shells.first()) else {
-        return (current, 0);
-    };
+    // Build edge->face adjacency and find boundary edges (read-only TShape walk)
+    let (edge_face_count, boundary_edges) = {
+        let Some(shell_ts_idx) = current.tshapes.iter().find_map(|ts| {
+            if let TShape::Solid(sd) = ts.as_ref() {
+                sd.shells.first().copied()
+            } else {
+                None
+            }
+        })
+        .map(|sr| sr.index)
+        else {
+            return (current, 0);
+        };
+        let TShape::Shell(shd) = &*current.tshapes[shell_ts_idx] else {
+            return (current, 0);
+        };
 
-    // Count face usage for each edge
-    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
-    for face in &shell.faces {
-        for we in &face.outer_wire.edges {
-            *edge_face_count.entry(we.idx).or_default() += 1;
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                *edge_face_count.entry(we.idx).or_default() += 1;
+        // Count face usage for each edge
+        let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+        for face_sr in &shd.faces {
+            if let TShape::Face(fd) = &*current.tshapes[face_sr.index] {
+                if let TShape::Wire(wd) = &*current.tshapes[fd.outer_wire.index] {
+                    for edge_sr in &wd.edges {
+                        *edge_face_count.entry(edge_sr.index).or_default() += 1;
+                    }
+                }
+                for inner_sr in &fd.inner_wires {
+                    if let TShape::Wire(iwd) = &*current.tshapes[inner_sr.index] {
+                        for edge_sr in &iwd.edges {
+                            *edge_face_count.entry(edge_sr.index).or_default() += 1;
+                        }
+                    }
+                }
             }
         }
-    }
 
-    // Find boundary edges (used by only one face in a manifold solid)
-    let boundary_edges: Vec<usize> = edge_face_count
-        .iter()
-        .filter(|(_, count)| **count == 1)
-        .map(|(ei, _)| *ei)
-        .collect();
+        // Find boundary edges (used by only one face in a manifold solid)
+        let boundary_edges: Vec<usize> = edge_face_count
+            .iter()
+            .filter(|(_, count)| **count == 1)
+            .map(|(ei, _)| *ei)
+            .collect();
+
+        (edge_face_count, boundary_edges)
+    };
+    // shd dropped here -- OK to mut borrow current.tshapes below
 
     // Collect vertex merge operations
     let mut vertex_merges: Vec<(usize, DVec3)> = Vec::new();
 
     // For each boundary edge, try to find and close the gap
     for &ei in &boundary_edges {
-        // Check if the edge vertices are close to another edge's vertices
-        let Some(edge) = current.edges.get(ei) else {
+        let TShape::Edge(ed) = &*current.tshapes[ei] else {
             continue;
         };
-        let (start_v, end_v) = (edge.start, edge.end);
-        let Some(v1) = current.vertices.get(start_v) else {
+        let Some(p1) = current.vertex_point(ed.first.index) else {
             continue;
         };
-        let Some(v2) = current.vertices.get(end_v) else {
+        let Some(p2) = current.vertex_point(ed.last.index) else {
             continue;
         };
-        let (p1, p2) = (v1.point, v2.point);
 
         // Look for other edges with close vertices
         for (&other_ei, &count) in &edge_face_count {
             if other_ei == ei || count != 1 {
                 continue;
             }
-            let Some(other_edge) = current.edges.get(other_ei) else {
+            let TShape::Edge(other_ed) = &*current.tshapes[other_ei] else {
                 continue;
             };
-            let (other_start, other_end) = (other_edge.start, other_edge.end);
-            let Some(ov1) = current.vertices.get(other_start) else {
+            let Some(op1) = current.vertex_point(other_ed.first.index) else {
                 continue;
             };
-            let Some(ov2) = current.vertices.get(other_end) else {
+            let Some(op2) = current.vertex_point(other_ed.last.index) else {
                 continue;
             };
-            let (op1, op2) = (ov1.point, ov2.point);
 
             // Check if vertices are close enough to merge
             let close_1_1 = (p1 - op1).length() < tolerance;
@@ -457,11 +503,11 @@ fn fill_topology_gaps(brep: &BRep, tolerance: f64) -> (BRep, usize) {
             if (close_1_1 || close_1_2) && (close_2_1 || close_2_2) {
                 // Record vertex merges
                 if close_1_1 || close_1_2 {
-                    let target_v = if close_1_1 { other_start } else { other_end };
+                    let target_v = if close_1_1 { other_ed.first.index } else { other_ed.last.index };
                     vertex_merges.push((target_v, p1));
                 }
                 if close_2_1 || close_2_2 {
-                    let target_v = if close_2_1 { other_start } else { other_end };
+                    let target_v = if close_2_1 { other_ed.first.index } else { other_ed.last.index };
                     vertex_merges.push((target_v, p2));
                 }
                 gaps_filled += 1;
@@ -469,10 +515,10 @@ fn fill_topology_gaps(brep: &BRep, tolerance: f64) -> (BRep, usize) {
         }
     }
 
-    // Apply vertex merges
+    // Apply vertex merges via Arc::get_mut on TShape::Vertex
     for (vi, new_point) in vertex_merges {
-        if let Some(v) = current.vertices.get_mut(vi) {
-            v.point = new_point;
+        if let Some(TShape::Vertex(vd)) = current.tshapes.get_mut(vi).and_then(|arc| Arc::get_mut(arc)) {
+            vd.point = new_point;
         }
     }
 
@@ -520,7 +566,7 @@ pub struct FeatureInteractionAnalysis {
 /// This function identifies pairs of features that share edges, vertices,
 /// or overlap spatially, which should be processed together for robust defeaturing.
 pub fn analyze_feature_interactions(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     features: &[CylindricalFeature],
     tolerance: f64,
 ) -> Vec<FeatureInteractionAnalysis> {
@@ -593,50 +639,63 @@ pub fn analyze_feature_interactions(
 }
 
 /// Check if two faces share an edge.
-fn faces_share_edge(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+fn faces_share_edge(brep: &rcad_kernel::BRep, fi_a: usize, fi_b: usize) -> bool {
+    let Some(fd_a) = get_face_data(brep, 0, 0, fi_a) else {
+        return false;
+    };
+    let Some(fd_b) = get_face_data(brep, 0, 0, fi_b) else {
         return false;
     };
 
-    let Some(face_a) = shell.faces.get(fi_a) else {
-        return false;
+    let edges_a: HashSet<usize> = {
+        let mut s = HashSet::new();
+        if let TShape::Wire(wd) = &*brep.tshapes[fd_a.outer_wire.index] {
+            for edge_sr in &wd.edges {
+                s.insert(edge_sr.index);
+            }
+        }
+        s
     };
-    let Some(face_b) = shell.faces.get(fi_b) else {
-        return false;
+    let edges_b: HashSet<usize> = {
+        let mut s = HashSet::new();
+        if let TShape::Wire(wd) = &*brep.tshapes[fd_b.outer_wire.index] {
+            for edge_sr in &wd.edges {
+                s.insert(edge_sr.index);
+            }
+        }
+        s
     };
-
-    let edges_a: HashSet<usize> = face_a.outer_wire.edges.iter().map(|we| we.idx).collect();
-    let edges_b: HashSet<usize> = face_b.outer_wire.edges.iter().map(|we| we.idx).collect();
 
     !edges_a.is_disjoint(&edges_b)
 }
 
 /// Check if two faces share a vertex.
-fn faces_share_vertex(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+fn faces_share_vertex(brep: &rcad_kernel::BRep, fi_a: usize, fi_b: usize) -> bool {
+    let Some(fd_a) = get_face_data(brep, 0, 0, fi_a) else {
         return false;
     };
-
-    let Some(face_a) = shell.faces.get(fi_a) else {
-        return false;
-    };
-    let Some(face_b) = shell.faces.get(fi_b) else {
+    let Some(fd_b) = get_face_data(brep, 0, 0, fi_b) else {
         return false;
     };
 
     let mut vertices_a: HashSet<usize> = HashSet::new();
-    for we in &face_a.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            vertices_a.insert(edge.start);
-            vertices_a.insert(edge.end);
+    if let TShape::Wire(wd) = &*brep.tshapes[fd_a.outer_wire.index] {
+        for edge_sr in &wd.edges {
+            if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                vertices_a.insert(ed.first.index);
+                vertices_a.insert(ed.last.index);
+            }
         }
     }
 
-    for we in &face_b.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx)
-            && (vertices_a.contains(&edge.start) || vertices_a.contains(&edge.end)) {
-                return true;
+    if let TShape::Wire(wd) = &*brep.tshapes[fd_b.outer_wire.index] {
+        for edge_sr in &wd.edges {
+            if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                if vertices_a.contains(&ed.first.index) || vertices_a.contains(&ed.last.index) {
+                    return true;
+                }
             }
+        }
     }
 
     false
@@ -758,7 +817,7 @@ impl Default for RobustnessOptions {
 #[derive(Debug, Clone)]
 pub struct RobustSuppressionResult {
     /// The resulting BRep.
-    pub brep: BRep,
+    pub brep: rcad_kernel::BRep,
     /// Whether the operation succeeded.
     pub success: bool,
     /// Number of attempts made.
@@ -776,8 +835,8 @@ pub struct RobustSuppressionResult {
 /// This function wraps the boolean operation with multiple retry strategies
 /// and inter-operation healing.
 pub fn suppress_feature_robust(
-    brep: &BRep,
-    fill_solid: &BRep,
+    brep: &rcad_kernel::BRep,
+    fill_solid: &rcad_kernel::BRep,
     is_hole: bool,
     options: &RobustnessOptions,
 ) -> RobustSuppressionResult {
@@ -804,7 +863,7 @@ pub fn suppress_feature_robust(
             };
             boolean_op_with_options(op, &current, fill_solid, fuzzy_opts)
         } else {
-            boolean_op(op, &current, fill_solid).map(|t| rcad_kernel::BRep::from_topods(&t))
+            boolean_op(op, &current, fill_solid).map(|t| (t).clone())
         };
 
         match result {
@@ -847,10 +906,10 @@ pub fn suppress_feature_robust(
 /// Perform boolean operation with explicit options.
 fn boolean_op_with_options(
     op: BooleanOpType,
-    a: &BRep,
-    b: &BRep,
+    a: &rcad_kernel::BRep,
+    b: &rcad_kernel::BRep,
     options: BooleanOptions,
-) -> Result<BRep, crate::BooleanError> {
+) -> Result<rcad_kernel::BRep, crate::BooleanError> {
     // For now, delegate to the standard boolean with fuzzy tolerance
     // A full implementation would respect all options
     if options.fuzzy_tol > 0.0 {
@@ -862,7 +921,7 @@ fn boolean_op_with_options(
         };
         boolean_op_robust(op, a, b, robust_opts).map(|(b, _)| b)
     } else {
-        boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))
+        boolean_op(op, a, b).map(|t| (t).clone())
     }
 }
 
@@ -984,10 +1043,18 @@ pub struct DefeaturingReportV2 {
 /// - Robust error recovery
 /// - Post-suppression topology healing
 pub fn defeature_brep_v2(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &DefeaturingOptionsV2,
-) -> Result<(BRep, DefeaturingReportV2), DefeaturingError> {
-    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+) -> Result<(rcad_kernel::BRep, DefeaturingReportV2), DefeaturingError> {
+    // Check that there's at least one solid with a non-empty shell
+    let has_viable_solid = brep.tshapes.iter().any(|ts| {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            !sd.shells.is_empty()
+        } else {
+            false
+        }
+    });
+    if !has_viable_solid {
         return Err(DefeaturingError::EmptyInput);
     }
 
@@ -1092,7 +1159,7 @@ pub fn defeature_brep_v2(
             };
 
             // Apply robust suppression
-            let fill_old = rcad_kernel::BRep::from_topods(&fill);
+            let fill_old = (fill).clone();
             let result = suppress_feature_robust(&current, &fill_old, feature.is_hole, &options.robustness);
 
             report.total_attempts += result.attempts;
@@ -1119,8 +1186,3 @@ pub fn defeature_brep_v2(
 
     Ok((current, report))
 }
-
-// =============================================================================
-// ADDITIONAL TESTS FOR NEW FUNCTIONALITY
-// =============================================================================
-

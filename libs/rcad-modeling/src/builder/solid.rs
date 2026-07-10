@@ -298,15 +298,9 @@ pub fn make_conical_frustum_brep(
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     let half_h = height * 0.5;
 
-    // Near-cylinder case: fall back to kernel cylinder primitive
+    // Near-cylinder case: delegate to cylinder_brep
     if (rb - rt).abs() < 1e-12 {
-        let primitive = PrimitiveSolid::Cylinder {
-            radius: rb,
-            height,
-        };
-        let mut brep = BRep::from_primitive(primitive);
-        transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
-        return Ok(brep);
+        return cylinder_brep(center, axis, ref_dir, rb, height);
     }
 
     // Reuse the stable "narrower bottom 闁?wider top" cone parameterization for
@@ -319,49 +313,39 @@ pub fn make_conical_frustum_brep(
 
     use std::f64::consts::PI;
     use glam::DVec2;
-    use rcad_kernel::{
-        geom::{self, *},
-        Edge, Face, GeomStore, PCurve, Shell, Solid, Vertex, Wire, WireEdge,
-    };
+    use rcad_kernel::geom::{self, *};
+    use rcad_kernel::topods::Orientation;
 
     let half_angle = ((rb - rt).abs() / height).atan();
     let cos_ha = half_angle.cos();
     let tan_ha = half_angle.tan();
     let seam_len = height / cos_ha;
 
-    // Compute apex position and cone orientation.
-    // The apex is on the central axis, on the side of the narrower end.
     let d_bottom = rb / tan_ha;
-    let apex_y = -half_h - d_bottom;
-    let axis_dir = DVec3::Y;
     let v_bottom = d_bottom / cos_ha;
     let v_top = (d_bottom + height) / cos_ha;
 
-    // Vertices (in local coordinates: axis = Y, bottom at -half_h, top at +half_h)
     let bottom_pt = DVec3::new(rb, -half_h, 0.0);
     let top_pt = DVec3::new(rt, half_h, 0.0);
-    let vertices = vec![Vertex { point: bottom_pt }, Vertex { point: top_pt }];
 
-    // Edges: E0 = bottom circle, E1 = top circle, E2 = seam
-    let edges = vec![
-        Edge { start: 0, end: 0 },
-        Edge { start: 1, end: 1 },
-        Edge { start: 0, end: 1 },
-    ];
+    let mut t = topods::BRep::new();
+    let v0 = t.add_tvertex(bottom_pt);
+    let v1 = t.add_tvertex(top_pt);
 
-    // 闁冲厜鍋撻柍鍏夊亾 3D curves 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
     let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, rb));
     let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y, rt));
-    let seam_curve = Curve3::Line(Line3 {
-        origin: bottom_pt,
-        direction: (top_pt - bottom_pt).normalize(),
-    });
+    let seam_dir = (top_pt - bottom_pt).normalize();
+    let seam_curve = Curve3::Line(Line3 { origin: bottom_pt, direction: seam_dir });
 
-    // 闁冲厜鍋撻柍鍏夊亾 Surfaces 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
-    let apex = DVec3::new(0.0, apex_y, 0.0);
+    let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
+
+        // Surfaces
+    let apex = DVec3::new(0.0, -half_h - d_bottom, 0.0);
     let cone_surf = Surface3::Cone(geom::ConicalSurface {
         apex,
-        axis: axis_dir,
+        axis: DVec3::Y,
         radius: 0.0,
         half_angle_rad: half_angle,
     });
@@ -374,124 +358,50 @@ pub fn make_conical_frustum_brep(
         normal: DVec3::Y,
     });
 
-    // 闁冲厜鍋撻柍鍏夊亾 PCurves 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
-    // E0 bottom circle on cone face: iso-V at V=v_bottom
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+
+    // Wires and faces
+    let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    let f0 = t.add_tface(Some(cone_surf), w0, vec![], Some(DVec3::new(0.0, 0.0, rb)), None, vec![], true);
+
+    let w1 = t.add_twire(vec![rev(e0)]);
+    let f1 = t.add_tface(Some(bottom_plane), w1, vec![], Some(DVec3::new(0.0, -half_h, 0.0)), None, vec![], false);
+
+    let w2 = t.add_twire(vec![e1]);
+    let f2 = t.add_tface(Some(top_plane), w2, vec![], Some(DVec3::new(0.0, half_h, 0.0)), None, vec![], false);
+
+    // PCurves on edges (keyed by face.index)
     let e0_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_bottom),
         direction: DVec2::new(1.0, 0.0),
     });
-    // E0 on bottom plane: full circle in UV
     let e0_on_plane = Curve2d::Circle(Circle2d::new(DVec2::ZERO, rb));
-    // E1 top circle on cone face: iso-V at V=v_top
     let e1_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_top),
         direction: DVec2::new(1.0, 0.0),
     });
-    // E1 on top plane: full circle in UV
     let e1_on_plane = Curve2d::Circle(Circle2d::new(DVec2::ZERO, rt));
-    // E2 seam on cone face: iso-U at U=0, V ranges v_bottom 闁?v_top
     let e2_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_bottom),
         direction: DVec2::new(0.0, (v_top - v_bottom) / seam_len),
     });
 
-    // 闁冲厜鍋撻柍鍏夊亾 Faces 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
-    // F0 lateral (cone): bottom circle fwd 闁?seam fwd 闁?top circle rev 闁?seam rev
-    let f0 = Face {
-        outer_wire: Wire {
-            edges: vec![
-                WireEdge::fwd(0),
-                WireEdge::fwd(2),
-                WireEdge::rev(1),
-                WireEdge::rev(2),
-            ],
-        },
-        inner_wires: vec![],
-        normal: DVec3::X,
-        triangles: vec![],
-        sample_point: None,
-        mesh_dirty: true,
-                surface_idx: None,
-    };
-    // F1 bottom cap (plane): E0 rev (CCW when viewed from -Y)
-    let f1 = Face {
-        outer_wire: Wire {
-            edges: vec![WireEdge::rev(0)],
-        },
-        inner_wires: vec![],
-        normal: -DVec3::Y,
-        triangles: vec![],
-        sample_point: None,
-        mesh_dirty: true,
-                surface_idx: None,
-    };
-    // F2 top cap (plane): E1 fwd (CCW when viewed from +Y)
-    let f2 = Face {
-        outer_wire: Wire {
-            edges: vec![WireEdge::fwd(1)],
-        },
-        inner_wires: vec![],
-        normal: DVec3::Y,
-        triangles: vec![],
-        sample_point: None,
-        mesh_dirty: true,
-                surface_idx: None,
-    };
+    t.edge_mut(e0).pcurves.insert(f0.index, (e0_on_cone, 0.0, 2.0 * PI));
+    t.edge_mut(e0).pcurves.insert(f1.index, (e0_on_plane, 0.0, 2.0 * PI));
+    t.edge_mut(e1).pcurves.insert(f0.index, (e1_on_cone, 0.0, 2.0 * PI));
+    t.edge_mut(e1).pcurves.insert(f2.index, (e1_on_plane, 0.0, 2.0 * PI));
+    t.edge_mut(e2).pcurves.insert(f0.index, (e2_on_cone, 0.0, seam_len));
 
-    let solid = Solid {
-        shells: vec![Shell {
-            faces: vec![f0, f1, f2],
-        }],
-    };
+    // Shell and solid
+    let shell = t.add_tshell(vec![f0, f1, f2]);
+    t.add_tsolid(vec![shell]);
 
-    // 闁冲厜鍋撻柍鍏夊亾 Geometry store 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
-    let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
-        curves: vec![bottom_circle, top_circle, seam_curve],
-        surfaces: vec![cone_surf, bottom_plane, top_plane],
-        curve2ds: vec![e0_on_cone, e0_on_plane, e1_on_cone, e1_on_plane, e2_on_cone],
-        edge_curve: vec![Some(0), Some(1), Some(2)],
-        face_surface: vec![Some(0), Some(1), Some(2)],
-        edge_pcurves: vec![
-            // E0: on cone (surface 0) + bottom plane (surface 1)
-            vec![
-                PCurve { surface_idx: 0, curve2d_idx: 0 },
-                PCurve { surface_idx: 1, curve2d_idx: 1 },
-            ],
-            // E1: on cone (surface 0) + top plane (surface 2)
-            vec![
-                PCurve { surface_idx: 0, curve2d_idx: 2 },
-                PCurve { surface_idx: 2, curve2d_idx: 3 },
-            ],
-            // E2 seam: on cone only
-            vec![PCurve { surface_idx: 0, curve2d_idx: 4 }],
-        ],
-        edge_curve_range: vec![
-            Some([0.0, 2.0 * PI]),
-            Some([0.0, 2.0 * PI]),
-            Some([0.0, seam_len]),
-        ],
-        edge_degenerated: vec![false, false, false],
-        vertex_tolerance: Vec::new(),
-        edge_tolerance: Vec::new(),
-        face_tolerance: Vec::new(),
-        curve2d_range: Vec::new(),
-        face_surface_range: Vec::new(),
-        edge_same_parameter: Vec::new(),
-        edge_same_range: Vec::new(),
-    };
-
-    let mut brep = BRep {
-        vertices,
-        edges,
-        solids: vec![solid],
-        geom,
-        compound: None,
-        compsolid: None,
-    };
-
-    transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
-    Ok(brep)
+    // Transform from local Y-up coordinates to target frame
+    let mat = glam::DAffine3::from_cols(x_axis, y_axis, z_axis, center);
+    t.apply_transform(mat);
+    Ok(t)
 }
+
 
 pub fn torus_primitive(major_radius: f64, minor_radius: f64) -> Result<PrimitiveSolid, BuildError> {
     let major_radius = validate_positive("major_radius", major_radius)?;
@@ -1007,11 +917,11 @@ fn mirror_surface(s: &Surface3, mirror_p: impl Fn(DVec3) -> DVec3, mirror_v: imp
 }
 
 pub fn make_conical_frustum_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, r_bottom: f64, r_top: f64, height: f64) -> Result<topods::BRep, BuildError> {
-    make_conical_frustum_brep(center, axis, ref_dir, r_bottom, r_top, height).map(|b| b.to_topods())
+    make_conical_frustum_brep(center, axis, ref_dir, r_bottom, r_top, height)
 }
 
 pub fn make_convex_polyhedron_from_half_spaces_topods(planes: &[(DVec3, DVec3)]) -> Result<topods::BRep, BuildError> {
-    make_convex_polyhedron_from_half_spaces(planes).map(|b| b.to_topods())
+    make_convex_polyhedron_from_half_spaces(planes)
 }
 
 // 闁冲厜鍋撻柍鍏夊亾 Topods-native wrappers 闁冲厜鍋撻柍鍏夊亾

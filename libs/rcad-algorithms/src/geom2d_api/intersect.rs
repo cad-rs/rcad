@@ -1,3 +1,6 @@
+use super::*;
+use super::helpers::{curve2d_domain, refine_curve2d_intersection};
+
 // =============================================================================
 // InterCurveCurve - 2D curve-curve intersection
 // =============================================================================

@@ -3,9 +3,10 @@
 //! This module provides an analyze -> repair -> recheck workflow similar in
 //! spirit to OCCT ShapeAnalysis/ShapeFix orchestration.
 
+
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
+use rcad_kernel::PCurve;
 use rcad_kernel::{BSplineSurface, BezierSurface};
 
 use crate::brep_check::{
@@ -229,7 +230,7 @@ impl ComprehensiveDiagnosis {
 ///
 /// # Returns
 /// A `ComprehensiveDiagnosis` containing all analysis results.
-pub fn diagnose_all(brep: &BRep, tolerance: f64) -> ComprehensiveDiagnosis {
+pub fn diagnose_all(brep: &rcad_kernel::BRep, tolerance: f64) -> ComprehensiveDiagnosis {
     use crate::brep_check::{
         analyze_surface_uv_consistency, analyze_wire_quality,
         diagnose_same_parameter, diagnose_same_range,
@@ -948,9 +949,9 @@ impl Default for OperatorReport {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Operator Result Aggregation, Rollback, and Progress Callbacks
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Aggregated results from a healing pipeline execution.
 ///
@@ -1055,7 +1056,7 @@ impl OperatorResultAggregation {
 #[derive(Debug, Clone)]
 pub struct BRepSnapshot {
     /// The BRep state.
-    pub brep: BRep,
+    pub brep: rcad_kernel::BRep,
     /// Operator index at which this snapshot was taken.
     pub operator_index: usize,
     /// Label for this snapshot.
@@ -1066,7 +1067,7 @@ pub struct BRepSnapshot {
 
 impl BRepSnapshot {
     /// Create a new snapshot.
-    pub fn new(brep: &BRep, operator_index: usize, label: impl Into<String>, elapsed_seconds: f64) -> Self {
+    pub fn new(brep: &rcad_kernel::BRep, operator_index: usize, label: impl Into<String>, elapsed_seconds: f64) -> Self {
         Self {
             brep: brep.clone(),
             operator_index,
@@ -1229,7 +1230,7 @@ pub struct PipelineExecutionReport {
     /// Snapshots taken during execution.
     pub snapshots: Vec<BRepSnapshot>,
     /// Final BRep state.
-    pub final_brep: BRep,
+    pub final_brep: rcad_kernel::BRep,
     /// Whether the pipeline completed successfully.
     pub completed: bool,
     /// Reason for failure (if not completed).
@@ -1269,9 +1270,9 @@ impl PipelineExecutionReport {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Operator Chaining Improvements
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Condition for conditional operator execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -1313,7 +1314,7 @@ pub enum CheckIssuePredicate {
 
 impl OperatorCondition {
     /// Evaluate whether the condition is met.
-    pub fn evaluate(&self, _brep: &BRep, report: &HealingReport, previous_results: &[OperatorResult]) -> bool {
+    pub fn evaluate(&self, _brep: &rcad_kernel::BRep, report: &HealingReport, previous_results: &[OperatorResult]) -> bool {
         match self {
             OperatorCondition::Always => true,
             OperatorCondition::OnlyIfIssues => !report.final_result.is_valid(),
@@ -1677,7 +1678,7 @@ impl ShapeProcessReport {
             )
         } else {
             format!(
-                "ShapeProcess: {} → {} issues ({} fixed) after {} operators in {:.3}s",
+                "ShapeProcess: {} 鈫?{} issues ({} fixed) after {} operators in {:.3}s",
                 self.initial_issue_count(),
                 self.final_issue_count(),
                 self.issues_fixed(),
