@@ -357,17 +357,20 @@ mod tkgeom_algo_tests {
         assert!(p.is_finite(), "Ruled surface from single curve should evaluate");
     }
 
-    // GeomPlate_BuildPlateSurface (1 test) — rcad: shape_construct::build_plate_surface
+    // GeomPlate_BuildPlateSurface (1 test) — rcad: rcad_kernel::math_utils::build_plate_surface
     #[test]
     fn plate_surface() {
         // OCCT: create constraint curves, build plate surface, verify evaluation.
-        // rcad: build BSplineSurface from constraint point profiles.
-        let profiles: Vec<Vec<DVec3>> = vec![
-            vec![DVec3::ZERO, DVec3::new(2.0, 0.0, 0.0), DVec3::new(5.0, 0.0, 0.0), DVec3::new(8.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0)],
-            vec![DVec3::new(0.0, 3.0, 1.0), DVec3::new(2.5, 3.0, 2.0), DVec3::new(5.0, 3.0, 1.5), DVec3::new(7.5, 3.0, 2.0), DVec3::new(10.0, 3.0, 1.0)],
-            vec![DVec3::new(0.0, 6.0, 0.0), DVec3::new(2.0, 6.0, 0.5), DVec3::new(5.0, 6.0, 0.0), DVec3::new(8.0, 6.0, -0.5), DVec3::new(10.0, 6.0, 0.0)],
+        // rcad: thin-plate spline-based BSplineSurface from constraint points.
+        let pts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(5.0, 0.0, 0.5),
+            DVec3::new(10.0, 0.0, 0.0),
+            DVec3::new(0.0, 5.0, 1.0),
+            DVec3::new(5.0, 2.5, 1.5),
+            DVec3::new(10.0, 5.0, 1.0),
         ];
-        let surf = crate::shape_construct::build_plate_surface(&profiles);
+        let surf = rcad_kernel::math_utils::build_plate_surface(&pts, 6, 6);
         assert!(surf.is_some(), "plate surface should be constructed");
         if let Some(ref s) = surf {
             let p = s.point_at(0.5, 0.5);
