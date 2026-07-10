@@ -431,3 +431,6 @@ pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
  }
  }
 
+#[cfg(test)]
+pub mod tkmath_gtests;
+
