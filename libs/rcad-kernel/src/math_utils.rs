@@ -79,7 +79,7 @@ pub fn newton_raphson(
 ///
 /// # Returns
 /// The root if found within interval and tolerance
-pub fn bisection(f: fn(f64) -> f64, a: f64, b: f64, tol: f64) -> Option<f64> {
+pub fn bisection(f: impl Fn(f64) -> f64, a: f64, b: f64, tol: f64) -> Option<f64> {
     let mut lo = a;
     let mut hi = b;
 
@@ -1120,7 +1120,327 @@ fn solve_linear_system(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
 }
 
 // =============================================================================
+// FRPR — Fletcher-Reeves Polak-Ribiere conjugate gradient optimization
+// =============================================================================
+
+/// Minimize function with gradient using FRPR conjugate gradient method.
+pub fn frpr_minimize(
+    x0: &[f64],
+    f_grad: impl Fn(&[f64], &mut [f64]) -> f64,
+    tol: f64,
+    max_iter: usize,
+) -> Option<Vec<f64>> {
+    let n = x0.len();
+    let mut x = x0.to_vec();
+    let mut grad = vec![0.0; n];
+    let _f = f_grad(&x, &mut grad);
+    let mut d = grad.iter().map(|g| -g).collect::<Vec<_>>();
+    let mut prev_norm2 = grad.iter().map(|g| g * g).sum::<f64>();
+
+    for _ in 0..max_iter {
+        if prev_norm2.sqrt() < tol { return Some(x); }
+        let alpha = line_search_backtracking(&x, &d, &grad, _f, &f_grad);
+        for i in 0..n { x[i] += alpha * d[i]; }
+        let mut new_grad = vec![0.0; n];
+        let _f = f_grad(&x, &mut new_grad);
+        let new_norm2 = new_grad.iter().map(|g| g * g).sum::<f64>();
+        let gg_diff: f64 = new_grad.iter().zip(grad.iter()).map(|(ng, g)| ng * (ng - g)).sum();
+        let beta = if prev_norm2 > TOLERANCE_FLOAT_DEDUP { (gg_diff / prev_norm2).max(0.0) } else { 0.0 };
+        for i in 0..n { d[i] = -new_grad[i] + beta * d[i]; }
+        grad = new_grad;
+        prev_norm2 = new_norm2;
+    }
+    if prev_norm2.sqrt() < tol { Some(x) } else { None }
+}
+
+// =============================================================================
+// Powell — Derivative-free direction-set optimization
+// =============================================================================
+
+/// Minimize using Powell's derivative-free conjugate direction method.
+pub fn powell_minimize(x0: &[f64], f: impl Fn(&[f64]) -> f64, tol: f64, max_iter: usize) -> Option<Vec<f64>> {
+    let n = x0.len();
+    let mut x = x0.to_vec();
+    let mut dirs: Vec<Vec<f64>> = (0..n).map(|i| { let mut d = vec![0.0; n]; d[i] = 1.0; d }).collect();
+    let mut prev_f = f(&x);
+    for _ in 0..max_iter {
+        let x_start = x.clone();
+        let mut delta = 0.0;
+        let mut best_dir = 0;
+        for i in 0..n {
+            // Minimize along direction i via golden section
+            let (xn, fn_) = minimize_1d(&x, &dirs[i], &f);
+            let dec = prev_f - fn_;
+            if dec > delta { delta = dec; best_dir = i; }
+            x = xn; prev_f = fn_;
+        }
+        if x.iter().zip(x_start.iter()).map(|(a, b)| (a - b).abs()).sum::<f64>() < tol { return Some(x); }
+        // New conjugate direction
+        let mut nd = Vec::with_capacity(n);
+        for i in 0..n { nd.push(x[i] - x_start[i]); }
+        let nn = nd.iter().map(|d| d * d).sum::<f64>().sqrt();
+        if nn > TOLERANCE_FLOAT_DEDUP {
+            for i in 0..n { nd[i] /= nn; }
+            for i in best_dir..n - 1 { dirs.swap(i, i + 1); }
+            *dirs.last_mut().unwrap() = nd;
+        }
+    }
+    None
+}
+
+fn minimize_1d(x: &[f64], dir: &[f64], f: impl Fn(&[f64]) -> f64) -> (Vec<f64>, f64) {
+    let n = x.len();
+    let at = |alpha: f64| -> f64 { let mut t = x.to_vec(); for i in 0..n { t[i] += alpha * dir[i]; } f(&t) };
+    let alpha = golden_section_min(at, 0.0, 10.0, 1e-10);
+    let mut xn = x.to_vec();
+    for i in 0..n { xn[i] += alpha * dir[i]; }
+    let fxn = f(&xn);
+    (xn, fxn)
+}
+
+// =============================================================================
+// Householder — QR via Householder reflections
+// =============================================================================
+
+/// Solve A*x = b using Householder QR decomposition.
+pub fn householder_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
+    if n == 0 { return None; }
+    let mut r = a.to_vec();
+    let mut rhs = b.to_vec();
+    for k in 0..n - 1 { // Skip last column (no rows below to zero out)
+        let mut nrm2 = 0.0;
+        for i in k..n { nrm2 += r[i * n + k] * r[i * n + k]; }
+        if nrm2 < TOLERANCE_FLOAT_DEDUP { continue; }
+        let nrm = nrm2.sqrt();
+        let sign = if r[k * n + k] >= 0.0 { -1.0 } else { 1.0 };
+        let beta = -sign * nrm;
+        let vk = r[k * n + k] - sign * nrm;
+        for i in (k + 1)..n { r[i * n + k] /= vk; }
+        r[k * n + k] = beta;
+        for j in (k + 1)..n {
+            let mut sp = r[k * n + k] * r[k * n + j];
+            for i in (k + 1)..n { sp += r[i * n + k] * r[i * n + j]; }
+            let tau = sp / beta;
+            r[k * n + j] -= tau * r[k * n + k];
+            for i in (k + 1)..n { r[i * n + j] -= tau * r[i * n + k]; }
+        }
+        let mut sp = r[k * n + k] * rhs[k];
+        for i in (k + 1)..n { sp += r[i * n + k] * rhs[i]; }
+        let tau = sp / beta;
+        rhs[k] -= tau * r[k * n + k];
+        for i in (k + 1)..n { rhs[i] -= tau * r[i * n + k]; }
+    }
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut s = rhs[i];
+        for j in (i + 1)..n { s -= r[i * n + j] * x[j]; }
+        if r[i * n + i].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        x[i] = s / r[i * n + i];
+    }
+    Some(x)
+}
+
+// =============================================================================
+// Crout — LU decomposition with partial pivoting
+// =============================================================================
+
+/// Solve A*x = b using Crout LU decomposition.
+pub fn crout_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
+    if n == 0 { return None; }
+    let mut lu = a.to_vec();
+    let mut p: Vec<usize> = (0..n).collect();
+    for k in 0..n {
+        let mut max_val = lu[p[k] * n + k].abs();
+        let mut max_r = k;
+        for i in (k + 1)..n { let v = lu[p[i] * n + k].abs(); if v > max_val { max_val = v; max_r = i; } }
+        p.swap(k, max_r);
+        if lu[p[k] * n + k].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        for i in (k + 1)..n {
+            let f = lu[p[i] * n + k] / lu[p[k] * n + k];
+            lu[p[i] * n + k] = f;
+            for j in (k + 1)..n { lu[p[i] * n + j] -= f * lu[p[k] * n + j]; }
+        }
+    }
+    let mut y = vec![0.0; n];
+    for i in 0..n { let mut s = b[p[i]]; for j in 0..i { s -= lu[p[i] * n + j] * y[j]; } y[i] = s; }
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut s = y[i];
+        for j in (i + 1)..n { s -= lu[p[i] * n + j] * x[j]; }
+        if lu[p[i] * n + i].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        x[i] = s / lu[p[i] * n + i];
+    }
+    Some(x)
+}
+
+// =============================================================================
+// BissecNewton — Hybrid bisection + Newton root finding
+// =============================================================================
+
+/// Find root using hybrid bisection-Newton method (safe + fast).
+pub fn biss_newton(f: impl Fn(f64) -> f64, df: impl Fn(f64) -> f64,
+    a: f64, b: f64, tol: f64) -> Option<f64> {
+    let mut lo = a.min(b); let mut hi = a.max(b);
+    let mut x = (lo + hi) / 2.0;
+    for _ in 0..100 {
+        let fx = f(x);
+        if fx.abs() < tol { return Some(x); }
+        let dfx = df(x);
+        let xn = if dfx.abs() > TOLERANCE_FLOAT_DEDUP {
+            let nv = x - fx / dfx;
+            if nv > lo && nv < hi { nv } else { (lo + hi) / 2.0 }
+        } else { (lo + hi) / 2.0 };
+        if (xn - x).abs() < tol { return Some(xn); }
+        if f(lo) * f(xn) <= 0.0 { hi = xn; } else { lo = xn; }
+        x = xn;
+    }
+    if f(x).abs() < tol { Some(x) } else { None }
+}
+
+// =============================================================================
+// TrigonometricFunctionRoots
+// Solve: a*cos²(x) + 2b*cos(x)sin(x) + c*cos(x) + d*sin(x) + e = 0
+// =============================================================================
+
+fn trig_f(a: f64, b: f64, c: f64, d: f64, e: f64) -> impl Fn(f64) -> f64 {
+    move |x: f64| { let (s, c_) = x.sin_cos(); a * c_ * c_ + 2.0 * b * c_ * s + c * c_ + d * s + e }
+}
+
+/// Find roots of trigonometric equation in [x_min, x_max].
+pub fn trig_roots(a: f64, b: f64, c: f64, d: f64, e: f64, x_min: f64, x_max: f64) -> Vec<f64> {
+    let f = trig_f(a, b, c, d, e);
+    find_roots_in(f, x_min, x_max, 200)
+}
+
+/// Solve d*sin(x) + e = 0 in [x_min, x_max].
+pub fn trig_roots_sin_only(d: f64, e: f64, x_min: f64, x_max: f64) -> Vec<f64> {
+    trig_roots(0.0, 0.0, 0.0, d, e, x_min, x_max)
+}
+
+/// Solve c*cos(x) + d*sin(x) + e = 0 in [x_min, x_max].
+pub fn trig_roots_cos_sin(c: f64, d: f64, e: f64, x_min: f64, x_max: f64) -> Vec<f64> {
+    trig_roots(0.0, 0.0, c, d, e, x_min, x_max)
+}
+
+// =============================================================================
+// Laguerre — Polynomial root finding via Laguerre's method
+// =============================================================================
+
+/// Find all roots of polynomial a₀ + a₁x + ... + a_nx^n using Laguerre's method.
+pub fn laguerre_roots(coeffs: &[f64]) -> Vec<f64> {
+    let mut a: Vec<f64> = coeffs.iter().copied().collect();
+    while a.len() > 1 && a.last().map_or(false, |&c| c.abs() < TOLERANCE_FLOAT_DEDUP) { a.pop(); }
+    let n = a.len() - 1;
+    if n == 0 { return vec![]; }
+    if n <= 4 { return match n { 1 => vec![-a[0] / a[1]], 2 => solve_quadratic(a[2], a[1], a[0]), 3 => solve_cubic(a[3], a[2], a[1], a[0]), _ => solve_quartic(a[4], a[3], a[2], a[1], a[0]) }; }
+
+    let mut roots = Vec::new();
+    let mut deg = n;
+    while deg >= 2 {
+        let mut x = 0.0;
+        for _ in 0..200 {
+            let mut p = vec![0.0; deg + 1]; p[deg] = a[deg];
+            for i in (0..deg).rev() { p[i] = a[i] + x * p[i + 1]; }
+            let fv = p[0];
+            if fv.abs() < 1e-14 { break; }
+            let mut p1 = vec![0.0; deg]; for i in 0..deg { p1[i] = a[i + 1] * (i as f64 + 1.0); }
+            let mut fp = 0.0; for i in (0..deg - 1).rev() { fp = fp * x + p1[i]; }
+            let mut fp2 = 0.0; for i in (0..deg - 2).rev() { fp2 = fp2 * x + p1[i + 1] * (i as f64 + 1.0); }
+            let g = fp / fv; let h = g * g - fp2 / fv;
+            let d_ = ((deg as f64 - 1.0) * (deg as f64 * h - g * g)).sqrt();
+            let s = if (g + d_).abs() > (g - d_).abs() { deg as f64 / (g + d_) } else { deg as f64 / (g - d_) };
+            if s.abs() < 1e-14 { break; }
+            x -= s;
+            if s.abs() < 1e-12 { break; }
+        }
+        roots.push(x);
+        let mut b = vec![0.0; deg]; b[deg - 1] = a[deg];
+        for i in (0..deg - 1).rev() { b[i] = a[i + 1] + x * b[i + 1]; }
+        a = b; deg = a.len() - 1;
+    }
+    if deg == 1 { roots.push(-a[0] / a[1]); }
+    roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    roots
+}
+
+// =============================================================================
+// BrentMinimum — Brent's method for 1D minimization
+// =============================================================================
+
+/// Minimize a 1D function using Brent's method.
+pub fn brent_minimize(f: impl Fn(f64) -> f64, a: f64, b: f64, tol: f64) -> f64 {
+    const PHI: f64 = 0.3819660112501051;
+    let (mut lo, mut hi) = if a < b { (a, b) } else { (b, a) };
+    let (mut x, mut w, mut v) = ((a + b) / 2.0, (a + b) / 2.0, (a + b) / 2.0);
+    let (mut fx, mut fw, mut fv) = (f(x), f(x), f(x));
+    let (mut d, mut e): (f64, f64) = (0.0, 0.0);
+    for _ in 0..100 {
+        let mid = (lo + hi) / 2.0;
+        let tol1 = tol * x.abs() + 1e-12;
+        let tol2 = 2.0 * tol1;
+        if (x - mid).abs() <= tol2 - (hi - lo) / 2.0 { return x; }
+        let mut use_para = false;
+        let mut u = 0.0;
+        if e.abs() > tol1 {
+            let r = (x - w) * (fx - fv); let qq = (x - v) * (fx - fw);
+            let p = (x - v) * qq - (x - w) * r; let q = 2.0 * (qq - r);
+            if q.abs() > tol1 { u = x - p / q; if u > lo + tol1 && u < hi - tol1 && (u - x).abs() < e { use_para = true; } }
+        }
+        if !use_para { u = if x >= mid { x - PHI * (x - lo) } else { x + PHI * (hi - x) }; e = d; d = u - x; }
+        let fu = f(u);
+        if fu <= fx {
+            if u >= x { lo = x; } else { hi = x; }
+            v = w; fv = fw; w = x; fw = fx; x = u; fx = fu;
+        } else {
+            if u >= x { hi = u; } else { lo = u; }
+            if fu <= fw || w == x { v = w; fv = fw; w = u; fw = fu; }
+            else if fu <= fv || v == x || v == w { v = u; fv = fu; }
+        }
+    }
+    x
+}
+
+// =============================================================================
+// MultipleRoots — Find all roots of f(x) = 0 in [a, b]
+// =============================================================================
+
+/// Find all roots in [a, b] by scanning for sign changes.
+pub fn find_roots_in(f: impl Fn(f64) -> f64, a: f64, b: f64, n_intervals: usize) -> Vec<f64> {
+    let step = (b - a) / n_intervals.max(1) as f64;
+    let mut roots = Vec::new();
+    for i in 0..n_intervals {
+        let x1 = a + i as f64 * step; let x2 = x1 + step;
+        let f1 = f(x1); let f2 = f(x2);
+        if f1 * f2 < 0.0 { if let Some(r) = bisection(&f, x1, x2, 1e-10) { roots.push(r); } }
+        else if f1.abs() < 1e-10 && !roots.iter().any(|r| (r - x1).abs() < 1e-8) { roots.push(x1); }
+    }
+    if f(b).abs() < 1e-10 && !roots.iter().any(|r| (r - b).abs() < 1e-8) { roots.push(b); }
+    roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    roots
+}
+
+/// Find a bracket [a,b] where f(a) and f(b) have opposite signs.
+pub fn bracket_root(f: impl Fn(f64) -> f64, x0: f64, step: f64, max_steps: usize) -> Option<(f64, f64)> {
+    let mut a = x0; let mut fa = f(a);
+    for _ in 0..max_steps {
+        let b = a + step; let fb = f(b);
+        if fa * fb <= 0.0 { return Some((a, b)); }
+        a = b; fa = fb;
+    }
+    None
+}
+
+// =============================================================================
+// MathFunctor — General function evaluation utility
+// =============================================================================
+
+/// Evaluate a polynomial using Horner's method.
+pub fn poly_eval(coeffs: &[f64], x: f64) -> f64 {
+    coeffs.iter().rev().fold(0.0, |acc, &c| acc * x + c)
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
-
+// Test module is in math_gtests.rs
