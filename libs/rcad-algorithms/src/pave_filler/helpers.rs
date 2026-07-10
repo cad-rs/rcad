@@ -174,8 +174,16 @@ pub(crate) fn find_nearest_valid_point(
     if curve.point_at(start_u).distance_squared(vert_pt) > tol_sq { return None; }
 
     // 2. Step until outside tolerance sphere
+    // Clamp step to at most 1/1000 of the parameter range to prevent
+    // billion-iteration loops on degenerated edges (where speed ≈ 0
+    // gives step = tol = 1e-7, producing O(30M) steps) and on circle
+    // curves (where step = tol/radius = 1e-7, producing O(60M) steps).
+    // OCCT handles this via Degenerated-edge early exit and BSpline
+    // derivative threshold acceleration — rcad uses the range clamp.
     let step = curve_resolution(curve, start_u, vert_tol).max(eps);
-    let step = if is_first { step } else { -step };
+    let range = (last - first).abs();
+    let step = if range <= (step * 1000.0) { if is_first { step } else { -step } }
+               else { (range / 1000.0) * if is_first { 1.0 } else { -1.0 } };
     let (mut u_in, mut u_out) = (start_u, start_u);
     loop {
         u_in = u_out; u_out += step;

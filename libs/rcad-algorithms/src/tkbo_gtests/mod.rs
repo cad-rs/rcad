@@ -16,6 +16,7 @@
 //! and generated_occt_boolean_bcut_simple.rs). Those test series are covered by
 //! the tkremaining_gtests module as stubs to avoid duplication.
 
+use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::{surface_area, volume};
 use rcad_kernel::geom;
