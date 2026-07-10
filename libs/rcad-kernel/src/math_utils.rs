@@ -1440,7 +1440,169 @@ pub fn poly_eval(coeffs: &[f64], x: f64) -> f64 {
 }
 
 // =============================================================================
-// Tests
+// GlobOptMin — Global optimization via grid + local refinement
+// =============================================================================
+
+/// Global optimizer: coarse grid evaluation + local coordinate descent.
+pub fn glob_opt_min(
+    f: impl Fn(&[f64]) -> f64,
+    lower: &[f64],
+    upper: &[f64],
+    n_cells: usize,
+    n_local: usize,
+) -> Vec<f64> {
+    let n = lower.len();
+    if n == 0 { return vec![]; }
+    let mut candidates: Vec<(f64, Vec<f64>)> = Vec::new();
+    let mut current = vec![0.0; n];
+    fn grid_eval(f: &impl Fn(&[f64]) -> f64, lower: &[f64], upper: &[f64], nc: usize,
+        cand: &mut Vec<(f64, Vec<f64>)>, cur: &mut Vec<f64>, dim: usize) {
+        if dim == cur.len() { cand.push((f(cur), cur.clone())); return; }
+        let step = (upper[dim] - lower[dim]) / nc as f64;
+        for i in 0..=nc { cur[dim] = lower[dim] + i as f64 * step; grid_eval(f, lower, upper, nc, cand, cur, dim + 1); }
+    }
+    grid_eval(&f, lower, upper, n_cells, &mut candidates, &mut current, 0);
+    candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    candidates.truncate(n_local.max(1));
+    let mut best_x = candidates[0].1.clone();
+    let mut best_f = candidates[0].0;
+    for (_, mut x) in candidates {
+        for _ in 0..5 {
+            for i in 0..n {
+                let step = (upper[i] - lower[i]) * 0.01;
+                let fx = f(&x);
+                let mut xt = x.clone(); xt[i] += step;
+                if xt[i] <= upper[i] && f(&xt) < fx { x[i] = xt[i]; continue; }
+                xt[i] = x[i] - step;
+                if xt[i] >= lower[i] && f(&xt) < fx { x[i] = xt[i]; }
+            }
+        }
+        let fv = f(&x);
+        if fv < best_f { best_f = fv; best_x = x; }
+    }
+    best_x
+}
+
+// =============================================================================
+// PSO — Particle Swarm Optimization
+// =============================================================================
+
+/// Minimize a function using Particle Swarm Optimization.
+pub fn pso_minimize(
+    f: impl Fn(&[f64]) -> f64,
+    lower: &[f64],
+    upper: &[f64],
+    n_particles: usize,
+    max_iter: usize,
+    tol: f64,
+) -> Vec<f64> {
+    let n = lower.len();
+    let mut rng = fastrand::Rng::new();
+    let mut positions: Vec<Vec<f64>> = Vec::with_capacity(n_particles);
+    let mut velocities: Vec<Vec<f64>> = Vec::with_capacity(n_particles);
+    let mut pbest: Vec<Vec<f64>> = Vec::with_capacity(n_particles);
+    let mut pbest_val: Vec<f64> = Vec::with_capacity(n_particles);
+    for _ in 0..n_particles {
+        let mut pos = Vec::with_capacity(n);
+        for i in 0..n { pos.push(lower[i] + rng.f64() * (upper[i] - lower[i])); }
+        let fv = f(&pos);
+        positions.push(pos.clone()); velocities.push(vec![0.0; n]);
+        pbest.push(pos); pbest_val.push(fv);
+    }
+    let mut gbest = pbest[0].clone();
+    let mut gbest_val = pbest_val[0];
+    for i in 1..n_particles { if pbest_val[i] < gbest_val { gbest = pbest[i].clone(); gbest_val = pbest_val[i]; } }
+    for _ in 0..max_iter {
+        let prev = gbest_val;
+        for i in 0..n_particles {
+            for j in 0..n {
+                velocities[i][j] = 0.72 * velocities[i][j] + 1.49 * rng.f64() * (pbest[i][j] - positions[i][j])
+                    + 1.49 * rng.f64() * (gbest[j] - positions[i][j]);
+                let vmax = (upper[j] - lower[j]) * 0.2;
+                velocities[i][j] = velocities[i][j].clamp(-vmax, vmax);
+                positions[i][j] = (positions[i][j] + velocities[i][j]).clamp(lower[j], upper[j]);
+            }
+            let fv = f(&positions[i]);
+            if fv < pbest_val[i] { pbest_val[i] = fv; pbest[i] = positions[i].clone(); }
+            if fv < gbest_val { gbest_val = fv; gbest = positions[i].clone(); }
+        }
+        if (prev - gbest_val).abs() < tol && gbest_val.abs() > 1e-15 { break; }
+    }
+    gbest
+}
+
+// =============================================================================
+// LM — Levenberg-Marquardt nonlinear least squares
+// =============================================================================
+
+/// Levenberg-Marquardt solver for nonlinear least squares.
+///
+/// Minimizes 0.5 * Σ f_i(x)² where f_i are residuals.
+/// `func` fills the residual vector `f` (n_eq) and Jacobian `J` (n_eq × n, column-major),
+/// and returns the sum-of-squares value 0.5*Σf_i².
+pub fn lm_solve(
+    x0: &[f64],
+    mut func: impl FnMut(&[f64], &mut [f64], &mut [f64]) -> f64,
+    n_eq: usize,
+    max_iter: usize,
+    tol: f64,
+) -> Option<Vec<f64>> {
+    let n = x0.len();
+    if n == 0 || n_eq == 0 { return None; }
+    let mut x = x0.to_vec();
+    let mut f = vec![0.0; n_eq];
+    let mut jac = vec![0.0; n_eq * n];
+    let mut lambda = 1.0;
+    let mut cost = func(&x, &mut f, &mut jac);
+    for _ in 0..max_iter {
+        let mut jtj = vec![0.0; n * n];
+        let mut jtf = vec![0.0; n];
+        for i in 0..n {
+            for k in 0..n {
+                let mut s = 0.0;
+                for r in 0..n_eq { s += jac[r * n + i] * jac[r * n + k]; }
+                jtj[i * n + k] = s;
+            }
+        }
+        for i in 0..n {
+            let mut s = 0.0;
+            for r in 0..n_eq { s += jac[r * n + i] * f[r]; }
+            jtf[i] = s;
+        }
+        if jtf.iter().map(|v| v * v).sum::<f64>().sqrt() < tol { return Some(x); }
+        let mut h = jtj.clone();
+        for i in 0..n { h[i * n + i] += lambda; }
+        let rhs: Vec<f64> = jtf.iter().map(|v| -v).collect();
+        let delta = solve_linear_system(&h, &rhs, n);
+        let (cost_new, gain_ratio) = match delta {
+            Some(ref d) => {
+                let mut xn = vec![0.0; n];
+                for i in 0..n { xn[i] = x[i] + d[i]; }
+                let mut fn_ = vec![0.0; n_eq];
+                let mut jn = vec![0.0; n_eq * n];
+                let cn = func(&xn, &mut fn_, &mut jn);
+                let pred: f64 = 0.5 * d.iter().zip(rhs.iter()).map(|(d, r)| d * r).sum::<f64>();
+                let gr = if pred.abs() > 1e-15 { (cost - cn) / pred } else { 0.0 };
+                (cn, gr)
+            }
+            None => (cost, -1.0)
+        };
+        if gain_ratio > 0.0 {
+            let d = delta.as_ref().unwrap();
+            for i in 0..n { x[i] += d[i]; }
+            let _ = func(&x, &mut f, &mut jac);
+            cost = cost_new;
+            lambda *= if gain_ratio > 0.75 { 0.5 } else if gain_ratio < 0.25 { 2.0 } else { 1.0 };
+            lambda = lambda.max(1e-12).min(1e12);
+            let dn: f64 = d.iter().map(|d| d * d).sum::<f64>().sqrt();
+            if dn < tol { return Some(x); }
+        } else {
+            lambda *= 2.0;
+            if lambda > 1e12 { break; }
+        }
+    }
+    if cost < tol { Some(x) } else { None }
+}
 // =============================================================================
 
 // Test module is in math_gtests.rs
