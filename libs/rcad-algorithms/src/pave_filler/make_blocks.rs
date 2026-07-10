@@ -787,62 +787,28 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  // OCCT L1023-1044: MakeEdge + MakePCurve
- // rcad: create DSEdge from the sub-PB
- let new_ei = self.ds.edges.len();
  let ic = &self.ds.intersection_curves[ci];
  let pca = ic.pcurve_on_a.clone();
  let pcb = ic.pcurve_on_b.clone();
- let curve = ic.curve.clone();
- let geom_tol = ic.geom_tol;
-
- let mut sec_face_reps = Vec::new();
- if let Some(ref pc) = pca {
- sec_face_reps.push(DSCurveRepOnFace {
- face_idx: n_f1,
- pcurve: pc.clone(),
- pcurve2: None,
- pcurve_range: [a_t1, a_t2],
- start_param: a_t1, end_param: a_t2,
- });
- }
- if let Some(ref pc) = pcb {
- sec_face_reps.push(DSCurveRepOnFace {
- face_idx: n_f2,
- pcurve: pc.clone(),
- pcurve2: None,
- pcurve_range: [a_t1, a_t2],
- start_param: a_t1, end_param: a_t2,
- });
- }
-
- let mut sub_pb = a_pb.clone();
- sub_pb.new_edge = Some(new_ei);
- self.ds.edges.push(DSEdge {
- start_vertex: n_v1, end_vertex: n_v2,
- curve: curve.clone(),
- t_range: [a_t1, a_t2],
- origin: ShapeOrigin::ShapeA,
- geom_tol,
- paves: Vec::new(),
- pave_blocks: vec![crate::bopds::pave::SharedPB::new(sub_pb.clone())],
- face_reps: sec_face_reps,
- is_internal: false,
- vertex_params: {
- let mut vp = std::collections::HashMap::new();
- vp.insert(n_v1, a_t1);
- vp.insert(n_v2, a_t2);
- vp
- },
- face_tolerances: Vec::new(),
-  is_geometric: true,
-  location: 0,
-  });
-  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
- epb.0.write().unwrap().new_edge = Some(new_ei);
+ let new_ei = crate::boptools::make_edge(self.ds, ci, n_v1, n_v2, a_t1, a_t2, a_tol_r3d);
+ crate::boptools::make_pcurve(
+  self.ds, new_ei, n_f1, n_f2, ci,
+  self.section_attribute.pcurve_on_s1,
+  self.section_attribute.pcurve_on_s2,
+  pca.as_ref(), pcb.as_ref(),
+  Some([a_t1, a_t2]), Some([a_t1, a_t2]),
+ );
+ // set PB edge and register in section_edge_refs
+ if new_ei < self.ds.edges.len() {
+  if let Some(epb) = self.ds.edges[new_ei].pave_blocks.first_mut() {
+   epb.0.write().unwrap().new_edge = Some(new_ei);
+  }
  }
  self.ds.section_edge_refs[ci].push(new_ei);
- // OCCT L1066-1067: aLPBC.Append(aPB)  ?append PB to curve.
- // OCCT L1069-1075: aMSCPB.Add(aES, aCPB)  ?register section edge.
+ // OCCT L1066-1067: aLPBC.Append(aPB)
+ let mut sub_pb = a_pb.clone();
+ sub_pb.new_edge = Some(new_ei);
+ // OCCT L1069-1075: aMSCPB.Add(aES, aCPB)
  // rcad: allocate a global PB and register on both faces' pave_blocks_sc.
  let g_pb_idx = self.ds.allocate_pave_block(sub_pb.clone());
  for &fi in &[n_f1, n_f2] {
@@ -850,9 +816,9 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
  }
  }
- // OCCT L1082-1094: ProcessExistingPaveBlocks  ?existing PBs from
- // ON/IN sets may overlap this new section edge. Uses BVH tree on
- // aMPBOnIn; rcad iterates flat list checking vertex sharing.
+ // OCCT L1079-1080: aMVTol.UnBind(nV1/nV2)
+ a_mv_tol.retain(|&(v, _)| v != n_v1 && v != n_v2);
+ // OCCT L1082-1094: ProcessExistingPaveBlocks
  for &pb_idx in &candidates {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  // OCCT L3139: theMPB.Contains(aPBF)  ?skip already-processed
