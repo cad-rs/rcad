@@ -233,12 +233,13 @@ impl<'a> BooleanBuilder<'a> {
         result: &mut ResultBuilder,
         t: &mut topods::BRep,
     ) {
-        // OCCT L258-266: iterate all source shapes --filter TopAbs_FACE.
-        // rcad shape_info is ordered V/E/F/S (type-grouped).  A running counter
-        // maps each Face-type entry to its DS face index, matching the implicit
-        // type-index OCCT derives from unified shape_info traversal order.
         let a_nb_s = self.ds.nb_source_shapes;
         let mut face_counter = 0usize;
+        let brep_snapshot = self.brep.borrow().clone().unwrap_or_default();
+        let (brep_owned, face_refs_owned, ic_edge_map_owned) = brep_snapshot;
+        let mut a_vbf: Vec<crate::builder::BuilderFace> = Vec::new();
+        let mut a_vbf_face_srs: Vec<topods::ShapeRef> = Vec::new();
+
         for i in 0..a_nb_s {
             if i >= self.ds.shape_info.len() { continue; }
             let si = &self.ds.shape_info[i];
@@ -246,32 +247,19 @@ impl<'a> BooleanBuilder<'a> {
             let fi = face_counter;
             face_counter += 1;
             if fi >= self.ds.faces.len() { continue; }
-            // OCCT L272: const TopoDS_Face& aF = aSI.Shape()
             let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
 
-            // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
-
-            // OCCT L283-287: aNbPBIn = myDS->PaveBlocksIn(i).Extent();
-            //                  aNbPBSc = myDS->PaveBlocksSc(i).Extent();  // PAVE BLOCKS, not curves
-            //                  aNbPBOn = myDS->PaveBlocksOn(i).Extent();
-            //                  aNbAV   = myDS->AloneVertices(i).Extent();
             let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
-            // OCCT L286-287: AloneVertices(i, aLIAV) --vertices ON face, not on any edge boundary.
-            // rcad: face_info.vertices_on contains vertices ON the face surface.
             let a_nb_av = self.ds.faces[fi].face_info.vertices_on.len();
 
-            // OCCT L293-296: if (!aNbPBIn && !aNbPBOn && !aNbPBSc && !aNbAV) continue.
             if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 && !has_info {
                 continue;
             }
 
-            // OCCT L298-332: no IN/SC PBs --BuildDraftFace for ON PBs / alone vertices.
-            // OCCT L332+:    has IN/SC PBs --full BuilderFace::Perform.
             if !has_pb_in && !has_pb_sc {
-                // OCCT L309-333: if (!aNbAV) -- check internals + modified, else skip.
                 if a_nb_av == 0 {
                     let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
                         self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
@@ -282,11 +270,9 @@ impl<'a> BooleanBuilder<'a> {
                             imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
                         })
                     });
-                    // OCCT L330-333: if (!hasInternals && !hasModified) continue.
                     if !has_internals && !has_modified && !has_pb_on {
                         continue;
                     }
-                    // OCCT L336-350: if no internals --BuildDraftFace.
                     if !has_internals && has_info {
                         if let Some(draft) = self.build_draft_face(fi) {
                             let (_segments, wfs, _vp) = draft;
@@ -305,118 +291,111 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // Has IN or SC pave blocks --full BuilderFace::Perform (TopoDS path).
-            // OCCT L501-504: accumulate BuilderFace tasks in aVBF (batching).
-            // Record source face key for later myImages registration.
             let sf_idx = self.ds.faces[fi].source_face_idx;
             let f_base = self.ds.vertices.len() + self.ds.edges.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
-            // OCCT L353-494: Build edge list aLE (boundary + split + IN + SC edges).
-            // NOTE: brep_data borrow is temporary (not &'a), so BuilderFace
-            // is created AND executed inside this scope (no batching across
-            // faces — OCCT accumulates aVBF for parallel execution).
-            if let Some(ref brep_data) = *self.brep.borrow() {
-                let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
-                let mut a_le: Vec<topods::ShapeRef> = Vec::new();
-                {
-                    let t = self.my_shape.borrow();
-                    if face_sr.index < t.tshapes.len() {
-                        if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
-                            // OCCT L360-465: iterate all face edges (bounding + split).
-                            for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
-                                if wi.index >= t.tshapes.len() { continue; }
-                                if let topods::TShape::Wire(wd) = &*t.tshapes[wi.index] {
-                                    for &ei in &wd.edges {
-                                        // OCCT L369: if (!myImages.IsBound(aE)) --add original
-                                        let my_images = self.my_images.borrow();
-                                        if !my_images.contains_key(&ei) {
-                                            a_le.push(ei);
-                                            continue;
-                                        }
-                                        // OCCT L387-465: edge has images --add split edges
-                                        if let Some(imgs) = my_images.get(&ei) {
-                                            for &sp_ei in imgs {
-                                                a_le.push(sp_ei);
-                                            }
-                                        }
+            let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
+            let mut a_le: Vec<topods::ShapeRef> = Vec::new();
+            {
+                let t_shape = self.my_shape.borrow();
+                if face_sr.index < t_shape.tshapes.len() {
+                    if let topods::TShape::Face(fd) = &*t_shape.tshapes[face_sr.index] {
+                        for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                            if wi.index >= t_shape.tshapes.len() { continue; }
+                            if let topods::TShape::Wire(wd) = &*t_shape.tshapes[wi.index] {
+                                for &ei in &wd.edges {
+                                    let my_images = self.my_images.borrow();
+                                    if !my_images.contains_key(&ei) {
+                                        a_le.push(ei);
+                                        continue;
+                                    }
+                                    if let Some(imgs) = my_images.get(&ei) {
+                                        for &sp_ei in imgs { a_le.push(sp_ei); }
                                     }
                                 }
                             }
                         }
                     }
                 }
-                // OCCT L468-480: add IN PB edges
-                for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_in {
-                    if pb_idx < self.ds.pave_blocks.len() {
-                        let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
-                            .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
-                        let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
-                        a_le.push(e_sr);
-                        // OCCT L477-479: add REVERSED orientation
-                        a_le.push(topods::ShapeRef {
-                            index: e_sr.index,
-                            orientation: topods::Orientation::Reversed,
-                            ..e_sr
-                        });
-                    }
+            }
+            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_in {
+                if pb_idx < self.ds.pave_blocks.len() {
+                    let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
+                        .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
+                    let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                    a_le.push(e_sr);
+                    a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Reversed, ..e_sr });
                 }
-                // OCCT L483-494: add SC PB edges
-                for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
-                    if pb_idx < self.ds.pave_blocks.len() {
-                        let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
-                            .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
-                        let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
-                        a_le.push(e_sr);
-                        // OCCT L490-493: add REVERSED orientation
-                        a_le.push(topods::ShapeRef {
-                            index: e_sr.index,
-                            orientation: topods::Orientation::Reversed,
-                            ..e_sr
-                        });
-                    }
+            }
+            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
+                if pb_idx < self.ds.pave_blocks.len() {
+                    let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
+                        .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
+                    let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                    a_le.push(e_sr);
+                    a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Reversed, ..e_sr });
                 }
-                // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aF)
-                if !self.my_non_destructive {
-                    let t2: &topods::BRep = &*t;
-                    if face_sr.index < t2.tshapes.len() {
-                        if let topods::TShape::Face(_fd) = &*t2.tshapes[face_sr.index] {
-                            if matches!(self.ds.faces[fi].surface, rcad_kernel::geom::Surface3::Plane(_)) {
-                                for &e_sr in &a_le {
-                                    if e_sr.index < t2.tshapes.len() {
-                                        if let topods::TShape::Edge(ed) = &*t2.tshapes[e_sr.index] {
-                                            if !ed.pcurves.contains_key(&face_sr.index) {
-                                                // rcad: MakeBlocks already sets pcurves on both faces.
-                                            }
-                                        }
+            }
+            if !self.my_non_destructive {
+                let t2: &topods::BRep = &*t;
+                if face_sr.index < t2.tshapes.len() {
+                    if let topods::TShape::Face(_fd) = &*t2.tshapes[face_sr.index] {
+                        if matches!(self.ds.faces[fi].surface, rcad_kernel::geom::Surface3::Plane(_)) {
+                            for &e_sr in &a_le {
+                                if e_sr.index < t2.tshapes.len() {
+                                    if let topods::TShape::Edge(ed) = &*t2.tshapes[e_sr.index] {
+                                        if !ed.pcurves.contains_key(&face_sr.index) { }
                                     }
                                 }
                             }
                         }
                     }
                 }
-                // OCCT L501-504: create BuilderFace and perform immediately (no batching).
-                let mut bf = crate::builder::BuilderFace::new(
-                    self.ds,
-                    &brep_data.0,
-                    &brep_data.1,
-                    &brep_data.2,
-                    &self.my_face_refs,
-                    fi,
-                    is_a,
-                );
-                bf.set_shapes(a_le);
-                // OCCT L121-147: Perform (no result parameter)
-                bf.perform(t);
-                // OCCT L527-552: transfer myAreas to myImages
-                for &area_sr in bf.areas() {
-                    self.my_images.borrow_mut()
-                        .entry(f_sr)
-                        .or_default()
-                        .push(area_sr);
+            }
+            let mut bf = crate::builder::BuilderFace::new(
+                self.ds,
+                &brep_owned,
+                &face_refs_owned,
+                &ic_edge_map_owned,
+                &self.my_face_refs,
+                fi,
+                is_a,
+            );
+            bf.set_shapes(a_le);
+            a_vbf.push(bf);
+            a_vbf_face_srs.push(f_sr);
+        }
+
+        let a_nb_bf = a_vbf.len();
+        for k in 0..a_nb_bf {
+            a_vbf[k].perform(t);
+        }
+
+        if self.has_errors { return; }
+
+        let mut a_faces_im: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
+            std::collections::HashMap::new();
+        for (bf, f_sr) in a_vbf.iter().zip(a_vbf_face_srs.iter()) {
+            if bf.areas().is_empty() { continue; }
+            let entry = a_faces_im.entry(*f_sr).or_default();
+            for &sr in bf.areas() {
+                entry.push(sr);
+            }
+        }
+
+        for (src_face_sr, a_lfr) in &a_faces_im {
+            let an_ori_f = topods::Orientation::Forward;
+            let mut my_images = self.my_images.borrow_mut();
+            let p_lf_im = my_images.entry(*src_face_sr).or_insert_with(Vec::new);
+            for &a_fr in a_lfr {
+                let mut out_sr = a_fr;
+                if an_ori_f == topods::Orientation::Reversed {
+                    out_sr.orientation = topods::Orientation::Reversed;
                 }
-            }  // close if let ref brep_data
-        }  // close for i (source shape iteration)
+                p_lf_im.push(out_sr);
+            }
+        }
     }
 
     /// --OCCT-aligned: FillInternalVertices (Builder_2.cxx L929-1008).

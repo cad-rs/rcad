@@ -7,17 +7,17 @@ use crate::builder::types::*;
 use crate::builder::{collect_face_edge_segments, FaceOrigin, WireEdgeSource};
 
 /// OCCT-aligned: BOPAlgo_BuilderFace (BuilderFace.hxx).
-/// Self-contained face splitting class.  Input: face + shapes (edge list).
-/// Output: myAreas (list of TFace ShapeRefs).  TShapes are created in `t`.
-pub(crate) struct BuilderFace<'a> {
+/// Self-contained face splitting class.
+/// Two lifetimes: 'a = DS (long-lived), 'b = BRep data (may be shorter).
+pub(crate) struct BuilderFace<'a, 'b> {
     ds: &'a DS,
-    brep: &'a topods::BRep,
-    face_refs: &'a [ShapeRef],
-    ic_edge_map: &'a [Option<ShapeRef>],
+    brep: &'b topods::BRep,
+    face_refs: &'b [ShapeRef],
+    ic_edge_map: &'b [Option<ShapeRef>],
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
     face_idx: usize,
     is_a: bool,
-    /// OCCT-aligned: myShapes (aLE edge list from BuildSplitFaces).
+    /// OCCT-aligned: myShapes (aLE edge list).
     shapes: Option<Vec<ShapeRef>>,
     /// OCCT-aligned: myAreas — resulting split-face TShape refs.
     my_areas: Vec<ShapeRef>,
@@ -25,12 +25,12 @@ pub(crate) struct BuilderFace<'a> {
     my_result: crate::builder::result_builder::ResultBuilder,
 }
 
-impl<'a> BuilderFace<'a> {
+impl<'a, 'b> BuilderFace<'a, 'b> {
     pub fn new(
         ds: &'a DS,
-        brep: &'a topods::BRep,
-        face_refs: &'a [ShapeRef],
-        ic_edge_map: &'a [Option<ShapeRef>],
+        brep: &'b topods::BRep,
+        face_refs: &'b [ShapeRef],
+        ic_edge_map: &'b [Option<ShapeRef>],
         my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
         face_idx: usize,
         is_a: bool,
@@ -43,19 +43,15 @@ impl<'a> BuilderFace<'a> {
         }
     }
 
-    /// OCCT-aligned: SetShapes (BuilderFace.hxx L54).
     pub fn set_shapes(&mut self, shapes: Vec<ShapeRef>) {
         self.shapes = Some(shapes);
     }
 
-    /// OCCT-aligned: Areas (BuilderFace.hxx L67).
     pub fn areas(&self) -> &[ShapeRef] {
         &self.my_areas
     }
 
     /// OCCT-aligned: Perform (BuilderFace.cxx L117-148).
-    /// Takes `t` (BRep where TFace TShapes are created) but NOT a ResultBuilder.
-    /// Stores split-face TShape refs in myAreas; caller reads via areas().
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
         // OCCT L123: CheckData
         if self.face_idx >= self.face_refs.len() { return; }
@@ -64,7 +60,7 @@ impl<'a> BuilderFace<'a> {
             || !matches!(&*self.brep.tshapes[face_ref.index], topods::TShape::Face(_))
         { return; }
 
-        // ----- OCCT L129: PerformShapesToAvoid -----
+        // OCCT L129: PerformShapesToAvoid
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci);
         let segments = collect_face_edge_segments(self.ds, self.face_idx, &pcurve_lookup);
         if segments.is_empty() { return; }
@@ -77,7 +73,7 @@ impl<'a> BuilderFace<'a> {
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
 
-        // ----- OCCT L135: PerformLoops -----
+        // OCCT L135: PerformLoops
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
 
@@ -88,7 +84,7 @@ impl<'a> BuilderFace<'a> {
         let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
             &segments_topo, &avoided);
 
-        // ----- OCCT L141: PerformAreas -----
+        // OCCT L141: PerformAreas
         let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
@@ -108,11 +104,11 @@ impl<'a> BuilderFace<'a> {
 
         let mut wfs = wfs;
 
-        // ----- OCCT L147: PerformInternalShapes -----
+        // OCCT L147: PerformInternalShapes
         crate::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
 
-        // ----- Store results in myAreas (OCCT: myAreas.Append) -----
+        // Store results in myAreas
         let e_base = self.ds.vertices.len();
         let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments.iter()
             .filter_map(|seg| match &seg.source {
@@ -153,7 +149,6 @@ impl<'a> BuilderFace<'a> {
         }
     }
 
-    /// Find pcurve on the given intersection curve for this face.
     fn find_pcurve_for_face(&self, ci: usize) -> Option<Curve2d> {
         if ci >= self.ds.intersection_curves.len() { return None; }
         let ic = &self.ds.intersection_curves[ci];
