@@ -12,7 +12,7 @@
 
 #[cfg(test)]
 mod tkdata_tkbrep_tests {
-    use rcad_kernel::topods::{self, BRep, BRepBuilder, ShapeRef};
+    use rcad_kernel::topods::{self, BRep, BRepBuilder};
     use rcad_kernel::{BRepGraph, BRepGraphTool, CurveEval, SurfaceEval};
     use glam::DVec3;
 
@@ -948,113 +948,6 @@ mod tkdata_tkg2d_tests {
         let l = Curve2d::Line(Line2d { origin: Point2::ZERO, direction: Vec2::X });
         let p = l.point_at(5.0);
         assert!((p - Point2::new(5.0, 0.0)).length() < TOL);
-    }
-
-    // =============================================================================
-    // Geom2dAPI_InterCurveCurve_Test.cxx 锟?covered in tkg2d_gtests::api_intercurve_tests
-    // =============================================================================
-    #[test]
-    fn geom2d_api_inter_curve_curve_two_circles() {
-        // OCCT OCC24889: intersection parameters within trimmed curve limits.
-        // rcad: use intersect_curves2d with full circles
-        let c1 = Curve2d::Circle(Circle2d::new(Point2::new(25.0, -25.0), 155.0));
-        let c2 = Curve2d::Circle(Circle2d::new(Point2::new(25.0, 25.0), 155.0));
-        let pts = crate::geom2d_api::intersect_curves2d(&c1, &c2, 1.0);
-        // Two circles offset by 50 along Y, radius 155 => they intersect
-        // Verify intersection points exist and are finite
-        if !pts.is_empty() {
-            for p in pts {
-                assert!(p.point.is_finite());
-                assert!(p.point.x.is_finite());
-                assert!(p.point.y.is_finite());
-                // Verify intersection point distance to both circles 锟?0
-                let d1 = p.point.distance(c1.point_at(0.0)).abs().min(
-                    p.point.distance(c1.point_at(PI)).abs());
-                let d2 = p.point.distance(c2.point_at(0.0)).abs().min(
-                    p.point.distance(c2.point_at(PI)).abs());
-                // Points should be near both circle boundaries
-            }
-        }
-    }
-
-    // =============================================================================
-    // Geom2dEval_SineWaveCurve_Test.cxx 锟?covered in tkg2d_gtests::sinewave_tests
-    // =============================================================================
-    #[test]
-    fn geom2d_eval_sine_wave_basic() {
-        // OCCT: sine wave with A=2, omega=3
-        let s = Curve2d::SineWave(SineWave2d { amplitude: 2.0, frequency: 3.0, phase: 0.0 });
-        // t=0: (0, 0)
-        let p0 = s.point_at(0.0);
-        assert!((p0 - Point2::ZERO).length() < TOL);
-        // t=PI/(2*omega): (PI/(2*omega), A)
-        let t1 = PI / (2.0 * 3.0);
-        let p1 = s.point_at(t1);
-        assert!((p1.x - t1).abs() < TOL);
-        assert!((p1.y - 2.0).abs() < TOL);
-    }
-
-    // =============================================================================
-    // Geom2dEval_ArchimedeanSpiral_Test.cxx 锟?covered in tkg2d_gtests
-    // =============================================================================
-    #[test]
-    fn geom2d_eval_archimedean_spiral_basic() {
-        // OCCT: distance from origin = a + b*t
-        let s = Curve2d::ArchimedeanSpiral(ArchimedeanSpiral2d {
-            center: Point2::ZERO, a: 0.0, b: 1.0, start_angle: 0.0,
-        });
-        for &t in &[0.0, 1.0, 2.0, PI, 10.0] {
-            let p = s.point_at(t);
-            let d = p.distance(Point2::ZERO);
-            assert!((d - t).abs() < 1e-9, "dist at t={t}: got {d}, expected {t}");
-        }
-    }
-
-    #[test]
-    fn geom2d_eval_archimedean_spiral_with_initial_radius() {
-        // OCCT: initial a=2, growth b=0.5
-        let s = Curve2d::ArchimedeanSpiral(ArchimedeanSpiral2d {
-            center: Point2::ZERO, a: 2.0, b: 0.5, start_angle: 0.0,
-        });
-        let p0 = s.point_at(0.0);
-        assert!((p0 - Point2::new(2.0, 0.0)).length() < TOL);
-    }
-
-    // =============================================================================
-    // Geom2dEval_CircleInvolute_Test.cxx 锟?covered in tkg2d_gtests
-    // =============================================================================
-    #[test]
-    fn geom2d_eval_circle_involute_basic() {
-        // OCCT: C(0) = (R, 0), D1(0) = (0, 0)
-        let c = Curve2d::CircleInvolute(CircleInvolute2d {
-            center: Point2::ZERO, base_radius: 1.0, start_angle: 0.0,
-        });
-        let p0 = c.point_at(0.0);
-        assert!((p0 - Point2::new(1.0, 0.0)).length() < TOL);
-    }
-
-    // =============================================================================
-    // Geom2dEval_LogarithmicSpiral_Test.cxx 锟?covered in tkg2d_gtests
-    // =============================================================================
-    #[test]
-    fn geom2d_eval_log_spiral_self_similarity() {
-        // OCCT: C(t+k) is C(t) scaled by e^(b*k)
-        let a = 1.0;
-        let b = 0.2;
-        let s = Curve2d::LogarithmicSpiral(LogarithmicSpiral2d {
-            center: Point2::ZERO, a, b, start_angle: 0.0,
-        });
-        let k = 2.0;
-        let scale = (b * k).exp();
-        for &t in &[0.0, 1.0, 2.0, PI] {
-            let p1 = s.point_at(t);
-            let p2 = s.point_at(t + k);
-            let d1 = p1.distance(Point2::ZERO);
-            let d2 = p2.distance(Point2::ZERO);
-            if d1 > 1e-12 {
-                assert!((d2 / d1 - scale).abs() < 1e-9, "ratio at t={t}");
-            }
-        }
     }
 
     // =============================================================================

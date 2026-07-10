@@ -29,7 +29,7 @@ const TOL: f64 = 1e-6;
 // =============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TopAbsState {
+enum TopAbsState {
     In,
     Out,
     On,
@@ -37,12 +37,12 @@ pub enum TopAbsState {
 }
 
 /// Stub: BRepBuilderAPI_MakeEdge equivalent
-pub struct MakeEdgeStub {
+struct MakeEdgeStub {
     brep: Option<topods::BRep>,
 }
 
 impl MakeEdgeStub {
-    pub fn from_points(p1: DVec3, p2: DVec3) -> Self {
+    fn from_points(p1: DVec3, p2: DVec3) -> Self {
         // TODO: implement actual edge creation
         let mut b = topods::BRep::new();
         let v1 = b.add_tvertex(p1);
@@ -67,7 +67,7 @@ impl MakeEdgeStub {
 }
 
 /// Edge length via arc_length computation
-pub fn edge_length(brep: &topods::BRep, edge_idx: usize) -> f64 {
+fn edge_length(brep: &topods::BRep, edge_idx: usize) -> f64 {
     if edge_idx < brep.tshapes.len() {
         if let topods::TShape::Edge(ed) = &*brep.tshapes[edge_idx] {
             if let Some(ref curve) = ed.curve {
@@ -79,7 +79,7 @@ pub fn edge_length(brep: &topods::BRep, edge_idx: usize) -> f64 {
 }
 
 /// Stub: BRepBuilderAPI_MakeFace equivalent
-pub struct MakeFaceStub {
+struct MakeFaceStub {
     brep: Option<topods::BRep>,
 }
 
@@ -123,7 +123,7 @@ impl MakeFaceStub {
 }
 
 /// Stub: BRepBuilderAPI_MakeWire equivalent — builds a wire from edges.
-pub struct MakeWireStub {
+struct MakeWireStub {
     edges: Vec<topods::ShapeRef>,
     built_wire: Option<topods::ShapeRef>,
 }
@@ -142,7 +142,7 @@ impl MakeWireStub {
 }
 
 /// Transform a BRep by applying an affine transform to all vertex positions.
-pub fn transform_brep(brep: &topods::BRep, xf: &DAffine3) -> topods::BRep {
+fn transform_brep(brep: &topods::BRep, xf: &DAffine3) -> topods::BRep {
     let mut out = brep.clone();
     for ts in &mut out.tshapes {
         if let topods::TShape::Vertex(vd) = std::sync::Arc::make_mut(ts) {
@@ -153,23 +153,23 @@ pub fn transform_brep(brep: &topods::BRep, xf: &DAffine3) -> topods::BRep {
 }
 
 /// Stub: BRepBuilderAPI_Transform — translate by offset vector.
-pub fn transform_brep_translate(brep: &topods::BRep, offset: DVec3) -> topods::BRep {
+fn transform_brep_translate(brep: &topods::BRep, offset: DVec3) -> topods::BRep {
     transform_brep(brep, &DAffine3::from_translation(offset))
 }
 
 /// Stub: BRepBuilderAPI_Transform — rotate around axis through origin.
-pub fn transform_brep_rotate(brep: &topods::BRep, axis: DVec3, angle_rad: f64) -> topods::BRep {
+fn transform_brep_rotate(brep: &topods::BRep, axis: DVec3, angle_rad: f64) -> topods::BRep {
     let rot = DMat3::from_axis_angle(axis.normalize_or_zero(), angle_rad);
     transform_brep(brep, &DAffine3::from_mat3_translation(rot, DVec3::ZERO))
 }
 
 /// Stub: BRepBuilderAPI_Transform — scale uniformly about origin.
-pub fn transform_brep_scale(brep: &topods::BRep, factor: f64) -> topods::BRep {
+fn transform_brep_scale(brep: &topods::BRep, factor: f64) -> topods::BRep {
     transform_brep(brep, &DAffine3::from_scale(DVec3::splat(factor)))
 }
 
 /// Mirror across a plane through origin with given normal.
-pub fn transform_brep_mirror(brep: &topods::BRep, normal: DVec3) -> topods::BRep {
+fn transform_brep_mirror(brep: &topods::BRep, normal: DVec3) -> topods::BRep {
     let n = normal.normalize_or_zero();
     // Householder reflection
     let refl = DMat3::IDENTITY - 2.0 * DMat3::from_cols(n * n.x, n * n.y, n * n.z);
@@ -177,15 +177,15 @@ pub fn transform_brep_mirror(brep: &topods::BRep, normal: DVec3) -> topods::BRep
 }
 
 /// Stub: BRepBuilderAPI_Copy equivalent
-pub fn copy_brep(brep: &topods::BRep) -> topods::BRep {
+fn copy_brep(brep: &topods::BRep) -> topods::BRep {
     brep.clone()
 }
 
 /// Stub: center of mass
-pub fn center_of_mass(brep: &topods::BRep) -> DVec3 { rcad_kernel::centroid(brep) }
+fn center_of_mass(brep: &topods::BRep) -> DVec3 { rcad_kernel::centroid(brep) }
 
 /// Total edge length (LinearProperties)
-pub fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
+fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
     let mut total = 0.0;
     for i in 0..brep.tshapes.len() {
         if let topods::TShape::Edge(ed) = &*brep.tshapes[i] {
@@ -201,7 +201,7 @@ pub fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
 ///
 /// Stores the BRep by value to avoid lifetime coupling, and creates a
 /// temporary classifier on each perform call.
-pub struct SolidClassifierStub {
+struct SolidClassifierStub {
     brep: topods::BRep,
     solid_ref: topods::ShapeRef,
     state: TopAbsState,
@@ -260,7 +260,7 @@ impl SolidClassifierStub {
 ///
 /// Computes minimum distance from point to line segment for linear edges.
 /// For curved edges falls back to 0.0 (unimplemented for non-linear).
-pub struct DistShapeShapeStub {
+struct DistShapeShapeStub {
     value: f64,
     done: bool,
 }
@@ -301,7 +301,7 @@ fn point_to_segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
 
 /// Stub: PrincipalProperties / symmetry axis
 /// Principal properties / symmetry axis — check inertia tensor principal moments
-pub fn has_symmetry_axis(brep: &topods::BRep) -> bool {
+fn has_symmetry_axis(brep: &topods::BRep) -> bool {
     let inertia = rcad_kernel::inertia_tensor(brep);
     let ixx = inertia.ixx.abs();
     let iyy = inertia.iyy.abs();
