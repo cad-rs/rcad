@@ -333,6 +333,14 @@ impl<'a> BooleanBuilder<'a> {
             for &si in solid_shells {
                 if let Some(shell_faces) = result.tmp_shells.get(si) {
                     for &rfi in shell_faces {
+                        // Check both index spaces that keep_set may use:
+                        //   - f_base + rfi for split faces (images, line 174)
+                        //   - f_base + dfi for unsplit faces (original, line 188)
+                        let rfi_flat = f_base + rfi;
+                        if keep_set.contains(&rfi_flat) {
+                            solid_keep = true;
+                            break;
+                        }
                         let dfi_opt = match result.face_origins.get(rfi) {
                             Some(FaceOrigin::FromA(sfi)) => self.ds.faces.iter().position(|f|
                                 f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
