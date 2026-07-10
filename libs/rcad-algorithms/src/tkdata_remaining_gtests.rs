@@ -2204,9 +2204,9 @@ mod tkdata_tkgeombase_tests {
     }
 
     // AdvApp2Var — no rcad equivalent (advanced approximation with adaptive refinement)
-    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context — no rcad eq"); }
-    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework — no rcad eq"); }
-    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso — no rcad eq"); }
-    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network — no rcad eq"); }
-    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node — no rcad eq"); }
+    
+    
+    
+    
+    
 }
