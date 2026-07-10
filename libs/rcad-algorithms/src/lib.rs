@@ -85,7 +85,7 @@ pub mod approx_int;
 pub mod adv_app2_var;
 pub mod app_cont;
 pub mod blend;
-mod bop_occt_union;
+pub mod bop_occt_union;
 pub mod brep_adaptor;
 pub mod brep_feat;
 pub mod brep_int_curve_surface;
@@ -725,7 +725,6 @@ pub use shape_analysis::{
     check_face_wires,
     check_uv_consistency,
     compute_surface_deviation,
-    detect_surface_self_intersection,
 };
 pub use shape_build::{
     BRepBuilder, BuildError, BuildFace, BuildShell, BuildSolid, BuildVertex, BuildWire, Rebuild,
@@ -790,13 +789,3 @@ pub use triangulate::{
     mesh_brep, triangulate_surface,
 };
 
-pub use boolean::{
-    BooleanOptions, BooleanRetryPolicy, BooleanRobustOptions,
-    ExtremeGeometryRetryConfig, ExtremeGeometryRetryPolicy,
-};
-pub(crate) use bop_occt_union::boolean_op_generic as boolean_op;
-pub(crate) use bop_occt_union::boolean_op_with_history_generic as boolean_op_with_history;
-pub(crate) use bop_occt_union::boolean_op_generic as boolean_op_robust;
-pub use rcad_kernel::topods::BRep;
-pub use boolean::{GeneralFuseHistory, general_fuse, general_fuse_with_history, boolean_op_pave_fill_build};
-pub use boolean::shape_analysis;

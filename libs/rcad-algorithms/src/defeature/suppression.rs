@@ -855,15 +855,9 @@ pub fn suppress_feature_robust(
         // Try the boolean operation
         let result = if options.use_fuzzy_boolean && attempt > 0 {
             // Use fuzzy tolerance for retry
-            let fuzzy_opts = BooleanOptions {
-                fuzzy_tol: tolerance,
-                use_glue: true,
-                glue_tolerance: tolerance,
-                ..Default::default()
-            };
-            boolean_op_with_options(op, &current, fill_solid, fuzzy_opts)
+            boolean_op_with_options(op, &current, fill_solid, tolerance)
         } else {
-            boolean_op(op, &current, fill_solid).map(|t| (t).clone())
+            crate::bop_occt_union::boolean_op_generic(op, &current, fill_solid)
         };
 
         match result {
@@ -903,26 +897,14 @@ pub fn suppress_feature_robust(
     }
 }
 
-/// Perform boolean operation with explicit options.
+/// Perform boolean operation with explicit options (fuzzy tolerance only).
 fn boolean_op_with_options(
     op: BooleanOpType,
-    a: &rcad_kernel::BRep,
-    b: &rcad_kernel::BRep,
-    options: BooleanOptions,
-) -> Result<rcad_kernel::BRep, crate::BooleanError> {
-    // For now, delegate to the standard boolean with fuzzy tolerance
-    // A full implementation would respect all options
-    if options.fuzzy_tol > 0.0 {
-        let robust_opts = BooleanRobustOptions {
-            base: options,
-            fuzzy_retry_ladder: vec![options.fuzzy_tol],
-            retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
-            extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
-        };
-        boolean_op_robust(op, a, b, robust_opts).map(|(b, _)| b)
-    } else {
-        boolean_op(op, a, b).map(|t| (t).clone())
-    }
+    a: &topods::BRep,
+    b: &topods::BRep,
+    fuzzy_tol: f64,
+) -> Result<topods::BRep, crate::BooleanError> {
+    crate::bop_occt_union::boolean_op_generic(op, a, b)
 }
 
 // =============================================================================

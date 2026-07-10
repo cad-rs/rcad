@@ -622,7 +622,7 @@ mod tkfillet_tests {
     fn chamfer_after_boolean() {
         let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
         let b2 = rcad_modeling::make_box_brep(DVec3::new(5.0, 5.0, 5.0), DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
-        let fuse_result = std::panic::catch_unwind(|| crate::boolean_op(crate::BooleanOpType::Union, &b1, &b2));
+        let fuse_result = std::panic::catch_unwind(|| crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &b1, &b2));
         if let Ok(Ok(fused)) = fuse_result {
             let result = rcad_modeling::chamfer_edge(&fused, 0, 2.0);
             if let Err(ref e) = result {
@@ -694,7 +694,7 @@ mod tkfillet_tests {
     fn fillet_occ1077_boolean_fillet() {
         let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
         let b2 = rcad_modeling::make_box_brep(DVec3::new(5.0, 5.0, 5.0), DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
-        let fuse_result = std::panic::catch_unwind(|| crate::boolean_op(crate::BooleanOpType::Union, &b1, &b2));
+        let fuse_result = std::panic::catch_unwind(|| crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &b1, &b2));
         if let Ok(Ok(fused)) = fuse_result {
             let result = rcad_modeling::fillet_edge(&fused, 0, 2.0);
             if let Err(ref e) = result {
@@ -707,7 +707,7 @@ mod tkfillet_tests {
     fn fillet_occ426_revolve_fuse_fillet() {
         let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
         let b2 = rcad_modeling::make_box_brep(DVec3::new(5.0, 5.0, 5.0), DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
-        let fuse_result = std::panic::catch_unwind(|| crate::boolean_op(crate::BooleanOpType::Union, &b1, &b2));
+        let fuse_result = std::panic::catch_unwind(|| crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &b1, &b2));
         if let Ok(Ok(fused)) = fuse_result {
             let result = rcad_modeling::fillet_edge(&fused, 0, 2.0);
             if let Err(ref e) = result {

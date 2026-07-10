@@ -58,8 +58,8 @@ use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurf
 use rcad_modeling::make_cylinder_brep;
 
 use crate::tolerance::*;
-use crate::{BooleanOptions, BooleanRobustOptions, BooleanRetryPolicy, boolean_op_robust, ExtremeGeometryRetryConfig};
-use crate::{BooleanOpType, boolean_op};
+use crate::bop_occt_union::boolean_op_generic as boolean_op;
+use crate::{BooleanOpType};
 use crate::brep_repair::make_connected_enhanced;
 
 // -- Tolerances --------------------------------------------------------------

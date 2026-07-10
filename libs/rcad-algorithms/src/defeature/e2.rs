@@ -296,29 +296,7 @@ fn try_boolean_with_retry(
     match boolean_op(op, a, b) {
         Ok(result) => Ok(((result).clone(), false)),
         Err(first_err) => {
-            // Build retry ladder based on multiplier.
-            let ladder: Vec<f64> = (1..=max_retries)
-                .map(|i| TOLERANCE_ABS * fuzzy_multiplier * (i as f64))
-                .collect();
-
-            let robust_opts = BooleanRobustOptions {
-                base: BooleanOptions::default(),
-                fuzzy_retry_ladder: ladder,
-                retry_policy: BooleanRetryPolicy::Aggressive,
-                extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
-            };
-
-            report.retry_attempts += 1;
-
-            match boolean_op_robust(op, a, b, robust_opts) {
-                Ok((result, _exec_report)) => {
-                    report.retry_attempts += _exec_report.retry_count;
-                    Ok((result, true))
-                }
-                Err(_) => {
-                    Err(first_err)
-                }
-            }
+            Err(first_err)
         }
     }
 }
@@ -600,22 +578,7 @@ fn process_feature_group(
                     BooleanOpType::Difference
                 };
 
-                let result = if options.base.enable_retry {
-                    let ladder: Vec<f64> = (1..=options.base.max_retries)
-                        .map(|i| TOLERANCE_ABS * options.base.retry_fuzzy_multiplier * (i as f64))
-                        .collect();
-
-                    let robust_opts = BooleanRobustOptions {
-                        base: BooleanOptions::default(),
-                        fuzzy_retry_ladder: ladder,
-                        retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
-                        extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
-                    };
-
-                    report.base.retry_attempts += 1;
-                    boolean_op_robust(op, &current, &fill_old, robust_opts)
-                        .map(|(b, _)| b)
-                } else {
+                let result = {
                     boolean_op(op, &current, &fill_old).map(|b| (b).clone())
                 };
 

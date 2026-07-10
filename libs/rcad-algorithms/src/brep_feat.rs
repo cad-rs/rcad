@@ -20,7 +20,8 @@ use glam::DVec3;
 use rcad_kernel::topods::{self, ShapeRef, TShape, Orientation};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 
-use crate::{BooleanError, BooleanOpType, boolean_op};
+use crate::{BooleanError, BooleanOpType};
+use crate::bop_occt_union::boolean_op_generic as boolean_op;
 
 // ===========================================================?
 // Error Types

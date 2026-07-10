@@ -17,7 +17,7 @@
 //! on some merged planes until the kernel’s planar integrator is tightened).
 //!
 //! History and parallel-history APIs intentionally skip step 4 to match the existing behavior
-//! of [`crate::boolean_op_with_history`] and [`crate::boolean_op_par`].
+//! of [`crate::bop_occt_union::boolean_op_with_history_generic`] and [`crate::boolean_op_par`].
 //!
 //! ## In-pipeline validation
 //!
@@ -326,7 +326,7 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
  bvh::Bvh::build(indices, face_aabbs)
 }
 
-/// `use_bvh`: match [`crate::boolean_op`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
+/// `use_bvh`: match [`crate::bop_occt_union::boolean_op_generic`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
 /// when BVH acceleration is toggled off (`false` --plain [`pave_filler::PaveFiller::new`]).
 /// --OCCT-aligned: PaveFiller creation + configuration + Perform.
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
@@ -368,7 +368,7 @@ pub(crate) fn boolean_op_with_history_generic(
  Ok((result_brep, hist))
 }
 
-/// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
+/// Uses BVH when both operands have faces, matching [`crate::bop_occt_union::boolean_op_generic`].
 pub fn boolean_op_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
 ) -> Result<topods::BRep, BooleanError> {

@@ -124,7 +124,7 @@ mod bop_algo_direct_tests {
     use crate::BooleanOpType;
 
     fn perform_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        crate::boolean_op(op, a, b).expect("BOP operation failed")
+        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("BOP operation failed")
     }
 
     #[test]

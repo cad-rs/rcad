@@ -12,6 +12,7 @@
 //! 7. TestCurveOnSurface() — check curve-surface consistency
 
 use rcad_kernel::topods;
+use rcad_kernel::topods::BRep;
 use crate::tolerance::TOLERANCE_ABS;
 use crate::brep_tools::{get_shape_type, ShapeType};
 use crate::bopds::checker_si::CheckerSI;

@@ -35,7 +35,7 @@ use std::collections::HashSet;
 
 use rcad_kernel::topods;
 
-use crate::{BooleanError, GeneralFuseHistory, general_fuse, general_fuse_with_history};
+use crate::BooleanError;
 
 /// Error type for MakerVolume-style solid assembly.
 #[derive(Debug)]
@@ -139,7 +139,7 @@ impl MakerVolume {
     pub fn build_from_region_mask_with_history(
         &self,
         region_mask: &[bool],
-    ) -> Result<(topods::BRep, GeneralFuseHistory), MakerVolumeError> {
+    ) -> Result<(topods::BRep, ()), MakerVolumeError> {
         let selection = self.selection_from_region_mask(region_mask)?;
         self.build_from_indices_with_history(&selection.selected_cell_indices)
     }
@@ -147,7 +147,10 @@ impl MakerVolume {
     /// Build a solid from an explicit cell index list.
     pub fn build_from_indices(&self, indices: &[usize]) -> Result<topods::BRep, MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        let result = general_fuse(&parts)?;
+        let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
+            if acc.solids.is_empty() { Ok(part) }
+            else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
+        })?;
         Ok(result)
     }
 
@@ -155,10 +158,14 @@ impl MakerVolume {
     pub fn build_from_indices_with_history(
         &self,
         indices: &[usize],
-    ) -> Result<(topods::BRep, GeneralFuseHistory), MakerVolumeError> {
+    ) -> Result<(topods::BRep, ()), MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        let (result, hist) = general_fuse_with_history(&parts)?;
-        Ok((result, hist))
+        let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
+            if acc.solids.is_empty() { Ok(part) }
+            else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
+
+        })?;
+        Ok((result, ()))
     }
 
     /// Convert a region mask into a validated selection report.
@@ -229,9 +236,9 @@ pub fn make_solid_from_region(
 
 /// Convenience helper: assemble a solid from a region mask and report history.
 pub fn make_solid_from_region_with_history(
-    cells: &[rcad_kernel::BRep],
+    cells: &[topods::BRep],
     region_mask: &[bool],
-) -> Result<(rcad_kernel::BRep, GeneralFuseHistory), MakerVolumeError> {
+) -> Result<(topods::BRep, ()), MakerVolumeError> {
     let cells_t: Vec<_> = cells.to_vec();
     MakerVolume::from_cells(cells_t).build_from_region_mask_with_history(region_mask)
 }

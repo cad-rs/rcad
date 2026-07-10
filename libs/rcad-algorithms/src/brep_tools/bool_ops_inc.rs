@@ -276,14 +276,14 @@ fn partition_solid_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) 
  let tool = &expanded_tools[i];
 
  if inside {
- match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, tool) {
+ match crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Intersection, &cell, tool) {
  Ok(r) => { cell = compact_brep(&r); },
  Err(_) => { failed = true; break; }
  }
  } else if let Some(complement_idx) = expanded_complements[i] {
  // Half-space: "outside" = Intersection with complementary half-space.
  let complement = &expanded_tools[complement_idx];
- match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, complement) {
+ match crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Intersection, &cell, complement) {
  Ok(r) => { cell = compact_brep(&r); },
  Err(_) => { failed = true; break; }
  }
@@ -312,7 +312,7 @@ fn partition_solid_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) 
   let comp_box_old = comp_box;
   for cell_part in &cell_solids {
   if let Ok(part) =
-  crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box_old)
+  crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Intersection, cell_part, &comp_box_old)
  {
  let p = part;
  if count_faces(&p) > 0 {
@@ -327,7 +327,7 @@ fn partition_solid_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) 
  }
  }
  // Subsequent tool or non-box tool: use Diff.
- match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Difference, &cell, tool) {
+ match crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Difference, &cell, tool) {
  Ok(r) => { cell = compact_brep(&r); }
  Err(_) => { failed = true; break; }
  }
@@ -405,13 +405,13 @@ fn partition_face_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -
  let mut cells = Vec::new();
  let mut remaining = obj.clone();
  for tool in &solid_tools {
- let inside_t = crate::boolean_op(crate::BooleanOpType::Intersection, &remaining, tool)?;
+ let inside_t = crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Intersection, &remaining, tool)?;
  let inside = inside_t;
  let in_faces = collect_on_plane(&inside);
  if !in_faces.is_empty() {
  cells.push(extract_brep_subset(&inside, &in_faces));
  }
- let remaining_t = crate::boolean_op(crate::BooleanOpType::Difference, &remaining, tool)?;
+ let remaining_t = crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Difference, &remaining, tool)?;
  remaining = remaining_t;
  }
  let out_faces = collect_on_plane(&remaining);
