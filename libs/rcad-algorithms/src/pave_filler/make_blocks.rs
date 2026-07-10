@@ -129,44 +129,53 @@ impl<'a> super::PaveFiller<'a> {
  {
  let f1_face = &self.ds.faces[n_f1];
  let f2_face = &self.ds.faces[n_f2];
- // Vertices ON
- for &vi in &f1_face.face_info.vertices_on {
- if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
- a_mv_common.insert(vi);
- } else {
- a_mv_on_in.insert(vi);
- }
- }
- for &vi in &f2_face.face_info.vertices_on {
- if !f1_face.face_info.vertices_on.contains(&vi) && !a_mv_common.contains(&vi) {
- a_mv_on_in.insert(vi);
- }
- }
- // Vertices IN
- for &vi in &f1_face.face_info.vertices_in {
- if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
- a_mv_common.insert(vi);
- } else {
- a_mv_on_in.insert(vi);
- }
- }
- for &vi in &f2_face.face_info.vertices_in {
- if !f1_face.face_info.vertices_on.contains(&vi) && !f1_face.face_info.vertices_in.contains(&vi) && !a_mv_common.contains(&vi) {
- a_mv_on_in.insert(vi);
- }
- }
- // PaveBlocks ON/IN
+ // Step 1: PBs ON/IN — add PB + endpoints to aMVOnIn + aMPBOnIn
+ let pb_sets_fn = |pb_set: &indexmap::IndexSet<usize>,
+                   mpb_set: &mut std::collections::HashSet<usize>,
+                   mv_set: &mut std::collections::HashSet<usize>| {
+  for &pb_idx in pb_set {
+   mpb_set.insert(pb_idx);
+   if pb_idx < self.ds.pave_blocks.len() {
+    let pb = &self.ds.pave_blocks[pb_idx];
+    let (v1, v2) = pb.0.read().unwrap().indices();
+    mv_set.insert(v1);
+    mv_set.insert(v2);
+   }
+  }
+ };
+ pb_sets_fn(&f1_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
+ pb_sets_fn(&f1_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
+ pb_sets_fn(&f2_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
+ pb_sets_fn(&f2_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
+ // Step 2: Common PBs — PBsOn1 also in PBsOn2/PBsIn2
  for &pb_idx in &f1_face.face_info.pave_blocks_on {
- a_mpb_on_in.insert(pb_idx);
+  if f2_face.face_info.pave_blocks_on.contains(&pb_idx)
+  || f2_face.face_info.pave_blocks_in.contains(&pb_idx) {
+   a_mpb_common.insert(pb_idx);
+   if pb_idx < self.ds.pave_blocks.len() {
+    let pb = &self.ds.pave_blocks[pb_idx];
+    let (v1, v2) = pb.0.read().unwrap().indices();
+    a_mv_common.insert(v1);
+    a_mv_common.insert(v2);
+   }
+  }
  }
- for &pb_idx in &f1_face.face_info.pave_blocks_in {
- a_mpb_on_in.insert(pb_idx);
+ // Step 3: f1 VerticesOn/In also in f2 → aMVOnIn + aMVCommon
+ for &vi in &f1_face.face_info.vertices_on {
+  if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
+   a_mv_on_in.insert(vi);
+   a_mv_common.insert(vi);
+  } else {
+   a_mv_on_in.insert(vi);
+  }
  }
- for &pb_idx in &f2_face.face_info.pave_blocks_on {
- a_mpb_on_in.insert(pb_idx);
- }
- for &pb_idx in &f2_face.face_info.pave_blocks_in {
- a_mpb_on_in.insert(pb_idx);
+ for &vi in &f1_face.face_info.vertices_in {
+  if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
+   a_mv_on_in.insert(vi);
+   a_mv_common.insert(vi);
+  } else {
+   a_mv_on_in.insert(vi);
+  }
  }
  }
 
@@ -296,30 +305,8 @@ impl<'a> super::PaveFiller<'a> {
  self.put_stick_paves_on_curve(ci, &aMI, &a_mv_stick);
 
  // OCCT L823-826: PutEFPavesOnCurve (single curve case)
- if a_nb_c_single == 1 {
- // rcad PutEFPavesOnCurve for BSpline curves only
- let ic = &self.ds.intersection_curves[ci];
- let is_bspline = matches!(&ic.curve, Curve3::BSpline(_));
- let has_one_pb = ic.pave_blocks.len() == 1;
- if is_bspline && has_one_pb {
- let ef_verts: Vec<usize> = self.ds.interf_ef.iter()
- .filter_map(|inf| {
- let edge_on_pair = self.ds.edges[inf.edge].face_reps.iter()
- .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
- if edge_on_pair && (inf.face == n_f1 || inf.face == n_f2) {
- Some(inf.new_vertex)
- } else { None }
- })
- .collect();
- if !ef_verts.is_empty() {
- for n_v in &ef_verts {
- if *n_v < self.ds.vertices.len() {
- a_mv_tol.push((*n_v, self.ds.vertices[*n_v].geom_tol));
- }
- self.put_pave_on_curve(*n_v, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
- }
- }
- }
+ if a_nb_c == 1 {
+  self.put_ef_paves_on_curve(ci, &aMI, &a_mv_ef);
  }
 
  // OCCT L828-843: PutBoundPaveOnCurve(aF1, aF2, aNC, aLBV) + aDMBV

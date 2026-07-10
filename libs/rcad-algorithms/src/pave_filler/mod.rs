@@ -830,48 +830,23 @@ impl<'a> PaveFiller<'a> {
  }
 
  fn remove_micro_edges(&mut self) {
- let mut micro_edges: Vec<usize> = Vec::new();
-
- // OCCT L4398-4433: iterate edges in PaveBlocks pool
+ let mut micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
  for ei in 0..self.ds.edges.len() {
- // OCCT L4401-4403: skip edges with <2 PaveBlocks (no splits)
- if self.ds.edges[ei].pave_blocks.len() < 2 {
- continue;
+  if self.ds.edges[ei].pave_blocks.len() < 2 { continue; }
+  if self.ds.is_edge_degenerated(ei) { continue; }
+  for pb in &self.ds.edges[ei].pave_blocks {
+   let nv1 = pb.0.read().unwrap().pave1.vertex_idx;
+   let nv2 = pb.0.read().unwrap().pave2.vertex_idx;
+   if nv1 == nv2 {
+    if !pb.0.read().unwrap().has_shrunk_data() {
+     micro_edges.insert(ei);
+    }
+    break;
+   }
+  }
  }
-
- // OCCT L4407-4410: skip degenerated edges (HasFlag)
- if self.ds.is_edge_degenerated(ei) {
- continue;
- }
-
- // OCCT L4412-4432: iterate PaveBlocks, find nV1==nV2
- for pb in &self.ds.edges[ei].pave_blocks {
- let nv1 = pb.0.read().unwrap().pave1.vertex_idx;
- let nv2 = pb.0.read().unwrap().pave2.vertex_idx;
- if nv1 == nv2 {
- // OCCT L4425-4426: FillShrunkData + HasShrunkData check
- if pb.0.read().unwrap().has_shrunk_data() {
- // OCCT L4425: if HasShrunkData && IsSplittable  ?skip
- if pb.0.read().unwrap().is_splittable { continue; }
- }
- micro_edges.push(ei);
- break;
- }
- }
- }
-
- // OCCT L4434: RemovePaveBlocks(aMicroEdges)
- // rcad: clear pave_blocks, restore single-span representation
  for &ei in &micro_edges {
- let sv = self.ds.edges[ei].start_vertex;
- let ev = self.ds.edges[ei].end_vertex;
- let t0 = self.ds.edges[ei].t_range[0];
- let t1 = self.ds.edges[ei].t_range[1];
-  self.ds.edges[ei].pave_blocks = vec![crate::bopds::pave::SharedPB::new(PaveBlock::new(
-  ei,
-  Pave { vertex_idx: sv, param: t0 },
-  Pave { vertex_idx: ev, param: t1 },
-  ))];
+  self.ds.edges[ei].pave_blocks.clear();
  }
  }
 

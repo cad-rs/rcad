@@ -526,6 +526,25 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
+ /// OCCT-aligned: PutEFPavesOnCurve (PaveFiller_6.cxx L2724-2778).
+ /// For single-curve FF pairs, put EF-intersection vertices onto the curve.
+ pub(crate) fn put_ef_paves_on_curve(
+  &mut self,
+  ci: usize,
+  aMI: &std::collections::HashSet<usize>,
+  aMVEF: &std::collections::HashSet<usize>,
+ ) {
+  let a_tol_r3d = {
+   let ic = &self.ds.intersection_curves[ci];
+   ic.geom_tol.max(ic.curve_extra.tangential_tol)
+  };
+  for &n_v in aMVEF {
+   if n_v < self.ds.vertices.len() {
+    self.put_pave_on_curve(n_v, a_tol_r3d, ci, aMI, 1);
+   }
+  }
+ }
+
  /// Find the two face indices for a given intersection curve.
  fn face_idxs_for_curve(&self, ci: usize) -> [usize; 2] {
  let mut result = [usize::MAX; 2];
