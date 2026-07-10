@@ -504,13 +504,6 @@ pub use brep_repair::{
 pub use builder::{
     BooleanError,
     BooleanOpType,
-    // Glue path enhancement types
-    GlueConfig,
-    GlueFaceCache,
-    GlueFacePair,
-    apply_glue_optimization,
-    compute_adaptive_glue_tolerance,
-    detect_glue_faces,
 };
 pub use chamfer::{
     ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,
@@ -796,5 +789,3 @@ pub use triangulate::{
     MeshQualityMetrics, MeshSimplifier, SurfaceMesh, TessellationParams, compute_mesh_quality,
     mesh_brep, triangulate_surface,
 };
-pub mod lib_inline;
-pub use lib_inline::*;

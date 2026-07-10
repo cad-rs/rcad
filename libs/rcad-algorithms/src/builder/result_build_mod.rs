@@ -1,3 +1,23 @@
+use super::{BooleanBuilder, SourceSide};
+use std::collections::{HashMap, HashSet, VecDeque};
+use indexmap::IndexMap;
+use glam::{DVec2, DVec3};
+use rcad_kernel::topods;
+use rcad_kernel::PCurve;
+use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval, *};
+use rcad_kernel::topology::*;
+use crate::bvh::{Aabb, DsBvh};
+use crate::bopds::ds::*;
+use crate::classify::{Classification, classify_point};
+use crate::bopalgo::{GlueEnum, Alert, Report};
+use crate::builder::types::*;
+use super::ResultBuilder;
+use crate::builder::wire_splitter::{EdgeInfo, build_closed_wires};
+use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
+use crate::inttools::context::Context;
+use crate::inttools::edge_face::plane_local_basis;
+use crate::tolerance::*;
+
 impl<'a> BooleanBuilder<'a> {
     /// OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L583-867, SOLID filtering part).
     ///   Filter result.tmp_solids by boolean operation type using args/tools face-set
@@ -15,14 +35,14 @@ impl<'a> BooleanBuilder<'a> {
     ///   rcad: result.tmp_solids contains pre-assembled split solids with
     ///     solid_side_origin tracking.  The OCCT myShape is approximated by
     ///     result.tmp_solids entries.
-    fn build_rc(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
+    pub(super) fn build_rc(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         // OCCT L587-591: TopoDS_Compound aC; BRep_Builder aBB; aBB.MakeCompound(aC)
 
         let solids = std::mem::take(&mut result.tmp_solids);
         let sides: Vec<usize> = result.solid_side_origin.clone();
         if sides.len() != solids.len() { return; }
 
-        // OCCT L594-609: A. FUSE �?iterate myShape with fence, add all
+        // OCCT L594-609: A. FUSE --iterate myShape with fence, add all
         if self.op == BooleanOpType::Union {
             // OCCT L596: aMFence fence map
             // OCCT L597-606: TopExp_Explorer aExp(myShape, aType); fence-add to aC
@@ -40,20 +60,20 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L616-645: prepare building elements of arguments to get splits
-        //   OCCT: iterate myArguments/myTools �?TreatCompound �?TopExp::MapShapes
+        //   OCCT: iterate myArguments/myTools --TreatCompound --TopExp::MapShapes
         //   rcad: DS vertices/edges/faces are the building elements.
         //   For each side (0=args, 1=tools): collect V/E/F indices into maps.
         let e_base = self.ds.vertices.len();
         let f_base = e_base + self.ds.edges.len();
 
-        // OCCT L622: aMArgs, aMTools �?indexed maps of source shapes (V/E/F)
+        // OCCT L622: aMArgs, aMTools --indexed maps of source shapes (V/E/F)
         //   rcad: HashSet<usize> of flat V/E/F indices.
         let mut a_m_args: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut a_m_tools: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut a_maps = [&mut a_m_args, &mut a_m_tools];
 
         for (side_idx, a_ms) in a_maps.iter_mut().enumerate() {
-            // OCCT L628-643: for each argument/tool shape �?TreatCompound �?MapShapes
+            // OCCT L628-643: for each argument/tool shape --TreatCompound --MapShapes
             //   rcad: source building elements classified by origin in DS arrays.
             let v_range = if side_idx == 0 {
                 (0usize, self.ds.a_vertex_count)
@@ -71,7 +91,7 @@ impl<'a> BooleanBuilder<'a> {
                 (self.ds.a_face_count, self.ds.faces.len())
             };
 
-            // OCCT L641-642: TypeToExplore(iDim) �?MapShapes(aSS, aType, aMS)
+            // OCCT L641-642: TypeToExplore(iDim) --MapShapes(aSS, aType, aMS)
             //   rcad: each DS entity is a building element by type.
             for vi in v_range.0..v_range.1 { a_ms.insert(vi); }
             for ei in e_range.0..e_range.1 { a_ms.insert(e_base + ei); }
@@ -79,7 +99,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L654-705: get splits of building elements
-        //   For each building element, check myImages.IsBound �?add split images.
+        //   For each building element, check myImages.IsBound --add split images.
         //   rcad: for edges: self.my_images[b].  for faces: result.face_origins count.
         //   For faces with no images, also build BOPTools_Set for SOLID.
         let mut a_m_args_im: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -100,7 +120,7 @@ impl<'a> BooleanBuilder<'a> {
 
             for &&flat_idx in &sorted_elements {
                 // OCCT L670-678: Type check + degenerated edge skip
-                //   rcad: flat_idx < v_range �?VERTEX, < e_range �?EDGE, else FACE
+                //   rcad: flat_idx < v_range --VERTEX, < e_range --EDGE, else FACE
                 let is_edge = flat_idx >= e_base && flat_idx < f_base;
                 let is_face = flat_idx >= f_base;
                 let local_idx = if is_edge { flat_idx - e_base }
@@ -131,7 +151,7 @@ impl<'a> BooleanBuilder<'a> {
                     result_count > 1
                     // If result_count == 0, the face was not split at all
                 } else {
-                    // OCCT: VERTEX images from myImages �?not tracked at this level in rcad
+                    // OCCT: VERTEX images from myImages --not tracked at this level in rcad
                     false
                 };
 
@@ -164,7 +184,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 } else {
-                    // OCCT L692-702: no images �?add original shape
+                    // OCCT L692-702: no images --add original shape
                     a_ms_im.insert(flat_idx);
 
                     // OCCT L694-701: for SOLID building elements, build BOPTools_Set
@@ -173,7 +193,7 @@ impl<'a> BooleanBuilder<'a> {
                         let mut a_st: std::collections::BTreeSet<usize> =
                             std::collections::BTreeSet::new();
                         // Build face set from this face and its adjacent faces in the same solid
-                        //   �?rcad: BOPTools_Set at FACE level approximates OCCT's
+                        //   --rcad: BOPTools_Set at FACE level approximates OCCT's
                         //     SOLID-level BOPTools_Set.  OCCT adds all faces of the SOLID;
                         //     rcad adds the single DS face and its shell siblings.
                         let (o_exp2, sfi2) = if side_is_args {
@@ -201,7 +221,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // OCCT L707-783: compare the maps and make the result
         let b_common = self.op == BooleanOpType::Intersection;
-        let b_cut21 = false; // �?rcad: CUT21 not supported
+        let b_cut21 = false; // --rcad: CUT21 not supported
 
         // OCCT L715-720: determine iteration/check maps based on CUT21
         let a_m_it: &std::collections::HashSet<usize> = if b_cut21 { &a_m_tools_im } else { &a_m_args_im };
@@ -295,7 +315,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 b_contains = a_mset_check.iter().any(|s| s == &a_st);
             }
-            // OCCT L770-783: COMMON �?keep if contained; CUT �?keep if NOT contained
+            // OCCT L770-783: COMMON --keep if contained; CUT --keep if NOT contained
             let keep = if b_common { b_contains } else { !b_contains };
             if keep {
                 keep_set.insert(flat_idx);
@@ -307,7 +327,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut kept_solids: Vec<Vec<usize>> = Vec::new();
         for (i, solid_shells) in solids.iter().enumerate() {
             let side = sides.get(i).copied().unwrap_or(0);
-            // Check each solid: if ANY face's building element is in keep_set �?keep.
+            // Check each solid: if ANY face's building element is in keep_set --keep.
             // A result solid is kept iff the source face(s) it was split from pass.
             let mut solid_keep = false;
             for &si in solid_shells {
@@ -336,7 +356,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L786-809: filter result for COMMON �?re-explore from high dim to low
+        // OCCT L786-809: filter result for COMMON --re-explore from high dim to low
         //   rcad: OCCT re-iterates the compound by dimension (SOLID→SHELL→FACE) with
         //   a fence.  rcad solids are already at SOLID granularity; shell-count fence
         //   prevents duplicates (OCCT L799-804 fence at FACE+WIRE level).
@@ -353,14 +373,14 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L811-864: degenerated edge squat (DEs whose vertex is in result,
-        //   is not new, and is not interfered �?add to aC).
-        //   �?rcad: result edges are embedded in pre-assembled solids.  Adding
+        //   is not new, and is not interfered --add to aC).
+        //   --rcad: result edges are embedded in pre-assembled solids.  Adding
         //     standalone DEs to the compound is not applicable at this level.
 
         result.tmp_solids = kept_solids;
     }
 
-    /// �?OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    /// --OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
     ///   Settle internal sub-shapes (vertices, edges) into result solids.
     ///
     /// OCCT flow:
@@ -369,23 +389,23 @@ impl<'a> BooleanBuilder<'a> {
     ///   L680-718 (Phase 2): For each source SOLID, OwnInternalShapes
     ///     collects non-FACE sub-shapes (V/E/WIRE).  Build aMSx ancestry
     ///     map (VERTEX→EDGE, VERTEX→FACE, EDGE→FACE) for split solids.
-    ///   L720-746 (Phase 3): Filter �?remove internal shapes already
+    ///   L720-746 (Phase 3): Filter --remove internal shapes already
     ///     attached to split-solid faces (found in aMSx).
     ///   L806-887 (Phase 4): Classify remaining against each split solid
-    ///     via ComputeStateByOnePoint.  If IN �?add to that solid with
+    ///     via ComputeStateByOnePoint.  If IN --add to that solid with
     ///     TopAbs_INTERNAL orientation.  If the solid is an original (not
     ///     yet having images), clone it first and store in myImages.
     ///
     /// rcad: internal V/E are marked via DSVertex/DSEdge::is_internal
     ///   flag.  Phase 1-2 collect is_internal V/E from the DS arrays.
-    ///   Phase 3: no-face-ancestry check �?internal shapes by definition
+    ///   Phase 3: no-face-ancestry check --internal shapes by definition
     ///   have no face references.  Phase 4: classify point against result
-    ///   solids' DS face sets via classify_point.  If IN �?the shape is
+    ///   solids' DS face sets via classify_point.  If IN --the shape is
     ///   recorded on result.face_internal_vtx for the solid's first face
     ///   (OCCT adds it to the TopoDS_Solid as INTERNAL sub-shape).
 
     /// OCCT-aligned: PerformAreas void detection (BuilderSolid.cxx L397-576).
-    fn detect_internal_voids(&self, result: &mut ResultBuilder,
+    pub(super) fn detect_internal_voids(&self, result: &mut ResultBuilder,
                               assignments: &[(usize, usize, &'static str)]) {
         // OCCT L397-399: myAreas.Clear(); BRep_Builder aBB;
         // OCCT L400-407: aNewSolids, aHoleShells, aMHF (hole face map).
@@ -433,10 +453,10 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // === Step 1: Classify each shell as Growth or Hole (OCCT L411-442) ===
-        //   OCCT L422: IsGrowthShell(aShell, aMHF) �?fast face overlap check.
+        //   OCCT L422: IsGrowthShell(aShell, aMHF) --fast face overlap check.
         //     If any face of theShell is already in aMHF (face map of known holes),
         //     the shell is a Growth (it bounds a hole).
-        //   OCCT L426: IsHole(aShell, myContext) �?classify infinite point against
+        //   OCCT L426: IsHole(aShell, myContext) --classify infinite point against
         //     the dead solid (original solid being split).  IN = hole, OUT = growth.
         let mut a_mhf: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut is_hole = vec![false; n_solids];
@@ -450,7 +470,7 @@ impl<'a> BooleanBuilder<'a> {
             };
 
             if !is_growth {
-                // OCCT L426: IsHole �?classify against original solid (source operand).
+                // OCCT L426: IsHole --classify against original solid (source operand).
                 let side = result.solid_side_origin.get(si).copied().unwrap_or(0);
                 let dead_faces: Vec<usize> = self.ds.faces.iter().enumerate()
                     .filter(|(_, f)| match side {
@@ -460,10 +480,10 @@ impl<'a> BooleanBuilder<'a> {
                     .map(|(fi, _)| fi)
                     .collect();
                 let class = classify_point(centroids[si], &dead_faces, self.ds);
-                // OCCT: IsHole returns true if infinite point is IN dead solid �?hole.
+                // OCCT: IsHole returns true if infinite point is IN dead solid --hole.
                 is_hole[si] = class == Classification::In;
             }
-            // else: IsGrowthShell returned true �?definitely a growth.
+            // else: IsGrowthShell returned true --definitely a growth.
 
             if is_hole[si] {
                 // OCCT L439-441: aHoleShells.Add + TopExp::MapShapes(,TopAbs_FACE,aMHF)
@@ -477,7 +497,7 @@ impl<'a> BooleanBuilder<'a> {
         let in_si: Vec<usize> = (0..n_solids).filter(|&i| is_hole[i]).collect();
         let out_si: Vec<usize> = (0..n_solids).filter(|&i| !is_hole[i]).collect();
 
-        // OCCT L444-458: if no holes �?add all growths to myAreas + return.
+        // OCCT L444-458: if no holes --add all growths to myAreas + return.
         if in_si.is_empty() || out_si.is_empty() { return; }
 
         // === Step 2: Build BVH of hole shells (OCCT L462-478) ===
@@ -489,13 +509,13 @@ impl<'a> BooleanBuilder<'a> {
 
         // === Step 3: Classify holes against growth solids (OCCT L483-529) ===
         //   OCCT L493-529: for each growth solid:
-        //     build box �?BVH-select candidate holes �?IsInside �?store outermost.
+        //     build box --BVH-select candidate holes --IsInside --store outermost.
         let mut a_hole_solid_map: std::collections::HashMap<usize, usize> =
             std::collections::HashMap::new();
 
         for &os in &out_si {
             // OCCT L494-497: BRepBndLib::Add(aSolid, aBox)
-            // OCCT L499-502: BOPTools_BoxTreeSelector �?candidate holes
+            // OCCT L499-502: BOPTools_BoxTreeSelector --candidate holes
             let candidates = hole_bvh.query_aabb(&aabbs[os]);
 
             for &hole_idx in &candidates {
@@ -507,7 +527,7 @@ impl<'a> BooleanBuilder<'a> {
 
                 // OCCT L517-527: select outermost containing solid.
                 //   If current os is INSIDE the previously recorded solid,
-                //   the current os is more specific (innermost container) �?prefer it.
+                //   the current os is more specific (innermost container) --prefer it.
                 use std::collections::hash_map::Entry;
                 match a_hole_solid_map.entry(hole_idx) {
                     Entry::Occupied(mut e) => {
@@ -525,7 +545,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // === Step 4: Build reverse map: solid �?list of holes (OCCT L532-548) ===
+        // === Step 4: Build reverse map: solid --list of holes (OCCT L532-548) ===
         let mut solid_holes_map: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
         for (&hole_idx, &os) in &a_hole_solid_map {
@@ -534,7 +554,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // === Step 5: Add holes to solids + myAreas (OCCT L550-576) ===
         let mut removed = vec![false; n_solids];
-        // OCCT L553-573: for each growth with holes �?aBB.Add(aSolid, aHole)
+        // OCCT L553-573: for each growth with holes --aBB.Add(aSolid, aHole)
         for (&os, holes) in &solid_holes_map {
             for &hole_idx in holes {
                 let void_shells = result.tmp_solids[hole_idx].clone();
@@ -542,8 +562,8 @@ impl<'a> BooleanBuilder<'a> {
                 removed[hole_idx] = true;
             }
         }
-        // OCCT L575: myAreas.Append(aSolid) �?rcad: non-removed solids kept in tmp_solids.
-        // OCCT L578-581: add un-associated holes to myAreas (rcad: not needed �?kept as-is).
+        // OCCT L575: myAreas.Append(aSolid) --rcad: non-removed solids kept in tmp_solids.
+        // OCCT L578-581: add un-associated holes to myAreas (rcad: not needed --kept as-is).
         let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(n_solids);
         for (si, solid) in result.tmp_solids.drain(..).enumerate() {
             if !removed[si] { new_solids.push(solid); }
@@ -551,30 +571,30 @@ impl<'a> BooleanBuilder<'a> {
         result.tmp_solids = new_solids;
     }
 
-    /// �?OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    /// --OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
     /// OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
     ///   Phase 1 (L648-709): Collect internal V/E/WIRE from arguments.
     ///   Phase 2 (L717-788): Internal V/E from source solids + build aMSx ancestry.
     ///   Phase 3 (L790-809): Filter shapes already attached via aMSx.
     ///   Phase 4 (L811-816): Early return if none.
     ///   Phase 5 (L820-877): Classify each internal shape against each split solid;
-    ///     if IN �?add as INTERNAL sub-shape (clone original if needed).
-    fn fill_internal_shapes(&self, result: &mut ResultBuilder) {
+    ///     if IN --add as INTERNAL sub-shape (clone original if needed).
+    pub(super) fn fill_internal_shapes(&self, result: &mut ResultBuilder) {
         // OCCT L631-644: allocator + indexed maps (aMSx, aMx, aMSI, aMFence, aMSOr, ...)
         //   rcad: adapted to Vec/HashSet equivalents.
 
-        // === Phase 1: Shapes to process �?collect from arguments (OCCT L648-709) ===
-        //   OCCT L653-658: TreatCompound on each argument �?flatten into aLSC.
-        //   OCCT L660-681: filter VERTEX/EDGE/WIRE from aLSC �?aLArgs.
-        //   OCCT L684-709: for each aLArgs, check myImages.IsBound �?aMSI (images or originals).
+        // === Phase 1: Shapes to process --collect from arguments (OCCT L648-709) ===
+        //   OCCT L653-658: TreatCompound on each argument --flatten into aLSC.
+        //   OCCT L660-681: filter VERTEX/EDGE/WIRE from aLSC --aLArgs.
+        //   OCCT L684-709: for each aLArgs, check myImages.IsBound --aMSI (images or originals).
         //   rcad: DS vertices/edges with is_internal flag = sources.
-        //   �?TreatCompound: rcad treats DS V/E as already-flattened source shapes.
-        //   �?aMSI: maps shape-ref �?true if it's an internal shape to process.
+        //   --TreatCompound: rcad treats DS V/E as already-flattened source shapes.
+        //   --aMSI: maps shape-ref --true if it's an internal shape to process.
         let mut a_msi: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // Collect internal vertices (OCCT L677-679: TopAbs_VERTEX �?aLArgs)
+        // Collect internal vertices (OCCT L677-679: TopAbs_VERTEX --aLArgs)
         for (vi, v) in self.ds.vertices.iter().enumerate() {
             if v.is_internal {
-                // OCCT L691-706: check myImages.IsBound �?add split images or original
+                // OCCT L691-706: check myImages.IsBound --add split images or original
                 let v_ref = self.brep_sr(vi);
                 if self.my_images.borrow().contains_key(&v_ref) {
                     for img in &self.my_images.borrow()[&v_ref] {
@@ -585,7 +605,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
         }
-        // Collect internal edges (OCCT L665-675: WIRE �?iterate edges; L677-679: EDGE directly)
+        // Collect internal edges (OCCT L665-675: WIRE --iterate edges; L677-679: EDGE directly)
         for (ei, e) in self.ds.edges.iter().enumerate() {
             if e.is_internal {
                 let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
@@ -601,13 +621,13 @@ impl<'a> BooleanBuilder<'a> {
 
         // === Phase 2: Internal V/E from source solids + build aMSx ancestry (OCCT L717-788) ===
         //   OCCT L721-727: iterate DS for SOLIDs.
-        //   L738: OwnInternalShapes(aS, aMx) �?get INTERNAL sub-shapes from each solid.
+        //   L738: OwnInternalShapes(aS, aMx) --get INTERNAL sub-shapes from each solid.
         //   L741-758: insert into aMSI (with myImages check).
         //   L760-787: build aMSx ancestry: Vertex→Edge, Vertex→Face, Edge→Face.
         //   rcad: aMSx tracks which internal shapes are already on split-solid faces.
         #[allow(unused)]
         let mut a_msx: std::collections::HashMap<usize, Vec<usize>> =
-            std::collections::HashMap::new(); // shape_idx �?list of ancestor face/edge indices
+            std::collections::HashMap::new(); // shape_idx --list of ancestor face/edge indices
         let mut a_lsd: Vec<usize> = Vec::new(); // split solids to process
 
         // OCCT L741-758: internal shapes from OwnInternalShapes
@@ -615,8 +635,8 @@ impl<'a> BooleanBuilder<'a> {
         //   The DS vertices/edges with is_internal=true are equivalent to OCCT's OwnInternalShapes output.
 
         // OCCT L760-787: build aMSx for split solids
-        //   For each source SOLID that has split results (images) �?build ancestry map.
-        //   rcad: iterate result.tmp_solids �?for each solid, map edges→faces.
+        //   For each source SOLID that has split results (images) --build ancestry map.
+        //   rcad: iterate result.tmp_solids --for each solid, map edges→faces.
         for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
             // OCCT L761: if (myImages.IsBound(aS)) for source solid
             let side = result.solid_side_origin.get(si).copied().unwrap_or(0);
@@ -634,12 +654,12 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            // OCCT L770-773: TopExp::MapShapesAndAncestors �?aMSx
+            // OCCT L770-773: TopExp::MapShapesAndAncestors --aMSx
             //   aMSx[vertex] = list of edge indices
             //   aMSx[vertex] = list of face indices
             //   aMSx[edge] = list of face indices
             for (&ei, face_list) in &edge_to_faces {
-                // e_ref in a_msx �?ancestors (face indices)
+                // e_ref in a_msx --ancestors (face indices)
                 a_msx.entry(ei).or_default().extend(face_list);
                 // Also add vertex→edge ancestry
                 if ei < self.ds.edges.len() {
@@ -654,10 +674,10 @@ impl<'a> BooleanBuilder<'a> {
 
         // === Phase 3: Filter shapes already attached to split-solid faces (OCCT L790-809) ===
         //   OCCT: for each shape in aMSI, check if aMSx.Contains(shape) with non-empty ancestor list.
-        //         �?if NOT attached �?aLSI (list of shapes to settle).
+        //         --if NOT attached --aLSI (list of shapes to settle).
         let mut a_lsi: Vec<usize> = Vec::new();
         for &si in &a_msi {
-            // OCCT L796-808: if aMSx contains the shape AND has non-empty ancestors �?skip (attached).
+            // OCCT L796-808: if aMSx contains the shape AND has non-empty ancestors --skip (attached).
             //   rcad: check if this internal shape index appears in aMSx with non-empty ancestors.
             let is_attached = a_msx.get(&si).map_or(false, |anc| !anc.is_empty());
             if !is_attached {
@@ -672,8 +692,8 @@ impl<'a> BooleanBuilder<'a> {
 
         // === Phase 5: Settle internal V/E into solids (OCCT L820-877) ===
         //   OCCT L825-876: for each split solid (aLSd), for each internal shape (aLSI):
-        //     ComputeStateByOnePoint(aSI, aSd) �?if IN:
-        //       - if original solid (aMSOr): clone �?add INTERNAL �?bind myImages/myOrigins
+        //     ComputeStateByOnePoint(aSI, aSd) --if IN:
+        //       - if original solid (aMSOr): clone --add INTERNAL --bind myImages/myOrigins
         //       - else: add INTERNAL directly
         for &si in &a_lsd {
             // OCCT L828: TopoDS_Solid aSd
@@ -727,8 +747,8 @@ impl<'a> BooleanBuilder<'a> {
                     continue;
                 }
 
-                // OCCT L844-873: shape is IN �?add as INTERNAL
-                //   OCCT L844: if (aMSOr.Contains(aSd)) �?original solid �?clone first
+                // OCCT L844-873: shape is IN --add as INTERNAL
+                //   OCCT L844: if (aMSOr.Contains(aSd)) --original solid --clone first
                 //   rcad: find first face of this solid to store internal vertex
                 if let Some(&first_shi) = result.tmp_solids.get(si).and_then(|s| s.first()) {
                     if let Some(shell_faces) = result.tmp_shells.get(first_shi) {
@@ -746,14 +766,14 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
 
-                // OCCT L875: aLSI.Remove(aIt1) �?remove settled shape
+                // OCCT L875: aLSI.Remove(aIt1) --remove settled shape
                 a_lsi.swap_remove(i);
-                // don't increment i �?the new element at i needs checking too
+                // don't increment i --the new element at i needs checking too
             }
         }
     }
 
-    /// �?OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
+    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
     ///   Phase 7: group result solids into COMPSOLID/COMPOUND hierarchy.
     ///
     /// OCCT flow:
@@ -767,42 +787,42 @@ impl<'a> BooleanBuilder<'a> {
     ///   reconstruction happens after result.build() in build_with_history
     ///   (see the rebuild_compound_for_step post-step) because the result
     ///   BRep solids don't exist until build() is called.
-    /// �?OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217).
+    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217).
     ///
     /// OCCT FillImagesCompounds L197-217:
     ///   L200: aMFP fence map
     ///   L202-216: iterate source shapes, filter TopAbs_COMPOUND,
     ///             call FillImagesCompound(aC, aMFP)
     /// OCCT FillImagesCompound L280-342:
-    ///   L290-293: fence �?skip if processed
+    ///   L290-293: fence --skip if processed
     ///   L296-308: check if any sub-shape has images
-    ///   L309-312: if none modified �?return
+    ///   L309-312: if none modified --return
     ///   L314-341: build new compound from sub-shape (solid) images
     ///
     /// rcad: source compound solids are tracked in DS solid_images.
     ///   Compound reconstruction from result solids is deferred to
     ///   build_with_history's post-step (L6834-6840) because the
     ///   result BRep solids don't exist until ResultBuilder::build().
-    /// �?OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
-    ///   L197-201: aMFP fence map; NbSourceShapes �?filter TopAbs_COMPOUND.
-    ///   L280-293: FillImagesCompound �?fence skip if already processed.
+    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
+    ///   L197-201: aMFP fence map; NbSourceShapes --filter TopAbs_COMPOUND.
+    ///   L280-293: FillImagesCompound --fence skip if already processed.
     ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
-    ///   L309-312: no modification �?return.
+    ///   L309-312: no modification --return.
     ///   L314-341: build new compound from sub-shape images; store in myImages.
     /// OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
     ///   L197-201: dispatcher with fence map; iterate source COMPOUND shapes.
-    ///   L280-293: FillImagesCompound �?fence skip if already processed.
+    ///   L280-293: FillImagesCompound --fence skip if already processed.
     ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
-    ///   L309-312: no modification �?return.
+    ///   L309-312: no modification --return.
     ///   L314-341: build new compound from sub-shape images; store in myImages.
-    ///   �?rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
+    ///   --rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
     ///     The recursive FillImagesCompound is collapsed to a single level.
-    fn fill_images_compounds(&self, result: &mut ResultBuilder) {
+    pub(super) fn fill_images_compounds(&self, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
-        // OCCT L199-200: aMFP fence map �?prevents reprocessing the same compound.
+        // OCCT L199-200: aMFP fence map --prevents reprocessing the same compound.
         //   rcad: HashSet of processed compsolid indices.
         let mut a_mfp: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // OCCT L202: aNbS = myDS->NbSourceShapes() �?iterate all DS shapes.
+        // OCCT L202: aNbS = myDS->NbSourceShapes() --iterate all DS shapes.
         //   rcad: collect unique source_compsolid_idx from DS faces.
         let mut compound_indices: Vec<usize> = Vec::new();
         for df in &self.ds.faces {
@@ -815,7 +835,7 @@ impl<'a> BooleanBuilder<'a> {
         if compound_indices.is_empty() { return; }
 
         for &csi in &compound_indices {
-            // OCCT L290-293: if (!theMFP.Add(theS)) return �?fence check.
+            // OCCT L290-293: if (!theMFP.Add(theS)) return --fence check.
             if !a_mfp.insert(csi) { continue; }
 
             // OCCT L295-308: check if any sub-shape (SOLID) has been modified.
@@ -830,7 +850,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 })
                 .collect();
-            // OCCT L300-303: recurse into sub-compounds �?rcad: flat, no nesting.
+            // OCCT L300-303: recurse into sub-compounds --rcad: flat, no nesting.
             // OCCT L304-307: if (myImages.IsBound(aSx)) bInterferred = true.
             //   rcad: check if any sub-solid produces >1 result solid (split).
             let mut b_interferred = false;
@@ -854,14 +874,14 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // OCCT L309-312: if (!bInterferred) return �?no modification.
+            // OCCT L309-312: if (!bInterferred) return --no modification.
             if !b_interferred { continue; }
 
             // OCCT L314-315: MakeContainer(COMPOUND, aCIm)
             //   rcad: collect result solid indices for this compsolid.
             let mut a_c_im: Vec<usize> = Vec::new();
 
-            // OCCT L317-336: iterate sub-shapes �?add images or original.
+            // OCCT L317-336: iterate sub-shapes --add images or original.
             for &ssi in &sub_solid_indices {
                 // Find the DS face for this source solid to determine its side (origin)
                 let side = self.ds.faces.iter()
@@ -872,7 +892,7 @@ impl<'a> BooleanBuilder<'a> {
                     })
                     .unwrap_or(0);
 
-                // OCCT L322: if (myImages.IsBound(aSX)) �?has split images?
+                // OCCT L322: if (myImages.IsBound(aSX)) --has split images?
                 //   rcad: check if result solids exist for this side+source solid.
                 let matching_solids: Vec<usize> = result.solid_side_origin.iter()
                     .enumerate()
@@ -881,15 +901,15 @@ impl<'a> BooleanBuilder<'a> {
                     .collect();
 
                 if matching_solids.is_empty() {
-                    // OCCT L334-335: no images �?add original sub-shape
-                    //   rcad: no solid to add �?the original solid is implicit.
+                    // OCCT L334-335: no images --add original sub-shape
+                    //   rcad: no solid to add --the original solid is implicit.
                     continue;
                 }
 
-                // OCCT L324-331: has images �?add each image with orientation.
+                // OCCT L324-331: has images --add each image with orientation.
                 for &si in &matching_solids {
                     if !a_c_im.contains(&si) {
-                        // OCCT L329: aSXIm.Orientation(aOrX) �?preserve orientation.
+                        // OCCT L329: aSXIm.Orientation(aOrX) --preserve orientation.
                         //   rcad: orientation is per-face via FaceOrigin.
                         a_c_im.push(si);
                     }
@@ -913,23 +933,23 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
-    fn incoming_edge_is_inside(&self, smart_map: &IndexMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
+    pub(super) fn incoming_edge_is_inside(&self, smart_map: &IndexMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
         smart_map.get(&vertex)
             .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == seg_idx && ei.in_flag))
             .map_or(false, |ei| ei.is_inside)
     }
 
-    /// �?OCCT-aligned: face keep/discard policy (ComputeState �?FillIn3DParts equivalent).
-    ///   OCCT does NOT have a surface-type special case �?ComputeState propagates
+    /// --OCCT-aligned: face keep/discard policy (ComputeState --FillIn3DParts equivalent).
+    ///   OCCT does NOT have a surface-type special case --ComputeState propagates
     ///   ON→IN/OUT based on face orientation + solid side, not surface type.
-    /// �?OCCT-aligned: BOPAlgo_Builder::FillImagesFaces �?face keep policy.
+    /// --OCCT-aligned: BOPAlgo_Builder::FillImagesFaces --face keep policy.
     ///   OCCT: after ComputeState returns IN/OUT/ON for a face against the other solid:
     ///     FUSE: keep OUT + ON
     ///     COMMON: keep IN + ON
     ///     CUT A-B:
-    ///       face from A �?keep if OUT or ON (A outside B)
-    ///       face from B �?keep if IN or ON (B inside A, the cut surface)
-    fn classification_keep_policy(&self, source: SourceSide, class: Classification, _fi: usize) -> bool {
+    ///       face from A --keep if OUT or ON (A outside B)
+    ///       face from B --keep if IN or ON (B inside A, the cut surface)
+    pub(super) fn classification_keep_policy(&self, source: SourceSide, class: Classification, _fi: usize) -> bool {
         match self.op {
             BooleanOpType::Intersection => class == Classification::In || class == Classification::On,
             BooleanOpType::Difference => match source {
@@ -940,23 +960,23 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// �?OCCT-aligned: BuildResult �?add split images to result (Builder_1.cxx L130-168).
-    ///   OCCT: for each source shape of theType, if myImages bound �?add images;
+    /// --OCCT-aligned: BuildResult --add split images to result (Builder_1.cxx L130-168).
+    ///   OCCT: for each source shape of theType, if myImages bound --add images;
     ///   else add the original shape.  rcad: for Edge, creates topods edges in t_brep
     ///   (equivalent to OCCT's myShape) AND flat edge refs in result for face construction.
     ///   For Vertex/Wire/Shell/Solid, rcad handles these in other pipeline steps.
     /// OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
     ///   Add split images (or originals) of source shapes into the result.
     ///   OCCT L133: aMFence fence map.
-    ///   L136-167: for each source argument of matching type �?if myImages bound
-    ///     �?add all image shapes; else �?add the original shape.
-    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    ///   L136-167: for each source argument of matching type --if myImages bound
+    ///     --add all image shapes; else --add the original shape.
+    /// --OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form for ALL types.
-    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    /// --OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form:
     ///   for each source shape of matching type:
-    ///     if myImages bound → fence-add splits; else → fence-add original.
-    fn build_result(&self, the_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder) {
+    ///     if myImages bound --fence-add splits; else --fence-add original.
+    pub(super) fn build_result(&self, the_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if the_type == rcad_kernel::topods::ShapeType::Edge && self.my_edge_map.borrow().is_empty() {
@@ -981,8 +1001,8 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// OCCT-aligned: add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
-    ///   Handles ALL shape types — populates ResultBuilder data structures.
-    fn add_to_result(&self, a_s: rcad_kernel::topods::ShapeRef, topods_type: rcad_kernel::topods::ShapeType,
+    ///   Handles ALL shape types --populates ResultBuilder data structures.
+    pub(super) fn add_to_result(&self, a_s: rcad_kernel::topods::ShapeRef, topods_type: rcad_kernel::topods::ShapeType,
                      result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
         match topods_type {
             rcad_kernel::topods::ShapeType::Vertex => {
@@ -1058,11 +1078,11 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// �?OCCT-aligned: BOPAlgo_BOP::BuildShape (BOP.cxx L871-906).
+    /// --OCCT-aligned: BOPAlgo_BOP::BuildShape (BOP.cxx L871-906).
     ///   Calls BuildRC (L900) then BuildSolid for FUSE 3D (L902-906).
-    fn build_shape(&self, result: &mut ResultBuilder) {
+    pub(super) fn build_shape(&self, result: &mut ResultBuilder) {
         let mut t_brep = self.my_shape.borrow_mut();
-        // OCCT L875-897: if both dims are 3D, check for open solids → BuildBOP fallback.
+        // OCCT L875-897: if both dims are 3D, check for open solids --BuildBOP fallback.
         let md = self.my_dims.get();
         if md[0] == 3 && md[1] == 3 {
             let has_not_closed = self.check_args_for_open_solid();
@@ -1089,9 +1109,9 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
     /// OCCT-aligned: BOPAlgo_Builder::BuildBOP (Builder.hxx L214-290).
-    ///   For BOP: (objects, tools, operation)  → converts to IN/OUT states.
+    ///   For BOP: (objects, tools, operation)  --converts to IN/OUT states.
     ///   rcad: builds result from all classified face images.
-    fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
+    pub(super) fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         // OCCT L220-228: convert operation to object/tool states: IN/OUT
         // rcad: boolean flags (true = IN, false = OUT)
         let obj_in = matches!(self.op, BooleanOpType::Intersection);
@@ -1118,7 +1138,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// OCCT-aligned: CheckArgsForOpenSolid (BOP.cxx L1382-1470).
-    fn check_args_for_open_solid(&self) -> bool {
+    pub(super) fn check_args_for_open_solid(&self) -> bool {
         for shell in &self.ds.shells {
             // Check if the shell is closed (each edge appears twice).
             let mut ecount: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -1137,3 +1157,4 @@ impl<'a> BooleanBuilder<'a> {
     }
 
 }
+

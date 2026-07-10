@@ -56,53 +56,53 @@ pub(crate) use builder_utils::{
 };
 
 pub struct BooleanBuilder<'a> {
- ds: &'a DS,
- op: BooleanOpType,
+ pub(crate) ds: &'a DS,
+ pub(crate) op: BooleanOpType,
  /// =OCCT-aligned: myGlue =BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
- glue: GlueEnum,
- glue_tolerance: f64,
- context: RefCell<Context>,
+ pub(crate) glue: GlueEnum,
+ pub(crate) glue_tolerance: f64,
+ pub(crate) context: RefCell<Context>,
  // =OCCT-aligned: error tracking (myReport / HasErrors equivalent).
- has_errors: bool,
+ pub(crate) has_errors: bool,
  // =OCCT-aligned: myImages =source shape index =list of split image indices.
- my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
- my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
- my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
- my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+ pub(crate) my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+ pub(crate) my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+ pub(crate) my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+ pub(crate) my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+ pub(crate) my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
  // =OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
- my_non_destructive: bool,
+ pub(crate) my_non_destructive: bool,
  // OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
- my_fill_history: bool,
+ pub(crate) my_fill_history: bool,
  // =OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
- my_check_inverted: bool,
+ pub(crate) my_check_inverted: bool,
  // =OCCT-aligned: myStopOnFatalError =abort pipeline on fatal error.
- my_stop_on_fatal_error: bool,
+ pub(crate) my_stop_on_fatal_error: bool,
  /// =OCCT-aligned: myEntryPoint =tracks builder phase (1=PerformInternal1 done, etc.).
- my_entry_point: u8,
+ pub(crate) my_entry_point: u8,
  /// =OCCT-aligned: myReport =collects alerts during Builder execution.
-  my_report: std::cell::RefCell<Report>,
+  pub(crate) my_report: std::cell::RefCell<Report>,
  /// OCCT-aligned: myDims - dimension per argument (3=solid, 2=face).
- my_dims: std::cell::Cell<[i8; 2]>,
+ pub(crate) my_dims: std::cell::Cell<[i8; 2]>,
  /// =OCCT-aligned: converted BRep representation of DS.
- brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
+ pub(crate) brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
  /// OCCT-aligned: myShape  ?result shape accumulator (BRep).
- my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
+ pub(crate) my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
  /// OCCT-aligned: myArguments  ?all source shapes pre-created as TShapes.
- my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// OCCT-aligned: DS edge  ?TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
- my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// OCCT-aligned: result wire TShape refs (replaces ResultBuilder.wire_refs).
- my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// OCCT-aligned: result shell TShape refs (replaces ResultBuilder.shells).
- my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// Result face TShape refs (replaces ResultBuilder.face_refs).
- my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// Result solid TShape refs (replaces ResultBuilder.solids).
- my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// Result compsolid TShape refs (replaces ResultBuilder.compsolid_groups).
- my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+ pub(crate) my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +126,8 @@ mod wire_path;
 mod wire_path_topo_ds;
 mod edge_builders;
 mod builder_utils_topo_ds;
+mod filler_mod;
+mod result_build_mod;
 pub(crate) use wire_splitter::{
  EdgeInfo, build_closed_wires,
  expand_avoided_pids,
@@ -660,9 +662,6 @@ impl<'a> BooleanBuilder<'a> {
  }
 }
 
-include!("builder/filler.rs");
-include!("builder/result_build.rs");
-
 impl<'a> BooleanBuilder<'a> {
  /// The top-level pipeline entry: dimension-by-dimension image filling
  /// (V= = = ACE= HELL= OLID), followed by BuildResult for each type.
@@ -1086,6 +1085,3 @@ impl<'a> BooleanBuilder<'a> {
  None
  }
 }
-
-include!("builder/part2.rs");
-include!("builder/footer.rs");
