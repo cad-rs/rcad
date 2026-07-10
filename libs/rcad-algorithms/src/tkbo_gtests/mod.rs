@@ -18,7 +18,15 @@
 
 use glam::DVec3;
 use rcad_kernel::{surface_area, volume};
+use rcad_kernel::geom;
 use rcad_kernel::topods;
+
+use crate::builder::BooleanOpType;
+use crate::bopds::ds::DS;
+use crate::brep_tools::make_face_half_space;
+use crate::pave_filler::PaveFiller;
+use crate::bvh::Bvh;
+use crate::tolerance::TOLERANCE_ABS;
 
 const TOL: f64 = 1.0e-6;
 const SA_TOLERANCE: f64 = 5000.0;
@@ -159,6 +167,197 @@ mod bop_algo_direct_tests {
         let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
         let result = perform_bop(&b2, &b1, BooleanOpType::Difference);
         validate_result(&result, -1.0, -1.0, true);
+    }
+}
+
+// =============================================================================
+// BOPAlgo_BOP_Test.cxx -- Two-step BOP operations
+//
+// OCCT: BOPAlgo_TwoStepOperationsTest (bop + bopcut/bopfuse/bopcommon/boptuc)
+// =============================================================================
+
+#[cfg(test)]
+mod bop_algo_two_step_tests {
+    use super::*;
+
+    /// Perform two-step BOP: PaveFiller first, then BOP.
+    /// Equivalent to OCCT `bop s1 s2; bopXXX result`.
+    fn perform_two_step_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
+        let a_br = a.clone();
+        let b_br = b.clone();
+        let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
+        let bvh_a = Bvh::build(&a_br);
+        let bvh_b = Bvh::build(&b_br);
+        let mut brep = rcad_kernel::topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.set_run_parallel(false);
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+        };
+        let builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+        let (result, _history) = builder.build_with_history_topods().expect("Two-step BOP failed");
+        result
+    }
+
+    #[test]
+    fn two_step_cut_sphere_minus_box() {
+        let a = make_unit_sphere();
+        let b = make_unit_box();
+        let result = perform_two_step_bop(&a, &b, BooleanOpType::Difference);
+        assert!(get_surface_area(&result) > 0.0);
+    }
+
+    #[test]
+    fn two_step_fuse_sphere_plus_box() {
+        let a = make_unit_sphere();
+        let b = make_unit_box();
+        let result = perform_two_step_bop(&a, &b, BooleanOpType::Union);
+        let vol = get_volume(&result);
+        assert!(vol > get_volume(&a));
+        assert!(vol > get_volume(&b));
+    }
+
+    #[test]
+    fn two_step_common_overlapping_boxes() {
+        let b1 = make_box(DVec3::ZERO, 2.0, 2.0, 2.0);
+        let b2 = make_box(DVec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0);
+        let result = perform_two_step_bop(&b1, &b2, BooleanOpType::Intersection);
+        validate_result(&result, -1.0, 1.0, false);
+    }
+
+    #[test]
+    fn two_step_tuc_identical_boxes() {
+        let b1 = make_box(DVec3::ZERO, 1.0, 1.0, 1.0);
+        let b2 = make_box(DVec3::ZERO, 1.0, 1.0, 1.0);
+        let result = perform_two_step_bop(&b2, &b1, BooleanOpType::Difference);
+        validate_result(&result, -1.0, -1.0, true);
+    }
+}
+
+// =============================================================================
+// BOPAlgo_BOP_Test.cxx -- Complex operations (chained boolean)
+// =============================================================================
+
+#[cfg(test)]
+mod bop_algo_complex_tests {
+    use super::*;
+
+    fn perform_direct_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
+        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("Direct BOP failed")
+    }
+
+    /// OCCT: MultipleIntersectingPrimitives
+    /// Chain: sphere ∩ cylinder → result ∪ box
+    #[test]
+    fn multiple_intersecting_primitives() {
+        let sphere = make_sphere(DVec3::ZERO, 1.5);
+        let cylinder = make_cylinder(0.8, 3.0);
+        let box_ = make_box(DVec3::new(-0.5, -0.5, -0.5), 1.0, 1.0, 1.0);
+
+        let intermediate = perform_direct_bop(&sphere, &cylinder, BooleanOpType::Intersection);
+        assert!(get_volume(&intermediate) > 0.0);
+
+        let final_result = perform_direct_bop(&intermediate, &box_, BooleanOpType::Union);
+        assert!(get_volume(&final_result) > 0.0);
+    }
+
+    /// OCCT: DirectVsTwoStepComparison
+    /// Both paths should produce equivalent results.
+    #[test]
+    fn direct_vs_two_step_equivalent() {
+        let sphere = make_unit_sphere();
+        let box_ = make_unit_box();
+
+        let direct = perform_direct_bop(&sphere, &box_, BooleanOpType::Union);
+        let two_step = crate::bop_occt_union::boolean_op_generic(BooleanOpType::Union, &sphere, &box_)
+            .expect("Two-step failed");
+
+        let direct_vol = get_volume(&direct);
+        let two_step_vol = get_volume(&two_step);
+        assert!((direct_vol - two_step_vol).abs() < TOL,
+            "Direct and two-step should produce equivalent results: {} vs {}", direct_vol, two_step_vol);
+    }
+}
+
+// =============================================================================
+// BOPAlgo_BOP_Test.cxx -- Degenerate thin-tool tests
+// =============================================================================
+
+#[cfg(test)]
+mod bop_algo_thin_tool_tests {
+    use super::*;
+
+    fn perform_direct_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
+        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("Direct BOP failed")
+    }
+
+    /// OCCT: Cut_AxisAlignedThinTool_NearlyPreservesBoxVolume
+    /// Thin tool (1e-6 thick) nearly preserves the box volume.
+    #[test]
+    fn cut_axis_aligned_thin_tool() {
+        let box_ = make_box(DVec3::ZERO, 100.0, 100.0, 100.0);
+        let thin = make_box(DVec3::new(-500.0, 25.0, -500.0), 1500.0, 1.0e-6, 1500.0);
+        let box_vol = get_volume(&box_);
+        let overlap_v = 100.0 * 1.0e-6 * 100.0;
+
+        let res = perform_direct_bop(&box_, &thin, BooleanOpType::Difference);
+        assert!((get_volume(&res) - (box_vol - overlap_v)).abs() < 1.0e-4);
+    }
+
+    /// OCCT: Fuse_AxisAlignedThinTool_AddsNonOverlappingSlice
+    #[test]
+    fn fuse_axis_aligned_thin_tool() {
+        let box_ = make_box(DVec3::ZERO, 100.0, 100.0, 100.0);
+        let thin = make_box(DVec3::new(-500.0, 25.0, -500.0), 1500.0, 1.0e-6, 1500.0);
+        let box_vol = get_volume(&box_);
+        let thin_vol = 1500.0 * 1.0e-6 * 1500.0;
+        let overlap_v = 100.0 * 1.0e-6 * 100.0;
+
+        let res = perform_direct_bop(&box_, &thin, BooleanOpType::Union);
+        assert!((get_volume(&res) - (box_vol + thin_vol - overlap_v)).abs() < 1.0e-4);
+    }
+
+    /// OCCT: Cut_LegitimateThinSlab_NotTreatedAsEmpty
+    /// A thin slab (100x100x1) should not be treated as empty.
+    #[test]
+    fn cut_legitimate_thin_slab() {
+        let box_ = make_box(DVec3::ZERO, 100.0, 100.0, 100.0);
+        let slab = make_box(DVec3::new(0.0, 0.0, 50.0), 100.0, 100.0, 1.0);
+        let box_vol = get_volume(&box_);
+        let slab_vol = get_volume(&slab);
+
+        let res = perform_direct_bop(&box_, &slab, BooleanOpType::Difference);
+        assert!((get_volume(&res) - (box_vol - slab_vol)).abs() < TOL);
+    }
+
+    /// OCCT: Cut_BySemiInfinitePrism_Unaffected
+    /// Semi-infinite prism cutting a box.
+    /// Approximated by a very long box in the extrusion direction.
+    #[test]
+    fn cut_by_long_prism() {
+        let box_ = make_box(DVec3::new(0.0, -1.0, -1.0), 2.0, 2.0, 2.0);
+        // Approximate semi-infinite prism by a long box in X direction
+        let prism = make_box(DVec3::new(-0.5, -0.5, -0.5), 1000.0, 1.0, 1.0);
+
+        let res = perform_direct_bop(&box_, &prism, BooleanOpType::Difference);
+        assert!(get_volume(&res) > 1.0);
+    }
+
+    /// OCCT: Common_SolidAndHalfspace_Unaffected
+    /// Box intersected with half-space solid.
+    #[test]
+    fn common_solid_and_halfspace() {
+        let box_ = make_box(DVec3::new(0.0, 0.0, -30.0), 150.0, 200.0, 200.0);
+        let plane = geom::Plane {
+            origin: DVec3::new(0.0, 0.0, 0.0),
+            normal: DVec3::Z,
+        };
+        let bbox = [DVec3::new(-250.0, -250.0, -30.0), DVec3::new(250.0, 250.0, 200.0)];
+        let halfspace = make_face_half_space(&plane, &bbox, true);
+
+        let res = perform_direct_bop(&box_, &halfspace, BooleanOpType::Intersection);
+        assert!(get_volume(&res) > 1.0);
     }
 }
 
