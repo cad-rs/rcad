@@ -98,7 +98,7 @@ impl<'a> super::PaveFiller<'a> {
  if pairs.is_empty() { return; }
 
  // OCCT L154-205: Prepare pairs for intersection (filter + build aMVEPairs)
- let filtered: Vec<(usize, usize)> = pairs.par_iter()
+ let filtered: Vec<(usize, usize)> = pairs.iter()
  .filter(|&(vi, ei)| {
  if (*vi < a_vc) == (*ei < a_ec) { return false; }
  // OCCT L165-168: aSIE.HasSubShape(nV)  ?skip if vertex is sub-shape of edge
@@ -237,7 +237,7 @@ impl<'a> super::PaveFiller<'a> {
  let a_ec = ds.a_edge_count;
 
  // OCCT L181-267: Build parallel job list (aVEdgeEdge)
- let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
+ let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.iter()
  .filter(|&(ae, be)| {
  if (*ae < a_ec) == (*be < a_ec) { return false; }
  // OCCT L189-198: HasFlag checks
@@ -300,7 +300,7 @@ impl<'a> super::PaveFiller<'a> {
 
  // OCCT L219-252: Build filtered pairs + aMVFPairs dedup by (nVSD, nF)
  // Skip already-interfered pairs; resolve SD vertices.
- let filtered: Vec<(usize, usize)> = pairs.par_iter()
+ let filtered: Vec<(usize, usize)> = pairs.iter()
  .filter(|&(vi, fi)| {
  if (*vi < a_vc) == (*fi < a_fc) { return false; }
  // OCCT L226: IsSubShape (rcad: no direct equivalent)
@@ -335,7 +335,7 @@ impl<'a> super::PaveFiller<'a> {
  let ds = &self.ds;
  let a_edge_count = ds.a_edge_count;
  let a_face_count = ds.a_face_count;
- let blocks: Vec<(usize, usize, [f64; 2])> = pairs.par_iter()
+ let blocks: Vec<(usize, usize, [f64; 2])> = pairs.iter()
  .filter(|&(ei, fi)| {
  let same_range = (*ei < a_edge_count && *fi < a_face_count)
  || (*ei >= a_edge_count && *fi >= a_face_count);

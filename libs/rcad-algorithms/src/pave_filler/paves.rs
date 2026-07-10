@@ -61,6 +61,7 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  pub(crate) fn fill_shrunk_data(&mut self) {
+  // OCCT L2415-2435: iterate all pave blocks, compute shrunk range
  let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
  let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
  let v_tols: Vec<f64> = self.ds.vertices.iter().map(|v| v.geom_tol).collect();
