@@ -1016,15 +1016,36 @@ use rcad_kernel::PCurve;
  });
  }
 
- // OCCT L284-287: UpdateVertices for section-edge pcurves.
- // Adjusts vertex tolerances based on mismatch between 3D curve and 2D pcurve.
+ // OCCT L284-287, L808-846: UpdateVertices for section-edge pcurves.
  for &(ei, fi) in &update_vertices_list {
- // OCCT: UpdateVertices(aCopyE, myF)  ?corrects vertex tolerances using the
- // difference between the edge's 3D curve and its pcurve on the face.
- //
- // rcad placeholder: structure matches OCCT but the actual tolerance
- // adjustment is deferred. The pcurve is already computed and stored above.
- let _ = (ei, fi);
+  if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() { continue; }
+  let edge = &self.ds.edges[ei];
+  let face = &self.ds.faces[fi];
+  let [a_t1, a_t2] = edge.t_range;
+  let a_c3d = &edge.curve;
+  let pc2d = edge.face_reps.iter().find(|r| r.face_idx == fi).map(|r| &r.pcurve);
+  if let Some(pc) = pc2d {
+   for (j, a_t) in [a_t1, a_t2].iter().enumerate() {
+    let a_p3d = a_c3d.point_at(*a_t);
+    let vi = if j == 0 { edge.start_vertex } else { edge.end_vertex };
+    if vi < self.ds.vertices.len() {
+     let a_tol_v2 = self.ds.vertices[vi].geom_tol;
+     let uv = pc.point_at(*a_t);
+     let proj = match &face.surface {
+      Surface3::Plane(p) => {
+       let u_dir = rcad_kernel::geom::any_perpendicular(p.normal).normalize();
+       let v_dir = p.normal.cross(u_dir);
+       p.origin + uv.x * u_dir + uv.y * v_dir
+      }
+      _ => a_p3d,
+     };
+     let d2 = a_p3d.distance_squared(proj);
+     if d2 > a_tol_v2 * a_tol_v2 {
+      self.ds.vertices[vi].geom_tol = d2.sqrt() + 1e-12;
+     }
+    }
+   }
+  }
  }
  }
  pub(crate) fn update_face_info(&mut self, fi: usize) {
