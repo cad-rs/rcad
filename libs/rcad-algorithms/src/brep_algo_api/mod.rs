@@ -22,7 +22,7 @@ pub mod section;
 
 use rcad_kernel::topods;
 
-use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
+use crate::builder::{BooleanError, BooleanOpType};
 use crate::history::BooleanHistory;
 
 /// Options for boolean operations.
@@ -92,12 +92,29 @@ impl<'a> BooleanOp<'a> {
     pub fn set_options(&mut self, options: BooleanOptions) { self.options = options; }
 
     /// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderShape::Build()`.
-    /// Pipeline: DS construction -> BooleanBuilder -> result.
+    /// Pipeline: DS -> PaveFiller -> BooleanBuilder -> result.
     pub fn build(&mut self) -> bool {
         self.result = None; self.err = None; self.history = None;
         use crate::bopds::ds::DS;
-        let ds = DS::new_from_topods(self.shape1, self.shape2, self.options.fuzzy_value);
-        let mut builder = BooleanBuilder::new(&ds, self.op_type);
+        use crate::pave_filler::PaveFiller;
+        use crate::bvh::Bvh;
+        use crate::builder::BooleanBuilder;
+        let mut ds = DS::new_from_topods(self.shape1, self.shape2, self.options.fuzzy_value);
+        let fuzzy_tol = ds.fuzzy_tol;
+        let mut brep = topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let bvh_a = Bvh::build(self.shape1);
+            let bvh_b = Bvh::build(self.shape2);
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.set_run_parallel(false);
+            filler.configure_fuzzy(fuzzy_tol);
+            filler.set_non_destructive(false);
+            filler.configure_glue(false, crate::tolerance::TOLERANCE_ABS);
+            filler.set_use_obb(false);
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+        };
+        let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
         match builder.build_with_history_topods() {
             Ok((t, h)) => {
                 self.result = Some(t);
