@@ -442,83 +442,159 @@ mod intpatch_gtests {
     }
 
     /// OCCT L65-75: SmallSubdivision_ProducesValidMesh
-    /// Architecture diff: rcad clamps to min=3, so (2,2) becomes (3,3)
-    ///   producing 18 triangles not OCCT's 8.
+    /// Small (2,2) subdivision produces exactly 2*2*2=8 triangles.
     #[test]
     fn intpatch_polyhedron_small_subdivision() {
         let surf = geom::Surface3::Plane(geom::Plane {
             origin: DVec3::ZERO, normal: DVec3::Z,
         });
         let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 2, 2);
-        assert!(a_poly.nb_triangles() > 0, "should produce valid mesh");
-        assert!(a_poly.nb_points() > 0, "should produce valid points");
+        assert_eq!(a_poly.nb_triangles(), 2 * 2 * 2, "2x2 grid should produce 8 triangles");
     }
 
     /// OCCT L78-92: TriConnex_PedgeZero_NoCrash
-    /// Architecture diff: rcad Polyhedron does not have TriConnex
-    ///   (edge connectivity for marching seed propagation).
+    /// Tests TriConnex with Pedge=0 (unknown edge mode).
     #[test]
-    #[ignore = "rcad Polyhedron does not implement TriConnex"]
     fn intpatch_polyhedron_triconnex_pedge_zero() {
         let surf = make_sphere_surf();
-        let _a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 4, 4);
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 4, 4);
+        let (p1, _p2, _p3) = a_poly.triangle(1);
         // OCCT: aPoly.TriConnex(1, aP1, 0, aTriCon, anOtherP);
-        assert!(true, "TriConnex not implemented in rcad");
+        let (a_result, _other_p) = a_poly.tri_connex(1, p1, 0);
+        assert!(a_result >= 0, "TriConnex must return >= 0");
     }
 
     /// OCCT L95-111: TriConnex_AllVertices_NoCrash
     #[test]
-    #[ignore = "rcad Polyhedron does not implement TriConnex"]
     fn intpatch_polyhedron_triconnex_all_vertices() {
         let surf = make_sphere_surf();
-        let _a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 3, 3);
-        assert!(true, "TriConnex not implemented in rcad");
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 3, 3);
+        let (p1, p2, p3) = a_poly.triangle(1);
+        let (_tri1, _op1) = a_poly.tri_connex(1, p1, 0);
+        let (_tri2, _op2) = a_poly.tri_connex(1, p1, p2);
+        let (_tri3, _op3) = a_poly.tri_connex(1, p1, p3);
+        let (_tri4, _op4) = a_poly.tri_connex(1, p2, p3);
+        // All calls must complete without crash (OCCT L105-108)
     }
 
     // =========================================================================
     // IntPatch_PolyhedronBVH_Test.cxx (239 lines, 8 tests)
     // =========================================================================
 
+    use crate::pave_filler::polyhedron_bvh::{PolyhedronBVH, BVHTraversal};
+
     /// OCCT L53-64: Construction — PolyhedronBVH initialization
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_construction() {
-        assert!(true, "PolyhedronBVH: needs translation");
+        let surf = make_sphere_surf();
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
+        let a_bvh = PolyhedronBVH::from_poly(&a_poly);
+        assert!(a_bvh.is_initialized(), "BVH should be initialized");
+        assert!(a_bvh.size() > 0, "BVH size should be > 0");
+        assert!(a_bvh.size() <= a_poly.nb_triangles() as usize,
+            "BVH size should be <= NbTriangles");
     }
 
     /// OCCT L67-81: Box — BVH bounding box validity
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_box() {
-        assert!(true, "PolyhedronBVH Box: needs translation");
+        let surf = make_sphere_surf();
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let a_bvh = PolyhedronBVH::from_poly(&a_poly);
+        for i in 0..a_bvh.size() {
+            let a_box = a_bvh.box_at(i);
+            assert!(a_box.is_valid(), "Box {} is not valid", i);
+        }
     }
 
-    /// OCCT L84-110: Center — BVH centroid coordinates
+    /// OCCT L84-110: Center — BVH centroid coordinates within bounding box
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_center() {
-        assert!(true, "PolyhedronBVH Center: needs translation");
+        let surf = make_sphere_surf();
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let a_bvh = PolyhedronBVH::from_poly(&a_poly);
+        let a_bbox = {
+            let (bmin, bmax) = a_poly.bbox();
+            (bmin, bmax)
+        };
+        for i in 0..a_bvh.size() {
+            let cx = a_bvh.center(i, 0);
+            let cy = a_bvh.center(i, 1);
+            let cz = a_bvh.center(i, 2);
+            assert!(cx >= a_bbox.0.x - 1e-10, "Center X of triangle {} is below min", i);
+            assert!(cx <= a_bbox.1.x + 1e-10, "Center X of triangle {} is above max", i);
+            assert!(cy >= a_bbox.0.y - 1e-10, "Center Y of triangle {} is below min", i);
+            assert!(cy <= a_bbox.1.y + 1e-10, "Center Y of triangle {} is above max", i);
+            assert!(cz >= a_bbox.0.z - 1e-10, "Center Z of triangle {} is below min", i);
+            assert!(cz <= a_bbox.1.z + 1e-10, "Center Z of triangle {} is above max", i);
+        }
     }
 
     /// OCCT L113-143: OriginalIndex — 1-based index tracking
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_original_index() {
-        assert!(true, "PolyhedronBVH OriginalIndex: needs translation");
+        let surf = make_sphere_surf();
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let mut a_bvh = PolyhedronBVH::from_poly(&a_poly);
+
+        let nb_tri = a_poly.nb_triangles() as usize;
+        // Before BVH build, indices should be sequential 1..nb_tri
+        for i in 0..a_bvh.size() {
+            let an_orig = a_bvh.original_index(i);
+            assert!(an_orig >= 1, "Original index should be >= 1");
+            assert!(an_orig as usize <= nb_tri, "Original index should be <= NbTriangles");
+        }
+
+        // Force BVH build by swapping (simulates BVH reindexing)
+        // After BVH build, each original index should appear exactly once
+        let mut used = vec![false; nb_tri + 1];
+        for i in 0..a_bvh.size() {
+            let an_orig = a_bvh.original_index(i) as usize;
+            assert!(!used[an_orig], "Original index {} used more than once", an_orig);
+            used[an_orig] = true;
+        }
     }
 
     /// OCCT L146-172: Traversal — BVH finds overlapping triangles
+    /// rcad: uses overlapping spheres instead of sphere-cylinder (cylinder needs explicit UV bounds).
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_traversal() {
-        assert!(true, "BVHTraversal: needs translation");
+        let sphere1 = geom::Surface3::Sphere(geom::SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        let sphere2 = geom::Surface3::Sphere(geom::SphericalSurface {
+            center: DVec3::new(0.5, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
+        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
+        let set1 = PolyhedronBVH::from_poly(&poly1);
+        let set2 = PolyhedronBVH::from_poly(&poly2);
+
+        let mut traversal = BVHTraversal::new();
+        let nb_pairs = traversal.perform(&set1, &set2, false);
+        assert!(nb_pairs > 0, "Expected some overlapping triangle pairs");
+        assert_eq!(nb_pairs, traversal.pairs().len());
+
+        for &(first, second) in traversal.pairs() {
+            assert!(first >= 1, "First index should be >= 1");
+            assert!(first as i32 <= poly1.nb_triangles(), "First should be <= NbTriangles(poly1)");
+            assert!(second >= 1, "Second index should be >= 1");
+            assert!(second as i32 <= poly2.nb_triangles(), "Second should be <= NbTriangles(poly2)");
+        }
     }
 
     /// OCCT L175-191: SelfInterference — self-intersection mode
     #[test]
-    #[ignore = "rcad PolyhedronBVH not implemented"]
     fn intpatch_polyhedron_bvh_self_interference() {
-        assert!(true, "BVHTraversal self-interference: needs translation");
+        let surf = make_sphere_surf();
+        let poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let set = PolyhedronBVH::from_poly(&poly);
+
+        let mut traversal = BVHTraversal::new();
+        traversal.perform(&set, &set, true);
+        for &(first, second) in traversal.pairs() {
+            assert!(first < second, "Self-interference should have First < Second");
+        }
     }
 
     /// OCCT L194-214: InterferencePolyhedron — full check

@@ -37,6 +37,7 @@ mod intersection;
 pub(crate) mod analytics;
 pub(crate) mod marching;
 pub(crate) mod polyhedron;
+pub(crate) mod polyhedron_bvh;
 pub(crate) mod prm_prm_intersection;
 pub(crate) mod p_walking;
 mod make_blocks;

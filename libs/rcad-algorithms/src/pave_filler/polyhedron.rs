@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
+//! OCCT-aligned: IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
 //!
 //! Triangle mesh approximation of a parametric surface for seed point
 //! detection in PrmPrm intersection. Matches OCCT IntPatch_Polyhedron.hxx/cxx.
@@ -8,20 +8,21 @@ use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 /// OCCT-aligned: IntPatch_Polyhedron — triangle mesh approximation
 pub struct Polyhedron {
-    nb_u: i32,
-    nb_v: i32,
-    points: Vec<DVec3>,
-    u_params: Vec<f64>,
-    v_params: Vec<f64>,
-    bbox_min: DVec3,
-    bbox_max: DVec3,
+    pub(crate) nb_u: i32,
+    pub(crate) nb_v: i32,
+    pub(crate) points: Vec<DVec3>,
+    pub(crate) u_params: Vec<f64>,
+    pub(crate) v_params: Vec<f64>,
+    pub(crate) bbox_min: DVec3,
+    pub(crate) bbox_max: DVec3,
 }
 
 impl Polyhedron {
-    /// OCCT L34-36: constructor with surface + (nU, nV) grid resolution
+    /// OCCT L34-36: constructor with surface + (nU, nV) grid resolution.
+    /// rcad: clamps to min=1 matching OCCT IntPatch_Polyhedron behavior.
     pub fn new(surf: &Surface3, n_u: i32, n_v: i32) -> Self {
-        let n_u = n_u.max(3);
-        let n_v = n_v.max(3);
+        let n_u = n_u.max(1);
+        let n_v = n_v.max(1);
         let [u_min, u_max, v_min, v_max] = surf.default_domain();
 
         let mut pts = Vec::with_capacity(((n_u + 1) * (n_v + 1)) as usize);
@@ -69,7 +70,122 @@ impl Polyhedron {
     }
 
     pub fn point(&self, index: i32) -> DVec3 { self.points[(index - 1) as usize] }
+    /// OCCT-aligned: Size(nbU, nbV) — get grid dimensions.
+    pub fn size(&self) -> (i32, i32) { (self.nb_u, self.nb_v) }
     pub fn bbox(&self) -> (DVec3, DVec3) { (self.bbox_min, self.bbox_max) }
+
+    /// OCCT-aligned: TriConnex (IntPatch_Polyhedron.cxx L299-567).
+    /// Finds the triangle adjacent to `triang` across the edge (pivot, pedge).
+    /// Returns the adjacent triangle index (0 = boundary), sets `tri_con` and `other_p`.
+    pub fn tri_connex(&self, triang: i32, pivot: i32, pedge: i32) -> (i32, i32) {
+        const LONGUEUR_MINI_EDGE_TRIANGLE: f64 = 1e-14; // OCCT 1e-14
+        let nbdeltaVp1 = self.nb_v + 1;
+        let nbdeltaVm2 = self.nb_v * 2;
+
+        let pivotm1 = pivot - 1;
+        let lig_p = pivotm1 / nbdeltaVp1;
+        let col_p = pivotm1 - lig_p * nbdeltaVp1;
+
+        let (lig_e, col_e, typ_e) = if pedge != 0 {
+            let lig_e = (pedge - 1) / nbdeltaVp1;
+            let col_e = (pedge - 1) - lig_e * nbdeltaVp1;
+            let typ_e = if lig_p == lig_e { 1 }      // Horizontal
+                   else if col_p == col_e { 2 }      // Vertical
+                   else { 3 };                        // Oblique
+            (lig_e, col_e, typ_e)
+        } else {
+            (0, 0, 0)
+        };
+
+        let (mut lin_t, mut col_t, mut lin_o, mut col_o);
+        if triang != 0 {
+            let t  = (triang - 1) / nbdeltaVm2;
+            let tt = (triang - 1) - t * nbdeltaVm2;
+            lin_t = 1 + t;
+            col_t = 1 + tt;
+            let typ_e = if typ_e == 0 {
+                // Determine edge type from triangle position relative to pivot
+                if lig_p == lin_t {
+                    (lig_p - 1, col_p - 1, 3)
+                } else if col_t == lig_p + lig_p {
+                    (lig_p, col_p - 1, 1)
+                } else {
+                    (lig_p + 1, col_p + 1, 3)
+                }
+            } else { (lig_e, col_e, typ_e) };
+            let (_lig_e, _col_e, typ_e) = typ_e;
+
+            match typ_e {
+                1 => { // Horizontal
+                    if lin_t == lig_p { lin_t += 1; lin_o = lig_p + 1; col_o = col_p.max(col_e); }
+                    else               { lin_t -= 1; lin_o = lig_p - 1; col_o = col_p.min(col_e); }
+                }
+                2 => { // Vertical
+                    if col_t == col_p + col_p { col_t += 1; lin_o = lig_p.max(lig_e); col_o = col_p + 1; }
+                    else                      { col_t -= 1; lin_o = lig_p.min(lig_e); col_o = col_p - 1; }
+                }
+                3 => { // Oblique
+                    if (col_t & 1) == 0 { col_t -= 1; lin_o = lig_p.max(lig_e); col_o = col_p.min(col_e); }
+                    else                { col_t += 1; lin_o = lig_p.min(lig_e); col_o = col_p.max(col_e); }
+                }
+                _ => { lin_o = 0; col_o = 0; }
+            }
+        } else {
+            // Unknown triangle position
+            if pedge == 0 {
+                lin_t = 1.max(lig_p);
+                col_t = 1.max(col_p + col_p);
+                if lig_p == 0 { lin_o = lig_p + 1; } else { lin_o = lig_p - 1; }
+                col_o = col_p;
+            } else {
+                match typ_e {
+                    1 => { lin_t = lig_p + 1; col_t = col_p.max(col_e) * 2; lin_o = lig_p + 1; col_o = col_p.max(col_e); }
+                    2 => { lin_t = lig_p.max(lig_e); col_t = col_p + col_p; lin_o = lig_p.min(lig_e); col_o = col_p - 1; }
+                    3 => { lin_t = lig_p.max(lig_e); col_t = col_p + col_e; lin_o = lig_p.max(lig_e); col_o = col_p.min(col_e); }
+                    _ => { lin_t = 0; col_t = 0; lin_o = 0; col_o = 0; }
+                }
+            }
+        }
+
+        let mut tri_con = (lin_t - 1) * nbdeltaVm2 + col_t;
+
+        // Boundary checks
+        if lin_t < 1 {
+            lin_o = 0; col_o = col_p + col_p - col_e;
+            if col_o < 0 { col_o = 0; lin_o = 1; }
+            else if col_o > self.nb_v { col_o = self.nb_v; lin_o = 1; }
+            tri_con = 0;
+        } else if lin_t > self.nb_u {
+            lin_o = self.nb_u; col_o = col_p + col_p - col_e;
+            if col_o < 0 { col_o = 0; lin_o = self.nb_u - 1; }
+            else if col_o > self.nb_v { col_o = self.nb_v; lin_o = self.nb_u - 1; }
+            tri_con = 0;
+        }
+        if col_t < 1 {
+            col_o = 0; lin_o = lig_p + lig_p - lig_e;
+            if lin_o < 0 { lin_o = 0; col_o = 1; }
+            else if lin_o > self.nb_u { lin_o = self.nb_u; col_o = 1; }
+            tri_con = 0;
+        } else if col_t > self.nb_v {
+            col_o = self.nb_v; lin_o = lig_p + lig_p - lig_e;
+            if lin_o < 0 { lin_o = 0; col_o = self.nb_v - 1; }
+            else if lin_o > self.nb_u { lin_o = self.nb_u; col_o = self.nb_v - 1; }
+            tri_con = 0;
+        }
+
+        let other_p = lin_o * nbdeltaVp1 + col_o + 1;
+
+        // OCCT L546-553: degenerate case Pivot == Pedge
+        if pedge != 0 && self.point(pivot).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
+            return (triang, 0);
+        }
+        // OCCT L555-561: degenerate case OtherP == Pedge
+        if pedge != 0 && other_p > 0 && other_p <= self.points.len() as i32
+            && self.point(other_p).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
+            return (0, 0);
+        }
+        (tri_con, other_p)
+    }
     pub fn parameters(&self, index: i32) -> (f64, f64) {
         let idx = (index - 1) as usize;
         let n_plus_1 = (self.nb_u + 1) as usize;
