@@ -1030,28 +1030,28 @@ pub(crate) fn select_best_outgoing<'a>(
  return None;
  }
  let a_two_pi = std::f64::consts::TAU;
- let eps = std::f64::EPSILON; // OCCT: eps = Epsilon(1.)
+ let eps = std::f64::EPSILON;
  let mut a_min_angle = 100.0;
  let mut a_nb_ways_inside: i32 = 0;
  let mut p_only_way_in: Option<&EdgeInfo> = None;
  let mut p_edge_info: Option<&EdgeInfo> = None;
  for an_ei in candidates {
  let a_angle = if an_ei.seg_idx == incoming_ci {
- a_two_pi // OCCT L564-567: aE.IsSame(aEOuta) -> aTwoPI
+ a_two_pi
  } else {
- clock_wise_angle(angle_in, an_ei.angle) // OCCT L585-586
+ clock_wise_angle(angle_in, an_ei.angle)
  };
  if incoming_is_boundary && an_ei.is_inside {
- a_nb_ways_inside += 1; // OCCT L589-593
+ a_nb_ways_inside += 1;
  p_only_way_in = Some(an_ei);
  }
  if a_angle < a_min_angle - eps {
- a_min_angle = a_angle; // OCCT L595-599
+ a_min_angle = a_angle;
  p_edge_info = Some(an_ei);
  }
  }
  if a_nb_ways_inside == 1 {
- p_edge_info = p_only_way_in; // OCCT L602-604
+ p_edge_info = p_only_way_in;
  }
  p_edge_info
 }
@@ -1129,14 +1129,14 @@ pub(crate) fn perform_shapes_to_avoid_topo(
 
  let a_e1 = a_le[0];
  if a_nb_e == 1 {
- // OCCT L198-210: dangling edge — skip if degenerated or INTERNAL vertex
+ // Dangling edge — skip if degenerated or INTERNAL vertex
  if is_degenerate(&a_e1) { continue; }
  if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
  == rcad_kernel::topods::Orientation::Internal { continue; }
  b_found = true;
  avoided_pids.insert(a_e1);
  } else if a_nb_e == 2 && a_le[0] == a_le[1] {
- // OCCT L211-227: self-coincident — same edge twice at this vertex
+ // Self-coincident — same edge twice at this vertex
  let a_e2 = a_le[1];
  // Skip self-loop (edge whose endpoints are the same vertex)
  let (_tag, idx, a, b) = a_e1;
