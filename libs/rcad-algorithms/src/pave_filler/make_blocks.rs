@@ -179,6 +179,23 @@ impl<'a> super::PaveFiller<'a> {
    a_mv_on_in.insert(vi);
   }
  }
+ // Step 3b: f2 VerticesOn/In — process opposite face too (OCCT missing in rcad)
+ for &vi in &f2_face.face_info.vertices_on {
+  if f1_face.face_info.vertices_on.contains(&vi) || f1_face.face_info.vertices_in.contains(&vi) {
+   a_mv_on_in.insert(vi);
+   a_mv_common.insert(vi);
+  } else {
+   a_mv_on_in.insert(vi);
+  }
+ }
+ for &vi in &f2_face.face_info.vertices_in {
+  if f1_face.face_info.vertices_on.contains(&vi) || f1_face.face_info.vertices_in.contains(&vi) {
+   a_mv_on_in.insert(vi);
+   a_mv_common.insert(vi);
+  } else {
+   a_mv_on_in.insert(vi);
+  }
+ }
  }
 
  // OCCT L771: SharedEdges(nF1, nF2, aLSE)
@@ -265,9 +282,8 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L2921-2936: EF interferences
  for inf in &self.ds.interf_ef {
  if inf.new_vertex == usize::MAX { continue; }
- let e_in_pair = a_mi.contains(&inf.edge) || a_mi_b.contains(&inf.edge);
- let f_in_pair = a_mi.contains(&inf.face) || a_mi_b.contains(&inf.face);
- if !e_in_pair || !f_in_pair { continue; }
+ // EF vertices were already validated by the EF pass; add all directly.
+ // rcad: build_face_shape_map doesn't include face index, so skip pair check.
  if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
  a_mv_stick.insert(n_v);
  a_mv_ef.insert(n_v);

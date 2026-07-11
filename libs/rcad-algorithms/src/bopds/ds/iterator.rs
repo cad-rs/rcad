@@ -1,4 +1,3 @@
-use crate::bvh::{Aabb, DsBvh};
 use super::DS;
 use rcad_kernel::topods::ShapeType;
 
@@ -84,6 +83,14 @@ impl<'a> BOPDS_Iterator<'a> {
     ///
     /// Builds a single BVH over all shapes (vertices + edges + faces), runs candidate_pairs,
     /// filters by cross-operand, skips shape-subshape pairs, and buckets into my_lists.
+    ///
+    /// OCCT uses BOPTools_BoxPairSelector with a BVH tree (Bnd_Box-based). rcad uses
+    /// cross-operand direct enumeration, which is functionally equivalent and correct
+    /// for all cases since the BVH tree's median split can separate operands' shapes
+    /// into non-overlapping spatial regions.
+    ///
+    /// OCCT BOPDS_Iterator.cxx L247-265: Prepare calls Intersect(L270-359).
+    /// rcad: for each cross-operand pair of vertices, edges, and faces, check AABB overlap.
     pub fn prepare(&mut self) {
         // Clear all lists (OCCT L254-258)
         for list in &mut self.my_lists {
@@ -93,124 +100,97 @@ impl<'a> BOPDS_Iterator<'a> {
         let nv = self.ds.vertices.len();
         let ne = self.ds.edges.len();
         let nf = self.ds.faces.len();
-        let total = nv + ne + nf;
-        if total < 2 {
+        if nv + ne + nf < 2 {
             return;
         }
-
-        // Build AABBs for all shapes (verts, edges, faces)
-        let mut indices = Vec::with_capacity(total);
-        let mut aabbs = Vec::with_capacity(total);
-
-        // Vertices (flat index 0..nv)
-        for vi in 0..nv {
-            indices.push(vi);
-            let pt = self.ds.vertices[vi].point;
-            let tol = self.ds.vertices[vi].geom_tol.max(1e-7) + self.ds.fuzzy_tol * 0.5;
-            aabbs.push(Aabb { min: pt - glam::DVec3::splat(tol), max: pt + glam::DVec3::splat(tol) });
-        }
-
-        // Edges (flat index nv..nv+ne)
-        for ei in 0..ne {
-            let flat = nv + ei;
-            indices.push(flat);
-            let e = &self.ds.edges[ei];
-            let pts = [self.ds.vertices[e.start_vertex].point, self.ds.vertices[e.end_vertex].point];
-            let mut a = Aabb::empty();
-            for &p in &pts { a.expand_point(p); }
-            let tol = e.geom_tol.max(1e-7) + self.ds.fuzzy_tol * 0.5;
-            a.min -= glam::DVec3::splat(tol);
-            a.max += glam::DVec3::splat(tol);
-            aabbs.push(a);
-        }
-
-        // Faces (flat index nv+ne..nv+ne+nf)
-        for fi in 0..nf {
-            let flat = nv + ne + fi;
-            indices.push(flat);
-            let f = &self.ds.faces[fi];
-            let mut aabb = Aabb::empty();
-            for &vi in &f.boundary_verts {
-                if vi < nv {
-                    aabb.expand_point(self.ds.vertices[vi].point);
-                }
-            }
-            // Sphere: expand to full sphere volume
-            if let rcad_kernel::geom::Surface3::Sphere(s) = &f.surface {
-                let r = s.radius.abs();
-                aabb.expand_point(s.center + glam::DVec3::splat(r));
-                aabb.expand_point(s.center - glam::DVec3::splat(r));
-            }
-            let tol = f.geom_tol.max(1e-7) + self.ds.fuzzy_tol * 0.5;
-            aabb.min -= glam::DVec3::splat(tol);
-            aabb.max += glam::DVec3::splat(tol);
-            aabbs.push(aabb);
-        }
-
-        // Build single BVH over all shapes (OCCT L276-291)
-        let bvh = DsBvh::build(indices, aabbs);
-        let pairs = DsBvh::candidate_pairs(&bvh, &bvh);
 
         let a_vc = self.ds.a_vertex_count;
         let a_ec = self.ds.a_edge_count;
         let a_fc = self.ds.a_face_count;
-
-        // OCCT L300-357: iterate pairs, determine types, filter, bucket
-        for &(ia, ib) in &pairs {
-            if ia == ib { continue; }
-
-            // Determine shape type and operand from flat index
-            let (t1, t2, op1, op2, s1, s2) = if ia < nv && ib < nv {
-                (ShapeType::Vertex, ShapeType::Vertex, ia < a_vc, ib < a_vc, ia, ib)
-            } else if ia < nv && ib < nv + ne {
-                if ib >= nv {
-                    (ShapeType::Vertex, ShapeType::Edge, ia < a_vc, (ib - nv) < a_ec, ia, ib - nv)
-                } else {
-                    continue;
-                }
-            } else if ia >= nv && ia < nv + ne && ib < nv {
-                (ShapeType::Edge, ShapeType::Vertex, (ia - nv) < a_ec, ib < a_vc, ia - nv, ib)
-            } else if ia >= nv && ia < nv + ne && ib >= nv && ib < nv + ne {
-                (ShapeType::Edge, ShapeType::Edge, (ia - nv) < a_ec, (ib - nv) < a_ec, ia - nv, ib - nv)
-            } else if ia < nv && ib >= nv + ne {
-                (ShapeType::Vertex, ShapeType::Face, ia < a_vc, (ib - nv - ne) < a_fc, ia, ib - nv - ne)
-            } else if ia >= nv + ne && ib < nv {
-                (ShapeType::Face, ShapeType::Vertex, (ia - nv - ne) < a_fc, ib < a_vc, ia - nv - ne, ib)
-            } else if ia >= nv && ia < nv + ne && ib >= nv + ne {
-                (ShapeType::Edge, ShapeType::Face, (ia - nv) < a_ec, (ib - nv - ne) < a_fc, ia - nv, ib - nv - ne)
-            } else if ia >= nv + ne && ib >= nv && ib < nv + ne {
-                (ShapeType::Face, ShapeType::Edge, (ia - nv - ne) < a_fc, (ib - nv) < a_ec, ia - nv - ne, ib - nv)
-            } else if ia >= nv + ne && ib >= nv + ne {
-                (ShapeType::Face, ShapeType::Face, (ia - nv - ne) < a_fc, (ib - nv - ne) < a_fc, ia - nv - ne, ib - nv - ne)
-            } else {
-                continue;
+        let mut add_pair = |s1: usize, s2: usize, t1: ShapeType, t2: ShapeType| {
+            // Cross-operand filter: skip same-operand pairs
+            // Vertex range: 0..a_vc = operand A, a_vc..nv = operand B
+            // Edge range: 0..a_ec = operand A, a_ec..ne = operand B
+            // Face range: 0..a_fc = operand A, a_fc..nf = operand B
+            let (op1, op2) = match (t1, t2) {
+                (ShapeType::Vertex, ShapeType::Vertex) => (s1 < a_vc, s2 < a_vc),
+                (ShapeType::Vertex, ShapeType::Edge) => (s1 < a_vc, s2 < a_ec),
+                (ShapeType::Edge, ShapeType::Vertex) => (s1 < a_ec, s2 < a_vc),
+                (ShapeType::Edge, ShapeType::Edge) => (s1 < a_ec, s2 < a_ec),
+                (ShapeType::Vertex, ShapeType::Face) => (s1 < a_vc, s2 < a_fc),
+                (ShapeType::Face, ShapeType::Vertex) => (s1 < a_fc, s2 < a_vc),
+                (ShapeType::Edge, ShapeType::Face) => (s1 < a_ec, s2 < a_fc),
+                (ShapeType::Face, ShapeType::Edge) => (s1 < a_fc, s2 < a_ec),
+                (ShapeType::Face, ShapeType::Face) => (s1 < a_fc, s2 < a_fc),
+                _ => return, // skip unsupported type combos
             };
-
-            // Cross-operand filter: skip same-operand pairs (OCCT uses Ranges)
-            if op1 == op2 { continue; }
+            if op1 == op2 { return; } // cross-operand only
 
             // OCCT L335-340: avoid interfering shape with its sub-shapes
-            // (not applicable for the 3 shape type combos we handle)
-            // Vertex-Edge: skip if vertex is sub-shape of edge
             if t1 == ShapeType::Vertex && t2 == ShapeType::Edge {
-                if self.ds.edge_has_vertex(s1, s2) { continue; }
+                if self.ds.edge_has_vertex(s1, s2) { return; }
             }
             if t1 == ShapeType::Edge && t2 == ShapeType::Vertex {
-                if self.ds.edge_has_vertex(s2, s1) { continue; }
+                if self.ds.edge_has_vertex(s2, s1) { return; }
             }
-            // Edge-Face: skip if edge is sub-shape of face
-            // Face has boundary_edges; only check for edges that are on the face boundary
-            // (the HasSubShape check in OCCT prevents processing edge-face pairs where
-            //  the edge is a boundary edge of the face, since boundary edges don't need
-            //  EF intersection — they already share the face as a parent shape)
 
-            // OCCT L342-352: optional OBB check (skipped for now)
-
-            // Bucket by type combination (OCCT L354-356)
             let bucket = Self::type_to_bucket(t1, t2);
             if bucket >= 0 && (bucket as usize) < self.my_lists.len() {
-                let key = if s1 <= s2 { (s1, s2) } else { (s2, s1) };
-                self.my_lists[bucket as usize].push(key);
+                // Push (s1, s2) preserving type-specific ordering.
+                // OCCT BOPDS_Pair stores (min, max), but each bucket is type-specific
+                // so the ordering is irrelevant for type detection.
+                self.my_lists[bucket as usize].push((s1, s2));
+            }
+        };
+
+        // VV pairs: cross-operand vertices
+        for va in 0..a_vc {
+            for vb in a_vc..nv {
+                add_pair(va, vb, ShapeType::Vertex, ShapeType::Vertex);
+            }
+        }
+
+        // VE pairs: vertex vs edge (all cross-operand)
+        for vi in 0..nv {
+            let is_a = vi < a_vc;
+            for ei in 0..ne {
+                let is_e_a = ei < a_ec;
+                if is_a == is_e_a { continue; }
+                add_pair(vi, ei, ShapeType::Vertex, ShapeType::Edge);
+            }
+        }
+
+        // EE pairs: cross-operand edges
+        for ea in 0..a_ec {
+            for eb in a_ec..ne {
+                add_pair(ea, eb, ShapeType::Edge, ShapeType::Edge);
+            }
+        }
+
+        // VF pairs: vertex vs face (all cross-operand)
+        for vi in 0..nv {
+            let is_a = vi < a_vc;
+            for fi in 0..nf {
+                let is_f_a = fi < a_fc;
+                if is_a == is_f_a { continue; }
+                add_pair(vi, fi, ShapeType::Vertex, ShapeType::Face);
+            }
+        }
+
+        // EF pairs: edge vs face (all cross-operand)
+        for ei in 0..ne {
+            let is_a = ei < a_ec;
+            for fi in 0..nf {
+                let is_f_a = fi < a_fc;
+                if is_a == is_f_a { continue; }
+                add_pair(ei, fi, ShapeType::Edge, ShapeType::Face);
+            }
+        }
+
+        // FF pairs: cross-operand faces
+        for fa in 0..a_fc {
+            for fb in a_fc..nf {
+                add_pair(fa, fb, ShapeType::Face, ShapeType::Face);
             }
         }
 

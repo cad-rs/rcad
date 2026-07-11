@@ -484,8 +484,12 @@ pub(crate) fn put_pave_on_curve_full(
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = match curve {
         Curve3::Line(_) => {
-            // Lines are infinite; use unit-length box centered at origin.
-            Some([DVec3::splat(-1.0), DVec3::splat(1.0)])
+            // Lines are infinite; skip bounding box (return None) so
+            // the box check in put_paves_on_curve is bypassed and all
+            // vertices can be tested for projection onto the curve.
+            // OCCT's Bnd_Box handles this with SetGap, making boxes
+            // artificially large enough to overlap.
+            None
         }
         Curve3::Circle(c) => {
             let n = c.normal.normalize();

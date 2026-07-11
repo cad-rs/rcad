@@ -178,6 +178,12 @@ mod bop_algo_direct_tests {
                     i, ic.start_vertex, ic.end_vertex, ic.t_range[0], ic.t_range[1], ic.pave_blocks.len());
             }
         }
+        for (i, ic) in ds.intersection_curves.iter().enumerate() {
+            if !ic.pave_blocks.is_empty() {
+                eprintln!("  curve[{}]: sv={} ev={} t=[{:.4},{:.4}] {} pb",
+                    i, ic.start_vertex, ic.end_vertex, ic.t_range[0], ic.t_range[1], ic.pave_blocks.len());
+            }
+        }
 
         let result = crate::bop_occt_union::boolean_op_generic(BooleanOpType::Intersection, &b1, &b2).expect("Common failed");
         validate_result(&result, -1.0, 1.0, false);

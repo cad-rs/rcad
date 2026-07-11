@@ -394,6 +394,11 @@ impl<'a> PaveFiller<'a> {
  //  ?OCCT L328: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
 
+ // OCCT-aligned: BOPDS_DS::UpdateFaceInfoIn before MakeBlocks
+ for fi in 0..self.ds.faces.len() {
+ self.ds.update_face_info_in(fi);
+ }
+
  //  ?OCCT L330: MakeBlocks
  self.make_blocks();
 

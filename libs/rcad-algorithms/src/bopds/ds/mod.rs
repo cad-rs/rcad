@@ -916,6 +916,15 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  is_internal: false,
  location: 0,
  });
+ // OCCT-aligned: add ShapeInfo for the new vertex (is_new = true)
+ // so PutPavesOnCurve's IsNewShape check passes.
+ let mut si = crate::bopds::ds::types::ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
+ si.is_new = true;
+ si.rank = 0;
+ si.box_min = Some(point);
+ si.box_max = Some(point);
+ si.box_gap = new_base + self.fuzzy_tol * 0.5;
+ self.shape_info.push(si);
  idx
  }
 
@@ -1374,6 +1383,39 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  })
  })
  });
+ }
+
+ /// OCCT-aligned: BOPDS_DS::FaceInfoIn (BOPDS_DS.cxx L837-889).
+ /// Populates face_info.vertices_in with:
+ ///   1. Face's own boundary vertices (OCCT L843-852)
+ ///   2. VF interference vertices (OCCT L854-864)
+ ///   3. EF interference vertices (OCCT L866-889)
+ /// Must be called before MakeBlocks so SubShapesOnIn projects onto curves.
+ pub fn update_face_info_in(&mut self, fi: usize) {
+ // Pre-collect data to avoid borrow conflicts
+ let boundary_copy: Vec<usize> = self.faces[fi].boundary_verts.clone();
+ let vf_vertices: Vec<usize> = self.interf_vf.iter()
+ .filter(|inf| inf.face == fi)
+ .map(|inf| inf.vertex)
+ .collect();
+ let ef_new_vertices: Vec<usize> = self.interf_ef.iter()
+ .filter(|inf| inf.face == fi && inf.new_vertex != usize::MAX)
+ .map(|inf| inf.new_vertex)
+ .collect();
+ // Now modify face_info without borrowing self elsewhere
+ let info = &mut self.faces[fi].face_info;
+ for &vi in &boundary_copy {
+ let n_vsd = vi; // OCCT: GetSameDomainIndex — skip SD lookup for boundary verts
+ info.vertices_in.insert(n_vsd);
+ }
+ for &vi in &vf_vertices {
+ let n_vsd = vi;
+ info.vertices_in.insert(n_vsd);
+ }
+ for &n_v in &ef_new_vertices {
+ let n_vsd = n_v;
+ info.vertices_in.insert(n_vsd);
+ }
  }
 
  ///  ?OCCT-aligned: batch refine for all faces.
