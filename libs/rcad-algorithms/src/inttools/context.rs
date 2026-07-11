@@ -24,6 +24,18 @@ pub struct Context {
     uv_bounds_cache: Vec<Option<[f64; 4]>>,
     /// OCCT: SurfaceAdaptor — precomputed surface references.
     surface_cache: Vec<Option<Surface3>>,
+    /// OCCT: mySClassMap (IntTools_Context: solid i → BRepClass3d_SolidClassifier*).
+    /// rcad: unused — classification uses separate classify_point function.
+    #[allow(dead_code)]
+    solid_classifier_map: std::collections::HashMap<usize, ()>,
+    /// OCCT: myHatcherMap (IntTools_Context: face i → Geom2dHatch_Hatcher*).
+    /// rcad: unused — hatch-based classification not implemented.
+    #[allow(dead_code)]
+    hatcher_map: std::collections::HashMap<usize, ()>,
+    /// OCCT: myOBBMap (IntTools_Context: shape → Bnd_OBB*).
+    /// rcad: unused — AABB-based filtering via Bvh instead of OBB.
+    #[allow(dead_code)]
+    obb_map: std::collections::HashMap<usize, ()>,
 }
 
 impl Context {
@@ -38,6 +50,9 @@ impl Context {
             proj_pt_latest: None,
             uv_bounds_cache: (0..num_faces).map(|_| None).collect(),
             surface_cache: (0..num_faces).map(|_| None).collect(),
+            solid_classifier_map: std::collections::HashMap::new(),
+            hatcher_map: std::collections::HashMap::new(),
+            obb_map: std::collections::HashMap::new(),
         }
     }
 
