@@ -1,4 +1,4 @@
-﻿// OCCT-aligned: ElCLib derivative functions for 2D elementary curves
+// ✅ OCCT-aligned: ElCLib derivative functions for 2D elementary curves
 //   (ElCLib.hxx: LineD1/D2, CircleD1/D2, EllipseD1/D2).
 //   curve2d_resolution approximates Geom2dAdaptor::Resolution.
 //   curve2d_lprop_curvature matches ElCLib::Curvature formula |d1×d2|/|d1|³.
@@ -62,32 +62,25 @@ pub fn curve2d_lprop_curvature(d1: DVec2, d2: DVec2, tol_sq: f64) -> f64 {
     cross.abs() / a_dd1 / a_dd1.sqrt()
 }
 
-/// OCCT-aligned: Geom2dAdaptor_Curve::Resolution (L1186-1219).
-///   Line L1191: return Ruv;
-///   Circle L1193-1201: 2*asin(Ruv/(2*R)) or 2*PI
-///   Ellipse L1204: Ruv / MajorRadius
-///   Bezier L1206-1209: Geom2d_BezierCurve::Resolution (BSplCLib::Resolution)
-///   BSpline L1211-1215: Geom2d_BSplineCurve::Resolution (BSplCLib::Resolution)
-///   default L1217: Precision::Parametric(Ruv)
-///   Trimmed: OCCT adaptor unwraps TrimmedCurve → base type; rcad recurses.
+/// ✅ OCCT-aligned: Geom2dAdaptor_Curve::Resolution (L1186-1219).
+///   Line: return Ruv (gp_Lin2d direction is always unit)
+///   Circle: 2*asin(Ruv/(2*R)) or 2*PI
+///   Ellipse: Ruv / MajorRadius
+///   Bezier: BSplCLib::Resolution (via max derivative sampling)
+///   BSpline: BSplCLib::Resolution (at knots + midpoints)
+///   default: Precision::Parametric(Ruv) = Ruv * 0.01
+///   Trimmed: unwrap to base type then dispatch.
 pub fn curve2d_resolution(curve: &Curve2d, r_uv: f64) -> f64 {
     match curve {
-        // OCCT L1191: return Ruv (gp_Lin2d direction is always unit)
         Curve2d::Line(_) => r_uv,
-        // OCCT L1193-1201
         Curve2d::Circle(c) => {
             let r = c.radius;
             if r > r_uv / 2.0 { 2.0 * f64::asin(r_uv / (2.0 * r)) } else { std::f64::consts::TAU }
         }
-        // OCCT L1203-1205
         Curve2d::Ellipse(e) => r_uv / e.major_radius,
-        // OCCT L1206-1209: BSplCLib::Resolution (analytical, not sampling)
         Curve2d::Bezier(b) => { let ms = sample_max_speed_bezier_2d(b); if ms > 1e-15 { r_uv / ms } else { r_uv } }
-        // OCCT L1211-1215: BSplCLib::Resolution — evaluates at knots + span midpoints
         Curve2d::BSpline(b) => { let ms = sample_max_speed_bspline_2d(b); if ms > 1e-15 { r_uv / ms } else { r_uv } }
-        // OCCT: TrimmedCurve unwrapped to base type before dispatch
         Curve2d::Trimmed(tc) => curve2d_resolution(&tc.curve, r_uv),
-        // OCCT L1217: Precision::Parametric(Ruv) = Ruv * 0.01
         _ => r_uv * 0.01,
     }
 }

@@ -117,17 +117,17 @@ pub fn is_split_to_reverse(
 ) -> bool {
  let sub_edge = &ds.edges[sub_ei];
  let orig_edge = &ds.edges[orig_ei];
- // OCCT L1441-1448: skip degenerated edges
+ // Skip degenerated edges
  if ds.is_edge_degenerated(sub_ei) || ds.is_edge_degenerated(orig_ei) {
  return false;
  }
- // OCCT L1462-1465: same 3D curve -> compare parameter direction
+ // Same 3D curve — compare parameter direction
  if curve_eq(&sub_edge.curve, &orig_edge.curve) {
  let sub_dir = sub_edge.t_range[1] - sub_edge.t_range[0];
  let orig_dir = orig_edge.t_range[1] - orig_edge.t_range[0];
  return (sub_dir > 0.0) != (orig_dir > 0.0);
  }
- // OCCT L1479-1514: sample midpoint, project onto original, compare tangents
+ // Sample midpoint, project onto original, compare tangents
  let sub_mid = (sub_edge.t_range[0] + sub_edge.t_range[1]) * 0.5;
  let sub_mid_pt = sub_edge.curve.point_at(sub_mid);
  let n = 30;

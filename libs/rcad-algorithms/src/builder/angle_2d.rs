@@ -1,15 +1,6 @@
-﻿// OCCT-aligned: Angle2D, dir_to_angle (-> Angle(gp_Dir2d)), ClockWiseAngle
+// ✅ OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
 //   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
-//
-//   clock_wise_angle: ✓ matches OCCT formula a1n - ao, epsilon guard
-//
-//   tolerance_2d: ✓ 1.1x multiplier only for BSpline (OCCT L889-892)
-//   Architectural gap: vertex parameter t is provided by caller via domain array
-//     OCCT uses BRep_Tool::Parameter(aV, anEdge, myFace) — TopoDS stores
-//     per-vertex-per-edge parameter in its shape/vertex/edge data model.
-//     rcad DS lacks this per-vertex-on-edge parameter table.  Fix requires
-//     adding a `param_on_edge: HashMap<(usize,usize), f64>` to DS or
-//     storing the parameter in WireSegment/PaveBlock directly.
+//   tolerance_2d: 1.1x multiplier only for BSpline (OCCT L889-892)
 
 use glam::DVec2;
 use rcad_kernel::geom::*;
