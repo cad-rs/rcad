@@ -282,8 +282,9 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L2921-2936: EF interferences
  for inf in &self.ds.interf_ef {
  if inf.new_vertex == usize::MAX { continue; }
- // EF vertices were already validated by the EF pass; add all directly.
- // rcad: build_face_shape_map doesn't include face index, so skip pair check.
+ let e_in_pair = a_mi.contains(&inf.edge) || a_mi_b.contains(&inf.edge);
+ let f_in_pair = a_mi.contains(&inf.face) || a_mi_b.contains(&inf.face);
+ if !e_in_pair || !f_in_pair { continue; }
  if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
  a_mv_stick.insert(n_v);
  a_mv_ef.insert(n_v);

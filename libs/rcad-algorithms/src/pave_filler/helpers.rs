@@ -483,13 +483,22 @@ pub(crate) fn put_pave_on_curve_full(
 /// Used for OCCT-aligned vertex filtering in PutPavesOnCurve (L2409).
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = match curve {
-        Curve3::Line(_) => {
-            // Lines are infinite; skip bounding box (return None) so
-            // the box check in put_paves_on_curve is bypassed and all
-            // vertices can be tested for projection onto the curve.
-            // OCCT's Bnd_Box handles this with SetGap, making boxes
-            // artificially large enough to overlap.
-            None
+        Curve3::Line(l) => {
+            // OCCT-aligned: compute bounding box from line's infinite extent.
+            // OCCT's Bnd_Box uses SetGap to expand boxes, making them overlap.
+            // For an unbounded line, use a large finite extent (1e6 = 1000 km)
+            // to ensure the box encompasses all practical vertex positions.
+            // This allows put_paves_on_curve's box check to pass for any
+            // vertex within the modeling space.
+            let p0 = l.origin;
+            let d = l.direction.normalize_or_zero();
+            const LINE_EXTENT: f64 = 1e6;
+            let pm = p0 - d * LINE_EXTENT;
+            let px = p0 + d * LINE_EXTENT;
+            let bmin = pm.min(px);
+            let bmax = pm.max(px);
+            // Expand by tolerance to match OCCT's gap behavior
+            Some([bmin - DVec3::splat(tol.max(1.0)), bmax + DVec3::splat(tol.max(1.0))])
         }
         Curve3::Circle(c) => {
             let n = c.normal.normalize();
