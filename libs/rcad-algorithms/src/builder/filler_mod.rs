@@ -298,7 +298,7 @@ impl<'a> BooleanBuilder<'a> {
             let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
             let mut a_le: Vec<topods::ShapeRef> = Vec::new();
             {
-                let t_shape = self.my_shape.borrow();
+                let t_shape: &topods::BRep = &*t;
                 if face_sr.index < t_shape.tshapes.len() {
                     if let topods::TShape::Face(fd) = &*t_shape.tshapes[face_sr.index] {
                         for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
