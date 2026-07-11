@@ -1,23 +1,33 @@
-//! Boolean **Union** (fuse) aligned with Open CASCADE’s high-level phases.
+//! Boolean operations (Union / Common / Cut) aligned with OCCT's high-level phases.
 //!
-//! This module is the dedicated entry for [`crate::BooleanOpType::Union`]. The steps mirror
-//! OCCT’s `BOPAlgo_Builder` / `BRepAlgoAPI_Fuse` control flow:
+//! This module provides the PaveFiller-based boolean pipeline for all three operation types,
+//! mirroring OCCT's `BOPAlgo_BOP` / `BRepAlgoAPI_Fuse` / `BRepAlgoAPI_Common` / `BRepAlgoAPI_Cut`
+//! control flow:
 //!
-//! 1. **Prepare arguments** --build the interference descriptor from both operands
-//! ([`bopds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
-//! 2. **Intersection and paving** --[`crate::pave_filler::PaveFiller::perform`], analogous to
-//! `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
-//! 3. **Build fuse result** --[`crate::builder::BooleanBuilder`] with
-//! [`crate::BooleanOpType::Union`], analogous to building the fused solid from classified
-//! pieces.
-//! 4. **Post-process** (serial `fuse` only) --[`crate::geom_populate::recompute_plane_surfaces`]
-//! then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
-//! [`crate::unify_same_domain_faces`] pass to merge coplanar box fragments (OCCT
-//! `UnifySameDomain` + same-domain analog; wire order can still leave analytic area ~5--0% low
-//! on some merged planes until the kernel’s planar integrator is tightened).
+//! 1. **Prepare arguments** -- build the interference descriptor from both operands
+//!    ([`bopds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
+//! 2. **Intersection and paving** -- [`crate::pave_filler::PaveFiller::perform`], analogous to
+//!    `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
+//! 3. **Build result** -- [`crate::builder::BooleanBuilder`] with the requested
+//!    [`BooleanOpType`], analogous to building the result solid from classified pieces.
+//! 4. **Post-process** (serial `fuse` only) -- [`crate::geom_populate::recompute_plane_surfaces`]
+//!    then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
+//!    [`crate::unify_same_domain_faces`] pass to merge coplanar box fragments (OCCT
+//!    `UnifySameDomain` + same-domain analog).
 //!
 //! History and parallel-history APIs intentionally skip step 4 to match the existing behavior
-//! of [`crate::bop_occt_union::boolean_op_with_history_generic`] and [`crate::boolean_op_par`].
+//! of [`boolean_op_with_history_generic`] and [`crate::boolean_op_par`].
+//!
+//! ## OCCT mapping
+//!
+//! | Rust                                | OCCT                                     | Align |
+//! |-------------------------------------|-----------------------------------------|-------|
+//! | `boolean_op_generic`                | `BRepAlgoAPI_Fuse/Common/Cut::Shape()`  |   ✅  |
+//! | `boolean_op_with_history_generic`   | `BRepAlgoAPI_BuilderOperation::Build()` |   ✅  |
+//! | `fuse` / `fuse_with_history`        | `BRepAlgoAPI_Fuse` shortcut             |   ✅  |
+//! | `common_with_history`               | `BRepAlgoAPI_Common` shortcut           |   ✅  |
+//! | `cut_with_history`                  | `BRepAlgoAPI_Cut` shortcut              |   ✅  |
+//! | `validate_ds_invariants`            | rcad-specific (no direct OCCT eq)       |   ⏳  |
 //!
 //! ## In-pipeline validation
 //!
@@ -26,7 +36,7 @@
 //! checks on the result (and again after plane recompute on the serial path). These mirror
 //! invariants the implementation is expected to maintain; they are intentionally weaker than
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
-//! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `union:`.
+//! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `bop:`.
 
 use glam::{DVec2, DVec3};
 use crate::bopds;
@@ -45,7 +55,7 @@ use rcad_kernel::geom::Surface3;
 use rcad_kernel::topods;
 use crate::bvh::{Bvh, Aabb};
 
-/// DSU (Union-Find) for building connected SameDomain groups --equivalent to OCCT FillMap + MakeBlocks.
+/// DSU (Union-Find) for building connected SameDomain groups -- equivalent to OCCT FillMap + MakeBlocks.
 struct DSU {
  parent: Vec<usize>,
  rank: Vec<u32>,
@@ -71,9 +81,9 @@ impl DSU {
 
 /// Operands must be usable as boolean arguments: non-empty face set and **index-consistent**
 /// topology (plus finite vertex coordinates). We intentionally do **not** require a watertight
-/// shell here --downstream feature code may pass intermediate shapes that are not yet
-/// `brep_check`‑clean.
-/// Invariants on the BOP DS after prepare ([`DS::new`]) and after paving ([`PaveFiller::perform`]).
+/// shell here -- downstream feature code may pass intermediate shapes that are not yet
+/// `brep_check`-clean.
+/// Invariants on the BOP DS after prepare ([`DS::new`]) and after paving ([`PaveFiller::perform]).
 fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  let nv = ds.vertices.len();
  let ne = ds.edges.len();
@@ -81,11 +91,11 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  let nic = ds.intersection_curves.len();
 
  if !ds.fuzzy_tol.is_finite() || ds.fuzzy_tol < 0.0 {
- return Err(BooleanError::NumericalFailure("union: DS fuzzy_tol invalid"));
+ return Err(BooleanError::NumericalFailure("bop: DS fuzzy_tol invalid"));
  }
  if ds.a_vertex_count > nv || ds.a_edge_count > ne || ds.a_face_count > nf {
  return Err(BooleanError::InvalidResult(
- "union: DS shape A extent vs pool size inconsistent",
+ "bop: DS shape A extent vs pool size inconsistent",
  ));
  }
 
@@ -93,7 +103,7 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  let p = v.point;
  if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
  return Err(BooleanError::NumericalFailure(
- "union: DS vertex coordinate non-finite",
+ "bop: DS vertex coordinate non-finite",
  ));
  }
  }
@@ -101,7 +111,7 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  for e in &ds.edges {
  if e.start_vertex >= nv || e.end_vertex >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS edge references vertex out of range",
+ "bop: DS edge references vertex out of range",
  ));
  }
  let [t0, t1] = e.t_range;
@@ -110,36 +120,36 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  // poles may have NaN t_range (zero 3D length). Skip t_range check.
  if e.start_vertex == e.end_vertex { continue; }
  return Err(BooleanError::NumericalFailure(
- "union: DS edge t_range non-finite",
+ "bop: DS edge t_range non-finite",
  ));
  }
  for p in &e.paves {
  if p.vertex_idx >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS pave vertex index out of range",
+ "bop: DS pave vertex index out of range",
  ));
  }
  if !p.param.is_finite() {
  return Err(BooleanError::NumericalFailure(
- "union: DS pave param non-finite",
+ "bop: DS pave param non-finite",
  ));
  }
  }
  for pb in &e.pave_blocks {
  if pb.0.read().unwrap().original_edge != NO_EDGE && pb.0.read().unwrap().original_edge >= ne {
  return Err(BooleanError::InvalidResult(
- "union: DS pave_block original_edge out of range",
+ "bop: DS pave_block original_edge out of range",
  ));
  }
  if pb.0.read().unwrap().pave1.vertex_idx >= nv || pb.0.read().unwrap().pave2.vertex_idx >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS pave_block vertex out of range",
+ "bop: DS pave_block vertex out of range",
  ));
  }
  if let Some(ni) = pb.0.read().unwrap().new_edge
  && ni >= ne {
  return Err(BooleanError::InvalidResult(
- "union: DS pave_block new_edge out of range",
+ "bop: DS pave_block new_edge out of range",
  ));
  }
  }
@@ -149,14 +159,14 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  for &vi in &f.boundary_verts {
  if vi >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS face boundary_verts out of range",
+ "bop: DS face boundary_verts out of range",
  ));
  }
  }
  for &ei in &f.boundary_edges {
  if ei >= ne {
  return Err(BooleanError::InvalidResult(
- "union: DS face boundary_edges out of range",
+ "bop: DS face boundary_edges out of range",
  ));
  }
  }
@@ -164,27 +174,27 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  // Paving may still refine orientation; only reject NaNs / infinities here.
  if !n.x.is_finite() || !n.y.is_finite() || !n.z.is_finite() {
  return Err(BooleanError::InvalidResult(
- "union: DS face normal non-finite",
+ "bop: DS face normal non-finite",
  ));
  }
  for &v in &f.face_info.vertices_on {
  if v >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS face_info.vertices_on out of range",
+ "bop: DS face_info.vertices_on out of range",
  ));
  }
  }
  for &v in &f.face_info.vertices_in {
  if v >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS face_info.vertices_in out of range",
+ "bop: DS face_info.vertices_in out of range",
  ));
  }
  }
  for &ci in &f.face_info.curves_sc {
  if ci >= nic {
  return Err(BooleanError::InvalidResult(
- "union: DS face_info.curves_sc out of range",
+ "bop: DS face_info.curves_sc out of range",
  ));
  }
  }
@@ -193,13 +203,13 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  for ic in &ds.intersection_curves {
  if ic.start_vertex >= nv || ic.end_vertex >= nv {
  return Err(BooleanError::InvalidResult(
- "union: DS intersection_curve vertex out of range",
+ "bop: DS intersection_curve vertex out of range",
  ));
  }
  for p in &ic.polyline {
  if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
  return Err(BooleanError::NumericalFailure(
- "union: DS intersection polyline non-finite",
+ "bop: DS intersection polyline non-finite",
  ));
  }
  }
@@ -208,14 +218,14 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  for inf in &ds.interf_vv {
  if inf.v1 >= nv || inf.v2 >= nv || inf.merged_vertex >= nv {
  return Err(BooleanError::InvalidResult(
- "union: interference VertexVertex index out of range",
+ "bop: interference VertexVertex index out of range",
  ));
  }
  }
  for inf in &ds.interf_ve {
  if inf.vertex >= nv || inf.edge >= ne || !inf.param.is_finite() {
  return Err(BooleanError::InvalidResult(
- "union: interference VertexEdge index/param invalid",
+ "bop: interference VertexEdge index/param invalid",
  ));
  }
  }
@@ -230,14 +240,14 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  || !inf.param2.is_finite()
  {
  return Err(BooleanError::InvalidResult(
- "union: interference EdgeEdge invalid",
+ "bop: interference EdgeEdge invalid",
  ));
  }
  }
  for inf in &ds.interf_vf {
  if inf.vertex >= nv || inf.face >= nf {
  return Err(BooleanError::InvalidResult(
- "union: interference VertexFace index out of range",
+ "bop: interference VertexFace index out of range",
  ));
  }
  }
@@ -251,27 +261,27 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  || !inf.edge_param.is_finite()
  {
  return Err(BooleanError::InvalidResult(
- "union: interference EdgeFace invalid",
+ "bop: interference EdgeFace invalid",
  ));
  }
  }
  for inf in &ds.interf_ff {
  if inf.f1 >= nf || inf.f2 >= nf {
  return Err(BooleanError::InvalidResult(
- "union: interference FaceFace face index out of range",
+ "bop: interference FaceFace face index out of range",
  ));
  }
  for &c in &inf.curves {
  if c >= nic {
  return Err(BooleanError::InvalidResult(
- "union: interference FaceFace curve index out of range",
+ "bop: interference FaceFace curve index out of range",
  ));
  }
  }
  for &pv in &inf.points {
  if pv >= nv {
  return Err(BooleanError::InvalidResult(
- "union: interference FaceFace point vertex out of range",
+ "bop: interference FaceFace point vertex out of range",
  ));
  }
  }
@@ -295,8 +305,6 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
  bvh::Bvh::build(brep)
 }
 
-/// `use_bvh`: match [`crate::bop_occt_union::boolean_op_generic`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
-/// when BVH acceleration is toggled off (`false` --plain [`pave_filler::PaveFiller::new`]).
 /// --OCCT-aligned: PaveFiller creation + configuration + Perform.
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
 fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
@@ -323,9 +331,11 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh
 
 /// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].
 /// Larger means a **less** closed manifold shell.
-/// Union: DS --PaveFiller --BooleanBuilder(Union) --recompute plane surfaces.
+/// Uses DS -- PaveFiller -- BooleanBuilder(op) pipeline.
 ///
 /// Same phases as [`boolean_op_generic`], returns history.
+///
+/// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderOperation::Build()`
 pub(crate) fn boolean_op_with_history_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
@@ -337,7 +347,10 @@ pub(crate) fn boolean_op_with_history_generic(
  Ok((result_brep, hist))
 }
 
-/// Uses BVH when both operands have faces, matching [`crate::bop_occt_union::boolean_op_generic`].
+/// Generic boolean operation for Union / Common / Cut.
+///
+/// ✅ OCCT-aligned: `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
+/// Uses BVH when both operands have faces.
 pub fn boolean_op_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
 ) -> Result<topods::BRep, BooleanError> {
@@ -349,11 +362,14 @@ pub fn boolean_op_generic(
  Ok(result)
 }
 
+// ── Union (Fuse) shortcuts ─────────────────────────────────────────────
+
+/// ✅ OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`
 pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }
 
-/// --OCCT-aligned: DS --PaveFiller --BooleanBuilder(Union) --result.
+/// --OCCT-aligned: DS -- PaveFiller -- BooleanBuilder(Union) -- result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
  let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
@@ -401,6 +417,90 @@ pub(crate) fn fuse_with_history_par_bvh(
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
  validate_ds_invariants(&ds)?;
  let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+ let (result_brep, hist) = builder.build_with_history()?;
+ Ok((result_brep, hist))
+}
+
+// ── Common (Intersection) shortcuts ─────────────────────────────────────
+
+/// ✅ OCCT shortcut: `BRepAlgoAPI_Common(a, b).Shape()` with history.
+pub(crate) fn common_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ common_with_history_bvh(a, b, true)
+}
+
+pub(crate) fn common_with_history_bvh(
+ a: &topods::BRep,
+ b: &topods::BRep,
+ use_bvh: bool,
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ validate_ds_invariants(&ds)?;
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ validate_ds_invariants(&ds)?;
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Intersection, brep, face_refs, ic_edge_map);
+ let (result_brep, hist) = builder.build_with_history()?;
+ Ok((result_brep, hist))
+}
+
+/// Parallel classification path for Common (Intersection).
+pub(crate) fn common_with_history_par(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ common_with_history_par_bvh(a, b, true)
+}
+
+pub(crate) fn common_with_history_par_bvh(
+ a: &topods::BRep,
+ b: &topods::BRep,
+ use_bvh: bool,
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ validate_ds_invariants(&ds)?;
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ validate_ds_invariants(&ds)?;
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Intersection, brep, face_refs, ic_edge_map);
+ let (result_brep, hist) = builder.build_with_history()?;
+ Ok((result_brep, hist))
+}
+
+// ── Cut (Difference) shortcuts ──────────────────────────────────────────
+
+/// ✅ OCCT shortcut: `BRepAlgoAPI_Cut(a, b).Shape()` with history.
+pub(crate) fn cut_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ cut_with_history_bvh(a, b, true)
+}
+
+pub(crate) fn cut_with_history_bvh(
+ a: &topods::BRep,
+ b: &topods::BRep,
+ use_bvh: bool,
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ validate_ds_invariants(&ds)?;
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ validate_ds_invariants(&ds)?;
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Difference, brep, face_refs, ic_edge_map);
+ let (result_brep, hist) = builder.build_with_history()?;
+ Ok((result_brep, hist))
+}
+
+/// Parallel classification path for Cut (Difference).
+pub(crate) fn cut_with_history_par(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ cut_with_history_par_bvh(a, b, true)
+}
+
+pub(crate) fn cut_with_history_par_bvh(
+ a: &topods::BRep,
+ b: &topods::BRep,
+ use_bvh: bool,
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
+ validate_ds_invariants(&ds)?;
+ let mut brep = rcad_kernel::topods::BRep::new();
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ validate_ds_invariants(&ds)?;
+ let mut builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Difference, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
  Ok((result_brep, hist))
 }

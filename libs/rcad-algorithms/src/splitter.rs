@@ -34,7 +34,7 @@ use rcad_kernel::topods;
 /// 4. Discards shapes whose origin traces back to the Tool (ShapeB).
 ///
 /// The `face_origins` slice comes from [`BooleanHistory::face_origins`]
-/// (returned by [`crate::bop_occt_union::boolean_op_with_history_generic`]), which maps each result
+/// (returned by [`crate::bop_occt_ops::boolean_op_with_history_generic`]), which maps each result
 /// face (in flattened order) to its input face origin.
 ///
 /// # Example
@@ -222,7 +222,7 @@ pub fn split_shape_occt_aligned(shape: &rcad_kernel::BRep, tool: &rcad_kernel::B
     // Step 1: Run the PaveFiller + Builder pipeline (same as boolean ops).
     // OCCT: BOPAlgo_Splitter uses BOPAlgo_Builder (not BOPAlgo_BOP), which
     // splits all faces and classifies them per the boolean op type.
-    let (brep, history) = crate::bop_occt_union::boolean_op_with_history_generic(
+    let (brep, history) = crate::bop_occt_ops::boolean_op_with_history_generic(
         BooleanOpType::Intersection,
         shape,
         tool,

@@ -85,7 +85,7 @@ pub mod approx_int;
 pub mod adv_app2_var;
 pub mod app_cont;
 pub mod blend;
-pub mod bop_occt_union;
+pub mod bop_occt_ops;
 pub mod brep_adaptor;
 pub mod brep_feat;
 pub mod brep_int_curve_surface;

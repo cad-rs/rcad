@@ -1205,7 +1205,7 @@ pub fn boolean_op_with_history(
  b: &BRep,
 ) -> Result<(BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
- let (t, hist) = bop_occt_union::fuse_with_history(&a.to_topods(), &b.to_topods())?;
+ let (t, hist) = bop_occt_ops::fuse_with_history(&a.to_topods(), &b.to_topods())?;
  return Ok((rcad_kernel::BRep::from_topods(&t), hist));
  }
 
@@ -1244,7 +1244,7 @@ pub fn boolean_op_par(
  b: &BRep,
 ) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
- let (t, h) = bop_occt_union::fuse_with_history_par(&a.to_topods(), &b.to_topods())?;
+ let (t, h) = bop_occt_ops::fuse_with_history_par(&a.to_topods(), &b.to_topods())?;
  return Ok((t, h));
  }
 

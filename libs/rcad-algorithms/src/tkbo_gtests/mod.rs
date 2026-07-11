@@ -133,7 +133,7 @@ mod bop_algo_direct_tests {
     use crate::BooleanOpType;
 
     fn perform_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("BOP operation failed")
+        crate::bop_occt_ops::boolean_op_generic(op, a, b).expect("BOP operation failed")
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod bop_algo_direct_tests {
             }
         }
 
-        let result = crate::bop_occt_union::boolean_op_generic(BooleanOpType::Intersection, &b1, &b2).expect("Common failed");
+        let result = crate::bop_occt_ops::boolean_op_generic(BooleanOpType::Intersection, &b1, &b2).expect("Common failed");
         validate_result(&result, -1.0, 1.0, false);
     }
 
@@ -274,7 +274,7 @@ mod bop_algo_complex_tests {
     use super::*;
 
     fn perform_direct_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("Direct BOP failed")
+        crate::bop_occt_ops::boolean_op_generic(op, a, b).expect("Direct BOP failed")
     }
 
     /// OCCT: MultipleIntersectingPrimitives
@@ -300,7 +300,7 @@ mod bop_algo_complex_tests {
         let box_ = make_unit_box();
 
         let direct = perform_direct_bop(&sphere, &box_, BooleanOpType::Union);
-        let two_step = crate::bop_occt_union::boolean_op_generic(BooleanOpType::Union, &sphere, &box_)
+        let two_step = crate::bop_occt_ops::boolean_op_generic(BooleanOpType::Union, &sphere, &box_)
             .expect("Two-step failed");
 
         let direct_vol = get_volume(&direct);
@@ -319,7 +319,7 @@ mod bop_algo_thin_tool_tests {
     use super::*;
 
     fn perform_direct_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        crate::bop_occt_union::boolean_op_generic(op, a, b).expect("Direct BOP failed")
+        crate::bop_occt_ops::boolean_op_generic(op, a, b).expect("Direct BOP failed")
     }
 
     /// OCCT: Cut_AxisAlignedThinTool_NearlyPreservesBoxVolume

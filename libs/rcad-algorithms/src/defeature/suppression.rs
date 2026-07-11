@@ -857,7 +857,7 @@ pub fn suppress_feature_robust(
             // Use fuzzy tolerance for retry
             boolean_op_with_options(op, &current, fill_solid, tolerance)
         } else {
-            crate::bop_occt_union::boolean_op_generic(op, &current, fill_solid)
+            crate::bop_occt_ops::boolean_op_generic(op, &current, fill_solid)
         };
 
         match result {
@@ -904,7 +904,7 @@ fn boolean_op_with_options(
     b: &topods::BRep,
     fuzzy_tol: f64,
 ) -> Result<topods::BRep, crate::BooleanError> {
-    crate::bop_occt_union::boolean_op_generic(op, a, b)
+    crate::bop_occt_ops::boolean_op_generic(op, a, b)
 }
 
 // =============================================================================

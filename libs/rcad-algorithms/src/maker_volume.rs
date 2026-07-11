@@ -149,7 +149,7 @@ impl MakerVolume {
         let parts = self.selected_cells(indices)?;
         let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
             if acc.tshapes.is_empty() { Ok(part) }
-            else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
+            else { crate::bop_occt_ops::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
         })?;
         Ok(result)
     }
@@ -162,7 +162,7 @@ impl MakerVolume {
         let parts = self.selected_cells(indices)?;
         let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
             if acc.tshapes.is_empty() { Ok(part) }
-            else { crate::bop_occt_union::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
+            else { crate::bop_occt_ops::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
 
         })?;
         Ok((result, ()))
