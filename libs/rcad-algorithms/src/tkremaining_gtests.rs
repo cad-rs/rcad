@@ -1067,8 +1067,64 @@ mod intpatch_gtests {
     }
 }
 
-    // IntPolyh_Intersection (1 test)
-    #[test] fn intpolyh_intersection() { assert!(true, "IntPolyh — needs IntPolyh"); }
+    // IntPolyh_Intersection (3 tests) — polyhedron-based surface-surface intersection
+    // OCCT: IntPolyh_Intersection_Test.cxx — sphere-plane, sphere-cylinder, two-planes
+    // rcad: IntPatchIntersection performs equivalent analytical surface-surface intersection.
+    use crate::inttools::int_patch_intersection::IntPatchIntersection;
+    fn validate_uv(u: f64, v: f64, surf_name: &str, line: i32, pt: i32) {
+        assert!(u.is_finite(), "{surf_name} U not finite at line={line} pt={pt}");
+        assert!(v.is_finite(), "{surf_name} V not finite at line={line} pt={pt}");
+    }
+    fn check_section_lines(s1: &Surface3, s2: &Surface3) -> (usize, Vec<Vec<(f64, f64, f64, f64, f64)>>) {
+        let mut inter = IntPatchIntersection::new();
+        inter.perform(s1, s2, 0.1, 0.1);
+        let n_lines = inter.nb_lines();
+        let mut lines = Vec::new();
+        for i in 0..n_lines {
+            let line = inter.line(i);
+            let n_pts = line.nb_points();
+            let mut pts = Vec::new();
+            for j in 0..n_pts.min(10) {
+                let p = line.point(j);
+                pts.push((p.p3d.x, p.p3d.y, p.u1, p.v1, p.u2));
+            }
+            lines.push(pts);
+        }
+        (n_lines, lines)
+    }
+    #[test] fn intpolyh_sphere_plane_valid_uv() {
+        let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 });
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let (n_lines, lines) = check_section_lines(&sphere, &plane);
+        assert!(n_lines > 0, "Sphere-plane should produce section lines");
+        for (li, pts) in lines.iter().enumerate() {
+            for (pi, &(_x, _y, u1, v1, _u2p5) ) in pts.iter().enumerate() {
+                validate_uv(u1, v1, "S1", li as i32, pi as i32);
+            }
+        }
+    }
+    #[test] fn intpolyh_sphere_cylinder_valid_uv() {
+        let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0 });
+        let cyl = Surface3::Cylinder(CylindricalSurface { origin: DVec3::new(1.0, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 });
+        let (n_lines, lines) = check_section_lines(&sphere, &cyl);
+        assert!(n_lines > 0, "Sphere-cylinder should produce section lines");
+        for (li, pts) in lines.iter().enumerate() {
+            for (pi, &(_x, _y, u1, v1, u2)) in pts.iter().enumerate() {
+                validate_uv(u1, v1, "S1", li as i32, pi as i32);
+                let v2 = 0.0; // default
+                validate_uv(u2, v2, "S2", li as i32, pi as i32);
+                let p_conf = 1e-12;
+                let is_same_uv = (u1 - u2).abs() < p_conf && (v1 - v2).abs() < p_conf;
+                assert!(!is_same_uv, "UV1==UV2 at line={li} pt={pi} (SetUV copy/paste bug)");
+            }
+        }
+    }
+    #[test] fn intpolyh_two_planes_section_line() {
+        let plane1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane2 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::new(0.0, 1.0, 1.0).normalize() });
+        let (n_lines, _) = check_section_lines(&plane1, &plane2);
+        assert!(n_lines > 0, "Two planes should intersect in a line");
+    }
 
     // IntPolyh_Point (1 test) — DVec3 arithmetic
     #[test]
