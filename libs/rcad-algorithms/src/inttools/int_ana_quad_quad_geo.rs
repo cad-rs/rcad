@@ -173,11 +173,10 @@ impl QuadQuadGeo {
         let n1_len = n1.length();
         let n2_len = n2.length();
 
-        // OCCT: dot product to check parallelism
-        let cos_angle = n1.dot(n2) / (n1_len * n2_len);
-
-        // OCCT: if parallel
-        if cos_angle.abs() > (std::f64::consts::PI / 2.0 - tol_ang).cos() {
+        // OCCT: cross product magnitude = |sin(angle)| * |n1| * |n2|
+        let cross_mag = n1.cross(n2).length();
+        // OCCT: if aMVD <= TolAng — normals are collinear (parallel planes)
+        if cross_mag <= tol_ang * n1_len.max(n2_len).max(1.0) {
             // OCCT: check if identical
             let dist = d1 / n1_len - d2 / n2_len;
             if dist.abs() < tol {

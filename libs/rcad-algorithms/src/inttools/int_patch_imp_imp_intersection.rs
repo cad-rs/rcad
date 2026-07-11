@@ -196,27 +196,32 @@ impl ImpImpIntersection {
         }
     }
 
-    fn int_pcy(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, tol: f64, _b_reverse: bool) {
+    fn int_pcy(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_plane_cylinder(q1, q2, 1e-8, tol, 0.0);
+        let (plane, cyl) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_plane_cylinder(plane, cyl, 1e-8, tol, 0.0);
         self.post_process_geo(&geo);
     }
 
-    fn int_pco(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, _b_reverse: bool) {
+    fn int_pco(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_plane_cone(q1, q2, tol_ang, tol);
+        let (plane, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_plane_cone(plane, cone, tol_ang, tol);
         self.post_process_geo(&geo);
     }
 
-    fn int_psp(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, _tol: f64, _b_reverse: bool) {
+    fn int_psp(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, _tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_plane_sphere(q1, q2);
+        // perform_plane_sphere expects (plane, sphere). b_reverse=true means q1=Sphere, q2=Plane.
+        let (plane, sphere) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_plane_sphere(plane, sphere);
         self.post_process_geo(&geo);
     }
 
-    fn int_pto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
+    fn int_pto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_plane_torus(q1, q2, tol);
+        let (plane, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_plane_torus(plane, torus, tol);
         self.post_process_geo(&geo);
     }
 
@@ -254,21 +259,25 @@ impl ImpImpIntersection {
         }
     }
 
-    fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
+    fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_cylinder_cone(q1, q2, tol);
+        let (cyl, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_cylinder_cone(cyl, cone, tol);
         self.post_process_geo(&geo);
     }
 
-    fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
+    fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_cylinder_sphere(q1, q2, tol);
+        // perform_cylinder_sphere expects (cylinder, sphere)
+        let (cyl, sph) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_cylinder_sphere(cyl, sph, tol);
         self.post_process_geo(&geo);
     }
 
-    fn int_cyto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
+    fn int_cyto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_cylinder_torus(q1, q2, tol);
+        let (cyl, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
+        geo.perform_cylinder_torus(cyl, torus, tol);
         self.post_process_geo(&geo);
     }
 
@@ -278,9 +287,10 @@ impl ImpImpIntersection {
         self.post_process_geo(&geo);
     }
 
-    fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
+    fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        geo.perform_sphere_cone(q1, q2, tol);
+        let (sph, con) = if b_reverse { (q1, q2) } else { (q2, q1) };
+        geo.perform_sphere_cone(sph, con, tol);
         self.post_process_geo(&geo);
     }
 

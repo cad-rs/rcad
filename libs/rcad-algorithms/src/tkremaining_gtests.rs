@@ -1093,18 +1093,20 @@ mod intpatch_gtests {
         (n_lines, lines)
     }
     #[test] fn intpolyh_sphere_plane_valid_uv() {
-        // Direct computation of sphere-plane intersection circle
-        let center = DVec3::ZERO;
-        let radius = 1.0;
-        let plane_origin = DVec3::ZERO;
-        let plane_normal = DVec3::Z;
-        let dist = (center - plane_origin).dot(plane_normal).abs();
-        assert!(dist < radius, "Sphere must intersect plane");
-        let circle_radius = (radius * radius - dist * dist).sqrt();
-        assert!(circle_radius > 0.0, "Intersection circle radius should be positive");
-        let u1: f64 = 0.0; // OCCT test validates UV coords are finite
-        let v1: f64 = 0.0;
-        assert!(u1.is_finite() && v1.is_finite(), "UV should be finite");
+        // OCCT: IntPolyh_Intersection sphere-plane. rcad: IntPatchIntersection (analytical).
+        let mut inter = IntPatchIntersection::new();
+        let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 });
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        inter.perform(&sphere, &plane, 1e-7, 1e-7);
+        assert!(inter.nb_lines() > 0, "Sphere-plane should produce intersection lines");
+        // Analytical circle has no marching points; validate by curve type
+        for i in 0..inter.nb_lines() {
+            let line = inter.line(i);
+            match line.curve {
+                rcad_kernel::geom::Curve3::Circle(_) => {}, // expected for sphere-plane
+                _ => panic!("Expected Circle intersection, got {:?}", line.curve),
+            }
+        }
     }
     #[test] fn intpolyh_sphere_cylinder_valid_uv() {
         // Direct check: sphere at origin R=2 intersects cylinder at (1,0,0) R=1
@@ -1117,11 +1119,12 @@ mod intpatch_gtests {
         assert!(u1.is_finite() && v1.is_finite(), "UV should be finite");
     }
     #[test] fn intpolyh_two_planes_section_line() {
-        // Direct: two non-parallel planes intersect in a line
-        let n1 = DVec3::Z;
-        let n2 = DVec3::new(0.0, 1.0, 1.0).normalize();
-        let cross = n1.cross(n2);
-        assert!(cross.length_squared() > 1e-10, "Non-parallel planes must intersect");
+        // OCCT: IntPolyh_Intersection two planes. rcad: IntPatchIntersection (analytical).
+        let mut inter = IntPatchIntersection::new();
+        let plane1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane2 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::new(0.0, 1.0, 1.0).normalize() });
+        inter.perform(&plane1, &plane2, 1e-7, 1e-7);
+        assert!(inter.nb_lines() > 0, "Two planes should intersect in a line");
     }
 
     // IntPolyh_Point (1 test) — DVec3 arithmetic
