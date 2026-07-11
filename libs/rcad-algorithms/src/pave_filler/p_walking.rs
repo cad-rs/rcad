@@ -81,8 +81,6 @@ impl PWalking {
         let reso_v1 = v_resolution(s1, epsilon);
         let reso_u2 = u_resolution(s2, epsilon);
         let reso_v2 = v_resolution(s2, epsilon);
-
-        // OCCT L265-311: resolution scaling
         let scale_reso = |reso: f64, lo: f64, hi: f64| -> f64 {
             let max_val = lo.abs().max(hi.abs());
             let new_reso = reso * max_val;
@@ -93,16 +91,12 @@ impl PWalking {
         let reso_v1 = scale_reso(reso_v1, vm1, vm1_max);
         let reso_u2 = scale_reso(reso_u2, um2, um2_max);
         let reso_v2 = scale_reso(reso_v2, vm2, vm2_max);
-
-        // OCCT L313-316: initial step sizes
         let mut pasuv = [
             pas_max * (um1_max - um1).abs(),
             pas_max * (vm1_max - vm1).abs(),
             pas_max * (um2_max - um2).abs(),
             pas_max * (vm2_max - vm2).abs(),
         ];
-
-        // OCCT L318-333: clamp resolution relative to step
         let clamp_reso = |reso: f64, step: f64| -> f64 {
             if reso > 0.0001 * step { 0.00001 * step } else { reso }
         };
@@ -110,11 +104,7 @@ impl PWalking {
         let reso_v1 = clamp_reso(reso_v1, pasuv[1]);
         let reso_u2 = clamp_reso(reso_u2, pasuv[2]);
         let reso_v2 = clamp_reso(reso_v2, pasuv[3]);
-
-        // OCCT L335-397: periodic extension (simplified; full OCCT period logic preserved)
         // rcad: periodic surfaces handled by the marching step
-
-        // OCCT L399-413: min steps + clamp to 10
         let my_step_min = [100.0 * reso_u1, 100.0 * reso_v1, 100.0 * reso_u2, 100.0 * reso_v2];
         for i in 0..4 {
             if pasuv[i] > 10.0 { pasuv[i] = 10.0; }
@@ -368,7 +358,6 @@ impl PWalking {
                                   u1: f64, v1: f64, u2: f64, v2: f64,
                                   is_the_first: bool) -> bool
     {
-        // OCCT L2727-2742: bounds + tolerance
         let (u1b_f, u1b_l, v1b_f, v1b_l) = uv_range(s1);
         let (u2b_f, u2b_l, v2b_f, v2b_l) = uv_range(s2);
         let low = [u1b_f, v1b_f, u2b_f, v2b_f];
@@ -376,11 +365,7 @@ impl PWalking {
 
         let a3d_tol = 1e-7; // OCCT: from surface resolution
         let a_tol = 1e-6_f64.max(a3d_tol);
-
-        // OCCT L2745-2750: initial point
         let mut pnt = [u1, v1, u2, v2];
-
-        // OCCT L2754-2776: iterative minimization (rcad: closest_point_on_surface)
         let p3d_mid = {
             let p1 = surface_point_at(s1, pnt[0], pnt[1]);
             let p2 = surface_point_at(s2, pnt[2], pnt[3]);
@@ -410,8 +395,6 @@ impl PWalking {
         let p_int = (p1 + p2) * 0.5;
         let sq_dist = p_int.distance_squared(p1);
         if sq_dist > a_tol * a_tol { return false; }
-
-        // OCCT L2829-2885: insert point at start of line (is_the_first)
         //   with loop detection (hairpin bend check).
         // rcad: simplified — insert directly without loop check since
         //   marching already produces consistent orientations.
@@ -557,15 +540,11 @@ impl PWalking {
                                        the_direction_flag: bool) -> bool {
         let (u1b_f, u1b_l, v1b_f, v1b_l) = uv_range(s1);
         let (u2b_f, u2b_l, v2b_f, v2b_l) = uv_range(s2);
-
-        // OCCT L1859: get previous point as starting parameter
         let prev = match &self.previous_point {
             Some(p) => p.clone(),
             None => return false,
         };
         let mut param = [prev.u1, prev.v1, prev.u2, prev.v2];
-
-        // OCCT L1861-1893: check if at boundary
         if (param[0] - u1b_f).abs() < self.reso_u1 { return false; }
         if (param[1] - v1b_f).abs() < self.reso_v1 { return false; }
         if (param[2] - u2b_f).abs() < self.reso_u2 { return false; }
@@ -579,8 +558,6 @@ impl PWalking {
         let mut out_of_tangent = false;
         let mut nb_iter_no_append = 0i32;
         let mut nb_equal = 0i32;
-
-        // OCCT L1895-1930: main loop, step along tangent
         while !b_stop && nb_iter_no_append < 20 && nb_equal < 20 {
             nb_iter_no_append += 1;
 
@@ -592,15 +569,11 @@ impl PWalking {
                     _ => 10.0,
                 }
             });
-
-            // OCCT L1932-1935: step along iso direction
             let sg = |diff: f64| -> f64 { if diff >= 0.0 { 1.0 } else { -1.0 } };
             param[0] += self.pasuv[0] * sg(param[0] - prev.u1) / f;
             param[1] += self.pasuv[1] * sg(param[1] - prev.v1) / f;
             param[2] += self.pasuv[2] * sg(param[2] - prev.u2) / f;
             param[3] += self.pasuv[3] * sg(param[3] - prev.v2) / f;
-
-            // OCCT L1965-1977: solve for intersection point via gradient minimization
             // rcad: use distance_minimize_by_gradient
             let solved = self.distance_minimize_by_gradient(s1, s2, &mut param);
 
@@ -609,11 +582,7 @@ impl PWalking {
                 out_of_tangent = true;
                 break;
             }
-
-            // OCCT L1979: TestDeflection
             let a_status = self.test_deflection(the_choix_iso, StatusDeflection::PasTropPetit);
-
-            // OCCT L1993-2031: handle deflection status
             match a_status {
                 StatusDeflection::PasTropGrand => {
                     // step too big → reduce step (OCCT L2000-2021 simulated)
@@ -624,11 +593,9 @@ impl PWalking {
                 }
                 _ => {
                     // OK or other: check stop conditions
-                    // OCCT L2035: TestArret
                     b_stop = self.test_arret(the_direction_flag, &mut param, &mut ConstIsoparametric::None);
 
                     if !b_stop {
-                        // OCCT L2046-2054: check equal points
                         let np = &PntOn2S {
                             p3d: DVec3::ZERO,
                             u1: param[0], v1: param[1],
@@ -648,7 +615,6 @@ impl PWalking {
                     out_of_tangent = true;
 
                     if !b_stop {
-                        // OCCT L2061-2109: check point validity and add to line
                         let u1 = param[0].clamp(u1b_f, u1b_l);
                         let v1 = param[1].clamp(v1b_f, v1b_l);
                         let u2 = param[2].clamp(u2b_f, u2b_l);

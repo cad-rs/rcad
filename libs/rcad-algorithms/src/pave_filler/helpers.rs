@@ -205,34 +205,23 @@ pub(crate) fn find_valid_range(
     sv_pt: DVec3, sv_tol: f64, ev_pt: DVec3, ev_tol: f64,
 ) -> Option<(f64, f64)> {
     use rcad_kernel::geom::CurveEval;
-    // OCCT L184-187: range must be wider than PConfusion
     if (t1 - t0).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
-    // OCCT L191-199: aMaxPar for Epsilon computation
     let abs_max = t0.abs().max(t1.abs()).max(1.0);
-    // OCCT L201-202: anEps = max(curve.Resolution(theTolE * 0.1), Epsilon(aMaxPar), Precision::PConfusion())
     let eps = curve_resolution(curve, (t0 + t1) * 0.5, theTolE * 0.1)
         .max(abs_max * f64::EPSILON)
         .max(rcad_kernel::tolerance::CONFUSION);
-
-    // OCCT L204-225: start point — infinite → pass through; otherwise findNearestValidPoint
     let first = if t0.is_infinite() { t0 } else {
         match find_nearest_valid_point(curve, t0, t1, true, sv_pt, sv_tol, eps) {
-            // OCCT L221: theParV2 - theFirst < anEps => return false
             Some(f) => { if t1 - f < eps { return None; } f }
             None => { return None; }
         }
     };
-
-    // OCCT L227-248: end point
     let last = if t1.is_infinite() { t1 } else {
         match find_nearest_valid_point(curve, t0, t1, false, ev_pt, ev_tol, eps) {
-            // OCCT L244: theLast - theParV1 < anEps => return false
             Some(l) => { if l - t0 < eps { return None; } l }
             None => { return None; }
         }
     };
-
-    // OCCT L250-255: if first > last, overlapping, not valid
     if first > last { None } else { Some((first, last)) }
 }
 
@@ -399,7 +388,7 @@ pub(crate) fn put_pave_on_curve_full(
 ) -> Vec<(f64, usize)> {
     let ic = &ds.intersection_curves[curve_idx];
     let [t0, t1] = ic.t_range;
-    let a_tol_r3d = ic.geom_tol; // OCCT L2384: max(theNC.Tolerance(), theNC.TangentialTolerance())
+    let a_tol_r3d = ic.geom_tol;
     let mut paves: Vec<(f64, usize)> = Vec::new();
 
     // OCCT-aligned: compute curve bounding box for vertex filtering (L2409: aBoxC.IsOut(aBoxV)).
@@ -410,7 +399,6 @@ pub(crate) fn put_pave_on_curve_full(
     //   rcad: filter EF vertices by checking if the interference's face is in this pair.
     let ef_vertices: std::collections::HashSet<usize> = ds.interf_ef.iter()
         .filter_map(|inf| {
-            // OCCT L2896: aMI.Contains(nS1) && aMI.Contains(nS2)
             //   Both sub-shapes belong to the two faces -- the EF vertex involves this pair.
             if inf.face == face_idxs[0] || inf.face == face_idxs[1] {
                 Some(inf.new_vertex)
@@ -420,8 +408,6 @@ pub(crate) fn put_pave_on_curve_full(
 
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
-
-        // OCCT L2386-2392: EF vertices first -- only vertices belonging to this FF pair
         for &vi in &face.face_info.vertices_on {
             if !ef_vertices.contains(&vi) { continue; } // OCCT GetStickVertices: skip non-pair EF
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
@@ -433,15 +419,10 @@ pub(crate) fn put_pave_on_curve_full(
                 }
             }
         }
-
-        // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering
         for &vi in &face.face_info.vertices_in {
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
-            // OCCT L2399-2401: skip ON/IN vertices already in EF set
             if ef_vertices.contains(&vi) { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
-
-            // OCCT L2404-2412: BBox filtering
             if let Some([c_min, c_max]) = curve_bbox {
                 let v_pt = ds.vertices[vi].point;
                 let v_tol = ds.vertices[vi].geom_tol.max(a_tol_r3d);
@@ -453,8 +434,6 @@ pub(crate) fn put_pave_on_curve_full(
                     continue;
                 }
             }
-
-            // OCCT L2413-2415: IsNewShape filter - skip non-new vertices
             if !ds.is_new_vertex(vi) {
                 continue;
             }

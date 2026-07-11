@@ -30,7 +30,7 @@ pub use crate::bopds::ds::NearTangentType;
 /// Below this threshold, brute-force O(n ? is faster due to BVH build overhead.
 const BVH_THRESHOLD: usize = 20;
 
-///  ?OCCT-aligned: BOPAlgo_PaveFiller =six intersection passes
+///  OCCT-aligned: BOPAlgo_PaveFiller =six intersection passes
 /// (PaveFiller.hxx L106-107, PaveFiller.cxx L234-355).
 mod glue;
 mod intersection;
@@ -83,7 +83,7 @@ pub struct PaveFiller<'a> {
  pub ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
  bvh_a: Option<&'a Bvh>,
  bvh_b: Option<&'a Bvh>,
- ///  ?OCCT-aligned: BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
+ ///  OCCT-aligned: BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
  glue: GlueEnum,
  glue_tolerance: f64,
  /// OCCT-aligned: convenience  ?true when glue is active (not GlueOff).
@@ -121,7 +121,7 @@ pub struct PaveFiller<'a> {
  /// =OCCT-aligned: myDistances =minimal edge-face distances for non-intersecting
  /// pairs.  Map: (edge_idx, face_idx) =Vec<EdgeRangeDistance>.
  distances: std::collections::HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
- ///  ?OCCT-aligned: myReport  ?collects alerts during PaveFiller execution.
+ ///  OCCT-aligned: myReport  ?collects alerts during PaveFiller execution.
  my_report: Report,
 }
 
@@ -199,7 +199,7 @@ fn propagate_ic_vertices_to_shared_faces(
 
 impl<'a> PaveFiller<'a> {
 
- ///  ?OCCT-aligned: Prepare (PaveFiller_7.cxx L850-929).
+ ///  OCCT-aligned: Prepare (PaveFiller_7.cxx L850-929).
  /// Build 2D pcurves for edges on planar faces.
  /// OCCT: iterate all V/E, E/E, E/F pairs to find planar faces, collect edge-face pairs,
  /// compute pcurves in parallel, update edges.  rcad: DS::build_face_reps already computes
@@ -246,9 +246,7 @@ impl<'a> PaveFiller<'a> {
  }
  }
 
-
  //  ?OCCT L248 Prepare: build pcurves on planar faces
- // OCCT L234-355 PerformInternal: Init->Prepare->VV->VE->EE->VF->EF->
  // RepeatInt->ForceEE->ForceEF->FF->UpdBlk->RefFI->MkSEdges->MkBlks->
  // ChkSI->RefFO->RmvME->MkPCurves->ProcDE
  pub fn perform(&mut self) {
@@ -292,11 +290,8 @@ impl<'a> PaveFiller<'a> {
   self.ds.update_pave_blocks_with_sd_vertices();
 
   let _ee_survivors: Vec<usize> = if !skip_ee {
-  // OCCT L145-267: PerformEE  ?build intersections
   let ee_modified = self.perform_ee_bvh(&ee_pairs);
-  // OCCT L558-565: PerformCommonBlocks + PerformNewVertices
   let survivors = self.treat_new_vertices();
-  // OCCT L571-585: SplitPaveBlocks for remaining modified edges
   // (edges with new vertices already handled by treat_new_vertices)
   if !ee_modified.is_empty() {
   let sd_vertices: std::collections::HashSet<usize> =
@@ -316,7 +311,6 @@ impl<'a> PaveFiller<'a> {
   self.split_pave_blocks(&remaining, false);
   }
   }
-  // OCCT L273: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
   survivors
   } else { vec![] };
@@ -351,7 +345,6 @@ impl<'a> PaveFiller<'a> {
  }
 
  // =OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
- // OCCT L302: ForceInterfEE =after RepeatIntersection, force intersection
  // of edge pairs sharing a vertex with increased tolerance, detecting
  // collinear/coincident edges (common block).
  // =rcad: simplified, only checks line-line edge pairs sharing a pave vertex.
@@ -360,7 +353,6 @@ impl<'a> PaveFiller<'a> {
  }
 
  // =OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
- // OCCT L309: ForceInterfEF =after ForceInterfEE, force intersection of
  // edges whose both endpoints are on a face with increased tolerance.
  // =rcad: simplified, only checks edge-face pairs where both endpoints are on the face.
  if !skip_ef {
@@ -369,8 +361,6 @@ impl<'a> PaveFiller<'a> {
 
  if !skip_ff {
  self.perform_ff();
-
- // OCCT L330: InitPaveBlock1 is called per-curve inside MakeBlocks (PaveFiller_6.cxx L800).
  // rcad ICs start with empty pave_blocks; MakeBlocks::InitPaveBlock1 creates them.
 
  // =OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
@@ -406,14 +396,14 @@ impl<'a> PaveFiller<'a> {
  // OCCT uses AddWarning =non-fatal, the operation continues.
  let si_warnings = self.check_self_interference();
 
- //  ?OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
+ //  OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
  self.update_interfs_with_sd_vertices();
 
- //  ?OCCT-aligned: ReleasePaveBlocks (PerformInternal L339) =OCCT frees
+ //  OCCT-aligned: ReleasePaveBlocks (PerformInternal L339) =OCCT frees
  // UNUSED PBs.  rcad: PBs remain in pool (PaveBlocksSc indices stay valid).
  // Clearing the pool here would invalidate PaveBlocksSc indices.
 
- //  ?OCCT-aligned: RefineFaceInfoOn =after ReleasePaveBlocks, remove
+ //  OCCT-aligned: RefineFaceInfoOn =after ReleasePaveBlocks, remove
  // zero-length On pave blocks (PerformInternal L340, BOPDS_DS::RefineFaceInfoOn).
  for fi in 0..self.ds.faces.len() {
  self.ds.refine_face_info_on(fi);
@@ -426,7 +416,7 @@ impl<'a> PaveFiller<'a> {
  // =OCCT-aligned: MakePCurves =after RemoveMicroEdges (PerformInternal L344)
  self.make_pcurves();
 
- //  ?OCCT-aligned: ProcessDE =after MakePCurves (PerformInternal L350)
+ //  OCCT-aligned: ProcessDE =after MakePCurves (PerformInternal L350)
  self.process_de();
 
  // Export to BRep if direct output is enabled (A3 dual-write).
@@ -444,25 +434,16 @@ impl<'a> PaveFiller<'a> {
 
 
 
-
-
-
-
  // = = = =Pass 1: Vertex-Vertex = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-
  // = = = =Pass 2: Vertex-Edge = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
 
 
  // = = = =Pass 3: Edge-Edge = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 
 
-
  // = = = =Pass 4: Vertex-Face = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-
 
 
 
@@ -471,26 +452,17 @@ impl<'a> PaveFiller<'a> {
 
 
 
-
-
  // = = = =Pass 6: Face-Face = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-
  fn update_blocks_with_shared_vertices(&mut self) {
- // OCCT L3948-3951: non-destructive guard
  if !self.non_destructive { return; }
-
- // OCCT L3953-3960: check FF interferences
  let has_ff = !self.ds.interf_ff.is_empty();
  if !has_ff { return; }
 
  // Collect face pairs with shared (old) vertices
- // OCCT L3967-4049: iterate each FF
  let ff_entries: Vec<(usize, usize, Vec<usize>)> = self.ds.interf_ff.iter()
  .filter_map(|ff| {
  if ff.curves.is_empty() { return None; }
-
- // OCCT L3996-4017: collect shared old vertices
  let fi1 = ff.f1;
  let fi2 = ff.f2;
  let on1 = &self.ds.faces[fi1].face_info.vertices_on;
@@ -501,9 +473,7 @@ impl<'a> PaveFiller<'a> {
  let shared: Vec<usize> = on1.iter()
  .chain(in1.iter())
  .filter(|&&vi| {
- // OCCT L4008-4011: skip new vertices (only old shapes)
  if self.ds.is_new_vertex(vi) { return false; }
- // OCCT L4012: must be ON or IN in the other face too
  on2.contains(&vi) || in2.contains(&vi)
  })
  .copied()
@@ -513,16 +483,11 @@ impl<'a> PaveFiller<'a> {
  Some((fi1, fi2, ff.curves.clone()))
  })
  .collect();
-
- // OCCT L4020-4048: for each FF entry, try shared vertices on each curve
  for (f1, f2, curves) in &ff_entries {
- // OCCT L3980-3987: UpdateFaceInfoOn equivalent
  // rcad: not needed =FaceInfo data is already populated.
 
  for &ci in curves {
  if ci >= self.ds.intersection_curves.len() { continue; }
-
- // OCCT L4023: aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance())
  let ic = &self.ds.intersection_curves[ci];
  let _a_tol_r3d = ic.geom_tol;
  let f1 = *f1;
@@ -538,9 +503,7 @@ impl<'a> PaveFiller<'a> {
  .chain(in1.iter())
  .filter(|&&vi| {
  if self.ds.is_new_vertex(vi) { return false; }
- // OCCT L4012: present in the other face's On/In sets
  if !on2.contains(&vi) && !in2.contains(&vi) { return false; }
- // OCCT L4030-4034: skip if already has SD mapping
  // rcad: check shape_sd
  if self.ds.shape_sd.is_sub_vertex(vi) { return false; }
  true
@@ -549,10 +512,7 @@ impl<'a> PaveFiller<'a> {
  .collect();
 
  for &n_v in &shared {
- // OCCT L4036: EstimatePaveOnCurve
  if self.estimate_pave_on_curve(ci, n_v).is_none() { continue; }
-
- // OCCT L4042-4046: UpdateVertex + InitPaveBlocksForVertex
  let v_tol = self.ds.vertices[n_v].geom_tol;
  // UpdateVertex: increase tolerance if the projection distance is larger
  if let Some(t) = self.project_vertex_on_curve(n_v, ic) {
@@ -580,7 +540,6 @@ impl<'a> PaveFiller<'a> {
  }
  }
  }
- // OCCT L4051: UpdateCommonBlocksWithSDVertices()
  self.ds.update_pave_blocks_with_sd_vertices();
  }
 
@@ -621,7 +580,7 @@ impl<'a> PaveFiller<'a> {
  struct SECurve { curve_idx: usize, sv: usize, ev: usize, curve: Curve3, geom_tol: f64, t_range: [f64; 2], pbs: Vec<PaveBlock> }
  let mut se_data: Vec<SECurve> = Vec::new();
 
- //  ?OCCT-aligned: build position= ertex map for IC endpoint remapping (ShapesSD equivalent).
+ //  OCCT-aligned: build position= ertex map for IC endpoint remapping (ShapesSD equivalent).
  // OCCT's PaveFiller records same-domain vertices via AddShapeSD.
  // rcad: find the minimum-index vertex at each distinct position from ALL DS vertices.
  let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
@@ -636,7 +595,6 @@ impl<'a> PaveFiller<'a> {
  .min()
  .unwrap_or(v)
  };
- // OCCT L854-875 (M6): Build BVH tree of existing PBs for IsExistingPaveBlock lookup.
  // rcad: key by (face1, face2, nV1, nV2) =same geometric edge from same face pair reuses.
  // Different face pairs produce separate edges even with same vertices (sphere pole case).
  let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
@@ -673,7 +631,7 @@ impl<'a> PaveFiller<'a> {
  };
  for mut sub_pb in sub_pbs {
  let (nV1_raw, nV2_raw) = sub_pb.indices();
- //  ?OCCT-aligned: remap IC endpoint vertices to canonical boundary vertices
+ //  OCCT-aligned: remap IC endpoint vertices to canonical boundary vertices
  // (ShapesSD equivalent).  OCCT records SD during PaveFiller vertex creation;
  // rcad does it here so section edges connect boundary vertices, not orphan IC vertices.
  let nV1 = remap_ds_v(nV1_raw);
@@ -687,7 +645,6 @@ impl<'a> PaveFiller<'a> {
  if std::env::var("RCAD_DEBUG_PB").is_ok() { eprintln!("[PB_FAIL] ci={} RANGE_TOO_SMALL", ci); }
  continue;
  }
- // OCCT L906-918: IsValidBlockForFaces =check midpoint of sub-PB against both faces
  if surf0.is_some() && surf1.is_some() {
  let s0 = surf0.as_ref().unwrap();
  let s1 = surf1.as_ref().unwrap();
@@ -723,7 +680,6 @@ impl<'a> PaveFiller<'a> {
  }
  if !b_flag { continue; }
  } // end IsValidBlockForFaces
- // OCCT L936-947: FindValidRange check =skip micro-edges where vertex tolerance
  // spheres cover the entire parameter range.
  if nV1 < self.ds.vertices.len() && nV2 < self.ds.vertices.len() {
  let v1_pt = self.ds.vertices[nV1].point;
@@ -739,7 +695,6 @@ impl<'a> PaveFiller<'a> {
  continue;
  }
  }
- // OCCT L920-963 (M7e): IsExistingPaveBlock =check if this sub-PB already has
  // a DSEdge from another curve (via BVH tree / existing_edge_map).
  // key includes face pair so different FF pairs create separate edges.
  let (v1, v2) = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
@@ -747,7 +702,6 @@ impl<'a> PaveFiller<'a> {
  let f2 = face_ids[0].max(face_ids[1]);
  let edge_key = (f1, f2, v1, v2);
  if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
- // OCCT L924-928: UpdateEdgeTolerance + UpdateSavedTolerance for reused edge
  sub_pb.new_edge = Some(existing_ei);
  sub_with_edge.push(sub_pb);
  if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 { eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei); }
@@ -861,5 +815,4 @@ impl<'a> PaveFiller<'a> {
 // Second empty impl block (kept for OCCT alignment)
 impl<'a> PaveFiller<'a> {
 }
-
 

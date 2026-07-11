@@ -53,7 +53,6 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  pub(crate) fn fill_shrunk_data(&mut self) {
-  // OCCT L2415-2435: iterate all pave blocks, compute shrunk range
  let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
  let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
  let v_tols: Vec<f64> = self.ds.vertices.iter().map(|v| v.geom_tol).collect();
@@ -115,7 +114,6 @@ impl<'a> super::PaveFiller<'a> {
   /// computes shrunk data, and unifies vertices when no valid range.
   pub(crate) fn split_pave_blocks(&mut self, edges: &std::collections::HashSet<usize>,
   add_interfs: bool) {
-    // OCCT L423-427: aMPairs (dedup fence), aMCBNewPB (CB tracking)
     let mut a_mcb_new_pb: std::collections::HashMap<usize,
       Vec<(usize, PaveBlock)>> = std::collections::HashMap::new();
     let mut verts_to_merge: Vec<Vec<usize>> = Vec::new();
@@ -123,8 +121,6 @@ impl<'a> super::PaveFiller<'a> {
       if ei >= self.ds.edges.len() { continue; }
       let edge = &self.ds.edges[ei];
       if edge.paves.len() < 2 { continue; }
-
-      // OCCT L449: aCB = myDS->CommonBlock(aPB)
       // Map old PB vertex pairs to their CommonBlock index
       let old_pair_to_cb: std::collections::HashMap<(usize, usize), usize> = edge.pave_blocks.iter()
         .filter_map(|pb| {
@@ -136,8 +132,6 @@ impl<'a> super::PaveFiller<'a> {
           })
         })
         .collect();
-
-      // OCCT L447-453: aPB->Update(aLPBN)  ?rebuild PBs from all paves
       let mut params: Vec<(usize, f64)> = edge.paves.iter()
         .map(|p| (p.vertex_idx, p.param)).collect();
       params.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -146,33 +140,24 @@ impl<'a> super::PaveFiller<'a> {
       // Build new PBs from consecutive pave pairs
       let mut new_pbs: Vec<PaveBlock> = Vec::new();
       for w in params.windows(2) {
-        // OCCT L460-461: UpdatePaveBlockWithSDVertices
         let pb = PaveBlock::new(
           ei,
           Pave { vertex_idx: w[0].0, param: w[0].1 },
           Pave { vertex_idx: w[1].0, param: w[1].1 },
         );
-
-        // OCCT L462: FillShrunkData
         let v1_tol = if w[0].0 < self.ds.vertices.len() { self.ds.vertices[w[0].0].geom_tol } else { TOLERANCE_ABS };
         let v2_tol = if w[1].0 < self.ds.vertices.len() { self.ds.vertices[w[1].0].geom_tol } else { TOLERANCE_ABS };
         let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
         sr.set_data(ei, [w[0].1, w[1].1], v1_tol, v2_tol, edge.geom_tol);
         sr.perform(&edge.curve);
-
-        // OCCT L468-507: Check valid range + unify if needed
         if sr.shrunk_range().is_none() || (!sr.is_splittable() && sr.shrunk_range().is_some()) {
           let nv1 = w[0].0;
           let nv2 = w[1].0;
           if nv1 != nv2 {
-            // OCCT L493-506: MakeSDVertices for the pair
             verts_to_merge.push(vec![nv1, nv2]);
           }
           continue;
         }
-
-        // OCCT L510-511: Append valid new PB
-        // OCCT L512-523: If original PB had CB, track new PB
         let v1 = pb.pave1.vertex_idx;
         let v2 = pb.pave2.vertex_idx;
         let new_key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
@@ -181,12 +166,8 @@ impl<'a> super::PaveFiller<'a> {
         }
         new_pbs.push(pb);
       }
-
-      // OCCT L526: Replace old PBs with new ones
       self.ds.edges[ei].pave_blocks = new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect();
     }
-
-    // OCCT L493-506: Merge vertex pairs that have no valid range
     for pair in &verts_to_merge {
       if pair.len() >= 2 {
         let nv1 = pair[0];
@@ -201,8 +182,6 @@ impl<'a> super::PaveFiller<'a> {
         }
       }
     }
-
-    // OCCT L529-617: Make Common Blocks from split PBs
     // Group new PBs by vertex pair within each original CB
     // aMInds maps (cb_idx, vertex_pair) -> Vec<(edge_idx, local_pb_idx)>
     let mut a_m_inds: std::collections::HashMap<(usize, (usize, usize)), Vec<(usize, usize)>> =
@@ -357,7 +336,6 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  if bIsVertexOnLine {
- // OCCT L3031: aDTol = BOPTools_AlgoTools::DTolerance()  (=1.e-12)
  let aDTol = 1e-12;
  let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
 
@@ -413,22 +391,15 @@ impl<'a> super::PaveFiller<'a> {
  ) {
  let ic = &self.ds.intersection_curves[curve_idx];
  let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
- // OCCT L2415-2416: aBoxC = theNC.Box()
  let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
-
- // OCCT L2418-2424: Put EF vertices first (iCheckExtend=2)
  for &nV in theMVEF {
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2);
  }
-
- // OCCT L2426-2452: Put all other ON/IN vertices (iCheckExtend=1)
  for &nV in theMVOnIn {
  if theMVEF.contains(&nV) { continue; }
  if theMVCommon.contains(&nV) {
- // OCCT L2436: common vertices skip box check
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
  } else {
- // OCCT L2438-2444: Box check  ?skip if curve box doesn't overlap vertex box
  if nV < self.ds.shape_info.len() {
  if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[nV].box_min, self.ds.shape_info[nV].box_max) {
  let v_box_min = vmn - glam::DVec3::splat(aTolR3D);
@@ -442,7 +413,6 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- // OCCT L2445-2447: Skip non-new shapes
  if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
  continue;
  }
@@ -464,11 +434,9 @@ impl<'a> super::PaveFiller<'a> {
  let ic = &self.ds.intersection_curves[ci];
  (ic.start_vertex, ic.end_vertex, ic.t_range, ic.curve.clone(), ic.geom_tol)
  };
- // OCCT L2792-2798: getBoundPaves  ?check if both ends already have vertices
  if start_vertex < self.ds.vertices.len() && end_vertex < self.ds.vertices.len() {
  return;
  }
- // OCCT L2799-2801: RemoveUsedVertices
  let a_mv: std::collections::HashSet<usize> = aMVStick.iter().copied().collect();
  if a_mv.is_empty() { return; }
 
@@ -491,15 +459,12 @@ impl<'a> super::PaveFiller<'a> {
  for &n_v in &a_mv {
  let v_pt = self.ds.vertices[n_v].point;
  for m in 0..2 {
- // OCCT L2838-2841: skip if bound already has a vertex
  if (m == 0 && start_vertex < self.ds.vertices.len()) ||
  (m == 1 && end_vertex < self.ds.vertices.len()) {
  continue;
  }
- // OCCT L2842-2846: rich criterion  ?close to IC endpoint
  let d2 = a_p[m].distance_squared(v_pt);
  if d2 > a_dt2 { continue; }
- // OCCT L2848-2866: crease criterion  ?face normals nearly opposite
  let mut sc_pr = 1.0;
  if let (Some(s0), Some(s1)) = (&surf_both[0], &surf_both[1]) {
  let n0 = Self::estimate_surface_normal(s0, a_p[m]);
@@ -509,7 +474,6 @@ impl<'a> super::PaveFiller<'a> {
  sc_pr = 1.0 - sc_pr;
  }
  if sc_pr > a_d_sc_pr { continue; }
- // OCCT L2869-2871: PutPaveOnCurve
  let a_d = d2.sqrt();
  let a_tol_r3d_use = a_tol_r3d.max(self.ds.vertices[n_v].geom_tol);
  self.put_pave_on_curve(n_v, a_d.min(a_tol_r3d_use), ci, aMI, 1);
@@ -577,7 +541,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- ///  ?OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
+ ///  OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
  /// Form-identical logic: curve-type-based tolerance  ?first-endpoint
  /// check (with local+global projection fallback)  ?last-endpoint check
  /// (with bFirstValid shortcut)  ?global projection via closest_point_on_curve.
@@ -595,19 +559,14 @@ use rcad_kernel::PCurve;
  let vp = self.ds.vertices[nV].point;
  let aFirst = ic.t_range[0];
  let aLast = ic.t_range[1];
-
- // OCCT L800: aTolSum = aTolV + aTolC
- // OCCT L802-819: curve-type-dependent tolerance scaling
  let mut aTolSum = aTolV + aTolC;
  let is_bspline_or_bezier = matches!(&ic.curve, Curve3::BSpline(_) | Curve3::Bezier(_));
  aTolSum *= 2.0;
  if is_bspline_or_bezier {
- if aTolSum < 1e-5 { aTolSum = 1e-5; } // OCCT L807-809
+ if aTolSum < 1e-5 { aTolSum = 1e-5; }
  } else {
- if aTolSum < 1e-6 { aTolSum = 1e-6; } // OCCT L815-817
+ if aTolSum < 1e-6 { aTolSum = 1e-6; }
  }
-
- // OCCT L821-822: aFirst / aLast from curve
  // (already set from ic.t_range above)
 
  //  € € OCCT L824-883: First endpoint check  € €
@@ -620,10 +579,8 @@ use rcad_kernel::PCurve;
  b_first_valid = true;
  *aT = aFirst;
  if a_first_dist > aTolV {
- // OCCT L840: Extrema_LocateExtPC equivalent
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
- // OCCT L847-851 (locate) + L875-879 (extpc): same guard
  let p_first_d = p_first.distance(proj.point);
  if proj.param > mid || proj.distance > aTolSum || p_first_d < 1e-7 {
  *aT = aFirst;
@@ -638,7 +595,6 @@ use rcad_kernel::PCurve;
  if aLast.is_finite() {
  let p_last = ic.curve.point_at(aLast);
  let d_last = vp.distance(p_last);
- // OCCT L890-892: if first valid and first is closer  ?keep first
  if b_first_valid && a_first_dist < d_last {
  // Keep aT from first-endpoint branch
  return true;
@@ -649,7 +605,6 @@ use rcad_kernel::PCurve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
  let p_last_d = p_last.distance(proj.point);
- // OCCT L908-912 (locate) + L936-940 (extpc): same guard
  if proj.param < mid || proj.distance > aTolSum || p_last_d < 1e-7 {
  *aT = aLast;
  } else {
@@ -659,7 +614,6 @@ use rcad_kernel::PCurve;
  return true;
  }
  } else if b_first_valid {
- // OCCT L948-951: only first endpoint is valid  ?return true
  return true;
  }
 
@@ -669,8 +623,6 @@ use rcad_kernel::PCurve;
  *aT = proj.param;
  return true;
  }
-
- // OCCT L957-980: BoundedCurve fallback (endpoints)
  // rcad: closest_point_on_curve already handles bounded curves,
  // so skip explicit endpoint fallback and return false.
  false
@@ -731,7 +683,6 @@ use rcad_kernel::PCurve;
  // OCCT IsVertexOnLine L800: aTolSum = aTolV + aTolC
  // where aTolC = aTolR3D + myFuzzyValue (PutPaveOnCurve L2976)
  let raw_sum = v_tol + c_tol + f_tol;
- // OCCT L806-819: aTolSum = 2 * aTolSum, clamped to >= 1e-6
  let tl = (2.0 * raw_sum).max(1e-6);
  let result = self.project_vertex_on_curve_with_tol(vi, ic, tl);
  if result.is_some() { return result; }
@@ -787,7 +738,6 @@ use rcad_kernel::PCurve;
  }
 
  pub(crate) fn make_pcurves(&mut self) {
- // OCCT L592-595: early return when pcurve building is avoided or neither
  // section face requires pcurves.
  if self.avoid_build_pcurve
  || (!self.section_attribute.pcurve_on_s1 && !self.section_attribute.pcurve_on_s2)
@@ -795,8 +745,6 @@ use rcad_kernel::PCurve;
  return;
  }
  let b_pcurve_on_s = [self.section_attribute.pcurve_on_s1, self.section_attribute.pcurve_on_s2];
-
- // OCCT L601: BOPAlgo_VectorOfMPC aVMPC  ?collection of MPC entries.
  // rcad: the MPC (Make PCurve) concept is inlined  ?we store the data
  // needed to either (a) compute a new pcurve, or (b) update vertex tolerances
  // from an already-existing pcurve.
@@ -817,8 +765,6 @@ use rcad_kernel::PCurve;
  // (edges lying on the face surface).
  for fi in 0..self.ds.faces.len() {
  let face_info = &self.ds.faces[fi].face_info;
-
- // OCCT L618-631: PaveBlocksIn
  for &pb_idx in &face_info.pave_blocks_in {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  let pb = &self.ds.pave_blocks[pb_idx];
@@ -831,20 +777,14 @@ use rcad_kernel::PCurve;
  existing_edge: None,
  });
  }
-
- // OCCT L633-699: PaveBlocksOn
  for &pb_idx in &face_info.pave_blocks_on {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  let pb = &self.ds.pave_blocks[pb_idx];
  let ei = pb.0.read().unwrap().original_edge;
  if ei >= self.ds.edges.len() { continue; }
-
- // OCCT L641: HasCurveOnSurface  ?skip if pcurve already exists
  if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) {
  continue;
  }
-
- // OCCT L649-695: CommonBlock inheritance  ?if another PB in the same
  // CommonBlock already has a pcurve on this face, reuse it (SetData).
  let mut cb_existing_edge: Option<usize> = None;
  if let Some(cb_idx) = pb.0.read().unwrap().common_block_idx {
@@ -857,7 +797,6 @@ use rcad_kernel::PCurve;
  let other_ei = other_pb.0.read().unwrap().original_edge;
  if let Some(other_edge) = self.ds.edges.get(other_ei) {
  if other_edge.face_reps.iter().any(|r| r.face_idx == fi) {
- // OCCT L678-690: SetData(aEz, aV1x, aT1x, aV2x, aT2x)
  // AttachExistingPCurve  ?the existing pcurve on aEx
  // (other edge) will be copied to this edge.
  cb_existing_edge = Some(other_ei);
@@ -884,37 +823,25 @@ use rcad_kernel::PCurve;
  // This phase creates MPC entries with SetFlag(true) so that UpdateVertices
  // is called after the pcurve is known, correcting vertex tolerances.
  if b_pcurve_on_s[0] || b_pcurve_on_s[1] {
- // OCCT L711: anEFPairs fence prevents duplicate (edge, face) pairs
  let mut ef_pairs: std::collections::HashSet<(usize, usize)> =
  std::collections::HashSet::new();
-
- // OCCT L712-713: iterate all FF interferences
  for ff in &self.ds.interf_ff {
  let nf = [ff.f1, ff.f2];
-
- // OCCT L733-755: for each curve in the FF interference
  for &ci in &ff.curves {
  if ci >= self.ds.intersection_curves.len() { continue; }
  let ic = &self.ds.intersection_curves[ci];
-
- // OCCT L736-754: for each PaveBlock of this curve
  for pb in &ic.pave_blocks {
- // OCCT L741: nE = aPB->Edge()
  // For section edges original_edge == NO_EDGE, use new_edge.
  let section_ei = match pb.0.read().unwrap().new_edge {
  Some(ei) => ei,
  None => continue,
  };
-
- // OCCT L744-753: for each of the two faces
  for (m, &fi) in nf.iter().enumerate() {
  if !b_pcurve_on_s[m] { continue; }
- // OCCT L746: anEFPairs.Add(BOPDS_Pair(nE, nF[m]))
  // Returns false if pair already existed
  if !ef_pairs.insert((section_ei, fi)) {
  continue;
  }
- // OCCT L748-751: create MPC with SetFlag(true)
  a_vmpc.push(MPCEntry {
  edge_idx: section_ei,
  face_idx: fi,
@@ -928,7 +855,6 @@ use rcad_kernel::PCurve;
  } // end Phase 2
 
  // ===== Phase 3: Perform all MPC computations (OCCT L760-775) =====
- // OCCT L760-766: BOPTools_Parallel::Perform(myRunParallel, aVMPC, myContext)
  // rcad: sequential execution for now  ?each MPC.Perform computes the pcurve
  // (or copies from existing_edge), stores it in the DS, and optionally calls
  // UpdateVertices.
@@ -989,13 +915,11 @@ use rcad_kernel::PCurve;
  update_vertices_list.push((ei, fi));
  }
  } else {
- // OCCT L782-788: failed  ?collect for warning
  failed_pcurves.push((ei, fi));
  }
  }
 
  // ===== Phase 4: Error reporting and batch application (OCCT L782-789) =====
- // OCCT L782-788: AddWarning for each failed MPC
  for &(ei, fi) in &failed_pcurves {
  // OCCT: BRep_Builder MakeCompound + Add(Edge) + Add(Face) +
  // AddWarning(new BOPAlgo_AlertBuildingPCurveFailed(compound))
@@ -1015,8 +939,6 @@ use rcad_kernel::PCurve;
  end_param: t1,
  });
  }
-
- // OCCT L284-287, L808-846: UpdateVertices for section-edge pcurves.
  for &(ei, fi) in &update_vertices_list {
   if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() { continue; }
   let edge = &self.ds.edges[ei];
@@ -1429,7 +1351,7 @@ use rcad_kernel::PCurve;
  }
  }
 
- ///  ?OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
+ ///  OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
  /// OCCT PerformFF creates DSEdges for each intersecton curve PB immediately
  /// (via BOPDS_Curve::InitPaveBlock1 + SetEdge).  rcad defers; this step
  /// creates the missing section edge + PB so post_treat_ff can register PaveBlocksSc.
@@ -1517,7 +1439,6 @@ use rcad_kernel::PCurve;
  }
 
 }
-
 
 
 

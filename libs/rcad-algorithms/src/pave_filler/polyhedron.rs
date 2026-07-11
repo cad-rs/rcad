@@ -174,12 +174,9 @@ impl Polyhedron {
         }
 
         let other_p = lin_o * nbdeltaVp1 + col_o + 1;
-
-        // OCCT L546-553: degenerate case Pivot == Pedge
         if pedge != 0 && self.point(pivot).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
             return (triang, 0);
         }
-        // OCCT L555-561: degenerate case OtherP == Pedge
         if pedge != 0 && other_p > 0 && other_p <= self.points.len() as i32
             && self.point(other_p).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
             return (0, 0);

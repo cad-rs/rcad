@@ -275,7 +275,6 @@ impl PrmPrmIntersection {
         deflection: f64,
         increment: f64,
     ) {
-        // OCCT L1837-1841
         if seed_points.is_empty() {
             self.done = true;
             return;
@@ -283,26 +282,19 @@ impl PrmPrmIntersection {
 
         self.empt = true;
         self.slin.clear();
-
-        // OCCT L1846-1863: surface UV bounds + periodicity
         let u_min1 = 0.0; let u_max1 = 1.0; let v_min1 = 0.0; let v_max1 = 1.0; // placeholder
         let u_min2 = 0.0; let u_max2 = 1.0; let v_min2 = 0.0; let v_max2 = 1.0;
         let _periods = [0.0; 4]; // OCCT periodic adjustment (surf1_u, surf1_v, surf2_u, surf2_v)
 
-        let seuild_point_ligne = 15.0 * increment * increment; // OCCT L2001
+        let seuild_point_ligne = 15.0 * increment * increment;
 
         let mut nb_lig_calculee: usize = 0;
-
-        // OCCT L2012-2169: iterate seed points
         for seed in seed_points {
-            // OCCT L2024: PW.PerformFirstPoint(StartParams, StartPOn2S)
             let has_start = self.perform_first_point(s1, s2, seed);
 
             if !has_start { continue; }
 
-            let mut dmini_point_ligne = seuild_point_ligne + seuild_point_ligne; // OCCT L2025
-
-            // OCCT L2029-2040: check if this start point is already on an existing line
+            let mut dmini_point_ligne = seuild_point_ligne + seuild_point_ligne;
             for existing in &self.slin {
                 if is_point_on_line(&seed, existing, deflection) {
                     dmini_point_ligne = 0.0;
@@ -311,8 +303,6 @@ impl PrmPrmIntersection {
             }
 
             if dmini_point_ligne <= seuild_point_ligne { continue; }
-
-            // OCCT L2044-2052: walk the intersection line from the seed
             let walked = self.walk_line(s1, s2, seed, u_min1, v_min1, u_min2, v_min2,
                                          u_max1, v_max1, u_max2, v_max2, epsilon, deflection, increment);
 
@@ -321,8 +311,6 @@ impl PrmPrmIntersection {
             }
 
             let Some(walk_line) = walked else { continue };
-
-            // OCCT L2060-2085: reject duplicate lines
             let mut reject = false;
             let p3d_debut = walk_line.points.first().map(|p| p.p3d).unwrap_or(DVec3::ZERO);
             let p3d_fin   = walk_line.points.last().map(|p| p.p3d).unwrap_or(DVec3::ZERO);
@@ -342,24 +330,14 @@ impl PrmPrmIntersection {
             }
 
             if reject { continue; }
-
-            // OCCT L2092-2115: compute transition types
             let (trans1, trans2) = self.compute_transitions(s1, s2, &walk_line);
-
-            // OCCT L2118-2120: create WLine
             let mut wline = IntersectionLine {
                 points: walk_line.points.clone(),
                 trans1, trans2,
             };
-
-            // OCCT L2123-2131: PutVertexOnLine (simplified — add endpoints as vertices)
             if wline.points.len() < 2 { continue; }
-
-            // OCCT L2152-2161: SeveralWlinesProcessing (stub — 1:1 structure preserved)
             //   OCCT merges coincident vertices between overlapping walking lines.
             //   rcad: the marching step already produces consistent UV parameterization.
-
-            // OCCT L2163: AddWLine
             self.add_wline(&mut wline, deflection);
             self.empt = false;
             nb_lig_calculee = self.slin.len();
@@ -508,12 +486,8 @@ impl PrmPrmIntersection {
         self.done = false;
         self.empt = true;
         self.slin.clear();
-
-        // OCCT L331, 363: construct polyhedra
         let poly1 = super::polyhedron::Polyhedron::new(s1, 10, 10);
         let poly2 = super::polyhedron::Polyhedron::new(s2, 10, 10);
-
-        // OCCT L380: InterferencePolyhedron
         let interference = super::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
 
         if interference.nb_section_lines() == 0 {
@@ -525,8 +499,6 @@ impl PrmPrmIntersection {
         let seeds: Vec<PntOn2S> = interference.seed_points().iter().map(|sp| {
             PntOn2S { p3d: sp.p3d, u1: sp.u1, v1: sp.v1, u2: sp.u2, v2: sp.v2 }
         }).collect();
-
-        // OCCT L395: walk from each seed
         self.perform_with_seeds(s1, s2, &seeds, tol_tangency, epsilon, deflection, increment);
     }
 
@@ -560,11 +532,9 @@ impl PrmPrmIntersection {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // OCCT L108-116: Perform(S1, D1, ...) — single surface self-intersection
     //   — already implemented as perform_single
     // ═══════════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════════
-    // OCCT L175-180: NewLine(Caro1, Caro2, IndexLine, LowPoint, HighPoint, NbPoints)
     //   — subdivide a line into finer points
     // ═══════════════════════════════════════════════════════════════
     pub fn new_line(
@@ -581,14 +551,10 @@ impl PrmPrmIntersection {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // OCCT L190: RemplitLin (cxx:1690-1728) — already implemented
-    // OCCT L198: RemplitTri (cxx:1732-1793) — already implemented
-    // OCCT L209: Remplit   (cxx:1797-1823) — already implemented
     // ═══════════════════════════════════════════════════════════════
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT L224-230: PointDepart — find starting point on line
 // ═══════════════════════════════════════════════════════════════════
 
 /// OCCT L224-230: PointDepart — computes starting point parameters on a line.

@@ -2,124 +2,85 @@ use super::*;
 
 impl<'a> PaveFiller<'a> {
     pub(crate) fn force_interf_ee(&mut self) {
-        // OCCT L999-1003: ForceInterfEE — find additional common blocks among
         // pairs of edges.  Since all real intersections have already happened,
         // here we are interested in common blocks only, thus we check only
         // pairs of pave blocks with the same bounding vertices.
-
-        // OCCT L1008-1023: InitPaveBlocksForVertex for interfered vertices.
         // rcad: PBs already initialized in earlier pipeline steps; skip.
-
-        // OCCT L1026-1080: build (v1,v2) → Vec<(edge, local_pb)> map from ALL edge PBs
-        // OCCT L1029-1030: aMPBFence — in OCCT, a fence avoids double-counting the same
         //   PB (shared via CommonBlock). rcad PBs are per-edge and unique; skip fence.
         let mut pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
 
         for (ei, edge) in self.ds.edges.iter().enumerate() {
-            // OCCT L1034-1039: ShapeType != TopAbs_EDGE → skip (all DS entries are edges)
-            // OCCT L1041-1045: HasReference (non-empty pave_blocks)
             if edge.pave_blocks.is_empty() { continue; }
-            // OCCT L1047-1051: HasFlag → skip degenerated edges
             if self.ds.is_edge_degenerated(ei) { continue; }
 
             for (local_pbi, pb) in edge.pave_blocks.iter().enumerate() {
-                // OCCT L1060-1065: RealPaveBlock + fence dedup (skip — see above)
-                // OCCT L1068-1069: aPBR->Indices(nV1, nV2)
                 let (nV1, nV2) = pb.0.write().unwrap().indices();
                 let key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
-                // OCCT L1073-1078: append to map
                 pb_map.entry(key).or_default().push((ei, local_pbi));
             }
         }
-
-        // OCCT L1082-1086: early return if no entries
         if pb_map.is_empty() { return; }
-
-        // OCCT L1090: aVEdgeEdge — instead of a parallel vector, process pairs inline
-        // OCCT L1093-1225: iterate map entries with ≥2 PBs
         for (&(nV1, nV2), pbs) in &pb_map {
-            // OCCT L1100-1103: skip entries with < 2 PBs
             if pbs.len() < 2 { continue; }
-
-            // OCCT L1105-1118: vertex tolerances for aTolAdd
-            // OCCT L1116: aTolAdd = 2 * max(Tol(V1), Tol(V2))
             let a_tol_add = 2.0 * self.ds.vertices[nV1].geom_tol
                                 .max(self.ds.vertices[nV2].geom_tol);
-
-            // OCCT L1120-1223: iterate all (pb1,pb2) pairs from the list
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
                 let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
-                let nE1 = pb1.0.read().unwrap().original_edge;                  // OCCT L1127
+                let nE1 = pb1.0.read().unwrap().original_edge;                 
                 let r1 = self.ds.edges[nE1].origin;
-                let (t11, t12) = pb1.0.write().unwrap().range();                 // OCCT L1130
-                let mid_t1 = (t11 + t12) * 0.5;              // OCCT L1134
-                let c1 = &self.ds.edges[nE1].curve;           // OCCT L1131: BRepAdaptor_Curve
-                // OCCT L1132-1134: tangent at midpoint
+                let (t11, t12) = pb1.0.write().unwrap().range();                
+                let mid_t1 = (t11 + t12) * 0.5;             
+                let c1 = &self.ds.edges[nE1].curve;          
                 let tgt1 = c1.tangent_at(mid_t1);
-                // OCCT L1135-1139: skip if |tangent| < Resolution
                 if tgt1.length_squared() < 1e-60 { continue; }
 
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
                     let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
-                    let nE2 = pb2.0.read().unwrap().original_edge;              // OCCT L1145
-                    let r2 = self.ds.edges[nE2].origin;       // OCCT L1147: iR2
-                    let (t21, t22) = pb2.0.write().unwrap().range();             // OCCT L1173
-
-                    // OCCT L1149-1160: skip edges from the same argument
+                    let nE2 = pb2.0.read().unwrap().original_edge;             
+                    let r2 = self.ds.edges[nE2].origin;      
+                    let (t21, t22) = pb2.0.write().unwrap().range();            
                     //   if the bounding vertices are original (not acquired during operation)
                     if r1 == r2 {
                         let o_rank = if r1 == ShapeOrigin::ShapeA { 0 } else { 1 };
-                        // OCCT L1155-1158: IsNewShape + Rank check
                         if (!self.ds.is_new_vertex(nV1) && self.ds.rank(nV1) == o_rank)
                             || (!self.ds.is_new_vertex(nV2) && self.ds.rank(nV2) == o_rank)
                         {
                             continue;
                         }
                     }
-
-                    // OCCT L1162-1169: skip if PBs already form a CommonBlock
                     // rcad: has_interf_ee checks for existing EE interference
                     if self.ds.has_interf_ee(nE1, nE2) { continue; }
-
-                    // OCCT L1178: use angle between edges to decide bUseAddTol
-                    let c2 = &self.ds.edges[nE2].curve;       // OCCT L1180: BRepAdaptor_Curve aBAC2
-                    let tgt1_n = tgt1.normalize();            // OCCT L1139
+                    let c2 = &self.ds.edges[nE2].curve;      
+                    let tgt1_n = tgt1.normalize();           
                     let b_use_add_tol = match (c1, c2) {
-                        // OCCT L1181: both lines → direction dot check
                         (Curve3::Line(l1), Curve3::Line(l2)) => {
                             let cos_angle = l1.direction.dot(l2.direction).abs();
-                            cos_angle >= 0.9063  // OCCT L1200: 25°
+                            cos_angle >= 0.9063 
                         }
                         _ => {
-                            // OCCT L1183-1191: project midpoint of curve1 onto curve2
                             let mid_pt = c1.point_at(mid_t1);
-                            // OCCT L1185: GeomAPI_ProjectPointOnCurve aProjPC(aE2);
                             let proj = closest_point_on_curve(c2, mid_pt, 64);
                             if !proj.param.is_finite() { false } else {
-                                // OCCT L1192: aBAC2.D1(projPC.LowerDistanceParameter(), ...)
                                 let tgt2 = c2.tangent_at(proj.param);
                                 if tgt2.length_squared() < 1e-60 { false } else {
                                     let cos_angle = tgt1_n.dot(tgt2.normalize()).abs();
-                                    cos_angle >= 0.9063  // OCCT L1200
+                                    cos_angle >= 0.9063 
                                 }
                             }
                         }
                     };
-
-                    // OCCT L1207-1222: create BOPAlgo_EdgeEdge
                     let fuzzy = if b_use_add_tol {
-                        self.ds.fuzzy_tol + a_tol_add  // OCCT L1217: myFuzzyValue + aTolAdd
+                        self.ds.fuzzy_tol + a_tol_add 
                     } else {
-                        self.ds.fuzzy_tol              // OCCT L1221
+                        self.ds.fuzzy_tol             
                     };
 
                     // ── BEGIN existing intersection code (preserved verbatim) ──
                     match (c1, c2) {
                         (Curve3::Line(l1), Curve3::Line(l2)) => {
-                            // OCCT L1097-1102: midpoint direction vector, check angle
                             // intersect_line_line returns Option<(f64,f64,DVec3)>
                             if let Some((t1, t2, pt)) = intersect_line_line(
                                 l1, self.ds.edges[nE1].t_range,
@@ -239,7 +200,6 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
-        // OCCT L1332: PerformCommonBlocks — in rcad, the EE interferences above
         // are consumed downstream by the builder.
     }
 
@@ -496,8 +456,6 @@ impl<'a> PaveFiller<'a> {
             // L1174-1183: Add EdgeFace interference (rcad equivalent)
             let a_t_mid = crate::boptools::intermediate_point(pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param);
             let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
-
-            // OCCT L1176-1182: create BOPDS_InterfEF + AddInterf
             self.ds.interf_ef.push(InterferenceEF{
                 edge: ne,
                 face: nf,
