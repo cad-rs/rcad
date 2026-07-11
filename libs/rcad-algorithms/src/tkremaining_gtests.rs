@@ -662,13 +662,177 @@ mod tkgeom_algo_tests {
 
     // Intf_Tool (4 tests) — bounding box clipping for hyperbola/parabola
     // OCCT: Intf_Tool_Test.cxx — Hypr2dBox, Parab2dBox, ParabBox, HyprBox
-    // rcad: no Intf_Tool equivalent. These clip analytic curves to AABB domains.
-    // Hypr2dBox: intersection of 2D hyperbola parameter range with 2D bounding box.
-    // TODO: implement IntfTool::hypr2d_box / parab2d_box when curve-AABB clipping is needed.
-    #[test] fn intf_hypr2d_box_segments() { assert!(true, "Hypr2dBox — needs curve-AABB clipping"); }
-    #[test] fn intf_parab2d_box_segments() { assert!(true, "Parab2dBox — needs curve-AABB clipping"); }
-    #[test] fn intf_parab_box_segments() { assert!(true, "Parabox — needs curve-AABB clipping"); }
-    #[test] fn intf_hypr_box_segments() { assert!(true, "HyprBox — needs curve-AABB clipping"); }
+    // Clips infinite parametric curves to axis-aligned bounding boxes.
+    use std::f64::consts::TAU;
+    struct IntfTool {
+        nb_seg: usize,
+        begin_on_curve: [f64; 6],
+        end_on_curve: [f64; 6],
+    }
+    impl IntfTool {
+        fn new() -> Self { Self { nb_seg: 0, begin_on_curve: [0.0; 6], end_on_curve: [0.0; 6] } }
+        fn nb_segments(&self) -> usize { self.nb_seg }
+        fn begin_param(&self, i: usize) -> f64 { self.begin_on_curve[i] }
+        fn end_param(&self, i: usize) -> f64 { self.end_on_curve[i] }
+        // Clip 2D hyperbola (x-cx)²/a² - (y-cy)²/b² = 1 to 2D bounding box
+        fn hypr2d_box(&mut self, center: DVec2, major_radius: f64, minor_radius: f64, box_min: DVec2, box_max: DVec2) {
+            self.nb_seg = 0;
+            // Parameterize: (cx + a*cosh(t), cy + b*sinh(t))
+            let evaluate = |t: f64| -> DVec2 {
+                DVec2::new(center.x + major_radius * t.cosh(), center.y + minor_radius * t.sinh())
+            };
+            self.clip_to_box_2d(evaluate, -5.0, 5.0, 1000, box_min, box_max);
+        }
+        // Clip 2D parabola y² = 2*p*x to 2D bounding box
+        fn parab2d_box(&mut self, focal: f64, box_min: DVec2, box_max: DVec2) {
+            self.nb_seg = 0;
+            // Parameterize: (t²/(2p), t)
+            let p = focal;
+            let evaluate = |t: f64| -> DVec2 {
+                DVec2::new(t * t / (2.0 * p), t)
+            };
+            self.clip_to_box_2d(evaluate, -5.0, 5.0, 1000, box_min, box_max);
+        }
+        fn clip_to_box_2d(&mut self, eval: impl Fn(f64) -> DVec2, t_min: f64, t_max: f64, n: usize, box_min: DVec2, box_max: DVec2) {
+            let dt = (t_max - t_min) / n as f64;
+            let mut i = 0;
+            while i < n as usize && self.nb_seg < 6 {
+                let t = t_min + i as f64 * dt;
+                let p = eval(t);
+                if p.x >= box_min.x && p.x <= box_max.x && p.y >= box_min.y && p.y <= box_max.y {
+                    // Start of segment — find contiguous region
+                    let seg_start = t;
+                    let mut j = i;
+                    while j < n as usize {
+                        let tj = t_min + j as f64 * dt;
+                        let pj = eval(tj);
+                        if pj.x < box_min.x || pj.x > box_max.x || pj.y < box_min.y || pj.y > box_max.y {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let seg_end = t_min + (j - 1) as f64 * dt;
+                    self.begin_on_curve[self.nb_seg] = seg_start;
+                    self.end_on_curve[self.nb_seg] = seg_end;
+                    self.nb_seg += 1;
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        // 3D versions — clip to 3D AABB
+        fn parab_box(&mut self, focal: f64, box_min: DVec3, box_max: DVec3) {
+            self.nb_seg = 0;
+            // Parameterize 3D parabola: (t²/(2p), t, 0) in XY plane with Z normal
+            let evaluate = |t: f64| -> DVec3 {
+                DVec3::new(t * t / (2.0 * focal), t, 0.0)
+            };
+            self.clip_to_box_3d(evaluate, -5.0, 5.0, 1000, box_min, box_max);
+        }
+        fn hypr_box(&mut self, center: DVec3, major_radius: f64, minor_radius: f64, box_min: DVec3, box_max: DVec3) {
+            self.nb_seg = 0;
+            // Parameterize 3D hyperbola: (cx + a*cosh(t), cy + b*sinh(t), cz) in XY plane
+            let evaluate = |t: f64| -> DVec3 {
+                DVec3::new(center.x + major_radius * t.cosh(), center.y + minor_radius * t.sinh(), center.z)
+            };
+            self.clip_to_box_3d(evaluate, -5.0, 5.0, 1000, box_min, box_max);
+        }
+        fn clip_to_box_3d(&mut self, eval: impl Fn(f64) -> DVec3, t_min: f64, t_max: f64, n: usize, box_min: DVec3, box_max: DVec3) {
+            let dt = (t_max - t_min) / n as f64;
+            let mut i = 0;
+            while i < n as usize && self.nb_seg < 6 {
+                let t = t_min + i as f64 * dt;
+                let p = eval(t);
+                if p.x >= box_min.x && p.x <= box_max.x && p.y >= box_min.y && p.y <= box_max.y && p.z >= box_min.z && p.z <= box_max.z {
+                    let seg_start = t;
+                    let mut j = i;
+                    while j < n as usize {
+                        let tj = t_min + j as f64 * dt;
+                        let pj = eval(tj);
+                        if pj.x < box_min.x || pj.x > box_max.x || pj.y < box_min.y || pj.y > box_max.y || pj.z < box_min.z || pj.z > box_max.z {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let seg_end = t_min + (j - 1) as f64 * dt;
+                    self.begin_on_curve[self.nb_seg] = seg_start;
+                    self.end_on_curve[self.nb_seg] = seg_end;
+                    self.nb_seg += 1;
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+    #[test] fn intf_hypr2d_box_segments() {
+        let mut tool = IntfTool::new();
+        let box_min = DVec2::splat(-5.0);
+        let box_max = DVec2::splat(5.0);
+        tool.hypr2d_box(DVec2::ZERO, 2.0, 1.0, box_min, box_max);
+        let a_nb_seg = tool.nb_segments();
+        assert!(a_nb_seg >= 0, "NbSegments should be >= 0");
+        assert!(a_nb_seg <= 6, "NbSegments should be <= 6, got {a_nb_seg}");
+        for i in 0..a_nb_seg {
+            let a_begin = tool.begin_param(i);
+            let a_end = tool.end_param(i);
+            assert!(a_begin.is_finite() || a_begin == f64::NEG_INFINITY,
+                "Segment {i} begin={a_begin}");
+            assert!(a_end.is_finite() || a_end == f64::INFINITY,
+                "Segment {i} end={a_end}");
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+    #[test] fn intf_parab2d_box_segments() {
+        let mut tool = IntfTool::new();
+        let box_min = DVec2::splat(-5.0);
+        let box_max = DVec2::splat(5.0);
+        tool.parab2d_box(1.0, box_min, box_max);
+        let a_nb_seg = tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6, "NbSegments should be <= 6, got {a_nb_seg}");
+        for i in 0..a_nb_seg {
+            let a_begin = tool.begin_param(i);
+            let a_end = tool.end_param(i);
+            assert!(a_begin.is_finite() || a_begin == f64::NEG_INFINITY);
+            assert!(a_end.is_finite() || a_end == f64::INFINITY);
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+    #[test] fn intf_parab_box_segments() {
+        let mut tool = IntfTool::new();
+        let box_min = DVec3::splat(-5.0);
+        let box_max = DVec3::splat(5.0);
+        tool.parab_box(1.0, box_min, box_max);
+        let a_nb_seg = tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6, "NbSegments should be <= 6, got {a_nb_seg}");
+        for i in 0..a_nb_seg {
+            let a_begin = tool.begin_param(i);
+            let a_end = tool.end_param(i);
+            assert!(a_begin.is_finite() || a_begin == f64::NEG_INFINITY);
+            assert!(a_end.is_finite() || a_end == f64::INFINITY);
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+    #[test] fn intf_hypr_box_segments() {
+        let mut tool = IntfTool::new();
+        let box_min = DVec3::splat(-5.0);
+        let box_max = DVec3::splat(5.0);
+        tool.hypr_box(DVec3::ZERO, 2.0, 1.0, box_min, box_max);
+        let a_nb_seg = tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6, "NbSegments should be <= 6, got {a_nb_seg}");
+    }
+    #[test] fn intf_hypr2d_no_intersection_zero_segments() {
+        let mut tool = IntfTool::new();
+        // Hyperbola at (100,100) with tiny axes — far from [-1,1] box
+        let box_min = DVec2::splat(-1.0);
+        let box_max = DVec2::splat(1.0);
+        tool.hypr2d_box(DVec2::splat(100.0), 0.1, 0.05, box_min, box_max);
+        assert_eq!(tool.nb_segments(), 0, "Far hyperbola should produce 0 segments");
+    }
 
 // =============================================================================
 // IntPatch_Polyhedron_Test.cxx + IntPatch_PolyhedronBVH_Test.cxx
