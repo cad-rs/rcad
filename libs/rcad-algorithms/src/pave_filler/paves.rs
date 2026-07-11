@@ -2,61 +2,53 @@ use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn process_de(&mut self) {
- // Detect degenerate edges on periodic surfaces
- let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
- let mut degen_flags: Vec<(usize, usize)> = Vec::new();
- for fi in 0..self.ds.faces.len() {
- let is_periodic = matches!(self.ds.faces[fi].surface,
- Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_));
- if !is_periodic { continue; }
- let mut vs = Vec::new();
- let boundary_edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
- for &ei in &boundary_edges {
- if ei >= self.ds.edges.len() { continue; }
- let e = &self.ds.edges[ei];
- if e.start_vertex == e.end_vertex {
- degen_flags.push((ei, fi + 1));
- vs.push(e.start_vertex);
- } else {
- let d = (self.ds.vertices[e.start_vertex].point - self.ds.vertices[e.end_vertex].point).length();
- if d < TOLERANCE_ABS*100.0 {
- degen_flags.push((ei, fi + 1));
- vs.push(e.start_vertex); vs.push(e.end_vertex);
- }
- }
- }
- if let Surface3::Sphere(sp) = &self.ds.faces[fi].surface.clone() {
- let tl = self.ds.faces[fi].geom_tol.max(TOLERANCE_ABS);
- for pp in [sp.center + sp.axis * sp.radius, sp.center - sp.axis * sp.radius] {
- if let Some(vi) = self.ds.find_vertex_near(pp, tl) { vs.push(vi); }
- }
- }
- fv[fi] = vs;
- }
- for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
- for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val as i64); }
-
- // Process flagged degenerate edges  ?iterate shape_info for edge entries
- let degen_edges: Vec<(usize, usize)> = (0..self.ds.edges.len())
- .filter_map(|ei| {
- let flag = self.ds.edge_flag(ei);
- if flag == 0 { return None; }
- let fi = (flag - 1) as usize;
- if fi >= self.ds.faces.len() { return None; }
- Some((ei, fi))
- }).collect();
-
- for (ei, fi) in degen_edges {
- if ei >= self.ds.edges.len() { continue; }
- let edge = &self.ds.edges[ei];
- if edge.pave_blocks.is_empty() { continue; }
- let n_v = edge.start_vertex;
- if n_v >= self.ds.vertices.len() { continue; }
-
- // OCCT L84-101: FindPaveBlocks  ?locate PBs in this face's sets that pass through nV
- // (simplified: the pave_block info is already in the edge's PBs)
- // Ensure the degen edge's PB has an ext pave at the degenerate vertex
- // so make_section_edges will split it properly.
+ for ei in 0..self.ds.nb_source_shapes {
+  if ei >= self.ds.shape_info.len() { continue; }
+  let si = &self.ds.shape_info[ei];
+  if si.shape_type != rcad_kernel::topods::ShapeType::Edge { continue; }
+  let flag = self.ds.edge_flag(ei);
+  if flag == 0 { continue; }
+  let nf = (flag - 1) as usize;
+  if nf >= self.ds.shape_info.len() { continue; }
+  let si_f = &self.ds.shape_info[nf];
+  let nv = si.sub_shapes.first().copied().unwrap_or(usize::MAX);
+  let nv = self.ds.has_shape_sd(nv).unwrap_or(nv);
+  if si_f.shape_type == rcad_kernel::topods::ShapeType::Face {
+   let face_idx = nf.saturating_sub(self.ds.vertices.len() + self.ds.edges.len());
+   if face_idx < self.ds.faces.len() {
+    // FindPaveBlocks: find PBs on this face that pass through nv
+    let mut found_pbs: Vec<usize> = Vec::new();
+    for &pb_idx in &self.ds.faces[face_idx].face_info.pave_blocks_in {
+     if pb_idx < self.ds.pave_blocks.len() {
+      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
+      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
+     }
+    }
+    for &pb_idx in &self.ds.faces[face_idx].face_info.pave_blocks_on {
+     if pb_idx < self.ds.pave_blocks.len() {
+      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
+      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
+     }
+    }
+    for &pb_idx in &self.ds.faces[face_idx].face_info.pave_blocks_sc {
+     if pb_idx < self.ds.pave_blocks.len() {
+      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
+      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
+     }
+    }
+    if !found_pbs.is_empty() {
+     if let Some(pbd) = self.ds.edges.get(ei).and_then(|e| e.pave_blocks.first()) {
+      // FillPaves: add ext_pave for nv on the degen edge's PB
+      let a_tol_v = if nv < self.ds.vertices.len() { self.ds.vertices[nv].geom_tol } else { TOLERANCE_ABS };
+      pbd.0.write().unwrap().append_ext_pave(Pave { vertex_idx: nv, param: 0.5 });
+      // UpdatePaveBlock equivalent
+      // No explicit Update call needed -- rcad splits via Update() in make_blocks
+     }
+    }
+    // MakeSplitEdge equivalent
+    // Skipped -- rcad split edges are created during MakeBlocks from pave block data
+   }
+  }
  }
  }
 
