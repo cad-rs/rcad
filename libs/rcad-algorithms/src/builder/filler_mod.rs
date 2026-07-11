@@ -116,7 +116,7 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-481).
     /// Corrects tolerances of the result shape after building.
     pub(super) fn post_treat(&mut self) {
-        // OCCT L458-474: MapToAvoid (NonDestructive mode only)
+        
         let _a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
             (0..self.ds.nb_source_shapes)
                 .filter(|&i| {
@@ -130,7 +130,7 @@ impl<'a> BooleanBuilder<'a> {
         } else {
             std::collections::HashSet::new()
         };
-        // OCCT L478: CorrectTolerances on the result BRep.
+        
         let e_base = self.ds.vertices.len();
         let mut edge_updates: Vec<(usize, f64)> = Vec::new();
         let mut vert_updates: Vec<(usize, f64)> = Vec::new();
@@ -169,7 +169,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L480: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
+        
         // rcad: CorrectShapeTolerances is a BRep-level operation not yet translated.
     }
 
@@ -362,12 +362,12 @@ impl<'a> BooleanBuilder<'a> {
     ///   classify alone vertices from its source DS face.  If the vertex
     ///   falls inside the result face's UV boundary --add to face_internal_vtx.
     pub(super) fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
-        // OCCT L935: BOPAlgo_VectorOfVFI aVVFI --build vertex-face pairs.
-        // OCCT L937-944: iterate source shapes, filter TopAbs_FACE.
+        
+        
         for (ds_fi, ds_face) in self.ds.faces.iter().enumerate() {
-            // OCCT L941-944: skip non-face shapes (DS only has faces here).
+            
 
-            // OCCT L951-956: find images (split result faces) for this source face.
+            
             let image_rfis: Vec<usize> = result.face_origins.iter().enumerate()
                 .filter(|(_, origin)| match origin {
                     FaceOrigin::FromA(sfi) =>
@@ -380,7 +380,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             if image_rfis.is_empty() { continue; }
 
-            // OCCT L959-960: AloneVertices(i, aLIAV).
+            
             //   Alone vertices = (VerticesIn + VerticesSc) minus endpoints of
             //   (PaveBlocksIn + PaveBlocksSc), matching BOPDS_DS.cxx L1028-1062.
             let fi = &ds_face.face_info;
@@ -399,7 +399,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             if alone.is_empty() { continue; }
 
-            // OCCT L964-978: for each alone vertex × each image face --classify.
+            
             for &vi in &alone {
                 if vi >= self.ds.vertices.len() { continue; }
                 let v_pt = self.ds.vertices[vi].point;
@@ -407,7 +407,7 @@ impl<'a> BooleanBuilder<'a> {
                 for &rfi in &image_rfis {
                     if rfi >= result.faces.len() { continue; }
 
-                    // OCCT L972: classify against split face aFIm.
+                    
                     let ds_fi_for_classify = match &result.face_origins[rfi] {
                         FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
                             f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
@@ -445,11 +445,11 @@ impl<'a> BooleanBuilder<'a> {
         let nf = result.faces.len();
         if nf < 2 { return; }
 
-        // OCCT L584-589: Check FF interferences --if none, nothing to merge.
+        
         let has_ff = !self.ds.interf_ff.is_empty();
         if !has_ff { return; }
 
-        // OCCT L597-648: Build aFaceToParent map --faces from the same parent
+        
         //   solid are NOT SD merged (prevents zero-thickness interior).
         //   OCCT: iterate NbSourceShapes --filter TopAbs_SOLID --TopExp_Explorer
         //   collect sub-faces --aFaceToParent.Bind(aF, aSolid) --propagate to images.
@@ -472,7 +472,7 @@ impl<'a> BooleanBuilder<'a> {
             Some((origin == ShapeOrigin::ShapeA, solid_idx))
         };
 
-        // OCCT L659-684: Collect FF-interfering DS face indices into aFIVec.
+        
         // rcad: build (origin, source_face_idx) set from FF interferences,
         // then filter result faces to only those matching the FF set.
         let mut ff_source_set: std::collections::HashSet<(bool, usize)> = std::collections::HashSet::new();
@@ -500,7 +500,7 @@ impl<'a> BooleanBuilder<'a> {
         if result_fi_filtered.len() < 2 { return; }
 
         // ── Edge-set signature per face (OCCT BOPTools_Set ──
-        // OCCT L689-741: BOPTools_Set uses TopoDS_Edge identity.
+        
         // rcad: use edge index ei directly (add_edge already deduplicates
         // by vertex pair, making ei a stable identity).  Exclude degenerate
         // edges (matching OCCT's BRep_Tool::Degenerated skip).
@@ -525,7 +525,7 @@ impl<'a> BooleanBuilder<'a> {
                 (fi, ids)
             }).collect();
 
-        // OCCT L694: aMFPlanar --track bounded planar faces for fast-path SD
+        
         let mut planars: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &fi in &result_fi_filtered {
             if matches!(result.faces[fi].4, Surface3::Plane(_)) {
@@ -586,7 +586,7 @@ impl<'a> BooleanBuilder<'a> {
                     if face_parent(fi) == face_parent(fj) {
                         continue;
                     }
-                    // OCCT L780-784: bounded planar faces with same edge set --SD fast path
+                    
                     if planars.contains(&fi) && planars.contains(&fj) {
                         to_remove[fj] = true;
                         continue;
@@ -830,7 +830,7 @@ impl<'a> BooleanBuilder<'a> {
                 if result_faces.is_empty() { continue; }
 
                 if result_faces.len() > 1 {
-                    // OCCT L305-346: face has images --iterate image faces
+                    
                     for &a_fx in &result_faces {
                         let a_fx_dfi_opt = match &result.face_origins[a_fx] {
                             FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
@@ -1075,21 +1075,21 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad: shells WITHOUT IN faces are "non-interfered" --a_mst + stored as solids.
         //   --OCCT iterates DS shape info for TopAbs_SOLID entries; rcad uses assignments.
         for &(si, side, _state) in assignments {
-            // OCCT L437-440: if (aSI.ShapeType() != TopAbs_SOLID) continue;
-            // OCCT L447: if (!aMFence.Add(aS)) continue; --fence dedup.
-            // OCCT L451-454: if (theDraftSolids.IsBound(aS)) continue; --skip interfered.
+            
+            
+            
             let in_faces_this: Vec<usize> = my_in_parts.get(&side).cloned().unwrap_or_default();
             if has_in_faces && !in_faces_this.is_empty() {
                 continue;
             }
 
-            // OCCT L456-459: BOPTools_Set aST; aST.Add(aS, TopAbs_FACE); aMST.Add(aST);
+            
             if let Some(ds_shell) = self.ds.shells.get(si) {
                 let ds_set: std::collections::BTreeSet<usize> = ds_shell.faces.iter().copied().collect();
                 if ds_set.is_empty() { continue; }
                 a_mst.push(ds_set);
 
-                // OCCT L487-488: aSolidsIm.Add(aS).Append(aSD) --store non-interfered draft solid.
+                
                 let result_faces: Vec<usize> = ds_shell.faces.iter()
                     .flat_map(|&dsfi| {
                         let dsf = &self.ds.faces[dsfi];
@@ -1135,7 +1135,7 @@ impl<'a> BooleanBuilder<'a> {
             let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
             let other_origin = if side == 0 { ShapeOrigin::ShapeB } else { ShapeOrigin::ShapeA };
 
-            // OCCT L491-499: 1.1 Fill Shell Faces Set
+            
             let mut ds_face_set: Vec<usize> = Vec::new();
             if let Some(ds_shell) = self.ds.shells.get(si) {
                 for &dsfi in &ds_shell.faces {
@@ -1144,7 +1144,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            // OCCT L501-511: 1.2 Fill internal faces (FWD + REV orientations)
+            
             for &rfi in &in_faces_this {
                 if let Some(dfi) = result_to_ds(rfi, other_origin) {
                     ds_face_set.push(dfi);
@@ -1172,12 +1172,12 @@ impl<'a> BooleanBuilder<'a> {
         // === Phase 2: Collect areas --aSolidsIm + myImages (OCCT L539-617) ===
         for task in &tasks {
             for area_ds in task.builder_solid.areas() {
-                // OCCT L590-602: BOPTools_Set dedup via aMST.Contains / aMST.Added.
+                
                 let ds_set: std::collections::BTreeSet<usize> = area_ds.iter().copied().collect();
                 if a_mst.iter().any(|s| s == &ds_set) { continue; }
                 a_mst.push(ds_set);
 
-                // OCCT L590-602: map DS faces to result faces.
+                
                 let mut result_faces: Vec<usize> = Vec::new();
                 let mut mapped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
                 for &dfi in area_ds {
@@ -1187,7 +1187,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 if result_faces.is_empty() { continue; }
 
-                // OCCT L603-614: store in myImages + myOrigins + myShapesSD.
+                
                 {
                     let sf: Vec<topods::ShapeRef> = result_faces.iter()
                         .filter_map(|&rfi| self.my_face_refs.borrow().get(rfi).copied())
@@ -1207,7 +1207,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L580-617: aMST-based dedup already applied per-area above.
+        
         result.tmp_solids = result_solids;
 
         // OCCT BuilderSolid::PerformAreas (BuilderSolid.cxx L397-576): void detection.

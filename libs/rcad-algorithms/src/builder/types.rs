@@ -102,7 +102,7 @@ pub struct WireFace {
  pub internal_wires: Vec<Vec<usize>>,
 }
 
-/// 闁?OCCT-aligned: collected sub-face result before classification.
+/// 闁OCCT-aligned: collected sub-face result before classification.
 /// Holds either a wire-pipeline result (to emit via emit_wire_face) or
 /// a legacy split_face result (to emit via emit_face_with_origin).
 
@@ -137,7 +137,7 @@ pub(crate) struct WireSegment {
  /// wires. Set for seam segments on split-seam periodic surfaces.
  pub(crate) second_pcurve: Option<Curve2d>,
  pub(crate) first_pcurve: Option<Curve2d>,
- /// 闁?OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
+ /// 闁OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
  /// WireSplitter_1.cxx L669). t_range[0] = start_vertex param,
  /// t_range[1] = end_vertex param.  vertex_uv evaluates pc.point_at(t).
  pub(crate) t_range: [f64; 2],
@@ -184,7 +184,7 @@ pub(crate) type FaceEntry = (
  Vec<Vec<(usize, bool)>>, // internal wire edges (TopAbs_INTERNAL)
 );
 
-/// 闁?OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
+/// 闁OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
 /// in the dimension-by-dimension pipeline.  Carries the data needed for
 /// HIGH-D face assembly from build_face_edges_and_wires to
 /// build_face_from_wire_edges, matching OCCT's separation of edge/wire
@@ -227,7 +227,7 @@ pub(crate) struct WireSegmentTopoDS {
  pub(crate) is_closed_on_face: bool,
  pub(crate) first_pcurve: Option<Curve2d>,
  pub(crate) second_pcurve: Option<Curve2d>,
- /// 闁?OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
+ /// 闁OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
  /// t_range[0] = start_vertex param, t_range[1] = end_vertex param.
  pub(crate) t_range: [f64; 2],
 }

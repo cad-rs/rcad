@@ -26,7 +26,7 @@ pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usiz
  Some(Curve2d::Line(Line2d { origin: DVec2::new(uv_s.x + shift_u, uv_s.y), direction: DVec2::new(0.0, uv_e.y - uv_s.y) }))
 }
 
-///  ?OCCT-aligned: split seam sub-edges for sphere (DoSplitSEAMOnFace).
+///  OCCT-aligned: split seam sub-edges for sphere (DoSplitSEAMOnFace).
 pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace, _face_idx: usize) -> Vec<WireSegment> {
  let ds_edge = &ds.edges[ei];
  let mut segs: Vec<WireSegment> = Vec::new();
@@ -79,7 +79,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
  segs
 }
 
-///  ?OCCT-aligned: cylinder/cone seam edge  ?FWD+REV with shifted pcurves.
+///  OCCT-aligned: cylinder/cone seam edge  ?FWD+REV with shifted pcurves.
 pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace) -> Vec<WireSegment> {
  let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
  let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
@@ -108,7 +108,7 @@ pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, fa
  ]
 }
 
-///  ?OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1432-1523).
+///  OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1432-1523).
 /// Compares the direction of a split sub-edge against its original edge.
 pub fn is_split_to_reverse(
  ds: &DS,

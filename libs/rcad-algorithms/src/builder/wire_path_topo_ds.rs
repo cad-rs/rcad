@@ -172,8 +172,8 @@ pub(crate) fn walk_path_extract_wires(
     let mut arrived_vertex = start_seg.end_vertex.index;
 
     for _iter in 0..max_iter {
-        // OCCT L394-403: do not escape through edge from which you enter.
-        // OCCT L580: aEOuta.IsSame(aEL) — handle identity + orientation.
+        
+        
         if edge_seq.len() == 1 {
             let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
                 (WireEdgeSourceTopoDS::DsEdge(ea), WireEdgeSourceTopoDS::DsEdge(eb)) => {
@@ -200,7 +200,7 @@ pub(crate) fn walk_path_extract_wires(
         info_seq.push(ci);
 
         // ── Loop Detection (OCCT L424-523) ──
-        // OCCT L437: bIsClosed = aVertMap.Find(aVb) — arrived vertex's closure.
+        
         //   Using arrived vertex (not current edge) matches OCCT's aVertMap:
         //   a vertex is "closed" if any incident edge is degenerated or closed
         //   on the face (BOPAlgo_WireSplitter_1.cxx L147-148, L184-194).
@@ -216,7 +216,7 @@ pub(crate) fn walk_path_extract_wires(
             let prev_uv = uv_seq[i];
             let prev_si = edge_seq[i];
 
-            // OCCT L449-458: bHasEdge — skip degenerate-only wires
+            
             if !b_has_edge {
                 b_has_edge = match &segments[prev_si].source {
                     WireEdgeSourceTopoDS::DsEdge(ei) => !tool.is_edge_degenerated(*ei),
@@ -288,11 +288,11 @@ pub(crate) fn walk_path_extract_wires(
             None => return,
         };
         let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
-        // OCCT L540: bIsClosed = aVertMap.Find(aVb) — arrived vertex's closure.
+        
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = coord2d(ShapeRef::synthetic(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
 
-        // OCCT L540-549: prepare selection state
+        
         let mut p_edge_info: Option<usize> = None;
         let mut a_min_angle = 100.0;
         let le_info = smart_map.get(&arrived_vertex).map(|v| v.as_slice()).unwrap_or(&[]);
@@ -305,13 +305,13 @@ pub(crate) fn walk_path_extract_wires(
             let an_is_out = !ei.in_flag;
             let an_is_not_passed = !ei.passed;
             if !an_is_out || !an_is_not_passed { continue; }
-            // OCCT L565-569: no way to go
+            
             if i_cnt == 0 { return; }
-            // OCCT L571-575: single way out
+            
             if i_cnt == 1 { p_edge_info = Some(ei.seg_idx); break; }
             let an_angle = if ei.seg_idx == ci { std::f64::consts::TAU }
             else {
-                // OCCT L584-596: 2D distance filter for closed vertices
+                
                 if b_is_closed {
                     let cand_uv = coord2d_vf(&segments[ei.seg_idx])
                         .unwrap_or(DVec2::ZERO);
@@ -320,22 +320,22 @@ pub(crate) fn walk_path_extract_wires(
                 let an_angle_out = ei.angle;
                 clock_wise_angle(angle_in, an_angle_out)
             };
-            // OCCT L603-607: count inside ways
+            
             if incoming_is_boundary && ei.is_inside {
                 a_nb_ways_inside += 1;
                 p_only_way_in = Some(ei.seg_idx);
             }
-            // OCCT L609-613: select minimal angle
+            
             if an_angle < a_min_angle - std::f64::EPSILON {
                 a_min_angle = an_angle;
                 p_edge_info = Some(ei.seg_idx);
             }
         }
-        // OCCT L616-619: prefer only way inside
+        
         if a_nb_ways_inside == 1 { p_edge_info = p_only_way_in; }
-        // OCCT L621-625: no way to go
+        
         let best_si = match p_edge_info { Some(si) => si, None => return };
-        // OCCT L627-629: advance to next vertex
+        
         ci = best_si;
         arrived_vertex = segments[ci].end_vertex.index;
     }
@@ -378,7 +378,7 @@ fn refine_angles(
             let b_refined = match pc {
                 Some(pc) => {
                     let ta = pc.point_at(t_v);
-                    // OCCT L1057-1061: use pcurve UV to compute new angle
+                    
                     // Check if angle is near boundary — true refine via micro-step
                     let eps = 1e-12;
                     let dt = (1e-8 * (domain[1] - domain[0]).abs().max(1.0)).min((domain[1] - domain[0]).abs() * 0.1);
@@ -423,9 +423,9 @@ pub(crate) fn split_block(
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
 ) {
-    // OCCT L324: RefineAngles before Path walk
+    
     refine_angles(smart_map, segments, tool);
-    // OCCT L331-358: Path walk
+    
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
@@ -556,7 +556,7 @@ fn build_smart_map(
     use super::angle_2d::angle_2d;
     use super::wire_path::pc_parameter_range;
 
-    // OCCT L147-152: aMS set tracking edge parity (odd → boundary, even → internal).
+    
     // Non-closed edges appearing an even number of times are internal (IsInside=true).
     // Uses orientation-aware key matching OCCT TopoDS_Shape hashing (orientation
     // in the face wire distinguishes FWD and REV occurrences of the same edge).
@@ -578,7 +578,7 @@ fn build_smart_map(
         let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
 
         let src_key = src_key_of(seg, si);
-        // OCCT L149: !aMS.Add(aE) && !bIsClosed → aMS.Remove(aE)
+        
         if !a_ms.insert(src_key) && !b_closed {
             a_ms.remove(&src_key);
         }
@@ -591,12 +591,12 @@ fn build_smart_map(
             || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
         if !has_pcurve { continue; }
 
-        // OCCT L310: IsInside = !aMS.Contains(aE)
+        
         let src_key = src_key_of(seg, si);
         let is_inside = !a_ms.contains(&src_key);
         let is_circle_arc = false;
 
-        // OCCT L170-172: in_flag based on vertex orientation in the edge.
+        
         //   TopExp_Explorer of an oriented edge always returns:
         //   first vertex = FORWARD → in_flag=false (outgoing from start)
         //   second vertex = REVERSED → in_flag=true (incoming at end)
@@ -611,7 +611,7 @@ fn build_smart_map(
         });
     }
 
-    // OCCT L184-194: aVertMap — vertex→closed flag (any incident edge is closed).
+    
     let mut a_vert_map: HashMap<usize, bool> = HashMap::new();
     for &si in block {
         let seg = &segments[si];
@@ -734,7 +734,7 @@ pub(crate) fn perform_areas(
     face_idx: usize,
     ds: &crate::bopds::ds::DS,
 ) -> Vec<WireFace> {
-    // OCCT L401-414: if no loops at all
+    
     if wires.is_empty() {
         if ds.faces[face_idx].natural_restriction {
             return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
@@ -742,16 +742,16 @@ pub(crate) fn perform_areas(
         return vec![];
     }
 
-    // OCCT L420-423: aMHE — map of hole face edges for quick growth check.
+    
     let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
 
-    // OCCT L425-458: classify each wire as growth or hole.
+    
     let mut a_new_faces: Vec<Vec<usize>> = Vec::new(); // growth wires
     let mut a_hole_faces: Vec<Vec<usize>> = Vec::new(); // hole wires
 
     for w in wires {
-        // OCCT L437-439: MakeFace from wire (rcad: we work with segment indices).
-        // OCCT L441: IsGrowthWire(aWire, aMHE) — fast check.
+        
+        
         let b_is_growth = if !a_mhe.is_empty() {
             w.iter().any(|&si| {
                 if let Some(seg) = segments.get(si) {
@@ -763,7 +763,7 @@ pub(crate) fn perform_areas(
         let b_is_growth = if b_is_growth {
             true
         } else {
-            // OCCT L444-446: run classification via IsHole().
+            
             // rcad: UV signed area (equivalent: CW = hole, CCW = growth).
             let mut uv_boundary: Vec<DVec2> = Vec::new();
             for &si in w {
@@ -797,12 +797,12 @@ pub(crate) fn perform_areas(
             area >= 0.0 // IsHole() = area < 0 → growth = !IsHole = area >= 0
         };
 
-        // OCCT L449-458: save face.
+        
         if b_is_growth {
             a_new_faces.push(w.clone());
         } else {
             a_hole_faces.push(w.clone());
-            // OCCT L457: TopExp::MapShapes(aWire, TopAbs_EDGE, aMHE)
+            
             for &si in w {
                 if let Some(seg) = segments.get(si) {
                     a_mhe.insert(seg.edge);
@@ -811,14 +811,14 @@ pub(crate) fn perform_areas(
         }
     }
 
-    // OCCT L461-466: no holes -> all wires are growths.
+    
     if a_hole_faces.is_empty() {
         return a_new_faces.iter().map(|w| WireFace {
             outer_wire: w.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec(),
         }).collect();
     }
 
-    // OCCT L470-484: prepare bounding boxes for hole faces.
+    
     // rcad: compute UV bounding boxes for hole wires.
     let mut hole_uv_boxes: Vec<Option<[f64; 4]>> = a_hole_faces.iter().map(|w| {
         let mut uv_bnd: Vec<DVec2> = Vec::new();
@@ -845,7 +845,7 @@ pub(crate) fn perform_areas(
         Some([u_min, u_max, v_min, v_max])
     }).collect();
 
-    // OCCT L486-491: assign holes to enclosing growth faces.
+    
     // rcad: for each hole, find the smallest-enclosing growth via point-in-polygon.
     let mut h2g: Vec<(usize, usize)> = Vec::new();
     for (hi, h_wire) in a_hole_faces.iter().enumerate() {
@@ -893,30 +893,30 @@ pub(crate) fn perform_areas(
         }
     }
 
-    // OCCT L557-581: identify orphan holes
+    
     let assigned_hole_set: std::collections::HashSet<usize> = h2g.iter().map(|&(h, _)| h).collect();
     let orphan_holes: Vec<usize> = (0..a_hole_faces.len())
         .filter(|hi| !assigned_hole_set.contains(hi))
         .collect();
 
-    // OCCT L540-555: build growth → holes map
+    
     let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
-    // OCCT L584-613: build result WireFaces — each wire becomes its own face.
+    
     //   OCCT BOPAlgo_BuilderFace::PerformAreas creates a separate TopoDS_Face
     //   for EACH wire (growth or hole).  The caller (ComputeState) then classifies
     //   each face independently, removing those that are In the opposing solid.
     //   rcad legacy approach merged holes as inner_wires, preventing per-face
     //   classification and leaving internal vertices in the result.
-    // OCCT L584-613: build result WireFaces
+    
     let mut result: Vec<WireFace> = a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
         outer_wire: w.clone(),
         inner_wires: g2h.get(&gi).map(|hs| hs.iter().map(|&h| a_hole_faces[h].clone()).collect()).unwrap_or_default(),
         internal_wires: internal_wires.to_vec(),
     }).collect();
 
-    // OCCT L557-581: unassigned holes + open face → create new growth from original surface.
+    
     //   OCCT checks aBoxF.IsOpen* (infinite surface like plane).  When the original
     //   face is open/unbounded, a new face is created from the original surface with
     //   ALL orphan holes as inner wires, and appended to aNewFaces (growth list).
@@ -973,7 +973,7 @@ pub(crate) fn perform_areas(
                 });
             }
         } else if ds.faces[face_idx].natural_restriction {
-            // OCCT L581 path for closed surfaces: each orphan hole is its own face
+            
             // (classified independently by caller).
             for &h in &orphan_holes {
                 result.push(WireFace {
@@ -983,7 +983,7 @@ pub(crate) fn perform_areas(
                 });
             }
         }
-        // OCCT L557-581: for open surfaces with existing growth wires, the orphan
+        
         //   holes are simply left unassigned — they were not enclosed by any growth.
         //   rcad: same — skip them; they'll be filtered out during classification.
     }
@@ -1004,7 +1004,7 @@ pub(crate) fn perform_internal_shapes(
     if internal_wire_groups.is_empty() { return; }
     if wfs.is_empty() { return; }
 
-    // OCCT L634-666: Build UV boundaries for each face
+    
     let face_uv_bounds: Vec<Vec<DVec2>> = wfs.iter().map(|wf| {
         let mut uv_bnd: Vec<DVec2> = Vec::new();
         for &si in &wf.outer_wire {
@@ -1048,7 +1048,7 @@ pub(crate) fn perform_internal_shapes(
         eprintln!("[DBG] face {} internal_shapes: {} groups, {} wfs", face_idx, internal_wire_groups.len(), wfs.len());
     }
 
-    // OCCT L674-741: classify each internal wire against each face
+    
     for group in internal_wire_groups {
         if group.is_empty() { continue; }
         let si = group[0];
@@ -1088,7 +1088,7 @@ pub(crate) fn perform_internal_shapes(
             pt
         };
 
-        // OCCT L710-715: if edge is inside face → add to internal wires
+        
         for (fi, wf) in wfs.iter_mut().enumerate() {
             if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
                 && crate::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])

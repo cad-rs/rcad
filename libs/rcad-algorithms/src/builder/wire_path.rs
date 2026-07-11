@@ -44,12 +44,12 @@ pub(crate) fn refine_angles(
             }
         }
 
-        // OCCT L965-968: only vertices with exactly 2 boundary edges
+        // Only vertices with exactly 2 boundary edges
         if cnt_bnd != 2 { continue; }
 
         let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
 
-        // OCCT L970-1000: refine IC outgoing angles
+        // Refine IC outgoing angles
         // Maps edge index 閳?refined angle (OCCT aDMSR)
         let mut refined_map: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
         for ei in &infos {
@@ -57,15 +57,15 @@ pub(crate) fn refine_angles(
                 let a_ic = ei.angle;
                 let a_da = clock_wise_angle(a2_bnd, a_ic);
                 if a_da < a_delta {
-                    continue; // OCCT L986-989: already inside boundary sweep
+                    continue;
                 }
 
-                // OCCT L991: try pcurve-based refinement first
+                // Try pcurve-based refinement first
                 let b_refined = refine_angle_2d(v, &segments[ei.seg_idx], segments, ds, face_surface, a1_bnd, a2_bnd, a_delta, a_ic);
                 if let Some(refined_angle) = b_refined {
                     refined_map.insert(ei.seg_idx, refined_angle);
                 } else if cnt_int == 2 {
-                    // OCCT L1012: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
+                    // w/ angular precision guard
                     let eps = 1e-12;
                     let new_angle = if a_ic <= a1_bnd {
                         (a1_bnd + eps) % std::f64::consts::TAU
@@ -79,12 +79,12 @@ pub(crate) fn refine_angles(
 
         if refined_map.is_empty() { continue; }
 
-        // OCCT L1008-1028: update angles in SmartMap
+        // Update angles in SmartMap
         if let Some(infos_mut) = smart_map.get_mut(&v) {
             for ei in infos_mut.iter_mut() {
                 if let Some(&new_angle) = refined_map.get(&ei.seg_idx) {
                     ei.angle = new_angle;
-                    // OCCT L1022-1024: for incoming edges, adjust by PI
+                    // For incoming edges, adjust by PI
                     if ei.in_flag {
                         ei.angle = (new_angle + std::f64::consts::PI) % std::f64::consts::TAU;
                     }
@@ -276,7 +276,7 @@ pub(crate) fn intersect_ray_curve_2d(
     }
 }
 
-/// 閴?OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
+/// 閴OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
 /// OCCT ref: BRep_Tool::Parameter (returns the parameter of a vertex on an edge's curve).
 pub(crate) fn project_uv_to_curve(
     uv: DVec2,
@@ -331,7 +331,7 @@ pub(crate) fn project_uv_to_curve(
     }
 }
 
-/// 閴?OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
+/// 閴OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
 ///
 /// For an IC outgoing edge outside the boundary sweep, compute a refined
 /// angle by intersecting the edge's UV pcurve with rays along the boundary
@@ -358,11 +358,11 @@ pub(crate) fn refine_angle_2d(
     _a_delta: f64,
     _current_angle: f64,
 ) -> Option<f64> {
-    // OCCT L1057-1061: use vertex parameter on edge's pcurve (BRep_Tool::Parameter).
+    // Use vertex parameter on edge's pcurve (BRep_Tool::Parameter).
     //   rcad does NOT store per-vertex-on-edge parameters, but for IC arcs we can
     //   use the pcurve endpoint UV directly instead of re-projecting 3D閳壏V via
     //   world_to_uv (which gives wrong UV at periodic surface singularities).
-    // OCCT L1062-1068: get pcurve and range
+    // Get pcurve and range
     let (curve2d, t_min, t_max): (Curve2d, f64, f64) = match &seg.source {
         WireEdgeSource::IntersectionCurve(ci) => {
             let ic = &ds.intersection_curves[*ci];
@@ -488,17 +488,17 @@ pub(crate) fn refine_angle_2d(
         }
 
         if let Some((t_1max, _t_2max)) = best {
-            // OCCT L1104-1108: skip if intersection is at far end
+            // Skip if intersection is at far end
             let dt = t_op - t_1max;
             if dt.abs() < a_tol_int { continue; }
 
-            // OCCT L1110-1113: sample curve slightly before intersection
+            // Sample curve slightly before intersection
             let t_sample = t_1max + a_cf * dt;
             let p_sample = curve2d.point_at(t_sample);
             let dir = p_sample - v_uv;
             if dir.length_squared() < 1e-30 { continue; }
 
-            // OCCT L1115-1121: compute angle and check if inside boundary wedge
+            // Compute angle and check if inside boundary wedge
             let a_angle = dir.y.atan2(dir.x);
             let a_angle = if a_angle < 0.0 { a_angle + std::f64::consts::TAU } else { a_angle };
             let a_da = clock_wise_angle(a2_bnd, a_angle);
@@ -509,7 +509,7 @@ pub(crate) fn refine_angle_2d(
     }
     None
 }
-/// 閴?OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
+/// 閴OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
 ///
 /// Key differences from the previous implementation:
 /// 1. Tracks UV coordinates of each visited vertex (aCoordVa).
@@ -555,7 +555,7 @@ pub(crate) fn walk_path_extract_wires(
     let two_pi = std::f64::consts::TAU;
 
     // OCCT: aLS (edge sequence), aVertVa (vertex sequence), aCoordVa (UV coordinates)
-    // OCCT L389: anInfoSeq (EdgeInfo pointer sequence for isBoundary tracking)
+    
     let mut edge_seq: Vec<usize> = Vec::new();
     let mut vert_seq: Vec<usize> = Vec::new();
     let mut uv_seq: Vec<DVec2> = Vec::new();
@@ -567,7 +567,7 @@ pub(crate) fn walk_path_extract_wires(
     let max_iter = segments.len() * 4 + 200; // increased safety limit
 
     // Build a per-vertex map: does this vertex belong to a closed/degenerate edge?
-    // OCCT L424: bIsClosed = aVertMap.Find(aVb)
+    
     let is_vert_closed = |smart_map: &IndexMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
         smart_map.get(&v).map_or(false, |infos| {
             infos.iter().any(|ei| {
@@ -591,7 +591,7 @@ pub(crate) fn walk_path_extract_wires(
                 // OCCT BRep_Tool::Parameter(aV, aE, aF): vertex parameter on
                 // edge's pcurve.  vi == ic.start_vertex 閳?t_range[0];
                 // vi == ic.end_vertex 閳?t_range[1].
-                // 閳?OCCT-aligned: compare by 3D position, not index.  rcad's DS
+                // 閳OCCT-aligned: compare by 3D position, not index.  rcad's DS
                 //   assigns different vertex indices to the same 3D point (remap_ic_v),
                 //   so vi == ic.start_vertex fails silently for remapped vertices.
                 //   Use geometric distance at remap_ic_v's tolerance.
@@ -602,7 +602,7 @@ pub(crate) fn walk_path_extract_wires(
                 Some(pc.point_at(t))
             }
             WireEdgeSource::DsEdge(_) if segment.is_closed_on_face => {
-                // 閴?OCCT-aligned: Coord2d (WireSplitter_1.cxx L663-674) uses the
+                // 閴OCCT-aligned: Coord2d (WireSplitter_1.cxx L663-674) uses the
                 //   edge's own pcurve, selected by orientation per CurveOnSurface
                 //   (BRep_Tool.cxx L354-361): FORWARD 閳?PCurve (native U side),
                 //   REVERSED 閳?PCurve2 (shifted U side).  rcad models a closed
@@ -614,7 +614,7 @@ pub(crate) fn walk_path_extract_wires(
                 //   the "out" end to (2锜? Vpole) at the "in" end, spanning the full
                 //   U circle at Vpole 閳?exactly matching OCCT's pcurve for a sphere
                 //   degenerated edge.
-                // 閴?OCCT-aligned: CurveOnSurface returns PCurve for FORWARD (L354-361),
+                // 閴OCCT-aligned: CurveOnSurface returns PCurve for FORWARD (L354-361),
                 //   PCurve2 for REVERSED.  vertex_uv uses first_pcurve (PCurve) for
                 //   FORWARD segments, second_pcurve (PCurve2) for REVERSED, matching
                 //   Coord2d per-edge pcurve evaluation (WireSplitter_1.cxx L663-674).
@@ -661,7 +661,7 @@ pub(crate) fn walk_path_extract_wires(
         if let Some(uv) = pc_uv {
             return Some(uv);
         }
-        // 閴?OCCT-aligned: non-seam DsEdge vertex_uv from first_pcurve (OCCT:
+        // 閴OCCT-aligned: non-seam DsEdge vertex_uv from first_pcurve (OCCT:
         //   BRep_Tool::CurveOnSurface 閳?C2D->D0(BRep_Tool::Parameter(aV,aE,aF), aP2D1)).
         if let WireEdgeSource::DsEdge(_) = &segment.source {
             if !segment.is_closed_on_face {
@@ -717,16 +717,16 @@ pub(crate) fn walk_path_extract_wires(
             _ => vt,
         }
     };
-    // OCCT L859-881: Tolerance2D 閳?max(UResolution, VResolution, tolV3D)
+     閳?max(UResolution, VResolution, tolV3D)
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
         let mut t2d = u_resolution(vt).max(v_resolution(vt)).max(vt);
         if matches!(face_surface, Surface3::BSpline(_) | Surface3::Bezier(_)) { t2d *= 1.1; }
         t2d
     };
-    // OCCT L885-891: UTolerance2D = UResolution(aTolV3D)
+     = UResolution(aTolV3D)
     let u_tolerance_2d = |vi: usize| -> f64 { u_resolution(vtol(vi)) };
-    // OCCT L895-901: VTolerance2D = VResolution(aTolV3D)
+     = VResolution(aTolV3D)
     let v_tolerance_2d = |vi: usize| -> f64 { v_resolution(vtol(vi)) };
     let uv_tolerance = |vi: usize| -> f64 { 2.0 * tolerance_2d(vi) };
 
@@ -767,7 +767,7 @@ pub(crate) fn walk_path_extract_wires(
             let prev_uv = uv_seq[i];
             let prev_si = edge_seq[i];
 
-            // OCCT L449-458: bHasEdge 閳?skip degenerate-only wires
+             閳?skip degenerate-only wires
             if !b_has_edge {
                 b_has_edge = match &segments[prev_si].source {
                     WireEdgeSource::DsEdge(ei) => !ds.is_edge_degenerated(*ei),
@@ -852,7 +852,7 @@ pub(crate) fn walk_path_extract_wires(
             return;
         };
 
-        // OCCT L571-582: 2D distance check (Coord2dVf vs aPb) applies to ALL
+        
         //   candidates.  Compute a_pb (UV of arrived vertex on current edge) and
         //   b_is_closed before candidate filtering/selection.
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
@@ -938,10 +938,10 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<Edg
     }
 }
 
-/// 閴?OCCT-aligned: wire 3D boundary polygon
+/// 閴OCCT-aligned: wire 3D boundary polygon
 ///     DS  3D
 
-/// 閴?OCCT-aligned: classify wires into growth/outer and holes
+/// 閴OCCT-aligned: classify wires into growth/outer and holes
 /// (BOPAlgo_BuilderFace::PerformAreas L387-606).
 ///
 /// OCCT creates a TopoDS_Face from each wire via BRepBuilderAPI_MakeFace,
@@ -952,7 +952,7 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<Edg
 /// then use ray-casting point-in-polygon.  Full-wrap wires (<3 unique
 /// vertices, spanning the full periodic domain) use the surface's full
 /// UV rectangle as their polygon.
-/// 閴?OCCT-aligned: merge sphere wires by interleaving seam+IC segments.
+/// 閴OCCT-aligned: merge sphere wires by interleaving seam+IC segments.
 ///    OCCT's DoSplitSEAMOnFace produces a single wire alternating between
 ///    seam sub-segments and IC arcs.  rcad produces 2 wires (one IC-loop,
 ///    one seam-loop) on the same vertices but opposite directions.
@@ -965,13 +965,13 @@ pub(crate) fn perform_areas(
     _context: &mut Context,
     face_idx: usize,
 ) -> Vec<WireFace> {
-    // OCCT L401-414: if no loops at all
+    
     if wires.is_empty() {
         if ds.faces[face_idx].natural_restriction {
-            // OCCT L403-411: infinite face 閳?create a single face without wires
+             閳?create a single face without wires
             return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
         }
-        // OCCT L413: non-infinite face with no loops 閳?nothing to create
+         閳?nothing to create
         return vec![];
     }
 
@@ -996,13 +996,13 @@ pub(crate) fn perform_areas(
         }
     }
 
-    // OCCT L432-437: build 3D boundary polygon and centroid for each wire
-    // OCCT L401-402: if no wires and natural_restriction, the whole face is used.
+    
+    
     // WireData.full_wrap removed 閳?it was a rcad invention (see P2).
     struct WireData { wire_idx: usize, uv_boundary: Vec<DVec2>, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let fsurf = &ds.faces[face_idx].surface;
-        // 閴?OCCT-aligned: collect UV polygon by sampling each edge's pcurve
+        // 閴OCCT-aligned: collect UV polygon by sampling each edge's pcurve
         //   at NbSamples points (OCCT IntTools_FClass2d Init L291-312).
         //   Convert each segment to (edge_idx, forward) pairs for DsEdge segments,
         //   fall back to world_to_uv for IC/SeamEdge segments.
@@ -1105,18 +1105,18 @@ pub(crate) fn perform_areas(
 
     if wds.is_empty() { return vec![]; }
 
-    // OCCT L428-458: sequential classification with IsGrowthWire + IsHole
+    
     let mut is_hole = vec![false; wds.len()];
     let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     for si in 0..wds.len() {
-        // OCCT L441: IsGrowthWire fast check 閳?if wire shares edges with known
+         閳?if wire shares edges with known
         // hole edges (MHE), it is the GROWTH containing the hole (not a hole
         // itself).  Enables alternating growth閳姍ole閳姅rowth閳姍ole nesting.
         if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; }
         else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
-            // 閴?OCCT-aligned: IsHole check via UV polygon signed area.
+            // 閴OCCT-aligned: IsHole check via UV polygon signed area.
             //   OCCT IntTools_FClass2d derives myIsHole from the face's parametric
             //   area: negative (CW) 閳?hole, positive (CCW) 閳?growth.  Compute the
             //   signed area of the UV boundary directly 閳?equivalent to OCCT's area
@@ -1174,13 +1174,13 @@ pub(crate) fn perform_areas(
         } else { continue; };
         let mut assigned = false;
         for (gi, &g) in growths.iter().enumerate() {
-            // OCCT L494: compute growth UV bounding box, skip non-overlapping.
+            
             if let Some([u0, u1, v0, v1]) = growth_uv_bbox[gi] {
                 if h_uv_c.x < u0 || h_uv_c.x > u1 || h_uv_c.y < v0 || h_uv_c.y > v1 {
                     continue; // UV bbox non-overlapping 閳?skip (OCCT Box2dTree filter)
                 }
             }
-            // OCCT L502-537: IsInside test 閳?hole centroid in growth UV polygon.
+             閳?hole centroid in growth UV polygon.
             if wds[g].uv_boundary.len() >= 3 && point_in_polygon_2d(&wds[g].uv_boundary, h_uv_c) {
                 h2g.push((h, g));
                 assigned = true;
@@ -1192,7 +1192,7 @@ pub(crate) fn perform_areas(
         }
     }
 
-    // OCCT L557-581: identify orphan holes (assigned count < total holes)
+     (assigned count < total holes)
     let assigned_hole_set: std::collections::HashSet<usize> = h2g.iter().map(|&(h, _)| h).collect();
     let orphan_holes: Vec<usize> = holes.iter()
         .enumerate()
@@ -1200,20 +1200,20 @@ pub(crate) fn perform_areas(
         .map(|(_, h)| *h)
         .collect();
 
-    // OCCT L540-555: build reverse map growth閳姍oles.
+     growth閳姍oles.
     let mut g2h: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
-    // OCCT L584-613: add holes to growth faces.
+    
     let mut result: Vec<WireFace> = growths.iter().map(|&g| WireFace {
         outer_wire: wires[g].clone(),
         inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
         internal_wires: internal_wires.to_vec(),
     }).collect();
 
-    // OCCT L557-581: unassigned holes 閳?create new growth face from original surface
+     閳?create new growth face from original surface
     if !orphan_holes.is_empty() && ds.faces[face_idx].natural_restriction {
-        // OCCT L565-579: new TopoDS_Face from original surface 閳?add orphan holes as inner wires
+         閳?add orphan holes as inner wires
         // rcad: WireFace with empty outer_wire = full parametric surface (natural_restriction)
         let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter().map(|&h| wires[h].clone()).collect();
         result.push(WireFace {
@@ -1225,7 +1225,7 @@ pub(crate) fn perform_areas(
     result
 }
 
-/// 閴?OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
+/// 閴OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
 ///   Classify internal wire groups against result faces and add as internal wires.
 ///   L620-631: return early if no internal wires.
 ///   L634-666: build UV boxes for each face (rcad: UV boundary polygon).
@@ -1243,7 +1243,7 @@ pub(crate) fn perform_internal_shapes(
 
     let fsurf = &ds.faces[face_idx].surface;
 
-    // OCCT L634-666: Build UV boxes for each face (BRepTools::AddUVBounds)
+     (BRepTools::AddUVBounds)
     //   rcad: build UV boundary polygon for each WireFace's outer wire.
     let face_uv_bounds: Vec<Vec<DVec2>> = wfs.iter().map(|wf| {
         let mut uv_bnd: Vec<DVec2> = Vec::new();
@@ -1296,7 +1296,7 @@ pub(crate) fn perform_internal_shapes(
         uv_bnd
     }).collect();
 
-    // OCCT L674-741: classify each internal wire against each face
+    
     //   rcad: for each internal wire group, sample a UV point and find
     //   the first face containing it (IsInside equivalent).
     for group in internal_wire_groups {
@@ -1329,7 +1329,7 @@ pub(crate) fn perform_internal_shapes(
             pt
         };
 
-        // OCCT L710-715: if edge is inside face 閳?add to internal wires
+         閳?add to internal wires
         for (fi, wf) in wfs.iter_mut().enumerate() {
             if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
                 && point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])

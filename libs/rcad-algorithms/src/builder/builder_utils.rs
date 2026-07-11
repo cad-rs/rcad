@@ -15,7 +15,7 @@ use crate::builder::angle_2d::angle_2d;
 use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, are_verts_coincident, is_edge_isoline};
 use crate::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
 
-///  ?OCCT-aligned: compare two Curve3 for identity (same TShape).
+///  OCCT-aligned: compare two Curve3 for identity (same TShape).
 pub(crate) fn curve_eq(a: &Curve3, b: &Curve3) -> bool {
  match (a, b) {
  (Curve3::Circle(ca), Curve3::Circle(cb)) => {
@@ -84,9 +84,9 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// See also `BooleanHistory::update_with_post_treat()` for a more OCCT-aligned
 /// implementation that uses `ds.my_images` instead of spatial proximity.
 ///
-///  ?OCCT-aligned: core concept (history tracking from DS) matches OCCT's
+///  OCCT-aligned: core concept (history tracking from DS) matches OCCT's
 /// image-map-based approach, adapted for rcad's flat-array data model.
-///  ?OCCT-aligned: TopExp::MapShapes(myShape, myMapShape)  ?build result S index map.
+///  OCCT-aligned: TopExp::MapShapes(myShape, myMapShape)  ?build result S index map.
 /// OCCT maps TopoDS_Shape  ?identity for myMapShape lookup.
 /// rcad: maps result vertex index  ?DS vertex index, result edge index  ?(DS vertices).
 /// Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
@@ -119,14 +119,14 @@ pub(crate) fn map_result_shapes(brep: &topods::BRep, ds: &DS) -> (Vec<usize>, Ve
  (result_to_ds, edge_pairs)
 }
 
-///  ?OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+///  OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified / AddGenerated / Remove.
 /// rcad: uses pre-built result_to_ds map to annotate vertex/edge provenance.
 #[allow(dead_code)]
 pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut BooleanHistory, ds: &DS) {
  let (result_to_ds, _) = map_result_shapes(brep, ds);
 
- // OCCT L176: MapShapes done.  Annotate vertex origins (FromA/FromB/Intersection).
+ 
  let a_vc = ds.a_vertex_count;
  let n_result_verts = brep.tshapes.iter().filter(|ts| std::matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
  let mut vertex_origins: Vec<VertexOrigin> = Vec::with_capacity(n_result_verts);
@@ -232,7 +232,7 @@ pub(crate) fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> So
  }
 }
 
-///  ?OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
+///  OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified/AddGenerated/Remove.
 /// rcad: aggregates per-face origins to shell/solid level via face_region  ?shell  ?solid.
 pub(crate) fn annotate_shell_and_solid_history(brep: &topods::BRep, history: &mut BooleanHistory) {
@@ -279,36 +279,36 @@ pub struct BooleanBuilder<'a> {
  use_glue: bool,
  glue_tolerance: f64,
  context: RefCell<Context>,
- //  ?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
+ //  OCCT-aligned: error tracking (myReport / HasErrors equivalent).
  has_errors: bool,
- //  ?OCCT-aligned: myImages  ?source shape index  ?list of split image indices.
+ //  OCCT-aligned: myImages  ?source shape index  ?list of split image indices.
  // Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
  my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  ?OCCT-aligned: myOrigins  ?split shape index  ?list of source origin indices.
+ //  OCCT-aligned: myOrigins  ?split shape index  ?list of source origin indices.
  my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  ?OCCT-aligned: myShapesSD  ?source shape index  ?same-domain shape index.
+ //  OCCT-aligned: myShapesSD  ?source shape index  ?same-domain shape index.
  my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
- //  ?OCCT-aligned: split edges created by FillImagesEdges (PaveBlock  ?new DSEdge).
+ //  OCCT-aligned: split edges created by FillImagesEdges (PaveBlock  ?new DSEdge).
  // Stored here because DS is immutable (rcad uses &'a DS); their indices start
  // at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
  split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
- //  ?OCCT-aligned: myInParts  ?source solid index  ?list of its IN face indices
+ //  OCCT-aligned: myInParts  ?source solid index  ?list of its IN face indices
  // (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
  // FillIn3DParts / BuildDraftSolid for solid assembly.
  my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  ?OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
+ //  OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
  // OCCT BuildSplitSolids stores split solids in myImages[source_solid].
  // rcad: maps source side (0=A, 1=B)  ?result solid indices from
  // build_split_solids.  Used by annotate_shell_and_solid_history and
  // for OCCT-form history tracking.
  my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  ?OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
+ //  OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
  // Reverse map: result solid index  ?list of source sides.
  my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  ?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
+ //  OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
  // Safe processing  ?avoids modifying input shapes. Used in PostTreat.
  my_non_destructive: bool,
- //  ?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
+ //  OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
  // Enables/disables inverted-solid check on input shapes.
  my_check_inverted: bool,
 }
@@ -317,7 +317,7 @@ pub struct BooleanBuilder<'a> {
 // OCCT 1:1  ? IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-///  ?OCCT-aligned:  ?MEF (Map Edge= aces) = 椤?椤?閳??
+///  OCCT-aligned:  ?MEF (Map Edge= aces) = 椤?椤?閳??
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 /// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
 /// Checks if two faces are tangent (parallel normals + close distance).
@@ -348,7 +348,7 @@ pub(crate) fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collect
  bounds
 }
 
-///  ?OCCT-aligned: PointInFace  椤??= ?FaceSampleData =UV domain  = ?
+///  OCCT-aligned: PointInFace  椤??= ?FaceSampleData =UV domain  = ?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
 /// rcad  ? FaceSampleData  ?uv_domain =uv_centroid,= ?UV centroid
@@ -369,7 +369,7 @@ pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
  (xb << 42) | (yb << 21) | zb
 }
 
-///  ?OCCT-aligned: IsInternalFace  椤??(BOPTools_AlgoTools.cxx L791-872)
+///  OCCT-aligned: IsInternalFace  椤??(BOPTools_AlgoTools.cxx L791-872)
 ///
 ///  椤?
 /// Level 1:  椤?= 閳?=solid  閿?椤? 1  = 閵??
@@ -382,7 +382,7 @@ pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
 /// None =  
 /// Check if a DS vertex lies on the boundary edge between sv/ev, and if so add it
 /// to split_verts with its parametric position t.
-///  ?OCCT-aligned: FillImagesEdges checks pave blocks per edge (global scope).
+///  OCCT-aligned: FillImagesEdges checks pave blocks per edge (global scope).
 pub(crate) fn check_and_add_split_vertex(
  ds: &DS,
  sv: usize,
@@ -407,19 +407,19 @@ pub(crate) fn check_and_add_split_vertex(
  }
 }
 
-///  ?OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
+///  OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
 pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
  let face = &ds.faces[face_idx];
  let mut segments: Vec<WireSegment> = Vec::new();
  let mut processed_seam_ds_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
- //  ?OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
+ //  OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
  // OCCT's DS shares vertices via ShapesSD during PaveFiller.
  // rcad: vertex remapping is done in make_section_edges_from_curve_pbs,
  // so IC endpoints already reference canonical vertices by this point.
 
  // Check if surface is closed (U/V)  for seam edge detection
- // OCCT L383-388: GeomLib::IsClosed  U/V
+ 
  let (is_u_closed, is_v_closed) = match &face.surface {
  Surface3::Sphere(_) => (true, true),
  Surface3::Cylinder(_) => (true, false),
@@ -471,15 +471,15 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  continue;
  }
  //  ?OCCT L371-382: unsplit edge  ?add directly.
- // OCCT L371-377: INTERNAL orientation  ?FWD+REV.
- // OCCT L379-381: FORWARD/REVERSED  ?add with orientation.
+ 
+ 
  let is_internal = ds.edges[ei].is_internal;
  let rep = ds.edge_on_face(ei, face_idx);
  let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
  Some(&edge.curve), Some(edge.t_range));
  let src = WireEdgeSource::DsEdge(ei);
  if is_internal {
- // OCCT L373-377: INTERNAL unsplit  ?FWD + REV
+ 
  segments.push(WireSegment {
  start_vertex: sv, end_vertex: ev, source: src.clone(),
  orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
@@ -492,7 +492,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  first_pcurve: None, t_range: [0.0, 1.0],
  });
  } else {
- // OCCT L379-381: non-INTERNAL  ?add with orientation
+ 
  segments.push(WireSegment {
  start_vertex: sv, end_vertex: ev, source: src,
  orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
@@ -520,7 +520,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
 
  //  ?OCCT L408-464: iterate split sub-edges (aLIE from myImages.Find).
  if b_is_degenerated {
- // OCCT L413-417: iterate sub-edges, set orientation, append
+ 
  for &sub_ei in &ds.my_images[ei] {
  let sub_edge = &ds.edges[sub_ei];
  let sv_seg = sub_edge.start_vertex;
@@ -552,7 +552,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  let sv_seg = sub_edge.start_vertex;
  let ev_seg = sub_edge.end_vertex;
  if sv_seg == ev_seg { continue; }
- // OCCT L420-426: INTERNAL original -> each sub-edge FWD+REV
+ 
  if is_original_internal {
  let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
  Some(&sub_edge.curve), Some(sub_edge.t_range));
@@ -573,7 +573,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  });
  continue;
  }
- // OCCT L457-462: normal split -> orientation + IsSplitToReverseWithWarn
+ 
  let needs_reverse = is_split_to_reverse(ds, sub_ei, ei);
  let (t_fwd, t_rev) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
  Some(&sub_edge.curve), Some(sub_edge.t_range));
@@ -613,7 +613,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  }
 
  // ================================================================
- //  ?OCCT-aligned: inner wire edges  ?same processing as outer boundary.
+ //  OCCT-aligned: inner wire edges  ?same processing as outer boundary.
  // OCCT TopExp_Explorer iterates all wires' edges in one loop.
  // rcad stores them separately, so we apply identical logic here.
  // ================================================================
@@ -671,7 +671,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  };
 
  if b_is_degenerated {
- // OCCT L413-417: iterate sub-edges, set orientation, append
+ 
  for &sub_ei in &ds.my_images[ei] {
  let sub_edge = &ds.edges[sub_ei];
  let sv_seg = sub_edge.start_vertex;
