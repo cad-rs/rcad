@@ -1116,33 +1116,290 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
     }
-    /// OCCT-aligned: BOPAlgo_Builder::BuildBOP (Builder.hxx L214-290).
-    ///   For BOP: (objects, tools, operation)  --converts to IN/OUT states.
-    ///   rcad: builds result from all classified face images.
+    /// OCCT-aligned: BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L485-891).
+    ///   For BOP: (objects, tools, operation) --converts to IN/OUT states.
+    ///   rcad: builds result from all classified face images with IN/OUT filtering.
     pub(super) fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
-        // OCCT L220-228: convert operation to object/tool states: IN/OUT
-        // rcad: boolean flags (true = IN, false = OUT)
-        let obj_in = matches!(self.op, BooleanOpType::Intersection);
-        let tools_in = matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference);
-        // Collect all non-null face refs (already classified by fill_images_faces)
-        let all_faces: Vec<_> = self.my_face_refs.borrow().iter()
-            .filter(|sr| !sr.is_null())
-            .copied()
-            .collect();
-        if all_faces.is_empty() {
-            // OCCT L502-504: AlertBuilderFailed
+        // OCCT L492-504: HasErrors / empty argument check
+        if self.has_errors {
+            return;
+        }
+        let my_face_refs = self.my_face_refs.borrow();
+        let my_images = self.my_images.borrow();
+        let my_in_parts = self.my_in_parts.borrow();
+
+        // OCCT L514-520: hasObjects / hasTools from DS face counts
+        let has_objects = self.ds.a_face_count > 0;
+        let has_tools   = self.ds.faces.len() > self.ds.a_face_count;
+        if !has_objects && !has_tools {
             self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::TooFewArguments);
             return;
         }
-        // OCCT L637-684: select faces based on IN/OUT state per operation.
-        // rcad simplified: all non-null faces participate (FillImagesFaces
-        // already filtered out-of-classification faces).
-        let _ = (obj_in, tools_in); // form alignment placeholder
+        // OCCT L506-511: state validation
+        let the_obj_state_in   = matches!(self.op, BooleanOpType::Intersection);
+        let the_tools_state_in = matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference);
+        // OCCT L558-635: build face maps per source solid.
+        // rcad: iterate DS faces per side (A=0, B=1), collect face images with orientation.
+        // Architecture diff (OCCT TopExp_Explorer → rcad DS index loops):
+        //   OCCT iterates TopoDS solids via TopExp_Explorer(aS, TopAbs_SOLID)
+        //   then their faces via TopExp_Explorer(aS, TopAbs_FACE).
+        //   rcad: source solids are tracked by DS solid/shell indices;
+        //   DS faces have source_solid_idx to link back.
+        //   DSSolid has no `origin` field → side determined by DS face origin.
+        let f_base = self.ds.vertices.len() + self.ds.edges.len();
+        let mut faces_with_ori: [Vec<topods::ShapeRef>; 2] = [Vec::new(), Vec::new()];
+        let mut faces_fence: [std::collections::HashSet<u64>; 2] =
+            [std::collections::HashSet::new(), std::collections::HashSet::new()];
+        let mut in_faces: [std::collections::HashSet<u64>; 2] =
+            [std::collections::HashSet::new(), std::collections::HashSet::new()];
+        // Collect source solid indices per side for myInParts lookup
+        let mut src_solids: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+        for (si, _sol) in self.ds.solids.iter().enumerate() {
+            // Determine side from any face belonging to this solid
+            let mut side = 2usize; // unknown
+            for (fi, df) in self.ds.faces.iter().enumerate() {
+                if df.source_solid_idx == Some(si) {
+                    side = if df.origin == ShapeOrigin::ShapeA { 0 } else { 1 };
+                    break;
+                }
+            }
+            if side < 2 { src_solids[side].push(si); }
+        }
 
-        // OCCT L700-870: build result solids from selected faces
-        let shell_ref = t_brep.add_tshell(all_faces);
-        let solid_ref = t_brep.add_tsolid(vec![shell_ref]);
-        self.my_solids.borrow_mut().push(solid_ref);
+        for side in 0..2 {
+            // Collect all DS face indices for this side
+            let side_origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+            // OCCT L580-618: iterate faces of each solid
+            for &src_si in &src_solids[side] {
+                let mut solid_faces: Vec<usize> = Vec::new();
+                for (fi, df) in self.ds.faces.iter().enumerate() {
+                    if df.origin == side_origin && df.source_solid_idx == Some(src_si) {
+                        solid_faces.push(fi);
+                    }
+                }
+                for &fi in &solid_faces {
+                    let face_sr = my_face_refs.get(fi).copied()
+                        .unwrap_or(topods::ShapeRef::synthetic(f_base + fi));
+                    if face_sr.is_null() { continue; }
+                    // Architecture diff: OCCT TopoDS_Face has FORWARD/REVERSED orientation;
+                    // rcad DS faces are always FORWARD. Orientation tracked only in ShapeRef.
+
+                    // OCCT L593-618: myImages.Seek(aF) → splits
+                    let has_images = my_images.get(&face_sr)
+                        .map_or(false, |imgs| !imgs.is_empty());
+                    if has_images {
+                        if let Some(imgs) = my_images.get(&face_sr) {
+                            for &img_sr in imgs {
+                                // OCCT L600-611: IsSplitToReverse check
+                                let need_reverse = if img_sr.index < t_brep.tshapes.len() {
+                                    let orig_normal = self.face_approx_normal(fi);
+                                    let split_normal = self.shape_ref_face_normal(img_sr, t_brep);
+                                    split_normal.map_or(false, |sn| {
+                                        crate::boptools::is_split_to_reverse(orig_normal, sn)
+                                    })
+                                } else { false };
+                                if need_reverse {
+                                    let mut rev = img_sr;
+                                    rev.orientation = topods::Orientation::Reversed;
+                                    faces_with_ori[side].push(rev);
+                                } else {
+                                    faces_with_ori[side].push(img_sr);
+                                }
+                                faces_fence[side].insert(img_sr.ptr_id);
+                            }
+                        }
+                    } else {
+                        // OCCT L616-618: no images → add original face
+                        faces_with_ori[side].push(face_sr);
+                        faces_fence[side].insert(face_sr.ptr_id);
+                    }
+                }
+                // OCCT L621-632: collect IN faces from myInParts for this solid
+                if let Some(in_face_indices) = my_in_parts.get(&src_si) {
+                    for &in_fi in in_face_indices {
+                        let in_sr = my_face_refs.get(in_fi).copied()
+                            .unwrap_or(topods::ShapeRef::synthetic(f_base + in_fi));
+                        if !in_sr.is_null() {
+                            in_faces[side].insert(in_sr.ptr_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L637-743: face selection based on IN/OUT states
+        let is_objects_in = the_obj_state_in;
+        let is_tools_in   = the_tools_state_in;
+        let b_avoid_in         = !is_objects_in && !is_tools_in;        // OCCT L643
+        let b_avoid_in_for_both = is_objects_in != is_tools_in;          // OCCT L644
+        let is_same_ori_needed = the_obj_state_in == the_tools_state_in; // OCCT L647
+
+        let mut a_m_res_faces_ori: Vec<topods::ShapeRef> = Vec::new();
+        let mut a_m_res_faces_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut a_m_f_to_avoid: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut a_m_fence: [std::collections::HashSet<u64>; 2] =
+            [std::collections::HashSet::new(), std::collections::HashSet::new()];
+        let mut a_m_fence_ori: [std::collections::HashSet<u64>; 2] =
+            [std::collections::HashSet::new(), std::collections::HashSet::new()];
+
+        for side in 0..2 {
+            let b_take_in = if side == 0 { is_objects_in } else { is_tools_in };
+            let opposite_side = 1 - side;
+            for &f_sr in &faces_with_ori[side] {
+                let f_id = f_sr.ptr_id;
+                let is_in         = in_faces[side].contains(&f_id);
+                let is_in_opposite = in_faces[opposite_side].contains(&f_id);
+                if b_avoid_in && (is_in || is_in_opposite) { continue; }
+                if b_avoid_in_for_both && is_in && is_in_opposite { continue; }
+                if !a_m_fence[side].insert(f_id) {
+                    if !faces_fence[opposite_side].contains(&f_id) {
+                        if b_take_in != is_same_ori_needed {
+                            a_m_f_to_avoid.insert(f_id);
+                        }
+                    } else {
+                        let is_same_ori = !a_m_fence_ori[side].insert(f_id);
+                        if is_same_ori_needed == is_same_ori {
+                            if a_m_res_faces_fence.insert(f_id) {
+                                a_m_res_faces_ori.push(f_sr);
+                            }
+                        } else {
+                            a_m_f_to_avoid.insert(f_id);
+                        }
+                        continue;
+                    }
+                }
+                if !a_m_fence_ori[side].insert(f_id) { continue; }
+                if b_take_in == is_in_opposite {
+                    if is_in {
+                        a_m_res_faces_ori.push(f_sr);
+                        let mut rev = f_sr;
+                        rev.orientation = topods::Orientation::Reversed;
+                        a_m_res_faces_ori.push(rev);
+                    } else if b_take_in && !is_same_ori_needed {
+                        let mut rev = f_sr;
+                        rev.orientation = topods::Orientation::Reversed;
+                        a_m_res_faces_ori.push(rev);
+                    } else {
+                        a_m_res_faces_ori.push(f_sr);
+                    }
+                    a_m_res_faces_fence.insert(f_id);
+                }
+            }
+        }
+        // OCCT L745-755: remove avoided faces
+        let mut a_res_faces: Vec<topods::ShapeRef> = Vec::new();
+        for &f_sr in &a_m_res_faces_ori {
+            if !a_m_f_to_avoid.contains(&f_sr.ptr_id) {
+                a_res_faces.push(f_sr);
+            }
+        }
+        if a_res_faces.is_empty() {
+            self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::TooFewArguments);
+            return;
+        }
+        // OCCT L759-765: BOPAlgo_BuilderSolid from selected faces
+        // rcad: BuilderSolid expects DS face indices; convert ShapeRefs → DS indices
+        let mut bs_faces: Vec<usize> = Vec::new();
+        for f_sr in &a_res_faces {
+            for (dfi, &ref_sr) in my_face_refs.iter().enumerate() {
+                if !ref_sr.is_null() && ref_sr.ptr_id == f_sr.ptr_id {
+                    bs_faces.push(dfi);
+                    break;
+                }
+            }
+        }
+        bs_faces.sort_unstable();
+        bs_faces.dedup();
+
+        let mut a_bs = crate::bopds::builder_solid::BuilderSolid::new();
+        a_bs.set_shapes(&bs_faces);
+        a_bs.perform(&self.ds);
+        // OCCT L767-799: validate each resulting solid has ≥1 face from objects/tools
+        let mut a_res_solids: Vec<topods::ShapeRef> = Vec::new();
+        if !self.ds.solids.is_empty() || true {
+            // rcad BuilderSolid.areas() returns &[Vec<usize>] (each Vec = set of DS face indices)
+            let a_areas: &[Vec<usize>] = a_bs.areas();
+            for area_faces in a_areas {
+                if area_faces.is_empty() { continue; }
+                // Check at least one face from objects or tools
+                let has_obj_or_tool_face = area_faces.iter().any(|&fi| {
+                    let fi_sr = my_face_refs.get(fi).copied()
+                        .unwrap_or(topods::ShapeRef::synthetic(f_base + fi));
+                    faces_fence[0].contains(&fi_sr.ptr_id)
+                        || faces_fence[1].contains(&fi_sr.ptr_id)
+                });
+                if !has_obj_or_tool_face { continue; }
+                // Build BRep shell + solid from this area
+                let mut area_face_refs: Vec<topods::ShapeRef> = Vec::new();
+                for &fi in area_faces {
+                    let fi_sr = my_face_refs.get(fi).copied()
+                        .unwrap_or(topods::ShapeRef::synthetic(f_base + fi));
+                    area_face_refs.push(fi_sr);
+                }
+                let shell_ref = t_brep.add_tshell(area_face_refs);
+                let solid_ref = t_brep.add_tsolid(vec![shell_ref]);
+                a_res_solids.push(solid_ref);
+            }
+        }
+        // OCCT L801-839: collect unused faces → connexity blocks → solids
+        {
+            let mut a_unused_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            for solid_sr in &a_res_solids {
+                if solid_sr.index < t_brep.tshapes.len() {
+                    if let topods::TShape::Solid(ref sd) = *t_brep.tshapes[solid_sr.index] {
+                        for &sh_sr in &sd.shells {
+                            if sh_sr.index < t_brep.tshapes.len() {
+                                if let topods::TShape::Shell(ref shd) = *t_brep.tshapes[sh_sr.index] {
+                                    for &face_sr in &shd.faces {
+                                        a_unused_fence.insert(face_sr.ptr_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut a_unused_faces: Vec<topods::ShapeRef> = Vec::new();
+            for &f_sr in &a_res_faces {
+                if !a_unused_fence.contains(&f_sr.ptr_id) {
+                    a_unused_faces.push(f_sr);
+                }
+            }
+            if !a_unused_faces.is_empty() {
+                // Architecture diff: OCCT uses MakeConnexityBlocks + OrientFacesOnShell for
+                // unused faces, then builds solids. rcad simplifies to single shell+solid.
+                let shell_ref = t_brep.add_tshell(a_unused_faces);
+                let solid_ref = t_brep.add_tsolid(vec![shell_ref]);
+                a_res_solids.push(solid_ref);
+            }
+        }
+        // OCCT L841-877: FillInternals
+        // TODO(OCCT L841-877): BOPAlgo_Tools::FillInternals needs further tooling alignment
+        // OCCT L879-891: combine solids into result compound
+        for &sr in &a_res_solids {
+            self.my_solids.borrow_mut().push(sr);
+        }
+    }
+
+    /// Approximation of face normal for orientation comparison (OCCT IsSplitToReverse).
+    /// Uses the first triangle or edges to estimate face normal direction.
+    fn face_approx_normal(&self, fi: usize) -> glam::DVec3 {
+        if let Some(face) = self.ds.faces.get(fi) {
+            return face.surface.normal_at(0.5, 0.5);
+        }
+        glam::DVec3::Z
+    }
+
+    /// Lookup the normal of a ShapeRef that refers to a Face TShape in the BRep.
+    fn shape_ref_face_normal(&self, sr: topods::ShapeRef, t_brep: &topods::BRep) -> Option<glam::DVec3> {
+        if sr.index < t_brep.tshapes.len() {
+            if let topods::TShape::Face(fd) = &*t_brep.tshapes[sr.index] {
+                if let Some(ref surf) = fd.surface {
+                    return Some(surf.normal_at(0.5, 0.5));
+                }
+            }
+        }
+        None
     }
 
     /// OCCT-aligned: CheckArgsForOpenSolid (BOP.cxx L1382-1470).
