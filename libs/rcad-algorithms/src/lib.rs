@@ -317,14 +317,9 @@ pub use boolean::{
     FinalSuccessfulConfig, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
 };
 pub use brep_algo_api::{
-    // BRepAlgoAPI-style high-level boolean API
-    BRepAlgoAPI_Common,
-    BRepAlgoAPI_Cut,
-    BRepAlgoAPI_Fuse,
-    BRepAlgoAPI_Section,
-    BRepHistory,
-    BooleanApiOptions,
+    BooleanOp, BooleanOptions, SectionOp,
 };
+pub use brep_algo_api::{common, cut, fuse};
 pub use brep_check::{
     CheckIssue,
     CheckResult,

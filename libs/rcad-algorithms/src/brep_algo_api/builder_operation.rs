@@ -83,7 +83,7 @@ pub struct BooleanOpStatistics {
     pub n_solids: usize,
 }
 
-/// BooleanOp 鈥?a general boolean operation between two shapes with history tracking.
+/// `BuilderOperation` — a general boolean operation between two shapes with history tracking.
 ///
 /// This is the rcad equivalent of OCCT BRepAlgoAPI_BuilderOperation,
 /// which is the base class for:
@@ -95,7 +95,7 @@ pub struct BooleanOpStatistics {
 ///
 /// Wraps the rcad boolean pipeline (DS + PaveFiller + BooleanBuilder) in
 /// a struct that tracks shape history (Modified/Generated/IsDeleted).
-pub struct BooleanOp {
+pub struct BuilderOperation {
     /// First input shape (object).
     shape_a: rcad_kernel::BRep,
     /// Second input shape (tool).
@@ -112,7 +112,7 @@ pub struct BooleanOp {
     error: Option<BooleanError>,
 }
 
-impl BooleanOp {
+impl BuilderOperation {
     /// Create a new BooleanOp.
     ///
     /// OCCT ref: BRepAlgoAPI_Common/Fuse/Cut constructor (BRepAlgoAPI.cxx)
