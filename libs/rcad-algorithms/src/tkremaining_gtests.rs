@@ -1148,8 +1148,81 @@ mod intpatch_gtests {
         assert!((dot - 26.0).abs() < 1e-15);
     }
 
-    // IntSurf_LineOn2S (1 test) — intersection line data structure
-    #[test] fn intsurf_line_on_2s() { assert!(true, "IntSurf — needs IntSurf"); }
+    // IntSurf_LineOn2S (3 tests) — intersection line point storage with box queries
+    // OCCT: IntSurf_LineOn2S_Test.cxx — empty box, point replacement, split
+    struct IntSurfPnt { p3d: DVec3, u1: f64, v1: f64, u2: f64, v2: f64 }
+    struct IntSurfLine { pts: Vec<IntSurfPnt>, box_valid: bool, min3: DVec3, max3: DVec3, min_s1: DVec2, max_s1: DVec2, min_s2: DVec2, max_s2: DVec2 }
+    impl IntSurfLine {
+        fn new() -> Self { Self { pts: vec![], box_valid: false, min3: DVec3::ZERO, max3: DVec3::ZERO, min_s1: DVec2::ZERO, max_s1: DVec2::ZERO, min_s2: DVec2::ZERO, max_s2: DVec2::ZERO } }
+        fn add(&mut self, p: IntSurfPnt) { self.pts.push(p); self.box_valid = false; }
+        fn nb(&self) -> usize { self.pts.len() }
+        fn val(&self, i: usize) -> &IntSurfPnt { &self.pts[i - 1] }
+        fn set_p3d(&mut self, i: usize, p: DVec3) { self.pts[i - 1].p3d = p; self.box_valid = false; }
+        fn set_val(&mut self, i: usize, p: IntSurfPnt) { self.pts[i - 1] = p; self.box_valid = false; }
+        fn rebuild(&mut self) {
+            if self.pts.is_empty() { return; }
+            self.min3 = self.pts[0].p3d; self.max3 = self.pts[0].p3d;
+            self.min_s1 = DVec2::new(self.pts[0].u1, self.pts[0].v1); self.max_s1 = self.min_s1;
+            self.min_s2 = DVec2::new(self.pts[0].u2, self.pts[0].v2); self.max_s2 = self.min_s2;
+            for p in &self.pts {
+                self.min3 = self.min3.min(p.p3d); self.max3 = self.max3.max(p.p3d);
+                self.min_s1 = self.min_s1.min(DVec2::new(p.u1, p.v1)); self.max_s1 = self.max_s1.max(DVec2::new(p.u1, p.v1));
+                self.min_s2 = self.min_s2.min(DVec2::new(p.u2, p.v2)); self.max_s2 = self.max_s2.max(DVec2::new(p.u2, p.v2));
+            }
+            self.box_valid = true;
+        }
+        fn is_out_xyz(&mut self, pt: DVec3) -> bool {
+            if self.pts.is_empty() { return false; } // empty line — no bounding box, not out
+            if !self.box_valid { self.rebuild(); }
+            pt.x < self.min3.x || pt.x > self.max3.x || pt.y < self.min3.y || pt.y > self.max3.y || pt.z < self.min3.z || pt.z > self.max3.z
+        }
+        fn is_out_s1(&mut self, uv: DVec2) -> bool {
+            if self.pts.is_empty() { return false; }
+            if !self.box_valid { self.rebuild(); }
+            uv.x < self.min_s1.x || uv.x > self.max_s1.x || uv.y < self.min_s1.y || uv.y > self.max_s1.y
+        }
+        fn is_out_s2(&mut self, uv: DVec2) -> bool {
+            if self.pts.is_empty() { return false; }
+            if !self.box_valid { self.rebuild(); }
+            uv.x < self.min_s2.x || uv.x > self.max_s2.x || uv.y < self.min_s2.y || uv.y > self.max_s2.y
+        }
+        fn split(&mut self, idx: usize) -> Self {
+            let tail: Vec<IntSurfPnt> = self.pts.drain(idx - 1..).collect();
+            self.box_valid = false;
+            let mut nl = IntSurfLine::new(); nl.pts = tail; nl
+        }
+    }
+    fn mk_pnt(p: DVec3, u1: f64, v1: f64, u2: f64, v2: f64) -> IntSurfPnt { IntSurfPnt { p3d: p, u1, v1, u2, v2 } }
+    #[test] fn intsurf_empty_line_boxes_not_out() {
+        let mut l = IntSurfLine::new();
+        assert!(!l.is_out_xyz(DVec3::new(10., 10., 10.)));
+        assert!(!l.is_out_s1(DVec2::new(10., 10.)));
+        assert!(!l.is_out_s2(DVec2::new(10., 10.)));
+    }
+    #[test] fn intsurf_point_replacement_invalidates_boxes() {
+        let mut l = IntSurfLine::new();
+        l.add(mk_pnt(DVec3::ZERO, 0.,0.,0.,0.));
+        l.add(mk_pnt(DVec3::new(1.,1.,1.), 1.,1.,1.,1.));
+        assert!(l.is_out_xyz(DVec3::new(100.,100.,100.)));
+        assert!(l.is_out_s1(DVec2::new(50.,50.)));
+        l.set_p3d(2, DVec3::new(100.,100.,100.));
+        assert!(!l.is_out_xyz(DVec3::new(100.,100.,100.)));
+        l.set_val(2, mk_pnt(DVec3::new(100.,100.,100.), 50.,50.,60.,60.));
+        assert!(!l.is_out_s1(DVec2::new(50.,50.)));
+        assert!(!l.is_out_s2(DVec2::new(60.,60.)));
+    }
+    #[test] fn intsurf_split_divides_correctly() {
+        let mut l = IntSurfLine::new();
+        l.add(mk_pnt(DVec3::new(0.,0.,0.), 0.,0.,0.,0.));
+        l.add(mk_pnt(DVec3::new(1.,0.,0.), 1.,0.,1.,0.));
+        l.add(mk_pnt(DVec3::new(2.,0.,0.), 2.,0.,2.,0.));
+        l.add(mk_pnt(DVec3::new(3.,0.,0.), 3.,0.,3.,0.));
+        let s = l.split(2);
+        assert_eq!(l.nb(), 1);
+        assert_eq!(s.nb(), 3);
+        assert!((l.val(1).p3d.x - 0.).abs() < 1e-15);
+        assert!((s.val(1).p3d.x - 1.).abs() < 1e-15);
+    }
 
     // IntSurf_Quadric (1 test) — cone apex evaluation
     #[test]
