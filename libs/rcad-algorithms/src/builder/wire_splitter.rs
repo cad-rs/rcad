@@ -120,6 +120,26 @@ pub(crate) fn is_edge_isoline(pcurve: &Curve2d, range: [f64; 2]) -> (bool, bool)
  let tangent_n = tangent.normalize();
  let tol = 1e-12;
  // OCCT L696-699: CrossMagnitude((0,1)) = |t.x|, CrossMagnitude((1,0)) = |t.y|
+
+// ====================================================================
+// OCCT-aligned: Build BVH tree (Bnd_Box2d per edge from pcurve UV bounds)
+// ====================================================================
+
+// ====================================================================
+// OCCT-aligned: For each WireFace, classify avoided segments via IsInside
+// ====================================================================
+
+// ====================================================================
+// OCCT-aligned: select edges inside this face via 2D ray casting
+// ====================================================================
+
+// ====================================================================
+// OCCT-aligned: BVH box prefilter (skip if box doesn't overlap face)
+// ====================================================================
+
+// ====================================================================
+// OCCT-aligned: MakeInternalWires (per-face BFS assembly)
+// ====================================================================
  let is_uiso = tangent_n.x.abs() <= tol;
  let is_v_iso = tangent_n.y.abs() <= tol;
  (is_uiso, is_v_iso)
@@ -564,9 +584,9 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
  (wires, internal_wires, vertex_positions)
 }
 
-///  OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks(start_elements, VERTEX, EDGE).
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks (L105-154).
 /// Groups segments into connected components (blocks) by shared vertices.
-/// Each block is a subset of segments that form a connected sub-graph.
+/// Iterates over the block while growing it (OCCT self-iterating list pattern).
 pub(crate) fn make_connexity_blocks(
  segments: &[WireSegment],
  avoided: &std::collections::HashSet<usize>,
@@ -574,29 +594,27 @@ pub(crate) fn make_connexity_blocks(
  vert_to_segs: &HashMap<usize, Vec<usize>>,
  n: usize,
 ) -> Vec<Vec<usize>> {
- let mut visited_seg = vec![false; n];
+ let mut fence: HashSet<usize> = HashSet::new();
  let mut blocks: Vec<Vec<usize>> = Vec::new();
  for si in 0..n {
- if visited_seg[si] { continue; }
+ if !fence.insert(si) { continue; }
  if avoided.contains(&si) { continue; }
- let mut block = Vec::new();
- let mut queue = std::collections::VecDeque::new();
- queue.push_back(si);
- visited_seg[si] = true;
- while let Some(ci) = queue.pop_front() {
- block.push(ci);
+ let mut block = vec![si];
+ let mut i = 0;
+ while i < block.len() {
+ let ci = block[i];
  let seg = &segments[ci];
  for &vi in &[seg.start_vertex, seg.end_vertex] {
  let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
  if let Some(neighbors) = vert_to_segs.get(&cvi) {
  for &ni in neighbors {
- if !visited_seg[ni] {
- visited_seg[ni] = true;
- queue.push_back(ni);
+ if fence.insert(ni) {
+ block.push(ni);
  }
  }
  }
  }
+ i += 1;
  }
  blocks.push(block);
  }
@@ -828,7 +846,9 @@ pub(crate) fn assemble_internal_wires(
  return vec![vec![]; wfs.len()];
  }
 
- // OCCT L633-663: Build BVH tree  ?Bnd_Box2d per edge from pcurve UV bounds.
+ // ====================================================================
+// OCCT-aligned: Build BVH tree (Bnd_Box2d per edge from pcurve UV bounds)
+// ====================================================================
  // OCCT: BRepTools::AddUVBounds(myFace, aE, aBoxE) samples the edge's
  // pcurve on the face surface.  rcad: compute UV bounding box from segment's
  // first_pcurve at sampled points (matching OCCT sampling density).
@@ -849,7 +869,9 @@ pub(crate) fn assemble_internal_wires(
  })
  }).collect();
 
- // OCCT L674-716: For each WireFace, classify avoided segments via IsInside.
+ // ====================================================================
+// OCCT-aligned: For each WireFace, classify avoided segments via IsInside
+// ====================================================================
  let mut face_internal: Vec<Vec<usize>> = vec![Vec::new(); wfs.len()];
 
  for (fi, wf) in wfs.iter().enumerate() {
@@ -870,12 +892,13 @@ pub(crate) fn assemble_internal_wires(
  }).collect()
  }).filter(|poly: &Vec<DVec2>| poly.len() >= 3).collect();
 
- // OCCT L704-716: select edges inside this face via 2D ray casting.
- // OCCT uses BVH box prefilter + IsInside.  rcad: box overlap prefilter
- // + 2D point-in-polygon (equivalent to IsInside).
+ // ====================================================================
+// OCCT-aligned: select edges inside this face via 2D ray casting
+// ====================================================================
+ // Box overlap prefilter + 2D point-in-polygon (equivalent to OCCT IsInside)
  for (ai, &si) in avoided.iter().enumerate() {
  let Some(box_e) = &seg_uv_box[ai] else { continue; };
- // OCCT L694-695: BVH box prefilter  ?skip if box doesn't overlap face.
+ // Skip if edge box doesn't overlap face
  if outer_uv.iter().all(|p| p.x < box_e[0] || p.x > box_e[1] || p.y < box_e[2] || p.y > box_e[3]) {
  continue;
  }
@@ -887,7 +910,9 @@ pub(crate) fn assemble_internal_wires(
  }
  }
 
- // OCCT L724-725: MakeInternalWires  ?per-face BFS assembly.
+ // ====================================================================
+// OCCT-aligned: MakeInternalWires (per-face BFS assembly)
+// ====================================================================
  let mut per_face_wires: Vec<Vec<Vec<usize>>> = vec![Vec::new(); wfs.len()];
  for (fi, assigned) in face_internal.iter().enumerate() {
  if assigned.is_empty() { continue; }
