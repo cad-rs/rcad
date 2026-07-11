@@ -171,6 +171,8 @@ mod bop_algo_direct_tests {
         }
         let n_pb: usize = ds.intersection_curves.iter().map(|ic| ic.pave_blocks.len()).sum();
         let n_pb_sc: usize = ds.faces.iter().map(|f| f.face_info.pave_blocks_sc.len()).sum();
+        let n_pb: usize = ds.intersection_curves.iter().map(|ic| ic.pave_blocks.len()).sum();
+        let n_pb_sc: usize = ds.faces.iter().map(|f| f.face_info.pave_blocks_sc.len()).sum();
         eprintln!("DEBUG: n_ic={} n_pb={} n_pb_sc={}", ds.intersection_curves.len(), n_pb, n_pb_sc);
         for (i, ic) in ds.intersection_curves.iter().enumerate() {
             if !ic.pave_blocks.is_empty() {

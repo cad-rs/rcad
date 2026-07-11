@@ -490,7 +490,18 @@ impl<'a> super::PaveFiller<'a> {
  {
  let ic = &mut self.ds.intersection_curves[ci];
   if let Some(mut pb1) = ic.pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
- let sub_pbs = pb1.update(false);
+  // OCCT-aligned: ensure pave1/pave2 use the curve's clipped endpoint vertices.
+  // clip_curve_to_face_uv sets t_range and start/end_vertex; propagate to PB.
+  if pb1.original_edge == NO_EDGE && ic.start_vertex < self.ds.vertices.len()
+   && ic.end_vertex < self.ds.vertices.len() {
+   pb1.pave1 = crate::bopds::pave::Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] };
+   pb1.pave2 = crate::bopds::pave::Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] };
+  }
+  // OCCT-aligned: use the_flag=true for IC PBs (original_edge == NO_EDGE)
+  // so that pave1/pave2 are included as endpoint paves. With the_flag=false,
+  // curves with < 2 ext_paves produce no sub-PBs (a_nb = ext_paves.len() <= 1).
+  let the_flag = pb1.original_edge == NO_EDGE;
+ let sub_pbs = pb1.update(the_flag);
  a_lpb = sub_pbs;
  }
  }
