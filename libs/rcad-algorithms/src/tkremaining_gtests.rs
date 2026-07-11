@@ -191,9 +191,57 @@ mod tkgeom_algo_tests {
         }
     }
 
-    // Geom2dGcc_Lin2d2Tan (2 tests) — requires 3D-to-2D projection + line-tangent alg, not yet implemented
-    #[test] fn line_tangent_ellipse_and_point() { assert!(true, "Line tangent ellipse (needs line-tangent API)"); }
-    #[test] fn line_tangent_circle_and_ellipse() { assert!(true, "Line tangent circ+ell (needs line-tangent API)"); }
+    // Geom2dGcc_Lin2d2Tan (2 tests) — tangent lines to 2D curves
+    // OCCT: Geom2dGcc_Lin2d2Tan_Test.cxx — OCC813 + OCC814
+    #[test] fn line_tangent_ellipse_and_point() {
+        // OCCT OCC813: tangent line from a 2D point to a projected ellipse
+        let an_ell = Curve3::Ellipse(geom::Ellipse3 {
+            center: DVec3::new(1262.224429, 425.040878, 363.609716),
+            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
+            major_dir: DVec3::new(-0.932169, 0.164367, -0.322560).normalize(),
+            major_radius: 150.0,
+            minor_radius: 100.0,
+        });
+        let a_plane = Surface3::Plane(Plane {
+            origin: DVec3::new(1262.224429, 425.040878, 363.609716),
+            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
+        });
+        let a_curve_2d = crate::geom2d_api::project_curve_to_plane(&an_ell, &a_plane)
+            .expect("Ellipse should project to 2D");
+        let a_pnt_2d = DVec2::new(200.0, 200.0);
+        let sols = crate::geom2d_api::tangent::lines_tangent_to_curve_from_point(&a_curve_2d, a_pnt_2d, 0.1);
+        assert!(sols.len() > 0, "Expected at least one tangent line solution");
+    }
+
+    #[test] fn line_tangent_circle_and_ellipse() {
+        // OCCT OCC814: common tangent line between a 2D circle and a 2D ellipse
+        let a_cir = Curve3::Circle(geom::Circle3 {
+            center: DVec3::new(823.687192, 502.366825, 478.960440),
+            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
+            x_dir: DVec3::new(-0.932169, 0.164367, -0.322560).normalize(),
+            y_dir: DVec3::new(0.173648, 0.984808, 0.000000).normalize().cross(
+                DVec3::new(-0.932169, 0.164367, -0.322560).normalize()).normalize(),
+            radius: 50.0,
+        });
+        let an_ell = geom::Ellipse3 {
+            center: DVec3::new(1262.224429, 425.040878, 363.609716),
+            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
+            major_dir: DVec3::new(-0.932169, 0.164367, -0.322560).normalize(),
+            major_radius: 150.0,
+            minor_radius: 100.0,
+        };
+        let a_plane = Surface3::Plane(Plane {
+            origin: DVec3::new(1262.224429, 425.040878, 363.609716),
+            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
+        });
+        let a_curve_2d = crate::geom2d_api::project_curve_to_plane(&Curve3::Ellipse(an_ell), &a_plane)
+            .expect("Ellipse should project to 2D");
+        let a_from_curve_2d = crate::geom2d_api::project_curve_to_plane(&a_cir, &a_plane)
+            .expect("Circle should project to 2D");
+        let sols = crate::geom2d_api::tangent::common_tangents_curve_curve(
+            &a_curve_2d, &a_from_curve_2d, 0.1);
+        assert!(sols.len() > 0, "Expected at least one common tangent line solution");
+    }
 
     // Geom2dHatch_Elements (3 tests) — hatching data structure
     #[test] fn hatch_elements_deferred() { assert!(true, "Hatching — no rcad equivalent"); }

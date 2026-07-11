@@ -17,6 +17,9 @@ pub use self::bspline::*;
 // Projection, distance, angle queries (~160 lines)
 pub mod query;
 pub use self::query::*;
+// 3D curve to 2D on plane projection (~40 lines)
+mod project;
+pub use self::project::*;
 // Internal helpers (~355 lines)
 pub(crate) mod helpers;
 

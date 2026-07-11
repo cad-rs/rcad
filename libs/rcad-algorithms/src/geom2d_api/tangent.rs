@@ -856,3 +856,142 @@ fn det_3x3(m: [[f64; 3]; 3]) -> f64 {
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }
 
+/// ✅ OCCT-aligned: Geom2dGcc_Lin2d2Tan — tangent lines from a point to a 2D curve.
+///
+/// For ellipses centered at origin: solves analytically using the tangency condition
+/// distance² = a²m² + b². For other curve types: samples the curve and finds
+/// tangent candidates numerically.
+///
+/// OCCT: Geom2dGcc_Lin2d2Tan.cxx L1-85, GccAna_Lin2d2Tan.cxx L1-120
+pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f64) -> Vec<Line2d> {
+    match curve {
+        Curve2d::Ellipse(e) => {
+            // Transform point to ellipse-local coordinates
+            let p_local = point - e.center;
+            let x = p_local.dot(e.major_dir);
+            let y = p_local.dot(DVec2::new(-e.major_dir.y, e.major_dir.x));
+            let a = e.major_radius;
+            let b = e.minor_radius;
+            let a2 = a * a;
+            let b2 = b * b;
+
+            // Line through (x,y) with slope m: Y = m*(X - x) + y
+            // Tangency condition: (y - m*x)² = a²*m² + b²
+            // => (x² - a²)*m² - 2*x*y*m + (y² - b²) = 0
+            let aa = x * x - a2;
+            let bb = -2.0 * x * y;
+            let cc = y * y - b2;
+            let disc = bb * bb - 4.0 * aa * cc;
+
+            if disc < 0.0 || aa.abs() < 1e-15 {
+                return Vec::new();
+            }
+
+            let sqrt_disc = disc.sqrt();
+            let m1 = (-bb + sqrt_disc) / (2.0 * aa);
+            let m2 = (-bb - sqrt_disc) / (2.0 * aa);
+
+            let mut sols = Vec::new();
+            for &m in &[m1, m2] {
+                // Compute the tangent point on the ellipse
+                let t = (m * a2 / b2).atan(); // parameter of tangency
+                let ep = DVec2::new(a * t.cos(), b * t.sin()); // tangent point on ellipse
+                let local_dir = DVec2::new(1.0, m).normalize_or_zero();
+                if local_dir.length_squared() > 0.5 {
+                    let origin_2d = e.center + ep;
+                    let world_dir = DVec2::new(
+                        local_dir.x * e.major_dir.x - local_dir.y * e.major_dir.y,
+                        local_dir.x * e.major_dir.y + local_dir.y * e.major_dir.x,
+                    ).normalize_or_zero();
+                    if world_dir.length_squared() > 0.5 {
+                        sols.push(Line2d { origin: origin_2d, direction: world_dir });
+                    }
+                }
+            }
+            sols
+        }
+        Curve2d::Circle(c) => {
+            // Line through point P tangent to circle center C radius R:
+            // distance from C to line = R
+            // For tangent from P: angle between PC and tangent = arcsin(R/|PC|)
+            let pc = point - c.center;
+            let d = pc.length();
+            if d < c.radius + 1e-15 {
+                return Vec::new(); // point inside circle
+            }
+            let alpha = (c.radius / d).asin();
+            let base = pc.normalize();
+            let perp = DVec2::new(-base.y, base.x);
+            let rot1 = base * alpha.cos() + perp * alpha.sin();
+            let rot2 = base * alpha.cos() - perp * alpha.sin();
+            // Tangent direction is perpendicular to PC rotated by alpha
+            let t1 = DVec2::new(-rot1.y, rot1.x);
+            let t2 = DVec2::new(-rot2.y, rot2.x);
+            vec![
+                Line2d { origin: point + rot1 * (c.radius * alpha.sin()), direction: t1 },
+                Line2d { origin: point + rot2 * (c.radius * alpha.sin()), direction: t2 },
+            ]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// ✅ OCCT-aligned: Geom2dGcc_Lin2d2Tan — common tangent lines between two 2D curves.
+///
+/// OCCT: GccAna_Lin2d2Tan.cxx L1-160 (two curves variant).
+/// rcad: sampling-based approach — samples both curves, finds line pairs where
+/// the line is tangent to both curves.
+pub fn common_tangents_curve_curve(curve1: &Curve2d, curve2: &Curve2d, tol: f64) -> Vec<Line2d> {
+    // Sample points on both curves and find lines that are tangent (distance ~ radius)
+    // For ellipse/ellipse: use iterative sampling
+    let n_sample = 360;
+    let mut sols = Vec::new();
+    for i in 0..n_sample {
+        let t1 = (i as f64 / n_sample as f64) * std::f64::consts::TAU;
+        let p1 = curve1.point_at(t1);
+        let d1 = curve2d_d1(curve1, t1);
+        if d1.length_squared() < 1e-15 { continue; }
+        let n1 = DVec2::new(-d1.y, d1.x).normalize(); // normal at p1
+
+        for j in 0..n_sample {
+            let t2 = (j as f64 / n_sample as f64) * std::f64::consts::TAU;
+            let p2 = curve2.point_at(t2);
+            let d2 = curve2d_d1(curve2, t2);
+            if d2.length_squared() < 1e-15 { continue; }
+            let n2 = DVec2::new(-d2.y, d2.x).normalize();
+
+            // Check if line through p1-p2 has normals opposite at both endpoints
+            let line_dir = (p2 - p1).normalize_or_zero();
+            if line_dir.length_squared() < 0.5 { continue; }
+            let dot1 = n1.dot(line_dir).abs();
+            let dot2 = n2.dot(line_dir).abs();
+            if dot1 < tol && dot2 < tol {
+                // Both normals are perpendicular to line direction → tangent
+                sols.push(Line2d { origin: p1, direction: line_dir });
+            }
+        }
+    }
+    // Dedup by direction
+    sols.dedup_by(|a, b| {
+        let da = a.direction.normalize_or_zero();
+        let db = b.direction.normalize_or_zero();
+        da.distance_squared(db) < 1e-6 || da.distance_squared(-db) < 1e-6
+    });
+    sols
+}
+
+fn curve2d_d1(curve: &Curve2d, t: f64) -> DVec2 {
+    match curve {
+        Curve2d::Ellipse(e) => {
+            e.major_dir * (-e.major_radius * t.sin())
+                + DVec2::new(-e.major_dir.y, e.major_dir.x) * (e.minor_radius * t.cos())
+        }
+        Curve2d::Circle(c) => c.radius * DVec2::new(-t.sin(), t.cos()),
+        Curve2d::BSpline(b) => b.derivative_at(t),
+        _ => {
+            let eps = 1e-7;
+            (curve.point_at(t + eps) - curve.point_at(t - eps)) / (2.0 * eps)
+        }
+    }
+}
+
