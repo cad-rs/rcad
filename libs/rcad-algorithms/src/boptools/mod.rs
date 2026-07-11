@@ -46,7 +46,7 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
 /// rcad: operates on DS edge index instead of TopoDS_Edge + Context.
 pub fn is_micro_edge(ei: usize, ds: &DS, check_splittable: bool) -> bool {
  // OCCT L2076: degenerated or non-geometric
- if ds.edges.get(ei).map_or(true, |e| e.is_degenerated) { return true; }
+ if ds.is_edge_degenerated(ei) { return true; }
  let Some(edge) = ds.edges.get(ei) else { return true; };
  // OCCT L2082-2091: get curve range
  let a_t_range = edge.t_range;
