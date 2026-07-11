@@ -680,13 +680,8 @@ impl BvhStats {
 ///
 /// OCCT `BOPDS_Iterator` builds BVH trees over all DS sub-shapes to
 /// avoid O(n²) pair enumeration.  `DsBvh` provides the same culling
-/// for arbitrary DS arrays by computing AABBs from the entity geometry.
-///
-/// Building:
-/// ```
-/// let bvh = DsBvh::build(&aabbs);
-/// let pairs = DsBvh::candidate_pairs(&bvh_a, &bvh_b);
-/// ```
+/// OCCT-aligned BVH for DS entity pair filtering.
+/// Uses median-split builder (same algorithm as OCCT BVH_SpatialMedianBuilder).
 pub struct DsBvh {
  nodes: Vec<BvhNode>,
  indices: Vec<usize>,
@@ -711,6 +706,7 @@ impl DsBvh {
  Self { nodes, indices: sorted_indices, aabbs: sorted_aabbs }
  }
 
+ // OCCT-aligned: BVH_SpatialMedianBuilder — median-split construction.
  fn build_rec(
  order: &mut [usize],
  aabbs: &[Aabb],
@@ -728,7 +724,6 @@ impl DsBvh {
 
  let count = end - start;
  if count <= 4 {
- // Leaf node
  let idx = nodes.len();
  let leaf_start = out_indices.len();
  for &oi in &order[start..end] {
@@ -769,7 +764,7 @@ impl DsBvh {
  }
 
  /// Candidate entity pairs between two DS BVHs whose AABBs overlap.
- /// Returns (index_into_bvh_a, index_into_bvh_b) pairs.
+ /// OCCT-aligned: dual-tree BVH traversal (matching IntPatch_BVHTraversal).
  pub fn candidate_pairs(bvh_a: &DsBvh, bvh_b: &DsBvh) -> Vec<(usize, usize)> {
  let mut pairs = Vec::new();
  if bvh_a.nodes.is_empty() || bvh_b.nodes.is_empty() {
@@ -815,7 +810,6 @@ impl DsBvh {
  }
 
  /// Query all items whose AABB overlaps the query AABB.
- /// Returns the entity indices (into the original `indices` array).
  pub fn query_aabb(&self, query: &Aabb) -> Vec<usize> {
  if self.nodes.is_empty() { return vec![]; }
  let mut results = Vec::new();
