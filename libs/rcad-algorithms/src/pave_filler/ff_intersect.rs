@@ -461,7 +461,6 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  /// OCCT: plane-plane intersection
- /// OCCT: plane-plane intersection
 
  ///  ?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
  /// Builds vertex aces and edge aces connection maps per source range,

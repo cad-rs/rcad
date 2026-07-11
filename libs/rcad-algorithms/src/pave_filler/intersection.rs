@@ -1016,12 +1016,9 @@ impl<'a> super::PaveFiller<'a> {
  }
  if new_verts.len() < 2 { return vec![]; }
 
- // = =  Phase 2: IntersectVertices (BOPAlgo_Tools.cxx L1119-1204) = = = 
- // OCCT L1135: aTolAdd = theFuzzyValue / 2.
+ // = =  Phase 2: IntersectVertices (BOPAlgo_Tools.hxx L1119-1205) = = =
  let gap = self.ds.fuzzy_tol / 2.0;
 
- // OCCT L1137-1157: build BVH tree of vertex bounding boxes.
- // rcad: use DsBvh with AABBs expanded by tolerance + gap.
  use crate::bvh::{Aabb, DsBvh};
  let nv = new_verts.len();
  let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
@@ -1037,60 +1034,53 @@ impl<'a> super::PaveFiller<'a> {
  }
  let bvh = DsBvh::build(bvh_indices, bvh_aabbs);
 
- // OCCT L1159-1165: BVH pair selection + L1175-1178: FillMap
- // rcad: DsBvh::candidate_pairs gives overlapping AABB pairs.
  let pairs = DsBvh::candidate_pairs(&bvh, &bvh);
 
- // OCCT L1167-1179: FillMap + L1181-1182: MakeBlocks
- // rcad: union-find for connected component grouping (same result).
- let mut parent: Vec<usize> = (0..nv).collect();
- fn vfind(parent: &mut [usize], x: usize) -> usize {
- if parent[x] != x { parent[x] = vfind(parent, parent[x]); }
- parent[x]
- }
- fn vunion(parent: &mut [usize], a: usize, b: usize) {
- let ra = vfind(parent, a);
- let rb = vfind(parent, b);
- if ra != rb { parent[ra] = rb; }
- }
+ // OCCT L1167-1179: FillMap
+ let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
  for &(ia, ib) in &pairs {
- let vi = &new_verts[ia];
- let vj = &new_verts[ib];
- // OCCT-aligned: aTolSum2 = aTolV1 + aTolV2 + theFuzzyValue (BOPAlgo_Tools.cxx L1094)
- let geom_vi = self.ds.vertices[new_verts[ia].idx].geom_tol;
- let geom_vj = self.ds.vertices[new_verts[ib].idx].geom_tol;
- let merge_tol = geom_vi + geom_vj + self.ds.fuzzy_tol;
- if (vi.pos - vj.pos).length() <= merge_tol {
- vunion(&mut parent, ia, ib);
- }
+   let geom_vi = self.ds.vertices[new_verts[ia].idx].geom_tol;
+   let geom_vj = self.ds.vertices[new_verts[ib].idx].geom_tol;
+   let merge_tol = geom_vi + geom_vj + self.ds.fuzzy_tol;
+   if (new_verts[ia].pos - new_verts[ib].pos).length() <= merge_tol {
+     fill_map(&mut a_mili, ia, ib);
+   }
  }
 
- // OCCT L1184-1194: build chains from blocks.
- // rcad: group by root.
- let mut groups: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
- for i in 0..nv {
- let root = vfind(&mut parent, i);
- groups.entry(root).or_default().push(new_verts[i].idx);
- }
- // OCCT L1196-1203: add non-interfered vertices as single-element chains.
- // rcad: they're already in groups as single-element groups.
+ // OCCT L1181-1182: MakeBlocks
+ let a_blocks = make_blocks(&a_mili);
 
- // = =  Phase 3: MakeVertex for each chain (OCCT L714-717) = = = = = = = = = = 
- // OCCT BOPTools_AlgoTools::MakeVertex:
- // Single element  ?reuse the vertex.
- // Multiple elements  ?BRepLib::BoundingVertex computes center + tolerance.
- // Creates new TopoDS_Vertex via BRep_Builder::MakeVertex.
- // rcad: create new DS vertex for each multi-vertex group,
- // update all interferences/paves to point to the new vertex.
+ // OCCT L1184-1203: build chains from blocks
+ let mut groups: Vec<Vec<usize>> = a_blocks.iter()
+   .map(|block| block.iter().map(|&i| new_verts[i].idx).collect())
+   .collect();
+
+ // OCCT L1196-1204: add non-interfered vertices as singleton chains
+ {
+   let mut taken: HashSet<usize> = HashSet::new();
+   for group in &groups {
+     for &vi in group {
+       taken.insert(vi);
+     }
+   }
+   for i in 0..nv {
+     if !taken.contains(&new_verts[i].idx) {
+       groups.push(vec![new_verts[i].idx]);
+     }
+   }
+ }
+
+ // = =  Phase 3: MakeVertex for each chain (BOPTools_AlgoTools::MakeVertex) = = =
+ // Single element -> reuse the vertex.
+ // Multiple elements -> BRepLib::BoundingVertex computes center + tolerance.
  let mut survivors: Vec<usize> = Vec::new();
- for (_root, members) in &groups {
+ for members in &groups {
  if members.len() < 2 {
- // OCCT L1793-1795: single vertex  ?reuse as-is
  survivors.push(members[0]);
  continue;
  }
 
- // OCCT L1797-1804: BRepLib::BoundingVertex computes center + tolerance.
+ // OCCT: BRepLib::BoundingVertex computes center + tolerance.
  // rcad: compute centroid of all member vertex positions.
  let centroid = members.iter()
  .map(|&vi| self.ds.vertices[vi].point)
@@ -1106,7 +1096,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT: myIncreasedSS.Add(nV)  ?mark tolerance as increased.
  self.ds.increased_ss.insert(new_vi);
 
- // OCCT L638-648: aInt->SetIndexNew(iV)  ?update interference refs.
+ // Update interferences and paves to point to the new vertex
  for &old_vi in members {
  if old_vi == new_vi { continue; }
  for edge in &mut self.ds.edges {

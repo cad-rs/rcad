@@ -51,16 +51,14 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         &self.my_areas
     }
 
-    /// OCCT-aligned: Perform (BuilderFace.cxx L117-148).
+    /// ✅ OCCT-aligned: Perform (BuilderFace.cxx L117-148).
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
-        // OCCT L123: CheckData
         if self.face_idx >= self.face_refs.len() { return; }
         let face_ref = self.face_refs[self.face_idx];
         if face_ref.index >= self.brep.tshapes.len()
             || !matches!(&*self.brep.tshapes[face_ref.index], topods::TShape::Face(_))
         { return; }
 
-        // OCCT L129: PerformShapesToAvoid
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci);
         let segments = collect_face_edge_segments(self.ds, self.face_idx, &pcurve_lookup);
         if segments.is_empty() { return; }
@@ -73,7 +71,6 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
 
-        // OCCT L135: PerformLoops
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
 
@@ -84,7 +81,6 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
             &segments_topo, &avoided);
 
-        // OCCT L141: PerformAreas
         let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
@@ -104,7 +100,6 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
 
         let mut wfs = wfs;
 
-        // OCCT L147: PerformInternalShapes
         crate::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
 

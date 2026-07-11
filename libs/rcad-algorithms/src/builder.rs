@@ -703,103 +703,6 @@ impl<'a> BooleanBuilder<'a> {
 
  ///  ?OCCT-aligned: create TShapes for all DS source shapes in my_shape.
  /// Equivalent to OCCT's myArguments populated with all source TopoDS_Shape.
- fn pre_create_source_shapes(&self) {
- let mut t = self.my_shape.borrow_mut();
- let mut args = Vec::new();
-  // 1. Vertices
-  for v in &self.ds.vertices {
-  let sr = t.add_tvertex(v.point).with_location(v.location);
-  args.push(sr);
-  }
-  // 2. Edges (with curves)
-  for (ei, edge) in self.ds.edges.iter().enumerate() {
-  let sv = t.add_tvertex(self.ds.vertices[edge.start_vertex].point).with_location(edge.location);
-  let ev = t.add_tvertex(self.ds.vertices[edge.end_vertex].point).with_location(edge.location);
-  let te = t.add_tedge(Some(edge.curve.clone()), sv, ev, edge.t_range).with_location(edge.location);
- if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
- t.edge_mut(te).degenerated = true;
- }
- args.push(te);
- }
- // 3. Wires (from DS wires, using pre-created edge ShapeRefs)
- let e_base = self.ds.vertices.len();
- for wire in &self.ds.wires {
- let wire_edges: Vec<rcad_kernel::topods::ShapeRef> = wire.edges.iter()
- .filter_map(|&ei| {
- let idx = e_base + ei;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- })
- .collect();
- let ws = t.add_twire(wire_edges);
- args.push(ws);
- }
- // 4. Faces (from DS faces, using pre-created wire TShapes)
- let w_base = e_base + self.ds.edges.len();
- for fi in 0..self.ds.faces.len() {
- let face = &self.ds.faces[fi];
- // Outer wire
- let outer_wire = if let Some(wi) = face.outer_wire_idx {
- let idx = w_base + wi;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- } else { None };
- // Inner wires
- let inner_wires: Vec<rcad_kernel::topods::ShapeRef> = face.inner_wire_idxs.iter()
- .filter_map(|&wi| {
- let idx = w_base + wi;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- })
- .collect();
- let sample_pt = face.boundary_verts.first().copied()
- .and_then(|vi| self.ds.vertices.get(vi))
- .map(|v| v.point)
- .unwrap_or(glam::DVec3::ZERO);
-  let face_sr = t.add_tface(Some(face.surface.clone()),
-  outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
-  inner_wires, Some(sample_pt), None, vec![], face.natural_restriction).with_location(face.location);
-  args.push(face_sr);
- }
- // 5. Shells (from DS shells, using pre-created face TShapes)
- let f_base = w_base + self.ds.wires.len();
- for shell in &self.ds.shells {
- let face_refs: Vec<rcad_kernel::topods::ShapeRef> = shell.faces.iter()
- .filter_map(|&fi| {
- let idx = f_base + fi;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- })
- .collect();
- if !face_refs.is_empty() {
- args.push(t.add_tshell(face_refs));
- }
- }
- // 6. Solids (from DS solids, using pre-created shell TShapes)
- let sh_base = f_base + self.ds.faces.len();
- for solid in &self.ds.solids {
- let shell_refs: Vec<rcad_kernel::topods::ShapeRef> = solid.shells.iter()
- .filter_map(|&si| {
- let idx = sh_base + si;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- })
- .collect();
- if !shell_refs.is_empty() {
- args.push(t.add_tsolid(shell_refs));
- }
- }
- // 7. CompSolids
- let so_base = sh_base + self.ds.shells.len();
- for cs in &self.ds.comp_solids {
- let solid_refs: Vec<rcad_kernel::topods::ShapeRef> = cs.solids.iter()
- .filter_map(|&soi| {
- let idx = so_base + soi;
- if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
- })
- .collect();
- if !solid_refs.is_empty() {
- args.push(t.add_tcompsolid(solid_refs));
- }
- }
- *self.my_arguments.borrow_mut() = args;
- }
-
  ///  ?OCCT-aligned: TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
  /// Handles the case where one or both operands have no geometry.
  /// Returns Ok(Some(brep)) if a quick result was determined,
@@ -872,26 +775,22 @@ impl<'a> BooleanBuilder<'a> {
  let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
  self.check_data()?;
 
- // OCCT L438-442: Prepare
+ // OCCT L438-443: Prepare
  // rcad: prepare() initializes my_shape + returns ResultBuilder.
  let mut result = self.prepare().1;
-  // OCCT-aligned: compute myDims from argument shape types.
-  // OCCT BOPAlgo_BOP::PerformInternal1 (BOP.cxx L438):
-  //   myDims[0] = BRep_Tool::Dimension(myArguments.First());
-  //   myDims[1] = BRep_Tool::Dimension(myArguments.Last());
-  // BRep_Tool::Dimension: VERTEX=0, EDGE=1, WIRE/FACE=2, SHELL/SOLID/COMPSOLID=3.
-  // rcad: infer from per-origin shape counts in the DS.
-  let a_n_verts = self.ds.a_vertex_count;
-  let a_n_edges = self.ds.a_edge_count;
-  let a_n_faces = self.ds.a_face_count;
-  let b_n_verts = self.ds.vertices.len() - a_n_verts;
-  let b_n_edges = self.ds.edges.len() - a_n_edges;
-  let b_n_faces = self.ds.faces.len() - a_n_faces;
-  let dim_a = if a_n_faces > 0 { 3_i8 } else if a_n_edges > 0 { 1 } else if a_n_verts > 0 { 0 } else { 3 };
-  let dim_b = if b_n_faces > 0 { 3_i8 } else if b_n_edges > 0 { 1 } else if b_n_verts > 0 { 0 } else { 3 };
-  self.my_dims.set([dim_a, dim_b]);
+ // Compute myDims from argument shape types.
+ // OCCT: BRep_Tool::Dimension(myArguments.First/Last) → VERTEX=0, EDGE=1, WIRE/FACE=2, SHELL/SOLID=3.
+ // rcad: infer from per-origin shape counts in the DS.
+ let a_n_verts = self.ds.a_vertex_count;
+ let a_n_edges = self.ds.a_edge_count;
+ let a_n_faces = self.ds.a_face_count;
+ let b_n_verts = self.ds.vertices.len() - a_n_verts;
+ let b_n_edges = self.ds.edges.len() - a_n_edges;
+ let b_n_faces = self.ds.faces.len() - a_n_faces;
+ let dim_a = if a_n_faces > 0 { 3_i8 } else if a_n_edges > 0 { 1 } else if a_n_verts > 0 { 0 } else { 3 };
+ let dim_b = if b_n_faces > 0 { 3_i8 } else if b_n_edges > 0 { 1 } else if b_n_verts > 0 { 0 } else { 3 };
+ self.my_dims.set([dim_a, dim_b]);
  // OCCT L445-453: TreatEmptyShape.
- // OCCT: GetReport()->HasAlert(AlertEmptyShape) -> TreatEmptyShape() -> PrepareHistory -> return.
  // rcad: check if either operand has no faces (DS was populated by pave_fill).
  if a_faces.is_empty() || b_faces.is_empty() {
  if self.treat_empty_shape(&a_faces, &b_faces)?.is_some() {
@@ -910,62 +809,57 @@ impl<'a> BooleanBuilder<'a> {
  }
 
  // OCCT L454-457: ProgressScope + PISteps + analyzeProgress.
- const _PIOP_LAST: usize = 12;
- let _a_steps = [0.0f64; _PIOP_LAST];
- // OCCT: pre-create ALL source shapes as TShapes (matching myArguments in OCCT).
- self.pre_create_source_shapes();
- // OCCT L456-459: FillImagesVertices  ?BuildResult(VERTEX)
+ // rcad: progress reporting not yet integrated.
+ // OCCT L459-471: 3.1 FillImagesVertices + BuildResult(VERTEX)
  self.fill_images_vertices();
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Vertex, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L461-465: FillImagesEdges  ?BuildResult(EDGE)
+ // OCCT L472-483: 3.2 FillImagesEdges + BuildResult(EDGE)
  self.fill_images_edges();
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Edge, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L467-470: FillImagesContainers(WIRE)
+ // OCCT L484-496: 3.3 FillImagesContainers(WIRE) + BuildResult(WIRE)
  self.fill_images_container(ShapeType::Wire, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Wire, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L472-475: FillImagesFaces  ?BuildResult(FACE)
+ // OCCT L497-509: 3.4 FillImagesFaces + BuildResult(FACE)
  // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
- // Remaining unsplit faces already have pre-created TShapes from pre_create_source_shapes.
- // OCCT L498-502: FillImagesFaces(aPS.Next(...)) -- takes progress range only.
- // OCCT form: no external parameters; reads all data from this->myDS, this->myImages.
+ // Remaining unsplit faces have existing TShapes from pre-create_source_shapes.
  self.fill_images_faces();
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // BuildResult(FACE)  ?generic loop over my_arguments, adds originals/splits to result.
+ // BuildResult(FACE) — generic loop over my_arguments, adds originals/splits to result.
  self.build_result(topods::ShapeType::Face, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L477-480: FillImagesContainers(SHELL)
+ // OCCT L510-522: 3.5 FillImagesContainers(SHELL) + BuildResult(SHELL)
  self.fill_images_container(ShapeType::Shell, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Shell, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L482-485: FillImagesSolids
+ // OCCT L523-535: 3.6 FillImagesSolids + BuildResult(SOLID)
  self.fill_images_solids(&mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Solid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L537-548: FillImagesContainers(COMPSOLID)
+ // OCCT L536-548: 3.7 FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
  self.fill_images_container(ShapeType::CompSolid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::CompSolid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L492-495: FillImagesCompounds
+ // OCCT L549-561: 3.8 FillImagesCompounds + BuildResult(COMPOUND)
  self.fill_images_compounds(&mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Compound, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L498-500: BuildShape
+ // OCCT L563-568: 4. BuildShape
  self.build_shape(&mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L502-504: PrepareHistory
+ // OCCT L570-575: 5. PrepareHistory
  let mut history = self.prepare_history(&mut result);
 
- // OCCT L506-508: PostTreat(aPS.Next(...))
+ // OCCT L577-578: 6. PostTreat
  // Corrects tolerances of the result shape (CorrectTolerances + CorrectShapeTolerances).
  self.post_treat();
  let result_brep = self.my_shape.borrow().clone();
