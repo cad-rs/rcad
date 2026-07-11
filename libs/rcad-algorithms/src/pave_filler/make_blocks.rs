@@ -61,9 +61,10 @@ impl<'a> super::PaveFiller<'a> {
  let mut a_mv_tol: Vec<(usize, f64)> = Vec::new();
  // OCCT L704: aLPB  ?temporary list of PaveBlocks from update()
  let mut a_lpb: Vec<PaveBlock> = Vec::new();
- // OCCT L706: aMSCPB  ?map from section edge shape to (interf index, curve index, PB)
- // rcad: use existing_edge_map + PB list
- // OCCT L707: aMVI  ?map from shape to DS vertex index
+ // OCCT L706: aMSCPB  — map from section edge index to (interf_index, curve_index)
+ let mut a_mscpb: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
+ // OCCT L707: aMVI  — map from DS vertex index -> DS vertex index (identity)
+ let mut a_mvi: std::collections::HashSet<usize> = std::collections::HashSet::new();
  // OCCT L708-709: aDMExEdges  ?map PB -> list of existing edges
  // OCCT L710: aDMNewSD  ?map old vertex -> new SD vertex
  let mut a_dm_new_sd: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -456,7 +457,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
 
  // OCCT L882-1066: Make section edges (third loop over curves)
- for &ci in curves_of_ff {
+ for (j, &ci) in curves_of_ff.iter().enumerate() {
  if ci >= self.ds.intersection_curves.len() { continue; }
 
  // OCCT L884-886: Get curve data
@@ -808,7 +809,10 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L1066-1067: aLPBC.Append(aPB)
  let mut sub_pb = a_pb.clone();
  sub_pb.new_edge = Some(new_ei);
- // OCCT L1069-1075: aMSCPB.Add(aES, aCPB)
+ // OCCT L1069-1075: aMSCPB.Add(aES, aCPB) + aMVI.Bind(aV1, nV1)
+ a_mscpb.insert(new_ei, (cur_ind, j));
+ a_mvi.insert(n_v1);
+ a_mvi.insert(n_v2);
  // rcad: allocate a global PB and register on both faces' pave_blocks_sc.
  let g_pb_idx = self.ds.allocate_pave_block(sub_pb.clone());
  for &fi in &[n_f1, n_f2] {
