@@ -40,9 +40,32 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
   ei
 }
 
-/// OCCT-aligned: IsMicroEdge (BOPTools_AlgoTools).
-pub fn is_micro_edge(v1: &glam::DVec3, v2: &glam::DVec3) -> bool {
- (v1 - v2).length() < crate::tolerance::TOLERANCE_ABS * 100.0
+/// OCCT-aligned: BOPTools_AlgoTools::IsMicroEdge (BOPAlgo_Builder.cxx L2067-2104).
+/// Returns true if the edge is too short to be split (degenerated, range < PConfusion,
+/// shrunk range empty, or not splittable).
+/// rcad: operates on DS edge index instead of TopoDS_Edge + Context.
+pub fn is_micro_edge(ei: usize, ds: &DS, check_splittable: bool) -> bool {
+ // OCCT L2076: degenerated or non-geometric
+ if ds.edges.get(ei).map_or(true, |e| e.is_degenerated) { return true; }
+ let Some(edge) = ds.edges.get(ei) else { return true; };
+ // OCCT L2082-2091: get curve range
+ let a_t_range = edge.t_range;
+ let mut a_t1 = a_t_range[0];
+ let mut a_t2 = a_t_range[1];
+ if a_t2 < a_t1 {
+  std::mem::swap(&mut a_t1, &mut a_t2);
+ }
+ // OCCT L2093-2101: ShrunkRange
+ let mut a_sr = crate::inttools::shrunk_range::ShrunkRange::new();
+ let sv = edge.start_vertex;
+ let ev = edge.end_vertex;
+ let v1_tol = if sv < ds.vertices.len() { ds.vertices[sv].geom_tol } else { 0.0 };
+ let v2_tol = if ev < ds.vertices.len() { ds.vertices[ev].geom_tol } else { 0.0 };
+ a_sr.set_data(ei, [a_t1, a_t2], v1_tol, v2_tol, edge.geom_tol);
+ a_sr.perform(&edge.curve);
+ if !a_sr.is_done() { return true; }
+ if check_splittable && !a_sr.is_splittable() { return true; }
+ false
 }
 
 /// OCCT-aligned: ComputeState (BOPTools_AlgoTools).
