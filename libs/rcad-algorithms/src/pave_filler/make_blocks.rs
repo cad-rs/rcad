@@ -1019,11 +1019,6 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // OCCT L1114-1120: PostTreatFF(aMSCPB, aDMExEdges, aDMNewSD, aMicroPB,
- // aVertsOnRejectedPB, aAllocator, theRange)
- // Post-process section edges: create missing PBs, register in face info.
- self.post_treat_ff();
-
  // OCCT L1125-1126: CorrectToleranceOfSE()
  // Reduce tolerance of section edges where appropriate.
  for ci in 0..self.ds.intersection_curves.len() {
@@ -1097,31 +1092,6 @@ impl<'a> super::PaveFiller<'a> {
 
  // OCCT-aligned: InitPaveBlock1 is called per-curve in the first loop above.
  // The empty loop here is removed -- its purpose was served.
- }
-}
-
-/// OCCT-aligned: PostTreatFF (BOPAlgo_PaveFiller_6.cxx L1197-?).
-/// Post-processes section edges created by MakeBlocks.
-/// Creates missing PBs, registers in face info, and handles
-/// technological vertices.  Currently a stub -- the full ~2000-line
-/// OCCT function body will be translated in a subsequent alignment pass.
-impl<'a> super::PaveFiller<'a> {
- pub(super) fn post_treat_ff(&mut self) {
-  // OCCT L1208-1212: aNbS = theMSCPB.Extent(); if (!aNbS) return;
-  // rcad: section edges are registered in section_edge_refs.
-  let total_section_edges: usize = self.ds.section_edge_refs.iter().map(|v| v.len()).sum();
-  if total_section_edges == 0 {
-   return;
-  }
-  // OCCT PostTreatFF body (PaveFiller_6.cxx L1197-?).
-  // Handles: registering section edges in face info, creating
-  // SD vertices for micro edges, cleaning technological vertices,
-  // and fixing up pave blocks for same-domain face pairs.
-  //
-  // rcad: the core registration is already done in the third loop
-  // (Make section edges) above via section_edge_refs and
-  // pave_blocks_sc.  Additional passes (technological vertices,
-  // multi-face section edge propagation) are deferred.
  }
 }
 

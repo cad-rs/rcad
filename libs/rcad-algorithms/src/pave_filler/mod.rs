@@ -404,7 +404,7 @@ impl<'a> PaveFiller<'a> {
 
  //  ?OCCT L336: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
  // OCCT uses AddWarning =non-fatal, the operation continues.
- let _ = self.check_self_interference();
+ let si_warnings = self.check_self_interference();
 
  //  ?OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
  self.update_interfs_with_sd_vertices();

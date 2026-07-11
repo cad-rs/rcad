@@ -2,6 +2,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
 use crate::inttools::intss::{SurfaceSurfaceIntersection, SurfaceCurve};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ABS_SQ};
 use rcad_kernel::geom::CurveEval;
 
 /// ✅ OCCT-aligned: IntTools_FaceFace — face-face intersection result.
@@ -127,17 +128,25 @@ pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
     if !b_to_split { return; }
     let mut i = 0;
     while i < curves.len() {
+        let (t0, t1) = (curves[i].t_range[0], curves[i].t_range[1]);
+        // OCCT IntTools_Tools::IsClosed: check if start/end points coincide
         let is_closed = {
             let c = &curves[i];
-            let p1 = c.curve.point_at(c.t_range[0]);
-            let p2 = c.curve.point_at(c.t_range[1]);
-            (p1 - p2).length() < c.tolerance
+            let p1 = c.curve.point_at(t0);
+            let p2 = c.curve.point_at(t1);
+            (p1 - p2).length_squared() < TOLERANCE_ABS_SQ
         };
         if is_closed {
-            let t_mid = (curves[i].t_range[0] + curves[i].t_range[1]) * 0.5;
+            // OCCT L214-221: for BSpline/Bezier use IntermediatePoint, else regular midpoint
+            let t_mid = match &curves[i].curve {
+                Curve3::BSpline(_) | Curve3::Bezier(_) => {
+                    0.56786082 * t0 + 0.43213918 * t1
+                }
+                _ => 0.5 * (t0 + t1),
+            };
             let c2 = IntersectionCurve {
                 curve: curves[i].curve.clone(),
-                t_range: [t_mid, curves[i].t_range[1]],
+                t_range: [t_mid, t1],
                 pcurve1: curves[i].pcurve1.clone(),
                 pcurve2: curves[i].pcurve2.clone(),
                 tolerance: curves[i].tolerance,

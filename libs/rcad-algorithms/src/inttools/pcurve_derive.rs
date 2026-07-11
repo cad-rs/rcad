@@ -871,7 +871,11 @@ pub fn compute_max_deviation_3d_to_pcurve(
  let p_surf = surface.point_at(uv.x, uv.y);
  (p3 - p_surf).length()
  };
- crate::golden_section_max(f, t0, t1, TOLERANCE_PARAM_LEGACY)
+ let raw_max = crate::golden_section_max(f, t0, t1, TOLERANCE_PARAM_LEGACY);
+ // OCCT IntTools_Tools::ComputeTolerance L774: safety margin (1.0 + 1.0e-5)
+ // to allow for future trimming/small geometric perturbations.
+ const OCCT_MARGIN: f64 = 1.0 + 1.0e-5;
+ raw_max * OCCT_MARGIN
 }
 
 /// Compute the maximum deviation between a 3D curve and a surface
@@ -1013,11 +1017,44 @@ fn split_closed_curve(
 ///
 /// Operates on the `curves` vector in place.
 pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
- // OCCT PrepareLines3D (IntTools_FaceFace.cxx L1932-1967) does NOT split
- // closed curves — it only computes polyline approximation and tolerance.
- // Splitting is self-invented and causes curve count doubling.  Aligned
- // to OCCT: no-op.  MakeBlocks handles closed curves via PutPavesOnCurve
- // + PutBoundPaveOnCurve.
+ // OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967)
+ // + IntTools_Tools::SplitCurve (IntTools_Tools.cxx L191-250).
+ //
+ // Split closed 3D curves at the parametric midpoint so they can be
+ // trimmed properly.  Also trims 2D pcurves to the sub-ranges.
+ let mut i = 0;
+ while i < curves.len() {
+   let tr = curves[i].t_range;
+   if let Some(sub_ranges) = split_closed_curve(&curves[i].curve, &tr) {
+     let [r0, r1] = sub_ranges;
+     // OCCT L223-225: trim 3D curve to [First, Mid] (first half)
+     curves[i].t_range = r0;
+     // OCCT L228-240: trim 2D pcurves to sub-ranges
+     let pca_first = curves[i].pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1]));
+     let pcb_first = curves[i].pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1]));
+     let pca_second = curves[i].pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1]));
+     let pcb_second = curves[i].pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1]));
+     curves[i].pcurve_on_a = pca_first;
+     curves[i].pcurve_on_b = pcb_first;
+     // OCCT L242-247: create and append second half
+     let c2 = crate::bopds::ds::IntersectionCurve {
+       curve: curves[i].curve.clone(),
+       polyline: Vec::new(),
+       start_vertex: curves[i].start_vertex,
+       end_vertex: curves[i].end_vertex,
+       t_range: r1,
+       pcurve_on_a: pca_second,
+       pcurve_on_b: pcb_second,
+       geom_tol: curves[i].geom_tol,
+       pave_blocks: Vec::new(),
+       curve_extra: curves[i].curve_extra.clone(),
+     };
+     curves.insert(i + 1, c2);
+     i += 2;
+   } else {
+     i += 1;
+   }
+ }
 }
 
 /// Trim a Curve2d to the given parameter sub-range [lo, hi].
