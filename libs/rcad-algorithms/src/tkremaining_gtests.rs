@@ -401,11 +401,162 @@ mod tkgeom_algo_tests {
     // Intf_Tool (1 test) — OCCT-specific intersection tool
     #[test] fn intf_tool_bounding_box() { assert!(true, "Intf tool — OCCT-specific"); }
 
-    // IntPatch_Polyhedron (1 test) — patch intersection polyhedron
-    #[test] fn intpatch_polyhedron_deferred() { assert!(true, "IntPatch Poly — needs IntPatch"); }
+// =============================================================================
+// IntPatch_Polyhedron_Test.cxx + IntPatch_PolyhedronBVH_Test.cxx
+// OCCT: TKGeomAlgo/GTests/
+// =============================================================================
 
-    // IntPatch_PolyhedronBVH (1 test)
-    #[test] fn intpatch_polyhedron_bvh() { assert!(true, "IntPatch BVH — needs IntPatch"); }
+#[cfg(test)]
+mod intpatch_gtests {
+    use glam::DVec3;
+    use rcad_kernel::geom;
+
+    fn make_sphere_surf() -> geom::Surface3 {
+        geom::Surface3::Sphere(geom::SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        })
+    }
+
+    // =========================================================================
+    // IntPatch_Polyhedron_Test.cxx (111 lines, 5 tests)
+    // =========================================================================
+
+    /// OCCT L37-48: DefaultConstructor_ProducesValidMesh
+    #[test]
+    fn intpatch_polyhedron_default_constructor() {
+        let surf = make_sphere_surf();
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
+        assert!(a_poly.nb_triangles() > 0, "nb_triangles should be > 0");
+        assert!(a_poly.nb_points() > 0, "nb_points should be > 0");
+    }
+
+    /// OCCT L52-62: ZeroSubdivision_ClampedToMinimum
+    #[test]
+    fn intpatch_polyhedron_zero_subdivision() {
+        let surf = geom::Surface3::Plane(geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::Z,
+        });
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 0, 0);
+        assert!(a_poly.nb_triangles() > 0, "clamped polyhedron should produce triangles");
+        assert!(a_poly.nb_points() > 0, "clamped polyhedron should produce points");
+    }
+
+    /// OCCT L65-75: SmallSubdivision_ProducesValidMesh
+    /// Architecture diff: rcad clamps to min=3, so (2,2) becomes (3,3)
+    ///   producing 18 triangles not OCCT's 8.
+    #[test]
+    fn intpatch_polyhedron_small_subdivision() {
+        let surf = geom::Surface3::Plane(geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::Z,
+        });
+        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 2, 2);
+        assert!(a_poly.nb_triangles() > 0, "should produce valid mesh");
+        assert!(a_poly.nb_points() > 0, "should produce valid points");
+    }
+
+    /// OCCT L78-92: TriConnex_PedgeZero_NoCrash
+    /// Architecture diff: rcad Polyhedron does not have TriConnex
+    ///   (edge connectivity for marching seed propagation).
+    #[test]
+    #[ignore = "rcad Polyhedron does not implement TriConnex"]
+    fn intpatch_polyhedron_triconnex_pedge_zero() {
+        let surf = make_sphere_surf();
+        let _a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 4, 4);
+        // OCCT: aPoly.TriConnex(1, aP1, 0, aTriCon, anOtherP);
+        assert!(true, "TriConnex not implemented in rcad");
+    }
+
+    /// OCCT L95-111: TriConnex_AllVertices_NoCrash
+    #[test]
+    #[ignore = "rcad Polyhedron does not implement TriConnex"]
+    fn intpatch_polyhedron_triconnex_all_vertices() {
+        let surf = make_sphere_surf();
+        let _a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 3, 3);
+        assert!(true, "TriConnex not implemented in rcad");
+    }
+
+    // =========================================================================
+    // IntPatch_PolyhedronBVH_Test.cxx (239 lines, 8 tests)
+    // =========================================================================
+
+    /// OCCT L53-64: Construction — PolyhedronBVH initialization
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_construction() {
+        assert!(true, "PolyhedronBVH: needs translation");
+    }
+
+    /// OCCT L67-81: Box — BVH bounding box validity
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_box() {
+        assert!(true, "PolyhedronBVH Box: needs translation");
+    }
+
+    /// OCCT L84-110: Center — BVH centroid coordinates
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_center() {
+        assert!(true, "PolyhedronBVH Center: needs translation");
+    }
+
+    /// OCCT L113-143: OriginalIndex — 1-based index tracking
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_original_index() {
+        assert!(true, "PolyhedronBVH OriginalIndex: needs translation");
+    }
+
+    /// OCCT L146-172: Traversal — BVH finds overlapping triangles
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_traversal() {
+        assert!(true, "BVHTraversal: needs translation");
+    }
+
+    /// OCCT L175-191: SelfInterference — self-intersection mode
+    #[test]
+    #[ignore = "rcad PolyhedronBVH not implemented"]
+    fn intpatch_polyhedron_bvh_self_interference() {
+        assert!(true, "BVHTraversal self-interference: needs translation");
+    }
+
+    /// OCCT L194-214: InterferencePolyhedron — full check
+    /// rcad: uses InterferencePolyhedron with triangle-triangle intersection
+    ///   (no BVH acceleration). Uses overlapping spheres (both have bounded
+    ///   default domains) instead of sphere-cylinder which needs explicit UV bounds.
+    #[test]
+    fn intpatch_polyhedron_interference_bvh() {
+        let sphere1 = geom::Surface3::Sphere(geom::SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        // Overlapping sphere shifted in X
+        let sphere2 = geom::Surface3::Sphere(geom::SphericalSurface {
+            center: DVec3::new(0.5, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
+        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
+        let an_interf = crate::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
+        let has_results = an_interf.nb_section_lines() > 0;
+        assert!(has_results, "Expected some intersection results for overlapping spheres");
+        for sp in an_interf.seed_points() {
+            assert!(sp.p3d.is_finite(), "Seed point must be finite");
+        }
+    }
+
+    /// OCCT L217-239: NoOverlap — far-away surfaces produce no intersections
+    #[test]
+    fn intpatch_polyhedron_no_overlap() {
+        let sphere = make_sphere_surf();
+        let far_plane = geom::Surface3::Plane(geom::Plane {
+            origin: DVec3::new(10.0, 10.0, 10.0), normal: DVec3::X,
+        });
+        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere, 5, 5);
+        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&far_plane, 5, 5);
+        let an_interf = crate::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
+        assert_eq!(an_interf.nb_section_lines(), 0, "Expected no intersections for distant surfaces");
+    }
+}
 
     // IntPolyh_Intersection (1 test)
     #[test] fn intpolyh_intersection() { assert!(true, "IntPolyh — needs IntPolyh"); }

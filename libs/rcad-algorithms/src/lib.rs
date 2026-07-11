@@ -115,12 +115,18 @@ pub mod thicken;
 pub mod tkbo_gtests;
 #[cfg(test)]
 pub mod tkbrep_algo_gtests;
+#[cfg(test)]
 pub mod tkbrep_gtests;
+#[cfg(test)]
 pub mod tkg2d_gtests;
+#[cfg(test)]
 pub mod tkg3d_gtests;
 pub mod tkgeombase_algo;
+#[cfg(test)]
 pub mod tkgeombase_gtests;
 pub mod tkgeombase_props;
+#[cfg(test)]
+pub mod tkremaining_gtests;
 pub mod tolerance;
 pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;
