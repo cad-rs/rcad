@@ -803,12 +803,18 @@ pub fn orient_faces_on_shell(
  }
  }
 
- // Helper: edge orientation in face (OCCT local function `Orientation` L511-527)
+ // Helper: edge orientation in face (OCCT local function `Orientation` L511-527).
+ // rcad: DSFace stores orientation in boundary_edge_forwards (parallel to boundary_edges)
+ // and inner_boundary_edges as Vec<(edge_idx, forward)>.
  let edge_orientation_in_face = |ei: usize, fi: usize, ds: &DS| -> bool {
  if let Some(face) = ds.faces.get(fi) {
- if face.boundary_edges.contains(&ei) {
- // Forward if edge's start_vertex comes first in boundary_edges
- return true;
+ if let Some(pos) = face.boundary_edges.iter().position(|&be| be == ei) {
+ return face.boundary_edge_forwards.get(pos).copied().unwrap_or(true);
+ }
+ for iw in &face.inner_boundary_edges {
+ for &(ie, fwd) in iw {
+ if ie == ei { return fwd; }
+ }
  }
  }
  true
