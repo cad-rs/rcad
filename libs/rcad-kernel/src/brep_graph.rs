@@ -215,7 +215,17 @@ impl BRepGraph {
   }
  }
 
- //  € € Pre-fill edge endpoints  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+ //  € € Pre-fill edge endpoints + tshapes-index → flat-edge-index map  € € €
+ let mut ts_to_edge: Vec<Option<usize>> = vec![None; brep.tshapes.len()];
+ {
+ let mut flat_ei = 0usize;
+ for (ti, ts) in brep.tshapes.iter().enumerate() {
+  if matches!(&**ts, topods::TShape::Edge(_)) {
+  ts_to_edge[ti] = Some(flat_ei);
+  flat_ei += 1;
+  }
+ }
+ }
  let edge_endpoints: Vec<(usize, usize)> = brep.tshapes.iter().filter_map(|ts| {
   if let topods::TShape::Edge(ed) = &**ts { Some((ed.first.index, ed.last.index)) } else { None }
  }).collect();
@@ -246,8 +256,7 @@ impl BRepGraph {
  let mut face_edge_set = Vec::new();
  let mut face_vert_set = HashSet::new();
  for sr in &wd.edges {
- let ei = sr.index;
- if ei < ec {
+ let Some(ei) = ts_to_edge[sr.index] else { continue };
  if !edge_to_faces[ei].contains(&flat_fi) {
  edge_to_faces[ei].push(flat_fi);
  }
@@ -257,14 +266,12 @@ impl BRepGraph {
  let (vs, ve) = edge_endpoints[ei];
  if vs < vc { face_vert_set.insert(vs); }
  if ve < vc { face_vert_set.insert(ve); }
- }
  }
  // Inner wires
  for inner_sr in &fd.inner_wires {
  if let topods::TShape::Wire(iwd) = &*brep.tshapes[inner_sr.index] {
  for sr in &iwd.edges {
- let ei = sr.index;
- if ei < ec {
+ let Some(ei) = ts_to_edge[sr.index] else { continue };
  if !edge_to_faces[ei].contains(&flat_fi) {
  edge_to_faces[ei].push(flat_fi);
  }
@@ -274,7 +281,6 @@ impl BRepGraph {
  let (vs, ve) = edge_endpoints[ei];
  if vs < vc { face_vert_set.insert(vs); }
  if ve < vc { face_vert_set.insert(ve); }
- }
  }
  }
  }
@@ -1713,10 +1719,11 @@ mod tests {
  let graph = BRepGraph::from_brep(&brep);
  let tool = graph.tool(&brep);
 
- // face_location: all 6 faces should resolve to (solid 0, shell 0, face fi)
+ // face_location: all 6 faces should resolve to (solid_tshape_idx, shell 0, face fi)
+ // build_unit_cube places solid at tshapes index (8 verts + 12 edges + 6 wires + 6 faces + 1 shell) = 33
  for fi in 0..6 {
-  assert_eq!(tool.face_location(fi), Some((0, 0, fi)),
-   "flat face {fi} should resolve to (0,0,{fi})");
+  assert_eq!(tool.face_location(fi), Some((33, 0, fi)),
+   "flat face {fi} should resolve to (33,0,{fi})");
  }
 
  // edge_points via graph adjacency tables

@@ -300,33 +300,35 @@ mod tests {
     use super::*;
     use glam::DVec3;
 
-    fn brep_with_edge() -> topods::BRep {
+    fn brep_with_edge() -> (topods::BRep, usize) {
         let mut brep = topods::BRep::new();
+        // Vertices must come first in tshapes (add_tvertex pushes).
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        brep.add_tedge(
+        let e = brep.add_tedge(
             None,
             v0,
             topods::ShapeRef::synthetic_with_orientation(v1.index, topods::Orientation::Reversed),
             [0.0, 1.0],
         );
-        brep
+        // Edge is at tshapes[2] (after 2 vertices). TopoEntityRef::Edge(i) uses tshapes index.
+        (brep, e.index)
     }
 
     #[test]
     fn bind_and_rename_roundtrip() {
         let mut hooks = PersistentNamingHooks::new();
-        let brep = brep_with_edge();
+        let (brep, edge_ts_idx) = brep_with_edge();
         hooks
-            .bind_for_brep(&brep, "test", TopoEntityRef::Edge(0))
+            .bind_for_brep(&brep, "test", TopoEntityRef::Edge(edge_ts_idx))
             .expect("bind should succeed");
-        assert_eq!(hooks.resolve("test"), Some(TopoEntityRef::Edge(0)));
+        assert_eq!(hooks.resolve("test"), Some(TopoEntityRef::Edge(edge_ts_idx)));
 
         hooks
             .rename("test", "renamed")
             .expect("rename should succeed");
         assert_eq!(hooks.resolve("test"), None);
-        assert_eq!(hooks.resolve("renamed"), Some(TopoEntityRef::Edge(0)));
+        assert_eq!(hooks.resolve("renamed"), Some(TopoEntityRef::Edge(edge_ts_idx)));
     }
 
     #[test]
