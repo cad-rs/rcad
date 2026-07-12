@@ -43,22 +43,40 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-125).
     /// Maps source edges → split images via pave-block new_edge.
     /// Also handles CommonBlocks via myShapesSD.
+    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     pub(super) fn fill_images_edges(&self) {
-        let e_base = self.ds.vertices.len();
-        for (ei, edge) in self.ds.edges.iter().enumerate() {
-            if edge.pave_blocks.is_empty() { continue; }
-            let aE = self.brep_sr(e_base + ei);
-            for pb in &edge.pave_blocks {
-                let nSpR = self.ds.real_pave_block_edge(ei, pb)
+        let a_nb_s = self.ds.nb_source_shapes();
+        let a_nv = self.ds.vertices.len();
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info_at(i);
+            if a_si.shape_type != rcad_kernel::topods::ShapeType::Edge {
+                continue;
+            }
+            // Check if the pave blocks for the edge have been initialized
+            if !a_si.has_reference() {
+                continue;
+            }
+            let ei = a_si.source_idx;
+            let a_e = self.brep_sr(a_nv + ei);
+            let a_pb_refs = self.ds.pave_blocks(ei);
+            // Fill the images of the edge from the list of its pave blocks.
+            // The small edges, having no pave blocks, will have the empty list
+            // of images and, thus, will be avoided in the result.
+            let mut my_images = self.my_images.borrow_mut();
+            let a_l_im = my_images.entry(a_e).or_default();
+            for pb in a_pb_refs {
+                let n_sp_r = self.ds.real_pave_block_edge(ei, pb)
                     .or(pb.0.read().unwrap().new_edge)
                     .unwrap_or(ei);
-                let aSpR = self.brep_sr(e_base + nSpR);
-                self.my_images.borrow_mut().entry(aE).or_default().push(aSpR);
-                self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
+                let a_sp_r = self.brep_sr(a_nv + n_sp_r);
+                a_l_im.push(a_sp_r);
+                let mut my_origins = self.my_origins.borrow_mut();
+                let p_l_or = my_origins.entry(a_sp_r).or_default();
+                p_l_or.push(a_e);
                 if pb.0.read().unwrap().common_block_idx.is_some() {
-                    if let Some(nSp) = pb.0.read().unwrap().new_edge {
-                        let aSp = self.brep_sr(e_base + nSp);
-                        self.my_shapes_sd.borrow_mut().insert(aSp, aSpR);
+                    if let Some(n_sp) = pb.0.read().unwrap().new_edge {
+                        let a_sp = self.brep_sr(a_nv + n_sp);
+                        self.my_shapes_sd.borrow_mut().insert(a_sp, a_sp_r);
                     }
                 }
             }

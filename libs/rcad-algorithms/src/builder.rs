@@ -22,6 +22,8 @@ use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
+use crate::pipeline_dump::DumpCtx;
+
 mod angle_2d;
 mod curve_tools;
 mod debug_utils;
@@ -779,6 +781,14 @@ impl<'a> BooleanBuilder<'a> {
  let dim_a = if a_n_faces > 0 { 3_i8 } else if a_n_edges > 0 { 1 } else if a_n_verts > 0 { 0 } else { 3 };
  let dim_b = if b_n_faces > 0 { 3_i8 } else if b_n_edges > 0 { 1 } else if b_n_verts > 0 { 0 } else { 3 };
  self.my_dims.set([dim_a, dim_b]);
+
+ // Pipeline snapshot: create dump context for stage-by-stage DS/BRep capture.
+ let mut dump_ctx = DumpCtx::new(
+     &std::env::var("RCAD_DUMP_GRID").unwrap_or_default(),
+     &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
+ );
+ dump_ctx.snapshot("initial", self.ds, None);
+
  // OCCT L445-453: TreatEmptyShape.
  // rcad: check if either operand has no faces (DS was populated by pave_fill).
  if a_faces.is_empty() || b_faces.is_empty() {
@@ -804,16 +814,19 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Vertex, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_FillImagesVertices", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L472-483: 3.2 FillImagesEdges + BuildResult(EDGE)
  self.fill_images_edges();
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Edge, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_FillImagesEdges", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L484-496: 3.3 FillImagesContainers(WIRE) + BuildResult(WIRE)
  self.fill_images_container(ShapeType::Wire, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Wire, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_BuildResultWire", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L497-509: 3.4 FillImagesFaces + BuildResult(FACE)
  // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
  // Remaining unsplit faces have existing TShapes from pre-create_source_shapes.
@@ -822,16 +835,19 @@ impl<'a> BooleanBuilder<'a> {
  // BuildResult(FACE) — generic loop over my_arguments, adds originals/splits to result.
  self.build_result(topods::ShapeType::Face, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_FillImagesFaces", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L510-522: 3.5 FillImagesContainers(SHELL) + BuildResult(SHELL)
  self.fill_images_container(ShapeType::Shell, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Shell, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_BuildResultShell", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L523-535: 3.6 FillImagesSolids + BuildResult(SOLID)
  self.fill_images_solids(&mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Solid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_FillImagesSolids", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L536-548: 3.7 FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
  self.fill_images_container(ShapeType::CompSolid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -842,6 +858,7 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Compound, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_FillImagesCompounds", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L563-568: 4. PrepareHistory — builds BRep TShapes + source shape history.
  let mut history = {
  let mut t_brep = self.my_shape.borrow_mut();

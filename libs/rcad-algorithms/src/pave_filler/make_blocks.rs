@@ -118,60 +118,66 @@ impl<'a> super::PaveFiller<'a> {
    }
   }
  }
- // Step 3: f1 VerticesOn/In also in f2 → aMVOnIn + aMVCommon
+ // OCCT-aligned: SubShapesOnIn — Face1 vertices in Face2 → aMVOnIn + aMVCommon
+ // OCCT BOPDS_DS.cxx L1124-1142: only Face1's VOn/VIn checked against Face2's VOn/VIn
  for &vi in &f1_face.face_info.vertices_on {
   if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
    a_mv_on_in.insert(vi);
    a_mv_common.insert(vi);
-  } else {
-   a_mv_on_in.insert(vi);
   }
  }
  for &vi in &f1_face.face_info.vertices_in {
   if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
    a_mv_on_in.insert(vi);
    a_mv_common.insert(vi);
-  } else {
-   a_mv_on_in.insert(vi);
-  }
- }
- // Step 3b: f2 VerticesOn/In — process opposite face too (OCCT missing in rcad)
- for &vi in &f2_face.face_info.vertices_on {
-  if f1_face.face_info.vertices_on.contains(&vi) || f1_face.face_info.vertices_in.contains(&vi) {
-   a_mv_on_in.insert(vi);
-   a_mv_common.insert(vi);
-  } else {
-   a_mv_on_in.insert(vi);
-  }
- }
- for &vi in &f2_face.face_info.vertices_in {
-  if f1_face.face_info.vertices_on.contains(&vi) || f1_face.face_info.vertices_in.contains(&vi) {
-   a_mv_on_in.insert(vi);
-   a_mv_common.insert(vi);
-  } else {
-   a_mv_on_in.insert(vi);
   }
  }
  }
+ // OCCT-aligned: SharedEdges (BOPDS_DS.cxx L1147-1208)
  {
- let f1_edge_set: std::collections::HashSet<usize> = self.ds.faces[n_f1].boundary_edges.iter().copied().collect();
+ let mut a_first_face_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+ for &ei in &self.ds.faces[n_f1].boundary_edges {
+  let pbs = self.ds.pave_blocks(ei);
+  if pbs.is_empty() {
+   a_first_face_edges.insert(ei);
+  } else {
+   for pb in pbs {
+    let re = self.ds.real_pave_block_edge(ei, pb)
+     .or(pb.0.read().unwrap().new_edge)
+     .unwrap_or(ei);
+    a_first_face_edges.insert(re);
+   }
+  }
+ }
  for &ei in &self.ds.faces[n_f2].boundary_edges {
- if f1_edge_set.contains(&ei) {
- a_lse.push(ei);
+  let pbs = self.ds.pave_blocks(ei);
+  if pbs.is_empty() {
+   if a_first_face_edges.contains(&ei) {
+    a_lse.push(ei);
+   }
+  } else {
+   for pb in pbs {
+    let re = self.ds.real_pave_block_edge(ei, pb)
+     .or(pb.0.read().unwrap().new_edge)
+     .unwrap_or(ei);
+    if a_first_face_edges.contains(&re) {
+     a_lse.push(re);
+    }
+   }
+  }
  }
  }
- }
+ // OCCT L775-793: 1. Treat Points
  for j in 0..a_nb_p {
   // OCCT: const gp_Pnt& aP = aNP.Pnt();
   if points_of_ff[j] >= self.ds.ff_points.len() { continue; }
   let a_p = self.ds.ff_points[points_of_ff[j]];
   b_exist = self.is_existing_vertex_at_point(a_p, a_tol_ff, &a_mv_on_in);
-
   if !b_exist {
    let n_v = self.ds.add_vertex(a_p);
    self.ds.vertices[n_v].geom_tol = a_tol_ff;
-
-   // SKIP: rcad has no aMSCPB (CoupleOfPaveBlocks map) equivalent yet.
+   // OCCT: aCPB.SetIndexInterf(i) + aCPB.SetIndex(j) + aMSCPB.Add(aV, aCPB)
+   a_mscpb.insert(n_v, (cur_ind, j));
   }
  }
  // OCCT BOPAlgo_PaveFiller_6.cxx L2879-2937
