@@ -431,17 +431,29 @@ impl<'a> BooleanBuilder<'a> {
                     a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Reversed, ..e_sr });
                 }
             }
+            // OCCT L496-500: BuildPCurveForEdgesOnPlane — speed up for planar faces.
             if !self.my_non_destructive {
-                let t2: &topods::BRep = &*t;
-                if face_sr.index < t2.tshapes.len() {
-                    if let topods::TShape::Face(_fd) = &*t2.tshapes[face_sr.index] {
-                        if matches!(self.ds.faces[fi].surface, rcad_kernel::geom::Surface3::Plane(_)) {
-                            for &e_sr in &a_le {
-                                if e_sr.index < t2.tshapes.len() {
-                                    if let topods::TShape::Edge(ed) = &*t2.tshapes[e_sr.index] {
-                                        if !ed.pcurves.contains_key(&face_sr.index) { }
-                                    }
-                                }
+                if matches!(self.ds.faces[fi].surface, rcad_kernel::geom::Surface3::Plane(_)) {
+                    for &e_sr in &a_le {
+                        // Skip synthetic refs with no real TShape in the BRep.
+                        if e_sr.index >= t.tshapes.len() { continue; }
+                        let ei = e_sr.index.saturating_sub(e_base);
+                        if ei >= self.ds.edges.len() { continue; }
+                        // Skip edges that already have a pcurve for this face.
+                        let has_pc = match &*t.tshapes[e_sr.index] {
+                            topods::TShape::Edge(ed) => ed.pcurves.contains_key(&face_sr.index),
+                            _ => continue,
+                        };
+                        if has_pc { continue; }
+                        // Project 3D curve to 2D pcurve on the plane surface.
+                        if let Some(pc) = crate::geom2d_api::project_curve_to_plane(
+                            &self.ds.edges[ei].curve, &self.ds.faces[fi].surface)
+                        {
+                            // OCCT pattern: clone TEdgeData → insert → replace Arc.
+                            if let topods::TShape::Edge(ed) = &*t.tshapes[e_sr.index].clone() {
+                                let mut new_ed = ed.clone();
+                                new_ed.pcurves.insert(face_sr.index, (pc, ed.range[0], ed.range[1]));
+                                t.tshapes[e_sr.index] = std::sync::Arc::new(topods::TShape::Edge(new_ed));
                             }
                         }
                     }
