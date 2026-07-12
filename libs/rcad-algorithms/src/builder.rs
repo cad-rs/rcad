@@ -410,17 +410,6 @@ impl<'a> BooleanBuilder<'a> {
  /// source shape history (modified/generated/deleted).
  /// In rcad this combines two steps (build_topods for shape-level,
  /// fill_history for source-level) into one public method.
- fn prepare_history(&self, result: &mut ResultBuilder) -> BooleanHistory {
- let mut t_brep = self.my_shape.borrow_mut();
- let mut history = result.build_topods(&mut *t_brep, self.my_fill_history, &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(), &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
- let source_history = if self.my_fill_history {
- self.fill_history(&mut *t_brep)
- } else {
- vec![]
- };
- history.source_history = source_history;
- history
- }
 
  /// OCCT-aligned: PrepareHistory for the TreatEmptyShape case (BOP.cxx L462-468).
  /// All source shapes are present as-is (Generated) or absent (Deleted);
@@ -853,9 +842,18 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Compound, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L563-568: 4. PrepareHistory — final BRep assembly + source shape tracking.
- // rcad: build_topods defers TShape creation to this final step (vs OCCT per-dimension).
- let mut history = self.prepare_history(&mut result);
+ // OCCT L563-568: 4. PrepareHistory — builds BRep TShapes + source shape history.
+ let mut history = {
+ let mut t_brep = self.my_shape.borrow_mut();
+ let mut history = result.build_topods(&mut *t_brep, self.my_fill_history,
+ &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(),
+ &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
+ let source_history = if self.my_fill_history {
+ self.fill_history(&mut *t_brep)
+ } else { vec![] };
+ history.source_history = source_history;
+ history
+ };
  // OCCT L577-578: 5. PostTreat
  // Corrects tolerances of the result shape (CorrectTolerances + CorrectShapeTolerances).
  self.post_treat();
