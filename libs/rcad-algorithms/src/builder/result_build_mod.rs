@@ -688,73 +688,49 @@ impl<'a> BooleanBuilder<'a> {
     ///     The recursive FillImagesCompound is collapsed to a single level.
     /// ✅ OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L199-341).
     /// Wraps sub-shape images into compound containers for non-destructive history.
+    /// --OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216) +
+    ///   FillImagesCompound (L280-342).  OCCT iterates source shapes, filters COMPOUND,
+    ///   recursively processes each compound.  rcad: iterate compsolid groups from DS
+    ///   faces (compounds not in shape_info for standard BRep inputs).
+    ///
+    ///   OCCT FillImagesCompound(theS, theMFP):
+    ///     1. L290-293: Fence — theMFP.Add(theS) → skip if processed.
+    ///     2. L295-312: Interference check — sub-shapes with myImages → bInterferred.
+    ///        Sub-compounds → recurse.
+    ///     3. L314-315: MakeContainer(TopAbs_COMPOUND, aCIm) for new compound.
+    ///     4. L317-337: Add sub-shapes with orientation propagation (aSXIm.Orientation(aOrX)).
+    ///     5. L339-341: myImages.Bind(theS, aLSIm).
     pub(super) fn fill_images_compounds(&self, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
-        
-        //   rcad: HashSet of processed compsolid indices.
+        // OCCT: NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> aMFP — fence
         let mut a_mfp: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        
-        //   rcad: collect unique source_compsolid_idx from DS faces.
-        let mut compound_indices: Vec<usize> = Vec::new();
+        // Collect unique source_compsolid_idx from DS faces (equivalent to COMPOUND source shapes)
+        let mut compound_groups: Vec<usize> = Vec::new();
         for df in &self.ds.faces {
             if let Some(csi) = df.source_compsolid_idx {
-                if !compound_indices.contains(&csi) {
-                    compound_indices.push(csi);
+                // OCCT L290-293: theMFP.Add(theS) — fence
+                if a_mfp.insert(csi) {
+                    compound_groups.push(csi);
                 }
             }
         }
-        if compound_indices.is_empty() { return; }
+        if compound_groups.is_empty() { return; }
 
-        for &csi in &compound_indices {
-            
-            if !a_mfp.insert(csi) { continue; }
-
-            
-            //   rcad: collect source_solid_idx values under this compsolid,
-            //   check if any has images (multiple result solids).
-            let sub_solid_indices: Vec<usize> = self.ds.faces.iter()
-                .filter_map(|f| {
-                    if f.source_compsolid_idx == Some(csi) {
-                        f.source_solid_idx
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            
-            
-            //   rcad: check if any sub-solid produces >1 result solid (split).
+        for &csi in &compound_groups {
+            // OCCT L295-308: interference check — myImages.IsBound(aSx) for any sub-shape
+            // rcad: check if any source solid under this compsolid has result solids
             let mut b_interferred = false;
-            for &ssi in &sub_solid_indices {
-                // Count result solids from this source solid
-                let count = result.solid_side_origin.iter()
-                    .filter(|&&side| {
-                        // Count result solids from the side matching this source solid's origin
-                        let dfi = self.ds.faces.iter().position(|f|
-                            f.source_solid_idx == Some(ssi));
-                        dfi.map_or(false, |di| {
-                            let origin = &self.ds.faces[di].origin;
-                            (origin == &crate::bopds::ds::ShapeOrigin::ShapeA && side == 0)
-                                || (origin == &crate::bopds::ds::ShapeOrigin::ShapeB && side == 1)
-                        })
+            let sub_solid_indices: Vec<usize> = {
+                let mut seen = std::collections::HashSet::new();
+                self.ds.faces.iter()
+                    .filter_map(|f| {
+                        if f.source_compsolid_idx == Some(csi) { f.source_solid_idx } else { None }
                     })
-                    .count();
-                if count > 0 {
-                    b_interferred = true;
-                    break;
-                }
-            }
-
-            
-            if !b_interferred { continue; }
-
-            
-            //   rcad: collect result solid indices for this compsolid.
-            let mut a_c_im: Vec<usize> = Vec::new();
-
-            
+                    .filter(|&ssi| seen.insert(ssi))
+                    .collect()
+            };
             for &ssi in &sub_solid_indices {
-                // Find the DS face for this source solid to determine its side (origin)
+                // OCCT: myImages.IsBound(aSx) — check if sub-shape has split images
                 let side = self.ds.faces.iter()
                     .find(|f| f.source_solid_idx == Some(ssi))
                     .map(|f| match f.origin {
@@ -762,39 +738,46 @@ impl<'a> BooleanBuilder<'a> {
                         crate::bopds::ds::ShapeOrigin::ShapeB => 1,
                     })
                     .unwrap_or(0);
-
-                
-                //   rcad: check if result solids exist for this side+source solid.
-                let matching_solids: Vec<usize> = result.solid_side_origin.iter()
-                    .enumerate()
-                    .filter(|&(_, &s)| s == side)
-                    .map(|(si, _)| si)
-                    .collect();
-
-                if matching_solids.is_empty() {
-                    
-                    //   rcad: no solid to add --the original solid is implicit.
-                    continue;
+                let has_images = result.solid_side_origin.iter()
+                    .filter(|&&s| s == side)
+                    .count() > 0;
+                if has_images {
+                    b_interferred = true;
+                    break;
                 }
+            }
+            // OCCT L309-312: no interference → skip
+            if !b_interferred { continue; }
 
-                
-                for &si in &matching_solids {
-                    if !a_c_im.contains(&si) {
-                        
-                        //   rcad: orientation is per-face via FaceOrigin.
+            // OCCT L314-315: MakeContainer(TopAbs_COMPOUND, aCIm)
+            // rcad: collect result solid ShapeRefs
+            let mut a_c_im: Vec<usize> = Vec::new();
+            for &ssi in &sub_solid_indices {
+                let side = self.ds.faces.iter()
+                    .find(|f| f.source_solid_idx == Some(ssi))
+                    .map(|f| match f.origin {
+                        crate::bopds::ds::ShapeOrigin::ShapeA => 0,
+                        crate::bopds::ds::ShapeOrigin::ShapeB => 1,
+                    })
+                    .unwrap_or(0);
+                // OCCT L321: aOrX = aSX.Orientation() — get source orientation
+                // rcad: orientation is per-face via FaceOrigin (no per-solid orientation)
+                for (si, &s) in result.solid_side_origin.iter().enumerate() {
+                    if s == side && !a_c_im.contains(&si) {
                         a_c_im.push(si);
                     }
                 }
             }
 
-            
-            //   rcad: create TShape::Compound from result solid ShapeRefs.
+            // OCCT L330: aBB.Add(aCIm, aSXIm) — add shapes to compound
+            // OCCT L339-341: myImages.Bind(theS, aLSIm) — bind to myImages
             if !a_c_im.is_empty() {
                 let solid_refs: Vec<topods::ShapeRef> = a_c_im.iter()
                     .filter_map(|&si| self.my_solids.borrow().get(si).copied())
                     .collect();
                 if !solid_refs.is_empty() {
                     let cmp_ref = t.add_tcompound(solid_refs);
+                    // rcad: synthetic key (OCCT: original source shape via theS)
                     let ckey = topods::ShapeRef::synthetic(usize::MAX - a_c_im.len());
                     self.my_images.borrow_mut().entry(ckey).or_default().push(cmp_ref);
                     self.my_compsolid_groups.borrow_mut().push(cmp_ref);
