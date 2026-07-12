@@ -381,66 +381,87 @@ impl FClass2d {
     /// ✅ OCCT-aligned: Perform with RecadreOnPeriodic (IntTools_FClass2d.cxx L637-803).
     ///   For periodic surfaces (sphere U/V, cylinder U), when the UV point
     ///   falls outside the cached [Umin,Umax]×[Vmin,Vmax] bounds, shift the
-    ///   point by the period and reclassify.  OCCT L666-678 adjusts the UV,
-    ///   L758-802 retries with period-shifted coordinates.
+    ///   point by the period and reclassify.  OCCT L666-678 adjusts the UV
+    ///   (GeomInt::AdjustPeriodic), L680-803 retries with period-shifted coordinates.
     pub fn perform(&self, uv: DVec2, recadre_on_periodic: bool) -> State {
-        if !recadre_on_periodic || (!self.is_u_periodic && !self.is_v_periodic) {
-            return self.perform_impl(uv);
+        let nbtabclass = self.tab_class.len();
+        if nbtabclass == 0 {
+            return State::In;
         }
 
-        // OCCT L666-678: adjust UV to bring it within bounds.
+        // OCCT L645-649: save original UV
         let mut u = uv.x;
         let mut v = uv.y;
-        let uu = u;
-        let vv = v;
+        let mut uu = u;
+        let mut vv = v;
 
-        // OCCT L680-802: retry loop with period adjustments.
+        // OCCT L666-678: adjust periodic parameters (GeomInt::AdjustPeriodic)
+        if recadre_on_periodic {
+            if self.is_u_periodic {
+                let (new_uu, _) = self.adjust_periodic(uu, self.u1, self.u2, self.u_period);
+                uu = new_uu;
+            }
+            if self.is_v_periodic {
+                let (new_vv, _) = self.adjust_periodic(vv, self.v1, self.v2, self.v_period);
+                vv = new_vv;
+            }
+        }
+
+        if !recadre_on_periodic || (!self.is_u_periodic && !self.is_v_periodic) {
+            return self.perform_impl(DVec2::new(u, v));
+        }
+
+        // OCCT L680-803: main retry loop
         let mut urecadre = false;
         let mut vrecadre = false;
-        let max_iterations = 4; // U shift, U+period, V shift, V+period
-
-        for _iter in 0..max_iterations {
+        loop {
             let result = self.perform_impl(DVec2::new(u, v));
 
-            // OCCT L763-766: IN or ON → return immediately.
             if result == State::In || result == State::On {
                 return result;
             }
 
-            // OCCT L768-802: try shifting U, then V, by period.
+            // OCCT L768-779: U retry (reset to adjusted uu, or add period)
             if !urecadre {
                 u = uu;
                 urecadre = true;
             } else if self.is_u_periodic {
-                // OCCT L777-779: shift U by one period
-                if u >= self.u1 - self.tol_uv {
-                    u = uu - self.u_period;
-                } else {
-                    u = uu + self.u_period;
-                }
-                // Continue to next iteration with shifted U
-                continue;
+                u += self.u_period;
             }
 
-            if !vrecadre {
-                v = vv;
-                vrecadre = true;
-                u = uu; // reset U shift
-            } else if self.is_v_periodic {
-                if v >= self.v1 - self.tol_uv {
-                    v = vv - self.v_period;
-                } else {
-                    v = vv + self.v_period;
+            // OCCT L781-802: if U exhausted, try V shifts
+            if u > self.u2 || !self.is_u_periodic {
+                if !vrecadre {
+                    v = vv;
+                    vrecadre = true;
+                } else if self.is_v_periodic {
+                    v += self.v_period;
                 }
-                u = uu; // reset U shift
-                continue;
-            }
 
-            break;
+                u = uu;
+
+                // OCCT L798-801: V exhausted → return last result
+                if v > self.v2 || !self.is_v_periodic {
+                    return result;
+                }
+            }
         }
+    }
 
-        // OCCT L801: all period shifts exhausted, return last result.
-        self.perform_impl(DVec2::new(u, v))
+    /// OCCT: GeomInt::AdjustPeriodic (GeomInt.cxx L21-48).
+    /// Shifts `par` by multiples of `period` to bring it within [par_min, par_max].
+    fn adjust_periodic(&self, par: f64, par_min: f64, par_max: f64, period: f64) -> (f64, f64) {
+        let mut new_par = par;
+        let mut offset = 0.0;
+        let b_min = par_min - par > 1e-12;
+        let b_max = par - par_max > 1e-12;
+        if b_min || b_max {
+            let dp = if b_min { par_max - par } else { par_min - par };
+            let nb_per = (dp / period).trunc();
+            offset = nb_per * period;
+            new_par += offset;
+        }
+        (new_par, offset)
     }
     /// 1-arg convenience for callers without periodic handling.
     pub fn perform_point(&self, uv: DVec2) -> State { self.perform_impl(uv) }
