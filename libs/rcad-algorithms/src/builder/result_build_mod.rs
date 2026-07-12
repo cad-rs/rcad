@@ -970,36 +970,6 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: BuildShape (BOPAlgo_BOP.cxx L871-906).
-    /// Calls BuildRC then BuildSolid for FUSE 3D.
-    pub(super) fn build_shape(&self, result: &mut ResultBuilder) {
-        let mut t_brep = self.my_shape.borrow_mut();
-        
-        let md = self.my_dims.get();
-        if md[0] == 3 && md[1] == 3 {
-            let has_not_closed = self.check_args_for_open_solid();
-            if has_not_closed {
-                // rcad: attempt BuildBOP fallback (subset of BuildRC for non-closed solids).
-                self.build_bop(result, &mut *t_brep);
-                if self.has_errors { /* fall through */ }
-            }
-        }
-        
-        self.build_rc(result, &mut *t_brep);
-        if self.has_errors { return; }
-        
-        if self.op == BooleanOpType::Union && md[0] == 3 {
-            let face_refs: Vec<_> = self.my_face_refs.borrow().iter()
-                .filter(|sr| !sr.is_null())
-                .copied()
-                .collect();
-            if !face_refs.is_empty() {
-                let shell_ref = t_brep.add_tshell(face_refs);
-                let solid_ref = t_brep.add_tsolid(vec![shell_ref]);
-                self.my_solids.borrow_mut().push(solid_ref);
-            }
-        }
-    }
     /// OCCT-aligned: BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L485-891).
     ///   For BOP: (objects, tools, operation) --converts to IN/OUT states.
     ///   rcad: builds result from all classified face images with IN/OUT filtering.

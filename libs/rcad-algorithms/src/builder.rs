@@ -853,13 +853,10 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Compound, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L563-568: 4. BuildShape
- self.build_shape(&mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
- // OCCT L570-575: 5. PrepareHistory
+ // OCCT L563-568: 4. PrepareHistory — final BRep assembly + source shape tracking.
+ // rcad: build_topods defers TShape creation to this final step (vs OCCT per-dimension).
  let mut history = self.prepare_history(&mut result);
-
- // OCCT L577-578: 6. PostTreat
+ // OCCT L577-578: 5. PostTreat
  // Corrects tolerances of the result shape (CorrectTolerances + CorrectShapeTolerances).
  self.post_treat();
  let result_brep = self.my_shape.borrow().clone();
