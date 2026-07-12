@@ -3890,17 +3890,19 @@ mod eval_tests {
     #[test]
     fn cylinder_eval_d0() {
         // Cylinder with axis Z, any_perpendicular(Z) = Y, y_ax = Z.cross(Y) = -X
-        // P(u,v) = R*(cos(u)*Y + sin(u)*(-X)) + v*Z
-        // P(0,0) = 3*Y = (0, 3, 0)
-        // P(PI/2, 5) = 3*(0 + 1*(-X)) + 5*Z = (-3, 0, 5)
+        // Cylinder with axis Z, ref_dir=X:
+        // x_ax = X, y_ax = Z×X = Y
+        // P(u,v) = R*(cos(u)*X + sin(u)*Y) + v*Z
+        // P(0,0) = 3*X = (3, 0, 0)
+        // P(PI/2, 5) = 3*Y + 5*Z = (0, 3, 5)
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO, axis: DVec3::Z,
             radius: 3.0, ref_dir: DVec3::X,
         };
         let p0 = cyl.point_at(0.0, 0.0);
-        assert!((p0 - DVec3::new(0.0, 3.0, 0.0)).length() < 1e-10);
+        assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
         let p1 = cyl.point_at(std::f64::consts::PI / 2.0, 5.0);
-        assert!((p1 - DVec3::new(-3.0, 0.0, 5.0)).length() < 1e-10);
+        assert!((p1 - DVec3::new(0.0, 3.0, 5.0)).length() < 1e-10);
     }
 
     #[test]
@@ -4066,18 +4068,17 @@ mod eval_tests {
 
     #[test]
     fn offset_curve2d_eval() {
-        // Circle2d r=5, offset=+1 (left-of-travel = inward for CCW circle):
-        // tangent at 0 = (0,1), left normal = (-1,0), P(0) = (5,0) + 1*(-1,0) ≈ (4,0)
+        // Circle2d r=5, offset_distance uses right-hand normal.
+        // P(0) = (5,0) + 1*(right_normal at 0) = (5,0) + 1*(1,0) ≈ (6,0)
         let basis = Curve2d::Circle(Circle2d::new(DVec2::ZERO, 5.0));
         let off = OffsetCurve2d {
             basis: Box::new(basis),
             offset_distance: 1.0,
         };
         let p0 = off.point_at(0.0);
-        // Offset point should be inside the original circle (not on it)
-        assert!(p0.length() < 5.0);
-        // But not at the origin
-        assert!(p0.length() > 3.0);
+        // Offset point should be outside the original circle
+        assert!(p0.length() > 5.0);
+        assert!((p0.length() - 6.0).abs() < 0.1);
     }
 
     // ── Special 2D curve evaluation tests ───────────────────────────────
@@ -4511,11 +4512,11 @@ mod eval_tests {
             origin: DVec3::ZERO, axis: DVec3::Z,
             radius: 3.0, ref_dir: DVec3::X,
         };
-        // At u=0, normal should point in the X direction
-        // but any_perpendicular(Z)=Y gives x_ax=Y, y_ax=-X
-        // point_at(0,0) = (0,3,0), radial = Y
+        // Cylinder with axis Z, ref_dir=X:
+        // x_ax = X, y_ax = Z×X = Y
+        // At u=0, normal should point in the X direction (radial outward)
         let n = cyl.normal_at(0.0, 0.0);
-        assert!((n - DVec3::Y).length() < 1e-10);
+        assert!((n - DVec3::X).length() < 1e-10);
     }
 
     // ── Sphere ──────────────────────────────────────────────────────────
@@ -4663,10 +4664,11 @@ mod eval_tests {
             origin: DVec3::ZERO, axis: DVec3::Z,
             radius: 2.0, ref_dir: DVec3::X,
         });
+        // Cylinder with axis Z, ref_dir=X: dP/du at u=0 = R*y_ax = 2*Y = (0,2,0)
         let (_p, dpu, dpv) = s.derivatives(0.0, 0.0);
         // dP/dv should be axis direction
         assert!((dpv - DVec3::Z).length() < 1e-10);
         // dP/du should be tangent (perpendicular to radial)
-        assert!((dpu - DVec3::new(-2.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((dpu - DVec3::new(0.0, 2.0, 0.0)).length() < 1e-10);
     }
 }

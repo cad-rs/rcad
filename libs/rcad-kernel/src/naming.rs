@@ -298,12 +298,27 @@ fn is_valid_ref_for_brep(brep: &topods::BRep, target: TopoEntityRef) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::DVec3;
+
+    fn brep_with_edge() -> topods::BRep {
+        let mut brep = topods::BRep::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        brep.add_tedge(
+            None,
+            v0,
+            topods::ShapeRef::synthetic_with_orientation(v1.index, topods::Orientation::Reversed),
+            [0.0, 1.0],
+        );
+        brep
+    }
 
     #[test]
     fn bind_and_rename_roundtrip() {
         let mut hooks = PersistentNamingHooks::new();
+        let brep = brep_with_edge();
         hooks
-            .bind_for_brep(&topods::BRep::new(), "test", TopoEntityRef::Edge(0))
+            .bind_for_brep(&brep, "test", TopoEntityRef::Edge(0))
             .expect("bind should succeed");
         assert_eq!(hooks.resolve("test"), Some(TopoEntityRef::Edge(0)));
 
