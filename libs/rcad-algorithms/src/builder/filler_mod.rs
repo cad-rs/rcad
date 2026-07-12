@@ -514,26 +514,19 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --OCCT-aligned: FillInternalVertices (Builder_2.cxx L929-1008).
-    ///   Settle alone vertices into split faces as INTERNAL sub-shapes.
-    ///
-    /// OCCT flow:
+    /// ✅ OCCT-aligned: FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
     ///   L937-980: For each source FACE with split images:
-    ///     a) Get alone vertices (myDS->AloneVertices --vertices ON face, not on any edge)
-    ///     b) For each alone vertex, create (vertex, split_face) pairs for classification
-    ///   L982-991: Classify each pair via BOPAlgo_VFI (IntTools_FClass2d)
-    ///   L997-1007: For pairs classified as INTERNAL --BRep_Builder.Add(aF, aV)
-    ///
-    /// rcad: alone vertices = FaceInfo.vertices_on.  For each result face,
-    ///   classify alone vertices from its source DS face.  If the vertex
-    ///   falls inside the result face's UV boundary --add to face_internal_vtx.
+    ///     a) Get alone vertices (myDS->AloneVertices = VerticesIn + VerticesSc
+    ///        minus endpoints of PaveBlocksIn + PaveBlocksSc).
+    ///     b) For each alone vertex, create (vertex, split_face) pairs for
+    ///        classification via FClass2d.
+    ///   L997-1007: For pairs classified as INTERNAL — add vertex to face.
+    /// rcad: alone vertices computed from FaceInfo; classification via
+    ///   FClass2d::perform; results stored in face_internal_vtx.
     pub(super) fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
-        
-        
+        // OCCT L937-980: iterate source faces with split images.
         for (ds_fi, ds_face) in self.ds.faces.iter().enumerate() {
-            
-
-            
+            // OCCT L952-956: skip if no split images for this source face.
             let image_rfis: Vec<usize> = result.face_origins.iter().enumerate()
                 .filter(|(_, origin)| match origin {
                     FaceOrigin::FromA(sfi) =>
@@ -546,9 +539,8 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             if image_rfis.is_empty() { continue; }
 
-            
-            //   Alone vertices = (VerticesIn + VerticesSc) minus endpoints of
-            //   (PaveBlocksIn + PaveBlocksSc), matching BOPDS_DS.cxx L1028-1062.
+            // OCCT L958-960: Get alone vertices = (VerticesIn + VerticesSc)
+            // minus endpoints of (PaveBlocksIn + PaveBlocksSc).
             let fi = &ds_face.face_info;
             let mut pb_endpoints: HashSet<usize> = HashSet::new();
             for &pb_idx in fi.pave_blocks_in.iter().chain(fi.pave_blocks_sc.iter()) {
@@ -565,7 +557,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             if alone.is_empty() { continue; }
 
-            
+            // OCCT L963-979: classify each alone vertex against each split face.
             for &vi in &alone {
                 if vi >= self.ds.vertices.len() { continue; }
                 let v_pt = self.ds.vertices[vi].point;
@@ -573,7 +565,7 @@ impl<'a> BooleanBuilder<'a> {
                 for &rfi in &image_rfis {
                     if rfi >= result.faces.len() { continue; }
 
-                    
+                    // Find DS face index for classification tolerance lookup.
                     let ds_fi_for_classify = match &result.face_origins[rfi] {
                         FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
                             f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
@@ -584,10 +576,15 @@ impl<'a> BooleanBuilder<'a> {
                     let Some(cfi) = ds_fi_for_classify else { continue };
                     if cfi >= self.ds.faces.len() { continue; }
 
+                    // OCCT L974-977: tolerance = MAX(tolV, tolF) + fuzzyValue.
+                    let tol_v = self.ds.vertices.get(vi).map_or(crate::tolerance::TOLERANCE_ABS, |v| v.geom_tol);
+                    let tol_f = self.ds.faces[cfi].geom_tol;
+                    let class_tol = tol_v.max(tol_f) + self.ds.fuzzy_tol;
+
                     let fs = &self.ds.faces[cfi].surface;
                     if let Some(uv) = world_to_uv(fs, v_pt) {
                         let fclass = crate::inttools::fclass2d::FClass2d::new(
-                            self.ds, cfi, crate::tolerance::TOLERANCE_ABS * 100.0);
+                            self.ds, cfi, class_tol);
                         if fclass.perform(uv, true) == crate::inttools::fclass2d::State::In {
                             if rfi < result.face_internal_vtx.len() {
                                 result.face_internal_vtx[rfi].push(vi);
