@@ -17,6 +17,34 @@ use rcad_kernel::{CurveEval, SurfaceEval};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 
 impl DS {
+    /// Create an empty DS (equivalent to OCCT BOPDS_DS default constructor).
+    pub fn new_empty() -> Self {
+        Self {
+            vertices: Vec::new(), edges: Vec::new(), wires: Vec::new(),
+            shells: Vec::new(), solids: Vec::new(), comp_solids: Vec::new(),
+            faces: Vec::new(),
+            interf_vv: Vec::new(), interf_ve: Vec::new(), interf_vf: Vec::new(),
+            interf_ee: Vec::new(), interf_ef: Vec::new(), interf_ff: Vec::new(),
+            interf_vz: Vec::new(), interf_ez: Vec::new(), interf_fz: Vec::new(),
+            interf_zz: Vec::new(),
+            intersection_curves: Vec::new(), ff_points: Vec::new(),
+            section_edge_refs: Vec::new(),
+            fuzzy_tol: crate::tolerance::TOLERANCE_ABS,
+            a_vertex_count: 0, a_edge_count: 0, a_face_count: 0,
+            shared_topology: Default::default(),
+            shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
+            same_domain_overlaps: Vec::new(), common_blocks: Vec::new(),
+            my_images: Vec::new(), my_origins: Vec::new(),
+            wire_images: Vec::new(), shell_images: Vec::new(),
+            solid_images: Vec::new(), locations: Vec::new(),
+            pave_blocks: Vec::new(),
+            increased_ss: std::collections::HashSet::new(),
+            interf_tb: std::collections::HashSet::new(),
+            map_ve: std::collections::HashMap::new(),
+            shape_info: Vec::new(), nb_source_shapes: 0,
+        }
+    }
+
  ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
  /// Returns the flag value for an edge index, or 0 if not set.
  /// Flag is stored in shape_info[nv + edge_idx].flag matching OCCT's

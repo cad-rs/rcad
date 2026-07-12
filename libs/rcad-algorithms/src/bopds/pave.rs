@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 use rcad_kernel::geom::{Curve2d, Curve3};
@@ -244,4 +244,325 @@ pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
 
 impl SharedPB {
     pub fn new(pb: PaveBlock) -> Self { SharedPB(Arc::new(RwLock::new(pb))) }
+}
+
+#[cfg(test)]
+mod pave_block_tests {
+    use super::*;
+    use crate::bopds::common_block::CommonBlock;
+    use glam::DVec3;
+
+    #[test]
+    fn pave_block_new() {
+        let pv1 = Pave { vertex_idx: 0, param: 0.0 };
+        let pv2 = Pave { vertex_idx: 1, param: 1.0 };
+        let pb = PaveBlock::new(5, pv1, pv2);
+
+        assert_eq!(pb.original_edge, 5);
+        assert_eq!(pb.pave1.vertex_idx, 0);
+        assert_eq!(pb.pave1.param, 0.0);
+        assert_eq!(pb.pave2.vertex_idx, 1);
+        assert_eq!(pb.pave2.param, 1.0);
+        assert!(pb.ext_paves.is_empty());
+        assert!(!pb.is_splittable);
+        assert!(pb.new_edge.is_none());
+    }
+
+    #[test]
+    fn pave_block_range_and_indices() {
+        let pb = PaveBlock::new(3,
+            Pave { vertex_idx: 2, param: 0.5 },
+            Pave { vertex_idx: 5, param: 2.5 });
+        let (t1, t2) = pb.range();
+        assert!((t1 - 0.5).abs() < 1e-15);
+        assert!((t2 - 2.5).abs() < 1e-15);
+        let (v1, v2) = pb.indices();
+        assert_eq!(v1, 2);
+        assert_eq!(v2, 5);
+    }
+
+    #[test]
+    fn pave_block_has_same_bounds() {
+        let a = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        let b = PaveBlock::new(2,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        let c = PaveBlock::new(3,
+            Pave { vertex_idx: 1, param: 0.0 },
+            Pave { vertex_idx: 0, param: 1.0 });
+        let d = PaveBlock::new(4,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 2, param: 1.0 });
+
+        assert!(a.has_same_bounds(&b), "Same bounds (forward)");
+        assert!(a.has_same_bounds(&c), "Same bounds (reversed vertex order)");
+        assert!(!a.has_same_bounds(&d), "Different vertex should not match");
+    }
+
+    #[test]
+    fn pave_block_append_ext_pave_dedup() {
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
+        assert_eq!(pb.ext_paves.len(), 1);
+
+        // Same vertex_idx → dedup (fence)
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
+        assert_eq!(pb.ext_paves.len(), 1, "Duplicate ext_pave should be rejected by fence");
+
+        // Different vertex_idx → added
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.7 });
+        assert_eq!(pb.ext_paves.len(), 2);
+    }
+
+    #[test]
+    fn pave_block_remove_ext_pave() {
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.7 });
+        assert_eq!(pb.ext_paves.len(), 2);
+
+        pb.remove_ext_pave(2);
+        assert_eq!(pb.ext_paves.len(), 1);
+        assert_eq!(pb.ext_paves[0].vertex_idx, 3);
+
+        // Remove non-existent → no-op
+        pb.remove_ext_pave(99);
+        assert_eq!(pb.ext_paves.len(), 1);
+    }
+
+    #[test]
+    fn pave_block_is_to_update() {
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        assert!(!pb.is_to_update(), "No ext_paves → not to update");
+
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.5 });
+        assert!(pb.is_to_update(), "Has ext_paves → to update");
+    }
+
+    #[test]
+    fn pave_block_contains_parameter() {
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.5 });
+
+        let mut idx = 0usize;
+        assert!(pb.contains_parameter(0.5, 1e-10, &mut idx));
+        assert_eq!(idx, 2);
+
+        assert!(!pb.contains_parameter(0.8, 1e-10, &mut idx));
+    }
+
+    #[test]
+    fn pave_block_update_splits() {
+        // OCCT-aligned: BOPDS_PaveBlock::Update splits the block at ext_pave params
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 3, param: 3.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 2.0 });
+
+        let result = pb.update(true); // the_flag=true includes endpoint paves
+        assert_eq!(result.len(), 3, "Three sub-blocks from two ext_paves + endpoints");
+        // Sorted endpoints + ext_paves: [0.0, 1.0, 2.0, 3.0] → blocks [0,1], [1,2], [2,3]
+        assert!((result[0].pave1.param - 0.0).abs() < 1e-15);
+        assert!((result[0].pave2.param - 1.0).abs() < 1e-15);
+        assert!((result[1].pave1.param - 1.0).abs() < 1e-15);
+        assert!((result[1].pave2.param - 2.0).abs() < 1e-15);
+        assert!((result[2].pave1.param - 2.0).abs() < 1e-15);
+        assert!((result[2].pave2.param - 3.0).abs() < 1e-15);
+        assert!(pb.ext_paves.is_empty(), "Ext_paves drained after update");
+    }
+
+    #[test]
+    fn pave_block_update_includes_endpoints() {
+        let mut pb = PaveBlock::new(1,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 3, param: 3.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 2, param: 2.0 }); // One interior split
+
+        let result = pb.update(true); // the_flag=true (include endpoint paves)
+        // Endpoints (0.0, 3.0) + ext (2.0) = sorted [0.0, 2.0, 3.0] → 2 blocks
+        assert_eq!(result.len(), 2, "Two sub-blocks: [0,2] and [2,3]");
+    }
+
+    #[test]
+    fn pave_block_new_curve_block() {
+        let pb = PaveBlock::new_curve_block();
+        assert_eq!(pb.original_edge, NO_EDGE);
+        assert!(pb.is_splittable);
+        assert!(pb.new_edge.is_none());
+    }
+
+    #[test]
+    fn pave_block_has_same_bounds_reversed() {
+        let a = PaveBlock::new(1,
+            Pave { vertex_idx: 5, param: 0.0 },
+            Pave { vertex_idx: 9, param: 1.0 });
+        let b = PaveBlock::new(2,
+            Pave { vertex_idx: 9, param: 1.0 },
+            Pave { vertex_idx: 5, param: 0.0 });
+
+        assert!(a.has_same_bounds(&b), "Reversed endpoints should be considered same bounds");
+        assert!(b.has_same_bounds(&a), "Symmetric check");
+    }
+
+    #[test]
+    fn common_block_new() {
+        let cb = CommonBlock::new();
+        assert!(cb.pave_blocks().is_empty());
+        assert!(cb.faces().is_empty());
+        assert_eq!(cb.tolerance(), 0.0);
+        assert!(cb.edge().is_none());
+    }
+
+    #[test]
+    fn common_block_add_pave_block() {
+        let mut cb = CommonBlock::new();
+        cb.add_pave_block(0, 1);
+        cb.add_pave_block(2, 1);
+        assert_eq!(cb.pave_blocks().len(), 2);
+        assert_eq!(cb.pave_blocks()[0], (0, 1));
+        assert_eq!(cb.pave_blocks()[1], (2, 1));
+    }
+
+    #[test]
+    fn common_block_add_face_dedup() {
+        let mut cb = CommonBlock::new();
+        cb.add_face(1);
+        cb.add_face(2);
+        cb.add_face(1); // duplicate
+        assert_eq!(cb.faces().len(), 2, "Duplicate faces should be ignored");
+    }
+
+    #[test]
+    fn common_block_set_pave_blocks() {
+        let mut cb = CommonBlock::new();
+        cb.set_pave_blocks(vec![(0, 1), (1, 2), (2, 3)]);
+        assert_eq!(cb.pave_blocks().len(), 3);
+        cb.set_pave_blocks(vec![]);
+        assert!(cb.pave_blocks().is_empty(), "set_pave_blocks should replace all");
+    }
+
+    #[test]
+    fn common_block_set_and_get_edge() {
+        let mut cb = CommonBlock::new();
+        assert!(cb.edge().is_none());
+        cb.set_edge(42);
+        assert!(cb.edge().is_some());
+        assert_eq!(cb.edge(), Some(42));
+    }
+
+    #[test]
+    fn common_block_tolerance() {
+        let mut cb = CommonBlock::new();
+        cb.set_tolerance(1.5);
+        assert!((cb.tolerance() - 1.5).abs() < 1e-15);
+    }
+
+    #[test]
+    fn common_block_set_faces() {
+        let mut cb = CommonBlock::new();
+        cb.set_faces(vec![10, 20, 30]);
+        assert_eq!(cb.faces().len(), 3);
+        assert_eq!(cb.faces()[0], 10);
+        assert_eq!(cb.faces()[2], 30);
+    }
+
+    #[test]
+    fn common_block_append_faces() {
+        let mut cb = CommonBlock::new();
+        cb.add_face(1);
+        cb.append_faces(&[2, 3, 1]); // 1 is duplicate
+        assert_eq!(cb.faces().len(), 3, "append_faces with duplicate should not add dups");
+        assert_eq!(cb.faces()[0], 1);
+        assert_eq!(cb.faces()[1], 2);
+        assert_eq!(cb.faces()[2], 3);
+    }
+
+    #[test]
+    fn shared_pb_wraps_pave_block() {
+        let pb = PaveBlock::new(7,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        let spb = SharedPB::new(pb);
+        let read = spb.0.read().unwrap();
+        assert_eq!(read.original_edge, 7);
+    }
+
+    #[test]
+    fn common_block_pave_block1() {
+        let mut cb = CommonBlock::new();
+        assert!(cb.pave_block1().is_none());
+        cb.add_pave_block(5, 1);
+        assert_eq!(cb.pave_block1(), Some(5));
+    }
+
+    #[test]
+    fn common_block_is_pave_block_on_face() {
+        let mut cb = CommonBlock::new();
+        cb.add_pave_block(0, 1);
+        cb.add_pave_block(1, 2);
+        assert!(cb.is_pave_block_on_face(1));
+        assert!(cb.is_pave_block_on_face(2));
+        assert!(!cb.is_pave_block_on_face(3));
+    }
+
+    #[test]
+    fn common_block_is_pave_block_on_edge() {
+        let mut cb = CommonBlock::new();
+        assert!(!cb.is_pave_block_on_edge());
+        cb.set_edge(5);
+        assert!(cb.is_pave_block_on_edge());
+    }
+
+    #[test]
+    fn common_block_contains() {
+        let mut cb = CommonBlock::new();
+        cb.add_pave_block(0, 1);
+        cb.add_pave_block(2, 1);
+        assert!(cb.contains(0));
+        assert!(cb.contains(2));
+        assert!(!cb.contains(1));
+    }
+
+    #[test]
+    fn common_block_sort_by_edge() {
+        let mut cb = CommonBlock::new();
+        cb.add_pave_block(3, 1); // not on real edge
+        cb.add_pave_block(1, 2); // on real edge
+        cb.add_pave_block(2, 3); // not on real edge
+        cb.set_edge(5);
+        // sort: PBs where original_edge == 5 → this is checked by the closure
+        cb.sort_by_edge(|pb_idx| pb_idx == 1);
+        assert_eq!(cb.pave_block1(), Some(1), "Real-edge PB should be first");
+    }
+
+    #[test]
+    fn common_block_pave_block_on_edge() {
+        let mut cb = CommonBlock::new();
+        assert!(cb.pave_block_on_edge().is_none());
+        cb.add_pave_block(7, 1);
+        assert_eq!(cb.pave_block_on_edge(), Some(7));
+    }
+
+    #[test]
+    fn common_block_dump_contains_info() {
+        let mut cb = CommonBlock::new();
+        cb.add_pave_block(0, 1);
+        cb.set_edge(3);
+        let dump = cb.dump();
+        assert!(dump.contains("CommonBlock"));
+        assert!(dump.contains("3"));
+        assert!(dump.contains("1"));
+    }
 }

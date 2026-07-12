@@ -434,12 +434,17 @@ mod pave_filler_tests {
 // =============================================================================
 // IntTools_FaceFace_Test.cxx -- Face-face intersection
 //
-// Not yet translatable (require boundary-aware face-face intersection):
+// Not yet translatable: these tests require boundary-aware face-face
+// intersection (OCCT IntTools_FaceFace uses BRepTopAdaptor_TopolTool to
+// clip curves to face wire boundaries).  rcad's intersect_faces() is
+// surface-surface only (no wire clipping), so tests that assert 0 curves
+// when surfaces overlap but wire boundaries don't, will fail.
 //   - HalfCylinderOutsideCircularPlane_NoIntersection
 //   - HalfCylinderInsideCircularPlane_HasIntersection
 //   - OppositeHalfInsideCircle_HasIntersection
 //   - PartialCrossing_ProperlyTrimmed
 //   - BothHalvesCompletelyOutside_NoIntersection
+// Revisit when boundary-aware FF clipping is added.
 // =============================================================================
 
 #[cfg(test)]
@@ -559,6 +564,691 @@ mod bop_common_simple_tests {
         let result = crate::brep_algo_api::common(&b1, &b2)
             .expect("Common operation should succeed");
         assert!(get_surface_area(&result) > 0.0);
+    }
+}
+
+// =============================================================================
+// IntAna_QuadQuadGeo — Additional analytic intersection tests (P0)
+//
+// OCCT-aligned: IntAna_QuadQuadGeo — closed-form intersections between
+// quadric surfaces. Tests complement the existing plane-plane and
+// cylinder-cylinder tests above.
+// =============================================================================
+
+#[cfg(test)]
+mod quad_quad_geo_tests {
+    use super::*;
+    use crate::inttools::int_ana_quad_quad_geo::*;
+    use crate::inttools::int_surf_quadric::Quadric;
+    use rcad_kernel::geom::*;
+
+    /// Plane through sphere center → Circle with radius = sphere radius.
+    #[test]
+    fn plane_sphere_circle() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let q_plane = Quadric::from_surface3(&plane).unwrap();
+        let q_sphere = Quadric::from_surface3(&sphere).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_sphere(&q_plane, &q_sphere);
+
+        assert!(qq.is_done(), "Plane-sphere intersection should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Circle, "Plane through sphere center should produce Circle");
+        assert_eq!(qq.nb_solutions(), 1);
+        // Circle radius = sphere radius = 2.0 (center on plane → distance 0)
+        assert!((qq.circle().radius - 2.0).abs() < 1e-10, "Circle radius should match sphere radius");
+    }
+
+    /// Plane outside sphere → Empty.
+    #[test]
+    fn plane_sphere_empty() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 3.0), normal: DVec3::Z });
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        let q_plane = Quadric::from_surface3(&plane).unwrap();
+        let q_sphere = Quadric::from_surface3(&sphere).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_sphere(&q_plane, &q_sphere);
+
+        assert!(qq.is_done(), "Plane-sphere (empty) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Empty, "Plane outside sphere should produce Empty");
+        assert_eq!(qq.nb_solutions(), 0);
+    }
+
+    /// Plane tangent to sphere → Point (single contact).
+    #[test]
+    fn plane_sphere_tangent_point() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 1.0), normal: DVec3::Z });
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
+        });
+        let q_plane = Quadric::from_surface3(&plane).unwrap();
+        let q_sphere = Quadric::from_surface3(&sphere).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_sphere(&q_plane, &q_sphere);
+
+        assert!(qq.is_done(), "Plane-sphere (tangent) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Point, "Tangent plane should produce Point");
+    }
+
+    /// Plane perpendicular to cone axis, not through apex → Circle.
+    #[test]
+    fn plane_cone_circle() {
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z, radius: 0.0, half_angle_rad: 0.5235987756, // 30°
+        });
+        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 2.0), normal: DVec3::Z });
+        let q_cone = Quadric::from_surface3(&cone).unwrap();
+        let q_plane = Quadric::from_surface3(&plane).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.init_tolerances();
+        qq.perform_plane_cone(&q_plane, &q_cone, 1e-10, 1e-10);
+
+        assert!(qq.is_done(), "Plane-cone intersection should complete");
+        // A plane perpendicular to the cone axis (not through apex) → Circle
+        assert_eq!(qq.type_inter(), AnaResultType::Circle, "Plane perpendicular to cone axis should produce Circle");
+        assert_eq!(qq.nb_solutions(), 1);
+    }
+
+    /// Two identical cones with same axis → Same.
+    #[test]
+    fn cone_cone_same() {
+        let c1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.4,
+        });
+        let c2 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, 2.0), axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.4,
+        });
+        let q1 = Quadric::from_surface3(&c1).unwrap();
+        let q2 = Quadric::from_surface3(&c2).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_cone_cone(&q1, &q2, 1e-10);
+
+        assert!(qq.is_done(), "Cone-cone (same) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Same, "Identical cones should be Same");
+    }
+
+    /// Two cones with different axes → Hyperbola (2 solutions).
+    #[test]
+    fn cone_cone_hyperbola() {
+        let c1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.4,
+        });
+        let c2 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(1.0, 0.0, 0.0), axis: DVec3::X, radius: 1.0, half_angle_rad: 0.4,
+        });
+        let q1 = Quadric::from_surface3(&c1).unwrap();
+        let q2 = Quadric::from_surface3(&c2).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_cone_cone(&q1, &q2, 1e-10);
+
+        assert!(qq.is_done(), "Cone-cone (different axes) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Hyperbola, "Different-axis cones should produce Hyperbola");
+        assert_eq!(qq.nb_solutions(), 2);
+    }
+
+    /// Two overlapping spheres → Circle.
+    #[test]
+    fn sphere_sphere_circle() {
+        let s1 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let s2 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let q1 = Quadric::from_surface3(&s1).unwrap();
+        let q2 = Quadric::from_surface3(&s2).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_sphere_sphere(&q1, &q2, 1e-10);
+
+        assert!(qq.is_done(), "Sphere-sphere intersection should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Circle, "Overlapping equal spheres should produce Circle");
+        assert_eq!(qq.nb_solutions(), 1);
+    }
+
+    /// Two non-overlapping spheres → Empty.
+    #[test]
+    fn sphere_sphere_empty() {
+        let s1 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let s2 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(10.0, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let q1 = Quadric::from_surface3(&s1).unwrap();
+        let q2 = Quadric::from_surface3(&s2).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_sphere_sphere(&q1, &q2, 1e-10);
+
+        assert!(qq.is_done(), "Sphere-sphere (empty) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Empty, "Non-overlapping spheres should produce Empty");
+        assert_eq!(qq.nb_solutions(), 0);
+    }
+
+    /// Two identical spheres with same center → Same.
+    #[test]
+    fn sphere_sphere_same() {
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
+        });
+        let q1 = Quadric::from_surface3(&s).unwrap();
+        let q2 = Quadric::from_surface3(&s).unwrap();
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_sphere_sphere(&q1, &q2, 1e-10);
+
+        assert!(qq.is_done(), "Sphere-sphere (same) should complete");
+        assert_eq!(qq.type_inter(), AnaResultType::Same, "Identical spheres should be Same");
+    }
+}
+
+// =============================================================================
+// IntSurf_Quadric — Quadric surface tests (P1)
+//
+// OCCT-aligned: IntSurf_Quadric_Test.cxx — ConeApexGradientRemainsFinite
+// =============================================================================
+
+#[cfg(test)]
+mod quadric_tests {
+    use crate::inttools::int_surf_quadric::Quadric;
+    use glam::DVec3;
+    use rcad_kernel::geom::*;
+
+    #[test]
+    fn cone_apex_gradient_remains_finite() {
+        // OCCT: gp_Cone(Ax3(Pnt(0,0,0), Dir(0,0,1), Dir(1,0,0)), 0.5, 0.0)
+        // Semi-angle = 0.5, radius at apex = 0.0
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 0.0,
+            half_angle_rad: 0.5,
+        });
+        let q = Quadric::from_surface3(&cone).expect("Cone quadric");
+        let apex = DVec3::ZERO;
+
+        // Gradient at apex must be finite (not panic, not NaN/inf)
+        let grad = q.gradient(apex);
+        assert!(grad.is_finite(), "Cone apex gradient must be finite");
+
+        // ValAndGrad at apex: distance should be near zero (apex is on the cone)
+        let (dist, grad2) = q.val_and_grad(apex);
+        assert!(dist.is_finite(), "Cone apex distance must be finite");
+        assert!(grad2.is_finite(), "Cone apex gradient from val_and_grad must be finite");
+    }
+}
+
+// =============================================================================
+// IntTools_EdgeEdge — Pure helper function tests (edge_edge.rs)
+//
+// OCCT-aligned: curve_type_to_integer, point_box_distance,
+// split_range_on_segments, intersect_line_line_3d
+// =============================================================================
+
+#[cfg(test)]
+mod edge_edge_tools_tests {
+    use glam::DVec3;
+    use rcad_kernel::geom::*;
+
+    #[test]
+    fn curve_type_to_integer_all_types() {
+        use crate::inttools::edge_edge::curve_type_to_integer;
+        assert_eq!(curve_type_to_integer(&Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))), 0);
+        assert_eq!(curve_type_to_integer(&Curve3::Hyperbola(Hyperbola3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, semi_major: 1.0, semi_minor: 1.0 })), 1);
+        assert_eq!(curve_type_to_integer(&Curve3::Parabola(Parabola3 { vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X, focal_param: 1.0 })), 1);
+        assert_eq!(curve_type_to_integer(&Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0))), 2);
+        assert_eq!(curve_type_to_integer(&Curve3::Ellipse(Ellipse3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, major_radius: 2.0, minor_radius: 1.0 })), 2);
+        assert_eq!(curve_type_to_integer(&Curve3::BSpline(BSplineCurve3 { degree: 3, knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], control_points: vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Z], weights: vec![] })), 3);
+        assert_eq!(curve_type_to_integer(&Curve3::Bezier(BezierCurve3 { control_points: vec![DVec3::ZERO, DVec3::X, DVec3::Y], weights: vec![] })), 3);
+        // Fallback (default) type
+        assert_eq!(curve_type_to_integer(&Curve3::Offset(OffsetCurve3 { basis: Box::new(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))), offset_distance: 1.0, offset_dir: DVec3::Z })), 4);
+    }
+
+    #[test]
+    fn point_box_distance_inside() {
+        use crate::inttools::edge_edge::point_box_distance;
+        let p = DVec3::new(0.5, 0.5, 0.5);
+        let bmin = DVec3::ZERO;
+        let bmax = DVec3::ONE;
+        assert!((point_box_distance(p, bmin, bmax) - 0.0).abs() < 1e-15, "Point inside box: distance should be 0");
+    }
+
+    #[test]
+    fn point_box_distance_outside() {
+        use crate::inttools::edge_edge::point_box_distance;
+        let p = DVec3::new(2.0, 0.0, 0.0);
+        let bmin = DVec3::ZERO;
+        let bmax = DVec3::ONE;
+        let d = point_box_distance(p, bmin, bmax);
+        assert!((d - 1.0).abs() < 1e-15, "Point at (2,0,0) outside box [0,1]: distance should be 1, got {d}");
+    }
+
+    #[test]
+    fn point_box_distance_on_boundary() {
+        use crate::inttools::edge_edge::point_box_distance;
+        let p = DVec3::new(1.0, 0.5, 0.5);
+        let bmin = DVec3::ZERO;
+        let bmax = DVec3::ONE;
+        let d = point_box_distance(p, bmin, bmax);
+        assert!(d < 1e-15, "Point on box boundary: distance should be 0, got {d}");
+    }
+
+    #[test]
+    fn point_box_distance_diagonal() {
+        use crate::inttools::edge_edge::point_box_distance;
+        let p = DVec3::new(2.0, 2.0, 2.0);
+        let bmin = DVec3::ZERO;
+        let bmax = DVec3::ONE;
+        let d = point_box_distance(p, bmin, bmax);
+        let expected = (3.0_f64).sqrt(); // sqrt(1^2 + 1^2 + 1^2)
+        assert!((d - expected).abs() < 1e-15, "Point at corner: distance should be sqrt(3)={expected}, got {d}");
+    }
+
+    #[test]
+    fn split_range_on_segments_basic() {
+        use crate::inttools::edge_edge::split_range_on_segments;
+        let (num, segs) = split_range_on_segments(0.0, 10.0, 0.1, 5);
+        assert_eq!(num, 5, "Should return 5 segments for nb_seg=5");
+        assert_eq!(segs.len(), 5);
+        assert!((segs[0][0] - 0.0).abs() < 1e-15);
+        assert!((segs[0][1] - 2.0).abs() < 1e-15);
+        assert!((segs[4][0] - 8.0).abs() < 1e-15);
+        assert!((segs[4][1] - 10.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn split_range_on_segments_small_range() {
+        use crate::inttools::edge_edge::split_range_on_segments;
+        // range smaller than resolution → single segment
+        let (num, segs) = split_range_on_segments(0.0, 0.01, 0.1, 5);
+        assert_eq!(num, 1, "Range < resolution should produce single segment");
+        assert_eq!(segs.len(), 1);
+    }
+
+    #[test]
+    fn split_range_on_segments_single_requested() {
+        use crate::inttools::edge_edge::split_range_on_segments;
+        let (num, segs) = split_range_on_segments(0.0, 10.0, 0.1, 1);
+        assert_eq!(num, 1, "nb_seg=1 should produce single segment");
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0][0] - 0.0).abs() < 1e-15);
+        assert!((segs[0][1] - 10.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn intersect_line_line_3d_coincident_overlap() {
+        use crate::inttools::edge_edge::intersect_line_line_3d;
+        // Two collinear line segments overlapping
+        let result = intersect_line_line_3d(
+            DVec3::ZERO, DVec3::X, [0.0, 5.0],  // line1: 0→5
+            DVec3::new(3.0, 0.0, 0.0), DVec3::X, [0.0, 5.0], // line2 offset: at 3→8
+            1e-7,
+        );
+        assert!(result.is_some(), "Overlapping collinear lines should intersect");
+        let (r1, r2, is_edge) = result.unwrap();
+        assert!(is_edge, "Overlapping lines should produce EDGE-type intersection");
+        assert!((r1[0] - 0.0).abs() < 1e-10, "Line1 range start should be 0");
+        assert!((r1[1] - 5.0).abs() < 1e-10, "Line1 range end should be 5");
+        assert!((r2[0] - 3.0).abs() < 1e-10, "Line2 projected overlap start should be 3");
+        assert!((r2[1] - 5.0).abs() < 1e-10, "Line2 projected overlap end should be 5");
+    }
+
+    #[test]
+    fn intersect_line_line_3d_coincident_no_overlap() {
+        use crate::inttools::edge_edge::intersect_line_line_3d;
+        // Two collinear line segments that DON'T overlap
+        let result = intersect_line_line_3d(
+            DVec3::ZERO, DVec3::X, [0.0, 2.0],
+            DVec3::new(5.0, 0.0, 0.0), DVec3::X, [0.0, 2.0],
+            1e-7,
+        );
+        assert!(result.is_none(), "Non-overlapping collinear lines should return None");
+    }
+
+    #[test]
+    fn intersect_line_line_3d_crossing() {
+        use crate::inttools::edge_edge::intersect_line_line_3d;
+        // Two perpendicular lines crossing at (1,0,0)
+        // Line1: along X from 0 to 2 → (0,0,0) to (2,0,0)
+        // Line2: along Y from -1 to 1 → (1,-1,0) to (1,1,0)
+        let result = intersect_line_line_3d(
+            DVec3::ZERO, DVec3::X, [0.0, 2.0],
+            DVec3::new(1.0, -1.0, 0.0), DVec3::Y, [0.0, 2.0],
+            1e-7,
+        );
+        assert!(result.is_some(), "Crossing lines should intersect");
+        let (r1, r2, is_edge) = result.unwrap();
+        assert!(!is_edge, "Crossing lines should produce VERTEX-type intersection");
+        // Range is a tiny tolerance interval [t-a_dt, t+a_dt], not fully degenerate
+        let t1_at_intersection = (r1[0] + r1[1]) * 0.5;
+        let t2_at_intersection = (r2[0] + r2[1]) * 0.5;
+        // Line1 from (0,0,0) to (2,0,0), intersection at x=1 → t1=1.0
+        assert!((t1_at_intersection - 1.0).abs() < 1e-7, "Line1 intersection param should be ~1.0");
+        // Line2 from (1,-1,0) to (1,1,0), intersection at y=0 → t2=1.0 (0+1)
+        assert!((t2_at_intersection - 1.0).abs() < 1e-7, "Line2 intersection param should be ~1.0");
+    }
+
+    #[test]
+    fn intersect_line_line_3d_parallel_no_intersect() {
+        use crate::inttools::edge_edge::intersect_line_line_3d;
+        // Two parallel lines separated in Y
+        let result = intersect_line_line_3d(
+            DVec3::ZERO, DVec3::X, [0.0, 5.0],
+            DVec3::new(0.0, 2.0, 0.0), DVec3::X, [0.0, 5.0],
+            1e-7,
+        );
+        assert!(result.is_none(), "Parallel non-collinear lines should return None");
+    }
+}
+
+// =============================================================================
+// BOPTools — Pure helper function tests (boptools/mod.rs)
+//
+// OCCT-aligned: is_dirs_coinside, intermediate_point, is_on_pave,
+// is_in_range, compute_int_range, is_split_to_reverse, point_near_edge,
+// curve_tolerance
+// =============================================================================
+
+#[cfg(test)]
+mod boptools_helpers_tests {
+    use glam::DVec3;
+    use rcad_kernel::geom::*;
+
+    #[test]
+    fn is_dirs_coinside_same() {
+        assert!(crate::boptools::is_dirs_coinside(DVec3::X, DVec3::X), "Same direction");
+    }
+
+    #[test]
+    fn is_dirs_coinside_opposite() {
+        assert!(crate::boptools::is_dirs_coinside(DVec3::X, -DVec3::X), "Opposite direction (2-d < 0.0002)");
+    }
+
+    #[test]
+    fn is_dirs_coinside_orthogonal() {
+        assert!(!crate::boptools::is_dirs_coinside(DVec3::X, DVec3::Y), "Orthogonal should not be coincident");
+    }
+
+    #[test]
+    fn is_dirs_coinside_with_tol_custom() {
+        assert!(crate::boptools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 1.5), "Orthogonal within loose tol (|X-Y|=sqrt2≈1.414 < 1.5)");
+        assert!(!crate::boptools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 0.5), "Orthogonal outside tight tol (|X-Y|=sqrt2≈1.414 > 0.5, |2-1.414|=0.586 > 0.5)");
+    }
+
+    #[test]
+    fn intermediate_point_midpoint() {
+        assert!((crate::boptools::intermediate_point(0.0, 10.0) - 5.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn intermediate_point_occt_weighted() {
+        // PAR_T = 0.43213918 → result = (1-0.43213918)*0 + 0.43213918*10 = 4.3213918
+        let r = crate::boptools::intermediate_point_occt(0.0, 10.0);
+        assert!((r - 4.3213918).abs() < 1e-10, "OCCT-biased midpoint should be ~4.32, got {r}");
+    }
+
+    #[test]
+    fn is_on_pave_at_boundary() {
+        assert!(crate::boptools::is_on_pave(0.0, [0.0, 10.0], 1e-7), "At start boundary");
+        assert!(crate::boptools::is_on_pave(10.0, [0.0, 10.0], 1e-7), "At end boundary");
+    }
+
+    #[test]
+    fn is_on_pave_inside() {
+        assert!(!crate::boptools::is_on_pave(5.0, [0.0, 10.0], 1e-7), "Inside range should not be 'on pave'");
+    }
+
+    #[test]
+    fn is_on_pave_near_boundary() {
+        assert!(crate::boptools::is_on_pave(0.001, [0.0, 10.0], 0.01), "Within tolerance of start");
+        assert!(!crate::boptools::is_on_pave(0.001, [0.0, 10.0], 1e-10), "Outside tolerance of start");
+    }
+
+    #[test]
+    fn is_in_range_overlapping() {
+        assert!(crate::boptools::is_in_range([3.0, 7.0], [0.0, 10.0], 0.0), "Fully inside");
+        assert!(crate::boptools::is_in_range([-1.0, 5.0], [0.0, 10.0], 0.0), "Partially overlapping (left)");
+        assert!(crate::boptools::is_in_range([5.0, 15.0], [0.0, 10.0], 0.0), "Partially overlapping (right)");
+    }
+
+    #[test]
+    fn is_in_range_non_overlapping() {
+        assert!(!crate::boptools::is_in_range([-10.0, -5.0], [0.0, 10.0], 0.0), "Completely left");
+        assert!(!crate::boptools::is_in_range([20.0, 30.0], [0.0, 10.0], 0.0), "Completely right");
+    }
+
+    #[test]
+    fn is_in_range_tolerance_expands() {
+        // With tolerance, range boundaries expand
+        assert!(crate::boptools::is_in_range([-1.0, -0.5], [0.0, 10.0], 2.0), "Within tolerance expansion");
+        assert!(!crate::boptools::is_in_range([-5.0, -3.0], [0.0, 10.0], 2.0), "Outside even with tolerance");
+    }
+
+    #[test]
+    fn compute_int_range_perpendicular() {
+        // angle = PI/2 (perpendicular) → sin=1, tan=inf → formula handles this
+        let r = crate::boptools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_2);
+        assert!(r.is_finite(), "Perpendicular surfaces should produce finite range");
+    }
+
+    #[test]
+    fn compute_int_range_acute() {
+        // angle = PI/3 (60°)
+        let r = crate::boptools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_3);
+        assert!(r.is_finite(), "Acute angle should produce finite range");
+        assert!(r > 0.0, "Range should be positive");
+    }
+
+    #[test]
+    fn is_split_to_reverse_forward() {
+        assert!(!crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::Z), "Same normal → not reverse");
+        assert!(!crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.1, 0.99).normalize()), "Slightly off normal → not reverse");
+    }
+
+    #[test]
+    fn is_split_to_reverse_opposite() {
+        assert!(crate::boptools::is_split_to_reverse(DVec3::Z, -DVec3::Z), "Opposite → reverse");
+        assert!(crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.0, -1.0)), "Exact opposite → reverse");
+    }
+
+    #[test]
+    fn point_near_edge_offset() {
+        let pt = crate::boptools::point_near_edge(&Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z }), DVec3::ZERO, DVec3::Z);
+        assert!((pt - DVec3::new(0.0, 0.0, crate::tolerance::TOLERANCE_ABS * 10.0)).length() < 1e-15,
+            "Point near edge should be offset along normal");
+    }
+
+    #[test]
+    fn curve_tolerance_default() {
+        let line = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
+        assert!((crate::boptools::curve_tolerance(&line, 1.0) - 1.0).abs() < 1e-15, "Line should return tol_base unchanged");
+        
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        assert!((crate::boptools::curve_tolerance(&circle, 1.0) - 1.0).abs() < 1e-15, "Circle should return tol_base unchanged");
+    }
+
+    #[test]
+    fn curve_tolerance_parabola() {
+        let parabola = Curve3::Parabola(Parabola3 { vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X, focal_param: 1.0 });
+        let r = crate::boptools::curve_tolerance(&parabola, 1.0);
+        assert!((r - 10.0).abs() < 1e-15, "Parabola should get 10x tolerance, got {r}");
+    }
+}
+
+// =============================================================================
+// DS data structure tests (try_add_interf, has_interf_*, allocate_pave_block)
+//
+// OCCT-aligned: BOPDS_DS interference fence and PaveBlock pool operations
+// =============================================================================
+
+#[cfg(test)]
+mod ds_interf_tests {
+    #[test]
+    fn try_add_interf_new_pair() {
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        assert!(ds.try_add_interf(0, 1), "First insertion should return true (new pair)");
+        assert!(ds.try_add_interf(2, 3), "Another new pair");
+    }
+
+    #[test]
+    fn try_add_interf_duplicate_rejected() {
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        assert!(ds.try_add_interf(0, 1), "First insertion");
+        assert!(!ds.try_add_interf(0, 1), "Duplicate should be rejected");
+        assert!(!ds.try_add_interf(1, 0), "Reversed pair should also be rejected (sorted)");
+    }
+
+    #[test]
+    fn try_add_interf_multiple_pairs() {
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        assert!(ds.try_add_interf(0, 1));
+        assert!(ds.try_add_interf(0, 2));
+        assert!(ds.try_add_interf(1, 2));
+        assert!(!ds.try_add_interf(0, 1), "Already added");
+        assert!(!ds.try_add_interf(2, 0), "Already added (reversed)");
+    }
+
+    #[test]
+    fn allocate_pave_block_returns_increasing_indices() {
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        use crate::bopds::pave::{PaveBlock, Pave};
+        let pv1 = Pave { vertex_idx: 0, param: 0.0 };
+        let pv2 = Pave { vertex_idx: 1, param: 1.0 };
+        let idx0 = ds.allocate_pave_block(PaveBlock::new(0, pv1, pv2));
+        assert_eq!(idx0, 0, "First allocation should return 0");
+        let idx1 = ds.allocate_pave_block(PaveBlock::new(1, pv1, pv2));
+        assert_eq!(idx1, 1, "Second allocation should return 1");
+        assert_eq!(ds.pave_blocks.len(), 2);
+    }
+
+    #[test]
+    fn add_shape_sd_then_has_shape_sd() {
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        ds.add_shape_sd(0, 1);
+        assert_eq!(ds.has_shape_sd(0), Some(1));
+        // Independent pair
+        ds.add_shape_sd(2, 3);
+        assert_eq!(ds.has_shape_sd(2), Some(3));
+        assert_eq!(ds.has_shape_sd(0), Some(1), "Earlier mapping unchanged");
+    }
+}
+
+// =============================================================================
+// FaceInfo tests
+// =============================================================================
+
+#[cfg(test)]
+mod face_info_tests {
+    #[test]
+    fn has_any_interference_empty() {
+        use crate::bopds::face_info::FaceInfo;
+        let fi = FaceInfo::default();
+        assert!(!fi.has_any_interference());
+    }
+
+    #[test]
+    fn has_any_interference_with_paves() {
+        use crate::bopds::face_info::FaceInfo;
+        let mut fi = FaceInfo::default();
+        fi.pave_blocks_sc.insert(0);
+        assert!(fi.has_any_interference());
+    }
+
+    #[test]
+    fn has_any_interference_with_vertices_in() {
+        use crate::bopds::face_info::FaceInfo;
+        // Note: has_any_interference checks pave_blocks_in/on/sc and curves_sc,
+        // NOT vertices_in. Test that vertices_in alone does NOT trigger it.
+        let mut fi = FaceInfo::default();
+        fi.vertices_in.insert(0);
+        assert!(!fi.has_any_interference(), "vertices_in alone should not trigger has_any_interference");
+        fi.pave_blocks_in.insert(0);
+        assert!(fi.has_any_interference(), "pave_blocks_in should trigger it");
+    }
+
+    #[test]
+    fn curves_sc_only_returns_section_curves() {
+        use crate::bopds::face_info::FaceInfo;
+        let mut fi = FaceInfo::default();
+        fi.curves_sc.insert(3);
+        fi.curves_sc.insert(1);
+        let sc = fi.curves_sc_only();
+        assert_eq!(sc, vec![3, 1]);
+    }
+
+    #[test]
+    fn curves_sc_only_empty() {
+        use crate::bopds::face_info::FaceInfo;
+        let fi = FaceInfo::default();
+        assert!(fi.curves_sc_only().is_empty());
+    }
+}
+
+// =============================================================================
+// boptools/extra trivial helpers
+// =============================================================================
+
+#[cfg(test)]
+mod boptools_extra_tests {
+    use glam::DVec3;
+
+    #[test]
+    fn min_step_in_2d_constant() {
+        let v = crate::boptools::min_step_in_2d();
+        assert!(v > 0.0 && v < 1.0, "min_step_in_2d should be a small positive constant, got {v}");
+    }
+
+    #[test]
+    fn sense_flag_parallel() {
+        assert_eq!(crate::boptools::sense_flag(DVec3::Z, DVec3::Z), 1);
+    }
+
+    #[test]
+    fn sense_flag_opposite() {
+        assert_eq!(crate::boptools::sense_flag(DVec3::Z, -DVec3::Z), -1);
+    }
+
+    #[test]
+    fn sense_flag_orthogonal() {
+        assert_eq!(crate::boptools::sense_flag(DVec3::Z, DVec3::X), 0);
+    }
+}
+
+// =============================================================================
+// face_face helper functions
+// =============================================================================
+
+#[cfg(test)]
+mod face_face_helper_tests {
+    #[test]
+    fn correct_surface_boundaries_expands() {
+        let mut bounds = [0.0, 1.0, 0.0, 1.0];
+        crate::inttools::face_face::correct_surface_boundaries(&mut bounds, 0.1);
+        assert!((bounds[0] - (-0.1)).abs() < 1e-15);
+        assert!((bounds[1] - 1.1).abs() < 1e-15);
+        assert!((bounds[2] - (-0.1)).abs() < 1e-15);
+        assert!((bounds[3] - 1.1).abs() < 1e-15);
+    }
+
+    #[test]
+    fn correct_plane_boundaries_wide() {
+        let mut bounds = [0.0, 1.0, 0.0, 1.0];
+        crate::inttools::face_face::correct_plane_boundaries(&mut bounds);
+        assert!((bounds[0] - (-1e10)).abs() < 1.0, "Plane u_min should be -1e10");
+        assert!((bounds[1] - 1e10).abs() < 1.0, "Plane u_max should be 1e10");
+        assert!((bounds[2] - (-1e10)).abs() < 1.0, "Plane v_min should be -1e10");
+        assert!((bounds[3] - 1e10).abs() < 1.0, "Plane v_max should be 1e10");
     }
 }
 

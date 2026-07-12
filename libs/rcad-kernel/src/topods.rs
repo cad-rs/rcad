@@ -1618,6 +1618,100 @@ impl BRepBuilder {
             _ => panic!("add_to_compound: shape is not a Compound"),
         }
     }
+
+    // ======================================================================
+    // Additional BRep_Builder methods (completing coverage)
+    // ======================================================================
+
+    /// OCCT BRep_Builder::Range(aE, First, Last) — set edge parametric range.
+    /// Updates the edge-level range field.
+    pub fn set_edge_range(&mut self, brep: &mut BRep, edge: ShapeRef, first: f64, last: f64) {
+        brep.edge_mut(edge).range = [first, last];
+    }
+
+    /// OCCT BRep_Builder::SameParameter(aE, theFlag) — set same-parameter flag.
+    pub fn set_edge_same_parameter(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
+        brep.edge_mut(edge).same_parameter = flag;
+    }
+
+    /// OCCT BRep_Builder::SameRange(aE, theFlag) — set same-range flag.
+    pub fn set_edge_same_range(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
+        brep.edge_mut(edge).same_range = flag;
+    }
+
+    /// OCCT BRep_Builder::NaturalRestriction(aF, theFlag) — set natural-restriction flag.
+    pub fn set_face_natural_restriction(&mut self, brep: &mut BRep, face: ShapeRef, flag: bool) {
+        brep.face_mut(face).natural_restriction = flag;
+    }
+
+    /// OCCT BRep_Builder::UpdateFace(aF, theTol) — update face tolerance.
+    pub fn update_face_tolerance(&mut self, brep: &mut BRep, face: ShapeRef, tol: f64) {
+        let fd = brep.face_mut(face);
+        fd.tolerance = fd.tolerance.max(tol);
+    }
+
+    /// OCCT BRep_Builder::UpdateVertex(aV, aP, theTol) — set vertex point and tolerance.
+    pub fn update_vertex_point(&mut self, brep: &mut BRep, vertex: ShapeRef, pt: DVec3, tol: f64) {
+        let vd = brep.vertex_mut(vertex);
+        vd.point = pt;
+        vd.tolerance = vd.tolerance.max(tol);
+    }
+
+    /// Remove an edge from a wire (OCCT BRep_Builder::Remove).
+    pub fn remove_from_wire(&mut self, brep: &mut BRep, wire: ShapeRef, edge: ShapeRef) {
+        let wd = brep.wire_mut(wire);
+        wd.edges.retain(|e| e.index != edge.index || e.orientation != edge.orientation);
+        wd.my_shapes.retain(|s| s.index != edge.index || s.orientation != edge.orientation);
+    }
+
+    /// Remove an inner wire from a face (OCCT BRep_Builder::Remove).
+    pub fn remove_from_face(&mut self, brep: &mut BRep, face: ShapeRef, inner_wire: ShapeRef) {
+        let fd = brep.face_mut(face);
+        fd.inner_wires.retain(|w| w.index != inner_wire.index);
+        fd.my_shapes.retain(|s| s.index != inner_wire.index);
+    }
+
+    /// Remove a face from a shell (OCCT BRep_Builder::Remove).
+    pub fn remove_from_shell(&mut self, brep: &mut BRep, shell: ShapeRef, face: ShapeRef) {
+        let sd = brep.shell_mut(shell);
+        sd.faces.retain(|f| f.index != face.index);
+        sd.my_shapes.retain(|s| s.index != face.index);
+    }
+
+    /// OCCT BRep_Builder::Transfert(aEin, aEout) — copy 3D curve from one edge to another.
+    /// Copies the Curve3D representation (first one found) from edge_in to edge_out.
+    pub fn transfert_edge_curve(&mut self, brep: &mut BRep, edge_in: ShapeRef, edge_out: ShapeRef) {
+        let curve_clone = brep.edge(edge_in).curve.clone();
+        let pcurves_clone = brep.edge(edge_in).pcurves.clone();
+        if let Some(curve) = curve_clone {
+            brep.edge_mut(edge_out).curve = Some(curve);
+        }
+        if !pcurves_clone.is_empty() {
+            brep.edge_mut(edge_out).pcurves.extend(pcurves_clone);
+        }
+    }
+
+    /// OCCT BRep_Builder::Transfert(aEin, aEout, aVin, aVout) — copy vertex parameter
+    /// from vertex_in on edge_in to vertex_out on edge_out.
+    pub fn transfert_vertex_param(&mut self, brep: &mut BRep,
+        edge_in: ShapeRef, vertex_in: ShapeRef,
+        edge_out: ShapeRef, vertex_out: ShapeRef)
+    {
+        let param = brep.edge(edge_in).vertex_params.get(&vertex_in.index).copied();
+        if let Some(param) = param {
+            brep.edge_mut(edge_out).vertex_params.insert(vertex_out.index, param);
+        }
+    }
+
+    /// OCCT BRep_Builder::Degenerated(aE, true) — set degenerated flag AND clear 3D curve.
+    /// OCCT removes the 3D curve when marking an edge as degenerated.
+    pub fn set_edge_degenerated_with_clear(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
+        let ed = brep.edge_mut(edge);
+        ed.degenerated = flag;
+        if flag {
+            ed.curve = None;
+        }
+    }
 }
 
 /// Get the parameter range for a Curve2d (Trimmed 鈫?stored range, Circle 鈫?[0, 2蟺]).
@@ -1655,6 +1749,7 @@ impl TShape {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::*;
 
     #[test]
     fn test_orientation_values() {
@@ -1876,6 +1971,171 @@ mod tests {
         let restored: BRep = serde_json::from_str(&json).unwrap();
         let fd = restored.face(f);
         assert!(!fd.natural_restriction);
+    }
+
+    // ---- BRepBuilder extension method tests ----
+
+    #[test]
+    fn test_builder_set_edge_range() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
+        assert_eq!(brep.edge(e).range, [0.0, 1.0]);
+        bld.set_edge_range(&mut brep, e, 0.5, 2.5);
+        assert_eq!(brep.edge(e).range, [0.5, 2.5]);
+    }
+
+    #[test]
+    fn test_builder_set_edge_same_parameter() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
+        assert!(brep.edge(e).same_parameter); // default is true in add_tedge
+        bld.set_edge_same_parameter(&mut brep, e, false);
+        assert!(!brep.edge(e).same_parameter);
+        bld.set_edge_same_parameter(&mut brep, e, true);
+        assert!(brep.edge(e).same_parameter);
+    }
+
+    #[test]
+    fn test_builder_set_edge_same_range() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
+        assert!(brep.edge(e).same_range); // default is true in add_tedge
+        bld.set_edge_same_range(&mut brep, e, false);
+        assert!(!brep.edge(e).same_range);
+    }
+
+    #[test]
+    fn test_builder_set_face_natural_restriction() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let w = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+        assert!(brep.face(f).natural_restriction);
+        bld.set_face_natural_restriction(&mut brep, f, false);
+        assert!(!brep.face(f).natural_restriction);
+    }
+
+    #[test]
+    fn test_builder_update_face_tolerance() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let w = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+        assert!((brep.face(f).tolerance - 0.0).abs() < 1e-15);
+        bld.update_face_tolerance(&mut brep, f, 1.5);
+        assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
+        bld.update_face_tolerance(&mut brep, f, 0.5); // smaller → max keeps 1.5
+        assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_builder_update_vertex_point() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v = brep.add_tvertex(DVec3::ZERO);
+        assert_eq!(brep.vertex(v).point, DVec3::ZERO);
+        bld.update_vertex_point(&mut brep, v, DVec3::new(5.0, 0.0, 0.0), 0.1);
+        assert_eq!(brep.vertex(v).point, DVec3::new(5.0, 0.0, 0.0));
+        assert!((brep.vertex(v).tolerance - 0.1).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_builder_remove_from_wire() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
+        let wire = bld.build_wire(&mut brep, vec![e]);
+        assert_eq!(brep.wire(wire).edges.len(), 1);
+        bld.remove_from_wire(&mut brep, wire, e);
+        assert!(brep.wire(wire).edges.is_empty());
+    }
+
+    #[test]
+    fn test_builder_remove_from_face() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let outer = brep.add_twire(vec![]);
+        let inner = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, outer, vec![inner], None, None, vec![], true);
+        assert_eq!(brep.face(f).inner_wires.len(), 1);
+        bld.remove_from_face(&mut brep, f, inner);
+        assert!(brep.face(f).inner_wires.is_empty());
+    }
+
+    #[test]
+    fn test_builder_remove_from_shell() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let w = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+        let shell = bld.make_shell(&mut brep);
+        bld.add_to_shell(&mut brep, shell, f);
+        assert_eq!(brep.shell(shell).faces.len(), 1);
+        bld.remove_from_shell(&mut brep, shell, f);
+        assert!(brep.shell(shell).faces.is_empty());
+    }
+
+    #[test]
+    fn test_builder_transfert_edge_curve() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let curve = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let e_in = bld.add_edge(&mut brep, Some(curve.clone()), v0, v1, [0.0, 1.0]);
+
+        // Use different vertices so add_tedge creates a distinct edge (dedup by vertex pair)
+        let v2 = brep.add_tvertex(DVec3::Y);
+        let v3 = brep.add_tvertex(DVec3::new(1.0, 1.0, 0.0));
+        let e_out = bld.add_edge(&mut brep, None, v2, v3, [0.0, 1.0]);
+
+        assert!(brep.edge(e_out).curve.is_none());
+        bld.transfert_edge_curve(&mut brep, e_in, e_out);
+        assert!(brep.edge(e_out).curve.is_some(), "Curve should be transferred");
+    }
+
+    #[test]
+    fn test_builder_transfert_vertex_param() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
+        bld.set_vertex_param(&mut brep, e, v0, 0.5);
+        assert_eq!(brep.edge(e).vertex_params.get(&v0.index), Some(&0.5));
+
+        // Transfer from v0 on e → v_new on a new edge
+        let v_new = brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
+        let e_new = bld.add_edge(&mut brep, None, v_new, v1, [0.0, 1.0]);
+        assert!(brep.edge(e_new).vertex_params.get(&v_new.index).is_none());
+        bld.transfert_vertex_param(&mut brep, e, v0, e_new, v_new);
+        assert_eq!(brep.edge(e_new).vertex_params.get(&v_new.index), Some(&0.5));
+    }
+
+    #[test]
+    fn test_builder_set_edge_degenerated_with_clear() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+        let curve = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let e = bld.add_edge(&mut brep, Some(curve), v0, v1, [0.0, 1.0]);
+        assert!(!brep.edge(e).degenerated);
+        assert!(brep.edge(e).curve.is_some());
+        bld.set_edge_degenerated_with_clear(&mut brep, e, true);
+        assert!(brep.edge(e).degenerated);
+        assert!(brep.edge(e).curve.is_none(), "3D curve should be cleared when setting degenerated");
     }
 }
 
