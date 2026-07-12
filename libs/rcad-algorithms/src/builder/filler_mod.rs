@@ -65,40 +65,70 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainer(WIRE) (Builder_1.cxx L221-276).
-    /// Rebuilds wire edge lists with split sub-edges when any edge has images.
+    /// --OCCT-aligned: FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
+    ///   OCCT FillImagesContainers(WIRE) (L172-193): iterates NbSourceShapes, filters
+    ///   by WIRE type, calls FillImagesContainer per wire.
+    ///   OCCT FillImagesContainer(theS, WIRE) (L221-276):
+    ///     1. Check if any sub-edge has modified images (L224-233),
+    ///        if none modified → return (L235-240).
+    ///     2. Build new wire from split edges (L247-272),
+    ///        apply IsSplitToReverseWithWarn orientation fix (L265-269).
+    ///     3. Bind new wire to myImages (L275).
+    ///   rcad: shape_info now has WIRE entries (flat index nv+ne..nv+ne+nw).
     pub(super) fn fill_images_container_wire(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertices.len();
-        let mut pending: Vec<(rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>)> = Vec::new();
-        {
-            let my_images = self.my_images.borrow();
-            for (wi, wire) in self.ds.wires.iter().enumerate() {
-                let w_ref = self.brep_sr(
-                    e_base + self.ds.edges.len() + wi);
-                let mut a_c_im: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
-                let mut has_images = false;
-                for &ei in &wire.edges {
-                    let e_ref = self.brep_sr(e_base + ei);
-                    if let Some(imgs) = my_images.get(&e_ref) {
-                        has_images = true;
-                        for &img_sr in imgs {
-                            if !a_c_im.contains(&img_sr) {
-                                a_c_im.push(img_sr);
-                            }
-                        }
-                    } else {
-                        if !a_c_im.contains(&e_ref) {
-                            a_c_im.push(e_ref);
-                        }
+        let w_base = e_base + self.ds.edges.len();
+        let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
+        let my_images = self.my_images.borrow();
+        // OCCT FillImagesContainers(WIRE): iterate NbSourceShapes, filter WIRE
+        let nb_src = self.ds.nb_source_shapes();
+        for i_src in 0..nb_src {
+            let si = &self.ds.shape_info[i_src];
+            if si.shape_type != topods::ShapeType::Wire { continue; }
+            let wi = si.source_idx;
+            let w_ref = self.brep_sr(w_base + wi);
+
+            // OCCT L224-233: check if any sub-edge has been modified
+            //   pLFIm = myImages.Seek(aSS)
+            //   modified = pLFIm && (pLFIm.Extent() != 1 || !pLFIm.First().IsSame(aSS))
+            let mut modified = false;
+            for &flat_ei in &si.sub_shapes {
+                let e_ref = self.brep_sr(flat_ei);
+                if let Some(imgs) = my_images.get(&e_ref) {
+                    if imgs.len() != 1 || imgs[0] != e_ref {
+                        modified = true;
+                        break;
                     }
                 }
-                if has_images {
-                    pending.push((w_ref, a_c_im));
+            }
+            // OCCT L235-240: no modified sub-shapes → skip (original wire is used as-is)
+            if !modified { continue; }
+
+            // OCCT L247-272: rebuild wire with split or original sub-edges
+            let mut a_c_im: Vec<topods::ShapeRef> = Vec::new();
+            for &flat_ei in &si.sub_shapes {
+                let e_ref = self.brep_sr(flat_ei);
+                if let Some(imgs) = my_images.get(&e_ref) {
+                    for &img_sr in imgs {
+                        // OCCT L265-269: IsSplitToReverseWithWarn orientation fix
+                        //   rcad: orientation handled at edge level during build_split_edges
+                        if !a_c_im.contains(&img_sr) {
+                            a_c_im.push(img_sr);
+                        }
+                    }
+                } else {
+                    if !a_c_im.contains(&e_ref) {
+                        a_c_im.push(e_ref);
+                    }
                 }
             }
+            // OCCT L274-275: aCIm.Closed(...); myImages.Bound(theS, ...)->Append(aCIm)
+            pending.push((w_ref, a_c_im));
         }
+        drop(my_images);
+        let mut my_images_mut = self.my_images.borrow_mut();
         for (w_ref, a_c_im) in pending {
-            self.my_images.borrow_mut().entry(w_ref).or_default().extend(a_c_im);
+            my_images_mut.entry(w_ref).or_default().extend(a_c_im);
         }
     }
     /// ✅ OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
@@ -214,7 +244,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             let sf_idx = self.ds.faces[fi].source_face_idx;
-            let f_base = self.ds.vertices.len() + self.ds.edges.len();
+            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
 

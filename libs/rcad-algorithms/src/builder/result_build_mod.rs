@@ -53,7 +53,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // B. COMMON/CUT/CUT21: prepare building elements of arguments/tools
         let e_base = self.ds.vertices.len();
-        let f_base = e_base + self.ds.edges.len();
+        let f_base = e_base + self.ds.edges.len() + self.ds.wires.len();
 
         // Map source shapes (V/E/F) per side
         let mut a_m_args: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -878,7 +878,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Path B — TopExp_Explorer on Face sub-shapes of this argument.
                 // rcad: DS data replaces explorer; side maps argument index to origin.
                 let side = if arg_idx == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
-                let f_base = self.ds.vertices.len() + self.ds.edges.len();
+                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
                 let side_offset = if side == ShapeOrigin::ShapeA { 0usize } else { self.ds.a_face_count };
                 for (fi, df) in self.ds.faces.iter().enumerate() {
                     if df.origin != side { continue; }

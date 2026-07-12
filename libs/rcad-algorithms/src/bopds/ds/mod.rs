@@ -1,4 +1,4 @@
-﻿pub mod face_aabb;
+pub mod face_aabb;
 pub mod types;
 pub use types::*;
 pub mod iterator;
@@ -706,13 +706,15 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  ///  ?OCCT-aligned: InitShapeInfo =build flat ShapeInfo array from existing Vecs.
  /// OCCT: BOPDS_DS::InitShapeInfo (BOPDS_DS.cxx L264-309).  Populates myLines
  /// with one BOPDS_ShapeInfo per shape, setting type, sub-shapes, has_brep.
- /// rcad: builds shape_info from vertices/edges/faces/shells arrays.
+ /// rcad: builds shape_info from vertices/edges/wires/faces/shells arrays.
  /// Flat index: [0..nV) = VERTEX, [nV..nV+nE) = EDGE,
- /// [nV+nE..nV+nE+nF) = FACE, [nV+nE+nF..) = SHELL+SOLID.
+ /// [nV+nE..nV+nE+nW) = WIRE, [nV+nE+nW..nV+nE+nW+nF) = FACE,
+ /// [nV+nE+nW+nF..) = SHELL+SOLID+COMPSOLID.
  pub fn init_shape_info(&mut self) {
  self.shape_info.clear();
  let nv = self.vertices.len();
  let ne = self.edges.len();
+ let nw = self.wires.len();
  let nf = self.faces.len();
  let nsh = self.shells.len();
  let a_v = self.a_vertex_count;
@@ -762,6 +764,19 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   }
   self.shape_info.push(si);
   }
+ // WIRE entries -- sub-shapes = edge indices (flat).  OCCT order: after EDGE, before FACE.
+ // Flat index: [nv+ne .. nv+ne+nw)
+ for wi in 0..nw {
+ let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Wire);
+ si.has_brep = false;
+ si.rank = 0;
+ si.source_idx = wi;
+ si.is_new = false;
+ for &ei in &self.wires[wi].edges {
+ si.sub_shapes.push(nv + ei);
+ }
+ self.shape_info.push(si);
+ }
  // FACE entries -- sub-shapes = edge indices (flat)
  for fi in 0..nf {
  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
@@ -799,7 +814,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  si.source_idx = shi;
  si.is_new = false;
  for &fi in &self.shells[shi].faces {
- si.sub_shapes.push(nv + ne + fi);
+ si.sub_shapes.push(nv + ne + nw + fi);
  }
  self.shape_info.push(si);
  }
@@ -812,7 +827,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  si.source_idx = soi;
  si.is_new = false;
  for &shi in &self.solids[soi].shells {
- si.sub_shapes.push(nv + ne + nf + shi);
+ si.sub_shapes.push(nv + ne + nw + nf + shi);
  }
  self.shape_info.push(si);
  }
@@ -825,7 +840,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  si.source_idx = csi;
  si.is_new = false;
  for &soi in &self.comp_solids[csi].solids {
- si.sub_shapes.push(nv + ne + nf + nsh + soi);
+ si.sub_shapes.push(nv + ne + nw + nf + nsh + soi);
  }
   self.shape_info.push(si);
   }
