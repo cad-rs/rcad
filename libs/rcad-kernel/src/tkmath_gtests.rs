@@ -218,23 +218,22 @@ mod circ_tests {
 
     #[test]
     fn point_at_zero_angle() {
-        // Circle3 uses x_dir = any_perpendicular(normal)
-        // For normal=Z, x_dir = Y, so P(0) = center + r*Y = (0,5,0)
+        // OCCT-aligned gp_Ax2: normal=Z gives x_dir=X, so P(0) = center + r*X = (5,0,0)
         let p = make_circ().point_at(0.0);
-        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_quarter_turn() {
-        // P(π/2) = center + r*(-X)  (since Z×Y = -X)
+        // y_dir = Z×X = Y, P(π/2) = center + r*Y = (0,5,0)
         let p = make_circ().point_at(std::f64::consts::FRAC_PI_2);
-        assert!((p - DVec3::new(-5.0, 0.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_half_turn() {
         let p = make_circ().point_at(std::f64::consts::PI);
-        assert!((p - DVec3::new(0.0, -5.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(-5.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
@@ -246,9 +245,9 @@ mod circ_tests {
     #[test]
     fn center_offset() {
         let c = Circle3::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z, 5.0);
-        // P(0) = center + r*Y = (1, 7, 3)
+        // OCCT-aligned: x_dir=X, P(0) = center + 5*X = (6, 2, 3)
         let p = c.point_at(0.0);
-        assert!((p - DVec3::new(1.0, 7.0, 3.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(6.0, 2.0, 3.0)).length() < TOL_EVAL);
     }
 }
 
@@ -421,10 +420,10 @@ mod torus_tests {
 
     #[test]
     fn point_at_uv_zero() {
-        // ToroidalSurface uses any_perpendicular(Z) = Y as x_ax
-        // P(0,0) = center + (R+r_)*Y = (0, 13, 0)
+        // OCCT-aligned: any_perpendicular(Z) = X as x_ax
+        // P(0,0) = center + (R+r)*X = (13, 0, 0)
         let p = make_torus().point_at(0.0, 0.0);
-        assert!((p - DVec3::new(0.0, 13.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(13.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 }
 
@@ -446,18 +445,18 @@ mod cylinder_tests {
 
     #[test]
     fn point_at_u0_v0() {
-        // any_perpendicular(Z) = Y, so P(0,0) = r*Y = (0,5,0)
+        // OCCT-aligned gp_Ax2: axis=Z gives ref_dir=X, so P(0,0) = r*X = (5,0,0)
         let c = CylindricalSurface::new(DVec3::ZERO, DVec3::Z, 5.0);
         let p = c.point_at(0.0, 0.0);
-        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_u90_v0() {
-        // P(π/2, 0) = r * axis×ref_dir = 5 * Z×Y = 5*(-X) = (-5,0,0)
+        // P(π/2, 0) = r * axis×ref_dir = 5 * Z×X = 5*Y = (0,5,0)
         let c = CylindricalSurface::new(DVec3::ZERO, DVec3::Z, 5.0);
         let p = c.point_at(std::f64::consts::FRAC_PI_2, 0.0);
-        assert!((p - DVec3::new(-5.0, 0.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
     }
 }
 
@@ -472,7 +471,7 @@ mod sphere_tests {
     use crate::SurfaceEval;
 
     fn make_sphere() -> SphericalSurface {
-        // axis=Z, ref_dir=any_perpendicular(Z)=Y
+        // axis=Z: OCCT-aligned ref_dir = X
         SphericalSurface::new(DVec3::ZERO, DVec3::Z, 5.0)
     }
 
@@ -491,16 +490,16 @@ mod sphere_tests {
 
     #[test]
     fn point_at_equator() {
-        // v=π/2 (equator), u=0: P = r*ref_dir = r*Y = (0,5,0)
+        // v=π/2 (equator), u=0: P = r*ref_dir = r*X = (5,0,0)
         let p = make_sphere().point_at(0.0, std::f64::consts::FRAC_PI_2);
-        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_90_degrees_along_equator() {
-        // v=π/2 (equator), u=π/2: P = r*axis×ref_dir = 5*Z×Y = (-5,0,0)
+        // v=π/2 (equator), u=π/2: P = r*axis×ref_dir = 5*Z×X = (0,5,0)
         let p = make_sphere().point_at(std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
-        assert!((p - DVec3::new(-5.0, 0.0, 0.0)).length() < TOL_EVAL);
+        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
     }
 }
 

@@ -50,11 +50,11 @@ pub struct Circle3 {
 }
 
 fn stable_x_dir(normal: Vec3) -> Vec3 {
-    if normal.x.abs() < 0.9 {
-        normal.cross(DVec3::X).normalize()
-    } else {
-        normal.cross(DVec3::Y).normalize()
-    }
+    // OCCT-aligned: gp_Ax2 reference direction for circle's local frame.
+    // Use X as reference; if N is parallel to X (|N·X| ≥ 1-1e-12), use Z instead.
+    // u_dir = (ref - N * (N·ref)).normalize()
+    let ref_dir = if normal.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+    (ref_dir - normal * ref_dir.dot(normal)).normalize_or_zero()
 }
 fn circle3_x_dir_default() -> Vec3 { DVec3::X }
 fn circle3_y_dir_default() -> Vec3 { DVec3::Y }
@@ -1086,18 +1086,16 @@ pub enum Curve2d {
     TBezier(TBezierCurve2),
 }
 
-/// Returns a vector perpendicular to `v`. Stable for any non-zero input.
+/// OCCT-aligned: returns a vector perpendicular to `v` using the gp_Ax2
+/// reference direction convention (project X onto plane; fallback to Z).
+/// Stable for any non-zero input.
 pub fn any_perpendicular(v: DVec3) -> DVec3 {
-    // Pick the axis least aligned with v, then cross.
-    let abs = v.abs();
-    let candidate = if abs.x <= abs.y && abs.x <= abs.z {
-        DVec3::X
-    } else if abs.y <= abs.z {
-        DVec3::Y
-    } else {
-        DVec3::Z
-    };
-    v.cross(candidate).normalize()
+    // OCCT gp_Ax2 reference direction selection:
+    // Use X (1,0,0) as default; if |v·X| ≥ 1-1e-12 (v parallel to X), use Z (0,0,1).
+    let ref_dir = if v.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+    // Project reference onto plane perpendicular to v: ref - v*(v·ref)
+    let perp = ref_dir - v * ref_dir.dot(v);
+    perp.normalize_or_zero()
 }
 
 fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
@@ -3804,30 +3802,30 @@ mod eval_tests {
 
     #[test]
     fn circle_eval_d0_d1() {
-        // Circle3::new(ZERO, Z, 5.0): x_dir = Y (from any_perpendicular), y_dir = -X
-        // P(0) = 5*Y = (0,5,0), tangent = -X
-        // P(PI/2) = 5*(-X) = (-5,0,0), tangent = -Y
+        // Circle3::new(ZERO, Z, 5.0): OCCT gp_Ax2 gives x_dir=X, y_dir=Z×X=Y
+        // P(0) = 5*X = (5,0,0), tangent = Y
+        // P(PI/2) = 5*Y = (0,5,0), tangent = -X
         let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 5.0);
         let p0 = circle.point_at(0.0);
-        assert!((p0 - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        assert!((p0 - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
         let p_half = circle.point_at(std::f64::consts::PI / 2.0);
-        assert!((p_half - DVec3::new(-5.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((p_half - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
         let p_pi = circle.point_at(std::f64::consts::PI);
-        assert!((p_pi - DVec3::new(0.0, -5.0, 0.0)).length() < 1e-10);
-        // Tangent at 0 should be (-1, 0, 0)
+        assert!((p_pi - DVec3::new(-5.0, 0.0, 0.0)).length() < 1e-10);
+        // Tangent at 0 should be (0, 1, 0)
         let t0 = circle.tangent_at(0.0);
-        assert!((t0 - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
-        // Tangent at PI/2 should be (0, -1, 0)
+        assert!((t0 - DVec3::Y).length() < 1e-10);
+        // Tangent at PI/2 should be (-1, 0, 0)
         let t_half = circle.tangent_at(std::f64::consts::PI / 2.0);
-        assert!((t_half - DVec3::new(0.0, -1.0, 0.0)).length() < 1e-10);
+        assert!((t_half - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
     }
 
     #[test]
     fn circle_transform_copy() {
-        // Circle3::new((1,2,3), Z, 4.0): x_dir = Y, y_dir = -X
-        // P(0) = (1,2,3) + 4*Y = (1,6,3)
+        // Circle3::new((1,2,3), Z, 4.0): OCCT gp_Ax2 gives x_dir=X, y_dir=Y
+        // P(0) = (1,2,3) + 4*X = (5,2,3)
         let circle = Circle3::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z, 4.0);
-        assert!((circle.point_at(0.0) - DVec3::new(1.0, 6.0, 3.0)).length() < 1e-10);
+        assert!((circle.point_at(0.0) - DVec3::new(5.0, 2.0, 3.0)).length() < 1e-10);
     }
 
     #[test]
@@ -3934,18 +3932,18 @@ mod eval_tests {
     #[test]
     fn torus_eval_d0() {
         use std::f64::consts::PI;
-        // Torus with axis Z: x_ax = Y, y_ax = -X
-        // P(u,v) = (R + r*cos(v))*(cos(u)*Y + sin(u)*(-X)) + r*sin(v)*Z
-        // P(0,0) = (5+1)*Y = (0, 6, 0)
+        // Torus with axis Z: OCCT-aligned x_ax = X, y_ax = Y
+        // P(u,v) = (R + r*cos(v))*(cos(u)*X + sin(u)*Y) + r*sin(v)*Z
+        // P(0,0) = (5+1)*X = (6, 0, 0)
         let t = ToroidalSurface {
             center: DVec3::ZERO, axis: DVec3::Z,
             major_radius: 5.0, minor_radius: 1.0,
         };
         let p = t.point_at(0.0, 0.0);
-        assert!((p - DVec3::new(0.0, 6.0, 0.0)).length() < 1e-9);
-        // At u=0, v=PI: P = (5-1)*Y = (0, 4, 0)
+        assert!((p - DVec3::new(6.0, 0.0, 0.0)).length() < 1e-9);
+        // At u=0, v=PI: P = (5-1)*X = (4, 0, 0)
         let p2 = t.point_at(0.0, PI);
-        assert!((p2 - DVec3::new(0.0, 4.0, 0.0)).length() < 1e-9);
+        assert!((p2 - DVec3::new(4.0, 0.0, 0.0)).length() < 1e-9);
     }
 
     #[test]
@@ -4590,16 +4588,16 @@ mod eval_tests {
             center: DVec3::ZERO, axis: DVec3::Z,
             major_radius: 5.0, minor_radius: 1.0,
         };
-        // At u=0, v=0: outer equator, point=(0,6,0)
+        // OCCT-aligned: x_ax=X, y_ax=Y. At u=0, v=0: outer equator, point=(6,0,0)
         let (p, dpu, dpv) = t.derivatives(0.0, 0.0);
-        assert!((p - DVec3::new(0.0, 6.0, 0.0)).length() < 1e-9);
-        // dP/du should be in the X direction (major circle tangent)
-        assert!((dpu - DVec3::new(-6.0, 0.0, 0.0)).length() < 1e-9);
+        assert!((p - DVec3::new(6.0, 0.0, 0.0)).length() < 1e-9);
+        // dP/du should be in the Y direction (major circle tangent)
+        assert!((dpu - DVec3::new(0.0, 6.0, 0.0)).length() < 1e-9);
         // dP/dv should be in the Z direction (minor circle tangent at v=0)
         assert!((dpv - DVec3::Z).length() < 1e-9);
-        // Normal at outer equator should be outward radial (Y)
+        // Normal at outer equator should be outward radial (X)
         let n = t.normal_at(0.0, 0.0);
-        assert!((n - DVec3::Y).length() < 1e-9);
+        assert!((n - DVec3::X).length() < 1e-9);
     }
 
     #[test]
@@ -4609,9 +4607,9 @@ mod eval_tests {
             center: DVec3::ZERO, axis: DVec3::Z,
             major_radius: 5.0, minor_radius: 1.0,
         };
-        // Inner equator: u=0, v=PI → point=(0,4,0), normal should be -Y (inward)
+        // Inner equator: u=0, v=PI → point=(4,0,0), normal should be -X (inward)
         let n_inner = t.normal_at(0.0, PI);
-        assert!((n_inner + DVec3::Y).length() < 1e-9);
+        assert!((n_inner + DVec3::X).length() < 1e-9);
     }
 
     // ── BSplineSurface ──────────────────────────────────────────────────
