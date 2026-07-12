@@ -612,112 +612,219 @@ impl<'a> BooleanBuilder<'a> {
         let has_ff = !self.ds.interf_ff.is_empty();
         if !has_ff { return; }
 
-        
-        //   solid are NOT SD merged (prevents zero-thickness interior).
-        //   OCCT: iterate NbSourceShapes --filter TopAbs_SOLID --TopExp_Explorer
-        //   collect sub-faces --aFaceToParent.Bind(aF, aSolid) --propagate to images.
-        //   rcad: use DSFace.source_solid_idx as parent-solid identity.  Result faces
-        //   with the same (operand, source_solid_idx) share a parent and are NOT merged.
-        let face_parent = |fi: usize| -> Option<(bool, usize)> {
-            let origin = match &result.face_origins[fi] {
-                FaceOrigin::FromA(_) => ShapeOrigin::ShapeA,
-                FaceOrigin::FromB(_) => ShapeOrigin::ShapeB,
+        // --OCCT-aligned: aFaceToParent (BOPAlgo_Builder_2.cxx L597-649).
+        //   Map DS face index -> parent solid index.  Prevents two result faces
+        //   from the same operand solid from being merged (zero-thickness interior).
+        //   OCCT: iterate NbSourceShapes, filter TopAbs_SOLID, TopExp_Explorer
+        //   on sub-faces -> Bind(aF, aSolid).  Then propagate to split faces via
+        //   myImages: if a source face has a parent solid, its split faces inherit.
+        //   rcad: walk DS.shape_info tree (SOLID -> SHELL -> FACE) to build the
+        //   mapping, then propagate by looking up each result face's source DS face.
+        let mut a_face_to_parent: HashMap<usize, usize> = HashMap::new();
+        let nb_src = self.ds.nb_source_shapes();
+        for i_src in 0..nb_src {
+            let si = &self.ds.shape_info[i_src];
+            if si.shape_type != topods::ShapeType::Solid {
+                continue;
+            }
+            // Walk SOLID -> SHELL -> FACE sub-shapes (OCCT: TopExp_Explorer)
+            for &shell_i in &si.sub_shapes {
+                if shell_i >= self.ds.shape_info.len() {
+                    continue;
+                }
+                let shell_si = &self.ds.shape_info[shell_i];
+                for &face_i in &shell_si.sub_shapes {
+                    a_face_to_parent.entry(face_i).or_insert(i_src);
+                }
+            }
+        }
+        // OCCT L619-649: propagate aFaceToParent to split/result faces.
+        // rcad: use result.face_origins to map result face -> source DS face -> parent solid.
+        let result_face_parent_solid = |rfi: usize| -> Option<usize> {
+            let (origin, sfi) = match &result.face_origins[rfi] {
+                FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
                 _ => return None,
             };
-            let ds_fi = self.ds.faces.iter().position(|f| {
-                f.origin == origin && f.source_face_idx == match &result.face_origins[fi] {
-                    FaceOrigin::FromA(sfi) => *sfi,
-                    FaceOrigin::FromB(sfi) => *sfi,
-                    _ => unreachable!(),
-                }
+            let dsfi = self.ds.faces.iter().position(|f| {
+                f.origin == origin && f.source_face_idx == sfi
             })?;
-            let solid_idx = self.ds.faces.get(ds_fi)?.source_solid_idx?;
-            Some((origin == ShapeOrigin::ShapeA, solid_idx))
+            a_face_to_parent.get(&dsfi).copied()
         };
 
-        
-        // rcad: build (origin, source_face_idx) set from FF interferences,
-        // then filter result faces to only those matching the FF set.
-        let mut ff_source_set: std::collections::HashSet<(bool, usize)> = std::collections::HashSet::new();
+        // --OCCT-aligned: aFIVec + aMFence (BOPAlgo_Builder_2.cxx L654-687).
+        //   Collect DS face indices from FF interferences, check HasFaceInfo,
+        //   dedup with aMFence, sort.  OCCT then iterates aFIVec to build edge sets.
+        //   rcad: collect DS face indices, then map to result face indices.
+        let mut a_fi_vec: Vec<usize> = Vec::new();
+        let mut a_fence: HashSet<usize> = HashSet::new();
         for ff in &self.ds.interf_ff {
-            if true {
-                for &dfi in &[ff.f1, ff.f2] {
-                    if let Some(df) = self.ds.faces.get(dfi) {
-                        ff_source_set.insert((df.origin == ShapeOrigin::ShapeA, df.source_face_idx));
+            for dfi in [ff.f1, ff.f2] {
+                if !a_fence.insert(dfi) {
+                    continue;
+                }
+                if let Some(df) = self.ds.faces.get(dfi) {
+                    if !df.face_info.has_any_interference() {
+                        continue;
+                    }
+                }
+                a_fi_vec.push(dfi);
+            }
+        }
+        // OCCT L687: std::sort(aFIVec.begin(), aFIVec.end())
+        a_fi_vec.sort_unstable();
+        if a_fi_vec.is_empty() { return; }
+
+        // Map DS face index -> result face indices (for downstream edge-set building)
+        let mut ds_to_result: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (rfi, fo) in result.face_origins.iter().enumerate() {
+            let (origin, sfi) = match fo {
+                FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
+                _ => continue,
+            };
+            if let Some(dsfi) = self.ds.faces.iter().position(|f| {
+                f.origin == origin && f.source_face_idx == sfi
+            }) {
+                ds_to_result.entry(dsfi).or_default().push(rfi);
+            }
+        }
+        // Build result_fi_filtered from aFIVec (only result faces whose source DS face
+        // is in the FF-interfering set — matches OCCT's iteration scope)
+        let mut a_fence_result: HashSet<usize> = HashSet::new();
+        let mut result_fi_filtered: Vec<usize> = Vec::new();
+        for &dsfi in &a_fi_vec {
+            if let Some(rfis) = ds_to_result.get(&dsfi) {
+                for &rfi in rfis {
+                    if a_fence_result.insert(rfi) {
+                        result_fi_filtered.push(rfi);
                     }
                 }
             }
         }
-        // OCCT aFence: skip repeated checks.  Also skip result faces whose
-        // source DS face has no FF interference (not in aFIVec).
-        let face_origin_pair = |fi: usize| -> (bool, usize) {
-            match &result.face_origins[fi] {
-                FaceOrigin::FromA(sfi) => (true, *sfi),
-                FaceOrigin::FromB(sfi) => (false, *sfi),
-                _ => (false, usize::MAX),
-            }
-        };
-        let mut result_fi_filtered: Vec<usize> = (0..nf)
-            .filter(|fi| ff_source_set.contains(&face_origin_pair(*fi)))
-            .collect();
         if result_fi_filtered.len() < 2 { return; }
 
-        // ── Edge-set signature per face (OCCT BOPTools_Set ──
-        
-        // rcad: use edge index ei directly (add_edge already deduplicates
-        // by vertex pair, making ei a stable identity).  Exclude degenerate
-        // edges (matching OCCT's BRep_Tool::Degenerated skip).
-        let face_edge_set: std::collections::HashMap<usize, Vec<usize>> =
-            result_fi_filtered.iter().map(|&fi| {
+        // --OCCT-aligned: BOPTools_Set (BOPTools_Set.hxx L27-65).
+        //   Stores edge-index signature from one face.  Add(theS, TopAbs_EDGE)
+        //   traverses sub-EDGEs via TopExp_Explorer, skips degenerated,
+        //   doubles INTERNAL edges (FORWARD + REVERSED).  IsEqual uses set
+        //   comparison; GetSum() provides hash for IndexedDataMap key.
+        #[derive(Debug, Clone)]
+        struct BOPToolsSet {
+            edges: Vec<usize>,
+            sum: u64,
+        }
+        impl BOPToolsSet {
+            fn from_result_face(result: &ResultBuilder, fi: usize) -> Self {
                 let entry = &result.faces[fi];
-                let collect_ids = |edges: &[(usize, bool)]| -> Vec<usize> {
-                    edges.iter()
-                        .filter(|(ei, _)| !result.deg_edge_indices.contains(ei))
-                        .map(|&(ei, _)| ei)
-                        .collect()
-                };
-                let mut ids: Vec<usize> = collect_ids(&entry.0);
-                for iw_es in &entry.1 {
-                    ids.extend(collect_ids(iw_es));
+                // OCCT BOPTools_Set::Add(theS, TopAbs_EDGE)
+                let mut a_se: Vec<usize> = Vec::new();
+                for &(ei, _) in &entry.0 {
+                    if !result.deg_edge_indices.contains(&ei) { a_se.push(ei); }
                 }
-                for iw_es in &entry.9 {
-                    ids.extend(collect_ids(iw_es));
+                for inner in &entry.1 {
+                    for &(ei, _) in inner {
+                        if !result.deg_edge_indices.contains(&ei) { a_se.push(ei); }
+                    }
                 }
-                ids.sort_unstable();
-                ids.dedup();
-                (fi, ids)
-            }).collect();
+                // OCCT L149-159: TopAbs_INTERNAL → add FORWARD + REVERSED
+                for internal in &entry.9 {
+                    for &(ei, _) in internal {
+                        if !result.deg_edge_indices.contains(&ei) {
+                            a_se.push(ei);
+                            a_se.push(ei);
+                        }
+                    }
+                }
+                a_se.sort_unstable();
+                a_se.dedup();
+                // OCCT GetSum(): hash sum for map key
+                let sum = a_se.iter().fold(0u64, |acc, &e| acc.wrapping_add(e as u64));
+                BOPToolsSet { edges: a_se, sum }
+            }
+            fn nb_shapes(&self) -> usize { self.edges.len() }
+            fn is_empty(&self) -> bool { self.edges.is_empty() }
+        }
+        impl PartialEq for BOPToolsSet {
+            // OCCT BOPTools_Set::IsEqual: myNbShapes + set containment
+            fn eq(&self, other: &Self) -> bool {
+                if self.nb_shapes() != other.nb_shapes() { return false; }
+                self.edges == other.edges
+            }
+        }
+        impl Eq for BOPToolsSet {}
+        impl std::hash::Hash for BOPToolsSet {
+            // OCCT: std::hash<BOPTools_Set> uses GetSum()
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                state.write_u64(self.sum);
+            }
+        }
+
+        // --OCCT-aligned: AddEdgeSet (BOPAlgo_Builder_2.cxx L562-576).
+        //   anESetFaces: NCollection_IndexedDataMap<BOPTools_Set, List<TopoDS_Shape>>.
+        //   rcad: HashMap<BOPToolsSet, Vec<usize>>.
+        let mut an_eset_faces: HashMap<BOPToolsSet, Vec<usize>> = HashMap::new();
+        for &fi in &result_fi_filtered {
+            let a_se = BOPToolsSet::from_result_face(result, fi);
+            if a_se.is_empty() { continue; }
+            // OCCT AddEdgeSet: theMap(aSE).Append(theS)
+            an_eset_faces.entry(a_se).or_default().push(fi);
+        }
 
         
-        let mut planars: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // --OCCT-aligned: planar bounded face detection (BOPAlgo_Builder_2.cxx L707-718).
+        //   OCCT: SurfaceAdaptor::GetType() == GeomAbs_Plane
+        //         + Bnd_Box::IsOpenXmin/Xmax/Ymin/Ymax/Zmin/Zmax (all 6 closed).
+        //   rcad: Surface3::Plane + DS ShapeInfo box has valid min/max.
+        let mut a_mf_planar: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &fi in &result_fi_filtered {
-            if matches!(result.faces[fi].4, Surface3::Plane(_)) {
-                // Check boundedness: non-natural-restriction faces are bounded
-                let is_bounded = result.faces[fi].5.map_or(true, |uv| {
-                    uv[0].is_finite() && uv[1].is_finite()
-                });
-                if is_bounded {
-                    planars.insert(fi);
+            if !matches!(result.faces[fi].4, Surface3::Plane(_)) {
+                continue;
+            }
+            // OCCT: aSI = myDS->ShapeInfo(nF); aBox = aSI.Box()
+            //   bCheckPlanar = !(aBox.IsOpenXmin() || ... || aBox.IsOpenZmax())
+            let dsfi = match &result.face_origins[fi] {
+                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                _ => None,
+            };
+            if dsfi.and_then(|dsfi| self.ds.shape_info.get(dsfi))
+                .map_or(false, |si| si.box_min.is_some() && si.box_max.is_some())
+            {
+                a_mf_planar.insert(fi);
+            }
+        }
+
+        // OCCT L696-741: iterate aFIVec, AddEdgeSet for each face/split, build anESetFaces + aMFPlanar.
+        //   Already done above in AddEdgeSet loop.
+
+        // --OCCT-aligned: aTolF = max(face_tol, max_edge_tol_on_face) (AreFacesSameDomain L1160-1188).
+        //   OCCT: TopExp_Explorer theF1 on TopAbs_EDGE, skip degenerated edges,
+        //   compute max edge tolerance, compare against face tolerance.
+        //   rcad: explore all edges on the DS face (outer + inner wires), skip degenerated.
+        let face_tol_with_edges = |dsfi: usize| -> f64 {
+            let mut a_tol = self.ds.faces[dsfi].geom_tol;
+            let mut a_tol_e_max = -1.0_f64;
+            for &ei in &self.ds.faces[dsfi].boundary_edges {
+                if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
+                    let e_tol = self.ds.edges[ei].geom_tol;
+                    if e_tol > a_tol_e_max { a_tol_e_max = e_tol; }
                 }
             }
-        }
-
-        // ── Group by edge-set signature ──
-        let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for &fi in &result_fi_filtered {
-            if let Some(sig) = face_edge_set.get(&fi) {
-                if sig.is_empty() { continue; }
-                groups.entry(sig.clone()).or_default().push(fi);
+            for inner in &self.ds.faces[dsfi].inner_boundary_edges {
+                for &(ei, _) in inner {
+                    if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
+                        let e_tol = self.ds.edges[ei].geom_tol;
+                        if e_tol > a_tol_e_max { a_tol_e_max = e_tol; }
+                    }
+                }
             }
-        }
-
-        // ── AreFacesSameDomain: projection-based (OCCT BOPTools_AlgoTools.cxx L1131-1197) ──
-        // OCCT: PointInFace(F1) --IsValidPointForFace(point, F2, aTol)
-        //   where aTol = aTolF1 + aTolF2 + max(theFuzz, Precision::Confusion())
-        //   and aTolF = max(face_tolerance, max_edge_tolerance_on_face)
-        // rcad: use sample_pt from result face + projection + FClass2d.
-        // Map result face index --DS face index for tolerance lookup
+            if a_tol_e_max > a_tol { a_tol = a_tol_e_max; }
+            a_tol
+        };
+        // Map result face index -> DS face index for tolerance lookup
         let ds_face_idx = |rfi: usize| -> Option<usize> {
             match &result.face_origins[rfi] {
                 FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
@@ -727,73 +834,107 @@ impl<'a> BooleanBuilder<'a> {
                 _ => None,
             }
         };
-        // OCCT aTolF = max(face_tol, max_edge_tol_on_face) per face
-        let face_tol_with_edges = |dsfi: usize| -> f64 {
-            let mut a_tol = self.ds.faces[dsfi].geom_tol;
-            for &ei in &self.ds.faces[dsfi].boundary_edges {
-                if ei < self.ds.edges.len() {
-                    let e_tol = self.ds.edges[ei].geom_tol;
-                    if e_tol > a_tol { a_tol = e_tol; }
-                }
-            }
-            a_tol
+
+        // --OCCT-aligned: AreFacesSameDomain single-direction (BOPTools_AlgoTools.cxx L1131-1197).
+        //   OCCT: PointInFace(F1) -> IsValidPointForFace(aP1, F2, aTol).
+        //   Only projects point from F1 onto F2 (one direction).
+        //   rcad: sample_pt from result face fi -> project onto fj -> classify.
+        let faces_are_sd = |rfi: usize, rfj: usize| -> bool {
+            let pt_i = result.faces[rfi].8;
+            let surf_j = &result.faces[rfj].4;
+            let ds_i = ds_face_idx(rfi);
+            let ds_j = ds_face_idx(rfj);
+            let (Some(di), Some(dj)) = (ds_i, ds_j) else { return false };
+            let a_tol = face_tol_with_edges(di) + face_tol_with_edges(dj)
+                + self.ds.fuzzy_tol.max(TOLERANCE_ABS);
+            let (uv_j, proj_j) = crate::extrema::closest_point_on_surface(surf_j, pt_i);
+            let dist_j = proj_j.distance(pt_i);
+            dist_j <= a_tol && self.context.borrow_mut().is_point_in_on_face(self.ds, dj, uv_j)
         };
-        let mut to_remove = vec![false; nf];
-        for (_edge_set, members) in groups.iter() {
+
+        // --OCCT-aligned: FillMap + MakeBlocks (BOPAlgo_Tools.hxx, Builder_2.cxx L820-826).
+        //   FillMap: back-and-forth adjacency in aDMSLS.
+        //   MakeBlocks: BFS transitive closure -> blocks of SD faces.
+        //   rcad: aDMSLS is HashMap<usize, Vec<usize>> (adjacency list).
+        let mut a_dmsls: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut fill_map = |n1: usize, n2: usize| {
+            a_dmsls.entry(n1).or_insert_with(|| vec![n1]).push(n2);
+            a_dmsls.entry(n2).or_insert_with(|| vec![n2]).push(n1);
+        };
+
+        // OCCT L750-793: for each edge-set group, iterate pairs
+        // OCCT L750: anESetFaces.Extent() --iterate each edge-set group
+        for members in an_eset_faces.values() {
             if members.len() < 2 { continue; }
-            let survivors: Vec<usize> = members.iter().filter(|&&fi| !to_remove[fi]).copied().collect();
-            for i in 0..survivors.len() {
-                for j in (i + 1)..survivors.len() {
-                    let fi = survivors[i];
-                    let fj = survivors[j];
-                    if face_parent(fi) == face_parent(fj) {
+            // OCCT L764-772: aIt1 outer, aIt2 = aIt1 (inner starts at i+1)
+            for i in 0..members.len() {
+                let a_f1 = members[i];
+                let b_check_planar = a_mf_planar.contains(&a_f1);
+                let p_parent1 = result_face_parent_solid(a_f1);
+                for j in (i + 1)..members.len() {
+                    let a_f2 = members[j];
+                    let p_parent2 = result_face_parent_solid(a_f2);
+                    // OCCT L776: same parent -> skip (zero-thickness guard)
+                    if p_parent1.is_some() && p_parent2.is_some() && p_parent1 == p_parent2 {
                         continue;
                     }
-                    
-                    if planars.contains(&fi) && planars.contains(&fj) {
-                        to_remove[fj] = true;
+                    // OCCT L780-784: both planar bounded -> FillMap directly
+                    if b_check_planar && a_mf_planar.contains(&a_f2) {
+                        fill_map(a_f1, a_f2);
                         continue;
                     }
-                    // Get interior point from result face fi
-                    let pt_i = result.faces[fi].8; // sample_pt
-                    let pt_j = result.faces[fj].8; // sample_pt
-                    let surf_j = &result.faces[fj].4;
-                    let surf_i = &result.faces[fi].4;
-                    // Compute tolerance: aTolF1 + aTolF2 + fuzzy
-                    let ds_i = ds_face_idx(fi);
-                    let ds_j = ds_face_idx(fj);
-                    let a_tol = match (ds_i, ds_j) {
-                        (Some(di), Some(dj)) => {
-                            face_tol_with_edges(di) + face_tol_with_edges(dj) + self.ds.fuzzy_tol
-                        }
-                        _ => continue,
-                    };
-                    // OCCT: project point from fi onto fj's surface, check distance + classification
-                    let (uv_j, proj_j) = crate::extrema::closest_point_on_surface(surf_j, pt_i);
-                    let dist_j = proj_j.distance(pt_i);
-                    let valid_j = if dist_j <= a_tol {
-                        if let Some(dj) = ds_j {
-                            self.context.borrow_mut().is_point_in_on_face(self.ds, dj, uv_j)
-                        } else { false }
-                    } else { false };
-                    // Reverse: project point from fj onto fi's surface
-                    let (uv_i, proj_i) = crate::extrema::closest_point_on_surface(surf_i, pt_j);
-                    let dist_i = proj_i.distance(pt_j);
-                    let valid_i = if dist_i <= a_tol {
-                        if let Some(di) = ds_i {
-                            self.context.borrow_mut().is_point_in_on_face(self.ds, di, uv_i)
-                        } else { false }
-                    } else { false };
-                    if valid_j && valid_i {
-                        // OCCT: face with smaller DS index survives.
-                        // rcad: higher-index result face is removed.
-                        to_remove[fj] = true;
+                    // OCCT L786-791: AreFacesSameDomain check (single-direction)
+                    if faces_are_sd(a_f1, a_f2) {
+                        fill_map(a_f1, a_f2);
                     }
                 }
             }
         }
 
-        // ── Apply removals ──
+        // OCCT L826: MakeBlocks (BFS from aDMSLS adjacency -> connected components)
+        let mut a_m_blocks: Vec<Vec<usize>> = Vec::new();
+        {
+            let mut processed: HashSet<usize> = HashSet::new();
+            for &key in a_dmsls.keys() {
+                if processed.contains(&key) { continue; }
+                let mut block: Vec<usize> = Vec::new();
+                let mut queue: VecDeque<usize> = VecDeque::new();
+                queue.push_back(key);
+                while let Some(current) = queue.pop_front() {
+                    if processed.insert(current) {
+                        block.push(current);
+                        if let Some(neighbors) = a_dmsls.get(&current) {
+                            for &n in neighbors {
+                                if !processed.contains(&n) {
+                                    queue.push_back(n);
+                                }
+                            }
+                        }
+                    }
+                }
+                if block.len() > 1 {
+                    a_m_blocks.push(block);
+                }
+            }
+        }
+        if a_m_blocks.is_empty() { return; }
+
+        // OCCT L830-881: For each SD block, pick representative (min result index),
+        // bind all other faces to it via to_remove.
+        let mut to_remove = vec![false; nf];
+        for block in &a_m_blocks {
+            // OCCT L842-867: face with smallest index is rep (OCCT: min DS index for originals)
+            let rep = *block.iter().min().unwrap();
+            // OCCT L876-881: myShapesSD.Bind(aF, *pFSD) for all block members
+            for &fi in block {
+                if fi != rep {
+                    to_remove[fi] = true;
+                }
+            }
+        }
+
+        // OCCT L884-921: Update myImages with SD faces, fill myOrigins.
+        // rcad: remove non-representative faces from result (architecture equivalent).
         let removed = to_remove.iter().filter(|&&r| r).count();
         if removed == 0 { return; }
 
