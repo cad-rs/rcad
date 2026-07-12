@@ -423,7 +423,7 @@ pub fn linear_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: profile_pts[0], normal: cap_normal })),
+ Some(Surface3::Plane(Plane::new(profile_pts[0], cap_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -442,7 +442,7 @@ pub fn linear_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: end_pts[0], normal: dir })),
+ Some(Surface3::Plane(Plane::new(end_pts[0], dir))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -475,7 +475,7 @@ pub fn linear_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: a, normal: lat_normal })),
+ Some(Surface3::Plane(Plane::new(a, lat_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -653,7 +653,7 @@ pub fn rotational_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: profile_pts[0], normal: profile_normal })),
+ Some(Surface3::Plane(Plane::new(profile_pts[0], profile_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -674,7 +674,7 @@ pub fn rotational_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: rot_pts[0], normal: rot_normal })),
+ Some(Surface3::Plane(Plane::new(rot_pts[0], rot_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -707,7 +707,7 @@ pub fn rotational_sweep_with_options(
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: p0, normal: lat_normal })),
+ Some(Surface3::Plane(Plane::new(p0, lat_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);
@@ -1000,7 +1000,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(rcad_ke
  let wire = brep.add_twire(edge_refs);
  let fi = face_refs.len();
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: a, normal: lat_normal })),
+ Some(Surface3::Plane(Plane::new(a, lat_normal))),
  wire, vec![], None, None, vec![], true,
  );
  face_refs.push(face_sr);

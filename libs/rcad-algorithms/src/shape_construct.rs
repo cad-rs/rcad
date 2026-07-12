@@ -225,20 +225,13 @@ pub fn construct_plane_from_3_points(p1: DVec3, p2: DVec3, p3: DVec3) -> Option<
     if len < TOLERANCE_ABS {
         return None;
     }
-    Some(Plane {
-        origin: p1,
-        normal: normal / len,
-    })
+    Some(Plane::new(p1, normal / len))
 }
 
 /// Construct a plane from a point and normal vector.
 ///
 /// The normal will be normalized.
-pub fn construct_plane_from_point_normal(point: DVec3, normal: DVec3) -> Plane {
-    Plane {
-        origin: point,
-        normal: normal.normalize_or(DVec3::Z),
-    }
+pub fn construct_plane_from_point_normal(point: DVec3, normal: DVec3) -> Plane::new(point, normal.normalize_or(DVec3::Z))
 }
 
 /// Construct a cylindrical surface from axis point, direction, and radius.
@@ -613,7 +606,7 @@ pub fn construct_planar_face_from_wire(wire: &Wire, surface: &Surface3) -> Face 
 ///     &[DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 0.0), DVec3::new(0.0, 10.0, 0.0)],
 ///     true
 /// );
-/// let surface = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+/// let surface = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 /// let face = construct_face_from_boundary(outer, vec![], surface);
 /// assert!(face.inner_wires.is_empty());
 /// ```

@@ -912,10 +912,7 @@ pub fn trim_surface(surface: &Surface3, u1: f64, u2: f64, v1: f64, v2: f64) -> S
 pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
     match surface {
         Surface3::Plane(plane) => {
-            Surface3::Plane(Plane {
-                origin: transform.transform_point3(plane.origin),
-                normal: transform.transform_vector3(plane.normal).normalize(),
-            })
+            Surface3::Plane(Plane::new(transform.transform_point3(plane.origin), transform.transform_vector3(plane.normal).normalize()))
         }
         Surface3::Cylinder(cyl) => {
             let scale = transform.matrix3.x_axis.length();

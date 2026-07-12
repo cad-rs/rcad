@@ -209,10 +209,7 @@ pub fn find_surface_through_points(
  && plane.rms_error < best_error && plane.rms_error < scale_tol {
  best_error = plane.rms_error;
  best_fit = Some(FoundSurface {
- surface: Surface3::Plane(rcad_kernel::geom::Plane {
- origin: plane.point,
- normal: plane.normal,
- }),
+ surface: Surface3::Plane(rcad_kernel::geom::Plane::new(plane.point, plane.normal)),
  rms_error: plane.rms_error,
  surface_type: FittedSurfaceType::Plane,
  });
@@ -629,10 +626,7 @@ fn fit_bspline_surface_to_points(points: &[DVec3]) -> Result<FoundSurface, BRepL
  // For now, return a plane as the BSpline fallback
  // In a full implementation, this would create an actual BSpline surface
  Ok(FoundSurface {
- surface: Surface3::Plane(rcad_kernel::geom::Plane {
- origin: plane.point,
- normal: plane.normal,
- }),
+ surface: Surface3::Plane(rcad_kernel::geom::Plane::new(plane.point, plane.normal)),
  rms_error: plane.rms_error,
  surface_type: FittedSurfaceType::BSpline,
  })

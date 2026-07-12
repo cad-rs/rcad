@@ -407,7 +407,7 @@ mod convert_plane_tests {
 
     #[test]
     fn plane_to_bspline_evaluates() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
         let bspline = plane_to_bspline(&plane, 1, 1);
         let p = bspline.point_at(0.5, 0.5);
         assert!(p.is_finite(), "plane BSpline should evaluate to finite point");
@@ -415,7 +415,7 @@ mod convert_plane_tests {
 
     #[test]
     fn plane_to_bspline_degree_one() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
         let bspline = plane_to_bspline(&plane, 1, 1);
         assert_eq!(bspline.degree_u, 1);
         assert_eq!(bspline.degree_v, 1);

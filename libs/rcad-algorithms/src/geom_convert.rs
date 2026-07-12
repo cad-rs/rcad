@@ -1223,7 +1223,7 @@ mod geom_convert_approx_tests {
 
     #[test]
     fn approx_surface_to_bspline_plane() {
-        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let params = ConvertParams::new(1e-6);
         let bs = surface_to_bspline(&plane, &params);
         let p = bs.point_at(0.0, 0.0);

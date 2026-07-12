@@ -880,10 +880,7 @@ mod tests {
 
     #[test]
     fn project_onto_plane() {
-        let plane = Surface3::Plane(Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Y,
-        });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Y));
         let q = DVec3::new(3.0, 5.0, -2.0);
         let r = closest_point_on_surface(&plane, q, 8);
         assert!(
@@ -1173,10 +1170,7 @@ mod tests {
 
     #[test]
     fn project_onto_plane_offset() {
-        let plane = Surface3::Plane(Plane {
-            origin: DVec3::new(0.0, 5.0, 0.0),
-            normal: DVec3::Y,
-        });
+        let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 5.0, 0.0), DVec3::Y));
         let q = DVec3::new(3.0, 0.0, -2.0);
         let r = closest_point_on_surface(&plane, q, 8);
         assert!((r.point.y - 5.0).abs() < 1e-9);
@@ -1222,10 +1216,7 @@ mod tests {
 
     #[test]
     fn project_near_surface_boundary() {
-        let plane = Surface3::Plane(Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         // Query very close to plane
         let q = DVec3::new(1.0, 2.0, 1e-10);
         let r = closest_point_on_surface(&plane, q, 8);

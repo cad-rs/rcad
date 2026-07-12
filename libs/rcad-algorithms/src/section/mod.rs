@@ -1699,10 +1699,7 @@ fn triangle_triangle_intersect_eps(
         return None;
     }
     let normal2 = normal2 / len2;
-    let plane2 = Plane {
-        origin: tri2[0],
-        normal: normal2,
-    };
+    let plane2 = Plane::new(tri2[0], normal2);
 
     // Find intersection of tri1 with plane of tri2
     let seg = triangle_section_eps(&plane2, *tri1, pe)?;

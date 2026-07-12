@@ -208,10 +208,7 @@ mod tests {
 
     #[test]
     fn plane_has_zero_curvature() {
-        let s = Surface3::Plane(Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         assert_eq!(k1, 0.0);
         assert_eq!(k2, 0.0);
@@ -363,10 +360,7 @@ mod tests {
 
     #[test]
     fn plane_curvature_zero() {
-        let s = Surface3::Plane(Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         assert!(approx_eq(k1, 0.0, TOL), "plane k1 should be 0");
         assert!(approx_eq(k2, 0.0, TOL), "plane k2 should be 0");

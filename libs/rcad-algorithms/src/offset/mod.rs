@@ -600,10 +600,7 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
  match surf {
  Surface3::Plane(p) => {
  // Plane offset: translate along normal
- Some(Surface3::Plane(Plane {
- origin: p.origin + p.normal * d,
- normal: p.normal,
- }))
+ Some(Surface3::Plane(Plane::new(p.origin + p.normal * d, p.normal)))
  }
 
  Surface3::Sphere(s) => {
@@ -769,14 +766,8 @@ pub fn intersect_offset_plane_plane(
  d2: f64,
 ) -> OffsetIntersectionCurve {
  // Compute the offset planes
- let offset_plane1 = Plane {
- origin: plane1.origin + plane1.normal * d1,
- normal: plane1.normal,
- };
- let offset_plane2 = Plane {
- origin: plane2.origin + plane2.normal * d2,
- normal: plane2.normal,
- };
+ let offset_plane1 = Plane::new(plane1.origin + plane1.normal * d1, plane1.normal);
+ let offset_plane2 = Plane::new(plane2.origin + plane2.normal * d2, plane2.normal);
 
  // Use existing plane-plane intersection
  match crate::inttools::plane_plane::intersect_plane_plane(&offset_plane1, &offset_plane2) {
@@ -955,10 +946,7 @@ pub fn intersect_offset_plane_cylinder(
  d_cyl: f64,
 ) -> OffsetIntersectionCurve {
  // Compute the offset plane
- let offset_plane = Plane {
- origin: plane.origin + plane.normal * d_plane,
- normal: plane.normal,
- };
+ let offset_plane = Plane::new(plane.origin + plane.normal * d_plane, plane.normal);
 
  // Compute effective cylinder radius after offset
  let r = cyl.radius + d_cyl;
@@ -1004,10 +992,7 @@ pub fn intersect_offset_plane_sphere(
  d_sphere: f64,
 ) -> OffsetIntersectionCurve {
  // Compute the offset plane
- let offset_plane = Plane {
- origin: plane.origin + plane.normal * d_plane,
- normal: plane.normal,
- };
+ let offset_plane = Plane::new(plane.origin + plane.normal * d_plane, plane.normal);
 
  // Compute effective sphere radius after offset
  let r = sphere.radius + d_sphere;
@@ -1205,10 +1190,7 @@ pub fn intersect_offset_plane_cone(
  d_plane: f64,
  d_cone: f64,
 ) -> OffsetIntersectionCurve {
- let offset_plane = Plane {
- origin: plane.origin + plane.normal * d_plane,
- normal: plane.normal,
- };
+ let offset_plane = Plane::new(plane.origin + plane.normal * d_plane, plane.normal);
  let offset_cone = match offset_conical_surface(cone, d_cone) {
  Some(c) => c,
  None => return OffsetIntersectionCurve::NoIntersection,
@@ -1378,10 +1360,7 @@ pub fn intersect_offset_plane_torus(
  d_plane: f64,
  d_torus: f64,
 ) -> OffsetIntersectionCurve {
- let offset_plane = Plane {
- origin: plane.origin + plane.normal * d_plane,
- normal: plane.normal,
- };
+ let offset_plane = Plane::new(plane.origin + plane.normal * d_plane, plane.normal);
  let r_minor = torus.minor_radius + d_torus;
  if r_minor <= 0.0 {
  return OffsetIntersectionCurve::NoIntersection;

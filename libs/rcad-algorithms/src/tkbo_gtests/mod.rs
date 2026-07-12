@@ -379,10 +379,7 @@ mod bop_algo_thin_tool_tests {
     #[test]
     fn common_solid_and_halfspace() {
         let box_ = make_box(DVec3::new(0.0, 0.0, -30.0), 150.0, 200.0, 200.0);
-        let plane = geom::Plane {
-            origin: DVec3::new(0.0, 0.0, 0.0),
-            normal: DVec3::Z,
-        };
+        let plane = geom::Plane::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z);
         let bbox = [DVec3::new(-250.0, -250.0, -30.0), DVec3::new(250.0, 250.0, 200.0)];
         let halfspace = make_face_half_space(&plane, &bbox, true);
 
@@ -456,14 +453,8 @@ mod int_tools_face_face_tests {
 
     #[test]
     fn perpendicular_planes_intersect() {
-        let s1 = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        });
-        let s2 = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::X,
-        });
+        let s1 = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
+        let s2 = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::X));
 
         let q1 = Quadric::from_surface3(&s1).expect("Plane 1 quadric");
         let q2 = Quadric::from_surface3(&s2).expect("Plane 2 quadric");
@@ -482,10 +473,7 @@ mod int_tools_face_face_tests {
             ref_dir: DVec3::X,
             radius: 2.0,
         });
-        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::X,
-        });
+        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::X));
 
         let q_cyl = Quadric::from_surface3(&cyl_s).expect("Cylinder quadric");
         let q_pl = Quadric::from_surface3(&plane_s).expect("Plane quadric");
@@ -530,10 +518,7 @@ mod int_tools_face_face_tests {
     /// produce at least one intersection result.
     #[test]
     fn occ24005_plane_cylinder_intersection() {
-        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::new(-72.948737453424499, 754.30437716359393, 259.52151854671678),
-            normal: DVec3::new(6.2471473085930200e-007, -0.99999999999980493, 0.0).normalize(),
-        });
+        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::new(-72.948737453424499, 754.30437716359393, 259.52151854671678), DVec3::new(6.2471473085930200e-007, -0.99999999999980493, 0.0).normalize()));
         let cyl_s = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
             origin: DVec3::new(-6.4812490053250649, 753.39408794522092, 279.16400974257465),
             axis: DVec3::X,
@@ -585,7 +570,7 @@ mod quad_quad_geo_tests {
     /// Plane through sphere center → Circle with radius = sphere radius.
     #[test]
     fn plane_sphere_circle() {
-        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let sphere = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0,
         });
@@ -605,7 +590,7 @@ mod quad_quad_geo_tests {
     /// Plane outside sphere → Empty.
     #[test]
     fn plane_sphere_empty() {
-        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 3.0), normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z));
         let sphere = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
         });
@@ -623,7 +608,7 @@ mod quad_quad_geo_tests {
     /// Plane tangent to sphere → Point (single contact).
     #[test]
     fn plane_sphere_tangent_point() {
-        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 1.0), normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
         let sphere = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
         });
@@ -643,7 +628,7 @@ mod quad_quad_geo_tests {
         let cone = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO, axis: DVec3::Z, radius: 0.0, half_angle_rad: 0.5235987756, // 30°
         });
-        let plane = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 2.0), normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 2.0), DVec3::Z));
         let q_cone = Quadric::from_surface3(&cone).unwrap();
         let q_plane = Quadric::from_surface3(&plane).unwrap();
 
@@ -1064,7 +1049,7 @@ mod boptools_helpers_tests {
 
     #[test]
     fn point_near_edge_offset() {
-        let pt = crate::boptools::point_near_edge(&Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z }), DVec3::ZERO, DVec3::Z);
+        let pt = crate::boptools::point_near_edge(&Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z)), DVec3::ZERO, DVec3::Z);
         assert!((pt - DVec3::new(0.0, 0.0, crate::tolerance::TOLERANCE_ABS * 10.0)).length() < 1e-15,
             "Point near edge should be offset along normal");
     }

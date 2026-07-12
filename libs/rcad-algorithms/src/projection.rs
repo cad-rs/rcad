@@ -240,10 +240,7 @@ pub fn project_point_on_curve_with_options(
 /// use rcad_algorithms::projection::project_point_on_surface;
 /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
-/// let plane = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::Z,
-/// });
+/// let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 /// let (proj, uv) = project_point_on_surface(DVec3::new(1.0, 2.0, 5.0), &plane, &Default::default());
 /// assert!(proj.z.abs() < TOLERANCE_MESH_LEGACY);
 /// ```
@@ -371,10 +368,7 @@ pub fn project_point_on_brep(
 /// use rcad_kernel::{topology::{Wire, WireEdge}};
 /// use rcad_algorithms::projection::project_wire_on_surface;
 ///
-/// let plane = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::Z,
-/// });
+/// let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 /// // Create a simple wire (would need actual BRep setup)
 /// // let projected = project_wire_on_surface(&wire, &brep, &plane, DVec3::Z);
 /// ```
@@ -547,10 +541,7 @@ pub struct CurveOnSurfaceProjection {
 ///     origin: DVec3::new(0.0, 0.0, 5.0),
 ///     direction: DVec3::X,
 /// });
-/// let plane = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::Z,
-/// });
+/// let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 /// let curve2d = project_curve_on_surface(&line, &plane, &ProjectionOptions::default());
 /// ```
 pub fn project_curve_on_surface(
@@ -652,14 +643,8 @@ fn fit_uv_points_to_curve2d(points: &[DVec2]) -> Curve2d {
 /// use rcad_kernel::geom::{Surface3, Plane};
 /// use rcad_algorithms::projection::{project_surface_on_surface, ProjectionOptions};
 ///
-/// let plane1 = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::Z,
-/// });
-/// let plane2 = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::X,
-/// });
+/// let plane1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+/// let plane2 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::X));
 /// let curves = project_surface_on_surface(&plane1, &plane2, &ProjectionOptions::default());
 /// // Two planes intersect in a line
 /// assert!(!curves.is_empty());
@@ -1035,10 +1020,7 @@ pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<u
 ///     origin: DVec3::new(0.0, 0.0, 5.0),
 ///     direction: DVec3::X,
 /// });
-/// let plane = Surface3::Plane(Plane {
-///     origin: DVec3::ZERO,
-///     normal: DVec3::Z,
-/// });
+/// let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 /// let curve2d = normal_project_curve_on_surface(&line, &plane, &Default::default());
 /// ```
 pub fn normal_project_curve_on_surface(

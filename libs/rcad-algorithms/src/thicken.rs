@@ -957,10 +957,7 @@ fn add_face(
 fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
  use rcad_kernel::geom::*;
  match surf {
- Surface3::Plane(p) => Some(Surface3::Plane(Plane {
- origin: p.origin + p.normal * d,
- normal: p.normal,
- })),
+ Surface3::Plane(p) => Some(Surface3::Plane(Plane::new(p.origin + p.normal * d, p.normal))),
  Surface3::Sphere(s) => {
  let r = s.radius + d;
  if r <= TOLERANCE_ABS { return None; }

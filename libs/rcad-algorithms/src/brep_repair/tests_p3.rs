@@ -663,14 +663,8 @@
  }));
 
  // Add surfaces
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: DVec3::ZERO,
- normal: DVec3::Z,
- }));
- brep.geom.surfaces.push(Surface3::Plane(Plane {
- origin: DVec3::ZERO,
- normal: DVec3::Z,
- }));
+ brep.geom.surfaces.push(Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z)));
+ brep.geom.surfaces.push(Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z)));
 
  // Add multiple PCurves for edge 0 (seam candidate)
  brep.geom.edge_pcurves.push(vec![
@@ -1408,10 +1402,7 @@
  fn periodic_surface_info_plane_not_periodic() {
  use rcad_kernel::geom::{Plane, Surface3};
 
- let plane = Surface3::Plane(Plane {
- origin: DVec3::ZERO,
- normal: DVec3::Z,
- });
+ let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 
  let info = detect_periodic_surface_info(&plane);
  assert!(!info.is_u_periodic(), "Plane should not be U-periodic");

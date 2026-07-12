@@ -80,7 +80,7 @@ fn boolean_diff_box_cylinder_par(c: &mut Criterion) {
 fn intss_plane_sphere(c: &mut Criterion) {
     use rcad_algorithms::inttools::intss::intersect_surfaces;
     use rcad_kernel::geom::{Plane, SphericalSurface, Surface3};
-    let s1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+    let s1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
     let s2 = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: any_perpendicular(DVec3::Z) });
     c.bench_function("intss_plane_sphere", |bench| {
         bench.iter(|| intersect_surfaces(&s1, &s2))

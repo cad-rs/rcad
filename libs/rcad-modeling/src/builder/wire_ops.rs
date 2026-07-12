@@ -399,10 +399,7 @@ mod tests {
             depth: 1.0,
         });
         let wire = box_wire_0(&brep);
-        let plane = Surface3::Plane(Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::NEG_Z,
-        });
+        let plane = Surface3::Plane(Plane::new(glam::DVec3::ZERO, glam::DVec3::NEG_Z));
 
         let (proj_wire, proj_pts) = project_wire_onto_surface(&brep, &wire, &plane, 16).unwrap();
         // All projected points should lie on z=0.
@@ -429,10 +426,7 @@ mod tests {
             edges: vec![WireEdge::fwd(e0), WireEdge::fwd(e1), WireEdge::fwd(e2), WireEdge::fwd(e3)],
         };
 
-        let plane = Surface3::Plane(Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::Z,
-        });
+        let plane = Surface3::Plane(Plane::new(glam::DVec3::ZERO, glam::DVec3::Z));
         let (_proj_wire, proj_pts) = project_wire_onto_surface(&brep, &wire, &plane, 16).unwrap();
         for p in &proj_pts {
             assert!(p.z.abs() < 1e-9, "projected point not on z=0 plane: {p:?}");
@@ -446,10 +440,7 @@ mod tests {
     fn project_wire_empty_wire_returns_error() {
         let brep = BRep::new();
         let wire = Wire { edges: vec![] };
-        let plane = Surface3::Plane(Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::Z,
-        });
+        let plane = Surface3::Plane(Plane::new(glam::DVec3::ZERO, glam::DVec3::Z));
         assert!(project_wire_onto_surface(&brep, &wire, &plane, 16).is_err());
     }
 

@@ -995,10 +995,7 @@ pub fn blend_edge_to_face(
 
  // Create face surface if not present (use Z-up plane as fallback)
  let face_surface = face_surface.unwrap_or({
-  Surface3::Plane(Plane {
-   origin: p0,
-   normal: DVec3::Z,
-  })
+  Surface3::Plane(Plane::new(p0, DVec3::Z))
  });
 
  // Compute the blend

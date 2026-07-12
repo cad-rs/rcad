@@ -171,10 +171,7 @@ impl BuildVertex {
  /// use rcad_algorithms::shape_build::BuildVertex;
  /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
  ///
- /// let plane = Surface3::Plane(Plane {
- /// origin: DVec3::ZERO,
- /// normal: DVec3::Z,
- /// });
+ /// let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
  /// let v = BuildVertex::build_vertex_on_surface(&plane, 1.0, 2.0);
  /// // Point on the plane at UV (1, 2)
  /// # use rcad_algorithms::tolerance::*;

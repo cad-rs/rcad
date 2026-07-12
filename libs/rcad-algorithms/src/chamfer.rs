@@ -639,10 +639,7 @@ fn compute_chamfer_plane_plane(
  let end_p1 = edge_info.end_point + along_face1 * d2;
 
  Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane {
- origin: mid_point,
- normal: chamfer_normal,
- }),
+ chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
  origin: mid_point,
  normal: chamfer_normal,
  start_vertices: [start_p0, start_p1],
@@ -714,10 +711,7 @@ fn compute_chamfer_cylinder_plane(
  // Return in consistent order (face0, face1)
  if face0.surface_type == SurfaceType::Cylinder {
  Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane {
- origin: mid_point,
- normal: chamfer_normal,
- }),
+ chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
  origin: mid_point,
  normal: chamfer_normal,
  start_vertices: [start_on_cyl, start_on_plane],
@@ -727,10 +721,7 @@ fn compute_chamfer_cylinder_plane(
  })
  } else {
  Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane {
- origin: mid_point,
- normal: chamfer_normal,
- }),
+ chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
  origin: mid_point,
  normal: chamfer_normal,
  start_vertices: [start_on_plane, start_on_cyl],
@@ -804,10 +795,7 @@ fn compute_chamfer_cylinder_cylinder(
  let end1 = edge_info.end_point + radial1 * d2;
 
  Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane {
- origin: mid_point,
- normal: chamfer_normal,
- }),
+ chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
  origin: mid_point,
  normal: chamfer_normal,
  start_vertices: [start0, start1],
@@ -859,10 +847,7 @@ fn compute_chamfer_general(
  let end1 = edge_info.end_point + along_face1 * d2;
 
  Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane {
- origin: mid_point,
- normal: chamfer_normal,
- }),
+ chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
  origin: mid_point,
  normal: chamfer_normal,
  start_vertices: [start0, start1],

@@ -54,7 +54,7 @@ pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
         };
         let ts = &mut brep.tshapes[fi];
         let TShape::Face(fd) = Arc::make_mut(ts) else { continue };
-        fd.surface = Some(Surface3::Plane(Plane { origin, normal }));
+        fd.surface = Some(Surface3::Plane(Plane::new(origin, normal)));
     }
 }
 

@@ -93,7 +93,7 @@ pub fn make_box_brep(
 
     let mut face_refs = Vec::new();
     for i in 0..6 {
-        let surface = Surface3::Plane(Plane { origin: centers[i], normal: normals[i] });
+        let surface = Surface3::Plane(Plane::new(centers[i], normals[i]));
         face_refs.push(t.add_tface(Some(surface), wires[i], vec![], Some(centers[i]), None, vec![], true));
     }
     let shell = t.add_tshell(face_refs);
@@ -190,10 +190,10 @@ pub fn cylinder_brep(
     });
     let lateral_face = t.add_tface(Some(cyl_surface), lateral_wire, vec![], Some(p(0.0, 0.0, r)), None, vec![], true);
 
-    let top_plane = Surface3::Plane(Plane { origin: p(0.0, half, 0.0), normal: z_axis });
+    let top_plane = Surface3::Plane(Plane::new(p(0.0, half, 0.0), z_axis));
     let top_face = t.add_tface(Some(top_plane), top_wire, vec![], Some(p(0.0, half, 0.0)), None, vec![], false);
 
-    let bot_plane = Surface3::Plane(Plane { origin: p(0.0, -half, 0.0), normal: -z_axis });
+    let bot_plane = Surface3::Plane(Plane::new(p(0.0, -half, 0.0), -z_axis));
     let bot_face = t.add_tface(Some(bot_plane), bot_wire, vec![], Some(p(0.0, -half, 0.0)), None, vec![], false);
 
     let shell = t.add_tshell(vec![lateral_face, top_face, bot_face]);
@@ -257,7 +257,7 @@ pub fn cone_brep(
     });
     let lateral = t.add_tface(Some(cone_surf), top_wire, vec![], Some(p(0.0, 0.0, r)), None, vec![], true);
 
-    let bot_surf = Surface3::Plane(Plane { origin: p(0.0, -half, 0.0), normal: -z_axis });
+    let bot_surf = Surface3::Plane(Plane::new(p(0.0, -half, 0.0), -z_axis));
     let bottom = t.add_tface(Some(bot_surf), bot_wire, vec![], Some(p(0.0, -half, 0.0)), None, vec![], false);
 
     let shell = t.add_tshell(vec![lateral, bottom]);
@@ -349,14 +349,8 @@ pub fn make_conical_frustum_brep(
         radius: 0.0,
         half_angle_rad: half_angle,
     });
-    let bottom_plane = Surface3::Plane(Plane {
-        origin: DVec3::new(0.0, -half_h, 0.0),
-        normal: -DVec3::Y,
-    });
-    let top_plane = Surface3::Plane(Plane {
-        origin: DVec3::new(0.0, half_h, 0.0),
-        normal: DVec3::Y,
-    });
+    let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y));
+    let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y));
 
     let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
 
@@ -524,7 +518,7 @@ pub fn make_planar_rect_brep(
     vmax: f64,
 ) -> Result<topods::BRep, BuildError> {
     let normal = u_axis.cross(v_axis).normalize();
-    let surface = Surface3::Plane(Plane { origin, normal });
+    let surface = Surface3::Plane(Plane::new(origin, normal));
 
     let c0 = origin + u_axis * umin + v_axis * vmin;
     let c1 = origin + u_axis * umax + v_axis * vmin;
@@ -568,7 +562,7 @@ pub fn make_planar_polygon_brep(
     outer_polygon: &[DVec3],
     inner_polygons: &[Vec<DVec3>],
 ) -> Result<topods::BRep, BuildError> {
-    let surface = Surface3::Plane(Plane { origin, normal });
+    let surface = Surface3::Plane(Plane::new(origin, normal));
     let mut t = topods::BRep::new();
     let outer_wire = make_polygon_wire_topods(&mut t, outer_polygon)?;
     let mut inner_wires = Vec::new();
@@ -805,7 +799,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
         }
 
         let wire = make_wire(wire_edges);
-        let surface = Surface3::Plane(Plane { origin, normal: n });
+        let surface = Surface3::Plane(Plane::new(origin, n));
         make_face(&mut brep, surface, wire, vec![])?;
     }
 
@@ -899,7 +893,7 @@ fn tshape_ptr_id(ts: &std::sync::Arc<rcad_kernel::topods::TShape>) -> u64 {
 
 fn mirror_surface(s: &Surface3, mirror_p: impl Fn(DVec3) -> DVec3, mirror_v: impl Fn(DVec3) -> DVec3) -> Surface3 {
     match s {
-        Surface3::Plane(p) => Surface3::Plane(Plane { origin: mirror_p(p.origin), normal: mirror_v(p.normal) }),
+        Surface3::Plane(p) => Surface3::Plane(Plane::new(mirror_p(p.origin), mirror_v(p.normal))),
         Surface3::Cylinder(c) => Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
             origin: mirror_p(c.origin), axis: mirror_v(c.axis), radius: c.radius, ref_dir: mirror_v(c.ref_dir),
         }),

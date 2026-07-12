@@ -496,7 +496,7 @@ impl BeanFaceIntersector {
     pub fn new() -> Self {
         Self {
             curve: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
-            surface: Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            surface: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             first_param: 0.0, last_param: 1.0,
             u_min: f64::NEG_INFINITY, u_max: f64::INFINITY,
             v_min: f64::NEG_INFINITY, v_max: f64::INFINITY,

@@ -8,7 +8,7 @@ use rcad_kernel::geom::{
 pub fn plane(origin: DVec3, normal: DVec3) -> Result<Surface3, BuildError> {
     let origin = validate_point("origin", origin)?;
     let normal = normalize_vector("normal", normal)?;
-    Ok(Surface3::Plane(Plane { origin, normal }))
+    Ok(Surface3::Plane(Plane::new(origin, normal)))
 }
 
 pub fn make_plane(origin: DVec3, normal: DVec3) -> Result<Surface3, BuildError> {

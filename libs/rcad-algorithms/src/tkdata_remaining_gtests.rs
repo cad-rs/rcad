@@ -1715,8 +1715,8 @@ mod tkdata_tkgeombase_tests {
     // =========================================================================
     #[test]
     fn gc_make_plane_from_plane_and_dist() {
-        let pl = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let offset_pl = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };
+        let pl = Plane::new(DVec3::ZERO, DVec3::Z);
+        let offset_pl = Plane::new(DVec3::new(0.0, 0.0, 5.0), DVec3::Z);
         let s = Surface3::Plane(offset_pl);
         let p = s.point_at(0.0, 0.0);
         assert!((p - DVec3::new(0.0, 0.0, 5.0)).length() < TOL);
@@ -1725,7 +1725,7 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn gc_make_plane_from_plane_and_point() {
         let pt = DVec3::new(2.0, -3.0, 7.0);
-        let pl = Plane { origin: pt, normal: DVec3::Z };
+        let pl = Plane::new(pt, DVec3::Z);
         let s = Surface3::Plane(pl);
         let p = s.point_at(0.0, 0.0);
         assert!((p - pt).length() < TOL);
@@ -1868,7 +1868,7 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn bndlib_surface_plane() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let bbox = rcad_kernel::surface_bounding_box(&s, &[make_vertex(DVec3::ZERO)]);
         assert!(bbox.is_none(), "Plane bbox not implemented");
     }
@@ -2004,7 +2004,7 @@ mod tkdata_tkgeombase_tests {
     // IntAna — analytic intersection between quadric surfaces
     #[test]
     fn int_ana_plane_cylinder_intersection() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::X };
+        let plane = Plane::new(DVec3::ZERO, DVec3::X);
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X };
         let result = crate::int_ana::intersect_plane_cylinder_intana(&plane, &cyl);
         match result {
@@ -2067,7 +2067,7 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn proj_lib_point_on_surface() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let (pt, uv) = crate::projection::project_point_on_surface(DVec3::new(3.0, 4.0, 5.0), &s, &Default::default());
         assert!((pt - DVec3::new(3.0, 4.0, 0.0)).length() < TOL, "projected pt={pt:?}");
     }

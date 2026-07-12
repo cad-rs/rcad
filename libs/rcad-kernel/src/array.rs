@@ -1009,10 +1009,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
  };
 
  match surface {
- Surface3::Plane(p) => Surface3::Plane(Plane {
- origin: transform_point(p.origin),
- normal: transform_direction(p.normal),
- }),
+ Surface3::Plane(p) => Surface3::Plane(Plane::new(transform_point(p.origin), transform_direction(p.normal))),
  Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
  origin: transform_point(c.origin),
  axis: transform_direction(c.axis),

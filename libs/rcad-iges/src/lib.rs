@@ -1040,7 +1040,7 @@ impl IgesBrepBuilder {
             DVec3::new(d / a, 0.0, 0.0)
         };
 
-        let plane = Plane { origin, normal };
+        let plane = Plane::new(origin, normal);
 
         self.surface_map.insert(de.sequence, Surface3::Plane(plane));
 
@@ -1637,10 +1637,7 @@ mod tests {
         );
 
         // Add face with plane surface
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
         let wire = brep.add_twire(vec![edge]);
         brep.add_tface(
             Some(Surface3::Plane(plane)),

@@ -40,10 +40,7 @@ impl ArcFunction {
                 origin: DVec2::ZERO,
                 direction: DVec2::X,
             }),
-            surf: Surface3::Plane(rcad_kernel::geom::Plane {
-                origin: DVec3::ZERO,
-                normal: DVec3::Z,
-            }),
+            surf: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             quad: Quadric::new(),
             ptsol: DVec3::ZERO,
             seqpt: Vec::new(),

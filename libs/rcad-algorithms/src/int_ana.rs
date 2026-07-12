@@ -43,7 +43,7 @@ pub struct LinPlnIntersection {
 /// use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 ///
 /// let line = Line3 { origin: DVec3::ZERO, direction: DVec3::Z };
-/// let plane = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };
+/// let plane = Plane::new(DVec3::new(0.0, 0.0, 5.0), DVec3::Z);
 /// let result = intersect_line_plane(&line, &plane);
 /// assert!(result.is_some());
 /// let intersection = result.unwrap();

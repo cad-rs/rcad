@@ -490,7 +490,7 @@ mod tests {
 
  // Face with Plane surface
  let face = brep.add_tface(
-  Some(Surface3::Plane(Plane { origin, normal: n })),
+  Some(Surface3::Plane(Plane::new(origin, n))),
   wire,
   vec![],
   None,

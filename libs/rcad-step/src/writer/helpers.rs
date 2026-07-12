@@ -244,7 +244,7 @@ pub(super) fn find_topological_plane_for_edge_topods(
             };
             let origin = loop_points.first().copied()?;
             let normal = compute_face_normal(&loop_points)?;
-            return Some(rcad_kernel::geom::Plane { origin, normal });
+            return Some(rcad_kernel::geom::Plane::new(origin, normal));
         }
     }
     None

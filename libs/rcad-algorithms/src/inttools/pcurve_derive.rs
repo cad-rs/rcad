@@ -21,16 +21,16 @@ use rcad_kernel::projection::closest_point_on_surface;
 
 /// Project a [`Circle3`] onto a [`Plane`]'s (u, v) domain.
 ///
-/// Uses `any_perpendicular(plane.normal)` as the u-axis and
-/// `plane.normal × u_axis` as the v-axis, matching [`Plane::point_at`].
+/// Uses `plane.u_dir` as the u-axis and `plane.v_dir` as the v-axis, matching
+/// `Plane::point_at`.
 ///
 /// If the circle lies in the plane (its normal is parallel to the plane
 /// normal), the result is an analytic [`Circle2d`].  Otherwise the circle
 /// projects to a general conic and is approximated with a [`BSplineCurve2`]
 /// built from 33 sampled points.
 pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
- let u_axis = any_perpendicular(plane.normal);
- let v_axis = plane.normal.cross(u_axis);
+ let u_axis = plane.u_dir;
+ let v_axis = plane.v_dir;
 
  // Test whether the circle lies in the plane.
  let normal_dot = circle
@@ -40,9 +40,12 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
  .abs();
  if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
  // Circle lies in the plane → analytic Circle2d.
+ // Project the 3D circle's center and axes onto the plane's (u, v) domain.
  let diff = circle.center - plane.origin;
  let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
- return Curve2d::Circle(Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: circle.radius,
+ let x_dir_2d = DVec2::new(circle.x_dir.dot(u_axis), circle.x_dir.dot(v_axis));
+ let y_dir_2d = DVec2::new(circle.y_dir.dot(u_axis), circle.y_dir.dot(v_axis));
+ return Curve2d::Circle(Circle2d { center: center_2d, x_dir: x_dir_2d, y_dir: y_dir_2d, radius: circle.radius,
  });
  }
 
@@ -72,8 +75,8 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
 /// direction, and radii (unchanged — projection along a parallel normal
 /// preserves semi-axes when the ellipse is coplanar with the plane).
 pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
- let u_axis = any_perpendicular(plane.normal);
- let v_axis = plane.normal.cross(u_axis);
+ let u_axis = plane.u_dir;
+ let v_axis = plane.v_dir;
 
  let diff = ellipse.center - plane.origin;
  let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
@@ -98,8 +101,8 @@ pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
 /// Returns a [`Line2d`] whose origin and direction are the projections of the
 /// 3D line's origin and direction into the plane's parameter space.
 pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
- let u_axis = any_perpendicular(plane.normal);
- let v_axis = plane.normal.cross(u_axis);
+ let u_axis = plane.u_dir;
+ let v_axis = plane.v_dir;
 
  let diff = line.origin - plane.origin;
  let origin_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));

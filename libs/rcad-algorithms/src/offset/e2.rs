@@ -441,10 +441,7 @@ pub fn create_tangent_join(
 
     // Create a plane that smoothly blends the two face normals
     let blend_normal = (n0 + n1).normalize();
-    let blend_plane = Surface3::Plane(Plane {
-        origin: (p0 + p1) * 0.5,
-        normal: blend_normal,
-    });
+    let blend_plane = Surface3::Plane(Plane::new((p0 + p1) * 0.5, blend_normal));
 
     // Create the wire for the tangent join face
     let dir = (p1 - p0).normalize_or(DVec3::X);

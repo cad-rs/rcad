@@ -657,7 +657,7 @@ fn build_smart_map(
                 }
             };
             let surf = tool.face_surface(seg.face).unwrap_or(
-                &Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }));
+                &Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)));
             let new_angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
                 .unwrap_or(0.0);
             if std::env::var("RCAD_ANGLE_DUMP").is_ok() {

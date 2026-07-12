@@ -246,7 +246,7 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
  // Create merged face with outer wire + inner wire
  for &fi in group { to_remove.push(fi); }
  let surf_idx = brep.geom.surfaces.len();
- brep.geom.surfaces.push(Surface3::Plane(Plane{origin: o_pts[0], normal: n}));
+ brep.geom.surfaces.push(Surface3::Plane(Plane::new(o_pts[0], n)));
  new_faces.push(Face {
  outer_wire: Wire{edges: outer_we},
  inner_wires: vec![Wire{edges: inner_we}],

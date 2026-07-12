@@ -1396,10 +1396,7 @@ pub fn wires_to_faces(
 
  // Build planar face (OCCT L758: BRepBuilderAPI_MakeFace)
  let plane_surface = rcad_kernel::geom::Surface3::Plane(
- rcad_kernel::geom::Plane {
- origin: pln_info.point,
- normal: pln_info.normal,
- }
+ rcad_kernel::geom::Plane::new(pln_info.point, pln_info.normal)
  );
 
  // Deduplicate edges and collect unique DS edge indices

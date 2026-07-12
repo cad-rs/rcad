@@ -405,12 +405,9 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
         "1" => {
             let p = c.parse_point3()?;
             let n = c.parse_dir3()?;
-            let _du = c.parse_dir3()?;
+            let du = c.parse_dir3()?;
             let _dv = c.parse_dir3()?;
-            Ok(Surface3::Plane(Plane {
-                origin: p,
-                normal: n,
-            }))
+            Ok(Surface3::Plane(Plane::with_axes(p, n, du)))
         }
         "2" => {
             let p = c.parse_point3()?;

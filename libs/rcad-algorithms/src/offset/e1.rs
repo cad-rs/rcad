@@ -879,8 +879,8 @@ fn offset_edge(
  // problem of the intersection line origin not matching the vertex positions.
  if matches!(orig0, Surface3::Plane(_)) && matches!(orig1, Surface3::Plane(_)) {
  if let (Surface3::Plane(pl0), Surface3::Plane(pl1)) = (orig0, orig1) {
- let offset_pl0 = Plane { origin: pl0.origin + pl0.normal * distance, normal: pl0.normal };
- let offset_pl1 = Plane { origin: pl1.origin + pl1.normal * distance, normal: pl1.normal };
+ let offset_pl0 = Plane::new(pl0.origin + pl0.normal * distance, pl0.normal);
+ let offset_pl1 = Plane::new(pl1.origin + pl1.normal * distance, pl1.normal);
  let cross_dir = offset_pl0.normal.cross(offset_pl1.normal);
  if cross_dir.length_squared() < TOLERANCE_ANG * TOLERANCE_ANG {
  // Parallel planes 鈥?caller handles via vertex positions

@@ -617,7 +617,7 @@ impl ResultBuilder {
  } else { None };
 
  let surface = tool.face_surface(face_ref)
- .cloned().unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane { origin: glam::DVec3::ZERO, normal: glam::DVec3::Z }));
+ .cloned().unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane::new(glam::DVec3::ZERO, glam::DVec3::Z)));
 
  let sample_pt = if !wf.outer_wire.is_empty() {
  if let Some(ap) = cw_centroid_antipode {

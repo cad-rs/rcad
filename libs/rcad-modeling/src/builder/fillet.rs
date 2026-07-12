@@ -430,10 +430,7 @@ fn add_closing_triangle(dst: &mut BRep, v0: usize, v1: usize, v2: usize) -> Resu
  let p1 = vert_point(dst, v1);
  let p2 = vert_point(dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: p0,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(p0, n));
 
  let e01 = add_line_edge(dst, v0, v1)?;
  let e12 = add_line_edge(dst, v1, v2)?;
@@ -610,23 +607,20 @@ fn copy_face_remapped(
  }
  };
 
- let surf = Surface3::Plane(Plane {
- origin: {
- let first_esr = if let TShape::Wire(wd) = &*src.tshapes[fd.outer_wire.index] {
- wd.edges.first()
- } else { None };
- if let Some(esr) = first_esr {
- let ed = edge_data(src, esr.index);
- let old_v = if esr.orientation == topods::Orientation::Forward {
- ed.first.index
- } else {
- ed.last.index
- };
- vert_point(dst, vi_remap[old_v])
- } else { DVec3::ZERO }
- },
- normal,
- });
+ let surf = Surface3::Plane(Plane::new({
+  let first_esr = if let TShape::Wire(wd) = &*src.tshapes[fd.outer_wire.index] {
+  wd.edges.first()
+  } else { None };
+  if let Some(esr) = first_esr {
+  let ed = edge_data(src, esr.index);
+  let old_v = if esr.orientation == topods::Orientation::Forward {
+  ed.first.index
+  } else {
+  ed.last.index
+  };
+  vert_point(dst, vi_remap[old_v])
+  } else { DVec3::ZERO }
+ }, normal));
 
  make_face(dst, surf, wire, vec![])
 }
@@ -1243,7 +1237,7 @@ fn rebuild_with_variable_fillet_verts_history(
  let p1_c = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane { origin: p0, normal: n });
+ let surf = Surface3::Plane(Plane::new(p0, n));
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
  let e20 = add_line_edge(&mut dst, v2, v0)?;
@@ -1260,7 +1254,7 @@ fn rebuild_with_variable_fillet_verts_history(
  let p1_c = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane { origin: p0, normal: n });
+ let surf = Surface3::Plane(Plane::new(p0, n));
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
  let e20 = add_line_edge(&mut dst, v2, v0)?;
@@ -1332,10 +1326,7 @@ fn rebuild_with_chamfer_verts_history(
  let pc = nv1b;
  let _pd = nv0b;
  let n = (pb - pa).cross(pc - pa).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: pa,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(pa, n));
 
  let ea = add_line_edge(&mut dst, nv0a_idx, nv1a_idx)?;
  let eb = add_line_edge(&mut dst, nv1a_idx, nv1b_idx)?;
@@ -1359,10 +1350,7 @@ fn rebuild_with_chamfer_verts_history(
  let p1 = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: p0,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(p0, n));
 
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
@@ -1382,10 +1370,7 @@ fn rebuild_with_chamfer_verts_history(
  let p1 = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: p0,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(p0, n));
 
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
@@ -1487,10 +1472,7 @@ fn rebuild_with_fillet_verts_history(
  let p1 = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: p0,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(p0, n));
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
  let e20 = add_line_edge(&mut dst, v2, v0)?;
@@ -1509,10 +1491,7 @@ fn rebuild_with_fillet_verts_history(
  let p1 = vert_point(&dst, v1);
  let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
- let surf = Surface3::Plane(Plane {
- origin: p0,
- normal: n,
- });
+ let surf = Surface3::Plane(Plane::new(p0, n));
  let e01 = add_line_edge(&mut dst, v0, v1)?;
  let e12 = add_line_edge(&mut dst, v1, v2)?;
  let e20 = add_line_edge(&mut dst, v2, v0)?;
@@ -1732,10 +1711,7 @@ pub fn corner_blend_with_history(
 
  // Create a planar face from the new boundary
  let n_raw = face_normal(brep, fi);
- let surf = Surface3::Plane(Plane {
- origin: new_boundary[0],
- normal: n_raw,
- });
+ let surf = Surface3::Plane(Plane::new(new_boundary[0], n_raw));
 
  // Add vertices and edges to dst
  let vi_list: Vec<usize> = new_boundary

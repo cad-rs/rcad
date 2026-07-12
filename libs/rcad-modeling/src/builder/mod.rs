@@ -267,10 +267,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                     Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface,
                 };
                 match s {
-                    Surface3::Plane(p) => Surface3::Plane(Plane {
-                        origin: mirror_point(p.origin),
-                        normal: mirror_vec(p.normal),
-                    }),
+                    Surface3::Plane(p) => Surface3::Plane(Plane::new(mirror_point(p.origin), mirror_vec(p.normal))),
                     Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
                         origin: mirror_point(c.origin),
                         axis: mirror_vec(c.axis),

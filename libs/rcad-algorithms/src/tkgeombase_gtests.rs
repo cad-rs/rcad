@@ -148,8 +148,8 @@ mod int_ana_plane_plane_tests {
 
     #[test]
     fn perpendicular_planes_intersect() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::ZERO, normal: DVec3::X };
+        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
+        let p2 = Plane::new(DVec3::ZERO, DVec3::X);
         let result = intersect_plane_plane_intana(&p1, &p2);
         match result {
             PlnPlnResult::Line(_) => {},
@@ -159,16 +159,16 @@ mod int_ana_plane_plane_tests {
 
     #[test]
     fn parallel_offset_planes_no_intersection() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::new(0.0, 0.0, 10.0), normal: DVec3::Z };
+        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
+        let p2 = Plane::new(DVec3::new(0.0, 0.0, 10.0), DVec3::Z);
         let result = intersect_plane_plane_intana(&p1, &p2);
         assert!(matches!(result, PlnPlnResult::Parallel));
     }
 
     #[test]
     fn identical_planes_coincident() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
+        let p2 = Plane::new(DVec3::ZERO, DVec3::Z);
         let result = intersect_plane_plane_intana(&p1, &p2);
         assert!(matches!(result, PlnPlnResult::Coincident));
     }

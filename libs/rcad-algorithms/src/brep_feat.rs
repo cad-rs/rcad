@@ -292,7 +292,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  .collect();
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: bot[0], normal: -dir })),
+ Some(Surface3::Plane(Plane::new(bot[0], -dir))),
  wire_sr,
  vec![],
  None,
@@ -310,7 +310,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  .collect();
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: top[0], normal: dir })),
+ Some(Surface3::Plane(Plane::new(top[0], dir))),
  wire_sr,
  vec![],
  None,
@@ -341,7 +341,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  ];
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: a, normal: face_normal })),
+ Some(Surface3::Plane(Plane::new(a, face_normal))),
  wire_sr,
  vec![],
  None,
@@ -898,7 +898,7 @@ pub(crate) fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::B
  .collect();
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: sections[0][0], normal: bottom_normal })),
+ Some(Surface3::Plane(Plane::new(sections[0][0], bottom_normal))),
  wire_sr,
  vec![],
  None,
@@ -922,7 +922,7 @@ pub(crate) fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::B
  .collect();
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: sections[num_sections - 1][0], normal: top_normal })),
+ Some(Surface3::Plane(Plane::new(sections[num_sections - 1][0], top_normal))),
  wire_sr,
  vec![],
  None,

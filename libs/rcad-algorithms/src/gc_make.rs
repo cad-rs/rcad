@@ -42,8 +42,7 @@ pub fn make_segment2d(p1: DVec2, p2: DVec2) -> Result<Line2d, MakeError> {
 // =============================================================================
 
 /// Create an offset plane from a base plane by a distance along the normal.
-pub fn make_plane_offset(plane: &Plane, distance: f64) -> Plane {
-    Plane { origin: plane.origin + distance * plane.normal, normal: plane.normal }
+pub fn make_plane_offset(plane: &Plane, distance: f64) -> Plane::new(plane.origin + distance * plane.normal, plane.normal)
 }
 
 // =============================================================================

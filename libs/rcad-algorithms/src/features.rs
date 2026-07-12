@@ -361,7 +361,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     }).collect();
     let bot_wire_sr = brep.add_twire(bot_wire);
     brep.add_tface(
-        Some(Surface3::Plane(rcad_kernel::geom::Plane { origin: bot[0], normal: -dir })),
+        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(bot[0], -dir))),
         bot_wire_sr, vec![], None, None, vec![], false,
     );
 
@@ -369,7 +369,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     let top_wire_edges: Vec<topods::ShapeRef> = (0..n).map(|i| top_edges[i]).collect();
     let top_wire_sr = brep.add_twire(top_wire_edges);
     brep.add_tface(
-        Some(Surface3::Plane(rcad_kernel::geom::Plane { origin: top[0], normal: dir })),
+        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(top[0], dir))),
         top_wire_sr, vec![], None, None, vec![], false,
     );
 
@@ -394,7 +394,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
         ];
         let wire_sr = brep.add_twire(wire_edges);
         brep.add_tface(
-            Some(Surface3::Plane(rcad_kernel::geom::Plane { origin: a, normal: face_normal })),
+            Some(Surface3::Plane(rcad_kernel::geom::Plane::new(a, face_normal))),
             wire_sr, vec![], None, None, vec![], false,
         );
     }

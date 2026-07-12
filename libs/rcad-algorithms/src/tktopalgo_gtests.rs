@@ -83,7 +83,7 @@ struct MakeFaceStub {
 impl MakeFaceStub {
     pub fn from_plane(origin: DVec3, normal: DVec3) -> Self {
         let mut b = topods::BRep::new();
-        let surf = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane { origin, normal });
+        let surf = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(origin, normal));
         let v = b.add_tvertex(origin);
         let wire = b.add_twire(vec![]); // empty wire for unbounded face
         b.add_tface(Some(surf), wire, vec![], Some(origin), None, vec![], true);
@@ -109,7 +109,7 @@ impl MakeFaceStub {
             edges.push(b.add_tedge(Some(crv), v1, v2, [0.0, len]));
         }
         let wire = b.add_twire(edges);
-        let surf = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane { origin, normal });
+        let surf = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(origin, normal));
         b.add_tface(Some(surf), wire, vec![], Some(origin + x_axis * dx * 0.5 + y_axis * dy * 0.5), None, vec![], false);
         Self { brep: Some(b) }
     }

@@ -702,14 +702,14 @@ mod tkg3d_geom_plane_tests {
 
     #[test]
     fn plane_d0_eval() {
-        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let pt = p.point_at(3.0, 4.0);
         assert!((pt - DVec3::new(-4.0, 3.0, 0.0)).length() < TOL);
     }
 
     #[test]
     fn plane_default_domain_open() {
-        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let [u0, u1, v0, v1] = p.default_domain();
         assert!(u0 == -f64::INFINITY);
         assert!(u1 == f64::INFINITY);
@@ -719,14 +719,14 @@ mod tkg3d_geom_plane_tests {
 
     #[test]
     fn plane_normal_is_constant() {
-        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let n = p.normal_at(0.0, 0.0);
         assert!((n - DVec3::Z).length() < TOL);
     }
 
     #[test]
     fn plane_transform_translation() {
-        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 10.0));
         let tp = transform_surface(&p, &xform);
         let pt = tp.point_at(0.0, 0.0);
@@ -743,7 +743,7 @@ mod tkg3d_geom_offset_surface_tests {
 
     #[test]
     fn offset_surface_from_plane() {
-        let base = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let base = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 3.0 });
         let pt = off.point_at(1.0, 2.0);
         assert!((pt - DVec3::new(-2.0, 1.0, 3.0)).length() < TOL);
@@ -839,7 +839,7 @@ mod tkg3d_surface_eval_tests {
 
     #[test]
     fn surface_eval_plane_xy() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let p = s.point_at(1.0, 2.0);
         assert!((p - DVec3::new(-2.0, 1.0, 0.0)).length() < TOL);
     }
@@ -945,7 +945,7 @@ mod tkg3d_adaptor_tests {
 
     #[test]
     fn adaptor_surface_transform_plane() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 10.0));
         let ts = transform_surface(&s, &xform);
         let p = ts.point_at(1.0, 2.0);
@@ -1030,7 +1030,7 @@ mod tkg3d_surface_properties_tests {
 
     #[test]
     fn plane_default_domain_infinite() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let [u0, u1, v0, v1] = s.default_domain();
         assert!(u0 == -f64::INFINITY);
         assert!(u1 == f64::INFINITY);
@@ -1126,7 +1126,7 @@ mod tkg3d_grid_eval_surface_tests {
 
     #[test]
     fn grid_eval_plane() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         for i in 0..=3 {
             let u = i as f64;
             for j in 0..=3 {
@@ -1476,15 +1476,15 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_plane_equal() {
-        let a = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let b = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let b = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
 
     #[test]
     fn hash_plane_different_normal() {
-        let a = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let b = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::X });
+        let a = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let b = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::X));
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
 
@@ -1534,7 +1534,7 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_diff_types_not_equal() {
-        let a = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let b = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
         });
@@ -1543,7 +1543,7 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_same_object_equal() {
-        let a = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         assert_eq!(format!("{:?}", a), format!("{:?}", a));
     }
 

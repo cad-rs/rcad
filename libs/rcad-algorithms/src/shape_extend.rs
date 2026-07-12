@@ -347,10 +347,7 @@ struct SurfacePatch {
 /// use glam::DVec3;
 ///
 /// let mut composite = CompositeSurface::new();
-/// let plane = Surface3::Plane(rcad_kernel::geom::Plane {
-/// origin: DVec3::ZERO,
-/// normal: DVec3::Z,
-/// });
+/// let plane = Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
 /// composite.add_surface(plane, [0.0, 1.0], [0.0, 1.0]);
 /// assert_eq!(composite.patch_count(), 1);
 /// ```

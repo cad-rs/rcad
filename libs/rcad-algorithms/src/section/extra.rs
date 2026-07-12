@@ -133,10 +133,7 @@ pub fn section_parallel_planes(
 
     for i in 0..count {
         let plane_origin = origin + dir * (spacing * i as f64);
-        let plane = Plane {
-            origin: plane_origin,
-            normal: dir,
-        };
+        let plane = Plane::new(plane_origin, dir);
         results.push(section_by_plane(brep, &plane));
     }
 
@@ -154,7 +151,7 @@ pub fn section_along_path(
     for &t in param_values {
         let origin = path.point_at(t);
         let normal = path.tangent_at(t);
-        let plane = Plane { origin, normal };
+        let plane = Plane::new(origin, normal);
         results.push(section_by_plane(brep, &plane));
     }
 

@@ -72,7 +72,7 @@ fn closest_point_on_sphere_surface_known() {
 fn closest_point_on_plane_known() {
     // XY plane (z=0), query at (1, 2, 5).
     // Closest point = (1, 2, 0), distance = 5.
-    let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+    let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
     let result = closest_point_on_surface(&plane, DVec3::new(1.0, 2.0, 5.0), 8);
     let expected = DVec3::new(1.0, 2.0, 0.0);
     assert!(
@@ -132,7 +132,7 @@ fn gaussian_curvature_sphere_known() {
 #[test]
 fn gaussian_curvature_plane_zero() {
     // Plane: Gaussian curvature K = 0.
-    let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+    let plane = Plane::new(DVec3::ZERO, DVec3::Z);
     let k = gaussian_curvature(&Surface3::Plane(plane), 0.0, 0.0);
     assert!(
         k.abs() < 1e-9,

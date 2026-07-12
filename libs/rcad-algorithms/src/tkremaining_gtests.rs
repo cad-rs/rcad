@@ -202,10 +202,7 @@ mod tkgeom_algo_tests {
             major_radius: 150.0,
             minor_radius: 100.0,
         });
-        let a_plane = Surface3::Plane(Plane {
-            origin: DVec3::new(1262.224429, 425.040878, 363.609716),
-            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
-        });
+        let a_plane = Surface3::Plane(Plane::new(DVec3::new(1262.224429, 425.040878, 363.609716), DVec3::new(0.173648, 0.984808, 0.000000).normalize()));
         let a_curve_2d = crate::geom2d_api::project_curve_to_plane(&an_ell, &a_plane)
             .expect("Ellipse should project to 2D");
         let a_pnt_2d = DVec2::new(200.0, 200.0);
@@ -230,10 +227,7 @@ mod tkgeom_algo_tests {
             major_radius: 150.0,
             minor_radius: 100.0,
         };
-        let a_plane = Surface3::Plane(Plane {
-            origin: DVec3::new(1262.224429, 425.040878, 363.609716),
-            normal: DVec3::new(0.173648, 0.984808, 0.000000).normalize(),
-        });
+        let a_plane = Surface3::Plane(Plane::new(DVec3::new(1262.224429, 425.040878, 363.609716), DVec3::new(0.173648, 0.984808, 0.000000).normalize()));
         let a_curve_2d = crate::geom2d_api::project_curve_to_plane(&Curve3::Ellipse(an_ell), &a_plane)
             .expect("Ellipse should project to 2D");
         let a_from_curve_2d = crate::geom2d_api::project_curve_to_plane(&a_cir, &a_plane)
@@ -363,7 +357,7 @@ mod tkgeom_algo_tests {
     fn bspline_extrusion_intersection() {
         // OCCT: intersection of two BSpline surfaces. rcad: inttools::face_face::intersect_faces
         // Create two simple surfaces: plane and cylinder
-        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 5.0,
         });
@@ -866,9 +860,7 @@ mod intpatch_gtests {
     /// OCCT L52-62: ZeroSubdivision_ClampedToMinimum
     #[test]
     fn intpatch_polyhedron_zero_subdivision() {
-        let surf = geom::Surface3::Plane(geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        });
+        let surf = geom::Surface3::Plane(geom::Plane::new(DVec3::ZERO, DVec3::Z));
         let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 0, 0);
         assert!(a_poly.nb_triangles() > 0, "clamped polyhedron should produce triangles");
         assert!(a_poly.nb_points() > 0, "clamped polyhedron should produce points");
@@ -878,9 +870,7 @@ mod intpatch_gtests {
     /// Small (2,2) subdivision produces exactly 2*2*2=8 triangles.
     #[test]
     fn intpatch_polyhedron_small_subdivision() {
-        let surf = geom::Surface3::Plane(geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        });
+        let surf = geom::Surface3::Plane(geom::Plane::new(DVec3::ZERO, DVec3::Z));
         let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 2, 2);
         assert_eq!(a_poly.nb_triangles(), 2 * 2 * 2, "2x2 grid should produce 8 triangles");
     }
@@ -1057,9 +1047,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_no_overlap() {
         let sphere = make_sphere_surf();
-        let far_plane = geom::Surface3::Plane(geom::Plane {
-            origin: DVec3::new(10.0, 10.0, 10.0), normal: DVec3::X,
-        });
+        let far_plane = geom::Surface3::Plane(geom::Plane::new(DVec3::new(10.0, 10.0, 10.0), DVec3::X));
         let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere, 5, 5);
         let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&far_plane, 5, 5);
         let an_interf = crate::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
@@ -1096,7 +1084,7 @@ mod intpatch_gtests {
         // OCCT: IntPolyh_Intersection sphere-plane. rcad: IntPatchIntersection (analytical).
         let mut inter = IntPatchIntersection::new();
         let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 });
-        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         inter.perform(&sphere, &plane, 1e-7, 1e-7);
         assert!(inter.nb_lines() > 0, "Sphere-plane should produce intersection lines");
         // Analytical circle has no marching points; validate by curve type
@@ -1121,8 +1109,8 @@ mod intpatch_gtests {
     #[test] fn intpolyh_two_planes_section_line() {
         // OCCT: IntPolyh_Intersection two planes. rcad: IntPatchIntersection (analytical).
         let mut inter = IntPatchIntersection::new();
-        let plane1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let plane2 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::new(0.0, 1.0, 1.0).normalize() });
+        let plane1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let plane2 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::new(0.0, 1.0, 1.0).normalize()));
         inter.perform(&plane1, &plane2, 1e-7, 1e-7);
         assert!(inter.nb_lines() > 0, "Two planes should intersect in a line");
     }

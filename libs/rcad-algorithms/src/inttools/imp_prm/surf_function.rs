@@ -64,9 +64,7 @@ impl SurfFunction {
     /// OCCT L37: default constructor
     pub fn new() -> Self {
         Self {
-            surf: Surface3::Plane(rcad_kernel::geom::Plane {
-                origin: DVec3::ZERO, normal: DVec3::Z,
-            }),
+            surf: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             quad: Quadric::new(),
             tol: 1e-7,
             u: 0.0, v: 0.0,

@@ -509,10 +509,7 @@ mod tests {
     #[test]
     fn plane_bspline_corners() {
         use crate::geom::Plane;
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
         let bs = plane_to_bspline(&plane);
         // Should evaluate points at corners of the [-1,1]×[-1,1] domain
         let p00 = bs.point_at(0.0, 0.0);

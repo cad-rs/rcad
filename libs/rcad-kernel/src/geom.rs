@@ -264,13 +264,43 @@ pub struct Plane {
     pub origin: Point3,
     /// Unit normal vector (OCCT gp_Dir invariant). Use Plane::new() for normalized construction.
     pub normal: Vec3,
+    /// U-axis direction (X direction of OCCT gp_Ax3). Orthogonal to normal.
+    /// Determines the U=0 direction in the plane's (u, v) parameterization.
+    pub u_dir: Vec3,
+    /// V-axis direction (Y direction of OCCT gp_Ax3, = normal × u_dir).
+    /// Orthogonal to both normal and u_dir.
+    pub v_dir: Vec3,
 }
 
 impl Plane {
     /// OCCT-aligned: construct from origin and normal.
-    /// Normal is normalized to unit length (gp_Dir invariant).
+    /// Equivalent to `gp_Pln(gp_Pnt, gp_Dir)` which internally creates
+    /// a `gp_Ax3` with the following X direction computation:
+    /// 1. Use X (1,0,0) as the reference direction
+    /// 2. If |N·X| ≥ 1 - Precision::Angular() (N parallel to X), use Z (0,0,1) instead
+    /// 3. u_dir = (ref - N * (N · ref)).normalize()
+    /// 4. v_dir = N × u_dir
     pub fn new(origin: DVec3, normal: DVec3) -> Self {
-        Plane { origin, normal: normal.normalize_or_zero() }
+        let normal = normal.normalize_or_zero();
+        // OCCT-aligned: gp_Ax3 reference direction selection
+        let ref_dir = if normal.x.abs() > 1.0 - 1e-12 {
+            DVec3::Z
+        } else {
+            DVec3::X
+        };
+        let u_dir = (ref_dir - normal * ref_dir.dot(normal)).normalize_or_zero();
+        let v_dir = normal.cross(u_dir).normalize_or_zero();
+        Plane { origin, normal, u_dir, v_dir }
+    }
+
+    /// OCCT-aligned: construct from origin, normal, and explicit u_dir.
+    /// Equivalent to `gp_Pln(gp_Ax3(origin, normal, u_dir))`.
+    /// v_dir is computed as `normal × u_dir` (right-handed orthonormal frame).
+    pub fn with_axes(origin: DVec3, normal: DVec3, u_dir: DVec3) -> Self {
+        let normal = normal.normalize_or_zero();
+        let u_dir = u_dir.normalize();
+        let v_dir = normal.cross(u_dir).normalize_or_zero();
+        Plane { origin, normal, u_dir, v_dir }
     }
 }
 
@@ -535,7 +565,7 @@ pub fn bspline_to_plane(bsp: &BSplineSurface) -> Plane {
         }
     }
 
-    Plane { origin, normal }
+    Plane::new(origin, normal)
 }
 
 /// A rational or non-rational Bezier surface (tensor-product bicubic patch).
@@ -1423,12 +1453,9 @@ impl CurveEval for Curve3 {
 // --- SurfaceEval implementations ---
 
 impl SurfaceEval for Plane {
-    /// OCCT-aligned: P(u,v) = origin + u*x_dir + v*y_dir with deterministic UV frame.
-    /// x_dir = any_perpendicular(normal); y_dir = normal × x_dir.
+    /// OCCT-aligned: P(u,v) = origin + u*u_dir + v*v_dir using stored axes.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.normal);
-        let y_ax = self.normal.cross(x_ax);
-        self.origin + u * x_ax + v * y_ax
+        self.origin + u * self.u_dir + v * self.v_dir
     }
     fn normal_at(&self, _u: f64, _v: f64) -> DVec3 {
         self.normal
@@ -1437,9 +1464,7 @@ impl SurfaceEval for Plane {
         [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
-        let x_ax = any_perpendicular(self.normal);
-        let y_ax = self.normal.cross(x_ax);
-        (self.origin + u * x_ax + v * y_ax, x_ax, y_ax)
+        (self.origin + u * self.u_dir + v * self.v_dir, self.u_dir, self.v_dir)
     }
 }
 
@@ -2878,10 +2903,7 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
 /// OCCT-aligned: apply TopLoc_Location transform to a Surface3.
 pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     match surface {
-        Surface3::Plane(p) => Surface3::Plane(Plane {
-            origin: loc.transform_point3(p.origin),
-            normal: loc.transform_vector3(p.normal).normalize_or_zero(),
-        }),
+        Surface3::Plane(p) => Surface3::Plane(Plane::new(loc.transform_point3(p.origin), loc.transform_vector3(p.normal).normalize_or_zero())),
         Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
             origin: loc.transform_point3(c.origin),
             axis: loc.transform_vector3(c.axis).normalize_or_zero(),
@@ -3857,9 +3879,9 @@ mod eval_tests {
 
     #[test]
     fn plane_eval_d0_d1() {
-        // Plane with normal Z: x_ax = any_perpendicular(Z) = Y, y_ax = Z.cross(Y) = -X
-        // P(u,v) = u*Y + v*(-X). So P(2,3) = (-3, 2, 0)
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        // Plane with normal Z: OCCT gp_Ax3 gives u_dir=X, v_dir=Y.
+        // P(u,v) = u*X + v*Y. So P(2,3) = (2, 3, 0)
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
         let p = plane.point_at(2.0, 3.0);
         // Should be in the plane (Z=0)
         assert!((p.z).abs() < 1e-10);
@@ -4453,11 +4475,11 @@ mod eval_tests {
 
     #[test]
     fn plane_derivatives_constant() {
-        let p = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        // derivatives = (point, dPdu, dPdv). For normal=Z: dPdu=Y, dPdv=-X
+        let p = Plane::new(DVec3::ZERO, DVec3::Z);
+        // OCCT-aligned: gp_Ax3(gp_Pnt, gp_Dir) with normal=Z gives u_dir=X, v_dir=Y
         let (pt, dpu, dpv) = p.derivatives(2.0, 3.0);
-        assert!((dpu - DVec3::Y).length() < 1e-10);
-        assert!((dpv - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((dpu - DVec3::X).length() < 1e-10);
+        assert!((dpv - DVec3::Y).length() < 1e-10);
         // normal should be perpendicular to both dPdu and dPdv
         assert!(dpu.dot(p.normal_at(0.0, 0.0)).abs() < 1e-10);
         assert!(dpv.dot(p.normal_at(0.0, 0.0)).abs() < 1e-10);
@@ -4616,10 +4638,11 @@ mod eval_tests {
 
     #[test]
     fn surface3_plane_dispatch() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        // OCCT-aligned: normal=Z gives u_dir=X, v_dir=Y
         let (_p, dpu, dpv) = s.derivatives(1.0, 2.0);
-        assert!((dpu - DVec3::Y).length() < 1e-10);
-        assert!((dpv - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((dpu - DVec3::X).length() < 1e-10);
+        assert!((dpv - DVec3::Y).length() < 1e-10);
         assert!(s.normal_at(1.0, 2.0) == DVec3::Z);
     }
 

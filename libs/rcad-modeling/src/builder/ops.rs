@@ -192,10 +192,7 @@ fn revolve_full_turn_tessellated(
                     v0,
                 )?;
 
-                let surface = Surface3::Plane(Plane {
-                    origin: p00,
-                    normal: nrm,
-                });
+                let surface = Surface3::Plane(Plane::new(p00, nrm));
                 make_face(
                     &mut result,
                     surface,
@@ -265,10 +262,7 @@ fn revolve_full_turn_tessellated(
                     v0,
                 )?;
 
-                let surface = Surface3::Plane(Plane {
-                    origin: p00,
-                    normal: nrm,
-                });
+                let surface = Surface3::Plane(Plane::new(p00, nrm));
                 make_face(
                     &mut result,
                     surface,
@@ -352,10 +346,7 @@ fn revolve_full_turn_tessellated(
                     v00,
                 )?;
 
-                let surface = Surface3::Plane(Plane {
-                    origin: p00,
-                    normal: lat_normal,
-                });
+                let surface = Surface3::Plane(Plane::new(p00, lat_normal));
                 make_face(
                     &mut result,
                     surface,
@@ -525,10 +516,7 @@ fn extrude_with_history_inner(
             });
         }
         let bot_normal = -dir;
-        let surface = Surface3::Plane(Plane {
-            origin: bot_pts[0],
-            normal: bot_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(bot_pts[0], bot_normal));
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
@@ -550,10 +538,7 @@ fn extrude_with_history_inner(
             });
         }
         let top_normal = dir;
-        let surface = Surface3::Plane(Plane {
-            origin: top_pts[0],
-            normal: top_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(top_pts[0], top_normal));
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
@@ -647,10 +632,7 @@ fn extrude_with_history_inner(
                 forward: true,
             },
         ]);
-        let surface = Surface3::Plane(Plane {
-            origin: a,
-            normal: lat_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(a, lat_normal));
         let face_idx = make_face(&mut result, surface, wire, vec![])?;
         lateral_faces.push(face_idx);
         profile_edge_to_lateral.insert(i, face_idx);
@@ -785,10 +767,7 @@ fn revolve_with_history_inner(
                 });
             }
             let bot_normal = quad_normal(bot_pts_ref[0], bot_pts_ref[1], bot_pts_ref[2]);
-            let surface = Surface3::Plane(Plane {
-                origin: bot_pts_ref[0],
-                normal: bot_normal,
-            });
+            let surface = Surface3::Plane(Plane::new(bot_pts_ref[0], bot_normal));
             make_face(&mut result, surface, make_wire(wire_edges), vec![])?
         };
         bottom_cap.push(bot_face);
@@ -819,10 +798,7 @@ fn revolve_with_history_inner(
                 });
             }
             let top_normal = quad_normal(top_pts_ref[0], top_pts_ref[1], top_pts_ref[2]);
-            let surface = Surface3::Plane(Plane {
-                origin: top_pts_ref[0],
-                normal: top_normal,
-            });
+            let surface = Surface3::Plane(Plane::new(top_pts_ref[0], top_normal));
             make_face(&mut result, surface, make_wire(wire_edges), vec![])?
         };
         top_cap.push(top_face);
@@ -921,10 +897,7 @@ fn revolve_with_history_inner(
                 forward: true,
             },
         ]);
-        let surface = Surface3::Plane(Plane {
-            origin: p0,
-            normal: lat_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(p0, lat_normal));
         let face_idx = make_face(&mut result, surface, wire, vec![])?;
         lateral_faces.push(face_idx);
         profile_edge_to_lateral.insert(i, face_idx);
@@ -1025,10 +998,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftH
         let centroid_0: DVec3 = pts.iter().sum::<DVec3>() / n as f64;
         let centroid_1: DVec3 = profiles[1].iter().sum::<DVec3>() / n as f64;
         let bot_normal = (centroid_0 - centroid_1).normalize_or_zero();
-        let surface = Surface3::Plane(Plane {
-            origin: pts[0],
-            normal: bot_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(pts[0], bot_normal));
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
@@ -1061,10 +1031,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftH
         let centroid_prev: DVec3 = profiles[s - 2].iter().sum::<DVec3>() / n as f64;
         let centroid_top: DVec3 = pts.iter().sum::<DVec3>() / n as f64;
         let top_normal = (centroid_top - centroid_prev).normalize_or_zero();
-        let surface = Surface3::Plane(Plane {
-            origin: pts[0],
-            normal: top_normal,
-        });
+        let surface = Surface3::Plane(Plane::new(pts[0], top_normal));
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
@@ -1147,10 +1114,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftH
             ]);
             let face_idx = make_face(
                 &mut result,
-                Surface3::Plane(Plane {
-                    origin: a,
-                    normal: lat_normal,
-                }),
+                Surface3::Plane(Plane::new(a, lat_normal)),
                 wire,
                 vec![],
             )?;
@@ -1343,10 +1307,7 @@ mod tests {
                 forward: true,
             });
         }
-        let surface = Surface3::Plane(Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        });
+        let surface = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         make_face(&mut brep, surface, make_wire(wires), vec![]).unwrap();
         brep
     }
@@ -1411,10 +1372,7 @@ mod tests {
                 forward: true,
             });
         }
-        let surface = Surface3::Plane(Plane {
-            origin: pts[0],
-            normal: DVec3::Z,
-        });
+        let surface = Surface3::Plane(Plane::new(pts[0], DVec3::Z));
         make_face(&mut brep, surface, make_wire(wires), vec![]).unwrap();
         let brep_t = brep.to_topods();
 
