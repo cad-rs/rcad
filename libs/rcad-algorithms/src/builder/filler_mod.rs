@@ -1683,9 +1683,46 @@ impl<'a> BooleanBuilder<'a> {
 
                 
                 {
-                    let sf: Vec<topods::ShapeRef> = result_faces.iter()
-                        .filter_map(|&rfi| self.my_face_refs.borrow().get(rfi).copied())
-                        .collect();
+                    let mut sf: Vec<topods::ShapeRef> = Vec::new();
+                    for &rfi in &result_faces {
+                        let sr = self.my_face_refs.borrow().get(rfi).copied().unwrap_or(topods::ShapeRef::NULL);
+                        if sr.ptr_id != 0 {
+                            sf.push(sr);
+                        } else {
+                            // OCCT-aligned: Build real TShape::Face for synthetic refs (same as Phase 0).
+                            let origin = &result.face_origins[rfi];
+                            let dsfi = match origin {
+                                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                                _ => None,
+                            };
+                            if let Some(dfi) = dsfi {
+                                let face = &self.ds.faces[dfi];
+                                let e_base = self.ds.vertices.len();
+                                let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+                                for &ei in &face.boundary_edges {
+                                    if ei >= self.ds.edges.len() { continue; }
+                                    let e = &self.ds.edges[ei];
+                                    let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
+                                    let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
+                                    let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
+                                    outer_edges.push(e_sr);
+                                }
+                                if outer_edges.len() >= 3 {
+                                    let ow = t.add_twire(outer_edges);
+                                    let real_sr = t.add_tface(Some(face.surface.clone()), ow, vec![],
+                                        Some(self.ds.vertices[face.boundary_verts[0]].point),
+                                        None, vec![], face.natural_restriction);
+                                    if let Some(slot) = self.my_face_refs.borrow_mut().get_mut(rfi) {
+                                        *slot = real_sr;
+                                    }
+                                    sf.push(real_sr);
+                                }
+                            }
+                        }
+                    }
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
