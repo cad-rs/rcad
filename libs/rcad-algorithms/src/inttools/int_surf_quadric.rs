@@ -378,17 +378,9 @@ impl Quadric {
     pub fn location(&self) -> DVec3 { self.location }
 }
 
-/// Helper: compute any perpendicular pair to a given direction.
+/// Helper: compute a perpendicular pair to a given direction (OCCT-aligned).
 fn any_perpendicular_pair(dir: DVec3) -> (DVec3, DVec3) {
-    let abs_dir = dir.abs();
-    let ref_vec = if abs_dir.x <= abs_dir.y && abs_dir.x <= abs_dir.z {
-        DVec3::X
-    } else if abs_dir.y <= abs_dir.z {
-        DVec3::Y
-    } else {
-        DVec3::Z
-    };
-    let x_dir = dir.cross(ref_vec).normalize_or_zero();
+    let x_dir = rcad_kernel::geom::any_perpendicular(dir);
     let y_dir = dir.cross(x_dir).normalize_or_zero();
     (x_dir, y_dir)
 }

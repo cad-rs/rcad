@@ -455,12 +455,10 @@ pub(super) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 pub(super) fn any_perpendicular_dvec3(v: glam::DVec3) -> glam::DVec3 {
-    let helper = if v.dot(glam::DVec3::Y).abs() < 0.9 {
-        glam::DVec3::Y
-    } else {
-        glam::DVec3::X
-    };
-    v.cross(helper).normalize_or_zero()
+    // OCCT-aligned: gp_Ax2 reference direction selection (X ref, Z fallback)
+    let ref_dir = if v.x.abs() > 1.0 - 1e-12 { glam::DVec3::Z } else { glam::DVec3::X };
+    let perp = ref_dir - v * ref_dir.dot(v);
+    perp.normalize_or_zero()
 }
 
 /// Compress an expanded knot vector into (multiplicities, distinct_knot_values).
