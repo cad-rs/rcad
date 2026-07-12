@@ -167,6 +167,13 @@ impl DS {
  self.edges[edge_idx].pave_blocks[0]
  .0.write().unwrap().append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
  }
+ // OCCT L499: aPaveBlock->Update(myPaveBlocksPool.Appended(), false);
+ // OCCT L500: anEdgeInfo.SetReference(myPaveBlocksPool.Length() - 1);
+ // rcad: flat index for this edge = nV + edge_idx
+ let si_idx = self.vertices.len() + edge_idx;
+ if si_idx < self.shape_info.len() {
+  self.shape_info[si_idx].reference = edge_idx as i64;
+ }
  }
 
  ///  ?OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
