@@ -39,7 +39,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::{
     CurveEval,
-    geom::{Curve3, Surface3, Line3, Circle3, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface},
+    geom::{Curve3, Surface3, Line3, Circle3, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, any_perpendicular},
     topods::{BRep, ShapeRef, TShape, Orientation},
 };
 
@@ -1069,7 +1069,7 @@ fn push_arc_edge(
 /// Find the parameter `t` on a circle such that
 /// `cos(t) x_ax + sin(t) y_ax = dir` (with `x_ax ⟂ normal`, `y_ax = normal × x_ax`).
 fn circle_t_for_dir(dir: DVec3, normal: DVec3) -> f64 {
-    let x_ax = rcad_kernel::geom::any_perpendicular(normal);
+    let x_ax = any_perpendicular(normal);
     let y_ax = normal.cross(x_ax).normalize();
     let d = dir.normalize();
     f64::atan2(d.dot(y_ax).clamp(-1.0, 1.0), d.dot(x_ax).clamp(-1.0, 1.0))
@@ -1253,7 +1253,7 @@ fn apply_cylinder_fillet(
         origin: arc_c_v1,
         axis: edge_dir,
         radius: r,
-        ref_dir: rcad_kernel::geom::any_perpendicular(edge_dir),
+        ref_dir: any_perpendicular(edge_dir),
     });
 
     let fillet_face_sr = brep.add_tface(
@@ -1429,17 +1429,6 @@ fn build_trimmed_face(
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 // Utility Functions
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-/// Get any vector perpendicular to the given vector.
-fn any_perpendicular(v: DVec3) -> DVec3 {
-    let v = v.normalize_or(DVec3::Z);
-    let perp = if v.x.abs() > 0.5 {
-        DVec3::new(-v.y, v.x, 0.0)
-    } else {
-        DVec3::new(0.0, -v.z, v.y)
-    };
-    perp.normalize_or(DVec3::X)
-}
 
 /// Interpolate between two radii with tension parameter.
 fn interpolate_radius(r1: f64, r2: f64, t: f64, tension: f64) -> f64 {
