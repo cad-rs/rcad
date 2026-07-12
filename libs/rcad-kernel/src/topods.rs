@@ -1307,24 +1307,30 @@ impl BRep {
             if let TShape::Solid(sd) = ts.as_ref() {
                 let mut shells = Vec::new();
                 for shell_sr in &sd.shells {
+                    if shell_sr.index >= self.tshapes.len() { continue; }
                     if let TShape::Shell(shd) = &*self.tshapes[shell_sr.index] {
                         let mut faces = Vec::new();
                         for face_sr in &shd.faces {
+                            if face_sr.index >= self.tshapes.len() { continue; }
                             if let TShape::Face(fd) = &*self.tshapes[face_sr.index] {
                                 let outer_wire = {
                                     let mut edges = Vec::new();
-                                    if let TShape::Wire(wd) = &*self.tshapes[fd.outer_wire.index] {
-                                        for esr in &wd.edges {
-                                            edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                    if fd.outer_wire.index < self.tshapes.len() {
+                                        if let TShape::Wire(wd) = &*self.tshapes[fd.outer_wire.index] {
+                                            for esr in &wd.edges {
+                                                edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                            }
                                         }
                                     }
                                     crate::topology::Wire { edges }
                                 };
                                 let inner_wires = fd.inner_wires.iter().map(|iw_sr| {
                                     let mut edges = Vec::new();
-                                    if let TShape::Wire(wd) = &*self.tshapes[iw_sr.index] {
-                                        for esr in &wd.edges {
-                                            edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                    if iw_sr.index < self.tshapes.len() {
+                                        if let TShape::Wire(wd) = &*self.tshapes[iw_sr.index] {
+                                            for esr in &wd.edges {
+                                                edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                            }
                                         }
                                     }
                                     crate::topology::Wire { edges }
