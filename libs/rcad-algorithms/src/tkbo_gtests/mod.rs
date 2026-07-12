@@ -415,9 +415,9 @@ mod pave_filler_tests {
         let cone_b = (cone).clone();
         let box_b = (box_).clone();
 
-        let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&cone_b, &box_b);
-        assert!(fuser.build(), "Boolean fuse of cone and box should succeed");
-        assert!(get_volume(fuser.shape()) > 0.0);
+        let result = crate::brep_algo_api::fuse(&cone_b, &box_b)
+            .expect("Boolean fuse of cone and box should succeed");
+        assert!(get_volume(&result) > 0.0);
     }
 
     #[test]
@@ -425,9 +425,9 @@ mod pave_filler_tests {
         let sphere_b = (make_unit_sphere().clone());
         let box_b = (make_unit_box().clone());
 
-        let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&sphere_b, &box_b);
-        assert!(fuser.build(), "Boolean fuse should succeed");
-        assert!(get_volume(fuser.shape()) > 0.0);
+        let result = crate::brep_algo_api::fuse(&sphere_b, &box_b)
+            .expect("Boolean fuse should succeed");
+        assert!(get_volume(&result) > 0.0);
     }
 }
 
@@ -556,9 +556,9 @@ mod bop_common_simple_tests {
         let b1 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
         let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
 
-        let mut common = crate::brep_algo_api::BRepAlgoAPI_Common::new(&b1, &b2);
-        assert!(common.build(), "Common operation should succeed");
-        assert!(get_surface_area(common.shape()) > 0.0);
+        let result = crate::brep_algo_api::common(&b1, &b2)
+            .expect("Common operation should succeed");
+        assert!(get_surface_area(&result) > 0.0);
     }
 }
 
