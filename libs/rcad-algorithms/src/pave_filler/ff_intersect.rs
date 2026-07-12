@@ -20,9 +20,13 @@ impl<'a> super::PaveFiller<'a> {
  return;
  }
 
- // OCCT-aligned: cross-group face pair iteration (BOPDS_Iterator).
- // BVH-based candidate_pairs returns BRep tshape indices; DS uses flat face order.
- // PairIterator avoids tshape-to-flat index mismatch.
+ // OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+ // rcad's external Bvh::build(brep) uses BRep tshape indices, while the DS
+ // identifies faces by flat face order. OCCT avoids this mismatch because
+ // its BVH (BOPTools_BoxTree) is built from DS ShapeInfo indices, using the
+ // same index space as BOPDS_Iterator.  For FF pair detection, PairIterator
+ // (which mirrors BOPDS_Iterator for cross-group pairs) is the correct path.
+ // The internal DsBvh in BOPDS_Iterator provides equivalent BVH acceleration.
  let a_fcount = self.ds.a_face_count;
  let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
  while fit.more() {
