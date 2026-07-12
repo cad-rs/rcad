@@ -351,6 +351,10 @@ pub(crate) fn boolean_op_with_history_generic(
 ///
 /// ✅ OCCT-aligned: `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
 /// Uses BVH when both operands have faces.
+/// Generic boolean operation for Union / Common / Cut.
+///
+/// ✅ OCCT-aligned: `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
+/// Uses BVH when both operands have faces.
 pub fn boolean_op_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
 ) -> Result<topods::BRep, BooleanError> {

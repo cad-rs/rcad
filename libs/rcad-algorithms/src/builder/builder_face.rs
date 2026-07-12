@@ -135,10 +135,17 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
                 &ds_ei_to_sr, &sr_index_to_ds_ei, self.ds);
             let fi = self.my_result.faces.len().wrapping_sub(1);
             if fi < self.my_result.faces.len() {
-                self.my_result.emit_face_topods(t, &mut Vec::new());
-                let last_idx = t.tshapes.len().wrapping_sub(1);
-                if last_idx < t.tshapes.len() {
-                    self.my_areas.push(topods::ShapeRef::synthetic(last_idx));
+                let mut real_face_refs = Vec::new();
+                self.my_result.emit_face_topods(t, &mut real_face_refs);
+                if let Some(&real_ref) = real_face_refs.last() {
+                    if !real_ref.is_null() {
+                        self.my_areas.push(real_ref);
+                    }
+                } else {
+                    let last_idx = t.tshapes.len().wrapping_sub(1);
+                    if last_idx < t.tshapes.len() {
+                        self.my_areas.push(topods::ShapeRef::synthetic(last_idx));
+                    }
                 }
             }
         }
