@@ -447,19 +447,26 @@ impl<'a> super::PaveFiller<'a> {
  if fi == usize::MAX { continue; }
  let pcurve = if k == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
  if let Some(pc) = pcurve {
- let uv = pc.point_at(mid_t);
- let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
- if !in_on {
-  if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} has_pcurve=true uv=({},{}) in_on={}", k, fi, uv.x, uv.y, in_on); }
-  ok = false; break;
- }
+  let uv = pc.point_at(mid_t);
+  let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
+  if !in_on {
+   // OCCT-aligned: fallback to 3D projection when pcurve-based check fails.
+   // This handles sub-PBs whose midpoint lies outside the trimmed face domain
+   // but whose 3D point is valid on the face surface. OCCT achieves this with
+   // finer sub-PB subdivision (more ext_paves); rcad falls back to projection.
+   let valid = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
+   if !valid {
+    if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} pcurve_uv=({:.4},{:.4}) proj_fail", k, fi, uv.x, uv.y); }
+    ok = false; break;
+   }
+  }
  } else {
- let surf = if k == 0 { &self.ds.faces[n_f1].surface } else { &self.ds.faces[n_f2].surface };
- let valid = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
- if !valid {
-  if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} has_pcurve=false valid={} tol={}", k, fi, valid, a_tol_r3d); }
-  ok = false; break;
- }
+  let surf = if k == 0 { &self.ds.faces[n_f1].surface } else { &self.ds.faces[n_f2].surface };
+  let valid = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
+  if !valid {
+   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} no_pcurve proj_fail", k, fi); }
+   ok = false; break;
+  }
  }
  }
  if !ok {
