@@ -843,31 +843,69 @@ impl<'a> BooleanBuilder<'a> {
     ///     --add all image shapes; else --add the original shape.
     /// --OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form for ALL types.
-    /// --OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
-    ///   Generic loop over myArguments matching OCCT form:
-    ///   for each source shape of matching type:
-    ///     if myImages bound --fence-add splits; else --fence-add original.
+    /// ✅ OCCT-aligned: BuildResult (BOPAlgo_Builder.cxx L130-168).
+    ///   For each argument (myArguments):
+    ///     Path A — argument's ShapeType == theType: process directly.
+    ///     Path B — TopExp_Explorer traverses sub-shapes of theType:
+    ///       if myImages.IsBound(sub) → fence-add image shapes
+    ///       else → fence-add the original sub-shape.
+    ///   rcad: for Face with solid/compound arguments (Path B), DS face array
+    ///   provides the equivalent of TopExp_Explorer, grouped by argument side.
     pub(super) fn build_result(&self, the_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if the_type == rcad_kernel::topods::ShapeType::Edge && self.my_edge_map.borrow().is_empty() {
             *self.my_edge_map.borrow_mut() = vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
         }
+
         let args = self.my_arguments.borrow();
-        for a_s in args.iter() {
-            if a_s.shape_type(&*t) != the_type { continue; }
-            let has_images = self.my_images.borrow().contains_key(a_s);
-            if !has_images {
-                if a_m_fence.insert(a_s.index) {
-                    self.add_to_result(*a_s, the_type, result, &mut *t);
+        for (arg_idx, a_s) in args.iter().enumerate() {
+            if a_s.shape_type(&*t) == the_type {
+                // Path A — argument directly matches target type.
+                let has_images = self.my_images.borrow().contains_key(a_s);
+                if !has_images {
+                    if a_m_fence.insert(a_s.index) {
+                        self.add_to_result(*a_s, the_type, result, &mut *t);
+                    }
+                } else if let Some(imgs) = self.my_images.borrow().get(a_s) {
+                    for &img_sr in imgs {
+                        if a_m_fence.insert(img_sr.index) {
+                            self.add_to_result(img_sr, the_type, result, &mut *t);
+                        }
+                    }
                 }
-            } else if let Some(imgs) = self.my_images.borrow().get(a_s) {
-                for &img_sr in imgs {
-                    if a_m_fence.insert(img_sr.index) {
-                        self.add_to_result(img_sr, the_type, result, &mut *t);
+            } else if the_type == rcad_kernel::topods::ShapeType::Face {
+                // Path B — TopExp_Explorer on Face sub-shapes of this argument.
+                // rcad: DS data replaces explorer; side maps argument index to origin.
+                let side = if arg_idx == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+                let f_base = self.ds.vertices.len() + self.ds.edges.len();
+                let side_offset = if side == ShapeOrigin::ShapeA { 0usize } else { self.ds.a_face_count };
+                for (fi, df) in self.ds.faces.iter().enumerate() {
+                    if df.origin != side { continue; }
+                    let src_sr = self.brep_sr(f_base + side_offset + df.source_face_idx);
+                    let has_images = self.my_images.borrow().contains_key(&src_sr);
+                    if !has_images {
+                        // Narrow scope for my_face_refs borrow to avoid conflict
+                        // with add_to_result which borrows my_face_refs mutably.
+                        let add_sr = {
+                            let mfr = self.my_face_refs.borrow();
+                            let face_sr = mfr.get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
+                            if !face_sr.is_null() { face_sr } else { src_sr }
+                        };
+                        if a_m_fence.insert(add_sr.index) {
+                            self.add_to_result(add_sr, the_type, result, &mut *t);
+                        }
+                    } else if let Some(imgs) = self.my_images.borrow().get(&src_sr) {
+                        for &img_sr in imgs {
+                            if a_m_fence.insert(img_sr.index) {
+                                self.add_to_result(img_sr, the_type, result, &mut *t);
+                            }
+                        }
                     }
                 }
             }
+            // Path B for other types (e.g. Edge inside Solid) — no sub-shape
+            // explorer implemented; the requirement is handled upstream.
         }
     }
 
