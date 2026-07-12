@@ -20,35 +20,17 @@ impl<'a> super::PaveFiller<'a> {
  return;
  }
 
- if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
- // Build reverse maps: BRep face index  ?position in a_faces/b_faces
- let a_max_idx = a_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
- let b_max_idx = b_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
- let mut a_rev = vec![usize::MAX; a_max_idx + 1];
- for (pos, &dsi) in a_faces.iter().enumerate() {
- a_rev[self.ds.faces[dsi].source_face_idx] = pos;
- }
- let mut b_rev = vec![usize::MAX; b_max_idx + 1];
- for (pos, &dsi) in b_faces.iter().enumerate() {
- b_rev[self.ds.faces[dsi].source_face_idx] = pos;
- }
-
- let candidates = Bvh::candidate_pairs(bvh_a, bvh_b);
+ if let (Some(ref fbvh)) = self.face_bvh {
+ // DS-based BVH: indices are DS face indices, no a_rev/b_rev mapping.
+ let candidates = crate::bvh::DsBvh::candidate_pairs(fbvh, fbvh);
+ // Cross-origin filter + dedup.
  let mut processed_pairs = std::collections::HashSet::new();
- for (fa_brep, fb_brep) in candidates {
- if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep))
- && ai != usize::MAX && bi != usize::MAX {
- //  OCCT-aligned: BVH may produce duplicate candidate pairs when a face appears
- // in multiple intersecting leaf nodes, causing duplicate intersection curves.
- // OCCT PaveFiller processes each face pair once (FF matrix uses BOPDS_IndexRange
- // to mark pairs as already processed).
- if !processed_pairs.insert((ai, bi)) { continue; }
- let af = a_faces[ai];
- let bf = b_faces[bi];
- if self.should_skip_glued_face_pair(af, bf) {
- continue;
- }
- self.intersect_face_face(af, bf);
+ for &(fa, fb) in &candidates {
+ if self.ds.faces[fa].origin == self.ds.faces[fb].origin { continue; }
+ if !processed_pairs.insert((fa, fb)) { continue; }
+ if self.ds.has_interf_ff(fa, fb) { continue; }
+ if !self.should_skip_glued_face_pair(fa, fb) {
+ self.intersect_face_face(fa, fb);
  }
  }
  } else {

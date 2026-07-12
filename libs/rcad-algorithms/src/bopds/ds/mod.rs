@@ -1,3 +1,4 @@
+﻿pub mod face_aabb;
 pub mod types;
 pub use types::*;
 pub mod iterator;
@@ -199,7 +200,7 @@ impl DS {
     }
   }
 
-  /// ✅ OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
+  /// 鉁?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
   ///   Populates map_ve from edges array.  Called by init_shape_info()
   ///   after all edges are loaded.
   pub fn build_map_ve(&mut self) {
@@ -233,7 +234,7 @@ impl DS {
   self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
   }
 
-  /// ✅ OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
+  /// 鉁?OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
   ///   Global interference pair fence.  Checks (i1, i2) with i1 < i2 against
   ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
   ///   if it already exists.  Call before adding to any typed interference vec.
@@ -726,7 +727,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.is_new = self.vertices[vi].origin.is_none();
   si.box_min = Some(self.vertices[vi].point);
   si.box_max = Some(self.vertices[vi].point);
-  // ✅ OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
+  // 鉁?OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
   //   theAdditionalTolerance = fuzzy_tol * 0.5 (matching OCCT PaveFiller UpdateTolerance).
   si.box_gap = self.vertices[vi].geom_tol + self.fuzzy_tol * 0.5;
   self.shape_info.push(si);
@@ -745,15 +746,15 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.box_min = Some(p1.min(p2));
   si.box_max = Some(p1.max(p2));
   }
-  // ✅ OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
+  // 鉁?OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
   // OCCT stores sub-shape indices as flat shape indices into myLines.
   si.sub_shapes.push(nv + sv);
   if sv != ev {
   si.sub_shapes.push(nv + ev);
   }
-  // ✅ OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
+  // 鉁?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
   si.box_gap = self.edges[ei].geom_tol + self.fuzzy_tol * 0.5;
-  // ✅ OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
+  // 鉁?OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
   //   OCCT BOPAlgo_Builder_1.cxx prepareFaces: SetFlag(faceIndex) for deg edges.
   //   rcad: set flag >= 0 when start==end vertex (degenerated geometry).
   if sv == ev {
@@ -786,7 +787,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.box_max = Some(mx);
   }
   }
-  // ✅ OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
+  // 鉁?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
   si.box_gap = self.faces[fi].geom_tol + self.fuzzy_tol * 0.5;
   self.shape_info.push(si);
   }
@@ -829,7 +830,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   self.shape_info.push(si);
   }
   self.nb_source_shapes = self.shape_info.len();
-  // ✅ OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
+  // 鉁?OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
   self.build_map_ve();
   }
 
@@ -1238,7 +1239,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  /// For each original wire whose edges were split by the PaveFiller,
  /// build a new edge list from the split sub-edges.
  ///
- /// Uses DS internal data only — no external BRep needed.
+ /// Uses DS internal data only 鈥?no external BRep needed.
  pub fn build_container_images(&mut self) {
  // Count total wires across all solids/shells in the DS
  let n_wires: usize = self.solids.iter()
@@ -1405,7 +1406,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  // Now modify face_info without borrowing self elsewhere
  let info = &mut self.faces[fi].face_info;
  for &vi in &boundary_copy {
- let n_vsd = vi; // OCCT: GetSameDomainIndex — skip SD lookup for boundary verts
+ let n_vsd = vi; // OCCT: GetSameDomainIndex 鈥?skip SD lookup for boundary verts
  info.vertices_in.insert(n_vsd);
  }
  for &vi in &vf_vertices {
@@ -1493,3 +1494,6 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  }
  }
 }
+
+
+

@@ -83,6 +83,10 @@ pub struct PaveFiller<'a> {
  pub ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
  bvh_a: Option<&'a Bvh>,
  bvh_b: Option<&'a Bvh>,
+ /// DS-based face BVH for FF pair detection. Uses DS face indices directly,
+ /// matching OCCT's BOPTools_BoxTree which operates on source shape indices.
+ /// OCCT-aligned: BVH index space equals DS index space (no a_rev/b_rev needed).
+ pub(crate) face_bvh: Option<crate::bvh::DsBvh>,
  ///  OCCT-aligned: BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
  glue: GlueEnum,
  glue_tolerance: f64,

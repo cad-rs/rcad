@@ -312,6 +312,18 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh
 {
  let (bvh_a, bvh_b) = if use_bvh { optional_bvhs(a, b) } else { (None, None) };
  let fuzzy_tol = ds.fuzzy_tol;
+ // Build DS-based face BVH for FF pair detection (OCCT-aligned: BOPTools_BoxTree
+ // uses source shape indices, not BRep tshape indices).
+ let face_bvh = {
+ // OCCT-aligned: single BVH over all faces from both operands.
+ let mut indices = Vec::new();
+ let mut aabbs = Vec::new();
+ for (fi, f) in ds.faces.iter().enumerate() {
+ indices.push(fi);
+ aabbs.push(crate::bopds::ds::face_aabb::face_aabb(ds, fi));
+ }
+ if indices.len() >= 20 { Some(crate::bvh::DsBvh::build(indices, aabbs)) } else { None }
+ };
  let mut filler = match (&bvh_a, &bvh_b) {
  (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(ds, ba, bb, brep),
  _ => {
@@ -320,6 +332,7 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh
  f
  }
  };
+ filler.face_bvh = face_bvh;
  filler.set_run_parallel(false);
  filler.configure_fuzzy(fuzzy_tol);
  filler.set_non_destructive(false);
