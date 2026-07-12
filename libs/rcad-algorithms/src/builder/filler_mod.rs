@@ -143,64 +143,69 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_internal_vertices(&mut result);
     }
 
-    /// ✅ OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-481).
-    /// Corrects tolerances of the result shape after building.
+    /// OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-481).
+    ///   1. Build MapToAvoid from non-destructive source shapes (L461-475).
+    ///   2. CorrectTolerances(myShape, aMA, 0.05) — adjust V/E tolerances (L478).
+    ///   3. CorrectShapeTolerances(myShape, aMA) — adjust shape tolerances (L480).
     pub(super) fn post_treat(&mut self) {
-        
-        let _a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
-            (0..self.ds.nb_source_shapes)
+        // OCCT L461-475: build MapToAvoid from VERTEX/EDGE/FACE source shapes
+        let a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
+            (0..self.ds.nb_source_shapes())
                 .filter(|&i| {
                     if i >= self.ds.shape_info.len() { return false; }
-                    let si = &self.ds.shape_info[i];
-                    si.shape_type == rcad_kernel::topods::ShapeType::Vertex
-                        || si.shape_type == rcad_kernel::topods::ShapeType::Edge
-                        || si.shape_type == rcad_kernel::topods::ShapeType::Face
+                    let st = self.ds.shape_info[i].shape_type;
+                    st == rcad_kernel::topods::ShapeType::Vertex
+                        || st == rcad_kernel::topods::ShapeType::Edge
+                        || st == rcad_kernel::topods::ShapeType::Face
                 })
                 .collect()
         } else {
             std::collections::HashSet::new()
         };
-        
-        let e_base = self.ds.vertices.len();
-        let mut edge_updates: Vec<(usize, f64)> = Vec::new();
-        let mut vert_updates: Vec<(usize, f64)> = Vec::new();
+
+        // OCCT L478: CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
+        // rcad: adjust V/E tolerances from DS geometric tolerances, clamped to 0.05.
         {
             let t = self.my_shape.borrow();
+            let e_base = self.ds.vertices.len();
+            let mut updates: Vec<(usize, f64, rcad_kernel::topods::ShapeType)> = Vec::new();
             for (ti, ts) in t.tshapes.iter().enumerate() {
-                if let topods::TShape::Edge(_ed) = &**ts {
+                if let rcad_kernel::topods::TShape::Edge(_ed) = &**ts {
                     let ei = ti.saturating_sub(e_base);
                     if ei < self.ds.edges.len() {
-                        edge_updates.push((ti, self.ds.edges[ei].geom_tol.max(0.05)));
+                        let tol = self.ds.edges[ei].geom_tol.max(0.05);
+                        updates.push((ti, tol, rcad_kernel::topods::ShapeType::Edge));
                     }
-                } else if let topods::TShape::Vertex(_vd) = &**ts {
+                } else if let rcad_kernel::topods::TShape::Vertex(_vd) = &**ts {
                     if ti < self.ds.vertices.len() {
-                        vert_updates.push((ti, self.ds.vertices[ti].geom_tol.max(0.05)));
+                        let tol = self.ds.vertices[ti].geom_tol.max(0.05);
+                        updates.push((ti, tol, rcad_kernel::topods::ShapeType::Vertex));
                     }
                 }
             }
-        }
-        {
+            drop(t);
             let mut t = self.my_shape.borrow_mut();
-            for (ti, tol) in &edge_updates {
-                if let topods::TShape::Edge(ed) = &*t.tshapes[*ti].clone() {
-                    t.tshapes[*ti] = std::sync::Arc::new(topods::TShape::Edge(topods::TEdgeData {
-                        tolerance: *tol,
-                        ..ed.clone()
-                    }));
-                }
-            }
-            for (ti, tol) in &vert_updates {
-                if let topods::TShape::Vertex(vd) = &*t.tshapes[*ti].clone() {
-                    t.tshapes[*ti] = std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
-                        tolerance: *tol,
-                        ..vd.clone()
-                    }));
+            for (ti, tol, st) in updates {
+                if st == rcad_kernel::topods::ShapeType::Edge {
+                    if let rcad_kernel::topods::TShape::Edge(ed) = &*t.tshapes[ti].clone() {
+                        t.tshapes[ti] = std::sync::Arc::new(
+                            rcad_kernel::topods::TShape::Edge(rcad_kernel::topods::TEdgeData {
+                                tolerance: tol, ..ed.clone()
+                            }));
+                    }
+                } else {
+                    if let rcad_kernel::topods::TShape::Vertex(vd) = &*t.tshapes[ti].clone() {
+                        t.tshapes[ti] = std::sync::Arc::new(
+                            rcad_kernel::topods::TShape::Vertex(rcad_kernel::topods::TVertexData {
+                                tolerance: tol, ..vd.clone()
+                            }));
+                    }
                 }
             }
         }
 
-        
-        // rcad: CorrectShapeTolerances is a BRep-level operation not yet translated.
+        // OCCT L480: CorrectShapeTolerances(myShape, aMA, myRunParallel)
+        // rcad: not yet translated — adjusts shell closure tolerances.
     }
 
     /// --OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
