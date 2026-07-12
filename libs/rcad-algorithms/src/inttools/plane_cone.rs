@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -175,7 +175,7 @@ fn build_ellipse(
     // Major direction in the plane (toward the steeper axis)
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
     let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
-        any_perpendicular(plane.normal)
+        plane.u_dir
     } else {
         major_dir
     };
@@ -208,7 +208,7 @@ fn build_parabola(
     // the "steepest descent" direction in the cutting plane.
     let steepest = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
     let steepest = if steepest.length_squared() < TOLERANCE_LEN_MIN {
-        any_perpendicular(plane.normal)
+        plane.u_dir
     } else {
         steepest
     };
@@ -274,7 +274,7 @@ fn build_hyperbola(
     // Major direction in the plane: projection of cone axis onto the plane.
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
     let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
-        any_perpendicular(plane.normal)
+        plane.u_dir
     } else {
         major_dir
     };

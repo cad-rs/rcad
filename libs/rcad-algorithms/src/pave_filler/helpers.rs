@@ -647,8 +647,8 @@ pub(crate) fn intersect_line_line(
 /// Sample a flat plane (infinite) over a 2D square of side `half_extent*2`
 /// centred at `plane.origin`.
 pub(crate) fn sample_plane(plane: &Plane, half_extent: f64, n: usize) -> Vec<DVec3> {
-    let u = rcad_kernel::any_perpendicular(plane.normal);
-    let v = plane.normal.cross(u);
+    let u = plane.u_dir;
+    let v = plane.v_dir;
     let mut pts = Vec::with_capacity(n * n);
     for i in 0..n {
         for j in 0..n {

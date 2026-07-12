@@ -1122,8 +1122,8 @@ impl<'a> super::PaveFiller<'a> {
                 let on_face = inttools::edge_face::point_in_planar_face_with_tol(
                     point, plane, &face_verts, tf);
                 // UV: project point onto plane UV coordinate system
-                let u_axis = any_perpendicular(plane.normal).normalize();
-                let v_axis = plane.normal.cross(u_axis).normalize();
+                let u_axis = plane.u_dir;
+                let v_axis = plane.v_dir;
                 let diff = point - plane.origin;
                 let u = diff.dot(u_axis);
                 let v = diff.dot(v_axis);

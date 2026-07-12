@@ -436,8 +436,8 @@ fn extract_planar_face_info(brep: &BRep, flat_face_idx: usize) -> Option<PlanarF
         Surface3::Plane(p) => *p,
         _ => return None,
     };
-    let x_axis = any_perpendicular(plane.normal);
-    let y_axis = plane.normal.cross(x_axis);
+    let x_axis = plane.u_dir;
+    let y_axis = plane.v_dir;
 
     let wire_pts = face_wire_points(brep, face_ref);
     let wire_2d: Vec<DVec2> = wire_pts.iter().map(|p| {

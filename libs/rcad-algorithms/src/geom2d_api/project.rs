@@ -6,11 +6,9 @@ use glam::{DVec2, DVec3};
 use crate::tolerance::TOLERANCE_ABS;
 
 /// Build a 2D coordinate frame from a plane surface.
-/// Returns (origin, u_axis, v_axis) where u_axis and v_axis are orthonormal.
+/// Returns (origin, u_axis, v_axis) using the plane's stored axes.
 pub(crate) fn plane_frame(plane: &Plane) -> (DVec3, DVec3, DVec3) {
-    let u = any_perpendicular(plane.normal).normalize();
-    let v = plane.normal.cross(u).normalize();
-    (plane.origin, u, v)
+    (plane.origin, plane.u_dir, plane.v_dir)
 }
 
 /// Project a 3D point onto a plane's 2D coordinate system.

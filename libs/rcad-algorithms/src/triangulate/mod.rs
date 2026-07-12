@@ -1343,8 +1343,8 @@ fn clamp_domain_to_vertices(
  match surf {
  Surface3::Plane(plane) => {
  // Project vertices onto the plane's local UV frame.
- let u_ax = any_perpendicular(plane.normal);
- let v_ax = plane.normal.cross(u_ax).normalize_or_zero();
+ let u_ax = plane.u_dir;
+ let v_ax = plane.v_dir;
  let us: Vec<f64> = pts.iter().map(|&p| (p - plane.origin).dot(u_ax)).collect();
  let vs: Vec<f64> = pts.iter().map(|&p| (p - plane.origin).dot(v_ax)).collect();
  let pu0 = us.iter().cloned().fold(f64::INFINITY, f64::min);
