@@ -38,8 +38,8 @@ pub(crate) fn edge_uv_tangent(
  (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
  }
  Surface3::Plane(p) => {
- let x_axis = any_perpendicular(p.normal).normalize();
- let y_axis = p.normal.cross(x_axis).normalize();
+ let x_axis = p.u_dir;
+ let y_axis = p.v_dir;
  let local_s = ds.vertices[sv].point - p.origin;
  let local_e = ds.vertices[ev].point - p.origin;
  let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
@@ -151,8 +151,8 @@ pub(crate) fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
  match surface {
  Surface3::Sphere(s) => Some(s.world_to_uv(pt)),
  Surface3::Plane(p) => {
- let x_axis = any_perpendicular(p.normal).normalize();
- let y_axis = p.normal.cross(x_axis).normalize();
+ let x_axis = p.u_dir;
+ let y_axis = p.v_dir;
  let local = pt - p.origin;
  Some(DVec2::new(local.dot(x_axis), local.dot(y_axis)))
  }

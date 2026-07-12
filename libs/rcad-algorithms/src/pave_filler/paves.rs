@@ -955,8 +955,8 @@ use rcad_kernel::PCurve;
      let uv = pc.point_at(*a_t);
      let proj = match &face.surface {
       Surface3::Plane(p) => {
-       let u_dir = rcad_kernel::geom::any_perpendicular(p.normal).normalize();
-       let v_dir = p.normal.cross(u_dir);
+       let u_dir = p.u_dir;
+       let v_dir = p.v_dir;
        p.origin + uv.x * u_dir + uv.y * v_dir
       }
       _ => a_p3d,

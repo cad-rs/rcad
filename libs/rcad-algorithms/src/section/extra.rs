@@ -28,9 +28,8 @@ fn compute_planar_section_properties(polylines: &[Vec<DVec3>], plane: &Plane) ->
 }
 
 fn compute_polygon_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> (f64, DVec3, f64, f64, f64) {
-    let normal = plane.normal.normalize();
-    let x_axis = any_perpendicular(normal);
-    let y_axis = normal.cross(x_axis);
+    let x_axis = plane.u_dir;
+    let y_axis = plane.v_dir;
 
     let mut total_area = 0.0;
     let mut cx = 0.0;

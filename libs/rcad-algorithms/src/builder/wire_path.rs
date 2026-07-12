@@ -686,8 +686,8 @@ pub(crate) fn walk_path_extract_wires(
                 Some(DVec2::new(u, v))
             }
             Surface3::Plane(p) => {
-                let x_axis = any_perpendicular(p.normal).normalize();
-                let y_axis = p.normal.cross(x_axis).normalize();
+                let x_axis = p.u_dir;
+                let y_axis = p.v_dir;
                 let local = v_pt - p.origin;
                 Some(DVec2::new(local.dot(x_axis), local.dot(y_axis)))
             }
