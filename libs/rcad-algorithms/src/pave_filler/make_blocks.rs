@@ -368,6 +368,52 @@ impl<'a> super::PaveFiller<'a> {
  a_lbv.push(n_vn);
  a_mv_bounds.insert(n_vn);
  }
+ // OCCT-aligned: UV boundary transition detection.  Sample the curve on each
+ // face's FClass2d to find where the pcurve crosses the trimmed face boundary.
+ // OCCT achieves this via PutBoundPaveOnCurve + aIC.Bounds() (clipped curve).
+ {
+ let a_faces = [n_f1, n_f2];
+ for (k, &fi) in a_faces.iter().enumerate() {
+  if fi == usize::MAX { continue; }
+  let pc_opt = if k == 0 { self.ds.intersection_curves[ci].pcurve_on_a.clone() }
+               else { self.ds.intersection_curves[ci].pcurve_on_b.clone() };
+  let Some(pc) = pc_opt else { continue };
+  let tt0 = ic_t_range[0];
+  let tt1 = ic_t_range[1];
+  let span = tt1 - tt0;
+  if span <= 1e-15 { continue; }
+  let n_samp = 129;
+  let first_in = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(tt0));
+  if std::env::var("RCAD_DEBUG_MB").is_ok() {
+   eprintln!("[MB]  UV_bd ci={} k={} fi={} first_in={} n_samp={}", ci, k, fi, first_in, n_samp);
+  }
+  let mut prev_t = tt0;
+  let mut prev_in = first_in;
+  for i in 1..=n_samp {
+   let t = tt0 + span * i as f64 / n_samp as f64;
+   let in_on = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(t));
+   if in_on != prev_in {
+    let mut lo = prev_t;
+    let mut hi = t;
+    for _ in 0..20 {
+     let mid = (lo + hi) * 0.5;
+     let mid_in = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(mid));
+     if mid_in == prev_in { lo = mid; } else { hi = mid; }
+    }
+    let ct = (lo + hi) * 0.5;
+    let cp = ic_curve.point_at(ct);
+    let nv = self.ds.add_vertex(cp);
+    self.ds.vertices[nv].geom_tol = a_tol_r3d;
+    if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
+     pb.0.write().unwrap().append_ext_pave(Pave { vertex_idx: nv, param: ct });
+    }
+    a_lbv.push(nv);
+    prev_in = in_on;
+   }
+   prev_t = t;
+  }
+ }
+ }
  }
  }
  for &ci in curves_of_ff {
