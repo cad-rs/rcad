@@ -496,8 +496,12 @@ impl<'a> BooleanBuilder<'a> {
             entry.extend(draft_refs.iter().copied());
         }
 
+        // OCCT L534-552: store aFacesIm entries into myImages with source-face orientation.
         for (src_face_sr, a_lfr) in &a_faces_im {
-            let an_ori_f = topods::Orientation::Forward;
+            // OCCT L537-538: get source face's original orientation from the DS/BRep.
+            let an_ori_f = face_refs_owned.get(src_face_sr.index)
+                .map(|sr| sr.orientation)
+                .unwrap_or(topods::Orientation::Forward);
             let mut my_images = self.my_images.borrow_mut();
             let p_lf_im = my_images.entry(*src_face_sr).or_insert_with(Vec::new);
             for &a_fr in a_lfr {
