@@ -174,10 +174,10 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// --OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
-    ///   Iterates source faces --splits each along intersection curves.
+    ///   Iterates source faces — splits each along intersection curves.
     ///   For faces with IN/SC PBs: full BuilderFace::Perform (builder_face_perform).
     ///   For ON-only faces: BuildDraftFace.
-    ///   Faces with no interferences --skipped (no images).
+    ///   Faces with no interferences — skipped (no images).
     pub(super) fn build_split_faces(
         &self,
         result: &mut ResultBuilder,
@@ -189,6 +189,9 @@ impl<'a> BooleanBuilder<'a> {
         let (brep_owned, face_refs_owned, ic_edge_map_owned) = brep_snapshot;
         let mut a_vbf: Vec<crate::builder::BuilderFace> = Vec::new();
         let mut a_vbf_face_srs: Vec<topods::ShapeRef> = Vec::new();
+        // OCCT aFacesIm: draft face results keyed by source face ref.
+        let mut a_faces_im_draft: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
+            std::collections::HashMap::new();
 
         for i in 0..a_nb_s {
             if i >= self.ds.shape_info.len() { continue; }
@@ -205,39 +208,8 @@ impl<'a> BooleanBuilder<'a> {
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
             let a_nb_av = self.ds.faces[fi].face_info.vertices_on.len();
 
+            // OCCT L275-279 + L293-296 combined skip: no face info or no PBs and no AV.
             if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 && !has_info {
-                continue;
-            }
-
-            if !has_pb_in && !has_pb_sc {
-                if a_nb_av == 0 {
-                    let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                        self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
-                    });
-                    let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                        let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
-                        self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
-                            imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
-                        })
-                    });
-                    if !has_internals && !has_modified && !has_pb_on {
-                        continue;
-                    }
-                    if !has_internals && has_info {
-                        if let Some(draft) = self.build_draft_face(fi) {
-                            let (_segments, wfs, _vp) = draft;
-                            for wf in &wfs {
-                                let origin = if is_a {
-                                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                                } else {
-                                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                                };
-                                result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
-                                    &std::collections::HashMap::new());
-                            }
-                        }
-                    }
-                }
                 continue;
             }
 
@@ -245,23 +217,195 @@ impl<'a> BooleanBuilder<'a> {
             let f_base = self.ds.vertices.len() + self.ds.edges.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
+
+            // OCCT L298-351: No IN/SC PBs branch.
+            if !has_pb_in && !has_pb_sc {
+                // OCCT L309: hasInternals, initially false.
+                let mut has_internals = false;
+                // OCCT L310-334: check internals and modified wires when no alone vertices.
+                if a_nb_av == 0 {
+                    // OCCT L321: internal edges check (first edge of wire with INTERNAL orientation).
+                    for &bei in &self.ds.faces[fi].boundary_edges {
+                        if bei < self.ds.edges.len() && self.ds.edges[bei].is_internal {
+                            has_internals = true;
+                            break;
+                        }
+                    }
+                    // OCCT L327: modified wires check (myImages.IsBound(wire)).
+                    let mut has_modified = false;
+                    if !has_internals {
+                        let wi_base = self.ds.vertices.len() + self.ds.edges.len();
+                        for &wi in std::iter::once(&self.ds.faces[fi].outer_wire_idx)
+                            .flatten()
+                            .chain(self.ds.faces[fi].inner_wire_idxs.iter())
+                        {
+                            let w_ref = self.brep_sr(wi_base + wi);
+                            if self.my_images.borrow().contains_key(&w_ref) {
+                                has_modified = true;
+                                break;
+                            }
+                        }
+                    }
+                    // OCCT L330-333: no internals and no modified → skip this face.
+                    if !has_internals && !has_modified {
+                        continue;
+                    }
+                }
+                // OCCT L336-350: if no internals, attempt BuildDraftFace.
+                if !has_internals {
+                    if let Some(draft) = self.build_draft_face(fi) {
+                        let (segments, wfs, vertex_positions) = draft;
+                        for wf in &wfs {
+                            let origin = if is_a {
+                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                            } else {
+                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                            };
+                            // OCCT L344-347: store draft face in aFacesIm and continue.
+                            result.emit_wire_face(fi, wf, &segments, self.ds, false, origin,
+                                &vertex_positions);
+                            // Create TShape and capture ref for my_images (OCCT L344-347).
+                            let mut tmp_fr = Vec::new();
+                            result.emit_face_topods(t, &mut tmp_fr);
+                            if let Some(&draft_ref) = tmp_fr.last() {
+                                if !draft_ref.is_null() {
+                                    a_faces_im_draft.entry(f_sr).or_default().push(draft_ref);
+                                }
+                            }
+                        }
+                        continue; // OCCT L347: draft face stored → skip BuilderFace.
+                    }
+                    // OCCT L349: BuildDraftFace returned null → fall through to BuilderFace.
+                }
+                // OCCT L351 (implicit): has_internals → fall through to BuilderFace.
+            }
+
             let face_sr = self.my_face_refs.borrow().get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
             let mut a_le: Vec<topods::ShapeRef> = Vec::new();
+            // OCCT L353: aMFence — fence for SEAM edge dedup.
+            let mut a_m_fence_local: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            // OCCT L387-393: surface closed state (computed once per face).
+            let (is_u_closed, is_v_closed) = match &self.ds.faces[fi].surface {
+                s if s.is_u_closed() && s.is_v_closed() => (true, true),
+                s if s.is_u_closed() => (true, false),
+                s if s.is_v_closed() => (false, true),
+                _ => (false, false),
+            };
+            let e_base = self.ds.vertices.len();
             {
                 let t_shape: &topods::BRep = &*t;
                 if face_sr.index < t_shape.tshapes.len() {
                     if let topods::TShape::Face(fd) = &*t_shape.tshapes[face_sr.index] {
+                        // OCCT L362-363: aExp.Init(aFF, TopAbs_EDGE).
+                        // rcad: iterate edges via wire topology.
                         for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
                             if wi.index >= t_shape.tshapes.len() { continue; }
                             if let topods::TShape::Wire(wd) = &*t_shape.tshapes[wi.index] {
-                                for &ei in &wd.edges {
+                                for &e_sr in &wd.edges {
+                                    // OCCT L367: anOriE = edge orientation in this wire.
+                                    let an_ori_e = e_sr.orientation;
                                     let my_images = self.my_images.borrow();
-                                    if !my_images.contains_key(&ei) {
-                                        a_le.push(ei);
-                                        continue;
+
+                                    // OCCT L369-385: edge NOT in myImages.
+                                    if !my_images.contains_key(&e_sr) {
+                                        // OCCT L371-378: INTERNAL → add FORWARD + REVERSED.
+                                        if an_ori_e == topods::Orientation::Internal {
+                                            let mut fwd = e_sr;
+                                            fwd.orientation = topods::Orientation::Forward;
+                                            a_le.push(fwd);
+                                            let mut rev = e_sr;
+                                            rev.orientation = topods::Orientation::Reversed;
+                                            a_le.push(rev);
+                                        } else {
+                                            // OCCT L379-381: normal → add as-is.
+                                            a_le.push(e_sr);
+                                        }
+                                        continue; // OCCT L383-384.
                                     }
-                                    if let Some(imgs) = my_images.get(&ei) {
-                                        for &sp_ei in imgs { a_le.push(sp_ei); }
+
+                                    // OCCT L386+: edge has split images.
+                                    let ei = e_sr.index.saturating_sub(e_base);
+                                    let b_is_degenerated = ei < self.ds.edges.len()
+                                        && self.ds.is_edge_degenerated(ei);
+                                    // OCCT L395-404: bIsClosed — periodic-surface closed edge.
+                                    let b_is_closed = if !b_is_degenerated && (is_u_closed || is_v_closed)
+                                        && ei < self.ds.edges.len()
+                                    {
+                                        let ed = &self.ds.edges[ei];
+                                        // Check if edge is closed on this face (OCCT BRep_Tool::IsClosed).
+                                        let is_edge_closed_on_face = ed.start_vertex == ed.end_vertex
+                                            || (is_u_closed || is_v_closed);
+                                        if is_edge_closed_on_face {
+                                            // OCCT L400-403: IsEdgeIsoline.
+                                            let (is_ui, is_vi) = if let Some(rep) = ed.face_reps.iter().find(|r| r.face_idx == fi) {
+                                                crate::builder::wire_splitter::is_edge_isoline(&rep.pcurve, ed.t_range)
+                                            } else {
+                                                (false, false)
+                                            };
+                                            (is_u_closed && is_ui) || (is_v_closed && is_vi)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+
+                                    // OCCT L408-464: iterate split image edges.
+                                    if let Some(imgs) = my_images.get(&e_sr) {
+                                        for &sp_sr in imgs {
+                                            let mut a_sp = sp_sr;
+
+                                            // OCCT L413-417: degenerated → set orientation, push.
+                                            if b_is_degenerated {
+                                                a_sp.orientation = an_ori_e;
+                                                a_le.push(a_sp);
+                                                continue;
+                                            }
+
+                                            // OCCT L420-426: INTERNAL → push FORWARD + REVERSED.
+                                            if an_ori_e == topods::Orientation::Internal {
+                                                a_sp.orientation = topods::Orientation::Forward;
+                                                a_le.push(a_sp);
+                                                let mut rev = sp_sr;
+                                                rev.orientation = topods::Orientation::Reversed;
+                                                a_le.push(rev);
+                                                continue;
+                                            }
+
+                                            // OCCT L429-454: SEAM / closed edge handling.
+                                            if b_is_closed {
+                                                if a_m_fence_local.insert(a_sp.ptr_id) {
+                                                    // OCCT L433-447: DoSplitSEAMOnFace if not closed.
+                                                    let sp_ei = a_sp.index.saturating_sub(e_base);
+                                                    if sp_ei < self.ds.edges.len() {
+                                                        crate::boptools::do_split_seam_on_face(sp_ei, fi, self.ds);
+                                                    }
+                                                    // OCCT L449-452: push FORWARD + REVERSED.
+                                                    a_sp.orientation = topods::Orientation::Forward;
+                                                    a_le.push(a_sp);
+                                                    let mut rev = sp_sr;
+                                                    rev.orientation = topods::Orientation::Reversed;
+                                                    a_le.push(rev);
+                                                }
+                                                continue;
+                                            }
+
+                                            // OCCT L457-462: normal image edge → IsSplitToReverse.
+                                            a_sp.orientation = an_ori_e;
+                                            let sp_ei = a_sp.index.saturating_sub(e_base);
+                                            if ei < self.ds.edges.len() && sp_ei < self.ds.edges.len() {
+                                                let needs_rev = crate::builder::edge_builders::is_split_to_reverse(
+                                                    self.ds, sp_ei, ei);
+                                                if needs_rev {
+                                                    a_sp.orientation = match a_sp.orientation {
+                                                        topods::Orientation::Forward => topods::Orientation::Reversed,
+                                                        topods::Orientation::Reversed => topods::Orientation::Forward,
+                                                        other => other,
+                                                    };
+                                                }
+                                            }
+                                            a_le.push(a_sp);
+                                        }
                                     }
                                 }
                             }
@@ -332,6 +476,12 @@ impl<'a> BooleanBuilder<'a> {
             for &sr in bf.areas() {
                 entry.push(sr);
             }
+        }
+
+        // OCCT L534-552: merge draft face results into aFacesIm before storing to myImages.
+        for (src_sr, draft_refs) in &a_faces_im_draft {
+            let entry = a_faces_im.entry(*src_sr).or_default();
+            entry.extend(draft_refs.iter().copied());
         }
 
         for (src_face_sr, a_lfr) in &a_faces_im {
