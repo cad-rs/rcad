@@ -1,4 +1,4 @@
-//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
+﻿//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
 //! intersection results.
 //!
 //! Each function takes a 3D intersection curve together with surface geometry
@@ -1171,3 +1171,57 @@ where
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Curve3, Curve2d, Circle3, Line3, Line2d, CurveEval};
+    use glam::{DVec3, DVec2};
+    use std::f64::consts::TAU;
+    use crate::tolerance::TOLERANCE_ABS_SQ;
+
+    #[test]
+    fn split_closed_circle_splits() {
+        let c = Curve3::Circle(Circle3::new(DVec3::Z, DVec3::Z, 1.0));
+        let result = split_closed_curve(&c, &[0.0, TAU]);
+        assert!(result.is_some(), "circle should be closed");
+        let [[a1, a2], [a3, a4]] = result.unwrap();
+        assert!((a2 - a1 - (a4 - a3)).abs() < 1e-12, "halves should be equal");
+    }
+
+    #[test]
+    fn split_closed_line_none() {
+        let l = Curve3::Line(Line3 { origin: DVec3::Z, direction: DVec3::X });
+        assert!(split_closed_curve(&l, &[-10.0, 10.0]).is_none(), "line not closed");
+    }
+
+    #[test]
+    fn split_closed_circle_midpoint() {
+        let c = Curve3::Circle(Circle3::new(DVec3::Z, DVec3::Z, 1.0));
+        let result = split_closed_curve(&c, &[0.0, TAU]).unwrap();
+        let mid = result[0][1];
+        assert!((mid - std::f64::consts::PI).abs() < 1e-12, "mid should be pi");
+    }
+
+    #[test]
+    fn trim_curve2d_line_unchanged() {
+        let pc = Curve2d::Line(Line2d::new(DVec2::ZERO, DVec2::X));
+        let trimmed = trim_curve2d(&pc, 0.5, 2.5);
+        assert!(matches!(trimmed, Curve2d::Line(_)));
+    }
+
+    #[test]
+    fn trim_curve2d_circle_unchanged() {
+        let pc = Curve2d::Circle(rcad_kernel::geom::Circle2d::new(DVec2::ZERO, 1.0));
+        let trimmed = trim_curve2d(&pc, 0.0, TAU);
+        assert!(matches!(trimmed, Curve2d::Circle(_)));
+    }
+
+    #[test]
+    fn is_closed_detection() {
+        let c = Curve3::Circle(Circle3::new(DVec3::Z, DVec3::Z, 1.0));
+        let p0 = c.point_at(0.0);
+        let p1 = c.point_at(TAU);
+        assert!((p1 - p0).length_squared() < TOLERANCE_ABS_SQ);
+    }
+}

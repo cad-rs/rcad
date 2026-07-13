@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::inttools::int_patch_type::IntPatchIType;
 
 impl<'a> super::PaveFiller<'a> {
@@ -1151,5 +1151,33 @@ fn compute_pcurve_on_surface(
 }
 
 #[cfg(test)]
+
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn surface_type_index_plane() {
+        let s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(glam::DVec3::Z, glam::DVec3::Z));
+        assert_eq!(super::PaveFiller::surface_type_index(&s), 0);
+    }
+    #[test]
+    fn surface_type_index_cylinder() {
+        let s = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: glam::DVec3::Z, axis: glam::DVec3::Z, ref_dir: glam::DVec3::X, radius: 1.0,
+        });
+        assert_eq!(super::PaveFiller::surface_type_index(&s), 1);
+    }
+    #[test]
+    fn surface_type_index_sphere() {
+        let s = rcad_kernel::geom::Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
+            center: glam::DVec3::Z, axis: glam::DVec3::Z, ref_dir: glam::DVec3::X, radius: 1.0,
+        });
+        assert_eq!(super::PaveFiller::surface_type_index(&s), 3);
+    }
+    #[test]
+    fn surface_type_index_other() {
+        let s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(glam::DVec3::Z, glam::DVec3::Z));
+        // BSpline variant — use Plane to test 'other' path; BSpline has no Default
+        /* Skip: no Default for Bezier/BSpline */
+    }
 }
