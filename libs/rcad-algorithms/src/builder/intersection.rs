@@ -1,7 +1,7 @@
-﻿use glam::DVec2;
+use glam::DVec2;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LINEAR_ULTRA_STRICT};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE, TOLERANCE_LINEAR_ULTRA_STRICT};
 use super::curve_tools::*;
 use super::intres2d::*;
 

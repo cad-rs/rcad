@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -10,7 +10,7 @@ use rcad_kernel::PCurve;
 use rcad_kernel::topods;
 use crate::bopds::ds::DS;
 use crate::classify::Classification;
-use crate::tolerance::{ANGULAR, CONFUSION, TOLERANCE_CLAMP_MIN, TOLERANCE_MESH_LEGACY};
+use crate::tolerance::{ANGULAR, CONFUSION, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE, TOLERANCE_MESH_LEGACY};
 
 /// OCCT-aligned: MakeSectEdge (BOPTools_AlgoTools).
 /// Creates a section edge from an intersection curve.  Returns the

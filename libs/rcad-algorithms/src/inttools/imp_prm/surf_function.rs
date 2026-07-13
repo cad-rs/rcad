@@ -1,4 +1,4 @@
-﻿//! ✅ OCCT-aligned: IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
+//! ✅ OCCT-aligned: IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
 //!
 //! OCCT IntPatch_TheSurfFunction.hxx / .cxx
 //!
@@ -9,6 +9,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
+use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 use super::super::super::inttools::int_surf_quadric::Quadric;
 
 /// OCCT-aligned: IntPatch_TheSurfFunction

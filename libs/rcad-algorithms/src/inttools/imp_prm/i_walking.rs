@@ -1,4 +1,4 @@
-﻿//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
+//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
 //!
 //! OCCT IntWalk_IWalking.gxx (3140 lines) — implicit surface walking.
 //!
@@ -15,6 +15,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
+use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 use super::surf_function::SurfFunction;
 use super::s_on_bounds::PathPoint;
 use super::search_inside::InteriorPoint;

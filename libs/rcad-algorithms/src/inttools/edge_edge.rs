@@ -1,6 +1,6 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 
 ///  ?OCCT-aligned: IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
 /// Describes a common part between two edges: either a VERTEX-type (point)

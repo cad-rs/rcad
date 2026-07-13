@@ -1,4 +1,4 @@
-﻿//!  ?OCCT-aligned: IntPatch_PrmPrmIntersection  ?intersection of two
+//!  ?OCCT-aligned: IntPatch_PrmPrmIntersection  ?intersection of two
 //!   bi-parametrized (parametric-parametric) surfaces.
 //!
 //! OCCT source: TKGeomAlgo/IntPatch/IntPatch_PrmPrmIntersection.cxx (4144 lines)
@@ -16,7 +16,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::Surface3;
-use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
+use crate::tolerance::{TOLERANCE_LEN_SQ_DIV_SAFE, TOLERANCE_MESH_LEGACY};
 
 // ── Grid constants (OCCT _DECAL, _BASE, etc.) ──────────────────────────
 const DECAL: i32 = 7;

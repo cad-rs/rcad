@@ -1,4 +1,4 @@
-//! BRepFeat-style feature-based modeling operations.
+﻿//! BRepFeat-style feature-based modeling operations.
 //!
 //! This module provides feature-based modeling operations analogous to OCCT's TKFeat
 //! (BRepFeat package). Features are operations that add or remove material from a
@@ -403,7 +403,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
  .collect();
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: profile_verts[0], normal })),
+ Some(Surface3::Plane(Plane::new(profile_verts[0], profile_verts[0].normalize_or_zero()))),
  wire_sr,
  vec![],
  None,
@@ -476,7 +476,7 @@ pub fn make_rib(
  // Build a thick prism for the rib
  let rib_solid = build_rib_solid(&profile_offset_neg, &profile_offset_pos, dir, thickness)?;
 
- // Fuse with target — boolean_op already returns topods::BRep
+ // Fuse with target 鈥?boolean_op already returns topods::BRep
  Ok(boolean_op(BooleanOpType::Union, target, &rib_solid)?)
 }
 
@@ -724,7 +724,7 @@ pub fn make_revol_feature(
  // Create the revolution
  let revol_tool = rcad_modeling::revolve(&profile_brep, 0, axis, axis_dir, angle)?;
 
- // Apply boolean operation based on fuse mode — both target and revol_tool are topods::BRep
+ // Apply boolean operation based on fuse mode 鈥?both target and revol_tool are topods::BRep
  let op = BooleanOpType::from(fuse_mode);
  Ok(boolean_op(op, target, &revol_tool)?)
 }
@@ -953,7 +953,7 @@ pub(crate) fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::B
 
  let wire_sr = brep.add_twire(wire_edge_refs);
  let face_sr = brep.add_tface(
- Some(Surface3::Plane(Plane { origin: p0, normal })),
+ Some(Surface3::Plane(Plane::new(p0, p0.normalize_or_zero()))),
  wire_sr,
  vec![],
  None,

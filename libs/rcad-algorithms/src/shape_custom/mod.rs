@@ -1398,10 +1398,7 @@ fn try_detect_plane(surface: &BSplineSurface, tolerance: f64) -> Option<Plane> {
         }
     }
 
-    Some(Plane {
-        origin: centroid,
-        normal,
-    })
+    Some(Plane::new(centroid, centroid.normalize_or_zero()))
 }
 
 /// Try to detect if a BSpline surface represents a cylinder.

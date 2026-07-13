@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -464,11 +464,15 @@ impl<'a> super::PaveFiller<'a> {
    pb1.pave1 = crate::bopds::pave::Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] };
    pb1.pave2 = crate::bopds::pave::Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] };
   }
-  // OCCT-aligned: Update with theFlag=false for IC PBs (section curves).
-  // The flag=false means pave1/pave2 are NOT included as endpoint paves;
-  // only ext_paves (from PutPavesOnCurve, PutStickPavesOnCurve, etc.)
-  // are used to generate sub-PBs.
- let sub_pbs = pb1.update(false);
+  // OCCT-aligned: Update with theFlag=true for IC PBs (section curves).
+  // The flag=true means pave1/pave2 ARE included as endpoint paves.
+  // This ensures even a PB with zero ext_paves (simple IC with only
+  // two endpoints) produces at least one sub-PB covering the full
+  // curve range.  The sub-PB may fail midpoint face-validation and
+  // be skipped if the IC is not properly clipped — that is correct
+  // rejection; without theFlag=true the pipeline produces no section
+  // edges at all for simple ICs.
+ let sub_pbs = pb1.update(true);
  a_lpb = sub_pbs;
  }
  }

@@ -276,10 +276,7 @@ pub fn hollow_solid_with_options(
   continue;
   }
 
-  let surf = Surface3::Plane(Plane {
-  origin: p0,
-  normal,
-  });
+  let surf = Surface3::Plane(Plane::new(p0, normal.normalize_or_zero()));
 
   // Quad: orig_start -> orig_end -> off_end -> off_start
   let vseq = [o_vs, o_ve, f_ve, f_vs];

@@ -1,4 +1,4 @@
-﻿//!  ?OCCT-aligned: IntWalk_PWalking  ?intersection curve walking for
+//!  ?OCCT-aligned: IntWalk_PWalking  ?intersection curve walking for
 //!   two parametric surfaces (parametric-parametric).
 //!
 //! OCCT source: TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx (4096 lines)
@@ -16,6 +16,7 @@ use rcad_kernel::geom::*;
 
 use crate::inttools::marching::{self, MarchingConfig};
 use crate::extrema;
+use crate::tolerance::{CONFUSION, TOLERANCE_MESH_LEGACY};
 use crate::tolerance::TOLERANCE_LEN_MIN;
 
 use super::prm_prm_intersection::PntOn2S;

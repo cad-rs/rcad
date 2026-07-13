@@ -1314,6 +1314,26 @@ mod stage_classification_tests {
         eprintln!("bfuse_simple A1: first failure at stage {:?}", bad);
     }
 
+    /// Batch classification: run all A-series cases for bfuse_simple.
+    #[test]
+    fn classify_bfuse_simple_a_series() {
+        // A1: sphere r=1 + box 1x1x1
+        // A2: sphere r=1 + box 2x2x2
+        // A3: sphere r=1.5 + box 2x2x2 (sphere larger than box)
+        // etc. — shapes vary by size/position
+
+        let cases: Vec<(&str, fn() -> (rcad_kernel::BRep, rcad_kernel::BRep))> = vec![
+            ("A1", || (make_unit_sphere(), make_unit_box())),
+            ("A2", || (make_sphere(DVec3::ZERO, 1.0), make_box(DVec3::new(-0.5, -0.5, -0.5), 2.0, 2.0, 2.0))),
+        ];
+
+        for (label, shapes) in &cases {
+            let (a, b) = shapes();
+            let bad = classify_case(&a, &b, BooleanOpType::Union, &format!("bfuse_simple_{label}"));
+            eprintln!("bfuse_simple_{}: first bad stage = {:?}", label, bad);
+        }
+    }
+
     /// Diagnose why MakeBlocks produces 0 PaveBlocks.
     #[test]
     fn diag_make_blocks_bfuse_simple_a1() {

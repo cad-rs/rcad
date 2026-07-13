@@ -1155,10 +1155,7 @@ impl<'a> MakePipeShell<'a> {
  let outer_wire = result_brep.add_twire(edge_srs);
 
  // Create plane surface
- let surface = Surface3::Plane(Plane {
- origin: p0,
- normal,
- });
+ let surface = Surface3::Plane(Plane::new(p0, normal.normalize_or_zero()));
 
  // Create face
  let face_sr = result_brep.add_tface(Some(surface), outer_wire, Vec::new(), None, None, Vec::new(), true);
@@ -1210,10 +1207,7 @@ impl<'a> MakePipeShell<'a> {
  let outer_wire = result_brep.add_twire(edge_srs);
 
  // Create surface
- let surface = Surface3::Plane(Plane {
- origin: centroid,
- normal,
- });
+ let surface = Surface3::Plane(Plane::new(centroid, normal.normalize_or_zero()));
 
  let face_sr = result_brep.add_tface(Some(surface), outer_wire, Vec::new(), None, None, Vec::new(), true);
 

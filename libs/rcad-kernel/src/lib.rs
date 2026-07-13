@@ -167,14 +167,16 @@ pub use properties::{
  InertiaTensor, centroid, face_surface_area, face_triangles_pub, try_analytic_face_surface_area_pub, point_in_spherical_polygon_3d_pub, inertia_tensor, signed_volume, surface_area, volume,
 };
 pub use tolerance::{
- ANGULAR, APPROXIMATION, brep_same_parameter, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
- face_domain, face_tolerance, model_tolerance, vertex_tolerance,
+ ANGULAR, APPROXIMATION, brep_same_parameter, COMPUTATIONAL, CONFUSION, edge_same_parameter,
+ edge_same_range, edge_tolerance, face_domain, face_tolerance, INFINITE_VALUE, INTERSECTION,
+ model_tolerance, SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, vertex_tolerance,
  resize_tolerance_arrays,
  set_vertex_tolerance, update_vertex_tolerance,
  set_edge_tolerance, update_edge_tolerance,
  set_face_tolerance, update_face_tolerance,
  finalize_tolerance_hierarchy,
  step_export_uncertainty,
+ is_infinite_value, is_positive_infinite_value, is_negative_infinite_value,
 };
 pub use topo_query::{
  vertex_storage_len,
