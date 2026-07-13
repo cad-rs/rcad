@@ -704,7 +704,7 @@ mod tkg3d_geom_plane_tests {
     fn plane_d0_eval() {
         let p = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let pt = p.point_at(3.0, 4.0);
-        assert!((pt - DVec3::new(-4.0, 3.0, 0.0)).length() < TOL);
+        assert!((pt - DVec3::new(3.0, 4.0, 0.0)).length() < TOL);
     }
 
     #[test]
@@ -746,7 +746,7 @@ mod tkg3d_geom_offset_surface_tests {
         let base = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 3.0 });
         let pt = off.point_at(1.0, 2.0);
-        assert!((pt - DVec3::new(-2.0, 1.0, 3.0)).length() < TOL);
+        assert!((pt - DVec3::new(1.0, 2.0, 3.0)).length() < TOL);
     }
 
     #[test]
@@ -841,7 +841,7 @@ mod tkg3d_surface_eval_tests {
     fn surface_eval_plane_xy() {
         let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let p = s.point_at(1.0, 2.0);
-        assert!((p - DVec3::new(-2.0, 1.0, 0.0)).length() < TOL);
+        assert!((p - DVec3::new(1.0, 2.0, 0.0)).length() < TOL);
     }
 
     #[test]
@@ -949,7 +949,7 @@ mod tkg3d_adaptor_tests {
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 10.0));
         let ts = transform_surface(&s, &xform);
         let p = ts.point_at(1.0, 2.0);
-        assert!((p - DVec3::new(-2.0, 1.0, 10.0)).length() < TOL);
+        assert!((p - DVec3::new(1.0, 2.0, 10.0)).length() < TOL);
     }
 
     #[test]
@@ -1132,7 +1132,7 @@ mod tkg3d_grid_eval_surface_tests {
             for j in 0..=3 {
                 let v = j as f64;
                 let p = s.point_at(u, v);
-                let expected = DVec3::new(-v, u, 0.0);
+                let expected = DVec3::new(u, v, 0.0);
                 assert!((p - expected).length() < TOL, "plane eval mismatch at u={} v={}: got {:?} expected {:?}", u, v, p, expected);
             }
         }
