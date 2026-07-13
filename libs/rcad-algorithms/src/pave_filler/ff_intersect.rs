@@ -266,75 +266,106 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  /// OCCT: dispatch FF intersection by surface type
- /// OCCT: dispatch FF intersection by surface type
- pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-  // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
-  let shift_info = self.check_seam_edge_shift(f1, f2);
-  let old_shift_tol = self.seam_shift_tol;
-  if let Some(ref info) = shift_info {
-  self.seam_shift_tol = info.shift_value;
-  }
+ /// OCCT L344-608: IntTools_FaceFace::Perform — face-face intersection.
+/// Dispatches by surface type with bReverse sorting (OCCT SortTypes/IndexType),
+/// then runs intersection, MakeCurve, ComputeTolReached3d, PrepareLines3D,
+/// and point/curve registration.
+pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
+ // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
+ let shift_info = self.check_seam_edge_shift(f1, f2);
+ let old_shift_tol = self.seam_shift_tol;
+ if let Some(ref info) = shift_info {
+ self.seam_shift_tol = info.shift_value;
+ }
 
-  let s1_orig = self.ds.faces[f1].surface.clone();
-  let s2_orig = self.ds.faces[f2].surface.clone();
+ let s1_orig = self.ds.faces[f1].surface.clone();
+ let s2_orig = self.ds.faces[f2].surface.clone();
 
-  // Apply seam edge shift to surface clones if needed
-  let s1 = match &shift_info {
-  Some(info) if info.shifted_face == 1 => {
-  apply_shift_to_surface(&s1_orig, info.shift_vector)
-  }
-  _ => s1_orig,
-  };
-  let s2 = match &shift_info {
-  Some(info) if info.shifted_face == 2 => {
-  apply_shift_to_surface(&s2_orig, info.shift_vector)
-  }
-  _ => s2_orig,
-  };
+ // Apply seam edge shift to surface clones if needed
+ let s1 = match &shift_info {
+ Some(info) if info.shifted_face == 1 => {
+ apply_shift_to_surface(&s1_orig, info.shift_vector)
+ }
+ _ => s1_orig,
+ };
+ let s2 = match &shift_info {
+ Some(info) if info.shifted_face == 2 => {
+ apply_shift_to_surface(&s2_orig, info.shift_vector)
+ }
+ _ => s2_orig,
+ };
 
-  // OCCT-aligned: IntPatch_Intersection: generic surface-surface intersection.
-  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
-  int_patch.perform(&s1, &s2, self.fuzzy_tolerance, self.fuzzy_tolerance);
-  if int_patch.tangent_faces() {
-  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
-  f1, f2, curves: Vec::new(), points: Vec::new(), tangent_faces: true,
-  });
-  if let Some(ref info) = shift_info { self.reverse_seam_edge_shift(f1, f2, info); }
-  self.seam_shift_tol = old_shift_tol;
-  return;
-  }
-  // OCCT-aligned: PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
-  // Projects intersection points onto each analytic line to create
-  // boundary-crossing vertices.  These vertices split the line into
-  // valid intervals for MakeCurve/TreatCircle.
-  for li in 0..int_patch.nb_lines() {
-  self.put_points_on_line(f1, f2, int_patch.line_mut(li));
-  }
+ // OCCT L351-375: SortTypes — canonical surface ordering.
+ // Swap f1/f2 so the higher-type surface is always "face A".
+ let type_idx1 = Self::surface_type_index(&s1);
+ let type_idx2 = Self::surface_type_index(&s2);
+ let b_reverse = type_idx1 < type_idx2;
+ // OCCT L354: if bReverse, swap face refs so myFace1 gets the higher type.
+ let (f1, f2, s_a, s_b) = if b_reverse { (f2, f1, &s2, &s1) } else { (f1, f2, &s1, &s2) };
 
-  // OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
-  // Returns a Vec of IntersectionCurve — one per valid part from the
-  // LineConstructor (OCCT supports aNbParts > 1, e.g. multi-segment clipping).
-  let mut ff_curve_indices: Vec<usize> = Vec::new();
-  for i in 0..int_patch.nb_lines() {
-  let ics = self.make_intersection_curve(f1, f2, int_patch.line(i));
-  for ic in ics {
-    let ci = self.ds.intersection_curves.len();
-    self.ds.intersection_curves.push(ic);
-    ff_curve_indices.push(ci);
-  }
-  }
-  let mut ff_point_indices: Vec<usize> = Vec::new();
-  for pi in 0..int_patch.nb_points() {
-  let pt = int_patch.point(pi);
-  if !self.context.is_point_in_on_face(self.ds, f1, glam::DVec2::new(pt.u1, pt.v1)) { continue; }
-  if !self.context.is_point_in_on_face(self.ds, f2, glam::DVec2::new(pt.u2, pt.v2)) { continue; }
-  let vi = self.ds.add_vertex(pt.p1);
-  self.ds.vertices[vi].geom_tol = self.ds.vertices[vi].geom_tol.max(pt.tolerance);
-  ff_point_indices.push(vi);
-  }
-  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
-  f1, f2, curves: ff_curve_indices, points: ff_point_indices, tangent_faces: false,
-  });
+ // OCCT L384-393: tolerance setup
+ // OCCT: myTolF1 = BRep_Tool::Tolerance(myFace1) + aFuzz, etc.
+ // rcad: tolerance handled by PaveFiller's fuzzy_tolerance and face geom_tols.
+
+ // OCCT L395-401: isFace1Quad/isFace2Quad — skip; rcad uses IntPatchIntersection
+ // which dispatches by quad type internally.
+
+ // OCCT-aligned: IntPatch_Intersection: generic surface-surface intersection.
+ let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
+ int_patch.perform(s_a, s_b, self.fuzzy_tolerance, self.fuzzy_tolerance);
+ if int_patch.tangent_faces() {
+ self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
+ f1, f2, curves: Vec::new(), points: Vec::new(), tangent_faces: true,
+ });
+ if let Some(ref info) = shift_info { self.reverse_seam_edge_shift(f1, f2, info); }
+ self.seam_shift_tol = old_shift_tol;
+ return;
+ }
+
+ // OCCT-aligned: PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
+ // Projects intersection points onto each analytic line to create
+ // boundary-crossing vertices.  These vertices split the line into
+ // valid intervals for MakeCurve/TreatCircle.
+ for li in 0..int_patch.nb_lines() {
+ self.put_points_on_line(f1, f2, int_patch.line_mut(li));
+ }
+
+ // OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
+ // Returns a Vec of IntersectionCurve — one per valid part from the
+ // LineConstructor (OCCT supports aNbParts > 1, e.g. multi-segment clipping).
+ let mut ff_curve_indices: Vec<usize> = Vec::new();
+ for i in 0..int_patch.nb_lines() {
+ let ics = self.make_intersection_curve(f1, f2, int_patch.line(i));
+ for ic in ics {
+   let ci = self.ds.intersection_curves.len();
+   let mut adjusted_ic = ic;
+   // OCCT L558-567: if reversed, swap pcurves (first ↔ second).
+   if b_reverse {
+   std::mem::swap(&mut adjusted_ic.pcurve_on_a, &mut adjusted_ic.pcurve_on_b);
+   }
+   self.ds.intersection_curves.push(adjusted_ic);
+   ff_curve_indices.push(ci);
+ }
+ }
+
+ // OCCT L576-608: points — filter by isPointInOnFace, append to myPnts.
+ let mut ff_point_indices: Vec<usize> = Vec::new();
+ for pi in 0..int_patch.nb_points() {
+ let pt = int_patch.point(pi);
+ let (uv_a, uv_b, f_a, f_b) = if b_reverse {
+   (glam::DVec2::new(pt.u2, pt.v2), glam::DVec2::new(pt.u1, pt.v1), f2, f1)
+ } else {
+   (glam::DVec2::new(pt.u1, pt.v1), glam::DVec2::new(pt.u2, pt.v2), f1, f2)
+ };
+ if !self.context.is_point_in_on_face(self.ds, f_a, uv_a) { continue; }
+ if !self.context.is_point_in_on_face(self.ds, f_b, uv_b) { continue; }
+ let vi = self.ds.add_vertex(pt.p1);
+ self.ds.vertices[vi].geom_tol = self.ds.vertices[vi].geom_tol.max(pt.tolerance);
+ ff_point_indices.push(vi);
+ }
+ self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
+ f1, f2, curves: ff_curve_indices, points: ff_point_indices, tangent_faces: false,
+ });
 
  // = =  Reverse Seam Edge Shift (OCCT ApplyTrsf L560) = = = = = = = = = = = = = = 
  if let Some(ref info) = shift_info {
@@ -349,10 +380,10 @@ impl<'a> super::PaveFiller<'a> {
  let t_b = self.ff_tol(f2, f2);
  for &ci in &ff_curves {
  let (curve, pca, pcb, tr, current_tol) = {
- let ic = &self.ds.intersection_curves[ci];
- (ic.curve.clone(),
-  ic.pcurve_on_a.clone(), ic.pcurve_on_b.clone(),
-  ic.t_range, ic.geom_tol)
+   let ic = &self.ds.intersection_curves[ci];
+   (ic.curve.clone(),
+    ic.pcurve_on_a.clone(), ic.pcurve_on_b.clone(),
+    ic.t_range, ic.geom_tol)
  };
  let (new_tol, tang_tol) = inttools::pcurve_derive::compute_intersection_curve_tolerance(
  &curve, pca.as_ref(), pcb.as_ref(),
@@ -383,38 +414,31 @@ impl<'a> super::PaveFiller<'a> {
  // correct endpoint positions via point_at and create new DS vertices.
  for ci in 0..self.ds.intersection_curves.len() {
  let needs_fix = {
- let ic = &self.ds.intersection_curves[ci];
- let half_circle = match &ic.curve {
- rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => {
- (ic.t_range[1] - ic.t_range[0] - std::f64::consts::TAU).abs() >= TOLERANCE_ANG
- }
- _ => false,
- };
- half_circle && ic.start_vertex == ic.end_vertex
+   let ic = &self.ds.intersection_curves[ci];
+   let half_circle = match &ic.curve {
+   rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => {
+   (ic.t_range[1] - ic.t_range[0] - std::f64::consts::TAU).abs() >= TOLERANCE_ANG
+   }
+   _ => false,
+   };
+   half_circle && ic.start_vertex == ic.end_vertex
  };
  if needs_fix {
- if std::env::var("RCAD_DBG_FF").is_ok() {
- eprintln!("[DBG_FF] needs_fix: ci={} t=[{:.4},{:.4}] sv={} ev={}", ci,
- self.ds.intersection_curves[ci].t_range[0], self.ds.intersection_curves[ci].t_range[1],
- self.ds.intersection_curves[ci].start_vertex, self.ds.intersection_curves[ci].end_vertex);
- }
- let t0 = self.ds.intersection_curves[ci].t_range[0];
- let t1 = self.ds.intersection_curves[ci].t_range[1];
- let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
- let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
- // Push new vertices directly  ?do NOT use add_vertex which merges
- // near-coincident points.  Multiple sphere-plane intersection circles
- // pass through the same spatial positions (e.g. (1,0,0), (0,1,0),
- // (0,0, 1)), and each half-circle needs its OWN start/end vertices
- // to form distinct arcs.  Merging them collapses different
- // face-boundary arcs onto the same vertex pair, creating the
- // same section edges for different curves and breaking the loop.
- let v_start = self.ds.vertices.len();
- self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
- let v_end = self.ds.vertices.len();
- self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
- self.ds.intersection_curves[ci].start_vertex = v_start;
- self.ds.intersection_curves[ci].end_vertex = v_end;
+  if std::env::var("RCAD_DBG_FF").is_ok() {
+   eprintln!("[DBG_FF] needs_fix: ci={} t=[{:.4},{:.4}] sv={} ev={}", ci,
+   self.ds.intersection_curves[ci].t_range[0], self.ds.intersection_curves[ci].t_range[1],
+   self.ds.intersection_curves[ci].start_vertex, self.ds.intersection_curves[ci].end_vertex);
+  }
+  let t0 = self.ds.intersection_curves[ci].t_range[0];
+  let t1 = self.ds.intersection_curves[ci].t_range[1];
+  let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
+  let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
+  let v_start = self.ds.vertices.len();
+  self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  let v_end = self.ds.vertices.len();
+  self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  self.ds.intersection_curves[ci].start_vertex = v_start;
+  self.ds.intersection_curves[ci].end_vertex = v_end;
  }
  }
  // OCCT-aligned: PreparePostTreatFF (PaveFiller_6.cxx L3642-3668).
@@ -424,295 +448,33 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[f2].face_info.curves_sc.extend(&post_ff_curves);
  for &ci in &post_ff_curves {
  if ci < self.ds.intersection_curves.len() {
- let ic = &self.ds.intersection_curves[ci];
- // Only add valid vertex indices to vertices_in.  Unclipped
- // analytical curves may still have usize::MAX endpoints.
- if ic.start_vertex < self.ds.vertices.len() {
- self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
- self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
- }
- if ic.end_vertex < self.ds.vertices.len() {
- self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
- self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
- }
- // Register curve endpoints as vertices_on if they match face boundary vertices
- let bv1 = self.ds.faces[f1].boundary_verts.clone();
- let bv2 = self.ds.faces[f2].boundary_verts.clone();
- for &bvi in &bv1 {
- if bvi == ic.start_vertex || bvi == ic.end_vertex {
- self.ds.faces[f1].face_info.vertices_on.insert(bvi);
+   let ic = &self.ds.intersection_curves[ci];
+   if ic.start_vertex < self.ds.vertices.len() {
+   self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
+   self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
+   }
+   if ic.end_vertex < self.ds.vertices.len() {
+   self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
+   self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
+   }
  }
  }
- for &bvi in &bv2 {
- if bvi == ic.start_vertex || bvi == ic.end_vertex {
- self.ds.faces[f2].face_info.vertices_on.insert(bvi);
- }
- }
- }
- }
- //  OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
- // Creates an initial PaveBlock on each curve for ext_pave tracking.
- for ci in 0..self.ds.intersection_curves.len() {
- 
- }
- }
- }
+  } // if let Some(ff_curves)
+} // fn intersect_face_face
 
- /// OCCT: plane-plane intersection
-
- ///  OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
- /// Builds vertex aces and edge aces connection maps per source range,
- /// detects acquired self-intersections (same vertex/edge used by >1 face from same operand).
- pub(crate) fn check_self_interference(&self) -> Vec<String> {
- // OCCT L30-34: single argument == self-interference mode, skip.
- if self.ds.a_vertex_count == 0 {
- return Vec::new();
+/// OCCT-aligned: IndexType (IntTools_FaceFace.cxx L2844-2870).
+/// Maps Surface3 variant to an integer index for canonical ordering.
+/// Lower-typed surface is "simpler" (Plane<Cylinder<Cone<Sphere<Torus).
+fn surface_type_index(surf: &rcad_kernel::geom::Surface3) -> i32 {
+ match surf {
+ rcad_kernel::geom::Surface3::Plane(_) => 0,
+ rcad_kernel::geom::Surface3::Cylinder(_) => 1,
+ rcad_kernel::geom::Surface3::Cone(_) => 2,
+ rcad_kernel::geom::Surface3::Sphere(_) => 3,
+ rcad_kernel::geom::Surface3::Torus(_) => 4,
+ _ => 11,
  }
-
- // OCCT L38-41: iterate ranges (A and B operands).
- let a_end = self.ds.a_vertex_count;
- let ranges: [(usize, usize, &str); 2] = [
- (0, a_end, "A"),
- (a_end, self.ds.vertices.len(), "B"),
- ];
-
- let mut warnings: Vec<String> = Vec::new();
-
- for &(range_start, range_end, _name) in &ranges {
- // OCCT L43-48: aMCSI  ?map of connections: vertex/edge  ?list of faces.
- let mut v_to_faces: std::collections::HashMap<usize, Vec<usize>> =
- std::collections::HashMap::new();
- let mut e_to_faces: std::collections::HashMap<usize, Vec<usize>> =
- std::collections::HashMap::new();
- // OCCT L48: aMCBFence  ?skip already-processed CommonBlocks.
- let mut cb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-
- // OCCT L51-197: iterate shapes in this range.
- // rcad: process faces whose source solids are in this range.
- let origin = if range_start == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
- for fi in 0..self.ds.faces.len() {
- let face = &self.ds.faces[fi];
- if face.origin != origin { continue; }
- for &vi in &face.face_info.vertices_in {
- v_to_faces.entry(vi).or_default().push(fi);
- }
- for &vi in &face.face_info.vertices_in {
- if !face.face_info.vertices_sc.is_empty() {
- // vertices_sc is the set of vertices of section curves
- }
- }
- for pb_idx in face.face_info.pave_blocks_in.iter()
- .chain(face.face_info.pave_blocks_sc.iter())
- {
- if *pb_idx >= self.ds.pave_blocks.len() { continue; }
- let pb = &self.ds.pave_blocks[*pb_idx];
-  let ei = pb.0.read().unwrap().original_edge;
-  if ei >= self.ds.edges.len() { continue; }
-  e_to_faces.entry(ei).or_default().push(fi);
-  // contains edges from the same argument.
-  if let Some(cb_idx) = pb.0.read().unwrap().common_block_idx {
- if cb_fence.insert(cb_idx) {
- if cb_idx < self.ds.common_blocks.len() {
- let cb = &self.ds.common_blocks[cb_idx];
- let same_arg_edges: Vec<usize> = cb.pave_blocks().iter()
- .filter_map(|&(pbi, _)| {
- let pb2 = &self.ds.pave_blocks[pbi];
- let e = pb2.0.read().unwrap().original_edge;
- if e < self.ds.edges.len()
- && self.ds.edges[e].origin == face.origin
- {
- Some(e)
- } else { None }
- })
- .collect();
- if same_arg_edges.len() > 1 {
- warnings.push(format!(
- "Acquired self-intersection: CommonBlock {:?} contains {} edges from same argument",
- cb_idx, same_arg_edges.len()
- ));
- }
- }
- }
- }
- }
- }
- // >1 face from the same argument  ?self-interference.
- for (_vi, faces) in &v_to_faces {
- if faces.len() > 1 {
- warnings.push(format!(
- "Self-interference: vertex {:?} belongs to {} faces from same argument",
- _vi, faces.len()
- ));
- }
- }
- for (_ei, faces) in &e_to_faces {
- if faces.len() > 1 {
- warnings.push(format!(
- "Self-interference: edge {:?} belongs to {} faces from same argument",
- _ei, faces.len()
- ));
- }
- }
- }
-
- warnings
- }
-
- pub(crate) fn make_split_edges(&mut self) {
- // ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
- self.ds.update_common_blocks_with_sd_vertices();
-
- // Phase 1: collect PaveBlock data without creating new edges (avoids
- // mutable borrow conflict with self.ds.edges iteration).
- struct BlockData {
- ei: usize,
- sv: usize, ev: usize,
- t_start: f64, t_end: f64,
- curve: Curve3,
- origin: ShapeOrigin,
- geom_tol: f64,
- face_reps: Vec<DSCurveRepOnFace>,
- }
- let mut all_blocks: Vec<BlockData> = Vec::new();
- let n_orig_edges = self.ds.edges.len();
-
- //  OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
- // edges and sets PaveBlock->Edge() (pb.0.read().unwrap().new_edge).  rcad also initializes
- // pave_blocks on source edges here so downstream FillImagesEdges can
- // read pb.0.read().unwrap().new_edge.  my_images / my_origins are NOT populated here  ?
- // that is FillImagesEdges' responsibility (build_edge_images in ds.rs).
-
- for ei in 0..n_orig_edges {
- let edge = &self.ds.edges[ei];
- if edge.paves.is_empty() {
- continue;
- }
- if self.ds.is_edge_degenerated(ei) {
- continue;
- }
-
- let mut all_paves = vec![
- Pave { vertex_idx: edge.start_vertex, param: edge.t_range[0] },
- Pave { vertex_idx: edge.end_vertex, param: edge.t_range[1] },
- ];
- all_paves.extend_from_slice(&edge.paves);
- all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
- all_paves.dedup_by(|a, b| params_equal(a.param, b.param));
- let mut processed_common_blocks: std::collections::HashSet<usize> = std::collections::HashSet::new();
-
- for w in all_paves.windows(2) {
-  let pb = PaveBlock::new(ei, w[0], w[1]);
-  if let Some(cb_idx) = pb.common_block_idx {
-  if !processed_common_blocks.insert(cb_idx) {
-  continue;
-  }
-  }
-  if !self.ds.is_new_vertex(pb.pave1.vertex_idx)
-  && !self.ds.is_new_vertex(pb.pave2.vertex_idx)
-  {
-  continue;
-  }
-
-  let t1 = pb.pave1.param;
-  let t2 = pb.pave2.param;
-  let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
-  let split_curve = pb.curve.clone().unwrap_or_else(|| edge.curve.clone());
-  all_blocks.push(BlockData {
-  ei,
-  sv: pb.pave1.vertex_idx,
-  ev: pb.pave2.vertex_idx,
- t_start, t_end,
- curve: split_curve,
- origin: edge.origin,
- geom_tol: edge.geom_tol,
- face_reps: edge.face_reps.clone(),
- });
- }
- }
-
- // Phase 2: create new DSEdges for each collected block + set pave_blocks
- // on source edges (MakeSplitEdges).  my_images / my_origins are NOT
- // populated here  ?that is FillImagesEdges' job (build_edge_images in ds.rs).
- let mut edge_pbs: std::collections::HashMap<usize, Vec<(usize, usize, f64, f64, usize)>> =
- std::collections::HashMap::new();
-
- for data in &all_blocks {
- let new_ei = self.ds.edges.len();
- self.ds.edges.push(DSEdge {
- start_vertex: data.sv,
- end_vertex: data.ev,
- curve: data.curve.clone(),
- t_range: [data.t_start, data.t_end],
- origin: data.origin,
- geom_tol: data.geom_tol,
- paves: vec![],
- pave_blocks: vec![],
- face_reps: data.face_reps.clone(),
- is_internal: false,
- vertex_params: {
- let mut vp = std::collections::HashMap::new();
- vp.insert(data.sv, data.t_start);
- vp.insert(data.ev, data.t_end);
- vp
- },
- face_tolerances: Vec::new(),
-  is_geometric: true,
-  location: 0,
-  });
-
-  // Track for pave_blocks assignment on source edge
- edge_pbs.entry(data.ei).or_default().push((
- data.sv, data.ev, data.t_start, data.t_end, new_ei,
- ));
- }
-
- //  OCCT-aligned: Set pave_blocks on source edges that were split,
- // so Builder::fill_images_edges can read pb.0.read().unwrap().new_edge.
- for (ei, blocks) in &edge_pbs {
- let pbs: Vec<PaveBlock> = blocks.iter().map(|&(sv, ev, t_start, t_end, new_ei)| {
- let mut pb = PaveBlock::new(*ei,
- Pave { vertex_idx: sv, param: t_start },
- Pave { vertex_idx: ev, param: t_end },
- );
-  pb.new_edge = Some(new_ei);
- pb
- }).collect();
- self.ds.edges[*ei].pave_blocks = pbs.into_iter().map(|pb| crate::bopds::pave::SharedPB::new(pb)).collect();
- }
- }
-
- // = = =  Helpers = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
-
- pub(crate) fn verts_of(&self, origin: ShapeOrigin) -> Vec<usize> {
- self.ds
- .vertices
- .iter()
- .enumerate()
- .filter(|(_, v)| v.origin == Some(origin))
- .map(|(i, _)| i)
- .collect()
- }
-
- pub(crate) fn edges_of(&self, origin: ShapeOrigin) -> Vec<usize> {
- self.ds
- .edges
- .iter()
- .enumerate()
- .filter(|(_, e)| e.origin == origin)
- .map(|(i, _)| i)
- .collect()
- }
-
- pub(crate) fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
- self.ds
- .faces
- .iter()
- .enumerate()
- .filter(|(_, f)| f.origin == origin)
- .map(|(i, _)| i)
- .collect()
- }
-
+}
  /// OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846).
 /// Dispatches by line type (OCCT switch on IntPatch_IType):
 ///   - Walking:        approximate BSpline from marching points (L1097)
