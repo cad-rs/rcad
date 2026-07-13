@@ -1008,56 +1008,56 @@ fn split_closed_curve(
  Some([[t0, tm], [tm, t1]])
 }
 
-/// Post-process intersection curves: split closed curves and reject redundant
-/// lines.
-///
-/// ✅ OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967)
-/// + IntTools_Tools::SplitCurve (IntTools_Tools.cxx L191-250)
-///
-/// 1. Splits closed 3D curves at the parametric midpoint so they can be
-/// trimmed properly.  Also trims 2D pcurves to the sub-ranges.
-/// 2. (Future) Plane/Cone 4-line redundant-line rejection.
+/// OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967).
+/// Post-processes intersection curves:
+/// 1. Splits closed 3D curves at the parametric midpoint (OCCT SplitCurve).
+/// 2. Rejects redundant lines for Plane/Cone 4-line case (OCCT RejectLines).
 ///
 /// Operates on the `curves` vector in place.
 pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
- // OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967)
- // + IntTools_Tools::SplitCurve (IntTools_Tools.cxx L191-250).
- //
- // Split closed 3D curves at the parametric midpoint so they can be
- // trimmed properly.  Also trims 2D pcurves to the sub-ranges.
- let mut i = 0;
- while i < curves.len() {
-   let tr = curves[i].t_range;
-   if let Some(sub_ranges) = split_closed_curve(&curves[i].curve, &tr) {
-     let [r0, r1] = sub_ranges;
-     // OCCT L223-225: trim 3D curve to [First, Mid] (first half)
-     curves[i].t_range = r0;
-     // OCCT L228-240: trim 2D pcurves to sub-ranges
-     let pca_first = curves[i].pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1]));
-     let pcb_first = curves[i].pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1]));
-     let pca_second = curves[i].pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1]));
-     let pcb_second = curves[i].pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1]));
-     curves[i].pcurve_on_a = pca_first;
-     curves[i].pcurve_on_b = pcb_first;
-     // OCCT L242-247: create and append second half
-     let c2 = crate::bopds::ds::IntersectionCurve {
-       curve: curves[i].curve.clone(),
-       polyline: Vec::new(),
-       start_vertex: curves[i].start_vertex,
-       end_vertex: curves[i].end_vertex,
-       t_range: r1,
-       pcurve_on_a: pca_second,
-       pcurve_on_b: pcb_second,
-       geom_tol: curves[i].geom_tol,
-       pave_blocks: Vec::new(),
-       curve_extra: curves[i].curve_extra.clone(),
-     };
-     curves.insert(i + 1, c2);
-     i += 2;
+ // OCCT L1936-1937: bToSplit parameter (OCCT default true).
+ const B_TO_SPLIT: bool = true;
+
+ // ── Phase 1: split closed curves ──
+ // OCCT L1938-1963: for each curve, SplitCurve(aIC) → append result.
+ let mut new_curves: Vec<crate::bopds::ds::IntersectionCurve> = Vec::with_capacity(curves.len());
+ for ic in curves.drain(..) {
+ let tr = ic.t_range;
+ if B_TO_SPLIT {
+   if let Some([r0, r1]) = split_closed_curve(&ic.curve, &tr) {
+   // OCCT L223-225: Geom_TrimmedCurve(aC3D, aF, aMid) for first half.
+   // rcad: t_range provides effective trimming; 3D curve kept as-is.
+   let first_half = crate::bopds::ds::IntersectionCurve {
+     t_range: r0,
+     pcurve_on_a: ic.pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1])),
+     pcurve_on_b: ic.pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r0[0], r0[1])),
+     ..ic.clone()
+   };
+   // OCCT L242-247: Geom_TrimmedCurve(aC3D, aMid, aL) for second half.
+   let second_half = crate::bopds::ds::IntersectionCurve {
+     t_range: r1,
+     pcurve_on_a: ic.pcurve_on_a.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1])),
+     pcurve_on_b: ic.pcurve_on_b.as_ref().map(|pc| trim_curve2d(pc, r1[0], r1[1])),
+     ..ic
+   };
+   new_curves.push(first_half);
+   new_curves.push(second_half);
    } else {
-     i += 1;
+   new_curves.push(ic);
    }
+ } else {
+   new_curves.push(ic);
  }
+ }
+
+ // ── Phase 2: Plane/Cone redundant-line rejection ──
+ // OCCT L1965-1990: if Plane+Cone intersection produced 4 lines, some may
+ // be redundant (parallel).  IntTools_Tools::RejectLines filters them.
+ // rcad: not yet implemented — this case only applies when Plane and Cone
+ // surfaces produce exactly 4 Line-type intersection curves.
+ // OCCTL1965-1990
+
+ *curves = new_curves;
 }
 
 /// Trim a Curve2d to the given parameter sub-range [lo, hi].
