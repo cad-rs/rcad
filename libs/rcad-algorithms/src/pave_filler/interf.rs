@@ -34,7 +34,7 @@ impl<'a> PaveFiller<'a> {
                 let mid_t1 = (t11 + t12) * 0.5;             
                 let c1 = &self.ds.edges[nE1].curve;          
                 let tgt1 = c1.tangent_at(mid_t1);
-                if tgt1.length_squared() < 1e-60 { continue; }
+                if tgt1.length_squared() < TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN { continue; }
 
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
@@ -58,16 +58,16 @@ impl<'a> PaveFiller<'a> {
                     let b_use_add_tol = match (c1, c2) {
                         (Curve3::Line(l1), Curve3::Line(l2)) => {
                             let cos_angle = l1.direction.dot(l2.direction).abs();
-                            cos_angle >= 0.9063 
+                            cos_angle >= TOLERANCE_COS_LINE_ANGLE
                         }
                         _ => {
                             let mid_pt = c1.point_at(mid_t1);
                             let proj = closest_point_on_curve(c2, mid_pt, 64);
                             if !proj.param.is_finite() { false } else {
                                 let tgt2 = c2.tangent_at(proj.param);
-                                if tgt2.length_squared() < 1e-60 { false } else {
+                                if tgt2.length_squared() < TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN { false } else {
                                     let cos_angle = tgt1_n.dot(tgt2.normalize()).abs();
-                                    cos_angle >= 0.9063 
+                                    cos_angle >= TOLERANCE_COS_LINE_ANGLE
                                 }
                             }
                         }
@@ -111,7 +111,7 @@ impl<'a> PaveFiller<'a> {
                             let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
                             let tgt1 = c1.tangent_at(mid_t1);
                             let tgt2 = c2.tangent_at(mid_t2);
-                            let cos_angle = if tgt1.length_squared() > 1e-30 && tgt2.length_squared() > 1e-30 {
+                            let cos_angle = if tgt1.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE && tgt2.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
                                 tgt1.normalize().dot(tgt2.normalize()).abs()
                             } else { 0.0 };
                             let fuzzy = if cos_angle >= 0.9063 {
@@ -163,10 +163,10 @@ impl<'a> PaveFiller<'a> {
                                 let p1 = c1.point_at(nr_t1);
                                 let p2 = c2.point_at(nr_t2);
                                 let diff = p1 - p2;
-                                if diff.length_squared() < 1e-30 { break; }
+                                if diff.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
                                 let t1 = c1.tangent_at(nr_t1);
                                 let t2 = c2.tangent_at(nr_t2);
-                                if t1.length_squared() < 1e-30 || t2.length_squared() < 1e-30 { break; }
+                                if t1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE || t2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
                                 let d1 = t1.normalize();
                                 let d2 = t2.normalize();
                                 // Hessian H and gradient grad of F(t1,t2) = ||C1-C2||^2
@@ -177,7 +177,7 @@ impl<'a> PaveFiller<'a> {
                                 let g0 = 2.0 * diff.dot(d1);
                                 let g1 = 2.0 * diff.dot(d2);
                                 let det = h00 * h11 - h01 * h01;
-                                if det.abs() < 1e-30 { break; }
+                                if det.abs() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
                                 let dt1 = (-g0 * h11 - g1 * h01) / det;
                                 let dt2 = (g1 * h00 + g0 * h10) / det;
                                 let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
@@ -366,7 +366,7 @@ impl<'a> PaveFiller<'a> {
                     let a_t_mid = crate::boptools::intermediate_point(a_ts[0], a_ts[1]);
                     let a_p_on_e = a_e_curve.point_at(a_t_mid);
                     let a_ve_tgt = a_e_curve.tangent_at(a_t_mid);
-                    if a_ve_tgt.length_squared() < 1e-30 { continue; }
+                    if a_ve_tgt.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
 
                     let (a_uv, a_p_on_s, a_lower_dist) =
                         match ctx.proj_ps(ds, nf, a_p_on_e) {
@@ -389,7 +389,7 @@ impl<'a> PaveFiller<'a> {
                         || !matches!(*a_e_curve, Curve3::Line(_))
                     {
                         let a_vf_norm = a_p_on_s - a_p_on_e;
-                        if a_vf_norm.length_squared() > 1e-30 {
+                        if a_vf_norm.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
                             let a_cos = a_vf_norm.normalize().dot(a_ve_tgt.normalize());
                             if a_cos.abs() > 0.4226 { b_use_add_tol = false; }
                         }

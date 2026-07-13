@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two cylinders.
+//! Analytic intersection of two cylinders.
 //!
 //! # Case classification
 //!
@@ -396,8 +396,8 @@ fn intersect_skew_cylinder_cylinder(
     let delta = o1 - o2; // O1 - O2
 
     const N_SAMPLES: usize = 128;
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
     let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
     let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
 
@@ -576,7 +576,7 @@ pub fn sample_perpendicular_offset_curves(
     let s = (d2 - a1.dot(a2) * d1) / denom;
     let conn = (cyl1.origin + a1 * t) - (cyl2.origin + a2 * s);
     let conn_len = conn.length();
-    let u1 = if conn_len < 1e-12 {
+    let u1 = if conn_len < TOLERANCE_LEN_MIN {
         a1.cross(a2).normalize()
     } else {
         conn / conn_len

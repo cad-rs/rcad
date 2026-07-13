@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntWalk_PWalking — intersection curve walking for
+//! �?OCCT-aligned: IntWalk_PWalking �?intersection curve walking for
 //!   two parametric surfaces (parametric-parametric).
 //!
 //! OCCT source: TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx (4096 lines)
@@ -16,6 +16,7 @@ use rcad_kernel::geom::*;
 
 use crate::inttools::marching::{self, MarchingConfig};
 use crate::extrema;
+use crate::tolerance::TOLERANCE_LEN_MIN;
 
 use super::prm_prm_intersection::PntOn2S;
 
@@ -23,7 +24,7 @@ use super::prm_prm_intersection::PntOn2S;
 #[derive(Clone, Copy, PartialEq)]
 enum StatusDeflection {
     PasTropGrand,   // step OK
-    PasTropPetit,   // step too small → refine
+    PasTropPetit,   // step too small �?refine
     PasTropGrandInFlexion, // step too large at inflection
 }
 
@@ -34,7 +35,7 @@ enum ConstIsoparametric {
     None,
 }
 
-/// ✅ OCCT-aligned: IntWalk_PWalking
+/// �?OCCT-aligned: IntWalk_PWalking
 pub struct PWalking {
     // ── Public state (OCCT hxx:243-287) ──────────────────────────
     done: bool,
@@ -161,7 +162,7 @@ impl PWalking {
         let p2 = surface_point_at(&self.s2, u2, v2);
         if !p1.is_finite() || !p2.is_finite() { return false; }
         let dist = p1.distance(p2);
-        if dist > self.my_tol_tang.max(1e-6) { return false; }
+        if dist > self.my_tol_tang.max(TOLERANCE_MESH_LEGACY) { return false; }
 
         *first_point = PntOn2S { p3d: (p1 + p2) * 0.5, u1, v1, u2, v2 };
         self.previous_point = Some(first_point.clone());
@@ -219,7 +220,7 @@ impl PWalking {
             },
         );
 
-        // Convert SampledCurve (3D points) → PntOn2S (UV+3D)
+        // Convert SampledCurve (3D points) �?PntOn2S (UV+3D)
         for p3d in &result.points {
             if !p3d.is_finite() { continue; }
             let Some((u1, v1)) = project_onto_surface(&self.s1, *p3d) else { continue };
@@ -244,7 +245,7 @@ impl PWalking {
     pub fn put_to_boundary(&mut self, s1: &Surface3, s2: &Surface3) -> bool {
         if self.line.len() < 2 { return false; }
 
-        let a_tol_min = 1e-12; // OCCT Precision::Confusion()
+        let a_tol_min = 1e-12; // minimum UV step threshold
         let (u1b_f, u1b_l, v1b_f, v1b_l) = uv_range(s1);
         let (u2b_f, u2b_l, v2b_f, v2b_l) = uv_range(s2);
 
@@ -363,8 +364,8 @@ impl PWalking {
         let low = [u1b_f, v1b_f, u2b_f, v2b_f];
         let upp = [u1b_l, v1b_l, u2b_l, v2b_l];
 
-        let a3d_tol = 1e-7; // OCCT: from surface resolution
-        let a_tol = 1e-6_f64.max(a3d_tol);
+        let a3d_tol = CONFUSION; // OCCT: from surface resolution
+        let a_tol = TOLERANCE_MESH_LEGACY.max(a3d_tol);
         let mut pnt = [u1, v1, u2, v2];
         let p3d_mid = {
             let p1 = surface_point_at(s1, pnt[0], pnt[1]);
@@ -396,12 +397,12 @@ impl PWalking {
         let sq_dist = p_int.distance_squared(p1);
         if sq_dist > a_tol * a_tol { return false; }
         //   with loop detection (hairpin bend check).
-        // rcad: simplified — insert directly without loop check since
+        // rcad: simplified �?insert directly without loop check since
         //   marching already produces consistent orientations.
         if is_the_first {
             if !self.line.is_empty() {
                 let dist = self.line[0].p3d.distance(p_int);
-                if dist > 1e-12 {
+                if dist > TOLERANCE_LEN_MIN {
                     self.line.insert(0, PntOn2S {
                         p3d: p_int, u1: pnt[0], v1: pnt[1],
                         u2: pnt[2], v2: pnt[3],
@@ -411,7 +412,7 @@ impl PWalking {
         } else {
             if !self.line.is_empty() {
                 let dist = self.line.last().unwrap().p3d.distance(p_int);
-                if dist > 1e-12 {
+                if dist > TOLERANCE_LEN_MIN {
                     self.line.push(PntOn2S {
                         p3d: p_int, u1: pnt[0], v1: pnt[1],
                         u2: pnt[2], v2: pnt[3],
@@ -578,14 +579,14 @@ impl PWalking {
             let solved = self.distance_minimize_by_gradient(s1, s2, &mut param);
 
             if !solved {
-                // OCCT: if !IsDone → return
+                // OCCT: if !IsDone �?return
                 out_of_tangent = true;
                 break;
             }
             let a_status = self.test_deflection(the_choix_iso, StatusDeflection::PasTropPetit);
             match a_status {
                 StatusDeflection::PasTropGrand => {
-                    // step too big → reduce step (OCCT L2000-2021 simulated)
+                    // step too big �?reduce step (OCCT L2000-2021 simulated)
                     for u in 0..4 {
                         self.pasuv[u] *= 0.8;
                         self.pasuv[u] = self.pasuv[u].max(self.my_step_min[u]);
@@ -712,13 +713,13 @@ fn u_resolution(s: &Surface3, _tol: f64) -> f64 {
     // rcad: estimate from UV range
     let (u_min, u_max, _, _) = uv_range(s);
     let range = (u_max - u_min).abs();
-    if range.is_finite() && range > 1e-10 { range * 1e-7 } else { 1e-7 }
+    if range.is_finite() && range > 1e-10 { range * CONFUSION } else { CONFUSION }
 }
 
 fn v_resolution(s: &Surface3, _tol: f64) -> f64 {
     let (_, _, v_min, v_max) = uv_range(s);
     let range = (v_max - v_min).abs();
-    if range.is_finite() && range > 1e-10 { range * 1e-7 } else { 1e-7 }
+    if range.is_finite() && range > 1e-10 { range * CONFUSION } else { CONFUSION }
 }
 
 fn surface_point_at(surf: &Surface3, u: f64, v: f64) -> DVec3 {

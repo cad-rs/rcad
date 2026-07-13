@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned TKGeomBase property/analysis equivalents.
+//! OCCT-aligned TKGeomBase property/analysis equivalents.
 //!
 //! 闁?OCCT-aligned implementations for:
 //!   - GeomLProp_CLProps2d     (curvature, D1, D2, centre of curvature, normal)
@@ -11,6 +11,7 @@
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
 use glam::DVec3;
+use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 
 /// Precision used for curvature computations.
 const TOL: f64 = 1e-7;
@@ -288,7 +289,7 @@ fn power_iteration(cxx: f64, cxy: f64, cxz: f64, cyy: f64, cyz: f64, czz: f64, s
             cxz * v.x + cyz * v.y + czz * v.z,
         );
         let len = v2.length();
-        if len < 1e-30 { break; }
+        if len < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
         v = v2 / len;
     }
     let eval = DVec3::new(

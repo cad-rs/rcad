@@ -1,14 +1,14 @@
-﻿//! BndLib-style bounding algorithms for 2D geometry.
+//! BndLib-style bounding algorithms for 2D geometry.
 //!
 //! Provides analytical bounding-box computation for 2D curves,
 //! matching OCCT's `BndLib` (2D overloads) and `GeomBndLib_Curve2d` dispatch.
 //!
-//! ✅ OCCT-aligned: BndLib.hxx (2D), GeomBndLib_Curve2d
+//! ? OCCT-aligned: BndLib.hxx (2D), GeomBndLib_Curve2d
 //!
 //! | Type           | Method                                        |
 //! |----------------|-----------------------------------------------|
 //! | Line2d         | Endpoints (+ infinite handling)               |
-//! | Circle2d       | Per-coordinate analytical (sqrt(R²·Xk²+R²·Yk²)) |
+//! | Circle2d       | Per-coordinate analytical (sqrt(R2��Xk2+R2��Yk2)) |
 //! | Ellipse2d      | Per-coordinate analytical (major/minor axes)  |
 //! | Parabola2d     | Endpoints + apex + infinite handling          |
 //! | Hyperbola2d    | Endpoints + per-coordinate extremal via log   |
@@ -19,15 +19,16 @@
 
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN};
 use rcad_kernel::geom::{
     BezierCurve2, BSplineCurve2, Circle2d, Ellipse2d, Hyperbola2d,
     Line2d, OffsetCurve2d, Parabola2d,
 };
 
 // =============================================================================
-// BoundingBox2d — 2D Axis-Aligned Bounding Box
+// BoundingBox2d �� 2D Axis-Aligned Bounding Box
 // =============================================================================
-// ✅ OCCT-aligned: Bnd_Box2d (simplified — no open/whole-space flags)
+// ? OCCT-aligned: Bnd_Box2d (simplified �� no open/whole-space flags)
 
 /// A 2D axis-aligned bounding box.
 ///
@@ -199,12 +200,12 @@ fn curve_box_optimal(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox
 }
 
 // =============================================================================
-// Analytical evaluators — 2D, matching GeomBndLib_Curve2d
+// Analytical evaluators �� 2D, matching GeomBndLib_Curve2d
 // =============================================================================
 
 fn eval_point(curve: &Curve2d, t: f64) -> DVec2 { curve.point_at(t) }
 
-// ── Line2d ────────────────────────────────────────────────────────────────
+// ���� Line2d ��������������������������������������������������������������������������������������������������������������������������������
 
 fn line_box(line: &Line2d, mut t1: f64, mut t2: f64, tol: f64) -> BoundingBox2d {
     use rcad_kernel::geom::Curve2dEval;
@@ -222,8 +223,8 @@ fn line_box(line: &Line2d, mut t1: f64, mut t2: f64, tol: f64) -> BoundingBox2d 
     bbox
 }
 
-// ── Circle2d ──────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Circle2d (same formula as 3D, 2 coordinates)
+// ���� Circle2d ����������������������������������������������������������������������������������������������������������������������������
+// ? OCCT-aligned: GeomBndLib_Circle2d (same formula as 3D, 2 coordinates)
 
 fn circle_box(circle: &Circle2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let r = circle.radius;
@@ -249,7 +250,7 @@ fn circle_box(circle: &Circle2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     for k in 0..2 {
         let xk = xd[k];
         let yk = yd[k];
-        let t_extr = if xk.abs() > 1e-15 { yk.atan2(xk) }
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN { yk.atan2(xk) }
                      else { std::f64::consts::PI / 2.0 };
         let t_extr2 = {
             let v = t_extr + std::f64::consts::PI;
@@ -284,7 +285,7 @@ fn full_circle_box(o: DVec2, xd: DVec2, yd: DVec2, r: f64, tol: f64) -> Bounding
     bbox
 }
 
-// ── Ellipse2d ─────────────────────────────────────────────────────────────
+// ���� Ellipse2d ��������������������������������������������������������������������������������������������������������������������������
 
 fn ellipse_box(ell: &Ellipse2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let a_maj = ell.major_radius;
@@ -311,7 +312,7 @@ fn ellipse_box(ell: &Ellipse2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     for k in 0..2 {
         let xk = xd[k];
         let yk = yd[k];
-        let t_extr = if xk.abs() > 1e-15 { (a_min * yk).atan2(a_maj * xk) }
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN { (a_min * yk).atan2(a_maj * xk) }
                      else { std::f64::consts::PI / 2.0 };
         let t_extr2 = if t_extr <= std::f64::consts::PI {
             t_extr + std::f64::consts::PI
@@ -347,7 +348,7 @@ fn full_ellipse_box(o: DVec2, xd: DVec2, yd: DVec2, a_maj: f64, a_min: f64, tol:
     bbox
 }
 
-// ── Parabola2d ────────────────────────────────────────────────────────────
+// ���� Parabola2d ������������������������������������������������������������������������������������������������������������������������
 
 fn parabola_box(par: &Parabola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     use rcad_kernel::geom::Curve2dEval;
@@ -359,7 +360,7 @@ fn parabola_box(par: &Parabola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     bbox
 }
 
-// ── Hyperbola2d ───────────────────────────────────────────────────────────
+// ���� Hyperbola2d ����������������������������������������������������������������������������������������������������������������������
 
 fn hyperbola_box(hyp: &Hyperbola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     use rcad_kernel::geom::Curve2dEval;
@@ -390,7 +391,7 @@ fn hyperbola_box(hyp: &Hyperbola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d
     bbox
 }
 
-// ── BSplineCurve2 ────────────────────────────────────────────────────────
+// ���� BSplineCurve2 ����������������������������������������������������������������������������������������������������������������
 
 fn bspline_curve_box(curve: &BSplineCurve2, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let a_weakness = 1.5;
@@ -410,7 +411,7 @@ fn bspline_curve_box_optimal(curve: &BSplineCurve2, t1: f64, t2: f64, tol: f64) 
     other_curve_box_optimal_from_fn(&|t| curve.point_at(t), t1, t2, tol)
 }
 
-// ── BezierCurve2 ─────────────────────────────────────────────────────────
+// ���� BezierCurve2 ������������������������������������������������������������������������������������������������������������������
 
 fn bezier_curve_box(curve: &BezierCurve2, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let a_weakness = 1.5;
@@ -430,7 +431,7 @@ fn bezier_curve_box_optimal(curve: &BezierCurve2, t1: f64, t2: f64, tol: f64) ->
     other_curve_box_optimal_from_fn(&|t| curve.point_at(t), t1, t2, tol)
 }
 
-// ── OffsetCurve2d ───────────────────────────────────────────────────────
+// ���� OffsetCurve2d ��������������������������������������������������������������������������������������������������������������
 
 fn offset_curve_box(curve: &OffsetCurve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let offset = curve.offset_distance.abs();
@@ -441,7 +442,7 @@ fn offset_curve_box(curve: &OffsetCurve2d, t1: f64, t2: f64, tol: f64) -> Boundi
     bbox
 }
 
-// ── OtherCurve2d (sampling fallback) ─────────────────────────────────────
+// ���� OtherCurve2d (sampling fallback) ��������������������������������������������������������������������������
 
 fn other_curve_box(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let weakness = 1.5;
@@ -489,7 +490,7 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec2>(
         }
     }
 
-    let eps = if tol > 1e-7f64 { tol } else { 1e-7f64 };
+    let eps = if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 };
     for k in 0..2 {
         let d = defl_max[k];
         if d > eps {
@@ -546,7 +547,7 @@ fn reduce_curve_box_2d(poles: &[DVec2], sampled: &BoundingBox2d) -> BoundingBox2
 
 fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(eval: &F, t1: f64, t2: f64, n: usize) -> (BoundingBox2d, f64) {
     let mut bbox = BoundingBox2d::new();
-    if (t2 - t1).abs() < 1e-15 { return (bbox, 0.0f64); }
+    if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN { return (bbox, 0.0f64); }
     let dt = (t2 - t1) / (2 * n) as f64;
     let mut p1 = eval(t1);
     bbox.add_point(p1);
@@ -568,7 +569,7 @@ fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(eval: &F, t1: f64, t2: f64, n: usize
 }
 
 // =============================================================================
-// Tests — translated from OCCT GTests
+// Tests �� translated from OCCT GTests
 // =============================================================================
 //
 // OCCT source:

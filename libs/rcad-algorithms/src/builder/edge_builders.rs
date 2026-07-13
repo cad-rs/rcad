@@ -16,8 +16,8 @@ pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usiz
  let mid_3d = (ds.vertices[sv].point + ds.vertices[ev].point) * 0.5;
  let uv_mid = world_to_uv(surface, mid_3d)?;
  let dU = match surface {
- Surface3::Sphere(sph) => edge_tol / sph.radius.max(1e-15),
- Surface3::Cylinder(cyl) => edge_tol / cyl.radius.max(1e-15),
+ Surface3::Sphere(sph) => edge_tol / sph.radius.max(TOLERANCE_CLAMP_MIN),
+ Surface3::Cylinder(cyl) => edge_tol / cyl.radius.max(TOLERANCE_CLAMP_MIN),
  _ => TOLERANCE_ABS,
  };
  let shift_u = if (uv_mid.x - u_min).abs() < dU { period } else if (uv_mid.x - u_max).abs() < dU { -period } else { return None; };
@@ -121,7 +121,7 @@ pub fn is_split_to_reverse(
  if ds.is_edge_degenerated(sub_ei) || ds.is_edge_degenerated(orig_ei) {
  return false;
  }
- // Same 3D curve â€” compare parameter direction
+ // Same 3D curve â€?compare parameter direction
  if curve_eq(&sub_edge.curve, &orig_edge.curve) {
  let sub_dir = sub_edge.t_range[1] - sub_edge.t_range[0];
  let orig_dir = orig_edge.t_range[1] - orig_edge.t_range[0];
@@ -143,7 +143,7 @@ pub fn is_split_to_reverse(
  best_t = t;
  }
  }
- if best_d > 1e-6 {
+ if best_d > TOLERANCE_MESH_LEGACY {
  return false;
  }
  let eps = 1e-8;

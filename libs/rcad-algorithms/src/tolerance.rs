@@ -63,11 +63,14 @@
 //! - [`AdaptiveTolerance::angular_tolerance`] intentionally scales [`TOLERANCE_ANG`] by [`ToleranceLevel`], not kernel `ANGULAR`.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::{
- edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
- vertex_tolerance as kernel_vertex_tolerance, topods, CONFUSION,
-};
 use tracing::debug;
+
+// OCCT-aligned: re-export kernel Precision constants and tolerance helpers.
+pub use rcad_kernel::{
+ ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, edge_tolerance as kernel_edge_tolerance,
+ face_tolerance as kernel_face_tolerance, INFINITE_VALUE, INTERSECTION, model_tolerance,
+ SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, topods, vertex_tolerance as kernel_vertex_tolerance,
+};
 
 /// Absolute tolerance for point coincidence.
 ///
@@ -146,6 +149,27 @@ pub const TOLERANCE_VEC_SQ_MIN: f64 = 1e-24;
 
 /// Squared length floor for normalization / AABB underflow guards (`1e-30`).
 pub const TOLERANCE_LEN_SQ_DIV_SAFE: f64 = 1e-30;
+
+/// Ultra-tight squared-length guard for UV-space direction checks (`1e-40`).
+///
+/// Stricter than [`TOLERANCE_LEN_SQ_DIV_SAFE`] — used when even trace
+/// squared-length values near `1e-30` are still degenerate in 2D param space
+/// (e.g. UV direction calculations in wire splitting).
+pub const TOLERANCE_UV_DIR_SQ_MIN: f64 = 1e-40;
+
+/// Absolute floor for squared tangent length before treating it as zero (`1e-60`).
+///
+/// Equivalently `TOLERANCE_LEN_SQ_DIV_SAFE²`. Used in tangent-vector underflow
+/// guards in edge-edge interference detection, where any floating noise below
+/// this threshold should be treated as zero.
+pub const TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN: f64 = 1e-60;
+
+/// Cosine threshold for "near parallel" line-line direction check (`0.9063 ≈ cos 25°`).
+///
+/// When two edges (or their tangents) have a direction dot product at or above
+/// this value, they are considered near-parallel enough to warrant additional
+/// fuzzy tolerance in edge-edge interference detection.
+pub const TOLERANCE_COS_LINE_ANGLE: f64 = 0.9063;
 
 /// Minimum edge / segment length floor (`1e-12`).
 pub const TOLERANCE_LEN_MIN: f64 = 1e-12;
@@ -700,6 +724,29 @@ pub fn params_equal(a: f64, b: f64) -> bool {
 pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> bool {
  let ang_tol = tol.angular_tolerance(ToleranceLevel::Normal);
  a.cross(b).length_squared() < ang_tol * ang_tol
+}
+
+/// OCCT-aligned: Precision::IsInfinite (Precision.hxx L350-353).
+/// Returns true if `R` may be considered as an infinite number.
+/// OCCT: std::abs(R) >= 0.5 * Precision::Infinite() where Precision::Infinite() = 2e100.
+/// Delegates to rcad_kernel::is_infinite_value().
+#[inline]
+pub fn precision_is_infinite(r: f64) -> bool {
+ rcad_kernel::tolerance::is_infinite_value(r)
+}
+
+/// OCCT-aligned: Precision::IsPositiveInfinite (Precision.hxx L357-360).
+/// Returns true if R may be considered as a positive infinite number.
+#[inline]
+pub fn precision_is_positive_infinite(r: f64) -> bool {
+ rcad_kernel::tolerance::is_positive_infinite_value(r)
+}
+
+/// OCCT-aligned: Precision::IsNegativeInfinite (Precision.hxx L364-367).
+/// Returns true if R may be considered as a negative infinite number.
+#[inline]
+pub fn precision_is_negative_infinite(r: f64) -> bool {
+ rcad_kernel::tolerance::is_negative_infinite_value(r)
 }
 
 // Re-export for test module convenience (any_perpendicular is in rcad-kernel).

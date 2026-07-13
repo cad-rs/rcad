@@ -1,21 +1,22 @@
-//! OCCT-aligned: IntPatch_WLineTool — walking line post-processing utilities.
+//! OCCT-aligned: IntPatch_WLineTool �?walking line post-processing utilities.
 //!
 //! OCCT IntPatch_WLineTool.hxx / .cxx (73K)
 //!
 //! Core methods:
-//!   ComputePurgedWLine — removes collinear/redundant points from WLine
-//!   JoinWLines         — joins adjacent WLines at shared endpoints
-//!   ExtendTwoWLines    — extends WLine endpoints to meet at intersections
+//!   ComputePurgedWLine �?removes collinear/redundant points from WLine
+//!   JoinWLines         �?joins adjacent WLines at shared endpoints
+//!   ExtendTwoWLines    �?extends WLine endpoints to meet at intersections
 
 use super::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
 use glam::DVec2;
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
 
 /// Max angle to concatenate two WLines to avoid C0-continuity issues.
 /// OCCT WLineTool.cxx: myMaxConcatAngle = PI/6
 const MAX_CONCAT_ANGLE: f64 = std::f64::consts::PI / 6.0;
 
 impl IntPatchLine {
-    /// OCCT: ComputePurgedWLine — remove collinear points from a walking line.
+    /// OCCT: ComputePurgedWLine �?remove collinear points from a walking line.
     ///
     /// 1. Remove duplicate points (within resolution)
     /// 2. Remove out-of-domain points
@@ -28,7 +29,7 @@ impl IntPatchLine {
         }
         if self.wline_pnts.len() == 2 {
             let d = self.wline_pnts[0].p3d.distance(self.wline_pnts[1].p3d);
-            if d < 1e-15 { return None; }
+            if d < TOLERANCE_CLAMP_MIN { return None; }
             return Some(self.clone());
         }
 
@@ -41,7 +42,7 @@ impl IntPatchLine {
                 let dv = (last.u2 - p.u2).abs() + (last.v2 - p.v2).abs();
                 // Find max UV magnitude for relative comparison
                 let max_uv = last.u1.abs().max(last.v1.abs().max(last.u2.abs().max(last.v2.abs())));
-                if d3 < 1e-15 || du < 1e-16 * max_uv.max(1.0) || dv < 1e-16 * max_uv.max(1.0) {
+                if d3 < TOLERANCE_CLAMP_MIN || du < 1e-16 * max_uv.max(1.0) || dv < 1e-16 * max_uv.max(1.0) {
                     continue; // skip duplicate
                 }
             }
@@ -54,7 +55,7 @@ impl IntPatchLine {
             } else { None };
         }
 
-        // Step 2: Tube criteria — remove collinear points
+        // Step 2: Tube criteria �?remove collinear points
         // Check each point: if distance from chord between neighbors is
         // below tolerance, remove it (collinear simplification)
         let resolution = 1e-12;
@@ -114,7 +115,7 @@ impl IntPatchLine {
     }
 }
 
-/// OCCT: JoinWLines — join adjacent WLines if they share endpoints.
+/// OCCT: JoinWLines �?join adjacent WLines if they share endpoints.
 /// Returns true if any joining was performed.
 pub fn join_wlines(lines: &mut Vec<IntPatchLine>, tol_3d: f64) -> bool {
     let mut joined = false;

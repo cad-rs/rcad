@@ -722,7 +722,7 @@ pub(crate) fn make_intersection_curve(
  rcad_kernel::geom::Curve3::BSpline(b) => b.clone(),
  _ => { return crate::bopds::ds::IntersectionCurve {
    curve: bs_curve3.clone(), polyline, start_vertex: usize::MAX, end_vertex: usize::MAX,
-   t_range: t_range_bs, pcurve_on_a, pcurve_on_b, geom_tol: line.tolerance.max(1e-7),
+   t_range: t_range_bs, pcurve_on_a, pcurve_on_b, geom_tol: line.tolerance.max(CONFUSION),
    pave_blocks: Vec::new(), curve_extra: crate::bopds::ds::CurveExtra { tangential_tol: line.tang_tolerance, ..Default::default() },
  }; }
  };
@@ -760,7 +760,7 @@ pub(crate) fn make_intersection_curve(
    start_vertex: usize::MAX, end_vertex: usize::MAX,
    t_range: t_range_bs,
    pcurve_on_a, pcurve_on_b,
-   geom_tol: line.tolerance.max(1e-7),
+   geom_tol: line.tolerance.max(CONFUSION),
    pave_blocks: Vec::new(),
    curve_extra: crate::bopds::ds::CurveExtra { tangential_tol: line.tang_tolerance, ..Default::default() },
  };
@@ -770,13 +770,13 @@ pub(crate) fn make_intersection_curve(
 
  // Step 1: For infinite-range Line3 curves, clip to face UV bounds.
  let needs_clipping = matches!(&curve, rcad_kernel::geom::Curve3::Line(_))
-   && t_range[0] <= -1e9 && t_range[1] >= 1e9;
+   && precision_is_infinite(t_range[0]) && precision_is_infinite(t_range[1]);
  if needs_clipping {
  let dir = match &curve {
  rcad_kernel::geom::Curve3::Line(l) => l.direction,
  _ => unreachable!(),
  };
- if !dir.is_finite() || dir.length_squared() < 1e-30 {
+ if !dir.is_finite() || dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
  return self.make_raw_intersection_curve(curve, t_range, pcurve_on_a, pcurve_on_b, geom_tol, line.tang_tolerance);
  }
  let line_origin = match &curve {
@@ -813,20 +813,22 @@ pub(crate) fn make_intersection_curve(
  has_uv = true;
  }
  }
- if !has_uv || !(u_max > u_min + 1e-12) || !(v_max > v_min + 1e-12) { continue; }
+ if !has_uv || !(u_max > u_min + 1e-12) || !(v_max > v_min + 1e-12) {
+ continue;
+ }
  let d_base = line_origin - base;
  let u0 = d_base.dot(x_axis);
  let du = dir.dot(x_axis);
  let v0 = d_base.dot(y_axis);
  let dv = dir.dot(y_axis);
- if du.abs() > 1e-30 {
+ if du.abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
  let t_lo = (u_min - u0) / du;
  let t_hi = (u_max - u0) / du;
  t_min = t_min.max(t_lo.min(t_hi)); t_max = t_max.min(t_lo.max(t_hi));
  } else if u0 < u_min - 1e-12 || u0 > u_max + 1e-12 {
  return self.make_raw_intersection_curve(curve, t_range, pcurve_on_a, pcurve_on_b, geom_tol, line.tang_tolerance);
  }
- if dv.abs() > 1e-30 {
+ if dv.abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
  let t_lo = (v_min - v0) / dv;
  let t_hi = (v_max - v0) / dv;
  t_min = t_min.max(t_lo.min(t_hi)); t_max = t_max.min(t_lo.max(t_hi));
@@ -844,7 +846,7 @@ pub(crate) fn make_intersection_curve(
  end_vertex = self.ds.vertices.len();
  self.ds.vertices.push(crate::bopds::ds::DSVertex { point: p_end, geom_tol: crate::tolerance::TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
  }
- }
+ } else { /* clipping did not produce a valid range */ }
  }
 
  // Step 2: Compute pcurves for analytic curves on Plane surfaces.

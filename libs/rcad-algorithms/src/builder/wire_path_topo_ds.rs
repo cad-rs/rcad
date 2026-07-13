@@ -385,7 +385,7 @@ fn refine_angles(
                     let t2 = (t_v + dt).min(domain[1]);
                     let pt2 = pc.point_at(t2);
                     let dir = pt2 - ta;
-                    if dir.length_squared() < 1e-30 { false }
+                    if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { false }
                     else {
                         let new_ang = dir.y.atan2(dir.x);
                         if clock_wise_angle(a2_bnd, new_ang) < a_delta { false }
@@ -656,8 +656,8 @@ fn build_smart_map(
                     }
                 }
             };
-            let surf = tool.face_surface(seg.face).unwrap_or(
-                &Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)));
+            let default_surf = Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
+            let surf = tool.face_surface(seg.face).unwrap_or(&default_surf);
             let new_angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
                 .unwrap_or(0.0);
             if std::env::var("RCAD_ANGLE_DUMP").is_ok() {

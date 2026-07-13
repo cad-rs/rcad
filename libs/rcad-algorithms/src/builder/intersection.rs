@@ -1,6 +1,7 @@
-﻿use glam::DVec2;
+use glam::DVec2;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LINEAR_ULTRA_STRICT};
 use super::curve_tools::*;
 use super::intres2d::*;
 
@@ -54,7 +55,7 @@ pub fn intersect_curves_2d_ginter(c1: &Curve2d, d1: &IntRes2dDomain, c2: &Curve2
 fn intersect_line_line(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64) -> Vec<(f64, f64)> {
     let Curve2d::Line(l1) = c1 else { return vec![] }; let Curve2d::Line(l2) = c2 else { return vec![] };
     let a = l1.direction.x; let b = -l2.direction.x; let c = l1.direction.y; let d = -l2.direction.y;
-    let det = a * d - b * c; if det.abs() < 1e-15 { return vec![]; }
+    let det = a * d - b * c; if det.abs() < TOLERANCE_CLAMP_MIN { return vec![]; }
     let rx = l2.origin.x - l1.origin.x; let ry = l2.origin.y - l1.origin.y;
     let t1 = (d * rx - b * ry) / det; let t2 = (a * ry - c * rx) / det;
     if t1 >= t1_min - 1e-12 && t1 <= t1_max + 1e-12 && t2 >= t2_min - 1e-12 && t2 <= t2_max + 1e-12 { vec![(t1, t2)] } else { vec![] }
@@ -99,7 +100,7 @@ fn intersect_line_conic(line: &Curve2d, conic: &Curve2d, _typ: G2dCurveType, tl_
 fn intersect_circle_circle(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64) -> Vec<(f64, f64)> {
     let Curve2d::Circle(ca) = c1 else { return vec![] }; let Curve2d::Circle(cb) = c2 else { return vec![] };
     let d = ca.center.distance(cb.center); let r1 = ca.radius; let r2 = cb.radius;
-    if d > r1+r2+1e-12 || d < (r1-r2).abs()-1e-12 || d < 1e-30 { return vec![]; }
+    if d > r1+r2+1e-12 || d < (r1-r2).abs()-1e-12 || d < TOLERANCE_LEN_SQ_DIV_SAFE { return vec![]; }
     let a = (r1*r1 - r2*r2 + d*d) / (2.0*d); let h = (r1*r1 - a*a).max(0.0).sqrt();
     let mid = ca.center + a*(cb.center - ca.center)/d;
     let perp = DVec2::new(-(cb.center.y-ca.center.y), cb.center.x-ca.center.x)/d;
@@ -117,7 +118,7 @@ fn intersect_conic_conic(c1: &Curve2d, typ1: G2dCurveType, c2: &Curve2d, typ2: G
     if typ1 == G2dCurveType::Circle && typ2 == G2dCurveType::Ellipse { intersect_circle_ellipse(c1, c2, t1_min, t1_max, t2_min, t2_max) }
     else if typ1 == G2dCurveType::Ellipse && typ2 == G2dCurveType::Circle { let r = intersect_circle_ellipse(c2, c1, t2_min, t2_max, t1_min, t1_max); r.into_iter().map(|(a,b)|(b,a)).collect() }
     else if typ1 == G2dCurveType::Ellipse && typ2 == G2dCurveType::Ellipse { intersect_ellipse_ellipse(c1, c2, t1_min, t1_max, t2_min, t2_max) }
-    else { intersect_curve_curve(c1, c2, t1_min, t1_max, t2_min, t2_max, 1e-7) }
+    else { intersect_curve_curve(c1, c2, t1_min, t1_max, t2_min, t2_max, TOLERANCE_ABS) }
 }
 
 /// OCCT-aligned: IntCurve_IntConicConic::Perform(Circle, DC, Ellipse, DE)
@@ -131,7 +132,7 @@ fn intersect_circle_ellipse(circle: &Curve2d, ell: &Curve2d, tc_min: f64, tc_max
     // OCCT L456-457, 460, 472-473: ensure closed domains with period 2π
     let te_range = te_max - te_min;
     let tc_range = tc_max - tc_min;
-    if te_range < 1e-15 || tc_range < 1e-15 { return vec![]; }
+    if te_range < TOLERANCE_CLAMP_MIN || tc_range < TOLERANCE_CLAMP_MIN { return vec![]; }
     let te_period = std::f64::consts::TAU;
     let tc_period = std::f64::consts::TAU;
     // Normalize domain spans to the [t_min, t_min + period] pattern
@@ -155,7 +156,7 @@ fn intersect_circle_ellipse(circle: &Curve2d, ell: &Curve2d, tc_min: f64, tc_max
                 candidates.push(t);
             }
         }
-        if f_val.abs() < 1e-10 {
+        if f_val.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             let is_dup = candidates.last().map_or(false, |&lt| (t - lt).abs() < 1e-9 * te_period);
             if !is_dup { candidates.push(t); }
         }
@@ -186,7 +187,7 @@ fn intersect_circle_ellipse(circle: &Curve2d, ell: &Curve2d, tc_min: f64, tc_max
             }
             let der = e.major_dir * (-e.major_radius * t.sin()) + minor * (e.minor_radius * t.cos());
             let df = 2.0 * dp.dot(der);
-            if df.abs() < 1e-15 { break; }
+            if df.abs() < TOLERANCE_CLAMP_MIN { break; }
             t = t - f_val / df;
         }
         if !converged {
@@ -216,7 +217,7 @@ fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f6
     let Curve2d::Ellipse(e1) = c1 else { return vec![] }; let Curve2d::Ellipse(e2) = c2 else { return vec![] };
     let m1 = DVec2::new(-e1.major_dir.y, e1.major_dir.x);
     let m2 = DVec2::new(-e2.major_dir.y, e2.major_dir.x);
-    if (t1_max - t1_min) < 1e-15 || (t2_max - t2_min) < 1e-15 { return vec![]; }
+    if (t1_max - t1_min) < TOLERANCE_CLAMP_MIN || (t2_max - t2_min) < TOLERANCE_CLAMP_MIN { return vec![]; }
     let period = std::f64::consts::TAU;
     // OCCT L929-956: ensure both domains are closed (period 2π)
     let t1_start = t1_min;
@@ -246,7 +247,7 @@ fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f6
                 candidates.push(t);
             }
         }
-        if f_val.abs() < 1e-10 {
+        if f_val.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             let is_dup = candidates.last().map_or(false, |&lt| (t - lt).abs() < 1e-9 * period);
             if !is_dup { candidates.push(t); }
         }
@@ -274,13 +275,13 @@ fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f6
             let der = e2.major_dir * (-e2.major_radius * t.sin()) + m2 * (e2.minor_radius * t.cos());
             // Derivative of implicit function along parametric curve:
             // d/dt f(P(t)) = ∇f(P) · P'(t)
-            // ∇f = 2*(lx/a², ly/b²) in local frame → transformed to world
+            // ∇f = 2*(lx/a², ly/b²) in local frame �?transformed to world
             let d = p - e1.center;
             let lx = d.dot(e1.major_dir) / e1.major_radius;
             let ly = d.dot(m1) / e1.minor_radius;
             let grad = 2.0 * (e1.major_dir * (lx / e1.major_radius) + m1 * (ly / e1.minor_radius));
             let df = grad.dot(der);
-            if df.abs() < 1e-15 { break; }
+            if df.abs() < TOLERANCE_CLAMP_MIN { break; }
             t = t - f_val / df;
         }
     }
@@ -298,7 +299,7 @@ impl IConicTool {
         IConicTool { conic: conic.clone() }
     }
 
-    /// Implicit value F(P). F(P) = 0 ⇔ P lies on the conic.
+    /// Implicit value F(P). F(P) = 0 �?P lies on the conic.
     fn value(&self, pt: DVec2) -> f64 {
         match &self.conic {
             Curve2d::Line(l) => {
@@ -320,10 +321,10 @@ impl IConicTool {
 /// OCCT-aligned: IntCurve_IntConicCurveGen (IntConicCurveGen.gxx/lxx L119-130).
 ///   Perform(IConicTool, D1, PCurve, D2, TolConf, Tol):
 ///   implicit conic × parametric curve intersection.
-///   Algorithm: sample parametric curve → find sign changes in implicit value → Newton refine.
+///   Algorithm: sample parametric curve �?find sign changes in implicit value �?Newton refine.
 fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, tc_min: f64, tc_max: f64, t_min: f64, t_max: f64, tol: f64) -> Vec<(f64, f64)> {
     let tr = t_max - t_min;
-    if tr < 1e-15 || !tr.is_finite() { return vec![]; }
+    if tr < TOLERANCE_CLAMP_MIN || !tr.is_finite() { return vec![]; }
     // OCCT: ensure closed domain for periodic conic (circle/ellipse)
     let is_periodic = matches!(conic, Curve2d::Circle(_) | Curve2d::Ellipse(_));
     if is_periodic && (tc_max - tc_min) < std::f64::consts::TAU - 1e-10 {
@@ -353,20 +354,20 @@ fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, t
                         results.push((tn, 0.0));
                         break;
                     }
-                    let eps_d = 1e-7;
+                    let eps_d = TOLERANCE_ABS;
                     let der = (curve.point_at((tn + eps_d).min(t_max)) - curve.point_at((tn - eps_d).max(t_min))) / (2.0 * eps_d);
                     let df = match conic {
                         Curve2d::Line(l) => der.x * l.direction.y - der.y * l.direction.x,
                         Curve2d::Circle(c) => 2.0 * (curve.point_at(tn) - c.center).dot(der),
                         _ => break,
                     };
-                    if df.abs() < 1e-15 { break; }
+                    if df.abs() < TOLERANCE_CLAMP_MIN { break; }
                     tn = tn - f_val / df;
                     if tn < t_min || tn > t_max { break; }
                 }
             }
             // Near-tangent detection: f near zero at both ends of interval
-            if f.abs() < 1e-10 && f_prev.abs() < 1e-10 {
+            if f.abs() < TOLERANCE_LINEAR_ULTRA_STRICT && f_prev.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 let t_mid = (t + t_prev) * 0.5;
                 let p_mid = curve.point_at(t_mid);
                 let f_mid = tool.value(p_mid);
@@ -388,7 +389,7 @@ fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, t
 fn intersect_curve_curve(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64, tol: f64) -> Vec<(f64, f64)> {
     let r1 = t1_max - t1_min;
     let r2 = t2_max - t2_min;
-    if r1 < 1e-15 || r2 < 1e-15 || !r1.is_finite() || !r2.is_finite() { return vec![]; }
+    if r1 < TOLERANCE_CLAMP_MIN || r2 < TOLERANCE_CLAMP_MIN || !r1.is_finite() || !r2.is_finite() { return vec![]; }
     // OCCT: build polygons for both curves (point + bounding segment)
     struct PolygonSample { t: f64, pt: DVec2, bbox_min: DVec2, bbox_max: DVec2 }
     let build_polygon = |c: &Curve2d, t_min: f64, t_max: f64, n: usize| -> Vec<PolygonSample> {
@@ -441,7 +442,7 @@ fn intersect_curve_curve(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t
             let a = d1.dot(d1); let b = d1.dot(d2); let c = d1.dot(r);
             let e = d2.dot(d2); let f = d2.dot(r);
             let det = a * e - b * b;
-            if det.abs() < 1e-30 { continue; }
+            if det.abs() < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
             let s = (b * f - c * e) / det;
             let t_s = (a * f - b * c) / det;
             let s_cl = s.clamp(0.0, 1.0);
@@ -462,7 +463,7 @@ fn intersect_curve_curve(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t
 }
 
 pub fn intersect_ray_curve_2d(ro: DVec2, rd: DVec2, curve: &Curve2d, t_min: f64, t_max: f64) -> Vec<(f64, f64)> {
-    if rd.length_squared() < 1e-30 { return vec![]; }
+    if rd.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return vec![]; }
     let rc = Curve2d::Line(Line2d { origin: ro, direction: rd });
     let mut d1 = IntRes2dDomain::new(); d1.set_values_bounded(ro, 0.0, 1e-10, ro+rd, 1.0, 1e-10);
     let mut d2 = IntRes2dDomain::new(); d2.set_values_bounded(curve.point_at(t_min), t_min, 1e-10, curve.point_at(t_max), t_max, 1e-10);

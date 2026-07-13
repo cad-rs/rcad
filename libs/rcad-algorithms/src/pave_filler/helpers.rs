@@ -95,7 +95,7 @@ pub(crate) fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Opti
         let cpp = -ellipse.major_radius * ct * ellipse.major_dir
             - ellipse.minor_radius * st * y_ax;
         let fp = cp.dot(cp) + d.dot(cpp);
-        if fp.abs() < 1e-15 { break; }
+        if fp.abs() < TOLERANCE_CLAMP_MIN { break; }
         best_t -= f / fp;
         if (f/fp).abs() < 1e-12 { break; }
     }
@@ -111,7 +111,7 @@ pub(crate) fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Op
             if k.len() >= 2 { (k[0], k[k.len()-1]) } else { (0.0, 1.0) } }
         _ => (0.0, 1.0),
     };
-    if (t1 - t0).abs() < 1e-15 { return None; }
+    if (t1 - t0).abs() < TOLERANCE_CLAMP_MIN { return None; }
     let n_sample = 128usize;
     let mut best_t = t0; let mut best_dist = f64::INFINITY;
     for i in 0..n_sample {
@@ -129,7 +129,7 @@ pub(crate) fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Op
         let t_eps = (best_t + eps).min(t1);
         let f2 = (curve.point_at(t_eps) - pt).dot(curve.tangent_at(t_eps));
         let fp = (f2 - f) / (t_eps - best_t);
-        if fp.abs() < 1e-15 { break; }
+        if fp.abs() < TOLERANCE_CLAMP_MIN { break; }
         best_t = (best_t - f / fp).clamp(t0, t1);
         if (f/fp).abs() < 1e-12 { break; }
     }
@@ -149,7 +149,7 @@ pub(crate) fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Op
 pub(crate) fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
     use rcad_kernel::geom::CurveEval;
     let speed = curve.tangent_at(t).length();
-    if speed < 1e-15 { tol } else { tol / speed }
+    if speed < TOLERANCE_CLAMP_MIN { tol } else { tol / speed }
 }
 
 /// OCCT-aligned (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
@@ -198,7 +198,7 @@ pub(crate) fn find_nearest_valid_point(
 
 /// OCCT-aligned: BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 /// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
-/// `theTolE` â€” edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
+/// `theTolE` â€?edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
 pub(crate) fn find_valid_range(
     curve: &Curve3, t0: f64, t1: f64, theTolE: f64,

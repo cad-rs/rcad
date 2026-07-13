@@ -2,7 +2,7 @@
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
 use rcad_kernel::geom::Surface3;
 
 /// ✅ OCCT-aligned: Geom2dInt_Geom2dCurveTool::NbSamples.
@@ -12,7 +12,7 @@ use rcad_kernel::geom::Surface3;
 ///   In IntTools_FClass2d Init, non-linear curves get nbs *= 4 oversampling.
 pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
     let range_len = (t1 - t0).abs();
-    if range_len < 1e-30 { return 2; }
+    if range_len < TOLERANCE_LEN_SQ_DIV_SAFE { return 2; }
     let nbs = match curve {
         Curve2d::Line(_) => 2,
         Curve2d::Circle(c) => {
@@ -27,7 +27,7 @@ pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
         Curve2d::BSpline(bsp) => {
             // OCCT L32-48: nbs = NbKnots * Degree, scaled by range ratio
             let full_range = bsp.knots.last().unwrap_or(&1.0) - bsp.knots.first().unwrap_or(&0.0);
-            let scale = if full_range.abs() > 1e-30 { range_len / full_range } else { 1.0 };
+            let scale = if full_range.abs() > TOLERANCE_LEN_SQ_DIV_SAFE { range_len / full_range } else { 1.0 };
             let n = (bsp.knots.len() * bsp.degree).max(4);
             let n_scaled = (n as f64 * scale).ceil() as usize;
             n_scaled.max(bsp.degree + 1).max(4)
@@ -105,8 +105,8 @@ pub struct CSLibClass2d {
 impl CSLibClass2d {
     pub fn new(points: &[DVec2], tol_u: f64, tol_v: f64,
                umin: f64, vmin: f64, umax: f64, vmax: f64) -> Self {
-        let range_u = if (umax - umin).abs() > 1e-30 { umax - umin } else { 1.0 };
-        let range_v = if (vmax - vmin).abs() > 1e-30 { vmax - vmin } else { 1.0 };
+        let range_u = if (umax - umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { umax - umin } else { 1.0 };
+        let range_v = if (vmax - vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { vmax - vmin } else { 1.0 };
         let xs: Vec<f64> = points.iter().map(|p| (p.x - umin) / range_u).collect();
         let ys: Vec<f64> = points.iter().map(|p| (p.y - vmin) / range_v).collect();
         let n = xs.len();
@@ -115,8 +115,8 @@ impl CSLibClass2d {
 
     pub fn si_dans(&self, uv: DVec2) -> CSLibResult {
         if self.n < 3 { return CSLibResult::Outside; }
-        let ru = if (self.umax - self.umin).abs() > 1e-30 { self.umax - self.umin } else { 1.0 };
-        let rv = if (self.vmax - self.vmin).abs() > 1e-30 { self.vmax - self.vmin } else { 1.0 };
+        let ru = if (self.umax - self.umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { self.umax - self.umin } else { 1.0 };
+        let rv = if (self.vmax - self.vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { self.vmax - self.vmin } else { 1.0 };
 
         // OCCT L155-160: quick rejection outside tolerance-expanded bounding box
         if uv.x < (self.umin - self.tol_u) || uv.x > (self.umax + self.tol_u)
@@ -544,7 +544,7 @@ fn chordal_deflection(pts: &[DVec2], tol_uv: f64) -> (f64, f64) {
     for i in 1..pts.len() - 1 {
         let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
         let ac = c - a; let len2 = ac.dot(ac);
-        if len2 < 1e-30 { continue; }
+        if len2 < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
         let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
         let proj = a + ac * t;
         let du = (b.x - proj.x).abs(); let dv = (b.y - proj.y).abs();

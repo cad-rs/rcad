@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a plane with a torus.
+//! Analytic intersection of a plane with a torus.
 //!
 //! # Cases
 //!
@@ -313,8 +313,8 @@ pub fn intersect_plane_torus_skew(
     raw_branches.extend(extract_runs(&branch_minus));
 
     // ── Adaptive chord-error refinement ────────────────────────────────────
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
 
     let refined: Vec<Vec<DVec3>> = raw_branches
         .into_iter()

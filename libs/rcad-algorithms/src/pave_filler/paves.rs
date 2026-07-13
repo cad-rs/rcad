@@ -323,6 +323,10 @@ impl<'a> super::PaveFiller<'a> {
 
  let mut aT: f64 = 0.0;
  let mut bIsVertexOnLine = self.is_vertex_on_line(nV, aTolV, curve_idx, aTolR3D + self.fuzzy_tolerance, &mut aT);
+ if std::env::var("RCAD_DEBUG_MB").is_ok() {
+  eprintln!("[PPC] nV={} aTolR3D={:.6e} tol_sum={:.6e} isOnLine={} aT={:.6e}",
+   nV, aTolR3D, aTolR3D + self.fuzzy_tolerance, bIsVertexOnLine, aT);
+ }
 
  if !bIsVertexOnLine && iCheckExtend != 0 && !self.verts_to_avoid_extension.contains(&nV) {
  let mut anExtraTol = aTolV;
@@ -336,7 +340,10 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  if bIsVertexOnLine {
- let aDTol = 1e-12;
+ if std::env::var("RCAD_DEBUG_MB").is_ok() {
+  eprintln!("[PPC]  VERTEX_ON_LINE nV={} aT={:.6e}", nV, aT);
+ }
+ let aDTol = CONFUSION * 1e-5; // OCCT BOPTools_AlgoTools::DTolerance()
  let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
 
   let mut nVUsed = 0;
@@ -375,6 +382,9 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  return Some(aT);
+ }
+ if std::env::var("RCAD_DEBUG_MB").is_ok() {
+  eprintln!("[PPC]  VERTEX_NOT_ON_LINE nV={}", nV);
  }
  None
  }
@@ -541,10 +551,14 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- ///  OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
- /// Form-identical logic: curve-type-based tolerance  ?first-endpoint
- /// check (with local+global projection fallback)  ?last-endpoint check
- /// (with bFirstValid shortcut)  ?global projection via closest_point_on_curve.
+ /// OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
+ /// Form-identical logic:
+ ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
+ ///   2. First endpoint �?local projection (Newton from aFirst),
+ ///      then global fallback (closest_point_on_curve).
+ ///   3. Last endpoint �?same with bFirstValid shortcut.
+ ///   4. Global projection �?GeomAPI_ProjectPointOnCurve style
+ ///      with NbPoints==0 fallback to bounded-curve endpoints.
  pub(crate) fn is_vertex_on_line(
  &self,
  nV: usize,
@@ -553,36 +567,80 @@ impl<'a> super::PaveFiller<'a> {
  aTolC: f64,
  aT: &mut f64,
  ) -> bool {
- use rcad_kernel::projection::closest_point_on_curve;
-use rcad_kernel::PCurve;
  let ic = &self.ds.intersection_curves[curve_idx];
  let vp = self.ds.vertices[nV].point;
- let aFirst = ic.t_range[0];
- let aLast = ic.t_range[1];
+ // L800: aTolSum = aTolV + aTolC
  let mut aTolSum = aTolV + aTolC;
+
+ // L802-819: curve-type-based tolerance adjustment
  let is_bspline_or_bezier = matches!(&ic.curve, Curve3::BSpline(_) | Curve3::Bezier(_));
- aTolSum *= 2.0;
  if is_bspline_or_bezier {
+ aTolSum = 2.0 * aTolSum;
  if aTolSum < 1e-5 { aTolSum = 1e-5; }
  } else {
- if aTolSum < 1e-6 { aTolSum = 1e-6; }
+ aTolSum = 2.0 * aTolSum;
+ if aTolSum < TOLERANCE_MESH_LEGACY { aTolSum = TOLERANCE_MESH_LEGACY; }
  }
- // (already set from ic.t_range above)
 
- //  € € OCCT L824-883: First endpoint check  € €
- let mut b_first_valid = false;
- let mut a_first_dist = f64::MAX;
- if aFirst.is_finite() {
+ // L821-822: aFirst, aLast from curve parameter range
+ let aFirst = ic.t_range[0];
+ let aLast = ic.t_range[1];
+
+ let mut bFirstValid = false;
+ let mut aFirstDist = f64::MAX;
+
+ // ── L824-883: First endpoint check ──────────────────────────────
+ if !precision_is_infinite(aFirst) {
  let p_first = ic.curve.point_at(aFirst);
- a_first_dist = vp.distance(p_first);
- if a_first_dist < aTolSum {
- b_first_valid = true;
+ aFirstDist = vp.distance(p_first);
+ if aFirstDist < aTolSum {
+ bFirstValid = true;
  *aT = aFirst;
- if a_first_dist > aTolV {
+ if aFirstDist > aTolV {
+ // L840: local projection from aFirst (Newton refinement)
+ let mut t_local = aFirst;
+ let mut dist_local = aFirstDist;
+ let clamp = |t: f64| t.clamp(aFirst, aLast);
+ let dt = 1e-7;
+ let max_iter = 20;
+ let mut converged = false;
+ for _ in 0..max_iter {
+ let p = ic.curve.point_at(t_local);
+ let diff = p - vp;
+ let deriv = ic.curve.derivative_at(t_local);
+ let deriv_sq = deriv.dot(deriv);
+ if deriv_sq < 1e-20 { break; }
+ let curv = (ic.curve.point_at(t_local + 2.0 * dt) - 2.0 * p
+ + ic.curve.point_at(t_local - 2.0 * dt)) / (dt * dt);
+ let denom = deriv_sq + diff.dot(curv);
+ let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
+ let new_t = clamp(t_local - delta);
+ let new_dist = (ic.curve.point_at(new_t) - vp).length();
+ if new_dist < dist_local {
+ dist_local = new_dist;
+ t_local = new_t;
+ } else {
+ break;
+ }
+ if delta.abs() < TOLERANCE_LINEAR_ULTRA_STRICT { converged = true; break; }
+ }
+ // L842-851: validate local projection result
+ if converged || dist_local < aFirstDist {
+ let mid = (aLast + aFirst) * 0.5;
+ let p_proj = ic.curve.point_at(t_local);
+ if (t_local > mid) || (dist_local > aTolSum)
+ || (p_first.distance(p_proj) < TOLERANCE_ABS) {
+ *aT = aFirst;
+ } else {
+ *aT = t_local;
+ }
+ } else {
+ // L856-880: local projection failed �?global fallback
+ use rcad_kernel::projection::closest_point_on_curve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
- let p_first_d = p_first.distance(proj.point);
- if proj.param > mid || proj.distance > aTolSum || p_first_d < 1e-7 {
+ if (proj.param > mid) || (proj.distance > aTolSum)
+ || (p_first.distance(proj.point) < TOLERANCE_ABS) {
  *aT = aFirst;
  } else {
  *aT = proj.param;
@@ -590,42 +648,103 @@ use rcad_kernel::PCurve;
  }
  }
  }
+ }
 
- //  € € OCCT L886-951: Last endpoint check  € €
- if aLast.is_finite() {
+ // ── L886-951: Last endpoint check ───────────────────────────────
+ if !precision_is_infinite(aLast) {
  let p_last = ic.curve.point_at(aLast);
  let d_last = vp.distance(p_last);
- if b_first_valid && a_first_dist < d_last {
- // Keep aT from first-endpoint branch
+ // L890-893: bFirstValid shortcut
+ if bFirstValid && aFirstDist < d_last {
  return true;
  }
  if d_last < aTolSum {
  *aT = aLast;
  if d_last > aTolV {
+ // L901: local projection from aLast (Newton refinement)
+ let mut t_local = aLast;
+ let mut dist_local = d_last;
+ let clamp = |t: f64| t.clamp(aFirst, aLast);
+ let dt = 1e-7;
+ let max_iter = 20;
+ let mut converged = false;
+ for _ in 0..max_iter {
+ let p = ic.curve.point_at(t_local);
+ let diff = p - vp;
+ let deriv = ic.curve.derivative_at(t_local);
+ let deriv_sq = deriv.dot(deriv);
+ if deriv_sq < 1e-20 { break; }
+ let curv = (ic.curve.point_at(t_local + 2.0 * dt) - 2.0 * p
+ + ic.curve.point_at(t_local - 2.0 * dt)) / (dt * dt);
+ let denom = deriv_sq + diff.dot(curv);
+ let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
+ let new_t = clamp(t_local - delta);
+ let new_dist = (ic.curve.point_at(new_t) - vp).length();
+ if new_dist < dist_local {
+ dist_local = new_dist;
+ t_local = new_t;
+ } else {
+ break;
+ }
+ if delta.abs() < TOLERANCE_LINEAR_ULTRA_STRICT { converged = true; break; }
+ }
+ // L905-911: validate local projection result
+ if converged || dist_local < d_last {
+ let mid = (aLast + aFirst) * 0.5;
+ let p_proj = ic.curve.point_at(t_local);
+ if (t_local < mid) || (dist_local > aTolSum)
+ || (p_last.distance(p_proj) < TOLERANCE_ABS) {
+ *aT = aLast;
+ } else {
+ *aT = t_local;
+ }
+ } else {
+ // L916-940: local projection failed �?global fallback
+ use rcad_kernel::projection::closest_point_on_curve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
- let p_last_d = p_last.distance(proj.point);
- if proj.param < mid || proj.distance > aTolSum || p_last_d < 1e-7 {
+ if (proj.param < mid) || (proj.distance > aTolSum)
+ || (p_last.distance(proj.point) < TOLERANCE_ABS) {
  *aT = aLast;
  } else {
  *aT = proj.param;
  }
  }
+ }
  return true;
  }
- } else if b_first_valid {
+ } else if bFirstValid {
  return true;
  }
 
- //  € € OCCT L953-992: General projection  € €
+ // ── L953-992: General projection (GeomAPI_ProjectPointOnCurve) ──
+ use rcad_kernel::projection::closest_point_on_curve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
- if proj.distance <= aTolSum {
- *aT = proj.param;
+ let aNbProj = if proj.distance.is_finite() { 1 } else { 0 };
+ if aNbProj == 0 {
+ // L959-978: bounded curve fallback �?check start/end points
+ if matches!(&ic.curve, Curve3::BSpline(_) | Curve3::Bezier(_))
+ || matches!(&ic.curve, Curve3::Line(_)) {
+ let aPDist = vp.distance(ic.curve.point_at(aFirst));
+ if aPDist < aTolSum {
+ *aT = aFirst;
  return true;
  }
- // rcad: closest_point_on_curve already handles bounded curves,
- // so skip explicit endpoint fallback and return false.
- false
+ let aPDist = vp.distance(ic.curve.point_at(aLast));
+ if aPDist < aTolSum {
+ *aT = aLast;
+ return true;
+ }
+ }
+ return false;
+ }
+ // L983-991: check distance vs tolerance
+ let aDist = proj.distance;
+ if aDist > aTolSum {
+ return false;
+ }
+ *aT = proj.param;
+ return true;
  }
 
  /// OCCT-aligned: BOPAlgo_PaveFiller::ExtendedTolerance (PaveFiller_6.cxx L????).
@@ -683,7 +802,7 @@ use rcad_kernel::PCurve;
  // OCCT IsVertexOnLine L800: aTolSum = aTolV + aTolC
  // where aTolC = aTolR3D + myFuzzyValue (PutPaveOnCurve L2976)
  let raw_sum = v_tol + c_tol + f_tol;
- let tl = (2.0 * raw_sum).max(1e-6);
+ let tl = (2.0 * raw_sum).max(TOLERANCE_MESH_LEGACY);
  let result = self.project_vertex_on_curve_with_tol(vi, ic, tl);
  if result.is_some() { return result; }
  let ext_tol = self.extended_tolerance_occt(vi);
@@ -698,7 +817,7 @@ use rcad_kernel::PCurve;
  if (v - l.direction*t).length() <= tl { Some(t.clamp(ic.t_range[0], ic.t_range[1])) } else { None } }
  Curve3::Circle(c) => {
  let v = vp - c.center;
- let tl_cap = tl.min(c.radius.max(1e-7) * 1e-4);
+ let tl_cap = tl.min(c.radius.max(TOLERANCE_ABS) * 1e-4);
  if (v.length() - c.radius).abs() > tl_cap { return None; }
  let nm = c.normal.normalize();
  if v.dot(nm).abs() > tl_cap { return None; }
@@ -963,7 +1082,7 @@ use rcad_kernel::PCurve;
      };
      let d2 = a_p3d.distance_squared(proj);
      if d2 > a_tol_v2 * a_tol_v2 {
-      self.ds.vertices[vi].geom_tol = d2.sqrt() + 1e-12;
+      self.ds.vertices[vi].geom_tol = d2.sqrt() + COMPUTATIONAL;
      }
     }
    }
@@ -1113,7 +1232,7 @@ use rcad_kernel::PCurve;
  // aTolV = BRep_Tool::Tolerance(aV) ?v_tol
  // aTolC = aTolR3D ?c_tol (no fuzzy)
  // 5-param: aTolSum = aTolV + aTolC;  2
- let tl = (2.0 * (v_tol + c_tol)).max(1e-6);
+ let tl = (2.0 * (v_tol + c_tol)).max(TOLERANCE_MESH_LEGACY);
  self.project_vertex_on_curve_with_tol(vi, ic, tl)
  }
 
@@ -1126,7 +1245,7 @@ use rcad_kernel::PCurve;
  for &ci in curve_idxs {
  if ci >= self.ds.intersection_curves.len() { continue; }
  let aNC = &self.ds.intersection_curves[ci];
- let aTolR3D = aNC.geom_tol.max(1e-12);
+ let aTolR3D = aNC.geom_tol.max(CONFUSION);
  let Some(aPB) = aNC.pave_blocks.first() else { continue };
  for pave in &aPB.0.read().unwrap().ext_paves {
  let nV = pave.vertex_idx;
@@ -1172,7 +1291,7 @@ use rcad_kernel::PCurve;
 
  if isRemoved && aMaxDistKept > 0.0 {
  if let Some(&pTol) = self.a_mv_tol.get(&nV) {
- let aRealTol = pTol.max(aMaxDistKept.sqrt() + 1e-12);
+ let aRealTol = pTol.max(aMaxDistKept.sqrt() + CONFUSION);
  if nV < self.ds.vertices.len() {
  self.ds.vertices[nV].geom_tol = aRealTol;
  }

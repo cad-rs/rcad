@@ -10,6 +10,7 @@ use rcad_kernel::PCurve;
 use rcad_kernel::topods;
 use crate::bopds::ds::DS;
 use crate::classify::Classification;
+use crate::tolerance::{ANGULAR, CONFUSION, TOLERANCE_CLAMP_MIN, TOLERANCE_MESH_LEGACY};
 
 /// OCCT-aligned: MakeSectEdge (BOPTools_AlgoTools).
 /// Creates a section edge from an intersection curve.  Returns the
@@ -593,7 +594,7 @@ pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
  }
  }
  let size = (aabb_max - aabb_min).length();
- if size < 1e-30 { return false; }
+ if size < TOLERANCE_LEN_SQ_DIV_SAFE { return false; }
  let far_point = aabb_max + glam::DVec3::splat(size * 100.0);
  let state = crate::classify::classify_point(far_point, solid_faces, ds);
  state == crate::classify::Classification::In
@@ -722,7 +723,7 @@ pub fn get_face_off(
  let _edge_mid = edge.curve.point_at(t_mid);
  let tangent = edge_tangent(&edge.curve, t_mid);
  let tgt_len = tangent.length();
- if tgt_len < 1e-30 {
+ if tgt_len < TOLERANCE_LEN_SQ_DIV_SAFE {
  return Some(candidates[0].1);
  }
  let a_dtgt = tangent / tgt_len;
@@ -750,7 +751,7 @@ pub fn get_face_off(
  let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
 
  // OCCT L1065-1075: special handling for zero/near-zero angles
- if a_angle.abs() < 1e-12 {
+ if a_angle.abs() < ANGULAR {
  // If the candidate face is physically the same as reference,
  // set angle to PI (maximally different)
  if cfi == fi {
@@ -760,7 +761,7 @@ pub fn get_face_off(
  }
 
  // OCCT L1077-1081: if angle =min_angle, can't reliably decide
- let an_angle_criteria = 1e-12;
+ let an_angle_criteria = CONFUSION;
  if a_angle.abs() < an_angle_criteria
  || (a_angle - a_angle_min).abs() < an_angle_criteria
  {
@@ -1181,7 +1182,7 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
  let t_range = curve.default_domain();
  let t1 = t_range[0];
  let t2 = t_range[1];
- if (t2 - t1).abs() < 1e-15 {
+ if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN {
  return None;
  }
  let a_nb_p = 11usize;
@@ -1194,7 +1195,7 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
  for _ in 1..=a_nb_p {
  let v2 = curve.tangent_at(t);
  let cross = v1.cross(v2);
- if cross.length_squared() > 1e-30 {
+ if cross.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
  let normal = cross.normalize();
  return Some((normal, p1));
  }
@@ -1222,7 +1223,7 @@ pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
  let t_range = curve.default_domain();
  let t1 = t_range[0];
  let t2 = t_range[1];
- if (t2 - t1).abs() < 1e-15 {
+ if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN {
  return None;
  }
  let a_nb_p = 11usize;
@@ -1230,7 +1231,7 @@ pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
  let mut t = t1 + a_dt;
  for _ in 1..=a_nb_p {
  let tangent = curve.tangent_at(t);
- if tangent.length_squared() > 1e-30 {
+ if tangent.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
  return Some(tangent.normalize());
  }
  t += a_dt;
@@ -1362,7 +1363,7 @@ pub fn wires_to_faces(
  wire_groups.push(group);
  }
 
- // OCCT L743-789: build faces from each group — use tshape API
+ // OCCT L743-789: build faces from each group �?use tshape API
  let mut face_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
  for group in &wire_groups {
  if group.is_empty() {
@@ -1762,7 +1763,7 @@ pub fn compute_tolerance(
  max_par = t;
  }
  }
- if max_dist < 1e-30 { None } else { Some((max_dist, max_par)) }
+ if max_dist < TOLERANCE_LEN_SQ_DIV_SAFE { None } else { Some((max_dist, max_par)) }
 }
 
 /// OCCT-aligned: MakeEdge (BOPTools_AlgoTools.cxx L1721-1738).

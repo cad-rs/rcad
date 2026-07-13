@@ -565,7 +565,7 @@ impl ResultBuilder {
  if let Some(Surface3::Sphere(s)) = tool.face_surface(face_ref) {
  let to_centroid = centroid - s.center;
  let len = to_centroid.length();
- if len > 1e-12 {
+ if len > TOLERANCE_LEN_MIN {
  Some(s.center - to_centroid / len * s.radius)
  } else { None }
  } else { None }

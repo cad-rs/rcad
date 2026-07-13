@@ -147,7 +147,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  }
  }
 
- // ----- Step 4: Hierarchy â€” Solid -> Shell -> Face -> Wire -> Edge -----
+ // ----- Step 4: Hierarchy â€?Solid -> Shell -> Face -> Wire -> Edge -----
  let mut face_flat_idx = 0usize;
  let mut shell_counter = 0usize;
  let mut solid_counter = 0usize;
@@ -168,7 +168,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let face_data = brep.face(*face_sr);
  let surface = face_data.surface.clone().unwrap_or_else(|| {
  let origin = DVec3::ZERO;
- Surface3::Plane(Plane { origin, normal: DVec3::Z })
+ Surface3::Plane(Plane::new(origin, DVec3::Z))
  });
  let outer_wire_data = brep.wire(face_data.outer_wire);
  let boundary_edges_ordered = reorder_wire_topods(&outer_wire_data.edges, brep, &e_map);
@@ -291,7 +291,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let uv_start = pcurve.point_at(*param_start);
  let uv_end = pcurve.point_at(*param_end);
  let span = (uv_end - uv_start).length();
- if span < 1e-15 || !span.is_finite() { continue; }
+ if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { continue; }
  ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
  face_idx: ds_fi,
  pcurve: pcurve.clone(),
@@ -307,7 +307,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let Some(&ds_fi) = f_map.get(face) else { continue; };
  if ds.edges[ds_ei].face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
  let span = range[1] - range[0];
- if span < 1e-15 { continue; }
+ if span < TOLERANCE_CLAMP_MIN { continue; }
  ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
  face_idx: ds_fi,
  pcurve: pcurve.clone(),
@@ -321,7 +321,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let Some(&ds_fi) = f_map.get(face) else { continue; };
  if ds.edges[ds_ei].face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
  let span = range[1] - range[0];
- if span < 1e-15 { continue; }
+ if span < TOLERANCE_CLAMP_MIN { continue; }
  ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
  face_idx: ds_fi,
  pcurve: pcurve1.clone(),

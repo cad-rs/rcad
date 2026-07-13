@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a cylinder and a cone.
+//! Analytic intersection of a cylinder and a cone.
 //!
 //! # Case classification
 //!
@@ -367,8 +367,8 @@ fn intersect_skew_cylinder_cone(
     let delta_o = o_cyl - o_cone; // O_cyl - O_cone
 
     const N_SAMPLES: usize = 128;
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
     let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
     let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
 

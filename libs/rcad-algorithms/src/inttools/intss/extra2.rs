@@ -1,4 +1,4 @@
-﻿/// Greedy nearest-neighbor ordering of a point cloud into one or more chains.
+/// Greedy nearest-neighbor ordering of a point cloud into one or more chains.
 ///
 /// Returns a `Vec` of chains (each chain is `Vec<DVec3>`).
 /// Points that can't be extended within `gap_tol` start a new chain.
@@ -204,7 +204,7 @@ fn refine_uv_intersection(
  let df_dv = (fv - f) / eps;
  let grad2 = df_du * df_du + df_dv * df_dv;
 
- if grad2 < 1e-30 {
+ if grad2 < TOLERANCE_LEN_SQ_DIV_SAFE {
  break;
  }
 
@@ -269,7 +269,7 @@ fn refine_uv_intersection_bounded(
  let df_dv = (fv - f) / eps;
  let grad2 = df_du * df_du + df_dv * df_dv;
 
- if grad2 < 1e-30 {
+ if grad2 < TOLERANCE_LEN_SQ_DIV_SAFE {
  break;
  }
 

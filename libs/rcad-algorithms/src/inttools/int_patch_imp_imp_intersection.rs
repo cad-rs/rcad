@@ -5,7 +5,7 @@
 //! Handles all 15 pair combinations of Plane, Cylinder, Sphere, Cone, Torus
 //! by converting to IntSurf_Quadric and dispatching to IntAna_QuadQuadGeo.
 
-use rcad_kernel::geom::{Curve3, Surface3};
+use rcad_kernel::geom::{Curve3, CurveEval, Surface3};
 use super::int_surf_quadric::Quadric;
 use super::int_ana_quad_quad_geo::{QuadQuadGeo, AnaResultType};
 use super::int_patch_line::IntPatchLine;
@@ -161,8 +161,13 @@ impl ImpImpIntersection {
                 Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
                 _ => IntPatchIType::Unknown,
             };
+            let t_range = match &c {
+                Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
+                Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
+                _ => c.default_domain(),
+            };
             self.slin.push(IntPatchLine {
-                line_type, curve: c, t_range: [0.0, 1.0],
+                line_type, curve: c, t_range,
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
                 wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
@@ -184,7 +189,7 @@ impl ImpImpIntersection {
             AnaResultType::Line => {
                 for c in geo.to_curves() {
                     self.slin.push(IntPatchLine {
-                        line_type: IntPatchIType::Line, curve: c, t_range: [-1e10, 1e10],
+                        line_type: IntPatchIType::Line, curve: c, t_range: [f64::NEG_INFINITY, f64::INFINITY],
                         pcurve1: None, pcurve2: None, tolerance: 1e-7, tang_tolerance: 1e-7,
                 wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
                     });
@@ -353,7 +358,7 @@ impl ImpImpIntersection {
             };
             let t_range = match &c {
                 Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
-                Curve3::Line(_) => [-1e10, 1e10],
+                Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
                 _ => [0.0, 1.0],
             };
             self.slin.push(IntPatchLine {

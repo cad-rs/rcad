@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a sphere and a cone.
+//! Analytic intersection of a sphere and a cone.
 //!
 //! # Case classification
 //!
@@ -224,13 +224,13 @@ fn intersect_sphere_cone_on_axis(
 ///
 /// Parameterizes the cone by θ (angle around axis) and s (axial distance from
 /// true apex).  For each θ, solves `A·s² + B(θ)·s + D = 0` where the sphere
-/// constraint |P(θ,s) − C|² = R² gives:
+/// constraint |P(θ,s) �?C|² = R² gives:
 ///
 /// | Term | Expression |
 /// |------|------------|
-/// | A    | `1 + tan²(β)` (constant, ≥ 1) |
-/// | B(θ) | `−2·(Cz + tan(β)·(Cx·cos(θ) + Cy·sin(θ)))` |
-/// | D    | `|C_local|² − R²` (constant) |
+/// | A    | `1 + tan²(β)` (constant, �?1) |
+/// | B(θ) | `�?·(Cz + tan(β)·(Cx·cos(θ) + Cy·sin(θ)))` |
+/// | D    | `|C_local|² �?R²` (constant) |
 ///
 /// Returns [`SphereConeResult::Polyline`] with one or more branches.
 fn intersect_sphere_cone_off_axis(
@@ -248,7 +248,7 @@ fn intersect_sphere_cone_off_axis(
         return SphereConeResult::General;
     }
 
-    // Local basis: u, v ⊥ axis
+    // Local basis: u, v �?axis
     let u = any_perpendicular(axis);
     let v = axis.cross(u).normalize();
 
@@ -260,7 +260,7 @@ fn intersect_sphere_cone_off_axis(
     let local_sq = cl.length_squared();
 
     // Constant coefficients
-    let a_coef = 1.0 + tan_beta * tan_beta; // A ≥ 1
+    let a_coef = 1.0 + tan_beta * tan_beta; // A �?1
     let d_coef = local_sq - sphere_r * sphere_r;
 
     const N_THETA: usize = 256;
@@ -283,14 +283,14 @@ fn intersect_sphere_cone_off_axis(
         let sqrt_delta = delta.sqrt();
         // Stable quadratic: "far" root via standard formula, "near" root via Vieta
         let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-        let s_near = if s_far.abs() > 1e-15 {
+        let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
             d_coef / (a_coef * s_far)
         } else {
-            // s_far ≈ 0 (D ≈ 0, near-tangent case), compute directly
+            // s_far �?0 (D �?0, near-tangent case), compute directly
             (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
         };
 
-        // Order so that s_lower ≤ s_upper
+        // Order so that s_lower �?s_upper
         let (s_lower, s_upper) = if s_far <= s_near {
             (s_far, s_near)
         } else {
@@ -303,14 +303,14 @@ fn intersect_sphere_cone_off_axis(
             apex_true + axis * s + radial * (u * cos_t + v * sin_t)
         };
 
-        // Lower branch — closer to apex
+        // Lower branch �?closer to apex
         if s_lower >= 0.0 {
             lower_branch.push(Some((theta, pt_at_s(s_lower))));
         } else {
             lower_branch.push(None);
         }
 
-        // Upper branch — further from apex (skip if coincident with lower)
+        // Upper branch �?further from apex (skip if coincident with lower)
         if s_upper >= 0.0 && (s_upper - s_lower).abs() > TOLERANCE_ABS * 0.1 {
             upper_branch.push(Some((theta, pt_at_s(s_upper))));
         } else {
@@ -364,8 +364,8 @@ fn intersect_sphere_cone_off_axis(
     let upper_param_branches = extract_runs(&upper_branch);
 
     // ── Adaptive chord-error refinement ────────────────────────────────────
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
 
     // Lower-branch eval: recompute 3D point at any θ, picking the near-apex root
     let lower_eval = {
@@ -378,7 +378,7 @@ fn intersect_sphere_cone_off_axis(
             }
             let sqrt_delta = delta.sqrt();
             let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-            let s_near = if s_far.abs() > 1e-15 {
+            let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
                 d_coef / (a_coef * s_far)
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
@@ -403,7 +403,7 @@ fn intersect_sphere_cone_off_axis(
             }
             let sqrt_delta = delta.sqrt();
             let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-            let s_near = if s_far.abs() > 1e-15 {
+            let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
                 d_coef / (a_coef * s_far)
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
@@ -441,7 +441,7 @@ fn intersect_sphere_cone_off_axis(
         }
     }
 
-    // Closed-curve check: drop duplicate endpoint for runs where first ≈ last
+    // Closed-curve check: drop duplicate endpoint for runs where first �?last
     for branch in &mut result {
         if branch.len() >= 3 {
             let d = (branch[0] - branch[branch.len() - 1]).length();

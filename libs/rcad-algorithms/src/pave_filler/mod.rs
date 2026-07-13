@@ -184,7 +184,7 @@ fn propagate_ic_vertices_to_shared_faces(
  let b = ds.vertices[edge.end_vertex].point;
  let ab = b - a;
  let ab_len2 = ab.length_squared();
- if ab_len2 < 1e-30 {
+ if ab_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
  continue;
  }
  let ap = vp - a;

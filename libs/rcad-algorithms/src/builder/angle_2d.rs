@@ -1,12 +1,13 @@
-// âœ… OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
+// ï¿?OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
 //   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
 //   tolerance_2d: 1.1x multiplier only for BSpline (OCCT L889-892)
 
 use glam::DVec2;
 use rcad_kernel::geom::*;
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_UV_DIR_SQ_MIN};
 use super::curve_tools::*;
 
-/// OCCT-aligned: Tolerance2D â€” BOPAlgo_WireSplitter_1.cxx L859-881
+/// OCCT-aligned: Tolerance2D ï¿?BOPAlgo_WireSplitter_1.cxx L859-881
 ///   aTol2D = max(UResolution(aTolV3D), VResolution(aTolV3D), aTolV3D)
 ///   For BSpline surface: multiplied by 1.1
 pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
@@ -24,16 +25,16 @@ pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f
 ///   When v_opt is None, falls back to apex radius (radius at V=0).
 fn u_resolution(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
     match surface {
-        Surface3::Sphere(s) => vt / s.radius.max(1e-15),
-        Surface3::Cylinder(c) => vt / c.radius.max(1e-15),
+        Surface3::Sphere(s) => vt / s.radius.max(TOLERANCE_CLAMP_MIN),
+        Surface3::Cylinder(c) => vt / c.radius.max(TOLERANCE_CLAMP_MIN),
         Surface3::Cone(c) => {
             let r = match v_opt {
                 Some(v) => (c.radius + v * c.half_angle_rad.tan()).abs(),
                 None => c.radius,
             };
-            vt / r.max(1e-15)
+            vt / r.max(TOLERANCE_CLAMP_MIN)
         }
-        Surface3::Torus(t) => vt / t.major_radius.max(1e-15),
+        Surface3::Torus(t) => vt / t.major_radius.max(TOLERANCE_CLAMP_MIN),
         _ => vt,
     }
 }
@@ -41,10 +42,10 @@ fn u_resolution(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
 /// OCCT-aligned: BRepAdaptor_Surface::VResolution
 fn v_resolution(vt: f64, surface: &Surface3) -> f64 {
     match surface {
-        Surface3::Sphere(s) => vt / s.radius.max(1e-15),
+        Surface3::Sphere(s) => vt / s.radius.max(TOLERANCE_CLAMP_MIN),
         Surface3::Cylinder(_) => vt,
         Surface3::Cone(_) => vt,
-        Surface3::Torus(t) => vt / t.minor_radius.max(1e-15),
+        Surface3::Torus(t) => vt / t.minor_radius.max(TOLERANCE_CLAMP_MIN),
         _ => vt,
     }
 }
@@ -66,7 +67,7 @@ pub fn dir_to_angle(dir: DVec2) -> f64 {
 pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surface: &Surface3, geom_tol: f64, v_opt: Option<f64>) -> Option<f64> {
     let first = domain[0]; let last = domain[1];
     let range = (last - first).abs();
-    if range < 1e-15 { return None; }
+    if range < TOLERANCE_CLAMP_MIN { return None; }
     let a_tol_2d = 2.0 * tolerance_2d(geom_tol, surface, v_opt);
     let mut dt = curve2d_resolution(curve, a_tol_2d).max(1e-9);
     let typ = curve_geom_type(curve);
@@ -74,7 +75,7 @@ pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surfac
         let d1 = curve2d_d1(curve, t); let d2 = curve2d_d2(curve, t);
         if d1.length_squared() > 1e-14 {
             let r = curve2d_lprop_curvature(d1, d2, 1e-14);
-            if r > 1e-7 {
+            if r > TOLERANCE_ABS {
                 let r_curv = 1.0 / r; let cosphi = r_curv / (r_curv + a_tol_2d);
                 if cosphi < 1.0 { dt = dt.max(cosphi.acos()); }
             }
@@ -85,7 +86,7 @@ pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surfac
     if dt > a_tx { dt = a_tx; }
     let t1 = if (t - first).abs() < (t - last).abs() { t + dt } else { t - dt };
     let dir = if b_is_in { curve.point_at(t) - curve.point_at(t1) } else { curve.point_at(t1) - curve.point_at(t) };
-    if dir.length_squared() < 1e-40 { return None; }
+    if dir.length_squared() < TOLERANCE_UV_DIR_SQ_MIN { return None; }
     Some(dir_to_angle(dir))
 }
 

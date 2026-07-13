@@ -310,10 +310,7 @@ pub fn create_sewing_face(
         0.0, len30, v3, v0);
 
     let normal = edge_dir.cross(sep_dir).normalize();
-    let sewing_surface = Surface3::Plane(Plane {
-        origin: (sv0 + sv1 + sv2 + sv3) * 0.25,
-        normal,
-    });
+    let sewing_surface = Surface3::Plane(Plane::new((sv0 + sv1 + sv2 + sv3) * 0.25, normal));
 
     let wire = Wire {
         edges: vec![
@@ -485,10 +482,7 @@ pub fn create_intersection_join(
     let midpoint = (p0 + p1) * 0.5;
     let normal = dir.any_orthonormal_pair().0;
 
-    let plane = Surface3::Plane(Plane {
-        origin: midpoint,
-        normal,
-    });
+    let plane = Surface3::Plane(Plane::new(midpoint, normal));
 
     let vs = add_vertex(brep, p0);
     let ve = add_vertex(brep, p1);

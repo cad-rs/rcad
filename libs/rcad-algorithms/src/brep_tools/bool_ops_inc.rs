@@ -388,7 +388,7 @@ fn partition_face_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -
  for _ in &shd.faces {
  if let Ok(Surface3::Plane(p)) = get_surface(brep, fi) {
  let dist = (p.origin - plane_origin).dot(plane_normal).abs();
- if dist < 1e-6 && p.normal.dot(plane_normal) > 0.9999 {
+ if dist < TOLERANCE_MESH_LEGACY && p.normal.dot(plane_normal) > 0.9999 {
  out.push(fi);
  }
  }

@@ -3,7 +3,7 @@
 
 use rcad_kernel::geom::*;
 use glam::{DVec2, DVec3};
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
 
 /// Build a 2D coordinate frame from a plane surface.
 /// Returns (origin, u_axis, v_axis) using the plane's stored axes.
@@ -35,7 +35,7 @@ pub fn project_curve_to_plane(curve: &Curve3, surface: &Surface3) -> Option<Curv
             let p_start = project_point_to_plane_uv(l.origin, plane);
             let p_end = project_point_to_plane_uv(l.origin + l.direction, plane);
             let dir = (p_end - p_start).normalize_or_zero();
-            if dir.length_squared() < 1e-30 {
+            if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                 return None;
             }
             Some(Curve2d::Line(Line2d { origin: p_start, direction: dir }))
@@ -45,7 +45,7 @@ pub fn project_curve_to_plane(curve: &Curve3, surface: &Surface3) -> Option<Curv
             // Project x_dir axis endpoint to find 2D axes
             let p_u = project_point_to_plane_uv(c.center + c.x_dir * c.radius, plane);
             let dir_u = (p_u - center_2d).normalize_or_zero();
-            if dir_u.length_squared() < 1e-30 {
+            if dir_u.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                 return None;
             }
             let perp = DVec2::new(-dir_u.y, dir_u.x);
@@ -62,12 +62,12 @@ pub fn project_curve_to_plane(curve: &Curve3, surface: &Surface3) -> Option<Curv
             // Project major_dir axis endpoint to get 2D major direction and radius
             let p_major = project_point_to_plane_uv(e.center + e.major_dir * e.major_radius, plane);
             let dir_major = (p_major - center_2d).normalize_or_zero();
-            if dir_major.length_squared() < 1e-30 {
+            if dir_major.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                 return None;
             }
             let uv_major_radius = (p_major - center_2d).length();
             // Project minor axis endpoint
-            let minor_dir_3d = if e.major_dir.cross(e.normal).length_squared() > 1e-30 {
+            let minor_dir_3d = if e.major_dir.cross(e.normal).length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
                 e.major_dir.cross(e.normal).normalize()
             } else {
                 any_perpendicular(e.major_dir).normalize()

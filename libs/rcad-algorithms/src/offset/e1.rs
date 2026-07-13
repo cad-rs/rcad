@@ -661,8 +661,8 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
  // Project onto the ellipse's plane first
  let in_plane = to_center - to_center.dot(ellipse.normal) * ellipse.normal;
  let y_axis = ellipse.normal.cross(ellipse.major_dir).normalize();
- let tx = in_plane.dot(ellipse.major_dir) / ellipse.major_radius.max(1e-30);
- let ty = in_plane.dot(y_axis) / ellipse.minor_radius.max(1e-30);
+ let tx = in_plane.dot(ellipse.major_dir) / ellipse.major_radius.max(TOLERANCE_LEN_SQ_DIV_SAFE);
+ let ty = in_plane.dot(y_axis) / ellipse.minor_radius.max(TOLERANCE_LEN_SQ_DIV_SAFE);
  let angle = ty.atan2(tx);
  Some(ellipse.center + ellipse.major_dir * ellipse.major_radius * angle.cos()
  + y_axis * ellipse.minor_radius * angle.sin())
@@ -673,8 +673,8 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
  // Project onto the ellipse's plane first
  let in_plane = tc - tc.dot(e.normal) * e.normal;
  let y_axis = e.normal.cross(e.major_dir).normalize();
- let tx = in_plane.dot(e.major_dir) / e.major_radius.max(1e-30);
- let ty = in_plane.dot(y_axis) / e.minor_radius.max(1e-30);
+ let tx = in_plane.dot(e.major_dir) / e.major_radius.max(TOLERANCE_LEN_SQ_DIV_SAFE);
+ let ty = in_plane.dot(y_axis) / e.minor_radius.max(TOLERANCE_LEN_SQ_DIV_SAFE);
  let ang = ty.atan2(tx);
  e.center + e.major_dir * e.major_radius * ang.cos() + y_axis * e.minor_radius * ang.sin()
  };
@@ -834,7 +834,7 @@ fn offset_edge(
 
  let dir = (off_p1 - off_p0).normalize_or(DVec3::X);
  let len = (off_p1 - off_p0).length();
- if len < 1e-12 {
+ if len < TOLERANCE_LEN_MIN {
  // Self-loop edge (start == end, or vertices collapsed to same position).
  // Instead of returning a degenerate zero-length line, preserve the
  // original edge curve.  Self-loop edges on periodic surfaces (torus

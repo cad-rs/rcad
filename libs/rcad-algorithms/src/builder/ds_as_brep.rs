@@ -5,10 +5,11 @@
 use std::collections::HashMap;
 use glam::DVec3;
 use crate::bopds::ds::DS;
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use rcad_kernel::geom::*;
 use rcad_kernel::topods::{self, BRepTool, ShapeRef, Orientation, ShapeType};
 
-/// Adaptor: wraps DS + face_idx as a BRepTool, mapping ShapeRef.index → DS array index.
+/// Adaptor: wraps DS + face_idx as a BRepTool, mapping ShapeRef.index �?DS array index.
 ///
 /// ShapeRef values used with this adaptor:
 /// - Vertex ShapeRef.index = DS vertex index
@@ -19,9 +20,9 @@ use rcad_kernel::topods::{self, BRepTool, ShapeRef, Orientation, ShapeType};
 pub(crate) struct DSAsBRep<'a> {
     pub ds: &'a DS,
     pub face_idx: usize,
-    /// edge_index → (pc_on_face, t_first, t_last) — built once from DSCurveRepOnFace
+    /// edge_index �?(pc_on_face, t_first, t_last) �?built once from DSCurveRepOnFace
     pub pcurve_cache: HashMap<usize, (Curve2d, f64, f64)>,
-    /// edge_index → (vertex_index → param) — built once from DSEdge.vertex_params
+    /// edge_index �?(vertex_index �?param) �?built once from DSEdge.vertex_params
     pub vertex_param_cache: HashMap<usize, HashMap<usize, f64>>,
 }
 
@@ -117,10 +118,10 @@ impl BRepTool for DSAsBRep<'_> {
         // Fallback: use the face surface from DS
         let surf = &self.ds.faces[self.face_idx].surface;
         match surf {
-            Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
-            Surface3::Cylinder(c) => tol3d / c.radius.max(1e-15),
+            Surface3::Sphere(s) => tol3d / s.radius.max(TOLERANCE_CLAMP_MIN),
+            Surface3::Cylinder(c) => tol3d / c.radius.max(TOLERANCE_CLAMP_MIN),
             Surface3::Cone(_) => tol3d * 1e-3,
-            Surface3::Torus(t) => tol3d / t.major_radius.max(1e-15),
+            Surface3::Torus(t) => tol3d / t.major_radius.max(TOLERANCE_CLAMP_MIN),
             _ => tol3d,
         }
     }
@@ -128,10 +129,10 @@ impl BRepTool for DSAsBRep<'_> {
     fn v_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
         let surf = &self.ds.faces[self.face_idx].surface;
         match surf {
-            Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
+            Surface3::Sphere(s) => tol3d / s.radius.max(TOLERANCE_CLAMP_MIN),
             Surface3::Cylinder(_) => tol3d,
             Surface3::Cone(_) => tol3d,
-            Surface3::Torus(t) => tol3d / t.minor_radius.max(1e-15),
+            Surface3::Torus(t) => tol3d / t.minor_radius.max(TOLERANCE_CLAMP_MIN),
             _ => tol3d,
         }
     }

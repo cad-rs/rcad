@@ -1,4 +1,4 @@
-﻿//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
+//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
 //!
 //! OCCT IntWalk_IWalking.gxx (3140 lines) — implicit surface walking.
 //!
@@ -195,7 +195,7 @@ impl IWalking {
             let Some((f_val, [df_du, df_dv])) = func.values(&x) else { break };
             if f_val.abs() < tol { return Some((u, v)); }
             let grad2 = df_du * df_du + df_dv * df_dv;
-            if grad2 < 1e-30 { break; }
+            if grad2 < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
             let du = -f_val * df_du / grad2;
             let dv = -f_val * df_dv / grad2;
             if du.abs() < 1e-14 && dv.abs() < 1e-14 { break; }
@@ -447,7 +447,7 @@ impl IWalking {
             let Some((f_val, [df_du, df_dv])) = func.values(&[u, v]) else { break };
             let _ = f_val;
             let gn2 = df_du * df_du + df_dv * df_dv;
-            if gn2 < 1e-30 { break; }
+            if gn2 < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
             let gn = gn2.sqrt();
 
             // Tangent direction: ⟂ ∇F

@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two tori.
+//! Analytic intersection of two tori.
 //!
 //! # Case classification
 //!
@@ -469,8 +469,8 @@ fn intersect_skew_torus_torus(
     }
 
     // ── Adaptive chord-error refinement ────────────────────────────────────
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
 
     let refined_3d: Vec<Vec<DVec3>> = branches
         .into_iter()

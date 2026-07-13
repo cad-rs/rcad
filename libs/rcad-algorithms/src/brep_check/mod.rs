@@ -461,7 +461,7 @@ pub fn brep_check_analyze(brep: &rcad_kernel::BRep) -> CheckResult {
     let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else { fi += 1; continue; };
 
     // C2: zero normal — approximate from surface
-    if fd.surface.as_ref().map(|s| s.normal_at(0.0, 0.0).length_squared() < 1e-30).unwrap_or(true) {
+    if fd.surface.as_ref().map(|s| s.normal_at(0.0, 0.0).length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE).unwrap_or(true) {
      issues.push(CheckIssue::ZeroNormal { solid: si, shell: shi, face: fi });
     }
 

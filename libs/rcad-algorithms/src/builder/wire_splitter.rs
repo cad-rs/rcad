@@ -9,7 +9,7 @@ use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wire
 use crate::builder::point_in_polygon_2d;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 
-/// ✅ OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
+/// �?OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
 /// Evaluates the 3D curve at a micro-step near each vertex (OCCT approach).
 /// Maps points to UV space via world_to_uv, computes the direction.
 pub(crate) fn edge_uv_tangent(
@@ -32,7 +32,7 @@ pub(crate) fn edge_uv_tangent(
  let uvs = s.world_to_uv(ds.vertices[sv].point);
  let uve = s.world_to_uv(ds.vertices[ev].point);
  let dir = uve - uvs;
- if dir.length_squared() < 1e-30 { return (None, None); }
+ if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return (None, None); }
  let a = dir_to_angle(dir);
  let na = a;
  (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
@@ -45,7 +45,7 @@ pub(crate) fn edge_uv_tangent(
  let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
  let uv_e = DVec2::new(local_e.dot(x_axis), local_e.dot(y_axis));
  let dir = uv_e - uv_s;
- if dir.length_squared() < 1e-30 { return (None, None); }
+ if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return (None, None); }
  let a = dir_to_angle(dir);
  let na = a;
  (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
@@ -54,15 +54,15 @@ pub(crate) fn edge_uv_tangent(
  }
 }
 
-/// ✅ OCCT-aligned: micro-step Angle2D for a 3D curve mapped to face UV.
+/// �?OCCT-aligned: micro-step Angle2D for a 3D curve mapped to face UV.
 /// Evaluates the 3D curve at t and t+dt, maps to UV via world_to_uv, returns UV direction angle.
 pub(crate) fn edge_angle_2d(
  curve: &Curve3, t: f64, domain: [f64; 2],
  surface: &Surface3, b_is_in: bool, geom_tol: f64,
 ) -> Option<f64> {
  let range = (domain[1] - domain[0]).abs();
- if range < 1e-15 { return None; }
- // Angle2D via 3D curve → UV mapping (WireSplitter_1.cxx L768-854).
+ if range < TOLERANCE_CLAMP_MIN { return None; }
+ // Angle2D via 3D curve �?UV mapping (WireSplitter_1.cxx L768-854).
  let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(geom_tol, surface, None);
  let mut dt = a_tol_2d.max(1e-9);
  // Curvature-aware adjustment for non-linear curves
@@ -73,11 +73,11 @@ pub(crate) fn edge_angle_2d(
  let p_m = curve.point_at(tm);
  let d1 = p_p - p_m;
  let speed = d1.length();
- if speed > 1e-30 {
+ if speed > TOLERANCE_LEN_SQ_DIV_SAFE {
  let d1_n = d1 / speed;
  let d2 = p_p - 2.0 * curve.point_at(t) + p_m;
  let curvature = d1_n.cross(d2).length() / (speed * speed);
- if curvature > 1e-30 {
+ if curvature > TOLERANCE_LEN_SQ_DIV_SAFE {
  let r_curv = 1.0 / curvature;
  let cos_phi = r_curv / (r_curv + a_tol_2d);
  if cos_phi < 1.0 {
@@ -100,7 +100,7 @@ pub(crate) fn edge_angle_2d(
  let uv0 = world_to_uv(surface, p0)?;
  let uv1 = world_to_uv(surface, p1)?;
  let dir = if b_is_in { uv0 - uv1 } else { uv1 - uv0 };
- if dir.length_squared() < 1e-40 { return None; }
+ if dir.length_squared() < TOLERANCE_UV_DIR_SQ_MIN { return None; }
  Some(dir_to_angle(dir))
 }
 
@@ -114,11 +114,11 @@ pub(crate) fn is_edge_isoline(pcurve: &Curve2d, range: [f64; 2]) -> (bool, bool)
  let p_plus = pcurve.point_at((t_mid + eps).min(range[1]));
  let p_minus = pcurve.point_at((t_mid - eps).max(range[0]));
  let tangent = p_plus - p_minus;
- if tangent.length_squared() < 1e-30 {
+ if tangent.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
  return (false, false);
  }
  let tangent_n = tangent.normalize();
- let tol = 1e-12;
+ let tol = ANGULAR;
  // OCCT L696-699: CrossMagnitude((0,1)) = |t.x|, CrossMagnitude((1,0)) = |t.y|
 
 // ====================================================================
@@ -489,11 +489,11 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
  if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
 
  // ONE EdgeInfo per vertex
- let sv_in = false; // start_vertex → out
+ let sv_in = false; // start_vertex �?out
  smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
  seg_idx: si, passed: false, in_flag: sv_in, is_inside, is_circle_arc, angle: 0.0,
  });
- let ev_in = true; // end_vertex → in
+ let ev_in = true; // end_vertex �?in
  smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
  seg_idx: si, passed: false, in_flag: ev_in, is_inside, is_circle_arc, angle: 0.0,
  });
@@ -572,7 +572,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
  wires.push(wire);
  }
  } else {
- // SplitBlock — refine angles + path walk for irregular blocks
+ // SplitBlock �?refine angles + path walk for irregular blocks
  split_block(block, segments, &mut smart_map, ds, face_idx, &mut wires);
  if std::env::var("RCAD_DEBUG_IC").is_ok() {
  eprintln!("[BLK_WIRES] fi={} bi={} n_wires_in_block={}", face_idx, bi,
@@ -584,7 +584,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
  (wires, internal_wires, vertex_positions)
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks (L105-154).
+/// �?OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks (L105-154).
 /// Groups segments into connected components (blocks) by shared vertices.
 /// Iterates over the block while growing it (OCCT self-iterating list pattern).
 pub(crate) fn make_connexity_blocks(
@@ -621,7 +621,7 @@ pub(crate) fn make_connexity_blocks(
  blocks
 }
 
-/// ✅ OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter.cxx L292-358).
+/// �?OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter.cxx L292-358).
 /// Handles irregular blocks (vertices with degree > 2) by refining edge
 /// angles at multi-connected vertices, then walking paths through the
 /// SmartMap to extract closed wires.
@@ -633,11 +633,11 @@ pub(crate) fn split_block(
  face_idx: usize,
  wires: &mut Vec<Vec<usize>>,
 ) {
- // RefineAngles — compute turning angles at each vertex
+ // RefineAngles �?compute turning angles at each vertex
  refine_angles(smart_map, segments, ds, face_idx);
  dbg_smartmap!("split_block", face_idx, smart_map);
 
- // Path walk — iterate all vertices by insertion order,
+ // Path walk �?iterate all vertices by insertion order,
  // for each unpassed OUT entry start a new Path walk.
  let order_keys: Vec<usize> = smart_map.keys().copied().collect();
  for &v in &order_keys {
@@ -654,7 +654,7 @@ pub(crate) fn split_block(
  }
 }
 
-/// ✅ OCCT-aligned: Regular block (degree=2) wire build.
+/// �?OCCT-aligned: Regular block (degree=2) wire build.
 pub(crate) fn build_regular_wire(
  block: &[usize],
  segments: &[WireSegment],
@@ -799,12 +799,12 @@ pub(crate) fn perform_shapes_to_avoid(
  continue;
  }
  if a_nb_e == 1 {
- // Dangling edge — skip degenerate
+ // Dangling edge �?skip degenerate
  let pid = ids[0];
  if is_degenerate(&pid) { continue; }
  if avoided_pids.insert(pid) { b_found = true; }
  } else if a_nb_e == 2 && ids[0] == ids[1] {
- // Self-coincident — same edge twice at this vertex
+ // Self-coincident �?same edge twice at this vertex
  let pid = ids[0];
  let (a, b) = pid_endpoints[&pid];
  if a == b { continue; } // self-loop (closed)
@@ -1135,7 +1135,7 @@ pub(crate) fn perform_shapes_to_avoid_topo(
  }
  };
 
- // Build aMVE: vertex → edges (same as OCCT MapShapesAndAncestors)
+ // Build aMVE: vertex �?edges (same as OCCT MapShapesAndAncestors)
  let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
  for (si, seg) in segments.iter().enumerate() {
  let pid = physical_edge_id_topo_ds(seg);
@@ -1154,14 +1154,14 @@ pub(crate) fn perform_shapes_to_avoid_topo(
 
  let a_e1 = a_le[0];
  if a_nb_e == 1 {
- // Dangling edge — skip if degenerated or INTERNAL vertex
+ // Dangling edge �?skip if degenerated or INTERNAL vertex
  if is_degenerate(&a_e1) { continue; }
  if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
  == rcad_kernel::topods::Orientation::Internal { continue; }
  b_found = true;
  avoided_pids.insert(a_e1);
  } else if a_nb_e == 2 && a_le[0] == a_le[1] {
- // Self-coincident — same edge twice at this vertex
+ // Self-coincident �?same edge twice at this vertex
  let a_e2 = a_le[1];
  // Skip self-loop (edge whose endpoints are the same vertex)
  let (_tag, idx, a, b) = a_e1;

@@ -10,6 +10,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3, Circle3, Ellipse3, Hyperbola3, Parabola3};
+use crate::tolerance::{TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 use super::int_surf_quadric::Quadric;
 
 /// OCCT IntAna_ResultType.hxx
@@ -82,7 +83,7 @@ impl QuadQuadGeo {
     pub fn init_tolerances(&mut self) {
         self.my_epsilon_distance = 1e-10;
         self.my_epsilon_angle_cone = 1e-12;
-        self.my_epsilon_mini_circle_radius = 1e-15;
+        self.my_epsilon_mini_circle_radius = TOLERANCE_CLAMP_MIN;
         self.my_epsilon_cylinder_delta_radius = 1e-10;
         self.my_epsilon_cylinder_delta_distance = 1e-10;
         self.my_epsilon_axes_para = 1e-10;
@@ -259,7 +260,7 @@ impl QuadQuadGeo {
         let x_len = x_dir.length();
         let y_len = y_dir.length();
 
-        if x_len < 1e-15 || y_len < 1e-15 { return; }
+        if x_len < TOLERANCE_CLAMP_MIN || y_len < TOLERANCE_CLAMP_MIN { return; }
 
         // OCCT: semi-axes of the ellipse
         let a_ellipse = radius / cos_ang.abs();
@@ -364,7 +365,7 @@ impl QuadQuadGeo {
                 self.param1 = (dist / semi_angle.tan()).abs(); self.param2 = self.param1;
                 self.param1bis = dist.abs(); self.param2bis = dist.abs();
             } else {
-                let centre = apex - dist * axis_dir / (cost + 1e-30);
+                let centre = apex - dist * axis_dir / (cost + TOLERANCE_LEN_SQ_DIV_SAFE);
                 let distance = apex.distance(centre);
                 if costa.abs() < tol_ang {
                     self.typeres = AnaResultType::Parabola; self.nbint = 1;
@@ -491,7 +492,7 @@ impl QuadQuadGeo {
             let alpha = 0.5*(r1*r1 - r2*r2 + d*d)/d;
             let beta_sq = r1*r1 - alpha*alpha;
             let beta = if beta_sq > 0.0 { beta_sq.sqrt() } else { 0.0 };
-            if beta <= 1e-15 {
+            if beta <= TOLERANCE_CLAMP_MIN {
                 self.typeres = AnaResultType::Point; self.nbint = 1;
                 self.pt1 = o1 + ((r1+d-r2)*0.5)*dir;
             } else {
@@ -510,7 +511,7 @@ impl QuadQuadGeo {
         let mr = tor.major_radius(); let mnr = tor.minor_radius();
         let dist = a*tc.x + b*tc.y + c_n*tc.z + d;
         let st = np.cross(ta).length();
-        if st < 1e-15 {
+        if st < TOLERANCE_CLAMP_MIN {
             let da = dist.abs();
             if da > mnr + tol { return; }
             if da > mnr - tol { self.typeres = AnaResultType::Circle; self.nbint = 1; self.pt1 = tc - dist*np; self.param1 = mr; return; }
@@ -545,7 +546,7 @@ impl QuadQuadGeo {
         let c1 = t1.axis_loc(); let c2 = t2.axis_loc();
         let a1 = t1.axis_dir(); let a2 = t2.axis_dir();
         let mr1 = t1.major_radius(); let mr2 = t2.major_radius();
-        if a1.cross(a2).length() < 1e-15 && c1.distance(c2) < tol && mr1-mr2.abs() < tol {
+        if a1.cross(a2).length() < TOLERANCE_CLAMP_MIN && c1.distance(c2) < tol && mr1-mr2.abs() < tol {
             self.typeres = AnaResultType::Same; return;
         }
         if c1.distance(c2) > mr1 + t1.minor_radius() + mr2 + t2.minor_radius() + tol { return; }

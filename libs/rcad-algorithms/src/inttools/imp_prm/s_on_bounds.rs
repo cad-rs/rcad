@@ -12,6 +12,7 @@
 
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use super::arc_function::ArcFunction;
 use super::super::int_surf_quadric::Quadric;
 use super::super::geom_abs_surface_type::GeomAbsSurfaceType;
@@ -208,7 +209,7 @@ impl SOnBounds {
         params: &mut Vec<f64>,
     ) {
         let range = p_fin - p_deb;
-        if range.abs() < 1e-15 { return; }
+        if range.abs() < TOLERANCE_CLAMP_MIN { return; }
 
         // OCCT: math_FunctionSample(Pdeb, Pfin, NbEchant)
         let dt = range / n_echant as f64;

@@ -61,4 +61,13 @@ pub use extreme_geometry::{
 pub use plane_torus::{PlaneTorusResult, intersect_plane_torus, intersect_plane_torus_with_tolerance};
 pub use cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus, intersect_cylinder_torus_with_tolerance};
 
+/// Shared chord-error tolerance for adaptive refinement of analytic
+/// intersection curves (`1e-6`). Equivalent to [`TOLERANCE_MESH_LEGACY`];
+/// semantically distinct — chord tolerance in surface-surface intersection
+/// curve refinement, not mesh merging.
+pub const CHORD_TOLERANCE: f64 = crate::tolerance::TOLERANCE_MESH_LEGACY;
+
+/// Maximum refinement depth for chord-error adaptive subdivision.
+pub const CHORD_REFINE_DEPTH: usize = 2;
+
 pub mod shrunk_range;

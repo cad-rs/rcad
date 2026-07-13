@@ -401,7 +401,7 @@ pub(crate) fn check_and_add_split_vertex(
  let t = ap.dot(ab) / ab_len2;
  if t > 1e-8 && t < 1.0 - 1e-8 {
  let proj = p_a + ab * t;
- if (p - proj).length_squared() < 1e-10 {
+ if (p - proj).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT {
  split_verts.push((vi, t));
  }
  }

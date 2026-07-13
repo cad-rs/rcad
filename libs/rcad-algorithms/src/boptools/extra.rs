@@ -347,7 +347,7 @@ fn estimate_pcurve_deviation(
  use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
  const N_SAMPLES: usize = 25;
  let span = t2 - t1;
- if span.abs() < 1e-15 {
+ if span.abs() < TOLERANCE_CLAMP_MIN {
  let uv = pcurve.point_at(t1);
  let p_c3d = curve3.point_at(t1);
  let p_surf = surface.point_at(uv.x, uv.y);
@@ -590,7 +590,7 @@ pub fn do_split_seam_on_face(
  let uv_s = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.start_vertex].point);
  let uv_e = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.end_vertex].point);
  let (Some(uva), Some(uvb)) = (uv_s, uv_e) else { return false };
- let seam_tol = 1e-6;
+ let seam_tol = TOLERANCE_MESH_LEGACY;
  let on_seam = |u: f64| u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol;
  on_seam(uva.x) && on_seam(uvb.x)
 }
@@ -618,7 +618,7 @@ pub fn sense_flag(n1: glam::DVec3, n2: glam::DVec3) -> i8 {
  let dot_abs = n1.dot(n2).abs();
  let len1 = n1.length_squared();
  let len2 = n2.length_squared();
- if len1 < 1e-30 || len2 < 1e-30 { return 0; }
+ if len1 < TOLERANCE_LEN_SQ_DIV_SAFE || len2 < TOLERANCE_LEN_SQ_DIV_SAFE { return 0; }
  let cos_angle = dot_abs / (len1 * len2).sqrt();
  if cos_angle < 0.9999 { return 0; } // not coincident
  // OCCT L392-401: check scalar product sign
@@ -635,7 +635,7 @@ pub fn get_normal_to_surface(
 ) -> Option<glam::DVec3> {
  use rcad_kernel::geom::SurfaceEval;
  let normal = surface.normal_at(u, v);
- if normal.length_squared() < 1e-30 { None } else { Some(normal.normalize()) }
+ if normal.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { None } else { Some(normal.normalize()) }
 }
 
 ///  ?OCCT-aligned: GetApproxNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L443-494).

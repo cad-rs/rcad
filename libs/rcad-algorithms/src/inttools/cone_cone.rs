@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two cones.
+//! Analytic intersection of two cones.
 //!
 //! # Case classification
 //!
@@ -161,8 +161,8 @@ fn intersect_skew_cone_cone(
     let c_v = delta_a2 * delta_a2 - cos2_2 * delta_sq; // constant
 
     const N_SAMPLES: usize = 128;
-    const CHORD_TOL: f64 = 1e-6;
-    const REFINE_DEPTH: usize = 2;
+    const CHORD_TOL: f64 = crate::inttools::CHORD_TOLERANCE;
+    const REFINE_DEPTH: usize = crate::inttools::CHORD_REFINE_DEPTH;
     let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
     let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
 

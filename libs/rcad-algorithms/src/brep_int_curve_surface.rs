@@ -19,10 +19,10 @@ use crate::inttools::curve_surface::{
 use rayon::prelude::*;
 
 // =============================================================================
-// BRepIntCurveSurface_Inter â€” curve-surface intersection (OCCT-aligned class)
+// BRepIntCurveSurface_Inter â€?curve-surface intersection (OCCT-aligned class)
 // =============================================================================
 
-/// OCCT-aligned: BRepIntCurveSurface_Inter â€” iterate intersection points
+/// OCCT-aligned: BRepIntCurveSurface_Inter â€?iterate intersection points
 /// between a curve and a BRep shape.
 ///
 /// Usage:
@@ -51,12 +51,12 @@ impl CurveSurfaceInter {
             index: 0,
             shape: None,
             curve: None,
-            tol: 1e-7,
+            tol: TOLERANCE_ABS,
             initialized: false,
         }
     }
 
-    /// OCCT-aligned: Init â€” set the shape, curve, and tolerance.
+    /// OCCT-aligned: Init â€?set the shape, curve, and tolerance.
     pub fn init(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.shape = Some(shape.clone());
         self.curve = Some(curve.clone());
@@ -66,18 +66,18 @@ impl CurveSurfaceInter {
         self.initialized = false;
     }
 
-    /// OCCT-aligned: Perform â€” compute all intersection points at once.
+    /// OCCT-aligned: Perform â€?compute all intersection points at once.
     pub fn perform(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.init(shape, curve, tol);
         self.compute();
     }
 
-    /// OCCT-aligned: More â€” returns true if there are more intersection points.
+    /// OCCT-aligned: More â€?returns true if there are more intersection points.
     pub fn more(&self) -> bool {
         self.initialized && self.index < self.results.len()
     }
 
-    /// OCCT-aligned: Next â€” advance to the next intersection.
+    /// OCCT-aligned: Next â€?advance to the next intersection.
     pub fn next(&mut self) {
         if !self.initialized {
             self.compute();
@@ -85,12 +85,12 @@ impl CurveSurfaceInter {
         self.index += 1;
     }
 
-    /// OCCT-aligned: Point â€” current intersection point.
+    /// OCCT-aligned: Point â€?current intersection point.
     pub fn point(&self) -> &CurveBRepIntersection {
         &self.results[self.index]
     }
 
-    /// OCCT-aligned: Face â€” the face containing the current intersection.
+    /// OCCT-aligned: Face â€?the face containing the current intersection.
     pub fn face(&self) -> usize {
         self.results[self.index].face_index
     }
@@ -970,7 +970,7 @@ fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, f
         // face's wire vertices projected onto the axis.  The primitive cylinder
         // wall face has only 2 unique wire vertices (seam edges), so
         // point_in_polygon_on_surface falls through to point_on_closed_surface
-        // which only checks the infinite surface radius without axial bounds â€”
+        // which only checks the infinite surface radius without axial bounds â€?
         // causing false hits for points far above/below the actual face.
         match &surface {
             Surface3::Cylinder(cyl) => {

@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_PrmPrmIntersection — intersection of two
+//! �?OCCT-aligned: IntPatch_PrmPrmIntersection �?intersection of two
 //!   bi-parametrized (parametric-parametric) surfaces.
 //!
 //! OCCT source: TKGeomAlgo/IntPatch/IntPatch_PrmPrmIntersection.cxx (4144 lines)
@@ -16,6 +16,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::Surface3;
+use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 
 // ── Grid constants (OCCT _DECAL, _BASE, etc.) ──────────────────────────
 const DECAL: i32 = 7;
@@ -28,10 +29,10 @@ const BASE_M1: i32 = 127;
 pub enum Transition { In, Out, Undefined }
 
 // ====================================================================
-// T3Bits — OCCT IntPatch_PrmPrmIntersection_T3Bits
+// T3Bits �?OCCT IntPatch_PrmPrmIntersection_T3Bits
 // ====================================================================
 
-/// ✅ OCCT-aligned: 1-D bit array for (size³) cells.
+/// �?OCCT-aligned: 1-D bit array for (size³) cells.
 pub struct T3Bits {
     p: Vec<u32>,
     isize: usize,
@@ -82,7 +83,7 @@ impl T3Bits {
 }
 
 // ====================================================================
-// PntOn2S — OCCT IntSurf_PntOn2S
+// PntOn2S �?OCCT IntSurf_PntOn2S
 // ====================================================================
 
 #[derive(Clone, Debug)]
@@ -93,7 +94,7 @@ pub struct PntOn2S {
 }
 
 // ====================================================================
-// IntersectionLine — rcad representation of OCCT IntPatch_WLine
+// IntersectionLine �?rcad representation of OCCT IntPatch_WLine
 // ====================================================================
 
 #[derive(Clone, Debug)]
@@ -104,7 +105,7 @@ pub struct IntersectionLine {
 }
 
 // ====================================================================
-// PrmPrmIntersection — OCCT IntPatch_PrmPrmIntersection
+// PrmPrmIntersection �?OCCT IntPatch_PrmPrmIntersection
 // ====================================================================
 
 pub struct PrmPrmIntersection {
@@ -134,7 +135,7 @@ impl PrmPrmIntersection {
         (t & BASE_M1, (t >> DECAL) & BASE_M1, t >> DECAL2)
     }
 
-    /// OCCT L78-88: t >= 0 && t < _BASE (1:1 — OCCT quirk preserved)
+    /// OCCT L78-88: t >= 0 && t < _BASE (1:1 �?OCCT quirk preserved)
     pub fn dans_grille(&self, t: i32) -> bool { t >= 0 && t < BASE }
 
     pub fn nb_points_grille(&self) -> i32 { BASE }
@@ -250,7 +251,7 @@ impl PrmPrmIntersection {
 
     // ── Perform (cxx:1827-2172): intersect from seed point list ─────
 
-    /// ✅ OCCT-aligned: Perform(Surf1, D1, Surf2, D2, TolTangency, Epsilon, Deflection,
+    /// �?OCCT-aligned: Perform(Surf1, D1, Surf2, D2, TolTangency, Epsilon, Deflection,
     ///   Increment, ListOfPoints)
     ///
     ///   Walks from each seed point in `seed_points` along the intersection curve.
@@ -400,7 +401,7 @@ impl PrmPrmIntersection {
     // ── ComputeTransitions (OCCT L2094-2115) ────────────────────────
 
     /// OCCT-aligned: compute In/Out transition from tangent × normal.
-    ///   tgline · (norm2 × norm1) >= 0 → (Out, In) else (In, Out)
+    ///   tgline · (norm2 × norm1) >= 0 �?(Out, In) else (In, Out)
     fn compute_transitions(&self, s1: &rcad_kernel::geom::Surface3,
                            s2: &rcad_kernel::geom::Surface3,
                            line: &IntersectionLine) -> (Transition, Transition) {
@@ -424,7 +425,7 @@ impl PrmPrmIntersection {
         let (_, d1u_2, d1v_2) = s2.derivatives(p_cur.u2, p_cur.v2);
         let norm2 = d1u_2.cross(d1v_2);
 
-        if norm1.length_squared() < 1e-30 || norm2.length_squared() < 1e-30 {
+        if norm1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE || norm2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
             return (Transition::Undefined, Transition::Undefined);
         }
 
@@ -468,11 +469,11 @@ impl PrmPrmIntersection {
         self.perform_with_seeds(s1, s2, seeds, tol_tangency, epsilon, deflection, increment);
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
     // OCCT L69-77: Perform(Surf1, D1, Surf2, D2, TolTang, Eps, Defl, Incr, ClearFlag)
-    //   — the main entry point used by IntPatch_Intersection
+    //   �?the main entry point used by IntPatch_Intersection
     //   rcad: without polyhedron, delegate to perform_with_seeds with empty seeds
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
     pub fn perform_main(
         &mut self,
         s1: &Surface3,
@@ -502,15 +503,15 @@ impl PrmPrmIntersection {
         self.perform_with_seeds(s1, s2, &seeds, tol_tangency, epsilon, deflection, increment);
     }
 
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
     // OCCT L82-90: Perform with ListOfPnts (the "from seed" overload)
-    //   — already implemented as perform_with_seeds
-    // ═══════════════════════════════════════════════════════════════
+    //   �?already implemented as perform_with_seeds
+    // ══════════════════════════════════════════════════════════════�?
 
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
     // OCCT L92-106: Perform(S1, D1, S2, D2, U1,V1, U2,V2, ...)
-    //   — start from a given pair of UV parameters
-    // ═══════════════════════════════════════════════════════════════
+    //   �?start from a given pair of UV parameters
+    // ══════════════════════════════════════════════════════════════�?
     pub fn perform_from_uv(
         &mut self,
         s1: &Surface3,
@@ -531,12 +532,12 @@ impl PrmPrmIntersection {
         self.perform_with_seeds(s1, s2, &[seed], tol_tangency, epsilon, deflection, increment);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    //   — already implemented as perform_single
-    // ═══════════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════
-    //   — subdivide a line into finer points
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
+    //   �?already implemented as perform_single
+    // ══════════════════════════════════════════════════════════════�?
+    // ══════════════════════════════════════════════════════════════�?
+    //   �?subdivide a line into finer points
+    // ══════════════════════════════════════════════════════════════�?
     pub fn new_line(
         &self,
         _s1: &Surface3,
@@ -546,19 +547,19 @@ impl PrmPrmIntersection {
         _high_point: usize,
         _nb_points: usize,
     ) -> Option<IntersectionLine> {
-        // rcad: not yet implemented — OCCT refines the line with additional samples
+        // rcad: not yet implemented �?OCCT refines the line with additional samples
         None
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════�?
+    // ══════════════════════════════════════════════════════════════�?
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════�?
+// ══════════════════════════════════════════════════════════════════�?
 
-/// OCCT L224-230: PointDepart — computes starting point parameters on a line.
-/// rcad: simplified — compute midpoint parametric coordinates.
+/// OCCT L224-230: PointDepart �?computes starting point parameters on a line.
+/// rcad: simplified �?compute midpoint parametric coordinates.
 pub fn point_depart(
     _line: &IntSurf_LineOn2S,
     _s1: &Surface3, _su1: i32, _sv1: i32,
@@ -567,7 +568,7 @@ pub fn point_depart(
     // Placeholder: OCCT computes UV bounds from grid indices
 }
 
-/// OCCT-aligned: IntSurf_LineOn2S — sequence of IntSurf_PntOn2S with bounding boxes.
+/// OCCT-aligned: IntSurf_LineOn2S �?sequence of IntSurf_PntOn2S with bounding boxes.
 pub struct IntSurf_LineOn2S {
     pub points: Vec<PntOn2S>,
 }
@@ -585,9 +586,9 @@ impl IntSurf_LineOn2S {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════�?
 // OCCT static: DublicateOfLinesProcessing (L278-312)
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════�?
 
 /// OCCT DublicateOfLinesProcessing L278-312: compare walking result with
 ///   existing line, keep the longer one.  If same length, keep the one
@@ -613,8 +614,8 @@ fn line_chord_len(line: &IntersectionLine) -> f64 {
 
 fn is_point_on_line(pnt: &PntOn2S, line: &IntersectionLine, _deflection: f64) -> bool {
     for lp in &line.points {
-        if (pnt.u1 - lp.u1).abs() < 1e-6 && (pnt.v1 - lp.v1).abs() < 1e-6
-            && (pnt.u2 - lp.u2).abs() < 1e-6 && (pnt.v2 - lp.v2).abs() < 1e-6
+        if (pnt.u1 - lp.u1).abs() < TOLERANCE_MESH_LEGACY && (pnt.v1 - lp.v1).abs() < TOLERANCE_MESH_LEGACY
+            && (pnt.u2 - lp.u2).abs() < TOLERANCE_MESH_LEGACY && (pnt.v2 - lp.v2).abs() < TOLERANCE_MESH_LEGACY
         {
             return true;
         }
@@ -624,7 +625,7 @@ fn is_point_on_line(pnt: &PntOn2S, line: &IntersectionLine, _deflection: f64) ->
 
 fn is_point_on_line_by_3d(p3d: &DVec3, line: &IntersectionLine, _deflection: f64) -> bool {
     for lp in &line.points {
-        if p3d.distance(lp.p3d) < 1e-6 { return true; }
+        if p3d.distance(lp.p3d) < TOLERANCE_MESH_LEGACY { return true; }
     }
     false
 }

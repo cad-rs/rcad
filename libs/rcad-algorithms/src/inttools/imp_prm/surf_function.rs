@@ -194,7 +194,7 @@ impl SurfFunction {
         let df_dv = self.gradient.dot(self.d1v);
         let tg = self.d1u * df_dv - self.d1v * df_du;
         let len = tg.length();
-        if len > 1e-30 {
+        if len > TOLERANCE_LEN_SQ_DIV_SAFE {
             self.d3d = tg / len;
         }
         self.d3d
@@ -210,7 +210,7 @@ impl SurfFunction {
         let df_dv = self.gradient.dot(self.d1v);
         // 2D tangent = (dF/dv, -dF/du) — perpendicular to gradient in UV
         let len = (df_du * df_du + df_dv * df_dv).sqrt();
-        if len > 1e-30 {
+        if len > TOLERANCE_LEN_SQ_DIV_SAFE {
             self.d2d = DVec2::new(df_dv / len, -df_du / len);
         }
         self.d2d

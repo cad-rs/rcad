@@ -1,9 +1,9 @@
-﻿//! BndLib-style bounding algorithms for geometry.
+//! BndLib-style bounding algorithms for geometry.
 //!
 //! Provides analytical bounding-box computation for curves and surfaces,
 //! matching OCCT's `BndLib` / `GeomBndLib` dispatch logic.
 //!
-//! ✅ OCCT-aligned: GeomBndLib_Curve.cxx, GeomBndLib_Surface.cxx
+//! �?OCCT-aligned: GeomBndLib_Curve.cxx, GeomBndLib_Surface.cxx
 //!
 //! Each curve/surface type gets a dedicated analytical evaluator:
 //!
@@ -33,6 +33,7 @@
 use glam::DVec3;
 use rcad_kernel::{Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 use rcad_kernel::geom::{
     BezierCurve3, BSplineCurve3, Circle3, Ellipse3, Hyperbola3,
     Line3, Parabola3, OffsetCurve3,
@@ -41,12 +42,12 @@ use rcad_kernel::geom::{
 use crate::brep_bnd::BoundingBox;
 
 // =============================================================================
-// Public API — curve bounding
+// Public API �?curve bounding
 // =============================================================================
 
 /// Add a 3D curve to a bounding box over parameter range `[t1, t2]`.
 ///
-/// ✅ OCCT-aligned: GeomBndLib_Curve::Add + per-type dispatch.
+/// �?OCCT-aligned: GeomBndLib_Curve::Add + per-type dispatch.
 pub fn add_curve_to_box(curve: &Curve3, t1: f64, t2: f64, bbox: &mut BoundingBox, tol: f64) {
     let box_ = curve_box(curve, t1, t2, tol);
     if box_.is_valid() {
@@ -56,7 +57,7 @@ pub fn add_curve_to_box(curve: &Curve3, t1: f64, t2: f64, bbox: &mut BoundingBox
 
 /// Add an optimal (tighter) bounding box for a curve.
 ///
-/// ✅ OCCT-aligned: GeomBndLib_Curve::AddOptimal.
+/// �?OCCT-aligned: GeomBndLib_Curve::AddOptimal.
 pub fn add_curve_optimal(curve: &Curve3, t1: f64, t2: f64, bbox: &mut BoundingBox, tol: f64) {
     let box_ = curve_box_optimal(curve, t1, t2, tol);
     if box_.is_valid() {
@@ -81,12 +82,12 @@ pub fn curve_bounds_optimal(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> Bound
 }
 
 // =============================================================================
-// Public API — surface bounding
+// Public API �?surface bounding
 // =============================================================================
 
 /// Add a surface to a bounding box over parameter domain `[u1, u2] × [v1, v2]`.
 ///
-/// ✅ OCCT-aligned: GeomBndLib_Surface::Add + per-type dispatch.
+/// �?OCCT-aligned: GeomBndLib_Surface::Add + per-type dispatch.
 pub fn add_surface_to_box(
     surface: &Surface3,
     u1: f64,
@@ -149,7 +150,7 @@ pub fn surface_bounds_optimal(
 }
 
 // =============================================================================
-// Internal dispatch — curves
+// Internal dispatch �?curves
 // =============================================================================
 
 fn curve_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
@@ -185,11 +186,11 @@ fn curve_box_optimal(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox 
 }
 
 // =============================================================================
-// Curve evaluators — analytical per type, matching GeomBndLib_*
+// Curve evaluators �?analytical per type, matching GeomBndLib_*
 // =============================================================================
 
 // ── Line ──────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Line
+// �?OCCT-aligned: GeomBndLib_Line
 
 fn line_box(line: &Line3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     use rcad_kernel::geom::CurveEval;
@@ -220,7 +221,7 @@ fn line_box(line: &Line3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
 }
 
 // ── Circle ────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Circle
+// �?OCCT-aligned: GeomBndLib_Circle
 
 fn circle_box(circle: &Circle3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     let r = circle.radius;
@@ -255,7 +256,7 @@ fn circle_box(circle: &Circle3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
         let yk = yd[k];
 
         // Extremal parameter for each coordinate: t = atan2(yk, xk)
-        let t_extr = if xk.abs() > 1e-15 {
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN {
             yk.atan2(xk)
         } else {
             std::f64::consts::PI / 2.0
@@ -277,7 +278,7 @@ fn circle_box(circle: &Circle3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
 }
 
 /// Full-circle bounding box: per-coordinate analytical extrema.
-/// ✅ OCCT-aligned: GeomBndLib_Circle::Box(gp_Circ, Tol) L23-44
+/// �?OCCT-aligned: GeomBndLib_Circle::Box(gp_Circ, Tol) L23-44
 fn full_circle_box(o: DVec3, xd: DVec3, yd: DVec3, r: f64, tol: f64) -> BoundingBox {
     let mut bmin = [f64::INFINITY; 3];
     let mut bmax = [f64::NEG_INFINITY; 3];
@@ -297,14 +298,14 @@ fn full_circle_box(o: DVec3, xd: DVec3, yd: DVec3, r: f64, tol: f64) -> Bounding
 }
 
 // ── Ellipse ───────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Ellipse
+// �?OCCT-aligned: GeomBndLib_Ellipse
 
 fn ellipse_box(ell: &Ellipse3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     let a_maj = ell.major_radius;
     let a_min = ell.minor_radius;
     let o = ell.center;
     let xd = ell.major_dir;
-    // ✅ OCCT-aligned: Y axis from cross product of normal × major_dir
+    // �?OCCT-aligned: Y axis from cross product of normal × major_dir
     let yd = ell.normal.cross(ell.major_dir).normalize();
 
     let period = 2.0 * std::f64::consts::PI;
@@ -330,7 +331,7 @@ fn ellipse_box(ell: &Ellipse3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
         let yk = yd[k];
 
         // OCCT L80-90: t_extr = atan2(a_min * yk, a_maj * xk)
-        let t_extr = if xk.abs() > 1e-15 {
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN {
             (a_min * yk).atan2(a_maj * xk)
         } else {
             std::f64::consts::PI / 2.0
@@ -372,7 +373,7 @@ fn full_ellipse_box(o: DVec3, xd: DVec3, yd: DVec3, a_maj: f64, a_min: f64, tol:
 }
 
 // ── Parabola ──────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Parabola
+// �?OCCT-aligned: GeomBndLib_Parabola
 
 fn parabola_box(par: &Parabola3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     use rcad_kernel::geom::CurveEval;
@@ -395,7 +396,7 @@ fn parabola_box(par: &Parabola3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
 }
 
 // ── Hyperbola ─────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Hyperbola
+// �?OCCT-aligned: GeomBndLib_Hyperbola
 
 fn hyperbola_box(hyp: &Hyperbola3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     use rcad_kernel::geom::CurveEval;
@@ -443,7 +444,7 @@ fn hyperbola_box(hyp: &Hyperbola3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
 }
 
 // ── BSplineCurve ─────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_BSplineCurve
+// �?OCCT-aligned: GeomBndLib_BSplineCurve
 
 fn bspline_curve_box(curve: &BSplineCurve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     let a_weakness = 1.5;
@@ -501,7 +502,7 @@ fn fill_bspline_curve_box(curve: &BSplineCurve3, t1: f64, t2: f64) -> (BoundingB
     for i in 1..active.len() {
         let a = active[i - 1];
         let b = active[i];
-        if b - a < 1e-15 { continue; }
+        if b - a < TOLERANCE_CLAMP_MIN { continue; }
         let (sub_box, defl) = fill_bspline_span(&|t| curve.point_at(t), a, b);
         if sub_box.is_valid() {
             bbox.add_bbox(&sub_box);
@@ -534,7 +535,7 @@ fn fill_bspline_span<F: Fn(f64) -> DVec3>(eval: &F, a: f64, b: f64) -> (Bounding
 }
 
 /// Reduce a sampled curve box by intersecting with the control-point convex hull.
-/// ✅ OCCT-aligned: GeomBndLib_SplineHelpers::ReduceSplineBox
+/// �?OCCT-aligned: GeomBndLib_SplineHelpers::ReduceSplineBox
 fn reduce_spline_curve_box(poles: &[DVec3], sampled: &BoundingBox) -> BoundingBox {
     if poles.is_empty() {
         return *sampled;
@@ -560,7 +561,7 @@ fn reduce_spline_curve_box(poles: &[DVec3], sampled: &BoundingBox) -> BoundingBo
 }
 
 // ── BezierCurve ──────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_BezierCurve
+// �?OCCT-aligned: GeomBndLib_BezierCurve
 
 fn bezier_curve_box(curve: &BezierCurve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     let a_weakness = 1.5;
@@ -581,7 +582,7 @@ fn bezier_curve_box_optimal(curve: &BezierCurve3, t1: f64, t2: f64, tol: f64) ->
 }
 
 // ── OffsetCurve ──────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_OffsetCurve
+// �?OCCT-aligned: GeomBndLib_OffsetCurve
 //
 // OffsetCurve3 has a `basis` Curve3 and `offset` f64.
 // We compute the bounding box of the basis curve and enlarge by |offset|.
@@ -609,7 +610,7 @@ fn offset_curve_box_optimal(curve: &OffsetCurve3, t1: f64, t2: f64, tol: f64) ->
 }
 
 // ── OtherCurve (sampling fallback) ──────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_OtherCurve
+// �?OCCT-aligned: GeomBndLib_OtherCurve
 
 /// Uniform sampling with deflection-based enlargement.
 fn other_curve_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
@@ -666,7 +667,7 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         }
     }
 
-    let eps = if tol > 1e-7f64 { tol } else { 1e-7f64 };
+    let eps = if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 };
     for k in 0..3 {
         let d = defl_max[k];
         if d <= eps {
@@ -683,14 +684,14 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         DVec3::new(coord_min[0], coord_min[1], coord_min[2]),
         DVec3::new(coord_max[0], coord_max[1], coord_max[2]),
     );
-    bbox.enlarge(if tol > 1e-7f64 { tol } else { 1e-7f64 });
+    bbox.enlarge(if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 });
     bbox
 }
 
 /// Sample a curve uniformly, returning (box, max_deflection).
 fn sample_curve_box(curve: &Curve3, t1: f64, t2: f64, n: usize) -> (BoundingBox, f64) {
     let mut bbox = BoundingBox::new();
-    if (t2 - t1).abs() < 1e-15 {
+    if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN {
         return (bbox, 0.0f64);
     }
     let dt = (t2 - t1) / (2 * n) as f64;
@@ -714,7 +715,7 @@ fn sample_curve_box(curve: &Curve3, t1: f64, t2: f64, n: usize) -> (BoundingBox,
 }
 
 // =============================================================================
-// Internal dispatch — surfaces
+// Internal dispatch �?surfaces
 // =============================================================================
 
 fn surface_box(surface: &Surface3, u1: f64, u2: f64, v1: f64, v2: f64, tol: f64) -> BoundingBox {
@@ -756,11 +757,11 @@ fn surface_box_optimal(
 }
 
 // =============================================================================
-// Surface evaluators — analytical per type, matching GeomBndLib_*
+// Surface evaluators �?analytical per type, matching GeomBndLib_*
 // =============================================================================
 
 // ── Plane ─────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Plane
+// �?OCCT-aligned: GeomBndLib_Plane
 
 fn plane_box(plane: &rcad_kernel::geom::Plane, u1: f64, u2: f64, v1: f64, v2: f64, tol: f64) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
@@ -796,7 +797,7 @@ fn plane_box(plane: &rcad_kernel::geom::Plane, u1: f64, u2: f64, v1: f64, v2: f6
 }
 
 // ── Cylinder ──────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Cylinder
+// �?OCCT-aligned: GeomBndLib_Cylinder
 
 fn cylinder_box(
     cyl: &rcad_kernel::geom::CylindricalSurface,
@@ -846,7 +847,7 @@ fn cylinder_box(
 }
 
 // ── Cone ──────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Cone
+// �?OCCT-aligned: GeomBndLib_Cone
 
 fn cone_box(
     cone: &rcad_kernel::geom::ConicalSurface,
@@ -858,7 +859,7 @@ fn cone_box(
     let half_angle = cone.half_angle_rad;
     let ref_radius = cone.radius;
 
-    // OCUT: ElSLib::ConeVIso → radius at slant = ref_radius + v * tan(half_angle)
+    // OCUT: ElSLib::ConeVIso �?radius at slant = ref_radius + v * tan(half_angle)
     let radius_at = |v: f64| ref_radius + v * half_angle.tan();
 
     let make_circle_at_v = |v: f64| -> Circle3 {
@@ -901,7 +902,7 @@ fn add_cone_v_iso(
     u1: f64, u2: f64, v: f64,
 ) {
     let c = make_circle(v);
-    if c.radius > 1e-15 {
+    if c.radius > TOLERANCE_CLAMP_MIN {
         bbox.add_bbox(&circle_box(&c, u1, u2, 0.0));
     } else {
         bbox.add_point(c.center);
@@ -909,7 +910,7 @@ fn add_cone_v_iso(
 }
 
 // ── Sphere ────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Sphere
+// �?OCCT-aligned: GeomBndLib_Sphere
 
 fn sphere_box(
     sphere: &rcad_kernel::geom::SphericalSurface,
@@ -992,7 +993,7 @@ fn sphere_box(
 }
 
 // ── Torus ─────────────────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_Torus (delegates to BndLib::Add with gp_Torus)
+// �?OCCT-aligned: GeomBndLib_Torus (delegates to BndLib::Add with gp_Torus)
 
 fn torus_box(
     torus: &rcad_kernel::geom::ToroidalSurface,
@@ -1070,7 +1071,7 @@ fn sample_torus_patch(
 }
 
 // ── BSplineSurface ──────────────────────────────────────────────────────
-// ✅ OCCT-aligned (simplified): GeomBndLib_BSplineSurface
+// �?OCCT-aligned (simplified): GeomBndLib_BSplineSurface
 
 fn bspline_surface_box(
     surf: &rcad_kernel::geom::BSplineSurface,
@@ -1146,7 +1147,7 @@ fn bspline_surface_pole_box(surf: &rcad_kernel::geom::BSplineSurface) -> Boundin
 }
 
 // ── BezierSurface ─────────────────────────────────────────────────────────
-// ✅ OCCT-aligned (simplified): GeomBndLib_BezierSurface
+// �?OCCT-aligned (simplified): GeomBndLib_BezierSurface
 
 fn bezier_surface_box(
     surf: &rcad_kernel::geom::BezierSurface,
@@ -1217,7 +1218,7 @@ fn bezier_surface_pole_box(surf: &rcad_kernel::geom::BezierSurface) -> BoundingB
 }
 
 // ── Revolution Surface ───────────────────────────────────────────────────
-// ✅ OCCT-aligned (simplified): GeomBndLib_SurfaceOfRevolution
+// �?OCCT-aligned (simplified): GeomBndLib_SurfaceOfRevolution
 
 fn revolution_surface_box(
     surf: &rcad_kernel::geom::RevolutionSurface,
@@ -1253,7 +1254,7 @@ fn revolution_surface_box_optimal(
 }
 
 // ── Linear Extrusion Surface ─────────────────────────────────────────────
-// ✅ OCCT-aligned (simplified): GeomBndLib_SurfaceOfExtrusion
+// �?OCCT-aligned (simplified): GeomBndLib_SurfaceOfExtrusion
 
 fn extrusion_surface_box(
     surf: &rcad_kernel::geom::LinearExtrusionSurface,
@@ -1290,7 +1291,7 @@ fn extrusion_surface_box_optimal(
 }
 
 // ── Offset Surface ──────────────────────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_OffsetSurface
+// �?OCCT-aligned: GeomBndLib_OffsetSurface
 
 fn offset_surface_box(
     surf: &rcad_kernel::geom::OffsetSurface,
@@ -1321,7 +1322,7 @@ fn offset_surface_box_optimal(
 }
 
 // ── OtherSurface (sampling fallback) ────────────────────────────────────
-// ✅ OCCT-aligned: GeomBndLib_OtherSurface
+// �?OCCT-aligned: GeomBndLib_OtherSurface
 
 fn other_surface_box_from(
     surface: &Surface3,
@@ -1374,12 +1375,12 @@ fn sample_surface_grid(
 /// Compute an arbitrary unit vector perpendicular to `v`.
 fn any_perpendicular(v: DVec3) -> DVec3 {
     let ax = v.cross(DVec3::X);
-    if ax.length_squared() > 1e-30 { ax.normalize() }
+    if ax.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE { ax.normalize() }
     else { DVec3::Y } // v is parallel to X
 }
 
 // =============================================================================
-// Tests — translated from OCCT GTests
+// Tests �?translated from OCCT GTests
 // =============================================================================
 //
 // The following tests are direct Rust translations of OCCT's GTest suite
@@ -1398,7 +1399,7 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 // Each test uses rcad geometry types (Curve3, Surface3) and checks
 // bounding box min/max against the same expected values OCCT uses.
 //
-// Tests marked "(2D only)" are skipped — our module only covers 3D.
-// Tests marked "(BRep only)" are skipped — geometry-level module.
+// Tests marked "(2D only)" are skipped �?our module only covers 3D.
+// Tests marked "(BRep only)" are skipped �?geometry-level module.
 
 

@@ -883,7 +883,7 @@ pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f6
             let cc = y * y - b2;
             let disc = bb * bb - 4.0 * aa * cc;
 
-            if disc < 0.0 || aa.abs() < 1e-15 {
+            if disc < 0.0 || aa.abs() < TOLERANCE_CLAMP_MIN {
                 return Vec::new();
             }
 
@@ -916,7 +916,7 @@ pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f6
             // For tangent from P: angle between PC and tangent = arcsin(R/|PC|)
             let pc = point - c.center;
             let d = pc.length();
-            if d < c.radius + 1e-15 {
+            if d < c.radius + TOLERANCE_CLAMP_MIN {
                 return Vec::new(); // point inside circle
             }
             let alpha = (c.radius / d).asin();
@@ -950,14 +950,14 @@ pub fn common_tangents_curve_curve(curve1: &Curve2d, curve2: &Curve2d, tol: f64)
         let t1 = (i as f64 / n_sample as f64) * std::f64::consts::TAU;
         let p1 = curve1.point_at(t1);
         let d1 = curve2d_d1(curve1, t1);
-        if d1.length_squared() < 1e-15 { continue; }
+        if d1.length_squared() < TOLERANCE_CLAMP_MIN { continue; }
         let n1 = DVec2::new(-d1.y, d1.x).normalize(); // normal at p1
 
         for j in 0..n_sample {
             let t2 = (j as f64 / n_sample as f64) * std::f64::consts::TAU;
             let p2 = curve2.point_at(t2);
             let d2 = curve2d_d1(curve2, t2);
-            if d2.length_squared() < 1e-15 { continue; }
+            if d2.length_squared() < TOLERANCE_CLAMP_MIN { continue; }
             let n2 = DVec2::new(-d2.y, d2.x).normalize();
 
             // Check if line through p1-p2 has normals opposite at both endpoints

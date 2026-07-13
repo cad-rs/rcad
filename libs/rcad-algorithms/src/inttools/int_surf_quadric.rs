@@ -9,6 +9,7 @@
 
 use glam::{DVec3, DAffine3};
 use rcad_kernel::geom::{Surface3, Plane, SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use super::geom_abs_surface_type::GeomAbsSurfaceType;
 
 /// OCCT-aligned: IntSurf_Quadric unified quadric surface.
@@ -240,7 +241,7 @@ impl Quadric {
             GeomAbsSurfaceType::Sphere => {
                 let d = p - self.location;
                 let r = d.length();
-                if r < 1e-15 { return (0.0, 0.0); }
+                if r < TOLERANCE_CLAMP_MIN { return (0.0, 0.0); }
                 let v = (d.z / r).asin();
                 let u = d.y.atan2(d.x);
                 (if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
@@ -250,7 +251,7 @@ impl Quadric {
                 let v = d.dot(self.axis_dir);
                 let radial = d - v * self.axis_dir;
                 let r = radial.length();
-                let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+                let u = if r < TOLERANCE_CLAMP_MIN { 0.0 } else { radial.y.atan2(radial.x) };
                 (if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
             }
             GeomAbsSurfaceType::Torus => {
@@ -258,11 +259,11 @@ impl Quadric {
                 let proj_axis = d.dot(self.axis_dir) * self.axis_dir;
                 let radial = d - proj_axis;
                 let r = radial.length();
-                let v = if r < 1e-15 { 0.0 } else {
+                let v = if r < TOLERANCE_CLAMP_MIN { 0.0 } else {
                     let center_to_p = (d - self.major_radius() * radial.normalize_or_zero()).length();
                     (d.dot(self.axis_dir) / center_to_p).asin()
                 };
-                let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+                let u = if r < TOLERANCE_CLAMP_MIN { 0.0 } else { radial.y.atan2(radial.x) };
                 (if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
             }
             _ => (0.0, 0.0),
@@ -328,19 +329,19 @@ impl Quadric {
                 let v = d.dot(self.axis_dir);
                 let radial = d - v * self.axis_dir;
                 let r = radial.length();
-                if r < 1e-15 { DVec3::ZERO } else { radial / r }
+                if r < TOLERANCE_CLAMP_MIN { DVec3::ZERO } else { radial / r }
             }
             GeomAbsSurfaceType::Sphere => {
                 let d = p - self.axis_loc;
                 let r = d.length();
-                if r < 1e-15 { DVec3::ZERO } else { d / r }
+                if r < TOLERANCE_CLAMP_MIN { DVec3::ZERO } else { d / r }
             }
             GeomAbsSurfaceType::Cone => {
                 let d = p - self.axis_loc;
                 let v = d.dot(self.axis_dir);
                 let radial = d - v * self.axis_dir;
                 let r = radial.length();
-                if r < 1e-15 { return self.axis_dir; }
+                if r < TOLERANCE_CLAMP_MIN { return self.axis_dir; }
                 let radial_dir = radial / r;
                 let cone_dir = self.axis_dir * self.prm3 - radial_dir * self.prm2.sin();
                 cone_dir.normalize_or_zero()
@@ -350,12 +351,12 @@ impl Quadric {
                 let proj_axis = d.dot(self.axis_dir) * self.axis_dir;
                 let radial = d - proj_axis;
                 let r = radial.length();
-                if r < 1e-15 { return DVec3::ZERO; }
+                if r < TOLERANCE_CLAMP_MIN { return DVec3::ZERO; }
                 let maj_r = self.prm1;
                 let radial_dir = radial / r;
                 let grad = radial_dir * (r - maj_r) / r + self.axis_dir * d.dot(self.axis_dir);
                 let norm = grad.length();
-                if norm < 1e-15 { DVec3::ZERO } else { grad / norm }
+                if norm < TOLERANCE_CLAMP_MIN { DVec3::ZERO } else { grad / norm }
             }
             _ => DVec3::ZERO,
         }

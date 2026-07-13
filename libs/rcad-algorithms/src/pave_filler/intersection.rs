@@ -37,13 +37,13 @@ impl<'a> super::PaveFiller<'a> {
  let mut a = Aabb::empty();
  for &p in &pts { a.expand_point(p); }
  // Expand for edge tolerance
- let tol = e.geom_tol.max(1e-7);
+ let tol = e.geom_tol.max(CONFUSION);
  a.min -= DVec3::splat(tol);
  a.max += DVec3::splat(tol);
  a
  } else {
  let pt = self.ds.vertices[ds_i].point;
- let tol = self.ds.vertices[ds_i].geom_tol.max(1e-7);
+ let tol = self.ds.vertices[ds_i].geom_tol.max(CONFUSION);
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
@@ -66,13 +66,13 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.vertices[e.end_vertex].point];
  let mut a = Aabb::empty();
  for &p in &pts { a.expand_point(p); }
- let tol = e.geom_tol.max(1e-7);
+ let tol = e.geom_tol.max(CONFUSION);
  a.min -= DVec3::splat(tol);
  a.max += DVec3::splat(tol);
  a
  } else {
  let pt = self.ds.vertices[ds_i].point;
- let tol = self.ds.vertices[ds_i].geom_tol.max(1e-7);
+ let tol = self.ds.vertices[ds_i].geom_tol.max(CONFUSION);
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
@@ -340,7 +340,7 @@ impl<'a> super::PaveFiller<'a> {
  aabb.expand_point(s.center + DVec3::splat(r));
  aabb.expand_point(s.center - DVec3::splat(r));
  }
- let tol = f.geom_tol.max(1e-7);
+ let tol = f.geom_tol.max(CONFUSION);
  aabb.min -= DVec3::splat(tol);
  aabb.max += DVec3::splat(tol);
  aabbs.push(aabb);
@@ -367,7 +367,7 @@ impl<'a> super::PaveFiller<'a> {
  aabb.expand_point(s.center + DVec3::splat(r));
  aabb.expand_point(s.center - DVec3::splat(r));
  }
- let tol = f.geom_tol.max(1e-7);
+ let tol = f.geom_tol.max(CONFUSION);
  aabb.min -= DVec3::splat(tol);
  aabb.max += DVec3::splat(tol);
  aabbs.push(aabb);

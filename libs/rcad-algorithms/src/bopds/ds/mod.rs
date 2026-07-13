@@ -235,7 +235,7 @@ impl DS {
     }
   }
 
-  /// ÈâÅ?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
+  /// Èâ?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
   ///   Populates map_ve from edges array.  Called by init_shape_info()
   ///   after all edges are loaded.
   pub fn build_map_ve(&mut self) {
@@ -269,7 +269,7 @@ impl DS {
   self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
   }
 
-  /// ÈâÅ?OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
+  /// Èâ?OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
   ///   Global interference pair fence.  Checks (i1, i2) with i1 < i2 against
   ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
   ///   if it already exists.  Call before adding to any typed interference vec.
@@ -419,7 +419,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  }
  // Deduplicate seam u-values (same edge may appear fwd+rev in the wire)
  seam_u_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
- seam_u_vals.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+ seam_u_vals.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_MESH_LEGACY);
  let (u_lo, u_hi) = if seam_u_vals.len() >= 2 {
  (seam_u_vals[0], seam_u_vals[seam_u_vals.len() - 1])
  } else {
@@ -532,10 +532,10 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  // UV points. OCCT's BOPAlgo_BuilderFace uses the face's topological
  // edges directly (each edge has exactly 2 vertices), not sampled UV
  // polylines.  The 8-sample-per-edge UV boundary creates edge fragments.
- // Tolerance 1e-6 * edge_length accounts for projection noise from
+ // Tolerance TOLERANCE_MESH_LEGACY * edge_length accounts for projection noise from
  // closest_point_on_surface on BSpline surfaces (Newton iteration).
  let is_planar = matches!(&surface, Surface3::Plane(_))
- || (if let Surface3::BSpline(ref bsp) = surface { rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) } else { false });
+ || (if let Surface3::BSpline(ref bsp) = surface { rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) } else { false });
  let decimated = if is_planar {
  let n = uv_pts.len();
  if n > 2 {
@@ -549,7 +549,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let cross = (d1.x * d2.y - d1.y * d2.x).abs();
  let len1 = d1.length_squared();
  let len2 = d2.length_squared();
- if cross < 1e-6 * len1.max(len2).max(f64::MIN_POSITIVE)
+ if cross < TOLERANCE_MESH_LEGACY * len1.max(len2).max(f64::MIN_POSITIVE)
  && len1 > f64::MIN_POSITIVE && len2 > f64::MIN_POSITIVE
  {
  continue;
@@ -591,7 +591,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let origin = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let dir = DVec2::new(l.direction.dot(u_axis), l.direction.dot(v_axis));
  let len = dir.length();
- if len > 1e-15 {
+ if len > TOLERANCE_CLAMP_MIN {
  Some((Curve2d::Line(Line2d { origin, direction: dir / len }), len))
  } else { None }
  }
@@ -601,7 +601,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let diff = c.center - p.origin;
  let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let normal_dot = c.normal.dot(p.normal).abs();
- if (normal_dot - 1.0).abs() < 1e-6 {
+ if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
  let perim = std::f64::consts::TAU * c.radius;
  Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: c.radius  }), perim))
  } else { None }
@@ -629,7 +629,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  }
  let delta = uv_end - uv_start;
  let span = delta.length();
- if span < 1e-15 || !span.is_finite() { return None; }
+ if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { return None; }
  Some((
  Curve2d::Line(Line2d {
  origin: uv_start,
@@ -657,7 +657,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  };
  let delta = uv_end - uv_start;
  let span = delta.length();
- if span < 1e-15 || !span.is_finite() { return None; }
+ if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { return None; }
  Some((
  Curve2d::Line(Line2d {
  origin: uv_start,
@@ -673,7 +673,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let along = local.dot(axis);
  let radial = local - axis * along;
  let r = radial.length();
- let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+ let u = if r < TOLERANCE_CLAMP_MIN { 0.0 } else { radial.y.atan2(radial.x) };
  DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, along)
  };
  let uv_end = {
@@ -681,12 +681,12 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let along = local.dot(axis);
  let radial = local - axis * along;
  let r = radial.length();
- let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+ let u = if r < TOLERANCE_CLAMP_MIN { 0.0 } else { radial.y.atan2(radial.x) };
  DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, along)
  };
  let delta = uv_end - uv_start;
  let span = delta.length();
- if span < 1e-15 || !span.is_finite() { return None; }
+ if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { return None; }
  Some((
  Curve2d::Line(Line2d {
  origin: uv_start,
@@ -704,7 +704,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  let uv_end = t.world_to_uv(curve.point_at(1.0));
  let delta = uv_end - uv_start;
  let span = delta.length();
- if span < 1e-15 || !span.is_finite() { return None; }
+ if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { return None; }
  Some((
  Curve2d::Line(Line2d {
  origin: uv_start,
@@ -764,7 +764,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.is_new = self.vertices[vi].origin.is_none();
   si.box_min = Some(self.vertices[vi].point);
   si.box_max = Some(self.vertices[vi].point);
-  // ÈâÅ?OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
+  // Èâ?OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
   //   theAdditionalTolerance = fuzzy_tol * 0.5 (matching OCCT PaveFiller UpdateTolerance).
   si.box_gap = self.vertices[vi].geom_tol + self.fuzzy_tol * 0.5;
   self.shape_info.push(si);
@@ -783,15 +783,15 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.box_min = Some(p1.min(p2));
   si.box_max = Some(p1.max(p2));
   }
-  // ÈâÅ?OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
+  // Èâ?OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
   // OCCT stores sub-shape indices as flat shape indices into myLines.
   si.sub_shapes.push(nv + sv);
   if sv != ev {
   si.sub_shapes.push(nv + ev);
   }
-  // ÈâÅ?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
+  // Èâ?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
   si.box_gap = self.edges[ei].geom_tol + self.fuzzy_tol * 0.5;
-  // ÈâÅ?OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
+  // Èâ?OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
   //   OCCT BOPAlgo_Builder_1.cxx prepareFaces: SetFlag(faceIndex) for deg edges.
   //   rcad: set flag >= 0 when start==end vertex (degenerated geometry).
   if sv == ev {
@@ -837,7 +837,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   si.box_max = Some(mx);
   }
   }
-  // ÈâÅ?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
+  // Èâ?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
   si.box_gap = self.faces[fi].geom_tol + self.fuzzy_tol * 0.5;
   self.shape_info.push(si);
   }
@@ -880,7 +880,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   self.shape_info.push(si);
   }
   self.nb_source_shapes = self.shape_info.len();
-  // ÈâÅ?OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
+  // Èâ?OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
   self.build_map_ve();
   }
 
@@ -922,7 +922,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  // not normalized UV-space.  pcurve point_at(raw_t) must give
  // the correct UV for any raw 3D parameter t on the edge.
  let t_span = edge.t_range[1] - edge.t_range[0];
- if t_span.abs() > 1e-15 && (span - t_span.abs()).abs() > 1e-12 {
+ if t_span.abs() > TOLERANCE_CLAMP_MIN && (span - t_span.abs()).abs() > 1e-12 {
  let scale = span / t_span;
  if let Curve2d::Line(ref mut l) = pcurve {
  l.direction *= scale;
@@ -1289,7 +1289,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  /// For each original wire whose edges were split by the PaveFiller,
  /// build a new edge list from the split sub-edges.
  ///
- /// Uses DS internal data only Èà•?no external BRep needed.
+ /// Uses DS internal data only Èà?no external BRep needed.
  pub fn build_container_images(&mut self) {
  // Count total wires across all solids/shells in the DS
  let n_wires: usize = self.solids.iter()
@@ -1456,7 +1456,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  // Now modify face_info without borrowing self elsewhere
  let info = &mut self.faces[fi].face_info;
  for &vi in &boundary_copy {
- let n_vsd = vi; // OCCT: GetSameDomainIndex Èà•?skip SD lookup for boundary verts
+ let n_vsd = vi; // OCCT: GetSameDomainIndex Èà?skip SD lookup for boundary verts
  info.vertices_in.insert(n_vsd);
  }
  for &vi in &vf_vertices {

@@ -87,7 +87,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  let f1_face = &self.ds.faces[n_f1];
  let f2_face = &self.ds.faces[n_f2];
- // Step 1: PBs ON/IN â€” add PB + endpoints to aMVOnIn + aMPBOnIn
+ // Step 1: PBs ON/IN â€?add PB + endpoints to aMVOnIn + aMPBOnIn
  let pb_sets_fn = |pb_set: &indexmap::IndexSet<usize>,
                    mpb_set: &mut std::collections::HashSet<usize>,
                    mv_set: &mut std::collections::HashSet<usize>| {
@@ -105,7 +105,7 @@ impl<'a> super::PaveFiller<'a> {
  pb_sets_fn(&f1_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
  pb_sets_fn(&f2_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
  pb_sets_fn(&f2_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
- // Step 2: Common PBs â€” PBsOn1 also in PBsOn2/PBsIn2
+ // Step 2: Common PBs â€?PBsOn1 also in PBsOn2/PBsIn2
  for &pb_idx in &f1_face.face_info.pave_blocks_on {
   if f2_face.face_info.pave_blocks_on.contains(&pb_idx)
   || f2_face.face_info.pave_blocks_in.contains(&pb_idx) {
@@ -118,7 +118,7 @@ impl<'a> super::PaveFiller<'a> {
    }
   }
  }
- // OCCT-aligned: SubShapesOnIn â€” Face1 vertices in Face2 â†’ aMVOnIn + aMVCommon
+ // OCCT-aligned: SubShapesOnIn â€?Face1 vertices in Face2 â†?aMVOnIn + aMVCommon
  // OCCT BOPDS_DS.cxx L1124-1142: only Face1's VOn/VIn checked against Face2's VOn/VIn
  for &vi in &f1_face.face_info.vertices_on {
   if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
@@ -381,7 +381,7 @@ impl<'a> super::PaveFiller<'a> {
   let tt0 = ic_t_range[0];
   let tt1 = ic_t_range[1];
   let span = tt1 - tt0;
-  if span <= 1e-15 { continue; }
+  if span <= TOLERANCE_CLAMP_MIN { continue; }
   let n_samp = 129;
   let first_in = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(tt0));
   if std::env::var("RCAD_DEBUG_MB").is_ok() {
@@ -464,11 +464,11 @@ impl<'a> super::PaveFiller<'a> {
    pb1.pave1 = crate::bopds::pave::Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] };
    pb1.pave2 = crate::bopds::pave::Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] };
   }
-  // OCCT-aligned: use the_flag=true for IC PBs (original_edge == NO_EDGE)
-  // so that pave1/pave2 are included as endpoint paves. With the_flag=false,
-  // curves with < 2 ext_paves produce no sub-PBs (a_nb = ext_paves.len() <= 1).
-  let the_flag = pb1.original_edge == NO_EDGE;
- let sub_pbs = pb1.update(the_flag);
+  // OCCT-aligned: Update with theFlag=false for IC PBs (section curves).
+  // The flag=false means pave1/pave2 are NOT included as endpoint paves;
+  // only ext_paves (from PutPavesOnCurve, PutStickPavesOnCurve, etc.)
+  // are used to generate sub-PBs.
+ let sub_pbs = pb1.update(false);
  a_lpb = sub_pbs;
  }
  }
@@ -826,12 +826,6 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- }
- }
- if ci < self.ds.intersection_curves.len() {
- let ic = &mut self.ds.intersection_curves[ci];
- if !ic.pave_blocks.is_empty() {
- ic.pave_blocks.remove(0);
  }
  }
  }
