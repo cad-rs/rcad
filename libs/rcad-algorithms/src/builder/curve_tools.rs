@@ -1,4 +1,4 @@
-// �?OCCT-aligned: ElCLib derivative functions for 2D elementary curves
+﻿// �?OCCT-aligned: ElCLib derivative functions for 2D elementary curves
 //   (ElCLib.hxx: LineD1/D2, CircleD1/D2, EllipseD1/D2).
 //   curve2d_resolution approximates Geom2dAdaptor::Resolution.
 //   curve2d_lprop_curvature matches ElCLib::Curvature formula |d1×d2|/|d1|³.

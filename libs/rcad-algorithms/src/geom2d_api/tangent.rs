@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 
 // =============================================================================
 // Curve2dIntersection - Result of 2D curve-curve intersection

@@ -1,4 +1,4 @@
-//! BRepTools-style utilities for BRep I/O, transformation, and queries.
+﻿//! BRepTools-style utilities for BRep I/O, transformation, and queries.
 //!
 //! Analogous to OCCT's `BRepTools` class.
 

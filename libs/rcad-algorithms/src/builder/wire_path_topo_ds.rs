@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
+﻿/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.

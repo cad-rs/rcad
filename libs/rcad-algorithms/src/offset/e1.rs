@@ -1,4 +1,4 @@
-
+﻿
 /// Project a point onto a plane surface and return UV parameters.
 ///
 /// The UV coordinates are computed using a deterministic orthonormal basis

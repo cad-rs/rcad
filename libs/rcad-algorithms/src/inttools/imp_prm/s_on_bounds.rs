@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_TheSOnBounds — boundary scanning for F(t)=0 on domain edges.
+﻿//! ✅ OCCT-aligned: IntPatch_TheSOnBounds — boundary scanning for F(t)=0 on domain edges.
 //!
 //! OCCT IntStart_SearchOnBoundaries.gxx (1232 lines) — generic template instantiated
 //! as IntPatch_TheSOnBounds (TheArc=Handle(Adaptor2d_Curve2d), TheFunction=ArcFunction).

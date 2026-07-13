@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+﻿use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;

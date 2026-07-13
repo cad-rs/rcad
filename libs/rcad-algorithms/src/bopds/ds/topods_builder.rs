@@ -1,4 +1,4 @@
-use crate::bopds::face_info::FaceInfo;
+ï»¿use crate::bopds::face_info::FaceInfo;
 use crate::bopds::ds::types::*;
 use crate::tolerance::*;
 use rcad_kernel::topods;
@@ -147,7 +147,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  }
  }
 
- // ----- Step 4: Hierarchy â€?Solid -> Shell -> Face -> Wire -> Edge -----
+ // ----- Step 4: Hierarchy ï¿½?Solid -> Shell -> Face -> Wire -> Edge -----
  let mut face_flat_idx = 0usize;
  let mut shell_counter = 0usize;
  let mut solid_counter = 0usize;

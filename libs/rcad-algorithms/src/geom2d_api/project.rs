@@ -1,4 +1,4 @@
-//! 3D curve → 2D curve projection onto a plane surface.
+﻿//! 3D curve → 2D curve projection onto a plane surface.
 //! OCCT-aligned: GeomAPI::To2d (geomapi.cxx L311-340).
 
 use rcad_kernel::geom::*;

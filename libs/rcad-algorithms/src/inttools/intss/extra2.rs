@@ -1,4 +1,4 @@
-/// Greedy nearest-neighbor ordering of a point cloud into one or more chains.
+﻿/// Greedy nearest-neighbor ordering of a point cloud into one or more chains.
 ///
 /// Returns a `Vec` of chains (each chain is `Vec<DVec3>`).
 /// Points that can't be extended within `gap_tol` start a new chain.

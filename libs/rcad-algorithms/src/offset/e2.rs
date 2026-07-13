@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 use rcad_kernel::topods::{ShapeRef, Orientation, TShape, TEdgeData};
 
 /// Helper: extract face ShapeRefs from the first solid's first shell.

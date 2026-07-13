@@ -1,4 +1,4 @@
-//! BndLib-style bounding algorithms for 2D geometry.
+﻿//! BndLib-style bounding algorithms for 2D geometry.
 //!
 //! Provides analytical bounding-box computation for 2D curves,
 //! matching OCCT's `BndLib` (2D overloads) and `GeomBndLib_Curve2d` dispatch.

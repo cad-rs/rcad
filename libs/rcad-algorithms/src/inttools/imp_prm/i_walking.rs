@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
+﻿//! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
 //!
 //! OCCT IntWalk_IWalking.gxx (3140 lines) — implicit surface walking.
 //!

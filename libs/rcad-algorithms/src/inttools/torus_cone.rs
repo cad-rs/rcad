@@ -1,4 +1,4 @@
-//! Analytic intersection of a torus and a cone.
+﻿//! Analytic intersection of a torus and a cone.
 //!
 //! # Case classification
 //!

@@ -1,4 +1,4 @@
-//! Analytic intersection of two tori.
+﻿//! Analytic intersection of two tori.
 //!
 //! # Case classification
 //!

@@ -1,4 +1,4 @@
-use std::collections::{HashSet, BTreeMap};
+﻿use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};

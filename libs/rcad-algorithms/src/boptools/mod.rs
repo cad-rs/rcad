@@ -1,4 +1,4 @@
-//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.

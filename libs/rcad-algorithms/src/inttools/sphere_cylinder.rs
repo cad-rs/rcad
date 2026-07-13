@@ -1,4 +1,4 @@
-//! Analytic intersection of a sphere and a cylinder.
+﻿//! Analytic intersection of a sphere and a cylinder.
 //!
 //! # Case classification
 //!

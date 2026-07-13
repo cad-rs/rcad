@@ -1,4 +1,4 @@
-//! Analytic intersection of two cylinders.
+﻿//! Analytic intersection of two cylinders.
 //!
 //! # Case classification
 //!

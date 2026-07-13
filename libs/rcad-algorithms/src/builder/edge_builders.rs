@@ -1,4 +1,4 @@
-use glam::DVec2;
+ï»¿use glam::DVec2;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
 use crate::tolerance::*;
@@ -121,7 +121,7 @@ pub fn is_split_to_reverse(
  if ds.is_edge_degenerated(sub_ei) || ds.is_edge_degenerated(orig_ei) {
  return false;
  }
- // Same 3D curve â€?compare parameter direction
+ // Same 3D curve ï¿½?compare parameter direction
  if curve_eq(&sub_edge.curve, &orig_edge.curve) {
  let sub_dir = sub_edge.t_range[1] - sub_edge.t_range[0];
  let orig_dir = orig_edge.t_range[1] - orig_edge.t_range[0];

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;

@@ -1,4 +1,4 @@
-//! OCCT-aligned TKGeomBase property/analysis equivalents.
+﻿//! OCCT-aligned TKGeomBase property/analysis equivalents.
 //!
 //! 闁?OCCT-aligned implementations for:
 //!   - GeomLProp_CLProps2d     (curvature, D1, D2, centre of curvature, normal)

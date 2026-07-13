@@ -1,4 +1,4 @@
-use glam::DVec3;
+ï»¿use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
 use crate::tolerance::*;
@@ -9,7 +9,7 @@ pub struct EdgeFaceHit {
 }
 
 /// Intersect a line segment (bounded by t_range) with a plane.
-/// Does NOT check face boundary containment â€?caller must do that.
+/// Does NOT check face boundary containment ï¿½?caller must do that.
 pub fn intersect_line_plane(line: &Line3, t_range: [f64; 2], plane: &Plane) -> Option<EdgeFaceHit> {
     intersect_line_plane_with_tol(line, t_range, plane, TOLERANCE_ABS)
 }
@@ -116,7 +116,7 @@ pub fn clip_line_to_convex_polygon(
     intervals.first().copied()
 }
 
-/// âœ?OCCT-aligned: compute_edge_face_criteria (IntTools_EdgeFace.cxx L528-548).
+/// ï¿½?OCCT-aligned: compute_edge_face_criteria (IntTools_EdgeFace.cxx L528-548).
 /// Computes the tolerance sum for edge-face intersection.
 /// For BSpline/Bezier curves with large tolerance ratio, uses max.
 pub fn compute_edge_face_criteria(edge_tol: f64, face_tol: f64, curve_type: &Curve3) -> f64 {
@@ -137,7 +137,7 @@ pub fn compute_edge_face_criteria(edge_tol: f64, face_tol: f64, curve_type: &Cur
     }
 }
 
-/// âœ?OCCT-aligned: IsEqDistance (IntTools_EdgeFace.cxx L240-299).
+/// ï¿½?OCCT-aligned: IsEqDistance (IntTools_EdgeFace.cxx L240-299).
 /// Checks if point is near the axis of a cylindrical/conical/toroidal surface,
 /// returning the surface's radius at that point.
 pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
@@ -179,7 +179,7 @@ pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
     }
 }
 
-/// âœ?OCCT-aligned: IsCoincident (IntTools_EdgeFace.cxx L62-163).
+/// ï¿½?OCCT-aligned: IsCoincident (IntTools_EdgeFace.cxx L62-163).
 /// Checks if an edge is coincident with a face by sampling points along the
 /// edge, projecting onto the face, and classifying them.
 /// Returns true if >50% of sample points project within criteria AND are IN.
@@ -237,7 +237,7 @@ pub fn is_coincident_edge_face(
     coeff > a_tresh
 }
 
-/// âœ?OCCT-aligned: IsCoplanar (IntTools_EdgeFace.cxx L788-813).
+/// ï¿½?OCCT-aligned: IsCoplanar (IntTools_EdgeFace.cxx L788-813).
 /// Checks if a curve lies in the plane of a planar surface.
 pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
     let Surface3::Plane(pl) = surface else { return false; };
@@ -249,7 +249,7 @@ pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
     }
 }
 
-/// âœ?OCCT-aligned: IsRadius (IntTools_EdgeFace.cxx L815-843).
+/// ï¿½?OCCT-aligned: IsRadius (IntTools_EdgeFace.cxx L815-843).
 /// Checks if a curve's radius matches the surface's curvature radius.
 pub fn is_radius(curve: &Curve3, surface: &Surface3, criteria: f64) -> bool {
     match (curve, surface) {
@@ -268,7 +268,7 @@ pub fn is_radius(curve: &Curve3, surface: &Surface3, criteria: f64) -> bool {
     }
 }
 
-/// âœ?OCCT-aligned: MakeType (IntTools_EdgeFace.cxx L304-359).
+/// ï¿½?OCCT-aligned: MakeType (IntTools_EdgeFace.cxx L304-359).
 /// Determines whether a common part is EDGE or VERTEX type.
 pub fn make_edge_face_type(
     edge_t_range: [f64; 2],
@@ -346,7 +346,7 @@ pub fn clip_line_to_polygon_with_tol(
         let ex = bx - ax;
         let ey = by - ay;
 
-        // line_dir Ã— edge_dir â€?zero means parallel
+        // line_dir Ã— edge_dir ï¿½?zero means parallel
         let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
             // OCCT-aligned: when the line coincides with a polygon edge (parallel
@@ -356,7 +356,7 @@ pub fn clip_line_to_polygon_with_tol(
             // face[6] intersection at z=0, which is on the face boundary).
             let dist = (origin_u - ax) * ey - (origin_v - ay) * ex;
             if dist.abs() < eps {
-                // Line coincides with this edge â€?add t at both endpoints
+                // Line coincides with this edge ï¿½?add t at both endpoints
                 let dir_len2 = line_u * line_u + line_v * line_v;
                 if dir_len2 > TOLERANCE_LEN_SQ_DIV_SAFE {
                     let t_a = ((ax - origin_u) * line_u + (ay - origin_v) * line_v) / dir_len2;
@@ -373,7 +373,7 @@ pub fn clip_line_to_polygon_with_tol(
         //   (p[i] - origin) Ã— edge_dir / (line_dir Ã— edge_dir)
         let t = ((ax - origin_u) * ey - (ay - origin_v) * ex) / denom;
 
-        // Edge parameter s â€?check the intersection is within the segment
+        // Edge parameter s ï¿½?check the intersection is within the segment
         let s = if ex.abs() > eps {
             (origin_u + t * line_u - ax) / ex
         } else {
@@ -386,7 +386,7 @@ pub fn clip_line_to_polygon_with_tol(
     }
 
     if t_vals.is_empty() {
-        // Line doesn't cross any edge â€?check if origin is inside
+        // Line doesn't cross any edge ï¿½?check if origin is inside
         if point_in_planar_face_with_tol(line.origin, plane, face_verts, geom_tol) {
             return vec![(f64::NEG_INFINITY, f64::INFINITY)];
         }
@@ -470,13 +470,13 @@ pub fn clip_line_to_polygon_with_tol(
     result
 }
 
-/// âœ?OCCT-aligned: IntTools_BeanFaceIntersector â€?edge-face intersection engine.
+/// ï¿½?OCCT-aligned: IntTools_BeanFaceIntersector ï¿½?edge-face intersection engine.
 ///
 /// Algorithm (Perform):
 ///   1. ComputeLinePlane if Line/Plane
 ///   2. FastComputeAnalytic for other analytic pairs
 ///   3. TestComputeCoinside (coincidence check)
-///   4. ComputeAroundExactIntersection â†?ComputeUsingExtremum â†?ComputeNearRangeBoundaries
+///   4. ComputeAroundExactIntersection ï¿½?ComputeUsingExtremum ï¿½?ComputeNearRangeBoundaries
 ///   5. Merge adjacent result ranges
 pub struct BeanFaceIntersector {
     curve: Curve3,
@@ -588,7 +588,7 @@ impl BeanFaceIntersector {
 
     // === Private methods ===
 
-    /// OCCT L820-908: ComputeLinePlane â€?intersect a line segment with a plane.
+    /// OCCT L820-908: ComputeLinePlane ï¿½?intersect a line segment with a plane.
     fn compute_line_plane(&mut self) {
         let Curve3::Line(l) = &self.curve else { return };
         let Surface3::Plane(pl) = &self.surface else { return };
@@ -599,7 +599,7 @@ impl BeanFaceIntersector {
         }
     }
 
-    /// OCCT L692-818: FastComputeAnalytic â€?handles Line/Sphere, Line/Cylinder,
+    /// OCCT L692-818: FastComputeAnalytic ï¿½?handles Line/Sphere, Line/Cylinder,
     /// Circle/Plane, and other analytic pairs.
     fn fast_compute_analytic(&mut self) -> bool {
         let curve = self.curve.clone();
@@ -715,7 +715,7 @@ impl BeanFaceIntersector {
         }
     }
 
-    /// OCCT: TestComputeCoinside â€?check if edge is coincident with surface.
+    /// OCCT: TestComputeCoinside ï¿½?check if edge is coincident with surface.
     fn test_compute_coinside(&self) -> bool {
         // Sample 5 points along the edge, check projection distance
         let n = 5usize;
@@ -731,7 +731,7 @@ impl BeanFaceIntersector {
         ratio > 0.8
     }
 
-    /// OCCT L564-690: ComputeAroundExactIntersection â€?refine around known intersection points.
+    /// OCCT L564-690: ComputeAroundExactIntersection ï¿½?refine around known intersection points.
     fn compute_around_exact_intersection(&mut self) {
         let curve = self.curve.clone();
         let surface = self.surface.clone();
@@ -762,7 +762,7 @@ impl BeanFaceIntersector {
         self.results = new_results;
     }
 
-    /// OCCT L910-1083: ComputeUsingExtremum â€?find extrema (min distance) and build ranges.
+    /// OCCT L910-1083: ComputeUsingExtremum ï¿½?find extrema (min distance) and build ranges.
     fn compute_using_extremum(&mut self) {
         let curve = self.curve.clone();
         let surface = self.surface.clone();
@@ -798,7 +798,7 @@ impl BeanFaceIntersector {
         (lo + hi) * 0.5
     }
 
-    /// OCCT L1085-1148: ComputeNearRangeBoundaries â€?extend ranges to cover near-boundary regions.
+    /// OCCT L1085-1148: ComputeNearRangeBoundaries ï¿½?extend ranges to cover near-boundary regions.
     fn compute_near_range_boundaries(&mut self) {
         let first = self.first_param;
         let last = self.last_param;

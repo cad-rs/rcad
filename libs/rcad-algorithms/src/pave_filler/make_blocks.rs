@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+ï»¿use std::collections::{HashMap, HashSet};
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -87,7 +87,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  let f1_face = &self.ds.faces[n_f1];
  let f2_face = &self.ds.faces[n_f2];
- // Step 1: PBs ON/IN â€?add PB + endpoints to aMVOnIn + aMPBOnIn
+ // Step 1: PBs ON/IN ï¿½?add PB + endpoints to aMVOnIn + aMPBOnIn
  let pb_sets_fn = |pb_set: &indexmap::IndexSet<usize>,
                    mpb_set: &mut std::collections::HashSet<usize>,
                    mv_set: &mut std::collections::HashSet<usize>| {
@@ -105,7 +105,7 @@ impl<'a> super::PaveFiller<'a> {
  pb_sets_fn(&f1_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
  pb_sets_fn(&f2_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
  pb_sets_fn(&f2_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
- // Step 2: Common PBs â€?PBsOn1 also in PBsOn2/PBsIn2
+ // Step 2: Common PBs ï¿½?PBsOn1 also in PBsOn2/PBsIn2
  for &pb_idx in &f1_face.face_info.pave_blocks_on {
   if f2_face.face_info.pave_blocks_on.contains(&pb_idx)
   || f2_face.face_info.pave_blocks_in.contains(&pb_idx) {
@@ -118,7 +118,7 @@ impl<'a> super::PaveFiller<'a> {
    }
   }
  }
- // OCCT-aligned: SubShapesOnIn â€?Face1 vertices in Face2 â†?aMVOnIn + aMVCommon
+ // OCCT-aligned: SubShapesOnIn ï¿½?Face1 vertices in Face2 ï¿½?aMVOnIn + aMVCommon
  // OCCT BOPDS_DS.cxx L1124-1142: only Face1's VOn/VIn checked against Face2's VOn/VIn
  for &vi in &f1_face.face_info.vertices_on {
   if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {

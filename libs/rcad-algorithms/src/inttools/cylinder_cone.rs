@@ -1,4 +1,4 @@
-//! Analytic intersection of a cylinder and a cone.
+﻿//! Analytic intersection of a cylinder and a cone.
 //!
 //! # Case classification
 //!

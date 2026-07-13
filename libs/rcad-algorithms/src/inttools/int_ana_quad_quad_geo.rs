@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
+﻿//! OCCT-aligned: IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
 //!
 //! OCCT IntAna_QuadQuadGeo.hxx / .cxx
 //!

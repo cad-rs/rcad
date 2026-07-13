@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
+﻿/// ✅ OCCT-aligned: 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;

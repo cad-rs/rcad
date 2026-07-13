@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
+﻿//! OCCT-aligned: IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
 //!
 //! OCCT IntPatch_ImpImpIntersection.hxx / .cxx
 //!

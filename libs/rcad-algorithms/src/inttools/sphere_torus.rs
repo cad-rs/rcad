@@ -1,11 +1,11 @@
-//! Analytic intersection of a sphere with a torus.
+﻿//! Analytic intersection of a sphere with a torus.
 //!
 //! # Cases
 //!
 //! - **On-axis**: One or two circles (sphere center on torus axis)
 //! - **Off-axis** (skew): Solved analytically by parameterizing the torus
 //!   P(u,v) and substituting into the sphere implicit equation |P - O_s|² = R_s².
-//!   At each u �?[0, 2π) this reduces to a linear-trigonometric equation in v:
+//!   At each u �?[0, 2π) this reduces to a linear-trigonometric equation in v:
 //!
 //!   ```text
 //!   A(u)·cos(v) + B·sin(v) + C(u) = 0
@@ -52,7 +52,7 @@ pub fn intersect_sphere_torus(
     let foot = torus.center + a * t;
     let d_perp = (sphere.center - foot).length();
 
-    // On-axis: sphere center lies on torus axis �?circles
+    // On-axis: sphere center lies on torus axis �?circles
     if d_perp < TOLERANCE_ABS {
         let z_s = (sphere.center - torus.center).dot(a);
         return intersect_sphere_torus_on_axis(torus, sphere, a, z_s);
@@ -70,7 +70,7 @@ pub fn intersect_sphere_torus(
 
 /// On-axis case: sphere center on torus axis.
 ///
-/// �?OCCT-aligned (documented): OCCT `IntAna_QuadQuadGeo` uses the direct
+/// �?OCCT-aligned (documented): OCCT `IntAna_QuadQuadGeo` uses the direct
 /// anAlpha / aBeta analytic formula for coaxial sphere-torus intersection
 /// (`BOPAlgo_PaveFiller.cxx`, spherical surface pair dispatch).  The key OCCT
 /// expressions are:
@@ -171,7 +171,7 @@ pub fn intersect_sphere_torus(
 /// skew solver (intersect_skew_sphere_torus), but restricted to a single beta
 /// value per intersection circle rather than a full sweep of u.
 ///
-/// �?Current rcad implementation uses the skew (off-axis) numeric solver which
+/// �?Current rcad implementation uses the skew (off-axis) numeric solver which
 /// also handles on-axis correctly.  The OCCT direct formula is not used;
 /// the existing approach is functionally equivalent for current purposes.
 fn intersect_sphere_torus_on_axis(
@@ -199,13 +199,13 @@ fn intersect_sphere_torus_on_axis(
 ///   A(u)·cos(v) + B·sin(v) + C(u) = 0
 ///
 /// where:
-///   A(u) = 2r·(R + D·x·cos(u) + D·y·sin(u))         �?coeff of cos(v)
-///   B    = 2r·(D·a)                                   �?coeff of sin(v), constant
+///   A(u) = 2r·(R + D·x·cos(u) + D·y·sin(u))         �?coeff of cos(v)
+///   B    = 2r·(D·a)                                   �?coeff of sin(v), constant
 ///   C(u) = |D|² + R² + r² + 2R·(D·x·cos(u) + D·y·sin(u)) - R_s²
 ///
-/// with D = O_t - O_s (torus center �?sphere center).
+/// with D = O_t - O_s (torus center �?sphere center).
 ///
-/// Solving ρ·cos(v - v₀) + C = 0 gives v = v₀ ± acos(-C/ρ) when |C| �?ρ.
+/// Solving ρ·cos(v - v₀) + C = 0 gives v = v₀ ± acos(-C/ρ) when |C| �?ρ.
 pub fn intersect_skew_sphere_torus(
     sphere: &SphericalSurface,
     torus: &ToroidalSurface,
@@ -226,7 +226,7 @@ pub fn intersect_skew_sphere_torus(
     let y_dir = a.cross(x_dir).normalize();
 
     // Constants
-    let b_coeff = 2.0 * r_minor * d.dot(a); // coefficient of sin(v) �?constant in u
+    let b_coeff = 2.0 * r_minor * d.dot(a); // coefficient of sin(v) �?constant in u
     let const_part = d_sq + r_major * r_major + r_minor * r_minor - r_sph * r_sph; // |D|² + R² + r² - R_s²
 
     const N_SAMPLES: usize = 128;
@@ -239,7 +239,7 @@ pub fn intersect_skew_sphere_torus(
         let u = i as f64 * delta_u;
         let (cu, su) = (u.cos(), u.sin());
 
-        // p_x(u) = d·(cos(u)·x + sin(u)·y) �?projection of d onto the
+        // p_x(u) = d·(cos(u)·x + sin(u)·y) �?projection of d onto the
         // torus equatorial plane in the radial direction at angle u.
         let p_x = d.dot(x_dir) * cu + d.dot(y_dir) * su;
 

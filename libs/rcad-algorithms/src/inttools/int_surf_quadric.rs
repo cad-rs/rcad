@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntSurf_Quadric — quadric surface representation.
+﻿//! ✅ OCCT-aligned: IntSurf_Quadric — quadric surface representation.
 //!
 //! OCCT IntSurf_Quadric.hxx / .cxx / .lxx
 //!

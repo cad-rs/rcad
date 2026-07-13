@@ -1,4 +1,4 @@
-/// OCCT BRepTool adaptor over the existing DS data source.
+﻿/// OCCT BRepTool adaptor over the existing DS data source.
 ///
 /// During Phase 1 migration, this allows TopoDS-based wire path code to
 /// read from the existing DS by wrapping DS indices as ShapeRef handles.

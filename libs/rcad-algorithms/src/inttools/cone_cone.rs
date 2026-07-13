@@ -1,4 +1,4 @@
-//! Analytic intersection of two cones.
+﻿//! Analytic intersection of two cones.
 //!
 //! # Case classification
 //!

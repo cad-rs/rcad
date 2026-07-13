@@ -1,4 +1,4 @@
-//! Analytic intersection of a cylinder with a torus.
+﻿//! Analytic intersection of a cylinder with a torus.
 //!
 //! # Cases
 //!
@@ -25,7 +25,7 @@ pub enum CylinderTorusResult {
     /// Two circles (coaxial case).
     TwoCircles(Circle3, Circle3),
     /// Skew/quartic intersection: one or more polyline branches sampled on the
-    /// cylinder parameterization.  For each cylinder azimuth u �?[0, 2π), solve
+    /// cylinder parameterization.  For each cylinder azimuth u �?[0, 2π), solve
     /// the quartic equation in v derived from the torus implicit equation.
     SkewQuartic(Vec<Vec<DVec3>>),
     /// Complex intersection, fall back to numerical marching.
@@ -74,22 +74,22 @@ pub fn intersect_cylinder_torus_with_tolerance(
     CylinderTorusResult::General
 }
 
-/// Solve a₄·x�?+ a₃·x³ + a₂·x² + a₁·x + a₀ = 0, return sorted real roots.
+/// Solve a₄·x�?+ a₃·x³ + a₂·x² + a₁·x + a₀ = 0, return sorted real roots.
 fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     if a4.abs() < TOLERANCE_CLAMP_MIN {
         return solve_cubic_real(a3, a2, a1, a0);
     }
 
-    // Normalize to monic: x�?+ b·x³ + c·x² + d·x + e = 0
+    // Normalize to monic: x�?+ b·x³ + c·x² + d·x + e = 0
     let (b, c, d, e) = (a3 / a4, a2 / a4, a1 / a4, a0 / a4);
 
-    // Depress: x = y - b/4 �?y�?+ p·y² + q·y + r = 0
+    // Depress: x = y - b/4 �?y�?+ p·y² + q·y + r = 0
     let bb = b * b;
     let p = c - 3.0 * bb / 8.0;
     let q = d - b * c / 2.0 + b * bb / 8.0;
     let r = e - b * d / 4.0 + bb * c / 16.0 - 3.0 * bb * bb / 256.0;
 
-    // Handle special: depressed quartic is biquadratic (q �?0)
+    // Handle special: depressed quartic is biquadratic (q �?0)
     if q.abs() < 1e-14 {
         let mut roots = Vec::new();
         let y2_roots = solve_quadratic_real(1.0, p, r);
@@ -118,14 +118,14 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 
     // If all resolvent roots are negative, we can still proceed with
     // complex arithmetic, but for practical CAD purposes this means the
-    // quartic has 0 or 4 complex roots �?no real solutions.
+    // quartic has 0 or 4 complex roots �?no real solutions.
     if m < 0.0 {
         return Vec::new();
     }
 
     let sqrt_m = m.sqrt();
 
-    // Factor: y�?+ p·y² + q·y + r = (y² + A·y + B)(y² - A·y + C)
+    // Factor: y�?+ p·y² + q·y + r = (y² + A·y + B)(y² - A·y + C)
     // where A = sqrt_m, B + C = p + m, C - B = q / sqrt_m
     let (b_val, c_val) = if sqrt_m > TOLERANCE_CLAMP_MIN {
         let half_q_over_sqrt_m = 0.5 * q / sqrt_m;
@@ -170,7 +170,7 @@ fn solve_cubic_real(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     // Normalize: x³ + p·x² + q·x + r = 0
     let (p, q, r) = (a2 / a3, a1 / a3, a0 / a3);
 
-    // Depress: x = t - p/3 �?t³ + a·t + b = 0
+    // Depress: x = t - p/3 �?t³ + a·t + b = 0
     let pp = p * p;
     let a = q - pp / 3.0;
     let b = 2.0 * p * pp / 27.0 - p * q / 3.0 + r;
@@ -189,7 +189,7 @@ fn solve_cubic_real(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
         let v = (-b / 2.0 - sqrt_d).cbrt();
         vec![u + v - p / 3.0]
     } else if disc.abs() < TOLERANCE_CLAMP_MIN {
-        // Multiple real roots (discriminant �?0)
+        // Multiple real roots (discriminant �?0)
         let u = (-b / 2.0).cbrt();
         let t1 = 2.0 * u;
         let t2 = -u;
@@ -288,7 +288,7 @@ fn intersect_skew_cylinder_torus(
 
     // Constants for the quartic coefficients
     let o_sq = o.length_squared();
-    let d1 = a.dot(a_tor); // a·a_tor �?constant
+    let d1 = a.dot(a_tor); // a·a_tor �?constant
     let d1_sq = d1 * d1;
     let o_dot_a = o.dot(a);
     let o_dot_a_tor = o.dot(a_tor);
@@ -304,17 +304,17 @@ fn intersect_skew_cylinder_torus(
         // Radial direction on cylinder at this u
         let r_dir = cu * x_dir + su * y_dir;
 
-        // C�?u) = a·O + ρ·(a·r_dir)
+        // C�?u) = a·O + ρ·(a·r_dir)
         let c1 = o_dot_a + rho * a.dot(r_dir);
 
         // C₀(u) = |O|² + ρ² + 2ρ·O·r_dir
         let c0 = o_sq + rho * rho + 2.0 * rho * o.dot(r_dir);
 
-        // D�?= a·a_tor (constant)
+        // D�?= a·a_tor (constant)
         // D₀(u) = O·a_tor + ρ·(r_dir·a_tor)
         let d0 = o_dot_a_tor + rho * r_dir.dot(a_tor);
 
-        // Quartic: v�?+ a₃·v³ + a₂·v² + a₁·v + a₀ = 0
+        // Quartic: v�?+ a₃·v³ + a₂·v² + a₁·v + a₀ = 0
         let a3 = 4.0 * c1;
         let a2 = 4.0 * c1 * c1 + 2.0 * c0 - 2.0 * r_sum_sq + 4.0 * r_major_sq * d1_sq;
         let a1 = 4.0 * c1 * c0 - 4.0 * r_sum_sq * c1 + 8.0 * r_major_sq * d1 * d0;

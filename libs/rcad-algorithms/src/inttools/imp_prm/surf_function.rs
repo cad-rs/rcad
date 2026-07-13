@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
+﻿//! ✅ OCCT-aligned: IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
 //!
 //! OCCT IntPatch_TheSurfFunction.hxx / .cxx
 //!

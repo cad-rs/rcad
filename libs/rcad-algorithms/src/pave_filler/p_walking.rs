@@ -1,4 +1,4 @@
-//! �?OCCT-aligned: IntWalk_PWalking �?intersection curve walking for
+﻿//! �?OCCT-aligned: IntWalk_PWalking �?intersection curve walking for
 //!   two parametric surfaces (parametric-parametric).
 //!
 //! OCCT source: TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx (4096 lines)

@@ -1,4 +1,4 @@
-//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
+﻿//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
 //!
 //! OCCT-aligned:
 //! - `SolidClassifier` (class): classify point relative to a solid using

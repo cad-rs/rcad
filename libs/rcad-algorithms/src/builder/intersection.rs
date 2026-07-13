@@ -1,4 +1,4 @@
-use glam::DVec2;
+﻿use glam::DVec2;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LINEAR_ULTRA_STRICT};

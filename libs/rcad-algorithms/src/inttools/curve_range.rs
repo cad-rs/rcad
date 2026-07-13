@@ -1,4 +1,4 @@
-use rcad_kernel::geom::{Curve3, CurveEval};
+﻿use rcad_kernel::geom::{Curve3, CurveEval};
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
 
 /// Curve parameter step: parameter increment needed to move `tol` distance along curve.

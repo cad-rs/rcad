@@ -1,4 +1,4 @@
-//! Analytic intersection of a plane with a torus.
+﻿//! Analytic intersection of a plane with a torus.
 //!
 //! # Cases
 //!
