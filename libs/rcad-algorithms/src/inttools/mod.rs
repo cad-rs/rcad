@@ -22,6 +22,7 @@ pub mod int_patch_point;
 pub mod int_patch_special_points;
 pub mod int_patch_type;
 pub mod int_patch_wline_tool;
+pub mod classify_lin2d;
 pub mod int_surf_quadric;
 pub mod intss;
 pub mod marching;
