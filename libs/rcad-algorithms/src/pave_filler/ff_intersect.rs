@@ -310,6 +310,20 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // OCCT L395-401: isFace1Quad/isFace2Quad — skip; rcad uses IntPatchIntersection
  // which dispatches by quad type internally.
 
+ // ── OCCT L404-434: Plane-Plane fast path (PerformPlanes) ──
+ if matches!(s_a, rcad_kernel::geom::Surface3::Plane(_))
+   && matches!(s_b, rcad_kernel::geom::Surface3::Plane(_))
+ {
+ self.perform_plane_plane(f1, f2);
+ if let Some(ref info) = shift_info { self.reverse_seam_edge_shift(f1, f2, info); }
+ self.seam_shift_tol = old_shift_tol;
+ return;
+ }
+
+ // OCCT L436-438: myLConstruct.Load(dom1, dom2, myHS1, myHS2)
+ let mut lconstruct = crate::inttools::int_patch_line_constructor::GeomIntLineConstructor::new();
+ lconstruct.load(f1, f2);
+
  // OCCT-aligned: IntPatch_Intersection: generic surface-surface intersection.
  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
  int_patch.perform(s_a, s_b, self.fuzzy_tolerance, self.fuzzy_tolerance);
@@ -475,6 +489,126 @@ fn surface_type_index(surf: &rcad_kernel::geom::Surface3) -> i32 {
  _ => 11,
  }
 }
+
+/// OCCT L2426-2560: PerformPlanes — plane-plane intersection fast path.
+fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
+ use rcad_kernel::geom::{Curve3, Surface3};
+ let pln1 = match &self.ds.faces[f1].surface { Surface3::Plane(p) => p, _ => return };
+ let pln2 = match &self.ds.faces[f2].surface { Surface3::Plane(p) => p, _ => return };
+ let mut geo = crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo::new();
+ let q1 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln1);
+ let q2 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln2);
+ let (Some(ref q1), Some(ref q2)) = (q1, q2) else { return };
+ geo.perform_plane_plane(q1, q2, 1e-8);
+ if !geo.is_done() { return; }
+ use crate::inttools::int_ana_quad_quad_geo::AnaResultType;
+ if let AnaResultType::Same = geo.type_inter() {
+ self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
+   f1, f2, curves: Vec::new(), points: Vec::new(), tangent_faces: true,
+ });
+ return;
+ }
+ if matches!(geo.type_inter(), AnaResultType::Empty | AnaResultType::NoResult) { return; }
+ let line3 = geo.line(1);
+ let line3d = Curve3::Line(*line3);
+ let pcurve1 = crate::inttools::pcurve_derive::line_pcurve_on_plane(line3, pln1);
+ let pcurve2 = crate::inttools::pcurve_derive::line_pcurve_on_plane(line3, pln2);
+ let uv1 = self.context.uv_bounds(self.ds, f1);
+ let uv2 = self.context.uv_bounds(self.ds, f2);
+ let tol = self.ds.faces[f1].geom_tol.max(self.ds.faces[f2].geom_tol);
+ let p1 = classify_lin2d(&pcurve1, uv1, tol);
+ let p2 = classify_lin2d(&pcurve2, uv2, tol);
+ let (Some([p11, p12]), Some([p21, p22])) = (p1, p2) else { return };
+ if p21 >= p12 || p22 <= p11 { return; }
+ let pmin = p11.max(p21);
+ let pmax = p12.min(p22);
+ if pmax - pmin <= tol { return; }
+ let t_range = [pmin, pmax];
+ let mut curve_extra = crate::bopds::ds::CurveExtra::default();
+ curve_extra.tangential_tol = tol;
+ let ic = crate::bopds::ds::IntersectionCurve {
+ curve: line3d, polyline: Vec::new(),
+ start_vertex: usize::MAX, end_vertex: usize::MAX,
+ t_range,
+ pcurve_on_a: Some(pcurve1), pcurve_on_b: Some(pcurve2),
+ geom_tol: tol, pave_blocks: Vec::new(), curve_extra,
+ };
+ let ci = self.ds.intersection_curves.len();
+ self.ds.intersection_curves.push(ic);
+ self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
+ f1, f2, curves: vec![ci], points: Vec::new(), tangent_faces: false,
+ });
+ self.ds.faces[f1].face_info.curves_sc.insert(ci);
+ self.ds.faces[f2].face_info.curves_sc.insert(ci);
+}
+
+/// OCCT L2574-2640: ClassifyLin2d — clip a 2D line to a UV rectangle.
+/// Returns parameter range [p1,p2] where line passes through [xmin,xmax]×[ymin,ymax],
+/// or None if it misses.  Exported as pub for testing.
+pub fn classify_lin2d(pc: &rcad_kernel::geom::Curve2d, uv: [f64; 4], tol: f64) -> Option<[f64; 2]> {
+ use rcad_kernel::geom::{Curve2d, Curve2dEval};
+ let (xmin, xmax, ymin, ymax) = (uv[0], uv[1], uv[2], uv[3]);
+ let (A, B, C) = match pc {
+ Curve2d::Line(l) => {
+   (l.direction.y, -l.direction.x, -(l.direction.y * l.origin.x - l.direction.x * l.origin.y))
+ }
+ _ => return None,
+ };
+ fn inter(a: f64, b: f64, tl: f64) -> bool { (a < -tl && b > tl) || (a > tl && b < -tl) }
+ fn coinc(a: f64, b: f64, tl: f64) -> bool { a.abs() <= tl && b.abs() <= tl }
+ let mut par: Vec<f64> = Vec::with_capacity(2);
+ // edge x=xmin, y∈[ymin,ymax]
+ let d1 = A * xmin + B * ymin + C;
+ let d2 = A * xmin + B * ymax + C;
+ if inter(d1, d2, tol) && B.abs() > 1e-15 {
+ let y = -(C + A * xmin) / B;
+ if y >= ymin - tol && y <= ymax + tol { par.push(line2d_param(pc, glam::DVec2::new(xmin, y))); }
+ } else if coinc(d1, d2, tol) {
+ par.push(line2d_param(pc, glam::DVec2::new(xmin, ymin)));
+ par.push(line2d_param(pc, glam::DVec2::new(xmin, ymax)));
+ }
+ if par.len() >= 2 { return Some([par[0].min(par[1]), par[0].max(par[1])]); }
+ // edge y=ymax, x∈[xmin,xmax]
+ let d1 = A * xmin + B * ymax + C;
+ let d2 = A * xmax + B * ymax + C;
+ if inter(d1, d2, tol) && A.abs() > 1e-15 {
+ let x = -(C + B * ymax) / A;
+ if x >= xmin - tol && x <= xmax + tol { par.push(line2d_param(pc, glam::DVec2::new(x, ymax))); }
+ } else if coinc(d1, d2, tol) && par.is_empty() {
+ par.push(line2d_param(pc, glam::DVec2::new(xmin, ymax)));
+ par.push(line2d_param(pc, glam::DVec2::new(xmax, ymax)));
+ }
+ if par.len() >= 2 { return Some([par[0].min(par[1]), par[0].max(par[1])]); }
+ // edge x=xmax, y∈[ymin,ymax]
+ let d1 = A * xmax + B * ymax + C;
+ let d2 = A * xmax + B * ymin + C;
+ if inter(d1, d2, tol) && B.abs() > 1e-15 {
+ let y = -(C + A * xmax) / B;
+ if y >= ymin - tol && y <= ymax + tol { par.push(line2d_param(pc, glam::DVec2::new(xmax, y))); }
+ } else if coinc(d1, d2, tol) && par.is_empty() {
+ par.push(line2d_param(pc, glam::DVec2::new(xmax, ymin)));
+ par.push(line2d_param(pc, glam::DVec2::new(xmax, ymax)));
+ }
+ if par.len() >= 2 { return Some([par[0].min(par[1]), par[0].max(par[1])]); }
+ // edge y=ymin, x∈[xmin,xmax]
+ let d1 = A * xmax + B * ymin + C;
+ let d2 = A * xmin + B * ymin + C;
+ if inter(d1, d2, tol) && A.abs() > 1e-15 {
+ let x = -(C + B * ymin) / A;
+ if x >= xmin - tol && x <= xmax + tol { par.push(line2d_param(pc, glam::DVec2::new(x, ymin))); }
+ } else if coinc(d1, d2, tol) && par.is_empty() {
+ par.push(line2d_param(pc, glam::DVec2::new(xmin, ymin)));
+ par.push(line2d_param(pc, glam::DVec2::new(xmax, ymin)));
+ }
+ if par.len() >= 2 { Some([par[0].min(par[1]), par[0].max(par[1])]) } else { None }
+}
+
+/// Helper: parameter of a 2D point on a Line2d.
+fn line2d_param(pc: &rcad_kernel::geom::Curve2d, p: glam::DVec2) -> f64 {
+ let l = match pc { rcad_kernel::geom::Curve2d::Line(l) => l, _ => return 0.0 };
+ (p - l.origin).dot(l.direction)
+}
+
  /// OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846).
 /// Dispatches by line type (OCCT switch on IntPatch_IType):
 ///   - Walking:        approximate BSpline from marching points (L1097)

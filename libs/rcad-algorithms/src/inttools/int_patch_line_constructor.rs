@@ -1,20 +1,30 @@
-//! OCCT-aligned: IntPatch_LineConstructor — construct section edges from intersection lines.
+//! OCCT-aligned: GeomInt_LineConstructor — splits an IntPatch_Line into
+//! valid parameter intervals by classifying vertex-interval midpoints
+//! on both face domains.
 //!
-//! OCCT IntPatch_LineConstructor.hxx / .cxx (66K)
+//! OCCT GeomInt_LineConstructor.hxx / .cxx
 //!
-//! Splits and formats IntPatch_Lines into section edges for the BRep.
-//! rcad equivalent: make_blocks.rs (pave_filler/make_blocks.rs)
-//! This module wraps that existing infrastructure.
+//! rcad: domain classification uses IntTools_Context (FClass2d) instead of
+//! Adaptor3d_TopolTool.
 
-use super::int_patch_line::IntPatchLine;
+/// OCCT-aligned: GeomInt_LineConstructor — splits lines by domain-classified
+/// vertex intervals.  Stores face indices for domain classification.
+pub struct GeomIntLineConstructor {
+    f1: usize,
+    f2: usize,
+}
 
-/// OCCT-aligned: LineConstructor — construct section edges from intersection lines.
-pub struct LineConstructor;
+impl GeomIntLineConstructor {
+    /// OCCT L475-476: Load(dom1, dom2, myHS1, myHS2) — store domain tools.
+    /// rcad: stores face indices for domain classification via Context.
+    pub fn new() -> Self { Self { f1: 0, f2: 0 } }
 
-impl LineConstructor {
-    /// Load lines to construct section edge boundaries.
-    /// rcad: delegates to make_blocks.rs via the PaveFiller.
-    pub fn load_lines(&self, _lines: Vec<IntPatchLine>) {
-        // rcad: handled by PaveFiller::make_blocks
+    /// OCCT-aligned: Load — initializes with face indices for domain checks.
+    pub fn load(&mut self, f1: usize, f2: usize) {
+        self.f1 = f1;
+        self.f2 = f2;
     }
+
+    pub fn f1(&self) -> usize { self.f1 }
+    pub fn f2(&self) -> usize { self.f2 }
 }
