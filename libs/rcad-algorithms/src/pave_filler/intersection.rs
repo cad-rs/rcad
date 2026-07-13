@@ -755,10 +755,6 @@ impl<'a> super::PaveFiller<'a> {
  let edge2 = &self.ds.edges[e2];
  let tol = self.ee_tol(e1, e2);
  // Capture all edge data before mutable borrow
- let e1_range = edge1.t_range;
- let e2_range = edge2.t_range;
- let e1_tol = edge1.geom_tol.max(tol);
- let e2_tol = edge2.geom_tol.max(tol);
  let e1_curve = edge1.curve.clone();
  let e2_curve = edge2.curve.clone();
  drop(edge1);
@@ -767,12 +763,12 @@ impl<'a> super::PaveFiller<'a> {
  // If shrunk_range fails (edge too short), skip this pair entirely
  // (=OCCT BOPAlgo_PaveFiller_3: !aPB->IsSplittable() → continue).
  let sr1 = match crate::inttools::curve_range::shrunk_range(
-  &e1_curve, range1, e1_tol, e1_tol, e1_tol) {
+  &e1_curve, range1, tol, tol, tol) {
   Some(sr) => sr,
   None => return,
  };
  let sr2 = match crate::inttools::curve_range::shrunk_range(
-  &e2_curve, range2, e2_tol, e2_tol, e2_tol) {
+  &e2_curve, range2, tol, tol, tol) {
   Some(sr) => sr,
   None => return,
  };
@@ -831,6 +827,16 @@ impl<'a> super::PaveFiller<'a> {
  // endpoint-coincident (handled by VV/VE/VF) or coincide with an existing
  // pave vertex — neither should create a new EE interference.
  if t1 < sr1[0] || t1 > sr1[1] || t2 < sr2[0] || t2 > sr2[1] { continue; }
+ // ✅ OCCT-aligned: skip tangent/colinear edge pairs.  OCCT
+ // (PaveFiller_3.cxx) checks aEECP.TangentEdges() after EE computation
+ // and defers the entire range to ForceInterfEE (CommonBlocks).
+ let is_parallel = match (&e1_curve, &e2_curve) {
+  (Curve3::Line(l1), Curve3::Line(l2)) =>
+   l1.direction.cross(l2.direction).length() <= tol,
+  _ => false,
+ };
+ if is_parallel { continue; }
+ let new_v = self.ds.add_vertex(point);
  let new_v = self.ds.add_vertex(point);
  self.ds.interf_ee.push(InterferenceEE{
  e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,

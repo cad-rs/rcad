@@ -1,4 +1,4 @@
-﻿use rcad_kernel::geom::{Curve3, CurveEval};
+use rcad_kernel::geom::{Curve3, CurveEval};
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
 
 /// Curve parameter step: parameter increment needed to move `tol` distance along curve.
@@ -70,7 +70,10 @@ fn find_nearest_valid_point(curve: &Curve3, t_start: f64, t_end: f64, center: DV
     let tol_sq = tol * tol;
     let mut t = t_start;
     let dir = if t_end > t_start { 1.0 } else { -1.0 };
-    while (t - t_start).signum() == (t_end - t_start).signum() {
+    // OCCT-aligned: iterate while still between t_start and t_end.
+    // Compare (t - t_start) * (t_end - t_start) >= 0 to handle t_start=0.0
+    // correctly (signum(0)=0 breaks equality-based comparison).
+    while (t - t_start) * (t_end - t_start) >= 0.0 {
         if (curve.point_at(t) - center).length_squared() >= tol_sq {
             let mut lo = if dir > 0.0 { t - step } else { t + step };
             let mut hi = t;
