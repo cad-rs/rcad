@@ -1453,6 +1453,24 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  .filter(|inf| inf.face == fi && inf.new_vertex != usize::MAX)
  .map(|inf| inf.new_vertex)
  .collect();
+ // Collect IC endpoint vertices from FF interferences involving this face.
+ // OCCT InitFaceInfoIn's TopoDS_Iterator dynamically captures all VERTEX
+ // sub-shapes of a face, including those added during intersection processing.
+ let ff_curve_endpoints: Vec<usize> = self.interf_ff.iter()
+ .filter(|inf| inf.f1 == fi || inf.f2 == fi)
+ .flat_map(|inf| inf.curves.iter().copied())
+ .filter(|&ci| ci < self.intersection_curves.len())
+ .flat_map(|ci| {
+  let mut v = Vec::with_capacity(2);
+  if self.intersection_curves[ci].start_vertex < self.vertices.len() {
+   v.push(self.intersection_curves[ci].start_vertex);
+  }
+  if self.intersection_curves[ci].end_vertex < self.vertices.len() {
+   v.push(self.intersection_curves[ci].end_vertex);
+  }
+  v
+ })
+ .collect();
  // Now modify face_info without borrowing self elsewhere
  let info = &mut self.faces[fi].face_info;
  for &vi in &boundary_copy {
@@ -1466,6 +1484,9 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  for &n_v in &ef_new_vertices {
  let n_vsd = n_v;
  info.vertices_in.insert(n_vsd);
+ }
+ for &n_v in &ff_curve_endpoints {
+ info.vertices_in.insert(n_v);
  }
  }
 

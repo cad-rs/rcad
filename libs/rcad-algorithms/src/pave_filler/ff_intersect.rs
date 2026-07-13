@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn perform_ff(&mut self) {
@@ -351,7 +351,18 @@ impl<'a> super::PaveFiller<'a> {
  ic.curve_extra.tangential_tol = ic.curve_extra.tangential_tol.max(tang_tol);
  }
  // PrepareLines3D  ?split closed curves
+ let n_curves_before_split = self.ds.intersection_curves.len();
  inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
+ // OCCT-aligned: After PrepareLines3D splits closed curves, the split
+ // segments are added to the same FF interference entry.  Update the
+ // FF entry's curve list to include any newly created curve indices.
+ if n_curves_before_split != self.ds.intersection_curves.len() {
+  if let Some(ff_entry) = self.ds.interf_ff.last_mut() {
+   for new_ci in n_curves_before_split..self.ds.intersection_curves.len() {
+    ff_entry.curves.push(new_ci);
+   }
+  }
+ }
  //  OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
  // must be updated to the split points. OCCT's BRepBuilderAPI_MakeEdge auto-sets
  // endpoints when creating edges. rcad's IntersectionCurve requires explicit update:

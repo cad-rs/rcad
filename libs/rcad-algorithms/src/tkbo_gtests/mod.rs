@@ -1237,3 +1237,136 @@ mod face_face_helper_tests {
     }
 }
 
+// ── Boolean pipeline stage classification tests ──────────────────────────────
+//
+// These tests use `build_with_history_stage_by_stage` to run the boolean
+// pipeline step by step, capturing DS + BRep counts after each stage.
+// The first stage with anomalous counts pinpoints the root cause.
+
+#[cfg(test)]
+mod stage_classification_tests {
+    use super::*;
+
+    /// Classify a boolean case: print per-stage snapshots, return the first
+    /// stage where something looks wrong, or None if all good.
+    fn classify_case(
+        a: &rcad_kernel::BRep,
+        b: &rcad_kernel::BRep,
+        op: BooleanOpType,
+        label: &str,
+    ) -> Option<u32> {
+        let a_br = a.clone();
+        let b_br = b.clone();
+        let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
+        let bvh_a = Bvh::build(&a_br);
+        let bvh_b = Bvh::build(&b_br);
+        let mut brep = rcad_kernel::topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.set_run_parallel(false);
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+        };
+        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+
+        let (_result_brep, _history, snapshots) = builder.build_with_history_stage_by_stage()
+            .expect("stage_by_stage pipeline failed");
+
+        eprintln!("\n── {label} stage classification ──");
+        eprintln!("{stage:>4} {name:<40} DS(V/E/F/PB/IC)    BRep(V/E/F/Sh/So)",
+            stage="Stg", name="StageName");
+        eprintln!("{}", "-".repeat(90));
+        let mut first_bad: Option<u32> = None;
+        for s in &snapshots {
+            let flag = if s.n_brep_faces == 0 && s.stage >= 9 {
+                " ◀ FAIL"
+            } else if s.n_brep_faces > 0 && s.stage >= 9 {
+                " OK"
+            } else if s.n_ds_pave_blocks == 0 && s.stage >= 5 {
+                " ⚠ nPB=0"
+            } else {
+                ""
+            };
+            eprintln!("{stage:>4} {name:<40} {dsv:>3}/{dse:>3}/{dsf:>3}/{pb:>3}/{ic:>3}     {brv:>3}/{bre:>3}/{brf:>3}/{sh:>3}/{so:>3}{flag}",
+                stage=s.stage, name=s.stage_name,
+                dsv=s.n_ds_vertices, dse=s.n_ds_edges, dsf=s.n_ds_faces,
+                pb=s.n_ds_pave_blocks, ic=s.n_ds_intersection_curves,
+                brv=s.n_brep_vertices, bre=s.n_brep_edges, brf=s.n_brep_faces,
+                sh=s.n_brep_shells, so=s.n_brep_solids);
+
+            // Detect first bad stage: after FillImagesFaces (stage >= 9),
+            // expect non-zero brep faces
+            if s.stage >= 9 && s.n_brep_faces == 0 && first_bad.is_none() {
+                first_bad = Some(s.stage);
+            }
+        }
+        eprintln!("── {label}: first bad stage = {:?} ──", first_bad);
+        first_bad
+    }
+
+    #[test]
+    fn classify_bfuse_simple_a1() {
+        let a = make_unit_sphere();
+        let b = make_unit_box();
+        let bad = classify_case(&a, &b, BooleanOpType::Union, "bfuse_simple_A1");
+        // Currently expected: builder produces empty shells (Stage 9+ has 0 faces)
+        assert!(bad.is_some(), "bfuse_simple A1 should fail at some stage");
+        eprintln!("bfuse_simple A1: first failure at stage {:?}", bad);
+    }
+
+    /// Diagnose why MakeBlocks produces 0 PaveBlocks.
+    #[test]
+    fn diag_make_blocks_bfuse_simple_a1() {
+        let a = make_unit_sphere();
+        let b = make_unit_box();
+        let a_br = a.clone();
+        let b_br = b.clone();
+        let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
+        let bvh_a = Bvh::build(&a_br);
+        let bvh_b = Bvh::build(&b_br);
+        let mut brep = rcad_kernel::topods::BRep::new();
+        let (_face_refs, _ic_edge_map) = {
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.set_run_parallel(false);
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+        };
+        eprintln!("\n── DS state after pave_fill ──");
+        eprintln!("V={} E={} F={} IC={} PB={}",
+            ds.vertices.len(), ds.edges.len(), ds.faces.len(),
+            ds.intersection_curves.len(), ds.pave_blocks.len());
+        for (fi, f) in ds.faces.iter().enumerate() {
+            let surf = format!("{:?}", f.surface).chars().take(30).collect::<String>();
+            eprintln!("  F[{}] {} bv={} be={} vi={} vo={} cs={}",
+                fi, surf, f.boundary_verts.len(), f.boundary_edges.len(),
+                f.face_info.vertices_in.len(), f.face_info.vertices_on.len(),
+                f.face_info.curves_sc.len());
+        }
+        for (ci, ic) in ds.intersection_curves.iter().enumerate() {
+            eprintln!("  IC[{}] sv={} ev={} r=[{:.2},{:.2}] pca={} pcb={} n_pb={}",
+                ci, ic.start_vertex, ic.end_vertex, ic.t_range[0], ic.t_range[1],
+                ic.pcurve_on_a.is_some(), ic.pcurve_on_b.is_some(),
+                ic.pave_blocks.len());
+            for &v in &[ic.start_vertex, ic.end_vertex] {
+                if v < ds.vertices.len() && v < ds.shape_info.len() {
+                    eprintln!("    IC[{}] v{} is_new={}", ci, v, ds.shape_info[v].is_new);
+                }
+            }
+            for (fi, f) in ds.faces.iter().enumerate() {
+                for &v in &[ic.start_vertex, ic.end_vertex] {
+                    if v < ds.vertices.len() && f.face_info.vertices_in.contains(&v) {
+                        eprintln!("    IC[{}] v{} IN Face[{}].vertices_in", ci, v, fi);
+                    }
+                }
+            }
+        }
+
+        // Debug: show interf_ff data
+        eprintln!("\n  FF interferences:");
+        for (ffi, ff) in ds.interf_ff.iter().enumerate() {
+            eprintln!("    FF[{}] f1={} f2={} curves={:?} points={:?}",
+                ffi, ff.f1, ff.f2, ff.curves, ff.points);
+        }
+    }
+}
+

@@ -879,6 +879,219 @@ impl<'a> BooleanBuilder<'a> {
  Ok((result_brep, history))
  }
 
+}
+
+/// Stage snapshot: counts of DS and BRep entities at a pipeline boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct StageSnapshot {
+  pub stage: u32,
+  pub stage_name: &'static str,
+  pub n_ds_vertices: usize,
+  pub n_ds_edges: usize,
+  pub n_ds_faces: usize,
+  pub n_ds_pave_blocks: usize,
+  pub n_ds_intersection_curves: usize,
+  pub n_ds_interf_ff: usize,
+  pub n_brep_vertices: usize,
+  pub n_brep_edges: usize,
+  pub n_brep_faces: usize,
+  pub n_brep_shells: usize,
+  pub n_brep_solids: usize,
+ }
+
+ /// Run pipeline stage by stage, collecting a snapshot after each stage.
+ /// Returns the final result + Vec of per-stage snapshots for test analysis.
+ /// Stops early and returns Ok((partial_result, snapshots)) if any stage
+ /// triggers `has_errors`, so the caller can inspect the failure point.
+impl<'a> BooleanBuilder<'a> {
+ pub(crate) fn build_with_history_stage_by_stage(
+  &mut self,
+ ) -> Result<(topods::BRep, BooleanHistory, Vec<StageSnapshot>), BooleanError> {
+  let mut snapshots: Vec<StageSnapshot> = Vec::with_capacity(12);
+
+  // Helper macro: capture current DS + BRep state into a snapshot.
+  // Uses a macro instead of closure to avoid borrow conflicts.
+  macro_rules! snap {
+   ($stage:expr, $name:expr) => {{
+    let b = self.my_shape.borrow();
+    let (nv, ne, nf, nsh, nso) = count_brep_entities(&b);
+    snapshots.push(StageSnapshot {
+     stage: $stage,
+     stage_name: $name,
+     n_ds_vertices: self.ds.vertices.len(),
+     n_ds_edges: self.ds.edges.len(),
+     n_ds_faces: self.ds.faces.len(),
+     n_ds_pave_blocks: self.ds.pave_blocks.len(),
+     n_ds_intersection_curves: self.ds.intersection_curves.len(),
+     n_ds_interf_ff: self.ds.interf_ff.len(),
+     n_brep_vertices: nv,
+     n_brep_edges: ne,
+     n_brep_faces: nf,
+     n_brep_shells: nsh,
+     n_brep_solids: nso,
+    });
+   }};
+  }
+
+  // OCCT L431-436: CheckData
+  let mut args = self.my_arguments.borrow_mut();
+  args.clear();
+  args.push(rcad_kernel::topods::ShapeRef::synthetic(0));
+  args.push(rcad_kernel::topods::ShapeRef::synthetic(1));
+  drop(args);
+  let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
+  let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
+  self.check_data()?;
+
+  // OCCT L438-443: Prepare
+  let mut result = self.prepare().1;
+  let a_n_verts = self.ds.a_vertex_count;
+  let a_n_edges = self.ds.a_edge_count;
+  let a_n_faces = self.ds.a_face_count;
+  let b_n_verts = self.ds.vertices.len() - a_n_verts;
+  let b_n_edges = self.ds.edges.len() - a_n_edges;
+  let b_n_faces = self.ds.faces.len() - a_n_faces;
+  let dim_a = if a_n_faces > 0 { 3_i8 } else if a_n_edges > 0 { 1 } else if a_n_verts > 0 { 0 } else { 3 };
+  let dim_b = if b_n_faces > 0 { 3_i8 } else if b_n_edges > 0 { 1 } else if b_n_verts > 0 { 0 } else { 3 };
+  self.my_dims.set([dim_a, dim_b]);
+
+  snap!(1, "Prepare");
+
+  // TreatEmptyShape
+  if a_faces.is_empty() || b_faces.is_empty() {
+   if self.treat_empty_shape(&a_faces, &b_faces)?.is_some() {
+    let source_history = if self.my_fill_history {
+     let side = if !a_faces.is_empty() { ShapeOrigin::ShapeA }
+     else { ShapeOrigin::ShapeB };
+     self.source_history_single_side(side)
+    } else {
+     vec![]
+    };
+    let mut history = result.build_topods(&mut *self.my_shape.borrow_mut(), self.my_fill_history, &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(), &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
+    history.source_history = source_history;
+    let result_brep = self.my_shape.borrow().clone();
+    snapshots.push(StageSnapshot {
+     stage: 1,
+     stage_name: "TreatEmptyShape_early_return",
+     n_ds_vertices: self.ds.vertices.len(),
+     n_ds_edges: self.ds.edges.len(),
+     n_ds_faces: self.ds.faces.len(),
+     n_ds_pave_blocks: self.ds.pave_blocks.len(),
+     n_ds_intersection_curves: self.ds.intersection_curves.len(),
+     n_ds_interf_ff: self.ds.interf_ff.len(),
+     n_brep_vertices: result_brep.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Vertex(_))).count(),
+     n_brep_edges: result_brep.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Edge(_))).count(),
+     n_brep_faces: result_brep.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Face(_))).count(),
+     n_brep_shells: result_brep.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Shell(_))).count(),
+     n_brep_solids: result_brep.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Solid(_))).count(),
+    });
+    return Ok((result_brep, history, snapshots));
+   }
+  }
+
+  // Stage 1: FillImagesVertices + BuildResult(Vertex)
+  snap!(2, "before_FillImagesVertices");
+  self.fill_images_vertices();
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Vertex, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(3, "after_FillImagesVertices");
+
+  // Stage 2: FillImagesEdges + BuildResult(Edge)
+  snap!(4, "before_FillImagesEdges");
+  self.fill_images_edges();
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Edge, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(5, "after_FillImagesEdges");
+
+  // Stage 3: FillImagesContainers(WIRE) + BuildResult(WIRE)
+  snap!(6, "before_FillImagesContainers_Wire");
+  self.fill_images_container(ShapeType::Wire, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Wire, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(7, "after_BuildResultWire");
+
+  // Stage 4: FillImagesFaces + BuildResult(FACE)
+  snap!(8, "before_FillImagesFaces");
+  self.fill_images_faces();
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Face, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(9, "after_FillImagesFaces");
+
+  // Stage 5: FillImagesContainers(SHELL) + BuildResult(SHELL)
+  snap!(10, "before_FillImagesContainers_Shell");
+  self.fill_images_container(ShapeType::Shell, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Shell, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(11, "after_BuildResultShell");
+
+  // Stage 6: FillImagesSolids + BuildResult(SOLID)
+  snap!(12, "before_FillImagesSolids");
+  self.fill_images_solids(&mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Solid, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(13, "after_FillImagesSolids");
+
+  // Stage 7: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
+  snap!(14, "before_FillImagesContainers_CompSolid");
+  self.fill_images_container(ShapeType::CompSolid, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::CompSolid, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+
+  // Stage 8: FillImagesCompounds + BuildResult(COMPOUND)
+  snap!(15, "before_FillImagesCompounds");
+  self.fill_images_compounds(&mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  self.build_result(topods::ShapeType::Compound, &mut result);
+  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(16, "after_FillImagesCompounds");
+
+  // PrepareHistory
+  let mut history = {
+   let mut t_brep = self.my_shape.borrow_mut();
+   let mut history = result.build_topods(&mut *t_brep, self.my_fill_history,
+    &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(),
+    &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
+   let source_history = if self.my_fill_history {
+    self.fill_history(&mut *t_brep)
+   } else { vec![] };
+   history.source_history = source_history;
+   history
+  };
+  snap!(17, "after_PrepareHistory");
+
+  // PostTreat
+  self.post_treat();
+  let result_brep = self.my_shape.borrow().clone();
+  snap!(18, "after_PostTreat");
+
+  Ok((result_brep, history, snapshots))
+ }
+
+}
+
+/// Count V/E/F/Shell/Solid TShapes in a BRep (owned, no borrow).
+ fn count_brep_entities(b: &topods::BRep) -> (usize, usize, usize, usize, usize) {
+  let mut nv = 0; let mut ne = 0; let mut nf = 0; let mut nsh = 0; let mut nso = 0;
+  for ts in &b.tshapes {
+   match &**ts {
+    topods::TShape::Vertex(_) => nv += 1,
+    topods::TShape::Edge(_) => ne += 1,
+    topods::TShape::Face(_) => nf += 1,
+    topods::TShape::Shell(_) => nsh += 1,
+    topods::TShape::Solid(_) => nso += 1,
+    _ => {}
+   }
+  }
+  (nv, ne, nf, nsh, nso)
+ }
+
  /// Parallel version of `build_with_history`.
  ///
  /// Uses Rayon to process faces in parallel. Each face is split and classified
@@ -889,6 +1102,7 @@ impl<'a> BooleanBuilder<'a> {
  ///
  /// - Small models (< 20 faces): May be slower due to thread overhead
  /// - Large models (> 100 faces): Typically 2-4x faster on multi-core systems
+impl<'a> BooleanBuilder<'a> {
  fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
  let mut v: Vec<usize> = self
  .ds
