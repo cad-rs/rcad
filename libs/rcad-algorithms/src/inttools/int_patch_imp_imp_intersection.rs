@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
+//! OCCT-aligned: IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
 //!
 //! OCCT IntPatch_ImpImpIntersection.hxx / .cxx
 //!
@@ -170,7 +170,7 @@ impl ImpImpIntersection {
                 line_type, curve: c, t_range,
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown, vertices: Vec::new(),
             });
         }
         self.my_done = IntStatus::OK;
@@ -191,7 +191,7 @@ impl ImpImpIntersection {
                     self.slin.push(IntPatchLine {
                         line_type: IntPatchIType::Line, curve: c, t_range: [f64::NEG_INFINITY, f64::INFINITY],
                         pcurve1: None, pcurve2: None, tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown, vertices: Vec::new(),
                     });
                 }
                 self.empt = false;
@@ -244,7 +244,7 @@ impl ImpImpIntersection {
                         curve: Curve3::Line(l), t_range: [-1e10, 1e10],
                         pcurve1: None, pcurve2: None,
                         tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown, vertices: Vec::new(),
                     });
                 }
                 self.empt = false; self.my_done = IntStatus::OK;
@@ -256,7 +256,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Ellipse(e), t_range: [0.0, std::f64::consts::TAU],
                     pcurve1: None, pcurve2: None,
                     tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown, vertices: Vec::new(),
                 });
                 self.empt = false; self.my_done = IntStatus::OK;
             }
@@ -318,7 +318,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c), t_range: [0.0, std::f64::consts::TAU],
                     pcurve1: None, pcurve2: None,
                     tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown, vertices: Vec::new(),
                 });
                 self.empt = false; self.my_done = IntStatus::OK;
             }
@@ -361,8 +361,10 @@ impl ImpImpIntersection {
                 Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
                 _ => [0.0, 1.0],
             };
+            // OCCT L362-370: line created by QuadQuadGeo; vertices are added
+            // later by PutPointsOnLine (intpatch_intersection post-process).
             self.slin.push(IntPatchLine {
-                line_type, curve: c, t_range,
+                line_type, curve: c, t_range, vertices: Vec::new(),
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
                 wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,

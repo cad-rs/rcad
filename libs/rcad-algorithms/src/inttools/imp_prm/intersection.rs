@@ -1,4 +1,4 @@
-﻿//! ✅ OCCT-aligned: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
+//! ✅ OCCT-aligned: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.hxx L32-90 + .cxx L181-1964 (Perform method).
 //!
@@ -336,7 +336,7 @@ impl ImpPrmIntersection {
                 pcurve1: None, pcurve2: None,
                 tolerance: tol_arc, tang_tolerance: tol_tang,
                 wline_pnts: Vec::new(), is_purging_allowed: false,
-                wl_type: WLineType::Unknown,
+                wl_type: WLineType::Unknown, vertices: Vec::new(),
             };
             self.slin.push(rline);
         }

@@ -388,8 +388,11 @@ impl IntPatchIntersection {
     pub fn nb_lines(&self) -> usize { self.slin.len() }
     /// OCCT L168: Line(Index)
     pub fn line(&self, index: usize) -> &IntPatchLine { &self.slin[index] }
+    /// OCCT L168: ChangeLine(Index) — mutable access for PutPointsOnLine.
+    pub fn line_mut(&mut self, index: usize) -> &mut IntPatchLine { &mut self.slin[index] }
     /// OCCT L170: SequenceOfLine
     pub fn sequence_of_line(&self) -> &[IntPatchLine] { &self.slin }
+    pub fn slin_mut(&mut self) -> &mut Vec<IntPatchLine> { &mut self.slin }
 
     // =========================================================================
     // rcad helper: convert to IntersectionCurve for DS storage
@@ -446,7 +449,7 @@ impl IntPatchIntersection {
                     tang_tolerance: _tol_tang,
                     wline_pnts,
                     is_purging_allowed: true,
-                    wl_type: crate::inttools::int_patch_line::WLineType::PrmPrm,
+                    wl_type: crate::inttools::int_patch_line::WLineType::PrmPrm, vertices: Vec::new(),
                 });
             }
             self.empt = self.slin.is_empty();

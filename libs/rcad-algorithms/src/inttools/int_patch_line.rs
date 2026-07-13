@@ -1,5 +1,30 @@
 use super::int_patch_type::IntPatchIType;
 use glam::DVec3;
+use rcad_kernel::geom::{Curve3, CurveEval};
+
+/// OCCT-aligned: IntPatch_Point — vertex on an IntPatch_Line marking
+/// a boundary intersection.  Each vertex stores its parameter on the
+/// line, the 3D position, and the UV coordinates on both surfaces.
+#[derive(Debug, Clone, Copy)]
+pub struct IntPatchVertex {
+    pub param_on_line: f64,
+    pub p3d: DVec3,
+    pub u1: f64, pub v1: f64,
+    pub u2: f64, pub v2: f64,
+}
+
+impl IntPatchVertex {
+    /// Compute a vertex at the given parameter by evaluating the curve
+    /// and (optionally) projecting to surface UV.
+    pub fn from_curve_at(curve: &Curve3, t: f64) -> Self {
+        Self {
+            param_on_line: t,
+            p3d: curve.point_at(t),
+            u1: 0.0, v1: 0.0,
+            u2: 0.0, v2: 0.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct WLinePnt {
@@ -23,20 +48,24 @@ pub struct IntPatchLine {
     pub wline_pnts: Vec<WLinePnt>,
     pub is_purging_allowed: bool,
     pub wl_type: WLineType,
+    /// OCCT-aligned: vertices on this line (IntPatch_Point / GeomInt_Vertex).
+    /// Populated during intersection: for analytic lines (Circle/Ellipse) at
+    /// least one vertex is required for the TreatCircle split logic.
+    pub vertices: Vec<IntPatchVertex>,
 }
 
 impl IntPatchLine {
     pub fn analytic(lt: IntPatchIType, curve: rcad_kernel::geom::Curve3, tr: [f64; 2]) -> Self {
         Self { line_type: lt, curve, t_range: tr, pcurve1: None, pcurve2: None,
             tolerance: 1e-7, tang_tolerance: 1e-7, wline_pnts: Vec::new(),
-            is_purging_allowed: false, wl_type: WLineType::Unknown }
+            is_purging_allowed: false, wl_type: WLineType::Unknown, vertices: Vec::new() }
     }
     pub fn walking(pnts: Vec<WLinePnt>, wt: WLineType) -> Self {
         let line = rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X };
         Self { line_type: IntPatchIType::Walking, curve: rcad_kernel::geom::Curve3::Line(line),
             t_range: [0.0, 1.0], pcurve1: None, pcurve2: None,
             tolerance: 1e-7, tang_tolerance: 1e-7, wline_pnts: pnts,
-            is_purging_allowed: true, wl_type: wt }
+            is_purging_allowed: true, wl_type: wt, vertices: Vec::new() }
     }
     pub fn is_wline(&self) -> bool { !self.wline_pnts.is_empty() }
     pub fn nb_points(&self) -> usize { self.wline_pnts.len() }
