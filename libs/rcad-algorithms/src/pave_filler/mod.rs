@@ -127,6 +127,9 @@ pub struct PaveFiller<'a> {
  distances: std::collections::HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
  ///  OCCT-aligned: myReport  ?collects alerts during PaveFiller execution.
  my_report: Report,
+ /// Pipeline stage dump context (rcad PF stages). Created from env vars;
+ /// disabled when RCAD_DUMP_PIPELINE is not set.
+ pub dump_ctx: crate::pipeline_dump::DumpCtx,
 }
 
 impl<'a> PaveFiller<'a> {
@@ -256,6 +259,7 @@ impl<'a> PaveFiller<'a> {
  pub fn perform(&mut self) {
   //  ?OCCT L248: Prepare =build pcurves on planar faces.
   self.prepare();
+  self.dump_ctx.snapshot("after_Prepare", self.ds, None);
 
   // Detect shared topology before interference passes when glue is enabled
   if self.use_glue() {
@@ -285,6 +289,7 @@ impl<'a> PaveFiller<'a> {
   };
 
   self.perform_vv(&vv_pairs);
+  self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
 
   if !skip_ve {
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) =single traversal.
@@ -292,6 +297,7 @@ impl<'a> PaveFiller<'a> {
   }
   // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
   self.ds.update_pave_blocks_with_sd_vertices();
+  self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
 
   let _ee_survivors: Vec<usize> = if !skip_ee {
   let ee_modified = self.perform_ee_bvh(&ee_pairs);
@@ -316,6 +322,7 @@ impl<'a> PaveFiller<'a> {
   }
   }
   self.ds.update_pave_blocks_with_sd_vertices();
+  self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   survivors
   } else { vec![] };
 
@@ -325,6 +332,7 @@ impl<'a> PaveFiller<'a> {
   }
   // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
   self.ds.update_pave_blocks_with_sd_vertices();
+  self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
 
    if !skip_ef {
    // OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
@@ -346,6 +354,7 @@ impl<'a> PaveFiller<'a> {
  self.ds.update_pave_blocks_with_sd_vertices();
  self.update_interfs_with_sd_vertices();
  self.repeat_intersection();
+ self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
  }
 
  // =OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
@@ -354,6 +363,7 @@ impl<'a> PaveFiller<'a> {
  // =rcad: simplified, only checks line-line edge pairs sharing a pave vertex.
  if !skip_ee {
  self.force_interf_ee();
+ self.dump_ctx.snapshot("after_ForceInterfEE", self.ds, None);
  }
 
  // =OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
@@ -361,6 +371,7 @@ impl<'a> PaveFiller<'a> {
  // =rcad: simplified, only checks edge-face pairs where both endpoints are on the face.
  if !skip_ef {
  self.force_interf_ef();
+ self.dump_ctx.snapshot("after_ForceInterfEF", self.ds, None);
  }
 
  if !skip_ff {
@@ -372,6 +383,7 @@ impl<'a> PaveFiller<'a> {
  // overlap boundaries so that overlap polygon vertices are shared between
  // both faces and registered in face_info.vertices_in.
  self.make_sd_vertices_ff();
+ self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
  }
 
  //  ?OCCT L318: UpdateBlocksWithSharedVertices
@@ -384,6 +396,7 @@ impl<'a> PaveFiller<'a> {
 
  //  ?OCCT L322: MakeSplitEdges
  self.make_split_edges();
+ self.dump_ctx.snapshot("after_MakeSplitEdges", self.ds, None);
 
  //  ?OCCT L328: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
@@ -395,6 +408,7 @@ impl<'a> PaveFiller<'a> {
 
  //  ?OCCT L330: MakeBlocks
  self.make_blocks();
+ self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
 
  //  ?OCCT L336: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
  // OCCT uses AddWarning =non-fatal, the operation continues.
@@ -419,9 +433,11 @@ impl<'a> PaveFiller<'a> {
 
  // =OCCT-aligned: MakePCurves =after RemoveMicroEdges (PerformInternal L344)
  self.make_pcurves();
+ self.dump_ctx.snapshot("after_MakePCurves", self.ds, None);
 
  //  OCCT-aligned: ProcessDE =after MakePCurves (PerformInternal L350)
  self.process_de();
+ self.dump_ctx.snapshot("after_ProcessDE", self.ds, None);
 
  // Export to BRep if direct output is enabled (A3 dual-write).
  // ds_to_brep module disabled during OCCT alignment migration

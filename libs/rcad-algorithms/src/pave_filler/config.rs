@@ -30,6 +30,11 @@ impl<'a> PaveFiller<'a> {
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
             my_report: Report::new(),
+            dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(
+                &std::env::var("RCAD_DUMP_GRID").unwrap_or_default(),
+                &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
+                "pf",
+            ),
         }
     }
 
@@ -63,6 +68,11 @@ impl<'a> PaveFiller<'a> {
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
             my_report: Report::new(),
+            dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(
+                &std::env::var("RCAD_DUMP_GRID").unwrap_or_default(),
+                &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
+                "pf",
+            ),
         }
     }
 
@@ -96,6 +106,11 @@ impl<'a> PaveFiller<'a> {
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
             my_report: Report::new(),
+            dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(
+                &std::env::var("RCAD_DUMP_GRID").unwrap_or_default(),
+                &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
+                "pf",
+            ),
         }
     }
 

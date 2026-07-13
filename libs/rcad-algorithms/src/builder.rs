@@ -853,6 +853,7 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::CompSolid, &mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ dump_ctx.snapshot("after_BuildResultCompSolid", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L549-561: 3.8 FillImagesCompounds + BuildResult(COMPOUND)
  self.fill_images_compounds(&mut result);
  if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -1043,14 +1044,15 @@ impl<'a> BooleanBuilder<'a> {
   if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::CompSolid, &mut result);
   if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  snap!(15, "after_BuildResultCompSolid");
 
   // Stage 8: FillImagesCompounds + BuildResult(COMPOUND)
-  snap!(15, "before_FillImagesCompounds");
+  snap!(16, "before_FillImagesCompounds");
   self.fill_images_compounds(&mut result);
   if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Compound, &mut result);
   if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
-  snap!(16, "after_FillImagesCompounds");
+  snap!(17, "after_FillImagesCompounds");
 
   // PrepareHistory
   let mut history = {
@@ -1064,12 +1066,12 @@ impl<'a> BooleanBuilder<'a> {
    history.source_history = source_history;
    history
   };
-  snap!(17, "after_PrepareHistory");
+  snap!(18, "after_PrepareHistory");
 
   // PostTreat
   self.post_treat();
   let result_brep = self.my_shape.borrow().clone();
-  snap!(18, "after_PostTreat");
+  snap!(19, "after_PostTreat");
 
   Ok((result_brep, history, snapshots))
  }

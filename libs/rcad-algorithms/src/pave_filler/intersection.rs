@@ -1,4 +1,4 @@
-﻿use std::collections::{HashSet, BTreeMap};
+use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
@@ -517,7 +517,7 @@ impl<'a> super::PaveFiller<'a> {
  /// The first vertex in the block becomes the merge target; all other
  /// vertices in the block are remapped to it via AddShapeSD and
  /// Interference::VertexVertex entries.
- fn make_sd_vertices_vv(&mut self, block: &[usize]) {
+ pub(super) fn make_sd_vertices_vv(&mut self, block: &[usize]) {
  if block.len() < 2 { return; }
  // nSD tracks the existing SD vertex index; others go into aLV.
  let mut n_sd: Option<usize> = None;
@@ -754,18 +754,31 @@ impl<'a> super::PaveFiller<'a> {
  let edge1 = &self.ds.edges[e1];
  let edge2 = &self.ds.edges[e2];
  let tol = self.ee_tol(e1, e2);
- // rcad: compute shrunk_range from edge geom_tol.  If shrunk_range fails
- // (edge too short or invalid), fall back to the original range so that
- // endpoint-coincident EE intersections are not discarded.
- let sr1 = crate::inttools::curve_range::shrunk_range(
- &edge1.curve, range1, edge1.geom_tol, edge1.geom_tol, edge1.geom_tol)
- .unwrap_or(range1);
- let sr2 = crate::inttools::curve_range::shrunk_range(
- &edge2.curve, range2, edge2.geom_tol, edge2.geom_tol, edge2.geom_tol)
- .unwrap_or(range2);
+ // Capture all edge data before mutable borrow
+ let e1_range = edge1.t_range;
+ let e2_range = edge2.t_range;
+ let e1_tol = edge1.geom_tol.max(tol);
+ let e2_tol = edge2.geom_tol.max(tol);
+ let e1_curve = edge1.curve.clone();
+ let e2_curve = edge2.curve.clone();
+ drop(edge1);
+ drop(edge2);
+ // ✅ OCCT-aligned: FillShrunkData computes shrunk ranges for each pave block.
+ // If shrunk_range fails (edge too short), skip this pair entirely
+ // (=OCCT BOPAlgo_PaveFiller_3: !aPB->IsSplittable() → continue).
+ let sr1 = match crate::inttools::curve_range::shrunk_range(
+  &e1_curve, range1, e1_tol, e1_tol, e1_tol) {
+  Some(sr) => sr,
+  None => return,
+ };
+ let sr2 = match crate::inttools::curve_range::shrunk_range(
+  &e2_curve, range2, e2_tol, e2_tol, e2_tol) {
+  Some(sr) => sr,
+  None => return,
+ };
 
  // Compute intersections restricted to shrunk sub-ranges.
- let hits: Vec<(f64, f64, DVec3)> = match (&edge1.curve, &edge2.curve) {
+ let hits: Vec<(f64, f64, DVec3)> = match (&e1_curve, &e2_curve) {
  (Curve3::Line(l1), Curve3::Line(l2)) => {
  intersect_line_line(l1, sr1, l2, sr2, tol)
  .into_iter().map(|(t1, t2, p)| (t1, t2, p)).collect()
@@ -813,6 +826,11 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT's UpdateVertex handles proximity via tolerance merging; rcad creates
  // vertices directly (architecture diff: rcad DSVertex has no UpdateVertex).
  for (t1, t2, point) in hits {
+ // ✅ OCCT-aligned: restrict to shrunk range.  IntTools_EdgeEdge computes
+ // within the shrunk range; results at/outside the boundary are
+ // endpoint-coincident (handled by VV/VE/VF) or coincide with an existing
+ // pave vertex — neither should create a new EE interference.
+ if t1 < sr1[0] || t1 > sr1[1] || t2 < sr2[0] || t2 > sr2[1] { continue; }
  let new_v = self.ds.add_vertex(point);
  self.ds.interf_ee.push(InterferenceEE{
  e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
