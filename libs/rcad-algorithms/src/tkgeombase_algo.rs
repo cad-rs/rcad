@@ -718,11 +718,12 @@ pub fn find_extrema_curve(curve: &Curve3, point: DVec3, tol: f64, mode: SearchMo
                     result.is_min.push(false);
                 }
             }
-            // Endpoints
+            // Endpoints — use <= not < so a duplicate sample (same t and sq
+            // as the first endpoint) is still caught as an extremum.
             if candidates.len() >= 2 {
                 let (t0, d0) = candidates[0];
                 let (_, d1) = candidates[1];
-                if d0 < d1 {
+                if d0 <= d1 {
                     result.params.insert(0, t0);
                     result.sq_dists.insert(0, d0);
                     result.is_min.insert(0, true);
@@ -730,7 +731,7 @@ pub fn find_extrema_curve(curve: &Curve3, point: DVec3, tol: f64, mode: SearchMo
                 let last = candidates.len() - 1;
                 let (t_last, d_last) = candidates[last];
                 let (_, d_prev) = candidates[last - 1];
-                if d_last < d_prev {
+                if d_last <= d_prev {
                     result.params.push(t_last);
                     result.sq_dists.push(d_last);
                     result.is_min.push(true);
