@@ -28,6 +28,16 @@ pub const APPROXIMATION: f64 = 1e-6;
 /// Analogous to `Precision::Intersection()` = Confusion / 100 = 1e-9.
 pub const INTERSECTION: f64 = CONFUSION * 0.01;
 
+/// Machine epsilon for double-precision floating-point.
+/// Analogous to `Precision::Computational()` = DBL_EPSILON ≈ 2.22e-16.
+pub const COMPUTATIONAL: f64 = f64::EPSILON;
+pub const SQUARE_COMPUTATIONAL: f64 = COMPUTATIONAL * COMPUTATIONAL;
+
+pub const SQUARE_CONFUSION: f64 = CONFUSION * CONFUSION;
+
+/// Analogous to `Precision::Infinite()` = 2e+100 in OCCT.
+pub const INFINITE_VALUE: f64 = 2e100;
+
 // ── Per-shape tolerance helpers (topods::BRep) ─────────────────────────────
 
 /// Vertex tolerance from a TShape vertex.

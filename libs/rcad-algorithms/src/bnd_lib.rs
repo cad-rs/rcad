@@ -1,4 +1,4 @@
-﻿//! BndLib-style bounding algorithms for geometry.
+//! BndLib-style bounding algorithms for geometry.
 //!
 //! Provides analytical bounding-box computation for curves and surfaces,
 //! matching OCCT's `BndLib` / `GeomBndLib` dispatch logic.
@@ -667,7 +667,7 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         }
     }
 
-    let eps = if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 };
+    let eps = if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS };
     for k in 0..3 {
         let d = defl_max[k];
         if d <= eps {
@@ -684,7 +684,7 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         DVec3::new(coord_min[0], coord_min[1], coord_min[2]),
         DVec3::new(coord_max[0], coord_max[1], coord_max[2]),
     );
-    bbox.enlarge(if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 });
+    bbox.enlarge(if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS });
     bbox
 }
 

@@ -1,11 +1,11 @@
-﻿//! OCCT-aligned: IntPatch_WLineTool �?walking line post-processing utilities.
+﻿//! OCCT-aligned: IntPatch_WLineTool  ?walking line post-processing utilities.
 //!
 //! OCCT IntPatch_WLineTool.hxx / .cxx (73K)
 //!
 //! Core methods:
-//!   ComputePurgedWLine �?removes collinear/redundant points from WLine
-//!   JoinWLines         �?joins adjacent WLines at shared endpoints
-//!   ExtendTwoWLines    �?extends WLine endpoints to meet at intersections
+//!   ComputePurgedWLine  ?removes collinear/redundant points from WLine
+//!   JoinWLines          ?joins adjacent WLines at shared endpoints
+//!   ExtendTwoWLines     ?extends WLine endpoints to meet at intersections
 
 use super::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
 use glam::DVec2;
@@ -16,7 +16,7 @@ use crate::tolerance::TOLERANCE_CLAMP_MIN;
 const MAX_CONCAT_ANGLE: f64 = std::f64::consts::PI / 6.0;
 
 impl IntPatchLine {
-    /// OCCT: ComputePurgedWLine �?remove collinear points from a walking line.
+    /// OCCT: ComputePurgedWLine  ?remove collinear points from a walking line.
     ///
     /// 1. Remove duplicate points (within resolution)
     /// 2. Remove out-of-domain points
@@ -55,7 +55,7 @@ impl IntPatchLine {
             } else { None };
         }
 
-        // Step 2: Tube criteria �?remove collinear points
+        // Step 2: Tube criteria  ?remove collinear points
         // Check each point: if distance from chord between neighbors is
         // below tolerance, remove it (collinear simplification)
         let resolution = 1e-12;
@@ -115,7 +115,7 @@ impl IntPatchLine {
     }
 }
 
-/// OCCT: JoinWLines �?join adjacent WLines if they share endpoints.
+/// OCCT: JoinWLines  ?join adjacent WLines if they share endpoints.
 /// Returns true if any joining was performed.
 pub fn join_wlines(lines: &mut Vec<IntPatchLine>, tol_3d: f64) -> bool {
     let mut joined = false;

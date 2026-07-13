@@ -1,4 +1,4 @@
-﻿// �?OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
+﻿//  ?OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
 //   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
 //   tolerance_2d: 1.1x multiplier only for BSpline (OCCT L889-892)
 
@@ -7,7 +7,7 @@ use rcad_kernel::geom::*;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_UV_DIR_SQ_MIN};
 use super::curve_tools::*;
 
-/// OCCT-aligned: Tolerance2D �?BOPAlgo_WireSplitter_1.cxx L859-881
+/// OCCT-aligned: Tolerance2D  ?BOPAlgo_WireSplitter_1.cxx L859-881
 ///   aTol2D = max(UResolution(aTolV3D), VResolution(aTolV3D), aTolV3D)
 ///   For BSpline surface: multiplied by 1.1
 pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {

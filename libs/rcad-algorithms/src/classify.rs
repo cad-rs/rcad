@@ -21,13 +21,13 @@ use crate::tolerance::{
 };
 
 // =============================================================================
-// BRepClass3d_SolidClassifier �?OCCT-aligned class
+// BRepClass3d_SolidClassifier  ?OCCT-aligned class
 // =============================================================================
 
-/// OCCT-aligned: BRepClass3d_SolidClassifier �?classify point relative to a solid.
+/// OCCT-aligned: BRepClass3d_SolidClassifier  ?classify point relative to a solid.
 ///
 /// Uses ray casting: cast a ray from the point in the +X direction, count
-/// face intersections. Odd �?In, Even �?Out. Also checks vertex/edge proximity
+/// face intersections. Odd  ?In, Even  ?Out. Also checks vertex/edge proximity
 /// for On classification.
 ///
 /// Usage:
@@ -49,7 +49,7 @@ impl<'a> SolidClassifier<'a> {
         Self { brep, solid_ref, state: Classification::Out, performed: false }
     }
 
-    /// OCCT-aligned: Perform �?classify point against the solid with tolerance.
+    /// OCCT-aligned: Perform  ?classify point against the solid with tolerance.
     pub fn perform(&mut self, point: DVec3, tol: f64) {
         // Collect all face ShapeRefs from this solid
         let face_refs = collect_solid_faces(self.brep, self.solid_ref);
@@ -59,7 +59,7 @@ impl<'a> SolidClassifier<'a> {
             return;
         }
 
-        // 1. Check vertex/edge proximity �?On
+        // 1. Check vertex/edge proximity  ?On
         for &fr in &face_refs {
             if let topods::TShape::Face(fd) = &*self.brep.tshapes[fr.index] {
                 // Check if point is near the face surface
@@ -104,7 +104,7 @@ impl<'a> SolidClassifier<'a> {
         self.perform(point, tol);
     }
 
-    /// OCCT-aligned: State �?classification result.
+    /// OCCT-aligned: State  ?classification result.
     pub fn state(&self) -> Classification { self.state }
 
     /// OCCT-aligned: IsDone.
@@ -588,13 +588,13 @@ fn relaxed_tol_for_solid_face_set(
 // Core Classification Functions
 // =============================================================================
 
-/// �?OCCT-aligned: BRepClass3d_SolidClassifier::Perform (L171-211).
+///  ?OCCT-aligned: BRepClass3d_SolidClassifier::Perform (L171-211).
 ///   Classify a 3D point relative to a solid defined by face indices.
 ///
 /// OCCT flow (BRepClass3d_SClassifier.cxx L203-253):
-///   1. L207: SolidExplorer.Reject(P) �?bounding box rejection �?Out
-///   2. L218-230: UB-tree select for vertex/edge proximity �?On
-///   3. L236+: Ray intersection with face �?In/Out from face orientation
+///   1. L207: SolidExplorer.Reject(P)  ?bounding box rejection  ?Out
+///   2. L218-230: UB-tree select for vertex/edge proximity  ?On
+///   3. L236+: Ray intersection with face  ?In/Out from face orientation
 ///
 pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Classification {
     if solid_face_indices.is_empty() {
@@ -611,13 +611,13 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     result
 }
 
-/// �?OCCT-aligned: BRepClass3d_SClassifier::Perform (L203-253).
+///  ?OCCT-aligned: BRepClass3d_SClassifier::Perform (L203-253).
 ///   Classify point via vertex/edge proximity + ray intersection.
 ///
 /// OCCT flow:
-///   1. L207: bounding box reject (SolidExplorer.Reject) �?handled by caller
-///   2. L218-230: vertex/edge proximity �?On
-///   3. L236+: ray intersect faces �?In/Out from face transition
+///   1. L207: bounding box reject (SolidExplorer.Reject)  ?handled by caller
+///   2. L218-230: vertex/edge proximity  ?On
+///   3. L236+: ray intersect faces  ?In/Out from face transition
 ///
 /// rcad: vertex/edge proximity (step 2) + face-on check + multi-ray voting (step 3).
 
@@ -736,7 +736,7 @@ fn classify_point_internal(
     while is_faulty_line && an_ind_face < dirs.len() {
         let rd = &dirs[an_ind_face];
 
-        // OCCT L259-266: Segment / OtherSegment �?rcad: direction from list
+        // OCCT L259-266: Segment / OtherSegment  ?rcad: direction from list
         let i_flag = 0i32; // rcad: always valid direction (0=OK, 1=OnFace, 2=OUT, 3=bad)
 
         // OCCT L270-278: anIndFace tracking via GetFaceSegmentIndex
@@ -944,7 +944,7 @@ enum RayFaceResult {
     Out(f64),
     /// Point is ON the face boundary.
     On,
-    /// Ray grazes face boundary �?retry needed (faulty line).
+    /// Ray grazes face boundary  ?retry needed (faulty line).
     Faulty,
 }
 
@@ -973,7 +973,7 @@ fn ray_cast_classify_point_on_face(
             let hit = point + ray_dir * t;
             let face_verts = ds.face_boundary_points(fi);
             if is_near_polygon_boundary(&hit, &face_verts, plane, boundary_tol) {
-                return RayFaceResult::Faulty; // grazes boundary �?faulty
+                return RayFaceResult::Faulty; // grazes boundary  ?faulty
             }
             if !inttools::edge_face::point_in_planar_face_with_tol(
                 hit, plane, &face_verts, boundary_tol,
@@ -985,9 +985,9 @@ fn ray_cast_classify_point_on_face(
             // If ray enters: point was OUTSIDE before intersection.
             // If ray exits:  point was INSIDE before intersection.
             if denom < 0.0 {
-                RayFaceResult::Out(t)  // ray enters solid �?point was Out
+                RayFaceResult::Out(t)  // ray enters solid  ?point was Out
             } else {
-                RayFaceResult::In(t)   // ray exits solid �?point was In
+                RayFaceResult::In(t)   // ray exits solid  ?point was In
             }
         }
         Surface3::Sphere(s) => {
@@ -1025,7 +1025,7 @@ fn ray_cast_classify_point_on_face(
             if found {
                 // OCCT transition: ray_enter check.  For sphere, outward
                 // normal = (hit - center).normalize().  ray_dir·normal < 0
-                // means entering �?point was Out; > 0 means exiting �?In.
+                // means entering  ?point was Out; > 0 means exiting  ?In.
                 let hit = point + ray_dir * nearest;
                 let n = (hit - s.center).normalize_or_zero();
                 if ray_dir.dot(n) < 0.0 {
@@ -1037,7 +1037,7 @@ fn ray_cast_classify_point_on_face(
                 RayFaceResult::Faulty
             }
         }
-        _ => RayFaceResult::Faulty, // non-analytic surface �?skip
+        _ => RayFaceResult::Faulty, // non-analytic surface  ?skip
     }
 }
 

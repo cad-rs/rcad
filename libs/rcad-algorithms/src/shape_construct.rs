@@ -231,7 +231,8 @@ pub fn construct_plane_from_3_points(p1: DVec3, p2: DVec3, p3: DVec3) -> Option<
 /// Construct a plane from a point and normal vector.
 ///
 /// The normal will be normalized.
-pub fn construct_plane_from_point_normal(point: DVec3, normal: DVec3) -> Plane::new(point, normal.normalize_or(DVec3::Z))
+pub fn construct_plane_from_point_normal(point: DVec3, normal: DVec3) -> Plane {
+    Plane::new(point, normal.normalize_or(DVec3::Z))
 }
 
 /// Construct a cylindrical surface from axis point, direction, and radius.

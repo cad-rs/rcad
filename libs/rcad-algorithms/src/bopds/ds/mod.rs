@@ -1,4 +1,4 @@
-﻿pub mod face_aabb;
+pub mod face_aabb;
 pub mod types;
 pub use types::*;
 pub mod iterator;

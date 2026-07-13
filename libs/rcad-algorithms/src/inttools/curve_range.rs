@@ -7,7 +7,7 @@ use crate::tolerance::TOLERANCE_CLAMP_MIN;
 /// (BRepLib_1.cxx L61, IntTools_ShrunkRange.cxx L162)
 ///
 /// For a curve parameterized by `t`, the step `resolution` satisfies:
-/// `|P(t + resolution) - P(t)| �?tol` (first-order approximation using tangent speed).
+/// `|P(t + resolution) - P(t)|  ?tol` (first-order approximation using tangent speed).
 ///
 /// When the tangent speed is nearly zero (singularity), the resolution is clamped to `tol`.
 pub fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
@@ -87,7 +87,7 @@ pub fn shrunk_range(
     curve: &Curve3, t_range: [f64; 2], v1_tol: f64, v2_tol: f64, edge_tol: f64,
 ) -> Option<[f64; 2]> {
     let [t1, t2] = t_range;
-    // OCCT L117-120: if range < PConfusion �?micro-edge
+    // OCCT L117-120: if range < PConfusion  ?micro-edge
     if (t2 - t1).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
     // OCCT L129-142: aTolV = max(aTolV, aTolE) + Confusion
     let confusion = rcad_kernel::tolerance::CONFUSION;
@@ -103,7 +103,7 @@ pub fn shrunk_range(
         (Some(f), Some(l)) => (f, l), (Some(f), None) => (f, t2),
         (None, Some(l)) => (t1, l), (None, None) => return None,
     };
-    // OCCT L152-155: if shrunk range < PConfusion �?micro-edge
+    // OCCT L152-155: if shrunk range < PConfusion  ?micro-edge
     if the_first >= the_last || (the_last - the_first) < rcad_kernel::tolerance::CONFUSION { return None; }
     Some([the_first, the_last])
 }

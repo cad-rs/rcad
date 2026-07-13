@@ -1363,7 +1363,7 @@ pub fn wires_to_faces(
  wire_groups.push(group);
  }
 
- // OCCT L743-789: build faces from each group �?use tshape API
+ // OCCT L743-789: build faces from each group  ?use tshape API
  let mut face_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
  for group in &wire_groups {
  if group.is_empty() {

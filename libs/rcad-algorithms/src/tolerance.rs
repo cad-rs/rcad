@@ -1,4 +1,4 @@
-﻿//! Geometric tolerances, adaptive context, and small predicate helpers.
+//! Geometric tolerances, adaptive context, and small predicate helpers.
 //!
 //! # Roadmap
 //!

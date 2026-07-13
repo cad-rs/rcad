@@ -554,10 +554,10 @@ impl<'a> super::PaveFiller<'a> {
  /// OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
  /// Form-identical logic:
  ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
- ///   2. First endpoint �?local projection (Newton from aFirst),
+ ///   2. First endpoint  ?local projection (Newton from aFirst),
  ///      then global fallback (closest_point_on_curve).
- ///   3. Last endpoint �?same with bFirstValid shortcut.
- ///   4. Global projection �?GeomAPI_ProjectPointOnCurve style
+ ///   3. Last endpoint  ?same with bFirstValid shortcut.
+ ///   4. Global projection  ?GeomAPI_ProjectPointOnCurve style
  ///      with NbPoints==0 fallback to bounded-curve endpoints.
  pub(crate) fn is_vertex_on_line(
  &self,
@@ -635,7 +635,7 @@ impl<'a> super::PaveFiller<'a> {
  *aT = t_local;
  }
  } else {
- // L856-880: local projection failed �?global fallback
+ // L856-880: local projection failed  ?global fallback
  use rcad_kernel::projection::closest_point_on_curve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
@@ -699,7 +699,7 @@ impl<'a> super::PaveFiller<'a> {
  *aT = t_local;
  }
  } else {
- // L916-940: local projection failed �?global fallback
+ // L916-940: local projection failed  ?global fallback
  use rcad_kernel::projection::closest_point_on_curve;
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let mid = (aLast + aFirst) * 0.5;
@@ -722,7 +722,7 @@ impl<'a> super::PaveFiller<'a> {
  let proj = closest_point_on_curve(&ic.curve, vp, 64);
  let aNbProj = if proj.distance.is_finite() { 1 } else { 0 };
  if aNbProj == 0 {
- // L959-978: bounded curve fallback �?check start/end points
+ // L959-978: bounded curve fallback  ?check start/end points
  if matches!(&ic.curve, Curve3::BSpline(_) | Curve3::Bezier(_))
  || matches!(&ic.curve, Curve3::Line(_)) {
  let aPDist = vp.distance(ic.curve.point_at(aFirst));

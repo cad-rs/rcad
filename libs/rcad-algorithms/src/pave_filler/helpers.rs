@@ -198,7 +198,7 @@ pub(crate) fn find_nearest_valid_point(
 
 /// OCCT-aligned: BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 /// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
-/// `theTolE` �?edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
+/// `theTolE`  ?edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
 pub(crate) fn find_valid_range(
     curve: &Curve3, t0: f64, t1: f64, theTolE: f64,

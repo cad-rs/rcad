@@ -1,13 +1,13 @@
-﻿//! OCCT-aligned: IntPatch_SpecialPoints �?add singular points (pole, apex) to intersection lines.
+﻿//! OCCT-aligned: IntPatch_SpecialPoints  ?add singular points (pole, apex) to intersection lines.
 //!
 //! OCCT IntPatch_SpecialPoints.hxx / .cxx (38K)
 //!
 //! Methods:
-//!   AddSingularPole      �?add sphere pole or cone apex as vertex
-//!   AddCrossUVIsoPoint   �?add point at UV=0 crossing
-//!   AddPointOnUorVIso    �?add point on an isoline
-//!   ContinueAfterSpecialPoint �?continue line after singular point
-//!   AdjustPointAndVertex �?adjust for periodic surfaces
+//!   AddSingularPole       ?add sphere pole or cone apex as vertex
+//!   AddCrossUVIsoPoint    ?add point at UV=0 crossing
+//!   AddPointOnUorVIso     ?add point on an isoline
+//!   ContinueAfterSpecialPoint  ?continue line after singular point
+//!   AdjustPointAndVertex  ?adjust for periodic surfaces
 
 use glam::{DVec2, DVec3};
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
@@ -18,7 +18,7 @@ use super::int_patch_line::IntPatchLine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecPntType { None, PoleOfSphere, ApexOfCone, PointOnBoundary }
 
-/// OCCT: AddSingularPole �?add sphere pole or cone apex as intersection point.
+/// OCCT: AddSingularPole  ?add sphere pole or cone apex as intersection point.
 /// Returns the computed point, or None if not applicable.
 pub fn add_singular_pole(
     surf: &rcad_kernel::geom::Surface3,
@@ -57,7 +57,7 @@ pub fn add_singular_pole(
     }
 }
 
-/// OCCT: AddCrossUVIsoPoint �?add a point at intersection of U=0 and V=0 isolines.
+/// OCCT: AddCrossUVIsoPoint  ?add a point at intersection of U=0 and V=0 isolines.
 pub fn add_cross_uv_iso_point(
     _qsurf: &rcad_kernel::geom::Surface3,
     _psurf: &rcad_kernel::geom::Surface3,

@@ -1,4 +1,4 @@
-﻿//! BndLib-style bounding algorithms for 2D geometry.
+//! BndLib-style bounding algorithms for 2D geometry.
 //!
 //! Provides analytical bounding-box computation for 2D curves,
 //! matching OCCT's `BndLib` (2D overloads) and `GeomBndLib_Curve2d` dispatch.
@@ -490,7 +490,7 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec2>(
         }
     }
 
-    let eps = if tol > TOLERANCE_ABSf64 { tol } else { TOLERANCE_ABSf64 };
+    let eps = if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS };
     for k in 0..2 {
         let d = defl_max[k];
         if d > eps {

@@ -1,4 +1,4 @@
-﻿use crate::bopds::face_info::FaceInfo;
+use crate::bopds::face_info::FaceInfo;
 use crate::bopds::ds::types::*;
 use crate::tolerance::*;
 use rcad_kernel::topods;

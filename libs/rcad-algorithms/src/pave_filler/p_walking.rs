@@ -1,4 +1,4 @@
-﻿//! �?OCCT-aligned: IntWalk_PWalking �?intersection curve walking for
+﻿//!  ?OCCT-aligned: IntWalk_PWalking  ?intersection curve walking for
 //!   two parametric surfaces (parametric-parametric).
 //!
 //! OCCT source: TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx (4096 lines)
@@ -24,7 +24,7 @@ use super::prm_prm_intersection::PntOn2S;
 #[derive(Clone, Copy, PartialEq)]
 enum StatusDeflection {
     PasTropGrand,   // step OK
-    PasTropPetit,   // step too small �?refine
+    PasTropPetit,   // step too small  ?refine
     PasTropGrandInFlexion, // step too large at inflection
 }
 
@@ -35,7 +35,7 @@ enum ConstIsoparametric {
     None,
 }
 
-/// �?OCCT-aligned: IntWalk_PWalking
+///  ?OCCT-aligned: IntWalk_PWalking
 pub struct PWalking {
     // ── Public state (OCCT hxx:243-287) ──────────────────────────
     done: bool,
@@ -220,7 +220,7 @@ impl PWalking {
             },
         );
 
-        // Convert SampledCurve (3D points) �?PntOn2S (UV+3D)
+        // Convert SampledCurve (3D points)  ?PntOn2S (UV+3D)
         for p3d in &result.points {
             if !p3d.is_finite() { continue; }
             let Some((u1, v1)) = project_onto_surface(&self.s1, *p3d) else { continue };
@@ -397,7 +397,7 @@ impl PWalking {
         let sq_dist = p_int.distance_squared(p1);
         if sq_dist > a_tol * a_tol { return false; }
         //   with loop detection (hairpin bend check).
-        // rcad: simplified �?insert directly without loop check since
+        // rcad: simplified  ?insert directly without loop check since
         //   marching already produces consistent orientations.
         if is_the_first {
             if !self.line.is_empty() {
@@ -579,14 +579,14 @@ impl PWalking {
             let solved = self.distance_minimize_by_gradient(s1, s2, &mut param);
 
             if !solved {
-                // OCCT: if !IsDone �?return
+                // OCCT: if !IsDone  ?return
                 out_of_tangent = true;
                 break;
             }
             let a_status = self.test_deflection(the_choix_iso, StatusDeflection::PasTropPetit);
             match a_status {
                 StatusDeflection::PasTropGrand => {
-                    // step too big �?reduce step (OCCT L2000-2021 simulated)
+                    // step too big  ?reduce step (OCCT L2000-2021 simulated)
                     for u in 0..4 {
                         self.pasuv[u] *= 0.8;
                         self.pasuv[u] = self.pasuv[u].max(self.my_step_min[u]);
