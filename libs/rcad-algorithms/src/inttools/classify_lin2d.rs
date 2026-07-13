@@ -24,8 +24,15 @@ pub fn classify_lin2d(pc: &Curve2d, uv: [f64; 4], tol: f64) -> Option<[f64; 2]> 
         _ => return None,
     };
 
-    let inter = |a: f64, b: f64| (a < -tol && b > tol) || (a > tol && b < -tol);
     let coinc = |a: f64, b: f64| a.abs() <= tol && b.abs() <= tol;
+    // INTER: signs differ (one on each side of boundary).
+    // Values within tol are treated as zero (on the boundary).
+    // 0.0 signum is treated as compatible with any sign (line at corner).
+    let inter = |a: f64, b: f64| {
+        let sa = if a.abs() < tol { 0.0 } else { a.signum() };
+        let sb = if b.abs() < tol { 0.0 } else { b.signum() };
+        sa != sb
+    };
 
     fn get_line<'a>(pc: &'a Curve2d) -> &'a rcad_kernel::geom::Line2d {
         match pc { Curve2d::Line(l) => l, _ => unreachable!() }

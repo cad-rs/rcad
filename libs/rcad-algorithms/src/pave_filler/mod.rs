@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
@@ -814,6 +814,24 @@ impl<'a> PaveFiller<'a> {
  }
  }
 
+ // Missing WIP methods
+ pub(crate) fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
+  self.ds.faces.iter().enumerate()
+   .filter(|(_, f)| f.origin == origin)
+   .map(|(i, _)| i).collect()
+ }
+ pub(crate) fn verts_of(&self, origin: ShapeOrigin) -> Vec<usize> {
+  self.ds.vertices.iter().enumerate()
+   .filter(|(_, v)| v.origin == Some(origin))
+   .map(|(i, _)| i).collect()
+ }
+ pub(crate) fn edges_of(&self, origin: ShapeOrigin) -> Vec<usize> {
+  self.ds.edges.iter().enumerate()
+   .filter(|(_, e)| e.origin == origin)
+   .map(|(i, _)| i).collect()
+ }
+ pub(crate) fn make_split_edges(&mut self) {}
+ pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
 }
 
 // Second empty impl block (kept for OCCT alignment)

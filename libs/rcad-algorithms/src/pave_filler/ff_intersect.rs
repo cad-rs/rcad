@@ -498,8 +498,7 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  let mut geo = crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo::new();
  let q1 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln1);
  let q2 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln2);
- let (Some(ref q1), Some(ref q2)) = (q1.as_ref(), q2.as_ref()) else { return };
- geo.perform_plane_plane(q1, q2, 1e-8, self.fuzzy_tolerance);
+ geo.perform_plane_plane(&q1, &q2, 1e-8, self.fuzzy_tolerance);
  if !geo.is_done() { return; }
  use crate::inttools::int_ana_quad_quad_geo::AnaResultType;
  if let AnaResultType::Same = geo.type_inter() {
