@@ -38,6 +38,22 @@ pub struct Context {
     obb_map: std::collections::HashMap<usize, ()>,
 }
 
+/// OCCT-aligned: ComputeVE result error codes (IntTools_Context.cxx L500-542).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VeError {
+    DegeneratedEdge = -1,
+    NotGeometric = -2,
+    ProjectionFailed = -3,
+    DistanceTooLarge = -4,
+}
+
+/// OCCT-aligned: ComputeVE result on success.
+#[derive(Debug, Clone, Copy)]
+pub struct VeResult {
+    pub param: f64,
+    pub tolerance: f64,
+}
+
 impl Context {
     pub fn new(num_faces: usize, tol_uv: f64) -> Self {
         let init_face: Vec<Option<FClass2d>> = (0..num_faces).map(|_| None).collect();
@@ -121,7 +137,34 @@ impl Context {
         }
     }
 
-    /// OCCT: ProjPT(theP, theC) — projects a 3D point onto a transient curve.
+    /// OCCT-aligned: ComputeVE (IntTools_Context.cxx L500-542).
+    /// Projects a vertex onto an edge's curve. Returns Ok(param, tolerance) on success,
+    /// or Err(VeError) with OCCT error code:
+    ///   DegeneratedEdge (-1): edge is degenerated
+    ///   NotGeometric (-2): edge has no 3D curve
+    ///   ProjectionFailed (-3): projection algorithm could not find any point
+    ///   DistanceTooLarge (-4): distance > tolV + tolE + max(fuzz, Precision::Confusion())
+    /// Tolerance in the success case = distance + edge_tolerance (matching OCCT).
+    pub fn compute_ve(&mut self, ds: &DS, vi: usize, ei: usize, fuzz: f64) -> Result<VeResult, VeError> {
+        use crate::tolerance::CONFUSION;
+        // -1: degenerated edge (OCCT BRep_Tool::Degenerated)
+        if ds.is_edge_degenerated(ei) { return Err(VeError::DegeneratedEdge); }
+        // -2: not geometric (OCCT BRep_Tool::IsGeometric)
+        if !ds.edge_is_geometric(ei) { return Err(VeError::NotGeometric); }
+        // Project vertex point onto edge curve (OCCT ProjPC + Perform)
+        let p = ds.vertex_point(vi);
+        let proj = self.proj_pc(ds, ei, p).ok_or(VeError::ProjectionFailed)?;
+        let dist = proj.2;
+        // OCCT L531-533: tolerance sum
+        let tol_v = ds.vertex_tolerance(vi);
+        let tol_e = ds.edge_tolerance(ei);
+        let tol_sum = tol_v + tol_e + fuzz.max(CONFUSION);
+        // OCCT L535: theTol = aDist + aTolE
+        let new_tol = dist + tol_e;
+        // OCCT L537-540: check distance against tolerance sum
+        if dist > tol_sum { return Err(VeError::DistanceTooLarge); }
+        Ok(VeResult { param: proj.0, tolerance: new_tol })
+    }
     /// Unlike ProjPC (which is keyed by edge index), this is a single reusable
     /// projector for one-off curve projections. Returns (param, 3d_point, distance).
     pub fn proj_pt(&mut self, curve: &Curve3, p: DVec3) -> Option<(f64, DVec3, f64)> {
@@ -307,5 +350,31 @@ mod tests {
         let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         assert!(ctx.is_infinite_face(0));
+    }
+
+    /// OCCT ComputeVE: vertex at edge endpoint is on the edge.
+    #[test]
+    fn compute_ve_vertex_on_edge() {
+        let ds = unit_box_ds();
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        // Edge 0: from (0,0,0) to (1,0,0). Vertex 0 is at (0,0,0).
+        let result = ctx.compute_ve(&ds, 0, 0, 0.0);
+        assert!(result.is_ok(), "vertex at edge endpoint should be on edge: {:?}", result);
+        if let Ok(res) = result {
+            assert!((res.param - 0.0).abs() < 1e-6 || (res.param - 1.0).abs() < 1e-6,
+                "param should be at endpoint (~0 or ~1), got {}", res.param);
+        }
+    }
+
+    /// OCCT ComputeVE: vertex far from edge should fail with DistanceTooLarge.
+    #[test]
+    fn compute_ve_vertex_off_edge() {
+        let ds = unit_box_ds();
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        // Edge 0 is at z=0, vertex at (100, 0, 100) — far away
+        // We need a vertex that exists — vertex 5 is at (1,0,1)
+        // and edge 3 is on bottom face at z=0 from (0,1,0) to (0,0,0)
+        let result = ctx.compute_ve(&ds, 5, 3, 0.0);
+        assert!(result.is_err(), "vertex far from edge should fail");
     }
 }

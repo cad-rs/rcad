@@ -523,7 +523,7 @@ impl<'a> PaveFiller<'a> {
                     if self.ds.is_edge_degenerated(ei) { continue; }
                     if ve_done.contains(&(vi, ei)) { continue; }
 
-                    self.check_vertex_edge(vi, ei);
+                    self.compute_ve(vi, ei);
                 }
             }
         }

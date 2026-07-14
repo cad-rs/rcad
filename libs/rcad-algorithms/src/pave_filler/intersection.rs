@@ -1,4 +1,4 @@
-use std::collections::{HashSet, BTreeMap};
+﻿use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
@@ -1094,7 +1094,7 @@ impl<'a> super::PaveFiller<'a> {
  self.fill_shrunk_data();
  let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
  let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
- // shrink data is computed on-the-fly in check_vertex_edge via ve_tol().
+ // shrink data is computed on-the-fly in compute_ve via ve_tol().
  //
  // rcad: manual O(n ? loop (see PairIterator in perform_ee for BVH pattern).
 
@@ -1107,7 +1107,7 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.is_edge_degenerated(ei) { continue; }
  if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
  if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
- self.check_vertex_edge(vi, ei);
+ self.compute_ve(vi, ei);
  }
  }
 
@@ -1123,92 +1123,16 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.is_edge_degenerated(ei) { continue; }
  if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
  if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
- self.check_vertex_edge(vi, ei);
+ self.compute_ve(vi, ei);
  }
  }
  }
  /// OCCT PaveFiller_2.cxx L104-121: ComputeVE
- pub(crate) fn check_vertex_edge(&mut self, vi: usize, ei: usize) {
- let point = self.ds.vertex_point(vi);
- let edge_curve = self.ds.edges[ei].curve.clone();
- let t_range = self.ds.edge_range(ei);
- let te = self.ve_tol(vi, ei);
- match &edge_curve {
- Curve3::Line(line) => {
- if let Some(t) = inttools::vertex_ops::vertex_on_line_with_tol(
- point,
- line,
- t_range,
- te,
- ) {
- self.ds.interf_ve.push(InterferenceVE{
- vertex: vi,
- edge: ei,
- param: t,
- });
- self.ds.edge_paves[ei].push(Pave {
-	vertex_idx: vi,
- param: t,
- });
- }
- }
- Curve3::Circle(circle) => {
- // Check if point lies on the circle arc
- let v = point - circle.center;
- let dist = v.length();
- if (dist - circle.radius).abs() < te {
- let on_plane = v.dot(circle.normal).abs() < te;
- if on_plane {
- // Compute angular parameter
- let u = if circle.normal.x.abs() < 0.9 {
- circle.normal.cross(DVec3::X).normalize()
- } else {
- circle.normal.cross(DVec3::Y).normalize()
- };
- let w = circle.normal.cross(u);
- let theta = w.dot(v).atan2(u.dot(v));
- if theta >= t_range[0] - te && theta <= t_range[1] + te {
- //  OCCT-aligned: only create VE interference if the vertex is
- // within tolerance of the edge's 3D curve at the computed param.
- let on_edge_3d = edge_curve.point_at(theta).distance(point) <= te;
- if on_edge_3d {
- self.ds.interf_ve.push(InterferenceVE{
- vertex: vi,
- edge: ei,
- param: theta,
- });
- self.ds.edge_paves[ei].push(Pave {
-	vertex_idx: vi,
- param: theta,
- });
- }
- }
- }
- }
- }
- _ => {
- //  OCCT-aligned: general curve projection (IntTools_Context:
- // GeomAPI_ProjectPointOnCurve for arbitrary curve types).
- // rcad: coarse 21-sample grid to find closest approach.
- let mut best_t = t_range[0];
- let mut best_d = f64::MAX;
- for si in 0..21 {
- let t = t_range[0] + (t_range[1] - t_range[0]) * (si as f64 / 20.0);
- let d = edge_curve.point_at(t).distance(point);
- if d < best_d { best_d = d; best_t = t; }
- }
- if best_d <= te {
- self.ds.interf_ve.push(InterferenceVE{
- vertex: vi,
- edge: ei,
- param: best_t,
- });
- self.ds.edge_paves[ei].push(Pave {
-	vertex_idx: vi,
- param: best_t,
- });
- }
- }
+ pub(crate) fn compute_ve(&mut self, vi: usize, ei: usize) {
+ let fuzz = self.fuzzy_tolerance;
+ if let Ok(res) = self.context.compute_ve(self.ds, vi, ei, fuzz) {
+  self.ds.interf_ve.push(InterferenceVE{vertex: vi, edge: ei, param: res.param});
+  self.ds.edge_paves[ei].push(Pave {vertex_idx: vi, param: res.param});
  }
  }
  /// OCCT PaveFiller_3.cxx L145-244: PerformEE
@@ -1617,7 +1541,7 @@ impl<'a> super::PaveFiller<'a> {
  };
  for &ei in &other_edges {
  if ve_done.contains(&(vi, ei)) { continue; }
- self.check_vertex_edge(vi, ei);
+ self.compute_ve(vi, ei);
  }
  }
 
