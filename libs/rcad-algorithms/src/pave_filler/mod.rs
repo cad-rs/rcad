@@ -297,6 +297,13 @@ impl<'a> PaveFiller<'a> {
   }
   // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
   self.ds.update_pave_blocks_with_sd_vertices();
+  // =OCCT-aligned: SplitPaveBlocks for VE-affected edges.
+  let ve_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
+    .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+    .collect();
+  if !ve_edges.is_empty() {
+    self.split_pave_blocks(&ve_edges, false);
+  }
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
 
   let _ee_survivors: Vec<usize> = if !skip_ee {
@@ -332,6 +339,13 @@ impl<'a> PaveFiller<'a> {
   }
   // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
   self.ds.update_pave_blocks_with_sd_vertices();
+  // =OCCT-aligned: SplitPaveBlocks for VF-affected edges.
+  let vf_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
+    .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+    .collect();
+  if !vf_edges.is_empty() {
+    self.split_pave_blocks(&vf_edges, false);
+  }
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
 
    if !skip_ef {
@@ -354,6 +368,13 @@ impl<'a> PaveFiller<'a> {
  self.ds.update_pave_blocks_with_sd_vertices();
  self.update_interfs_with_sd_vertices();
  self.repeat_intersection();
+ // =OCCT-aligned: SplitPaveBlocks for EF-affected edges.
+ let ef_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
+   .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+   .collect();
+ if !ef_edges.is_empty() {
+   self.split_pave_blocks(&ef_edges, false);
+ }
  self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
  }
 
@@ -389,9 +410,16 @@ impl<'a> PaveFiller<'a> {
  //  ?OCCT L318: UpdateBlocksWithSharedVertices
  self.update_blocks_with_shared_vertices();
 
- //  ?OCCT L320: RefineFaceInfoIn
+ //  ?OCCT L320: UpdateFaceInfoIn — must precede MakeSplitEdges so
+ // IC endpoint vertices are in face_info.vertices_in.
  for fi in 0..self.ds.faces.len() {
- self.ds.refine_face_info_in(fi);
+   self.ds.update_face_info_in(fi);
+ }
+ // Register IC endpoint vertices as paves on source edges, then split.
+ self.register_ic_endpoints_on_edges();
+ // OCCT-aligned: RefineFaceInfoIn =remove PBs that are both On and In.
+ for fi in 0..self.ds.faces.len() {
+   self.ds.refine_face_info_in(fi);
  }
 
  //  ?OCCT L322: MakeSplitEdges
@@ -942,5 +970,53 @@ impl<'a> PaveFiller<'a> {
  }
 
  pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
+
+ /// Register IC endpoint vertices (from face_info.vertices_in/on) as paves
+ /// on the face's boundary edges when the vertex lies on that edge.
+ /// This is necessary for MakeSplitEdges to split edges at IC endpoints.
+ pub(crate) fn register_ic_endpoints_on_edges(&mut self) {
+   use crate::pave_filler::helpers::project_vertex_to_curve;
+   let mut affected_edges: std::collections::HashSet<usize> =
+     std::collections::HashSet::new();
+
+   for fi in 0..self.ds.faces.len() {
+     let candidates: Vec<usize> = self.ds.faces[fi].face_info.vertices_in
+       .iter().copied().collect();
+     if candidates.is_empty() { continue; }
+     let boundary_edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
+
+     for &vi in &candidates {
+       if vi >= self.ds.vertices.len() { continue; }
+       let pt = self.ds.vertices[vi].point;
+       let v_tol = self.ds.vertices[vi].geom_tol;
+
+       for &ei in &boundary_edges {
+         if ei >= self.ds.edges.len() { continue; }
+         let edge_tol = self.ds.edges[ei].geom_tol.max(v_tol).max(CONFUSION);
+         let t_range = self.ds.edges[ei].t_range;
+
+         let t_opt = project_vertex_to_curve(pt, &self.ds.edges[ei].curve, edge_tol);
+         let t = match t_opt {
+           Some(t) if t >= t_range[0] - edge_tol && t <= t_range[1] + edge_tol => t,
+           _ => continue,
+         };
+
+         let already_pave = self.ds.edges[ei].paves.iter()
+           .any(|p| p.vertex_idx == vi);
+         if already_pave { continue; }
+
+         self.ds.edges[ei].paves.push(Pave {
+           vertex_idx: vi,
+           param: t.clamp(t_range[0], t_range[1]),
+         });
+         affected_edges.insert(ei);
+       }
+     }
+   }
+
+   if !affected_edges.is_empty() {
+     self.split_pave_blocks(&affected_edges, false);
+   }
+ }
 }
 

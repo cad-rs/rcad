@@ -152,6 +152,10 @@ impl DS {
   let pb = SharedPB::new(PaveBlock::new(edge_idx, pv1, pv2));
   // OCCT L469-471: ChangePaveBlocksPool  ?store in DS
   self.edges[edge_idx].pave_blocks = vec![pb];
+  // Seed edge.paves with endpoint vertices so split_pave_blocks can
+  // create sub-PBs between endpoint and intersection paves.
+  self.edges[edge_idx].paves.push(Pave { vertex_idx: sv, param: tr0 });
+  self.edges[edge_idx].paves.push(Pave { vertex_idx: ev, param: tr1 });
  // OCCT L473-475: loaded edge check  ?rcad: always new construction
  // OCCT L477-483: closed edges  ?add BOTH endpoint paves to ext_paves
  if sv == ev {
