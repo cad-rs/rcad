@@ -417,37 +417,33 @@ impl<'a> super::PaveFiller<'a> {
   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]  skip_zero_range t1={} t2={}", a_t1, a_t2); }
  continue;
  }
- // PAR_T = 10*e^(-PI) = 0.43213918, mid = (1-PAR_T)*T1 + PAR_T*T2
+ // OCCT-aligned: IsValidBlockForFaces — check t1, mid, t2 on BOTH faces
  let ic = &self.ds.intersection_curves[ci];
  let curve = &ic.curve;
- let mid_t = 0.56786082 * a_t1 + 0.43213918 * a_t2;
- let mid_pt = curve.point_at(mid_t);
+ let mid_t = (a_t1 + a_t2) * 0.5;
+ let pts_3d = [curve.point_at(a_t1), curve.point_at(mid_t), curve.point_at(a_t2)];
+ let params = [a_t1, mid_t, a_t2];
  let mut ok = true;
  for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
- if fi == usize::MAX { continue; }
- let pcurve = if k == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
- if let Some(pc) = pcurve {
-  let uv = pc.point_at(mid_t);
-  let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
-  if !in_on {
-   // OCCT-aligned: fallback to 3D projection when pcurve-based check fails.
-   // This handles sub-PBs whose midpoint lies outside the trimmed face domain
-   // but whose 3D point is valid on the face surface. OCCT achieves this with
-   // finer sub-PB subdivision (more ext_paves); rcad falls back to projection.
-   let valid = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
-   if !valid {
-    if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} pcurve_uv=({:.4},{:.4}) proj_fail", k, fi, uv.x, uv.y); }
+  if fi == usize::MAX { continue; }
+  let pcurve_opt = if k == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
+  for pi in 0..3 {
+   let pt = pts_3d[pi];
+   let in_on = if let Some(pc) = pcurve_opt {
+    let uv = pc.point_at(params[pi]);
+    self.context.is_point_in_on_face(self.ds, fi, uv)
+   } else {
+    let valid = self.context.is_valid_point_for_face(pt, fi, a_tol_r3d);
+    valid
+   };
+   if !in_on {
+    if std::env::var("RCAD_DEBUG_MB").is_ok() {
+     eprintln!("[MB]  fail_face k={} fi={} pi={} t={:.6}", k, fi, pi, params[pi]);
+    }
     ok = false; break;
    }
   }
- } else {
-  let surf = if k == 0 { &self.ds.faces[n_f1].surface } else { &self.ds.faces[n_f2].surface };
-  let valid = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
-  if !valid {
-   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]   fail_face k={} fi={} no_pcurve proj_fail", k, fi); }
-   ok = false; break;
-  }
- }
+  if !ok { break; }
  }
  if !ok {
   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]  skip_valid_block nv1={} nv2={} t1={} t2={}", n_v1, n_v2, a_t1, a_t2); }
