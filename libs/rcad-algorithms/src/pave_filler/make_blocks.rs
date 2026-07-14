@@ -417,38 +417,33 @@ impl<'a> super::PaveFiller<'a> {
   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]  skip_zero_range t1={} t2={}", a_t1, a_t2); }
  continue;
  }
- // OCCT-aligned: IsValidBlockForFaces — check t1, mid, t2 on BOTH faces
+ // OCCT-aligned: IsValidBlockForFaces — midpoint check on both faces (IntTools_Context.cxx L718-766)
  let ic = &self.ds.intersection_curves[ci];
  let curve = &ic.curve;
- let mid_t = (a_t1 + a_t2) * 0.5;
- let pts_3d = [curve.point_at(a_t1), curve.point_at(mid_t), curve.point_at(a_t2)];
- let params = [a_t1, mid_t, a_t2];
+ // IntTools_Tools::IntermediatePoint(aT1, aT2) = 0.56786082*aT1 + 0.43213918*aT2
+ let mid_t = 0.56786082 * a_t1 + 0.43213918 * a_t2;
+ let mid_pt = curve.point_at(mid_t);
  let mut ok = true;
  for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
   if fi == usize::MAX { continue; }
   let pcurve_opt = if k == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
-  for pi in 0..3 {
-   let pt = pts_3d[pi];
-   let in_on = if let Some(pc) = pcurve_opt {
-    let uv = pc.point_at(params[pi]);
-    let on_face = self.context.is_point_in_on_face(self.ds, fi, uv);
-    if on_face { true }
-    else { self.context.is_valid_point_for_face(pt, fi, a_tol_r3d.max(self.ds.face_tolerance(fi))) }
-   } else {
-    self.context.is_valid_point_for_face(pt, fi, a_tol_r3d.max(self.ds.face_tolerance(fi)))
-   };
-   if !in_on {
-    if std::env::var("RCAD_DEBUG_MB").is_ok() {
-     eprintln!("[MB]  fail_face k={} fi={} pi={} t={:.6}", k, fi, pi, params[pi]);
-    }
-    ok = false; break;
+  if let Some(pc) = pcurve_opt {
+   let uv = pc.point_at(mid_t);
+   ok = self.context.is_point_in_on_face(self.ds, fi, uv);
+   if !ok && std::env::var("RCAD_DEBUG_MB").is_ok() {
+    eprintln!("[MB]  fail_face k={} fi={} uv=({:.6},{:.6})", k, fi, uv.x, uv.y);
    }
+  } else {
+   // OCCT: IsValidPointForFace — 3D→UV projection then IsPointInOnFace
+   ok = self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d);
   }
   if !ok { break; }
  }
  if !ok {
   if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB]  skip_valid_block nv1={} nv2={} t1={} t2={}", n_v1, n_v2, a_t1, a_t2); }
   continue; }
+ // [MB_PASS] block passed IsValidBlockForFaces
+ if std::env::var("RCAD_DEBUG_MB").is_ok() { eprintln!("[MB_PASS] nv1={} nv2={} t1={} t2={}", n_v1, n_v2, a_t1, a_t2); }
  // OCCT BOPAlgo_PaveFiller_6.cxx L2020-2075
  // Uses geometry-based detection: intermediate point  ?bounding box  ?ComputePE
  let mut n_e_out: usize = usize::MAX;
