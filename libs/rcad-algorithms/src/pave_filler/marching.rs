@@ -117,12 +117,12 @@ impl<'a> super::PaveFiller<'a> {
             curve_extra: crate::bopds::ds::CurveExtra::default(),
         });
 
-            self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
-            self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
-            self.ds.faces[f1].face_info.vertices_in.insert(v_start);
-            self.ds.faces[f1].face_info.vertices_in.insert(v_end);
-            self.ds.faces[f2].face_info.vertices_in.insert(v_start);
-            self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+            self.ds.face_info_mut(f1).curves_sc.insert(curve_idx);
+            self.ds.face_info_mut(f2).curves_sc.insert(curve_idx);
+            self.ds.face_info_mut(f1).vertices_in.insert(v_start);
+            self.ds.face_info_mut(f1).vertices_in.insert(v_end);
+            self.ds.face_info_mut(f2).vertices_in.insert(v_start);
+            self.ds.face_info_mut(f2).vertices_in.insert(v_end);
 
             curve_indices.push(curve_idx);
         }
@@ -238,7 +238,7 @@ impl<'a> super::PaveFiller<'a> {
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             // Use boundary vertices (from wire edges)
             for &vi in &self.ds.faces[face_idx].boundary_verts {
-                let p = self.ds.vertices[vi].point;
+                let p = self.ds.vertex_point(vi);
                 mn = mn.min(p);
                 mx = mx.max(p);
             }
@@ -367,12 +367,12 @@ impl<'a> super::PaveFiller<'a> {
             curve_extra: crate::bopds::ds::CurveExtra::default(),
         });
 
-            self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
-            self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
-            self.ds.faces[f1].face_info.vertices_in.insert(v_start);
-            self.ds.faces[f1].face_info.vertices_in.insert(v_end);
-            self.ds.faces[f2].face_info.vertices_in.insert(v_start);
-            self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+            self.ds.face_info_mut(f1).curves_sc.insert(curve_idx);
+            self.ds.face_info_mut(f2).curves_sc.insert(curve_idx);
+            self.ds.face_info_mut(f1).vertices_in.insert(v_start);
+            self.ds.face_info_mut(f1).vertices_in.insert(v_end);
+            self.ds.face_info_mut(f2).vertices_in.insert(v_start);
+            self.ds.face_info_mut(f2).vertices_in.insert(v_end);
 
             curve_indices.push(curve_idx);
         }

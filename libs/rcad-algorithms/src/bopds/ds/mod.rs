@@ -5,6 +5,9 @@ pub mod iterator;
 pub use iterator::BOPDS_Iterator;
 pub mod topods_builder;
 
+/// Phase 4 transition: empty HashMap for fallback edge_vertex_params.
+static EMPTY_VERTEX_PARAMS: LazyLock<HashMap<usize, f64>> = LazyLock::new(HashMap::new);
+
 #[cfg(test)]
 mod integration_tests;
 
@@ -13,6 +16,7 @@ use super::common_block::CommonBlock;
 use super::face_info::FaceInfo;
 use crate::tolerance::*;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use glam::{DVec2, DVec3};
 use rcad_kernel::topods;
 use rcad_kernel::PCurve;
@@ -27,6 +31,16 @@ impl DS {
             vertices: Vec::new(), edges: Vec::new(), wires: Vec::new(),
             shells: Vec::new(), solids: Vec::new(), comp_solids: Vec::new(),
             faces: Vec::new(),
+            vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(),
+            edge_start_vertex: Vec::new(), edge_end_vertex: Vec::new(), edge_origins: Vec::new(),
+            edge_paves: Vec::new(), edge_pave_blocks: Vec::new(), edge_face_reps: Vec::new(),
+            edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(),
+            face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
+            face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
+            face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
+            face_normals: Vec::new(), face_origins: Vec::new(), face_info_vec: Vec::new(),
+            source_face_idxs: Vec::new(), face_locations: Vec::new(), face_uv_boundary: Vec::new(),
+            source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(),
             interf_vv: Vec::new(), interf_ve: Vec::new(), interf_vf: Vec::new(),
             interf_ee: Vec::new(), interf_ef: Vec::new(), interf_ff: Vec::new(),
             interf_vz: Vec::new(), interf_ez: Vec::new(), interf_fz: Vec::new(),
@@ -47,6 +61,280 @@ impl DS {
             map_ve: std::collections::HashMap::new(),
             shape_info: Vec::new(), nb_source_shapes: 0,
         }
+    }
+
+    // ----- Phase 4: Helper methods accessing parallel arrays or ds.shape(n) -----
+
+    /// Vertex point from TShape (ds.shape(vi) -> TVertexData.point).
+    pub fn vertex_point(&self, vi: usize) -> glam::DVec3 {
+        match self.shape(vi) {
+            topods::TShape::Vertex(d) => d.point,
+            _ => glam::DVec3::ZERO,
+        }
+    }
+
+    /// Vertex tolerance from TShape.
+    pub fn vertex_tolerance(&self, vi: usize) -> f64 {
+        match self.shape(vi) {
+            topods::TShape::Vertex(d) => d.tolerance,
+            _ => 0.0,
+        }
+    }
+
+    /// Vertex origin from parallel array (intersection-only data).
+    pub fn vertex_origin(&self, vi: usize) -> Option<ShapeOrigin> {
+        if vi < self.vertex_origins.len() { self.vertex_origins[vi] }
+        else { self.vertices.get(vi).and_then(|v| v.origin) }
+    }
+
+    /// Vertex is_internal from parallel array.
+    pub fn vertex_is_internal(&self, vi: usize) -> bool {
+        if vi < self.vertex_is_internal.len() { self.vertex_is_internal[vi] }
+        else { self.vertices.get(vi).map_or(false, |v| v.is_internal) }
+    }
+
+    /// Vertex location from parallel array.
+    pub fn vertex_location(&self, vi: usize) -> u32 {
+        if vi < self.vertex_locations.len() { self.vertex_locations[vi] }
+        else { self.vertices.get(vi).map_or(0, |v| v.location) }
+    }
+
+    /// Edge curve from TShape.
+    pub fn edge_curve(&self, ei: usize) -> Option<&rcad_kernel::geom::Curve3> {
+        match self.shape(ei) {
+            topods::TShape::Edge(d) => d.curve.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Edge tolerance from TShape.
+    pub fn edge_tolerance(&self, ei: usize) -> f64 {
+        match self.shape(ei) {
+            topods::TShape::Edge(d) => d.tolerance,
+            _ => 0.0,
+        }
+    }
+
+    /// Edge parametric range from TShape.
+    pub fn edge_range(&self, ei: usize) -> [f64; 2] {
+        match self.shape(ei) {
+            topods::TShape::Edge(d) => d.range,
+            _ => [0.0, 0.0],
+        }
+    }
+
+    /// Edge start vertex DS index from parallel array.
+    pub fn edge_start_vertex_ds(&self, ei: usize) -> usize {
+        if ei < self.edge_start_vertex.len() { self.edge_start_vertex[ei] }
+        else { self.edges.get(ei).map_or(0, |e| e.start_vertex) }
+    }
+
+    /// Edge end vertex DS index from parallel array.
+    pub fn edge_end_vertex_ds(&self, ei: usize) -> usize {
+        if ei < self.edge_end_vertex.len() { self.edge_end_vertex[ei] }
+        else { self.edges.get(ei).map_or(0, |e| e.end_vertex) }
+    }
+
+    /// Edge origin from parallel array.
+    pub fn edge_origin(&self, ei: usize) -> ShapeOrigin {
+        if ei < self.edge_origins.len() { self.edge_origins[ei] }
+        else { self.edges.get(ei).map_or(ShapeOrigin::ShapeA, |e| e.origin) }
+    }
+
+    /// Edge paves from parallel array.
+    pub fn edge_paves(&self, ei: usize) -> &[crate::bopds::pave::Pave] {
+        if ei < self.edge_paves.len() { &self.edge_paves[ei] }
+        else if let Some(e) = self.edges.get(ei) { &e.paves }
+        else { &[] }
+    }
+
+    /// Edge pave_blocks from parallel array.
+    pub fn edge_pave_blocks(&self, ei: usize) -> &[crate::bopds::pave::SharedPB] {
+        if ei < self.edge_pave_blocks.len() { &self.edge_pave_blocks[ei] }
+        else if let Some(e) = self.edges.get(ei) { &e.pave_blocks }
+        else { &[] }
+    }
+
+    /// Mutable edge pave_blocks from parallel array.
+    pub fn edge_pave_blocks_mut(&mut self, ei: usize) -> &mut Vec<crate::bopds::pave::SharedPB> {
+        if ei < self.edge_pave_blocks.len() {
+            &mut self.edge_pave_blocks[ei]
+        } else if ei < self.edges.len() {
+            &mut self.edges[ei].pave_blocks
+        } else {
+            panic!("edge_pave_blocks_mut: index {} out of bounds", ei);
+        }
+    }
+
+    /// Edge face_reps from parallel array.
+    pub fn edge_face_reps(&self, ei: usize) -> &[DSCurveRepOnFace] {
+        if ei < self.edge_face_reps.len() { &self.edge_face_reps[ei] }
+        else if let Some(e) = self.edges.get(ei) { &e.face_reps }
+        else { &[] }
+    }
+
+    /// Edge is_internal from parallel array.
+    pub fn edge_is_internal(&self, ei: usize) -> bool {
+        if ei < self.edge_is_internal.len() { self.edge_is_internal[ei] }
+        else { self.edges.get(ei).map_or(false, |e| e.is_internal) }
+    }
+
+    /// Edge per-face tolerances from parallel array.
+    pub fn edge_face_tols(&self, ei: usize) -> &[(usize, f64)] {
+        if ei < self.edge_face_tols.len() { &self.edge_face_tols[ei] }
+        else if let Some(e) = self.edges.get(ei) { &e.face_tolerances }
+        else { &[] }
+    }
+
+    /// Edge location from parallel array.
+    pub fn edge_location(&self, ei: usize) -> u32 {
+        if ei < self.edge_locations.len() { self.edge_locations[ei] }
+        else { self.edges.get(ei).map_or(0, |e| e.location) }
+    }
+
+    /// Edge vertex_params from TShape.
+    pub fn edge_vertex_params(&self, ei: usize) -> &std::collections::HashMap<usize, f64> {
+        match self.shape(ei) {
+            topods::TShape::Edge(d) => &d.vertex_params,
+            _ => {
+                // Fallback to old DSEdge during Phase 4 transition
+                self.edges.get(ei).map_or(&*EMPTY_VERTEX_PARAMS, |e| &e.vertex_params)
+            }
+        }
+    }
+
+    /// Edge is_geometric from TShape (curve.is_some()).
+    pub fn edge_is_geometric(&self, ei: usize) -> bool {
+        match self.shape(ei) {
+            topods::TShape::Edge(d) => d.curve.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Face surface from TShape.
+    pub fn face_surface(&self, fi: usize) -> Option<&rcad_kernel::geom::Surface3> {
+        match self.shape(fi) {
+            topods::TShape::Face(d) => d.surface.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Face tolerance from TShape.
+    pub fn face_tolerance(&self, fi: usize) -> f64 {
+        match self.shape(fi) {
+            topods::TShape::Face(d) => d.tolerance,
+            _ => 0.0,
+        }
+    }
+
+    /// Face natural_restriction from TShape.
+    pub fn face_natural_restriction(&self, fi: usize) -> bool {
+        match self.shape(fi) {
+            topods::TShape::Face(d) => d.natural_restriction,
+            _ => false,
+        }
+    }
+
+    /// Face origin from parallel array.
+    pub fn face_origin(&self, fi: usize) -> ShapeOrigin {
+        if fi < self.face_origins.len() { self.face_origins[fi] }
+        else { self.faces.get(fi).map_or(ShapeOrigin::ShapeA, |f| f.origin) }
+    }
+
+    /// FaceInfo reference from parallel array.
+    pub fn face_info(&self, fi: usize) -> &FaceInfo {
+        if fi < self.face_info_vec.len() { &self.face_info_vec[fi] }
+        else { &self.faces.get(fi).expect("face_info out of range").face_info }
+    }
+
+    /// Mutable FaceInfo from parallel array.
+    pub fn face_info_mut(&mut self, fi: usize) -> &mut FaceInfo {
+        if fi < self.face_info_vec.len() {
+            &mut self.face_info_vec[fi]
+        } else if fi < self.faces.len() {
+            &mut self.faces[fi].face_info
+        } else {
+            panic!("face_info_mut: index {} out of bounds", fi);
+        }
+    }
+
+    /// Face boundary edges from parallel array.
+    pub fn face_boundary_edges(&self, fi: usize) -> &[usize] {
+        if fi < self.face_boundary_edges.len() { &self.face_boundary_edges[fi] }
+        else if let Some(f) = self.faces.get(fi) { &f.boundary_edges }
+        else { &[] }
+    }
+
+    /// Face boundary verts from parallel array.
+    pub fn face_boundary_verts(&self, fi: usize) -> &[usize] {
+        if fi < self.face_boundary_verts.len() { &self.face_boundary_verts[fi] }
+        else if let Some(f) = self.faces.get(fi) { &f.boundary_verts }
+        else { &[] }
+    }
+
+    /// Face inner boundary edges from parallel array.
+    pub fn face_inner_boundary(&self, fi: usize) -> &[Vec<(usize, bool)>] {
+        if fi < self.face_inner_boundary.len() { &self.face_inner_boundary[fi] }
+        else if let Some(f) = self.faces.get(fi) { &f.inner_boundary_edges }
+        else { &[] }
+    }
+
+    /// Face outer wire index from parallel array.
+    pub fn face_outer_wire_idx(&self, fi: usize) -> Option<usize> {
+        if fi < self.face_outer_wire_idxs.len() { self.face_outer_wire_idxs[fi] }
+        else { self.faces.get(fi).and_then(|f| f.outer_wire_idx) }
+    }
+
+    /// Face inner wire indices from parallel array.
+    pub fn face_inner_wire_idxs(&self, fi: usize) -> &[usize] {
+        if fi < self.face_inner_wire_idxs.len() { &self.face_inner_wire_idxs[fi] }
+        else if let Some(f) = self.faces.get(fi) { &f.inner_wire_idxs }
+        else { &[] }
+    }
+
+    /// Face normal from parallel array.
+    pub fn face_normal(&self, fi: usize) -> glam::DVec3 {
+        if fi < self.face_normals.len() { self.face_normals[fi] }
+        else { self.faces.get(fi).map_or(glam::DVec3::Z, |f| f.normal) }
+    }
+
+    /// Face location from parallel array.
+    pub fn face_location(&self, fi: usize) -> u32 {
+        if fi < self.face_locations.len() { self.face_locations[fi] }
+        else { self.faces.get(fi).map_or(0, |f| f.location) }
+    }
+
+    /// Face uv_boundary from parallel array.
+    pub fn face_uv_boundary(&self, fi: usize) -> Option<&[glam::DVec2]> {
+        if fi < self.face_uv_boundary.len() {
+            self.face_uv_boundary[fi].as_ref().map(|v| v.as_slice())
+        } else {
+            self.faces.get(fi).and_then(|f| f.uv_boundary.as_ref()).map(|v| v.as_slice())
+        }
+    }
+
+    /// Source face index from parallel array.
+    pub fn source_face_idx(&self, fi: usize) -> usize {
+        if fi < self.source_face_idxs.len() { self.source_face_idxs[fi] }
+        else { self.faces.get(fi).map_or(0, |f| f.source_face_idx) }
+    }
+
+    /// Source shell index from parallel array.
+    pub fn source_shell_idx(&self, fi: usize) -> Option<usize> {
+        if fi < self.source_shell_idxs.len() { self.source_shell_idxs[fi] }
+        else { self.faces.get(fi).and_then(|f| f.source_shell_idx) }
+    }
+
+    /// Source solid index from parallel array.
+    pub fn source_solid_idx(&self, fi: usize) -> Option<usize> {
+        if fi < self.source_solid_idxs.len() { self.source_solid_idxs[fi] }
+        else { self.faces.get(fi).and_then(|f| f.source_solid_idx) }
+    }
+
+    /// Source compsolid index from parallel array.
+    pub fn source_compsolid_idx(&self, fi: usize) -> Option<usize> {
+        if fi < self.source_compsolid_idxs.len() { self.source_compsolid_idxs[fi] }
+        else { self.faces.get(fi).and_then(|f| f.source_compsolid_idx) }
     }
 
     /// OCCT-aligned: myDS->Shape(n). Returns &TShape at the given flat index.
@@ -87,14 +375,22 @@ impl DS {
     }
 
     /// OCCT-aligned: push a vertex (myDS->Append) + track in flat array.
+    /// When `tshape` is Some, uses that TShape for ds.shapes instead of creating a synthetic one.
     /// Returns the vertex index.
-    pub fn push_vertex(&mut self, dv: DSVertex) -> usize {
+    pub fn push_vertex(&mut self, dv: DSVertex, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
         let vi = self.vertices.len();
+        let origin = dv.origin;
+        let is_internal = dv.is_internal;
+        let location = dv.location;
         let point = dv.point;
         let geom_tol = dv.geom_tol;
         self.vertices.push(dv);
+        // Phase 4: populate parallel arrays
+        self.vertex_origins.push(origin);
+        self.vertex_is_internal.push(is_internal);
+        self.vertex_locations.push(location);
         use topods::tshape_flags;
-        self.shapes.push(std::sync::Arc::new(topods::TShape::Vertex(
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::Vertex(
             topods::TVertexData {
                 my_shapes: Vec::new(),
                 flags: tshape_flags::DEFAULT,
@@ -102,48 +398,125 @@ impl DS {
                 tolerance: geom_tol,
                 points: Vec::new(),
             },
-        )));
+        ))));
         vi
     }
 
     /// OCCT-aligned: push an edge (myDS->Append) + track in flat array.
+    /// When `tshape` is Some, uses that TShape for ds.shapes instead of creating a synthetic one.
     /// Returns the edge index.
-    pub fn push_edge(&mut self, de: DSEdge) -> usize {
+    pub fn push_edge(&mut self, de: DSEdge, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
         let ei = self.edges.len();
-        let curve = de.curve.clone();
+        let origin = de.origin;
+        let is_internal = de.is_internal;
         let e_tol = de.geom_tol;
-        let t_range = de.t_range;
+        let location = de.location;
         let start_vertex = de.start_vertex;
         let end_vertex = de.end_vertex;
+        let curve = de.curve.clone();
+        let t_range = de.t_range;
         let face_reps = de.face_reps.clone();
         let vertex_params = de.vertex_params.clone();
+        let face_tols = de.face_tolerances.clone();
+        let paves = de.paves.clone();
+        let pave_blocks = de.pave_blocks.clone();
         self.edges.push(de);
-        let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
-            std::collections::HashMap::new();
-        for rep in &face_reps {
-            pcurves.insert(rep.face_idx, (rep.pcurve.clone(), rep.start_param, rep.end_param));
-        }
-        let first = topods::ShapeRef::synthetic(start_vertex);
-        let last = topods::ShapeRef::synthetic(end_vertex);
-        use topods::tshape_flags;
-        self.shapes.push(std::sync::Arc::new(topods::TShape::Edge(
-            topods::TEdgeData {
-                my_shapes: vec![first, last],
-                flags: tshape_flags::DEFAULT,
-                curve: Some(curve),
-                first,
-                last,
-                range: t_range,
-                degenerated: start_vertex == end_vertex,
-                pcurves,
-                representations: Vec::new(),
-                vertex_params,
-                tolerance: e_tol,
-                same_parameter: true,
-                same_range: true,
-            },
-        )));
+        // Phase 4: populate parallel arrays
+        self.edge_start_vertex.push(start_vertex);
+        self.edge_end_vertex.push(end_vertex);
+        self.edge_origins.push(origin);
+        self.edge_paves.push(paves);
+        self.edge_pave_blocks.push(pave_blocks);
+        self.edge_face_reps.push(face_reps);
+        self.edge_is_internal.push(is_internal);
+        self.edge_face_tols.push(face_tols);
+        self.edge_locations.push(location);
+        self.shapes.push(tshape.unwrap_or_else(|| {
+            let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
+                std::collections::HashMap::new();
+            for rep in &self.edge_face_reps[ei] {
+                pcurves.insert(rep.face_idx, (rep.pcurve.clone(), rep.start_param, rep.end_param));
+            }
+            let first = topods::ShapeRef::synthetic(start_vertex);
+            let last = topods::ShapeRef::synthetic(end_vertex);
+            use topods::tshape_flags;
+            std::sync::Arc::new(topods::TShape::Edge(
+                topods::TEdgeData {
+                    my_shapes: vec![first, last],
+                    flags: tshape_flags::DEFAULT,
+                    curve: Some(curve),
+                    first,
+                    last,
+                    range: t_range,
+                    degenerated: start_vertex == end_vertex,
+                    pcurves,
+                    representations: Vec::new(),
+                    vertex_params,
+                    tolerance: e_tol,
+                    same_parameter: true,
+                    same_range: true,
+                },
+            ))
+        }));
         ei
+    }
+
+    /// Phase 4: push a face, populating both old DSFace and parallel arrays.
+    /// When `tshape` is Some, uses that TShape for ds.shapes instead of creating a minimal one.
+    /// Returns the face index.
+    pub fn push_face(&mut self, df: DSFace, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
+        let fi = self.faces.len();
+        let surface = df.surface.clone();
+        let natural_restriction = df.natural_restriction;
+        let geom_tol = df.geom_tol;
+        let location = df.location;
+        let boundary_verts = df.boundary_verts.clone();
+        let boundary_edges = df.boundary_edges.clone();
+        let boundary_forwards = df.boundary_edge_forwards.clone();
+        let inner_boundary = df.inner_boundary_edges.clone();
+        let outer_wire_idx = df.outer_wire_idx;
+        let inner_wire_idxs = df.inner_wire_idxs.clone();
+        let normal = df.normal;
+        let origin = df.origin;
+        let source_face_idx = df.source_face_idx;
+        let uv_boundary = df.uv_boundary.clone();
+        let source_shell_idx = df.source_shell_idx;
+        let source_solid_idx = df.source_solid_idx;
+        let source_compsolid_idx = df.source_compsolid_idx;
+        let face_info = df.face_info.clone();
+        self.faces.push(df);
+        // Phase 4: populate parallel arrays
+        self.face_boundary_verts.push(boundary_verts);
+        self.face_boundary_edges.push(boundary_edges);
+        self.face_boundary_forwards.push(boundary_forwards);
+        self.face_inner_boundary.push(inner_boundary);
+        self.face_outer_wire_idxs.push(outer_wire_idx);
+        self.face_inner_wire_idxs.push(inner_wire_idxs);
+        self.face_normals.push(normal);
+        self.face_origins.push(origin);
+        self.face_info_vec.push(face_info);
+        self.source_face_idxs.push(source_face_idx);
+        self.face_locations.push(location);
+        self.face_uv_boundary.push(uv_boundary);
+        self.source_shell_idxs.push(source_shell_idx);
+        self.source_solid_idxs.push(source_solid_idx);
+        self.source_compsolid_idxs.push(source_compsolid_idx);
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::Face(
+            topods::TFaceData {
+                my_shapes: Vec::new(),
+                flags: topods::tshape_flags::DEFAULT,
+                surface: Some(surface),
+                surface_location: location,
+                outer_wire: topods::ShapeRef::NULL,
+                inner_wires: Vec::new(),
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: Vec::new(),
+                tolerance: geom_tol,
+                natural_restriction,
+            },
+        ))));
+        fi
     }
 
     ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.

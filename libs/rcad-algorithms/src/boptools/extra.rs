@@ -107,21 +107,21 @@ pub fn attach_existing_pcurve(
  }
 
  // OCCT L88-94: SameRange  ?adjust pcurve range to match new edge's 3D curve range
- let t11 = ds.edges[ei_new].t_range[0];
- let t12 = ds.edges[ei_new].t_range[1];
+ let t11 = ds.edge_range(ei_new)[0];
+ let t12 = ds.edge_range(ei_new)[1];
  let a_c2d_t = same_range_2d(&a_c2d, t21, t22, t11, t12);
  if a_c2d_t.is_none() { return 2; }
  let a_c2d_t = a_c2d_t.unwrap();
 
  // OCCT L102-119: ComputeTolerance check via IntTools_Tools::ComputeTolerance(3D curve, pcurve, surface, range)
- let a_new_tol = ds.edges[ei_new].geom_tol;
+ let a_new_tol = ds.edge_tolerance(ei_new);
  let surface = &ds.faces[face_idx].surface;
  let tol_sp = estimate_pcurve_deviation(&a_c2d_t, &ds.edges[ei_new].curve, surface, t11, t12);
  if (tol_sp > 10.0 * a_new_tol) && tol_sp > 0.1 { return 4; }
 
  // OCCT L121-138: create temporary edge data, do SameParameter
  // rcad: just copy the pcurve to the new edge with adjusted tolerance
- ds.edges[ei_new].geom_tol = ds.edges[ei_new].geom_tol.max(a_new_tol);
+ ds.edges[ei_new].geom_tol = ds.edge_tolerance(ei_new).max(a_new_tol);
 
  // OCCT L140-149: handle closed edge (seam)
  let b_is_closed = is_closed_2d(ei_old, face_idx, ds);
@@ -149,14 +149,14 @@ pub fn attach_existing_pcurve(
  }
 
  // OCCT L152-158: update vertex tolerances from new edge
- let a_new_tol_final = ds.edges[ei_new].geom_tol;
- let sv = ds.edges[ei_new].start_vertex;
- let ev = ds.edges[ei_new].end_vertex;
+ let a_new_tol_final = ds.edge_tolerance(ei_new);
+ let sv = ds.edge_start_vertex_ds(ei_new);
+ let ev = ds.edge_end_vertex_ds(ei_new);
  if sv < ds.vertices.len() {
- ds.vertices[sv].geom_tol = ds.vertices[sv].geom_tol.max(a_new_tol_final);
+ ds.vertices[sv].geom_tol = ds.vertex_tolerance(sv).max(a_new_tol_final);
  }
  if ev < ds.vertices.len() {
- ds.vertices[ev].geom_tol = ds.vertices[ev].geom_tol.max(a_new_tol_final);
+ ds.vertices[ev].geom_tol = ds.vertex_tolerance(ev).max(a_new_tol_final);
  }
  0
 }
@@ -170,7 +170,7 @@ pub fn update_closed_pcurve(
  ei_old: usize,
  face_idx: usize,
 ) -> i32 {
- let _a_tol = ds.edges[ei_new].geom_tol;
+ let _a_tol = ds.edge_tolerance(ei_new);
  // OCCT L188: get pcurve of new edge on face
  let rep_new = {
  let edge = &ds.edges[ei_new];
@@ -423,10 +423,10 @@ pub fn correct_point_on_curve(
  // CPC::Perform calls CheckEdge(myEdge, myMaxTol, *mypMapToAvoid)
  for ei in 0..ds.edges.len() {
  // OCCT L434-436: aE.Orientation(FORWARD); aTolE = BRep_Tool::Tolerance(aE)
- let a_tol_e = ds.edges[ei].geom_tol;
- let start_vi = ds.edges[ei].start_vertex;
- let end_vi = ds.edges[ei].end_vertex;
- let t_range = ds.edges[ei].t_range;
+ let a_tol_e = ds.edge_tolerance(ei);
+ let start_vi = ds.edge_start_vertex_ds(ei);
+ let end_vi = ds.edge_end_vertex_ds(ei);
+ let t_range = ds.edge_range(ei);
  let vp_sv = ds.edges[ei].vertex_params.get(&start_vi).copied();
  let vp_ev = ds.edges[ei].vertex_params.get(&end_vi).copied();
  let curve = ds.edges[ei].curve.clone();
@@ -441,8 +441,8 @@ pub fn correct_point_on_curve(
  if map_to_avoid.contains(&vi) { continue; }
 
  // OCCT L447-453: TV->Pnt(); aTol = BRep_Tool::Tolerance(aV); aTol = max(aTol, aTolE)
- let v_pt = ds.vertices[vi].point;
- let a_tol_v = ds.vertices[vi].geom_tol;
+ let v_pt = ds.vertex_point(vi);
+ let a_tol_v = ds.vertex_tolerance(vi);
  let mut a_tol = a_tol_v.max(a_tol_e);
  let dd = 0.1 * a_tol; // OCCT L452
  a_tol *= a_tol; // OCCT L453: square it
@@ -457,7 +457,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
+ ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  }
@@ -470,7 +470,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
+ ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  } else {
@@ -480,7 +480,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
+ ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  }
@@ -499,7 +499,7 @@ pub fn correct_curve_on_surface(
  for fi in 0..ds.faces.len() {
  let face_surface = ds.faces[fi].surface.clone();
  // OCCT L367-368: aExpE.Init(aF, TopAbs_EDGE)
- let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
+ let face_edges: Vec<usize> = ds.face_boundary_edges(fi).to_vec();
  for &ei in &face_edges {
  if ei >= ds.edges.len() { continue; }
  if map_to_avoid.contains(&ei) { continue; }
@@ -606,7 +606,7 @@ pub fn point_on_surface(
  let _edge = ds.edges.get(ei)?;
  let _face = ds.faces.get(face_idx)?;
  // Get pcurve from edge's face_reps
- let rep = ds.edges[ei].face_reps.iter().find(|r| r.face_idx == face_idx)?;
+ let rep = ds.edge_face_reps(ei).iter().find(|r| r.face_idx == face_idx)?;
  let pt = rep.pcurve.point_at(t);
  Some(glam::DVec2::new(pt.x, pt.y))
 }
@@ -728,7 +728,7 @@ pub fn is_internal_face_against_solid(
  crate::boptools::get_edge_off(ei, &ds.edges, &ds.faces[a_f1])
  } else { None };
  if let Some(ei_f1) = e_on_f1 {
- if ds.edges[ei_f1].is_internal {
+ if ds.edge_is_internal(ei_f1) {
  // Edge is INTERNAL in neighbor face  ?face is internal
  i_ret = is_internal_face_core(fi, ei, a_f1, a_f1, ds);
  found_edge = Some(ei);
@@ -881,9 +881,9 @@ pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop
 
  // OCCT L293-294: get vertices
  let (a_v1, a_v2) = if a_ec_fwd {
- (ds.edges[a_ec].start_vertex, ds.edges[a_ec].end_vertex)
+ (ds.edge_start_vertex_ds(a_ec), ds.edge_end_vertex_ds(a_ec))
  } else {
- (ds.edges[a_ec].end_vertex, ds.edges[a_ec].start_vertex)
+ (ds.edge_end_vertex_ds(a_ec), ds.edge_start_vertex_ds(a_ec))
  };
 
  // OCCT L296-300: if closed edge, skip adjacency walk
@@ -943,7 +943,7 @@ pub fn point_in_face(
  let mut sum = glam::DVec3::ZERO;
  for &vi in &face.boundary_verts {
  if vi < ds.vertices.len() {
- sum += ds.vertices[vi].point;
+ sum += ds.vertex_point(vi);
  }
  }
  let p3d = sum / face.boundary_verts.len() as f64;
@@ -972,7 +972,7 @@ pub fn compute_state_face_against_solid(
  let solid_edge_set: std::collections::HashSet<usize> = solid_face_indices.iter()
  .flat_map(|&sfi| {
  if sfi < ds.faces.len() {
- ds.faces[sfi].boundary_edges.clone()
+ ds.face_boundary_edges(sfi).to_vec()
  } else { Vec::new() }
  })
  .collect();

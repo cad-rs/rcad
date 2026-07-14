@@ -27,7 +27,7 @@ impl<'a> super::PaveFiller<'a> {
  // Cross-origin filter + dedup.
  let mut processed_pairs = std::collections::HashSet::new();
  for &(fa, fb) in &candidates {
- if self.ds.faces[fa].origin == self.ds.faces[fb].origin { continue; }
+ if self.ds.faces[fa].origin == self.ds.face_origin(fb) { continue; }
  if !processed_pairs.insert((fa, fb)) { continue; }
  if self.ds.has_interf_ff(fa, fb) { continue; }
  if !self.should_skip_glued_face_pair(fa, fb) {
@@ -374,7 +374,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  if !self.context.is_point_in_on_face(self.ds, f_a, uv_a) { continue; }
  if !self.context.is_point_in_on_face(self.ds, f_b, uv_b) { continue; }
  let vi = self.ds.add_vertex(pt.p1);
- self.ds.vertices[vi].geom_tol = self.ds.vertices[vi].geom_tol.max(pt.tolerance);
+ self.ds.vertices[vi].geom_tol = self.ds.vertex_tolerance(vi).max(pt.tolerance);
  ff_point_indices.push(vi);
  }
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
@@ -448,9 +448,9 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
   let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
   let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
   let v_start = self.ds.vertices.len();
-  self.ds.push_vertex(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  self.ds.push_vertex(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 }, None);
   let v_end = self.ds.vertices.len();
-  self.ds.push_vertex(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  self.ds.push_vertex(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 }, None);
   self.ds.intersection_curves[ci].start_vertex = v_start;
   self.ds.intersection_curves[ci].end_vertex = v_end;
  }
@@ -458,18 +458,20 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // OCCT-aligned: PreparePostTreatFF (PaveFiller_6.cxx L3642-3668).
  let post_ff_curves = self.find_face_face_curve_indices(f1, f2)
  .unwrap_or_default();
- self.ds.faces[f1].face_info.curves_sc.extend(&post_ff_curves);
- self.ds.faces[f2].face_info.curves_sc.extend(&post_ff_curves);
+ self.ds.face_info_mut(f1).curves_sc.extend(&post_ff_curves);
+ self.ds.face_info_mut(f2).curves_sc.extend(&post_ff_curves);
  for &ci in &post_ff_curves {
  if ci < self.ds.intersection_curves.len() {
    let ic = &self.ds.intersection_curves[ci];
-   if ic.start_vertex < self.ds.vertices.len() {
-   self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
-   self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
+   let sv = ic.start_vertex;
+   let ev = ic.end_vertex;
+   if sv < self.ds.vertices.len() {
+   self.ds.face_info_mut(f1).vertices_in.insert(sv);
+   self.ds.face_info_mut(f2).vertices_in.insert(sv);
    }
-   if ic.end_vertex < self.ds.vertices.len() {
-   self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
-   self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
+   if ev < self.ds.vertices.len() {
+   self.ds.face_info_mut(f1).vertices_in.insert(ev);
+   self.ds.face_info_mut(f2).vertices_in.insert(ev);
    }
  }
  }
@@ -514,7 +516,7 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  let pcurve2 = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line3, pln2);
  let uv1 = self.context.uv_bounds(self.ds, f1);
  let uv2 = self.context.uv_bounds(self.ds, f2);
- let tol = self.ds.faces[f1].geom_tol.max(self.ds.faces[f2].geom_tol);
+ let tol = self.ds.face_tolerance(f1).max(self.ds.face_tolerance(f2));
  let p1 = crate::inttools::classify_lin2d::classify_lin2d(&pcurve1, uv1, tol);
  let p2 = crate::inttools::classify_lin2d::classify_lin2d(&pcurve2, uv2, tol);
  let (Some([p11, p12]), Some([p21, p22])) = (p1, p2) else { return };
@@ -537,8 +539,8 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
  f1, f2, curves: vec![ci], points: Vec::new(), tangent_faces: false,
  });
- self.ds.faces[f1].face_info.curves_sc.insert(ci);
- self.ds.faces[f2].face_info.curves_sc.insert(ci);
+ self.ds.face_info_mut(f1).curves_sc.insert(ci);
+ self.ds.face_info_mut(f2).curves_sc.insert(ci);
 }
 
 
@@ -695,9 +697,9 @@ fn make_analytic_nonperiodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 }, None);
      let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 }, None);
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };
@@ -821,9 +823,9 @@ fn make_analytic_periodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 }, None);
      let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 }, None);
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };

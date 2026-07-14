@@ -88,7 +88,7 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             if sv == ev { continue; }
 
             let rep = self.ds.edge_on_face(ei, self.face_idx);
-            let is_closed = self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex;
+            let is_closed = self.ds.edges[ei].start_vertex == self.ds.edge_end_vertex_ds(ei);
 
             segments.push(WireSegment {
                 start_vertex: sv,

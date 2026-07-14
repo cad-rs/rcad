@@ -396,7 +396,7 @@ impl ClassifyContext {
         for &fi in face_indices {
             let Some(face) = self.ds.faces.get(fi) else { continue; };
             for &vi in &face.boundary_verts {
-                aabb.expand_point(self.ds.vertices[vi].point);
+                aabb.expand_point(self.ds.vertex_point(vi));
             }
         }
         aabb
@@ -409,7 +409,7 @@ impl ClassifyContext {
                 let face = self.ds.faces.get(fi)?;
                 let mut aabb = Aabb::empty();
                 for &vi in &face.boundary_verts {
-                    aabb.expand_point(self.ds.vertices[vi].point);
+                    aabb.expand_point(self.ds.vertex_point(vi));
                 }
                 Some(aabb)
             })
@@ -803,8 +803,8 @@ fn classify_point_internal(
                     if faces.len() >= 2 {
                         let f1 = faces[0];
                         let f2 = faces[1];
-                        let n1 = ds.faces[f1].normal;
-                        let n2 = ds.faces[f2].normal;
+                        let n1 = ds.face_normal(f1);
+                        let n2 = ds.face_normal(f2);
                         let ang_tol = 1e-12;
                         // OCCT L677-683: check line orthogonal to normals
                         if rd.dir.dot(n1).abs() < ang_tol || rd.dir.dot(n2).abs() < ang_tol {
@@ -1135,7 +1135,7 @@ pub fn classify_solid_in_solid(
     for &fi in solid_b_faces {
         let face = &ds.faces[fi];
         for &vi in &face.boundary_verts {
-            let point = ds.vertices[vi].point;
+            let point = ds.vertex_point(vi);
             let class = classify_point(point, solid_a_faces, ds);
             match class {
                 Classification::In => {}
@@ -1163,7 +1163,7 @@ pub fn classify_solid_in_solid(
     for &fi in solid_a_faces {
         let face = &ds.faces[fi];
         for &vi in &face.boundary_verts {
-            let point = ds.vertices[vi].point;
+            let point = ds.vertex_point(vi);
             let class = classify_point(point, solid_b_faces, ds);
             match class {
                 Classification::In => {
@@ -1224,7 +1224,7 @@ fn compute_faces_aabb(face_indices: &[usize], ds: &DS) -> Aabb {
     for &fi in face_indices {
         let face = &ds.faces[fi];
         for &vi in &face.boundary_verts {
-            aabb.expand_point(ds.vertices[vi].point);
+            aabb.expand_point(ds.vertex_point(vi));
         }
     }
     aabb
@@ -1242,7 +1242,7 @@ fn check_face_intersections(
         let face_a = &ds.faces[fi_a];
         let mut aabb_a = Aabb::empty();
         for &vi in &face_a.boundary_verts {
-            aabb_a.expand_point(ds.vertices[vi].point);
+            aabb_a.expand_point(ds.vertex_point(vi));
         }
 
         for &fi_b in faces_b {
@@ -1253,13 +1253,13 @@ fn check_face_intersections(
             let face_b = &ds.faces[fi_b];
             let mut aabb_b = Aabb::empty();
             for &vi in &face_b.boundary_verts {
-                aabb_b.expand_point(ds.vertices[vi].point);
+                aabb_b.expand_point(ds.vertex_point(vi));
             }
 
             if aabb_a.intersects(&aabb_b) {
                 // Check if any vertex of B is inside A's face
                 for &vi in &face_b.boundary_verts {
-                    let point = ds.vertices[vi].point;
+                    let point = ds.vertex_point(vi);
                     let class = classify_point_on_face(point, fi_a, ds, tolerance);
                     if matches!(class, FaceClassification::Inside | FaceClassification::OnSurface) {
                         return true;

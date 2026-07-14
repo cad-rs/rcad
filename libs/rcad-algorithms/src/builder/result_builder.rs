@@ -104,7 +104,7 @@ impl ResultBuilder {
  let seg = &segments[si];
  // --OCCT-aligned: canonical vertices use stored positions
  let get_pos = |vi: usize| -> DVec3 {
- vertex_positions.get(&vi).copied().unwrap_or(ds.vertices[vi].point)
+ vertex_positions.get(&vi).copied().unwrap_or(ds.vertex_point(vi))
  };
  let v1 = if seg.start_vertex < ds.vertices.len() {
  self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
@@ -159,7 +159,7 @@ impl ResultBuilder {
  let mut iw_edges = Vec::new();
  for &si in iw {
  let seg = &segments[si];
- let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
+ let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertex_point(vi) } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
  let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
  let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
  if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
@@ -187,7 +187,7 @@ impl ResultBuilder {
  let mut iw_edges = Vec::new();
  for &si in iw {
  let seg = &segments[si];
- let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
+ let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertex_point(vi) } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
  let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
  let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
  let ei = match &seg.source {
@@ -313,10 +313,10 @@ impl ResultBuilder {
  internal_wire_edges,
  ));
  self.face_origins.push(origin);
- self.face_natural_restriction.push(ds.faces[face_idx].natural_restriction);
+ self.face_natural_restriction.push(ds.face_natural_restriction(face_idx));
  {
  let mut widxs = Vec::new();
- if let Some(owi) = ds.faces[face_idx].outer_wire_idx { widxs.push(owi); }
+ if let Some(owi) = ds.face_outer_wire_idx(face_idx) { widxs.push(owi); }
  widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
  self.face_all_wire_idxs.push(widxs);
  }
@@ -371,7 +371,7 @@ impl ResultBuilder {
  // by from_topods_with_location / load_brep).  The BRepTool fallback is only
  // used when vi is NOT a DS vertex index.
  if vi < ds.vertices.len() {
- ds.vertices[vi].point
+ ds.vertex_point(vi)
  } else {
  vertex_positions.get(&vi).copied()
  .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::synthetic(vi)))
@@ -636,7 +636,7 @@ impl ResultBuilder {
  self.face_natural_restriction.push(natural_restriction);
  {
  let mut widxs = Vec::new();
- if let Some(owi) = ds.faces[face_idx].outer_wire_idx { widxs.push(owi); }
+ if let Some(owi) = ds.face_outer_wire_idx(face_idx) { widxs.push(owi); }
  widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
  self.face_all_wire_idxs.push(widxs);
  }
@@ -776,8 +776,8 @@ impl ResultBuilder {
   Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
   _ => (e.start_vertex, e.end_vertex),
   };
-  let sv_sr = t.add_tvertex(ds.vertices[sv].point).with_location(e.location);
-  let ev_sr = t.add_tvertex(ds.vertices[ev].point).with_location(e.location);
+  let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(e.location);
+  let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(e.location);
   let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range).with_location(e.location);
   outer_edges.push(e_sr);
   prev_end = Some(ev);
@@ -797,8 +797,8 @@ impl ResultBuilder {
   } else {
   (e.end_vertex, e.start_vertex)
   };
-  let sv_sr = t.add_tvertex(ds.vertices[sv].point).with_location(e.location);
-  let ev_sr = t.add_tvertex(ds.vertices[ev].point).with_location(e.location);
+  let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(e.location);
+  let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(e.location);
   let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range).with_location(e.location);
   wire_edges.push(e_sr);
   }
@@ -809,17 +809,17 @@ impl ResultBuilder {
 
   let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
   let face_sr = t.add_tface(Some(face.surface.clone()), outer_wire, inner_wires,
-  Some(sample_pt), None, vec![], ds.faces[fi].natural_restriction).with_location(face.location);
+  Some(sample_pt), None, vec![], ds.face_natural_restriction(fi)).with_location(face.location);
  face_refs.push(face_sr);
  self.face_origins.push(origin);
 
  // Legacy flat-index path (kept for downstream consumers).
  // TODO: remove when downstream is migrated.
  {
- self.face_natural_restriction.push(ds.faces[fi].natural_restriction);
+ self.face_natural_restriction.push(ds.face_natural_restriction(fi));
  {
  let mut widxs = Vec::new();
- if let Some(owi) = ds.faces[fi].outer_wire_idx { widxs.push(owi); }
+ if let Some(owi) = ds.face_outer_wire_idx(fi) { widxs.push(owi); }
  widxs.extend(&ds.faces[fi].inner_wire_idxs);
  self.face_all_wire_idxs.push(widxs);
  }

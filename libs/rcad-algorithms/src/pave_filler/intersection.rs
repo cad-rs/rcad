@@ -36,7 +36,7 @@ fn compute_ef_hits(
 ) -> Vec<EfHit> {
   let edge_curve = &ds.edges[edge_idx].curve;
   let face_surface = &ds.faces[face_idx].surface;
-  let etf = ds.edges[edge_idx].geom_tol.max(ds.faces[face_idx].geom_tol).max(CONFUSION);
+  let etf = ds.edge_tolerance(edge_idx).max(ds.face_tolerance(face_idx)).max(CONFUSION);
   // Phase 1: try point-based (VERTEX-type) intersection
   let mut hits: Vec<EfHit> = match (edge_curve, face_surface) {
     (Curve3::Line(line), Surface3::Plane(plane)) =>
@@ -52,8 +52,8 @@ fn compute_ef_hits(
       crate::inttools::curve_surface::intersect_line_cone_with_tol(line, *ef_range, cone, etf)
       .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
     (Curve3::Circle(circle), Surface3::Plane(plane)) => {
-      let sv = ds.edges[edge_idx].start_vertex;
-      let ref_dir = (ds.vertices[sv].point - circle.center).normalize();
+      let sv = ds.edge_start_vertex_ds(edge_idx);
+      let ref_dir = (ds.vertex_point(sv) - circle.center).normalize();
       crate::inttools::curve_surface::intersect_circle_plane_with_ref(
         circle, *ef_range, plane, etf, Some(ref_dir),
       ).into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect()
@@ -148,7 +148,7 @@ struct VfTask {
 
 /// OCCT BOPAlgo_VertexFace: compute vertex projection on face.
 fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize) -> VfTask {
-  let point = ds.vertices[nV].point;
+  let point = ds.vertex_point(nV);
   let face = &ds.faces[nF];
   let mut r = VfTask { nV, nF, is_on: false, is_on_boundary: false, proj_u: 0.0, proj_v: 0.0, proj_dist: f64::MAX };
   match &face.surface {
@@ -167,7 +167,7 @@ fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize
     }
     surface => {
       let proj = rcad_kernel::projection::closest_point_on_surface(surface, point, 16);
-      let a_tol_v = ds.vertices[nV].geom_tol;
+      let a_tol_v = ds.vertex_tolerance(nV);
       let a_tol_f = face.geom_tol;
       let a_tol_sum = a_tol_v + a_tol_f + fuzzy_tol.max(vf_tol);
       if proj.distance <= a_tol_sum {
@@ -213,8 +213,8 @@ impl<'a> super::PaveFiller<'a> {
  a.max += DVec3::splat(tol);
  a
  } else {
- let pt = self.ds.vertices[ds_i].point;
- let tol = self.ds.vertices[ds_i].geom_tol.max(CONFUSION);
+ let pt = self.ds.vertex_point(ds_i);
+ let tol = self.ds.vertex_tolerance(ds_i).max(CONFUSION);
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
@@ -242,8 +242,8 @@ impl<'a> super::PaveFiller<'a> {
  a.max += DVec3::splat(tol);
  a
  } else {
- let pt = self.ds.vertices[ds_i].point;
- let tol = self.ds.vertices[ds_i].geom_tol.max(CONFUSION);
+ let pt = self.ds.vertex_point(ds_i);
+ let tol = self.ds.vertex_tolerance(ds_i).max(CONFUSION);
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
@@ -294,7 +294,7 @@ impl<'a> super::PaveFiller<'a> {
  std::collections::HashMap::new();
  let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
  for (&ei, verts) in &edge_verts {
- let a_mv_pb: std::collections::HashSet<usize> = self.ds.edges[ei].paves.iter()
+ let a_mv_pb: std::collections::HashSet<usize> = self.ds.edge_paves(ei).iter()
  .map(|p| p.vertex_idx)
  .collect();
 
@@ -306,7 +306,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  for (&(n_vsd, ei), original_verts) in &a_dmv_sd {
- let point = self.ds.vertices[n_vsd].point;
+ let point = self.ds.vertex_point(n_vsd);
  let edge = &self.ds.edges[ei];
  let te = self.ve_tol(n_vsd, ei);
 
@@ -317,21 +317,21 @@ impl<'a> super::PaveFiller<'a> {
  _ => continue,
  };
  let dist_3d = edge.curve.point_at(t).distance(point);
- if dist_3d > self.ds.vertices[n_vsd].geom_tol {
+ if dist_3d > self.ds.vertex_tolerance(n_vsd) {
  self.ds.vertices[n_vsd].geom_tol = dist_3d;
  self.ds.increased_ss.insert(n_vsd);
  }
  // OCCT adds pave via aPave.SetIndex(nVx) using the UpdateVertex result.
  // rcad: push Pave directly to edge's pave list.
- let edge_had_paves = !self.ds.edges[ei].paves.is_empty();
+ let edge_had_paves = !self.ds.edge_paves(ei).is_empty();
  for &vi in original_verts {
- let has_vertex_at_t = self.ds.edges[ei].paves.iter()
+ let has_vertex_at_t = self.ds.edge_paves(ei).iter()
  .any(|p| (p.param - t).abs() < TOLERANCE_ABS && p.vertex_idx == vi);
  if !has_vertex_at_t {
  self.ds.edges[ei].paves.push(Pave { vertex_idx: vi, param: t });
  }
  }
- if !edge_had_paves || self.ds.edges[ei].paves.len() > 1 {
+ if !edge_had_paves || self.ds.edge_paves(ei).len() > 1 {
  a_m_edges.insert(ei);
  }
  for &vi in original_verts {
@@ -374,8 +374,8 @@ impl<'a> super::PaveFiller<'a> {
  && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
  })
  .flat_map(|&(ae, be)| {
- let ra = Self::get_pb_boxes(ds, ae, ds.edges[ae].t_range);
- let rb = Self::get_pb_boxes(ds, be, ds.edges[be].t_range);
+ let ra = Self::get_pb_boxes(ds, ae, ds.edge_range(ae));
+ let rb = Self::get_pb_boxes(ds, be, ds.edge_range(be));
  let mut v = Vec::new();
  for &r1 in &ra { for &r2 in &rb { v.push((ae, be, r1, r2)); } }
  v
@@ -397,7 +397,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
  params.sort_by(|a, b| a.partial_cmp(b).unwrap());
  params.dedup();
- let tol = ds.edges[edge_idx].geom_tol.max(crate::tolerance::TOLERANCE_ABS);
+ let tol = ds.edge_tolerance(edge_idx).max(crate::tolerance::TOLERANCE_ABS);
  let mut ranges = Vec::new();
  let mut prev = edge_t_range[0];
  for &p in &params {
@@ -479,7 +479,7 @@ impl<'a> super::PaveFiller<'a> {
  });
  }
  // OCCT L285-292: UpdateVertex (simplified)
- if a_tol_vnew.is_finite() && a_tol_vnew > self.ds.vertices[nV_orig].geom_tol {
+ if a_tol_vnew.is_finite() && a_tol_vnew > self.ds.vertex_tolerance(nV_orig) {
  self.ds.vertices[nV_orig].geom_tol = a_tol_vnew;
  self.ds.increased_ss.insert(nV_orig);
  }
@@ -488,7 +488,7 @@ impl<'a> super::PaveFiller<'a> {
  if task.is_on_boundary {
  self.ds.faces[nF].face_info.vertices_on.insert(nVx);
  } else {
- self.ds.faces[nF].face_info.vertices_in.insert(nVx);
+ self.ds.face_info_mut(nF).vertices_in.insert(nVx);
  }
  }
  // OCCT L300: TreatVerticesEE() 鈥?not yet ported
@@ -524,7 +524,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut mx = DVec3::splat(f64::NEG_INFINITY);
  for &vi in &f.boundary_verts {
  if vi < self.ds.vertices.len() {
- let p = self.ds.vertices[vi].point; mn = mn.min(p); mx = mx.max(p);
+ let p = self.ds.vertex_point(vi); mn = mn.min(p); mx = mx.max(p);
  }
  }
  if let Surface3::Sphere(s) = &f.surface {
@@ -535,14 +535,14 @@ impl<'a> super::PaveFiller<'a> {
  face_min = mn - DVec3::splat(tol); face_max = mx + DVec3::splat(tol);
  }
  // OCCT L237-241: FaceInfo
- let face_pbon: Vec<usize> = self.ds.faces[nF].face_info.pave_blocks_on.iter().copied().collect();
- let face_vin: Vec<usize> = self.ds.faces[nF].face_info.vertices_in.iter().copied().collect();
+ let face_pbon: Vec<usize> = self.ds.face_info(nF).pave_blocks_on.iter().copied().collect();
+ let face_vin: Vec<usize> = self.ds.face_info(nF).vertices_in.iter().copied().collect();
  let face_von: Vec<usize> = self.ds.faces[nF].face_info.vertices_on.iter().copied().collect();
  // OCCT L246-248: iterate edge PBs
- let n_pbs = self.ds.edges[nE].pave_blocks.len();
+ let n_pbs = self.ds.edge_pave_blocks(nE).len();
  for pb_idx in 0..n_pbs {
  // OCCT L256-259: aPBR = RealPaveBlock; if aMPBF.Contains(aPBR) continue;
- let pb = &self.ds.edges[nE].pave_blocks[pb_idx];
+ let pb = &self.ds.edge_pave_blocks(nE)[pb_idx];
  let pb_ref = pb.0.read().unwrap();
  if face_pbon.contains(&pb_ref.original_edge) { continue; }
  // OCCT L262-266: GetPBBox
@@ -554,7 +554,7 @@ impl<'a> super::PaveFiller<'a> {
  None => {
  let p1 = self.ds.edges[nE].curve.point_at(sr[0]);
  let p2 = self.ds.edges[nE].curve.point_at(sr[1]);
- let tol = self.ds.edges[nE].geom_tol.max(CONFUSION);
+ let tol = self.ds.edge_tolerance(nE).max(CONFUSION);
  (p1.min(p2) - DVec3::splat(tol), p1.max(p2) + DVec3::splat(tol))
  }
  };
@@ -621,7 +621,7 @@ impl<'a> super::PaveFiller<'a> {
  let r2 = [task.aTS2.min(task.aT2), task.aTS2.max(task.aT2)];
  // OCCT L384-386: FaceInfo On/In
  let face_vin: std::collections::HashSet<usize> =
- self.ds.faces[nF].face_info.vertices_in.iter().copied().collect();
+ self.ds.face_info(nF).vertices_in.iter().copied().collect();
  let face_von: std::collections::HashSet<usize> =
  self.ds.faces[nF].face_info.vertices_on.iter().copied().collect();
  // OCCT L388-394: bLinePlane
@@ -643,12 +643,12 @@ impl<'a> super::PaveFiller<'a> {
  let nV1 = task.nV1;
  let nV2 = task.nV2;
  // OCCT L692-695: check if either vertex is a new shape
- let is_v1_new = nV1 < self.ds.vertices.len() && self.ds.vertices[nV1].origin.is_none();
- let is_v2_new = nV2 < self.ds.vertices.len() && self.ds.vertices[nV2].origin.is_none();
+ let is_v1_new = nV1 < self.ds.vertices.len() && self.ds.vertex_origin(nV1).is_none();
+ let is_v2_new = nV2 < self.ds.vertices.len() && self.ds.vertex_origin(nV2).is_none();
  if (is_v1_new || is_v2_new) && !self.ds.interf_ee.is_empty() {
  // OCCT L712-723: collect face's boundary edges
  let face_edges: std::collections::HashSet<usize> =
- self.ds.faces[nF].boundary_edges.iter().copied().collect();
+ self.ds.face_boundary_edges(nF).iter().copied().collect();
  // OCCT L725-767: iterate EE interferences
  for inf in &self.ds.interf_ee {
  // OCCT L728-731: check if EE has a new vertex
@@ -685,7 +685,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L421-439: if near both 鈫?EDGE type
  if (b_is_on_pave0 && b_is_on_pave1) || (b_line_plane && (b_is_on_pave0 || b_is_on_pave1)) {
  let (nV1, nV2) = {
- let pb = &self.ds.edges[nE].pave_blocks[0];
+ let pb = &self.ds.edge_pave_blocks(nE)[0];
  pb.0.read().unwrap().indices()
  };
  let bV0 = face_von.contains(&nV1) || face_vin.contains(&nV1);
@@ -700,7 +700,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  // OCCT L442-444: splittable check
  let is_splittable = {
- let pb = &self.ds.edges[nE].pave_blocks[0];
+ let pb = &self.ds.edge_pave_blocks(nE)[0];
  pb.0.read().unwrap().is_splittable
  };
  if !is_splittable { continue; }
@@ -709,9 +709,9 @@ impl<'a> super::PaveFiller<'a> {
  for j in 0..2 {
  if b_is_on_pave[j] {
  let nVx = if j == 0 {
- self.ds.edges[nE].pave_blocks[0].0.read().unwrap().pave1.vertex_idx
+ self.ds.edge_pave_blocks(nE)[0].0.read().unwrap().pave1.vertex_idx
  } else {
- self.ds.edges[nE].pave_blocks[0].0.read().unwrap().pave2.vertex_idx
+ self.ds.edge_pave_blocks(nE)[0].0.read().unwrap().pave2.vertex_idx
  };
  let bV_on_face = face_von.contains(&nVx) || face_vin.contains(&nVx);
  if !bV_on_face {
@@ -733,18 +733,18 @@ impl<'a> super::PaveFiller<'a> {
  for j in 0..2 {
  if b_is_on_pave[j] {
  let nVx = if j == 0 {
- self.ds.edges[nE].pave_blocks[0].0.read().unwrap().pave1.vertex_idx
+ self.ds.edge_pave_blocks(nE)[0].0.read().unwrap().pave1.vertex_idx
  } else {
- self.ds.edges[nE].pave_blocks[0].0.read().unwrap().pave2.vertex_idx
+ self.ds.edge_pave_blocks(nE)[0].0.read().unwrap().pave2.vertex_idx
  };
  // OCCT L486-489: get existing vertex, compute distance
- let dist_pp = (self.ds.vertices[nVx].point - point).length();
- let v_tol = self.ds.vertices[nVx].geom_tol;
+ let dist_pp = (self.ds.vertex_point(nVx) - point).length();
+ let v_tol = self.ds.vertex_tolerance(nVx);
  // OCCT L490-494: aMaxDist = 1e4 * aTol; capped at 0.1 if tol < 0.01
  let max_dist = (1e4 * v_tol).min(if v_tol < 0.01 { 0.1 } else { f64::MAX });
  if dist_pp < max_dist {
  // OCCT L495-497: if (aDistPP < aMaxDist) UpdateVertex(nV[j], aDistPP)
- if dist_pp > self.ds.vertices[nVx].geom_tol {
+ if dist_pp > self.ds.vertex_tolerance(nVx) {
  self.ds.vertices[nVx].geom_tol = dist_pp;
  self.ds.increased_ss.insert(nVx);
  }
@@ -758,15 +758,15 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L505-508: CheckFacePaves(aVnew, aMIFOn)
  let near_face_vx = face_von.iter().any(|&vi| {
  vi < self.ds.vertices.len()
- && (self.ds.vertices[vi].point - point).length() <= tol_ef
+ && (self.ds.vertex_point(vi) - point).length() <= tol_ef
  }) || face_vin.iter().any(|&vi| {
  vi < self.ds.vertices.len()
- && (self.ds.vertices[vi].point - point).length() <= tol_ef
+ && (self.ds.vertex_point(vi) - point).length() <= tol_ef
  });
  if near_face_vx { continue; }
  // OCCT L510-519: aTolVnew = max(aTolVnew, aTolE, aTolF)
  //   bLinePlane 鈫?increase tolerance by (aCR.Last() - aCR.First()) / 2.
- let mut a_tol_vnew = tol_ef.max(self.ds.edges[nE].geom_tol).max(self.ds.faces[nF].geom_tol);
+ let mut a_tol_vnew = tol_ef.max(self.ds.edge_tolerance(nE)).max(self.ds.face_tolerance(nF));
  if b_line_plane {
  // OCCT L517-518: aTolVnew = max(aTolVnew, (aCR.Last() - aCR.First()) / 2.)
  a_tol_vnew = a_tol_vnew.max(tol_ef * 10.0);
@@ -856,7 +856,7 @@ impl<'a> super::PaveFiller<'a> {
  // Boundary vertices
  for &vi in &f.boundary_verts {
  if vi < self.ds.vertices.len() {
- aabb.expand_point(self.ds.vertices[vi].point);
+ aabb.expand_point(self.ds.vertex_point(vi));
  }
  }
  // OCCT BndLib_AddSurface: expand AABB for curved surfaces.
@@ -888,7 +888,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut aabb = Aabb::empty();
  for &vi in &f.boundary_verts {
  if vi < self.ds.vertices.len() {
- aabb.expand_point(self.ds.vertices[vi].point);
+ aabb.expand_point(self.ds.vertex_point(vi));
  }
  }
  if let Surface3::Sphere(s) = &f.surface {
@@ -1019,7 +1019,7 @@ impl<'a> super::PaveFiller<'a> {
 
   // OCCT L93: ComputeVV(aV1, aV2, myFuzzyValue) 鈥?tolerance-based distance check
   let tol = self.vv_pair_tol(n1, n2);
-  let dist = (self.ds.vertices[n1sd].point - self.ds.vertices[n2sd].point).length();
+  let dist = (self.ds.vertex_point(n1sd) - self.ds.vertex_point(n2sd)).length();
   let i_flag = if dist <= tol { 0 } else { 1 };
 
   // OCCT L94-97: if !iFlag (vertices interfere) 鈥?FillMap
@@ -1063,11 +1063,11 @@ impl<'a> super::PaveFiller<'a> {
  let n_v = n_sd.unwrap_or_else(|| *a_lv.iter().min().unwrap());
  // rcad: geom_tol of the merged vertex is max of all members' tolerances.
  if let Some(&target) = block.iter().max_by(|&&a, &&b| {
- self.ds.vertices[a].geom_tol.partial_cmp(&self.ds.vertices[b].geom_tol).unwrap()
+ self.ds.vertex_tolerance(a).partial_cmp(&self.ds.vertex_tolerance(b)).unwrap()
  }) {
  if n_v < self.ds.vertices.len() {
- self.ds.vertices[n_v].geom_tol = self.ds.vertices[n_v].geom_tol
- .max(self.ds.vertices[target].geom_tol);
+ self.ds.vertices[n_v].geom_tol = self.ds.vertex_tolerance(n_v)
+ .max(self.ds.vertex_tolerance(target));
  }
  }
  for i in 0..block.len() {
@@ -1103,8 +1103,8 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.has_interf_ve(vi, ei) { continue; }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
- if !self.ds.edges[ei].pave_blocks[0].0.read().unwrap().is_splittable { continue; }
+ if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
+ if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
  self.check_vertex_edge(vi, ei);
  }
  }
@@ -1119,17 +1119,17 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.has_interf_ve(vi, ei) { continue; }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
- if !self.ds.edges[ei].pave_blocks[0].0.read().unwrap().is_splittable { continue; }
+ if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
+ if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
  self.check_vertex_edge(vi, ei);
  }
  }
  }
  /// OCCT PaveFiller_2.cxx L104-121: ComputeVE
  pub(crate) fn check_vertex_edge(&mut self, vi: usize, ei: usize) {
- let point = self.ds.vertices[vi].point;
+ let point = self.ds.vertex_point(vi);
  let edge_curve = self.ds.edges[ei].curve.clone();
- let t_range = self.ds.edges[ei].t_range;
+ let t_range = self.ds.edge_range(ei);
  let te = self.ve_tol(vi, ei);
  match &edge_curve {
  Curve3::Line(line) => {
@@ -1246,8 +1246,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  // PaveBlocks of each edge).  rcad: build sub-ranges from existing
  // paves to limit intersection to relevant sub-segments.
- let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edges[ae].t_range);
- let ranges_b = self.collect_paveblock_ranges(be, self.ds.edges[be].t_range);
+ let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edge_range(ae));
+ let ranges_b = self.collect_paveblock_ranges(be, self.ds.edge_range(be));
 
  if ranges_a.is_empty() || ranges_b.is_empty() {
  it.next(); continue;
@@ -1255,13 +1255,13 @@ impl<'a> super::PaveFiller<'a> {
 
  if self.use_glue() && shared_edge_set.contains(&(ae, be)) {
  // Glue: use first pave point as shared vertex
- let pv = self.ds.edges[ae].start_vertex;
+ let pv = self.ds.edge_start_vertex_ds(ae);
  if !self.ds.has_interf_ee(ae, be) {
  self.ds.interf_ee.push(InterferenceEE{
  e1: ae, e2: be,
- point: self.ds.vertices[pv].point,
- param1: self.ds.edges[ae].t_range[0],
- param2: self.ds.edges[be].t_range[0],
+ point: self.ds.vertex_point(pv),
+ param1: self.ds.edge_range(ae)[0],
+ param2: self.ds.edge_range(be)[0],
  new_vertex: pv,
  });
  }
@@ -1520,10 +1520,10 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT: BRepLib::BoundingVertex computes center + tolerance.
  // rcad: compute centroid of all member vertex positions.
  let centroid = members.iter()
- .map(|&vi| self.ds.vertices[vi].point)
+ .map(|&vi| self.ds.vertex_point(vi))
  .sum::<DVec3>() / members.len() as f64;
  let max_tol = members.iter()
- .map(|&vi| self.ds.vertices[vi].geom_tol)
+ .map(|&vi| self.ds.vertex_tolerance(vi))
  .max_by(|a, b| a.partial_cmp(b).unwrap())
  .unwrap_or(self.ds.fuzzy_tol);
 
@@ -1581,7 +1581,7 @@ impl<'a> super::PaveFiller<'a> {
  //  OCCT L398: PerformVV(aPS.Next())
  // VV safe: if pair already in interferences, add_vertex will dedup
  for &vi in &candidates {
- let vi_origin = self.ds.vertices[vi].origin;
+ let vi_origin = self.ds.vertex_origin(vi);
  let other_verts: Vec<usize> = self.ds.vertices.iter().enumerate()
  .filter(|(j, v)| {
  if *j == vi { return false; }
@@ -1595,7 +1595,7 @@ impl<'a> super::PaveFiller<'a> {
  .collect();
  for &vj in &other_verts {
  let tol = self.vv_pair_tol(vi, vj);
- let dist = (self.ds.vertices[vi].point - self.ds.vertices[vj].point).length();
+ let dist = (self.ds.vertex_point(vi) - self.ds.vertex_point(vj)).length();
  if dist <= tol {
  self.ds.interf_vv.push(InterferenceVV{
  v1: vi, v2: vj, merged_vertex: vi,
@@ -1607,7 +1607,7 @@ impl<'a> super::PaveFiller<'a> {
  // = =  VE: check survivors against edges on the other side = = = = = = 
  //  OCCT L403: PerformVE(aPS.Next())
  for &vi in &candidates {
- let vi_origin = self.ds.vertices[vi].origin;
+ let vi_origin = self.ds.vertex_origin(vi);
  let other_edges: Vec<usize> = match vi_origin {
  Some(ShapeOrigin::ShapeA) => self.edges_of(ShapeOrigin::ShapeB),
  Some(ShapeOrigin::ShapeB) => self.edges_of(ShapeOrigin::ShapeA),
@@ -1622,7 +1622,7 @@ impl<'a> super::PaveFiller<'a> {
  // = =  VF: check survivors against faces on the other side = = = = = = 
  //  OCCT L408: PerformVF(aPS.Next())
  for &vi in &candidates {
- let vi_origin = self.ds.vertices[vi].origin;
+ let vi_origin = self.ds.vertex_origin(vi);
  let other_faces: Vec<usize> = match vi_origin {
  Some(ShapeOrigin::ShapeA) => self.faces_of(ShapeOrigin::ShapeB),
  Some(ShapeOrigin::ShapeB) => self.faces_of(ShapeOrigin::ShapeA),
@@ -1665,7 +1665,7 @@ impl<'a> super::PaveFiller<'a> {
  /// rcad: sequential equivalent with same projection logic.
  pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
  let n_vsd = self.ds.has_shape_sd(vi).unwrap_or(vi);
- let point = self.ds.vertices[n_vsd].point;
+ let point = self.ds.vertex_point(n_vsd);
  let face = &self.ds.faces[fi];
  let tf = self.vf_tol(n_vsd, fi);
     let (is_on, proj_dist, proj_u, proj_v): (bool, f64, f64, f64) = match &face.surface {
@@ -1688,7 +1688,7 @@ impl<'a> super::PaveFiller<'a> {
         surface => {
             let proj = rcad_kernel::projection::closest_point_on_surface(
                 surface, point, 16);
-            let a_tol_v = self.ds.vertices[n_vsd].geom_tol;
+            let a_tol_v = self.ds.vertex_tolerance(n_vsd);
             let a_tol_f = face.geom_tol;
             let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
             if proj.distance <= a_tol_sum {
@@ -1710,14 +1710,14 @@ impl<'a> super::PaveFiller<'a> {
             v: proj_v,
         });
  if proj_dist > 0.0 && proj_dist < f64::MAX
- && proj_dist > self.ds.vertices[n_vsd].geom_tol
+ && proj_dist > self.ds.vertex_tolerance(n_vsd)
  {
  self.ds.vertices[n_vsd].geom_tol = proj_dist;
  self.ds.increased_ss.insert(n_vsd);
  }
 
  //  OCCT-aligned: ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
- self.ds.faces[fi].face_info.vertices_in.insert(n_vsd);
+ self.ds.face_info_mut(fi).vertices_in.insert(n_vsd);
  }
  }
  /// OCCT-aligned: PerformEF (PaveFiller_5.cxx L165-300) 鈥?LEGACY non-BVH path.
@@ -1730,7 +1730,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
  params.sort_by(|a, b| a.partial_cmp(b).unwrap());
- let edge_tol = self.ds.edges[edge_idx].geom_tol.max(self.tol());
+ let edge_tol = self.ds.edge_tolerance(edge_idx).max(self.tol());
  // Deduplicate
  params.dedup_by(|a, b| (*a - *b).abs() < edge_tol);
  // Include endpoints
@@ -1836,7 +1836,7 @@ impl<'a> super::PaveFiller<'a> {
  /// OCCT PaveFiller_5.cxx L340-480: IntersectEdgeFace
  pub(crate) fn intersect_ef(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
  let edge_curve = self.ds.edges[edge_idx].curve.clone();
- let edge_t_range = self.ds.edges[edge_idx].t_range;
+ let edge_t_range = self.ds.edge_range(edge_idx);
 
  // Use PaveBlock range to constrain intersection interval (OCCT L262: SetRange(aPBRange))
  let ef_range = [
@@ -1901,8 +1901,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  (Curve3::Circle(circle), Surface3::Plane(plane)) => {
  // Use edge start vertex as reference direction for  ?0
- let sv = self.ds.edges[edge_idx].start_vertex;
- let ref_dir = (self.ds.vertices[sv].point - circle.center).normalize();
+ let sv = self.ds.edge_start_vertex_ds(edge_idx);
+ let ref_dir = (self.ds.vertex_point(sv) - circle.center).normalize();
  inttools::curve_surface::intersect_circle_plane_with_ref(
  circle, ef_range, plane, etf, Some(ref_dir),
  )
@@ -2109,13 +2109,13 @@ impl<'a> super::PaveFiller<'a> {
  // PutPaveOnCurve to split intersection curve pave blocks.
  let new_v = self.ds.add_vertex(point);
  // Register vertices_on for the new vertex if it's near the edge boundary
- let sv = self.ds.edges[edge_idx].start_vertex;
- let ev = self.ds.edges[edge_idx].end_vertex;
+ let sv = self.ds.edge_start_vertex_ds(edge_idx);
+ let ev = self.ds.edge_end_vertex_ds(edge_idx);
  let tol = etf
- .max(self.ds.vertices[sv].geom_tol)
- .max(self.ds.vertices[ev].geom_tol);
- if (point - self.ds.vertices[sv].point).length() <= tol
- || (point - self.ds.vertices[ev].point).length() <= tol
+ .max(self.ds.vertex_tolerance(sv))
+ .max(self.ds.vertex_tolerance(ev));
+ if (point - self.ds.vertex_point(sv)).length() <= tol
+ || (point - self.ds.vertex_point(ev)).length() <= tol
  {
  self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
  }

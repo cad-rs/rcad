@@ -8,44 +8,44 @@ impl<'a> PaveFiller<'a> {
 
     #[inline]
     pub(crate) fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
-        self.ds.vertices[vi].geom_tol
-            + self.ds.vertices[vj].geom_tol
+        self.ds.vertex_tolerance(vi)
+            + self.ds.vertex_tolerance(vj)
             + self.tol()
     }
 
     #[inline]
     pub(crate) fn ve_tol(&self, vi: usize, ei: usize) -> f64 {
-        self.ds.vertices[vi].geom_tol
-            + self.ds.edges[ei].geom_tol
+        self.ds.vertex_tolerance(vi)
+            + self.ds.edge_tolerance(ei)
             + self.tol()
     }
 
     #[inline]
     pub(crate) fn ee_tol(&self, e1: usize, e2: usize) -> f64 {
-        self.ds.edges[e1].geom_tol
-            + self.ds.edges[e2].geom_tol
+        self.ds.edge_tolerance(e1)
+            + self.ds.edge_tolerance(e2)
             + self.tol()
     }
 
     #[inline]
     pub(crate) fn vf_tol(&self, vi: usize, fi: usize) -> f64 {
-        self.ds.vertices[vi].geom_tol
-            + self.ds.faces[fi].geom_tol
+        self.ds.vertex_tolerance(vi)
+            + self.ds.face_tolerance(fi)
             + self.tol()
     }
 
     #[inline]
     pub(crate) fn ef_tol(&self, ei: usize, fi: usize) -> f64 {
-        self.ds.edges[ei].geom_tol
-            + self.ds.faces[fi].geom_tol
+        self.ds.edge_tolerance(ei)
+            + self.ds.face_tolerance(fi)
             + self.tol()
     }
 
     #[inline]
     pub(crate) fn ff_tol(&self, f1: usize, f2: usize) -> f64 {
         self.tol()
-            .max(self.ds.faces[f1].geom_tol)
-            .max(self.ds.faces[f2].geom_tol)
+            .max(self.ds.face_tolerance(f1))
+            .max(self.ds.face_tolerance(f2))
             .max(self.seam_shift_tol)
     }
 

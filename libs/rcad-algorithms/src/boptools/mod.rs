@@ -37,7 +37,7 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
   face_tolerances: Vec::new(),
   is_geometric: true,
   location: 0,
-  });
+  }, None);
   ei
 }
 
@@ -60,8 +60,8 @@ pub fn is_micro_edge(ei: usize, ds: &DS, check_splittable: bool) -> bool {
  let mut a_sr = crate::inttools::shrunk_range::ShrunkRange::new();
  let sv = edge.start_vertex;
  let ev = edge.end_vertex;
- let v1_tol = if sv < ds.vertices.len() { ds.vertices[sv].geom_tol } else { 0.0 };
- let v2_tol = if ev < ds.vertices.len() { ds.vertices[ev].geom_tol } else { 0.0 };
+ let v1_tol = if sv < ds.vertices.len() { ds.vertex_tolerance(sv) } else { 0.0 };
+ let v2_tol = if ev < ds.vertices.len() { ds.vertex_tolerance(ev) } else { 0.0 };
  a_sr.set_data(ei, [a_t1, a_t2], v1_tol, v2_tol, edge.geom_tol);
  a_sr.perform(&edge.curve);
  if !a_sr.is_done() { return true; }
@@ -219,14 +219,14 @@ pub fn make_ds_edge(
   face_tolerances: Vec::new(),
   is_geometric: true,
   location: 0,
-  });
+  }, None);
   ei
 }
 /// OCCT-aligned: CorrectEdgeRange (BOPTools_AlgoTools).
 pub fn correct_edge_range(ds: &mut crate::bopds::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
  if ei < ds.edges.len() {
- let ts = t1.max(ds.edges[ei].t_range[0]);
- let te = t2.min(ds.edges[ei].t_range[1]);
+ let ts = t1.max(ds.edge_range(ei)[0]);
+ let te = t2.min(ds.edge_range(ei)[1]);
  [ts.min(te), te.max(ts)]
  } else { [t1, t2] }
 }
@@ -498,7 +498,7 @@ pub fn compute_state_by_one_point(
  0 => {
  // OCCT L634-636: VERTEX =use vertex point
  if shape_idx < ds.vertices.len() {
- ds.vertices[shape_idx].point
+ ds.vertex_point(shape_idx)
  } else {
  return crate::classify::Classification::Out;
  }
@@ -528,7 +528,7 @@ pub fn compute_state_by_one_point(
  let mut sum = glam::DVec3::ZERO;
  for &vi in &f.boundary_verts {
  if vi < ds.vertices.len() {
- sum += ds.vertices[vi].point;
+ sum += ds.vertex_point(vi);
  }
  }
  sum / f.boundary_verts.len() as f64
@@ -587,7 +587,7 @@ pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
  if fi >= ds.faces.len() { continue; }
  for &vi in &ds.faces[fi].boundary_verts {
  if vi < ds.vertices.len() {
- let p = ds.vertices[vi].point;
+ let p = ds.vertex_point(vi);
  aabb_min = aabb_min.min(p);
  aabb_max = aabb_max.max(p);
  }
@@ -934,7 +934,7 @@ pub fn compute_tolerance_of_cb(
  // OCCT L271-278: sample reference curve
  let a_nb_pnt = 11usize;
  let a_curve = &ds.edges[n_e].curve;
- let (a_t1, a_t2) = (ds.edges[n_e].t_range[0], ds.edges[n_e].t_range[1]);
+ let (a_t1, a_t2) = (ds.edge_range(n_e)[0], ds.edge_range(n_e)[1]);
  let a_dt = (a_t2 - a_t1) / (a_nb_pnt + 1) as f64;
 
  let mut a_tol_max = a_tol_max;
@@ -1024,7 +1024,7 @@ pub fn are_faces_same_domain(fi_a: usize, fi_b: usize, ds: &DS) -> bool {
  let n = fa.boundary_verts.len().min(fb.boundary_verts.len()).min(3);
  if n == 0 { return false; }
  let max_dist = fa.boundary_verts[..n].iter().zip(&fb.boundary_verts[..n])
- .map(|(&via, &vib)| (ds.vertices[via].point - ds.vertices[vib].point).length())
+ .map(|(&via, &vib)| (ds.vertex_point(via) - ds.vertex_point(vib)).length())
  .fold(0.0f64, f64::max);
  let tol = (fa.geom_tol.max(fb.geom_tol) + crate::tolerance::TOLERANCE_ABS) * 10.0;
  max_dist < tol
@@ -1462,7 +1462,7 @@ pub fn make_new_vertex(ds: &mut crate::bopds::ds::DS, p: glam::DVec3, tol: f64) 
  let vi = ds.vertices.len();
  ds.push_vertex(crate::bopds::ds::DSVertex {
  point: p, geom_tol: tol, origin: None, is_internal: false, location: 0,
- });
+ }, None);
  vi
 }
 
@@ -1476,7 +1476,7 @@ pub fn make_new_vertex_from_two(v1: &crate::bopds::ds::DSVertex, v2: &crate::bop
  let vi = ds.vertices.len();
  ds.push_vertex(crate::bopds::ds::DSVertex {
  point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
- });
+ }, None);
  vi
 }
 
@@ -1783,16 +1783,16 @@ pub fn make_edge(
  let need_tol = tol_r3d + crate::tolerance::TOLERANCE_LEN_MIN;
  // OCCT L1732-1733: UpdateVertex theV1/theV2 with aNeedTol
  if v1 < ds.vertices.len() {
- ds.vertices[v1].geom_tol = ds.vertices[v1].geom_tol.max(need_tol);
+ ds.vertices[v1].geom_tol = ds.vertex_tolerance(v1).max(need_tol);
  }
  if v2 < ds.vertices.len() {
- ds.vertices[v2].geom_tol = ds.vertices[v2].geom_tol.max(need_tol);
+ ds.vertices[v2].geom_tol = ds.vertex_tolerance(v2).max(need_tol);
  }
  // OCCT L1735: MakeSectEdge(aIC, aV1, aT1, aV2, aT2, aE)
  let ei = make_sect_edge(ds, ci, v1, v2);
  // OCCT L1737: UpdateEdge(aE, theTolR3D)
  if ei < ds.edges.len() {
- ds.edges[ei].geom_tol = ds.edges[ei].geom_tol.max(tol_r3d);
+ ds.edges[ei].geom_tol = ds.edge_tolerance(ei).max(tol_r3d);
  }
  ei
 }
@@ -1802,7 +1802,7 @@ pub fn make_edge(
 pub fn copy_ds_edge(ds: &mut crate::bopds::ds::DS, ei: usize) -> usize {
  let new_ei = ds.edges.len();
  let src = &ds.edges[ei].clone();
- ds.push_edge(src.clone());
+ ds.push_edge(src.clone(), None);
  new_ei
 }
 
@@ -1844,7 +1844,7 @@ pub fn make_split_edge(
   face_tolerances: Vec::new(),
   is_geometric: true,
   location: 0,
-  });
+  }, None);
   new_ei
 }
 
@@ -1868,8 +1868,8 @@ pub fn make_vertex_from_list(
  let mut max_tol = 0.0f64;
  for &vi in vertex_indices {
  if vi < ds.vertices.len() {
- sum += ds.vertices[vi].point;
- max_tol = max_tol.max(ds.vertices[vi].geom_tol);
+ sum += ds.vertex_point(vi);
+ max_tol = max_tol.max(ds.vertex_tolerance(vi));
  }
  }
  let n = vertex_indices.len() as f64;
@@ -1883,7 +1883,7 @@ pub fn make_vertex_from_list(
  let vi = ds.vertices.len();
  ds.push_vertex(crate::bopds::ds::DSVertex {
  point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
- });
+ }, None);
  vi
 }
 

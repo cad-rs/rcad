@@ -396,7 +396,7 @@ pub(crate) fn check_and_add_split_vertex(
  if vi == sv || vi == ev {
  return;
  }
- let p = ds.vertices[vi].point;
+ let p = ds.vertex_point(vi);
  let ap = p - p_a;
  let t = ap.dot(ab) / ab_len2;
  if t > 1e-8 && t < 1.0 - 1e-8 {

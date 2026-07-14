@@ -153,13 +153,13 @@ pub fn intersect_vertices(
     for i in 0..a_nb_v {
         let vi = vertex_indices[i];
         let Some(v) = ds.vertices.get(vi) else { continue; };
-        let a_tol = ds.vertices[vi].geom_tol.max(0.0);
+        let a_tol = ds.vertex_tolerance(vi).max(0.0);
         let total_tol = a_tol + a_tol_add;
 
         for j in (i + 1)..a_nb_v {
             let vj = vertex_indices[j];
             let Some(v2) = ds.vertices.get(vj) else { continue; };
-            let a_tol_j = ds.vertices[vj].geom_tol.max(0.0);
+            let a_tol_j = ds.vertex_tolerance(vj).max(0.0);
             let total_tol_j = a_tol_j + a_tol_add;
             let total_tol_sum = total_tol + total_tol_j;
             let dist2 = (v.point - v2.point).length_squared();

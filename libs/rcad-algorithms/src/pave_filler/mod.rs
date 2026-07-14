@@ -150,8 +150,8 @@ pub(crate) fn build_face_shape_map(ds: &DS, fi: usize) -> std::collections::Hash
  for &ei in &ds.faces[fi].boundary_edges {
  aMI.insert(ei);
  if ei < ds.edges.len() {
- aMI.insert(ds.edges[ei].start_vertex);
- aMI.insert(ds.edges[ei].end_vertex);
+ aMI.insert(ds.edge_start_vertex_ds(ei));
+ aMI.insert(ds.edge_end_vertex_ds(ei));
  }
  }
  }
@@ -177,10 +177,10 @@ fn propagate_ic_vertices_to_shared_faces(
  continue;
  }
  for &vi in ic_vertices {
- if ds.faces[fi].face_info.vertices_in.contains(&vi) {
+ if ds.face_info(fi).vertices_in.contains(&vi) {
  continue;
  }
- let vp = ds.vertices[vi].point;
+ let vp = ds.vertex_point(vi);
  for &ei in &ds.faces[fi].boundary_edges {
  let Some(edge) = ds.edges.get(ei) else { continue };
  let a = ds.vertices[edge.start_vertex].point;
@@ -195,7 +195,7 @@ fn propagate_ic_vertices_to_shared_faces(
  if t > -0.01 && t < 1.01 {
  let proj = a + ab * t.clamp(0.0, 1.0);
  if (vp - proj).length_squared() < vtol_sq {
- ds.faces[fi].face_info.vertices_in.insert(vi);
+ ds.face_info_mut(fi).vertices_in.insert(vi);
  break;
  }
  }
@@ -299,7 +299,7 @@ impl<'a> PaveFiller<'a> {
   self.ds.update_pave_blocks_with_sd_vertices();
   // =OCCT-aligned: SplitPaveBlocks for VE-affected edges.
   let ve_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-    .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+    .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
     .collect();
   if !ve_edges.is_empty() {
     self.split_pave_blocks(&ve_edges, false);
@@ -341,7 +341,7 @@ impl<'a> PaveFiller<'a> {
   self.ds.update_pave_blocks_with_sd_vertices();
   // =OCCT-aligned: SplitPaveBlocks for VF-affected edges.
   let vf_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-    .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+    .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
     .collect();
   if !vf_edges.is_empty() {
     self.split_pave_blocks(&vf_edges, false);
@@ -370,7 +370,7 @@ impl<'a> PaveFiller<'a> {
  self.repeat_intersection();
  // =OCCT-aligned: SplitPaveBlocks for EF-affected edges.
  let ef_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-   .filter(|&ei| self.ds.edges[ei].paves.len() > 2)
+   .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
    .collect();
  if !ef_edges.is_empty() {
    self.split_pave_blocks(&ef_edges, false);
@@ -514,9 +514,9 @@ impl<'a> PaveFiller<'a> {
  let fi1 = ff.f1;
  let fi2 = ff.f2;
  let on1 = &self.ds.faces[fi1].face_info.vertices_on;
- let in1 = &self.ds.faces[fi1].face_info.vertices_in;
+ let in1 = &self.ds.face_info(fi1).vertices_in;
  let on2 = &self.ds.faces[fi2].face_info.vertices_on;
- let in2 = &self.ds.faces[fi2].face_info.vertices_in;
+ let in2 = &self.ds.face_info(fi2).vertices_in;
 
  let shared: Vec<usize> = on1.iter()
  .chain(in1.iter())
@@ -543,9 +543,9 @@ impl<'a> PaveFiller<'a> {
 
  // Collect shared vertices for this face pair
  let on1 = &self.ds.faces[f1].face_info.vertices_on;
- let in1 = &self.ds.faces[f1].face_info.vertices_in;
+ let in1 = &self.ds.face_info(f1).vertices_in;
  let on2 = &self.ds.faces[f2].face_info.vertices_on;
- let in2 = &self.ds.faces[f2].face_info.vertices_in;
+ let in2 = &self.ds.face_info(f2).vertices_in;
 
  let shared: Vec<usize> = on1.iter()
  .chain(in1.iter())
@@ -561,11 +561,11 @@ impl<'a> PaveFiller<'a> {
 
  for &n_v in &shared {
  if self.estimate_pave_on_curve(ci, n_v).is_none() { continue; }
- let v_tol = self.ds.vertices[n_v].geom_tol;
+ let v_tol = self.ds.vertex_tolerance(n_v);
  // UpdateVertex: increase tolerance if the projection distance is larger
  if let Some(t) = self.project_vertex_on_curve(n_v, ic) {
  let pt_on_curve = ic.curve.point_at(t);
- let dist = self.ds.vertices[n_v].point.distance(pt_on_curve);
+ let dist = self.ds.vertex_point(n_v).distance(pt_on_curve);
  if dist > v_tol {
  self.ds.vertices[n_v].geom_tol = dist;
  self.ds.increased_ss.insert(n_v);
@@ -635,7 +635,7 @@ impl<'a> PaveFiller<'a> {
  .map(|(vi, v)| (v.point, vi)).collect();
  let remap_ds_v = |v: usize| -> usize {
  if v >= self.ds.vertices.len() { return v; }
- let p = self.ds.vertices[v].point;
+ let p = self.ds.vertex_point(v);
  let tol = TOLERANCE_ABS * 1000.0;
  bv_positions.iter()
  .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
@@ -730,10 +730,10 @@ impl<'a> PaveFiller<'a> {
  } // end IsValidBlockForFaces
  // spheres cover the entire parameter range.
  if nV1 < self.ds.vertices.len() && nV2 < self.ds.vertices.len() {
- let v1_pt = self.ds.vertices[nV1].point;
- let v2_pt = self.ds.vertices[nV2].point;
- let v1_tol = ff_tol.max(self.ds.vertices[nV1].geom_tol);
- let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
+ let v1_pt = self.ds.vertex_point(nV1);
+ let v2_pt = self.ds.vertex_point(nV2);
+ let v1_tol = ff_tol.max(self.ds.vertex_tolerance(nV1));
+ let v2_tol = ff_tol.max(self.ds.vertex_tolerance(nV2));
  if find_valid_range(&ic.curve, aT1, aT2, ff_tol, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
  if std::env::var("RCAD_DEBUG_PB").is_ok() {
  eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{}) v1_tol={:.12} v2_tol={:.12} v1_pt=({:.4},{:.4},{:.4}) v2_pt=({:.4},{:.4},{:.4})",
@@ -796,7 +796,7 @@ impl<'a> PaveFiller<'a> {
   face_tolerances: Vec::new(),
   is_geometric: true,
   location: 0,
-  });
+  }, None);
   // Set new_edge in the PB stored inside the edge AND in sub_with_edge
  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
  epb.0.write().unwrap().new_edge = Some(new_ei);
@@ -829,7 +829,7 @@ impl<'a> PaveFiller<'a> {
  let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
  for &fi in &face_ids {
  if fi != usize::MAX {
- self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
+ self.ds.face_info_mut(fi).pave_blocks_sc.insert(g_pb_idx);
  }
  }
  }
@@ -840,7 +840,7 @@ impl<'a> PaveFiller<'a> {
  fn remove_micro_edges(&mut self) {
  let mut micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
  for ei in 0..self.ds.edges.len() {
-  if self.ds.edges[ei].pave_blocks.len() < 2 { continue; }
+  if self.ds.edge_pave_blocks(ei).len() < 2 { continue; }
   if self.ds.is_edge_degenerated(ei) { continue; }
   for pb in &self.ds.edges[ei].pave_blocks {
    let nv1 = pb.0.read().unwrap().pave1.vertex_idx;
@@ -915,9 +915,9 @@ impl<'a> PaveFiller<'a> {
        let (t1, t2) = pb.range();
        // OCCT L426-467: decide whether to split the edge.
        let v1_new = v1 < self.ds.vertices.len()
-         && self.ds.vertices[v1].origin.is_none();
+         && self.ds.vertex_origin(v1).is_none();
        let v2_new = v2 < self.ds.vertices.len()
-         && self.ds.vertices[v2].origin.is_none();
+         && self.ds.vertex_origin(v2).is_none();
        if !v1_new && !v2_new && pbs.len() == 1 {
          // No new vertex on this edge -- single PB keeps the original edge.
          drop(pb);
@@ -958,7 +958,7 @@ impl<'a> PaveFiller<'a> {
        face_tolerances: Vec::new(),
        is_geometric: orig.is_geometric,
        location: orig.location,
-     });
+     }, None);
      // OCCT L539-547: assign new edge to CB or PB.
      if let Some(cb) = task.cb_idx {
        self.ds.common_blocks[cb].set_edge(new_ei);
@@ -980,20 +980,20 @@ impl<'a> PaveFiller<'a> {
      std::collections::HashSet::new();
 
    for fi in 0..self.ds.faces.len() {
-     let candidates: Vec<usize> = self.ds.faces[fi].face_info.vertices_in
+     let candidates: Vec<usize> = self.ds.face_info(fi).vertices_in
        .iter().copied().collect();
      if candidates.is_empty() { continue; }
-     let boundary_edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
+     let boundary_edges: Vec<usize> = self.ds.face_boundary_edges(fi).to_vec();
 
      for &vi in &candidates {
        if vi >= self.ds.vertices.len() { continue; }
-       let pt = self.ds.vertices[vi].point;
-       let v_tol = self.ds.vertices[vi].geom_tol;
+       let pt = self.ds.vertex_point(vi);
+       let v_tol = self.ds.vertex_tolerance(vi);
 
        for &ei in &boundary_edges {
          if ei >= self.ds.edges.len() { continue; }
-         let edge_tol = self.ds.edges[ei].geom_tol.max(v_tol).max(CONFUSION);
-         let t_range = self.ds.edges[ei].t_range;
+         let edge_tol = self.ds.edge_tolerance(ei).max(v_tol).max(CONFUSION);
+         let t_range = self.ds.edge_range(ei);
 
          let t_opt = project_vertex_to_curve(pt, &self.ds.edges[ei].curve, edge_tol);
          let t = match t_opt {
@@ -1001,7 +1001,7 @@ impl<'a> PaveFiller<'a> {
            _ => continue,
          };
 
-         let already_pave = self.ds.edges[ei].paves.iter()
+         let already_pave = self.ds.edge_paves(ei).iter()
            .any(|p| p.vertex_idx == vi);
          if already_pave { continue; }
 

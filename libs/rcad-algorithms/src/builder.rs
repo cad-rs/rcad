@@ -374,7 +374,7 @@ pub(crate) use wire_path::{
    let forward = face.boundary_edge_forwards.get(i).copied().unwrap_or(true);
 
    // OCCT L1104-1110: INTERNAL edge -> return null
-   if ds.edges[ei].is_internal { return None; }
+   if ds.edge_is_internal(ei) { return None; }
    let b_is_degenerated = ds.is_edge_degenerated(ei);
 
    // OCCT L1118: theImages.Seek(aE)
@@ -384,8 +384,8 @@ pub(crate) use wire_path::{
    if !has_images {
     // OCCT L1120-1135: edge without split images
     if !b_is_degenerated {
-     *vert_count.entry(ds.edges[ei].start_vertex).or_default() += 1;
-     *vert_count.entry(ds.edges[ei].end_vertex).or_default() += 1;
+     *vert_count.entry(ds.edge_start_vertex_ds(ei)).or_default() += 1;
+     *vert_count.entry(ds.edge_end_vertex_ds(ei)).or_default() += 1;
     }
     // OCCT L1128: edge unification (aMEdges.Add)
     if !edge_fence.insert(ei) { return None; }
@@ -399,8 +399,8 @@ pub(crate) use wire_path::{
      if sp_ei >= ds.edges.len() { continue; }
      // OCCT L1143: HasMultiConnected
      if !b_is_degenerated {
-      *vert_count.entry(ds.edges[sp_ei].start_vertex).or_default() += 1;
-      *vert_count.entry(ds.edges[sp_ei].end_vertex).or_default() += 1;
+      *vert_count.entry(ds.edge_start_vertex_ds(sp_ei)).or_default() += 1;
+      *vert_count.entry(ds.edge_end_vertex_ds(sp_ei)).or_default() += 1;
      }
      // OCCT L1149: edge unification
      if !edge_fence.insert(sp_ei) { return None; }
@@ -421,15 +421,15 @@ pub(crate) use wire_path::{
   for inner_wire in &face.inner_boundary_edges {
    for &(ei, forward) in inner_wire {
     if ei >= ds.edges.len() { continue; }
-    if ds.edges[ei].is_internal { return None; }
+    if ds.edge_is_internal(ei) { return None; }
     let b_is_degenerated = ds.is_edge_degenerated(ei);
     let e_sr = self.brep_sr(e_base + ei);
     let has_images = self.my_images.borrow().contains_key(&e_sr);
 
     if !has_images {
      if !b_is_degenerated {
-      *vert_count.entry(ds.edges[ei].start_vertex).or_default() += 1;
-      *vert_count.entry(ds.edges[ei].end_vertex).or_default() += 1;
+      *vert_count.entry(ds.edge_start_vertex_ds(ei)).or_default() += 1;
+      *vert_count.entry(ds.edge_end_vertex_ds(ei)).or_default() += 1;
      }
      if !edge_fence.insert(ei) { return None; }
      add_segment(ei, forward, None, &mut segments, &mut vertex_positions);
@@ -439,8 +439,8 @@ pub(crate) use wire_path::{
       let sp_ei = sp_sr.index.saturating_sub(e_base);
       if sp_ei >= ds.edges.len() { continue; }
       if !b_is_degenerated {
-       *vert_count.entry(ds.edges[sp_ei].start_vertex).or_default() += 1;
-       *vert_count.entry(ds.edges[sp_ei].end_vertex).or_default() += 1;
+       *vert_count.entry(ds.edge_start_vertex_ds(sp_ei)).or_default() += 1;
+       *vert_count.entry(ds.edge_end_vertex_ds(sp_ei)).or_default() += 1;
       }
       if !edge_fence.insert(sp_ei) { return None; }
       if b_is_degenerated {

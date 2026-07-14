@@ -46,7 +46,7 @@ impl ShrunkRange {
     pub fn set_data_from_pb(&mut self, ds: &DS, ei: usize, pb: &PaveBlock) {
         let v1_tol = ds.vertices[pb.pave1.vertex_idx].geom_tol;
         let v2_tol = ds.vertices[pb.pave2.vertex_idx].geom_tol;
-        let edge_tol = ds.edges[ei].geom_tol;
+        let edge_tol = ds.edge_tolerance(ei);
         self.set_data(ei, [pb.pave1.param, pb.pave2.param], v1_tol, v2_tol, edge_tol);
     }
 

@@ -13,7 +13,7 @@ pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usiz
  _ => (false, 0.0, 0.0, 0.0),
  };
  if !is_periodic { return None; }
- let mid_3d = (ds.vertices[sv].point + ds.vertices[ev].point) * 0.5;
+ let mid_3d = (ds.vertex_point(sv) + ds.vertex_point(ev)) * 0.5;
  let uv_mid = world_to_uv(surface, mid_3d)?;
  let dU = match surface {
  Surface3::Sphere(sph) => edge_tol / sph.radius.max(TOLERANCE_CLAMP_MIN),
@@ -21,8 +21,8 @@ pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usiz
  _ => TOLERANCE_ABS,
  };
  let shift_u = if (uv_mid.x - u_min).abs() < dU { period } else if (uv_mid.x - u_max).abs() < dU { -period } else { return None; };
- let uv_s = world_to_uv(surface, ds.vertices[sv].point)?;
- let uv_e = world_to_uv(surface, ds.vertices[ev].point)?;
+ let uv_s = world_to_uv(surface, ds.vertex_point(sv))?;
+ let uv_e = world_to_uv(surface, ds.vertex_point(ev))?;
  Some(Curve2d::Line(Line2d { origin: DVec2::new(uv_s.x + shift_u, uv_s.y), direction: DVec2::new(0.0, uv_e.y - uv_s.y) }))
 }
 
@@ -35,8 +35,8 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
  let sv_seg = pb.0.read().unwrap().pave1.vertex_idx; let ev_seg = pb.0.read().unwrap().pave2.vertex_idx;
  if sv_seg == ev_seg { continue; }
  let second_pcurve = build_seam_second_pcurve(ds, &face.surface, sv_seg, ev_seg, ds_edge.geom_tol);
- let first_pcurve = world_to_uv(&face.surface, ds.vertices[sv_seg].point).and_then(|uv_s| {
- world_to_uv(&face.surface, ds.vertices[ev_seg].point).map(|uv_e| {
+ let first_pcurve = world_to_uv(&face.surface, ds.vertex_point(sv_seg)).and_then(|uv_s| {
+ world_to_uv(&face.surface, ds.vertex_point(ev_seg)).map(|uv_e| {
  Curve2d::Line(Line2d { origin: DVec2::new(uv_s.x, uv_s.y), direction: DVec2::new(0.0, uv_e.y - uv_s.y) })
  })
  });
@@ -57,8 +57,8 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
  }
  } else {
  let second_pcurve = build_seam_second_pcurve(ds, &face.surface, sv, ev, ds_edge.geom_tol);
- let first_pcurve = world_to_uv(&face.surface, ds.vertices[sv].point).and_then(|uv_sv| {
- world_to_uv(&face.surface, ds.vertices[ev].point).map(|uv_ev| {
+ let first_pcurve = world_to_uv(&face.surface, ds.vertex_point(sv)).and_then(|uv_sv| {
+ world_to_uv(&face.surface, ds.vertex_point(ev)).map(|uv_ev| {
  Curve2d::Line(Line2d { origin: DVec2::new(uv_sv.x, uv_sv.y), direction: DVec2::new(0.0, uv_ev.y - uv_sv.y) })
  })
  });
@@ -81,8 +81,8 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
 
 ///  OCCT-aligned: cylinder/cone seam edge  ?FWD+REV with shifted pcurves.
 pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace) -> Vec<WireSegment> {
- let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
- let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
+ let uv_a = world_to_uv(&face.surface, ds.vertex_point(sv));
+ let uv_b = world_to_uv(&face.surface, ds.vertex_point(ev));
  let (pcurve_opt, second_pcurve_opt) = match (uv_a, uv_b) {
  (Some(ua), Some(ub)) => {
  let p0 = DVec2::new(ua.x, ua.y); let p1 = DVec2::new(ub.x, ub.y);

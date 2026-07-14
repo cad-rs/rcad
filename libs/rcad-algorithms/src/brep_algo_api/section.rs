@@ -238,8 +238,8 @@ impl Section {
 
         // OCCT L243-269: CommonBlocks between edge and face
         for ei in 0..ds.edges.len() {
-            for pb_idx in 0..ds.edges[ei].pave_blocks.len() {
-                let pb = &ds.edges[ei].pave_blocks[pb_idx];
+            for pb_idx in 0..ds.edge_pave_blocks(ei).len() {
+                let pb = &ds.edge_pave_blocks(ei)[pb_idx];
                 let cb = pb.0.read().unwrap().common_block_idx.and_then(|idx| ds.common_blocks.get(idx));
                 if let Some(cb) = cb {
                     if !cb.faces().is_empty() {
@@ -289,9 +289,9 @@ impl Section {
             let ev = e.end_vertex;
             if sv >= ds.vertices.len() || ev >= ds.vertices.len() { continue; }
             let vi_a = result.vertices().len();
-            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[sv].point });
+            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertex_point(sv) });
             let vi_b = result.vertices().len();
-            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[ev].point });
+            result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertex_point(ev) });
             let edge_idx = result.edges().len();
             result.edges().push(rcad_kernel::topology::Edge { start: vi_a, end: vi_b });
             let curve_idx = result.edges().len();
@@ -309,7 +309,7 @@ impl Section {
             }) {
                 if added_verts.insert(vi) {
                     let _v_idx = result.vertices().len();
-                    result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertices[vi].point });
+                    result.vertices().push(rcad_kernel::topology::Vertex { point: ds.vertex_point(vi) });
                     // OCCT adds isolated vertices as standalone shapes in a compound
                     // rcad: vertex edges are empty (no edge connected)
                 }

@@ -611,6 +611,38 @@ pub struct DS {
  ///  ?OCCT-aligned: compsolid containers (TopAbs_COMPSOLID in ShapeInfo hierarchy).
  pub comp_solids: Vec<DSCompSolid>,
  pub faces: Vec<DSFace>,
+
+ // ----- Phase 4: Parallel arrays replacing DSVertex/DSEdge/DSFace -----
+ /// Intersection-only data for vertices (shape data via ds.shape(vi)).
+ pub vertex_origins: Vec<Option<ShapeOrigin>>,
+ pub vertex_is_internal: Vec<bool>,
+ pub vertex_locations: Vec<u32>,
+ /// Intersection-only data for edges (shape data via ds.shape(ei)).
+ pub edge_start_vertex: Vec<usize>,
+ pub edge_end_vertex: Vec<usize>,
+ pub edge_origins: Vec<ShapeOrigin>,
+ pub edge_paves: Vec<Vec<Pave>>,
+ pub edge_pave_blocks: Vec<Vec<crate::bopds::pave::SharedPB>>,
+ pub edge_face_reps: Vec<Vec<DSCurveRepOnFace>>,
+ pub edge_is_internal: Vec<bool>,
+ pub edge_face_tols: Vec<Vec<(usize, f64)>>,
+ pub edge_locations: Vec<u32>,
+ /// Intersection-only data for faces (shape data via ds.shape(fi)).
+ pub face_boundary_verts: Vec<Vec<usize>>,
+ pub face_boundary_edges: Vec<Vec<usize>>,
+ pub face_boundary_forwards: Vec<Vec<bool>>,
+ pub face_inner_boundary: Vec<Vec<Vec<(usize, bool)>>>,
+ pub face_outer_wire_idxs: Vec<Option<usize>>,
+ pub face_inner_wire_idxs: Vec<Vec<usize>>,
+ pub face_normals: Vec<DVec3>,
+ pub face_origins: Vec<ShapeOrigin>,
+ pub face_info_vec: Vec<FaceInfo>,
+ pub source_face_idxs: Vec<usize>,
+ pub face_locations: Vec<u32>,
+ pub face_uv_boundary: Vec<Option<Vec<DVec2>>>,
+ pub source_shell_idxs: Vec<Option<usize>>,
+ pub source_solid_idxs: Vec<Option<usize>>,
+ pub source_compsolid_idxs: Vec<Option<usize>>,
  /// OCCT-aligned: type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).
  /// Replaces the generic Vec<Interference> enum =each variant has its own typed Vec.
  pub interf_vv: Vec<InterferenceVV>,

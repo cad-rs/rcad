@@ -1417,22 +1417,22 @@ mod pave_filler_internal_tests {
     /// - 1 face with boundary edges [0,1]
     fn make_minimal_ds() -> DS {
         let mut ds = DS::new_empty();
-        ds.vertices.push(DSVertex {
+        ds.push_vertex(DSVertex {
             point: DVec3::ZERO, origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
-        ds.vertices.push(DSVertex {
+        }, None);
+        ds.push_vertex(DSVertex {
             point: DVec3::X, origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
-        ds.vertices.push(DSVertex {
+        }, None);
+        ds.push_vertex(DSVertex {
             point: DVec3::new(1.0, 1.0, 0.0), origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
+        }, None);
         let line_curve = |start: DVec3, end: DVec3| -> Curve3 {
             Curve3::Line(rcad_kernel::geom::Line3::new(start, (end - start).normalize()))
         };
-        ds.edges.push(DSEdge {
+        ds.push_edge(DSEdge {
             start_vertex: 0, end_vertex: 1,
             curve: line_curve(DVec3::ZERO, DVec3::X),
             t_range: [0.0, 1.0], origin: ShapeOrigin::ShapeA, geom_tol: 1e-7,
@@ -1440,8 +1440,8 @@ mod pave_filler_internal_tests {
             is_internal: false, is_geometric: true,
             vertex_params: std::collections::HashMap::new(), face_tolerances: Vec::new(),
             location: 0,
-        });
-        ds.edges.push(DSEdge {
+        }, None);
+        ds.push_edge(DSEdge {
             start_vertex: 1, end_vertex: 2,
             curve: line_curve(DVec3::X, DVec3::new(1.0, 1.0, 0.0)),
             t_range: [0.0, 1.0], origin: ShapeOrigin::ShapeA, geom_tol: 1e-7,
@@ -1449,7 +1449,7 @@ mod pave_filler_internal_tests {
             is_internal: false, is_geometric: true,
             vertex_params: std::collections::HashMap::new(), face_tolerances: Vec::new(),
             location: 0,
-        });
+        }, None);
         ds.faces.push(DSFace {
             surface: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             boundary_verts: vec![0, 1, 2],
@@ -1465,7 +1465,7 @@ mod pave_filler_internal_tests {
             source_shell_idx: Some(0),
             source_compsolid_idx: Some(0),
             source_solid_idx: Some(0),
-        });
+        }, None);
         ds.a_vertex_count = 0;
         ds.a_edge_count = 2; // edges 0-1 belong to operand A
         ds.a_face_count = 1;
@@ -1500,25 +1500,25 @@ mod pave_filler_internal_tests {
     fn make_vertex_test_ds() -> DS {
         let mut ds = DS::new_empty();
         // v0: far away
-        ds.vertices.push(DSVertex {
+        ds.push_vertex(DSVertex {
             point: DVec3::new(0.0, 0.0, 0.0), origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
+        }, None);
         // v1: close to v0 (within tol)
-        ds.vertices.push(DSVertex {
+        ds.push_vertex(DSVertex {
             point: DVec3::new(1e-8, 0.0, 0.0), origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
+        }, None);
         // v2: far from both (outside tol of v0, v1)
-        ds.vertices.push(DSVertex {
+        ds.push_vertex(DSVertex {
             point: DVec3::new(100.0, 0.0, 0.0), origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
+        }, None);
         // v3: chain-close to v2 (close to v2 but not to v0/v1)
-        ds.vertices.push(DSVertex {
+        ds.push_vertex(DSVertex {
             point: DVec3::new(100.0 + 1e-8, 0.0, 0.0), origin: None, geom_tol: 1e-7,
             is_internal: false, location: 0,
-        });
+        }, None);
         ds.a_vertex_count = 0;
         ds
     }

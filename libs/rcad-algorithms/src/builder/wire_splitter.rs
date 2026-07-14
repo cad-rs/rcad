@@ -20,8 +20,8 @@ pub(crate) fn edge_uv_tangent(
  // For plane surfaces, endpoint method is exact (linear pcurve).
  if let (Some(curve), Some(tr)) = (curve, t_range) {
  if !matches!(surface, Surface3::Plane(_)) {
- let fa = edge_angle_2d(curve, tr[0], tr, surface, false, ds.vertices[sv].geom_tol);
- let fb = edge_angle_2d(curve, tr[1], tr, surface, true, ds.vertices[ev].geom_tol);
+ let fa = edge_angle_2d(curve, tr[0], tr, surface, false, ds.vertex_tolerance(sv));
+ let fb = edge_angle_2d(curve, tr[1], tr, surface, true, ds.vertex_tolerance(ev));
  return (fa, fb);
  }
  }
@@ -29,8 +29,8 @@ pub(crate) fn edge_uv_tangent(
  // Exact for plane surfaces; good approximation for small sub-edges.
  match surface {
  Surface3::Sphere(s) => {
- let uvs = s.world_to_uv(ds.vertices[sv].point);
- let uve = s.world_to_uv(ds.vertices[ev].point);
+ let uvs = s.world_to_uv(ds.vertex_point(sv));
+ let uve = s.world_to_uv(ds.vertex_point(ev));
  let dir = uve - uvs;
  if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return (None, None); }
  let a = dir_to_angle(dir);
@@ -40,8 +40,8 @@ pub(crate) fn edge_uv_tangent(
  Surface3::Plane(p) => {
  let x_axis = p.u_dir;
  let y_axis = p.v_dir;
- let local_s = ds.vertices[sv].point - p.origin;
- let local_e = ds.vertices[ev].point - p.origin;
+ let local_s = ds.vertex_point(sv) - p.origin;
+ let local_e = ds.vertex_point(ev) - p.origin;
  let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
  let uv_e = DVec2::new(local_e.dot(x_axis), local_e.dot(y_axis));
  let dir = uv_e - uv_s;
@@ -207,7 +207,7 @@ pub(crate) fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
 ///  DS  ()
 pub(crate) fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
  if vi == vj { return true; }
- let d2 = ds.vertices[vi].point.distance_squared(ds.vertices[vj].point);
+ let d2 = ds.vertex_point(vi).distance_squared(ds.vertex_point(vj));
  d2 < TOLERANCE_ABS_SQ
 }
 
@@ -239,7 +239,7 @@ pub(crate) fn build_vi_to_canon(segments: &[WireSegment], ds: &DS) -> Vec<usize>
  if seg.end_vertex >= ds.vertices.len() { continue; } // skip deg (virtual end)
  for &vi in &[seg.start_vertex, seg.end_vertex] {
  if vi_to_canon[vi] != usize::MAX { continue; }
- let pt = ds.vertices[vi].point;
+ let pt = ds.vertex_point(vi);
  let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 100_000_000.0);
  let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
  vi_to_canon[vi] = canon;
@@ -292,7 +292,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
  let mut cv = vec![DVec3::ZERO; maxc];
  for vi in 0..ds.vertices.len() {
  let c = vi_to_canon[vi];
- if c != usize::MAX { cv[c] = ds.vertices[vi].point; }
+ if c != usize::MAX { cv[c] = ds.vertex_point(vi); }
  }
  cv
  };
@@ -795,7 +795,7 @@ pub(crate) fn perform_shapes_to_avoid(
  for (&canon_vi, ids) in &anc {
  let a_nb_e = ids.len();
  // INTERNAL vertices skip (not on boundary)
- if canon_vi < ds.vertices.len() && ds.vertices[canon_vi].is_internal {
+ if canon_vi < ds.vertices.len() && ds.vertex_is_internal(canon_vi) {
  continue;
  }
  if a_nb_e == 1 {

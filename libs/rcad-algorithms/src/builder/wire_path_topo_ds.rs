@@ -736,7 +736,7 @@ pub(crate) fn perform_areas(
 ) -> Vec<WireFace> {
     
     if wires.is_empty() {
-        if ds.faces[face_idx].natural_restriction {
+        if ds.face_natural_restriction(face_idx) {
             return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
         }
         return vec![];
@@ -972,7 +972,7 @@ pub(crate) fn perform_areas(
                     internal_wires: vec![],
                 });
             }
-        } else if ds.faces[face_idx].natural_restriction {
+        } else if ds.face_natural_restriction(face_idx) {
             
             // (classified independently by caller).
             for &h in &orphan_holes {

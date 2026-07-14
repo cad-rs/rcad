@@ -412,7 +412,7 @@ pub(crate) fn put_pave_on_curve_full(
             if !ef_vertices.contains(&vi) { continue; } // OCCT GetStickVertices: skip non-pair EF
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
-            let pt = ds.vertices[vi].point;
+            let pt = ds.vertex_point(vi);
             if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
                 if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
                     paves.push((t, vi));
@@ -424,8 +424,8 @@ pub(crate) fn put_pave_on_curve_full(
             if ef_vertices.contains(&vi) { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
             if let Some([c_min, c_max]) = curve_bbox {
-                let v_pt = ds.vertices[vi].point;
-                let v_tol = ds.vertices[vi].geom_tol.max(a_tol_r3d);
+                let v_pt = ds.vertex_point(vi);
+                let v_tol = ds.vertex_tolerance(vi).max(a_tol_r3d);
                 let v_min = v_pt - DVec3::splat(v_tol);
                 let v_max = v_pt + DVec3::splat(v_tol);
                 if v_max.x < c_min.x || v_min.x > c_max.x ||
@@ -438,7 +438,7 @@ pub(crate) fn put_pave_on_curve_full(
                 continue;
             }
 
-            let pt = ds.vertices[vi].point;
+            let pt = ds.vertex_point(vi);
             if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
                 if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
                     paves.push((t, vi));
@@ -536,7 +536,7 @@ pub(crate) fn filter_paves_on_curves(
     let tol = ic.geom_tol + ds.fuzzy_tol;
     let tol_sq = tol * tol;
     paves.iter().filter(|&&(_, vi)| {
-        let pt = ds.vertices[vi].point;
+        let pt = ds.vertex_point(vi);
         let dist_sq = match &ic.curve {
             Curve3::Line(line) => {
                 let to_pt = pt - line.origin;

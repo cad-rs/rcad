@@ -170,7 +170,7 @@ impl<'a> BooleanBuilder<'a> {
                         for (dfi2, df2) in self.ds.faces.iter().enumerate() {
                             if dfi2 != local_idx && df2.origin == o_exp2
                                 && df2.source_shell_idx
-                                    == self.ds.faces[local_idx].source_shell_idx
+                                    == self.ds.source_shell_idx(local_idx)
                             {
                                 a_st.insert(dfi2);
                             }
@@ -212,8 +212,8 @@ impl<'a> BooleanBuilder<'a> {
                 } else if is_edge {
                     let local_ei = flat_idx - e_base;
                     if local_ei < self.ds.edges.len() {
-                        exp.insert(self.ds.edges[local_ei].start_vertex);
-                        exp.insert(self.ds.edges[local_ei].end_vertex);
+                        exp.insert(self.ds.edge_start_vertex_ds(local_ei));
+                        exp.insert(self.ds.edge_end_vertex_ds(local_ei));
                     }
                 }
                 exp.insert(flat_idx);
@@ -242,8 +242,8 @@ impl<'a> BooleanBuilder<'a> {
                 } else if is_edge {
                     let local_ei = flat_idx - e_base;
                     if local_ei < self.ds.edges.len() {
-                        exp.insert(self.ds.edges[local_ei].start_vertex);
-                        exp.insert(self.ds.edges[local_ei].end_vertex);
+                        exp.insert(self.ds.edge_start_vertex_ds(local_ei));
+                        exp.insert(self.ds.edge_end_vertex_ds(local_ei));
                     }
                 }
                 exp.insert(flat_idx);
@@ -372,7 +372,7 @@ impl<'a> BooleanBuilder<'a> {
                                 faces.push(dfi);
                                 for &vi in &self.ds.faces[dfi].boundary_verts {
                                     if vi < self.ds.vertices.len() {
-                                        aabb.expand_point(self.ds.vertices[vi].point);
+                                        aabb.expand_point(self.ds.vertex_point(vi));
                                     }
                                 }
                                 if fi < result.faces.len() {
@@ -554,9 +554,9 @@ impl<'a> BooleanBuilder<'a> {
             for (&ei, face_list) in &edge_to_faces {
                 a_msx.entry(ei).or_default().extend(face_list);
                 if ei < self.ds.edges.len() {
-                    a_msx.entry(self.ds.edges[ei].start_vertex)
+                    a_msx.entry(self.ds.edge_start_vertex_ds(ei))
                         .or_default().push(ei);
-                    a_msx.entry(self.ds.edges[ei].end_vertex)
+                    a_msx.entry(self.ds.edge_end_vertex_ds(ei))
                         .or_default().push(ei);
                 }
             }
@@ -605,12 +605,12 @@ impl<'a> BooleanBuilder<'a> {
             while i < a_lsi.len() {
                 let si_idx = a_lsi[i];
                 let pt = if si_idx < self.ds.vertices.len() {
-                    self.ds.vertices[si_idx].point
+                    self.ds.vertex_point(si_idx)
                 } else {
                     let ei = si_idx;
                     if ei < self.ds.edges.len() {
-                        (self.ds.vertices[self.ds.edges[ei].start_vertex].point
-                         + self.ds.vertices[self.ds.edges[ei].end_vertex].point) * 0.5
+                        (self.ds.vertices[self.ds.edge_start_vertex_ds(ei)].point
+                         + self.ds.vertices[self.ds.edge_end_vertex_ds(ei)].point) * 0.5
                     } else {
                         i += 1; continue;
                     }
@@ -900,7 +900,7 @@ impl<'a> BooleanBuilder<'a> {
             rcad_kernel::topods::ShapeType::Vertex => {
                 let vi = a_s.index;
                 if vi < self.ds.vertices.len() {
-                    result.add_ds_vertex(vi, self.ds.vertices[vi].point);
+                    result.add_ds_vertex(vi, self.ds.vertex_point(vi));
                 }
             }
             rcad_kernel::topods::ShapeType::Edge => {

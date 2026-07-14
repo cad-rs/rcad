@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> PaveFiller<'a> {
     pub(crate) fn force_interf_ee(&mut self) {
@@ -23,13 +23,13 @@ impl<'a> PaveFiller<'a> {
         if pb_map.is_empty() { return; }
         for (&(nV1, nV2), pbs) in &pb_map {
             if pbs.len() < 2 { continue; }
-            let a_tol_add = 2.0 * self.ds.vertices[nV1].geom_tol
-                                .max(self.ds.vertices[nV2].geom_tol);
+            let a_tol_add = 2.0 * self.ds.vertex_tolerance(nV1)
+                                .max(self.ds.vertex_tolerance(nV2));
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
-                let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
+                let pb1 = &self.ds.edge_pave_blocks(ei1)[pb1_local];
                 let nE1 = pb1.0.read().unwrap().original_edge;                 
-                let r1 = self.ds.edges[nE1].origin;
+                let r1 = self.ds.edge_origin(nE1);
                 let (t11, t12) = pb1.0.write().unwrap().range();                
                 let mid_t1 = (t11 + t12) * 0.5;             
                 let c1 = &self.ds.edges[nE1].curve;          
@@ -38,9 +38,9 @@ impl<'a> PaveFiller<'a> {
 
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
-                    let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
+                    let pb2 = &self.ds.edge_pave_blocks(ei2)[pb2_local];
                     let nE2 = pb2.0.read().unwrap().original_edge;             
-                    let r2 = self.ds.edges[nE2].origin;      
+                    let r2 = self.ds.edge_origin(nE2);      
                     let (t21, t22) = pb2.0.write().unwrap().range();            
                     //   if the bounding vertices are original (not acquired during operation)
                     if r1 == r2 {
@@ -83,8 +83,8 @@ impl<'a> PaveFiller<'a> {
                         (Curve3::Line(l1), Curve3::Line(l2)) => {
                             // intersect_line_line returns Option<(f64,f64,DVec3)>
                             if let Some((t1, t2, pt)) = intersect_line_line(
-                                l1, self.ds.edges[nE1].t_range,
-                                l2, self.ds.edges[nE2].t_range, fuzzy)
+                                l1, self.ds.edge_range(nE1),
+                                l2, self.ds.edge_range(nE2), fuzzy)
                             {
                                 self.ds.interf_ee.push(InterferenceEE{
                                     e1: nE1, e2: nE2, point: pt, param1: t1, param2: t2, new_vertex: nV1,
@@ -105,8 +105,8 @@ impl<'a> PaveFiller<'a> {
                             // (1) Coarse 21x21 grid -> find best (t1,t2)
                             // (2) Recursive subdivision around best: 2x denser per level
                             // (3) Converge when distance < fuzzy OR subrange < 1e-6
-                            let tr1 = self.ds.edges[nE1].t_range;
-                            let tr2 = self.ds.edges[nE2].t_range;
+                            let tr1 = self.ds.edge_range(nE1);
+                            let tr2 = self.ds.edge_range(nE2);
                             let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
                             let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
                             let tgt1 = c1.tangent_at(mid_t1);
@@ -218,7 +218,7 @@ impl<'a> PaveFiller<'a> {
             // L791-796: only edges (rcad: edges Vec contains only edges)
 
             // L798-802: edge must have PBs
-            if self.ds.edges[ne].pave_blocks.is_empty() {
+            if self.ds.edge_pave_blocks(ne).is_empty() {
                 continue;
             }
 
@@ -228,7 +228,7 @@ impl<'a> PaveFiller<'a> {
             }
 
             // L814-821: add all PBs to map
-            for local_i in 0..self.ds.edges[ne].pave_blocks.len() {
+            for local_i in 0..self.ds.edge_pave_blocks(ne).len() {
                 a_mpb.push((ne, local_i));
             }
         }
@@ -251,7 +251,7 @@ impl<'a> PaveFiller<'a> {
         let mut pb_indices: Vec<usize> = Vec::with_capacity(the_mpb.len());
         for (pi, &(ne, local_i)) in the_mpb.iter().enumerate() {
             if ne >= self.ds.edges.len() { continue; }
-            let pb = &self.ds.edges[ne].pave_blocks[local_i];
+            let pb = &self.ds.edge_pave_blocks(ne)[local_i];
             let aabb = if let Some((mn, mx)) = pb.0.read().unwrap().my_shrunk_box {
                 crate::bvh::Aabb { min: mn, max: mx }
             } else {
@@ -336,7 +336,7 @@ impl<'a> PaveFiller<'a> {
                 let mut face_aabb = crate::bvh::Aabb::empty();
                 for &vi in &a_face.boundary_verts {
                     if vi < ds.vertices.len() {
-                        face_aabb.expand_point(ds.vertices[vi].point);
+                        face_aabb.expand_point(ds.vertex_point(vi));
                     }
                 }
 
@@ -347,7 +347,7 @@ impl<'a> PaveFiller<'a> {
                 let mut local_pairs: Vec<(usize, usize, usize)> = Vec::new();
                 for &pb_idx in &overlapping {
                     let &(ne, local_i) = &the_mpb[pb_idx];
-                    let pb = &ds.edges[ne].pave_blocks[local_i];
+                    let pb = &ds.edge_pave_blocks(ne)[local_i];
 
                     // skip if PB already in face's EF set
                     if ds.interf_ef.iter().any(|inf| inf.edge == ne && inf.face == nf) {
@@ -358,7 +358,7 @@ impl<'a> PaveFiller<'a> {
                     let n_v2 = pb.0.read().unwrap().pave2.vertex_idx;
                     if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) { continue; }
 
-                    if ds.edges[ne].origin == ds.faces[nf].origin { continue; }
+                    if ds.edges[ne].origin == ds.face_origin(nf) { continue; }
 
                     let a_e_curve = &ds.edges[ne].curve;
                     let mut b_use_add_tol = true;
@@ -406,7 +406,7 @@ impl<'a> PaveFiller<'a> {
                             }
                         }
                         if a_tol_add > 0.0 {
-                            a_tol_add -= (ds.edges[ne].geom_tol + a_face.geom_tol);
+                            a_tol_add -= (ds.edge_tolerance(ne) + a_face.geom_tol);
                             if a_tol_add < 0.0 { a_tol_add = 0.0; }
                         }
                     }
@@ -448,13 +448,17 @@ impl<'a> PaveFiller<'a> {
             std::collections::BTreeMap::new();
 
         for &(ne, nf, local_i) in &a_v_edge_face {
-            let pb = &self.ds.edges[ne].pave_blocks[local_i];
-
-            // L1154-1158: (rcad: skip error check — no intersection engine)
-            // L1162-1170: results check (rcad: all pairs produce a result)
-
-            // L1174-1183: Add EdgeFace interference (rcad equivalent)
-            let a_t_mid = crate::boptools::intermediate_point(pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param);
+            let pb_data = {
+                let pbs = self.ds.edge_pave_blocks(ne);
+                if local_i >= pbs.len() { continue; }
+                let pb = &pbs[local_i];
+                let p1 = pb.0.read().unwrap().pave1;
+                let p2 = pb.0.read().unwrap().pave2;
+                let v_idx = p1.vertex_idx;
+                let a_t_mid = crate::boptools::intermediate_point(p1.param, p2.param);
+                (a_t_mid, v_idx, pb.clone())
+            };
+            let (a_t_mid, new_vertex, pb_clone) = pb_data;
             let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
             self.ds.interf_ef.push(InterferenceEF{
                 edge: ne,
@@ -462,13 +466,13 @@ impl<'a> PaveFiller<'a> {
                 point: a_mid_pt,
                 edge_param: a_t_mid,
                 // Use first vertex index as new_vertex placeholder
-                new_vertex: pb.0.read().unwrap().pave1.vertex_idx,
+                new_vertex: new_vertex,
             });
 
             // L1184-1186: Update face info with new IN pave block
             let g_pb_idx = self.ds.pave_blocks.len();
-            self.ds.pave_blocks.push(pb.clone());
-            self.ds.faces[nf].face_info.pave_blocks_in.insert(g_pb_idx);
+            self.ds.pave_blocks.push(pb_clone);
+            self.ds.face_info_mut(nf).pave_blocks_in.insert(g_pb_idx);
 
             // L1188-1192: Fill map for common blocks creation
             crate::bopalgo::fill_map(&mut a_mpbli, g_pb_idx, nf);
@@ -511,10 +515,10 @@ impl<'a> PaveFiller<'a> {
             };
 
             for &vi in &face_vertices {
-                let v_origin = self.ds.vertices[vi].origin;
+                let v_origin = self.ds.vertex_origin(vi);
                 if v_origin.is_none() { continue; }
                 for &ei in &boundary_edges {
-                    let e_origin = self.ds.edges[ei].origin;
+                    let e_origin = self.ds.edge_origin(ei);
                     if e_origin == v_origin.unwrap() { continue; }
                     if self.ds.is_edge_degenerated(ei) { continue; }
                     if ve_done.contains(&(vi, ei)) { continue; }
@@ -533,7 +537,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         for vi in 0..self.ds.vertices.len() {
-            let v_origin = self.ds.vertices[vi].origin;
+            let v_origin = self.ds.vertex_origin(vi);
             let opposite_faces: Vec<usize> = match v_origin {
                 Some(ShapeOrigin::ShapeA) => self.faces_of(ShapeOrigin::ShapeB),
                 Some(ShapeOrigin::ShapeB) => self.faces_of(ShapeOrigin::ShapeA),
@@ -566,13 +570,15 @@ impl<'a> PaveFiller<'a> {
                 let on_face = params.iter().any(|&t| {
                     use rcad_kernel::geom::CurveEval;
                     let pt = ic.curve.point_at(t);
-                    let tol = self.ds.faces[fi].geom_tol.max(TOLERANCE_ABS);
+                    let tol = self.ds.face_tolerance(fi).max(TOLERANCE_ABS);
                     self.point_on_face(pt, fi, tol)
                 });
                 if on_face {
-                    self.ds.faces[fi].face_info.curves_sc.insert(ci);
-                    self.ds.faces[fi].face_info.vertices_in.insert(ic.start_vertex);
-                    self.ds.faces[fi].face_info.vertices_in.insert(ic.end_vertex);
+                    let sv = ic.start_vertex;
+                    let ev = ic.end_vertex;
+                    self.ds.face_info_mut(fi).curves_sc.insert(ci);
+                    self.ds.face_info_mut(fi).vertices_in.insert(sv);
+                    self.ds.face_info_mut(fi).vertices_in.insert(ev);
                 }
             }
         }

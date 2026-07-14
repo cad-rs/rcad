@@ -21,6 +21,16 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  solids: Vec::new(),
  comp_solids: Vec::new(),
  faces: Vec::new(),
+ vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(),
+ edge_start_vertex: Vec::new(), edge_end_vertex: Vec::new(), edge_origins: Vec::new(),
+ edge_paves: Vec::new(), edge_pave_blocks: Vec::new(), edge_face_reps: Vec::new(),
+ edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(),
+ face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
+ face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
+ face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
+ face_normals: Vec::new(), face_origins: Vec::new(), face_info_vec: Vec::new(),
+ source_face_idxs: Vec::new(), face_locations: Vec::new(), face_uv_boundary: Vec::new(),
+ source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(),
  interf_vv: Vec::new(),
  interf_ve: Vec::new(),
  interf_vf: Vec::new(),
@@ -81,14 +91,13 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  v_map.insert(ti, existing);
  } else {
  let vi = ds.vertices.len();
- ds.vertices.push(DSVertex {
+ ds.push_vertex(DSVertex {
  point: vd.point,
  origin: Some(origin),
  geom_tol: vd.tolerance,
  is_internal: false,
  location: 0,
- });
- ds.shapes.push(ts.clone());
+ }, Some(ts.clone()));
  v_map.insert(ti, vi);
  }
  }
@@ -101,8 +110,8 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let start = v_map.get(&ed.first.index).copied().unwrap_or(0);
  let end = v_map.get(&ed.last.index).copied().unwrap_or(0);
  let curve = ed.curve.clone().unwrap_or_else(|| {
- let p0 = ds.vertices[start].point;
- let p1 = ds.vertices[end].point;
+ let p0 = ds.vertex_point(start);
+ let p1 = ds.vertex_point(end);
  let dir = (p1 - p0).normalize_or_zero();
  Curve3::Line(Line3 { origin: p0, direction: dir })
  });
@@ -118,7 +127,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let is_geometric = ed.curve.is_some() && (matches!(&curve, Curve3::Line(_) | Curve3::Circle(_)
  | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)));
  let ds_ei = ds.edges.len();
- ds.edges.push(DSEdge {
+ ds.push_edge(DSEdge {
  start_vertex: start,
  end_vertex: end,
  curve,
@@ -133,8 +142,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  face_tolerances: Vec::new(),
  is_geometric,
  location: 0,
- });
- ds.shapes.push(ts.clone());
+ }, Some(ts.clone()));
  e_map.insert(ti, ds_ei);
  ds.init_pave_blocks_for_edge(ds_ei);
  }
@@ -236,7 +244,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  };
  let ds_fi = ds.faces.len();
  f_map.insert(face_sr.index, ds_fi);
- ds.faces.push(DSFace {
+ ds.push_face(DSFace {
  surface,
  boundary_verts,
  boundary_edges,
@@ -255,8 +263,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  source_shell_idx: Some(shell_counter),
  source_solid_idx: Some(solid_counter),
  source_compsolid_idx: compsolid_idx,
- });
- ds.shapes.push(brep.tshapes[face_sr.index].clone());
+ }, Some(brep.tshapes[face_sr.index].clone()));
  face_flat_idx += 1;
  }
  let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();
@@ -291,7 +298,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let Some(&ds_ei) = e_map.get(&ti) else { continue; };
  for (&face_ti, (pcurve, param_start, param_end)) in &ed.pcurves {
  let Some(&ds_fi) = f_map.get(&face_ti) else { continue; };
- if ds.edges[ds_ei].face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
+ if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
  let uv_start = pcurve.point_at(*param_start);
  let uv_end = pcurve.point_at(*param_end);
  let span = (uv_end - uv_start).length();
@@ -309,7 +316,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  match rep {
  topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
  let Some(&ds_fi) = f_map.get(face) else { continue; };
- if ds.edges[ds_ei].face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
+ if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
  let span = range[1] - range[0];
  if span < TOLERANCE_CLAMP_MIN { continue; }
  ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
@@ -323,7 +330,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  }
  topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
  let Some(&ds_fi) = f_map.get(face) else { continue; };
- if ds.edges[ds_ei].face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
+ if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
  let span = range[1] - range[0];
  if span < TOLERANCE_CLAMP_MIN { continue; }
  ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
@@ -502,7 +509,7 @@ mod tests {
             geom_tol: TOLERANCE_ABS,
             is_internal: false,
             location: 0,
-        });
+        }, None);
         assert_eq!(vi, nv_before, "push_vertex returns next vertex index");
         assert_eq!(ds.vertices.len(), nv_before + 1, "vertices array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");

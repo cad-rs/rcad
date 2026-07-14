@@ -438,7 +438,7 @@ pub(crate) fn refine_angle_2d(
     //  ?OCCT L1060: vertex UV for ray origin (aGAC1.D0(aTV, aPV)).
     let v_uv = match &seg.source {
         WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
-            world_to_uv(face_surface, ds.vertices[vertex_idx].point)
+            world_to_uv(face_surface, ds.vertex_point(vertex_idx))
         }
         WireEdgeSource::IntersectionCurve(_) => {
             Some(curve2d.point_at(t_v))
@@ -595,7 +595,7 @@ pub(crate) fn walk_path_extract_wires(
                 //   assigns different vertex indices to the same 3D point (remap_ic_v),
                 //   so vi == ic.start_vertex fails silently for remapped vertices.
                 //   Use geometric distance at remap_ic_v's tolerance.
-                let vi_at_pole = ds.vertices[vi].point;
+                let vi_at_pole = ds.vertex_point(vi);
                 let t = if ds.vertices[ic.start_vertex].point.distance_squared(vi_at_pole)
                     <= TOLERANCE_ABS_SQ * 1_000_000.0 { ic.t_range[0] }
                         else { ic.t_range[1] };
@@ -628,7 +628,7 @@ pub(crate) fn walk_path_extract_wires(
                         _ => {
                             // OCCT: Coord2d always expects a pcurve  ?fall back to
                             // world_to_uv when unavailable (e.g. degenerated edge).
-                            world_to_uv(face_surface, ds.vertices[vi].point)
+                            world_to_uv(face_surface, ds.vertex_point(vi))
                         }
                     }
                 } else if segment.orientation == WireOrientation::Forward {
@@ -638,7 +638,7 @@ pub(crate) fn walk_path_extract_wires(
                             Some(l.point_at(t))
                         }
                         _ => {
-                            world_to_uv(face_surface, ds.vertices[vi].point)
+                            world_to_uv(face_surface, ds.vertex_point(vi))
                         }
                     }
                 } else {
@@ -651,7 +651,7 @@ pub(crate) fn walk_path_extract_wires(
                             Some(l.point_at(t))
                         }
                         _ => {
-                            world_to_uv(face_surface, ds.vertices[vi].point)
+                            world_to_uv(face_surface, ds.vertex_point(vi))
                         }
                     }
                 }
@@ -675,7 +675,7 @@ pub(crate) fn walk_path_extract_wires(
         // OCCT: Coord2d always expects a valid pcurve  ?this fallback should never
         // be reached in OCCT (the edge would not be in the wire).  Release builds
         // use world_to_uv as a best-effort approximation.
-        let v_pt = ds.vertices[vi].point;
+        let v_pt = ds.vertex_point(vi);
         match face_surface {
             Surface3::Sphere(s) => Some(s.world_to_uv(v_pt)),
             Surface3::Cylinder(c) => {
@@ -697,7 +697,7 @@ pub(crate) fn walk_path_extract_wires(
 
     // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L859-901).
     let vtol = |vi: usize| -> f64 {
-        ds.vertices[vi].geom_tol.max(TOLERANCE_ABS)
+        ds.vertex_tolerance(vi).max(TOLERANCE_ABS)
     };
     let u_resolution = |vt: f64| -> f64 {
         match face_surface {
@@ -886,12 +886,12 @@ pub(crate) fn walk_path_extract_wires(
         let candidates: Vec<&EdgeInfo> = if b_is_closed {
             let is_periodic = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
             let pb_uv = if is_periodic {
-                world_to_uv(&ds.faces[face_idx].surface, ds.vertices[arrived_vertex].point)
+                world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
                     .unwrap_or(DVec2::ZERO)
             } else { a_pb };
             raw_candidates.into_iter().filter(|ei| {
                 let cand_uv = if is_periodic {
-                    world_to_uv(&ds.faces[face_idx].surface, ds.vertices[arrived_vertex].point)
+                    world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
                         .unwrap_or(DVec2::ZERO)
                 } else {
                     vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
@@ -967,7 +967,7 @@ pub(crate) fn perform_areas(
 ) -> Vec<WireFace> {
     // OCCT L401-414: if no loops at all
     if wires.is_empty() {
-        if ds.faces[face_idx].natural_restriction {
+        if ds.face_natural_restriction(face_idx) {
             // OCCT L403-411: infinite face  ?create a single face without wires
             return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
         }
@@ -1212,7 +1212,7 @@ pub(crate) fn perform_areas(
     }).collect();
 
     // OCCT L557-581: unassigned holes  ?create new growth face from original surface
-    if !orphan_holes.is_empty() && ds.faces[face_idx].natural_restriction {
+    if !orphan_holes.is_empty() && ds.face_natural_restriction(face_idx) {
         // OCCT L565-579: new TopoDS_Face from original surface  ?add orphan holes as inner wires
         // rcad: WireFace with empty outer_wire = full parametric surface (natural_restriction)
         let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter().map(|&h| wires[h].clone()).collect();

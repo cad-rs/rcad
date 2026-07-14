@@ -191,12 +191,12 @@ impl<'a> BooleanBuilder<'a> {
                 if let rcad_kernel::topods::TShape::Edge(_ed) = &**ts {
                     let ei = ti.saturating_sub(e_base);
                     if ei < self.ds.edges.len() {
-                        let tol = self.ds.edges[ei].geom_tol.max(0.05);
+                        let tol = self.ds.edge_tolerance(ei).max(0.05);
                         updates.push((ti, tol, rcad_kernel::topods::ShapeType::Edge));
                     }
                 } else if let rcad_kernel::topods::TShape::Vertex(_vd) = &**ts {
                     if ti < self.ds.vertices.len() {
-                        let tol = self.ds.vertices[ti].geom_tol.max(0.05);
+                        let tol = self.ds.vertex_tolerance(ti).max(0.05);
                         updates.push((ti, tol, rcad_kernel::topods::ShapeType::Vertex));
                     }
                 }
@@ -255,9 +255,9 @@ impl<'a> BooleanBuilder<'a> {
             if fi >= self.ds.faces.len() { continue; }
             let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
 
-            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
-            let has_pb_sc = !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
-            let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
+            let has_pb_in = !self.ds.face_info(fi).pave_blocks_in.is_empty();
+            let has_pb_sc = !self.ds.face_info(fi).pave_blocks_sc.is_empty();
+            let has_pb_on = !self.ds.face_info(fi).pave_blocks_on.is_empty();
             // ✅ OCCT-aligned: AloneVertices (BOPDS_DS.cxx L1028-1062).
             // VerticesIn + VerticesSc minus PB endpoints of PaveBlocksIn + PaveBlocksSc.
             // OCCT does NOT include VerticesOn in alone-vertices count.
@@ -285,7 +285,7 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            let sf_idx = self.ds.faces[fi].source_face_idx;
+            let sf_idx = self.ds.source_face_idx(fi);
             let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
@@ -329,9 +329,9 @@ impl<'a> BooleanBuilder<'a> {
                         let (segments, wfs, vertex_positions) = draft;
                         for wf in &wfs {
                             let origin = if is_a {
-                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                                FaceOrigin::FromA(self.ds.source_face_idx(fi))
                             } else {
-                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                                FaceOrigin::FromB(self.ds.source_face_idx(fi))
                             };
                             // OCCT L344-347: store draft face in aFacesIm and continue.
                             result.emit_wire_face(fi, wf, &segments, self.ds, false, origin,
@@ -487,7 +487,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_in {
+            for &pb_idx in &self.ds.face_info(fi).pave_blocks_in {
                 if pb_idx < self.ds.pave_blocks.len() {
                     let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
                         .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
@@ -496,7 +496,7 @@ impl<'a> BooleanBuilder<'a> {
                     a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Reversed, ..e_sr });
                 }
             }
-            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
+            for &pb_idx in &self.ds.face_info(fi).pave_blocks_sc {
                 if pb_idx < self.ds.pave_blocks.len() {
                     let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
                         .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
@@ -634,7 +634,7 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L963-979: classify each alone vertex against each split face.
             for &vi in &alone {
                 if vi >= self.ds.vertices.len() { continue; }
-                let v_pt = self.ds.vertices[vi].point;
+                let v_pt = self.ds.vertex_point(vi);
 
                 for &rfi in &image_rfis {
                     if rfi >= result.faces.len() { continue; }
@@ -652,7 +652,7 @@ impl<'a> BooleanBuilder<'a> {
 
                     // OCCT L974-977: tolerance = MAX(tolV, tolF) + fuzzyValue.
                     let tol_v = self.ds.vertices.get(vi).map_or(crate::tolerance::TOLERANCE_ABS, |v| v.geom_tol);
-                    let tol_f = self.ds.faces[cfi].geom_tol;
+                    let tol_f = self.ds.face_tolerance(cfi);
                     let class_tol = tol_v.max(tol_f) + self.ds.fuzzy_tol;
 
                     let fs = &self.ds.faces[cfi].surface;
@@ -879,18 +879,18 @@ impl<'a> BooleanBuilder<'a> {
         //   compute max edge tolerance, compare against face tolerance.
         //   rcad: explore all edges on the DS face (outer + inner wires), skip degenerated.
         let face_tol_with_edges = |dsfi: usize| -> f64 {
-            let mut a_tol = self.ds.faces[dsfi].geom_tol;
+            let mut a_tol = self.ds.face_tolerance(dsfi);
             let mut a_tol_e_max = -1.0_f64;
             for &ei in &self.ds.faces[dsfi].boundary_edges {
                 if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
-                    let e_tol = self.ds.edges[ei].geom_tol;
+                    let e_tol = self.ds.edge_tolerance(ei);
                     if e_tol > a_tol_e_max { a_tol_e_max = e_tol; }
                 }
             }
             for inner in &self.ds.faces[dsfi].inner_boundary_edges {
                 for &(ei, _) in inner {
                     if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
-                        let e_tol = self.ds.edges[ei].geom_tol;
+                        let e_tol = self.ds.edge_tolerance(ei);
                         if e_tol > a_tol_e_max { a_tol_e_max = e_tol; }
                     }
                 }
@@ -1195,11 +1195,11 @@ impl<'a> BooleanBuilder<'a> {
             for ds_shell in &self.ds.shells {
                 for &dsfi in &ds_shell.faces {
                     if dsfi >= self.ds.faces.len() { continue; }
-                    if self.ds.faces[dsfi].source_compsolid_idx != Some(csi) { continue; }
+                    if self.ds.source_compsolid_idx(dsfi) != Some(csi) { continue; }
                     for (rfi, fo) in result.face_origins.iter().enumerate() {
-                        let matches = match (fo, self.ds.faces[dsfi].origin) {
-                            (FaceOrigin::FromA(s), ShapeOrigin::ShapeA) => *s == self.ds.faces[dsfi].source_face_idx,
-                            (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => *s == self.ds.faces[dsfi].source_face_idx,
+                        let matches = match (fo, self.ds.face_origin(dsfi)) {
+                            (FaceOrigin::FromA(s), ShapeOrigin::ShapeA) => *s == self.ds.source_face_idx(dsfi),
+                            (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => *s == self.ds.source_face_idx(dsfi),
                             _ => false,
                         };
                         if matches {
@@ -1339,7 +1339,7 @@ impl<'a> BooleanBuilder<'a> {
                             // Same-domain image face --check reverse
                             let b_to_reverse = a_fx_dfi_opt.map_or(false, |fx_dfi|
                                 crate::boptools::is_split_to_reverse(
-                                    self.ds.faces[dsfi].normal, self.ds.faces[fx_dfi].normal));
+                                    self.ds.face_normal(dsfi), self.ds.face_normal(fx_dfi)));
                             if !b_to_reverse {
                                 i_flag = true;
                                 if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); }
@@ -1446,7 +1446,7 @@ impl<'a> BooleanBuilder<'a> {
                     let mut aabb = Aabb::empty();
                     for &vi in &self.ds.faces[dfi].boundary_verts {
                         if vi < self.ds.vertices.len() {
-                            aabb.expand_point(self.ds.vertices[vi].point);
+                            aabb.expand_point(self.ds.vertex_point(vi));
                         }
                     }
                     aabb
@@ -1460,7 +1460,7 @@ impl<'a> BooleanBuilder<'a> {
                     if dfi < self.ds.faces.len() {
                         for &vi in &self.ds.faces[dfi].boundary_verts {
                             if vi < self.ds.vertices.len() {
-                                aabb.expand_point(self.ds.vertices[vi].point);
+                                aabb.expand_point(self.ds.vertex_point(vi));
                             }
                         }
                     }
