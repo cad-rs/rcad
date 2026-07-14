@@ -846,11 +846,101 @@ impl<'a> PaveFiller<'a> {
    .filter(|(_, e)| e.origin == origin)
    .map(|(i, _)| i).collect()
  }
- pub(crate) fn make_split_edges(&mut self) {}
- pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
-}
+ /// OCCT-aligned: BOPAlgo_PaveFiller::MakeSplitEdges (PaveFiller_7.cxx L371-549).
+ /// For each PaveBlock on each edge, creates a new DSEdge representing the
+ /// sub-range between the block's endpoints.  Edges that were not split by
+ /// intersection (single PB, both vertices are from original shapes) retain
+ /// their original edge.
+ pub(crate) fn make_split_edges(&mut self) {
+   let mut processed_cbs: std::collections::HashSet<usize> =
+     std::collections::HashSet::new();
+   // Collect split edge work items (BorrowChecker-friendly collection).
+   struct SplitEdgeWork {
+     edge_idx: usize,
+     v1: usize,
+     v2: usize,
+     t1: f64,
+     t2: f64,
+     pb_idx: usize,
+     cb_idx: Option<usize>,
+   }
+   let mut work: Vec<SplitEdgeWork> = Vec::new();
 
-// Second empty impl block (kept for OCCT alignment)
-impl<'a> PaveFiller<'a> {
+   for ei in 0..self.ds.edges.len() {
+     if self.ds.is_edge_degenerated(ei) {
+       continue;
+     }
+     let pbs = self.ds.edges[ei].pave_blocks.clone();
+     if pbs.is_empty() {
+       continue;
+     }
+     for (pi, spb) in pbs.iter().enumerate() {
+       let pb = spb.0.read().unwrap();
+       let cb_idx = pb.common_block_idx;
+       // CB dedup: process each CB only once (OCCT: aMCB set).
+       if let Some(cb) = cb_idx {
+         if !processed_cbs.insert(cb) {
+           continue;
+         }
+       }
+       let (v1, v2) = pb.indices();
+       let (t1, t2) = pb.range();
+       // OCCT L426-467: decide whether to split the edge.
+       let v1_new = v1 < self.ds.vertices.len()
+         && self.ds.vertices[v1].origin.is_none();
+       let v2_new = v2 < self.ds.vertices.len()
+         && self.ds.vertices[v2].origin.is_none();
+       if !v1_new && !v2_new && pbs.len() == 1 {
+         // No new vertex on this edge -- single PB keeps the original edge.
+         drop(pb);
+         spb.0.write().unwrap().new_edge = Some(ei);
+         continue;
+       }
+       drop(pb);
+       work.push(SplitEdgeWork {
+         edge_idx: ei,
+         v1,
+         v2,
+         t1,
+         t2,
+         pb_idx: pi,
+         cb_idx,
+       });
+     }
+   }
+   // Process split edges (OCCT L500-548: BOPTools_Parallel::Perform).
+   for task in &work {
+     let orig = &self.ds.edges[task.edge_idx];
+     let new_ei = self.ds.edges.len();
+     let mut vertex_params = std::collections::HashMap::new();
+     vertex_params.insert(task.v1, task.t1);
+     vertex_params.insert(task.v2, task.t2);
+     self.ds.edges.push(DSEdge {
+       start_vertex: task.v1,
+       end_vertex: task.v2,
+       curve: orig.curve.clone(),
+       t_range: [task.t1, task.t2],
+       origin: orig.origin,
+       geom_tol: orig.geom_tol,
+       paves: Vec::new(),
+       pave_blocks: Vec::new(),
+       face_reps: Vec::new(),
+       is_internal: orig.is_internal,
+       vertex_params,
+       face_tolerances: Vec::new(),
+       is_geometric: orig.is_geometric,
+       location: orig.location,
+     });
+     // OCCT L539-547: assign new edge to CB or PB.
+     if let Some(cb) = task.cb_idx {
+       self.ds.common_blocks[cb].set_edge(new_ei);
+     } else {
+       self.ds.edges[task.edge_idx].pave_blocks[task.pb_idx]
+         .0.write().unwrap().new_edge = Some(new_ei);
+     }
+   }
+ }
+
+ pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
 }
 
