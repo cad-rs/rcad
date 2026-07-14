@@ -1,4 +1,4 @@
-pub mod face_aabb;
+﻿pub mod face_aabb;
 pub mod types;
 pub use types::*;
 pub mod iterator;
@@ -1170,7 +1170,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  match (surface, curve) {
  (Surface3::Plane(p), Curve3::Line(l)) => {
  let (u_axis, v_axis) = if let Some((u, v, _)) = pl_basis { (u, v) }
-  else { let u = any_perpendicular(p.normal).normalize(); (u, p.normal.cross(u).normalize()) };
+  else { let u = DVec3::X - p.normal * p.normal.dot(DVec3::X); let u = if u.length_squared() < 1e-24 { DVec3::Z - p.normal * p.normal.dot(DVec3::Z) } else { u }; (u.normalize(), p.normal.cross(u).normalize()) };
  let diff = l.origin - p.origin;
  let origin = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let dir = DVec2::new(l.direction.dot(u_axis), l.direction.dot(v_axis));
@@ -1181,7 +1181,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  }
  (Surface3::Plane(p), Curve3::Circle(c)) => {
  let (u_axis, v_axis) = if let Some((u, v, _)) = pl_basis { (u, v) }
-  else { let u = any_perpendicular(p.normal).normalize(); (u, p.normal.cross(u).normalize()) };
+  else { let u = DVec3::X - p.normal * p.normal.dot(DVec3::X); let u = if u.length_squared() < 1e-24 { DVec3::Z - p.normal * p.normal.dot(DVec3::Z) } else { u }; (u.normalize(), p.normal.cross(u).normalize()) };
  let diff = c.center - p.origin;
  let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let normal_dot = c.normal.dot(p.normal).abs();
