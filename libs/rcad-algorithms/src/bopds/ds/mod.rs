@@ -1166,11 +1166,11 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  ///  ?OCCT-aligned: compute pcurve for a boundary edge on its face surface.
  /// Mirrors BRep_Tool::CurveOnSurface for boundary edges.
  /// Returns (pcurve, pcurve_span_length) where pcurve has normalized direction.
- pub(crate) fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, f64)> {
+ pub(crate) fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3, pl_basis: Option<(DVec3, DVec3, DVec3)>) -> Option<(Curve2d, f64)> {
  match (surface, curve) {
  (Surface3::Plane(p), Curve3::Line(l)) => {
- let u_axis = any_perpendicular(p.normal).normalize();
- let v_axis = p.normal.cross(u_axis).normalize();
+ let (u_axis, v_axis) = if let Some((u, v, _)) = pl_basis { (u, v) }
+  else { let u = any_perpendicular(p.normal).normalize(); (u, p.normal.cross(u).normalize()) };
  let diff = l.origin - p.origin;
  let origin = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let dir = DVec2::new(l.direction.dot(u_axis), l.direction.dot(v_axis));
@@ -1180,8 +1180,8 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  } else { None }
  }
  (Surface3::Plane(p), Curve3::Circle(c)) => {
- let u_axis = any_perpendicular(p.normal).normalize();
- let v_axis = p.normal.cross(u_axis).normalize();
+ let (u_axis, v_axis) = if let Some((u, v, _)) = pl_basis { (u, v) }
+  else { let u = any_perpendicular(p.normal).normalize(); (u, p.normal.cross(u).normalize()) };
  let diff = c.center - p.origin;
  let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
  let normal_dot = c.normal.dot(p.normal).abs();
@@ -1389,7 +1389,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
   }
  }
  // Generic pcurve computation for non-planar or non-line edges
- if let Some((mut pcurve, mut span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
+ if let Some((mut pcurve, mut span)) = Self::compute_edge_pcurve(&edge.curve, &surface, pl_basis) {
  let t_span = t_range[1] - t_range[0];
  if t_span.abs() > TOLERANCE_CLAMP_MIN && (span - t_span.abs()).abs() > 1e-12 {
  if let Curve2d::Line(ref mut l) = pcurve { l.direction *= span / t_span; }

@@ -1059,7 +1059,7 @@ impl<'a> super::PaveFiller<'a> {
  // Compute pcurve (OCCT MPC.Perform internal logic)
  let face_surface = self.ds.faces[fi].surface.clone();
  let edge_curve = &self.ds.edges[ei].curve;
- if let Some((pcurve, len)) = DS::compute_edge_pcurve(edge_curve, &face_surface) {
+ if let Some((pcurve, len)) = DS::compute_edge_pcurve(edge_curve, &face_surface, None) {
  applied_pcurves.push((
  ei, fi, pcurve,
  self.ds.edge_range(ei)[0],

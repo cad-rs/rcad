@@ -243,7 +243,7 @@ impl<'a> PaveFiller<'a> {
  for &ei in &face_edges[pos] {
  if self.ds.edge_on_face(ei, fi).is_some() { continue; }
  let Some(edge) = self.ds.edges.get_mut(ei) else { continue; };
- if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf[pos]) {
+ if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf[pos], None) {
  edge.face_reps.push(DSCurveRepOnFace {
  face_idx: fi,
  pcurve,
