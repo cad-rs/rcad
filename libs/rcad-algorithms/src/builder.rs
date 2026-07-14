@@ -39,7 +39,7 @@ pub use types::{
  BooleanOpType, BooleanError,
 };
 pub(crate) use types::{
- ShapeType, WireFace, WireSegment, WireEdgeSource,
+ ShapeType, WireFace, WireSegment, WireEdgeSource, WireOrientation,
  WireSegmentTopoDS, WireEdgeSourceTopoDS,
  FaceEntry,
 };
@@ -457,47 +457,148 @@ impl<'a> BooleanBuilder<'a> {
  /// tessellation fallback (split_curved_face_parametric, tessellate_sphere_face,
  /// etc.) that would otherwise be used for non-planar faces with only
  /// alone-vertex / on-edge intersection data.
+ /// ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L1048-1189).
  ///
- /// Returns `None` when:
- /// - The face has no boundary segments (empty geometry)
- /// - Any vertex is multi-connected (>=3 edges share the same vertex),
- /// indicating the face may need full SmartMap-based splitting
- /// - The wire pipeline cannot form a closed loop
+ /// Builds a draft face by substituting split images into the original wire.
+ /// Returns None when OCCT would return a null face (INTERNAL edges,
+ /// multi-connected vertices, edge unification failures).
  fn build_draft_face(
- &self,
- face_idx: usize,
+  &self,
+  face_idx: usize,
  ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
- let ds = self.ds;
- let face = &ds.faces[face_idx];
- let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
- let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
- if segments.is_empty() {
- return None;
- }
+  let ds = self.ds;
+  let face = &ds.faces[face_idx];
+  let e_base = ds.vertices.len();
 
- // OCCT HasMultiConnected: if a vertex connects >=3 boundary edges,
- // the face cannot be represented as a single closed wire and needs
- // the full SmartMap splitting path (BOPAlgo_Builder_2.cxx L1068-1074).
- let mut vert_count: HashMap<usize, usize> = HashMap::new();
- for seg in &segments {
- *vert_count.entry(seg.start_vertex).or_default() += 1;
- *vert_count.entry(seg.end_vertex).or_default() += 1;
- }
- if vert_count.values().any(|&c| c > 2) {
- return None;
- }
+  // OCCT L1073-1078: vertex counter / edge unification fence
+  let mut edge_fence: HashSet<usize> = HashSet::new();
+  let mut vert_count: HashMap<usize, usize> = HashMap::new();
+  let mut segments: Vec<WireSegment> = Vec::new();
+  let mut vertex_positions: HashMap<usize, DVec3> = HashMap::new();
 
- let (wires, internal_wires, vertex_positions) =
- build_closed_wires(&mut segments, ds, face_idx, &std::collections::HashSet::new());
- if wires.is_empty() && internal_wires.is_empty() {
- return None;
- }
- let wfs = perform_areas(&wires, &internal_wires, &segments, ds, &mut *self.context.borrow_mut(), face_idx);
- if wfs.is_empty() {
- return None;
- }
+  // Helper: add segment from an edge (original or split image)
+  let mut add_segment =
+   |sp_ei: usize, sp_fwd: bool, pcurve_from: Option<usize>,
+    segs: &mut Vec<WireSegment>, vp: &mut HashMap<usize, DVec3>|
+  {
+   if sp_ei >= ds.edges.len() { return; }
+   let sub = &ds.edges[sp_ei];
+   let sv = sub.start_vertex;
+   let ev = sub.end_vertex;
+   if !vp.contains_key(&sv) { if let Some(v) = ds.vertices.get(sv) { vp.insert(sv, v.point); } }
+   if !vp.contains_key(&ev) { if let Some(v) = ds.vertices.get(ev) { vp.insert(ev, v.point); } }
+   let (seg_sv, seg_ev) = if sp_fwd { (sv, ev) } else { (ev, sv) };
+   let rep = ds.edge_on_face(sp_ei, face_idx)
+    .or_else(|| pcurve_from.and_then(|ei| ds.edge_on_face(ei, face_idx)));
+   segs.push(WireSegment {
+    start_vertex: seg_sv, end_vertex: seg_ev,
+    source: WireEdgeSource::DsEdge(sp_ei),
+    orientation: WireOrientation::Forward,
+    is_closed_on_face: false, second_pcurve: None,
+    first_pcurve: rep.map(|r| r.pcurve.clone()),
+    t_range: rep.map(|r| r.pcurve_range).unwrap_or(sub.t_range),
+   });
+  };
 
- Some((segments, wfs, vertex_positions))
+  // OCCT L1080-1181: iterate original face wires (outer + inner)
+  for i in 0..face.boundary_edges.len() {
+   let ei = face.boundary_edges[i];
+   if ei >= ds.edges.len() { continue; }
+   let forward = face.boundary_edge_forwards.get(i).copied().unwrap_or(true);
+
+   // OCCT L1104-1110: INTERNAL edge -> return null
+   if ds.edges[ei].is_internal { return None; }
+   let b_is_degenerated = ds.is_edge_degenerated(ei);
+
+   // OCCT L1118: theImages.Seek(aE)
+   let e_sr = self.brep_sr(e_base + ei);
+   let has_images = self.my_images.borrow().contains_key(&e_sr);
+
+   if !has_images {
+    // OCCT L1120-1135: edge without split images
+    if !b_is_degenerated {
+     *vert_count.entry(ds.edges[ei].start_vertex).or_default() += 1;
+     *vert_count.entry(ds.edges[ei].end_vertex).or_default() += 1;
+    }
+    // OCCT L1128: edge unification (aMEdges.Add)
+    if !edge_fence.insert(ei) { return None; }
+    // OCCT L1133: aBB.Add(aNewWire, aE)
+    add_segment(ei, forward, None, &mut segments, &mut vertex_positions);
+   } else {
+    // OCCT L1137-1175: edge has split images
+    let imgs = self.my_images.borrow().get(&e_sr).cloned().unwrap_or_default();
+    for &sp_sr in &imgs {
+     let sp_ei = sp_sr.index.saturating_sub(e_base);
+     if sp_ei >= ds.edges.len() { continue; }
+     // OCCT L1143: HasMultiConnected
+     if !b_is_degenerated {
+      *vert_count.entry(ds.edges[sp_ei].start_vertex).or_default() += 1;
+      *vert_count.entry(ds.edges[sp_ei].end_vertex).or_default() += 1;
+     }
+     // OCCT L1149: edge unification
+     if !edge_fence.insert(sp_ei) { return None; }
+     // OCCT L1154: aSp.Orientation(anOriE)
+     // OCCT L1155-1159: degenerated -> add as-is
+     if b_is_degenerated {
+      add_segment(sp_ei, forward, None, &mut segments, &mut vertex_positions);
+      continue;
+     }
+     // OCCT L1161-1166: closed on face -> DoSplitSEAMOnFace (simplified: skip for draft)
+     let needs_rev = crate::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
+     add_segment(sp_ei, forward != needs_rev, Some(ei), &mut segments, &mut vertex_positions);
+    }
+   }
+  }
+
+  // OCCT: inner wires processed by same TopoDS_Iterator
+  for inner_wire in &face.inner_boundary_edges {
+   for &(ei, forward) in inner_wire {
+    if ei >= ds.edges.len() { continue; }
+    if ds.edges[ei].is_internal { return None; }
+    let b_is_degenerated = ds.is_edge_degenerated(ei);
+    let e_sr = self.brep_sr(e_base + ei);
+    let has_images = self.my_images.borrow().contains_key(&e_sr);
+
+    if !has_images {
+     if !b_is_degenerated {
+      *vert_count.entry(ds.edges[ei].start_vertex).or_default() += 1;
+      *vert_count.entry(ds.edges[ei].end_vertex).or_default() += 1;
+     }
+     if !edge_fence.insert(ei) { return None; }
+     add_segment(ei, forward, None, &mut segments, &mut vertex_positions);
+    } else {
+     let imgs = self.my_images.borrow().get(&e_sr).cloned().unwrap_or_default();
+     for &sp_sr in &imgs {
+      let sp_ei = sp_sr.index.saturating_sub(e_base);
+      if sp_ei >= ds.edges.len() { continue; }
+      if !b_is_degenerated {
+       *vert_count.entry(ds.edges[sp_ei].start_vertex).or_default() += 1;
+       *vert_count.entry(ds.edges[sp_ei].end_vertex).or_default() += 1;
+      }
+      if !edge_fence.insert(sp_ei) { return None; }
+      if b_is_degenerated {
+       add_segment(sp_ei, forward, None, &mut segments, &mut vertex_positions);
+       continue;
+      }
+      // OCCT L1161-1166: closed on face -> DoSplitSEAMOnFace (simplified: skip for draft)
+      let needs_rev = crate::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
+      add_segment(sp_ei, forward != needs_rev, Some(ei), &mut segments, &mut vertex_positions);
+     }
+    }
+   }
+  }
+
+  // OCCT L1082: check multi-connected vertices
+  if vert_count.values().any(|&c| c > 2) { return None; }
+  if segments.is_empty() { return None; }
+
+  // Single WireFace with one outer wire (OCCT: one draft face per face)
+  let wf = WireFace {
+   outer_wire: (0..segments.len()).collect(),
+   inner_wires: vec![],
+   internal_wires: vec![],
+  };
+  Some((segments, vec![wf], vertex_positions))
  }
 }
 
