@@ -399,27 +399,24 @@ impl<'a> BooleanBuilder<'a> {
                                     let ei = e_sr.index.saturating_sub(e_base);
                                     let b_is_degenerated = ei < self.ds.edges.len()
                                         && self.ds.is_edge_degenerated(ei);
-                                    // OCCT L395-404: bIsClosed — periodic-surface closed edge.
-                                    let b_is_closed = if !b_is_degenerated && (is_u_closed || is_v_closed)
-                                        && ei < self.ds.edges.len()
-                                    {
-                                        let ed = &self.ds.edges[ei];
-                                        // Check if edge is closed on this face (OCCT BRep_Tool::IsClosed).
-                                        let is_edge_closed_on_face = ed.start_vertex == ed.end_vertex
-                                            || (is_u_closed || is_v_closed);
-                                        if is_edge_closed_on_face {
-                                            // OCCT L400-403: IsEdgeIsoline.
-                                            let (is_ui, is_vi) = if let Some(rep) = ed.face_reps.iter().find(|r| r.face_idx == fi) {
-                                                crate::builder::wire_splitter::is_edge_isoline(&rep.pcurve, ed.t_range)
-                                            } else {
-                                                (false, false)
-                                            };
+                                    // ✅ OCCT-aligned L395-404: bIsClosed.
+                                    //   BRep_Tool::IsClosed(aE, aF) = edge has two pcurves on face.
+                                    //   IsEdgeIsoline + (isUClosed && isUIso) || (isVClosed && isVIso).
+                                    let b_is_closed = {
+                                        if b_is_degenerated || ei >= self.ds.edges.len() {
+                                            false
+                                        } else if (is_u_closed || is_v_closed)
+                                            && self.ds.edge_on_face(ei, fi)
+                                                .map_or(false, |rep| rep.pcurve2.is_some())
+                                        {
+                                            let (is_ui, is_vi) =
+                                                self.ds.edge_on_face(ei, fi).map_or((false, false), |rep|
+                                                    crate::builder::wire_splitter::is_edge_isoline(
+                                                        &rep.pcurve, rep.pcurve_range));
                                             (is_u_closed && is_ui) || (is_v_closed && is_vi)
                                         } else {
                                             false
                                         }
-                                    } else {
-                                        false
                                     };
 
                                     // OCCT L408-464: iterate split image edges.
@@ -447,10 +444,15 @@ impl<'a> BooleanBuilder<'a> {
                                             // OCCT L429-454: SEAM / closed edge handling.
                                             if b_is_closed {
                                                 if a_m_fence_local.insert(a_sp.ptr_id) {
-                                                    // OCCT L433-447: DoSplitSEAMOnFace if not closed.
+                                                    // OCCT L433-447: DoSplitSEAMOnFace if NOT closed on face.
                                                     let sp_ei = a_sp.index.saturating_sub(e_base);
                                                     if sp_ei < self.ds.edges.len() {
-                                                        crate::boptools::do_split_seam_on_face(sp_ei, fi, self.ds);
+                                                        // OCCT: if (!BRep_Tool::IsClosed(aSp, aF))
+                                                        let sp_is_closed = self.ds.edge_on_face(sp_ei, fi)
+                                                            .map_or(false, |rep| rep.pcurve2.is_some());
+                                                        if !sp_is_closed {
+                                                            crate::boptools::do_split_seam_on_face(sp_ei, fi, self.ds);
+                                                        }
                                                     }
                                                     // OCCT L449-452: push FORWARD + REVERSED.
                                                     a_sp.orientation = topods::Orientation::Forward;

@@ -597,8 +597,13 @@ impl ShapeInfo {
 /// Central data structure (OCCT: BOPDS_DS).
 #[derive(Debug)]
 pub struct DS {
- pub vertices: Vec<DSVertex>,
- pub edges: Vec<DSEdge>,
+	/// OCCT-aligned: BOPDS_DS::myShapes (=IndexedMap of TopoDS_Shape).
+	/// Each entry is an Arc<TShape> at the same flat index as the corresponding
+	/// vertex/edge/face in the flat arrays below.  PaveFiller appends new shapes
+	/// here (OCCT: myDS->Append).  Builder reads via ds.shape(n).
+	pub shapes: Vec<std::sync::Arc<topods::TShape>>,
+	pub vertices: Vec<DSVertex>,
+	pub edges: Vec<DSEdge>,
  pub wires: Vec<DSWire>,
  pub shells: Vec<DSShell>,
  ///  ?OCCT-aligned: solid containers (TopAbs_SOLID in ShapeInfo hierarchy).

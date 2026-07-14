@@ -52,7 +52,7 @@ mod builder_utils;
 pub(crate) use builder_utils::{
  curve_eq, hash_point,
  is_tangent_face, build_edge_bounds, quantize_pos,
- check_and_add_split_vertex, collect_face_edge_segments,
+ check_and_add_split_vertex,
  annotate_history_from_ds, annotate_shell_and_solid_history,
  aggregate_face_region_origin, aggregate_shell_region_origin,
  point_in_polygon_2d,
@@ -144,140 +144,7 @@ pub(crate) use wire_path::{
  walk_path_extract_wires,
 };
 
-impl<'a> BooleanBuilder<'a> {
- /// =OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
- /// Runs the full pipeline then emits result faces directly into ResultBuilder.
- pub(crate) fn builder_face_perform(
- &self,
- face_idx: usize,
- is_a: bool,
- result: &mut ResultBuilder,
- t: &mut topods::BRep,
- ) {
- let ds = self.ds;
- // Get BRep from the cached conversion (built during build_with_history)
- let brep_borrow = self.brep.borrow();
- let (br, face_refs, _ic_edge_map): &(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>) = match brep_borrow.as_ref() {
- Some(v) => v,
- None => {
- if std::env::var("RCAD_DEBUG_IC").is_ok() {
- eprintln!("[IC] builder_face_perform: self.brep is None, skipping face {}", face_idx);
- }
- return;
- }
- };
- // Guard: skip if face_refs doesn't have an entry for this face
- if face_idx >= face_refs.len() {
- if std::env::var("RCAD_DEBUG_IC").is_ok() {
- eprintln!("[IC] builder_face_perform: face_refs[{}] out of bounds (len={}), skipping", face_idx, face_refs.len());
- }
- return;
- }
-
- let face_ref = face_refs[face_idx];
- // Guard: verify the source face ShapeRef is valid in the brep
- if face_ref.index >= br.tshapes.len() || !matches!(&*br.tshapes[face_ref.index], rcad_kernel::topods::TShape::Face(_)) {
- if std::env::var("RCAD_DEBUG_IC").is_ok() {
- eprintln!("[IC] builder_face_perform: face_ref {} is not a valid face in brep (tshapes.len={}), skipping face {}",
- face_ref.index, br.tshapes.len(), face_idx);
- }
- return;
- }
-
- let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
- let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
- if std::env::var("RCAD_DEBUG_IC").is_ok() {
- eprintln!("[SPLIT] face={} DS origin={:?} n_segments={} has_pb_sc={}", 
- face_idx, ds.faces[face_idx].origin, segments.len(),
- !ds.faces[face_idx].face_info.curves_sc.is_empty());
- for (si, seg) in segments.iter().enumerate() {
- let src = format!("{:?}", seg.source);
- eprintln!("[SPLIT] seg[{}] src={} v{}->v{}", si, src, seg.start_vertex, seg.end_vertex);
- }
- }
- if !self.builder_face_check_data(face_idx, &segments) { return; }
-
- let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..], &_ic_edge_map[..]);
- // segments kept alive for classification below; dropped after classification.
-
- let tool: &dyn rcad_kernel::topods::BRepTool = br;
-
- let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
- &segments_topo, tool);
- let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
- let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
- &segments_topo, &avoided, tool);
-
- let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
- for si in 0..segments_topo.len() {
- if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
- }
- // OCCT L327-382: group connected avoided edges into internal wires
- let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
- &segments_topo, &avoided);
-
- let wfs = if !wires.is_empty() {
- crate::builder::wire_path_topo_ds::perform_areas(
- &wires, &internal_wire_groups, &segments_topo, tool, face_idx, ds)
- } else if !avoided.is_empty() {
- vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments_topo.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
- } else {
- vec![WireFace { outer_wire: (0..segments_topo.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
- };
- if wfs.is_empty() { return; }
-
- let mut wfs = wfs;
- // OCCT-aligned L147: PerformInternalShapes
- crate::builder::wire_path_topo_ds::perform_internal_shapes(
- &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, face_ref, ds);
-
- // OCCT form: BuilderFace::Perform keeps ALL WireFaces.  Classification against
- // the opposing solid is done at the SOLID level (BuildRC), not per-face.
- // Build reverse lookup: DsEdge(sr) in segments_topo has sr.index = e_base + ei,
- // which cannot directly index ds.edges. Map ShapeRef.index -> DS edge index.
- // Must build before drop(segments) below.
- let e_base = self.ds.vertices.len();
- let ds_ei_to_sr: HashMap<usize, topods::ShapeRef> = segments.iter()
- .filter_map(|seg| match &seg.source {
- WireEdgeSource::DsEdge(ei) => Some((*ei, self.brep_sr(e_base + *ei))),
- _ => None,
- }).collect();
- let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
- .filter_map(|seg| match &seg.source {
- WireEdgeSource::DsEdge(ei) => Some((e_base + *ei, *ei)),
- _ => None,
- }).collect();
- drop(segments);
-
- let origin = if is_a {
- FaceOrigin::FromA(ds.faces[face_idx].source_face_idx)
- } else {
- FaceOrigin::FromB(ds.faces[face_idx].source_face_idx)
- };
- let ic_curves: HashMap<usize, Curve3> = ds.intersection_curves.iter()
- .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
- // Architecture diff A6: provide DS edge array for curve lookup.
- result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
- for wf in &wfs {
- result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
- &HashMap::new(), face_refs[face_idx], self.ds.faces[face_idx].natural_restriction,
- &ds_ei_to_sr, &sr_index_to_ds_ei, &self.ds);
- // Architecture A1: create TShapes for this face immediately (incremental),
- // matching OCCT's per-face BRep_Builder assembly.  build_topods_faces will
- // skip faces already emitted as TShapes.
- result.emit_face_topods(t, &mut *self.my_face_refs.borrow_mut());
- }
- }
-
- /// =OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
- /// Validates face has intersection curves/segments. If no interferences,
- /// delegates to BuildDraftFace (OCCT's alternative path for non-split faces).
- fn builder_face_check_data(&self, face_idx: usize, segments: &[WireSegment]) -> bool {
- if segments.is_empty() {
- return false;
- }
- true
- }
+ impl<'a> BooleanBuilder<'a> {
 
  /// =OCCT-aligned: PIOperation_FillHistory =PrepareHistory (Builder_4.cxx L164-252).
  /// Builds source= esult history matching OCCT's BRepTools_History.
@@ -694,59 +561,6 @@ impl<'a> BooleanBuilder<'a> {
  }
  }
 
- fn pcurve_matches_face_surface(
- &self,
- pcurve: &rcad_kernel::geom::Curve2d,
- surface: &Surface3,
- ic: &IntersectionCurve,
- ) -> bool {
- let samples: Vec<DVec3> = if ic.polyline.len() >= 3 {
- let mid = ic.polyline.len() / 2;
- vec![ic.polyline[0], ic.polyline[mid], *ic.polyline.last().unwrap()]
- } else if ic.polyline.len() == 2 {
- vec![ic.polyline[0], ic.polyline[1]]
- } else {
- let [t0, t1] = ic.t_range;
- let tm = 0.5 * (t0 + t1);
- vec![ic.curve.point_at(t0), ic.curve.point_at(tm), ic.curve.point_at(t1)]
- };
-
- let params: Vec<f64> = match pcurve.inner() {
- rcad_kernel::geom::Curve2d::BSpline(_) => {
- if samples.len() <= 1 {
- vec![0.0]
- } else {
- (0..samples.len())
- .map(|i| i as f64 / (samples.len() - 1) as f64)
- .collect()
- }
- }
- _ => {
- let [t0, t1] = ic.t_range;
- if samples.len() <= 1 {
- vec![t0]
- } else {
- (0..samples.len())
- .map(|i| t0 + (t1 - t0) * i as f64 / (samples.len() - 1) as f64)
- .collect()
- }
- }
- };
-
- let mut max_err: f64 = 0.0;
- for (sample, t) in samples.iter().zip(params.iter().copied()) {
- let uv = pcurve.point_at(t);
- let lifted = surface.point_at(uv.x, uv.y);
- max_err = max_err.max((lifted - *sample).length());
- }
-
- max_err.is_finite() && max_err <= TOLERANCE_ADAPTIVE_MAX
- }
-
- pub fn build(&mut self) -> Result<topods::BRep, BooleanError> {
- let (t, _) = self.build_with_history()?;
- Ok(t)
- }
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -1255,51 +1069,4 @@ impl<'a> BooleanBuilder<'a> {
  t
  }
 
- /// Split a curved face (Cylinder, Sphere, Cone, Torus) by intersection polylines.
- ///
- /// Legacy approximate method: for each intersection polyline that crosses the face,
- /// we split the boundary point list into two halves at the points closest to the
- /// polyline endpoints. Kept as fallback when UV data or PCurves are unavailable.
-
- /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
- /// Maps resulting sub-polygons back to 3D via surface evaluation.
- ///
- /// == € ? = ㄦ = € ==﹂ =   Υ?
- /// OCCT: BuildSplitFaces =section edges ==ㄧ=== ?BRep sub-face=
- /// rcad: = == =8 == ⒔= ?FaceSampleData,=outer_circle_edges ===== 〒 ь ?
- /// == = ?8 == = ㄩ ф =+  € € ?,=OCCT = 〒 ｇ  ?FaceSampleData=
-
- /// Find the PCurve (2D parametric curve) for the given intersection curve
- /// as it lies on the given face. Searches FaceFace interferences to determine
- /// whether this face is f1 (use pcurve_on_a) or f2 (use pcurve_on_b).
- fn find_pcurve_for_face(
- &self,
- curve_idx: usize,
- face_idx: usize,
- ) -> Option<rcad_kernel::geom::Curve2d> {
- for ff in &self.ds.interf_ff {
- if ff.curves.contains(&curve_idx) {
- let ic = &self.ds.intersection_curves[curve_idx];
- if ff.f1 == face_idx {
- return ic.pcurve_on_a.clone();
- } else if ff.f2 == face_idx {
- return ic.pcurve_on_b.clone();
- }
- }
- }
-
- let ic = &self.ds.intersection_curves[curve_idx];
- let surface = &self.ds.faces[face_idx].surface;
- if let Some(pcurve) = &ic.pcurve_on_a
- && self.pcurve_matches_face_surface(pcurve, surface, ic)
- {
- return Some(pcurve.clone());
- }
- if let Some(pcurve) = &ic.pcurve_on_b
- && self.pcurve_matches_face_surface(pcurve, surface, ic)
- {
- return Some(pcurve.clone());
- }
- None
- }
 }

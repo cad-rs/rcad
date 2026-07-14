@@ -1,0 +1,118 @@
+ /// OCCT PaveFiller_4.cxx L139-301: PerformVF
+ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
+ // OCCT L141: myIterator->Initialize(TopAbs_VERTEX, TopAbs_FACE)
+ let a_vc = self.ds.a_vertex_count;
+ let a_fc = self.ds.a_face_count;
+ // OCCT L142-146: iSize check
+ let i_size = pairs.len();
+ if i_size == 0 { return; }
+ // OCCT L147-160: myGlue == GlueFull — handled in mod.rs
+ //
+ // ------------------------------------------------------------------
+ // Phase 1: Collect VF tasks (OCCT L181-232)
+ // ------------------------------------------------------------------
+ // OCCT L172: int nVSD, iFlag, nVx, aNbVF, k;
+ // OCCT L174: BOPAlgo_VectorOfVertexFace aVVF;
+ let mut a_vv_f: Vec<VfTask> = Vec::new();
+ //
+ // OCCT L180: NCollection_DataMap<BOPDS_Pair, NCollection_Map<int>> aMVFPairs
+ let mut a_mvf_pairs: std::collections::HashMap<(usize, usize), Vec<usize>> =
+ std::collections::HashMap::new();
+ //
+ for &(nV, nF) in pairs {
+ // OCCT L183-186: UserBreak
+ //
+ // OCCT L187: myIterator->Value(nV, nF);
+ let same_range = (nV < a_vc) == (nF < a_fc);
+ if same_range { continue; }
+ //
+ // OCCT L189-192: if (myDS->IsSubShape(nV, nF)) continue;
+ //
+ // OCCT L194-197: if (myDS->HasInterf(nV, nF)) continue;
+ if self.ds.has_interf_vf(nV, nF) { continue; }
+ if self.ds.has_interf_ve_via_faces(nV, nF) { continue; }
+ //
+ // OCCT L199: myDS->ChangeFaceInfo(nF);
+ //
+ // OCCT L200-203: if (myDS->HasInterfShapeSubShapes(nV, nF)) continue;
+ //
+ // OCCT L205-209: SD resolution
+ let nVx = self.ds.has_shape_sd(nV).unwrap_or(nV);
+ //
+ // OCCT L211-220: aMVFPairs dedup (key = nVx, nF)
+ let key = (nVx, nF);
+ let entry = a_mvf_pairs.entry(key).or_default();
+ entry.push(nV);
+ if entry.len() > 1 {
+ // OCCT L216: continue — already have a task for this SD-face pair
+ continue;
+ }
+ //
+ // OCCT L222-230: Create BOPAlgo_VertexFace task
+ a_vv_f.push(VfTask {
+ nV: nVx, nF,
+ is_on: false, is_on_boundary: false,
+ proj_u: 0.0, proj_v: 0.0, proj_dist: f64::MAX,
+ });
+ } // for (; myIterator->More(); myIterator->Next()) {
+ //
+ // ------------------------------------------------------------------
+ // Phase 2: BOPAlgo_VertexFace computation (OCCT L234-243)
+ // ------------------------------------------------------------------
+ // OCCT L234-240: aNbVF = aVVF.Length(); SetProgressRange
+ // OCCT L242: BOPTools_Parallel::Perform(myRunParallel, aVVF, myContext);
+ for task in &mut a_vv_f {
+ let tf = self.vf_tol(task.nV, task.nF);
+ let fuzzy = self.fuzzy_tolerance;
+ *task = compute_vf_on_face(&self.ds, tf, fuzzy, task.nV, task.nF);
+ }
+ //
+ // ------------------------------------------------------------------
+ // Phase 3: Process results — OCCT-aligned (OCCT L249-298)
+ // ------------------------------------------------------------------
+ // OCCT L249-266: for (k = 0; k < aNbVF; ++k)
+ for task in &a_vv_f {
+ // OCCT L257-265: iFlag = aVertexFace.Flag();
+ if !task.is_on { continue; }
+ //
+ // OCCT L268: aVertexFace.Indices(nVx, nF);
+ let nVx = task.nV;
+ let nF = task.nF;
+ // OCCT L269: aVertexFace.Parameters(aT1, aT2);
+ // OCCT L270: double aTolVNew = aVertexFace.VertexNewTolerance();
+ let a_tol_vnew = task.proj_dist;
+ //
+ // OCCT L272-273: aMVFPairs.Find(aVFPair) — all original vertices
+ let key = (nVx, nF);
+ let orig_verts: Vec<usize> = match a_mvf_pairs.get(&key) {
+ Some(v) => v.clone(),
+ None => vec![nVx],
+ };
+ //
+ // OCCT L275-297: for each original vertex:
+ for &nV_orig in &orig_verts {
+ // OCCT L277-283: BOPDS_InterfVF
+ if !self.ds.interf_vf.iter().any(|inf| inf.vertex == nV_orig && inf.face == nF) {
+ self.ds.interf_vf.push(InterferenceVF {
+ vertex: nV_orig, face: nF,
+ u: task.proj_u, v: task.proj_v,
+ });
+ }
+ //
+ // OCCT L285-292: UpdateVertex + IsNewShape
+ if a_tol_vnew.is_finite() && a_tol_vnew > self.ds.vertices[nV_orig].geom_tol {
+ self.ds.vertices[nV_orig].geom_tol = a_tol_vnew;
+ self.ds.increased_ss.insert(nV_orig);
+ }
+ } // for each original vertex
+ //
+ // OCCT L295-297: Update FaceInfo — aFI.ChangeVerticesIn().Add(nVx);
+ if task.is_on_boundary {
+ self.ds.faces[nF].face_info.vertices_on.insert(nVx);
+ } else {
+ self.ds.faces[nF].face_info.vertices_in.insert(nVx);
+ }
+ } // for each task
+ //
+ // OCCT L300: TreatVerticesEE() — not yet ported
+ }

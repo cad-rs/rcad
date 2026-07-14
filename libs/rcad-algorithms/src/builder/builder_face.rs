@@ -209,14 +209,4 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         }
     }
 
-    fn find_pcurve_for_face(&self, ci: usize) -> Option<Curve2d> {
-        if ci >= self.ds.intersection_curves.len() { return None; }
-        let ic = &self.ds.intersection_curves[ci];
-        let fi = self.face_idx;
-        if self.ds.faces.get(fi).map_or(false, |f| f.face_info.curves_sc.contains(&ci)) {
-            ic.pcurve_on_a.clone().or_else(|| ic.pcurve_on_b.clone())
-        } else {
-            ic.pcurve_on_b.clone().or_else(|| ic.pcurve_on_a.clone())
-        }
-    }
 }
