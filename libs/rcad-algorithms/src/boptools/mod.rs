@@ -1783,16 +1783,16 @@ pub fn make_edge(
  let need_tol = tol_r3d + crate::tolerance::TOLERANCE_LEN_MIN;
  // OCCT L1732-1733: UpdateVertex theV1/theV2 with aNeedTol
  if v1 < ds.vertices.len() {
- ds.vertices[v1].geom_tol = ds.vertex_tolerance(v1).max(need_tol);
+ ds.vertex_data_mut(v1).tolerance = ds.vertex_tolerance(v1).max(need_tol);
  }
  if v2 < ds.vertices.len() {
- ds.vertices[v2].geom_tol = ds.vertex_tolerance(v2).max(need_tol);
+ ds.vertex_data_mut(v2).tolerance = ds.vertex_tolerance(v2).max(need_tol);
  }
  // OCCT L1735: MakeSectEdge(aIC, aV1, aT1, aV2, aT2, aE)
  let ei = make_sect_edge(ds, ci, v1, v2);
  // OCCT L1737: UpdateEdge(aE, theTolR3D)
  if ei < ds.edges.len() {
- ds.edges[ei].geom_tol = ds.edge_tolerance(ei).max(tol_r3d);
+ ds.edge_data_mut(ei).tolerance = ds.edge_tolerance(ei).max(tol_r3d);
  }
  ei
 }

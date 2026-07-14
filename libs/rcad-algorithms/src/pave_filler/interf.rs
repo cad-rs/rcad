@@ -358,7 +358,7 @@ impl<'a> PaveFiller<'a> {
                     let n_v2 = pb.0.read().unwrap().pave2.vertex_idx;
                     if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) { continue; }
 
-                    if ds.edges[ne].origin == ds.face_origin(nf) { continue; }
+                    if ds.edge_origins[ne] == ds.face_origin(nf) { continue; }
 
                     let a_e_curve = &ds.edges[ne].curve;
                     let mut b_use_add_tol = true;

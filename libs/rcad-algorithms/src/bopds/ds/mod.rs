@@ -65,6 +65,30 @@ impl DS {
 
     // ----- Phase 4: Helper methods accessing parallel arrays or ds.shape(n) -----
 
+    /// Mutable access to TVertexData for a vertex (for write operations).
+    pub fn vertex_data_mut(&mut self, vi: usize) -> &mut topods::TVertexData {
+        match std::sync::Arc::make_mut(&mut self.shapes[vi]) {
+            topods::TShape::Vertex(vd) => vd,
+            _ => panic!("vertex_data_mut: {} is not a Vertex", vi),
+        }
+    }
+
+    /// Mutable access to TEdgeData for an edge (for write operations).
+    pub fn edge_data_mut(&mut self, ei: usize) -> &mut topods::TEdgeData {
+        match std::sync::Arc::make_mut(&mut self.shapes[ei]) {
+            topods::TShape::Edge(ed) => ed,
+            _ => panic!("edge_data_mut: {} is not an Edge", ei),
+        }
+    }
+
+    /// Mutable access to TFaceData for a face (for write operations).
+    pub fn face_data_mut(&mut self, fi: usize) -> &mut topods::TFaceData {
+        match std::sync::Arc::make_mut(&mut self.shapes[fi]) {
+            topods::TShape::Face(fd) => fd,
+            _ => panic!("face_data_mut: {} is not a Face", fi),
+        }
+    }
+
     /// Vertex point from TShape (ds.shape(vi) -> TVertexData.point).
     pub fn vertex_point(&self, vi: usize) -> glam::DVec3 {
         match self.shape(vi) {

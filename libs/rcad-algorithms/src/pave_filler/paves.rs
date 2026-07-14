@@ -166,7 +166,9 @@ impl<'a> super::PaveFiller<'a> {
         }
         new_pbs.push(pb);
       }
-      self.ds.edges[ei].pave_blocks = new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect();
+      self.ds.edge_pave_blocks_mut(ei).clone_from(
+          &new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect::<Vec<_>>()
+      );
     }
     for pair in &verts_to_merge {
       if pair.len() >= 2 {
@@ -351,7 +353,10 @@ impl<'a> super::PaveFiller<'a> {
  let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
 
   let mut nVUsed = 0;
-  if let Some(mut pb) = self.ds.intersection_curves[curve_idx].pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
+  // Clone the SharedPB outside the if-let to avoid keeping self.ds borrowed
+  let shared_pb = self.ds.intersection_curves[curve_idx].pave_blocks.first().cloned();
+  if let Some(spb) = shared_pb {
+  let mut pb = spb.0.write().unwrap();
  let bExist = pb.contains_parameter(aT, aPTol, &mut nVUsed);
  if bExist {
  let pList = self.a_dmv_lv.entry(nVUsed).or_insert_with(|| {
@@ -378,10 +383,12 @@ impl<'a> super::PaveFiller<'a> {
  let aP2 = self.ds.vertex_point(nV);
  let aDist = aP1.distance(aP2);
  if aTolV < aDist + aDTol {
- self.ds.vertices[nV].geom_tol = aDist + aDTol;
  if !self.a_mv_tol.contains_key(&nV) {
  self.a_mv_tol.insert(nV, aTolV);
  }
+ // Tolerance update (lock is dropped with spb scope)
+ let new_tol = aDist + aDTol;
+ self.ds.vertex_data_mut(nV).tolerance = new_tol;
  }
  }
  }
@@ -1064,19 +1071,20 @@ impl<'a> super::PaveFiller<'a> {
  }
  for &(ei, fi) in &update_vertices_list {
   if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() { continue; }
-  let edge = &self.ds.edges[ei];
-  let face = &self.ds.faces[fi];
-  let [a_t1, a_t2] = edge.t_range;
-  let a_c3d = &edge.curve;
-  let pc2d = edge.face_reps.iter().find(|r| r.face_idx == fi).map(|r| &r.pcurve);
+  let [a_t1, a_t2] = self.ds.edge_range(ei);
+  let a_c3d = self.ds.edge_curve(ei).cloned().unwrap();
+  let face_reps: Vec<_> = self.ds.edge_face_reps(ei).iter().map(|r| r.clone()).collect();
+  let face_surface = self.ds.face_surface(fi).cloned().unwrap();
+  let pc2d = face_reps.iter().find(|r| r.face_idx == fi).map(|r| &r.pcurve);
+  let (start_v, end_v) = (self.ds.edge_start_vertex_ds(ei), self.ds.edge_end_vertex_ds(ei));
   if let Some(pc) = pc2d {
    for (j, a_t) in [a_t1, a_t2].iter().enumerate() {
     let a_p3d = a_c3d.point_at(*a_t);
-    let vi = if j == 0 { edge.start_vertex } else { edge.end_vertex };
+    let vi = if j == 0 { start_v } else { end_v };
     if vi < self.ds.vertices.len() {
      let a_tol_v2 = self.ds.vertex_tolerance(vi);
      let uv = pc.point_at(*a_t);
-     let proj = match &face.surface {
+     let proj = match &face_surface {
       Surface3::Plane(p) => {
        let u_dir = p.u_dir;
        let v_dir = p.v_dir;
@@ -1086,7 +1094,7 @@ impl<'a> super::PaveFiller<'a> {
      };
      let d2 = a_p3d.distance_squared(proj);
      if d2 > a_tol_v2 * a_tol_v2 {
-      self.ds.vertices[vi].geom_tol = d2.sqrt() + COMPUTATIONAL;
+      self.ds.vertex_data_mut(vi).tolerance = d2.sqrt() + COMPUTATIONAL;
      }
     }
    }
@@ -1300,7 +1308,7 @@ impl<'a> super::PaveFiller<'a> {
  if let Some(&pTol) = self.a_mv_tol.get(&nV) {
  let aRealTol = pTol.max(aMaxDistKept.sqrt() + CONFUSION);
  if nV < self.ds.vertices.len() {
- self.ds.vertices[nV].geom_tol = aRealTol;
+ self.ds.vertex_data_mut(nV).tolerance = aRealTol;
  }
  }
  }

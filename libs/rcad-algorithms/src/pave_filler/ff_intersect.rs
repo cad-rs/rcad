@@ -27,7 +27,7 @@ impl<'a> super::PaveFiller<'a> {
  // Cross-origin filter + dedup.
  let mut processed_pairs = std::collections::HashSet::new();
  for &(fa, fb) in &candidates {
- if self.ds.faces[fa].origin == self.ds.face_origin(fb) { continue; }
+ if self.ds.face_origins[fa] == self.ds.face_origin(fb) { continue; }
  if !processed_pairs.insert((fa, fb)) { continue; }
  if self.ds.has_interf_ff(fa, fb) { continue; }
  if !self.should_skip_glued_face_pair(fa, fb) {
@@ -257,10 +257,10 @@ impl<'a> super::PaveFiller<'a> {
  let sv = ic.start_vertex;
  let ev = ic.end_vertex;
  if sv < self.ds.vertices.len() {
- self.ds.vertices[sv].point += inv_vec;
+ self.ds.vertex_data_mut(sv).point += inv_vec;
  }
  if ev < self.ds.vertices.len() {
- self.ds.vertices[ev].point += inv_vec;
+ self.ds.vertex_data_mut(ev).point += inv_vec;
  }
  }
  }
@@ -374,7 +374,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  if !self.context.is_point_in_on_face(self.ds, f_a, uv_a) { continue; }
  if !self.context.is_point_in_on_face(self.ds, f_b, uv_b) { continue; }
  let vi = self.ds.add_vertex(pt.p1);
- self.ds.vertices[vi].geom_tol = self.ds.vertex_tolerance(vi).max(pt.tolerance);
+ self.ds.vertex_data_mut(vi).tolerance = self.ds.vertex_tolerance(vi).max(pt.tolerance);
  ff_point_indices.push(vi);
  }
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {

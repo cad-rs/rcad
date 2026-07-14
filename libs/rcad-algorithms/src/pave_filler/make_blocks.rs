@@ -176,7 +176,7 @@ impl<'a> super::PaveFiller<'a> {
   b_exist = self.is_existing_vertex_at_point(a_p, a_tol_ff, &a_mv_on_in);
   if !b_exist {
    let n_v = self.ds.add_vertex(a_p);
-   self.ds.vertices[n_v].geom_tol = a_tol_ff;
+   self.ds.vertex_data_mut(n_v).tolerance = a_tol_ff;
    // OCCT: aCPB.SetIndexInterf(i) + aCPB.SetIndex(j) + aMSCPB.Add(aV, aCPB)
    a_mscpb.insert(n_v, (cur_ind, j));
   }
@@ -360,7 +360,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  if !bvf { continue; }
  let n_vn = self.ds.add_vertex(a_p[j]);
- self.ds.vertices[n_vn].geom_tol = a_tol_r3d;
+ self.ds.vertex_data_mut(n_vn).tolerance = a_tol_r3d;
  if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
  pb.0.write().unwrap().append_ext_pave(crate::bopds::pave::Pave {
  vertex_idx: n_vn, param: a_t[j],
@@ -404,7 +404,7 @@ impl<'a> super::PaveFiller<'a> {
     let ct = (lo + hi) * 0.5;
     let cp = ic_curve.point_at(ct);
     let nv = self.ds.add_vertex(cp);
-    self.ds.vertices[nv].geom_tol = a_tol_r3d;
+    self.ds.vertex_data_mut(nv).tolerance = a_tol_r3d;
     if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
      pb.0.write().unwrap().append_ext_pave(Pave { vertex_idx: nv, param: ct });
     }
@@ -562,7 +562,7 @@ impl<'a> super::PaveFiller<'a> {
  if a_tol_new > 0.0 {
  // Update edge tolerance
  if n_e_out < self.ds.edges.len() {
- self.ds.edges[n_e_out].geom_tol = self.ds.edge_tolerance(n_e_out).max(a_tol_new);
+ self.ds.edge_data_mut(n_e_out).tolerance = self.ds.edge_tolerance(n_e_out).max(a_tol_new);
  }
  // Save vertex tolerances
  for &vi in &[n_v1, n_v2] {
@@ -732,7 +732,7 @@ impl<'a> super::PaveFiller<'a> {
  if !b_in_f1 || !b_in_f2 {
  // Update edge tolerance: OCCT L968-985
  if n_e_out < self.ds.edges.len() {
- self.ds.edges[n_e_out].geom_tol = self.ds.edge_tolerance(n_e_out).max(a_tol_new);
+ self.ds.edge_data_mut(n_e_out).tolerance = self.ds.edge_tolerance(n_e_out).max(a_tol_new);
  }
  // aPBFacesMap: OCCT L988-993
  let n_f = if b_in_f1 { n_f2 } else { n_f1 };
@@ -776,7 +776,7 @@ impl<'a> super::PaveFiller<'a> {
  );
  // set PB edge and register in section_edge_refs
  if new_ei < self.ds.edges.len() {
-  if let Some(epb) = self.ds.edges[new_ei].pave_blocks.first_mut() {
+  if let Some(epb) = self.ds.edge_pave_blocks_mut(new_ei).first_mut() {
    epb.0.write().unwrap().new_edge = Some(new_ei);
   }
  }
@@ -844,7 +844,7 @@ impl<'a> super::PaveFiller<'a> {
  a_mv_tol.dedup_by_key(|a| a.0);
  for &(n_v, saved_tol) in &a_mv_tol {
  if n_v < self.ds.vertices.len() {
- self.ds.vertices[n_v].geom_tol = saved_tol;
+ self.ds.vertex_data_mut(n_v).tolerance = saved_tol;
  }
  }
  for &(n_v, _) in &a_mv_tol {
@@ -894,19 +894,23 @@ impl<'a> super::PaveFiller<'a> {
  {
  for ci in 0..self.ds.intersection_curves.len() {
  let mut keep: Vec<usize> = Vec::new();
- for &sei in &self.ds.section_edge_refs[ci] {
+ let refs = self.ds.section_edge_refs[ci].clone();
+ for &sei in &refs {
  let is_micro = if sei < self.ds.edges.len() {
- let e = &self.ds.edges[sei];
+ let (sv, ev) = {
+  let e = &self.ds.edges[sei];
+  (e.start_vertex, e.end_vertex)
+ };
  a_micro_pb.iter().any(|pb: &PaveBlock| {
   let (pv1, pv2) = pb.indices();
- (pv1 == e.start_vertex && pv2 == e.end_vertex)
- || (pv1 == e.end_vertex && pv2 == e.start_vertex)
+ (pv1 == sv && pv2 == ev)
+ || (pv1 == ev && pv2 == sv)
  })
  } else { false };
  if !is_micro {
  keep.push(sei);
  } else if sei < self.ds.edges.len() {
- self.ds.edges[sei].pave_blocks.clear();
+ self.ds.edge_pave_blocks_mut(sei).clear();
  }
  }
  self.ds.section_edge_refs[ci] = keep;
@@ -1074,14 +1078,15 @@ impl<'a> super::PaveFiller<'a> {
  // ⏳ OCCT-aligned: CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L1158, L4105-4306).
  // rcad: only min(curve_tol, edge_tol); OCCT also reduces vertex tolerances.
  for ci in 0..self.ds.intersection_curves.len() {
- for &sei in &self.ds.section_edge_refs[ci] {
+ let refs = self.ds.section_edge_refs[ci].clone();
+ for &sei in &refs {
  if sei < self.ds.edges.len() {
  let edge_tol = self.ds.edge_tolerance(sei);
  let curve_tol = if ci < self.ds.intersection_curves.len() {
  self.ds.intersection_curves[ci].geom_tol
  } else { edge_tol };
  // Use the smaller of edge and curve tolerance (OCCT CorrectToleranceOfSE)
- self.ds.edges[sei].geom_tol = edge_tol.min(curve_tol).max(TOLERANCE_ABS);
+ self.ds.edge_data_mut(sei).tolerance = edge_tol.min(curve_tol).max(TOLERANCE_ABS);
  }
  }
  }

@@ -536,8 +536,9 @@ impl<'a> PaveFiller<'a> {
 
  for &ci in curves {
  if ci >= self.ds.intersection_curves.len() { continue; }
- let ic = &self.ds.intersection_curves[ci];
- let _a_tol_r3d = ic.geom_tol;
+ let ic_curve = self.ds.intersection_curves[ci].curve.clone();
+ let ic_geom_tol = self.ds.intersection_curves[ci].geom_tol;
+ let _a_tol_r3d = ic_geom_tol;
  let f1 = *f1;
  let f2 = *f2;
 
@@ -563,11 +564,12 @@ impl<'a> PaveFiller<'a> {
  if self.estimate_pave_on_curve(ci, n_v).is_none() { continue; }
  let v_tol = self.ds.vertex_tolerance(n_v);
  // UpdateVertex: increase tolerance if the projection distance is larger
- if let Some(t) = self.project_vertex_on_curve(n_v, ic) {
- let pt_on_curve = ic.curve.point_at(t);
+ let t_result = self.project_vertex_on_curve(n_v, &self.ds.intersection_curves[ci]);
+ if let Some(t) = t_result {
+ let pt_on_curve = ic_curve.point_at(t);
  let dist = self.ds.vertex_point(n_v).distance(pt_on_curve);
  if dist > v_tol {
- self.ds.vertices[n_v].geom_tol = dist;
+ self.ds.vertex_data_mut(n_v).tolerance = dist;
  self.ds.increased_ss.insert(n_v);
  }
  }
@@ -583,7 +585,7 @@ impl<'a> PaveFiller<'a> {
  }
  }
  for (ei, param) in new_paves {
- self.ds.edges[ei].paves.push(Pave { vertex_idx: n_v, param });
+ self.ds.edge_paves[ei].push(Pave { vertex_idx: n_v, param });
  }
  }
  }
@@ -854,7 +856,7 @@ impl<'a> PaveFiller<'a> {
   }
  }
  for &ei in &micro_edges {
-  self.ds.edges[ei].pave_blocks.clear();
+  self.ds.edge_pave_blocks_mut(ei).clear();
  }
  }
 
@@ -1005,7 +1007,7 @@ impl<'a> PaveFiller<'a> {
            .any(|p| p.vertex_idx == vi);
          if already_pave { continue; }
 
-         self.ds.edges[ei].paves.push(Pave {
+         self.ds.edge_paves[ei].push(Pave {
            vertex_idx: vi,
            param: t.clamp(t_range[0], t_range[1]),
          });

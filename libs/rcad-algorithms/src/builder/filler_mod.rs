@@ -253,7 +253,7 @@ impl<'a> BooleanBuilder<'a> {
             let fi = face_counter;
             face_counter += 1;
             if fi >= self.ds.faces.len() { continue; }
-            let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
+            let is_a = self.ds.face_origins[fi] == ShapeOrigin::ShapeA;
 
             let has_pb_in = !self.ds.face_info(fi).pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.face_info(fi).pave_blocks_sc.is_empty();

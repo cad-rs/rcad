@@ -43,7 +43,7 @@
  ds.edges[ei].face_reps.push(rep);
  }
  // OCCT L1716: BRepLib::SameParameter(aE)  ?rcad: mark edge as needing param sync
- ds.edges[ei].geom_tol = tol_e;
+ ds.edge_data_mut(ei).tolerance = tol_e;
 }
 
 ///  ?OCCT-aligned: IsClosed (BOPTools_AlgoTools2D_1.cxx L289-311).
@@ -121,7 +121,7 @@ pub fn attach_existing_pcurve(
 
  // OCCT L121-138: create temporary edge data, do SameParameter
  // rcad: just copy the pcurve to the new edge with adjusted tolerance
- ds.edges[ei_new].geom_tol = ds.edge_tolerance(ei_new).max(a_new_tol);
+ ds.edge_data_mut(ei_new).tolerance = ds.edge_tolerance(ei_new).max(a_new_tol);
 
  // OCCT L140-149: handle closed edge (seam)
  let b_is_closed = is_closed_2d(ei_old, face_idx, ds);
@@ -153,10 +153,10 @@ pub fn attach_existing_pcurve(
  let sv = ds.edge_start_vertex_ds(ei_new);
  let ev = ds.edge_end_vertex_ds(ei_new);
  if sv < ds.vertices.len() {
- ds.vertices[sv].geom_tol = ds.vertex_tolerance(sv).max(a_new_tol_final);
+ ds.vertex_data_mut(sv).tolerance = ds.vertex_tolerance(sv).max(a_new_tol_final);
  }
  if ev < ds.vertices.len() {
- ds.vertices[ev].geom_tol = ds.vertex_tolerance(ev).max(a_new_tol_final);
+ ds.vertex_data_mut(ev).tolerance = ds.vertex_tolerance(ev).max(a_new_tol_final);
  }
  0
 }
@@ -457,7 +457,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
+ ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  }
@@ -470,7 +470,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
+ ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  } else {
@@ -480,7 +480,7 @@ pub fn correct_point_on_curve(
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
  if new_tol < max_tol && vi < ds.vertices.len() {
- ds.vertices[vi].geom_tol = ds.vertex_tolerance(vi).max(new_tol);
+ ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
  }
@@ -511,7 +511,7 @@ pub fn correct_curve_on_surface(
  if let Some((max_dist, _)) = compute_tolerance(&edge_clone, &ds.faces[fi], ds) {
  let updated_tol = max_dist + 0.1 * max_dist;
  if updated_tol > a_new_tol && updated_tol < max_tol {
- ds.edges[ei].geom_tol = updated_tol;
+ ds.edge_data_mut(ei).tolerance = updated_tol;
  }
  }
  }
