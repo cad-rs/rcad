@@ -1450,7 +1450,7 @@ mod pave_filler_internal_tests {
             vertex_params: std::collections::HashMap::new(), face_tolerances: Vec::new(),
             location: 0,
         }, None);
-        ds.faces.push(DSFace {
+        ds.push_face(DSFace {
             surface: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             boundary_verts: vec![0, 1, 2],
             boundary_edges: vec![0, 1],

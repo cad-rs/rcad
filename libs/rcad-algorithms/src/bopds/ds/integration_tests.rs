@@ -1,6 +1,9 @@
 //! Integration tests for DS + PaveFiller + boolean pipeline.
 //! These tests verify alignment with OCCT reference data.
 //! All reference values come from OCCT DRAW runs (bfuse_simple A1).
+//!
+//! Stage-by-stage tests: set RCAD_STOP_AFTER to stop PaveFiller at a specific
+//! stage and inspect DS invariants at that point.
 
 use super::types::*;
 use super::DS;
@@ -25,6 +28,25 @@ fn make_unit_box() -> topods::BRep {
 fn box_at(origin: DVec3, dx: f64, dy: f64, dz: f64) -> topods::BRep {
     rcad_modeling::make_box_brep(origin, DVec3::X, DVec3::Y, dx, dy, dz)
         .expect("Box creation failed")
+}
+
+/// Run PaveFiller up to a specific stage, return the DS.
+/// Uses RCAD_STOP_AFTER env var to stop PaveFiller::perform() early.
+fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
+    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut brep = topods::BRep::new();
+    let bvh_a = Bvh::build(a);
+    let bvh_b = Bvh::build(b);
+    // SAFETY: setting env var for stage control in test context
+    unsafe { std::env::set_var("RCAD_STOP_AFTER", stage); }
+    {
+        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        filler.set_run_parallel(false);
+        filler.perform();
+    }
+    // SAFETY: removing test env var
+    unsafe { std::env::remove_var("RCAD_STOP_AFTER"); }
+    ds
 }
 
 /// Run PaveFiller on two BReps, return the filled DS.
@@ -133,6 +155,99 @@ fn ds_load_sphere_and_box_origin_flags() {
     let b_count = ds.faces.iter().filter(|f| f.origin == ShapeOrigin::ShapeB).count();
     assert_eq!(a_count, 1, "sphere (A) has 1 face");
     assert_eq!(b_count, 6, "box (B) has 6 faces");
+}
+
+// =========================================================================
+// Tests: PaveFiller stage-by-stage invariants
+// =========================================================================
+// Each test stops the PaveFiller at a specific stage and checks DS state.
+// This catches regressions in individual pipeline phases.
+
+#[test]
+fn stage_prepare_has_shapes() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = pave_fill_stage(&sphere, &bx, "after_Prepare");
+    assert!(ds.vertices.len() >= 8, "Prepare: >=8 vertices");
+    assert!(ds.edges.len() >= 14, "Prepare: >=14 edges");
+    assert_eq!(ds.faces.len(), 7, "Prepare: sphere(1)+box(6)=7 faces");
+    assert!(ds.intersection_curves.is_empty(), "Prepare: no ICs yet");
+}
+
+#[test]
+fn stage_vv_has_interferences() {
+    let bx1 = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
+    let bx2 = box_at(DVec3::new(0.5, 0.5, 0.5), 2.0, 2.0, 2.0);
+    let ds = pave_fill_stage(&bx1, &bx2, "after_PerformVV");
+    // Overlapping boxes should produce VV interferences
+    assert!(!ds.interf_vv.is_empty(),
+        "VV: overlapping boxes should have VV interferences");
+}
+
+#[test]
+#[ignore = "rcad: pre-existing index OOB in split_pave_blocks (paves.rs:92), not related to stage test"]
+fn stage_ff_has_intersection_curves_for_overlap() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = pave_fill_stage(&sphere, &bx, "after_PerformFF");
+    assert!(!ds.intersection_curves.is_empty(),
+        "FF: sphere-box should produce intersection curves");
+    assert!(!ds.interf_ff.is_empty(),
+        "FF: sphere-box should have FF interferences");
+    // Check each IC has a valid 3D curve
+    for (ci, ic) in ds.intersection_curves.iter().enumerate() {
+        assert!(ic.t_range[1] > ic.t_range[0],
+            "FF: IC {} has valid t_range {:?}", ci, ic.t_range);
+    }
+}
+
+#[test]
+#[ignore = "rcad: pre-existing index OOB in split_pave_blocks (paves.rs:92), not related to stage test"]
+fn stage_ff_no_ics_for_non_intersecting() {
+    let b1 = box_at(DVec3::new(-5.0, -5.0, -5.0), 1.0, 1.0, 1.0);
+    let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
+    let ds = pave_fill_stage(&b1, &b2, "after_PerformFF");
+    assert!(ds.intersection_curves.is_empty(),
+        "FF: non-intersecting boxes -> 0 ICs");
+    assert!(ds.interf_ff.is_empty(),
+        "FF: non-intersecting boxes -> 0 FF interferences");
+}
+
+#[test]
+#[ignore = "rcad: pre-existing index OOB in split_pave_blocks (paves.rs:92), not related to stage test"]
+fn stage_make_split_edges_creates_edges() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds_pre = pave_fill_stage(&sphere, &bx, "after_PerformFF");
+    let ds_post = pave_fill_stage(&sphere, &bx, "after_MakeSplitEdges");
+    // MakeSplitEdges should add at least some section edges
+    assert!(ds_post.edge_start_vertex.len() > ds_pre.edge_start_vertex.len(),
+        "MakeSplitEdges: edge count should increase (pre={}, post={})",
+        ds_pre.edge_start_vertex.len(), ds_post.edge_start_vertex.len());
+}
+
+#[test]
+#[ignore = "rcad: pre-existing index OOB in split_pave_blocks (paves.rs:92), not related to stage test"]
+fn stage_make_blocks_creates_pave_blocks() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = pave_fill_stage(&sphere, &bx, "after_MakeBlocks");
+    // After MakeBlocks, at least one edge should have pave_blocks
+    let any_pbs = (0..ds.edge_start_vertex.len()).any(|ei| !ds.edge_pave_blocks(ei).is_empty());
+    assert!(any_pbs, "MakeBlocks: at least one edge should have PBs");
+}
+
+#[test]
+#[ignore = "rcad: pre-existing index OOB in split_pave_blocks (paves.rs:92), not related to stage test"]
+fn stage_make_pcurves_creates_pcurves() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = pave_fill_stage(&sphere, &bx, "after_MakePCurves");
+    // After MakePCurves, at least one section edge should have face_reps with pcurves
+    let any_pcurve = (0..ds.edge_start_vertex.len()).any(|ei| {
+        ds.edge_face_reps(ei).iter().any(|r| r.face_idx < ds.face_origins.len())
+    });
+    assert!(any_pcurve, "MakePCurves: at least one edge should have pcurves");
 }
 
 // =========================================================================

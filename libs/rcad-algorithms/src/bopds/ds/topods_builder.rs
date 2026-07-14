@@ -547,7 +547,7 @@ mod tests {
             face_tolerances: Vec::new(),
             is_geometric: true,
             location: 0,
-        });
+        }, None);
         assert_eq!(ei, ne_before, "push_edge returns next edge index");
         assert_eq!(ds.edges.len(), ne_before + 1, "edges array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");

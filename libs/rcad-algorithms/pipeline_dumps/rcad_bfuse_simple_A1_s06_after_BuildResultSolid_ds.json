@@ -1,0 +1,465 @@
+{
+  "ds": {
+    "edges": [
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 1.0), direction: DVec3(NaN, NaN, NaN) })",
+        "ei": 0,
+        "ev": 0,
+        "is_internal": false,
+        "my_images": [
+          0
+        ],
+        "nPBs": 1,
+        "sv": 0
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(0.0, 1.0, 0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ei": 1,
+        "ev": 1,
+        "is_internal": false,
+        "my_images": [
+          1
+        ],
+        "nPBs": 1,
+        "sv": 0
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, -1.0), direction: DVec3(NaN, NaN, NaN) })",
+        "ei": 2,
+        "ev": 1,
+        "is_internal": false,
+        "my_images": [
+          2
+        ],
+        "nPBs": 1,
+        "sv": 1
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 0.0), direction: DVec3(1.0, 0.0, 0.0) })",
+        "ei": 3,
+        "ev": 3,
+        "is_internal": false,
+        "my_images": [
+          3
+        ],
+        "nPBs": 1,
+        "sv": 2
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 0.0), direction: DVec3(0.0, 1.0, 0.0) })",
+        "ei": 4,
+        "ev": 4,
+        "is_internal": false,
+        "my_images": [
+          4
+        ],
+        "nPBs": 1,
+        "sv": 3
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 0.0), direction: DVec3(-1.0, 0.0, 0.0) })",
+        "ei": 5,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [
+          5
+        ],
+        "nPBs": 1,
+        "sv": 4
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 0.0), direction: DVec3(0.0, -1.0, 0.0) })",
+        "ei": 6,
+        "ev": 2,
+        "is_internal": false,
+        "my_images": [
+          6
+        ],
+        "nPBs": 1,
+        "sv": 5
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 1.0), direction: DVec3(1.0, 0.0, 0.0) })",
+        "ei": 7,
+        "ev": 6,
+        "is_internal": false,
+        "my_images": [
+          7
+        ],
+        "nPBs": 1,
+        "sv": 0
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 1.0), direction: DVec3(0.0, 1.0, 0.0) })",
+        "ei": 8,
+        "ev": 7,
+        "is_internal": false,
+        "my_images": [
+          8
+        ],
+        "nPBs": 1,
+        "sv": 6
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 1.0), direction: DVec3(-1.0, 0.0, 0.0) })",
+        "ei": 9,
+        "ev": 8,
+        "is_internal": false,
+        "my_images": [
+          9
+        ],
+        "nPBs": 1,
+        "sv": 7
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 1.0), direction: DVec3(0.0, -1.0, 0.0) })",
+        "ei": 10,
+        "ev": 0,
+        "is_internal": false,
+        "my_images": [
+          10
+        ],
+        "nPBs": 1,
+        "sv": 8
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 11,
+        "ev": 0,
+        "is_internal": false,
+        "my_images": [
+          11
+        ],
+        "nPBs": 1,
+        "sv": 2
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 12,
+        "ev": 6,
+        "is_internal": false,
+        "my_images": [
+          12
+        ],
+        "nPBs": 1,
+        "sv": 3
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 13,
+        "ev": 7,
+        "is_internal": false,
+        "my_images": [
+          13
+        ],
+        "nPBs": 1,
+        "sv": 4
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 14,
+        "ev": 8,
+        "is_internal": false,
+        "my_images": [
+          14
+        ],
+        "nPBs": 1,
+        "sv": 5
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ei": 15,
+        "ev": 0,
+        "is_internal": false,
+        "my_images": [
+          15
+        ],
+        "nPBs": 1,
+        "sv": 3
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ei": 16,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [
+          16
+        ],
+        "nPBs": 1,
+        "sv": 0
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ei": 17,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [
+          17
+        ],
+        "nPBs": 1,
+        "sv": 0
+      }
+    ],
+    "faces": [
+      {
+        "boundary_edges": [
+          0,
+          1,
+          2,
+          1
+        ],
+        "curves_sc": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "fi": 0,
+        "nBE": 4,
+        "nCurvesSc": 6,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 3,
+        "nVIn": 4,
+        "surf": "Sphere(SphericalSurface { center: DVec3(0.0, 0.0, 0.0), axis: DVec3(0.0, 0.0, 1.0), radius: 1.0, ref_dir: DVec3(1.0, 0.0, 0.0) })",
+        "vertices_in": [
+          0,
+          1,
+          5,
+          9
+        ]
+      },
+      {
+        "boundary_edges": [
+          3,
+          4,
+          5,
+          6
+        ],
+        "curves_sc": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "fi": 1,
+        "nBE": 4,
+        "nCurvesSc": 6,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 4,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0) })",
+        "vertices_in": [
+          0,
+          1,
+          5,
+          9
+        ]
+      },
+      {
+        "boundary_edges": [
+          7,
+          8,
+          9,
+          10
+        ],
+        "curves_sc": [],
+        "fi": 2,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 0,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 1.0), normal: DVec3(0.0, 0.0, 1.0) })",
+        "vertices_in": []
+      },
+      {
+        "boundary_edges": [
+          3,
+          12,
+          7,
+          11
+        ],
+        "curves_sc": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "fi": 3,
+        "nBE": 4,
+        "nCurvesSc": 4,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 1,
+        "nVIn": 4,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0) })",
+        "vertices_in": [
+          0,
+          1,
+          5,
+          9
+        ]
+      },
+      {
+        "boundary_edges": [
+          5,
+          14,
+          9,
+          13
+        ],
+        "curves_sc": [],
+        "fi": 4,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 0,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 1.0, 0.0), normal: DVec3(0.0, 1.0, 0.0) })",
+        "vertices_in": []
+      },
+      {
+        "boundary_edges": [
+          6,
+          11,
+          10,
+          14
+        ],
+        "curves_sc": [
+          4,
+          5
+        ],
+        "fi": 5,
+        "nBE": 4,
+        "nCurvesSc": 2,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 2,
+        "nVIn": 2,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0) })",
+        "vertices_in": [
+          0,
+          1
+        ]
+      },
+      {
+        "boundary_edges": [
+          4,
+          13,
+          8,
+          12
+        ],
+        "curves_sc": [],
+        "fi": 6,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 0,
+        "surf": "Plane(Plane { origin: DVec3(1.0, 0.0, 0.0), normal: DVec3(1.0, 0.0, 0.0) })",
+        "vertices_in": []
+      }
+    ],
+    "interf": {
+      "EE": 0,
+      "EF": 15,
+      "total": 18
+    },
+    "intersection_curves": [
+      {
+        "ci": 0,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(0.0, -1.0, 0.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ev": 5,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 9,
+        "t_range": [
+          0.0,
+          3.141592653589793
+        ]
+      },
+      {
+        "ci": 1,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(0.0, -1.0, 0.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ev": 9,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 5,
+        "t_range": [
+          3.141592653589793,
+          6.283185307179586
+        ]
+      },
+      {
+        "ci": 2,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ev": 1,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 0,
+        "t_range": [
+          0.0,
+          3.141592653589793
+        ]
+      },
+      {
+        "ci": 3,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
+        "ev": 0,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 1,
+        "t_range": [
+          3.141592653589793,
+          6.283185307179586
+        ]
+      },
+      {
+        "ci": 4,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ev": 0,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 1,
+        "t_range": [
+          0.0,
+          3.141592653589793
+        ]
+      },
+      {
+        "ci": 5,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ev": 1,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 1,
+        "sv": 0,
+        "t_range": [
+          3.141592653589793,
+          6.283185307179586
+        ]
+      }
+    ],
+    "nA": 2,
+    "nB": 8,
+    "nCB": 0,
+    "nE": 18,
+    "nF": 7,
+    "nIC": 6,
+    "nPB": 3,
+    "nV": 10
+  }
+}
