@@ -4,6 +4,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
 
+use crate::bopalgo;
 use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
@@ -464,15 +465,12 @@ impl<'a> super::PaveFiller<'a> {
    pb1.pave1 = crate::bopds::pave::Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] };
    pb1.pave2 = crate::bopds::pave::Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] };
   }
-  // OCCT-aligned: Update with theFlag=true for IC PBs (section curves).
-  // The flag=true means pave1/pave2 ARE included as endpoint paves.
-  // This ensures even a PB with zero ext_paves (simple IC with only
-  // two endpoints) produces at least one sub-PB covering the full
-  // curve range.  The sub-PB may fail midpoint face-validation and
-  // be skipped if the IC is not properly clipped — that is correct
-  // rejection; without theFlag=true the pipeline produces no section
-  // edges at all for simple ICs.
- let sub_pbs = pb1.update(true);
+  // OCCT-aligned: Update with theFlag=false (BOPAlgo_PaveFiller_6.cxx L912).
+  // The flag=false means ext_paves alone define the sub-PB boundaries.
+  // The InitPaveBlock1 + PutPavesOnCurve handling of IC endpoints ensures
+  // the sv/ev are present as ext_paves, so Update(false) still produces
+  // valid sub-PBs covering the full curve range.
+ let sub_pbs = pb1.update(false);
  a_lpb = sub_pbs;
  }
  }
@@ -832,6 +830,12 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
+ // OCCT-aligned: aLPBC.RemoveFirst() (BOPAlgo_PaveFiller_6.cxx L1097).
+ // Remove the InitPaveBlock1 PB from the curve's PaveBlocks list now that
+ // all sub-PBs have been processed.
+ if !self.ds.intersection_curves[ci].pave_blocks.is_empty() {
+  self.ds.intersection_curves[ci].pave_blocks.remove(0);
+ }
  }
  if is_to_recheck {
  a_ff_to_recheck.push(cur_ind);
@@ -879,7 +883,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // ===== Post-loop phases (OCCT L1109-1136) =====
+ // ===== Post-loop phase =====
+ // OCCT-aligned: RemoveMicroSectionEdges (BOPAlgo_PaveFiller_6.cxx L1142, L4341-4417).
  // Micro section edges are PBs whose FindValidRange failed (too short).
  // The a_micro_pb list has been populated during section edge creation.
  // OCCT BOPAlgo_PaveFiller_6.cxx L4341-4419
@@ -907,8 +912,8 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.section_edge_refs[ci] = keep;
  }
  }
- // Create SD vertices for coinciding VV/VE/VF vertex groups
- // OCCT BOPAlgo_PaveFiller_6.cxx L1173-1193
+ // OCCT-aligned: MakeSDVerticesFF (BOPAlgo_PaveFiller_6.cxx L1145, L1173-1193).
+ // Create SD vertices for coinciding VV/VE/VF vertex groups.
  {
  // a_dm_vlv: map from vertex index to list of coincident vertices
  let key_list: Vec<(usize, Vec<usize>)> = a_dm_vlv.iter()
@@ -942,7 +947,132 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- // Reduce tolerance of section edges where appropriate.
+ // OCCT-aligned: PostTreatFF (BOPAlgo_PaveFiller_6.cxx L1146-1152, L1197-1701).
+ // rcad uses crate::bopalgo::intersect_vertices + self.make_sd_vertices_vv
+ // to fuse section-edge vertices, replacing OCCT's nested PaveFiller.
+ {
+ // Phase 1 (OCCT L1235-1263): Find unused vertices from FF pairs.
+ // For each FF, get stick vertices, remove those used by curves' paves.
+ let mut a_verts_unused: std::collections::HashSet<usize> = std::collections::HashSet::new();
+ let mut a_ind_map: std::collections::HashSet<usize> = std::collections::HashSet::new();
+ for ff in &self.ds.interf_ff {
+  let n_f1 = ff.f1;
+  let n_f2 = ff.f2;
+  if n_f1 >= self.ds.faces.len() || n_f2 >= self.ds.faces.len() { continue; }
+  // Build stick vertices (OCCT: GetStickVertices)
+  let mut a_mv: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  let mut a_mi = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
+  let a_mi_b = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
+  for v in &a_mi_b { a_mi.insert(*v); }
+  // Collect vertex indices from all interference types belonging to this FF's faces
+  for inf in &self.ds.interf_ve {
+   if !a_mi.contains(&inf.vertex) { continue; }
+   a_mv.insert(inf.vertex);
+  }
+  for inf in &self.ds.interf_vf {
+   if !a_mi.contains(&inf.vertex) { continue; }
+   a_mv.insert(inf.vertex);
+  }
+  for inf in &self.ds.interf_ee {
+   if inf.new_vertex == usize::MAX { continue; }
+   if !a_mi.contains(&inf.e1) || !a_mi.contains(&inf.e2) { continue; }
+   let n_v = self.ds.has_shape_sd(inf.new_vertex).unwrap_or(inf.new_vertex);
+   a_mv.insert(n_v);
+  }
+  for inf in &self.ds.interf_vv {
+   if inf.merged_vertex == usize::MAX { continue; }
+   if !a_mi.contains(&inf.v1) || !a_mi.contains(&inf.v2) { continue; }
+   let n_v = self.ds.has_shape_sd(inf.merged_vertex).unwrap_or(inf.merged_vertex);
+   a_mv.insert(n_v);
+  }
+  for inf in &self.ds.interf_ef {
+   if inf.new_vertex == usize::MAX { continue; }
+   let e_in = a_mi.contains(&inf.edge);
+   let f_in = a_mi.contains(&inf.face);
+   if !e_in || !f_in { continue; }
+   let n_v = self.ds.has_shape_sd(inf.new_vertex).unwrap_or(inf.new_vertex);
+   a_mv.insert(n_v);
+  }
+  // Remove used vertices (OCCT: RemoveUsedVertices — iterates curves' PB paves)
+  for &ci in &ff.curves {
+   if ci >= self.ds.intersection_curves.len() { continue; }
+   let ic = &self.ds.intersection_curves[ci];
+   for spb in &ic.pave_blocks {
+    let pb = spb.0.read().unwrap();
+    a_mv.remove(&pb.pave1.vertex_idx);
+    a_mv.remove(&pb.pave2.vertex_idx);
+    for ep in &pb.ext_paves {
+     a_mv.remove(&ep.vertex_idx);
+    }
+   }
+  }
+  // OCCT: IndMap fence — vertices appearing once go to VertsUnused;
+  // appearing twice get removed.
+  for &vi in &a_mv {
+   if a_ind_map.contains(&vi) {
+    a_verts_unused.remove(&vi);
+   } else {
+    a_ind_map.insert(vi);
+    a_verts_unused.insert(vi);
+   }
+  }
+ }
+
+ // Phase 2 (OCCT L1269-1308): Early return for single-entry case (skip, no TopoDS shapes).
+ let a_nb_s = a_mscpb.len();
+ let a_nb_me = a_micro_pb.len();
+ if a_nb_s > 0 && a_nb_me == 0 {
+  // Collect all unique vertex indices from section edges
+  let mut a_post_verts: Vec<usize> = a_mvi.iter().copied().collect();
+  // Add vertices from micro PBs
+  for pb in &a_micro_pb {
+   let (pv1, pv2) = pb.indices();
+   a_post_verts.push(pv1);
+   a_post_verts.push(pv2);
+  }
+  // Add unused vertices (Phase 1)
+  for &vi in &a_verts_unused {
+   a_post_verts.push(vi);
+  }
+  // Phase 3 (OCCT L1310-1348)+Phase 6 (OCCT L1421-1430): Fuse vertices.
+  // Use OCCT-aligned intersect_vertices to group close vertices,
+  // then make_sd_vertices_vv to create SD entries for each group.
+  let fuzzy = self.fuzzy_tolerance;
+  let blocks = crate::bopalgo::intersect_vertices(&a_post_verts, self.ds, fuzzy);
+  for block in &blocks {
+   if block.len() >= 2 {
+    self.make_sd_vertices_vv(block);
+   }
+  }
+  // Phase 8 (OCCT L1690-1701): Extract SD entries from shape_sd into aDMNewSD.
+  for &vi in &a_post_verts {
+   if let Some(sd) = self.ds.has_shape_sd(vi) {
+    if vi != sd {
+     a_dm_new_sd.entry(vi).or_insert(sd);
+    }
+   }
+  }
+  // Follow SD chains: resolve old→new through any intermediate mappings.
+  let sd_keys: Vec<usize> = a_dm_new_sd.keys().copied().collect();
+  for &k in &sd_keys {
+   if let Some(&v) = a_dm_new_sd.get(&k) {
+    let mut chain = v;
+    let mut depth = 0;
+    while let Some(&next) = a_dm_new_sd.get(&chain) {
+     if next == chain || depth > 100 { break; }
+     chain = next;
+     depth += 1;
+    }
+    if chain != v {
+     a_dm_new_sd.insert(k, chain);
+    }
+   }
+  }
+ }
+ }
+
+ // ⏳ OCCT-aligned: CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L1158, L4105-4306).
+ // rcad: only min(curve_tol, edge_tol); OCCT also reduces vertex tolerances.
  for ci in 0..self.ds.intersection_curves.len() {
  for &sei in &self.ds.section_edge_refs[ci] {
  if sei < self.ds.edges.len() {
@@ -955,8 +1085,10 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- // Register section edge PBs in their missing faces via aPBFacesMap.
- // Then recompute vertices_in for each face from curve endpoints.
+ // ⏳ OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1161, L1705-1978).
+ // rcad: simple pave_blocks_sc + vertices_in; OCCT also handles CommonBlocks,
+ // existing-edge PB replacement via aDMExEdges, and SD vertex remapping in
+ // PaveBlocksOn/PaveBlocksIn/PaveBlocksSc.
  for (&pb_idx, faces) in &a_pb_faces_map {
  if pb_idx < self.ds.pave_blocks.len() {
  for &fi in faces {
@@ -975,7 +1107,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- // Update PB vertex indices for SD vertices
+ // ⏳ OCCT-aligned: UpdatePaveBlocks (BOPAlgo_PaveFiller_6.cxx L1163, L3712-3750).
  for (old_v, new_v) in &a_dm_new_sd {
  for ei in 0..self.ds.edges.len() {
   for spb in &mut self.ds.edges[ei].pave_blocks {
@@ -991,6 +1123,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
+ // OCCT-aligned: PutSEInOtherFaces (BOPAlgo_PaveFiller_6.cxx L1167-1168).
  self.put_se_in_other_faces();
 
  // OCCT-aligned: Build edge images
@@ -1006,8 +1139,6 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // OCCT-aligned: InitPaveBlock1 is called per-curve in the first loop above.
- // The empty loop here is removed -- its purpose was served.
  }
 }
 

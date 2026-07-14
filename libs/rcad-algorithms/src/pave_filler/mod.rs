@@ -342,7 +342,7 @@ impl<'a> PaveFiller<'a> {
    ef_iterator.prepare();
    ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
    };
-   self.perform_ef_bvh(&ef_pairs);
+   self.perform_ef(&ef_pairs);
   // =OCCT-aligned: TreatNewVertices =merge new vertices created by EF intersection.
   // OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
   let _ef_survivors = self.treat_new_vertices();
