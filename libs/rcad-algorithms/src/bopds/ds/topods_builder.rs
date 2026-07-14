@@ -554,4 +554,69 @@ mod tests {
             panic!("expected Edge TShape");
         }
     }
+
+    /// Sphere: parametric sphere (radius=1) — 1 face, seam edges, degenerated edges.
+    fn make_unit_sphere() -> topods::BRep {
+        rcad_modeling::make_sphere_brep(glam::DVec3::ZERO, 1.0)
+            .expect("Unit sphere creation failed")
+    }
+
+    #[test]
+    fn load_sphere_faces() {
+        let brep = make_unit_sphere();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        // Sphere has 1 face
+        assert_eq!(ds.faces.len(), 1, "sphere has 1 face");
+        // Vertex count varies by implementation; at least 2 for UV seam structure
+        assert!(ds.vertices.len() >= 2, "sphere has >=2 vertices, got {}", ds.vertices.len());
+        // Edge count — sphere has seam edges + degenerated edges
+        assert!(ds.edges.len() >= 2, "sphere has >=2 edges, got {}", ds.edges.len());
+    }
+
+    #[test]
+    fn load_sphere_surface_type() {
+        let brep = make_unit_sphere();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        assert_eq!(ds.faces.len(), 1);
+        // The face should be a spherical surface
+        match &ds.faces[0].surface {
+            rcad_kernel::geom::Surface3::Sphere(_) => {} // OK
+            other => panic!("expected Sphere surface, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn load_two_shapes_origin() {
+        let sphere = make_unit_sphere();
+        let box_brep = make_unit_box();
+        let sphere_face_count;
+        let box_face_count;
+        {
+            // Pre-count each shape's faces
+            let ds_sphere = new_from_topods(&sphere, &topods::BRep::new(), TOLERANCE_ABS);
+            sphere_face_count = ds_sphere.faces.len();
+        }
+        {
+            let ds_box = new_from_topods(&box_brep, &topods::BRep::new(), TOLERANCE_ABS);
+            box_face_count = ds_box.faces.len();
+        }
+        // Load both A=sphere, B=box
+        let ds = new_from_topods(&sphere, &box_brep, TOLERANCE_ABS);
+        let total_faces = ds.faces.len();
+        assert!(total_faces >= sphere_face_count + box_face_count,
+            "total faces {} >= {} + {}", total_faces, sphere_face_count, box_face_count);
+    }
+
+    #[test]
+    fn load_two_shapes_vertex_edge_counts() {
+        let sphere = make_unit_sphere();
+        let box_brep = make_unit_box();
+        let ds = new_from_topods(&sphere, &box_brep, TOLERANCE_ABS);
+        // Both shapes loaded — at minimum 8 box vertices + sphere vertices
+        assert!(ds.vertices.len() >= 8, "total vertices >= 8, got {}", ds.vertices.len());
+        // Box has 12 edges, sphere has at least 2
+        assert!(ds.edges.len() >= 14, "total edges >= 14, got {}", ds.edges.len());
+        // Box has 6 faces, sphere has 1
+        assert_eq!(ds.faces.len(), 7, "total faces = 7 (6 box + 1 sphere)");
+    }
 }
