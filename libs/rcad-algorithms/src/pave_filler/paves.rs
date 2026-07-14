@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn process_de(&mut self) {
@@ -262,17 +262,19 @@ impl<'a> super::PaveFiller<'a> {
  }
  for ci in 0..n_curves {
  let Some(&(fa, fb)) = curve_faces.get(&ci) else { continue };
- let ic = &self.ds.intersection_curves[ci];
- let t0 = ic.t_range[0]; let t1 = ic.t_range[1];
+ let t0 = self.ds.intersection_curves[ci].t_range[0];
+ let t1 = self.ds.intersection_curves[ci].t_range[1];
  if (t1 - t0).abs() < TOLERANCE_ABS { continue; }
+ // Clone the curve to avoid borrow conflict when push_vertex is needed later.
+ let ic_curve = self.ds.intersection_curves[ci].curve.clone();
  for &(fi, use_a) in &[(fa, true), (fb, false)] {
  let (period, _, _) = match &self.ds.faces[fi].surface {
  Surface3::Sphere(_) => (std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
  Surface3::Cylinder(_) => (std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
  _ => continue,
  };
- let pcurve = if use_a { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
- let Some(pc) = pcurve else { continue };
+ let pcurve_owned = if use_a { self.ds.intersection_curves[ci].pcurve_on_a.clone() } else { self.ds.intersection_curves[ci].pcurve_on_b.clone() };
+ let Some(pc) = pcurve_owned else { continue };
  const N_SAMP: usize = 64;
  let mut prev_u: Option<f64> = None;
  for i in 0..=N_SAMP {
@@ -289,16 +291,18 @@ impl<'a> super::PaveFiller<'a> {
  else { hi = mid; }
  }
  let t_cross = t0 + (t1 - t0) * (lo + hi) * 0.5;
- let pt = ic.curve.point_at(t_cross);
- let v_new = self.ds.find_vertex_near(pt, TOLERANCE_ABS * 1000.0)
- .unwrap_or_else(|| {
+ let pt = ic_curve.point_at(t_cross);
+ let v_new = match self.ds.find_vertex_near(pt, TOLERANCE_ABS * 1000.0) {
+ Some(v) => v,
+ None => {
  let vi = self.ds.vertices.len();
- self.ds.vertices.push(crate::bopds::ds::DSVertex {
+ self.ds.push_vertex(crate::bopds::ds::DSVertex {
  point: pt, geom_tol: TOLERANCE_ABS, origin: None,
  is_internal: false, location: 0,
  });
  vi
- });
+ }
+ };
  self.ds.faces[fa].face_info.vertices_in.insert(v_new);
  self.ds.faces[fb].face_info.vertices_in.insert(v_new);
  }
@@ -1523,7 +1527,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- self.ds.edges.push(DSEdge {
+ self.ds.push_edge(DSEdge {
  start_vertex: sv,
  end_vertex: ev,
  curve: curve.clone(),

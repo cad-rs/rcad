@@ -20,6 +20,7 @@ impl DS {
     /// Create an empty DS (equivalent to OCCT BOPDS_DS default constructor).
     pub fn new_empty() -> Self {
         Self {
+            shapes: Vec::new(),
             vertices: Vec::new(), edges: Vec::new(), wires: Vec::new(),
             shells: Vec::new(), solids: Vec::new(), comp_solids: Vec::new(),
             faces: Vec::new(),
@@ -45,7 +46,104 @@ impl DS {
         }
     }
 
- ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
+    /// OCCT-aligned: myDS->Shape(n). Returns &TShape at the given flat index.
+    pub fn shape(&self, idx: usize) -> &topods::TShape {
+        &self.shapes[idx]
+    }
+
+    /// OCCT-aligned: mutable shape access for PaveFiller tolerance updates.
+    pub fn shape_mut(&mut self, idx: usize) -> &mut topods::TShape {
+        std::sync::Arc::make_mut(&mut self.shapes[idx])
+    }
+
+    /// OCCT-aligned: myDS->Append — add a new TShape and return its index.
+    pub fn append_shape(&mut self, ts: topods::TShape) -> usize {
+        let idx = self.shapes.len();
+        self.shapes.push(std::sync::Arc::new(ts));
+        idx
+    }
+
+    /// OCCT-aligned: BOPDS_DS::NbShapes — total count of all shapes.
+    pub fn nb_shapes(&self) -> usize {
+        self.shapes.len()
+    }
+
+    /// OCCT-aligned: myDS->ShapeType(n) == TopAbs_VERTEX.
+    pub fn is_vertex(&self, idx: usize) -> bool {
+        self.shapes.get(idx).map_or(false, |s| matches!(&**s, topods::TShape::Vertex(_)))
+    }
+
+    /// OCCT-aligned: myDS->ShapeType(n) == TopAbs_EDGE.
+    pub fn is_edge(&self, idx: usize) -> bool {
+        self.shapes.get(idx).map_or(false, |s| matches!(&**s, topods::TShape::Edge(_)))
+    }
+
+    /// OCCT-aligned: myDS->ShapeType(n) == TopAbs_FACE.
+    pub fn is_face(&self, idx: usize) -> bool {
+        self.shapes.get(idx).map_or(false, |s| matches!(&**s, topods::TShape::Face(_)))
+    }
+
+    /// OCCT-aligned: push a vertex (myDS->Append) + track in flat array.
+    /// Returns the vertex index.
+    pub fn push_vertex(&mut self, dv: DSVertex) -> usize {
+        let vi = self.vertices.len();
+        let point = dv.point;
+        let geom_tol = dv.geom_tol;
+        self.vertices.push(dv);
+        use topods::tshape_flags;
+        self.shapes.push(std::sync::Arc::new(topods::TShape::Vertex(
+            topods::TVertexData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                point,
+                tolerance: geom_tol,
+                points: Vec::new(),
+            },
+        )));
+        vi
+    }
+
+    /// OCCT-aligned: push an edge (myDS->Append) + track in flat array.
+    /// Returns the edge index.
+    pub fn push_edge(&mut self, de: DSEdge) -> usize {
+        let ei = self.edges.len();
+        let curve = de.curve.clone();
+        let e_tol = de.geom_tol;
+        let t_range = de.t_range;
+        let start_vertex = de.start_vertex;
+        let end_vertex = de.end_vertex;
+        let face_reps = de.face_reps.clone();
+        let vertex_params = de.vertex_params.clone();
+        self.edges.push(de);
+        let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
+            std::collections::HashMap::new();
+        for rep in &face_reps {
+            pcurves.insert(rep.face_idx, (rep.pcurve.clone(), rep.start_param, rep.end_param));
+        }
+        let first = topods::ShapeRef::synthetic(start_vertex);
+        let last = topods::ShapeRef::synthetic(end_vertex);
+        use topods::tshape_flags;
+        self.shapes.push(std::sync::Arc::new(topods::TShape::Edge(
+            topods::TEdgeData {
+                my_shapes: vec![first, last],
+                flags: tshape_flags::DEFAULT,
+                curve: Some(curve),
+                first,
+                last,
+                range: t_range,
+                degenerated: start_vertex == end_vertex,
+                pcurves,
+                representations: Vec::new(),
+                vertex_params,
+                tolerance: e_tol,
+                same_parameter: true,
+                same_range: true,
+            },
+        )));
+        ei
+    }
+
+    ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
  /// Returns the flag value for an edge index, or 0 if not set.
  /// Flag is stored in shape_info[nv + edge_idx].flag matching OCCT's
  /// per-shape integer flag (BOPDS_ShapeInfo::myFlag).

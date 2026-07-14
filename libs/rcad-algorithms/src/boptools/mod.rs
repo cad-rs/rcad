@@ -18,7 +18,7 @@ use crate::tolerance::{ANGULAR, CONFUSION, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ
 pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
  let ei = ds.edges.len();
  let ic = &ds.intersection_curves[ci];
- ds.edges.push(crate::bopds::ds::DSEdge {
+ ds.push_edge(crate::bopds::ds::DSEdge {
  start_vertex: v1,
  end_vertex: v2,
  curve: ic.curve.clone(),
@@ -204,7 +204,7 @@ pub fn make_ds_edge(
  ds: &mut crate::bopds::ds::DS, v1: usize, v2: usize, curve: rcad_kernel::geom::Curve3, t_range: [f64; 2],
 ) -> usize {
  let ei = ds.edges.len();
- ds.edges.push(crate::bopds::ds::DSEdge {
+ ds.push_edge(crate::bopds::ds::DSEdge {
  start_vertex: v1, end_vertex: v2, curve, t_range,
  origin: crate::bopds::ds::ShapeOrigin::ShapeA,
  geom_tol: crate::tolerance::TOLERANCE_ABS,
@@ -1460,7 +1460,7 @@ pub fn compute_vv(v1: &crate::bopds::ds::DSVertex, v2: &crate::bopds::ds::DSVert
 /// Returns the new vertex DS index.
 pub fn make_new_vertex(ds: &mut crate::bopds::ds::DS, p: glam::DVec3, tol: f64) -> usize {
  let vi = ds.vertices.len();
- ds.vertices.push(crate::bopds::ds::DSVertex {
+ ds.push_vertex(crate::bopds::ds::DSVertex {
  point: p, geom_tol: tol, origin: None, is_internal: false, location: 0,
  });
  vi
@@ -1474,7 +1474,7 @@ pub fn make_new_vertex_from_two(v1: &crate::bopds::ds::DSVertex, v2: &crate::bop
  let dist = (v1.point - v2.point).length();
  let tol = dist * 0.5 + v1.geom_tol.max(v2.geom_tol) + crate::tolerance::TOLERANCE_LEN_MIN;
  let vi = ds.vertices.len();
- ds.vertices.push(crate::bopds::ds::DSVertex {
+ ds.push_vertex(crate::bopds::ds::DSVertex {
  point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
  });
  vi
@@ -1802,7 +1802,7 @@ pub fn make_edge(
 pub fn copy_ds_edge(ds: &mut crate::bopds::ds::DS, ei: usize) -> usize {
  let new_ei = ds.edges.len();
  let src = &ds.edges[ei].clone();
- ds.edges.push(src.clone());
+ ds.push_edge(src.clone());
  new_ei
 }
 
@@ -1824,7 +1824,7 @@ pub fn make_split_edge(
  };
  let new_ei = ds.edges.len();
  let t_range = if p1 < p2 { [p1, p2] } else { [p2, p1] };
- ds.edges.push(crate::bopds::ds::DSEdge {
+ ds.push_edge(crate::bopds::ds::DSEdge {
  start_vertex: v1,
  end_vertex: v2,
  curve,
@@ -1881,7 +1881,7 @@ pub fn make_vertex_from_list(
  .fold(0.0f64, f64::max);
  let tol = max_dist + max_tol + crate::tolerance::TOLERANCE_LEN_MIN;
  let vi = ds.vertices.len();
- ds.vertices.push(crate::bopds::ds::DSVertex {
+ ds.push_vertex(crate::bopds::ds::DSVertex {
  point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
  });
  vi

@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use crate::inttools::int_patch_type::IntPatchIType;
 
 impl<'a> super::PaveFiller<'a> {
@@ -448,9 +448,9 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
   let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
   let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
   let v_start = self.ds.vertices.len();
-  self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  self.ds.push_vertex(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
   let v_end = self.ds.vertices.len();
-  self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
+  self.ds.push_vertex(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
   self.ds.intersection_curves[ci].start_vertex = v_start;
   self.ds.intersection_curves[ci].end_vertex = v_end;
  }
@@ -695,9 +695,9 @@ fn make_analytic_nonperiodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.vertices.push(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
      let ev = self.ds.vertices.len();
-     self.ds.vertices.push(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 });
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };
@@ -821,9 +821,9 @@ fn make_analytic_periodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.vertices.push(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
      let ev = self.ds.vertices.len();
-     self.ds.vertices.push(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 });
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };

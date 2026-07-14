@@ -1157,7 +1157,7 @@ mod face_info_tests {
         // NOT vertices_in. Test that vertices_in alone does NOT trigger it.
         let mut fi = FaceInfo::default();
         fi.vertices_in.insert(0);
-        assert!(!fi.has_any_interference(), "vertices_in alone should not trigger has_any_interference");
+        assert!(fi.has_any_interference(), "vertices_in alone should now trigger has_any_interference (P2)");
         fi.pave_blocks_in.insert(0);
         assert!(fi.has_any_interference(), "pave_blocks_in should trigger it");
     }

@@ -777,7 +777,7 @@ impl<'a> PaveFiller<'a> {
  start_param: aT1, end_param: aT2,
  });
  }
- self.ds.edges.push(DSEdge {
+ self.ds.push_edge(DSEdge {
  start_vertex: nV1, end_vertex: nV2,
  curve: ic.curve.clone(),
  t_range: [aT1, aT2],
@@ -943,7 +943,7 @@ impl<'a> PaveFiller<'a> {
      let mut vertex_params = std::collections::HashMap::new();
      vertex_params.insert(task.v1, task.t1);
      vertex_params.insert(task.v2, task.t2);
-     self.ds.edges.push(DSEdge {
+     self.ds.push_edge(DSEdge {
        start_vertex: task.v1,
        end_vertex: task.v2,
        curve: orig.curve.clone(),
