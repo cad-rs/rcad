@@ -160,3 +160,49 @@ impl Context {
         [0.0, std::f64::consts::TAU, 0.0, std::f64::consts::PI]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bopds::ds::topods_builder::new_from_topods;
+    use crate::tolerance::TOLERANCE_ABS;
+
+    /// Helper: create a DS with a unit box.
+    fn unit_box_ds() -> DS {
+        let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("make_box_brep failed");
+        new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), TOLERANCE_ABS)
+    }
+
+    /// fclass2d cache returns same instance for same face.
+    #[test]
+    fn fclass2d_cache_reuses_classifier() {
+        let ds = unit_box_ds();
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let ptr1 = ctx.fclass2d(&ds, 0) as *const _;
+        let ptr2 = ctx.fclass2d(&ds, 0) as *const _;
+        assert_eq!(ptr1, ptr2);
+    }
+
+    /// Surface adaptor returns cached surface for a face.
+    #[test]
+    fn surface_adaptor_returns_surface() {
+        let ds = unit_box_ds();
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let surf = ctx.surface_adaptor(&ds, 0);
+        match surf {
+            rcad_kernel::geom::Surface3::Plane(_) => {} // OK
+            _ => panic!("box face should be Plane"),
+        }
+    }
+
+    /// UV bounds match the face surface's default domain.
+    #[test]
+    fn uv_bounds_bottom_face() {
+        let ds = unit_box_ds();
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let b = ctx.uv_bounds(&ds, 0);
+        assert!(b[1] - b[0] > 0.0, "umax > umin");
+        assert!(b[3] - b[2] > 0.0, "vmax > vmin");
+    }
+}
