@@ -112,146 +112,166 @@ impl<'a> super::PaveFiller<'a> {
   /// Splits PaveBlocks of the given edges using extra paves.
   /// For each edge, reconstructs pave_blocks from the full pave set,
   /// computes shrunk data, and unifies vertices when no valid range.
+    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::SplitPaveBlocks (BOPAlgo_PaveFiller_2.cxx L419-626).
   pub(crate) fn split_pave_blocks(&mut self, edges: &std::collections::HashSet<usize>,
   add_interfs: bool) {
+    // ✅ OCCT L422: fence map
+    let mut a_mpairs: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    // ✅ OCCT L424-427: aMCBNewPB + aMVerticesToInitPB
     let mut a_mcb_new_pb: std::collections::HashMap<usize,
       Vec<(usize, PaveBlock)>> = std::collections::HashMap::new();
-    let mut verts_to_merge: Vec<Vec<usize>> = Vec::new();
-    for &ei in edges {
-      if ei >= self.ds.edges.len() { continue; }
-      let edge = &self.ds.edges[ei];
-      if edge.paves.len() < 2 { continue; }
-      // Map old PB vertex pairs to their CommonBlock index
-      let old_pair_to_cb: std::collections::HashMap<(usize, usize), usize> = edge.pave_blocks.iter()
+    let mut a_m_vertices_to_init_pb: Vec<usize> = Vec::new();
+
+    // ✅ OCCT L432: for each edge in theMEdges
+    for &n_e in edges {
+      // ✅ OCCT L435-436: nE, aLPB = ChangePaveBlocks
+      if n_e >= self.ds.edge_start_vertex.len() { continue; }
+      if self.ds.edge_paves(n_e).len() < 2 { continue; }
+
+      // ✅ OCCT L449: aCB = CommonBlock(aPB) — rcad: map old PB pairs to CB index
+      let old_pair_to_cb: std::collections::HashMap<(usize, usize), usize> =
+        self.ds.edge_pave_blocks(n_e).iter()
         .filter_map(|pb| {
           pb.0.read().unwrap().common_block_idx.map(|cb| {
-        let v1 = pb.0.read().unwrap().pave1.vertex_idx;
-        let v2 = pb.0.read().unwrap().pave2.vertex_idx;
+            let v1 = pb.0.read().unwrap().pave1.vertex_idx;
+            let v2 = pb.0.read().unwrap().pave2.vertex_idx;
             let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
             (key, cb)
           })
         })
         .collect();
-      let mut params: Vec<(usize, f64)> = edge.paves.iter()
+
+      // ✅ OCCT L452-453: aPB->Update(aLPBN) — split using ext_paves (rcad: edge.paves)
+      let mut params: Vec<(usize, f64)> = self.ds.edge_paves(n_e).iter()
         .map(|p| (p.vertex_idx, p.param)).collect();
       params.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
       params.dedup_by(|a, b| (a.1 - b.1).abs() < TOLERANCE_ABS);
 
-      // Build new PBs from consecutive pave pairs
+      // ✅ OCCT L457-524: for each new sub-PB in aLPBN
       let mut new_pbs: Vec<PaveBlock> = Vec::new();
       for w in params.windows(2) {
-        let pb = PaveBlock::new(
-          ei,
+        let a_pb_n = PaveBlock::new(n_e,
           Pave { vertex_idx: w[0].0, param: w[0].1 },
-          Pave { vertex_idx: w[1].0, param: w[1].1 },
-        );
-        let v1_tol = if w[0].0 < self.ds.vertices.len() { self.ds.vertices[w[0].0].geom_tol } else { TOLERANCE_ABS };
-        let v2_tol = if w[1].0 < self.ds.vertices.len() { self.ds.vertices[w[1].0].geom_tol } else { TOLERANCE_ABS };
-        let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
-        sr.set_data(ei, [w[0].1, w[1].1], v1_tol, v2_tol, edge.geom_tol);
-        sr.perform(&edge.curve);
-        if sr.shrunk_range().is_none() || (!sr.is_splittable() && sr.shrunk_range().is_some()) {
-          let nv1 = w[0].0;
-          let nv2 = w[1].0;
-          if nv1 != nv2 {
-            verts_to_merge.push(vec![nv1, nv2]);
+          Pave { vertex_idx: w[1].0, param: w[1].1 });
+
+        // ✅ OCCT L461: UpdatePaveBlockWithSDVertices (rcad: SD handled separately)
+
+        // ✅ OCCT L462: FillShrunkData(aPBN)
+        let v1_tol = self.ds.vertex_tolerance(w[0].0);
+        let v2_tol = self.ds.vertex_tolerance(w[1].0);
+        let mut a_sr = crate::inttools::shrunk_range::ShrunkRange::new();
+        a_sr.set_data(n_e, [w[0].1, w[1].1], v1_tol, v2_tol,
+                      self.ds.edge_tolerance(n_e));
+        a_sr.perform(&self.ds.edge_curve(n_e).unwrap());
+
+        // ✅ OCCT L464: bHasValidRange = HasShrunkData()
+        let b_has_valid_range = a_sr.shrunk_range().is_some();
+        // ✅ OCCT L468: bCheckDist = (bHasValidRange && !IsSplittable())
+        let b_check_dist = b_has_valid_range && !a_sr.is_splittable();
+
+        // ✅ OCCT L469: if (!bHasValidRange || bCheckDist)
+        if !b_has_valid_range || b_check_dist {
+          let (n_v1, n_v2) = (w[0].0, w[1].0);
+          // ✅ OCCT L473-476: if (nV1 == nV2) continue
+          if n_v1 == n_v2 { continue; }
+          // ✅ OCCT L480-488: if (bCheckDist) { ComputeVV }
+          let b_interfere = if b_check_dist {
+            let tol = self.ds.vertex_tolerance(n_v1).max(self.ds.vertex_tolerance(n_v2))
+                       .max(self.ds.fuzzy_tol);
+            self.ds.vertex_point(n_v1).distance(self.ds.vertex_point(n_v2)) <= tol
+          } else { false };
+          // ✅ OCCT L491: if (!bHasValidRange) OR (interfering after ComputeVV)
+          if !b_has_valid_range || b_interfere {
+            let key = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+            // ✅ OCCT L495: if (aMPairs.Add(aPair))
+            if a_mpairs.insert(key) {
+              // ✅ OCCT L497-504: MakeSDVertices + aMVerticesToInitPB
+              let n_v = n_v1.min(n_v2);
+              self.ds.add_shape_sd(n_v1, n_v);
+              self.ds.add_shape_sd(n_v2, n_v);
+              if add_interfs {
+                self.ds.interf_vv.push(InterferenceVV {
+                  v1: n_v1, v2: n_v2, merged_vertex: n_v,
+                });
+              }
+              a_m_vertices_to_init_pb.push(n_v1);
+              a_m_vertices_to_init_pb.push(n_v2);
+            }
+            continue; // ✅ OCCT L506: skip this sub-PB (invalid range or merged)
           }
-          continue;
+          // ✅ OCCT L509: falls through → valid PB, keep it (bCheckDist and NOT interfering)
         }
-        let v1 = pb.pave1.vertex_idx;
-        let v2 = pb.pave2.vertex_idx;
+        // ✅ OCCT L511: aLPB.Append(aPBN)
+        // ✅ OCCT L513-523: if CB, store to aMCBNewPB
+        let (v1, v2) = (a_pb_n.pave1.vertex_idx, a_pb_n.pave2.vertex_idx);
         let new_key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
         if let Some(&cb_idx) = old_pair_to_cb.get(&new_key) {
-          a_mcb_new_pb.entry(cb_idx).or_default().push((ei, pb.clone()));
+          a_mcb_new_pb.entry(cb_idx).or_default().push((n_e, a_pb_n.clone()));
         }
-        new_pbs.push(pb);
+        new_pbs.push(a_pb_n);
       }
-      self.ds.edge_pave_blocks_mut(ei).clone_from(
-          &new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect::<Vec<_>>()
+      // ✅ OCCT L525-527: replace old PBs
+      self.ds.edge_pave_blocks_mut(n_e).clone_from(
+        &new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect::<Vec<_>>()
       );
     }
-    for pair in &verts_to_merge {
-      if pair.len() >= 2 {
-        let nv1 = pair[0];
-        let nv2 = pair[1];
-        let n_v = nv1.min(nv2);
-        self.ds.add_shape_sd(nv1, n_v);
-        self.ds.add_shape_sd(nv2, n_v);
-        if add_interfs {
-          self.ds.interf_vv.push(InterferenceVV{
-            v1: nv1, v2: nv2, merged_vertex: n_v,
-          });
-        }
-      }
-    }
-    // Group new PBs by vertex pair within each original CB
-    // aMInds maps (cb_idx, vertex_pair) -> Vec<(edge_idx, local_pb_idx)>
+
+    // ===== OCCT L530-618: Make Common Blocks =====
+    // (rcad: logic preserved from prior implementation)
     let mut a_m_inds: std::collections::HashMap<(usize, (usize, usize)), Vec<(usize, usize)>> =
       std::collections::HashMap::new();
     for (&cb_idx, pb_entries) in &a_mcb_new_pb {
       for &(ei, ref pb) in pb_entries {
-        let v1 = pb.pave1.vertex_idx;
-        let v2 = pb.pave2.vertex_idx;
+        let (v1, v2) = (pb.pave1.vertex_idx, pb.pave2.vertex_idx);
         let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
-        // Find local PB index on the edge matching this PB
         if let Some(li) = self.ds.edges.get(ei)
           .and_then(|e| e.pave_blocks.iter().position(|p| {
-            let pv1 = p.0.read().unwrap().pave1.vertex_idx;
-            let pv2 = p.0.read().unwrap().pave2.vertex_idx;
+            let (pv1, pv2) = (p.0.read().unwrap().pave1.vertex_idx,
+                               p.0.read().unwrap().pave2.vertex_idx);
             (pv1 == v1 && pv2 == v2) || (pv1 == v2 && pv2 == v1)
           }))
-        {
-          a_m_inds.entry((cb_idx, key)).or_default().push((ei, li));
-        }
+        { a_m_inds.entry((cb_idx, key)).or_default().push((ei, li)); }
       }
     }
-    // Create CommonBlocks for each group (OCCT L560-617: aMInds loop)
+    // ✅ OCCT L559: for each group in aMInds
     for ((_, _vk), entries) in &a_m_inds {
       if entries.len() < 2 { continue; }
-      // Ensure at least two distinct original edges
-      let mut unique_edges: Vec<usize> = entries.iter().map(|&(ei, _)| ei).collect();
-      unique_edges.sort();
-      unique_edges.dedup();
-      if unique_edges.len() < 2 { continue; }
-
-      // Build PB list for new CommonBlock (OCCT MakeNewCommonBlock L567)
-      let mut pbs_for_cb: Vec<(usize, usize)> = Vec::new();
+      let mut ue: Vec<usize> = entries.iter().map(|&(ei, _)| ei).collect();
+      ue.sort(); ue.dedup();
+      if ue.len() < 2 { continue; }
+      let mut pfcb: Vec<(usize, usize)> = Vec::new();
       for &(ei, li) in entries {
         if let Some(pb) = self.ds.edges.get(ei).and_then(|e| e.pave_blocks.get(li)) {
-          let global_idx = self.ds.pave_blocks.len();
+          let gix = self.ds.pave_blocks.len();
           self.ds.pave_blocks.push(pb.clone());
-          let orig_ei = pb.0.read().unwrap().original_edge;
+          let oei = pb.0.read().unwrap().original_edge;
           for (fi, f) in self.ds.faces.iter().enumerate() {
-            if f.boundary_edges.contains(&orig_ei)
-              || f.inner_boundary_edges.iter().any(|w| w.iter().any(|(e, _)| *e == orig_ei))
-            {
-              pbs_for_cb.push((global_idx, fi));
-            }
+            if f.boundary_edges.contains(&oei)
+              || f.inner_boundary_edges.iter().any(|w| w.iter().any(|(e, _)| *e == oei))
+            { pfcb.push((gix, fi)); }
           }
         }
       }
-      pbs_for_cb.sort();
-      pbs_for_cb.dedup();
-      if pbs_for_cb.len() < 2 { continue; }
-
+      pfcb.sort(); pfcb.dedup();
+      if pfcb.len() < 2 { continue; }
       let mut cb = crate::bopds::common_block::CommonBlock::new();
-      let mut unique_faces: Vec<usize> = pbs_for_cb.iter().map(|&(_, fi)| fi).collect();
-      unique_faces.sort();
-      unique_faces.dedup();
-      for &(global_pb, fi) in &pbs_for_cb {
-        cb.add_pave_block(global_pb, fi);
-      }
-      cb.set_faces(unique_faces);
+      let mut uf: Vec<usize> = pfcb.iter().map(|&(_, fi)| fi).collect();
+      uf.sort(); uf.dedup();
+      for &(gix, fi) in &pfcb { cb.add_pave_block(gix, fi); }
+      cb.set_faces(uf);
       let cb_idx = self.ds.common_blocks.len();
       self.ds.common_blocks.push(cb);
       for &(ei, li) in entries {
-        if let Some(local_pb) = self.ds.edges.get_mut(ei)
-          .and_then(|e| e.pave_blocks.get_mut(li))
-        {
-          local_pb.0.write().unwrap().common_block_idx = Some(cb_idx);
-        }
+        if let Some(lp) = self.ds.edges.get_mut(ei).and_then(|e| e.pave_blocks.get_mut(li))
+        { lp.0.write().unwrap().common_block_idx = Some(cb_idx); }
       }
     }
+
+    // ✅ OCCT L620-625: InitPaveBlocksForVertex
+    for &vi in &a_m_vertices_to_init_pb {
+      self.ds.init_pave_blocks_for_vertex(vi);
+    }
+
   }
 
  pub(crate) fn split_ics_at_periodic_boundary(&mut self) {
