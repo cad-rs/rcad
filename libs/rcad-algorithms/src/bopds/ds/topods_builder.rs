@@ -13,6 +13,7 @@ use std::collections::HashMap;
 pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS {
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
  let mut ds = DS {
+ shapes: Vec::new(),
  vertices: Vec::new(),
  edges: Vec::new(),
  wires: Vec::new(),
@@ -87,6 +88,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  is_internal: false,
  location: 0,
  });
+ ds.shapes.push(ts.clone());
  v_map.insert(ti, vi);
  }
  }
@@ -132,6 +134,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  is_geometric,
  location: 0,
  });
+ ds.shapes.push(ts.clone());
  e_map.insert(ti, ds_ei);
  ds.init_pave_blocks_for_edge(ds_ei);
  }
@@ -253,6 +256,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  source_solid_idx: Some(solid_counter),
  source_compsolid_idx: compsolid_idx,
  });
+ ds.shapes.push(brep.tshapes[face_sr.index].clone());
  face_flat_idx += 1;
  }
  let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();

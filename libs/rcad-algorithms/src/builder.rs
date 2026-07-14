@@ -555,21 +555,15 @@ impl<'a> BooleanBuilder<'a> {
  builder
  }
 
- /// Return a real Arc-based ShapeRef for a given flat DS index.
- /// Looks up the TShape at `flat_idx` in the cached BRep to extract the real
- /// Arc pointer identity.  Falls back to a synthetic ShapeRef when the BRep
- /// is unavailable or the index is out of range (e.g. sentinel keys for
- /// shells/solids).
+ /// OCCT-aligned: ShapeRef backed by shared Arc in ds.shapes (myDS->Shape(n) identity).
+ /// Falls back to synthetic for out-of-range indices (shell/solid sentinel keys).
  fn brep_sr(&self, flat_idx: usize) -> rcad_kernel::topods::ShapeRef {
- let brep_borrow = self.brep.borrow();
- if let Some((ref br, ..)) = *brep_borrow {
- if flat_idx < br.tshapes.len() {
- let ptr_id = std::sync::Arc::as_ptr(&br.tshapes[flat_idx]) as u64;
- return rcad_kernel::topods::ShapeRef { ptr_id, index: flat_idx,
- orientation: rcad_kernel::topods::Orientation::Forward, location: 0 };
- }
- }
- { rcad_kernel::topods::ShapeRef::synthetic(flat_idx) }
+  if flat_idx < self.ds.shapes.len() {
+   let ptr_id = std::sync::Arc::as_ptr(&self.ds.shapes[flat_idx]) as u64;
+   return rcad_kernel::topods::ShapeRef { ptr_id, index: flat_idx,
+    orientation: rcad_kernel::topods::Orientation::Forward, location: 0 };
+  }
+  { rcad_kernel::topods::ShapeRef::synthetic(flat_idx) }
  }
 
  pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
