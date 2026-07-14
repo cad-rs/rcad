@@ -1353,34 +1353,53 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  // For each face, iterate its boundary edges and create DSCurveRepOnFace entries.
  for fi in 0..self.faces.len() {
  let surface = self.faces[fi].surface.clone();
+ // OCCT-aligned: precompute a single UV basis per face for planar surfaces
+ let pl_basis: Option<(DVec3, DVec3, DVec3)> = match &surface {
+  Surface3::Plane(p) => { let u = any_perpendicular(p.normal).normalize(); Some((u, p.normal.cross(u).normalize(), p.origin)) }
+  _ => None,
+ };
  // Collect all edge indices from outer and inner wires.
  let mut all_ei: Vec<usize> = self.faces[fi].boundary_edges.clone();
  for w in &self.faces[fi].inner_boundary_edges {
  all_ei.extend(w.iter().map(|&(ei, _)| ei));
  }
  for &ei in &all_ei {
- if self.edge_on_face(ei, fi).is_some() { continue; } // already computed
+ if self.edge_on_face(ei, fi).is_some() { continue; }
  let Some(edge) = self.edges.get_mut(ei) else { continue; };
- if let Some((mut pcurve, mut span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
- // Scale pcurve direction to match edge's 3D parameter range.
- // OCCT Geom2d_Curve::Value(t) uses the 3D curve parameter t,
- // not normalized UV-space.  pcurve point_at(raw_t) must give
- // the correct UV for any raw 3D parameter t on the edge.
- let t_span = edge.t_range[1] - edge.t_range[0];
- if t_span.abs() > TOLERANCE_CLAMP_MIN && (span - t_span.abs()).abs() > 1e-12 {
- let scale = span / t_span;
- if let Curve2d::Line(ref mut l) = pcurve {
- l.direction *= scale;
+ let t_range = edge.t_range;
+ // Shared UV basis for planar line edges
+ if let Some((ref u_axis, ref v_axis, ref pl_origin)) = pl_basis {
+  if let Curve3::Line(l) = &edge.curve {
+   let diff = l.origin - *pl_origin;
+   let origin = DVec2::new(diff.dot(*u_axis), diff.dot(*v_axis));
+   let dir = DVec2::new(l.direction.dot(*u_axis), l.direction.dot(*v_axis));
+   let len = dir.length();
+   if len > TOLERANCE_CLAMP_MIN && (t_range[1] - t_range[0]).abs() > TOLERANCE_CLAMP_MIN {
+    let scale = (t_range[1] - t_range[0]) / len;
+    edge.face_reps.push(DSCurveRepOnFace {
+     face_idx: fi,
+     pcurve: Curve2d::Line(Line2d { origin, direction: dir / len * scale }),
+     pcurve2: None,
+     pcurve_range: [t_range[0], t_range[1]],
+     start_param: t_range[0],
+     end_param: t_range[1],
+    });
+    continue;
+   }
+  }
  }
+ // Generic pcurve computation for non-planar or non-line edges
+ if let Some((mut pcurve, mut span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
+ let t_span = t_range[1] - t_range[0];
+ if t_span.abs() > TOLERANCE_CLAMP_MIN && (span - t_span.abs()).abs() > 1e-12 {
+ if let Curve2d::Line(ref mut l) = pcurve { l.direction *= span / t_span; }
  span = t_span;
  }
  edge.face_reps.push(DSCurveRepOnFace {
- face_idx: fi,
- pcurve,
- pcurve2: None,
- pcurve_range: [0.0, span],
- start_param: 0.0,
- end_param: span,
+ face_idx: fi, pcurve, pcurve2: None,
+ pcurve_range: [t_range[0], t_range[0] + span],
+ start_param: t_range[0],
+ end_param: t_range[0] + span,
  });
  }
  }
