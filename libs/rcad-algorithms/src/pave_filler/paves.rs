@@ -55,21 +55,21 @@ impl<'a> super::PaveFiller<'a> {
  pub(crate) fn fill_shrunk_data(&mut self) {
  let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
  let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
- let v_tols: Vec<f64> = self.ds.vertices.iter().map(|v| v.geom_tol).collect();
- // Read phase: copy all PB params into flat arrays
+ let v_tols: Vec<f64> = (0..self.ds.vertex_origins.len()).map(|vi| self.ds.vertex_tolerance(vi)).collect();
+ // Read phase: copy all PB params into flat arrays (from parallel arrays)
  let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
- for ei in 0..self.ds.edges.len() {
- for pb in &self.ds.edges[ei].pave_blocks {
+ for ei in 0..self.ds.edge_start_vertex.len() {
+ for pb in self.ds.edge_pave_blocks(ei) {
   all_pb.push((ei, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
   }
   }
   for pb in &self.ds.pave_blocks {
-  if pb.0.read().unwrap().original_edge < self.ds.edges.len() {
+  if pb.0.read().unwrap().original_edge < self.ds.edge_start_vertex.len() {
   all_pb.push((pb.0.read().unwrap().original_edge, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
  }
  }
- let num_edges = self.ds.edges.len();
- let edge_pb_counts: Vec<usize> = self.ds.edges.iter().map(|e| e.pave_blocks.len()).collect();
+ let num_edges = self.ds.edge_start_vertex.len();
+ let edge_pb_counts: Vec<usize> = (0..num_edges).map(|ei| self.ds.edge_pave_blocks(ei).len()).collect();
  // Compute phase: ShrunkRange (no borrow on self)
  let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
  // OCCT-aligned: skip degenerated edges (BRep_Tool::Degenerated).
@@ -94,7 +94,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  for pb in &mut self.ds.pave_blocks {
- if pb.0.read().unwrap().original_edge >= self.ds.edges.len() { continue; }
+ if pb.0.read().unwrap().original_edge >= self.ds.edge_start_vertex.len() { continue; }
  let (range, splittable) = results[idx]; idx += 1;
  pb.0.write().unwrap().shrunk_range = range;
  pb.0.write().unwrap().is_splittable = splittable;
