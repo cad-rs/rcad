@@ -431,10 +431,11 @@ impl<'a> super::PaveFiller<'a> {
    let pt = pts_3d[pi];
    let in_on = if let Some(pc) = pcurve_opt {
     let uv = pc.point_at(params[pi]);
-    self.context.is_point_in_on_face(self.ds, fi, uv)
+    let on_face = self.context.is_point_in_on_face(self.ds, fi, uv);
+    if on_face { true }
+    else { self.context.is_valid_point_for_face(pt, fi, a_tol_r3d.max(self.ds.face_tolerance(fi))) }
    } else {
-    let valid = self.context.is_valid_point_for_face(pt, fi, a_tol_r3d);
-    valid
+    self.context.is_valid_point_for_face(pt, fi, a_tol_r3d.max(self.ds.face_tolerance(fi)))
    };
    if !in_on {
     if std::env::var("RCAD_DEBUG_MB").is_ok() {
