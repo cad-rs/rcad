@@ -167,7 +167,6 @@ fn pavefill_sphere_box_has_intersections() {
 
 /// Known issue: pave_blocks_sc not populated after PaveFiller for sphere-box.
 #[test]
-#[ignore = "rcad: pave_blocks_sc empty after PaveFiller — IC curves exist but MakeBlocks not registering SC PBs"]
 fn pavefill_sphere_box_sc_pbs_populated() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
@@ -193,9 +192,7 @@ fn pavefill_non_intersecting_boxes_no_ics() {
 // =========================================================================
 
 /// OCCT ref bfuse_simple A1: V=8, E=15, F=7 (1 sphere + 6 plane).
-/// Known issue: pave_blocks_sc not populated → no section edges → sphere not split.
 #[test]
-#[ignore = "rcad: pave_blocks_sc empty after PaveFiller (IC curves exist but MakeBlocks not registering SC PBs)"]
 fn fuse_sphere_box_ref_topology() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
