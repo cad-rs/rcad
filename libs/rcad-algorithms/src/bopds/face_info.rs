@@ -1,4 +1,4 @@
-﻿use indexmap::IndexSet;
+use indexmap::IndexSet;
 
 /// Per-face intersection bookkeeping (OCCT: BOPDS_FaceInfo).
 ///
@@ -26,14 +26,17 @@ pub struct FaceInfo {
 }
 
 impl FaceInfo {
-    /// True if this face has any interference data (PaveBlocksIn/On/Sc).
-    /// OCCT equivalent: `bHasFaceInfo = myDS->HasFaceInfo(i)` which checks for
-    /// any PaveBlocksIn/On/Sc or alone vertices.
+    /// OCCT-aligned: `myDS->HasFaceInfo(i)` which checks for any PaveBlocksIn/On/Sc,
+    /// curves_sc, or alone vertices (VerticesIn/VerticesOn/VerticesSc).
+    /// ✅ OCCT-aligned: BOPDS_DS::HasFaceInfo + BOPDS_FaceInfo presence.
     pub fn has_any_interference(&self) -> bool {
         !self.pave_blocks_in.is_empty()
             || !self.pave_blocks_on.is_empty()
             || !self.pave_blocks_sc.is_empty()
             || !self.curves_sc.is_empty()
+            || !self.vertices_in.is_empty()
+            || !self.vertices_sc.is_empty()
+            || !self.vertices_on.is_empty()
     }
 
     /// OCCT PaveBlocksSc: section curve indices from FF intersection only.

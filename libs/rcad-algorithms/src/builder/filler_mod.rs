@@ -255,14 +255,33 @@ impl<'a> BooleanBuilder<'a> {
             if fi >= self.ds.faces.len() { continue; }
             let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
 
-            let has_info = self.ds.faces[fi].face_info.has_any_interference();
             let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
-            let a_nb_av = self.ds.faces[fi].face_info.vertices_on.len();
+            // ✅ OCCT-aligned: AloneVertices (BOPDS_DS.cxx L1028-1062).
+            // VerticesIn + VerticesSc minus PB endpoints of PaveBlocksIn + PaveBlocksSc.
+            // OCCT does NOT include VerticesOn in alone-vertices count.
+            let a_nb_av = {
+                let fi_info = &self.ds.faces[fi].face_info;
+                let mut pb_endpoints: HashSet<usize> = HashSet::new();
+                for &pb_idx in fi_info.pave_blocks_in.iter().chain(fi_info.pave_blocks_sc.iter()) {
+                    if pb_idx < self.ds.pave_blocks.len() {
+                        let (nV1, nV2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
+                        pb_endpoints.insert(nV1);
+                        pb_endpoints.insert(nV2);
+                    }
+                }
+                let mut alone = 0usize;
+                for &vi in fi_info.vertices_in.iter().chain(fi_info.vertices_sc.iter()) {
+                    if pb_endpoints.insert(vi) {
+                        alone += 1;
+                    }
+                }
+                alone
+            };
 
-            // OCCT L275-279 + L293-296 combined skip: no face info or no PBs and no AV.
-            if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 && !has_info {
+            // OCCT L275-279 + L293-296: skip if no PBs (IN/ON/SC) and no alone vertices.
+            if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 {
                 continue;
             }
 
@@ -276,34 +295,34 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L309: hasInternals, initially false.
                 let mut has_internals = false;
                 // OCCT L310-334: check internals and modified wires when no alone vertices.
-                if a_nb_av == 0 {
-                    // OCCT L321: internal edges check (first edge of wire with INTERNAL orientation).
-                    for &bei in &self.ds.faces[fi].boundary_edges {
-                        if bei < self.ds.edges.len() && self.ds.edges[bei].is_internal {
-                            has_internals = true;
-                            break;
-                        }
-                    }
-                    // OCCT L327: modified wires check (myImages.IsBound(wire)).
-                    let mut has_modified = false;
-                    if !has_internals {
-                        let wi_base = self.ds.vertices.len() + self.ds.edges.len();
-                        for &wi in std::iter::once(&self.ds.faces[fi].outer_wire_idx)
-                            .flatten()
-                            .chain(self.ds.faces[fi].inner_wire_idxs.iter())
-                        {
-                            let w_ref = self.brep_sr(wi_base + wi);
-                            if self.my_images.borrow().contains_key(&w_ref) {
-                                has_modified = true;
-                                break;
+                    if a_nb_av == 0 {
+                        // OCCT L310-328: iterate original face wires, check first edge
+                        // orientation for INTERNAL wire detection.
+                        let mut has_modified = false;
+                        if let Some(arc) = brep_owned.tshapes.get(f_sr.index) {
+                            if let topods::TShape::Face(fd) = &**arc {
+                                for w_sr in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                                    if let Some(arc_w) = brep_owned.tshapes.get(w_sr.index) {
+                                        if let topods::TShape::Wire(wd) = &**arc_w {
+                                            // OCCT L321: itE.More() && itE.Value().Orientation() == TopAbs_INTERNAL
+                                            if let Some(&first_e_sr) = wd.edges.first() {
+                                                if first_e_sr.orientation == topods::Orientation::Internal {
+                                                    has_internals = true;
+                                                    break;
+                                                }
+                                            }
+                                            // OCCT L327: hasModified |= myImages.IsBound(wire)
+                                            has_modified |= self.my_images.borrow().contains_key(w_sr);
+                                        }
+                                    }
+                                }
                             }
                         }
+                        // OCCT L330-333: no internals and no modified → skip this face.
+                        if !has_internals && !has_modified {
+                            continue;
+                        }
                     }
-                    // OCCT L330-333: no internals and no modified → skip this face.
-                    if !has_internals && !has_modified {
-                        continue;
-                    }
-                }
                 // OCCT L336-350: if no internals, attempt BuildDraftFace.
                 if !has_internals {
                     if let Some(draft) = self.build_draft_face(fi) {
