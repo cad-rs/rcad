@@ -4,7 +4,7 @@ use rcad_kernel::topods::{self, ShapeRef, Orientation, BRepTool};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
 use crate::builder::types::*;
-use crate::builder::{collect_face_edge_segments, FaceOrigin, WireEdgeSource};
+use crate::builder::{WireEdgeSource, FaceOrigin};
 
 /// OCCT-aligned: BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
@@ -52,6 +52,8 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
     }
 
     /// ✅ OCCT-aligned: Perform (BuilderFace.cxx L117-148).
+    /// Converts myShapes (aLE) to WireSegments, then runs the standard
+    /// Avoid → Loops → Areas → InternalShapes pipeline.
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
         if self.face_idx >= self.face_refs.len() { return; }
         let face_ref = self.face_refs[self.face_idx];
@@ -59,8 +61,64 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             || !matches!(&*self.brep.tshapes[face_ref.index], topods::TShape::Face(_))
         { return; }
 
-        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci);
-        let segments = collect_face_edge_segments(self.ds, self.face_idx, &pcurve_lookup);
+        let shapes = match &self.shapes {
+            Some(s) => s,
+            None => return,
+        };
+
+        let e_base = self.ds.vertices.len();
+        let face = &self.ds.faces[self.face_idx];
+        let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
+
+        // OCCT-aligned: convert myShapes (aLE) to WireSegments.
+        // Each ShapeRef is a DS edge with orientation from the original wire.
+        for &sr in shapes {
+            let ei = sr.index.saturating_sub(e_base);
+            if ei >= self.ds.edges.len() { continue; }
+            let edge = &self.ds.edges[ei];
+
+            // OCCT L371-378: INTERNAL → FORWARD + REVERSED
+            // OCCT L379-381: normal → as-is
+            // For FORWARD: start→end, for REVERSED: end→start
+            let (sv, ev) = match sr.orientation {
+                Orientation::Forward | Orientation::Internal => (edge.start_vertex, edge.end_vertex),
+                Orientation::Reversed => (edge.end_vertex, edge.start_vertex),
+                _ => (edge.start_vertex, edge.end_vertex),
+            };
+            if sv == ev { continue; }
+
+            let rep = self.ds.edge_on_face(ei, self.face_idx);
+            let is_closed = self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex;
+
+            segments.push(WireSegment {
+                start_vertex: sv,
+                end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                orientation: WireOrientation::Forward,
+                is_closed_on_face: is_closed,
+                second_pcurve: None,
+                first_pcurve: rep.map(|r| r.pcurve.clone()),
+                t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+            });
+
+            // OCCT L371-378: INTERNAL edges also need REVERSED copy.
+            if sr.orientation == Orientation::Internal {
+                segments.push(WireSegment {
+                    start_vertex: ev,
+                    end_vertex: sv,
+                    source: WireEdgeSource::DsEdge(ei),
+                    orientation: WireOrientation::Reversed,
+                    is_closed_on_face: is_closed,
+                    second_pcurve: None,
+                    first_pcurve: None,
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                });
+            }
+        }
+
+        // OCCT L467-494: IN and SC PaveBlock edges are already in aLE
+        // (added by build_split_faces L469-486), so they require no special handling.
+
         if segments.is_empty() { return; }
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
