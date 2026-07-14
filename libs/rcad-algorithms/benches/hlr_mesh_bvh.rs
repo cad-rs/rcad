@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use glam::DVec3;
-use rcad_algorithms::{Bvh, HlrCamera, compute_hlr, mesh_brep, TessellationParams};
+use rcad_algorithms::{Bvh, HlrCamera, TessellationParams, compute_hlr, mesh_brep};
 use rcad_modeling::{make_box_brep, make_cylinder_brep, make_sphere_brep};
 
 // ── HLR ───────────────────────────────────────────────────────────────────────
@@ -14,9 +14,7 @@ fn hlr_box_isometric(c: &mut Criterion) {
 }
 
 fn hlr_cylinder_silhouette(c: &mut Criterion) {
-    let brep = make_cylinder_brep(
-        DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 4.0
-    ).unwrap();
+    let brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
     let camera = HlrCamera::right(10.0);
     c.bench_function("hlr_cylinder_silhouette", |bench| {
         bench.iter(|| compute_hlr(&brep, &camera, 8))
@@ -64,9 +62,7 @@ fn mesh_brep_sphere_fine(c: &mut Criterion) {
 }
 
 fn mesh_brep_cylinder(c: &mut Criterion) {
-    let mut brep = make_cylinder_brep(
-        DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 6.0
-    ).unwrap();
+    let mut brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 6.0).unwrap();
     let params = TessellationParams::default();
     c.bench_function("mesh_brep_cylinder", |bench| {
         bench.iter(|| mesh_brep(&mut brep, &params))
@@ -84,9 +80,7 @@ fn bvh_build_box_6_faces(c: &mut Criterion) {
 
 fn bvh_build_sphere(c: &mut Criterion) {
     let brep = make_sphere_brep(DVec3::ZERO, 5.0).unwrap();
-    c.bench_function("bvh_build_sphere", |bench| {
-        bench.iter(|| Bvh::build(&brep))
-    });
+    c.bench_function("bvh_build_sphere", |bench| bench.iter(|| Bvh::build(&brep)));
 }
 
 fn bvh_query_sphere(c: &mut Criterion) {

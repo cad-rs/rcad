@@ -3,11 +3,15 @@ use std::collections::HashSet;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
+use rcad_kernel::topods;
 
 use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
  InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
 };
+use crate::bopds::ds::topods_builder::load_topods_brep;
+use crate::bopds::ds::face_aabb;
+use crate::bvh::DsBvh;
 use crate::bopds::pave::*;
 use crate::bopalgo::{GlueEnum, Alert, Report};
 use crate::bvh::Bvh;
@@ -256,7 +260,44 @@ impl<'a> PaveFiller<'a> {
  //  ?OCCT L248 Prepare: build pcurves on planar faces
  // RepeatInt->ForceEE->ForceEF->FF->UpdBlk->RefFI->MkSEdges->MkBlks->
  // ChkSI->RefFO->RmvME->MkPCurves->ProcDE
- pub fn perform(&mut self) {
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-213).
+ /// Populates the DS from operand BReps, matching what
+ /// BOPDS_DS::Init + BOPDS_DS::SetArguments does in OCCT.
+ /// Guards: only populates when DS is empty (no faces loaded yet)
+ /// so that legacy callers that pre-populate DS before perform() still work.
+ fn init(&mut self, a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) {
+ if !self.ds.faces.is_empty() { return; }
+ let tol = fuzzy_tol.max(TOLERANCE_ABS);
+ self.ds.fuzzy_tol = tol;
+ load_topods_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
+ self.ds.a_vertex_count = self.ds.vertices.len();
+ self.ds.a_edge_count = self.ds.edges.len();
+ self.ds.a_face_count = self.ds.faces.len();
+ load_topods_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
+ self.ds.compute_uv_boundaries();
+ self.ds.build_face_reps();
+ self.ds.init_shape_info();
+ }
+
+ pub fn perform(&mut self, a: &topods::BRep, b: &topods::BRep) {
+  // =OCCT-aligned: Init =create DS from arguments (PaveFiller.cxx L176-213).
+  self.init(a, b, self.fuzzy_tolerance);
+  self.dump_ctx.snapshot("after_Init", self.ds, None);
+  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_Init" { return; } }
+
+  // Build face BVH for FF pair detection (analogous to BOPTools_BoxTree).
+  // Must happen after init() populates the DS faces.
+  {
+  let mut indices = Vec::new();
+  let mut aabbs = Vec::new();
+  for (fi, f) in self.ds.faces.iter().enumerate() {
+  indices.push(fi);
+  aabbs.push(crate::bopds::ds::face_aabb::face_aabb(self.ds, fi));
+  }
+  self.face_bvh = if indices.len() >= 20 { Some(DsBvh::build(indices, aabbs)) } else { None };
+  }
+
   // =OCCT-aligned: early return if stop_after env var is set and matches
   // (allows stage-by-stage testing without modifying production logic)
 

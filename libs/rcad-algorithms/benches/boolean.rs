@@ -1,10 +1,9 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use glam::{DVec2, DVec3};
-use rcad_algorithms::{boolean_op, boolean_op_par, BooleanOpType};
+use rcad_algorithms::{BooleanOpType, boolean_op, boolean_op_par};
 use rcad_kernel::any_perpendicular;
 use rcad_modeling::{
-    make_box_brep, make_cylinder_brep, make_sphere_brep,
-    fillet_edge, loft, sweep_pipe,
+    fillet_edge, loft, make_box_brep, make_cylinder_brep, make_sphere_brep, sweep_pipe,
 };
 
 // ── Boolean operations ────────────────────────────────────────────────────────
@@ -81,7 +80,12 @@ fn intss_plane_sphere(c: &mut Criterion) {
     use rcad_algorithms::inttools::intss::intersect_surfaces;
     use rcad_kernel::geom::{Plane, SphericalSurface, Surface3};
     let s1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
-    let s2 = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: any_perpendicular(DVec3::Z) });
+    let s2 = Surface3::Sphere(SphericalSurface {
+        center: DVec3::ZERO,
+        axis: DVec3::Z,
+        radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
+    });
     c.bench_function("intss_plane_sphere", |bench| {
         bench.iter(|| intersect_surfaces(&s1, &s2))
     });

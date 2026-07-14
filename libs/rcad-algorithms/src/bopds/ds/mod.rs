@@ -31,10 +31,10 @@ impl DS {
             vertices: Vec::new(), edges: Vec::new(), wires: Vec::new(),
             shells: Vec::new(), solids: Vec::new(), comp_solids: Vec::new(),
             faces: Vec::new(),
-            vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(),
+            vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(), vertex_shape_idx: Vec::new(),
             edge_start_vertex: Vec::new(), edge_end_vertex: Vec::new(), edge_origins: Vec::new(),
             edge_paves: Vec::new(), edge_pave_blocks: Vec::new(), edge_face_reps: Vec::new(),
-            edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(),
+            edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(), edge_shape_idx: Vec::new(),
             face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
             face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
             face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
@@ -67,17 +67,21 @@ impl DS {
 
     /// Mutable access to TVertexData for a vertex (for write operations).
     pub fn vertex_data_mut(&mut self, vi: usize) -> &mut topods::TVertexData {
-        match std::sync::Arc::make_mut(&mut self.shapes[vi]) {
+        assert!(vi < self.vertices.len(),
+            "vertex_data_mut: {} >= vertices.len() {}", vi, self.vertices.len());
+        let si = if vi < self.vertex_shape_idx.len() { self.vertex_shape_idx[vi] } else { vi };
+        match std::sync::Arc::make_mut(&mut self.shapes[si]) {
             topods::TShape::Vertex(vd) => vd,
-            _ => panic!("vertex_data_mut: {} is not a Vertex", vi),
+            _ => panic!("vertex_data_mut: {} (shape[{}]) is not a Vertex", vi, si),
         }
     }
 
     /// Mutable access to TEdgeData for an edge (for write operations).
     pub fn edge_data_mut(&mut self, ei: usize) -> &mut topods::TEdgeData {
-        match std::sync::Arc::make_mut(&mut self.shapes[ei]) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match std::sync::Arc::make_mut(&mut self.shapes[si]) {
             topods::TShape::Edge(ed) => ed,
-            _ => panic!("edge_data_mut: {} is not an Edge", ei),
+            _ => panic!("edge_data_mut: {} (shape[{}]) is not an Edge", ei, si),
         }
     }
 
@@ -90,6 +94,8 @@ impl DS {
     }
 
     /// Vertex point from TShape (ds.shape(vi) -> TVertexData.point).
+    /// NOTE: after shapes reorder, shapes[0..nv) = Vertex entries, so
+    /// vertex index vi maps correctly to shapes[vi].
     pub fn vertex_point(&self, vi: usize) -> glam::DVec3 {
         match self.shape(vi) {
             topods::TShape::Vertex(d) => d.point,
@@ -125,7 +131,8 @@ impl DS {
 
     /// Edge curve from TShape.
     pub fn edge_curve(&self, ei: usize) -> Option<&rcad_kernel::geom::Curve3> {
-        match self.shape(ei) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match self.shape(si) {
             topods::TShape::Edge(d) => d.curve.as_ref(),
             _ => None,
         }
@@ -133,7 +140,8 @@ impl DS {
 
     /// Edge tolerance from TShape.
     pub fn edge_tolerance(&self, ei: usize) -> f64 {
-        match self.shape(ei) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match self.shape(si) {
             topods::TShape::Edge(d) => d.tolerance,
             _ => 0.0,
         }
@@ -141,7 +149,8 @@ impl DS {
 
     /// Edge parametric range from TShape.
     pub fn edge_range(&self, ei: usize) -> [f64; 2] {
-        match self.shape(ei) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match self.shape(si) {
             topods::TShape::Edge(d) => d.range,
             _ => [0.0, 0.0],
         }
@@ -218,7 +227,8 @@ impl DS {
 
     /// Edge vertex_params from TShape.
     pub fn edge_vertex_params(&self, ei: usize) -> &std::collections::HashMap<usize, f64> {
-        match self.shape(ei) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match self.shape(si) {
             topods::TShape::Edge(d) => &d.vertex_params,
             _ => {
                 // Fallback to old DSEdge during Phase 4 transition
@@ -229,7 +239,8 @@ impl DS {
 
     /// Edge is_geometric from TShape (curve.is_some()).
     pub fn edge_is_geometric(&self, ei: usize) -> bool {
-        match self.shape(ei) {
+        let si = if ei < self.edge_shape_idx.len() { self.edge_shape_idx[ei] } else { self.vertices.len() + ei };
+        match self.shape(si) {
             topods::TShape::Edge(d) => d.curve.is_some(),
             _ => false,
         }
@@ -423,6 +434,7 @@ impl DS {
                 points: Vec::new(),
             },
         ))));
+        self.vertex_shape_idx.push(self.shapes.len() - 1);
         vi
     }
 
@@ -482,6 +494,7 @@ impl DS {
                 },
             ))
         }));
+        self.edge_shape_idx.push(self.shapes.len() - 1);
         ei
     }
 
@@ -2064,6 +2077,123 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  for fi in 0..self.faces.len() {
  self.refine_face_info_on(fi);
  self.refine_face_info_in(fi);
+ }
+ }
+
+ /// OCCT-aligned: BOPDS_DS::SubShapesOnIn (BOPDS_DS.cxx L1066-1143).
+ /// Collects PBs and vertices of two faces that are ON or IN,
+ /// and identifies common PBs/vertices between them.
+ pub fn sub_shapes_on_in(
+ &self,
+ the_face_index1: usize,
+ the_face_index2: usize,
+ the_mv_on_in: &mut std::collections::HashSet<usize>,
+ the_mv_common: &mut std::collections::HashSet<usize>,
+ the_pb_on_in: &mut std::collections::HashSet<usize>,
+ the_common_pave_blocks: &mut std::collections::HashSet<usize>,
+ ) {
+ let a_face_info1 = &self.faces[the_face_index1].face_info;
+ let a_face_info2 = &self.faces[the_face_index2].face_info;
+
+ // Helper: process PBs from a face's pave_blocks_on/in set
+ let process_map = |pb_set: &indexmap::IndexSet<usize>,
+ pb_on_in: &mut std::collections::HashSet<usize>,
+ mv_on_in: &mut std::collections::HashSet<usize>| {
+ for &pb_idx in pb_set {
+ pb_on_in.insert(pb_idx);
+ if pb_idx < self.pave_blocks.len() {
+ let (v1, v2) = self.pave_blocks[pb_idx].0.read().unwrap().indices();
+ mv_on_in.insert(v1);
+ mv_on_in.insert(v2);
+ }
+ }
+ };
+
+ // Process all four pave-block maps
+ process_map(&a_face_info1.pave_blocks_on, the_pb_on_in, the_mv_on_in);
+ process_map(&a_face_info1.pave_blocks_in, the_pb_on_in, the_mv_on_in);
+ process_map(&a_face_info2.pave_blocks_on, the_pb_on_in, the_mv_on_in);
+ process_map(&a_face_info2.pave_blocks_in, the_pb_on_in, the_mv_on_in);
+
+ // Find common PBs (Face1 PBs that are also in Face2)
+ for &pb_idx in &a_face_info1.pave_blocks_on {
+ if a_face_info2.pave_blocks_on.contains(&pb_idx) || a_face_info2.pave_blocks_in.contains(&pb_idx) {
+ the_common_pave_blocks.insert(pb_idx);
+ if pb_idx < self.pave_blocks.len() {
+ let (v1, v2) = self.pave_blocks[pb_idx].0.read().unwrap().indices();
+ the_mv_common.insert(v1);
+ the_mv_common.insert(v2);
+ }
+ }
+ }
+ for &pb_idx in &a_face_info1.pave_blocks_in {
+ if a_face_info2.pave_blocks_on.contains(&pb_idx) || a_face_info2.pave_blocks_in.contains(&pb_idx) {
+ the_common_pave_blocks.insert(pb_idx);
+ if pb_idx < self.pave_blocks.len() {
+ let (v1, v2) = self.pave_blocks[pb_idx].0.read().unwrap().indices();
+ the_mv_common.insert(v1);
+ the_mv_common.insert(v2);
+ }
+ }
+ }
+
+ // OCCT L1124-1142: vertices from Face1 that are also in Face2
+ for &vi in &a_face_info1.vertices_on {
+ if a_face_info2.vertices_on.contains(&vi) || a_face_info2.vertices_in.contains(&vi) {
+ the_mv_on_in.insert(vi);
+ the_mv_common.insert(vi);
+ }
+ }
+ for &vi in &a_face_info1.vertices_in {
+ if a_face_info2.vertices_on.contains(&vi) || a_face_info2.vertices_in.contains(&vi) {
+ the_mv_on_in.insert(vi);
+ the_mv_common.insert(vi);
+ }
+ }
+ }
+
+ /// OCCT-aligned: BOPDS_DS::SharedEdges (BOPDS_DS.cxx L1147-1208).
+ /// Collects edges that are shared between two faces.
+ pub fn shared_edges(
+ &self,
+ the_face_index1: usize,
+ the_face_index2: usize,
+ the_edge_list: &mut Vec<usize>,
+ ) {
+ let mut a_first_face_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+ // Collect edges of the first face.
+ for &ei in &self.faces[the_face_index1].boundary_edges {
+ let pbs = self.pave_blocks(ei);
+ if pbs.is_empty() {
+ a_first_face_edges.insert(ei);
+ } else {
+ for pb in pbs {
+ let re = self.real_pave_block_edge(ei, pb)
+ .or(pb.0.read().unwrap().new_edge)
+ .unwrap_or(ei);
+ a_first_face_edges.insert(re);
+ }
+ }
+ }
+
+ // Add edges of the second face if they are in the first one.
+ for &ei in &self.faces[the_face_index2].boundary_edges {
+ let pbs = self.pave_blocks(ei);
+ if pbs.is_empty() {
+ if a_first_face_edges.contains(&ei) {
+ the_edge_list.push(ei);
+ }
+ } else {
+ for pb in pbs {
+ let re = self.real_pave_block_edge(ei, pb)
+ .or(pb.0.read().unwrap().new_edge)
+ .unwrap_or(ei);
+ if a_first_face_edges.contains(&re) {
+ the_edge_list.push(re);
+ }
+ }
+ }
  }
  }
 }

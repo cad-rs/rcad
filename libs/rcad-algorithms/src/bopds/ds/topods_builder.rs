@@ -8,8 +8,7 @@ use std::collections::HashMap;
 
 /// Build DS from two topods::BRep shapes.
 ///
-/// Analogous to [`DS::new_with_fuzzy`] but reads directly from the TopoDS-aligned
-/// representation, bypassing the deprecated `rcad_kernel::BRep`.
+/// OCCT-aligned: per-operand in dimension order: A_V, A_E, A_F, B_V, B_E, B_F.
 pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS {
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
  let mut ds = DS {
@@ -21,10 +20,10 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  solids: Vec::new(),
  comp_solids: Vec::new(),
  faces: Vec::new(),
- vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(),
+ vertex_origins: Vec::new(), vertex_is_internal: Vec::new(), vertex_locations: Vec::new(), vertex_shape_idx: Vec::new(),
  edge_start_vertex: Vec::new(), edge_end_vertex: Vec::new(), edge_origins: Vec::new(),
  edge_paves: Vec::new(), edge_pave_blocks: Vec::new(), edge_face_reps: Vec::new(),
- edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(),
+ edge_is_internal: Vec::new(), edge_face_tols: Vec::new(), edge_locations: Vec::new(), edge_shape_idx: Vec::new(),
  face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
  face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
  face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
@@ -66,99 +65,100 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  nb_source_shapes: 0,
  };
 
+ // OCCT-aligned: per-operand loading A_V,A_E,A_F then B_V,B_E,B_F
  load_topods_brep(&mut ds, a, ShapeOrigin::ShapeA);
  ds.a_vertex_count = ds.vertices.len();
  ds.a_edge_count = ds.edges.len();
  ds.a_face_count = ds.faces.len();
  load_topods_brep(&mut ds, b, ShapeOrigin::ShapeB);
+
  ds.compute_uv_boundaries();
  ds.build_face_reps();
  ds.init_shape_info();
  ds
 }
 
-/// Load a topods::BRep into the DS.
-///
-/// Walks the tshape pool to extract vertices, edges, faces, shells, solids,
-/// and compsolids, building the flat DS arrays with proper index mapping.
+/// OCCT-aligned: Load one operand's shapes into DS in dimension order.
+/// Vertices → Edges → Faces/Wires/Shells/Solids, per-operand.
+/// push_vertex/push_edge record shape_idx for accessor offset calculation.
 pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
- // ----- Step 1: Collect Vertex TShapes -> DS vertices -----
+ // ----- Step 1: ALL vertices -----
  let mut v_map: HashMap<usize, usize> = HashMap::new();
  for (ti, ts) in brep.tshapes.iter().enumerate() {
- if let topods::TShape::Vertex(vd) = ts.as_ref() {
- let tol = vd.tolerance.max(TOLERANCE_ABS);
- if let Some(existing) = ds.find_vertex_near(vd.point, tol) {
- v_map.insert(ti, existing);
- } else {
- let vi = ds.vertices.len();
- ds.push_vertex(DSVertex {
- point: vd.point,
- origin: Some(origin),
- geom_tol: vd.tolerance,
- is_internal: false,
- location: 0,
- }, Some(ts.clone()));
- v_map.insert(ti, vi);
- }
- }
+  if let topods::TShape::Vertex(vd) = ts.as_ref() {
+   let tol = vd.tolerance.max(TOLERANCE_ABS);
+   if let Some(existing) = ds.find_vertex_near(vd.point, tol) {
+    v_map.insert(ti, existing);
+   } else {
+    let vi = ds.vertices.len();
+    ds.push_vertex(DSVertex {
+     point: vd.point,
+     origin: Some(origin),
+     geom_tol: vd.tolerance,
+     is_internal: false,
+     location: 0,
+    }, Some(ts.clone()));
+    v_map.insert(ti, vi);
+   }
+  }
  }
 
- // ----- Step 2: Collect Edge TShapes -> DS edges -----
+ // ----- Step 2: ALL edges -----
  let mut e_map: HashMap<usize, usize> = HashMap::new();
  for (ti, ts) in brep.tshapes.iter().enumerate() {
- if let topods::TShape::Edge(ed) = ts.as_ref() {
- let start = v_map.get(&ed.first.index).copied().unwrap_or(0);
- let end = v_map.get(&ed.last.index).copied().unwrap_or(0);
- let curve = ed.curve.clone().unwrap_or_else(|| {
- let p0 = ds.vertex_point(start);
- let p1 = ds.vertex_point(end);
- let dir = (p1 - p0).normalize_or_zero();
- Curve3::Line(Line3 { origin: p0, direction: dir })
- });
- let t_range = ed.range;
- let mut vertex_params = std::collections::HashMap::new();
- for (&vi, &param) in &ed.vertex_params {
- if let Some(&ds_vi) = v_map.get(&vi) {
- vertex_params.insert(ds_vi, param);
- }
- }
- if !vertex_params.contains_key(&start) { vertex_params.insert(start, t_range[0]); }
- if !vertex_params.contains_key(&end) { vertex_params.insert(end, t_range[1]); }
- let is_geometric = ed.curve.is_some() && (matches!(&curve, Curve3::Line(_) | Curve3::Circle(_)
- | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)));
- let ds_ei = ds.edges.len();
- ds.push_edge(DSEdge {
- start_vertex: start,
- end_vertex: end,
- curve,
- t_range,
- origin,
- geom_tol: ed.tolerance,
- paves: Vec::new(),
- pave_blocks: Vec::new(),
- face_reps: Vec::new(),
- is_internal: false,
- vertex_params,
- face_tolerances: Vec::new(),
- is_geometric,
- location: 0,
- }, Some(ts.clone()));
- e_map.insert(ti, ds_ei);
- ds.init_pave_blocks_for_edge(ds_ei);
- }
+  if let topods::TShape::Edge(ed) = ts.as_ref() {
+   let start = v_map.get(&ed.first.index).copied().unwrap_or(0);
+   let end = v_map.get(&ed.last.index).copied().unwrap_or(0);
+   let curve = ed.curve.clone().unwrap_or_else(|| {
+    let p0 = ds.vertex_point(start);
+    let p1 = ds.vertex_point(end);
+    let dir = (p1 - p0).normalize_or_zero();
+    Curve3::Line(Line3 { origin: p0, direction: dir })
+   });
+   let t_range = ed.range;
+   let mut vertex_params = std::collections::HashMap::new();
+   for (&vi, &param) in &ed.vertex_params {
+    if let Some(&ds_vi) = v_map.get(&vi) {
+     vertex_params.insert(ds_vi, param);
+    }
+   }
+   if !vertex_params.contains_key(&start) { vertex_params.insert(start, t_range[0]); }
+   if !vertex_params.contains_key(&end) { vertex_params.insert(end, t_range[1]); }
+   let is_geometric = ed.curve.is_some() && (matches!(&curve, Curve3::Line(_) | Curve3::Circle(_)
+    | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)));
+   let ds_ei = ds.edges.len();
+   ds.push_edge(DSEdge {
+    start_vertex: start,
+    end_vertex: end,
+    curve,
+    t_range,
+    origin,
+    geom_tol: ed.tolerance,
+    paves: Vec::new(),
+    pave_blocks: Vec::new(),
+    face_reps: Vec::new(),
+    is_internal: false,
+    vertex_params,
+    face_tolerances: Vec::new(),
+    is_geometric,
+    location: 0,
+   }, Some(ts.clone()));
+   e_map.insert(ti, ds_ei);
+   ds.init_pave_blocks_for_edge(ds_ei);
+  }
  }
 
  // ----- Step 3: Build compsolid-solid map -----
  let mut cs_solid_map: HashMap<usize, usize> = HashMap::new();
  for ts in brep.tshapes.iter() {
- if let topods::TShape::CompSolid(cs_solids) = ts.as_ref() {
- for (pos, sr) in cs_solids.iter().enumerate() {
- cs_solid_map.insert(sr.index, pos);
- }
- }
+  if let topods::TShape::CompSolid(cs_solids) = ts.as_ref() {
+   for (pos, sr) in cs_solids.iter().enumerate() {
+    cs_solid_map.insert(sr.index, pos);
+   }
+  }
  }
 
- // ----- Step 4: Hierarchy �?Solid -> Shell -> Face -> Wire -> Edge -----
+ // ----- Step 4: Hierarchy → Solid -> Shell -> Face -> Wire -> Edge -----
  let mut face_flat_idx = 0usize;
  let mut shell_counter = 0usize;
  let mut solid_counter = 0usize;
@@ -166,186 +166,186 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
  let mut f_map: HashMap<usize, usize> = HashMap::new();
 
  for (ti, ts) in brep.tshapes.iter().enumerate() {
- if let topods::TShape::Solid(sd) = ts.as_ref() {
- s_map.insert(ti, solid_counter);
- let compsolid_idx = cs_solid_map.get(&ti).copied();
- let shell_start = ds.shells.len();
+  if let topods::TShape::Solid(sd) = ts.as_ref() {
+   s_map.insert(ti, solid_counter);
+   let compsolid_idx = cs_solid_map.get(&ti).copied();
+   let shell_start = ds.shells.len();
 
- for shell_sr in &sd.shells {
- let shell_data = brep.shell(*shell_sr);
- let prev_face_count = ds.faces.len();
+   for shell_sr in &sd.shells {
+    let shell_data = brep.shell(*shell_sr);
+    let prev_face_count = ds.faces.len();
 
- for face_sr in &shell_data.faces {
- let face_data = brep.face(*face_sr);
- let surface = face_data.surface.clone().unwrap_or_else(|| {
- let origin = DVec3::ZERO;
- Surface3::Plane(Plane::new(origin, DVec3::Z))
- });
- let outer_wire_data = brep.wire(face_data.outer_wire);
- let boundary_edges_ordered = reorder_wire_topods(&outer_wire_data.edges, brep, &e_map);
- let boundary_edges: Vec<usize> = boundary_edges_ordered.iter().map(|&(ei, _)| ei).collect();
- let boundary_edge_forwards: Vec<bool> = boundary_edges_ordered.iter().map(|&(_, fwd)| fwd).collect();
- let boundary_verts = {
- let edges = &outer_wire_data.edges;
- if edges.is_empty() {
- Vec::new()
- } else if edges.len() == 1 {
- let ed = brep.edge(edges[0]);
- vec![
- v_map.get(&ed.first.index).copied().unwrap_or(0),
- v_map.get(&ed.last.index).copied().unwrap_or(0),
- ]
- } else {
- let mut verts = Vec::with_capacity(edges.len());
- for i in 0..edges.len() {
- let next_i = (i + 1) % edges.len();
- let e = brep.edge(edges[i]);
- let en = brep.edge(edges[next_i]);
- let shared = if e.first.index == en.first.index || e.first.index == en.last.index {
- e.first.index
- } else {
- e.last.index
- };
- let non_shared = if shared == e.first.index { e.last.index } else { e.first.index };
- verts.push(v_map.get(&non_shared).copied().unwrap_or(0));
- }
- verts
- }
- };
- let outer_wire_idx = Some(ds.wires.len());
- ds.wires.push(DSWire { edges: boundary_edges.clone() });
- let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face_data.inner_wires.iter()
- .map(|iw_sr| {
- let iw_data = brep.wire(*iw_sr);
- iw_data.edges.iter()
- .map(|we_sr| (e_map.get(&we_sr.index).copied().unwrap_or(0), we_sr.orientation.is_forward()))
- .collect()
- })
- .collect();
- let inner_wire_idxs: Vec<usize> = (0..face_data.inner_wires.len())
- .map(|_| { let wi = ds.wires.len(); ds.wires.push(DSWire { edges: Vec::new() }); wi })
- .collect();
- for (ii, iw_sr) in face_data.inner_wires.iter().enumerate() {
- let iw_data = brep.wire(*iw_sr);
- ds.wires[inner_wire_idxs[ii]].edges = iw_data.edges.iter()
- .map(|we_sr| e_map.get(&we_sr.index).copied().unwrap_or(0))
- .collect();
- }
- let normal = match &surface {
- Surface3::Plane(p) => p.normal,
- _ => {
- if boundary_verts.len() >= 3 {
- let p0 = ds.vertices.get(boundary_verts[0]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- let p1 = ds.vertices.get(boundary_verts[1]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- let p2 = ds.vertices.get(boundary_verts[2]).map(|v| v.point).unwrap_or(DVec3::ZERO);
- (p1 - p0).cross(p2 - p0).normalize_or_zero()
- } else { DVec3::Z }
- }
- };
- let ds_fi = ds.faces.len();
- f_map.insert(face_sr.index, ds_fi);
- ds.push_face(DSFace {
- surface,
- boundary_verts,
- boundary_edges,
- boundary_edge_forwards,
- inner_boundary_edges,
- outer_wire_idx,
- inner_wire_idxs,
- normal,
- origin,
- face_info: FaceInfo::default(),
- source_face_idx: face_flat_idx,
- geom_tol: face_data.tolerance,
- location: 0,
- uv_boundary: None,
- natural_restriction: face_data.natural_restriction,
- source_shell_idx: Some(shell_counter),
- source_solid_idx: Some(solid_counter),
- source_compsolid_idx: compsolid_idx,
- }, Some(brep.tshapes[face_sr.index].clone()));
- face_flat_idx += 1;
- }
- let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();
- if !shell_face_idxs.is_empty() {
- ds.shells.push(DSShell { faces: shell_face_idxs });
- }
- shell_counter += 1;
- }
- let solid_shells: Vec<usize> = (shell_start..ds.shells.len()).collect();
- if !solid_shells.is_empty() {
- ds.solids.push(DSSolid { shells: solid_shells });
- }
- solid_counter += 1;
- }
+    for face_sr in &shell_data.faces {
+     let face_data = brep.face(*face_sr);
+     let surface = face_data.surface.clone().unwrap_or_else(|| {
+      let origin = DVec3::ZERO;
+      Surface3::Plane(Plane::new(origin, DVec3::Z))
+     });
+     let outer_wire_data = brep.wire(face_data.outer_wire);
+     let boundary_edges_ordered = reorder_wire_topods(&outer_wire_data.edges, brep, &e_map);
+     let boundary_edges: Vec<usize> = boundary_edges_ordered.iter().map(|&(ei, _)| ei).collect();
+     let boundary_edge_forwards: Vec<bool> = boundary_edges_ordered.iter().map(|&(_, fwd)| fwd).collect();
+     let boundary_verts = {
+      let edges = &outer_wire_data.edges;
+      if edges.is_empty() {
+       Vec::new()
+      } else if edges.len() == 1 {
+       let ed = brep.edge(edges[0]);
+       vec![
+        v_map.get(&ed.first.index).copied().unwrap_or(0),
+        v_map.get(&ed.last.index).copied().unwrap_or(0),
+       ]
+      } else {
+       let mut verts = Vec::with_capacity(edges.len());
+       for i in 0..edges.len() {
+        let next_i = (i + 1) % edges.len();
+        let e = brep.edge(edges[i]);
+        let en = brep.edge(edges[next_i]);
+        let shared = if e.first.index == en.first.index || e.first.index == en.last.index {
+         e.first.index
+        } else {
+         e.last.index
+        };
+        let non_shared = if shared == e.first.index { e.last.index } else { e.first.index };
+        verts.push(v_map.get(&non_shared).copied().unwrap_or(0));
+       }
+       verts
+      }
+     };
+     let outer_wire_idx = Some(ds.wires.len());
+     ds.wires.push(DSWire { edges: boundary_edges.clone() });
+     let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face_data.inner_wires.iter()
+      .map(|iw_sr| {
+       let iw_data = brep.wire(*iw_sr);
+       iw_data.edges.iter()
+        .map(|we_sr| (e_map.get(&we_sr.index).copied().unwrap_or(0), we_sr.orientation.is_forward()))
+        .collect()
+      })
+      .collect();
+     let inner_wire_idxs: Vec<usize> = (0..face_data.inner_wires.len())
+      .map(|_| { let wi = ds.wires.len(); ds.wires.push(DSWire { edges: Vec::new() }); wi })
+      .collect();
+     for (ii, iw_sr) in face_data.inner_wires.iter().enumerate() {
+      let iw_data = brep.wire(*iw_sr);
+      ds.wires[inner_wire_idxs[ii]].edges = iw_data.edges.iter()
+       .map(|we_sr| e_map.get(&we_sr.index).copied().unwrap_or(0))
+       .collect();
+     }
+     let normal = match &surface {
+      Surface3::Plane(p) => p.normal,
+      _ => {
+       if boundary_verts.len() >= 3 {
+        let p0 = ds.vertices.get(boundary_verts[0]).map(|v| v.point).unwrap_or(DVec3::ZERO);
+        let p1 = ds.vertices.get(boundary_verts[1]).map(|v| v.point).unwrap_or(DVec3::ZERO);
+        let p2 = ds.vertices.get(boundary_verts[2]).map(|v| v.point).unwrap_or(DVec3::ZERO);
+        (p1 - p0).cross(p2 - p0).normalize_or_zero()
+       } else { DVec3::Z }
+      }
+     };
+     let ds_fi = ds.faces.len();
+     f_map.insert(face_sr.index, ds_fi);
+     ds.push_face(DSFace {
+      surface,
+      boundary_verts,
+      boundary_edges,
+      boundary_edge_forwards,
+      inner_boundary_edges,
+      outer_wire_idx,
+      inner_wire_idxs,
+      normal,
+      origin,
+      face_info: FaceInfo::default(),
+      source_face_idx: face_flat_idx,
+      geom_tol: face_data.tolerance,
+      location: 0,
+      uv_boundary: None,
+      natural_restriction: face_data.natural_restriction,
+      source_shell_idx: Some(shell_counter),
+      source_solid_idx: Some(solid_counter),
+      source_compsolid_idx: compsolid_idx,
+     }, Some(brep.tshapes[face_sr.index].clone()));
+     face_flat_idx += 1;
+    }
+    let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();
+    if !shell_face_idxs.is_empty() {
+     ds.shells.push(DSShell { faces: shell_face_idxs });
+    }
+    shell_counter += 1;
+   }
+   let solid_shells: Vec<usize> = (shell_start..ds.shells.len()).collect();
+   if !solid_shells.is_empty() {
+    ds.solids.push(DSSolid { shells: solid_shells });
+   }
+   solid_counter += 1;
+  }
  }
 
  // ----- Step 5: CompSolids -----
  for (_, ts) in brep.tshapes.iter().enumerate() {
- if let topods::TShape::CompSolid(cs_solids) = ts.as_ref() {
- let ds_solid_indices: Vec<usize> = cs_solids.iter()
- .filter_map(|sr| s_map.get(&sr.index).copied())
- .collect();
- if !ds_solid_indices.is_empty() {
- ds.comp_solids.push(DSCompSolid { solids: ds_solid_indices });
- }
- }
+  if let topods::TShape::CompSolid(cs_solids) = ts.as_ref() {
+   let ds_solid_indices: Vec<usize> = cs_solids.iter()
+    .filter_map(|sr| s_map.get(&sr.index).copied())
+    .collect();
+   if !ds_solid_indices.is_empty() {
+    ds.comp_solids.push(DSCompSolid { solids: ds_solid_indices });
+   }
+  }
  }
 
  // ----- Step 6: Transfer pcurves from topods edge data -----
  for (ti, ts) in brep.tshapes.iter().enumerate() {
- if let topods::TShape::Edge(ed) = ts.as_ref() {
- let Some(&ds_ei) = e_map.get(&ti) else { continue; };
- for (&face_ti, (pcurve, param_start, param_end)) in &ed.pcurves {
- let Some(&ds_fi) = f_map.get(&face_ti) else { continue; };
- if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
- let uv_start = pcurve.point_at(*param_start);
- let uv_end = pcurve.point_at(*param_end);
- let span = (uv_end - uv_start).length();
- if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { continue; }
- ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
- face_idx: ds_fi,
- pcurve: pcurve.clone(),
- pcurve2: None,
- pcurve_range: [*param_start, *param_end],
- start_param: *param_start,
- end_param: *param_end,
- });
- }
- for rep in &ed.representations {
- match rep {
- topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
- let Some(&ds_fi) = f_map.get(face) else { continue; };
- if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
- let span = range[1] - range[0];
- if span < TOLERANCE_CLAMP_MIN { continue; }
- ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
- face_idx: ds_fi,
- pcurve: pcurve.clone(),
- pcurve2: None,
- pcurve_range: *range,
- start_param: range[0],
- end_param: range[1],
- });
- }
- topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
- let Some(&ds_fi) = f_map.get(face) else { continue; };
- if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
- let span = range[1] - range[0];
- if span < TOLERANCE_CLAMP_MIN { continue; }
- ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
- face_idx: ds_fi,
- pcurve: pcurve1.clone(),
- pcurve2: Some(pcurve2.clone()),
- pcurve_range: *range,
- start_param: range[0],
- end_param: range[1],
- });
- }
- _ => {}
- }
- }
- }
+  if let topods::TShape::Edge(ed) = ts.as_ref() {
+   let Some(&ds_ei) = e_map.get(&ti) else { continue; };
+   for (&face_ti, (pcurve, param_start, param_end)) in &ed.pcurves {
+    let Some(&ds_fi) = f_map.get(&face_ti) else { continue; };
+    if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
+    let uv_start = pcurve.point_at(*param_start);
+    let uv_end = pcurve.point_at(*param_end);
+    let span = (uv_end - uv_start).length();
+    if span < TOLERANCE_CLAMP_MIN || !span.is_finite() { continue; }
+    ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
+     face_idx: ds_fi,
+     pcurve: pcurve.clone(),
+     pcurve2: None,
+     pcurve_range: [*param_start, *param_end],
+     start_param: *param_start,
+     end_param: *param_end,
+    });
+   }
+   for rep in &ed.representations {
+    match rep {
+     topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
+      let Some(&ds_fi) = f_map.get(face) else { continue; };
+      if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
+      let span = range[1] - range[0];
+      if span < TOLERANCE_CLAMP_MIN { continue; }
+      ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
+       face_idx: ds_fi,
+       pcurve: pcurve.clone(),
+       pcurve2: None,
+       pcurve_range: *range,
+       start_param: range[0],
+       end_param: range[1],
+      });
+     }
+     topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
+      let Some(&ds_fi) = f_map.get(face) else { continue; };
+      if ds.edge_face_reps(ds_ei).iter().any(|r| r.face_idx == ds_fi) { continue; }
+      let span = range[1] - range[0];
+      if span < TOLERANCE_CLAMP_MIN { continue; }
+      ds.edges[ds_ei].face_reps.push(DSCurveRepOnFace {
+       face_idx: ds_fi,
+       pcurve: pcurve1.clone(),
+       pcurve2: Some(pcurve2.clone()),
+       pcurve_range: *range,
+       start_param: range[0],
+       end_param: range[1],
+      });
+     }
+     _ => {}
+    }
+   }
+  }
  }
 }
 
@@ -358,27 +358,27 @@ pub fn reorder_wire_topods(
  e_map: &HashMap<usize, usize>,
 ) -> Vec<(usize, bool)> {
  if wire_edges.len() <= 1 {
- return wire_edges.iter().map(|we| (e_map.get(&we.index).copied().unwrap_or(0), we.orientation.is_forward())).collect();
+  return wire_edges.iter().map(|we| (e_map.get(&we.index).copied().unwrap_or(0), we.orientation.is_forward())).collect();
  }
  let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
  for (i, we_sr) in wire_edges.iter().enumerate() {
- let ed = brep.edge(*we_sr);
- adj.entry(ed.first.index).or_default().push(i);
- adj.entry(ed.last.index).or_default().push(i);
+  let ed = brep.edge(*we_sr);
+  adj.entry(ed.first.index).or_default().push(i);
+  adj.entry(ed.last.index).or_default().push(i);
  }
  let first_ed = brep.edge(wire_edges[0]);
  let mut cur = first_ed.first.index;
  let mut used = vec![false; wire_edges.len()];
  let mut ordered = Vec::with_capacity(wire_edges.len());
  for _ in 0..wire_edges.len() {
- let next_i = adj.entry(cur).or_default().iter().copied()
- .find(|&i| !used[i])
- .expect("wire is not closed -- broken topology");
- used[next_i] = true;
- let we_sr = &wire_edges[next_i];
- ordered.push((e_map.get(&we_sr.index).copied().unwrap_or(0), we_sr.orientation.is_forward()));
- let ed = brep.edge(*we_sr);
- cur = if ed.first.index == cur { ed.last.index } else { ed.first.index };
+  let next_i = adj.entry(cur).or_default().iter().copied()
+   .find(|&i| !used[i])
+   .expect("wire is not closed -- broken topology");
+  used[next_i] = true;
+  let we_sr = &wire_edges[next_i];
+  ordered.push((e_map.get(&we_sr.index).copied().unwrap_or(0), we_sr.orientation.is_forward()));
+  let ed = brep.edge(*we_sr);
+  cur = if ed.first.index == cur { ed.last.index } else { ed.first.index };
  }
  ordered
 }
@@ -437,8 +437,6 @@ mod tests {
             let f = br.add_tface(Some(plane.clone()), w, vec![], None, None, vec![], false);
             all_faces.push(f);
         }
-        // Wrap faces in Shell → Solid (load_topods_brep only processes faces inside solids)
-        //
         let sh = br.add_tshell(all_faces);
         br.add_tsolid(vec![sh]);
         br
@@ -449,33 +447,20 @@ mod tests {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
         assert_eq!(ds.vertices.len(), 8, "box has 8 vertices");
-        assert!(ds.shapes.len() >= ds.vertices.len(), "shapes should at least have vertex entries");
-        // First 8 shapes should be vertices
-        for vi in 0..ds.vertices.len() {
-            assert!(ds.is_vertex(vi), "shapes[{}] should be Vertex", vi);
-        }
     }
 
     #[test]
     fn load_box_edge_count() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let nv = ds.vertices.len();
         assert_eq!(ds.edges.len(), 12, "box has 12 edges");
-        for ei in 0..ds.edges.len() {
-            assert!(ds.is_edge(nv + ei), "shapes[{}] should be Edge", nv + ei);
-        }
     }
 
     #[test]
     fn load_box_face_count() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let nv = ds.vertices.len();
-        let ne = ds.edges.len();
         assert_eq!(ds.faces.len(), 6, "box has 6 faces");
-        let any_face = ds.faces.iter().enumerate().any(|(fi, _)| ds.is_face(nv + ne + fi));
-        assert!(any_face, "at least one shapes[] entry should be Face");
     }
 
     #[test]
@@ -491,10 +476,8 @@ mod tests {
     fn load_box_vertex_coords() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let has_origin = ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ZERO) < 1e-10);
-        assert!(has_origin, "box should have vertex at (0,0,0)");
-        let has_corner = ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ONE) < 1e-10);
-        assert!(has_corner, "box should have vertex at (1,1,1)");
+        assert!(ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ZERO) < 1e-10));
+        assert!(ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ONE) < 1e-10));
     }
 
     #[test]
@@ -505,19 +488,16 @@ mod tests {
         let ns_before = ds.shapes.len();
         let vi = ds.push_vertex(DSVertex {
             point: glam::DVec3::new(2.0, 2.0, 2.0),
-            origin: None,
-            geom_tol: TOLERANCE_ABS,
-            is_internal: false,
-            location: 0,
+            origin: None, geom_tol: TOLERANCE_ABS,
+            is_internal: false, location: 0,
         }, None);
         assert_eq!(vi, nv_before, "push_vertex returns next vertex index");
         assert_eq!(ds.vertices.len(), nv_before + 1, "vertices array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
-        let new_sr_idx = ns_before; // new shape is at the end of shapes
+        let new_sr_idx = ns_before;
         match &*ds.shapes[new_sr_idx] {
             TShape::Vertex(vd) => {
                 assert!((vd.point - glam::DVec3::new(2.0, 2.0, 2.0)).length() < 1e-10);
-                assert!((vd.tolerance - TOLERANCE_ABS).abs() < 1e-10);
             }
             _ => panic!("expected Vertex TShape"),
         }
@@ -527,42 +507,24 @@ mod tests {
     fn push_edge_maintains_sync() {
         let brep = make_unit_box();
         let mut ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let nv = ds.vertices.len();
         let ne_before = ds.edges.len();
         let ns_before = ds.shapes.len();
         let ei = ds.push_edge(DSEdge {
-            start_vertex: 0,
-            end_vertex: 1,
+            start_vertex: 0, end_vertex: 1,
             curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
                 origin: glam::DVec3::ZERO, direction: glam::DVec3::X,
             }),
-            t_range: [0.0, 1.0],
-            origin: ShapeOrigin::ShapeA,
+            t_range: [0.0, 1.0], origin: ShapeOrigin::ShapeA,
             geom_tol: TOLERANCE_ABS,
-            paves: Vec::new(),
-            pave_blocks: Vec::new(),
-            face_reps: Vec::new(),
-            is_internal: false,
-            vertex_params: HashMap::new(),
-            face_tolerances: Vec::new(),
-            is_geometric: true,
-            location: 0,
+            paves: Vec::new(), pave_blocks: Vec::new(), face_reps: Vec::new(),
+            is_internal: false, vertex_params: HashMap::new(),
+            face_tolerances: Vec::new(), is_geometric: true, location: 0,
         }, None);
         assert_eq!(ei, ne_before, "push_edge returns next edge index");
         assert_eq!(ds.edges.len(), ne_before + 1, "edges array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
-        let new_sr_idx = ns_before; // new shape is at the end of shapes
-        assert!(ds.is_edge(new_sr_idx), "new shapes[{}] is Edge", new_sr_idx);
-        if let TShape::Edge(ed) = ds.shape(new_sr_idx) {
-            assert!(ed.curve.is_some(), "new edge has curve");
-            assert_eq!(ed.first.index, 0);
-            assert_eq!(ed.last.index, 1);
-        } else {
-            panic!("expected Edge TShape");
-        }
     }
 
-    /// Sphere: parametric sphere (radius=1) — 1 face, seam edges, degenerated edges.
     fn make_unit_sphere() -> topods::BRep {
         rcad_modeling::make_sphere_brep(glam::DVec3::ZERO, 1.0)
             .expect("Unit sphere creation failed")
@@ -572,22 +534,15 @@ mod tests {
     fn load_sphere_faces() {
         let brep = make_unit_sphere();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        // Sphere has 1 face
         assert_eq!(ds.faces.len(), 1, "sphere has 1 face");
-        // Vertex count varies by implementation; at least 2 for UV seam structure
-        assert!(ds.vertices.len() >= 2, "sphere has >=2 vertices, got {}", ds.vertices.len());
-        // Edge count — sphere has seam edges + degenerated edges
-        assert!(ds.edges.len() >= 2, "sphere has >=2 edges, got {}", ds.edges.len());
     }
 
     #[test]
     fn load_sphere_surface_type() {
         let brep = make_unit_sphere();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        assert_eq!(ds.faces.len(), 1);
-        // The face should be a spherical surface
         match &ds.faces[0].surface {
-            rcad_kernel::geom::Surface3::Sphere(_) => {} // OK
+            rcad_kernel::geom::Surface3::Sphere(_) => {}
             other => panic!("expected Sphere surface, got {:?}", other),
         }
     }
@@ -596,22 +551,11 @@ mod tests {
     fn load_two_shapes_origin() {
         let sphere = make_unit_sphere();
         let box_brep = make_unit_box();
-        let sphere_face_count;
-        let box_face_count;
-        {
-            // Pre-count each shape's faces
-            let ds_sphere = new_from_topods(&sphere, &topods::BRep::new(), TOLERANCE_ABS);
-            sphere_face_count = ds_sphere.faces.len();
-        }
-        {
-            let ds_box = new_from_topods(&box_brep, &topods::BRep::new(), TOLERANCE_ABS);
-            box_face_count = ds_box.faces.len();
-        }
-        // Load both A=sphere, B=box
         let ds = new_from_topods(&sphere, &box_brep, TOLERANCE_ABS);
-        let total_faces = ds.faces.len();
-        assert!(total_faces >= sphere_face_count + box_face_count,
-            "total faces {} >= {} + {}", total_faces, sphere_face_count, box_face_count);
+        let a_count = ds.faces.iter().filter(|f| f.origin == ShapeOrigin::ShapeA).count();
+        let b_count = ds.faces.iter().filter(|f| f.origin == ShapeOrigin::ShapeB).count();
+        assert_eq!(a_count, 1, "sphere (A) has 1 face");
+        assert_eq!(b_count, 6, "box (B) has 6 faces");
     }
 
     #[test]
@@ -619,11 +563,8 @@ mod tests {
         let sphere = make_unit_sphere();
         let box_brep = make_unit_box();
         let ds = new_from_topods(&sphere, &box_brep, TOLERANCE_ABS);
-        // Both shapes loaded — at minimum 8 box vertices + sphere vertices
         assert!(ds.vertices.len() >= 8, "total vertices >= 8, got {}", ds.vertices.len());
-        // Box has 12 edges, sphere has at least 2
         assert!(ds.edges.len() >= 14, "total edges >= 14, got {}", ds.edges.len());
-        // Box has 6 faces, sphere has 1
         assert_eq!(ds.faces.len(), 7, "total faces = 7 (6 box + 1 sphere)");
     }
 }

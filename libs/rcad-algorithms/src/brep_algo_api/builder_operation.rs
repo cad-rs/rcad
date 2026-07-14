@@ -182,10 +182,10 @@ impl BuilderOperation {
         let bvh_b = Bvh::build(&b);
 
         // 鉁?OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
-        let mut brep = rcad_kernel::topods::BRep::new();
+        let mut brep_dst = rcad_kernel::topods::BRep::new();
         let (face_refs, ic_edge_map) = {
-            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
-            filler.perform();
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep_dst);
+            filler.perform(&a, &b);
             (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
 
@@ -193,7 +193,7 @@ impl BuilderOperation {
         ds.build_container_images();
 
         // 鉁?OCCT-aligned: Build result
-        let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
+        let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep_dst, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);

@@ -159,7 +159,7 @@ impl Section {
         // - Edge-Face (EF) intersections
         // - Face-Face (FF) intersections
         let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
-        filler.perform();
+        filler.perform(&a_t, &b_t);
 
         // ✅ OCCT-aligned: FillImagesContainers
         ds.build_container_images();

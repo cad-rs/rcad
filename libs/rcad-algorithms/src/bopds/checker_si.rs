@@ -87,17 +87,16 @@ impl CheckerSI {
         // PaveFiller compares A entities against B entities, so loading the
         // same shape twice makes it detect intersections between any pair
         // of distinct sub-shapes within the original shape.
-        let mut ds = DS::new_from_topods(brep, brep, crate::tolerance::TOLERANCE_ABS);
-
-        let a_vc = ds.a_vertex_count;
-        let a_ec = ds.a_edge_count;
-        let a_fc = ds.a_face_count;
-
+        let mut ds = DS::new_empty();
         // Run the PaveFiller interference detection pipeline.
         // This executes all six intersection passes (VV/VE/EE/VF/EF/FF)
         // plus edge splitting and common block detection.
         let mut pf = PaveFiller::new(&mut ds);
-        pf.perform();
+        pf.perform(brep, brep);
+        // a_vertex/edge/face counts set by init() inside perform()
+        let a_vc = ds.a_vertex_count;
+        let a_ec = ds.a_edge_count;
+        let a_fc = ds.a_face_count;
 
         // Filter interferences:
         // 1. Remove trivial A-B pairs (same original entity from two copies).

@@ -1,4 +1,4 @@
-﻿use std::collections::{HashSet, BTreeMap};
+use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
@@ -480,8 +480,10 @@ impl<'a> super::PaveFiller<'a> {
  }
  // OCCT L285-292: UpdateVertex (simplified)
  if a_tol_vnew.is_finite() && a_tol_vnew > self.ds.vertex_tolerance(nV_orig) {
+ if nV_orig < self.ds.vertices.len() {
  self.ds.vertex_data_mut(nV_orig).tolerance = a_tol_vnew;
  self.ds.increased_ss.insert(nV_orig);
+ }
  }
  }
  // OCCT L295-297: Add nVx to face's VerticesIn/VerticesOn

@@ -15,6 +15,82 @@ use crate::tolerance::*;
 use super::helpers::*;
 
 impl<'a> super::PaveFiller<'a> {
+ /// OCCT-aligned: BOPAlgo_PaveFiller::CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L4105-4306).
+ /// Reduces tolerances of section edges where it is appropriate.
+ fn correct_tolerance_of_se(&mut self) {
+ for ci in 0..self.ds.intersection_curves.len() {
+ let refs = self.ds.section_edge_refs[ci].clone();
+ for &sei in &refs {
+ if sei < self.ds.edges.len() {
+ let edge_tol = self.ds.edge_tolerance(sei);
+ let curve_tol = if ci < self.ds.intersection_curves.len() {
+ self.ds.intersection_curves[ci].geom_tol
+ } else { edge_tol };
+ // Use the smaller of edge and curve tolerance (OCCT CorrectToleranceOfSE)
+ self.ds.edge_data_mut(sei).tolerance = edge_tol.min(curve_tol).max(TOLERANCE_ABS);
+ }
+ }
+ }
+ }
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::GetStickVertices (L2879-2937).
+ /// Collects stick vertices from VV/VE/EE/VF/EF interferences between
+ /// two faces, populating aMVStick, aMVEF and aMI (full shape map).
+ fn get_stick_vertices_ff(
+ &self,
+ n_f1: usize,
+ n_f2: usize,
+ a_mv_stick: &mut HashSet<usize>,
+ a_mv_ef: &mut HashSet<usize>,
+ a_mi: &mut HashSet<usize>,
+ ) {
+ // Build full shape map (OCCT: GetFullShapeMap twice)
+ a_mi.clear();
+ let a_mi_1 = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
+ let a_mi_2 = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
+ for &v in &a_mi_1 { a_mi.insert(v); }
+ for &v in &a_mi_2 { a_mi.insert(v); }
+
+ // OCCT L2900-2920: VV/VE/EE/VF interferences (types 0-3)
+ // VE: vertex-on-edge interferences
+ for inf in &self.ds.interf_ve {
+ if !a_mi.contains(&inf.vertex) { continue; }
+ a_mv_stick.insert(inf.vertex);
+ a_mi.insert(inf.vertex);
+ }
+ // VF: vertex-on-face interferences
+ for inf in &self.ds.interf_vf {
+ if !a_mi.contains(&inf.vertex) { continue; }
+ a_mv_stick.insert(inf.vertex);
+ a_mi.insert(inf.vertex);
+ }
+ // EE: edge-edge interferences with new vertex
+ for inf in &self.ds.interf_ee {
+ if inf.new_vertex == usize::MAX { continue; }
+ if !a_mi.contains(&inf.e1) || !a_mi.contains(&inf.e2) { continue; }
+ let n_v_new = self.ds.has_shape_sd(inf.new_vertex).unwrap_or(inf.new_vertex);
+ a_mv_stick.insert(n_v_new);
+ a_mi.insert(n_v_new);
+ }
+ // VV: vertex-vertex interferences with merged vertex
+ for inf in &self.ds.interf_vv {
+ if inf.merged_vertex == usize::MAX { continue; }
+ if !a_mi.contains(&inf.v1) || !a_mi.contains(&inf.v2) { continue; }
+ let n_v_new = self.ds.has_shape_sd(inf.merged_vertex).unwrap_or(inf.merged_vertex);
+ a_mv_stick.insert(n_v_new);
+ a_mi.insert(n_v_new);
+ }
+ // OCCT L2921-2937: EF interferences (type 4) -> aMVStick + aMVEF
+ for inf in &self.ds.interf_ef {
+ if inf.new_vertex == usize::MAX { continue; }
+ if !a_mi.contains(&inf.edge) || !a_mi.contains(&inf.face) { continue; }
+ let n_v_new = self.ds.has_shape_sd(inf.new_vertex).unwrap_or(inf.new_vertex);
+ a_mv_stick.insert(n_v_new);
+ a_mv_ef.insert(n_v_new);
+ a_mi.insert(n_v_new);
+ }
+ }
+
  pub(super) fn make_blocks(&mut self) {
  if std::env::var("RCAD_DEBUG_MB").is_ok() {
  eprintln!("[MB] ENTER make_blocks");
@@ -85,89 +161,9 @@ impl<'a> super::PaveFiller<'a> {
  a_mv_tol.clear();
  a_lse.clear();
  a_mv_bounds.clear();
- {
- let f1_face = &self.ds.faces[n_f1];
- let f2_face = &self.ds.faces[n_f2];
- // Step 1: PBs ON/IN  ?add PB + endpoints to aMVOnIn + aMPBOnIn
- let pb_sets_fn = |pb_set: &indexmap::IndexSet<usize>,
-                   mpb_set: &mut std::collections::HashSet<usize>,
-                   mv_set: &mut std::collections::HashSet<usize>| {
-  for &pb_idx in pb_set {
-   mpb_set.insert(pb_idx);
-   if pb_idx < self.ds.pave_blocks.len() {
-    let pb = &self.ds.pave_blocks[pb_idx];
-    let (v1, v2) = pb.0.read().unwrap().indices();
-    mv_set.insert(v1);
-    mv_set.insert(v2);
-   }
-  }
- };
- pb_sets_fn(&f1_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
- pb_sets_fn(&f1_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
- pb_sets_fn(&f2_face.face_info.pave_blocks_on, &mut a_mpb_on_in, &mut a_mv_on_in);
- pb_sets_fn(&f2_face.face_info.pave_blocks_in, &mut a_mpb_on_in, &mut a_mv_on_in);
- // Step 2: Common PBs  ?PBsOn1 also in PBsOn2/PBsIn2
- for &pb_idx in &f1_face.face_info.pave_blocks_on {
-  if f2_face.face_info.pave_blocks_on.contains(&pb_idx)
-  || f2_face.face_info.pave_blocks_in.contains(&pb_idx) {
-   a_mpb_common.insert(pb_idx);
-   if pb_idx < self.ds.pave_blocks.len() {
-    let pb = &self.ds.pave_blocks[pb_idx];
-    let (v1, v2) = pb.0.read().unwrap().indices();
-    a_mv_common.insert(v1);
-    a_mv_common.insert(v2);
-   }
-  }
- }
- // OCCT-aligned: SubShapesOnIn  ?Face1 vertices in Face2  ?aMVOnIn + aMVCommon
- // OCCT BOPDS_DS.cxx L1124-1142: only Face1's VOn/VIn checked against Face2's VOn/VIn
- for &vi in &f1_face.face_info.vertices_on {
-  if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
-   a_mv_on_in.insert(vi);
-   a_mv_common.insert(vi);
-  }
- }
- for &vi in &f1_face.face_info.vertices_in {
-  if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
-   a_mv_on_in.insert(vi);
-   a_mv_common.insert(vi);
-  }
- }
- }
- // OCCT-aligned: SharedEdges (BOPDS_DS.cxx L1147-1208)
- {
- let mut a_first_face_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
- for &ei in &self.ds.faces[n_f1].boundary_edges {
-  let pbs = self.ds.pave_blocks(ei);
-  if pbs.is_empty() {
-   a_first_face_edges.insert(ei);
-  } else {
-   for pb in pbs {
-    let re = self.ds.real_pave_block_edge(ei, pb)
-     .or(pb.0.read().unwrap().new_edge)
-     .unwrap_or(ei);
-    a_first_face_edges.insert(re);
-   }
-  }
- }
- for &ei in &self.ds.faces[n_f2].boundary_edges {
-  let pbs = self.ds.pave_blocks(ei);
-  if pbs.is_empty() {
-   if a_first_face_edges.contains(&ei) {
-    a_lse.push(ei);
-   }
-  } else {
-   for pb in pbs {
-    let re = self.ds.real_pave_block_edge(ei, pb)
-     .or(pb.0.read().unwrap().new_edge)
-     .unwrap_or(ei);
-    if a_first_face_edges.contains(&re) {
-     a_lse.push(re);
-    }
-   }
-  }
- }
- }
+ // OCCT-aligned: SubShapesOnIn + SharedEdges (BOPDS_DS.cxx L1066-1208)
+ self.ds.sub_shapes_on_in(n_f1, n_f2, &mut a_mv_on_in, &mut a_mv_common, &mut a_mpb_on_in, &mut a_mpb_common);
+ self.ds.shared_edges(n_f1, n_f2, &mut a_lse);
  // OCCT L775-793: 1. Treat Points
  for j in 0..a_nb_p {
   // OCCT: const gp_Pnt& aP = aNP.Pnt();
@@ -181,72 +177,8 @@ impl<'a> super::PaveFiller<'a> {
    a_mscpb.insert(n_v, (cur_ind, j));
   }
  }
- // OCCT BOPAlgo_PaveFiller_6.cxx L2879-2937
- {
- // Build aMI = all sub-shapes of nF1  ?nF2 (GetFullShapeMap)
- // rcad: use build_face_shape_map which collects all edges/vertices of a face
- let mut a_mi = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
- let a_mi_b = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
- // VE: stick vertices from VE
- for inf in &self.ds.interf_ve {
- let belongs = a_mi.contains(&inf.vertex) || a_mi_b.contains(&inf.vertex);
- if !belongs { continue; }
- a_mv_stick.insert(inf.vertex);
- a_mi.insert(inf.vertex);
- }
- // VF: stick vertices from VF
- for inf in &self.ds.interf_vf {
- let belongs = a_mi.contains(&inf.vertex) || a_mi_b.contains(&inf.vertex);
- if !belongs { continue; }
- a_mv_stick.insert(inf.vertex);
- a_mi.insert(inf.vertex);
- }
- // EE: collect new vertices
- for inf in &self.ds.interf_ee {
- if inf.new_vertex == usize::MAX { continue; }
- let s1_in_pair = a_mi.contains(&inf.e1) || a_mi_b.contains(&inf.e1);
- let s2_in_pair = a_mi.contains(&inf.e2) || a_mi_b.contains(&inf.e2);
- if !s1_in_pair || !s2_in_pair { continue; }
- if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
- a_mv_stick.insert(n_v);
- a_mi.insert(n_v);
- } else {
- a_mv_stick.insert(inf.new_vertex);
- a_mi.insert(inf.new_vertex);
- }
- }
- // VV: collect merged vertices
- for inf in &self.ds.interf_vv {
- if inf.merged_vertex == usize::MAX { continue; }
- let s1_in_pair = a_mi.contains(&inf.v1) || a_mi_b.contains(&inf.v1);
- let s2_in_pair = a_mi.contains(&inf.v2) || a_mi_b.contains(&inf.v2);
- if !s1_in_pair || !s2_in_pair { continue; }
- if let Some(n_v) = self.ds.has_shape_sd(inf.merged_vertex) {
- a_mv_stick.insert(n_v);
- a_mi.insert(n_v);
- } else {
- a_mv_stick.insert(inf.merged_vertex);
- a_mi.insert(inf.merged_vertex);
- }
- }
- for inf in &self.ds.interf_ef {
- if inf.new_vertex == usize::MAX { continue; }
- let e_in_pair = a_mi.contains(&inf.edge) || a_mi_b.contains(&inf.edge);
- let f_in_pair = a_mi.contains(&inf.face) || a_mi_b.contains(&inf.face);
- if !e_in_pair || !f_in_pair { continue; }
- if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
- a_mv_stick.insert(n_v);
- a_mv_ef.insert(n_v);
- a_mi.insert(n_v);
- } else {
- a_mv_stick.insert(inf.new_vertex);
- a_mv_ef.insert(inf.new_vertex);
- a_mi.insert(inf.new_vertex);
- }
- }
- }
- let aMI = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
- let aMI_ref = &aMI;
+ // OCCT L796: GetStickVertices — populates a_mv_stick, a_mv_ef, a_mi
+ self.get_stick_vertices_ff(n_f1, n_f2, &mut a_mv_stick, &mut a_mv_ef, &mut a_mi);
  for &ci in curves_of_ff {
  if ci >= self.ds.intersection_curves.len() { continue; }
  // ensures at least one PaveBlock exists for PutPavesOnCurve to add ext_paves to.
@@ -254,16 +186,16 @@ impl<'a> super::PaveFiller<'a> {
   let pb = crate::bopds::pave::PaveBlock::new_curve_block();
   self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));
  }
- self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &aMI, &a_mv_ef);
+ self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &a_mi, &a_mv_ef);
  }
  self.filter_paves_on_curves(curves_of_ff);
 
  // Second loop over curves
  for (j, &ci) in curves_of_ff.iter().enumerate() {
  if ci >= self.ds.intersection_curves.len() { continue; }
- self.put_stick_paves_on_curve(ci, &aMI, &a_mv_stick);
+ self.put_stick_paves_on_curve(ci, &a_mi, &a_mv_stick);
  if a_nb_c == 1 {
-  self.put_ef_paves_on_curve(ci, &aMI, &a_mv_ef);
+  self.put_ef_paves_on_curve(ci, &a_mi, &a_mv_ef);
  }
  // OCCT BOPAlgo_PaveFiller_6.cxx L2340-2400
  // For each un-vertexed endpoint of the IC, check if it lies on both face
@@ -1075,21 +1007,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- // ⏳ OCCT-aligned: CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L1158, L4105-4306).
- // rcad: only min(curve_tol, edge_tol); OCCT also reduces vertex tolerances.
- for ci in 0..self.ds.intersection_curves.len() {
- let refs = self.ds.section_edge_refs[ci].clone();
- for &sei in &refs {
- if sei < self.ds.edges.len() {
- let edge_tol = self.ds.edge_tolerance(sei);
- let curve_tol = if ci < self.ds.intersection_curves.len() {
- self.ds.intersection_curves[ci].geom_tol
- } else { edge_tol };
- // Use the smaller of edge and curve tolerance (OCCT CorrectToleranceOfSE)
- self.ds.edge_data_mut(sei).tolerance = edge_tol.min(curve_tol).max(TOLERANCE_ABS);
- }
- }
- }
+ // OCCT L1158: CorrectToleranceOfSE
+ self.correct_tolerance_of_se();
  // ⏳ OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1161, L1705-1978).
  // rcad: simple pave_blocks_sc + vertices_in; OCCT also handles CommonBlocks,
  // existing-edge PB replacement via aDMExEdges, and SD vertex remapping in

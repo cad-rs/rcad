@@ -192,12 +192,8 @@ pub struct DSVertex {
  /// [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) for vertices added by the DS).
  pub geom_tol: f64,
  /// OCCT-aligned: TopAbs_INTERNAL orientation marker.
- /// True when this vertex is INTERNAL to its source solid volume
- /// (not on the boundary).  Used by FillInternalShapes.
  pub is_internal: bool,
  /// OCCT-aligned: TopLoc_Location index into DS.locations[]; 0 = identity.
- /// Populated when loading from topods::BRep with non-identity Location.
- /// Used by emit_wire_face_topods to create ShapeRefs with correct Location.
  pub location: u32,
 }
 
@@ -617,6 +613,9 @@ pub struct DS {
  pub vertex_origins: Vec<Option<ShapeOrigin>>,
  pub vertex_is_internal: Vec<bool>,
  pub vertex_locations: Vec<u32>,
+ /// Shape index in ds.shapes for each vertex. Set by push_vertex.
+ pub vertex_shape_idx: Vec<usize>,
+ /// OCCT-aligned: myRanges[0] =vertex range end (number of source shapes per type).
  /// Intersection-only data for edges (shape data via ds.shape(ei)).
  pub edge_start_vertex: Vec<usize>,
  pub edge_end_vertex: Vec<usize>,
@@ -627,6 +626,8 @@ pub struct DS {
  pub edge_is_internal: Vec<bool>,
  pub edge_face_tols: Vec<Vec<(usize, f64)>>,
  pub edge_locations: Vec<u32>,
+ /// Shape index in ds.shapes for each edge. Set by push_edge.
+ pub edge_shape_idx: Vec<usize>,
  /// Intersection-only data for faces (shape data via ds.shape(fi)).
  pub face_boundary_verts: Vec<Vec<usize>>,
  pub face_boundary_edges: Vec<Vec<usize>>,
