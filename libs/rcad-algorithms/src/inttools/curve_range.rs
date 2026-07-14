@@ -70,18 +70,22 @@ fn find_nearest_valid_point(curve: &Curve3, t_start: f64, t_end: f64, center: DV
     let tol_sq = tol * tol;
     let mut t = t_start;
     let dir = if t_end > t_start { 1.0 } else { -1.0 };
-    // OCCT-aligned: iterate while still between t_start and t_end.
-    // Compare (t - t_start) * (t_end - t_start) >= 0 to handle t_start=0.0
-    // correctly (signum(0)=0 breaks equality-based comparison).
-    while (t - t_start) * (t_end - t_start) >= 0.0 {
+    // OCCT BRepLib_1.cxx L70: bounds iterations to ~100.
+    let max_iter = 4096;
+    let mut iter = 0usize;
+    while iter < max_iter && (t - t_start) * (t_end - t_start) >= 0.0 {
+        iter += 1;
         if (curve.point_at(t) - center).length_squared() >= tol_sq {
+            if (t - t_start).abs() < step * 0.5 { return None; }
             let mut lo = if dir > 0.0 { t - step } else { t + step };
             let mut hi = t;
             for _ in 0..12 { let mid = (lo+hi)*0.5;
                 if (curve.point_at(mid)-center).length_squared() >= tol_sq { hi = mid; } else { lo = mid; } }
             return Some(hi);
         }
-        t += step * dir;
+        let next_t = t + step * dir;
+        if next_t == t { break; } // step too small for fp resolution
+        t = next_t;
     }
     None
 }

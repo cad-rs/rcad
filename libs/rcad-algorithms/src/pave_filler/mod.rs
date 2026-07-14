@@ -1017,6 +1017,26 @@ impl<'a> PaveFiller<'a> {
    if !affected_edges.is_empty() {
      self.split_pave_blocks(&affected_edges, false);
    }
+
+         let already_pave = self.ds.edges[ei].paves.iter()
+           .any(|p| p.vertex_idx == vi);
+         if already_pave { continue; }
+
+         self.ds.edges[ei].paves.push(Pave {
+           vertex_idx: vi,
+           param: t.clamp(t_range[0], t_range[1]),
+         });
+         affected_edges.insert(ei);
+       }
+     }
+   }
+
+   if !affected_edges.is_empty() {
+     eprintln!("[DBG] calling split_pave_blocks for {:?}", affected_edges);
+     self.split_pave_blocks(&affected_edges, false);
+     eprintln!("[DBG] split_pave_blocks done");
+   }
+   eprintln!("[DBG] register_ic_endpoints_on_edges EXIT");
  }
 }
 
