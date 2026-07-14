@@ -595,4 +595,57 @@ impl<'a> PaveFiller<'a> {
             _ => false,
         }
     }
+
+    /// OCCT-aligned: BOPAlgo_PaveFiller::ForceInterfVF (PaveFiller_5.cxx L631-681).
+    /// Force Vertex-Face interference check for a vertex with increased tolerance.
+    /// Returns true if a new VF interference was created.
+    /// Note: named with `_pair` suffix to distinguish from the zero-arg version above.
+    pub(crate) fn force_interf_vf_pair(&mut self, n_v: usize, n_f: usize) -> bool {
+        if n_v >= self.ds.vertices.len() || n_f >= self.ds.faces.len() { return false; }
+        let v_pt = self.ds.vertex_point(n_v);
+        let surf = self.ds.faces[n_f].surface.clone();
+        // Project vertex onto face surface
+        // Compute UV from surface projection
+        use rcad_kernel::geom::Surface3;
+        let (u_val, v_val) = match &surf {
+            Surface3::Plane(p) => {
+                let d = v_pt - p.origin;
+                (d.dot(p.u_dir), d.dot(p.v_dir))
+            }
+            Surface3::Sphere(s) => {
+                let d = (v_pt - s.center).normalize();
+                (d.z.atan2(d.x), d.y.asin())
+            }
+            Surface3::Cylinder(c) => {
+                let ax = c.axis.normalize();
+                let d = v_pt - c.origin;
+                let t = d.dot(ax);
+                let r_dir = (d - ax * t).normalize();
+                (r_dir.z.atan2(r_dir.x), t)
+            }
+            _ => (0.0, 0.0),
+        };
+        let proj = surf.point_at(u_val, v_val);
+        let dist = (proj - v_pt).length();
+        let tol_v = self.ds.vertex_tolerance(n_v);
+        let tol_f = self.ds.face_tolerance(n_f);
+        let a_tol_check = tol_v.max(tol_f) + self.fuzzy_tolerance;
+
+        if dist <= a_tol_check {
+            // Create VF interference
+            self.ds.interf_vf.push(InterferenceVF {
+                vertex: n_v,
+                face: n_f,
+                u: u_val,
+                v: v_val,
+            });
+            self.ds.interf_tb.insert((n_v.min(n_f), n_v.max(n_f)));
+            // Update vertex tolerance
+            let n_vx = self.update_vertex(n_v, dist.max(tol_v));
+            // Register vertex in face info
+            self.ds.face_info_mut(n_f).vertices_in.insert(n_vx);
+            return true;
+        }
+        false
+    }
 }

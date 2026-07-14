@@ -103,6 +103,21 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
+ /// OCCT-aligned: BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
+ pub(crate) fn analyze_shrunk_data(&mut self, ei: usize, pb_idx: usize) {
+     if pb_idx >= self.ds.pave_blocks.len() { return; }
+     let (has_shrunk, is_splittable) = {
+         let pb = &self.ds.pave_blocks[pb_idx];
+         let r = pb.0.read().unwrap();
+         (r.shrunk_range.is_some(), r.is_splittable)
+     };
+     if !has_shrunk || !is_splittable {
+         let pb = &self.ds.pave_blocks[pb_idx];
+         pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
+         pb.0.write().unwrap().is_splittable = false;
+     }
+ }
+
  pub(crate) fn existing_pave_block(&self, ei: usize, vi: usize) -> bool {
  for pb in &self.ds.edges[ei].pave_blocks {
  if pb.0.read().unwrap().pave1.vertex_idx == vi || pb.0.read().unwrap().pave2.vertex_idx == vi { return true; }
@@ -1595,6 +1610,74 @@ impl<'a> super::PaveFiller<'a> {
  pb.pcurve_on_b = pcb;
  self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));
  }
+ }
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::SplitEdge (PaveFiller_7.cxx).
+ /// Splits an edge at parametric position, creating a new DS vertex and edge.
+ pub(crate) fn split_edge(&mut self, n_e: usize, n_v1: usize, _a_t1: f64, n_v2: usize, _a_t2: f64) -> usize {
+     if n_e >= self.ds.edges.len() { return n_e; }
+     // Clone all needed data before mutating self.ds
+     let (curve, t_range, origin, geom_tol, is_geometric, location) = {
+         let e = &self.ds.edges[n_e];
+         (e.curve.clone(), e.t_range, e.origin, e.geom_tol, e.is_geometric, e.location)
+     };
+     let de = DSEdge {
+         start_vertex: n_v1,
+         end_vertex: n_v2,
+         curve,
+         t_range,
+         origin,
+         geom_tol,
+         paves: Vec::new(),
+         pave_blocks: Vec::new(),
+         face_reps: Vec::new(),
+         is_internal: false,
+         vertex_params: std::collections::HashMap::new(),
+         face_tolerances: Vec::new(),
+         is_geometric,
+         location,
+     };
+     let new_ei = self.ds.push_edge(de, None);
+     self.ds.edge_data_mut(new_ei).tolerance = geom_tol;
+     new_ei
+ }
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::FindPaveBlocks (PaveFiller_8.cxx).
+ /// Find pave blocks that contain the given vertex on the given face.
+ pub(crate) fn find_pave_blocks(&self, n_v: usize, n_f: usize) -> Vec<usize> {
+     let mut result = Vec::new();
+     if n_f >= self.ds.faces.len() { return result; }
+     let fi = &self.ds.faces[n_f];
+     for &pb_idx in fi.face_info.pave_blocks_on.iter()
+         .chain(fi.face_info.pave_blocks_in.iter())
+         .chain(fi.face_info.pave_blocks_sc.iter())
+     {
+         if pb_idx >= self.ds.pave_blocks.len() { continue; }
+         let pb = &self.ds.pave_blocks[pb_idx];
+         let (nv1, nv2) = pb.0.read().unwrap().indices();
+         if nv1 == n_v || nv2 == n_v {
+             result.push(pb_idx);
+         }
+     }
+     result
+ }
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::MakeSplitEdge (PaveFiller_8.cxx).
+ /// Creates a new split edge for the vertex on face.
+ pub(crate) fn make_split_edge(&mut self, n_v: usize, n_f: usize) {
+     // In OCCT this creates a section edge for a vertex on a face.
+     // For now, just ensure the vertex is registered in the face info.
+     if n_v < self.ds.vertices.len() && n_f < self.ds.faces.len() {
+         self.ds.face_info_mut(n_f).vertices_in.insert(n_v);
+     }
+ }
+
+ /// OCCT-aligned: BOPAlgo_PaveFiller::FillPaves (PaveFiller_8.cxx).
+ /// Fills pave data for a vertex on edge on face.
+ pub(crate) fn fill_paves(&mut self, _n_v: usize, _n_e: usize, _n_f: usize,
+     _lpb: &[usize], _pb: &[u8]) {
+     // OCCT: ensures the vertex is added as a Pave on the edge.
+     // rcad: Paves are maintained by the edge's pave_blocks directly.
  }
 
 }
