@@ -375,3 +375,183 @@ pub fn reorder_wire_topods(
  }
  ordered
 }
+
+// ===== Tests: DS loading from topods::BRep + shapes array sync =====
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bopds::ds::types::*;
+    use rcad_kernel::topods::{self, TShape};
+    use crate::tolerance::TOLERANCE_ABS;
+
+    fn make_unit_box() -> topods::BRep {
+        let mut br = topods::BRep::new();
+        let v000 = br.add_tvertex(glam::DVec3::new(0.0, 0.0, 0.0));
+        let v100 = br.add_tvertex(glam::DVec3::new(1.0, 0.0, 0.0));
+        let v110 = br.add_tvertex(glam::DVec3::new(1.0, 1.0, 0.0));
+        let v010 = br.add_tvertex(glam::DVec3::new(0.0, 1.0, 0.0));
+        let v001 = br.add_tvertex(glam::DVec3::new(0.0, 0.0, 1.0));
+        let v101 = br.add_tvertex(glam::DVec3::new(1.0, 0.0, 1.0));
+        let v111 = br.add_tvertex(glam::DVec3::new(1.0, 1.0, 1.0));
+        let v011 = br.add_tvertex(glam::DVec3::new(0.0, 1.0, 1.0));
+        let e_bot = vec![
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::X })), v000, v100, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Y })), v100, v110, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: -glam::DVec3::X })), v110, v010, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: -glam::DVec3::Y })), v010, v000, [0.0, 1.0]),
+        ];
+        let e_top = vec![
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::X })), v001, v101, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Y })), v101, v111, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: -glam::DVec3::X })), v111, v011, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: -glam::DVec3::Y })), v011, v001, [0.0, 1.0]),
+        ];
+        let e_side = vec![
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Z })), v000, v001, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Z })), v100, v101, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Z })), v110, v111, [0.0, 1.0]),
+            br.add_tedge(Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::Z })), v010, v011, [0.0, 1.0]),
+        ];
+        let _bottom_w = br.add_twire(e_bot.clone());
+        let _top_w = br.add_twire(e_top.clone());
+        let side_wires = [
+            vec![e_bot[3], e_side[0], e_top[3], e_side[3]],
+            vec![e_bot[0], e_side[1], e_top[0], e_side[0]],
+            vec![e_bot[1], e_side[2], e_top[1], e_side[1]],
+            vec![e_bot[2], e_side[3], e_top[2], e_side[2]],
+        ];
+        let plane = rcad_kernel::geom::Surface3::Plane(
+            rcad_kernel::geom::Plane::new(glam::DVec3::ZERO, glam::DVec3::Z));
+        let f_bottom = br.add_tface(Some(plane.clone()), _bottom_w, vec![], None, None, vec![], false);
+        let f_top = br.add_tface(Some(plane.clone()), _top_w, vec![], None, None, vec![], false);
+        let mut all_faces = vec![f_bottom, f_top];
+        for sw in &side_wires {
+            let w = br.add_twire(sw.clone());
+            let f = br.add_tface(Some(plane.clone()), w, vec![], None, None, vec![], false);
+            all_faces.push(f);
+        }
+        // Wrap faces in Shell → Solid (load_topods_brep only processes faces inside solids)
+        //
+        let sh = br.add_tshell(all_faces);
+        br.add_tsolid(vec![sh]);
+        br
+    }
+
+    #[test]
+    fn load_box_vertex_count() {
+        let brep = make_unit_box();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        assert_eq!(ds.vertices.len(), 8, "box has 8 vertices");
+        assert!(ds.shapes.len() >= ds.vertices.len(), "shapes should at least have vertex entries");
+        // First 8 shapes should be vertices
+        for vi in 0..ds.vertices.len() {
+            assert!(ds.is_vertex(vi), "shapes[{}] should be Vertex", vi);
+        }
+    }
+
+    #[test]
+    fn load_box_edge_count() {
+        let brep = make_unit_box();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let nv = ds.vertices.len();
+        assert_eq!(ds.edges.len(), 12, "box has 12 edges");
+        for ei in 0..ds.edges.len() {
+            assert!(ds.is_edge(nv + ei), "shapes[{}] should be Edge", nv + ei);
+        }
+    }
+
+    #[test]
+    fn load_box_face_count() {
+        let brep = make_unit_box();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let nv = ds.vertices.len();
+        let ne = ds.edges.len();
+        assert_eq!(ds.faces.len(), 6, "box has 6 faces");
+        let any_face = ds.faces.iter().enumerate().any(|(fi, _)| ds.is_face(nv + ne + fi));
+        assert!(any_face, "at least one shapes[] entry should be Face");
+    }
+
+    #[test]
+    fn load_box_shapes_sync() {
+        let brep = make_unit_box();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let expected_min = ds.vertices.len() + ds.edges.len() + ds.faces.len();
+        assert!(ds.shapes.len() >= expected_min,
+            "shapes len {} >= verts+edges+faces {}", ds.shapes.len(), expected_min);
+    }
+
+    #[test]
+    fn load_box_vertex_coords() {
+        let brep = make_unit_box();
+        let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let has_origin = ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ZERO) < 1e-10);
+        assert!(has_origin, "box should have vertex at (0,0,0)");
+        let has_corner = ds.vertices.iter().any(|v| v.point.distance_squared(glam::DVec3::ONE) < 1e-10);
+        assert!(has_corner, "box should have vertex at (1,1,1)");
+    }
+
+    #[test]
+    fn push_vertex_maintains_sync() {
+        let brep = make_unit_box();
+        let mut ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let nv_before = ds.vertices.len();
+        let ns_before = ds.shapes.len();
+        let vi = ds.push_vertex(DSVertex {
+            point: glam::DVec3::new(2.0, 2.0, 2.0),
+            origin: None,
+            geom_tol: TOLERANCE_ABS,
+            is_internal: false,
+            location: 0,
+        });
+        assert_eq!(vi, nv_before, "push_vertex returns next vertex index");
+        assert_eq!(ds.vertices.len(), nv_before + 1, "vertices array grew");
+        assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
+        let new_sr_idx = ns_before; // new shape is at the end of shapes
+        match &*ds.shapes[new_sr_idx] {
+            TShape::Vertex(vd) => {
+                assert!((vd.point - glam::DVec3::new(2.0, 2.0, 2.0)).length() < 1e-10);
+                assert!((vd.tolerance - TOLERANCE_ABS).abs() < 1e-10);
+            }
+            _ => panic!("expected Vertex TShape"),
+        }
+    }
+
+    #[test]
+    fn push_edge_maintains_sync() {
+        let brep = make_unit_box();
+        let mut ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+        let nv = ds.vertices.len();
+        let ne_before = ds.edges.len();
+        let ns_before = ds.shapes.len();
+        let ei = ds.push_edge(DSEdge {
+            start_vertex: 0,
+            end_vertex: 1,
+            curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: glam::DVec3::ZERO, direction: glam::DVec3::X,
+            }),
+            t_range: [0.0, 1.0],
+            origin: ShapeOrigin::ShapeA,
+            geom_tol: TOLERANCE_ABS,
+            paves: Vec::new(),
+            pave_blocks: Vec::new(),
+            face_reps: Vec::new(),
+            is_internal: false,
+            vertex_params: HashMap::new(),
+            face_tolerances: Vec::new(),
+            is_geometric: true,
+            location: 0,
+        });
+        assert_eq!(ei, ne_before, "push_edge returns next edge index");
+        assert_eq!(ds.edges.len(), ne_before + 1, "edges array grew");
+        assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
+        let new_sr_idx = ns_before; // new shape is at the end of shapes
+        assert!(ds.is_edge(new_sr_idx), "new shapes[{}] is Edge", new_sr_idx);
+        if let TShape::Edge(ed) = ds.shape(new_sr_idx) {
+            assert!(ed.curve.is_some(), "new edge has curve");
+            assert_eq!(ed.first.index, 0);
+            assert_eq!(ed.last.index, 1);
+        } else {
+            panic!("expected Edge TShape");
+        }
+    }
+}
