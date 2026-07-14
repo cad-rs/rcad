@@ -9,8 +9,10 @@ impl<'a> super::PaveFiller<'a> {
   let flag = self.ds.edge_flag(ei);
   if flag == 0 { continue; }
   let nf = (flag - 1) as usize;
-  if nf >= self.ds.shape_info.len() { continue; }
-  let si_f = &self.ds.shape_info[nf];
+  // B4: map flat face index to shapes[]-indexed shape_info
+  let nf_si = if nf < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[nf] } else { nf };
+  if nf_si >= self.ds.shape_info.len() { continue; }
+  let si_f = &self.ds.shape_info[nf_si];
   let nv = si.sub_shapes.first().copied().unwrap_or(usize::MAX);
   let nv = self.ds.has_shape_sd(nv).unwrap_or(nv);
   if si_f.shape_type == rcad_kernel::topods::ShapeType::Face {
@@ -441,8 +443,10 @@ impl<'a> super::PaveFiller<'a> {
  if theMVCommon.contains(&nV) {
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
  } else {
- if nV < self.ds.shape_info.len() {
- if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[nV].box_min, self.ds.shape_info[nV].box_max) {
+ if nV < self.ds.vertex_shape_idx.len() {
+ let nv_si = self.ds.vertex_shape_idx[nV];
+ if nv_si < self.ds.shape_info.len() {
+ if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[nv_si].box_min, self.ds.shape_info[nv_si].box_max) {
  let v_box_min = vmn - glam::DVec3::splat(aTolR3D);
  let v_box_max = vmx + glam::DVec3::splat(aTolR3D);
  if let Some(c_box) = &c_box {
@@ -454,7 +458,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
+ }
+ if nV < self.ds.vertex_shape_idx.len() && !self.ds.shape_info[self.ds.vertex_shape_idx[nV]].is_new {
  continue;
  }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
@@ -788,7 +793,7 @@ impl<'a> super::PaveFiller<'a> {
  aTolVExt: &mut f64,
  aType: i32,
  ) -> bool {
- if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
+ if nV < self.ds.vertex_shape_idx.len() && !self.ds.shape_info[self.ds.vertex_shape_idx[nV]].is_new {
  return false;
  }
  let vp = self.ds.vertex_point(nV);

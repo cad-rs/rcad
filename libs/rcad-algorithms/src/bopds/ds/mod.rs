@@ -40,7 +40,8 @@ impl DS {
             face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
             face_normals: Vec::new(), face_origins: Vec::new(), face_info_vec: Vec::new(),
             source_face_idxs: Vec::new(), face_locations: Vec::new(), face_uv_boundary: Vec::new(),
-            source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(),
+            source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(), face_shape_idx: Vec::new(),
+            wire_shape_idx: Vec::new(), shell_shape_idx: Vec::new(), solid_shape_idx: Vec::new(), compsolid_shape_idx: Vec::new(),
             interf_vv: Vec::new(), interf_ve: Vec::new(), interf_vf: Vec::new(),
             interf_ee: Vec::new(), interf_ef: Vec::new(), interf_ff: Vec::new(),
             interf_vz: Vec::new(), interf_ez: Vec::new(), interf_fz: Vec::new(),
@@ -87,25 +88,26 @@ impl DS {
 
     /// Mutable access to TFaceData for a face (for write operations).
     pub fn face_data_mut(&mut self, fi: usize) -> &mut topods::TFaceData {
-        match std::sync::Arc::make_mut(&mut self.shapes[fi]) {
+        let si = if fi < self.face_shape_idx.len() { self.face_shape_idx[fi] } else { fi };
+        match std::sync::Arc::make_mut(&mut self.shapes[si]) {
             topods::TShape::Face(fd) => fd,
-            _ => panic!("face_data_mut: {} is not a Face", fi),
+            _ => panic!("face_data_mut: {} (shape[{}]) is not a Face", fi, si),
         }
     }
 
-    /// Vertex point from TShape (ds.shape(vi) -> TVertexData.point).
-    /// NOTE: after shapes reorder, shapes[0..nv) = Vertex entries, so
-    /// vertex index vi maps correctly to shapes[vi].
+    /// Vertex point from TShape via vertex_shape_idx.
     pub fn vertex_point(&self, vi: usize) -> glam::DVec3 {
-        match self.shape(vi) {
+        let si = if vi < self.vertex_shape_idx.len() { self.vertex_shape_idx[vi] } else { vi };
+        match self.shape(si) {
             topods::TShape::Vertex(d) => d.point,
             _ => glam::DVec3::ZERO,
         }
     }
 
-    /// Vertex tolerance from TShape.
+    /// Vertex tolerance from TShape via vertex_shape_idx.
     pub fn vertex_tolerance(&self, vi: usize) -> f64 {
-        match self.shape(vi) {
+        let si = if vi < self.vertex_shape_idx.len() { self.vertex_shape_idx[vi] } else { vi };
+        match self.shape(si) {
             topods::TShape::Vertex(d) => d.tolerance,
             _ => 0.0,
         }
@@ -246,17 +248,19 @@ impl DS {
         }
     }
 
-    /// Face surface from TShape.
+    /// Face surface from TShape via face_shape_idx.
     pub fn face_surface(&self, fi: usize) -> Option<&rcad_kernel::geom::Surface3> {
-        match self.shape(fi) {
+        let si = if fi < self.face_shape_idx.len() { self.face_shape_idx[fi] } else { fi };
+        match self.shape(si) {
             topods::TShape::Face(d) => d.surface.as_ref(),
             _ => None,
         }
     }
 
-    /// Face tolerance from TShape.
+    /// Face tolerance from TShape via face_shape_idx.
     pub fn face_tolerance(&self, fi: usize) -> f64 {
-        match self.shape(fi) {
+        let si = if fi < self.face_shape_idx.len() { self.face_shape_idx[fi] } else { fi };
+        match self.shape(si) {
             topods::TShape::Face(d) => d.tolerance,
             _ => 0.0,
         }
@@ -553,7 +557,74 @@ impl DS {
                 natural_restriction,
             },
         ))));
+        self.face_shape_idx.push(self.shapes.len() - 1);
         fi
+    }
+
+    /// Phase 4: push a wire, populating DSWire and pushing TShape to shapes[].
+    /// Returns the wire index.
+    pub fn push_wire(&mut self, dw: DSWire, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
+        let wi = self.wires.len();
+        let edges = dw.edges.clone();
+        self.wires.push(dw);
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::Wire(
+            topods::TWireData {
+                my_shapes: edges.iter().map(|&ei| topods::ShapeRef::synthetic(ei)).collect(),
+                flags: topods::tshape_flags::DEFAULT,
+                edges: edges.iter().map(|&ei| topods::ShapeRef::synthetic(ei)).collect(),
+            },
+        ))));
+        self.wire_shape_idx.push(self.shapes.len() - 1);
+        wi
+    }
+
+    /// Phase 4: push a shell, populating DSShell and pushing TShape to shapes[].
+    /// Returns the shell index.
+    pub fn push_shell(&mut self, dsh: DSShell, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
+        let shi = self.shells.len();
+        let faces = dsh.faces.clone();
+        self.shells.push(dsh);
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::Shell(
+            topods::TShellData {
+                my_shapes: faces.iter().map(|&fi| topods::ShapeRef::synthetic(fi)).collect(),
+                flags: topods::tshape_flags::DEFAULT,
+                faces: faces.iter().map(|&fi| topods::ShapeRef::synthetic(fi)).collect(),
+            },
+        ))));
+        self.shell_shape_idx.push(self.shapes.len() - 1);
+        shi
+    }
+
+    /// Phase 4: push a solid, populating DSSolid and pushing TShape to shapes[].
+    /// Returns the solid index.
+    pub fn push_solid(&mut self, dso: DSSolid, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
+        let soi = self.solids.len();
+        let shells = dso.shells.clone();
+        self.solids.push(dso);
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::Solid(
+            topods::TSolidData {
+                my_shapes: shells.iter().map(|&shi| topods::ShapeRef::synthetic(shi)).collect(),
+                flags: topods::tshape_flags::DEFAULT,
+                shells: shells.iter().map(|&shi| topods::ShapeRef::synthetic(shi)).collect(),
+                internal_vertices: Vec::new(),
+                internal_edges: Vec::new(),
+            },
+        ))));
+        self.solid_shape_idx.push(self.shapes.len() - 1);
+        soi
+    }
+
+    /// Phase 4: push a compsolid, populating DSCompSolid and pushing TShape to shapes[].
+    /// Returns the compsolid index.
+    pub fn push_compsolid(&mut self, dcs: DSCompSolid, tshape: Option<std::sync::Arc<topods::TShape>>) -> usize {
+        let csi = self.comp_solids.len();
+        let solids = dcs.solids.clone();
+        self.comp_solids.push(dcs);
+        self.shapes.push(tshape.unwrap_or_else(|| std::sync::Arc::new(topods::TShape::CompSolid(
+            solids.iter().map(|&si| topods::ShapeRef::synthetic(si)).collect(),
+        ))));
+        self.compsolid_shape_idx.push(self.shapes.len() - 1);
+        csi
     }
 
     ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
@@ -561,8 +632,7 @@ impl DS {
  /// Flag is stored in shape_info[nv + edge_idx].flag matching OCCT's
  /// per-shape integer flag (BOPDS_ShapeInfo::myFlag).
  pub fn edge_flag(&self, edge_idx: usize) -> i64 {
- let nv = self.vertices.len();
- let si_idx = nv + edge_idx;
+ let si_idx = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { self.vertices.len() + edge_idx };
  if si_idx < self.shape_info.len() {
  let f = self.shape_info[si_idx].flag;
  if f >= 0 { f } else { 0 }
@@ -571,15 +641,13 @@ impl DS {
 
  ///  ?OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&)  ?true if flag is set (>= 0).
  pub fn edge_has_flag(&self, edge_idx: usize) -> bool {
- let nv = self.vertices.len();
- let si_idx = nv + edge_idx;
+ let si_idx = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { self.vertices.len() + edge_idx };
  si_idx < self.shape_info.len() && self.shape_info[si_idx].flag >= 0
  }
 
  ///  ?OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
  pub fn set_edge_flag(&mut self, edge_idx: usize, flag: i64) {
- let nv = self.vertices.len();
- let si_idx = nv + edge_idx;
+ let si_idx = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { self.vertices.len() + edge_idx };
  if si_idx < self.shape_info.len() {
  self.shape_info[si_idx].flag = flag;
  }
@@ -604,8 +672,9 @@ impl DS {
  /// with `origin: None` are intersection-created (new shapes).
  /// Edges with `origin: None` carry the same semantics.
  pub fn is_new_vertex(&self, vi: usize) -> bool {
- if vi < self.shape_info.len() {
- self.shape_info[vi].is_new
+ let si = if vi < self.vertex_shape_idx.len() { self.vertex_shape_idx[vi] } else { vi };
+ if si < self.shape_info.len() {
+ self.shape_info[si].is_new
  } else {
  self.vertices.get(vi).map_or(true, |v| v.origin.is_none())
  }
@@ -684,8 +753,8 @@ impl DS {
  }
  // OCCT L499: aPaveBlock->Update(myPaveBlocksPool.Appended(), false);
  // OCCT L500: anEdgeInfo.SetReference(myPaveBlocksPool.Length() - 1);
- // rcad: flat index for this edge = nV + edge_idx
- let si_idx = self.vertices.len() + edge_idx;
+ // rcad: shape index for this edge = edge_shape_idx[edge_idx]
+ let si_idx = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { self.vertices.len() + edge_idx };
  if si_idx < self.shape_info.len() {
   self.shape_info[si_idx].reference = edge_idx as i64;
  }
@@ -751,8 +820,8 @@ impl DS {
   }
 
   /// �?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
-  ///   Populates map_ve from edges array.  Called by init_shape_info()
-  ///   after all edges are loaded.
+  ///   Populates map_ve from edges array.  Must be called after init_shape_topo
+  ///   loads all source shapes.
   pub fn build_map_ve(&mut self) {
   self.map_ve.clear();
   for (ei, e) in self.edges.iter().enumerate() {
@@ -1260,146 +1329,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  /// Flat index: [0..nV) = VERTEX, [nV..nV+nE) = EDGE,
  /// [nV+nE..nV+nE+nW) = WIRE, [nV+nE+nW..nV+nE+nW+nF) = FACE,
  /// [nV+nE+nW+nF..) = SHELL+SOLID+COMPSOLID.
- pub fn init_shape_info(&mut self) {
- self.shape_info.clear();
- let nv = self.vertices.len();
- let ne = self.edges.len();
- let nw = self.wires.len();
- let nf = self.faces.len();
- let nsh = self.shells.len();
- let a_v = self.a_vertex_count;
- let a_e = self.a_edge_count;
- let a_f = self.a_face_count;
-
-  // VERTEX entries
-  for vi in 0..nv {
-  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
-  si.rank = if vi < a_v { 0 } else { 1 };
-  si.source_idx = vi;
-  si.is_new = self.vertices[vi].origin.is_none();
-  si.box_min = Some(self.vertices[vi].point);
-  si.box_max = Some(self.vertices[vi].point);
-  // �?OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
-  //   theAdditionalTolerance = fuzzy_tol * 0.5 (matching OCCT PaveFiller UpdateTolerance).
-  si.box_gap = self.vertices[vi].geom_tol + self.fuzzy_tol * 0.5;
-  self.shape_info.push(si);
-  }
- // EDGE entries
-  for ei in 0..ne {
-  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge);
-  si.rank = if ei < a_e { 0 } else { 1 };
-  si.source_idx = ei;
-  si.is_new = ei >= a_e;
-  let sv = self.edges[ei].start_vertex;
-  let ev = self.edges[ei].end_vertex;
-  if sv < self.vertices.len() && ev < self.vertices.len() {
-  let p1 = self.vertices[sv].point;
-  let p2 = self.vertices[ev].point;
-  si.box_min = Some(p1.min(p2));
-  si.box_max = Some(p1.max(p2));
-  }
-  // �?OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
-  // OCCT stores sub-shape indices as flat shape indices into myLines.
-  si.sub_shapes.push(nv + sv);
-  if sv != ev {
-  si.sub_shapes.push(nv + ev);
-  }
-  // �?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
-  si.box_gap = self.edges[ei].geom_tol + self.fuzzy_tol * 0.5;
-  // �?OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
-  //   OCCT BOPAlgo_Builder_1.cxx prepareFaces: SetFlag(faceIndex) for deg edges.
-  //   rcad: set flag >= 0 when start==end vertex (degenerated geometry).
-  if sv == ev {
-  si.flag = 0;
-  }
-  self.shape_info.push(si);
-  }
- // WIRE entries -- sub-shapes = edge indices (flat).  OCCT order: after EDGE, before FACE.
- // Flat index: [nv+ne .. nv+ne+nw)
- for wi in 0..nw {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Wire);
- si.has_brep = false;
- si.rank = 0;
- si.source_idx = wi;
- si.is_new = false;
- for &ei in &self.wires[wi].edges {
- si.sub_shapes.push(nv + ei);
- }
- self.shape_info.push(si);
- }
- // FACE entries -- sub-shapes = edge indices (flat)
- for fi in 0..nf {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
- si.rank = if fi < a_f { 0 } else { 1 };
- si.source_idx = fi;
- si.is_new = false;
- for &ei in &self.faces[fi].boundary_edges {
- si.sub_shapes.push(nv + ei);
- }
- let verts = &self.faces[fi].boundary_verts;
- if !verts.is_empty() {
- let mut mn = glam::DVec3::splat(f64::INFINITY);
- let mut mx = glam::DVec3::splat(f64::NEG_INFINITY);
- for &vi in verts {
- if vi < self.vertices.len() {
- let p = self.vertices[vi].point;
- mn = mn.min(p);
- mx = mx.max(p);
- }
- }
-  if mn.is_finite() {
-  si.box_min = Some(mn);
-  si.box_max = Some(mx);
-  }
-  }
-  // �?OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
-  si.box_gap = self.faces[fi].geom_tol + self.fuzzy_tol * 0.5;
-  self.shape_info.push(si);
-  }
- // SHELL entries -- sub-shapes = face indices (flat)
- for shi in 0..nsh {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Shell);
- si.has_brep = false;
- si.rank = 0;
- si.source_idx = shi;
- si.is_new = false;
- for &fi in &self.shells[shi].faces {
- si.sub_shapes.push(nv + ne + nw + fi);
- }
- self.shape_info.push(si);
- }
- // SOLID entries -- sub-shapes = shell indices (flat)
- let nso = self.solids.len();
- for soi in 0..nso {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Solid);
- si.has_brep = false;
- si.rank = 0;
- si.source_idx = soi;
- si.is_new = false;
- for &shi in &self.solids[soi].shells {
- si.sub_shapes.push(nv + ne + nw + nf + shi);
- }
- self.shape_info.push(si);
- }
- // COMPSOLID entries -- sub-shapes = solid indices (flat)
- let ncs = self.comp_solids.len();
- for csi in 0..ncs {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::CompSolid);
- si.has_brep = false;
- si.rank = 0;
- si.source_idx = csi;
- si.is_new = false;
- for &soi in &self.comp_solids[csi].solids {
- si.sub_shapes.push(nv + ne + nw + nf + nsh + soi);
- }
-  self.shape_info.push(si);
-  }
-  self.nb_source_shapes = self.shape_info.len();
-  // �?OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
-  self.build_map_ve();
-  }
-
- ///  ?OCCT-aligned: ShapeInfo(index) =access shape info by flat index.
+ ///  ?OCCT-aligned: ShapeInfo(index) =access shape info by shapes[] index.
  /// OCCT: BOPDS_DS::ShapeInfo (BOPDS_DS.cxx L255-258).
  pub fn shape_info_at(&self, idx: usize) -> &ShapeInfo {
  &self.shape_info[idx]

@@ -628,6 +628,14 @@ pub struct DS {
  pub edge_locations: Vec<u32>,
  /// Shape index in ds.shapes for each edge. Set by push_edge.
  pub edge_shape_idx: Vec<usize>,
+ /// Shape index in ds.shapes for each wire. Set by push_wire.
+ pub wire_shape_idx: Vec<usize>,
+ /// Shape index in ds.shapes for each shell. Set by push_shell.
+ pub shell_shape_idx: Vec<usize>,
+ /// Shape index in ds.shapes for each solid. Set by push_solid.
+ pub solid_shape_idx: Vec<usize>,
+ /// Shape index in ds.shapes for each compsolid. Set by push_compsolid.
+ pub compsolid_shape_idx: Vec<usize>,
  /// Intersection-only data for faces (shape data via ds.shape(fi)).
  pub face_boundary_verts: Vec<Vec<usize>>,
  pub face_boundary_edges: Vec<Vec<usize>>,
@@ -644,6 +652,8 @@ pub struct DS {
  pub source_shell_idxs: Vec<Option<usize>>,
  pub source_solid_idxs: Vec<Option<usize>>,
  pub source_compsolid_idxs: Vec<Option<usize>>,
+ /// Shape index in ds.shapes for each face. Set by push_face.
+ pub face_shape_idx: Vec<usize>,
  /// OCCT-aligned: type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).
  /// Replaces the generic Vec<Interference> enum =each variant has its own typed Vec.
  pub interf_vv: Vec<InterferenceVV>,

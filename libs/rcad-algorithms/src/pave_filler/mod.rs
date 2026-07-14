@@ -277,7 +277,9 @@ impl<'a> PaveFiller<'a> {
  load_topods_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
  self.ds.compute_uv_boundaries();
  self.ds.build_face_reps();
- self.ds.init_shape_info();
+ // ShapeInfo is built during load_topods_brep (init_shape_topo traversal).
+ self.ds.nb_source_shapes = self.ds.shape_info.len();
+ self.ds.build_map_ve();
  }
 
  pub fn perform(&mut self, a: &topods::BRep, b: &topods::BRep) {
