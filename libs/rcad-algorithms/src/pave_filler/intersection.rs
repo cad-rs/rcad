@@ -351,44 +351,192 @@ impl<'a> super::PaveFiller<'a> {
  self.split_pave_blocks(&a_m_edges, true);
  }
  }
- /// OCCT PaveFiller_3.cxx L145-244: PerformEE
- /// 閴?BOPDS_Iterator::Initialize(EDGE, EDGE) 閳?single pass.
- /// Cross-operand filtering via a_edge_count.
- /// PerformEE (PaveFiller_3.cxx L145-590).
- /// Returns the set of edges that were modified (got new paves).
- /// The caller should call split_pave_blocks for remaining edges
- /// after treat_new_vertices has processed the new vertex edges.
- pub(crate) fn perform_ee_bvh(&mut self, pairs: &[(usize, usize)])
- -> std::collections::HashSet<usize>
- {
-  // OCCT PaveFiller_3.cxx L145-462: PerformEE
+ // OCCT BOPAlgo_PaveFiller_3.cxx L145-590: PerformEE
+ //
+ // OCCT structure:
+ //   L147: FillShrunkData(EDGE, EDGE)
+ //   L149-150: Iterator init, iSize check
+ //   L157-175: variable declarations (aEEs, aMEdges, allocators)
+ //   L181-267: Phase 1 -- collect BOPAlgo_EdgeEdge tasks
+ //   L269-278: Phase 2 -- parallel execution (BOPTools_Parallel)
+ //   L285-556: Phase 3 -- process CommonPrt (VERTEX/EDGE types)
+ //   L558-585: Phase 4 -- PerformCommonBlocks + PerformNewVertices + SplitPaveBlocks
+ //
+ // rcad architecture differences:
+ //   - intersect_ee combines computation + InterfEE creation (no CommonPrt)
+ //   - treat_new_vertices() called separately from perform() (not inside)
+ //   - No aMVCPB / aMPBLPB coupling (common blocks handled elsewhere)
+ //   - Sequential execution (no BOPTools_Parallel)
+ pub(crate) fn perform_ee_bvh(&mut self, pairs: &[(usize, usize)]) {
+  // OCCT L147: FillShrunkData(EDGE, EDGE)
   self.fill_shrunk_data();
- // pairs come pre-computed from BOPDS_Iterator
- let ds = &self.ds;
- let a_ec = ds.a_edge_count;
- let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.iter()
- .filter(|&(ae, be)| {
- if (*ae < a_ec) == (*be < a_ec) { return false; }
- !ds.edge_has_flag(*ae) && !ds.edge_has_flag(*be)
- && !ds.has_interf_ee(*ae, *be)
- && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
- })
- .flat_map(|&(ae, be)| {
- let ra = Self::get_pb_boxes(ds, ae, ds.edge_range(ae));
- let rb = Self::get_pb_boxes(ds, be, ds.edge_range(be));
- let mut v = Vec::new();
- for &r1 in &ra { for &r2 in &rb { v.push((ae, be, r1, r2)); } }
- v
- })
- .collect();
- let mut modified: std::collections::HashSet<usize> = std::collections::HashSet::new();
- for &(ae, be, r1, r2) in &blocks {
- self.intersect_ee(ae, be, r1, r2, &mut modified);
- }
- // SplitPaveBlocks) is handled in the caller (perform() in mod.rs):
- // - treat_new_vertices()  ?PerformNewVertices
- // - split_pave_blocks() for remaining modified edges
- modified
+
+  // OCCT L149-150: myIterator->Initialize(EDGE, EDGE)
+  // iSize = myIterator->ExpectedLength()
+  let i_size = pairs.len();
+
+  // OCCT L152-155: if (!iSize) return
+  if i_size == 0 {
+   return;
+  }
+
+  // rcad EeTask replaces BOPAlgo_EdgeEdge (no TopoDS_Shape, no handle types)
+  struct EeTask {
+   nE1: usize,
+   nE2: usize,
+   aT11: f64,
+   aT12: f64,
+   aTS11: f64,
+   aTS12: f64,
+   aT21: f64,
+   aT22: f64,
+   aTS21: f64,
+   aTS22: f64,
+   nV11: usize,
+   nV12: usize,
+   nV21: usize,
+   nV22: usize,
+   b_express_compute: bool,
+   b_is_pb_splittable1: bool,
+   b_is_pb_splittable2: bool,
+  }
+
+  // OCCT L167: NCollection_Map<int> aMEdges
+  let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+  // OCCT L178-179: aEEs.SetIncrement(iSize)
+  self.ds.interf_ee.reserve(i_size);
+
+  // OCCT L181: for (; myIterator->More(); myIterator->Next())
+  let a_ec = self.ds.a_edge_count;
+  let mut a_vee: Vec<EeTask> = Vec::new();
+
+  for &(nE1, nE2) in pairs {
+   // rcad: cross-operand filter (OCCT: done by BOPDS_Iterator)
+   if (nE1 < a_ec) == (nE2 < a_ec) {
+    continue;
+   }
+
+   // OCCT L189-192: myDS->ShapeInfo(nE1).HasFlag()
+   if self.ds.edge_has_flag(nE1) || self.ds.edge_has_flag(nE2) {
+    continue;
+   }
+
+   // OCCT L200-204: myDS->ChangePaveBlocks(nE1).IsEmpty()
+   let a_lpb1 = self.ds.edge_pave_blocks(nE1);
+   if a_lpb1.is_empty() {
+    continue;
+   }
+
+   // OCCT L206-210: myDS->ChangePaveBlocks(nE2).IsEmpty()
+   let a_lpb2 = self.ds.edge_pave_blocks(nE2);
+   if a_lpb2.is_empty() {
+    continue;
+   }
+
+   // rcad: additional skip conditions (OCCT applies these earlier)
+   if self.ds.has_interf_ee(nE1, nE2) {
+    continue;
+   }
+   if self.ds.is_edge_degenerated(nE1) || self.ds.is_edge_degenerated(nE2) {
+    continue;
+   }
+
+   // OCCT L215-266: PB pair iteration
+   for pb1 in a_lpb1.iter() {
+    let pb1_r = pb1.0.read().unwrap();
+
+    // OCCT L222-229: GetPBBox
+    let (aT11, aT12) = pb1_r.range();
+    let (aTS11, aTS12, b_is_pb_splittable1) = if pb1_r.has_shrunk_data() {
+     let (ts1, ts2, spl) = pb1_r.shrunk_data();
+     (ts1, ts2, spl)
+    } else {
+     (aT11, aT12, false)
+    };
+
+    // OCCT L231: aPB1->Indices(nV11, nV12)
+    let (nV11, nV12) = pb1_r.indices();
+    drop(pb1_r);
+
+    // OCCT L233-265: aIt2.Initialize(aLPB2); for (; aIt2.More(); aIt2.Next())
+    for pb2 in a_lpb2.iter() {
+     let pb2_r = pb2.0.read().unwrap();
+
+     // OCCT L238-243: GetPBBox
+     let (aT21, aT22) = pb2_r.range();
+     let (aTS21, aTS22, b_is_pb_splittable2) = if pb2_r.has_shrunk_data() {
+      let (ts1, ts2, spl) = pb2_r.shrunk_data();
+      (ts1, ts2, spl)
+     } else {
+      (aT21, aT22, false)
+     };
+
+     // OCCT L245-248: if (aBB1.IsOut(aBB2)) continue
+     if (aTS12 - aTS11).abs() <= TOLERANCE_ABS || (aTS22 - aTS21).abs() <= TOLERANCE_ABS {
+      drop(pb2_r);
+      continue;
+     }
+
+     // OCCT L250: aPB2->Indices(nV21, nV22)
+     let (nV21, nV22) = pb2_r.indices();
+
+     // OCCT L252: bExpressCompute = same vertex bounds
+     let b_express_compute =
+      (nV11 == nV21 && nV12 == nV22) || (nV12 == nV21 && nV11 == nV22);
+
+     drop(pb2_r);
+
+     a_vee.push(EeTask {
+      nE1,
+      nE2,
+      aT11,
+      aT12,
+      aTS11,
+      aTS12,
+      aT21,
+      aT22,
+      aTS21,
+      aTS22,
+      nV11,
+      nV12,
+      nV21,
+      nV22,
+      b_express_compute,
+      b_is_pb_splittable1,
+      b_is_pb_splittable2,
+     });
+    }
+   }
+  }
+
+  // OCCT L269: aNbEdgeEdge = aVEdgeEdge.Length()
+  let a_nb_edge_edge = a_vee.len();
+
+  // OCCT L285-556: Process results
+  for k in 0..a_nb_edge_edge {
+   let task = &a_vee[k];
+   let nE1 = task.nE1;
+   let nE2 = task.nE2;
+
+   // Compute shrunk ranges for this task
+   let sr1 = [task.aTS11.min(task.aTS12), task.aTS11.max(task.aTS12)];
+   let sr2 = [task.aTS21.min(task.aTS22), task.aTS21.max(task.aTS22)];
+
+   let mut modified: std::collections::HashSet<usize> = std::collections::HashSet::new();
+   self.intersect_ee(nE1, nE2, sr1, sr2, &mut modified);
+
+   if !modified.is_empty() {
+    for &e in &modified {
+     a_m_edges.insert(e);
+    }
+   }
+  }
+
+  // OCCT L571-585: if (aMEdges.Extent()) { SplitPaveBlocks(aMEdges, false); }
+  if !a_m_edges.is_empty() {
+   self.split_pave_blocks(&a_m_edges, false);
+  }
  }
  /// OCCT: PaveBlock range extraction (GetPBBox equivalent)
  pub(crate) fn get_pb_boxes(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {

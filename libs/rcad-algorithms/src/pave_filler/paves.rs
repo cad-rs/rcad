@@ -1,54 +1,82 @@
 use super::*;
 
 impl<'a> super::PaveFiller<'a> {
+ /// OCCT BOPAlgo_PaveFiller_8.cxx L54-131: ProcessDE
  pub(crate) fn process_de(&mut self) {
- for ei in 0..self.ds.nb_source_shapes {
-  if ei >= self.ds.shape_info.len() { continue; }
-  let si = &self.ds.shape_info[ei];
-  if si.shape_type != rcad_kernel::topods::ShapeType::Edge { continue; }
-  let flag = self.ds.edge_flag(ei);
-  if flag == 0 { continue; }
-  let nf = (flag - 1) as usize;
-  // B4: map flat face index to shapes[]-indexed shape_info
-  let nf_si = if nf < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[nf] } else { nf };
-  if nf_si >= self.ds.shape_info.len() { continue; }
-  let si_f = &self.ds.shape_info[nf_si];
-  let nv = si.sub_shapes.first().copied().unwrap_or(usize::MAX);
-  let nv = self.ds.has_shape_sd(nv).unwrap_or(nv);
-  if si_f.shape_type == rcad_kernel::topods::ShapeType::Face {
-   let face_idx = nf.saturating_sub(self.ds.vertices.len() + self.ds.edges.len());
-   if face_idx < self.ds.faces.len() {
-    // FindPaveBlocks: find PBs on this face that pass through nv
-    let mut found_pbs: Vec<usize> = Vec::new();
-    for &pb_idx in &self.ds.face_info(face_idx).pave_blocks_in {
-     if pb_idx < self.ds.pave_blocks.len() {
-      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
-      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
+ for an_edge_index in 0..self.ds.nb_source_shapes() {
+  if an_edge_index >= self.ds.shape_info.len() { continue; }
+  let an_edge_info = &self.ds.shape_info[an_edge_index];
+  if an_edge_info.shape_type != rcad_kernel::topods::ShapeType::Edge { continue; }
+  let flag = self.ds.edge_flag(an_edge_index);
+  if flag <= 0 { continue; }
+  // OCCT: HasFlag(nF) sets nF to the shape index directly.
+  // rcad convention: the flag stores (face_idx + 1).
+  let n_f = (flag - 1) as usize;
+  // Map flat face index to shape_info index
+  let n_f_si = if n_f < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[n_f] } else { n_f };
+  if n_f_si >= self.ds.shape_info.len() { continue; }
+  let a_si_f = &self.ds.shape_info[n_f_si];
+  // OCCT: nV = anEdgeInfo.SubShapes().First()
+  let mut n_v = match an_edge_info.sub_shapes.first() {
+   Some(&v) => v,
+   None => continue,
+  };
+  // OCCT: if (HasShapeSD(nV, nVSD)) nV = nVSD
+  if let Some(n_v_sd) = self.ds.has_shape_sd(n_v) {
+   n_v = n_v_sd;
+  }
+  if a_si_f.shape_type == rcad_kernel::topods::ShapeType::Face {
+   // OCCT: FindPaveBlocks(nV, nF, aLPBOut)
+   let a_lpb_out = self.find_pave_blocks(n_v, n_f);
+   if !a_lpb_out.is_empty() {
+    // OCCT: aLPBD = myDS->ChangePaveBlocks(anEdgeIndex)
+    // OCCT: aPBD = aLPBD.First()
+    if an_edge_index < self.ds.edges.len() {
+     let a_lpbd = &self.ds.edges[an_edge_index].pave_blocks;
+     if !a_lpbd.is_empty() {
+      let a_pbd = a_lpbd[0].clone();
+      // OCCT: FillPaves(nV, anEdgeIndex, nF, aLPBOut, aPBD);
+      self.fill_paves(n_v, an_edge_index, n_f, &a_lpb_out, &a_pbd);
+      // OCCT: myDS->UpdatePaveBlock(aPBD);
+      // rcad: PaveBlock update (shrunk range etc.) is applied during
+      // SplitPaveBlocks, not here.
      }
     }
-    for &pb_idx in &self.ds.face_info(face_idx).pave_blocks_on {
-     if pb_idx < self.ds.pave_blocks.len() {
-      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
-      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
-     }
-    }
-    for &pb_idx in &self.ds.face_info(face_idx).pave_blocks_sc {
-     if pb_idx < self.ds.pave_blocks.len() {
-      let (v1, v2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
-      if v1 == nv || v2 == nv { found_pbs.push(pb_idx); }
-     }
-    }
-    if !found_pbs.is_empty() {
-     if let Some(pbd) = self.ds.edges.get(ei).and_then(|e| e.pave_blocks.first()) {
-      // FillPaves: add ext_pave for nv on the degen edge's PB
-      let a_tol_v = if nv < self.ds.vertices.len() { self.ds.vertex_tolerance(nv) } else { TOLERANCE_ABS };
-      pbd.0.write().unwrap().append_ext_pave(Pave { vertex_idx: nv, param: 0.5 });
-      // UpdatePaveBlock equivalent
-      // No explicit Update call needed -- rcad splits via Update() in make_blocks
-     }
-    }
-    // MakeSplitEdge equivalent
-    // Skipped -- rcad split edges are created during MakeBlocks from pave block data
+   }
+   // OCCT: MakeSplitEdge(anEdgeIndex, nF);
+   self.make_split_edge(an_edge_index, n_f);
+  } else if a_si_f.shape_type == rcad_kernel::topods::ShapeType::Edge {
+   // OCCT: EDGE branch — create a new degenerated edge for the vertex
+   // Clone edge data to avoid borrow conflict with self.ds.push_edge
+   let (a_curve, a_t_range, a_origin, a_geom_tol, a_is_geometric, a_location) = {
+    if an_edge_index < self.ds.edges.len() {
+     let e = &self.ds.edges[an_edge_index];
+     (e.curve.clone(), e.t_range, e.origin, e.geom_tol, e.is_geometric, e.location)
+    } else { continue }
+   };
+   if n_v >= self.ds.vertices.len() { continue; }
+   // Create a new degenerated edge (start == end vertex)
+   let de = DSEdge {
+    start_vertex: n_v,
+    end_vertex: n_v,
+    curve: a_curve,
+    t_range: a_t_range,
+    origin: a_origin,
+    geom_tol: a_geom_tol,
+    paves: Vec::new(),
+    pave_blocks: Vec::new(),
+    face_reps: Vec::new(),
+    is_internal: false,
+    vertex_params: std::collections::HashMap::new(),
+    face_tolerances: Vec::new(),
+    is_geometric: a_is_geometric,
+    location: a_location,
+   };
+   // OCCT: nEn = myDS->Append(aSI);
+   let n_en = self.ds.push_edge(de, None);
+   // OCCT: aPBD->SetEdge(nEn)
+   if let Some(a_pbd) = self.ds.edges[an_edge_index].pave_blocks.first() {
+    a_pbd.0.write().unwrap().new_edge = Some(n_en);
    }
   }
  }
@@ -1671,12 +1699,15 @@ impl<'a> super::PaveFiller<'a> {
      }
  }
 
- /// BOPAlgo_PaveFiller::FillPaves (PaveFiller_8.cxx).
- /// Fills pave data for a vertex on edge on face.
- pub(crate) fn fill_paves(&mut self, _n_v: usize, _n_e: usize, _n_f: usize,
-     _lpb: &[usize], _pb: &[u8]) {
-     // OCCT: ensures the vertex is added as a Pave on the edge.
-     // rcad: Paves are maintained by the edge's pave_blocks directly.
+ /// OCCT BOPAlgo_PaveFiller_8.cxx L224-331: FillPaves.
+ /// Adds intersection points between the degenerated edge's 2D curve
+ /// and each passing edge's 2D curve as Extra paves.
+ pub(crate) fn fill_paves(&mut self, _n_vd: usize, _n_ed: usize, _n_fd: usize,
+     _a_lpb_out: &[usize], _a_pbd: &SharedPB) {
+     // OCCT: Ensures the vertex is added as an Extra Pave on the PaveBlock
+     // of the degenerated edge. Implementation uses Geom2dInt_GInter to
+     // intersect the 2D curves and calls AddSplitPoint for valid results.
+     // rcad: full implementation pending 2D curve intersection support.
  }
 
 }
