@@ -434,22 +434,27 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT L772-827: ForceInterfEF (overload 1) — collect all edge PBs
+    // OCCT BOPAlgo_PaveFiller_5.cxx L772-827
     pub(crate) fn force_interf_ef(&mut self) {
         // L774-778
         if !self.is_primary {
             return;
         }
 
-        // L787-822: collect all PBs from all edges (skip no-PB, degenerated)
+        // L787-822: Collect all pave blocks from all source edges
         // rcad: Vec<(edge_idx, local_pb_idx)> — OCCT uses IndexedMap<handle<PaveBlock>>
         let mut a_mpb: Vec<(usize, usize)> = Vec::new();
-        let a_nb_s = self.ds.edges.len();
-        for ne in 0..a_nb_s {
-            // L791-796: only edges (rcad: edges Vec contains only edges)
+        let a_nb_s = self.ds.nb_source_shapes();
+        for n_e in 0..a_nb_s {
+            // L791-796: only edges
+            if self.ds.shape_type_of(n_e) != rcad_kernel::topods::ShapeType::Edge {
+                continue;
+            }
+            // rcad: shape_info[n_e].reference gives the flat edge index
+            let ne = self.ds.shape_info[n_e].reference as usize;
 
-            // L798-802: edge must have PBs
-            if self.ds.edge_pave_blocks(ne).is_empty() {
+            // L798-802: edge must have PBs (HasReference)
+            if !self.ds.has_pave_blocks(ne) {
                 continue;
             }
 
@@ -459,259 +464,374 @@ impl<'a> PaveFiller<'a> {
             }
 
             // L814-821: add all PBs to map
-            for local_i in 0..self.ds.edge_pave_blocks(ne).len() {
+            // OCCT uses RealPaveBlock(aPB) to resolve the real edge's PB
+            let a_lpb = self.ds.edge_pave_blocks(ne);
+            for (local_i, _a_it_lpb) in a_lpb.iter().enumerate() {
+                // rcad: real_pave_block_edge resolves through CommonBlock to
+                // the original edge index. OCCT uses RealPaveBlock to get the
+                // handle of the real pave block for IndexedMap dedup.
+                // In rcad, we store the index pair and resolve per-pair later.
                 a_mpb.push((ne, local_i));
             }
         }
 
-        // L826: call overload 2
-        self.force_interf_ef_with(&a_mpb);
+        // L826: call overload 2 with theAddInterf=true
+        self.force_interf_ef_with(&a_mpb, true);
     }
 
-    /// OCCT L831-1199: ForceInterfEF (overload 2, with theMPB)
-    fn force_interf_ef_with(&mut self, the_mpb: &[(usize, usize)]) {
+    // OCCT BOPAlgo_PaveFiller_5.cxx L831-1199
+    fn force_interf_ef_with(
+        &mut self,
+        the_mpb: &[(usize, usize)],
+        the_add_interf: bool,
+    ) {
         // L838-840
         if the_mpb.is_empty() {
             return;
         }
 
-        // L842-874: Build BVH tree of PB shrunk-data boxes
-        // OCCT: BOPTools_BoxTree over PB AABBs for spatial pair filtering.
-        // rcad: build DsBvh from PB shrunk-range AABBs (or edge endpoint fallback).
-        let mut pb_aabbs: Vec<crate::bvh::Aabb> = Vec::with_capacity(the_mpb.len());
-        let mut pb_indices: Vec<usize> = Vec::with_capacity(the_mpb.len());
-        for (pi, &(ne, local_i)) in the_mpb.iter().enumerate() {
-            if ne >= self.ds.edges.len() { continue; }
-            let pb = &self.ds.edge_pave_blocks(ne)[local_i];
-            let aabb = if let Some((mn, mx)) = pb.0.read().unwrap().my_shrunk_box {
-                crate::bvh::Aabb { min: mn, max: mx }
-            } else {
-                // Fallback: AABB from edge endpoint vertices
-                let v1 = if pb.0.read().unwrap().pave1.vertex_idx < self.ds.vertices.len() {
-                    self.ds.vertices[pb.0.read().unwrap().pave1.vertex_idx].point
-                } else { continue; };
-                let v2 = if pb.0.read().unwrap().pave2.vertex_idx < self.ds.vertices.len() {
-                    self.ds.vertices[pb.0.read().unwrap().pave2.vertex_idx].point
-                } else { continue; };
-                crate::bvh::Aabb { min: v1.min(v2), max: v1.max(v2) }
+        // L842-874: Fill the tree with bounding boxes of the pave blocks
+        // rcad: build DsBvh from PB AABBs (shrunk data or edge endpoint fallback).
+        let mut a_pb_aabbs: Vec<crate::bvh::Aabb> = Vec::with_capacity(the_mpb.len());
+        let mut a_pb_indices: Vec<usize> = Vec::with_capacity(the_mpb.len());
+        // L848-870: for each PB, get ShrunkData and add to tree
+        for (i_pb, &(ne, local_i)) in the_mpb.iter().enumerate() {
+            let a_pb = &self.ds.edges[ne].pave_blocks[local_i];
+            // L852-858: ensure shrunk data is available
+            // rcad: PB.shrunk_range holds the shrunk data (f, l) and splits
+            let a_pb_r = a_pb.0.read().unwrap();
+            let (shrunk, _is_split) = match a_pb_r.shrunk_range {
+                Some(sr) => (sr, a_pb_r.is_splittable),
+                None => continue,
             };
-            pb_aabbs.push(aabb);
-            pb_indices.push(pi);
+            drop(a_pb_r);
+            // L866-870: build AABB from shrunk range endpoint positions
+            let a_p1 = self.ds.edges[ne].curve.point_at(shrunk[0]);
+            let a_p2 = self.ds.edges[ne].curve.point_at(shrunk[1]);
+            let a_pb_box = crate::bvh::Aabb {
+                min: a_p1.min(a_p2),
+                max: a_p1.max(a_p2),
+            };
+            // L870: aBBTree.Add(aPBMap.Add(aPB), Bnd_Tools::Bnd2BVH(aPBBox));
+            a_pb_aabbs.push(a_pb_box);
+            a_pb_indices.push(i_pb);
         }
-        let pb_tree = crate::bvh::DsBvh::build(pb_indices, pb_aabbs);
+        // L873-874: Build BVH tree
+        let a_bb_tree = DsBvh::build(a_pb_indices, a_pb_aabbs);
 
         // L876: bSICheckMode — Self-Interference check mode (one argument)
+        // OCCT: myArguments.Extent() == 1
         let b_si_check_mode = self.my_arguments.len() <= 1;
 
-        // L880: EdgeFace pairs for intersection
-        // rcad: Vec<(edge_idx, face_idx, local_pb_idx)>
-        let mut a_v_edge_face: Vec<(usize, usize, usize)> = Vec::new();
+        // L880: vector of edge-face pairs for intersection
+        // OCCT: BOPAlgo_VectorOfEdgeFace aVEdgeFace
+        // rcad: pair data stored in a local struct
+        struct _EFPair {
+            n_e: usize,
+            n_f: usize,
+            pb: SharedPB,
+            a_tol_add: f64,
+            a_ts: [f64; 2],
+        }
+        let mut a_v_edge_face: Vec<_EFPair> = Vec::new();
 
-        // L882-1108: For each face with face info
-        // G3: parallel face processing with per-thread IntToolsContext
-        // (OCCT BOPAlgo_Parallel equivalent — each thread has its own context).
-        use rayon::prelude::*;
-        let n_faces = self.ds.faces.len();
-        let ds = &self.ds;
-        let pb_tree = &pb_tree;
-        let fpbdone = &self.fpbdone;
-        let context_tol = self.context.tol_uv();
-        let b_si_check_mode = b_si_check_mode;
+        // L882-1108: For each face that has face info
+        // OCCT iterates over all source shapes with type FACE + HasReference check.
+        // rcad: iterate over flat face array and map source idx for rank/origin checks.
+        let a_nb_f = self.ds.faces.len();
+        for n_f in 0..a_nb_f {
+            let a_fi = &self.ds.faces[n_f].face_info;
 
-        let per_face_pairs: Vec<Vec<(usize, usize, usize)>> = (0..n_faces)
-            .into_par_iter()
-            .map(|nf| {
-                let mut ctx = crate::inttools::context::Context::new(n_faces, context_tol);
-                let fi = &ds.faces[nf].face_info;
+            // L885-896: only faces with face info (HasReference equivalent)
+            // rcad: check that face info has any data
+            if a_fi.pave_blocks_on.is_empty()
+                && a_fi.pave_blocks_in.is_empty()
+                && a_fi.pave_blocks_sc.is_empty()
+                && a_fi.curves_sc.is_empty()
+                && a_fi.vertices_on.is_empty()
+                && a_fi.vertices_in.is_empty()
+                && a_fi.vertices_sc.is_empty()
+            {
+                continue;
+            }
 
-                // L885-896: skip faces with no face info
-                if fi.pave_blocks_on.is_empty()
-                    && fi.pave_blocks_in.is_empty()
-                    && fi.pave_blocks_sc.is_empty()
-                    && fi.curves_sc.is_empty()
-                    && fi.vertices_on.is_empty()
-                    && fi.vertices_in.is_empty()
-                    && fi.vertices_sc.is_empty()
+            // L903-910: Face AABB for BVH query
+            // OCCT: BOPTools_BoxTreeSelector with face box from ShapeInfo
+            let a_box_f = face_aabb::face_aabb(&self.ds, n_f);
+            let a_overlapping = a_bb_tree.query_aabb(&a_box_f);
+            if a_overlapping.is_empty() {
+                continue;
+            }
+
+            // L914-924: build aMVF from all face vertex sets
+            // OCCT: NCollection_Map<int> aMVF from FaceInfo VerticesOn/In/Sc
+            let mut a_mvf: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            for &v in &a_fi.vertices_on {
+                a_mvf.insert(v);
+            }
+            for &v in &a_fi.vertices_in {
+                a_mvf.insert(v);
+            }
+            for &v in &a_fi.vertices_sc {
+                a_mvf.insert(v);
+            }
+
+            // L926-939: add PB endpoints from face's PaveBlocksOn/In/Sc
+            let p_mpbf = [
+                &a_fi.pave_blocks_on,
+                &a_fi.pave_blocks_in,
+                &a_fi.pave_blocks_sc,
+            ];
+            for pbs in &p_mpbf {
+                for &pb_gi in pbs.iter() {
+                    if pb_gi < self.ds.pave_blocks.len() {
+                        let a_pb_r = self.ds.pave_blocks[pb_gi].0.read().unwrap();
+                        a_mvf.insert(a_pb_r.pave1.vertex_idx);
+                        a_mvf.insert(a_pb_r.pave2.vertex_idx);
+                    }
+                }
+            }
+
+            // Projection tool
+            // rcad: IntToolsContext provides proj_ps and is_point_in_face
+
+            // L947-1107: iterate PBs overlapping this face from BVH
+            for &a_pb_idx in &a_overlapping {
+                let &(ne, local_i) = &the_mpb[a_pb_idx];
+                let a_pb = &self.ds.edges[ne].pave_blocks[local_i];
+
+                // L952-955: skip if PB already in face's PB sets
+                // OCCT: if (pMPBF[0]->Contains(aPB) || ...)
+                if a_fi.pave_blocks_on.contains(&a_pb_idx)
+                    || a_fi.pave_blocks_in.contains(&a_pb_idx)
+                    || a_fi.pave_blocks_sc.contains(&a_pb_idx)
                 {
-                    return Vec::new();
+                    continue;
                 }
 
-                // L914-924: build aMVF from all face vertex sets
-                let mut a_mvf: std::collections::HashSet<usize> = std::collections::HashSet::new();
-                for &v in &fi.vertices_on { a_mvf.insert(v); }
-                for &v in &fi.vertices_in { a_mvf.insert(v); }
-                for &v in &fi.vertices_sc { a_mvf.insert(v); }
-
-                // L926-938: add PB endpoints from face's PaveBlocksOn/In/Sc
-                for &pb_gi in &fi.pave_blocks_on {
-                    if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
-                    }
-                }
-                for &pb_gi in &fi.pave_blocks_in {
-                    if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
-                    }
-                }
-                for &pb_gi in &fi.pave_blocks_sc {
-                    if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
-                    }
+                // L958-964: check if face contains both vertices of the PB
+                let (n_v1, n_v2) = {
+                    let r = a_pb.0.read().unwrap();
+                    (r.pave1.vertex_idx, r.pave2.vertex_idx)
+                };
+                if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) {
+                    continue;
                 }
 
-                // L947-949: compute face AABB
-                let a_face = &ds.faces[nf];
-                let mut face_aabb = crate::bvh::Aabb::empty();
-                for &vi in &a_face.boundary_verts {
-                    if vi < ds.vertices.len() {
-                        face_aabb.expand_point(ds.vertex_point(vi));
-                    }
+                // L967-981: Get the edge and check arguments
+                // OCCT: aPB->HasEdge(nE) / OriginalEdge() + rank check
+                // rcad: PB knows its edge from (ne, local_i) pair
+                // OCCT L977-980: check edge and face came from different arguments.
+                // rcad: ShapeOrigin check equivalent to OCCT's Rank()
+                if self.ds.edge_origin(ne) == self.ds.face_origin(n_f) {
+                    continue;
                 }
 
-                // L950-952: query BVH for PBs overlapping this face
-                let overlapping = pb_tree.query_aabb(&face_aabb);
+                let a_e_curve = &self.ds.edges[ne].curve;
 
-                // L954-1107: iterate overlapping PBs
-                let mut local_pairs: Vec<(usize, usize, usize)> = Vec::new();
-                for &pb_idx in &overlapping {
-                    let &(ne, local_i) = &the_mpb[pb_idx];
-                    let pb = &ds.edge_pave_blocks(ne)[local_i];
+                // L986-1006: check directions coincidence at middle point on edge
+                let mut b_use_add_tol = true;
 
-                    // skip if PB already in face's EF set
-                    if ds.interf_ef.iter().any(|inf| inf.edge == ne && inf.face == nf) {
-                        continue;
+                let a_ts: [f64; 2] = {
+                    let r = a_pb.0.read().unwrap();
+                    if let Some(sr) = r.shrunk_range {
+                        sr
+                    } else {
+                        [r.pave1.param, r.pave2.param]
                     }
+                };
 
-                    let n_v1 = pb.0.read().unwrap().pave1.vertex_idx;
-                    let n_v2 = pb.0.read().unwrap().pave2.vertex_idx;
-                    if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) { continue; }
+                // L998-1002: Middle point + tangent (aBAC.D1)
+                let a_t_mid = crate::boptools::intermediate_point(a_ts[0], a_ts[1]);
+                // rcad: point_at + tangent_at = OCCT D1
+                let a_p_on_e = a_e_curve.point_at(a_t_mid);
+                let a_ve_tgt = a_e_curve.tangent_at(a_t_mid);
+                if a_ve_tgt.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                    continue;
+                }
 
-                    if ds.edge_origins[ne] == ds.face_origin(nf) { continue; }
+                // L1008-1012: project middle point onto face
+                // OCCT: aProjPS.Perform(aPOnE); check NbPoints()
+                let (a_uv, _a_p_on_s, a_lower_dist) =
+                    match self.context.proj_ps(&self.ds, n_f, a_p_on_e) {
+                        Some(data) => data,
+                        None => continue,
+                    };
 
-                    let a_e_curve = &ds.edges[ne].curve;
-                    let mut b_use_add_tol = true;
-                    let a_ts = pb.0.read().unwrap().shrunk_range.unwrap_or([pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param]);
-                    let a_t_mid = crate::boptools::intermediate_point(a_ts[0], a_ts[1]);
-                    let a_p_on_e = a_e_curve.point_at(a_t_mid);
-                    let a_ve_tgt = a_e_curve.tangent_at(a_t_mid);
-                    if a_ve_tgt.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
+                // L1016-1029: check distance using max vertex tolerance
+                // OCCT: aTolCheck = bSICheckMode ? myFuzzyValue : 2*max(Tol(V1), Tol(V2))
+                let a_tol_v1 = self.ds.vertex_tolerance(n_v1);
+                let a_tol_v2 = self.ds.vertex_tolerance(n_v2);
+                let a_tol_check = if b_si_check_mode {
+                    self.ds.fuzzy_tol
+                } else {
+                    2.0 * a_tol_v1.max(a_tol_v2)
+                };
+                if a_lower_dist > a_tol_check + self.ds.fuzzy_tol {
+                    continue;
+                }
 
-                    let (a_uv, a_p_on_s, a_lower_dist) =
-                        match ctx.proj_ps(ds, nf, a_p_on_e) {
+                // L1031-1036: check point-in-face (UV)
+                // OCCT: myContext->IsPointInFace(aF, gp_Pnt2d(U, V))
+                if !self.context.is_point_in_face(&self.ds, n_f, a_uv) {
+                    continue;
+                }
+
+                // L1038-1052: non-plane/non-line → angle check for bUseAddTol
+                // OCCT: if (aSurfAdaptor.GetType() != GeomAbs_Plane || aBAC.GetType() != GeomAbs_Line)
+                let a_face = &self.ds.faces[n_f];
+                if !matches!(a_face.surface, Surface3::Plane(_))
+                    || !matches!(*a_e_curve, Curve3::Line(_))
+                {
+                    // L1040-1041: projection point (closest on surface)
+                    // rcad: re-project to get the nearest surface point
+                    let (_, a_p_on_s_re, _) =
+                        match self.context.proj_ps(&self.ds, n_f, a_p_on_e) {
                             Some(data) => data,
                             None => continue,
                         };
-
-                    let a_tol_v1 = ds.vertices.get(n_v1).map(|v| v.geom_tol).unwrap_or(0.0);
-                    let a_tol_v2 = ds.vertices.get(n_v2).map(|v| v.geom_tol).unwrap_or(0.0);
-                    let a_tol_check = if b_si_check_mode {
-                        ds.fuzzy_tol
-                    } else {
-                        2.0 * a_tol_v1.max(a_tol_v2)
-                    };
-                    if a_lower_dist > a_tol_check + ds.fuzzy_tol { continue; }
-
-                    if !ctx.is_point_in_face(ds, nf, a_uv) { continue; }
-
-                    if !matches!(a_face.surface, Surface3::Plane(_))
-                        || !matches!(*a_e_curve, Curve3::Line(_))
-                    {
-                        let a_vf_norm = a_p_on_s - a_p_on_e;
-                        if a_vf_norm.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
-                            let a_cos = a_vf_norm.normalize().dot(a_ve_tgt.normalize());
-                            if a_cos.abs() > 0.4226 { b_use_add_tol = false; }
+                    // L1041: aVFNorm = aPOnS - aPOnE
+                    let a_vf_norm = a_p_on_s_re - a_p_on_e;
+                    if a_vf_norm.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
+                        // L1044-1050: angle check with cos threshold 0.4226
+                        // (deviation 25 degrees from 90 degrees)
+                        let a_cos = a_vf_norm.normalize().dot(a_ve_tgt.normalize());
+                        if a_cos.abs() > 0.4226 {
+                            b_use_add_tol = false;
                         }
-                    }
-
-                    let mut a_tol_add = 0.0;
-                    if b_use_add_tol {
-                        for &a_t in &[a_ts[0], a_ts[1]] {
-                            let a_p = a_e_curve.point_at(a_t);
-                            if let Some((_, _, a_dist_ef)) = ctx.proj_ps(ds, nf, a_p) {
-                                if a_dist_ef < a_tol_check && a_dist_ef > a_tol_add {
-                                    a_tol_add = a_dist_ef;
-                                }
-                            }
-                        }
-                        if a_tol_add > 0.0 {
-                            a_tol_add -= (ds.edge_tolerance(ne) + a_face.geom_tol);
-                            if a_tol_add < 0.0 { a_tol_add = 0.0; }
-                        }
-                    }
-
-                    let b_intersect = a_tol_add > 0.0
-                        || !fpbdone.get(&nf).map_or(false, |done| {
-                            done.contains(&(ne << 16 | local_i))
-                        });
-                    if b_intersect {
-                        local_pairs.push((ne, nf, local_i));
                     }
                 }
-                local_pairs
-            })
-            .collect();
 
-        // Merge per-face results into a_v_edge_face
-        for pairs in &per_face_pairs {
-            a_v_edge_face.extend(pairs);
+                // L1054-1085: compute aTolAdd from endpoint projections
+                let mut a_tol_add = 0.0;
+                if b_use_add_tol {
+                    // L1064-1076: project the two endpoints of shrunk range onto face
+                    for &a_t in &[a_ts[0], a_ts[1]] {
+                        let a_p = a_e_curve.point_at(a_t);
+                        if let Some((_, _, a_dist_ef)) =
+                            self.context.proj_ps(&self.ds, n_f, a_p)
+                        {
+                            if a_dist_ef < a_tol_check && a_dist_ef > a_tol_add {
+                                a_tol_add = a_dist_ef;
+                            }
+                        }
+                    }
+                    // L1077-1084: subtract edge + face tolerances
+                    if a_tol_add > 0.0 {
+                        a_tol_add -= (self.ds.edge_tolerance(ne)
+                            + self.ds.face_tolerance(n_f));
+                        if a_tol_add < 0.0 {
+                            a_tol_add = 0.0;
+                        }
+                    }
+                }
+
+                // L1087-1092: bIntersect decision
+                // OCCT: bIntersect = aTolAdd > 0 ||
+                //   !pMPB || !(pMPB->Contains(aPB))
+                let b_intersect = a_tol_add > 0.0
+                    || !self.fpbdone.get(&n_f).map_or(false, |done| {
+                        // rcad: PB identity via encoded (ne << 16 | local_i)
+                        done.contains(&(ne.wrapping_mul(1_000_003).wrapping_add(local_i)))
+                    });
+
+                // L1094-1106: prepare pair for intersection
+                if b_intersect {
+                    // OCCT: BOPAlgo_EdgeFace& aEdgeFace = aVEdgeFace.Appended();
+                    // SetIndices, SetPaveBlock, SetEdge, SetFace, etc.
+                    // rcad: store pair data for later processing
+                    a_v_edge_face.push(_EFPair {
+                        n_e: ne,
+                        n_f,
+                        pb: a_pb.clone(),
+                        a_tol_add,
+                        a_ts,
+                    });
+                }
+            }
         }
 
-        // L1110-1113: no pairs
+        // L1110-1113: no pairs found
         let a_nb_ef = a_v_edge_face.len();
         if a_nb_ef == 0 {
             return;
         }
 
-        // L1129: process EF pairs sequentially.
-        // OCCT uses BOPAlgo_EdgeFace parallel solver with thread-local contexts.
-        // rcad: sequential — IntTools_Context (proj_ps) requires &mut self,
-        // preventing parallel closure capture.  Thread-local contexts could
-        // enable parallel execution in a future refactor.
+        // L1116-1120: close preparation step
+        // rcad: no allocator to clean up
 
-        // L1147-1192: process results
-        // rcad: create Interference::EdgeFace + update FaceInfo
-        // Collect map for CommonBlock creation: PB index -> face list
-        // rcad: use BTreeMap for ordered iteration
+        // L1122-1129: Perform intersection of the found pairs
+        // OCCT: BOPTools_Parallel::Perform(myRunParallel, aVEdgeFace, myContext)
+        // rcad: sequential — compute EF coincidence for each pair and store result.
+        // rcad uses a simple projection-distance test; OCCT runs the full
+        // BOPAlgo_EdgeFace solver (IntTools_EdgeFace) on each pair.
+        //
+        // ForceInterfEF configures EdgeFace with UseQuickCoincidenceCheck(true),
+        // producing exactly 1 CommonPart of type EDGE when the edge segment
+        // lies on the face. The rcad equivalent: mid-point projection check
+        // already passed above; additional tolerance computed from endpoints.
+        //
+        // rcad: the pair-level result is already determined by the selection
+        // criteria above.  Mark each as "done/EDGE-type" for processing phase.
+
+        // L1135-1139: prepare EF array if theAddInterf
+        if the_add_interf {
+            self.ds.interf_ef.reserve(a_nb_ef);
+        }
+
+        // L1147-1192: analyze results, create interferences
+        // Collect map for CommonBlock creation
         let mut a_mpbli: std::collections::BTreeMap<usize, Vec<usize>> =
             std::collections::BTreeMap::new();
 
-        for &(ne, nf, local_i) in &a_v_edge_face {
-            let pb_data = {
-                let pbs = self.ds.edge_pave_blocks(ne);
-                if local_i >= pbs.len() { continue; }
-                let pb = &pbs[local_i];
-                let p1 = pb.0.read().unwrap().pave1;
-                let p2 = pb.0.read().unwrap().pave2;
-                let v_idx = p1.vertex_idx;
-                let a_t_mid = crate::boptools::intermediate_point(p1.param, p2.param);
-                (a_t_mid, v_idx, pb.clone())
-            };
-            let (a_t_mid, new_vertex, pb_clone) = pb_data;
-            let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
-            self.ds.interf_ef.push(InterferenceEF{
-                edge: ne,
-                face: nf,
-                point: a_mid_pt,
-                edge_param: a_t_mid,
-                // Use first vertex index as new_vertex placeholder
-                new_vertex: new_vertex,
-            });
+        for pair in &a_v_edge_face {
+            // L1154-1159: check IsDone / HasErrors
+            // rcad: pairs that reached this point passed the selection criteria
 
-            // L1184-1186: Update face info with new IN pave block
-            let g_pb_idx = self.ds.pave_blocks.len();
-            self.ds.pave_blocks.push(pb_clone);
-            self.ds.face_info_mut(nf).pave_blocks_in.insert(g_pb_idx);
+            // L1161-1171: exactly 1 CommonPart of type EDGE expected
+            // rcad: the coordinate check above implies edge-on-face coincidence,
+            // equivalent to a single EDGE-type common part in OCCT.
 
-            // L1188-1192: Fill map for common blocks creation
-            crate::bopalgo::fill_map(&mut a_mpbli, g_pb_idx, nf);
+            // L1173-1181: add interference entry
+            if the_add_interf {
+                // L1178-1181: set indices and common part
+                // rcad: InterferenceEF stores edge, face, mid-point, param, new_vertex
+                let a_t_mid = crate::boptools::intermediate_point(pair.a_ts[0], pair.a_ts[1]);
+                let a_mid_pt = self.ds.edges[pair.n_e].curve.point_at(a_t_mid);
+                self.ds.interf_ef.push(InterferenceEF {
+                    edge: pair.n_e,
+                    face: pair.n_f,
+                    point: a_mid_pt,
+                    edge_param: a_t_mid,
+                    new_vertex: {
+                        let r = pair.pb.0.read().unwrap();
+                        r.pave1.vertex_idx
+                    },
+                });
+                // L1181: myDS->AddInterf(nE, nF)
+                self.ds.try_add_interf(pair.n_e, pair.n_f);
+            }
+
+            // L1184-1186: update face info with new IN pave block
+            // OCCT: myDS->ChangeFaceInfo(nF).ChangePaveBlocksIn().Add(aPB);
+            let g_pb_idx = self.ds.allocate_pave_block(
+                pair.pb.0.read().unwrap().clone()
+            );
+            self.ds.face_info_mut(pair.n_f).pave_blocks_in.insert(g_pb_idx);
+
+            // L1187-1191: fill map for common blocks creation
+            if the_add_interf {
+                crate::bopalgo::fill_map(&mut a_mpbli, g_pb_idx, pair.n_f);
+            }
         }
 
-        // L1194-1198: PerformCommonBlocks for coinciding pairs
-        if a_mpbli.len() > 0 {
-            crate::bopds::tools::perform_common_blocks(self.ds);
+        // L1194-1198: Create new common blocks for coinciding pairs
+        if !a_mpbli.is_empty() {
+            // rcad: BTreeMap<usize, Vec<usize>> where key = PB index,
+            // value = face indices sharing that PB.
+            // OCCT: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
+            crate::bopds::tools::perform_common_blocks(&mut self.ds);
         }
     }
 
