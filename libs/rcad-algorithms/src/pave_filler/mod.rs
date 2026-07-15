@@ -308,217 +308,119 @@ impl<'a> PaveFiller<'a> {
   // =OCCT-aligned: early return if stop_after env var is set and matches
   // (allows stage-by-stage testing without modifying production logic)
 
-  //  ?OCCT L248: Prepare =build pcurves on planar faces.
+  // OCCT L251: Prepare =build pcurves on planar faces.
   self.prepare();
   self.dump_ctx.snapshot("after_Prepare", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_Prepare" { return; } }
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_Prepare" { return; } }
 
-  // Detect shared topology before interference passes when glue is enabled
-  if self.use_glue() {
-  self.ds.detect_shared_topology(self.glue_tolerance);
-  }
-
-  // Skip redundant interference passes when glue is enabled and shared topology is detected
-  let skip_ve = self.should_skip_ve_pass();
-  let skip_ee = self.should_skip_ee_pass();
-  let skip_vf = self.should_skip_vf_pass();
-  let skip_ef = self.should_skip_ef_pass();
-  let skip_ff = self.should_skip_ff_pass();
-
-  // ✅ OCCT-aligned: BOPDS_Iterator — single BVH, type bucketing, stable_sort.
-  // Extract all pair lists upfront while iterator borrows self.ds,
-  // then drop iterator before calling any &mut self methods.
+  // OCCT-aligned: BOPDS_Iterator — single BVH, type bucketing, stable_sort.
+  // rcad: extract all pair lists upfront (Rust borrow limits prevent
+  // keeping a persistent iterator as a member like OCCT's myIterator).
   use crate::bopds::ds::BOPDS_Iterator;
   use rcad_kernel::topods::ShapeType;
   let (vv_pairs, ve_pairs, ee_pairs, vf_pairs) = {
   let mut iterator = BOPDS_Iterator::new(self.ds);
   iterator.prepare();
   let vv = iterator.pairs(ShapeType::Vertex, ShapeType::Vertex).to_vec();
-  let ve = if !skip_ve { iterator.pairs(ShapeType::Vertex, ShapeType::Edge).to_vec() } else { vec![] };
-  let ee = if !skip_ee { iterator.pairs(ShapeType::Edge, ShapeType::Edge).to_vec() } else { vec![] };
-  let vf = if !skip_vf { iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec() } else { vec![] };
+  let ve = iterator.pairs(ShapeType::Vertex, ShapeType::Edge).to_vec();
+  let ee = iterator.pairs(ShapeType::Edge, ShapeType::Edge).to_vec();
+  let vf = iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
   (vv, ve, ee, vf)
   };
 
   self.perform_vv(&vv_pairs);
   self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVV" { return; } }
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVV" { return; } }
 
-  if !skip_ve {
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) =single traversal.
   self.perform_ve_bvh(&ve_pairs);
-  }
-  // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
+  // OCCT L266: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
-  // =OCCT-aligned: SplitPaveBlocks for VE-affected edges.
-  let ve_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-    .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
-    .collect();
-  if !ve_edges.is_empty() {
-    self.split_pave_blocks(&ve_edges, false);
-  }
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVE" { return; } }
 
-  let _ee_survivors: Vec<usize> = if !skip_ee {
-  let ee_modified = self.perform_ee_bvh(&ee_pairs);
-  let survivors = self.treat_new_vertices();
-  // (edges with new vertices already handled by treat_new_vertices)
-  if !ee_modified.is_empty() {
-  let sd_vertices: std::collections::HashSet<usize> =
-  self.ds.shape_sd.sd_vertices_iter()
-  .map(|&(a, _)| a)
-  .collect();
-  // Edges to split = modified - edges whose new vertex is in SD
-  let remaining: std::collections::HashSet<usize> = ee_modified.iter()
-  .filter(|&&ei| {
-  let e = &self.ds.edges[ei];
-  !sd_vertices.contains(&e.start_vertex) &&
-  !sd_vertices.contains(&e.end_vertex)
-  })
-  .copied()
-  .collect();
-  if !remaining.is_empty() {
-  self.split_pave_blocks(&remaining, false);
-  }
-  }
+  // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE) =single traversal.
+  self.perform_ee_bvh(&ee_pairs);
+  // OCCT: TreatNewVertices (inside PerformEE)
+  self.treat_new_vertices();
+  // OCCT L272: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEE" { return; } }
-  survivors
-  } else { vec![] };
 
-  if !skip_vf {
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE) =single traversal.
   self.perform_vf_bvh(&vf_pairs);
-  }
-  // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
+  // OCCT L280: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
-  // =OCCT-aligned: SplitPaveBlocks for VF-affected edges.
-  let vf_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-    .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
-    .collect();
-  if !vf_edges.is_empty() {
-    self.split_pave_blocks(&vf_edges, false);
-  }
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVF" { return; } }
 
-   if !skip_ef {
-   // OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
-   // Rebuild BVH after MakeBlocks may have added/modified edges.
-   let ef_pairs = {
-   let mut ef_iterator = BOPDS_Iterator::new(self.ds);
-   ef_iterator.prepare();
-   ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
-   };
-   self.perform_ef(&ef_pairs);
-  // =OCCT-aligned: TreatNewVertices =merge new vertices created by EF intersection.
-  // OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
-  let _ef_survivors = self.treat_new_vertices();
-
- // =OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
- // After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.
- // OCCT reads from myIncreasedSS (populated by TreatNewVertices).
- // rcad: ds.increased_ss is populated by treat_new_vertices above.
- self.ds.update_pave_blocks_with_sd_vertices();
- self.update_interfs_with_sd_vertices();
- self.repeat_intersection();
- // =OCCT-aligned: SplitPaveBlocks for EF-affected edges.
- let ef_edges: std::collections::HashSet<usize> = (0..self.ds.edges.len())
-   .filter(|&ei| self.ds.edge_paves(ei).len() > 2)
-   .collect();
- if !ef_edges.is_empty() {
-   self.split_pave_blocks(&ef_edges, false);
- }
- self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
+  // OCCT: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
+  let ef_pairs = {
+  let mut ef_iterator = BOPDS_Iterator::new(self.ds);
+  ef_iterator.prepare();
+  ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
+  };
+  self.perform_ef(&ef_pairs);
+  // OCCT L290: UpdatePaveBlocksWithSDVertices
+  self.ds.update_pave_blocks_with_sd_vertices();
+  // OCCT L292: UpdateInterfsWithSDVertices
+  self.update_interfs_with_sd_vertices();
+  self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEF" { return; } }
- }
 
- // =OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
- // of edge pairs sharing a vertex with increased tolerance, detecting
- // collinear/coincident edges (common block).
- // =rcad: simplified, only checks line-line edge pairs sharing a pave vertex.
- if !skip_ee {
- self.force_interf_ee();
- self.dump_ctx.snapshot("after_ForceInterfEE", self.ds, None);
+  // OCCT L296-299: RepeatIntersection with increased vertices
+  self.repeat_intersection();
+  self.dump_ctx.snapshot("after_RepeatIntersection", self.ds, None);
+  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_RepeatIntersection" { return; } }
+
+  // OCCT L308: ForceInterfEE
+  self.force_interf_ee();
+  self.dump_ctx.snapshot("after_ForceInterfEE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ForceInterfEE" { return; } }
- }
 
- // =OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
- // edges whose both endpoints are on a face with increased tolerance.
- // =rcad: simplified, only checks edge-face pairs where both endpoints are on the face.
- if !skip_ef {
- self.force_interf_ef();
- self.dump_ctx.snapshot("after_ForceInterfEF", self.ds, None);
+  // OCCT L316: ForceInterfEF
+  self.force_interf_ef();
+  self.dump_ctx.snapshot("after_ForceInterfEF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ForceInterfEF" { return; } }
- }
 
- if !skip_ff {
- self.perform_ff();
- // rcad ICs start with empty pave_blocks; MakeBlocks::InitPaveBlock1 creates them.
-
- // =OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
- // After FF, create shared SD vertices for same-domain (coplanar) face
- // overlap boundaries so that overlap polygon vertices are shared between
- // both faces and registered in face_info.vertices_in.
- self.make_sd_vertices_ff();
- self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
+  // OCCT L324: PerformFF
+  self.perform_ff();
+  self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformFF" { return; } }
- }
 
  //  ?OCCT L318: UpdateBlocksWithSharedVertices
  self.update_blocks_with_shared_vertices();
 
- //  ?OCCT L320: UpdateFaceInfoIn — must precede MakeSplitEdges so
- // IC endpoint vertices are in face_info.vertices_in.
- for fi in 0..self.ds.faces.len() {
-   self.ds.update_face_info_in(fi);
- }
- // Register IC endpoint vertices as paves on source edges, then split.
- self.register_ic_endpoints_on_edges();
- // OCCT-aligned: RefineFaceInfoIn =remove PBs that are both On and In.
+ // OCCT L320: RefineFaceInfoIn before MakeSplitEdges
  for fi in 0..self.ds.faces.len() {
    self.ds.refine_face_info_in(fi);
  }
 
- //  ?OCCT L322: MakeSplitEdges
+ // OCCT L322: MakeSplitEdges
  self.make_split_edges();
  self.dump_ctx.snapshot("after_MakeSplitEdges", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeSplitEdges" { return; } }
 
- //  ?OCCT L328: UpdatePaveBlocksWithSDVertices
+ // OCCT L328: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
 
- // OCCT-aligned: UpdateFaceInfoOn + UpdateFaceInfoIn before MakeBlocks
- // (PaveFiller_6.cxx L313-314)
- for fi in 0..self.ds.faces.len() {
- self.ds.update_face_info_on(fi);
- }
- for fi in 0..self.ds.faces.len() {
- self.ds.update_face_info_in(fi);
- }
-
- //  ?OCCT L330: MakeBlocks
+ // OCCT L330: MakeBlocks
  self.make_blocks();
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeBlocks" { return; } }
 
- //  ?OCCT L336: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
- // OCCT uses AddWarning =non-fatal, the operation continues.
+ // OCCT L336: CheckSelfInterference
  let si_warnings = self.check_self_interference();
 
- //  OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
+ // OCCT L338: UpdateInterfsWithSDVertices
  self.update_interfs_with_sd_vertices();
 
- //  OCCT-aligned: ReleasePaveBlocks (PerformInternal L339) =OCCT frees
- // UNUSED PBs.  rcad: PBs remain in pool (PaveBlocksSc indices stay valid).
- // Clearing the pool here would invalidate PaveBlocksSc indices.
+ // OCCT L339: ReleasePaveBlocks
+ self.ds.release_pave_blocks();
 
- //  OCCT-aligned: RefineFaceInfoOn =after ReleasePaveBlocks, remove
- // zero-length On pave blocks (PerformInternal L340, BOPDS_DS::RefineFaceInfoOn).
+ // OCCT L340: RefineFaceInfoOn =after ReleasePaveBlocks, remove
+ // zero-length On pave blocks (BOPDS_DS::RefineFaceInfoOn).
  for fi in 0..self.ds.faces.len() {
  self.ds.refine_face_info_on(fi);
  }
@@ -1481,53 +1383,5 @@ impl<'a> PaveFiller<'a> {
  }
 
  pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
-
- /// Register IC endpoint vertices (from face_info.vertices_in/on) as paves
- /// on the face's boundary edges when the vertex lies on that edge.
- /// This is necessary for MakeSplitEdges to split edges at IC endpoints.
- pub(crate) fn register_ic_endpoints_on_edges(&mut self) {
-   use crate::pave_filler::helpers::project_vertex_to_curve;
-   let mut affected_edges: std::collections::HashSet<usize> =
-     std::collections::HashSet::new();
-
-   for fi in 0..self.ds.faces.len() {
-     let candidates: Vec<usize> = self.ds.face_info(fi).vertices_in
-       .iter().copied().collect();
-     if candidates.is_empty() { continue; }
-     let boundary_edges: Vec<usize> = self.ds.face_boundary_edges(fi).to_vec();
-
-     for &vi in &candidates {
-       if vi >= self.ds.vertices.len() { continue; }
-       let pt = self.ds.vertex_point(vi);
-       let v_tol = self.ds.vertex_tolerance(vi);
-
-       for &ei in &boundary_edges {
-         if ei >= self.ds.edges.len() { continue; }
-         let edge_tol = self.ds.edge_tolerance(ei).max(v_tol).max(CONFUSION);
-         let t_range = self.ds.edge_range(ei);
-
-         let t_opt = project_vertex_to_curve(pt, &self.ds.edges[ei].curve, edge_tol);
-         let t = match t_opt {
-           Some(t) if t >= t_range[0] - edge_tol && t <= t_range[1] + edge_tol => t,
-           _ => continue,
-         };
-
-         let already_pave = self.ds.edge_paves(ei).iter()
-           .any(|p| p.vertex_idx == vi);
-         if already_pave { continue; }
-
-         self.ds.edge_paves[ei].push(Pave {
-           vertex_idx: vi,
-           param: t.clamp(t_range[0], t_range[1]),
-         });
-         affected_edges.insert(ei);
-       }
-     }
-   }
-
-   if !affected_edges.is_empty() {
-     self.split_pave_blocks(&affected_edges, false);
-   }
- }
 }
 

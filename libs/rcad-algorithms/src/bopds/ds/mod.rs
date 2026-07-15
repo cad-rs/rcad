@@ -1879,6 +1879,14 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  });
  }
 
+ /// OCCT-aligned: BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1220-1225).
+ /// Clears all section pave blocks (pave_blocks_sc) from all face infos.
+ pub fn release_pave_blocks(&mut self) {
+   for fi in 0..self.faces.len() {
+     self.faces[fi].face_info.pave_blocks_sc.clear();
+   }
+ }
+
  ///  ?OCCT-aligned: BOPDS_DS::RefineFaceInfoIn.
  ///
  /// Removes PaveBlocks from the In set that ALSO appear in the On set.
