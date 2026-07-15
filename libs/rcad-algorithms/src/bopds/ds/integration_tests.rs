@@ -1,4 +1,4 @@
-﻿//! Integration tests for DS + PaveFiller + boolean pipeline.
+//! Integration tests for DS + PaveFiller + boolean pipeline.
 //! These tests verify alignment with OCCT reference data.
 //! All reference values come from OCCT DRAW runs (bfuse_simple A1).
 //!
@@ -967,7 +967,7 @@ fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
 /// Tests the full PaveFiller pipeline on two identical boxes at origin.
 /// OCCT ref counts are from DRAW nbshapes at each stage.
 #[test]
-fn pf_ref_plane_plane() {
+fn pavefiller_stage_ref_plane_plane() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
 
@@ -1019,7 +1019,7 @@ fn pf_ref_plane_plane() {
 }
 /// Stage ref: plane_sphere (box x psphere)
 #[test]
-fn pf_ref_plane_sphere() {
+fn pavefiller_stage_ref_plane_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
     let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
 
@@ -1075,7 +1075,7 @@ fn pf_ref_plane_sphere() {
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
 #[test]
-fn pf_ref_plane_cylinder() {
+fn pavefiller_stage_ref_plane_cylinder() {
     let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
     let b = make_cyl(0.5, 2.0);
 
@@ -1131,7 +1131,7 @@ fn pf_ref_plane_cylinder() {
 }
 /// Stage ref: plane_cone (box x pcone)
 #[test]
-fn pf_ref_plane_cone() {
+fn pavefiller_stage_ref_plane_cone() {
     let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
     let b = make_cone_fn(1.0, 2.0);
 
@@ -1187,7 +1187,7 @@ fn pf_ref_plane_cone() {
 }
 /// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
 #[test]
-fn pf_ref_cylinder_cylinder() {
+fn pavefiller_stage_ref_cylinder_cylinder() {
     let a = make_cyl(1.0, 3.0);
     let b = {
         let mut c = make_cyl(1.0, 3.0);
@@ -1247,7 +1247,7 @@ fn pf_ref_cylinder_cylinder() {
 }
 /// Stage ref: cylinder_sphere (pcylinder x psphere)
 #[test]
-fn pf_ref_cylinder_sphere() {
+fn pavefiller_stage_ref_cylinder_sphere() {
     let a = make_cyl(0.8, 3.0);
     let b = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.5).unwrap();
 
@@ -1303,7 +1303,7 @@ fn pf_ref_cylinder_sphere() {
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
 #[test]
-fn pf_ref_cylinder_torus() {
+fn pavefiller_stage_ref_cylinder_torus() {
     let a = make_cyl(1.0, 5.0);
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 1.0).unwrap();
 
@@ -1360,7 +1360,7 @@ fn pf_ref_cylinder_torus() {
 /// Stage ref: cone_cone (pcone x pcone)
 #[test]
 #[ignore = "cone pcurve degenerated: pre-existing bug"]
-fn pf_ref_cone_cone() {
+fn pavefiller_stage_ref_cone_cone() {
     let a = {
         let mut c = make_cone_fn(1.0, 2.0);
         c.apply_transform(glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 0.75)));
@@ -1425,7 +1425,7 @@ fn pf_ref_cone_cone() {
 }
 /// Stage ref: sphere_sphere (psphere x psphere)
 #[test]
-fn pf_ref_sphere_sphere() {
+fn pavefiller_stage_ref_sphere_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
     let b = rcad_modeling::make_sphere_brep(DVec3::new(1.0, 0.0, 0.0), 2.0).unwrap();
 
