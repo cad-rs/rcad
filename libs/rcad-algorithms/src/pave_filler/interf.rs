@@ -200,7 +200,7 @@ impl<'a> PaveFiller<'a> {
         // L1253-1257: get EE array reference (rcad: already exists as Vec)
         // rcad: use Vec<Option<InterferenceEE>> to store per-pair results
         let b_si = b_si_check_mode;
-        let mut a_ee_results: Vec<Option<InterferenceEE>> = vec![None; a_nb_pairs];
+        let mut a_ee_results: Vec<Option<(InterferenceEE, bool)>> = vec![None; a_nb_pairs];
 
         for (idx, entry) in a_v_edge_edge.iter().enumerate() {
             let curve1 = match self.ds.edge_curve(entry.n_e1) {
@@ -228,149 +228,29 @@ impl<'a> PaveFiller<'a> {
                 self.ds.fuzzy_tol
             };
 
-            // Compute intersection between the two curve ranges
-            let result = match (&curve1, &curve2) {
-                (Curve3::Line(l1), Curve3::Line(l2)) => {
-                    // Line-line: find closest approach
-                    let range1 = self.ds.edge_range(entry.n_e1);
-                    let range2 = self.ds.edge_range(entry.n_e2);
-                    #[allow(clippy::collapsible_if)]
-                    if let Some((t1, t2, pt)) = intersect_line_line(
-                        l1, range1, l2, range2, fuzzy)
-                    {
-                        Some(InterferenceEE {
-                            e1: entry.n_e1,
-                            e2: entry.n_e2,
-                            point: pt,
-                            param1: t1,
-                            param2: t2,
-                            new_vertex: entry.n_v1,
-                        })
-                    } else {
-                        None
-                    }
-                }
-                _ => {
-                    // Generic curve intersection: coarse + adaptive + Newton
-                    let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
-                    let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
-                    let tgt1 = curve1.tangent_at(mid_t1);
-                    let tgt2 = curve2.tangent_at(mid_t2);
-                    let cos_angle = if tgt1.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE
-                        && tgt2.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE
-                    {
-                        tgt1.normalize().dot(tgt2.normalize()).abs()
-                    } else {
-                        0.0
-                    };
-                    let fuzzy = if cos_angle >= 0.9063 {
-                        self.ds.fuzzy_tol + a_tol_add
-                    } else {
-                        self.ds.fuzzy_tol
-                    };
-                    let mut best_t1 = mid_t1;
-                    let mut best_t2 = mid_t2;
-                    let mut best_d = f64::MAX;
-                    // Coarse 21x21 grid
-                    for si in 0..21 {
-                        let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
-                        let p1 = curve1.point_at(t1);
-                        for sj in 0..21 {
-                            let t2 = tr2[0] + (tr2[1] - tr2[0]) * (sj as f64 / 20.0);
-                            let d = p1.distance(curve2.point_at(t2));
-                            if d < best_d {
-                                best_d = d;
-                                best_t1 = t1;
-                                best_t2 = t2;
-                            }
-                        }
-                    }
-                    // Adaptive refinement around best point
-                    let mut r1_lo = (best_t1 - (tr1[1] - tr1[0]) / 20.0).max(tr1[0]);
-                    let mut r1_hi = (best_t1 + (tr1[1] - tr1[0]) / 20.0).min(tr1[1]);
-                    let mut r2_lo = (best_t2 - (tr2[1] - tr2[0]) / 20.0).max(tr2[0]);
-                    let mut r2_hi = (best_t2 + (tr2[1] - tr2[0]) / 20.0).min(tr2[1]);
-                    for _ in 0..4 {
-                        let mid1 = (r1_lo + r1_hi) * 0.5;
-                        let mid2 = (r2_lo + r2_hi) * 0.5;
-                        let test_t1 = [r1_lo, mid1, r1_hi];
-                        let test_t2 = [r2_lo, mid2, r2_hi];
-                        for &t1 in &test_t1 {
-                            let pt1 = curve1.point_at(t1);
-                            for &t2 in &test_t2 {
-                                let d = pt1.distance(curve2.point_at(t2));
-                                if d < best_d {
-                                    best_d = d;
-                                    best_t1 = t1;
-                                    best_t2 = t2;
-                                }
-                            }
-                        }
-                        let span = (r1_hi - r1_lo) * 0.5;
-                        r1_lo = (best_t1 - span).max(tr1[0]);
-                        r1_hi = (best_t1 + span).min(tr1[1]);
-                        r2_lo = (best_t2 - span).max(tr2[0]);
-                        r2_hi = (best_t2 + span).min(tr2[1]);
-                    }
-                    // Newton-Raphson refinement
-                    let mut nr_t1 = best_t1;
-                    let mut nr_t2 = best_t2;
-                    for _ in 0..8 {
-                        let p1 = curve1.point_at(nr_t1);
-                        let p2 = curve2.point_at(nr_t2);
-                        let diff = p1 - p2;
-                        if diff.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
-                            break;
-                        }
-                        let t1 = curve1.tangent_at(nr_t1);
-                        let t2 = curve2.tangent_at(nr_t2);
-                        if t1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE
-                            || t2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE
-                        {
-                            break;
-                        }
-                        let d1 = t1.normalize();
-                        let d2 = t2.normalize();
-                        let h00 = 2.0;
-                        let h01 = -2.0 * d1.dot(d2);
-                        let h10 = h01;
-                        let h11 = 2.0;
-                        let g0 = 2.0 * diff.dot(d1);
-                        let g1 = 2.0 * diff.dot(d2);
-                        let det = h00 * h11 - h01 * h01;
-                        if det.abs() < TOLERANCE_LEN_SQ_DIV_SAFE {
-                            break;
-                        }
-                        let dt1 = (-g0 * h11 - g1 * h01) / det;
-                        let dt2 = (g1 * h00 + g0 * h10) / det;
-                        let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
-                        let new_t2 = (nr_t2 + dt2).clamp(tr2[0], tr2[1]);
-                        if (new_t1 - nr_t1).abs() < 1e-12 && (new_t2 - nr_t2).abs() < 1e-12 {
-                            break;
-                        }
-                        nr_t1 = new_t1;
-                        nr_t2 = new_t2;
-                    }
-                    let nr_d = curve1.point_at(nr_t1).distance(curve2.point_at(nr_t2));
-                    if nr_d < best_d {
-                        best_d = nr_d;
-                        best_t1 = nr_t1;
-                        best_t2 = nr_t2;
-                    }
-                    if best_d <= fuzzy {
-                        let best_pt = curve1.point_at(best_t1);
-                        Some(InterferenceEE {
-                            e1: entry.n_e1,
-                            e2: entry.n_e2,
-                            point: best_pt,
-                            param1: best_t1,
-                            param2: best_t2,
-                            new_vertex: entry.n_v1,
-                        })
-                    } else {
-                        None
-                    }
-                }
+            // OCCT UseQuickCoincidenceCheck (BOPAlgo_EdgeEdge): midpoint projection
+            // ForceInterfEE only accepts EDGE-type common parts (coincident ranges).
+            let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
+            let mid_p1 = curve1.point_at(mid_t1);
+            let proj_on_2 = closest_point_on_curve(&curve2, mid_p1, 64);
+            let d_at_mid = mid_p1.distance(curve2.point_at(proj_on_2.param));
+            let is_coincident = d_at_mid <= fuzzy;
+
+            let result: Option<(InterferenceEE, bool)> = if is_coincident {
+                let mid_param2 = proj_on_2.param;
+                let mid_pt = (curve1.point_at(mid_t1) + curve2.point_at(mid_param2)) * 0.5;
+                Some((InterferenceEE {
+                    e1: entry.n_e1,
+                    e2: entry.n_e2,
+                    point: mid_pt,
+                    param1: mid_t1,
+                    param2: mid_param2,
+                    new_vertex: entry.n_v1,
+                }, true))
+            } else {
+                // OCCT L1287-1291: only accept EDGE-type (coincident range).
+                // Point-type results belong to PerformEE, not ForceInterfEE.
+                None
             };
 
             a_ee_results[idx] = result;
@@ -385,10 +265,14 @@ impl<'a> PaveFiller<'a> {
 
         for (idx, opt_ee) in a_ee_results.iter().enumerate() {
             let entry = &a_v_edge_edge[idx];
-            let ee = match opt_ee {
-                Some(e) => e,
+            let (ee, is_edge_type) = match opt_ee {
+                Some(pair) => pair,
                 None => continue,
             };
+            // OCCT L1287-1291: only EDGE-type common parts accepted
+            if !is_edge_type {
+                continue;
+            }
 
             // L1297-1305: self-interference warning
             // OCCT: if both edges are from the same rank, add self-interference warning
