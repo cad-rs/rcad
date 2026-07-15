@@ -424,44 +424,61 @@ impl<'a> PaveFiller<'a> {
   if self.non_destructive {
    return;
   }
-  let mut planar_faces: Vec<usize> = Vec::new();
- for (fi, f) in self.ds.faces.iter().enumerate() {
- if matches!(f.surface, Surface3::Plane(_)) {
- planar_faces.push(fi);
- }
- }
- if planar_faces.is_empty() { return; }
+  // OCCT L857-879: Iterate V/E/F vs F via Iterator to find planar faces
+  use crate::bopds::ds::BOPDS_Iterator;
+  use rcad_kernel::topods::ShapeType;
+  let mut a_mf: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  let a_types = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
+  for &a_type in &a_types {
+   let mut it = BOPDS_Iterator::new(self.ds);
+   it.prepare();
+   let pairs = it.pairs(a_type, ShapeType::Face);
+   for &(_n1, n_f) in pairs.iter() {
+    if n_f < self.ds.faces.len()
+     && matches!(self.ds.faces[n_f].surface, Surface3::Plane(_))
+    {
+     a_mf.insert(n_f);
+    }
+   }
+  }
+  // OCCT L881-885: if no planar faces found, return
+  if a_mf.is_empty() { return; }
 
- let surf: Vec<Surface3> = planar_faces.iter().map(|&fi| self.ds.faces[fi].surface.clone()).collect();
-
- // Collect all edge indices from each planar face's boundary
- let mut face_edges: Vec<Vec<usize>> = Vec::with_capacity(planar_faces.len());
- for (pos, &fi) in planar_faces.iter().enumerate() {
- let f = &self.ds.faces[fi];
- let mut eids: Vec<usize> = f.boundary_edges.clone();
- for w in &f.inner_boundary_edges {
- eids.extend(w.iter().map(|&(ei, _)| ei));
- }
- face_edges.push(eids);
- }
-
- // Compute pcurves for edge-face pairs that don't already have one
- for (pos, &fi) in planar_faces.iter().enumerate() {
- for &ei in &face_edges[pos] {
- if self.ds.edge_on_face(ei, fi).is_some() { continue; }
- let Some(edge) = self.ds.edges.get_mut(ei) else { continue; };
- if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf[pos], None) {
- edge.face_reps.push(DSCurveRepOnFace {
- face_idx: fi,
- pcurve,
- pcurve2: None,
- pcurve_range: [0.0, span],
- start_param: 0.0,
- end_param: span,
- });
- }
- }
- }
+  // OCCT L888-901: collect edge-face pairs from planar faces' boundary topology
+  use crate::bopds::ds::DSCurveRepOnFace;
+  let mut ef_pairs: Vec<(usize, usize)> = Vec::new();
+  for &fi in &a_mf {
+   let f = &self.ds.faces[fi];
+   let surf = f.surface.clone();
+   for &ei in &f.boundary_edges {
+    if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
+     ef_pairs.push((ei, fi));
+    }
+   }
+   for w in &f.inner_boundary_edges {
+    for &(ei, _) in w {
+     if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
+      ef_pairs.push((ei, fi));
+     }
+    }
+   }
+  }
+  // OCCT L903-910: run pcurve computation (rcad: sequential, no BOPTools_Parallel)
+  for &(ei, fi) in &ef_pairs {
+   let surf = self.ds.faces[fi].surface.clone();
+   if let Some(edge) = self.ds.edges.get_mut(ei) {
+    if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf, None) {
+     edge.face_reps.push(DSCurveRepOnFace {
+      face_idx: fi,
+      pcurve,
+      pcurve2: None,
+      pcurve_range: [0.0, span],
+      start_param: 0.0,
+      end_param: span,
+     });
+    }
+   }
+  }
  }
 
  //  ?OCCT L248 Prepare: build pcurves on planar faces
