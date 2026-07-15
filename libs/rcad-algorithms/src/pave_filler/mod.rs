@@ -641,10 +641,6 @@ impl<'a> PaveFiller<'a> {
  self.process_de();
  self.dump_ctx.snapshot("after_ProcessDE", self.ds, None);
   if self.check_stop("after_ProcessDE") { return; }
-
- // Export to BRep if direct output is enabled (A3 dual-write).
- // ds_to_brep module disabled during OCCT alignment migration
- if false {}
  }
 
   /// BOPAlgo_PaveFiller::AddIntersectionFailedWarning (PaveFiller_2.cxx).

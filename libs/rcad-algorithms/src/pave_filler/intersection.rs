@@ -997,7 +997,31 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L346-362: aCPrts, aNbCPrts
  let a_nb_cprts = a_v_edge_face[k].hits.len();
  if a_nb_cprts == 0 {
- // OCCT L350-361: MinimalDistance handling (not ported)
+ // OCCT L350-361: MinimalDistance handling
+ {
+ let a_t1_ef = a_v_edge_face[k].aT1;
+ let a_t2_ef = a_v_edge_face[k].aT2;
+ let span = (a_t2_ef - a_t1_ef).abs();
+ if span > crate::tolerance::TOLERANCE_ABS {
+ let mut min_dist = f64::MAX;
+ let edge_curve = &self.ds.edges[nE].curve;
+ for s in 0..5 {
+ let t = a_t1_ef + span * (s as f64 / 4.0);
+ let pt = edge_curve.point_at(t);
+ if let Some((_, _, dist)) = self.context.proj_ps(self.ds, nF, pt) {
+ if dist < min_dist { min_dist = dist; }
+ }
+ }
+ if min_dist < f64::MAX && min_dist > a_tol_e + a_tol_f {
+ let entry = self.distances.entry((nE, nF)).or_default();
+ entry.push(crate::pave_filler::EdgeRangeDistance {
+ first: a_t1_ef,
+ last: a_t2_ef,
+ distance: min_dist,
+ });
+ }
+ }
+ }
  continue;
  }
  let tol_ef = self.ef_tol(nE, nF);
