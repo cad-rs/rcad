@@ -111,37 +111,16 @@ impl<'a> super::PaveFiller<'a> {
   // OCCT L133-137: store results + call AnalyzeShrunkData
   for ((ei, v1i, v2i, p1, p2), (_, range, splittable)) in all_pb.iter().zip(results.iter()) {
    // Find the matching PB (iterate all PBs, not just the first)
-   for pb in self.ds.edges.get(*ei).into_iter().flat_map(|e| &e.pave_blocks) {
+   for pi in 0..self.ds.edges[*ei].pave_blocks.len() {
+    let pb = &self.ds.edges[*ei].pave_blocks[pi];
     let r = pb.0.read().unwrap();
     if (r.pave1.param - *p1).abs() < 1e-12 && (r.pave2.param - *p2).abs() < 1e-12 {
      drop(r);
      pb.0.write().unwrap().shrunk_range = *range;
      pb.0.write().unwrap().is_splittable = *splittable;
-     // OCCT L136: AnalyzeShrunkData (alert checking)
-     if !splittable {
-      // OCCT L773-817: add warning alerts (simplified — no BOPAlgo_Alert in rcad)
-      let a_tol_v1 = self.ds.vertex_tolerance(*v1i);
-      let a_tol_v2 = self.ds.vertex_tolerance(*v2i);
-      let e_tol = et[*ei];
-      let edge_span = (self.ds.edge_range(*ei)[1] - self.ds.edge_range(*ei)[0]).abs();
-      let pb_span = (*p2 - *p1).abs();
-      // OCCT L778: bWholeEdge = PB covers whole edge
-      let b_whole_edge = pb_span >= edge_span - 1e-12;
-      if range.is_none() {
-       // OCCT L793-807: shrunk range computation failed
-       pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
-       pb.0.write().unwrap().is_splittable = false;
-      }
-      // OCCT L819-823: set final shrunk data with gap
-      if let Some(sr) = *range {
-       let gap = a_tol_v1.max(a_tol_v2).max(e_tol) + self.fuzzy_tolerance / 2.0;
-       // OCCT: SetShrunkData(aTS1, aTS2, aBox.SetGap(...), splittable)
-       // rcad: store range directly (no Bnd_Box needed)
-       pb.0.write().unwrap().shrunk_range = Some([sr[0], sr[1]]);
-       pb.0.write().unwrap().is_splittable = *splittable;
-      }
-      break;
-     }
+     // OCCT L136: AnalyzeShrunkData adds warnings + sets final gap
+     self.analyze_shrunk_data(*ei, pi);
+     break;
     }
    }
   }
@@ -150,15 +129,36 @@ impl<'a> super::PaveFiller<'a> {
  /// BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
  pub(crate) fn analyze_shrunk_data(&mut self, ei: usize, pb_idx: usize) {
      if pb_idx >= self.ds.pave_blocks.len() { return; }
-     let (has_shrunk, is_splittable) = {
-         let pb = &self.ds.pave_blocks[pb_idx];
+     let pb = &self.ds.pave_blocks[pb_idx];
+     let (has_shrunk, is_splittable, p1, p2, pe1, pe2, oei) = {
          let r = pb.0.read().unwrap();
-         (r.shrunk_range.is_some(), r.is_splittable)
+         (r.shrunk_range.is_some(), r.is_splittable, r.pave1.param, r.pave2.param, r.pave1.vertex_idx, r.pave2.vertex_idx, r.original_edge)
      };
+     // OCCT L770: if (!theSR.IsDone() || !theSR.IsSplittable())
      if !has_shrunk || !is_splittable {
-         let pb = &self.ds.pave_blocks[pb_idx];
-         pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
-         pb.0.write().unwrap().is_splittable = false;
+         let edge_span = (self.ds.edge_range(ei)[1] - self.ds.edge_range(ei)[0]).abs();
+         let pb_span = (p2 - p1).abs();
+         let b_whole_edge = pb_span >= edge_span - 1e-12;
+         // OCCT L793-807: if shrunk data is not computed successfully
+         if !has_shrunk {
+             pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
+             pb.0.write().unwrap().is_splittable = false;
+             // OCCT L795-802: TooSmallEdge or BadPositioning
+             if b_whole_edge {
+                 self.my_report.add_alert(crate::bopalgo::Alert::TooSmallRange(ei, 0.0));
+             }
+         }
+         // OCCT L809-816: if not splittable
+         if !is_splittable {
+             pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
+             pb.0.write().unwrap().is_splittable = false;
+         }
+         return;
+     }
+     // OCCT L819-823: set shrunk data with gap = aBox.GetGap() + myFuzzyValue / 2.
+     if let Some(sr) = pb.0.read().unwrap().shrunk_range {
+         let gap = self.ds.edge_tolerance(ei).max(TOLERANCE_ABS) + self.fuzzy_tolerance / 2.0;
+         pb.0.write().unwrap().shrunk_range = Some([sr[0] - gap * 0.01, sr[1] + gap * 0.01]);
      }
  }
 
