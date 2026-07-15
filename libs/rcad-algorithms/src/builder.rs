@@ -27,8 +27,8 @@ use crate::pipeline_dump::DumpCtx;
 mod angle_2d;
 mod curve_tools;
 mod debug_utils;
-mod intres2d;
-mod intersection;
+pub(crate) mod intres2d;
+pub(crate) mod intersection;
 mod types;
 mod ds_as_brep;
 

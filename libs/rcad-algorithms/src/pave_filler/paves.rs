@@ -1852,16 +1852,151 @@ impl<'a> super::PaveFiller<'a> {
      }
  }
 
- /// OCCT BOPAlgo_PaveFiller_8.cxx L224-331: FillPaves.
- /// Adds intersection points between the degenerated edge's 2D curve
- /// and each passing edge's 2D curve as Extra paves.
- pub(crate) fn fill_paves(&mut self, _n_vd: usize, _n_ed: usize, _n_fd: usize,
-     _a_lpb_out: &[usize], _a_pbd: &SharedPB) {
-     // OCCT: Ensures the vertex is added as an Extra Pave on the PaveBlock
-     // of the degenerated edge. Implementation uses Geom2dInt_GInter to
-     // intersect the 2D curves and calls AddSplitPoint for valid results.
-     // rcad: full implementation pending 2D curve intersection support.
- }
+/// OCCT PaveFiller_8.cxx L361-393: AddSplitPoint (static helper).
+/// Validates a pave point for a PaveBlock. If the point passes checks
+/// (inside range, not duplicate), adds it as an Extra Pave.
+fn add_split_point(
+    the_pbd: &SharedPB,
+    the_pave: &Pave,
+    the_tol: f64,
+) -> bool {
+    // OCCT L372-375: thePBD->Range(aTD1, aTD2)
+    let (a_td1, a_td2) = the_pbd.0.read().unwrap().range();
+    let a_t = the_pave.param;
+    // OCCT L377-380: check parameter is inside PB range (with tolerance margin)
+    if a_t - a_td1 < the_tol || a_td2 - a_t < the_tol {
+        return false;
+    }
+    // OCCT L383-387: check PB does not contain the same parameter
+    let mut an_ind = 0usize;
+    if the_pbd.0.read().unwrap().contains_parameter(a_t, the_tol, &mut an_ind) {
+        return false;
+    }
+    // OCCT L391: AppendExtPave1(thePave)
+    the_pbd.0.write().unwrap().append_ext_pave1(the_pave.clone());
+    true
+}
+
+/// OCCT BOPAlgo_PaveFiller_8.cxx L224-331: FillPaves.
+/// Adds intersection points between the degenerated edge's 2D curve
+/// and each passing edge's 2D curve as Extra paves.
+pub(crate) fn fill_paves(&mut self, n_vd: usize, n_ed: usize, n_fd: usize,
+    a_lpb_out: &[usize], a_pbd: &SharedPB) {
+    // OCCT L231-236: Prepare pave + get TopoDS shapes
+    let mut a_pave = Pave { vertex_idx: n_vd, param: 0.0 };
+    // OCCT L238-239: aTolV, aBAS
+    let a_tol_v = self.ds.vertex_tolerance(n_vd);
+    // OCCT L243-249: 2D intersection tolerance (U/VResolution from vertex tol)
+    let a_tol_int = crate::tolerance::CONFUSION.max(a_tol_v);
+    // OCCT L254-267: parametric tolerance for comparison
+    let a_tol_cmp = crate::tolerance::CONFUSION;
+    // OCCT L256-257: get 2D curve of degenerated edge on face
+    let (a_c2d_de, a_td1, a_td2) = {
+        let reps = self.ds.edge_face_reps(n_ed);
+        let rep = reps.iter().find(|r| r.face_idx == n_fd);
+        match rep {
+            Some(r) => (Some(r.pcurve.clone()), r.pcurve_range[0], r.pcurve_range[1]),
+            None => (None, 0.0, 0.0),
+        }
+    };
+    let Some(a_c2d_de) = a_c2d_de else { return; };
+    // OCCT L270-271: Geom2dAdaptor_Curve for degenerated edge
+    // OCCT L273-330: iterate passing PBs
+    for &pb_idx in a_lpb_out {
+        if pb_idx >= self.ds.pave_blocks.len() { continue; }
+        let n_e = {
+            let pb = &self.ds.pave_blocks[pb_idx];
+            let r = pb.0.read().unwrap();
+            r.new_edge.unwrap_or(r.original_edge)
+        };
+        if n_e >= self.ds.edges.len() { continue; }
+        // OCCT L283-288: get 2D curve of passing edge on same face
+        let (a_c2d, a_t1, a_t2) = {
+            let reps = self.ds.edge_face_reps(n_e);
+            let rep = reps.iter().find(|r| r.face_idx == n_fd);
+            match rep {
+                Some(r) => (Some(r.pcurve.clone()), r.pcurve_range[0], r.pcurve_range[1]),
+                None => (None, 0.0, 0.0),
+            }
+        };
+        let Some(a_c2d) = a_c2d else { continue; };
+        // OCCT L290-301: Prepare Geom2dAdaptor_Curve for passing edge
+        // OCCT L303: Geom2dInt_GInter intersection
+        use crate::builder::intres2d::IntRes2dDomain;
+        let mut a_domain_de = IntRes2dDomain::new();
+        a_domain_de.set_values_bounded(
+            a_c2d_de.point_at(a_td1), a_td1, a_tol_int,
+            a_c2d_de.point_at(a_td2), a_td2, a_tol_int,
+        );
+        let mut a_domain_e = IntRes2dDomain::new();
+        a_domain_e.set_values_bounded(
+            a_c2d.point_at(a_t1), a_t1, a_tol_int,
+            a_c2d.point_at(a_t2), a_t2, a_tol_int,
+        );
+        let a_g_inter = crate::builder::intersection::intersect_curves_2d_ginter(
+            &a_c2d_de, &a_domain_de,
+            &a_c2d, &a_domain_e,
+            a_tol_int, a_tol_cmp,
+        );
+        // OCCT L305-329: Process intersection results
+        if !a_g_inter.is_empty() {
+            // OCCT L307-313: for each intersection point, AddSplitPoint
+            for (a_x, _) in &a_g_inter {
+                a_pave.param = *a_x;
+                Self::add_split_point(a_pbd, &a_pave, a_tol_cmp);
+            }
+        } else {
+            // OCCT L317-328: projection fallback (endpoint of passing edge onto DE curve)
+            let a_t = if n_vd == {
+                let r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+                r.pave1.vertex_idx
+            } {
+                let r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+                r.pave1.param
+            } else {
+                let r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+                r.pave2.param
+            };
+            let a_p2d = a_c2d.point_at(a_t);
+            // Project point onto degenerated edge's 2D curve (OCCT: Geom2dAPI_ProjectPointOnCurve)
+            let a_proj_t = Self::project_point_on_curve2d(&a_p2d, &a_c2d_de, a_td1, a_td2);
+            if let Some(a_x) = a_proj_t {
+                a_pave.param = a_x;
+                Self::add_split_point(a_pbd, &a_pave, a_tol_cmp);
+            }
+        }
+    }
+}
+
+/// Project a 2D point onto a 2D curve within a parameter range.
+fn project_point_on_curve2d(pt: &DVec2, curve: &Curve2d, t_min: f64, t_max: f64) -> Option<f64> {
+    use rcad_kernel::geom::Curve2dEval;
+    let mut best_t = t_min;
+    let mut best_dist = (pt - curve.point_at(t_min)).length_squared();
+    let n_samples = 64;
+    for i in 1..=n_samples {
+        let t = t_min + (t_max - t_min) * (i as f64 / n_samples as f64);
+        let dist = (pt - curve.point_at(t)).length_squared();
+        if dist < best_dist {
+            best_dist = dist;
+            best_t = t;
+        }
+    }
+    // Refinement: sample more densely around the best candidate
+    let refinement_span = (t_max - t_min) / n_samples as f64;
+    let refine_n = 8;
+    for i in 0..=refine_n {
+        let t = (best_t - refinement_span/2.0) + refinement_span * (i as f64 / refine_n as f64);
+        if t >= t_min && t <= t_max {
+            let dist = (pt - curve.point_at(t)).length_squared();
+            if dist < best_dist {
+                best_dist = dist;
+                best_t = t;
+            }
+        }
+    }
+    Some(best_t)
+}
 
 }
 
