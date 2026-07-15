@@ -638,6 +638,7 @@ impl<'a> PaveFiller<'a> {
                 face: n_f,
                 u: u_val,
                 v: v_val,
+                index_new: None,
             });
             self.ds.interf_tb.insert((n_v.min(n_f), n_v.max(n_f)));
             // Update vertex tolerance

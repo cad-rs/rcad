@@ -416,6 +416,10 @@ pub struct InterferenceVF {
     ///   Stored as (f64, f64) — use u/v getters for clarity.
     pub u: f64,
     pub v: f64,
+    /// BOPDS_Interf::myIndexNew (Interf.hxx L203).
+    ///   Set via SetIndexNew() when UpdateVertex produces a new vertex
+    ///   (SD resolution during VF processing).
+    pub index_new: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
