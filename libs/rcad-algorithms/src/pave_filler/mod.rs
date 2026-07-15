@@ -1260,25 +1260,50 @@ impl<'a> PaveFiller<'a> {
  }
  }
 
+ // OCCT BOPAlgo_PaveFiller_6.cxx L4341-4417 - RemoveMicroEdges
+ // Removes edges whose PaveBlocks have no valid shrunk range.
+ // For each edge with PBs: if any PB has zero-length range, no ShrunkData,
+ // or shrunk range < edge tolerance, the edge's PBs are cleared.
  fn remove_micro_edges(&mut self) {
- let mut micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
- for ei in 0..self.ds.edges.len() {
-  if self.ds.edge_pave_blocks(ei).len() < 2 { continue; }
-  if self.ds.is_edge_degenerated(ei) { continue; }
-  for pb in &self.ds.edges[ei].pave_blocks {
-   let nv1 = pb.0.read().unwrap().pave1.vertex_idx;
-   let nv2 = pb.0.read().unwrap().pave2.vertex_idx;
-   if nv1 == nv2 {
-    if !pb.0.read().unwrap().has_shrunk_data() {
-     micro_edges.insert(ei);
+  let a_nb_e = self.ds.edges.len();
+  for i in 0..a_nb_e {
+   // OCCT L4343: skip removed/degenerated edges
+   if self.ds.edge_has_flag(i) || self.ds.is_edge_degenerated(i) {
+    continue;
+   }
+   // OCCT L4345: aLPB = myDS->PaveBlocks(i)
+   let a_lpb: Vec<crate::bopds::pave::SharedPB> = self.ds.edge_pave_blocks(i).to_vec();
+   if a_lpb.is_empty() { continue; }
+   let mut b_to_remove = false;
+   for spb in &a_lpb {
+    let pb = spb.0.read().unwrap();
+    // OCCT L4351: aPB->Range(aT1, aT2)
+    let (a_t1, a_t2) = pb.range();
+    // OCCT L4352: if (Abs(aT2 - aT1) < Precision::PConfusion())
+    if (a_t2 - a_t1).abs() < rcad_kernel::tolerance::CONFUSION {
+     b_to_remove = true;
+     break;
     }
-    break;
+    // OCCT L4357: if (!aPB->HasShrunkData())
+    if !pb.has_shrunk_data() {
+     b_to_remove = true;
+     break;
+    }
+    // OCCT L4362: aPB->ShrunkData(aTS1, aTS2, aIsSplittable)
+    let (a_ts1, a_ts2, _a_is_splittable) = pb.shrunk_data();
+    // OCCT L4365: aTolE = Max(Tolerance(i, EDGE), Precision::Confusion())
+    let a_tol_e = self.ds.edge_tolerance(i).max(crate::tolerance::CONFUSION);
+    // OCCT L4367: if (Abs(aTS2 - aTS1) < aTolE)
+    if (a_ts2 - a_ts1).abs() < a_tol_e {
+     b_to_remove = true;
+     break;
+    }
+   }
+   // OCCT L4374: if bToRemove -> clear all PBs for this edge
+   if b_to_remove {
+    self.ds.edge_pave_blocks_mut(i).clear();
    }
   }
- }
- for &ei in &micro_edges {
-  self.ds.edge_pave_blocks_mut(ei).clear();
- }
  }
 
  // Missing WIP methods
