@@ -1375,9 +1375,13 @@ impl<'a> super::PaveFiller<'a> {
  (Surface3::Plane(p1), Surface3::Plane(p2)) => {
  let dot = p1.normal.dot(p2.normal).abs();
  if dot > 0.9999 {
+ // Nearly parallel — check if coincident (OCCT: same plane within tolerance)
  let d = (p2.origin - p1.origin).dot(p1.normal).abs();
  d < TOLERANCE_ABS * 100.0
- } else { false }
+ } else {
+ // Non-parallel = planes DO intersect (OCCT CheckPlanes returns true)
+ true
+ }
  }
  _ => false,
  }
