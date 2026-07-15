@@ -100,18 +100,49 @@ impl<'a> super::PaveFiller<'a> {
   if all_pb.is_empty() { return; }
   let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
   let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
-  let v_tols: Vec<f64> = (0..self.ds.vertex_origins.len()).map(|vi| self.ds.vertex_tolerance(vi)).collect();
-  let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
-   if self.ds.is_edge_degenerated(*ei) { return (None, false); }
+  let vtols: Vec<f64> = (0..self.ds.vertices.len()).map(|vi| self.ds.vertex_tolerance(vi)).collect();
+  let results: Vec<(usize, Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
+   if self.ds.is_edge_degenerated(*ei) { return (*ei, None, false); }
    let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
-   sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
+   sr.set_data(*ei, [*p1, *p2], vtols[*v1i], vtols[*v2i], et[*ei]);
    sr.perform(&ec[*ei]);
-   (sr.shrunk_range(), sr.is_splittable())
+   (*ei, sr.shrunk_range(), sr.is_splittable())
   }).collect();
-  for ((ei, _v1i, _v2i, _p1, _p2), (range, splittable)) in all_pb.iter().zip(results.iter()) {
-   if let Some(pb) = self.ds.edges.get(*ei).and_then(|e| e.pave_blocks.first()) {
-    pb.0.write().unwrap().shrunk_range = *range;
-    pb.0.write().unwrap().is_splittable = *splittable;
+  // OCCT L133-137: store results + call AnalyzeShrunkData
+  for ((ei, v1i, v2i, p1, p2), (_, range, splittable)) in all_pb.iter().zip(results.iter()) {
+   // Find the matching PB (iterate all PBs, not just the first)
+   for pb in self.ds.edges.get(*ei).into_iter().flat_map(|e| &e.pave_blocks) {
+    let r = pb.0.read().unwrap();
+    if (r.pave1.param - *p1).abs() < 1e-12 && (r.pave2.param - *p2).abs() < 1e-12 {
+     drop(r);
+     pb.0.write().unwrap().shrunk_range = *range;
+     pb.0.write().unwrap().is_splittable = *splittable;
+     // OCCT L136: AnalyzeShrunkData (alert checking)
+     if !splittable {
+      // OCCT L773-817: add warning alerts (simplified — no BOPAlgo_Alert in rcad)
+      let a_tol_v1 = self.ds.vertex_tolerance(*v1i);
+      let a_tol_v2 = self.ds.vertex_tolerance(*v2i);
+      let e_tol = et[*ei];
+      let edge_span = (self.ds.edge_range(*ei)[1] - self.ds.edge_range(*ei)[0]).abs();
+      let pb_span = (*p2 - *p1).abs();
+      // OCCT L778: bWholeEdge = PB covers whole edge
+      let b_whole_edge = pb_span >= edge_span - 1e-12;
+      if range.is_none() {
+       // OCCT L793-807: shrunk range computation failed
+       pb.0.write().unwrap().shrunk_range = Some([0.0, 0.0]);
+       pb.0.write().unwrap().is_splittable = false;
+      }
+      // OCCT L819-823: set final shrunk data with gap
+      if let Some(sr) = *range {
+       let gap = a_tol_v1.max(a_tol_v2).max(e_tol) + self.fuzzy_tolerance / 2.0;
+       // OCCT: SetShrunkData(aTS1, aTS2, aBox.SetGap(...), splittable)
+       // rcad: store range directly (no Bnd_Box needed)
+       pb.0.write().unwrap().shrunk_range = Some([sr[0], sr[1]]);
+       pb.0.write().unwrap().is_splittable = *splittable;
+      }
+      break;
+     }
+    }
    }
   }
  }
