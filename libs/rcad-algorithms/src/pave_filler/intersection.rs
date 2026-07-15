@@ -1751,26 +1751,38 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
   }
  };
 
+ // OCCT L529-551: EDGE-type common parts — coincident edges create EE interferences
+ if hits.is_empty() {
+  let b_coincident = match (&e1_curve, &e2_curve) {
+  (Curve3::Line(l1), Curve3::Line(l2)) => {
+   let cross = l1.direction.cross(l2.direction);
+   if cross.length() > tol { false }
+   else { (l2.origin - l1.origin).cross(l1.direction).length() <= tol }
+  }
+  _ => false,
+  };
+  if b_coincident {
+   let mid_t = (range1[0] + range1[1]) * 0.5;
+   let mid_pt = e1_curve.point_at(mid_t);
+   let new_v = self.ds.add_vertex(mid_pt);
+   self.ds.interf_ee.push(InterferenceEE{
+    e1, e2, point: mid_pt,
+    param1: range1[0], param2: range2[0],
+    new_vertex: new_v,
+   });
+   self.ds.edge_paves[e1].push(Pave { vertex_idx: new_v, param: range1[0] });
+   self.ds.edge_paves[e2].push(Pave { vertex_idx: new_v, param: range2[0] });
+   modified.insert(e1);
+   modified.insert(e2);
+   return;
+  }
+  return;
+ }
+
  //  Process each intersection result (PaveFiller_3.cxx L682-750).
  // For each valid intersection, create a new vertex and record EE interference.
- // OCCT's UpdateVertex handles proximity via tolerance merging; rcad creates
- // vertices directly (architecture diff: rcad DSVertex has no UpdateVertex).
  for (t1, t2, point) in hits {
- // ??restrict to shrunk range.  IntTools_EdgeEdge computes
- // within the shrunk range; results at/outside the boundary are
- // endpoint-coincident (handled by VV/VE/VF) or coincide with an existing
- // pave vertex ??neither should create a new EE interference.
  if t1 < sr1[0] || t1 > sr1[1] || t2 < sr2[0] || t2 > sr2[1] { continue; }
- // ??skip tangent/colinear edge pairs.  OCCT
- // (PaveFiller_3.cxx) checks aEECP.TangentEdges() after EE computation
- // and defers the entire range to ForceInterfEE (CommonBlocks).
- let is_parallel = match (&e1_curve, &e2_curve) {
-  (Curve3::Line(l1), Curve3::Line(l2)) =>
-   l1.direction.cross(l2.direction).length() <= tol,
-  _ => false,
- };
- if is_parallel { continue; }
- let new_v = self.ds.add_vertex(point);
  let new_v = self.ds.add_vertex(point);
  self.ds.interf_ee.push(InterferenceEE{
  e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
