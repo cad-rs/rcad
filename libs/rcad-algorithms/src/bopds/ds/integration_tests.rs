@@ -37,15 +37,12 @@ fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
     let mut brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
-    // SAFETY: setting env var for stage control in test context
-    unsafe { std::env::set_var("RCAD_STOP_AFTER", stage); }
     {
         let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
         filler.set_run_parallel(false);
+        filler.stop_after = Some(stage.to_string());
         filler.perform(a, b);
     }
-    // SAFETY: removing test env var
-    unsafe { std::env::remove_var("RCAD_STOP_AFTER"); }
     ds
 }
 

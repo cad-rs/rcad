@@ -135,6 +135,9 @@ pub struct PaveFiller<'a> {
  /// Pipeline stage dump context (rcad PF stages). Created from env vars;
  /// disabled when RCAD_DUMP_PIPELINE is not set.
  pub dump_ctx: crate::pipeline_dump::DumpCtx,
+ /// Stage to stop after (for stage-by-stage testing). When set, perform()
+ /// returns early after completing the named stage.
+ pub stop_after: Option<String>,
 }
 
 impl<'a> PaveFiller<'a> {
@@ -287,11 +290,19 @@ impl<'a> PaveFiller<'a> {
  }
  }
 
+ /// Check whether to stop after the given stage name.
+ /// Returns true if perform() should return early.
+ fn check_stop(&self, stage: &str) -> bool {
+     if self.stop_after.as_deref() == Some(stage) { return true; }
+     if let Ok(s) = std::env::var("RCAD_STOP_AFTER") { return s == stage; }
+     false
+ }
+
  pub fn perform(&mut self, a: &topods::BRep, b: &topods::BRep) {
   // =OCCT-aligned: Init =create DS from arguments (PaveFiller.cxx L176-213).
   self.init(a, b, self.fuzzy_tolerance);
   self.dump_ctx.snapshot("after_Init", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_Init" { return; } }
+  if self.check_stop("after_Init") { return; }
 
   // Build face BVH for FF pair detection (analogous to BOPTools_BoxTree).
   // Must happen after init() populates the DS faces.
@@ -311,7 +322,7 @@ impl<'a> PaveFiller<'a> {
   // OCCT L251: Prepare =build pcurves on planar faces.
   self.prepare();
   self.dump_ctx.snapshot("after_Prepare", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_Prepare" { return; } }
+  if self.check_stop("after_Prepare") { return; }
 
   // OCCT-aligned: BOPDS_Iterator — single BVH, type bucketing, stable_sort.
   // rcad: extract all pair lists upfront (Rust borrow limits prevent
@@ -330,12 +341,12 @@ impl<'a> PaveFiller<'a> {
 
   self.perform_vv(&vv_pairs);
   self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVV" { return; } }
+  if self.check_stop("after_PerformVV") { return; }
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE)
   self.perform_ve_bvh(&ve_pairs);
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVE" { return; } }
+  if self.check_stop("after_PerformVE") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVE, after dump)
   self.ds.update_pave_blocks_with_sd_vertices();
 
@@ -344,14 +355,14 @@ impl<'a> PaveFiller<'a> {
   // OCCT: TreatNewVertices (inside PerformEE)
   self.treat_new_vertices();
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEE" { return; } }
+  if self.check_stop("after_PerformEE") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformEE, after dump)
   self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE)
   self.perform_vf_bvh(&vf_pairs);
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVF" { return; } }
+  if self.check_stop("after_PerformVF") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVF, after dump)
   self.ds.update_pave_blocks_with_sd_vertices();
 
@@ -367,27 +378,27 @@ impl<'a> PaveFiller<'a> {
   // OCCT L296: UpdateInterfsWithSDVertices
   self.update_interfs_with_sd_vertices();
   self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEF" { return; } }
+  if self.check_stop("after_PerformEF") { return; }
 
   // OCCT L300: RepeatIntersection
   self.repeat_intersection();
   self.dump_ctx.snapshot("after_RepeatIntersection", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_RepeatIntersection" { return; } }
+  if self.check_stop("after_RepeatIntersection") { return; }
 
   // OCCT L308: ForceInterfEE
   self.force_interf_ee();
   self.dump_ctx.snapshot("after_ForceInterfEE", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ForceInterfEE" { return; } }
+  if self.check_stop("after_ForceInterfEE") { return; }
 
   // OCCT L316: ForceInterfEF
   self.force_interf_ef();
   self.dump_ctx.snapshot("after_ForceInterfEF", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ForceInterfEF" { return; } }
+  if self.check_stop("after_ForceInterfEF") { return; }
 
   // OCCT L324: PerformFF
   self.perform_ff();
   self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformFF" { return; } }
+  if self.check_stop("after_PerformFF") { return; }
 
  // OCCT L331: UpdateBlocksWithSharedVertices
  self.update_blocks_with_shared_vertices();
@@ -400,7 +411,7 @@ impl<'a> PaveFiller<'a> {
  // OCCT L335: MakeSplitEdges
  self.make_split_edges();
  self.dump_ctx.snapshot("after_MakeSplitEdges", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeSplitEdges" { return; } }
+  if self.check_stop("after_MakeSplitEdges") { return; }
 
  // OCCT L342: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
@@ -408,7 +419,7 @@ impl<'a> PaveFiller<'a> {
  // OCCT L344: MakeBlocks
  self.make_blocks();
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeBlocks" { return; } }
+  if self.check_stop("after_MakeBlocks") { return; }
 
  // OCCT L351: CheckSelfInterference
  let _si_warnings = self.check_self_interference();
@@ -431,12 +442,12 @@ impl<'a> PaveFiller<'a> {
  // OCCT L359: MakePCurves =after RemoveMicroEdges
  self.make_pcurves();
  self.dump_ctx.snapshot("after_MakePCurves", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakePCurves" { return; } }
+  if self.check_stop("after_MakePCurves") { return; }
 
  // OCCT L366: ProcessDE =after MakePCurves
  self.process_de();
  self.dump_ctx.snapshot("after_ProcessDE", self.ds, None);
-  if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ProcessDE" { return; } }
+  if self.check_stop("after_ProcessDE") { return; }
 
  // Export to BRep if direct output is enabled (A3 dual-write).
  // ds_to_brep module disabled during OCCT alignment migration

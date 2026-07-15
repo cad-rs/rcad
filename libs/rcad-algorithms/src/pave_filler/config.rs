@@ -35,6 +35,7 @@ impl<'a> PaveFiller<'a> {
                 &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
                 "pf",
             ),
+            stop_after: None,
         }
     }
 
@@ -73,6 +74,7 @@ impl<'a> PaveFiller<'a> {
                 &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
                 "pf",
             ),
+            stop_after: None,
         }
     }
 
@@ -111,6 +113,7 @@ impl<'a> PaveFiller<'a> {
                 &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
                 "pf",
             ),
+            stop_after: None,
         }
     }
 
