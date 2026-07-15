@@ -897,6 +897,49 @@ fn shape_info_box_is_out_works() {
     }
 }
 
+// =========================================================================
+// Tests: PaveFiller end-to-end verification
+// These tests run PaveFiller to completion and verify intersection results.
+// =========================================================================
+
+#[test]
+fn pavefiller_sphere_box_has_intersection() {
+    let (sphere, bx) = sphere_box();
+    let ds = pave_fill_stage(&sphere, &bx, "after_ProcessDE");
+    assert!(!ds.interf_ff.is_empty(),
+        "sphere_box: FF interferences expected, got {}", ds.interf_ff.len());
+    assert!(!ds.intersection_curves.is_empty(),
+        "sphere_box: ICs expected, got {}", ds.intersection_curves.len());
+    let source_verts = 10;
+    assert!(ds.vertices.len() > source_verts,
+        "sphere_box: >{} vertices, got {}", source_verts, ds.vertices.len());
+}
+
+#[test]
+fn pavefiller_overlapping_boxes_consistent() {
+    let (b1, b2) = overlapping_boxes();
+    let ds = pave_fill_stage(&b1, &b2, "after_ProcessDE");
+    // Array consistency checks (same as stage_full_pipeline_consistent)
+    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len());
+    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len());
+    for fi in 0..ds.faces.len() {
+        for &vi in ds.face_info(fi).vertices_in.iter()
+            .chain(ds.face_info(fi).vertices_on.iter())
+        {
+            assert!(vi < ds.vertices.len(), "face {} vertex {} out of range", fi, vi);
+        }
+    }
+}
+
+#[test]
+fn pavefiller_coincident_boxes_common_blocks() {
+    let b1 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
+    let b2 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
+    let ds = pave_fill_stage(&b1, &b2, "after_ProcessDE");
+    eprintln!("coincident boxes: ICs={}, FF={}, CB={}",
+        ds.intersection_curves.len(), ds.interf_ff.len(), ds.common_blocks.len());
+}
+
 /// Two non-intersecting boxes — fuse should produce 2 separate solids.
 /// Known issue: BuildResult builds a single compound solid for all faces.
 #[test]
