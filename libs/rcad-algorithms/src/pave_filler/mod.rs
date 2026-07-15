@@ -332,28 +332,28 @@ impl<'a> PaveFiller<'a> {
   self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVV" { return; } }
 
-  // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) =single traversal.
+  // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE)
   self.perform_ve_bvh(&ve_pairs);
-  // OCCT L266: UpdatePaveBlocksWithSDVertices
-  self.ds.update_pave_blocks_with_sd_vertices();
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVE" { return; } }
+  // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVE, after dump)
+  self.ds.update_pave_blocks_with_sd_vertices();
 
-  // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE) =single traversal.
+  // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE)
   self.perform_ee_bvh(&ee_pairs);
   // OCCT: TreatNewVertices (inside PerformEE)
   self.treat_new_vertices();
-  // OCCT L272: UpdatePaveBlocksWithSDVertices
-  self.ds.update_pave_blocks_with_sd_vertices();
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEE" { return; } }
-
-  // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE) =single traversal.
-  self.perform_vf_bvh(&vf_pairs);
-  // OCCT L280: UpdatePaveBlocksWithSDVertices
+  // OCCT: UpdatePaveBlocksWithSDVertices (after PerformEE, after dump)
   self.ds.update_pave_blocks_with_sd_vertices();
+
+  // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE)
+  self.perform_vf_bvh(&vf_pairs);
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformVF" { return; } }
+  // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVF, after dump)
+  self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
   let ef_pairs = {
@@ -362,14 +362,14 @@ impl<'a> PaveFiller<'a> {
   ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
   };
   self.perform_ef(&ef_pairs);
-  // OCCT L290: UpdatePaveBlocksWithSDVertices
+  // OCCT L295: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
-  // OCCT L292: UpdateInterfsWithSDVertices
+  // OCCT L296: UpdateInterfsWithSDVertices
   self.update_interfs_with_sd_vertices();
   self.dump_ctx.snapshot("after_PerformEF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformEF" { return; } }
 
-  // OCCT L296-299: RepeatIntersection with increased vertices
+  // OCCT L300: RepeatIntersection
   self.repeat_intersection();
   self.dump_ctx.snapshot("after_RepeatIntersection", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_RepeatIntersection" { return; } }
@@ -389,52 +389,51 @@ impl<'a> PaveFiller<'a> {
   self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_PerformFF" { return; } }
 
- //  ?OCCT L318: UpdateBlocksWithSharedVertices
+ // OCCT L331: UpdateBlocksWithSharedVertices
  self.update_blocks_with_shared_vertices();
 
- // OCCT L320: RefineFaceInfoIn before MakeSplitEdges
+ // OCCT L333: RefineFaceInfoIn before MakeSplitEdges
  for fi in 0..self.ds.faces.len() {
    self.ds.refine_face_info_in(fi);
  }
 
- // OCCT L322: MakeSplitEdges
+ // OCCT L335: MakeSplitEdges
  self.make_split_edges();
  self.dump_ctx.snapshot("after_MakeSplitEdges", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeSplitEdges" { return; } }
 
- // OCCT L328: UpdatePaveBlocksWithSDVertices
+ // OCCT L342: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
 
- // OCCT L330: MakeBlocks
+ // OCCT L344: MakeBlocks
  self.make_blocks();
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakeBlocks" { return; } }
 
- // OCCT L336: CheckSelfInterference
- let si_warnings = self.check_self_interference();
+ // OCCT L351: CheckSelfInterference
+ let _si_warnings = self.check_self_interference();
 
- // OCCT L338: UpdateInterfsWithSDVertices
+ // OCCT L353: UpdateInterfsWithSDVertices
  self.update_interfs_with_sd_vertices();
 
- // OCCT L339: ReleasePaveBlocks
+ // OCCT L354: ReleasePaveBlocks
  self.ds.release_pave_blocks();
 
- // OCCT L340: RefineFaceInfoOn =after ReleasePaveBlocks, remove
+ // OCCT L355: RefineFaceInfoOn =after ReleasePaveBlocks, remove
  // zero-length On pave blocks (BOPDS_DS::RefineFaceInfoOn).
  for fi in 0..self.ds.faces.len() {
  self.ds.refine_face_info_on(fi);
  }
 
- // =OCCT-aligned: RemoveMicroEdges =after MakeBlocks, before MakePCurves
- // (PerformInternal L342, PaveFiller_6.cxx L4229-4270).
+ // OCCT L357: RemoveMicroEdges =after MakeBlocks, before MakePCurves
  self.remove_micro_edges();
 
- // =OCCT-aligned: MakePCurves =after RemoveMicroEdges (PerformInternal L344)
+ // OCCT L359: MakePCurves =after RemoveMicroEdges
  self.make_pcurves();
  self.dump_ctx.snapshot("after_MakePCurves", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_MakePCurves" { return; } }
 
- //  OCCT-aligned: ProcessDE =after MakePCurves (PerformInternal L350)
+ // OCCT L366: ProcessDE =after MakePCurves
  self.process_de();
  self.dump_ctx.snapshot("after_ProcessDE", self.ds, None);
   if let Some(stage) = std::env::var("RCAD_STOP_AFTER").ok() { if stage == "after_ProcessDE" { return; } }
