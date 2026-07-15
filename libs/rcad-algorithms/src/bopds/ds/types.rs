@@ -680,8 +680,8 @@ pub struct DS {
  /// Stores 3D intersection points from FaceFace intersection that have no
  /// associated curve (point contacts).  Referenced by InterferenceFF::points.
  pub ff_points: Vec<glam::DVec3>,
- /// Mapping: intersection curve index -> DSEdge indices created by make_section_edges_from_curve_pbs.
- /// Populated during PaveFiller::make_section_edges_from_curve_pbs.
+ /// Mapping: intersection curve index -> DSEdge indices created by section edge creation.
+ /// Populated during PaveFiller::make_blocks (PostTreatFF + CorrectToleranceOfSE).
  /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
  pub section_edge_refs: Vec<Vec<usize>>,
  /// Fuzzy tolerance used during interference detection.

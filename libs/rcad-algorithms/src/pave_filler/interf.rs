@@ -15,7 +15,9 @@ impl<'a> PaveFiller<'a> {
         // rcad: PBs already initialized in earlier pipeline steps; skip.
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
-        let a_nb_s = self.ds.edges.len();
+        // OCCT: iterates over NbSourceShapes, filters to EDGE type.
+        // rcad: source edges are 0..a_edge_count; skip intersection-created edges.
+        let a_nb_s = self.ds.a_edge_count;
         // rcad: HashMap keyed by (v_min, v_max), value = Vec<(edge_idx, local_pb_idx)>
         // OCCT: NCollection_IndexedDataMap<BOPDS_Pair, NCollection_List<handle<PaveBlock>>>
         let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
@@ -389,7 +391,12 @@ impl<'a> PaveFiller<'a> {
             };
 
             // L1297-1305: self-interference warning
-            // rcad: AcquiredSelfIntersection warning not yet implemented.
+            // OCCT: if both edges are from the same rank, add self-interference warning
+            if self.ds.rank(entry.n_e1) == self.ds.rank(entry.n_e2) {
+                self.my_report.add_alert(crate::bopalgo::Alert::AcquiredSelfIntersection(
+                    vec![entry.n_e1, entry.n_e2],
+                ));
+            }
 
             // L1307-1310: create InterfEE entry
             self.ds.interf_ee.push(ee.clone());

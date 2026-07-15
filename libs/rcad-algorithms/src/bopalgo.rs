@@ -48,6 +48,11 @@ pub enum Alert {
     ///   from another operand, indicating an acquired self-intersection.
     ///   Contains the indices of the shapes from the same operand.
     AcquiredSelfIntersection(Vec<usize>),
+    /// BOPAlgo_AlertSelfInterferingShape (PaveFiller_1.cxx L210-218).
+    ///   Two sub-shapes from the same operand occupy the same position,
+    ///   indicating a self-interfering input shape.
+    ///   Contains the indices of the two vertices from the same operand.
+    SelfInterferingShape(usize, usize),
 }
 
 /// BOPAlgo_Report — collects alerts during pipeline execution.

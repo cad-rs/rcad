@@ -318,6 +318,9 @@ pub struct PaveFiller<'a> {
  /// =myVertsToAvoidExtension =vertices that should NOT have
  /// their tolerance extended further (near EE/EF intersection points).
  verts_to_avoid_extension: std::collections::HashSet<usize>,
+ /// =myIncreasedSS (PaveFiller.hxx L651) — sub-shapes with increased tolerance.
+ /// OCCT: NCollection_Map<int> on PaveFiller, NOT on DS.
+ my_increased_ss: std::collections::HashSet<usize>,
  /// aMVTol -- per-vertex tolerance map (PaveFiller_6.cxx L2409).
  a_mv_tol: std::collections::HashMap<usize, f64>,
  /// aDMVLV -- duplicate vertex map (PaveFiller_6.cxx L2410).
@@ -415,8 +418,13 @@ impl<'a> PaveFiller<'a> {
  /// compute pcurves in parallel, update edges.  rcad: DS::build_face_reps already computes
  /// pcurves for all face types; this step ensures planar-face pcurves exist for any
  /// edges that build_face_reps may have missed (non-boundary or intersection-relevant).
+ // OCCT PaveFiller_7.cxx L850-932
  fn prepare(&mut self) {
- let mut planar_faces: Vec<usize> = Vec::new();
+  // OCCT L852-856: in non-destructive mode, do not modify original edges
+  if self.non_destructive {
+   return;
+  }
+  let mut planar_faces: Vec<usize> = Vec::new();
  for (fi, f) in self.ds.faces.iter().enumerate() {
  if matches!(f.surface, Surface3::Plane(_)) {
  planar_faces.push(fi);
@@ -463,8 +471,8 @@ impl<'a> PaveFiller<'a> {
  /// BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-213).
  /// Populates the DS from operand BReps, matching what
  /// BOPDS_DS::Init + BOPDS_DS::SetArguments does in OCCT.
- /// Guards: only populates when DS is empty (no faces loaded yet)
- /// so that legacy callers that pre-populate DS before perform() still work.
+ /// Architecture diff: rcad borrows DS from caller (not new + SetArguments).
+ /// Guard: allows pre-populated DS (rcad pattern), matching OCCT Init fresh.
  fn init(&mut self, a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) {
  if !self.ds.faces.is_empty() { return; }
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
@@ -493,8 +501,9 @@ impl<'a> PaveFiller<'a> {
      false
  }
 
+ // OCCT BOPAlgo_PaveFiller.cxx L235-372: PerformInternal
  pub fn perform(&mut self, a: &topods::BRep, b: &topods::BRep) {
-  // =Init =create DS from arguments (PaveFiller.cxx L176-213).
+  // Init (PaveFiller.cxx L176-213).
   self.init(a, b, self.fuzzy_tolerance);
   self.dump_ctx.snapshot("after_Init", self.ds, None);
   if self.check_stop("after_Init") { return; }
@@ -516,6 +525,7 @@ impl<'a> PaveFiller<'a> {
 
   // OCCT L251: Prepare =build pcurves on planar faces.
   self.prepare();
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_Prepare", self.ds, None);
   if self.check_stop("after_Prepare") { return; }
 
@@ -535,11 +545,13 @@ impl<'a> PaveFiller<'a> {
   };
 
   self.perform_vv(&vv_pairs);
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
   if self.check_stop("after_PerformVV") { return; }
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE)
   self.perform_ve_bvh(&ve_pairs);
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
   if self.check_stop("after_PerformVE") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVE, after dump)
@@ -547,6 +559,7 @@ impl<'a> PaveFiller<'a> {
 
   // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE)
   self.perform_ee_bvh(&ee_pairs);
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if self.check_stop("after_PerformEE") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformEE, after dump)
@@ -554,6 +567,7 @@ impl<'a> PaveFiller<'a> {
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE)
   self.perform_vf_bvh(&vf_pairs);
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
   if self.check_stop("after_PerformVF") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformVF, after dump)
@@ -566,6 +580,7 @@ impl<'a> PaveFiller<'a> {
   ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
   };
   self.perform_ef(&ef_pairs);
+  if self.my_report.has_errors() { return; }
   // OCCT L295: UpdatePaveBlocksWithSDVertices
   self.ds.update_pave_blocks_with_sd_vertices();
   // OCCT L296: UpdateInterfsWithSDVertices
@@ -575,21 +590,25 @@ impl<'a> PaveFiller<'a> {
 
   // OCCT L300: RepeatIntersection
   self.repeat_intersection();
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_RepeatIntersection", self.ds, None);
   if self.check_stop("after_RepeatIntersection") { return; }
 
   // OCCT L308: ForceInterfEE
   self.force_interf_ee();
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_ForceInterfEE", self.ds, None);
   if self.check_stop("after_ForceInterfEE") { return; }
 
   // OCCT L316: ForceInterfEF
   self.force_interf_ef();
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_ForceInterfEF", self.ds, None);
   if self.check_stop("after_ForceInterfEF") { return; }
 
   // OCCT L324: PerformFF
   self.perform_ff();
+  if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformFF", self.ds, None);
   if self.check_stop("after_PerformFF") { return; }
 
@@ -603,6 +622,7 @@ impl<'a> PaveFiller<'a> {
 
  // OCCT L335: MakeSplitEdges
  self.make_split_edges();
+ if self.my_report.has_errors() { return; }
  self.dump_ctx.snapshot("after_MakeSplitEdges", self.ds, None);
   if self.check_stop("after_MakeSplitEdges") { return; }
 
@@ -611,6 +631,7 @@ impl<'a> PaveFiller<'a> {
 
  // OCCT L344: MakeBlocks
  self.make_blocks();
+ if self.my_report.has_errors() { return; }
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
   if self.check_stop("after_MakeBlocks") { return; }
 
@@ -634,11 +655,13 @@ impl<'a> PaveFiller<'a> {
 
  // OCCT L359: MakePCurves =after RemoveMicroEdges
  self.make_pcurves();
+ if self.my_report.has_errors() { return; }
  self.dump_ctx.snapshot("after_MakePCurves", self.ds, None);
   if self.check_stop("after_MakePCurves") { return; }
 
  // OCCT L366: ProcessDE =after MakePCurves
  self.process_de();
+ if self.my_report.has_errors() { return; }
  self.dump_ctx.snapshot("after_ProcessDE", self.ds, None);
   if self.check_stop("after_ProcessDE") { return; }
  }
@@ -720,7 +743,7 @@ impl<'a> PaveFiller<'a> {
           // OCCT L117-125: increase tolerance if needed
           if a_tol_v < a_tol_new {
               self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_new;
-              self.ds.increased_ss.insert(n_v);
+              self.my_increased_ss.insert(n_v);
           }
           return n_v_new;
       }
@@ -736,7 +759,7 @@ impl<'a> PaveFiller<'a> {
       self.verts_to_avoid_extension.insert(n_v_new);
       // OCCT L156-159: mark increased tolerance on old vertex
       if a_tol_v < a_tol_new {
-          self.ds.increased_ss.insert(n_v);
+          self.my_increased_ss.insert(n_v);
       }
       n_v_new
   }
@@ -1313,6 +1336,7 @@ impl<'a> PaveFiller<'a> {
 
  // = = = =Pass 6: Face-Face = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
+ // OCCT BOPAlgo_PaveFiller.cxx L331: UpdateBlocksWithSharedVertices
  fn update_blocks_with_shared_vertices(&mut self) {
  if !self.non_destructive { return; }
  let has_ff = !self.ds.interf_ff.is_empty();
@@ -1381,7 +1405,7 @@ impl<'a> PaveFiller<'a> {
  let dist = self.ds.vertex_point(n_v).distance(pt_on_curve);
  if dist > v_tol {
  self.ds.vertex_data_mut(n_v).tolerance = dist;
- self.ds.increased_ss.insert(n_v);
+ self.my_increased_ss.insert(n_v);
  }
  }
  // InitPaveBlocksForVertex: collect edge indices + params, then apply
@@ -1404,6 +1428,7 @@ impl<'a> PaveFiller<'a> {
  self.ds.update_pave_blocks_with_sd_vertices();
  }
 
+ // OCCT BOPAlgo_PaveFiller.cxx L296: UpdateInterfsWithSDVertices
  fn update_interfs_with_sd_vertices(&mut self) {
  // Build vertex =SD vertex lookup (OCCT HasShapeSD equivalent)
  let sd_for: std::collections::HashMap<usize, usize> = self.ds.shape_sd
@@ -1433,222 +1458,8 @@ impl<'a> PaveFiller<'a> {
  }
  }
  }
- fn make_section_edges(&mut self) {
- // Section edges are now created per-curve inside make_blocks (OCCT form alignment).
- // This function is kept for reference but is no-op.
- return;
- // Collect section edge data per curve to avoid borrow conflicts
- struct SECurve { curve_idx: usize, sv: usize, ev: usize, curve: Curve3, geom_tol: f64, t_range: [f64; 2], pbs: Vec<PaveBlock> }
- let mut se_data: Vec<SECurve> = Vec::new();
-
- //  build position= ertex map for IC endpoint remapping (ShapesSD equivalent).
- // OCCT's PaveFiller records same-domain vertices via AddShapeSD.
- // rcad: find the minimum-index vertex at each distinct position from ALL DS vertices.
- let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
- .map(|(vi, v)| (v.point, vi)).collect();
- let remap_ds_v = |v: usize| -> usize {
- if v >= self.ds.vertices.len() { return v; }
- let p = self.ds.vertex_point(v);
- let tol = TOLERANCE_ABS * 1000.0;
- bv_positions.iter()
- .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
- .map(|&(_, bv)| bv)
- .min()
- .unwrap_or(v)
- };
- // rcad: key by (face1, face2, nV1, nV2) =same geometric edge from same face pair reuses.
- // Different face pairs produce separate edges even with same vertices (sphere pole case).
- let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
-
- for ci in 0..self.ds.intersection_curves.len() {
- let ic = &self.ds.intersection_curves[ci];
-
- // Find the two faces for IsValidBlockForFaces check (OCCT L906-918)
- let face_ids = find_face_idxs_for_curve(&self.ds, ci);
- let ff_tol = if face_ids[0] != usize::MAX && face_ids[1] != usize::MAX {
- self.ff_tol(face_ids[0], face_ids[1])
- } else { ic.geom_tol };
- // Pre-extract surface references for borrow-free comparison
- let surf0 = if face_ids[0] != usize::MAX { Some(self.ds.faces[face_ids[0]].surface.clone()) } else { None };
- let surf1 = if face_ids[1] != usize::MAX { Some(self.ds.faces[face_ids[1]].surface.clone()) } else { None };
-
- let mut sub_with_edge: Vec<PaveBlock> = Vec::new();
-
- for pbi in 0..ic.pave_blocks.len() {
- let pb = &ic.pave_blocks[pbi];
-
- // Clone all data before mutable access
- let mut pb_clone = pb.clone();
- let sub_pbs = if pb_clone.0.write().unwrap().is_to_update() {
- pb_clone.0.write().unwrap().update(true) // flag=true: include boundary paves, matching OCCT Update() usage
- } else {
- // curves without ext_paves produce a single section edge
- // spanning the entire IC range (OCCT uses Curve.StartVertex/EndVertex).
- vec![PaveBlock::new(
- crate::bopds::pave::NO_EDGE,
- Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] },
- Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] },
- )]
- };
- for mut sub_pb in sub_pbs {
- let (nV1_raw, nV2_raw) = sub_pb.indices();
- //  remap IC endpoint vertices to canonical boundary vertices
- // (ShapesSD equivalent).  OCCT records SD during PaveFiller vertex creation;
- // rcad does it here so section edges connect boundary vertices, not orphan IC vertices.
- let nV1 = remap_ds_v(nV1_raw);
- let nV2 = remap_ds_v(nV2_raw);
- if nV1 != nV1_raw || nV2 != nV2_raw {
- sub_pb.pave1.vertex_idx = nV1;
- sub_pb.pave2.vertex_idx = nV2;
- }
- let (aT1, aT2) = sub_pb.range();
- if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
- if std::env::var("RCAD_DEBUG_PB").is_ok() { eprintln!("[PB_FAIL] ci={} RANGE_TOO_SMALL", ci); }
- continue;
- }
- if surf0.is_some() && surf1.is_some() {
- let s0 = surf0.as_ref().unwrap();
- let s1 = surf1.as_ref().unwrap();
- let mid_t = (aT1 + aT2) * 0.5;
- let mid_pt = ic.curve.point_at(mid_t);
- let check_tol = ff_tol.max(TOLERANCE_ABS);
- let mut b_flag = true;
- for (i, &fi) in [face_ids[0], face_ids[1]].iter().enumerate() {
- if fi == usize::MAX { continue; }
- let pcurve = if i == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
- if let Some(pc) = pcurve {
- let uv = pc.point_at(mid_t);
- let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
- if std::env::var("RCAD_DEBUG_ISVALID").is_ok() && (fi == 3 || fi == 0) {
- eprintln!("[IV] ci={} fi={} uv=({:.6},{:.6}) in_on={}", ci, fi, uv.x, uv.y, in_on);
- }
- if !in_on {
- // 3D fallback: check distance from midpoint to face surface.
- let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
- let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
- let dist_3d = proj_pt.distance(mid_pt);
- if dist_3d > check_tol {
- b_flag = false; break;
- }
- }
- } else {
- let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
- let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
- if proj.distance(mid_pt) > check_tol {
- b_flag = false; break;
- }
- }
- }
- if !b_flag { continue; }
- } // end IsValidBlockForFaces
- // spheres cover the entire parameter range.
- if nV1 < self.ds.vertices.len() && nV2 < self.ds.vertices.len() {
- let v1_pt = self.ds.vertex_point(nV1);
- let v2_pt = self.ds.vertex_point(nV2);
- let v1_tol = ff_tol.max(self.ds.vertex_tolerance(nV1));
- let v2_tol = ff_tol.max(self.ds.vertex_tolerance(nV2));
- if find_valid_range(&ic.curve, aT1, aT2, ff_tol, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
- if std::env::var("RCAD_DEBUG_PB").is_ok() {
- eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{}) v1_tol={:.12} v2_tol={:.12} v1_pt=({:.4},{:.4},{:.4}) v2_pt=({:.4},{:.4},{:.4})",
- ci, nV1, nV2, v1_tol, v2_tol,
- v1_pt.x, v1_pt.y, v1_pt.z, v2_pt.x, v2_pt.y, v2_pt.z);
- }
- continue;
- }
- }
- // a DSEdge from another curve (via BVH tree / existing_edge_map).
- // key includes face pair so different FF pairs create separate edges.
- let (v1, v2) = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
- let f1 = face_ids[0].min(face_ids[1]);
- let f2 = face_ids[0].max(face_ids[1]);
- let edge_key = (f1, f2, v1, v2);
- if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
- sub_pb.new_edge = Some(existing_ei);
- sub_with_edge.push(sub_pb);
- if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 { eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei); }
- continue;
- }
- // Create new DSEdge for this sub-PB
- let new_ei = self.ds.edges.len();
- // propagate pcurves from IC to section DSEdge face_reps.
- let mut sec_face_reps = Vec::new();
- if let Some(ref pca) = ic.pcurve_on_a {
- sec_face_reps.push(DSCurveRepOnFace {
- face_idx: face_ids[0],
- pcurve: pca.clone(),
- pcurve2: None,
- pcurve_range: [aT1, aT2],
- start_param: aT1, end_param: aT2,
- });
- }
- if let Some(ref pcb) = ic.pcurve_on_b {
- sec_face_reps.push(DSCurveRepOnFace {
- face_idx: face_ids[1],
- pcurve: pcb.clone(),
- pcurve2: None,
- pcurve_range: [aT1, aT2],
- start_param: aT1, end_param: aT2,
- });
- }
- self.ds.push_edge(DSEdge {
- start_vertex: nV1, end_vertex: nV2,
- curve: ic.curve.clone(),
- t_range: [aT1, aT2],
- origin: ShapeOrigin::ShapeA,
- geom_tol: ic.geom_tol,
- paves: Vec::new(),
-  pave_blocks: vec![crate::bopds::pave::SharedPB::new(sub_pb.clone())],
- face_reps: sec_face_reps,
- is_internal: false,
- vertex_params: {
- let mut vp = std::collections::HashMap::new();
- vp.insert(nV1, aT1);
- vp.insert(nV2, aT2);
- vp
- },
-  face_tolerances: Vec::new(),
-  is_geometric: true,
-  location: 0,
-  }, None);
-  // Set new_edge in the PB stored inside the edge AND in sub_with_edge
- if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
- epb.0.write().unwrap().new_edge = Some(new_ei);
- }
- sub_pb.new_edge = Some(new_ei);
- self.ds.section_edge_refs[ci].push(new_ei);
- existing_edge_map.insert(edge_key, new_ei);
- sub_with_edge.push(sub_pb);
- }
- } // end for pbi in 0..ic.pave_blocks.len()
-
- if !sub_with_edge.is_empty() {
- se_data.push(SECurve {
- curve_idx: ci,
- sv: ic.start_vertex, ev: ic.end_vertex,
- curve: ic.curve.clone(), geom_tol: ic.geom_tol,
- t_range: ic.t_range,
- pbs: sub_with_edge,
- });
- }
- }
-
- // Register section edge PBs into global pool and pave_blocks_sc
- // each section edge belongs only to the TWO faces of its FF pair.
- for se in &se_data {
- // Find the two faces referencing this curve
- let face_ids = find_face_idxs_for_curve(&self.ds, se.curve_idx);
- for pb in &se.pbs {
-  if pb.new_edge.is_some() {
- let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
- for &fi in &face_ids {
- if fi != usize::MAX {
- self.ds.face_info_mut(fi).pave_blocks_sc.insert(g_pb_idx);
- }
- }
- }
- }
- }
- }
+ // Dead code removed: make_section_edges was always no-op.
+ // Section edge creation is now handled per-curve inside make_blocks (OCCT form alignment).
 
  // OCCT BOPAlgo_PaveFiller_6.cxx L4341-4417 - RemoveMicroEdges
  // Removes edges whose PaveBlocks have no valid shrunk range.

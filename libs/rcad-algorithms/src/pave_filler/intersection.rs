@@ -1543,10 +1543,15 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
    let n1 = block[i];
    // L197: AddShapeSD(n1, nV)
    self.ds.add_shape_sd(n1, n_v);
-   // L199-218: self-interfering shape warning (skipped for brevity)
+   // L199-218: self-interfering shape warning
+   let i_r1 = self.ds.rank(n1);
    // L221-228: VV interference for each pair (n1, n2)
    for j in (i + 1)..block.len() {
      let n2 = block[j];
+     // OCCT L199-218: if same rank, add self-interfering shape warning
+     if i_r1 == self.ds.rank(n2) {
+       self.my_report.add_alert(crate::bopalgo::Alert::SelfInterferingShape(n1, n2));
+     }
      // OCCT L223: if (myDS->AddInterf(n1, n2)) — fence check
      let key = if n1 < n2 { (n1, n2) } else { (n2, n1) };
      if self.ds.interf_tb.insert(key) {
@@ -1951,7 +1956,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let new_vi = self.ds.add_vertex(centroid);
  self.ds.vertex_data_mut(new_vi).tolerance = max_tol;
  // OCCT: myIncreasedSS.Add(nV)  ?mark tolerance as increased.
- self.ds.increased_ss.insert(new_vi);
+ self.my_increased_ss.insert(new_vi);
 
  // Update interferences and paves to point to the new vertex
  for &old_vi in members {
@@ -1992,13 +1997,13 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
      continue; // skip non-source vertices (OCCT L385: ShapeType check)
    }
    // L390-393: vertex directly in myIncreasedSS
-   if self.ds.increased_ss.contains(&vi) {
+   if self.my_increased_ss.contains(&vi) {
      a_extra_map.insert(vi);
      continue;
    }
    // L396-406: SD root whose tolerance was increased
    if let Some(n_vsd) = self.ds.has_shape_sd(vi) {
-     if self.ds.increased_ss.contains(&n_vsd) {
+     if self.my_increased_ss.contains(&n_vsd) {
        a_extra_map.insert(vi);
      }
    }
@@ -2136,7 +2141,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  && proj_dist > self.ds.vertex_tolerance(n_vsd)
  {
  self.ds.vertex_data_mut(n_vsd).tolerance = proj_dist;
- self.ds.increased_ss.insert(n_vsd);
+ self.my_increased_ss.insert(n_vsd);
  }
 
  //  ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
