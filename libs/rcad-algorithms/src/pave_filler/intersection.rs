@@ -5,7 +5,7 @@ use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
 use rcad_kernel::CurveEval;
 
 use crate::bopalgo::{GlueEnum, fill_map, make_blocks};
-use crate::bopds::ds::{DS, ShapeOrigin, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
+use crate::bopds::ds::{DS, DSVertex, ShapeOrigin, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -639,6 +639,14 @@ impl<'a> super::PaveFiller<'a> {
     }
    }
   }
+
+  // OCCT L558-560: PerformCommonBlocks + UpdateVerticesOfCB
+  if !a_vee.is_empty() {
+   crate::bopds::tools::perform_common_blocks(&mut self.ds);
+  }
+  self.update_vertices_of_cb();
+  // OCCT L565: PerformNewVertices (TreatNewVertices + IntersectVE)
+  self.treat_new_vertices();
 
   // OCCT L571-585: if (aMEdges.Extent()) { SplitPaveBlocks(aMEdges, false); }
   if !a_m_edges.is_empty() {
@@ -1375,8 +1383,9 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT BOPAlgo_PaveFiller_1.cxx L45-132: PerformVV
  pub(crate) fn perform_vv(&mut self, pairs: &[(usize, usize)]) {
    // L47-51: n1, n2, iFlag, aSize; myIterator->Initialize(VERTEX, VERTEX)
-   let a_vc: usize = self.ds.a_vertex_count;
-   let a_size: usize = a_vc * (self.ds.vertices.len() - a_vc);
+   // L50-51: myIterator->Initialize(TopAbs_VERTEX, TopAbs_VERTEX);
+   //         aSize = myIterator->ExpectedLength();
+   let a_size = pairs.len();
    // L53-56: if (!aSize) return
    if a_size == 0 {
      return;
@@ -1430,49 +1439,98 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
    // L129-131: aMBlocks.Clear(); aMILI.Clear() -- handled by Rust Drop
  }
 
- ///  MakeSDVertices (PaveFiller_1.cxx L136-233).
+ /// OCCT BOPAlgo_PaveFiller::MakeSDVertices (PaveFiller_1.cxx L136-233).
  /// Merges a connected group of vertices into a single SD vertex.
- /// The first vertex in the block becomes the merge target; all other
- /// vertices in the block are remapped to it via AddShapeSD and
- /// Interference::VertexVertex entries.
+ /// If any member already has an SD partner (nSD), that SD vertex is
+ /// updated in-place.  Otherwise a new vertex is appended to the DS.
+ /// Every pair in the block gets AddShapeSD + a VV interference record
+ /// pointing to the merged vertex.
  pub(super) fn make_sd_vertices_vv(&mut self, block: &[usize]) {
- if block.len() < 2 { return; }
- // nSD tracks the existing SD vertex index; others go into aLV.
+ // L136-138: return early if fewer than 2 vertices
+ if block.len() < 2 {
+   return;
+ }
+ // L141-161: 1. Collect vertices + track existing SD partner
  let mut n_sd: Option<usize> = None;
  let mut a_lv: Vec<usize> = Vec::with_capacity(block.len());
  for &n_x in block {
- if let Some(n_sd1) = self.ds.has_shape_sd(n_x) {
- if n_sd.is_none() {
- n_sd = Some(n_sd1);
+   // L145-158: check if vertex already has an SD partner
+   if let Some(n_sd1) = self.ds.has_shape_sd(n_x) {
+     if n_sd.is_none() {
+       // L148-153: keep the first SD vertex as the merge target
+       n_sd = Some(n_sd1);
+     }
+   }
+   // L159-160: add vertex to aLV list
+   a_lv.push(n_x);
  }
+ // L162: MakeVertex(aLV, aVn) — compute centroid + bounding tolerance.
+ // OCCT calls BRepLib::BoundingVertex to compute centroid and tolerance
+ // large enough to enclose all input vertices.
+ let centroid: DVec3 = a_lv.iter()
+   .map(|&vi| self.ds.vertex_point(vi))
+   .fold(DVec3::ZERO, |acc, p| acc + p) / a_lv.len() as f64;
+ let bounding_tol: f64 = a_lv.iter()
+   .map(|&vi| (self.ds.vertex_point(vi) - centroid).length() + self.ds.vertex_tolerance(vi))
+   .fold(TOLERANCE_ABS, |acc, d| acc.max(d));
+ // L163-179: 2. Determine nV — either update existing SD or append new
+ let n_v: usize;
+ if let Some(n_sd_idx) = n_sd {
+   // L166-171: update existing SD vertex in-place (position + tolerance)
+   self.ds.vertex_data_mut(n_sd_idx).point = centroid;
+   self.ds.vertex_data_mut(n_sd_idx).tolerance = bounding_tol;
+   n_v = n_sd_idx;
+ } else {
+   // L176-179: append new vertex to DS
+   n_v = self.ds.vertices.len();
+   self.ds.push_vertex(DSVertex {
+     point: centroid,
+     origin: None,
+     geom_tol: bounding_tol,
+     is_internal: false,
+     location: 0,
+   }, None);
+   // push_vertex does not maintain shape_info; push a matching entry
+   if n_v < self.ds.vertex_shape_idx.len() {
+     let si = self.ds.vertex_shape_idx[n_v];
+     if si >= self.ds.shape_info.len() {
+       let mut new_si = crate::bopds::ds::types::ShapeInfo::new(
+         rcad_kernel::topods::ShapeType::Vertex);
+       new_si.is_new = true;
+       new_si.rank = 0;
+       new_si.box_min = Some(centroid);
+       new_si.box_max = Some(centroid);
+       new_si.box_gap = bounding_tol + TOLERANCE_ABS;
+       self.ds.shape_info.push(new_si);
+     }
+   }
  }
- a_lv.push(n_x);
+ // L181-184: update bounding box for the SD vertex (both nSD and new)
+ if let Some(si_mut) = self.ds.shape_info.get_mut(n_v) {
+   si_mut.box_min = Some(centroid);
+   si_mut.box_max = Some(centroid);
+   si_mut.box_gap = bounding_tol + TOLERANCE_ABS;
  }
- // rcad: use the minimum-index vertex as the merged target.
- let n_v = n_sd.unwrap_or_else(|| *a_lv.iter().min().unwrap());
- // rcad: geom_tol of the merged vertex is max of all members' tolerances.
- if let Some(&target) = block.iter().max_by(|&&a, &&b| {
- self.ds.vertex_tolerance(a).partial_cmp(&self.ds.vertex_tolerance(b)).unwrap()
- }) {
- if n_v < self.ds.vertices.len() {
- self.ds.vertex_data_mut(n_v).tolerance = self.ds.vertex_tolerance(n_v)
- .max(self.ds.vertex_tolerance(target));
- }
- }
+ // L186-231: 3. Record SD mappings + VV interferences for every pair
  for i in 0..block.len() {
- let n1 = block[i];
- self.ds.add_shape_sd(n1, n_v);
- // rcad: ShapeOrigin check.
- // (OCCT L208-218: self-interfering shape warning  ?skipped for brevity)
- for j in (i + 1)..block.len() {
- let n2 = block[j];
- // rcad: push VertexVertex interference
- self.ds.interf_vv.push(InterferenceVV{
- v1: n1,
- v2: n2,
- merged_vertex: n_v,
- });
- }
+   let n1 = block[i];
+   // L197: AddShapeSD(n1, nV)
+   self.ds.add_shape_sd(n1, n_v);
+   // L199-218: self-interfering shape warning (skipped for brevity)
+   // L221-228: VV interference for each pair (n1, n2)
+   for j in (i + 1)..block.len() {
+     let n2 = block[j];
+     // OCCT L223: if (myDS->AddInterf(n1, n2)) — fence check
+     let key = if n1 < n2 { (n1, n2) } else { (n2, n1) };
+     if self.ds.interf_tb.insert(key) {
+       // L225-227: aVV.SetIndices(n1, n2); aVV.SetIndexNew(nV)
+       self.ds.interf_vv.push(InterferenceVV {
+         v1: n1,
+         v2: n2,
+         merged_vertex: n_v,
+       });
+     }
+   }
  }
  }
  /// OCCT PaveFiller_2.cxx L141-206: PerformVE
@@ -1490,6 +1548,11 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  if self.ds.edge_has_vertex(vi, ei) { continue; }
  if self.ds.edge_has_flag(ei) { continue; }
  if self.ds.has_interf_ve(vi, ei) { continue; }
+ // OCCT L180-184: HasInterfShapeSubShapes(nV, nE) — VV with edge endpoints
+ if let Some(edge) = self.ds.edges.get(ei) {
+   if self.ds.has_interf_vv(vi, edge.start_vertex)
+   || self.ds.has_interf_vv(vi, edge.end_vertex) { continue; }
+ }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
  if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
@@ -1506,6 +1569,11 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  if self.ds.edge_has_vertex(vi, ei) { continue; }
  if self.ds.edge_has_flag(ei) { continue; }
  if self.ds.has_interf_ve(vi, ei) { continue; }
+ // OCCT L180-184: HasInterfShapeSubShapes(nV, nE)
+ if let Some(edge) = self.ds.edges.get(ei) {
+   if self.ds.has_interf_vv(vi, edge.start_vertex)
+   || self.ds.has_interf_vv(vi, edge.end_vertex) { continue; }
+ }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
  if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
@@ -1876,20 +1944,25 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT BOPAlgo_PaveFiller.cxx L376-441: RepeatIntersection
  pub(crate) fn repeat_intersection(&mut self) {
  let mut a_extra_map: HashSet<usize> = HashSet::new();
- // OCCT L382-407: collect vertices directly in myIncreasedSS
- for &vi in &self.ds.increased_ss {
- a_extra_map.insert(vi);
- }
- // OCCT L396-406: check SD root for vertices not already in the set
+ // OCCT L382-407: iterate source vertices (0..NbSourceShapes, VERTEX only)
+ // whose tolerance was increased, or whose SD root tolerance was increased.
+ let a_nb_s = self.ds.nb_source_shapes;
  for vi in 0..self.ds.vertices.len() {
- if a_extra_map.contains(&vi) {
- continue;
- }
- if let Some(n_vsd) = self.ds.has_shape_sd(vi) {
- if self.ds.increased_ss.contains(&n_vsd) {
- a_extra_map.insert(vi);
- }
- }
+   let si = self.ds.vertex_shape_idx.get(vi).copied().unwrap_or(usize::MAX);
+   if si >= a_nb_s {
+     continue; // skip non-source vertices (OCCT L385: ShapeType check)
+   }
+   // L390-393: vertex directly in myIncreasedSS
+   if self.ds.increased_ss.contains(&vi) {
+     a_extra_map.insert(vi);
+     continue;
+   }
+   // L396-406: SD root whose tolerance was increased
+   if let Some(n_vsd) = self.ds.has_shape_sd(vi) {
+     if self.ds.increased_ss.contains(&n_vsd) {
+       a_extra_map.insert(vi);
+     }
+   }
  }
  // Build VV pairs: cross-operand involving extra vertices
  let a_vc = self.ds.a_vertex_count;

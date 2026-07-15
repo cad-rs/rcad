@@ -81,6 +81,197 @@ pub(crate) struct EdgeRangeDistance {
  pub distance: f64,
 }
 
+/// OCCT BOPAlgo_PaveFiller::UpdateExistingPaveBlocks (PaveFiller_6.cxx L3311-3529).
+/// Replaces old pave blocks (from aPBf / its CommonBlock) with new ones from
+/// PostTreatFF (aLPB). Handles CommonBlock splitting and re-projects edges to
+/// faces from thePBFacesMap.
+fn update_existing_pave_blocks(
+    ds: &mut DS,
+    context: &mut IntToolsContext,
+    a_pbf: usize,
+    a_lpb: &[usize],
+    the_pb_faces_map: &HashMap<usize, Vec<usize>>,
+    fuzzy_value: f64,
+) {
+    if a_lpb.is_empty() { return; }
+
+    // 1. Determine the set of old PBs (from aPBf's CB, or just aPBf)
+    let b_cb: bool;
+    let old_pbs: Vec<usize>;
+    {
+        let spb = &ds.pave_blocks[a_pbf];
+        let pb = spb.0.read().unwrap();
+        b_cb = pb.common_block_idx.is_some();
+        if let Some(cb_idx) = pb.common_block_idx {
+            if let Some(cb) = ds.common_blocks.get(cb_idx) {
+                old_pbs = cb.pave_blocks().iter().map(|&(pbi, _)| pbi).collect();
+            } else {
+                old_pbs = vec![a_pbf];
+            }
+        } else {
+            old_pbs = vec![a_pbf];
+        }
+    }
+
+    // 2. Remove old PBs from edge PB lists
+    for &old_pb_idx in &old_pbs {
+        let orig_e = {
+            let spb = &ds.pave_blocks[old_pb_idx];
+            spb.0.read().unwrap().original_edge
+        };
+        if orig_e < ds.edges.len() {
+            ds.edges[orig_e].pave_blocks.retain(|spb| {
+                let ptr = Arc::as_ptr(&spb.0);
+                let old_ptr = Arc::as_ptr(&ds.pave_blocks[old_pb_idx].0);
+                ptr != old_ptr
+            });
+        }
+    }
+
+    // 3. If CB: create new CommonBlocks per replacement PB
+    //    If not CB: just append new PBs to the edge
+    let mut new_pb_list: Vec<usize> = Vec::new();
+
+    if b_cb {
+        let orig_faces: Vec<usize> = {
+            let spb = &ds.pave_blocks[a_pbf];
+            let pb = spb.0.read().unwrap();
+            if let Some(cb_idx) = pb.common_block_idx {
+                if let Some(cb) = ds.common_blocks.get(cb_idx) {
+                    cb.faces().to_vec()
+                } else { Vec::new() }
+            } else { Vec::new() }
+        };
+
+        for &rp_idx in a_lpb {
+            let mut a_cb = crate::bopds::common_block::CommonBlock::new();
+            let rp_pave1;
+            let rp_pave2;
+            {
+                let rp_pb = ds.pave_blocks[rp_idx].0.read().unwrap();
+                rp_pave1 = rp_pb.pave1.clone();
+                rp_pave2 = rp_pb.pave2.clone();
+            }
+
+            for &old_pb_idx in &old_pbs {
+                let orig_e = {
+                    let spb = &ds.pave_blocks[old_pb_idx];
+                    spb.0.read().unwrap().original_edge
+                };
+                let mut pb2n = crate::bopds::pave::PaveBlock::new(
+                    orig_e,
+                    rp_pave1.clone(),
+                    rp_pave2.clone(),
+                );
+                pb2n.new_edge = {
+                    let rp_pb = ds.pave_blocks[rp_idx].0.read().unwrap();
+                    rp_pb.new_edge
+                };
+                // Register in DS
+                let new_g_idx = ds.pave_blocks.len();
+                ds.pave_blocks.push(crate::bopds::pave::SharedPB::new(pb2n));
+                a_cb.add_pave_block(new_g_idx, 0);
+                // Append to edge's PB list
+                if orig_e < ds.edges.len() {
+                    ds.edges[orig_e].pave_blocks.push(ds.pave_blocks[new_g_idx].clone());
+                }
+            }
+            a_cb.set_faces(orig_faces.clone());
+            let cb_idx = ds.common_blocks.len();
+            // Capture first PB before a_cb is moved into common_blocks
+            let first_pb = a_cb.pave_blocks().first().copied().map(|(pbi, _)| pbi);
+            // Set common_block_idx on all PBs in this CB
+            for &(pbi, _) in a_cb.pave_blocks() {
+                if pbi < ds.pave_blocks.len() {
+                    ds.pave_blocks[pbi].0.write().unwrap().common_block_idx = Some(cb_idx);
+                }
+            }
+            ds.common_blocks.push(a_cb);
+            if let Some(fp) = first_pb {
+                new_pb_list.push(fp);
+            }
+        }
+    } else {
+        let orig_e = {
+            let spb = &ds.pave_blocks[a_pbf];
+            spb.0.read().unwrap().original_edge
+        };
+        if orig_e < ds.edges.len() {
+            for &rp_idx in a_lpb {
+                ds.edges[orig_e].pave_blocks.push(ds.pave_blocks[rp_idx].clone());
+                new_pb_list.push(rp_idx);
+            }
+        }
+    }
+
+    // 4. Project replacement PBs to faces in thePBFacesMap
+    // OCCT L3481-3528: IntTools_EdgeFace check for each replacement PB
+    if let Some(pb_faces) = the_pb_faces_map.get(&a_pbf) {
+        let a_tol_f = crate::tolerance::CONFUSION;
+        for &fi in pb_faces {
+            if fi >= ds.faces.len() { continue; }
+            let face_surface = ds.faces[fi].surface.clone();
+            for &new_pb_idx in &new_pb_list {
+                if new_pb_idx >= ds.pave_blocks.len() { continue; }
+                // Check if already registered in this face's ON/IN sets (OCCT L3498)
+                {
+                    let face_info = &ds.faces[fi].face_info;
+                    if face_info.pave_blocks_on.contains(&new_pb_idx)
+                        || face_info.pave_blocks_in.contains(&new_pb_idx)
+                    {
+                        continue;
+                    }
+                }
+                // OCCT L3503-3511: IntTools_EdgeFace check
+                let (ei, t1, t2) = {
+                    let spb = &ds.pave_blocks[new_pb_idx];
+                    let pb = spb.0.read().unwrap();
+                    let e_idx = pb.new_edge.unwrap_or(pb.original_edge);
+                    let (tt1, tt2) = pb.range();
+                    (e_idx, tt1, tt2)
+                };
+                if ei >= ds.edges.len() { continue; }
+                let a_tol_e = ds.edge_tolerance(ei).max(CONFUSION);
+                // OCCT L3514: bCoincide = (aCPrts.Length() == 1 && aCPrts(1).Type() == TopAbs_EDGE)
+                let b_coincide = {
+                    crate::inttools::edge_face::is_coincident_edge_face(
+                        &ds.edges[ei].curve, [t1, t2],
+                        &face_surface, a_tol_f, a_tol_e,
+                        context, ds, fi,
+                    )
+                };
+                if b_coincide {
+                    // OCCT L3517-3524: create/find CommonBlock + AddFace
+                    let spb = &ds.pave_blocks[new_pb_idx];
+                    let pb_ptr = Arc::as_ptr(&spb.0);
+                    let mut found_cb = false;
+                    for cb in &mut ds.common_blocks {
+                        if cb.pave_blocks().iter().any(|&(pbi, _)| {
+                            pbi < ds.pave_blocks.len()
+                            && Arc::as_ptr(&ds.pave_blocks[pbi].0) == pb_ptr
+                        }) {
+                            cb.add_face(fi);
+                            found_cb = true;
+                            break;
+                        }
+                    }
+                    if !found_cb {
+                        // OCCT L3520-3522: create new CommonBlock
+                        let mut new_cb = crate::bopds::common_block::CommonBlock::new();
+                        new_cb.add_pave_block(new_pb_idx, 0);
+                        new_cb.add_face(fi);
+                        let cb_idx = ds.common_blocks.len();
+                        ds.pave_blocks[new_pb_idx].0.write().unwrap().common_block_idx = Some(cb_idx);
+                        ds.common_blocks.push(new_cb);
+                    }
+                    // OCCT L3525: aFI.ChangePaveBlocksIn().Add(aPB)
+                    ds.face_info_mut(fi).pave_blocks_in.insert(new_pb_idx);
+                }
+            }
+        }
+    }
+}
+
 pub struct PaveFiller<'a> {
  pub ds: &'a mut DS,
  /// Optional BRep for direct output (dual-write mode). When set, PaveFiller
@@ -356,8 +547,6 @@ impl<'a> PaveFiller<'a> {
 
   // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE)
   self.perform_ee_bvh(&ee_pairs);
-  // OCCT: TreatNewVertices (inside PerformEE)
-  self.treat_new_vertices();
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if self.check_stop("after_PerformEE") { return; }
   // OCCT: UpdatePaveBlocksWithSDVertices (after PerformEE, after dump)
@@ -857,7 +1046,7 @@ impl<'a> PaveFiller<'a> {
     &mut self,
     theDME: &HashMap<usize, Vec<usize>>,
     theDMV: &HashMap<usize, usize>,
-    _thePBFacesMap: &HashMap<usize, Vec<usize>>,
+    thePBFacesMap: &HashMap<usize, Vec<usize>>,
   ) {
     // OCCT L1715: anEdgeLPB — map from edge index to list of PBs
     let mut an_edge_lpb: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -890,8 +1079,11 @@ impl<'a> PaveFiller<'a> {
           // OCCT L1744: if (theDME.IsBound(aPB))
           if let Some(replacements) = theDME.get(&pb_idx) {
             // OCCT L1747: UpdateExistingPaveBlocks(aPB, aLPB, thePBFacesMap);
-            // rcad: UpdateExistingPaveBlocks not yet ported — theDME replacements
-            //        are applied directly in the caller (make_blocks).
+            update_existing_pave_blocks(
+                &mut self.ds, &mut self.context,
+                pb_idx, replacements,
+                thePBFacesMap, self.fuzzy_tolerance,
+            );
 
             // OCCT L1749-1758: add replacement PBs to anEdgeLPB
             for &rp in replacements {
