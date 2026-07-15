@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: IntTools_Context — shared computation context with caches.
+/// 鉁?OCCT-aligned: IntTools_Context 鈥?shared computation context with caches.
 ///   OCCT IntTools_Context.hxx caches: FClass2d, ProjPS, ProjPC, ProjPT,
 ///   SurfaceData, SolidClassifier, Hatcher, SurfaceAdaptor, OBB.
 ///   rcad: caches FClass2d per face and surface/curve projectors.
@@ -13,27 +13,27 @@ use rcad_kernel::projection::{closest_point_on_surface, closest_point_on_curve,
 pub struct Context {
     fclass2d_cache: Vec<Option<FClass2d>>,
     tol_uv: f64,
-    num_faces: usize,
-    /// OCCT: ProjPS — point-on-surface projector cache (latest result per face).
+    pub num_faces: usize,
+    /// OCCT: ProjPS 鈥?point-on-surface projector cache (latest result per face).
     proj_ps_latest: Vec<Option<SurfaceProjection>>,
-    /// OCCT: ProjPC — point-on-curve projector cache (latest result per edge).
+    /// OCCT: ProjPC 鈥?point-on-curve projector cache (latest result per edge).
     proj_pc_latest: Vec<Option<CurveProjection>>,
-    /// OCCT: ProjPT — single reusable point-on-curve projector for transient curves.
+    /// OCCT: ProjPT 鈥?single reusable point-on-curve projector for transient curves.
     proj_pt_latest: Option<CurveProjection>,
-    /// OCCT: UVBounds cache — precomputed UV bounds per face.
+    /// OCCT: UVBounds cache 鈥?precomputed UV bounds per face.
     uv_bounds_cache: Vec<Option<[f64; 4]>>,
-    /// OCCT: SurfaceAdaptor — precomputed surface references.
+    /// OCCT: SurfaceAdaptor 鈥?precomputed surface references.
     surface_cache: Vec<Option<Surface3>>,
-    /// OCCT: mySClassMap (IntTools_Context: solid i → BRepClass3d_SolidClassifier*).
-    /// rcad: unused — classification uses separate classify_point function.
+    /// OCCT: mySClassMap (IntTools_Context: solid i 鈫?BRepClass3d_SolidClassifier*).
+    /// rcad: unused 鈥?classification uses separate classify_point function.
     #[allow(dead_code)]
     solid_classifier_map: std::collections::HashMap<usize, ()>,
-    /// OCCT: myHatcherMap (IntTools_Context: face i → Geom2dHatch_Hatcher*).
-    /// rcad: unused — hatch-based classification not implemented.
+    /// OCCT: myHatcherMap (IntTools_Context: face i 鈫?Geom2dHatch_Hatcher*).
+    /// rcad: unused 鈥?hatch-based classification not implemented.
     #[allow(dead_code)]
     hatcher_map: std::collections::HashMap<usize, ()>,
-    /// OCCT: myOBBMap (IntTools_Context: shape → Bnd_OBB*).
-    /// rcad: unused — AABB-based filtering via Bvh instead of OBB.
+    /// OCCT: myOBBMap (IntTools_Context: shape 鈫?Bnd_OBB*).
+    /// rcad: unused 鈥?AABB-based filtering via Bvh instead of OBB.
     #[allow(dead_code)]
     obb_map: std::collections::HashMap<usize, ()>,
 }
@@ -105,7 +105,7 @@ impl Context {
 
     pub fn tol_uv(&self) -> f64 { self.tol_uv }
 
-    /// OCCT: FClass2d(theFace) — returns cached 2D point classifier for a face.
+    /// OCCT: FClass2d(theFace) 鈥?returns cached 2D point classifier for a face.
     pub fn fclass2d(&mut self, ds: &DS, face_idx: usize) -> &FClass2d {
         assert!(face_idx < self.num_faces, "Context: face_idx {} out of range ({})", face_idx, self.num_faces);
         if self.fclass2d_cache[face_idx].is_none() {
@@ -114,17 +114,17 @@ impl Context {
         self.fclass2d_cache[face_idx].as_ref().unwrap()
     }
 
-    /// OCCT: IsPointInOnFace(theFace, theUV) — convenience wrapper.
+    /// OCCT: IsPointInOnFace(theFace, theUV) 鈥?convenience wrapper.
     pub fn is_point_in_on_face(&mut self, ds: &DS, face_idx: usize, uv: DVec2) -> bool {
         self.fclass2d(ds, face_idx).perform(uv, true) != State::Out
     }
 
-    /// OCCT: IsPointInFace(theFace, theUV) — convenience wrapper.
+    /// OCCT: IsPointInFace(theFace, theUV) 鈥?convenience wrapper.
     pub fn is_point_in_face(&mut self, ds: &DS, face_idx: usize, uv: DVec2) -> bool {
         self.fclass2d(ds, face_idx).perform(uv, true) == State::In
     }
 
-    /// OCCT: IsValidPointForFace(theP, theFace, theTol) — checks if a 3D point
+    /// OCCT: IsValidPointForFace(theP, theFace, theTol) 鈥?checks if a 3D point
     /// projects onto the face surface within tolerance.
     pub fn is_valid_point_for_face(&self, p: DVec3, face_idx: usize, tol: f64) -> bool {
         if face_idx >= self.num_faces { return false; }
@@ -135,7 +135,7 @@ impl Context {
         false
     }
 
-    /// OCCT: ProjPS(theFace) — projects a 3D point onto the face surface.
+    /// OCCT: ProjPS(theFace) 鈥?projects a 3D point onto the face surface.
     /// Returns (uv, 3d_point, distance) on success.
     pub fn proj_ps(&mut self, ds: &DS, face_idx: usize, p: DVec3) -> Option<(DVec2, DVec3, f64)> {
         if face_idx >= self.num_faces { return None; }
@@ -150,7 +150,7 @@ impl Context {
         }
     }
 
-    /// OCCT: ProjPC(theEdge) — projects a 3D point onto the edge's curve.
+    /// OCCT: ProjPC(theEdge) 鈥?projects a 3D point onto the edge's curve.
     /// Returns (param, 3d_point, distance) on success.
     pub fn proj_pc(&mut self, ds: &DS, edge_idx: usize, p: DVec3) -> Option<(f64, DVec3, f64)> {
         if edge_idx >= ds.edges.len() { return None; }
@@ -215,7 +215,7 @@ impl Context {
         if dist <= tol_sum {
             return Ok(PeResult { param, distance: dist });
         }
-        // OCCT L469-493: projection found but too far — fallback: check endpoint vertices
+        // OCCT L469-493: projection found but too far 鈥?fallback: check endpoint vertices
         // (when the point is beyond the curve's range, nearest endpoint may be within tol)
         let edge = &ds.edges[ei];
         let sv = edge.start_vertex;
@@ -269,7 +269,7 @@ impl Context {
         self.proj_pc(ds, ei, p).map(|(param, _, _)| param)
     }
 
-    /// OCCT-aligned: ProjPT(theP, theC) — projects a 3D point onto a transient curve.
+    /// OCCT-aligned: ProjPT(theP, theC) 鈥?projects a 3D point onto a transient curve.
     /// projector for one-off curve projections. Returns (param, 3d_point, distance).
     pub fn proj_pt(&mut self, curve: &Curve3, p: DVec3) -> Option<(f64, DVec3, f64)> {
         let proj = closest_point_on_curve(curve, p, 16);
@@ -282,7 +282,7 @@ impl Context {
         }
     }
 
-    /// OCCT: SurfaceAdaptor(theFace) — returns cached surface reference for a face.
+    /// OCCT: SurfaceAdaptor(theFace) 鈥?returns cached surface reference for a face.
     pub fn surface_adaptor(&mut self, ds: &DS, face_idx: usize) -> &Surface3
     where
         Self: 'static,
@@ -294,7 +294,7 @@ impl Context {
         self.surface_cache[face_idx].as_ref().unwrap()
     }
 
-    /// OCCT: UVBounds(theFace) — returns cached UV bounds [umin, umax, vmin, vmax].
+    /// OCCT: UVBounds(theFace) 鈥?returns cached UV bounds [umin, umax, vmin, vmax].
     pub fn uv_bounds(&mut self, ds: &DS, face_idx: usize) -> [f64; 4] {
         if face_idx < self.num_faces {
             if let Some(bounds) = self.uv_bounds_cache[face_idx] {
@@ -306,13 +306,13 @@ impl Context {
         }
         [0.0, std::f64::consts::TAU, 0.0, std::f64::consts::PI]
     }
-    /// OCCT: StatePointFace(theFace, theP2D) — returns the state (In/On/Out)
+    /// OCCT: StatePointFace(theFace, theP2D) 鈥?returns the state (In/On/Out)
     /// of a UV point relative to the face's trimmed domain.
     pub fn state_point_face(&mut self, ds: &DS, face_idx: usize, uv: DVec2) -> State {
         self.fclass2d(ds, face_idx).perform(uv, true)
     }
 
-    /// OCCT: IsPointInFace(theP, theFace, theTol) — 3D point version.
+    /// OCCT: IsPointInFace(theP, theFace, theTol) 鈥?3D point version.
     /// Projects the 3D point onto the face surface; if distance < tol,
     /// classifies the projected UV against the face's trimmed domain.
     pub fn is_point_in_face_3d(&mut self, ds: &DS, face_idx: usize, p: DVec3, tol: f64) -> bool {
@@ -325,13 +325,13 @@ impl Context {
         self.is_point_in_face(ds, face_idx, uv)
     }
 
-    /// OCCT: IsValidPointForFaces(theP, theF1, theF2, theTol) — returns true
+    /// OCCT: IsValidPointForFaces(theP, theF1, theF2, theTol) 鈥?returns true
     /// if the 3D point is valid on BOTH faces.
     pub fn is_valid_point_for_faces(&self, p: DVec3, fi1: usize, fi2: usize, tol: f64) -> bool {
         self.is_valid_point_for_face(p, fi1, tol) && self.is_valid_point_for_face(p, fi2, tol)
     }
 
-    /// OCCT: IsInfiniteFace(theFace) — returns true if the face has infinite bounds.
+    /// OCCT: IsInfiniteFace(theFace) 鈥?returns true if the face has infinite bounds.
     /// OCCT checks the surface type: Plane, Cylinder, Cone, Sphere, Torus are infinite.
     pub fn is_infinite_face(&self, face_idx: usize) -> bool {
         if face_idx >= self.num_faces { return false; }
@@ -339,6 +339,15 @@ impl Context {
             matches!(surf, Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_)
                 | Surface3::Sphere(_) | Surface3::Torus(_))
         })
+    }
+
+    /// Resize context caches to match a new number of faces.
+    pub fn resize(&mut self, new_num_faces: usize) {
+        self.num_faces = new_num_faces;
+        self.fclass2d_cache.resize(new_num_faces, None);
+        self.proj_ps_latest.resize(new_num_faces, None);
+        self.uv_bounds_cache.resize(new_num_faces, None);
+        self.surface_cache.resize(new_num_faces, None);
     }
 }
 
@@ -422,7 +431,7 @@ mod tests {
         // Point (0.5, 0.5, 0.0) on the bottom face surface
         let result = ctx.is_point_in_face_3d(&ds, 0, DVec3::new(0.5, 0.5, 0.0), 1e-4);
         // This depends on FClass2d having a polygon. If no pcurves, returns false.
-        // Test runs without panic — result correctness depends on build_face_reps.
+        // Test runs without panic 鈥?result correctness depends on build_face_reps.
     }
 
     /// OCCT IsValidPointForFaces: point on both faces (sphere pole at origin).
@@ -475,8 +484,8 @@ mod tests {
     fn compute_ve_vertex_off_edge() {
         let ds = unit_box_ds();
         let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
-        // Edge 0 is at z=0, vertex at (100, 0, 100) — far away
-        // We need a vertex that exists — vertex 5 is at (1,0,1)
+        // Edge 0 is at z=0, vertex at (100, 0, 100) 鈥?far away
+        // We need a vertex that exists 鈥?vertex 5 is at (1,0,1)
         // and edge 3 is on bottom face at z=0 from (0,1,0) to (0,0,0)
         let result = ctx.compute_ve(&ds, 5, 3, 0.0);
         assert!(result.is_err(), "vertex far from edge should fail");

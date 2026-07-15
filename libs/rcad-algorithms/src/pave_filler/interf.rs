@@ -27,7 +27,7 @@ impl<'a> PaveFiller<'a> {
                                 .max(self.ds.vertex_tolerance(nV2));
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
-                let pb1 = &self.ds.edge_pave_blocks(ei1)[pb1_local];
+                let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
                 let nE1 = pb1.0.read().unwrap().original_edge;                 
                 let r1 = self.ds.edge_origin(nE1);
                 let (t11, t12) = pb1.0.write().unwrap().range();                
@@ -38,7 +38,7 @@ impl<'a> PaveFiller<'a> {
 
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
-                    let pb2 = &self.ds.edge_pave_blocks(ei2)[pb2_local];
+                    let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
                     let nE2 = pb2.0.read().unwrap().original_edge;             
                     let r2 = self.ds.edge_origin(nE2);      
                     let (t21, t22) = pb2.0.write().unwrap().range();            

@@ -1,4 +1,4 @@
-﻿pub mod face_aabb;
+pub mod face_aabb;
 pub mod types;
 pub use types::*;
 pub mod iterator;
@@ -386,14 +386,14 @@ impl DS {
         std::sync::Arc::make_mut(&mut self.shapes[idx])
     }
 
-    /// OCCT-aligned: myDS->Append — add a new TShape and return its index.
+    /// OCCT-aligned: myDS->Append 閳?add a new TShape and return its index.
     pub fn append_shape(&mut self, ts: topods::TShape) -> usize {
         let idx = self.shapes.len();
         self.shapes.push(std::sync::Arc::new(ts));
         idx
     }
 
-    /// OCCT-aligned: BOPDS_DS::NbShapes — total count of all shapes.
+    /// OCCT-aligned: BOPDS_DS::NbShapes 閳?total count of all shapes.
     pub fn nb_shapes(&self) -> usize {
         self.shapes.len()
     }
@@ -819,7 +819,7 @@ impl DS {
     }
   }
 
-  /// �?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
+  /// 閿?OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
   ///   Populates map_ve from edges array.  Must be called after init_shape_topo
   ///   loads all source shapes.
   pub fn build_map_ve(&mut self) {
@@ -853,7 +853,7 @@ impl DS {
   self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
   }
 
-  /// �?OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
+  /// 閿?OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
   ///   Global interference pair fence.  Checks (i1, i2) with i1 < i2 against
   ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
   ///   if it already exists.  Call before adding to any typed interference vec.
@@ -1440,6 +1440,14 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  si.box_max = Some(point);
  si.box_gap = new_base + self.fuzzy_tol * 0.5;
  self.shape_info.push(si);
+ // Ensure shapes/vertex_shape_idx are consistent (like push_vertex)
+ if idx >= self.vertex_shape_idx.len() {
+  use topods::tshape_flags;
+  self.shapes.push(std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
+   my_shapes: Vec::new(), flags: tshape_flags::DEFAULT, point, tolerance: new_base, points: Vec::new(),
+  })));
+  self.vertex_shape_idx.push(self.shapes.len() - 1);
+ }
  idx
  }
 
@@ -1753,7 +1761,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  /// For each original wire whose edges were split by the PaveFiller,
  /// build a new edge list from the split sub-edges.
  ///
- /// Uses DS internal data only �?no external BRep needed.
+ /// Uses DS internal data only 閿?no external BRep needed.
  pub fn build_container_images(&mut self) {
  // Count total wires across all solids/shells in the DS
  let n_wires: usize = self.solids.iter()
@@ -1900,59 +1908,106 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  });
  }
 
+ /// OCCT-aligned: BOPDS_DS::GetSameDomainIndex (BOPDS_DS.cxx L1244-1253).
+ /// Resolves the vertex index through the SD chain to its canonical root.
+ /// In rcad, SD targets always have smaller indices than sources
+ /// (make_sd_vertices_vv picks the minimum index as merge target),
+ /// so only follow when partner < result to avoid bidirectional bounce.
+ pub fn get_same_domain_index(&self, vi: usize) -> usize {
+  let mut result = vi;
+  loop {
+   match self.shape_sd.find_sd_partner(result) {
+    Some(next) if next < result => result = next,
+    _ => break,
+   }
+  }
+  result
+ }
+
  /// OCCT-aligned: BOPDS_DS::FaceInfoIn (BOPDS_DS.cxx L837-889).
- /// Populates face_info.vertices_in with:
- ///   1. Face's own boundary vertices (OCCT L843-852)
+ /// Clears and repopulates face_info.vertices_in and pave_blocks_in from:
+ ///   1. Face boundary vertices with GetSameDomainIndex (OCCT L843-852)
  ///   2. VF interference vertices (OCCT L854-864)
- ///   3. EF interference vertices (OCCT L866-889)
+ ///   3. EF interference vertices (OCCT L866-877)
+ ///   4. FF IC endpoint vertices (for SubShapesOnIn common-vertex detection)
  /// Must be called before MakeBlocks so SubShapesOnIn projects onto curves.
+ /// 閴?OCCT-aligned: Clear+recompute, GetSameDomainIndex on all vertices.
  pub fn update_face_info_in(&mut self, fi: usize) {
- // Pre-collect data to avoid borrow conflicts
- let boundary_copy: Vec<usize> = self.faces[fi].boundary_verts.clone();
- let vf_vertices: Vec<usize> = self.interf_vf.iter()
- .filter(|inf| inf.face == fi)
- .map(|inf| inf.vertex)
- .collect();
- let ef_new_vertices: Vec<usize> = self.interf_ef.iter()
- .filter(|inf| inf.face == fi && inf.new_vertex != usize::MAX)
- .map(|inf| inf.new_vertex)
- .collect();
- // Collect IC endpoint vertices from FF interferences involving this face.
- // OCCT InitFaceInfoIn's TopoDS_Iterator dynamically captures all VERTEX
- // sub-shapes of a face, including those added during intersection processing.
- let ff_curve_endpoints: Vec<usize> = self.interf_ff.iter()
- .filter(|inf| inf.f1 == fi || inf.f2 == fi)
- .flat_map(|inf| inf.curves.iter().copied())
- .filter(|&ci| ci < self.intersection_curves.len())
- .flat_map(|ci| {
-  let mut v = Vec::with_capacity(2);
-  if self.intersection_curves[ci].start_vertex < self.vertices.len() {
-   v.push(self.intersection_curves[ci].start_vertex);
+  // Resolve all SD indices upfront to avoid borrow conflicts with mutable self access
+  let boundary_copy: Vec<usize> = self.faces[fi].boundary_verts.iter()
+   .map(|&vi| self.get_same_domain_index(vi))
+   .collect();
+
+  let vf_vertices: Vec<usize> = self.interf_vf.iter()
+   .filter(|inf| inf.face == fi)
+   .map(|inf| self.get_same_domain_index(inf.vertex))
+   .collect();
+
+  let ef_new_vertices: Vec<usize> = self.interf_ef.iter()
+   .filter(|inf| inf.face == fi
+           && inf.new_vertex != usize::MAX
+           && inf.new_vertex < self.vertices.len())
+   .map(|inf| self.get_same_domain_index(inf.new_vertex))
+   .collect();
+
+  let ff_curve_endpoints: Vec<usize> = self.interf_ff.iter()
+   .filter(|inf| inf.f1 == fi || inf.f2 == fi)
+   .flat_map(|inf| inf.curves.iter().copied())
+   .filter(|&ci| ci < self.intersection_curves.len())
+   .flat_map(|ci| {
+    let mut v = Vec::with_capacity(2);
+    if self.intersection_curves[ci].start_vertex < self.vertices.len() {
+     v.push(self.intersection_curves[ci].start_vertex);
+    }
+    if self.intersection_curves[ci].end_vertex < self.vertices.len() {
+     v.push(self.intersection_curves[ci].end_vertex);
+    }
+    v
+   })
+   .collect();
+  let ff_curve_endpoints: Vec<usize> = ff_curve_endpoints.into_iter()
+   .map(|vi| self.get_same_domain_index(vi))
+   .collect();
+
+  // OCCT L784-787: Clear then refill
+  let info = &mut self.faces[fi].face_info;
+  info.vertices_in.clear();
+
+  for &vi in &boundary_copy { info.vertices_in.insert(vi); }
+  for &vi in &vf_vertices { info.vertices_in.insert(vi); }
+  for &n_v in &ef_new_vertices { info.vertices_in.insert(n_v); }
+  for &n_v in &ff_curve_endpoints { info.vertices_in.insert(n_v); }
+ }
+
+ /// OCCT-aligned: UpdateFaceInfoOn (BOPDS_DS.cxx L792-807 + L811-833).
+ pub fn update_face_info_on(&mut self, fi: usize) {
+  let boundary_edges: Vec<usize> = {
+   let mut edges: Vec<usize> = self.faces[fi].boundary_edges.clone();
+   for w in &self.faces[fi].inner_boundary_edges {
+    edges.extend(w.iter().map(|&(ei, _)| ei));
+   }
+   edges
+  };
+  let boundary_verts: Vec<usize> = self.faces[fi].boundary_verts.iter()
+   .map(|&vi| self.get_same_domain_index(vi))
+   .collect();
+  let mut edge_pb_vertices: Vec<usize> = Vec::new();
+  for &ei in &boundary_edges {
+   if ei >= self.edges.len() { continue; }
+   for spb in &self.edges[ei].pave_blocks {
+    let pb = spb.0.read().unwrap();
+    edge_pb_vertices.push(self.get_same_domain_index(pb.pave1.vertex_idx));
+    edge_pb_vertices.push(self.get_same_domain_index(pb.pave2.vertex_idx));
+   }
   }
-  if self.intersection_curves[ci].end_vertex < self.vertices.len() {
-   v.push(self.intersection_curves[ci].end_vertex);
-  }
-  v
- })
- .collect();
- // Now modify face_info without borrowing self elsewhere
- let info = &mut self.faces[fi].face_info;
- for &vi in &boundary_copy {
- let n_vsd = vi; // OCCT: GetSameDomainIndex �?skip SD lookup for boundary verts
- info.vertices_in.insert(n_vsd);
+  let info = &mut self.faces[fi].face_info;
+  info.pave_blocks_on.clear();
+  info.vertices_on.clear();
+  for &vi in &edge_pb_vertices { info.vertices_on.insert(vi); }
+  for &vi in &boundary_verts { info.vertices_on.insert(vi); }
  }
- for &vi in &vf_vertices {
- let n_vsd = vi;
- info.vertices_in.insert(n_vsd);
- }
- for &n_v in &ef_new_vertices {
- let n_vsd = n_v;
- info.vertices_in.insert(n_vsd);
- }
- for &n_v in &ff_curve_endpoints {
- info.vertices_in.insert(n_v);
- }
- }
+
+
 
  ///  ?OCCT-aligned: batch refine for all faces.
  ///

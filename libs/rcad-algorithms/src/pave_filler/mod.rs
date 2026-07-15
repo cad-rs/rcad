@@ -281,6 +281,10 @@ impl<'a> PaveFiller<'a> {
  // ShapeInfo is built during load_topods_brep (init_shape_topo traversal).
  self.ds.nb_source_shapes = self.ds.shape_info.len();
  self.ds.build_map_ve();
+ // Resize context to match the actual number of faces now loaded
+ if self.ds.faces.len() != self.context.num_faces {
+     self.context.resize(self.ds.faces.len());
+ }
  }
 
  pub fn perform(&mut self, a: &topods::BRep, b: &topods::BRep) {
@@ -488,7 +492,11 @@ impl<'a> PaveFiller<'a> {
  //  ?OCCT L328: UpdatePaveBlocksWithSDVertices
  self.ds.update_pave_blocks_with_sd_vertices();
 
- // OCCT-aligned: BOPDS_DS::UpdateFaceInfoIn before MakeBlocks
+ // OCCT-aligned: UpdateFaceInfoOn + UpdateFaceInfoIn before MakeBlocks
+ // (PaveFiller_6.cxx L313-314)
+ for fi in 0..self.ds.faces.len() {
+ self.ds.update_face_info_on(fi);
+ }
  for fi in 0..self.ds.faces.len() {
  self.ds.update_face_info_in(fi);
  }

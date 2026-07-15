@@ -1,4 +1,4 @@
-﻿//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
+//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
 //! intersection results.
 //!
 //! Each function takes a 3D intersection curve together with surface geometry
@@ -874,9 +874,10 @@ pub fn compute_max_deviation_3d_to_pcurve(
  let p_surf = surface.point_at(uv.x, uv.y);
  (p3 - p_surf).length()
  };
- let raw_max = crate::golden_section_max(f, t0, t1, TOLERANCE_PARAM_LEGACY);
+ // OCCT FindMaxDistance: golden_section_max returns arg-max, evaluate f at that t
+ let t_max = crate::golden_section_max(f, t0, t1, TOLERANCE_PARAM_LEGACY);
+ let raw_max = f(t_max);
  // OCCT IntTools_Tools::ComputeTolerance L774: safety margin (1.0 + 1.0e-5)
- // to allow for future trimming/small geometric perturbations.
  const OCCT_MARGIN: f64 = 1.0 + 1.0e-5;
  raw_max * OCCT_MARGIN
 }
@@ -910,7 +911,9 @@ pub fn compute_max_deviation_from_surface(
  let proj = closest_point_on_surface(surface, p3, 16);
  (p3 - proj.point).length()
  };
- let d = crate::golden_section_max(f, seg_start, seg_end, an_eps);
+ // OCCT FindMaxDistance: golden_section_max returns arg-max, evaluate f at that t
+ let t_max = crate::golden_section_max(f, seg_start, seg_end, an_eps);
+ let d = f(t_max);
  if d > max_d {
  max_d = d;
  }

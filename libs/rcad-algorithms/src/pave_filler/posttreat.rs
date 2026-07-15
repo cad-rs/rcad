@@ -94,11 +94,16 @@ impl<'a> PaveFiller<'a> {
             if key < self.ds.edges.len() {
                 // It's an edge
                 let pb_key = key;
-                let (nv1, nv2, a_t1, a_t2, has_edge) = {
+                let (nv1, nv2, a_t1, a_t2, has_edge) = if pb_key < self.ds.pave_blocks.len() {
                     let pb = &self.ds.pave_blocks[pb_key];
                     let r = pb.0.read().unwrap();
                     (r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param, r.new_edge.is_some())
-                };
+                } else if pb_key < self.ds.edges.len() {
+                    let pb = self.ds.edges[pb_key].pave_blocks.first()
+                        .map(|spb| spb.0.read().unwrap());
+                    let r = pb.as_ref().unwrap();
+                    (r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param, r.new_edge.is_some())
+                } else { return; };
                 if has_edge {
                     let a_lpbx = vec![pb_key];
                     a_dm_ex_edges.insert(pb_key, a_lpbx);

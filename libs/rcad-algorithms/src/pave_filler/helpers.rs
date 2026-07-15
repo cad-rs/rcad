@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::{
     DS, DSEdge, DSCurveRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
@@ -31,26 +31,13 @@ pub(crate) fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<
     let r = circle.radius;
     let center = circle.center;
     let normal = circle.normal;
-    // OCCT-aligned: point must be on the circle's plane (Geom_Circle::Value natural requirement)
     let local = pt - center;
-    if local.dot(normal).abs() > tol {
-        return None;
-    }
+    if local.dot(normal).abs() > tol { return None; }
     let dist_to_center = local.length();
-    if (dist_to_center - r).abs() > tol {
-        return None;
-    }
-    // Use Circle3's own basis (same as point_at), NOT any_perpendicular.
-    // OCCT-aligned: deterministic reference direction from normal x DVec3::X.
-    let nm = normal.normalize();
-    let x_ax = if nm.x.abs() < 0.9 {
-        nm.cross(DVec3::X).normalize()
-    } else {
-        nm.cross(DVec3::Y).normalize()
-    };
-    let y_ax = nm.cross(x_ax);
-    let x = local.dot(x_ax);
-    let y = local.dot(y_ax);
+    if (dist_to_center - r).abs() > tol { return None; }
+    // Use Circle3's own basis to match point_at(t), not a custom orthogonal frame.
+    let x = local.dot(circle.x_dir);
+    let y = local.dot(circle.y_dir);
     Some(y.atan2(x))
 }
 

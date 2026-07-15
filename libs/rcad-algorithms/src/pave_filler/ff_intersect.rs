@@ -1,14 +1,14 @@
-use super::*;
+﻿use super::*;
 use crate::inttools::int_patch_type::IntPatchIType;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn perform_ff(&mut self) {
- // before performing intersection (ensures FaceInfo is current).
- let mut ff_face_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
- ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeA));
- ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeB));
- for &fi in &ff_face_set {
- self.ds.refine_face_info_on(fi);
+  // before performing intersection (ensures FaceInfo is current).
+  let mut ff_face_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeA));
+  ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeB));
+  for &fi in &ff_face_set {
+  self.ds.refine_face_info_on(fi);
  self.ds.refine_face_info_in(fi);
  }
 
@@ -266,11 +266,13 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  /// OCCT: dispatch FF intersection by surface type
- /// OCCT L344-608: IntTools_FaceFace::Perform — face-face intersection.
+ /// OCCT L344-608: IntTools_FaceFace::Perform 闁?face-face intersection.
 /// Dispatches by surface type with bReverse sorting (OCCT SortTypes/IndexType),
 /// then runs intersection, MakeCurve, ComputeTolReached3d, PrepareLines3D,
 /// and point/curve registration.
 pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
+ let dbg_ff = std::env::var("RCAD_DBG_FF").is_ok();
+ if dbg_ff { eprintln!("[FF] intersect_face_face: f1={} f2={}", f1, f2); }
  // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
  let shift_info = self.check_seam_edge_shift(f1, f2);
  let old_shift_tol = self.seam_shift_tol;
@@ -295,7 +297,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  _ => s2_orig,
  };
 
- // OCCT L351-375: SortTypes — canonical surface ordering.
+ // OCCT L351-375: SortTypes 闁?canonical surface ordering.
  // Swap f1/f2 so the higher-type surface is always "face A".
  let type_idx1 = Self::surface_type_index(&s1);
  let type_idx2 = Self::surface_type_index(&s2);
@@ -307,10 +309,10 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // OCCT: myTolF1 = BRep_Tool::Tolerance(myFace1) + aFuzz, etc.
  // rcad: tolerance handled by PaveFiller's fuzzy_tolerance and face geom_tols.
 
- // OCCT L395-401: isFace1Quad/isFace2Quad — skip; rcad uses IntPatchIntersection
+ // OCCT L395-401: isFace1Quad/isFace2Quad 闁?skip; rcad uses IntPatchIntersection
  // which dispatches by quad type internally.
 
- // ── OCCT L404-434: Plane-Plane fast path (PerformPlanes) ──
+ // 闁冲厜鍋撻柍鍏夊亾 OCCT L404-434: Plane-Plane fast path (PerformPlanes) 闁冲厜鍋撻柍鍏夊亾
  if matches!(s_a, rcad_kernel::geom::Surface3::Plane(_))
    && matches!(s_b, rcad_kernel::geom::Surface3::Plane(_))
  {
@@ -345,7 +347,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  }
 
  // OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
- // Returns a Vec of IntersectionCurve — one per valid part from the
+ // Returns a Vec of IntersectionCurve 闁?one per valid part from the
  // LineConstructor (OCCT supports aNbParts > 1, e.g. multi-segment clipping).
  let mut ff_curve_indices: Vec<usize> = Vec::new();
  for i in 0..int_patch.nb_lines() {
@@ -353,16 +355,20 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  for ic in ics {
    let ci = self.ds.intersection_curves.len();
    let mut adjusted_ic = ic;
-   // OCCT L558-567: if reversed, swap pcurves (first ↔ second).
+   // OCCT L558-567: if reversed, swap pcurves (first 闁?second).
    if b_reverse {
    std::mem::swap(&mut adjusted_ic.pcurve_on_a, &mut adjusted_ic.pcurve_on_b);
    }
    self.ds.intersection_curves.push(adjusted_ic);
+   if std::env::var("RCAD_DBG_MB").is_ok() {
+    let ic2 = &self.ds.intersection_curves[ci];
+    eprintln!("[DBG_IC3] PUSHED IC[{}]: geom_tol={:.6e} t_range={:.6} {:.6}", ci, ic2.geom_tol, ic2.t_range[0], ic2.t_range[1]);
+   }
    ff_curve_indices.push(ci);
  }
  }
 
- // OCCT L576-608: points — filter by isPointInOnFace, append to myPnts.
+ // OCCT L576-608: points 闁?filter by isPointInOnFace, append to myPnts.
  let mut ff_point_indices: Vec<usize> = Vec::new();
  for pi in 0..int_patch.nb_points() {
  let pt = int_patch.point(pi);
@@ -377,6 +383,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  self.ds.vertex_data_mut(vi).tolerance = self.ds.vertex_tolerance(vi).max(pt.tolerance);
  ff_point_indices.push(vi);
  }
+ if std::env::var("RCAD_DBG_FF").is_ok() { eprintln!("[FF]   -> curves={} nLines={}", ff_curve_indices.len(), int_patch.nb_lines()); }
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
  f1, f2, curves: ff_curve_indices, points: ff_point_indices, tangent_faces: false,
  });
@@ -492,7 +499,7 @@ fn surface_type_index(surf: &rcad_kernel::geom::Surface3) -> i32 {
  }
 }
 
-/// OCCT L2426-2560: PerformPlanes — plane-plane intersection fast path.
+/// OCCT L2426-2560: PerformPlanes 闁?plane-plane intersection fast path.
 fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  use rcad_kernel::geom::{Curve3, Surface3};
  let pln1 = match &self.ds.faces[f1].surface { Surface3::Plane(p) => p, _ => return };
@@ -559,7 +566,7 @@ pub(crate) fn make_intersection_curve(
  use rcad_kernel::geom::Curve2dEval;
  use std::f64::consts::TAU;
 
- // OCCT L1097-1846: IntPatch_Walking → approximate BSpline from marching points.
+ // OCCT L1097-1846: IntPatch_Walking 闁?approximate BSpline from marching points.
  if line.is_wline() {
  return self.make_walking_curve(f1, f2, line);
  }
@@ -643,8 +650,8 @@ fn make_walking_curve(
 /// - Creates analytic curve from IntPatch_GLine.
 /// - Calls LineConstructor to get valid parameter parts (OCCT NbParts/Part).
 /// - For each part:
-///     both bounds finite  → trimmed 3D curve + BuildPCurves + endpoint vertices
-///     one/both infinite   → test reference point on face domains → keep or reject
+///     both bounds finite  闁?trimmed 3D curve + BuildPCurves + endpoint vertices
+///     one/both infinite   闁?test reference point on face domains 闁?keep or reject
 /// - rcad note: IntPatchLine has no vertex data, so LineConstructor returns
 ///   a single part with the original t_range (always infinite for lines).
 fn make_analytic_nonperiodic_curve(
@@ -673,7 +680,7 @@ fn make_analytic_nonperiodic_curve(
  let b_finite = fprm.is_finite() && lprm.is_finite() && lprm > fprm + 1e-12;
 
  if b_finite {
-   // ── Both bounds finite: trimmed curve + pcurves + vertices ──
+   // 闁冲厜鍋撻柍鍏夊亾 Both bounds finite: trimmed curve + pcurves + vertices 闁冲厜鍋撻柍鍏夊亾
    // OCCT L835-870: Geom_TrimmedCurve + BuildPCurves + Geom2d_TrimmedCurve.
    let ic_t_range = [fprm, lprm];
 
@@ -720,7 +727,7 @@ fn make_analytic_nonperiodic_curve(
    });
 
  } else {
-   // ── One/both bounds infinite: test reference point ──
+   // 闁冲厜鍋撻柍鍏夊亾 One/both bounds infinite: test reference point 闁冲厜鍋撻柍鍏夊亾
    // OCCT L850-895: test-point approach.
    // dT = 100.0; surface-type exceptions for extrusion/offset/revolution.
    let dT = 100.0;
@@ -731,7 +738,7 @@ fn make_analytic_nonperiodic_curve(
    // !bFNIt && bLPIt: only upper bound infinite
    fprm + dT
    } else {
-   // bFNIt && bLPIt: both infinite → IntermediatePoint(-dT, dT)
+   // bFNIt && bLPIt: both infinite 闁?IntermediatePoint(-dT, dT)
    0.0
    };
 
@@ -774,26 +781,29 @@ fn make_analytic_nonperiodic_curve(
 /// - Creates analytic curve from IntPatch_GLine.
 /// - Calls TreatCircle to sort vertices, split at 0, build candidate intervals.
 /// - For each candidate interval:
-///     not full-period → trimmed curve + BuildPCurves(with UV bounds) + vertices
-///     full-period (aNbParts=1) → test 18 points around circle → keep/reject
-/// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2π] interval.
+///     not full-period 闁?trimmed curve + BuildPCurves(with UV bounds) + vertices
+///     full-period (aNbParts=1) 闁?test 18 points around circle 闁?keep/reject
+/// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2閿滅 interval.
 fn make_analytic_periodic_curve(
   &mut self, f1: usize, f2: usize,
   curve: &Curve3, orig_t_range: [f64; 2], typl: IntPatchIType,
   geom_tol: f64, tang_tolerance: f64,
   vertices: &[crate::inttools::int_patch_line::IntPatchVertex],
 ) -> Vec<crate::bopds::ds::IntersectionCurve> {
+ if std::env::var("RCAD_DBG_MB").is_ok() {
+  eprintln!("[DBG_IC] make_analytic_periodic_curve: geom_tol={:.6e} t_range={:.6} {:.6}", geom_tol, orig_t_range[0], orig_t_range[1]);
+ }
  use rcad_kernel::geom::Curve2dEval;
  use std::f64::consts::{TAU, PI};
 
  // OCCT L906-920: create analytic 3D curve from GLine.
 
- // OCCT L922-950: TreatCircle — split intervals with 0-crossing handling.
+ // OCCT L922-950: TreatCircle 闁?split intervals with 0-crossing handling.
  // Sorts vertices on the GLine, creates intervals, tests midpoints.
  let parts = self.treat_circle_parts(curve, orig_t_range, typl, vertices, f1, f2);
 
  // OCCT L950-1095: aNbParts = seqp.Length() / 2.
- //   If aNbParts == 0 → the for loop does not execute → no output curves.
+ //   If aNbParts == 0 闁?the for loop does not execute 闁?no output curves.
  if parts.is_empty() {
  return Vec::new();
  }
@@ -804,11 +814,11 @@ fn make_analytic_periodic_curve(
  let mut result = Vec::with_capacity(parts.len());
 
  for &[fprm, lprm] in &parts {
- // OCCT L953-956: if (|fprm|>eps || |lprm-2π|>eps) → not full-period
+ // OCCT L953-956: if (|fprm|>eps || |lprm-2閿滅皸>eps) 闁?not full-period
  let is_full_period = fprm.abs() <= aRealEpsilon && (lprm - aPeriod).abs() <= aRealEpsilon;
 
  if !is_full_period && (lprm > fprm + 1e-12) {
-   // ── Not full-period: trimmed curve + pcurves + vertices ──
+   // 闁冲厜鍋撻柍鍏夊亾 Not full-period: trimmed curve + pcurves + vertices 闁冲厜鍋撻柍鍏夊亾
    // OCCT L960-990: Geom_TrimmedCurve(newc, fprm, lprm) + BuildPCurves + append.
 
    // OCCT L968-990: BuildPCurves with surface UV bounds for Circle/Ellipse.
@@ -846,7 +856,7 @@ fn make_analytic_periodic_curve(
    });
 
  } else if is_full_period && aNbParts == 1 {
-   // ── Full-period, single part → accept full circle ──
+   // 闁冲厜鍋撻柍鍏夊亾 Full-period, single part 闁?accept full circle 闁冲厜鍋撻柍鍏夊亾
    // OCCT L996-1042: trimmed full circle + BuildPCurves + append + break.
    let pca = self.compute_pcurve_on_surface(curve, f1);
    let pcb = self.compute_pcurve_on_surface(curve, f2);
@@ -867,7 +877,7 @@ fn make_analytic_periodic_curve(
    break;
 
  } else if is_full_period && aNbParts > 1 {
-   // ── Full-period, multiple parts: test 18 points ──
+   // 闁冲厜鍋撻柍鍏夊亾 Full-period, multiple parts: test 18 points 闁冲厜鍋撻柍鍏夊亾
    // OCCT L1045-1095: on regarde si on garde.
    let aTwoPIdiv17 = aPeriod / 17.0;
    for j in 0..=17 {
@@ -923,14 +933,14 @@ fn line_constructor_parts(
 }
 
 /// OCCT-aligned: TreatCircle (GeomInt_LineConstructor.cxx L481-560).
-/// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2π),
+/// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2閿?,
 /// creates intervals between sorted vertices, tests midpoints on both face
 /// domains.  Handles 0-crossing via PeriodicReparam + SeqFprm/SeqLprm.
 ///
 /// Without vertices (nbvtx=0): OCCT creates a zero-initialized array of size 1,
 /// the sort and interval-building steps produce no valid intervals, and seqp
 /// remains empty.  The caller sees aNbParts=0 and creates no output curves.
-/// This function matches that behavior — returns empty.
+/// This function matches that behavior 闁?returns empty.
 /// OCCT-aligned: PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
 /// For each analytic line, computes boundary-crossing points where the
 /// curve projects to UV outside one of the face domains.  These points
@@ -943,80 +953,40 @@ fn put_points_on_line(
   &mut self, f1: usize, f2: usize,
   line: &mut crate::inttools::int_patch_line::IntPatchLine,
 ) {
- use rcad_kernel::geom::Curve2dEval;
- if line.is_wline() { return; } // Walking lines handled separately.
+ use crate::pave_filler::helpers::project_vertex_to_curve;
+ if line.is_wline() { return; }
  let typl = line.line_type;
  if typl == IntPatchIType::Restriction { return; }
-
  let curve = &line.curve;
  let t_range = line.t_range;
- let pca = self.compute_pcurve_on_surface(curve, f1);
- let pcb = self.compute_pcurve_on_surface(curve, f2);
-
- // Determine a practical sampling range.
- let (sweep_start, sweep_end) = match typl {
- IntPatchIType::Circle | IntPatchIType::Ellipse => (0.0, std::f64::consts::TAU),
- _ => {
-   if t_range[0].is_finite() { (t_range[0], t_range[0] + 1e5) }
-   else if t_range[1].is_finite() { (t_range[1] - 1e5, t_range[1]) }
-   else { (-1e5, 1e5) }
- }
- };
- if !sweep_start.is_finite() || !sweep_end.is_finite() || sweep_end <= sweep_start { return; }
-
- // OCCT L272-282: for each line, for each point: project and classify.
- // rcad: sample the curve, evaluate pcurve, classify UV on both face domains.
- // Find transitions from valid→invalid or invalid→valid.
- const N_SAMPLES: usize = 501;
- let mut uv_in = vec![false; N_SAMPLES];
-
- for i in 0..N_SAMPLES {
- let t = sweep_start + (sweep_end - sweep_start) * i as f64 / (N_SAMPLES - 1) as f64;
- let p3d = curve.point_at(t);
- if !p3d.is_finite() { continue; }
-
- // Prefer pcurve for UV, fall back to 3D projection.
- let uv1 = pca.as_ref().and_then(|pc| { let uv = pc.point_at(t); if uv.is_finite() { Some(uv) } else { None } })
-   .or_else(|| self.context.proj_ps(self.ds, f1, p3d).map(|(uv, _, _)| uv));
- let uv2 = pcb.as_ref().and_then(|pc| { let uv = pc.point_at(t); if uv.is_finite() { Some(uv) } else { None } })
-   .or_else(|| self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv));
-
- let in1 = uv1.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f1, uv));
- let in2 = uv2.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f2, uv));
- uv_in[i] = in1 && in2;
- }
-
- // OCCT L290-310: find transitions and add vertices.
- // Add a vertex at each transition point (middle of the transition interval).
- let mut new_vertices: Vec<crate::inttools::int_patch_line::IntPatchVertex> = Vec::new();
- for i in 1..N_SAMPLES {
- if uv_in[i] != uv_in[i - 1] {
-   // Transition at midpoint between sample i-1 and i.
-   let t_mid = sweep_start + (sweep_end - sweep_start) * (i as f64 - 0.5) / (N_SAMPLES - 1) as f64;
-   let p3d = curve.point_at(t_mid);
-   if p3d.is_finite() {
-   new_vertices.push(crate::inttools::int_patch_line::IntPatchVertex {
-     param_on_line: t_mid,
-     p3d,
-     u1: pca.as_ref().map_or(0.0, |pc| pc.point_at(t_mid).x),
-     v1: pca.as_ref().map_or(0.0, |pc| pc.point_at(t_mid).y),
-     u2: pcb.as_ref().map_or(0.0, |pc| pc.point_at(t_mid).x),
-     v2: pcb.as_ref().map_or(0.0, |pc| pc.point_at(t_mid).y),
+ let a_tol_c = line.tolerance;
+ for &fi in &[f1, f2] {
+  if fi >= self.ds.faces.len() { continue; }
+  let verts: Vec<usize> = self.ds.faces[fi].boundary_verts.clone();
+  for &vi in &verts {
+   if vi >= self.ds.vertices.len() { continue; }
+   let v_pt = self.ds.vertex_point(vi);
+   let t_opt = project_vertex_to_curve(v_pt, curve, a_tol_c);
+   let t = match t_opt {
+    Some(t) if t >= t_range[0] - a_tol_c && t <= t_range[1] + a_tol_c => t,
+    _ => continue,
+   };
+   let is_dup = line.vertices.iter().any(|ev| (ev.param_on_line - t).abs() < 1e-10);
+   if is_dup { continue; }
+   let pca = self.compute_pcurve_on_surface(curve, f1);
+   let pcb = self.compute_pcurve_on_surface(curve, f2);
+   let uv1 = pca.as_ref().map(|pc| pc.point_at(t)).filter(|uv| uv.is_finite());
+   let uv2 = pcb.as_ref().map(|pc| pc.point_at(t)).filter(|uv| uv.is_finite());
+   let p3d = curve.point_at(t);
+   line.vertices.push(crate::inttools::int_patch_line::IntPatchVertex {
+    param_on_line: t, p3d,
+    u1: uv1.map_or(0.0, |uv| uv.x),
+    v1: uv1.map_or(0.0, |uv| uv.y),
+    u2: uv2.map_or(0.0, |uv| uv.x),
+    v2: uv2.map_or(0.0, |uv| uv.y),
    });
-   }
+  }
  }
- }
-
- // Deduplicate vertices: OCCT L312-320 rejects vertices within TolPC.
- const VERTEX_TOL: f64 = 1e-10;
- for v in new_vertices {
- let is_dup = line.vertices.iter().any(|ev| (ev.param_on_line - v.param_on_line).abs() < VERTEX_TOL);
- if !is_dup {
-   line.vertices.push(v);
- }
- }
-
- // Sort vertices by parameter (OCCT L322: ComputeVertexParameters).
  line.vertices.sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
 }
 
@@ -1027,10 +997,13 @@ fn treat_circle_parts(
 ) -> Vec<[f64; 2]> {
  use crate::inttools::int_patch_line::IntPatchVertex;
  use std::f64::consts::TAU;
+ if std::env::var("RCAD_DBG_FF").is_ok() {
+  eprintln!("[FF] treat_circle_parts: f1={} f2={} nVtx={}", f1, f2, vertices.len());
+ }
 
  // OCCT GeomInt_LineConstructor::TreatCircle (L481-560):
- //   aVtxArr = sorted vertices with params projected to [0, 2π)
- //   Last vertex = first.param + 2π  (wraps around)
+ //   aVtxArr = sorted vertices with params projected to [0, 2閿?
+ //   Last vertex = first.param + 2閿? (wraps around)
  //   Remove duplicates within aTolPC
  //   Sort again
  //   For each adjacent pair (i, i+1): test midpoint on both face domains
@@ -1038,12 +1011,12 @@ fn treat_circle_parts(
  let aNbVtx = vertices.len();
  if aNbVtx == 0 {
   // OCCT: with 0 vertices, aVtxArr has size 1 (default-constructed),
-  // sort does nothing, no intervals produced → seqp empty → caller
-  // sees aNbParts=0 → no output curves.
+  // sort does nothing, no intervals produced 闁?seqp empty 闁?caller
+  // sees aNbParts=0 闁?no output curves.
   return Vec::new();
  }
 
- // Build vertex array with parameters projected to [0, 2π) (OCCT L492-495).
+ // Build vertex array with parameters projected to [0, 2閿? (OCCT L492-495).
  let mut sorted: Vec<(f64, &IntPatchVertex)> = vertices.iter()
    .map(|v| {
      let par = if orig_t_range[1] - orig_t_range[0] >= TAU - 1e-12 {
@@ -1059,7 +1032,7 @@ fn treat_circle_parts(
  // OCCT L500-502: sort by parameter.
  sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
- // OCCT L504: create last vertex at first.param + 2π.
+ // OCCT L504: create last vertex at first.param + 2閿?
  let first_param = sorted[0].0;
  let last_param = first_param + TAU;
 
@@ -1071,7 +1044,7 @@ fn treat_circle_parts(
    deduped.push(par);
   }
  }
- // Add the last vertex (first.param + 2π), skip if duplicate of last deduped.
+ // Add the last vertex (first.param + 2閿?, skip if duplicate of last deduped.
  let last_2pi = first_param + TAU;
  if deduped.is_empty() || (last_2pi - *deduped.last().unwrap()).abs() > aTolPC {
   deduped.push(last_2pi);
@@ -1094,7 +1067,11 @@ fn treat_circle_parts(
   let uv2 = self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv);
   let in1 = uv1.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f1, uv));
   let in2 = uv2.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f2, uv));
-  if !(in1 && in2) { continue; }
+  if !(in1 && in2) {
+   if std::env::var("RCAD_DBG_FF").is_ok() { eprintln!("[FF]   interval [{:.4},{:.4}] REJECTED: in1={} in2={}", t1, t2, in1, in2); }
+   continue;
+  }
+  if std::env::var("RCAD_DBG_FF").is_ok() { eprintln!("[FF]   interval [{:.4},{:.4}] ACCEPTED", t1, t2); }
   result.push([t1, t2]);
  }
 
@@ -1179,7 +1156,7 @@ mod tests {
     #[test]
     fn surface_type_index_other() {
         let s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane::new(glam::DVec3::Z, glam::DVec3::Z));
-        // BSpline variant — use Plane to test 'other' path; BSpline has no Default
+        // BSpline variant 闁?use Plane to test 'other' path; BSpline has no Default
         /* Skip: no Default for Bezier/BSpline */
     }
 }
