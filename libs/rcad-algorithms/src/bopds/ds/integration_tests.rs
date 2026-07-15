@@ -962,57 +962,56 @@ fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
 #[test]
 fn pf_ref_plane_plane() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
-    // Use offset box to avoid potential DS vertex dedup with identical positions
-    let b = box_at(DVec3::new(0.2, 0.2, 0.2), 1.0, 1.0, 1.0);
+    let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=0, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=0, nV=24
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=0, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=0, nV=24
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 12, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=12, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=0, nV=24
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 12, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=12, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=0, nV=24
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 12, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=12, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=0, nV=24
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 8, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 12, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 30, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=12, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=30, nV=24
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 8, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 12, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 30, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=8, nV=24
+    // OCCT ref: interf_ee=12, nV=24
+    // OCCT ref: interf_ef=0, nV=24
+    // OCCT ref: interf_ff=30, nV=24
 
 }
 /// Stage ref: plane_sphere (box x psphere)
@@ -1023,52 +1022,52 @@ fn pf_ref_plane_sphere() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 1, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 6, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=1, nV=11
+    // OCCT ref: interf_ee=0, nV=11
+    // OCCT ref: interf_ef=1, nV=11
+    // OCCT ref: interf_ff=6, nV=11
 
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
@@ -1079,52 +1078,52 @@ fn pf_ref_plane_cylinder() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 1, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=11
+    // OCCT ref: interf_ee=0, nV=11
+    // OCCT ref: interf_ef=1, nV=11
+    // OCCT ref: interf_ff=0, nV=11
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 1, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 1, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=11
+    // OCCT ref: interf_ee=0, nV=11
+    // OCCT ref: interf_ef=1, nV=11
+    // OCCT ref: interf_ff=1, nV=11
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 1, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=11
+    // OCCT ref: interf_ee=0, nV=11
+    // OCCT ref: interf_ef=1, nV=11
+    // OCCT ref: interf_ff=1, nV=11
 
 }
 /// Stage ref: plane_cone (box x pcone)
@@ -1135,108 +1134,112 @@ fn pf_ref_plane_cone() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=10
+    // OCCT ref: interf_ee=0, nV=10
+    // OCCT ref: interf_ef=0, nV=10
+    // OCCT ref: interf_ff=0, nV=10
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 4, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=14
+    // OCCT ref: interf_ee=0, nV=14
+    // OCCT ref: interf_ef=4, nV=14
+    // OCCT ref: interf_ff=0, nV=14
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 4, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 9, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=14
+    // OCCT ref: interf_ee=0, nV=14
+    // OCCT ref: interf_ef=4, nV=14
+    // OCCT ref: interf_ff=9, nV=14
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 4, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 9, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=14
+    // OCCT ref: interf_ee=0, nV=14
+    // OCCT ref: interf_ef=4, nV=14
+    // OCCT ref: interf_ff=9, nV=14
 
 }
 /// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
 #[test]
 fn pf_ref_cylinder_cylinder() {
     let a = make_cyl(1.0, 3.0);
-    let b = make_cyl(1.0, 3.0) /* no rotation in rcad test */;
+    let b = {
+        let mut c = make_cyl(1.0, 3.0);
+        c.apply_transform(glam::DAffine3::from_rotation_y(std::f64::consts::FRAC_PI_2));
+        c
+    };
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 2, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 4, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=7
+    // OCCT ref: interf_ee=2, nV=7
+    // OCCT ref: interf_ef=1, nV=7
+    // OCCT ref: interf_ff=4, nV=7
 
 }
 /// Stage ref: cylinder_sphere (pcylinder x psphere)
@@ -1247,52 +1250,52 @@ fn pf_ref_cylinder_sphere() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=4
+    // OCCT ref: interf_ee=0, nV=4
+    // OCCT ref: interf_ef=0, nV=4
+    // OCCT ref: interf_ff=0, nV=4
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=4
+    // OCCT ref: interf_ee=0, nV=4
+    // OCCT ref: interf_ef=0, nV=4
+    // OCCT ref: interf_ff=0, nV=4
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=5
+    // OCCT ref: interf_ee=1, nV=5
+    // OCCT ref: interf_ef=0, nV=5
+    // OCCT ref: interf_ff=0, nV=5
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=5
+    // OCCT ref: interf_ee=1, nV=5
+    // OCCT ref: interf_ef=0, nV=5
+    // OCCT ref: interf_ff=0, nV=5
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=5
+    // OCCT ref: interf_ee=1, nV=5
+    // OCCT ref: interf_ef=0, nV=5
+    // OCCT ref: interf_ff=0, nV=5
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 2, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=5
+    // OCCT ref: interf_ee=1, nV=5
+    // OCCT ref: interf_ef=0, nV=5
+    // OCCT ref: interf_ff=2, nV=5
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 2, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=5
+    // OCCT ref: interf_ee=1, nV=5
+    // OCCT ref: interf_ef=0, nV=5
+    // OCCT ref: interf_ff=2, nV=5
 
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
@@ -1303,109 +1306,118 @@ fn pf_ref_cylinder_torus() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 2, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=2, nV=3
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 2, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=2, nV=3
 
 }
 /// Stage ref: cone_cone (pcone x pcone)
 #[test]
 #[ignore = "cone pcurve degenerated: pre-existing bug"]
 fn pf_ref_cone_cone() {
-    let a = make_cone_fn(1.0, 2.0);
-    let b = /* skip: needs translation */ make_cone_fn(1.0, 2.0);
+    let a = {
+        let mut c = make_cone_fn(1.0, 2.0);
+        c.apply_transform(glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 0.75)));
+        c
+    };
+    let b = {
+        let mut c = make_cone_fn(1.0, 2.0);
+        c.apply_transform(glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, -0.75)));
+        // Flip second cone (r1->r2 swap not easily done, approximate with inverted orientation)
+        c
+    };
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=3
+    // OCCT ref: interf_ee=0, nV=3
+    // OCCT ref: interf_ef=0, nV=3
+    // OCCT ref: interf_ff=0, nV=3
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 1, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 2, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 3, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=7
+    // OCCT ref: interf_ee=1, nV=7
+    // OCCT ref: interf_ef=2, nV=7
+    // OCCT ref: interf_ff=3, nV=7
 
 }
 /// Stage ref: sphere_sphere (psphere x psphere)
@@ -1416,51 +1428,51 @@ fn pf_ref_sphere_sphere() {
 
     // PerformVV
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // PerformVE
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // PerformEE
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // PerformVF
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // PerformEF
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // PerformFF
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-//     assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=2
+    // OCCT ref: interf_ee=0, nV=2
+    // OCCT ref: interf_ef=0, nV=2
+    // OCCT ref: interf_ff=0, nV=2
 
     // MakeBlocks
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-//     assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");  # baseline TBD
-//     assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");  # baseline TBD
-//     assert_eq!(ds.interf_ef.len(), 2, "MakeBlocks interf_ef");  # baseline TBD
-//     assert_eq!(ds.interf_ff.len(), 1, "MakeBlocks interf_ff");  # baseline TBD
+    // OCCT ref: interf_vv=0, nV=6
+    // OCCT ref: interf_ee=0, nV=6
+    // OCCT ref: interf_ef=2, nV=6
+    // OCCT ref: interf_ff=1, nV=6
 
 }
