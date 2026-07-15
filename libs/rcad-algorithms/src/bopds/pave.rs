@@ -134,9 +134,6 @@ impl PaveBlock {
 
     /// BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
     pub fn append_ext_pave(&mut self, pave: Pave) {
-        // OCCT AppendExtPave does NOT dedup by vertex_idx — the same
-        // vertex may appear at multiple parameters on a closed curve.
-        // The fence-based dedup was incorrect for this case.
         self.ext_paves.push(pave);
     }
 
@@ -147,8 +144,6 @@ impl PaveBlock {
 
     /// BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
     pub fn remove_ext_pave(&mut self, vertex_idx: usize) {
-        // OCCT removes by identity; rcad removes by vertex_idx match.
-        // No fence check needed since append_ext_pave no longer fences.
         self.ext_paves.retain(|p| p.vertex_idx != vertex_idx);
     }
 
@@ -300,24 +295,6 @@ mod pave_block_tests {
         assert!(a.has_same_bounds(&b), "Same bounds (forward)");
         assert!(a.has_same_bounds(&c), "Same bounds (reversed vertex order)");
         assert!(!a.has_same_bounds(&d), "Different vertex should not match");
-    }
-
-    #[test]
-    fn pave_block_append_ext_pave_dedup() {
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
-
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
-        assert_eq!(pb.ext_paves.len(), 1);
-
-        // Same vertex_idx → dedup (fence)
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
-        assert_eq!(pb.ext_paves.len(), 1, "Duplicate ext_pave should be rejected by fence");
-
-        // Different vertex_idx → added
-        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.7 });
-        assert_eq!(pb.ext_paves.len(), 2);
     }
 
     #[test]
