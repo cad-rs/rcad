@@ -645,8 +645,12 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- if nV < self.ds.vertex_shape_idx.len() && !self.ds.shape_info[self.ds.vertex_shape_idx[nV]].is_new {
- continue;
+ if nV < self.ds.vertex_shape_idx.len() {
+  let si = self.ds.vertex_shape_idx[nV];
+  if si < self.ds.shape_info.len() && !self.ds.shape_info[si].is_new {
+   // OCCT does NOT skip old vertices — boundary vertices must be
+   // put on the IC as paves so Update() can create sub-PBs.
+  }
  }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
  }

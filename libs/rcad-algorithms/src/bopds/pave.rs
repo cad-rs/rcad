@@ -134,9 +134,10 @@ impl PaveBlock {
 
     /// BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
     pub fn append_ext_pave(&mut self, pave: Pave) {
-        if self.ext_paves_fence.insert(pave.vertex_idx) {
-            self.ext_paves.push(pave);
-        }
+        // OCCT AppendExtPave does NOT dedup by vertex_idx — the same
+        // vertex may appear at multiple parameters on a closed curve.
+        // The fence-based dedup was incorrect for this case.
+        self.ext_paves.push(pave);
     }
 
     /// BOPDS_PaveBlock::AppendExtPave1 (cxx:177-180).
@@ -146,9 +147,9 @@ impl PaveBlock {
 
     /// BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
     pub fn remove_ext_pave(&mut self, vertex_idx: usize) {
-        if self.ext_paves_fence.remove(&vertex_idx) {
-            self.ext_paves.retain(|p| p.vertex_idx != vertex_idx);
-        }
+        // OCCT removes by identity; rcad removes by vertex_idx match.
+        // No fence check needed since append_ext_pave no longer fences.
+        self.ext_paves.retain(|p| p.vertex_idx != vertex_idx);
     }
 
     /// BOPDS_PaveBlock::IsToUpdate (cxx:220-223).
