@@ -1058,58 +1058,63 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
  self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
  }
- /// 閴?PerformVV (PaveFiller_1.cxx L45-132).
- /// Builds vertex-vertex connection map (FillMap), groups connected
- /// vertices (MakeBlocks), then creates SD vertices for each group.
- /// Pairs come pre-computed from BOPDS_Iterator (cross-operand, AABB-filtered).
-  pub(crate) fn perform_vv(&mut self, pairs: &[(usize, usize)]) {
-  // OCCT L47-56: n1, n2, iFlag, aSize; iterator init + early return
-  let a_vc = self.ds.a_vertex_count;
-  let a_size = a_vc * (self.ds.vertices.len() - a_vc);
-  if a_size == 0 { return; }
-
-  // 閴?BOPDS_Iterator(VERTEX, VERTEX) 閳?BVH-based pair enumeration.
-  // OCCT L68-76: myIterator->Initialize(VERTEX, VERTEX) returns overlapping AABB pairs.
-  let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-
-  // OCCT L68-98: 1. Map V/LV 閳?build connection map of close vertex pairs.
-  for &(n1, n2) in pairs {
-  // Skip same-operand pairs (OCCT: cross-operand only)
-  if (n1 < a_vc) == (n2 < a_vc) { continue; }
-
-  // OCCT L77-81: if HasInterf 閳?FillMap + continue
-  if self.ds.has_interf_vv(n1, n2) {
-  fill_map(&mut a_mili, n1, n2);
-  continue;
-  }
-
-  // OCCT L84-91: Resolve SD vertices (HasShapeSD) + ComputeVV
-  let n1sd = self.ds.has_shape_sd(n1).unwrap_or(n1);
-  let n2sd = self.ds.has_shape_sd(n2).unwrap_or(n2);
-
-  // OCCT L93: ComputeVV(aV1, aV2, myFuzzyValue) 閳?tolerance-based distance check
-  let tol = self.vv_pair_tol(n1, n2);
-  let dist = (self.ds.vertex_point(n1sd) - self.ds.vertex_point(n2sd)).length();
-  let i_flag = if dist <= tol { 0 } else { 1 };
-
-  // OCCT L94-97: if !iFlag (vertices interfere) 閳?FillMap
-  if i_flag == 0 {
-  fill_map(&mut a_mili, n1, n2);
-  }
-  }
- let a_m_blocks = make_blocks(&a_mili);
- for block in &a_m_blocks {
- if block.len() < 2 { continue; }
- self.make_sd_vertices_vv(block);
+ // OCCT BOPAlgo_PaveFiller_1.cxx L45-132: PerformVV
+ pub(crate) fn perform_vv(&mut self, pairs: &[(usize, usize)]) {
+   // L47-51: n1, n2, iFlag, aSize; myIterator->Initialize(VERTEX, VERTEX)
+   let a_vc: usize = self.ds.a_vertex_count;
+   let a_size: usize = a_vc * (self.ds.vertices.len() - a_vc);
+   // L53-56: if (!aSize) return
+   if a_size == 0 {
+     return;
+   }
+   // L58-59: InterfVV().SetIncrement(aSize)
+   self.ds.interf_vv.reserve(a_size);
+   // L62-64: aAllocator, aMILI, aMBlocks
+   let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+   // L66-98: 1. Map V/LV
+   for &(n1, n2) in pairs {
+     // L71-74: UserBreak check (not ported)
+     // L75: myIterator->Value(n1, n2)
+     //
+     // L77-81: if HasInterf -> FillMap + continue
+     // OCCT: myDS->HasInterf checks global fence myInterfTB
+     let key = if n1 < n2 { (n1, n2) } else { (n2, n1) };
+     if self.ds.interf_tb.contains(&key) {
+       fill_map(&mut a_mili, n1, n2);
+       continue;
+     }
+     // L84-88: Resolve SD vertices (HasShapeSD)
+     let n1sd: usize = self.ds.has_shape_sd(n1).unwrap_or(n1);
+     let n2sd: usize = self.ds.has_shape_sd(n2).unwrap_or(n2);
+     // L90-93: ComputeVV(aV1, aV2, myFuzzyValue)
+     //   OCCT: BRep_Tool::Tolerance(aV1) + BRep_Tool::Tolerance(aV2) + myFuzzyValue
+     let a_tol = self.ds.vertex_tolerance(n1sd) + self.ds.vertex_tolerance(n2sd) + self.tol();
+     let a_sq_dist = (self.ds.vertex_point(n1sd) - self.ds.vertex_point(n2sd)).length_squared();
+     let i_flag = if a_sq_dist <= a_tol * a_tol { 0 } else { 1 };
+     // L94-97: if !iFlag -> FillMap
+     if i_flag == 0 {
+       fill_map(&mut a_mili, n1, n2);
+     }
+   }
+   // L100-101: 2. Make blocks
+   let a_m_blocks: Vec<Vec<usize>> = make_blocks(&a_mili);
+   // L103-113: 3. Make SD vertices
+   for block in &a_m_blocks {
+     // L107-110: UserBreak check (not ported)
+     // L111-112: MakeSDVertices(aLI)
+     self.make_sd_vertices_vv(block);
+   }
+   // L115-127: 4. InitPaveBlocksForVertex for each SD vertex source
+   // L117: ShapesSD()
+   let a_dmii: std::collections::HashSet<usize> =
+     self.ds.shape_sd.sd_vertices_iter().map(|&(k, _)| k).collect();
+   for &n1_key in &a_dmii {
+     // L121-124: UserBreak check (not ported)
+     // L125-126: InitPaveBlocksForVertex(n1)
+     self.ds.init_pave_blocks_for_vertex(n1_key);
+   }
+   // L129-131: aMBlocks.Clear(); aMILI.Clear() -- handled by Rust Drop
  }
-  // OCCT ShapesSD is a DataMap<source, target> (one direction).
-  // rcad stores (source, target) bidirectionally; dedup via HashSet.
-  let a_dmii: std::collections::HashSet<usize> =
-    self.ds.shape_sd.sd_vertices_iter().map(|&(k, _)| k).collect();
-  for &n1 in &a_dmii {
-    self.ds.init_pave_blocks_for_vertex(n1);
-  }
-  }
 
  ///  MakeSDVertices (PaveFiller_1.cxx L136-233).
  /// Merges a connected group of vertices into a single SD vertex.
