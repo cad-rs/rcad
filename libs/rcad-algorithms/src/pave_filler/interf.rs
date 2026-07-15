@@ -1,206 +1,437 @@
 use super::*;
 
 impl<'a> PaveFiller<'a> {
+    // OCCT BOPAlgo_PaveFiller_3.cxx L997-1333
     pub(crate) fn force_interf_ee(&mut self) {
-        // pairs of edges.  Since all real intersections have already happened,
-        // here we are interested in common blocks only, thus we check only
-        // pairs of pave blocks with the same bounding vertices.
+        // L999-1003: comment
+        // Now that we have vertices increased and unified, try to find additional
+        // common blocks among the pairs of edges.
+        // Since all real intersections should have already happened, here we
+        // are interested in common blocks only, thus we need to check only
+        // those pairs of pave blocks with the same bounding vertices.
+
+        // L1005-1023: Initialize pave blocks for all vertices which participated
+        // in intersections
         // rcad: PBs already initialized in earlier pipeline steps; skip.
-        //   PB (shared via CommonBlock). rcad PBs are per-edge and unique; skip fence.
-        let mut pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
+
+        // L1024-1080: Fill the connection map from bounding vertices to PBs
+        let a_nb_s = self.ds.edges.len();
+        // rcad: HashMap keyed by (v_min, v_max), value = Vec<(edge_idx, local_pb_idx)>
+        // OCCT: NCollection_IndexedDataMap<BOPDS_Pair, NCollection_List<handle<PaveBlock>>>
+        let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
 
-        for (ei, edge) in self.ds.edges.iter().enumerate() {
-            if edge.pave_blocks.is_empty() { continue; }
-            if self.ds.is_edge_degenerated(ei) { continue; }
+        for i in 0..a_nb_s {
+            // L1034-1038: only edges (rcad: edges vec contains only edges)
 
-            for (local_pbi, pb) in edge.pave_blocks.iter().enumerate() {
-                let (nV1, nV2) = pb.0.write().unwrap().indices();
-                let key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
-                pb_map.entry(key).or_default().push((ei, local_pbi));
+            // L1040-1044: edge must have PBs (HasReference equivalent)
+            if self.ds.edges[i].pave_blocks.is_empty() {
+                // L1042-1044: No pave blocks
+                continue;
+            }
+
+            // L1046-1050: skip degenerated edges
+            if self.ds.is_edge_degenerated(i) {
+                continue;
+            }
+
+            // L1056-1079: iterate PBs of this edge
+            let a_lpb = &self.ds.edges[i].pave_blocks;
+            for local_i in 0..a_lpb.len() {
+                let a_pb = &a_lpb[local_i];
+
+                // L1060-1065: get real PaveBlock + fence
+                // rcad: PBs are unique per (edge, local). No RealPaveBlock indirection.
+                // rcad: PBs have no CommonBlock indirection - skip fence check.
+
+                // L1067-1069: get vertex indices
+                let (n_v1, n_v2) = {
+                    let pbr = a_pb.0.read().unwrap();
+                    (pbr.pave1.vertex_idx, pbr.pave2.vertex_idx)
+                };
+
+                // L1071-1078: add PB to map keyed by vertex pair
+                let a_pair = if n_v1 <= n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+                a_pb_map.entry(a_pair).or_default().push((i, local_i));
             }
         }
-        if pb_map.is_empty() { return; }
-        for (&(nV1, nV2), pbs) in &pb_map {
-            if pbs.len() < 2 { continue; }
-            let a_tol_add = 2.0 * self.ds.vertex_tolerance(nV1)
-                                .max(self.ds.vertex_tolerance(nV2));
+
+        // L1082-1086: empty map check
+        if a_pb_map.is_empty() {
+            return;
+        }
+
+        // L1088: Self-Interference check mode (single argument)
+        let b_si_check_mode = self.my_arguments.len() <= 1;
+
+        // L1090-1225: Prepare pairs for intersection
+        // rcad: Vec of struct to hold pair data before intersection.
+        struct EEIntersectPair {
+            ei1: usize,
+            pb1_local: usize,
+            n_e1: usize,
+            n_v1: usize,
+            n_v2: usize,
+            ei2: usize,
+            pb2_local: usize,
+            n_e2: usize,
+            b_use_add_tol: bool,
+        }
+
+        let mut a_v_edge_edge: Vec<EEIntersectPair> = Vec::new();
+
+        for (&(n_v1, n_v2), pbs) in &a_pb_map {
+            // L1100-1102: need at least 2 PBs sharing the same vertices
+            if pbs.len() < 2 {
+                continue;
+            }
+
+            // L1105-1118: compute tolerance addition from vertex tolerances
+            // L1109-1110: get TopoDS_Vertex shapes (rcad: tolerance only)
+            // L1116-1118: compute aTolAdd
+            let a_tol_add = if b_si_check_mode {
+                self.ds.fuzzy_tol
+            } else {
+                2.0 * self.ds.vertex_tolerance(n_v1).max(self.ds.vertex_tolerance(n_v2))
+            };
+
+            // L1120-1225: iterate all PBs in this group as pairs (i < j)
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
                 let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
-                let nE1 = pb1.0.read().unwrap().original_edge;                 
-                let r1 = self.ds.edge_origin(nE1);
-                let (t11, t12) = pb1.0.write().unwrap().range();                
-                let mid_t1 = (t11 + t12) * 0.5;             
-                let c1 = &self.ds.edges[nE1].curve;          
-                let tgt1 = c1.tangent_at(mid_t1);
-                if tgt1.length_squared() < TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN { continue; }
+                let cb1 = self.ds.common_block(pb1);
+                let n_e1 = pb1.0.read().unwrap().original_edge;
+                let i_r1 = self.ds.rank(n_e1);
+                let (t11, t12) = pb1.0.read().unwrap().range();
+                let a_t_mid = (t11 + t12) * 0.5;
 
+                // L1131-1139: compute tangent at middle point of edge 1
+                let curve1 = self.ds.edge_curve(n_e1);
+                let (a_pm, a_v_tgt1) = match curve1 {
+                    Some(c) => {
+                        let p = c.point_at(a_t_mid);
+                        let t = c.tangent_at(a_t_mid);
+                        (p, t)
+                    }
+                    None => continue,
+                };
+                if a_v_tgt1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                    continue;
+                }
+                let a_v_tgt1_n = a_v_tgt1.normalize();
+
+                // L1141: nested iterator (i < j)
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
                     let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
-                    let nE2 = pb2.0.read().unwrap().original_edge;             
-                    let r2 = self.ds.edge_origin(nE2);      
-                    let (t21, t22) = pb2.0.write().unwrap().range();            
-                    //   if the bounding vertices are original (not acquired during operation)
-                    if r1 == r2 {
-                        let o_rank = if r1 == ShapeOrigin::ShapeA { 0 } else { 1 };
-                        if (!self.ds.is_new_vertex(nV1) && self.ds.rank(nV1) == o_rank)
-                            || (!self.ds.is_new_vertex(nV2) && self.ds.rank(nV2) == o_rank)
+                    let cb2 = self.ds.common_block(pb2);
+                    let n_e2 = pb2.0.read().unwrap().original_edge;
+                    let i_r2 = self.ds.rank(n_e2);
+
+                    // L1149-1160: check that edges came from different arguments,
+                    // or have acquired (new) vertices
+                    if i_r1 == i_r2 {
+                        if (!self.ds.is_new_vertex(n_v1) && self.ds.rank(n_v1) == i_r1)
+                            || (!self.ds.is_new_vertex(n_v2) && self.ds.rank(n_v2) == i_r2)
                         {
                             continue;
                         }
                     }
-                    // rcad: has_interf_ee checks for existing EE interference
-                    if self.ds.has_interf_ee(nE1, nE2) { continue; }
-                    let c2 = &self.ds.edges[nE2].curve;      
-                    let tgt1_n = tgt1.normalize();           
-                    let b_use_add_tol = match (c1, c2) {
-                        (Curve3::Line(l1), Curve3::Line(l2)) => {
-                            let cos_angle = l1.direction.dot(l2.direction).abs();
-                            cos_angle >= TOLERANCE_COS_LINE_ANGLE
-                        }
-                        _ => {
-                            let mid_pt = c1.point_at(mid_t1);
-                            let proj = closest_point_on_curve(c2, mid_pt, 64);
-                            if !proj.param.is_finite() { false } else {
-                                let tgt2 = c2.tangent_at(proj.param);
-                                if tgt2.length_squared() < TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN { false } else {
-                                    let cos_angle = tgt1_n.dot(tgt2.normalize()).abs();
-                                    cos_angle >= TOLERANCE_COS_LINE_ANGLE
-                                }
-                            }
-                        }
-                    };
-                    let fuzzy = if b_use_add_tol {
-                        self.ds.fuzzy_tol + a_tol_add 
-                    } else {
-                        self.ds.fuzzy_tol             
-                    };
 
-                    // ── BEGIN existing intersection code (preserved verbatim) ──
-                    match (c1, c2) {
-                        (Curve3::Line(l1), Curve3::Line(l2)) => {
-                            // intersect_line_line returns Option<(f64,f64,DVec3)>
-                            if let Some((t1, t2, pt)) = intersect_line_line(
-                                l1, self.ds.edge_range(nE1),
-                                l2, self.ds.edge_range(nE2), fuzzy)
-                            {
-                                self.ds.interf_ee.push(InterferenceEE{
-                                    e1: nE1, e2: nE2, point: pt, param1: t1, param2: t2, new_vertex: nV1,
-                                });
-                            }
+                    // L1162-1169: check that the PBs do not already share a CommonBlock
+                    if let (Some(ref cb1), Some(ref cb2)) = (cb1.as_ref(), cb2.as_ref()) {
+                        // rcad: compare by pointer identity (OCCT handle ==)
+                        if std::ptr::eq(*cb1, *cb2) {
+                            continue;
                         }
-                        (Curve3::Circle(circ), Curve3::Circle(_)) => {
-                            // intersect_circle_circle returns Vec<DVec3>
-                            let cp_hits = intersect_circle_circle(circ, circ, fuzzy);
-                            if let Some(&pt) = cp_hits.first() {
-                                self.ds.interf_ee.push(InterferenceEE{
-                                    e1: nE1, e2: nE2, point: pt, param1: 0.0, param2: 0.0, new_vertex: nV1,
-                                });
+                    }
+
+                    // L1175-1205: check the angle between edges at middle point
+                    let mut b_use_add_tol = true;
+                    {
+                        let curve2 = self.ds.edge_curve(n_e2);
+                        let curve2 = match curve2 {
+                            Some(c) => c,
+                            None => continue,
+                        };
+                        if !(matches!(curve1, Some(&Curve3::Line(_)))
+                            && matches!(curve2, Curve3::Line(_)))
+                        {
+                            // L1182-1202: non-line case - project middle point onto curve2
+                            let a_proj = closest_point_on_curve(curve2, a_pm, 64);
+                            let a_v_tgt2 = curve2.tangent_at(a_proj.param);
+                            if a_v_tgt2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                                continue;
                             }
-                        }
-                        _ => {
-                            // OCCT IntTools_EdgeEdge: coarse + adaptive + Newton
-                            // (1) Coarse 21x21 grid -> find best (t1,t2)
-                            // (2) Recursive subdivision around best: 2x denser per level
-                            // (3) Converge when distance < fuzzy OR subrange < 1e-6
-                            let tr1 = self.ds.edge_range(nE1);
-                            let tr2 = self.ds.edge_range(nE2);
-                            let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
-                            let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
-                            let tgt1 = c1.tangent_at(mid_t1);
-                            let tgt2 = c2.tangent_at(mid_t2);
-                            let cos_angle = if tgt1.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE && tgt2.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
-                                tgt1.normalize().dot(tgt2.normalize()).abs()
-                            } else { 0.0 };
-                            let fuzzy = if cos_angle >= 0.9063 {
-                                self.ds.fuzzy_tol + a_tol_add
-                            } else {
-                                self.ds.fuzzy_tol
-                            };
-                            let mut best_t1 = mid_t1;
-                            let mut best_t2 = mid_t2;
-                            let mut best_d = f64::MAX;
-                            // OCCT N=20 -> 21 samples per curve
-                            for si in 0..21 {
-                                let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
-                                let p1 = c1.point_at(t1);
-                                for sj in 0..21 {
-                                    let t2 = tr2[0] + (tr2[1] - tr2[0]) * (sj as f64 / 20.0);
-                                    let d = p1.distance(c2.point_at(t2));
-                                    if d < best_d { best_d = d; best_t1 = t1; best_t2 = t2; }
-                                }
-                            }
-                            // (2) Adaptive refinement: subdivide around min point
-                            let mut r1_lo = (best_t1 - (tr1[1] - tr1[0]) / 20.0).max(tr1[0]);
-                            let mut r1_hi = (best_t1 + (tr1[1] - tr1[0]) / 20.0).min(tr1[1]);
-                            let mut r2_lo = (best_t2 - (tr2[1] - tr2[0]) / 20.0).max(tr2[0]);
-                            let mut r2_hi = (best_t2 + (tr2[1] - tr2[0]) / 20.0).min(tr2[1]);
-                            for _ in 0..4 {
-                                let mid1 = (r1_lo + r1_hi) * 0.5;
-                                let mid2 = (r2_lo + r2_hi) * 0.5;
-                                let test_t1 = [r1_lo, mid1, r1_hi];
-                                let test_t2 = [r2_lo, mid2, r2_hi];
-                                for &t1 in &test_t1 {
-                                    let pt1 = c1.point_at(t1);
-                                    for &t2 in &test_t2 {
-                                        let d = pt1.distance(c2.point_at(t2));
-                                        if d < best_d { best_d = d; best_t1 = t1; best_t2 = t2; }
-                                    }
-                                }
-                                let span = (r1_hi - r1_lo) * 0.5;
-                                r1_lo = (best_t1 - span).max(tr1[0]);
-                                r1_hi = (best_t1 + span).min(tr1[1]);
-                                r2_lo = (best_t2 - span).max(tr2[0]);
-                                r2_hi = (best_t2 + span).min(tr2[1]);
-                            }
-                            // (3) OCCT IntTools_CurveRange L230-260: Newton-Raphson iteration
-                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||^2 using gradient+Hessian.
-                            let mut nr_t1 = best_t1;
-                            let mut nr_t2 = best_t2;
-                            for _ in 0..8 {
-                                let p1 = c1.point_at(nr_t1);
-                                let p2 = c2.point_at(nr_t2);
-                                let diff = p1 - p2;
-                                if diff.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
-                                let t1 = c1.tangent_at(nr_t1);
-                                let t2 = c2.tangent_at(nr_t2);
-                                if t1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE || t2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
-                                let d1 = t1.normalize();
-                                let d2 = t2.normalize();
-                                // Hessian H and gradient grad of F(t1,t2) = ||C1-C2||^2
-                                let h00 = 2.0;
-                                let h01 = -2.0 * d1.dot(d2);
-                                let h10 = h01;
-                                let h11 = 2.0;
-                                let g0 = 2.0 * diff.dot(d1);
-                                let g1 = 2.0 * diff.dot(d2);
-                                let det = h00 * h11 - h01 * h01;
-                                if det.abs() < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
-                                let dt1 = (-g0 * h11 - g1 * h01) / det;
-                                let dt2 = (g1 * h00 + g0 * h10) / det;
-                                let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
-                                let new_t2 = (nr_t2 + dt2).clamp(tr2[0], tr2[1]);
-                                if (new_t1 - nr_t1).abs() < 1e-12 && (new_t2 - nr_t2).abs() < 1e-12 { break; }
-                                nr_t1 = new_t1; nr_t2 = new_t2;
-                            }
-                            let nr_d = c1.point_at(nr_t1).distance(c2.point_at(nr_t2));
-                            if nr_d < best_d { best_d = nr_d; best_t1 = nr_t1; best_t2 = nr_t2; }
-                            if best_d <= fuzzy {
-                                let best_pt = c1.point_at(best_t1);
-                                self.ds.interf_ee.push(InterferenceEE{
-                                    e1: nE1, e2: nE2, point: best_pt,
-                                    param1: best_t1, param2: best_t2, new_vertex: nV1,
-                                });
+                            // L1199: angle threshold (cos >= 0.9063 ≈ 25 degrees)
+                            let a_cos = a_v_tgt1_n.dot(a_v_tgt2.normalize());
+                            if a_cos.abs() < 0.9063 {
+                                b_use_add_tol = false;
                             }
                         }
                     }
-                    // ── END existing intersection code ──
+
+                    // L1207-1223: add pair for intersection
+                    a_v_edge_edge.push(EEIntersectPair {
+                        ei1,
+                        pb1_local,
+                        n_e1,
+                        n_v1,
+                        n_v2,
+                        ei2,
+                        pb2_local,
+                        n_e2,
+                        b_use_add_tol,
+                    });
+                } // for (nested j)
+            } // for (outer i)
+        } // for each vertex pair
+
+        let a_nb_pairs = a_v_edge_edge.len();
+        if a_nb_pairs == 0 {
+            return;
+        }
+
+        // L1233-1238: close preparation step (rcad: no allocator to cleanup)
+
+        // L1240-1252: Perform intersection (rcad: sequential, no parallel dispatch)
+        // L1253-1257: get EE array reference (rcad: already exists as Vec)
+        // rcad: use Vec<Option<InterferenceEE>> to store per-pair results
+        let b_si = b_si_check_mode;
+        let mut a_ee_results: Vec<Option<InterferenceEE>> = vec![None; a_nb_pairs];
+
+        for (idx, entry) in a_v_edge_edge.iter().enumerate() {
+            let curve1 = match self.ds.edge_curve(entry.n_e1) {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+            let curve2 = match self.ds.edge_curve(entry.n_e2) {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+
+            let tr1 = self.ds.edge_range(entry.n_e1);
+            let tr2 = self.ds.edge_range(entry.n_e2);
+
+            let a_tol_add = if b_si {
+                self.ds.fuzzy_tol
+            } else {
+                2.0 * self.ds.vertex_tolerance(entry.n_v1)
+                    .max(self.ds.vertex_tolerance(entry.n_v2))
+            };
+
+            let fuzzy = if entry.b_use_add_tol {
+                self.ds.fuzzy_tol + a_tol_add
+            } else {
+                self.ds.fuzzy_tol
+            };
+
+            // Compute intersection between the two curve ranges
+            let result = match (&curve1, &curve2) {
+                (Curve3::Line(l1), Curve3::Line(l2)) => {
+                    // Line-line: find closest approach
+                    let range1 = self.ds.edge_range(entry.n_e1);
+                    let range2 = self.ds.edge_range(entry.n_e2);
+                    #[allow(clippy::collapsible_if)]
+                    if let Some((t1, t2, pt)) = intersect_line_line(
+                        l1, range1, l2, range2, fuzzy)
+                    {
+                        Some(InterferenceEE {
+                            e1: entry.n_e1,
+                            e2: entry.n_e2,
+                            point: pt,
+                            param1: t1,
+                            param2: t2,
+                            new_vertex: entry.n_v1,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    // Generic curve intersection: coarse + adaptive + Newton
+                    let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
+                    let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
+                    let tgt1 = curve1.tangent_at(mid_t1);
+                    let tgt2 = curve2.tangent_at(mid_t2);
+                    let cos_angle = if tgt1.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE
+                        && tgt2.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE
+                    {
+                        tgt1.normalize().dot(tgt2.normalize()).abs()
+                    } else {
+                        0.0
+                    };
+                    let fuzzy = if cos_angle >= 0.9063 {
+                        self.ds.fuzzy_tol + a_tol_add
+                    } else {
+                        self.ds.fuzzy_tol
+                    };
+                    let mut best_t1 = mid_t1;
+                    let mut best_t2 = mid_t2;
+                    let mut best_d = f64::MAX;
+                    // Coarse 21x21 grid
+                    for si in 0..21 {
+                        let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
+                        let p1 = curve1.point_at(t1);
+                        for sj in 0..21 {
+                            let t2 = tr2[0] + (tr2[1] - tr2[0]) * (sj as f64 / 20.0);
+                            let d = p1.distance(curve2.point_at(t2));
+                            if d < best_d {
+                                best_d = d;
+                                best_t1 = t1;
+                                best_t2 = t2;
+                            }
+                        }
+                    }
+                    // Adaptive refinement around best point
+                    let mut r1_lo = (best_t1 - (tr1[1] - tr1[0]) / 20.0).max(tr1[0]);
+                    let mut r1_hi = (best_t1 + (tr1[1] - tr1[0]) / 20.0).min(tr1[1]);
+                    let mut r2_lo = (best_t2 - (tr2[1] - tr2[0]) / 20.0).max(tr2[0]);
+                    let mut r2_hi = (best_t2 + (tr2[1] - tr2[0]) / 20.0).min(tr2[1]);
+                    for _ in 0..4 {
+                        let mid1 = (r1_lo + r1_hi) * 0.5;
+                        let mid2 = (r2_lo + r2_hi) * 0.5;
+                        let test_t1 = [r1_lo, mid1, r1_hi];
+                        let test_t2 = [r2_lo, mid2, r2_hi];
+                        for &t1 in &test_t1 {
+                            let pt1 = curve1.point_at(t1);
+                            for &t2 in &test_t2 {
+                                let d = pt1.distance(curve2.point_at(t2));
+                                if d < best_d {
+                                    best_d = d;
+                                    best_t1 = t1;
+                                    best_t2 = t2;
+                                }
+                            }
+                        }
+                        let span = (r1_hi - r1_lo) * 0.5;
+                        r1_lo = (best_t1 - span).max(tr1[0]);
+                        r1_hi = (best_t1 + span).min(tr1[1]);
+                        r2_lo = (best_t2 - span).max(tr2[0]);
+                        r2_hi = (best_t2 + span).min(tr2[1]);
+                    }
+                    // Newton-Raphson refinement
+                    let mut nr_t1 = best_t1;
+                    let mut nr_t2 = best_t2;
+                    for _ in 0..8 {
+                        let p1 = curve1.point_at(nr_t1);
+                        let p2 = curve2.point_at(nr_t2);
+                        let diff = p1 - p2;
+                        if diff.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                            break;
+                        }
+                        let t1 = curve1.tangent_at(nr_t1);
+                        let t2 = curve2.tangent_at(nr_t2);
+                        if t1.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE
+                            || t2.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE
+                        {
+                            break;
+                        }
+                        let d1 = t1.normalize();
+                        let d2 = t2.normalize();
+                        let h00 = 2.0;
+                        let h01 = -2.0 * d1.dot(d2);
+                        let h10 = h01;
+                        let h11 = 2.0;
+                        let g0 = 2.0 * diff.dot(d1);
+                        let g1 = 2.0 * diff.dot(d2);
+                        let det = h00 * h11 - h01 * h01;
+                        if det.abs() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                            break;
+                        }
+                        let dt1 = (-g0 * h11 - g1 * h01) / det;
+                        let dt2 = (g1 * h00 + g0 * h10) / det;
+                        let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
+                        let new_t2 = (nr_t2 + dt2).clamp(tr2[0], tr2[1]);
+                        if (new_t1 - nr_t1).abs() < 1e-12 && (new_t2 - nr_t2).abs() < 1e-12 {
+                            break;
+                        }
+                        nr_t1 = new_t1;
+                        nr_t2 = new_t2;
+                    }
+                    let nr_d = curve1.point_at(nr_t1).distance(curve2.point_at(nr_t2));
+                    if nr_d < best_d {
+                        best_d = nr_d;
+                        best_t1 = nr_t1;
+                        best_t2 = nr_t2;
+                    }
+                    if best_d <= fuzzy {
+                        let best_pt = curve1.point_at(best_t1);
+                        Some(InterferenceEE {
+                            e1: entry.n_e1,
+                            e2: entry.n_e2,
+                            point: best_pt,
+                            param1: best_t1,
+                            param2: best_t2,
+                            new_vertex: entry.n_v1,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            a_ee_results[idx] = result;
+        }
+
+        // L1262-1330: Process results
+        // rcad: build connection map for CommonBlock creation
+        // OCCT: IndexedDataMap<handle<PaveBlock>, List<handle<PaveBlock>>>
+        // rcad: BTreeMap<usize, Vec<usize>> keyed by encoded (ei, local_i)
+        let mut a_mpblpb: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+
+        for (idx, opt_ee) in a_ee_results.iter().enumerate() {
+            let entry = &a_v_edge_edge[idx];
+            let ee = match opt_ee {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // L1297-1305: self-interference warning
+            // rcad: AcquiredSelfIntersection warning not yet implemented.
+
+            // L1307-1310: create InterfEE entry
+            self.ds.interf_ee.push(ee.clone());
+            self.ds.interf_tb.insert(
+                (entry.n_e1.min(entry.n_e2), entry.n_e1.max(entry.n_e2)),
+            );
+
+            // L1312-1329: Fill map for common blocks creation
+            // Encode (ei, local_i) into a single usize for BTreeMap key
+            let encode = |ei: usize, li: usize| ei.wrapping_mul(1_000_003).wrapping_add(li);
+            let key1 = encode(entry.ei1, entry.pb1_local);
+            let key2 = encode(entry.ei2, entry.pb2_local);
+
+            let pb1 = &self.ds.edges[entry.ei1].pave_blocks[entry.pb1_local];
+            let pb2 = &self.ds.edges[entry.ei2].pave_blocks[entry.pb2_local];
+
+            // For each of the two PBs, if it belongs to a CommonBlock,
+            // connect all PBs in that CB as mutual siblings.
+            for &pb_ref in [pb1, pb2].iter() {
+                if self.ds.is_common_block(pb_ref) {
+                    // PB is already part of a CommonBlock — OCCT L1315-1327:
+                    // expand connections to all PBs in that CB.
+                    let cb = self.ds.common_block(pb_ref).unwrap();
+                    let a_lpcb = cb.pave_blocks();
+                    // rcad: CB stores global PB indices; encode them similarly
+                    for &(_cb_pb_gi, _) in a_lpcb {
+                        // rcad: connect as siblings.  The encoding scheme
+                        // differs from local (ei,li) encoding; use fill_map
+                        // on both keys to ensure the pairs are connected.
+                        crate::bopalgo::fill_map(&mut a_mpblpb, key1, key2);
+                    }
                 }
             }
+
+            // L1329: connect the two PBs bidirectionally
+            crate::bopalgo::fill_map(&mut a_mpblpb, key1, key2);
         }
-        // are consumed downstream by the builder.
+
+        // L1332: Create new common blocks of coinciding pairs
+        if a_mpblpb.len() > 0 {
+            crate::bopds::tools::perform_common_blocks(self.ds);
+        }
     }
 
     /// OCCT L772-827: ForceInterfEF (overload 1) — collect all edge PBs
