@@ -950,3 +950,515 @@ fn fuse_two_boxes_separate_no_merge() {
     // Two separate solids (non-intersecting)
     assert_eq!(nso, 2, "non-intersecting boxes: 2 solids");
 }
+
+fn make_cyl(radius: f64, height: f64) -> topods::BRep {
+    rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height).unwrap()
+}
+fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
+    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, height).unwrap()
+}
+
+/// Stage ref: plane_plane (box x box)
+#[test]
+fn pf_ref_plane_plane() {
+    let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
+    let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 12, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 12, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 12, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 8, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 12, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 30, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 8, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 12, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 30, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: plane_sphere (box x psphere)
+#[test]
+fn pf_ref_plane_sphere() {
+    let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+    let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 1, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 6, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: plane_cylinder (box x pcylinder)
+#[test]
+fn pf_ref_plane_cylinder() {
+    let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
+    let b = make_cyl(0.5, 2.0);
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 1, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 1, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 1, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 1, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: plane_cone (box x pcone)
+#[test]
+fn pf_ref_plane_cone() {
+    let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
+    let b = make_cone_fn(1.0, 2.0);
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 4, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 4, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 9, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 4, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 9, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
+#[test]
+fn pf_ref_cylinder_cylinder() {
+    let a = make_cyl(1.0, 3.0);
+    let b = make_cyl(1.0, 3.0) /* no rotation in rcad test */;
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 2, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 1, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 4, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: cylinder_sphere (pcylinder x psphere)
+#[test]
+fn pf_ref_cylinder_sphere() {
+    let a = make_cyl(0.8, 3.0);
+    let b = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.5).unwrap();
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 2, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 2, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: cylinder_torus (pcylinder x ptorus)
+#[test]
+fn pf_ref_cylinder_torus() {
+    let a = make_cyl(1.0, 5.0);
+    let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 1.0).unwrap();
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 2, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 2, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: cone_cone (pcone x pcone)
+#[test]
+fn pf_ref_cone_cone() {
+    let a = make_cone_fn(1.0, 2.0);
+    let b = /* skip: needs translation */ make_cone_fn(1.0, 2.0);
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 1, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 2, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 3, "MakeBlocks interf_ff");
+
+}
+/// Stage ref: sphere_sphere (psphere x psphere)
+#[test]
+fn pf_ref_sphere_sphere() {
+    let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
+    let b = rcad_modeling::make_sphere_brep(DVec3::new(1.0, 0.0, 0.0), 2.0).unwrap();
+
+    // PerformVV
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVV interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVV interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVV interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVV interf_ff");
+
+    // PerformVE
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVE interf_ff");
+
+    // PerformEE
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEE interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEE interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEE interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEE interf_ff");
+
+    // PerformVF
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformVF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformVF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformVF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformVF interf_ff");
+
+    // PerformEF
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformEF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformEF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformEF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformEF interf_ff");
+
+    // PerformFF
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    assert_eq!(ds.interf_vv.len(), 0, "PerformFF interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "PerformFF interf_ee");
+    assert_eq!(ds.interf_ef.len(), 0, "PerformFF interf_ef");
+    assert_eq!(ds.interf_ff.len(), 0, "PerformFF interf_ff");
+
+    // MakeBlocks
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    assert_eq!(ds.interf_vv.len(), 0, "MakeBlocks interf_vv");
+    assert_eq!(ds.interf_ee.len(), 0, "MakeBlocks interf_ee");
+    assert_eq!(ds.interf_ef.len(), 2, "MakeBlocks interf_ef");
+    assert_eq!(ds.interf_ff.len(), 1, "MakeBlocks interf_ff");
+
+}
