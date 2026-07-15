@@ -1559,79 +1559,76 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  survivors
  }
- /// OCCT PaveFiller_5.cxx L359-420: RepeatIntersection
+ // OCCT BOPAlgo_PaveFiller.cxx L376-441: RepeatIntersection
  pub(crate) fn repeat_intersection(&mut self) {
- if self.ds.increased_ss.is_empty() { return; }
- let candidates: Vec<usize> = self.ds.increased_ss.iter().copied().collect();
-
- // Build set of existing interferences for dedup
- //  OCCT L398-413: PerformVV  ?PerformVE  ?PerformVF
- use std::collections::BTreeSet;
- let mut ve_done: BTreeSet<(usize, usize)> = BTreeSet::new();
- let mut vf_done: BTreeSet<(usize, usize)> = BTreeSet::new();
- for inf in &self.ds.interf_ve {
- ve_done.insert((inf.vertex, inf.edge));
+ let mut a_extra_map: HashSet<usize> = HashSet::new();
+ // OCCT L382-407: collect vertices directly in myIncreasedSS
+ for &vi in &self.ds.increased_ss {
+ a_extra_map.insert(vi);
  }
- for inf in &self.ds.interf_vf {
- vf_done.insert((inf.vertex, inf.face));
+ // OCCT L396-406: check SD root for vertices not already in the set
+ for vi in 0..self.ds.vertices.len() {
+ if a_extra_map.contains(&vi) {
+ continue;
  }
-
- // = =  VV: check survivors against vertices on the other side = = = = = = 
- //  OCCT L398: PerformVV(aPS.Next())
- // VV safe: if pair already in interferences, add_vertex will dedup
- for &vi in &candidates {
- let vi_origin = self.ds.vertex_origin(vi);
- let other_verts: Vec<usize> = self.ds.vertices.iter().enumerate()
- .filter(|(j, v)| {
- if *j == vi { return false; }
- match (vi_origin, v.origin) {
- (Some(ShapeOrigin::ShapeA), Some(ShapeOrigin::ShapeB)) => true,
- (Some(ShapeOrigin::ShapeB), Some(ShapeOrigin::ShapeA)) => true,
- _ => false,
- }
- })
- .map(|(j, _)| j)
- .collect();
- for &vj in &other_verts {
- let tol = self.vv_pair_tol(vi, vj);
- let dist = (self.ds.vertex_point(vi) - self.ds.vertex_point(vj)).length();
- if dist <= tol {
- self.ds.interf_vv.push(InterferenceVV{
- v1: vi, v2: vj, merged_vertex: vi,
- });
+ if let Some(n_vsd) = self.ds.has_shape_sd(vi) {
+ if self.ds.increased_ss.contains(&n_vsd) {
+ a_extra_map.insert(vi);
  }
  }
  }
-
- // = =  VE: check survivors against edges on the other side = = = = = = 
- //  OCCT L403: PerformVE(aPS.Next())
- for &vi in &candidates {
- let vi_origin = self.ds.vertex_origin(vi);
- let other_edges: Vec<usize> = match vi_origin {
- Some(ShapeOrigin::ShapeA) => self.edges_of(ShapeOrigin::ShapeB),
- Some(ShapeOrigin::ShapeB) => self.edges_of(ShapeOrigin::ShapeA),
- _ => continue,
- };
- for &ei in &other_edges {
- if ve_done.contains(&(vi, ei)) { continue; }
- self.compute_ve(vi, ei);
+ // Build VV pairs: cross-operand involving extra vertices
+ let a_vc = self.ds.a_vertex_count;
+ let n_vertices = self.ds.vertices.len();
+ let mut vv_pairs: Vec<(usize, usize)> = Vec::new();
+ for &vi in &a_extra_map {
+ if vi < a_vc {
+ for vj in a_vc..n_vertices {
+ vv_pairs.push((vi, vj));
+ }
+ } else {
+ for vj in 0..a_vc {
+ vv_pairs.push((vi, vj));
  }
  }
-
- // = =  VF: check survivors against faces on the other side = = = = = = 
- //  OCCT L408: PerformVF(aPS.Next())
- for &vi in &candidates {
- let vi_origin = self.ds.vertex_origin(vi);
- let other_faces: Vec<usize> = match vi_origin {
- Some(ShapeOrigin::ShapeA) => self.faces_of(ShapeOrigin::ShapeB),
- Some(ShapeOrigin::ShapeB) => self.faces_of(ShapeOrigin::ShapeA),
- _ => continue,
- };
- for &fi in &other_faces {
- if vf_done.contains(&(vi, fi)) { continue; }
- self.check_vertex_face(vi, fi);
+ }
+ self.perform_vv(&vv_pairs);
+ self.ds.update_pave_blocks_with_sd_vertices();
+ // Build VE pairs: cross-operand where vertex is in the extra set
+ let a_ec = self.ds.a_edge_count;
+ let n_edges = self.ds.edges.len();
+ let mut ve_pairs: Vec<(usize, usize)> = Vec::new();
+ for &vi in &a_extra_map {
+ if vi < a_vc {
+ for ei in a_ec..n_edges {
+ ve_pairs.push((vi, ei));
+ }
+ } else {
+ for ei in 0..a_ec {
+ ve_pairs.push((vi, ei));
  }
  }
+ }
+ self.perform_ve_bvh(&ve_pairs);
+ self.ds.update_pave_blocks_with_sd_vertices();
+ // Build VF pairs: cross-operand where vertex is in the extra set
+ let a_fc = self.ds.a_face_count;
+ let n_faces = self.ds.faces.len();
+ let mut vf_pairs: Vec<(usize, usize)> = Vec::new();
+ for &vi in &a_extra_map {
+ if vi < a_vc {
+ for fi in a_fc..n_faces {
+ vf_pairs.push((vi, fi));
+ }
+ } else {
+ for fi in 0..a_fc {
+ vf_pairs.push((vi, fi));
+ }
+ }
+ }
+ self.perform_vf_bvh(&vf_pairs);
+ self.ds.update_pave_blocks_with_sd_vertices();
+ self.update_interfs_with_sd_vertices();
  }
  /// OCCT PaveFiller_4.cxx: PerformVF
  pub(crate) fn perform_vf(&mut self) {
