@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
 use rcad_kernel::topods;
 
+use crate::bopds::common_block::CommonBlock;
 use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
  InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
@@ -20,6 +23,7 @@ use crate::inttools::context::Context as IntToolsContext;
 use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
+use indexmap::IndexSet;
 pub mod helpers;
 use self::helpers::*;
 
@@ -719,218 +723,376 @@ impl<'a> PaveFiller<'a> {
       *a_mscpb = a_sepb_map;
   }
 
-  /// BOPAlgo_PaveFiller::UpdatePaveBlocks (PaveFiller_6.cxx L3712-3844).
-  /// Updates all PaveBlocks with new SD vertex mappings, splitting edges
-  /// when vertices change and removing micro edges.
-  pub(crate) fn update_pave_blocks(&mut self, a_dm_new_sd: &std::collections::HashMap<usize, usize>) {
-      if a_dm_new_sd.is_empty() { return; }
-      let mut a_micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
-      let all_pbs: Vec<(usize, usize)> = {
-          // Collect all (ei, local_pb_idx) pairs
-          let mut result = Vec::new();
-          for ei in 0..self.ds.edges.len() {
-              for local in 0..self.ds.edges[ei].pave_blocks.len() {
-                  result.push((ei, local));
-              }
-          }
-          // Add section curve PBs
-          for ic in &self.ds.intersection_curves {
-              // Section curve PBs are already in the global pave_blocks pool
-          }
-          result
+  // OCCT BOPAlgo_PaveFiller::UpdatePaveBlocks (PaveFiller_6.cxx L3712-3844)
+  pub(crate) fn update_pave_blocks(&mut self, a_dm_new_sd: &HashMap<usize, usize>) {
+    if a_dm_new_sd.is_empty() {
+      return;
+    }
+    let mut a_micro_edges: HashSet<usize> = HashSet::new();
+    let mut a_mpb: HashSet<usize> = HashSet::new();
+
+    // Collect all PBs: section curves + pool
+    let mut an_all_pbs: Vec<SharedPB> = Vec::new();
+
+    // OCCT L3728-3746: section curve PBs
+    let a_nb_ff = self.ds.interf_ff.len();
+    for i in 0..a_nb_ff {
+      let ff = &self.ds.interf_ff[i];
+      for &ci in &ff.curves {
+        if ci >= self.ds.intersection_curves.len() { continue; }
+        let ic = &self.ds.intersection_curves[ci];
+        for spb in &ic.pave_blocks {
+          an_all_pbs.push(spb.clone());
+        }
+      }
+    }
+
+    // OCCT L3748-3760: pool PBs (all edge PBs)
+    for ei in 0..self.ds.edges.len() {
+      for spb in &self.ds.edges[ei].pave_blocks {
+        an_all_pbs.push(spb.clone());
+      }
+    }
+
+    // OCCT L3762-3837: process all PBs
+    for spb in &an_all_pbs {
+      let a_pb = spb.clone();
+      // OCCT L3767: handle<CommonBlock>& aCB = myDS->CommonBlock(aPB);
+      let orig_cb_idx = a_pb.0.read().unwrap().common_block_idx;
+      let b_cb = orig_cb_idx.is_some();
+
+      // OCCT L3769-3772: if (bCB) { aPB = aCB->PaveBlock1(); }
+      let a_pb_primary = if let Some(cb_idx) = orig_cb_idx {
+        if cb_idx < self.ds.common_blocks.len() {
+          let cb = &self.ds.common_blocks[cb_idx];
+          let pb1_local = cb.pave_block1();
+          let edge_idx = cb.edge();
+          if let (Some(pli), Some(ei)) = (pb1_local, edge_idx) {
+            if ei < self.ds.edges.len() && pli < self.ds.edges[ei].pave_blocks.len() {
+              self.ds.edges[ei].pave_blocks[pli].clone()
+            } else { a_pb.clone() }
+          } else { a_pb.clone() }
+        } else { a_pb.clone() }
+      } else { a_pb.clone() };
+
+      // OCCT L3774: if (!aMPB.Add(aPB)) { continue; }
+      let ptr = Arc::as_ptr(&a_pb_primary.0) as usize;
+      if !a_mpb.insert(ptr) {
+        continue;
+      }
+
+      // OCCT L3776-3778: aPB->Indices(nV[0], nV[1]); aPB->Range(aT[0], aT[1]);
+      let (mut n_v, a_t) = {
+        let pb_ref = a_pb_primary.0.read().unwrap();
+        ([pb_ref.pave1.vertex_idx, pb_ref.pave2.vertex_idx],
+         [pb_ref.pave1.param, pb_ref.pave2.param])
       };
-      let mut a_mpb: std::collections::HashSet<usize> = std::collections::HashSet::new();
-      for &(ei, local_pb_idx) in &all_pbs {
-          if ei >= self.ds.edges.len() { continue; }
-          let spb = self.ds.edges[ei].pave_blocks.get(local_pb_idx)
-              .cloned();
-          let Some(spb) = spb else { continue };
-          let cb_idx = spb.0.read().unwrap().common_block_idx;
-          let pb = if let Some(cb_idx) = cb_idx {
-              // Use the CB's primary PB
-              if cb_idx < self.ds.common_blocks.len() {
-                  let first_pb = self.ds.common_blocks[cb_idx].pave_blocks().first().map(|&(p, _)| p);
-                  if let Some(fp) = first_pb {
-                      if fp < self.ds.pave_blocks.len() {
-                          self.ds.pave_blocks[fp].clone()
-                      } else { spb }
-                  } else { spb }
-              } else { spb }
-          } else { spb };
-          if !a_mpb.insert(pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge)) {
-              continue;
+
+      // OCCT L3780: bool wasRegularEdge = (nV[0] != nV[1]);
+      let was_regular_edge = n_v[0] != n_v[1];
+      let mut b_rebuild = false;
+
+      // OCCT L3782-3801: replace vertices via aDMNewSD
+      for j in 0..2 {
+        if let Some(&new_v) = a_dm_new_sd.get(&n_v[j]) {
+          n_v[j] = new_v;
+          b_rebuild = true;
+          let a_pave = Pave { vertex_idx: new_v, param: a_t[j] };
+          if j == 0 {
+            a_pb_primary.0.write().unwrap().pave1 = a_pave;
+          } else {
+            a_pb_primary.0.write().unwrap().pave2 = a_pave;
           }
-          let (mut n_v, mut a_t) = {
-              let pb_ref = pb.0.read().unwrap();
-              let (nv1, nv2) = pb_ref.indices();
-              let (t1, t2) = pb_ref.range();
-              (vec![nv1, nv2], vec![t1, t2])
-          };
-          let was_regular_edge = n_v[0] != n_v[1];
-          let mut b_rebuild = false;
-          for j in 0..2 {
-              if let Some(&new_v) = a_dm_new_sd.get(&n_v[j]) {
-                  n_v[j] = new_v;
-                  b_rebuild = true;
-              }
-          }
-          if !b_rebuild { continue; }
-          // Check if edge became micro (same vertex at both ends)
-          if was_regular_edge && n_v[0] == n_v[1] {
-              // Check if it's a degenerated edge via shrunk data
-              // rcad: approximate — check edge length
-              let e_idx = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
-              if e_idx < self.ds.edges.len() {
-                  let (sv, ev) = {
-                      let e = &self.ds.edges[e_idx];
-                      (e.start_vertex, e.end_vertex)
-                  };
-                  let is_degen = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
-                      let d = self.ds.vertex_point(sv).distance(self.ds.vertex_point(ev));
-                      d < TOLERANCE_ABS * 10.0
-                  } else { true };
-                  if is_degen {
-                      a_micro_edges.insert(e_idx);
-                      continue;
-                  }
-              }
-          }
-          // Split edge with new vertices
-          // rcad: PBs are already split by update(false) during make_blocks;
-          // the vertex replacement is handled by update_pave_blocks_with_sd_vertices.
-          // For now, just update the PB vertices directly.
-          {
-              let mut pb_mut = pb.0.write().unwrap();
-              pb_mut.pave1.vertex_idx = n_v[0];
-              pb_mut.pave2.vertex_idx = n_v[1];
-          }
+        }
       }
-      if !a_micro_edges.is_empty() {
-          self.remove_pave_blocks(&a_micro_edges);
+
+      // OCCT L3804: if (bRebuild) { ... }
+      if !b_rebuild { continue; }
+
+      // OCCT L3806-3812: int nE = aPB->Edge(); if (nE < 0) nE = aPB->OriginalEdge();
+      let n_e = {
+        let pb_ref = a_pb_primary.0.read().unwrap();
+        if let Some(ne) = pb_ref.new_edge { ne } else { pb_ref.original_edge }
+      };
+      if n_e >= self.ds.edges.len() { continue; }
+
+      // OCCT L3813: bool isDegEdge = myDS->ShapeInfo(nE).HasFlag();
+      let is_degen_edge = self.ds.edge_has_flag(n_e);
+
+      // OCCT L3814-3824: micro edge check
+      if was_regular_edge && !is_degen_edge && n_v[0] == n_v[1] {
+        // OCCT L3818: FillShrunkData(aPB);
+        // OCCT L3819: if (!aPB->HasShrunkData())
+        let has_shrunk = a_pb_primary.0.read().unwrap().has_shrunk_data();
+        if !has_shrunk {
+          a_micro_edges.insert(n_e);
+          continue;
+        }
       }
+
+      // OCCT L3826: nSp = SplitEdge(nE, nV[0], aT[0], nV[1], aT[1]);
+      let n_sp = self.split_edge(n_e, n_v[0], a_t[0], n_v[1], a_t[1]);
+
+      // OCCT L3827-3834: if (bCB) aCB->SetEdge(nSp); else aPB->SetEdge(nSp);
+      if b_cb {
+        if let Some(cb_idx) = orig_cb_idx {
+          if cb_idx < self.ds.common_blocks.len() {
+            self.ds.common_blocks[cb_idx].set_edge(n_sp);
+          }
+        }
+      } else {
+        a_pb_primary.0.write().unwrap().new_edge = Some(n_sp);
+      }
+    } // for spb in an_all_pbs
+
+    // OCCT L3840-3843: if (aMicroEdges.Extent()) RemovePaveBlocks(aMicroEdges);
+    if !a_micro_edges.is_empty() {
+      self.remove_pave_blocks(&a_micro_edges);
+    }
   }
 
-  /// BOPAlgo_PaveFiller::UpdateFaceInfo (PaveFiller_6.cxx L1705-1978).
-  /// Full version with existing edge replacement and SD mapping.
-  /// Named `update_face_info_post` to distinguish from per-face `update_face_info(fi)`.
+  // OCCT BOPAlgo_PaveFiller::UpdateFaceInfo (PaveFiller_6.cxx L1705-1978)
   #[allow(non_snake_case)]
   pub(crate) fn update_face_info_post(
-      &mut self,
-      theDME: &std::collections::HashMap<usize, Vec<usize>>,
-      theDMV: &std::collections::HashMap<usize, usize>,
-      thePBFacesMap: &std::collections::HashMap<usize, Vec<usize>>,
+    &mut self,
+    theDME: &HashMap<usize, Vec<usize>>,
+    theDMV: &HashMap<usize, usize>,
+    _thePBFacesMap: &HashMap<usize, Vec<usize>>,
   ) {
-      // 1. Section edges: add to face info
-      let a_nb_ff = self.ds.interf_ff.len();
-      // Collect edge→PB list mapping (anEdgeLPB equivalent)
-      let mut an_edge_lpb: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-      for i in 0..a_nb_ff {
-          let (n_f1, n_f2) = {
-              let ff = &self.ds.interf_ff[i];
-              (ff.f1, ff.f2)
-          };
-          let curves: Vec<usize> = self.ds.interf_ff[i].curves.clone();
-          for &ci in &curves {
-              if ci >= self.ds.intersection_curves.len() { continue; }
-              let pbs: Vec<usize> = {
-                  let ic = &self.ds.intersection_curves[ci];
-                  (0..ic.pave_blocks.len()).collect()
+    // OCCT L1715: anEdgeLPB — map from edge index to list of PBs
+    let mut an_edge_lpb: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut a_mf: HashSet<usize> = HashSet::new();
+
+    // OCCT L1720: process all FF interferences
+    let a_nb_ff = self.ds.interf_ff.len();
+    for i in 0..a_nb_ff {
+      let (n_f1, n_f2) = {
+        let ff = &self.ds.interf_ff[i];
+        (ff.f1, ff.f2)
+      };
+      let a_fi1 = n_f1;
+      let a_fi2 = n_f2;
+
+      // OCCT L1729-1778: 1.1 Section edges
+      let curve_idxs: Vec<usize> = self.ds.interf_ff[i].curves.clone();
+      for &ci in &curve_idxs {
+        if ci >= self.ds.intersection_curves.len() { continue; }
+        // Collect curve's PBs (need to handle removal during iteration)
+        let curve_pbs: Vec<usize> = {
+          let ic = &self.ds.intersection_curves[ci];
+          (0..ic.pave_blocks.len()).collect()
+        };
+        let mut to_keep: Vec<usize> = Vec::new();
+
+        for &pb_local in &curve_pbs {
+          let pb_idx = pb_local; // global PB index
+
+          // OCCT L1744: if (theDME.IsBound(aPB))
+          if let Some(replacements) = theDME.get(&pb_idx) {
+            // OCCT L1747: UpdateExistingPaveBlocks(aPB, aLPB, thePBFacesMap);
+            // rcad: UpdateExistingPaveBlocks not yet ported — theDME replacements
+            //        are applied directly in the caller (make_blocks).
+
+            // OCCT L1749-1758: add replacement PBs to anEdgeLPB
+            for &rp in replacements {
+              let n_e = {
+                let pb_r = self.ds.pave_blocks[rp].0.read().unwrap();
+                pb_r.new_edge.unwrap_or(pb_r.original_edge)
               };
-              for &pb_local in &pbs {
-                  let pb_idx = pb_local;
-                  // Treat existing PBs
-                  if theDME.contains_key(&pb_idx) {
-                      if let Some(replacements) = theDME.get(&pb_idx) {
-                          // UpdateExistingPaveBlocks is handled by caller
-                          for &rp in replacements {
-                              let n_e = {
-                                  let pb_r = self.ds.pave_blocks[rp].0.read().unwrap();
-                                  pb_r.new_edge.unwrap_or(pb_r.original_edge)
-                              };
-                              an_edge_lpb.entry(n_e).or_default().push(rp);
-                          }
-                      }
-                      continue;
-                  }
-                  // Normal section PB: add to both faces' pave_blocks_sc
-                  self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
-                  self.ds.face_info_mut(n_f2).pave_blocks_sc.insert(pb_idx);
-                  let n_e = {
-                      let pb_r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
-                      pb_r.new_edge.unwrap_or(pb_r.original_edge)
-                  };
-                  an_edge_lpb.entry(n_e).or_default().push(pb_idx);
-              }
-          }
-          // Section vertices (point contacts)
-          if i < self.ds.interf_ff.len() {
-              // Point contact vertices are already in face_info via vertices_in
-          }
-      }
+              an_edge_lpb.entry(n_e).or_default().push(rp);
+            }
 
-      // 2. Handle edge PB combinations for CommonBlock creation
-      //    (OCCT L1799-1889: unify PBs of existing edges via CommonBlocks)
+            // OCCT L1761: aLPBC.Remove(aItPB) — don't add to keep list
+            continue;
+          }
+
+          // OCCT L1765-1766: normal section PB → add to both faces' pave_blocks_sc
+          self.ds.face_info_mut(a_fi1).pave_blocks_sc.insert(pb_idx);
+          self.ds.face_info_mut(a_fi2).pave_blocks_sc.insert(pb_idx);
+
+          // OCCT L1768-1774: add to anEdgeLPB
+          let n_e = {
+            let pb_r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+            pb_r.new_edge.unwrap_or(pb_r.original_edge)
+          };
+          an_edge_lpb.entry(n_e).or_default().push(pb_idx);
+          to_keep.push(pb_idx);
+        }
+        // OCCT L1761: actual removal from curve PB list
+        if to_keep.len() < curve_pbs.len() {
+          let ic = &mut self.ds.intersection_curves[ci];
+          // Build a set of Arc pointers for PBs to keep
+          let keep_ptrs: HashSet<*const RwLock<PaveBlock>> = to_keep.iter()
+            .filter_map(|&i| ic.pave_blocks.get(i))
+            .map(|spb| Arc::as_ptr(&spb.0))
+            .collect();
+          ic.pave_blocks.retain(|spb| keep_ptrs.contains(&Arc::as_ptr(&spb.0)));
+        }
+      } // for each curve
+
+      // OCCT L1781-1793: 1.2 Section vertices (point contacts)
+      // rcad: ff_points are DVec3, not vertex indices; section vertices
+      //       are tracked via vertices_in already. Skip for now.
+
+      // OCCT L1795-1796: track faces
+      a_mf.insert(a_fi1);
+      a_mf.insert(a_fi2);
+    } // for each FF
+
+    // OCCT L1799-1889: unify PBs on the same edge (anEdgeLPB) via CommonBlocks
+    let mut b_new_cb = false;
+    {
       for (_n_e, pb_list) in an_edge_lpb.iter() {
-          if pb_list.len() <= 1 { continue; }
-          // Multiple PBs on the same edge → they should be merged
-          // (OCCT creates or updates CommonBlocks here)
-          // rcad: CommonBlocks are handled by the edge's pave_blocks directly.
+        if pb_list.len() <= 1 { continue; }
+
+        b_new_cb = true;
+
+        let mut a_cb_idx: Option<usize> = None;
+        let mut a_m_faces: HashSet<usize> = HashSet::new();
+        let mut a_mpave_blocks: IndexSet<usize> = IndexSet::new();
+
+        for &pb_idx in pb_list {
+          a_mpave_blocks.insert(pb_idx);
+
+          // OCCT L1828-1850: if PB has a CommonBlock, collect its PBs and faces
+          let spb = &self.ds.pave_blocks[pb_idx];
+          if let Some(cb_idx) = spb.0.read().unwrap().common_block_idx {
+            if cb_idx < self.ds.common_blocks.len() {
+              let cb = &self.ds.common_blocks[cb_idx];
+              // Collect all PBs from this CB
+              for &(local_pb, _fi) in cb.pave_blocks() {
+                a_mpave_blocks.insert(local_pb);
+              }
+              // Collect faces
+              for &f in cb.faces() {
+                a_m_faces.insert(f);
+              }
+              if a_cb_idx.is_none() {
+                a_cb_idx = Some(cb_idx);
+              }
+            }
+          }
+        }
+
+        if let Some(cb_idx) = a_cb_idx {
+          // OCCT L1868-1888: extend existing CommonBlock
+          let all_pbs: Vec<(usize, usize)> = a_mpave_blocks.iter()
+            .map(|&pb| (pb, 0)) // face_idx placeholder
+            .collect();
+          self.ds.common_blocks[cb_idx].set_pave_blocks(all_pbs);
+          let faces: Vec<usize> = a_m_faces.iter().copied().collect();
+          self.ds.common_blocks[cb_idx].set_faces(faces);
+          // Set CommonBlock on each PB
+          // OCCT L1875: myDS->SetCommonBlock(aPB, aCB);
+          // In rcad, CB stores local indices; set common_block_idx on each
+        } else {
+          // OCCT L1857-1864: create new CommonBlock
+          let mut a_cb = CommonBlock::new();
+          let all_pbs: Vec<(usize, usize)> = pb_list.iter().map(|&pb| (pb, 0)).collect();
+          a_cb.set_pave_blocks(all_pbs);
+          let cb_idx = self.ds.common_blocks.len();
+          // Set common_block_idx on each PB
+          for &pb_idx in pb_list {
+            if pb_idx < self.ds.pave_blocks.len() {
+              self.ds.pave_blocks[pb_idx].0.write().unwrap().common_block_idx = Some(cb_idx);
+            }
+          }
+          self.ds.common_blocks.push(a_cb);
+        }
+      }
+    }
+
+    // OCCT L1892-1897: early return if no changes needed
+    let b_verts = !theDMV.is_empty();
+    let b_edges = !theDME.is_empty() || b_new_cb;
+    if !b_verts && !b_edges {
+      return;
+    }
+
+    // OCCT L1906-1977: update face info for each face in aMF
+    for &n_f1 in &a_mf {
+      let a_fi = n_f1;
+
+      // OCCT L1914-1934: 2.1 Update vertex ON/IN sets
+      if b_verts {
+        for (&n_v1, &n_v2) in theDMV.iter() {
+          if self.ds.face_info(a_fi).vertices_on.contains(&n_v1) {
+            self.ds.face_info_mut(a_fi).vertices_on.remove(&n_v1);
+            self.ds.face_info_mut(a_fi).vertices_on.insert(n_v2);
+          }
+          if self.ds.face_info(a_fi).vertices_in.contains(&n_v1) {
+            self.ds.face_info_mut(a_fi).vertices_in.remove(&n_v1);
+            self.ds.face_info_mut(a_fi).vertices_in.insert(n_v2);
+          }
+        }
       }
 
-      // 3. Update face info with SD vertex mappings (OCCT L1892-1976)
-      let b_verts = !theDMV.is_empty();
-      let b_edges = !theDME.is_empty() || true; // bNewCB equivalent
-      // Collect all unique face indices from FF interferences
-      let mut a_mf: std::collections::HashSet<usize> = std::collections::HashSet::new();
-      for ff in &self.ds.interf_ff {
-          a_mf.insert(ff.f1);
-          a_mf.insert(ff.f2);
-      }
-      for &n_f1 in &a_mf {
-          // 3.1 Update vertex ON/IN sets with SD mappings
-          if b_verts {
-              let to_remove_on: Vec<usize> = theDMV.keys().filter(|&&k| {
-                  self.ds.face_info(n_f1).vertices_on.contains(&k)
-              }).copied().collect();
-              for &k in &to_remove_on {
-                  let &v = theDMV.get(&k).unwrap();
-                  self.ds.face_info_mut(n_f1).vertices_on.remove(&k);
-                  self.ds.face_info_mut(n_f1).vertices_on.insert(v);
+      // OCCT L1938-1975: 2.2 Update PaveBlock ON/IN/SC sets
+      if b_edges {
+        let mut a_mpb_fence: HashSet<usize> = HashSet::new();
+
+        // Copy the three PB sets before clearing (OCCT: aMPBCopy = *pMPB[i])
+        let on_copy: Vec<usize> = self.ds.face_info(a_fi).pave_blocks_on.iter().copied().collect();
+        let in_copy: Vec<usize> = self.ds.face_info(a_fi).pave_blocks_in.iter().copied().collect();
+        let sc_copy: Vec<usize> = self.ds.face_info(a_fi).pave_blocks_sc.iter().copied().collect();
+
+        // Clear all three sets (OCCT: pMPB[i]->Clear())
+        self.ds.face_info_mut(a_fi).pave_blocks_on.clear();
+        self.ds.face_info_mut(a_fi).pave_blocks_in.clear();
+        self.ds.face_info_mut(a_fi).pave_blocks_sc.clear();
+
+        // Rebuild all three sets using aMPBFence for dedup (OCCT L1940-1974)
+        let mut new_on: Vec<usize> = Vec::new();
+        let mut new_in: Vec<usize> = Vec::new();
+        let mut new_sc: Vec<usize> = Vec::new();
+
+        for &pb_idx in &on_copy {
+          if let Some(replacements) = theDME.get(&pb_idx) {
+            for &rp in replacements {
+              // OCCT L1959: RealPaveBlock(aPB1) — in rcad the index IS the real block
+              if a_mpb_fence.insert(rp) {
+                new_on.push(rp);
               }
-              let to_remove_in: Vec<usize> = theDMV.keys().filter(|&&k| {
-                  self.ds.face_info(n_f1).vertices_in.contains(&k)
-              }).copied().collect();
-              for &k in &to_remove_in {
-                  let &v = theDMV.get(&k).unwrap();
-                  self.ds.face_info_mut(n_f1).vertices_in.remove(&k);
-                  self.ds.face_info_mut(n_f1).vertices_in.insert(v);
-              }
+            }
+          } else {
+            if a_mpb_fence.insert(pb_idx) {
+              new_on.push(pb_idx);
+            }
           }
-          // 3.2 Update PB ON/IN/SC sets with edge replacements
-          if b_edges {
-              let mut a_mpb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-              let on_copy: Vec<usize> = self.ds.face_info(n_f1).pave_blocks_on.iter().copied().collect();
-              let in_copy: Vec<usize> = self.ds.face_info(n_f1).pave_blocks_in.iter().copied().collect();
-              let sc_copy: Vec<usize> = self.ds.face_info(n_f1).pave_blocks_sc.iter().copied().collect();
-              for set in [&on_copy, &in_copy, &sc_copy] {
-                  for &pb_idx in set {
-                      if theDME.contains_key(&pb_idx) {
-                          if let Some(replacements) = theDME.get(&pb_idx) {
-                              for &rp in replacements {
-                                  if a_mpb_fence.insert(rp) {
-                                      self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(rp);
-                                  }
-                              }
-                          }
-                      } else {
-                          if a_mpb_fence.insert(pb_idx) {
-                              self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
-                          }
-                      }
-                  }
+        }
+        for &pb_idx in &in_copy {
+          if let Some(replacements) = theDME.get(&pb_idx) {
+            for &rp in replacements {
+              if a_mpb_fence.insert(rp) {
+                new_in.push(rp);
               }
+            }
+          } else {
+            if a_mpb_fence.insert(pb_idx) {
+              new_in.push(pb_idx);
+            }
           }
+        }
+        for &pb_idx in &sc_copy {
+          if let Some(replacements) = theDME.get(&pb_idx) {
+            for &rp in replacements {
+              if a_mpb_fence.insert(rp) {
+                new_sc.push(rp);
+              }
+            }
+          } else {
+            if a_mpb_fence.insert(pb_idx) {
+              new_sc.push(pb_idx);
+            }
+          }
+        }
+
+        // Insert rebuilt sets
+        for &pb in &new_on { self.ds.face_info_mut(a_fi).pave_blocks_on.insert(pb); }
+        for &pb in &new_in { self.ds.face_info_mut(a_fi).pave_blocks_in.insert(pb); }
+        for &pb in &new_sc { self.ds.face_info_mut(a_fi).pave_blocks_sc.insert(pb); }
       }
+    }
   }
 
   // ===== BVH-based pair enumeration (OCCT BOPDS_Iterator) =====
