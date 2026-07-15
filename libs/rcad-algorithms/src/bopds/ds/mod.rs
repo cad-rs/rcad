@@ -183,19 +183,23 @@ impl DS {
         else { &[] }
     }
 
-    /// Edge pave_blocks from parallel array.
+    /// Edge pave_blocks.
+    /// OCCT: myDS->ChangePaveBlocks(nE) — single path.
+    /// rcad: prefer self.edges[ei].pave_blocks over parallel array.
     pub fn edge_pave_blocks(&self, ei: usize) -> &[crate::bopds::pave::SharedPB] {
-        if ei < self.edge_pave_blocks.len() { &self.edge_pave_blocks[ei] }
-        else if let Some(e) = self.edges.get(ei) { &e.pave_blocks }
+        if let Some(e) = self.edges.get(ei) { &e.pave_blocks }
+        else if ei < self.edge_pave_blocks.len() { &self.edge_pave_blocks[ei] }
         else { &[] }
     }
 
-    /// Mutable edge pave_blocks from parallel array.
+    /// Mutable edge pave_blocks.
+    /// OCCT: myDS->ChangePaveBlocks(nE) — single path.
+    /// rcad: prefer edges[ei].pave_blocks over parallel array.
     pub fn edge_pave_blocks_mut(&mut self, ei: usize) -> &mut Vec<crate::bopds::pave::SharedPB> {
-        if ei < self.edge_pave_blocks.len() {
-            &mut self.edge_pave_blocks[ei]
-        } else if ei < self.edges.len() {
+        if ei < self.edges.len() {
             &mut self.edges[ei].pave_blocks
+        } else if ei < self.edge_pave_blocks.len() {
+            &mut self.edge_pave_blocks[ei]
         } else {
             panic!("edge_pave_blocks_mut: index {} out of bounds", ei);
         }
