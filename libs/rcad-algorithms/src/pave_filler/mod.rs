@@ -464,48 +464,88 @@ impl<'a> PaveFiller<'a> {
       }
   }
 
-  /// BOPAlgo_PaveFiller::UpdateEdgeTolerance (PaveFiller_10.cxx L63-100).
-  /// Increases tolerance of edge `nE` and propagates to its vertices.
+  /// Helper: true when edge n_e is an intersection-created shape (not a source edge).
+  /// OCCT equivalent: myDS->IsNewShape(nE) for an edge shape index.
+  fn is_new_edge(&self, n_e: usize) -> bool {
+      let si = if n_e < self.ds.edge_shape_idx.len() {
+          self.ds.edge_shape_idx[n_e]
+      } else {
+          self.ds.vertices.len() + n_e
+      };
+      if si < self.ds.shape_info.len() {
+          self.ds.shape_info[si].is_new
+      } else {
+          // no ShapeInfo entry -> created by push_edge during intersection
+          true
+      }
+  }
+
+  // OCCT BOPAlgo_PaveFiller_10.cxx L63-101
   pub(crate) fn update_edge_tolerance(&mut self, n_e: usize, a_tol_new: f64) {
-      if n_e >= self.ds.edges.len() { return; }
-      // rcad: update edge tolerance directly (no TopoDS_Shape to modify)
-      let old_tol = self.ds.edge_tolerance(n_e);
-      if a_tol_new > old_tol {
+      if n_e >= self.ds.edges.len() {
+          return;
+      }
+      // OCCT L68-85: avoid modifying input shapes in safe (non-destructive) mode
+      if self.non_destructive {
+          // OCCT L71-74: if edge is not a new shape, return
+          if !self.is_new_edge(n_e) {
+              return;
+          }
+          // OCCT L76-84: if any vertex is old and has no SD, return
+          let sv = self.ds.edge_start_vertex_ds(n_e);
+          let ev = self.ds.edge_end_vertex_ds(n_e);
+          for &n_v in &[sv, ev] {
+              if !self.ds.is_new_vertex(n_v) && self.ds.has_shape_sd(n_v).is_none() {
+                  return;
+              }
+          }
+      }
+      // OCCT L87-89: update edge tolerance (rcad: no TopoDS bounding box)
+      let a_tol_e = self.ds.edge_tolerance(n_e);
+      if a_tol_new > a_tol_e {
           self.ds.edge_data_mut(n_e).tolerance = a_tol_new;
       }
-      // Propagate to vertices (OCCT: iterate edge's sub-shapes)
+      // OCCT L94-100: update vertex tolerances
       let sv = self.ds.edge_start_vertex_ds(n_e);
       let ev = self.ds.edge_end_vertex_ds(n_e);
       self.update_vertex(sv, a_tol_new);
       self.update_vertex(ev, a_tol_new);
   }
 
-  /// BOPAlgo_PaveFiller::UpdateVertex (PaveFiller_10.cxx L105-162).
-  /// Updates vertex tolerance. If vertex is inactive (old + non-destructive),
-  /// creates a new vertex and registers SD mapping.
+  // OCCT BOPAlgo_PaveFiller_10.cxx L105-162
   pub(crate) fn update_vertex(&mut self, n_v: usize, a_tol_new: f64) -> usize {
-      if n_v >= self.ds.vertices.len() { return n_v; }
-      let n_v_new = n_v;
-      let b_new = self.ds.is_new_vertex(n_v_new)
-          || self.ds.has_shape_sd(n_v).is_some()
-          || !self.non_destructive;
-      if b_new {
-          // nV is a new vertex, or has SD, or non-destructive mode is off
+      if n_v >= self.ds.vertices.len() {
+          return n_v;
+      }
+      // OCCT L111: nVNew = nV
+      let mut n_v_new = n_v;
+      // OCCT L112: check is_new, has_sd, or non-destructive not in force
+      let sd_opt = self.ds.has_shape_sd(n_v);
+      if self.ds.is_new_vertex(n_v) || sd_opt.is_some() || !self.non_destructive {
+          // OCCT L115: if HasShapeSD(nV, nVNew), nVNew becomes the SD partner
+          if let Some(n_sd) = sd_opt {
+              n_v_new = n_sd;
+          }
+          // OCCT L116: get current tolerance of (possibly SD-partner) vertex
           let a_tol_v = self.ds.vertex_tolerance(n_v_new);
+          // OCCT L117-125: increase tolerance if needed
           if a_tol_v < a_tol_new {
               self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_new;
               self.ds.increased_ss.insert(n_v);
           }
           return n_v_new;
       }
-      // nV is old vertex and non-destructive mode is on
+      // OCCT L129-131: nV is old vertex in non-destructive mode
       let a_tol_v = self.ds.vertex_tolerance(n_v);
-      // Create a new vertex with max(old_tol, new_tol)
-      let pt = self.ds.vertex_point(n_v);
-      let n_v_new = self.ds.add_vertex(pt);
+      // OCCT L133-136: create new vertex with max(old, new) tolerance
+      let a_pv = self.ds.vertex_point(n_v);
+      n_v_new = self.ds.add_vertex(a_pv);
       self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_v.max(a_tol_new);
-      // Register SD mapping
+      // OCCT L150-151: register SD mapping old -> new
       self.ds.add_shape_sd(n_v, n_v_new);
+      // OCCT L154: avoid further extension of this new vertex
+      self.verts_to_avoid_extension.insert(n_v_new);
+      // OCCT L156-159: mark increased tolerance on old vertex
       if a_tol_v < a_tol_new {
           self.ds.increased_ss.insert(n_v);
       }
