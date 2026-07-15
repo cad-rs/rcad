@@ -55,52 +55,37 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  pub(crate) fn fill_shrunk_data(&mut self) {
- let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
- let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
- let v_tols: Vec<f64> = (0..self.ds.vertex_origins.len()).map(|vi| self.ds.vertex_tolerance(vi)).collect();
- // Read phase: copy all PB params into flat arrays (from parallel arrays)
- let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
- for ei in 0..self.ds.edge_start_vertex.len() {
- for pb in self.ds.edge_pave_blocks(ei) {
-  all_pb.push((ei, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
+  // OCCT BOPAlgo_PaveFiller_9.cxx L65-138: FillShrunkData
+  // Collect all edge PBs
+  let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
+  for ei in 0..self.ds.edges.len() {
+   if self.ds.edge_has_flag(ei) || self.ds.is_edge_degenerated(ei) { continue; }
+   let n_pbs = self.ds.edges[ei].pave_blocks.len();
+   if n_pbs == 0 { continue; }
+   for pi in 0..n_pbs {
+    let pb = &self.ds.edges[ei].pave_blocks[pi];
+    let r = pb.0.read().unwrap();
+    if r.shrunk_range.is_some() { continue; }
+    all_pb.push((ei, r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param));
+   }
   }
+  if all_pb.is_empty() { return; }
+  let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
+  let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
+  let v_tols: Vec<f64> = (0..self.ds.vertex_origins.len()).map(|vi| self.ds.vertex_tolerance(vi)).collect();
+  let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
+   if self.ds.is_edge_degenerated(*ei) { return (None, false); }
+   let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
+   sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
+   sr.perform(&ec[*ei]);
+   (sr.shrunk_range(), sr.is_splittable())
+  }).collect();
+  for ((ei, _v1i, _v2i, _p1, _p2), (range, splittable)) in all_pb.iter().zip(results.iter()) {
+   if let Some(pb) = self.ds.edges.get(*ei).and_then(|e| e.pave_blocks.first()) {
+    pb.0.write().unwrap().shrunk_range = *range;
+    pb.0.write().unwrap().is_splittable = *splittable;
+   }
   }
-  for pb in &self.ds.pave_blocks {
-  if pb.0.read().unwrap().original_edge < self.ds.edge_start_vertex.len() {
-  all_pb.push((pb.0.read().unwrap().original_edge, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
- }
- }
- let num_edges = self.ds.edge_start_vertex.len();
- let edge_pb_counts: Vec<usize> = (0..num_edges).map(|ei| self.ds.edge_pave_blocks(ei).len()).collect();
- // Compute phase: ShrunkRange (no borrow on self)
- let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
- // skip degenerated edges (BRep_Tool::Degenerated).
- // OCCT BRepLib::FindValidRange returns false immediately for
- // degenerated edges, avoiding the billion-iteration loop in
- // find_nearest_valid_point on a zero-direction line curve.
- if self.ds.is_edge_degenerated(*ei) {
- return (None, false);
- }
- let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
- sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
- sr.perform(&ec[*ei]);
- (sr.shrunk_range(), sr.is_splittable())
- }).collect();
- // Write phase: apply results back to PaveBlocks
- let mut idx = 0usize;
- for ei in 0..num_edges {
- for pi in 0..edge_pb_counts[ei] {
- let (range, splittable) = results[idx]; idx += 1;
- self.ds.edge_pave_blocks(ei)[pi].0.write().unwrap().shrunk_range = range;
- self.ds.edge_pave_blocks(ei)[pi].0.write().unwrap().is_splittable = splittable;
- }
- }
- for pb in &mut self.ds.pave_blocks {
- if pb.0.read().unwrap().original_edge >= self.ds.edge_start_vertex.len() { continue; }
- let (range, splittable) = results[idx]; idx += 1;
- pb.0.write().unwrap().shrunk_range = range;
- pb.0.write().unwrap().is_splittable = splittable;
- }
  }
 
  /// BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).

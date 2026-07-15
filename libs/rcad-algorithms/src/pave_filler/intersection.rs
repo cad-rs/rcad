@@ -262,7 +262,7 @@ impl<'a> super::PaveFiller<'a> {
  let a_vc = ds.a_vertex_count;
  let a_ec = ds.a_edge_count;
  if pairs.is_empty() { return; }
- let filtered: Vec<(usize, usize)> = pairs.par_iter()
+ let filtered: Vec<(usize, usize)> = pairs.iter()
  .filter(|&(vi, ei)| {
  if (*vi < a_vc) == (*ei < a_ec) { return false; }
  !ds.edge_has_vertex(*vi, *ei) && !ds.edge_has_flag(*ei)
@@ -361,12 +361,12 @@ impl<'a> super::PaveFiller<'a> {
  pub(crate) fn perform_ee_bvh(&mut self, pairs: &[(usize, usize)])
  -> std::collections::HashSet<usize>
  {
- use rayon::prelude::*;
- self.fill_shrunk_data();
+  // OCCT PaveFiller_3.cxx L145-462: PerformEE
+  self.fill_shrunk_data();
  // pairs come pre-computed from BOPDS_Iterator
  let ds = &self.ds;
  let a_ec = ds.a_edge_count;
- let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
+ let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.iter()
  .filter(|&(ae, be)| {
  if (*ae < a_ec) == (*be < a_ec) { return false; }
  !ds.edge_has_flag(*ae) && !ds.edge_has_flag(*be)
