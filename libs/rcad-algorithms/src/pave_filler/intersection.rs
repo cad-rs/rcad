@@ -1989,19 +1989,19 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
    }
  }
  // Build VV pairs: cross-operand involving extra vertices
+ // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) uses BVH to find
+ // candidate pairs involving the extra vertices only.
  let a_vc = self.ds.a_vertex_count;
- let n_vertices = self.ds.vertices.len();
+ let vv_bvh = self.build_ds_bvh_combined(false);
+ let all_candidates = crate::bvh::DsBvh::candidate_pairs(&vv_bvh, &vv_bvh);
  let mut vv_pairs: Vec<(usize, usize)> = Vec::new();
- for &vi in &a_extra_map {
- if vi < a_vc {
- for vj in a_vc..n_vertices {
- vv_pairs.push((vi, vj));
- }
- } else {
- for vj in 0..a_vc {
- vv_pairs.push((vi, vj));
- }
- }
+ for &(vi, vj) in &all_candidates {
+  let vi_x = a_extra_map.contains(&vi);
+  let vj_x = a_extra_map.contains(&vj);
+  // Only cross-operand pairs where exactly one vertex is "extra"
+  if vi_x != vj_x && ((vi < a_vc) != (vj < a_vc)) {
+   vv_pairs.push((vi, vj));
+  }
  }
  self.perform_vv(&vv_pairs);
  self.ds.update_pave_blocks_with_sd_vertices();
