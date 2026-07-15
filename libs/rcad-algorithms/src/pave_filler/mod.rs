@@ -1547,8 +1547,124 @@ impl<'a> PaveFiller<'a> {
        task.pb_shared.0.write().unwrap().new_edge = Some(n_sp);
      }
    }
- }
+  }
 
- pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> { Vec::new() }
+ // OCCT BOPAlgo_PaveFiller_11.cxx L1-126 CheckSelfInterference
+ pub(crate) fn check_self_interference(&self) -> Vec<crate::bopalgo::Alert> {
+   if self.my_arguments.len() <= 1 { return Vec::new(); }
+
+   let mut a_alerts: Vec<crate::bopalgo::Alert> = Vec::new();
+
+   for a_rank in 0..2 {
+     let mut a_mcsi: std::collections::HashMap<usize, indexmap::IndexSet<usize>> =
+       std::collections::HashMap::new();
+     let mut a_cb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+     // Process EDGES from this operand
+     for ei in 0..self.ds.edges.len() {
+       let e_origin = self.ds.edge_origin(ei);
+       let e_rank = match e_origin {
+         ShapeOrigin::ShapeA => 0,
+         ShapeOrigin::ShapeB => 1,
+       };
+       if e_rank != a_rank { continue; }
+       if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
+       if self.ds.edge_has_flag(ei) { continue; }
+
+       // Sub-shape vertices with SD resolution
+       let sv = self.ds.edge_start_vertex_ds(ei);
+       let ev = self.ds.edge_end_vertex_ds(ei);
+       let mut a_sub_s: std::collections::HashSet<usize> = std::collections::HashSet::new();
+       for n_v in [sv, ev] {
+         let n_v = self.ds.has_shape_sd(n_v).unwrap_or(n_v);
+         a_sub_s.insert(n_v);
+       }
+
+       let a_lpb = self.ds.edge_pave_blocks(ei);
+       let b_analyze_v = a_lpb.len() > 1;
+
+       for spb in a_lpb {
+         let pb = spb.0.read().unwrap();
+
+         if b_analyze_v {
+           let (nv1, nv2) = pb.indices();
+           for &n_v in &[nv1, nv2] {
+             let n_v = self.ds.has_shape_sd(n_v).unwrap_or(n_v);
+             let v_in_range = match self.ds.vertex_origin(n_v) {
+               Some(ShapeOrigin::ShapeA) => a_rank == 0,
+               Some(ShapeOrigin::ShapeB) => a_rank == 1,
+               None => false,
+             };
+             if !v_in_range && !a_sub_s.contains(&n_v) {
+               a_mcsi.entry(n_v).or_default().insert(ei);
+             }
+           }
+         }
+
+         if let Some(cb_idx) = pb.common_block_idx {
+           if a_cb_fence.insert(cb_idx) {
+             if let Some(cb) = self.ds.common_blocks.get(cb_idx) {
+               let mut a_le: Vec<usize> = Vec::new();
+               for &(pb_gi, _) in cb.pave_blocks() {
+                 if pb_gi < self.ds.pave_blocks.len() {
+                   let n_e_or = self.ds.pave_blocks[pb_gi].0.read().unwrap().original_edge;
+                   let eo = self.ds.edge_origin(n_e_or);
+                   let eor_rank = match eo {
+                     ShapeOrigin::ShapeA => 0,
+                     ShapeOrigin::ShapeB => 1,
+                   };
+                   if eor_rank == a_rank { a_le.push(n_e_or); }
+                 }
+               }
+               if a_le.len() > 1 {
+                 a_alerts.push(crate::bopalgo::Alert::AcquiredSelfIntersection(a_le));
+               }
+             }
+           }
+         }
+       }
+     }
+
+     // Process FACES from this operand
+     for fi in 0..self.ds.faces.len() {
+       let f_origin = self.ds.face_origin(fi);
+       let f_rank = match f_origin {
+         ShapeOrigin::ShapeA => 0,
+         ShapeOrigin::ShapeB => 1,
+       };
+       if f_rank != a_rank { continue; }
+
+       let a_fi = self.ds.face_info(fi);
+
+       for vertices_set in [&a_fi.vertices_in, &a_fi.vertices_sc] {
+         for &n_v in vertices_set {
+           a_mcsi.entry(n_v).or_default().insert(fi);
+         }
+       }
+       for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc] {
+         for &pb_gi in pb_set {
+           if pb_gi < self.ds.pave_blocks.len() {
+             let n_e = {
+               let pb = self.ds.pave_blocks[pb_gi].0.read().unwrap();
+               pb.new_edge.unwrap_or(pb.original_edge)
+             };
+             a_mcsi.entry(n_e).or_default().insert(fi);
+           }
+         }
+       }
+     }
+
+     // Analyze connections
+     for (_sub_shape, shapes) in &a_mcsi {
+       if shapes.len() > 1 {
+         a_alerts.push(crate::bopalgo::Alert::AcquiredSelfIntersection(
+           shapes.iter().copied().collect(),
+         ));
+       }
+     }
+   }
+
+   a_alerts
+ }
 }
 

@@ -43,6 +43,11 @@ pub enum Alert {
     BOPNotSet,
     /// BOPAlgo_AlertEmptyShape.
     EmptyShape,
+    /// BOPAlgo_AlertAcquiredSelfIntersection (PaveFiller_11.cxx L75, L120).
+    ///   Multiple shapes from one operand reference the same sub-shape
+    ///   from another operand, indicating an acquired self-intersection.
+    ///   Contains the indices of the shapes from the same operand.
+    AcquiredSelfIntersection(Vec<usize>),
 }
 
 /// BOPAlgo_Report — collects alerts during pipeline execution.
