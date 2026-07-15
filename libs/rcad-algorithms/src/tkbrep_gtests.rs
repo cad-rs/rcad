@@ -1,4 +1,4 @@
-//! OCCT-aligned TKBRep GTest translations (topods::BRep API).
+//! TKBRep GTest translations (topods::BRep API).
 //!
 //! OCCT source: src/ModelingData/TKBRep/GTests/
 //!

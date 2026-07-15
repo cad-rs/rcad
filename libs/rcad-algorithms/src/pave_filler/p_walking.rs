@@ -1,4 +1,4 @@
-//!  ?OCCT-aligned: IntWalk_PWalking  ?intersection curve walking for
+//!  ?IntWalk_PWalking  ?intersection curve walking for
 //!   two parametric surfaces (parametric-parametric).
 //!
 //! OCCT source: TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx (4096 lines)
@@ -36,7 +36,7 @@ enum ConstIsoparametric {
     None,
 }
 
-///  ?OCCT-aligned: IntWalk_PWalking
+///  ?IntWalk_PWalking
 pub struct PWalking {
     // ── Public state (OCCT hxx:243-287) ──────────────────────────
     done: bool,
@@ -241,7 +241,7 @@ impl PWalking {
 
     // ── PutToBoundary (OCCT cxx:2951-3155) ───────────────────────
 
-    /// OCCT-aligned: snap first and last line points to surface boundaries
+    /// snap first and last line points to surface boundaries
     /// if they are within tolerance.  Returns true if any point was added.
     pub fn put_to_boundary(&mut self, s1: &Surface3, s2: &Surface3) -> bool {
         if self.line.len() < 2 { return false; }
@@ -352,7 +352,7 @@ impl PWalking {
 
     // ── SeekPointOnBoundary (OCCT cxx:2716-2950) ─────────────────
 
-    /// OCCT-aligned: find an intersection point on a surface boundary near
+    /// find an intersection point on a surface boundary near
     /// given UV.  Uses gradient descent + projection (rcad: closest_point_on_surface).
     /// is_the_first: true = snap start point, false = snap end point.
     pub fn seek_point_on_boundary(&mut self,
@@ -426,7 +426,7 @@ impl PWalking {
 
     // ── DistanceMinimizeByGradient (OCCT cxx:2394-2522) ─────────
 
-    /// OCCT-aligned: gradient descent to minimize distance between two surfaces.
+    /// gradient descent to minimize distance between two surfaces.
     ///   rcad: uses extrema::closest_point_on_surface as the numerical engine.
     pub fn distance_minimize_by_gradient(&self, s1: &Surface3, s2: &Surface3,
                                          init: &mut [f64; 4]) -> bool {
@@ -449,7 +449,7 @@ impl PWalking {
 
     // ── DistanceMinimizeByExtrema (OCCT cxx:2532-2583) ──────────
 
-    /// OCCT-aligned: minimize distance from a 3D point to a surface.
+    /// minimize distance from a 3D point to a surface.
     ///   rcad: uses extrema::closest_point_on_surface.
     pub fn distance_minimize_by_extrema(&self, surf: &Surface3, p0: DVec3,
                                         u0: &mut f64, v0: &mut f64) -> bool {
@@ -463,7 +463,7 @@ impl PWalking {
 
     // ── HandleSingleSingularPoint (OCCT cxx:2587-2712) ──────────
 
-    /// OCCT-aligned: handle singular points on surface boundaries.
+    /// handle singular points on surface boundaries.
     fn handle_single_singular_point(&self, s1: &Surface3, s2: &Surface3,
                                     _a3d_tol: f64, pnt: &mut [f64; 4]) -> bool {
         let (u1b_f, u1b_l, v1b_f, v1b_l) = uv_range(s1);
@@ -496,7 +496,7 @@ impl PWalking {
 
     // ── SeekAdditionalPoints (OCCT cxx:3159-3350) ───────────────
 
-    /// OCCT-aligned: add midpoint points until line has at least min points.
+    /// add midpoint points until line has at least min points.
     pub fn seek_additional_points(&mut self, s1: &Surface3, s2: &Surface3,
                                    min_nb_points: usize) -> bool {
         if self.line.len() > min_nb_points { return true; }
@@ -533,7 +533,7 @@ impl PWalking {
 
     // ── ExtendLineInCommonZone (OCCT cxx:1831-2393) ─────────────
 
-    /// OCCT-aligned: attempt to extend the line through a tangent/common zone.
+    /// attempt to extend the line through a tangent/common zone.
     /// Steps along the tangent direction, minimizing distance between both surfaces
     /// at each step, until boundary or tangent zone exit.
     /// the_direction_flag: true = forward, false = backward.
@@ -643,7 +643,7 @@ impl PWalking {
 
     // ── TestDeflection (OCCT hxx:138-139) ─────────────────────────
 
-    /// OCCT-aligned: test if deflection between last 3 points is acceptable.
+    /// test if deflection between last 3 points is acceptable.
     pub fn test_deflection(&mut self, choix_iso: ConstIsoparametric,
                            status: StatusDeflection) -> StatusDeflection {
         let n = self.line.len();
@@ -665,7 +665,7 @@ impl PWalking {
 
     // ── TestArret (OCCT hxx:141-143) ─────────────────────────────
 
-    /// OCCT-aligned: check if the line has reached a surface boundary.
+    /// check if the line has reached a surface boundary.
     pub fn test_arret(&self, _deja_reparti: bool, param: &mut [f64; 4],
                       choix_iso: &mut ConstIsoparametric) -> bool {
         // Check if any parameter is at a surface boundary
@@ -680,7 +680,7 @@ impl PWalking {
 
     // ── RepartirOuDiviser (OCCT hxx:145-148) ─────────────────────
 
-    /// OCCT-aligned: restart or subdivide the walking step.
+    /// restart or subdivide the walking step.
     pub fn repartir_ou_diviser(&mut self, _deja_reparti: &mut bool,
                                _choix_iso: &mut ConstIsoparametric,
                                _arrive: &mut bool) {

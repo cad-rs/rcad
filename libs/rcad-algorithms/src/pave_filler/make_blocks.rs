@@ -1,4 +1,4 @@
-// OCCT-aligned: BOPAlgo_PaveFiller::MakeBlocks (PaveFiller_6.cxx L650-1169).
+// BOPAlgo_PaveFiller::MakeBlocks (PaveFiller_6.cxx L650-1169).
 // Creates section edges from FF intersection curves and handles post-treatment:
 // vertex fusion (PostTreatFF), tolerance correction, face info updates.
 //
@@ -18,7 +18,7 @@ use super::helpers::*;
 use super::*;
 
 impl<'a> super::PaveFiller<'a> {
-    /// OCCT-aligned: BOPAlgo_PaveFiller::CorrectToleranceOfSE (PaveFiller_6.cxx L4105-4306).
+    /// BOPAlgo_PaveFiller::CorrectToleranceOfSE (PaveFiller_6.cxx L4105-4306).
     pub(super) fn correct_tolerance_of_se(&mut self) {
         for ci in 0..self.ds.intersection_curves.len() {
             let refs = self.ds.section_edge_refs[ci].clone();
@@ -34,7 +34,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: GetStickVertices (PaveFiller_6.cxx L2879-2937).
+    /// GetStickVertices (PaveFiller_6.cxx L2879-2937).
     pub(super) fn get_stick_vertices_ff(
         &self,
         n_f1: usize, n_f2: usize,
@@ -75,7 +75,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: MakeBlocks (PaveFiller_6.cxx L650-1169).
+    /// MakeBlocks (PaveFiller_6.cxx L650-1169).
     #[allow(non_snake_case)]
     pub(super) fn make_blocks(&mut self) {
         // OCCT L654-657: skip if Glue mode
@@ -513,7 +513,7 @@ impl<'a> super::PaveFiller<'a> {
         self.ds.build_edge_images();
     }
 
-    /// OCCT-aligned: IsExistingPaveBlock via LSE (shared edges).
+    /// IsExistingPaveBlock via LSE (shared edges).
     /// OCCT PaveFiller_6.cxx L952-961.
     fn is_existing_pb_via_lse(
         &self, a_lse: &[usize], a_pb: &PaveBlock, ci: usize,
@@ -549,7 +549,7 @@ impl<'a> super::PaveFiller<'a> {
         found
     }
 
-    /// OCCT-aligned: IsExistingPaveBlock via ON/IN + BVH.
+    /// IsExistingPaveBlock via ON/IN + BVH.
     /// OCCT PaveFiller_6.cxx L994-1052.
     #[allow(clippy::too_many_arguments)]
     fn is_existing_pb_via_bvh(

@@ -447,7 +447,7 @@ fn solve_quadratic_hits(
 /// Returns the refined (t, uv) or None if the solver diverges or fails
 /// to converge within `max_iter` iterations.
 ///
-/// ✅ OCCT-aligned: matches IntCurveSurface_TheExactHInter refinement stage.
+/// matches IntCurveSurface_TheExactHInter refinement stage.
 pub fn newton_refine_curve_surface(
     curve: &Curve3,
     t: f64,

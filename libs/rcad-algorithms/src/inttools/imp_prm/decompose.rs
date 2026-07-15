@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: DecomposeResult + helpers for quadric-surface post-processing.
+﻿//! DecomposeResult + helpers for quadric-surface post-processing.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.cxx L3146-3730 + helper functions.
 //! Splits intersection lines at seam/pole boundaries for sphere/cone/cylinder/torus.

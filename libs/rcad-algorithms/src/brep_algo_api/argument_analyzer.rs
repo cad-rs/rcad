@@ -866,7 +866,7 @@ impl ArgumentAnalyzer {
     /// We use `TOLERANCE_ABS` (1e-7) × 10 as threshold, matching the
     /// OCCT `IsMicroEdge` tolerance scaling.
     fn test_small_edge(&mut self) {
-        let threshold = TOLERANCE_ABS * 10.0; // ✅ OCCT-aligned: IsMicroEdge scale
+        let threshold = TOLERANCE_ABS * 10.0; // IsMicroEdge scale
 
         // Check shape1 edges
         if let Some(s1) = self.shape1.as_ref() {
@@ -908,7 +908,7 @@ impl ArgumentAnalyzer {
 
     /// Compute an edge's length from its start/end vertex distance.
     ///
-    /// ✅ OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
+    /// BRep_Tool::IsMicroEdge checks vertex distance.
     fn compute_edge_length(&self, brep: &BRep, edge_idx: usize) -> f64 {
         let _edges = brep.edges();
         let Some(edge) = _edges.get(edge_idx) else {
@@ -943,7 +943,7 @@ impl ArgumentAnalyzer {
     /// - The outer wire forms a closed loop (start vertex == end vertex
     ///   of the last edge in the wire).
     ///
-    /// ✅ OCCT-aligned: structural rebuild-ability check (BOPAlgo_ArgumentAnalyzer.cxx L571-610).
+    /// structural rebuild-ability check (BOPAlgo_ArgumentAnalyzer.cxx L571-610).
     /// OCCT iterates faces, counts edges, checks INTERNAL orientation. Same approach.
     fn test_rebuild_face(&mut self) {
         self.rebuild_face_check_shape(true); // shape1
@@ -996,7 +996,7 @@ impl ArgumentAnalyzer {
 
     /// Structural check whether a face can be rebuilt from its wire edges.
     ///
-    /// ✅ OCCT-aligned: Verifies wire closure and edge existence.
+    /// Verifies wire closure and edge existence.
     fn face_rebuildable(
         &self,
         brep: &BRep,
@@ -1070,13 +1070,13 @@ impl ArgumentAnalyzer {
     /// produce unreliable results. This test requires geometric intersection
     /// analysis and is non-trivial.
     ///
-    /// ✅ OCCT-aligned: TestTangent (BOPAlgo_ArgumentAnalyzer.cxx L676-679).
+    /// TestTangent (BOPAlgo_ArgumentAnalyzer.cxx L676-679).
     ///   OCCT implementation is also empty (not implemented).
     fn test_tangent(&mut self) {
         // OCCT ref: Full implementation uses BOPTools_AlgoTools tangent detection.
         // This is a stub that records a single Unknown result (no fault).
         //
-        // ⏳ TODO: Implement tangent detection when needed for specific tests.
+        // TODO: Implement tangent detection when needed for specific tests.
         // The OCCT approach:
         //   1. For each pair of intersecting faces, compute normals at
         //      intersection points.
@@ -1130,7 +1130,7 @@ impl ArgumentAnalyzer {
             return;
         };
 
-        let merge_tol = TOLERANCE_ABS * 100.0; // ✅ OCCT-aligned: merge tolerance
+        let merge_tol = TOLERANCE_ABS * 100.0; // merge tolerance
 
         if is_vertex {
             // Check shape1 vertices against shape2 vertices
@@ -1267,12 +1267,12 @@ impl ArgumentAnalyzer {
     /// along shared edges. C0 (positional continuity only) may cause
     /// problems for boolean operations.
     ///
-    /// ❌ Not fully implemented: OCCT uses Geom_Curve::Continuity() to check
+    /// Not fully implemented: OCCT uses Geom_Curve::Continuity() to check
     ///   if each edge's underlying curve is C0 (positional only), which can
     ///   cause boolean instability.  rcad Curve3 has no Continuity property;
     ///   analytic curves (Line3, Circle3) are C2+, BSpline curves with
     ///   repeated knots could be C0.
-    ///   ⏳ BSpline knot multiplicity not tracked — needed for C0 detection.
+    ///   BSpline knot multiplicity not tracked — needed for C0 detection.
     fn test_continuity(&mut self) {
         // OCCT ref: Full implementation inspects each edge shared by
         // two faces and evaluates the angle between the face normals
@@ -1281,7 +1281,7 @@ impl ArgumentAnalyzer {
         //
         // This stub records a single Unknown result (no fault).
         //
-        // ⏳ TODO: Implement continuity detection:
+        // TODO: Implement continuity detection:
         //   1. For each edge, find the two faces that share it.
         //   2. Evaluate surface normals at several points along the edge.
         //   3. If the angle between normals exceeds a threshold,
@@ -1301,7 +1301,7 @@ impl ArgumentAnalyzer {
     /// Uses `BOPAlgo_AlgoTools::CheckCurveOnSurface()` in OCCT.
     /// Our equivalent is `diagnose_face_surface_consistency()`.
     ///
-    /// ✅ OCCT-aligned: Uses existing brep_check infrastructure.
+    /// Uses existing brep_check infrastructure.
     fn test_curve_on_surface(&mut self) {
         // Check shape1
         if let Some(s1) = self.shape1.as_ref() {

@@ -1,4 +1,4 @@
-﻿/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
+﻿/// TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.
@@ -22,7 +22,7 @@ use super::point_in_polygon_2d;
 // TopoDS-native EdgeInfo — no seg_idx, holds edge+face directly (OCCT aligned)
 // ---------------------------------------------------------------------------
 
-/// OCCT-aligned: EdgeInfo for TopoDS-native path.
+/// EdgeInfo for TopoDS-native path.
 /// Holds the edge and face directly instead of indexing into a WireSegment array.
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeInfoTopoDS {
@@ -133,13 +133,13 @@ pub(crate) fn walk_path_extract_wires(
         })
     };
 
-    // ✅ OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L677-688).
+    // Coord2d (BOPAlgo_WireSplitter_1.cxx L677-688).
     let coord2d = |vi: ShapeRef, edge: ShapeRef, face: ShapeRef| -> Option<DVec2> {
         let t = tool.parameter_on_edge(vi, edge, face)?;
         let (pc, _, _) = tool.curve_on_surface(edge, face)?;
         Some(pc.point_at(t))
     };
-    // ✅ OCCT-aligned: Coord2dVf (BOPAlgo_WireSplitter_1.cxx L692-711).
+    // Coord2dVf (BOPAlgo_WireSplitter_1.cxx L692-711).
     // Uses oriented_first_vertex to respect edge orientation in the face wire.
     let coord2d_vf = |seg: &WireSegmentTopoDS| -> Option<DVec2> {
         let fwd_v = tool.oriented_first_vertex(seg.edge, seg.orientation);
@@ -275,7 +275,7 @@ pub(crate) fn walk_path_extract_wires(
                 uv_seq.truncate(a_nbj);
                 info_seq.truncate(a_nbj);
 
-                // ✅ OCCT-aligned L532-535: update state to last kept edge + continuation vertex
+                // L532-535: update state to last kept edge + continuation vertex
                 ci = *info_seq.last().unwrap();
                 arrived_vertex = continue_vertex;
                 break;
@@ -341,7 +341,7 @@ pub(crate) fn walk_path_extract_wires(
     }
 }
 
-/// OCCT-aligned: RefineAngles (WireSplitter_1.cxx L919-1043).
+/// RefineAngles (WireSplitter_1.cxx L919-1043).
 /// For each multi-vertex with 2 boundary edges, adjust internal edge angles
 /// that fall outside the boundary sweep.  Uses BRepTool for angle computation.
 fn refine_angles(
@@ -415,7 +415,7 @@ fn refine_angles(
     }
 }
 
-/// ✅ OCCT-aligned: TopoDS-based SplitBlock — refine angles + path walk for irregular blocks.
+/// TopoDS-based SplitBlock — refine angles + path walk for irregular blocks.
 pub(crate) fn split_block(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
@@ -445,7 +445,7 @@ pub(crate) fn split_block(
     }
 }
 
-/// ✅ OCCT-aligned: TopoDS-based build_closed_wires — SmartMap + angle computation + wire walking.
+/// TopoDS-based build_closed_wires — SmartMap + angle computation + wire walking.
 ///
 /// Simplified version without vi_to_canon/deg_end_canon (ShapeRef handles use DS indices directly).
 pub(crate) fn build_closed_wires(
@@ -547,7 +547,7 @@ pub(crate) fn build_closed_wires(
 }
 
 /// Build SmartMap for TopoDS segments with angle computation.
-/// Returns (smart_map, aVertMap) — OCCT-aligned SplitBlock L137-196 + L298-319.
+/// Returns (smart_map, aVertMap) — SplitBlock L137-196 + L298-319.
 fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
@@ -723,7 +723,7 @@ fn make_connexity_blocks(
 
 /// TopoDS-based perform_areas — classifies wires as growth/hole.
 ///
-/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformAreas (L420-499).
+/// BOPAlgo_BuilderFace::PerformAreas (L420-499).
 ///   Uses IsGrowthWire fast pre-check + IsHole classification via UV signed area.
 ///   Returns Vec<WireFace> for backward compatibility with emit_wire_face_topods.
 pub(crate) fn perform_areas(
@@ -990,7 +990,7 @@ pub(crate) fn perform_areas(
     result
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
+/// BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
 ///   Classify internal wire groups against result faces via UV point-in-polygon.
 pub(crate) fn perform_internal_shapes(
     wfs: &mut Vec<WireFace>,

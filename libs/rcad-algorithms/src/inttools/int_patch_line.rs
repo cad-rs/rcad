@@ -2,7 +2,7 @@ use super::int_patch_type::IntPatchIType;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
-/// OCCT-aligned: IntPatch_Point — vertex on an IntPatch_Line marking
+/// IntPatch_Point — vertex on an IntPatch_Line marking
 /// a boundary intersection.  Each vertex stores its parameter on the
 /// line, the 3D position, and the UV coordinates on both surfaces.
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +48,7 @@ pub struct IntPatchLine {
     pub wline_pnts: Vec<WLinePnt>,
     pub is_purging_allowed: bool,
     pub wl_type: WLineType,
-    /// OCCT-aligned: vertices on this line (IntPatch_Point / GeomInt_Vertex).
+    /// vertices on this line (IntPatch_Point / GeomInt_Vertex).
     /// Populated during intersection: for analytic lines (Circle/Ellipse) at
     /// least one vertex is required for the TreatCircle split logic.
     pub vertices: Vec<IntPatchVertex>,

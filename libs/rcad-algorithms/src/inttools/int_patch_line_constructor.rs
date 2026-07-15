@@ -1,4 +1,4 @@
-//! OCCT-aligned: GeomInt_LineConstructor — splits an IntPatch_Line into
+//! GeomInt_LineConstructor — splits an IntPatch_Line into
 //! valid parameter intervals by classifying vertex-interval midpoints
 //! on both face domains.
 //!
@@ -7,7 +7,7 @@
 //! rcad: domain classification uses IntTools_Context (FClass2d) instead of
 //! Adaptor3d_TopolTool.
 
-/// OCCT-aligned: GeomInt_LineConstructor — splits lines by domain-classified
+/// GeomInt_LineConstructor — splits lines by domain-classified
 /// vertex intervals.  Stores face indices for domain classification.
 pub struct GeomIntLineConstructor {
     f1: usize,
@@ -19,7 +19,7 @@ impl GeomIntLineConstructor {
     /// rcad: stores face indices for domain classification via Context.
     pub fn new() -> Self { Self { f1: 0, f2: 0 } }
 
-    /// OCCT-aligned: Load — initializes with face indices for domain checks.
+    /// Load — initializes with face indices for domain checks.
     pub fn load(&mut self, f1: usize, f2: usize) {
         self.f1 = f1;
         self.f2 = f2;

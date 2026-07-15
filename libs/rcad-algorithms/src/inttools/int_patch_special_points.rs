@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: IntPatch_SpecialPoints  ?add singular points (pole, apex) to intersection lines.
+﻿//! IntPatch_SpecialPoints  ?add singular points (pole, apex) to intersection lines.
 //!
 //! OCCT IntPatch_SpecialPoints.hxx / .cxx (38K)
 //!

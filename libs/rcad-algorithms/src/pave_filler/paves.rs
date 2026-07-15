@@ -74,7 +74,7 @@ impl<'a> super::PaveFiller<'a> {
  let edge_pb_counts: Vec<usize> = (0..num_edges).map(|ei| self.ds.edge_pave_blocks(ei).len()).collect();
  // Compute phase: ShrunkRange (no borrow on self)
  let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
- // OCCT-aligned: skip degenerated edges (BRep_Tool::Degenerated).
+ // skip degenerated edges (BRep_Tool::Degenerated).
  // OCCT BRepLib::FindValidRange returns false immediately for
  // degenerated edges, avoiding the billion-iteration loop in
  // find_nearest_valid_point on a zero-direction line curve.
@@ -103,7 +103,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
+ /// BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
  pub(crate) fn analyze_shrunk_data(&mut self, ei: usize, pb_idx: usize) {
      if pb_idx >= self.ds.pave_blocks.len() { return; }
      let (has_shrunk, is_splittable) = {
@@ -125,27 +125,27 @@ impl<'a> super::PaveFiller<'a> {
  false
  }
 
-  /// OCCT-aligned: SplitPaveBlocks (PaveFiller_2.cxx L419-626).
+  /// SplitPaveBlocks (PaveFiller_2.cxx L419-626).
   /// Splits PaveBlocks of the given edges using extra paves.
   /// For each edge, reconstructs pave_blocks from the full pave set,
   /// computes shrunk data, and unifies vertices when no valid range.
-    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::SplitPaveBlocks (BOPAlgo_PaveFiller_2.cxx L419-626).
+    /// BOPAlgo_PaveFiller::SplitPaveBlocks (BOPAlgo_PaveFiller_2.cxx L419-626).
   pub(crate) fn split_pave_blocks(&mut self, edges: &std::collections::HashSet<usize>,
   add_interfs: bool) {
-    // ✅ OCCT L422: fence map
+    // OCCT L422: fence map
     let mut a_mpairs: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-    // ✅ OCCT L424-427: aMCBNewPB + aMVerticesToInitPB
+    // OCCT L424-427: aMCBNewPB + aMVerticesToInitPB
     let mut a_mcb_new_pb: std::collections::HashMap<usize,
       Vec<(usize, PaveBlock)>> = std::collections::HashMap::new();
     let mut a_m_vertices_to_init_pb: Vec<usize> = Vec::new();
 
-    // ✅ OCCT L432: for each edge in theMEdges
+    // OCCT L432: for each edge in theMEdges
     for &n_e in edges {
-      // ✅ OCCT L435-436: nE, aLPB = ChangePaveBlocks
+      // OCCT L435-436: nE, aLPB = ChangePaveBlocks
       if n_e >= self.ds.edge_start_vertex.len() { continue; }
       if self.ds.edge_paves(n_e).len() < 2 { continue; }
 
-      // ✅ OCCT L449: aCB = CommonBlock(aPB) — rcad: map old PB pairs to CB index
+      // OCCT L449: aCB = CommonBlock(aPB) — rcad: map old PB pairs to CB index
       let old_pair_to_cb: std::collections::HashMap<(usize, usize), usize> =
         self.ds.edge_pave_blocks(n_e).iter()
         .filter_map(|pb| {
@@ -158,22 +158,22 @@ impl<'a> super::PaveFiller<'a> {
         })
         .collect();
 
-      // ✅ OCCT L452-453: aPB->Update(aLPBN) — split using ext_paves (rcad: edge.paves)
+      // OCCT L452-453: aPB->Update(aLPBN) — split using ext_paves (rcad: edge.paves)
       let mut params: Vec<(usize, f64)> = self.ds.edge_paves(n_e).iter()
         .map(|p| (p.vertex_idx, p.param)).collect();
       params.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
       params.dedup_by(|a, b| (a.1 - b.1).abs() < TOLERANCE_ABS);
 
-      // ✅ OCCT L457-524: for each new sub-PB in aLPBN
+      // OCCT L457-524: for each new sub-PB in aLPBN
       let mut new_pbs: Vec<PaveBlock> = Vec::new();
       for w in params.windows(2) {
         let a_pb_n = PaveBlock::new(n_e,
           Pave { vertex_idx: w[0].0, param: w[0].1 },
           Pave { vertex_idx: w[1].0, param: w[1].1 });
 
-        // ✅ OCCT L461: UpdatePaveBlockWithSDVertices (rcad: SD handled separately)
+        // OCCT L461: UpdatePaveBlockWithSDVertices (rcad: SD handled separately)
 
-        // ✅ OCCT L462: FillShrunkData(aPBN)
+        // OCCT L462: FillShrunkData(aPBN)
         let v1_tol = self.ds.vertex_tolerance(w[0].0);
         let v2_tol = self.ds.vertex_tolerance(w[1].0);
         let mut a_sr = crate::inttools::shrunk_range::ShrunkRange::new();
@@ -181,28 +181,28 @@ impl<'a> super::PaveFiller<'a> {
                       self.ds.edge_tolerance(n_e));
         a_sr.perform(&self.ds.edge_curve(n_e).unwrap());
 
-        // ✅ OCCT L464: bHasValidRange = HasShrunkData()
+        // OCCT L464: bHasValidRange = HasShrunkData()
         let b_has_valid_range = a_sr.shrunk_range().is_some();
-        // ✅ OCCT L468: bCheckDist = (bHasValidRange && !IsSplittable())
+        // OCCT L468: bCheckDist = (bHasValidRange && !IsSplittable())
         let b_check_dist = b_has_valid_range && !a_sr.is_splittable();
 
-        // ✅ OCCT L469: if (!bHasValidRange || bCheckDist)
+        // OCCT L469: if (!bHasValidRange || bCheckDist)
         if !b_has_valid_range || b_check_dist {
           let (n_v1, n_v2) = (w[0].0, w[1].0);
-          // ✅ OCCT L473-476: if (nV1 == nV2) continue
+          // OCCT L473-476: if (nV1 == nV2) continue
           if n_v1 == n_v2 { continue; }
-          // ✅ OCCT L480-488: if (bCheckDist) { ComputeVV }
+          // OCCT L480-488: if (bCheckDist) { ComputeVV }
           let b_interfere = if b_check_dist {
             let tol = self.ds.vertex_tolerance(n_v1).max(self.ds.vertex_tolerance(n_v2))
                        .max(self.ds.fuzzy_tol);
             self.ds.vertex_point(n_v1).distance(self.ds.vertex_point(n_v2)) <= tol
           } else { false };
-          // ✅ OCCT L491: if (!bHasValidRange) OR (interfering after ComputeVV)
+          // OCCT L491: if (!bHasValidRange) OR (interfering after ComputeVV)
           if !b_has_valid_range || b_interfere {
             let key = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-            // ✅ OCCT L495: if (aMPairs.Add(aPair))
+            // OCCT L495: if (aMPairs.Add(aPair))
             if a_mpairs.insert(key) {
-              // ✅ OCCT L497-504: MakeSDVertices + aMVerticesToInitPB
+              // OCCT L497-504: MakeSDVertices + aMVerticesToInitPB
               let n_v = n_v1.min(n_v2);
               self.ds.add_shape_sd(n_v1, n_v);
               self.ds.add_shape_sd(n_v2, n_v);
@@ -214,12 +214,12 @@ impl<'a> super::PaveFiller<'a> {
               a_m_vertices_to_init_pb.push(n_v1);
               a_m_vertices_to_init_pb.push(n_v2);
             }
-            continue; // ✅ OCCT L506: skip this sub-PB (invalid range or merged)
+            continue; // OCCT L506: skip this sub-PB (invalid range or merged)
           }
-          // ✅ OCCT L509: falls through → valid PB, keep it (bCheckDist and NOT interfering)
+          // OCCT L509: falls through → valid PB, keep it (bCheckDist and NOT interfering)
         }
-        // ✅ OCCT L511: aLPB.Append(aPBN)
-        // ✅ OCCT L513-523: if CB, store to aMCBNewPB
+        // OCCT L511: aLPB.Append(aPBN)
+        // OCCT L513-523: if CB, store to aMCBNewPB
         let (v1, v2) = (a_pb_n.pave1.vertex_idx, a_pb_n.pave2.vertex_idx);
         let new_key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
         if let Some(&cb_idx) = old_pair_to_cb.get(&new_key) {
@@ -227,7 +227,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         new_pbs.push(a_pb_n);
       }
-      // ✅ OCCT L525-527: replace old PBs
+      // OCCT L525-527: replace old PBs
       self.ds.edge_pave_blocks_mut(n_e).clone_from(
         &new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect::<Vec<_>>()
       );
@@ -250,7 +250,7 @@ impl<'a> super::PaveFiller<'a> {
         { a_m_inds.entry((cb_idx, key)).or_default().push((ei, li)); }
       }
     }
-    // ✅ OCCT L559: for each group in aMInds
+    // OCCT L559: for each group in aMInds
     for ((_, _vk), entries) in &a_m_inds {
       if entries.len() < 2 { continue; }
       let mut ue: Vec<usize> = entries.iter().map(|&(ei, _)| ei).collect();
@@ -284,7 +284,7 @@ impl<'a> super::PaveFiller<'a> {
       }
     }
 
-    // ✅ OCCT L620-625: InitPaveBlocksForVertex
+    // OCCT L620-625: InitPaveBlocksForVertex
     for &vi in &a_m_vertices_to_init_pb {
       self.ds.init_pave_blocks_for_vertex(vi);
     }
@@ -437,7 +437,7 @@ impl<'a> super::PaveFiller<'a> {
  None
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::PutPavesOnCurve (L2404-2453).
+ /// BOPAlgo_PaveFiller::PutPavesOnCurve (L2404-2453).
  /// Takes pre-computed vertex sets instead of re-deriving from interferences.
  pub(crate) fn put_paves_on_curve(
  &mut self,
@@ -482,7 +482,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// OCCT-aligned: PutStickPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2780-2875).
+ /// PutStickPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2780-2875).
  /// Processes stick vertices that are near the IC endpoints (rich criterion)
  /// and where both face normals are nearly opposite (crease criterion).
  pub(crate) fn put_stick_paves_on_curve(
@@ -543,7 +543,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// OCCT-aligned: PutEFPavesOnCurve (PaveFiller_6.cxx L2724-2778).
+ /// PutEFPavesOnCurve (PaveFiller_6.cxx L2724-2778).
  /// For single-curve FF pairs, put EF-intersection vertices onto the curve.
  pub(crate) fn put_ef_paves_on_curve(
   &mut self,
@@ -602,7 +602,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
+ /// IntTools_Context::IsVertexOnLine (L786-992).
  /// Form-identical logic:
  ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
  ///   2. First endpoint  ?local projection (Newton from aFirst),
@@ -798,7 +798,7 @@ impl<'a> super::PaveFiller<'a> {
  return true;
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::ExtendedTolerance (PaveFiller_6.cxx L????).
+ /// BOPAlgo_PaveFiller::ExtendedTolerance (PaveFiller_6.cxx L????).
  /// In-out aTolVExt: on input it is the current vertex tolerance (lower bound),
  /// on output it is set to the maximum extended distance found.
  pub(crate) fn extended_tolerance(
@@ -1244,7 +1244,7 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.face_info(fi).vertices_in.contains(&vi)
  }
 
- /// OCCT-aligned: IsExistingVertex (PaveFiller_6.cxx L1200-1245).
+ /// IsExistingVertex (PaveFiller_6.cxx L1200-1245).
  /// Checks if a 3D point `theP` coincides with any vertex in theMVOnIn
  /// within `theTol + vertex.geom_tol` distance.
  pub(crate) fn is_existing_vertex_at_point(
@@ -1525,7 +1525,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- ///  OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
+ ///  create section edges for intersecton curves lacking PaveBlocks.
  /// OCCT PerformFF creates DSEdges for each intersecton curve PB immediately
  /// (via BOPDS_Curve::InitPaveBlock1 + SetEdge).  rcad defers; this step
  /// creates the missing section edge + PB so post_treat_ff can register PaveBlocksSc.
@@ -1612,7 +1612,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::SplitEdge (PaveFiller_7.cxx).
+ /// BOPAlgo_PaveFiller::SplitEdge (PaveFiller_7.cxx).
  /// Splits an edge at parametric position, creating a new DS vertex and edge.
  pub(crate) fn split_edge(&mut self, n_e: usize, n_v1: usize, _a_t1: f64, n_v2: usize, _a_t2: f64) -> usize {
      if n_e >= self.ds.edges.len() { return n_e; }
@@ -1642,7 +1642,7 @@ impl<'a> super::PaveFiller<'a> {
      new_ei
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::FindPaveBlocks (PaveFiller_8.cxx).
+ /// BOPAlgo_PaveFiller::FindPaveBlocks (PaveFiller_8.cxx).
  /// Find pave blocks that contain the given vertex on the given face.
  pub(crate) fn find_pave_blocks(&self, n_v: usize, n_f: usize) -> Vec<usize> {
      let mut result = Vec::new();
@@ -1662,7 +1662,7 @@ impl<'a> super::PaveFiller<'a> {
      result
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::MakeSplitEdge (PaveFiller_8.cxx).
+ /// BOPAlgo_PaveFiller::MakeSplitEdge (PaveFiller_8.cxx).
  /// Creates a new split edge for the vertex on face.
  pub(crate) fn make_split_edge(&mut self, n_v: usize, n_f: usize) {
      // In OCCT this creates a section edge for a vertex on a face.
@@ -1672,7 +1672,7 @@ impl<'a> super::PaveFiller<'a> {
      }
  }
 
- /// OCCT-aligned: BOPAlgo_PaveFiller::FillPaves (PaveFiller_8.cxx).
+ /// BOPAlgo_PaveFiller::FillPaves (PaveFiller_8.cxx).
  /// Fills pave data for a vertex on edge on face.
  pub(crate) fn fill_paves(&mut self, _n_v: usize, _n_e: usize, _n_f: usize,
      _lpb: &[usize], _pb: &[u8]) {

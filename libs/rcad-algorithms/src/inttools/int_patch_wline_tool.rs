@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: IntPatch_WLineTool  ?walking line post-processing utilities.
+﻿//! IntPatch_WLineTool  ?walking line post-processing utilities.
 //!
 //! OCCT IntPatch_WLineTool.hxx / .cxx (73K)
 //!

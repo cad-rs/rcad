@@ -22,12 +22,12 @@
 //!
 //! | Rust                                | OCCT                                     | Align |
 //! |-------------------------------------|-----------------------------------------|-------|
-//! | `boolean_op_generic`                | `BRepAlgoAPI_Fuse/Common/Cut::Shape()`  |   ✅  |
-//! | `boolean_op_with_history_generic`   | `BRepAlgoAPI_BuilderOperation::Build()` |   ✅  |
-//! | `fuse` / `fuse_with_history`        | `BRepAlgoAPI_Fuse` shortcut             |   ✅  |
-//! | `common_with_history`               | `BRepAlgoAPI_Common` shortcut           |   ✅  |
-//! | `cut_with_history`                  | `BRepAlgoAPI_Cut` shortcut              |   ✅  |
-//! | `validate_ds_invariants`            | rcad-specific (no direct OCCT eq)       |   ⏳  |
+//! | `boolean_op_generic`                | `BRepAlgoAPI_Fuse/Common/Cut::Shape()`  |   |
+//! | `boolean_op_with_history_generic`   | `BRepAlgoAPI_BuilderOperation::Build()` |   |
+//! | `fuse` / `fuse_with_history`        | `BRepAlgoAPI_Fuse` shortcut             |   |
+//! | `common_with_history`               | `BRepAlgoAPI_Common` shortcut           |   |
+//! | `cut_with_history`                  | `BRepAlgoAPI_Cut` shortcut              |   |
+//! | `validate_ds_invariants`            | rcad-specific (no direct OCCT eq)       |   |
 //!
 //! ## In-pipeline validation
 //!
@@ -305,9 +305,9 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
  bvh::Bvh::build(brep)
 }
 
-/// --OCCT-aligned: PaveFiller creation + configuration + Perform.
+/// --PaveFiller creation + configuration + Perform.
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
-/// OCCT-aligned: DS is created empty and populated by PaveFiller::init()
+/// DS is created empty and populated by PaveFiller::init()
 /// inside perform(), mirroring BOPAlgo_PaveFiller::Init.
 fn pave_fill(a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
  brep: &mut rcad_kernel::topods::BRep,
@@ -344,7 +344,7 @@ fn pave_fill(a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
 ///
 /// Same phases as [`boolean_op_generic`], returns history.
 ///
-/// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderOperation::Build()`
+/// `BRepAlgoAPI_BuilderOperation::Build()`
 pub(crate) fn boolean_op_with_history_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
@@ -357,11 +357,11 @@ pub(crate) fn boolean_op_with_history_generic(
 
 /// Generic boolean operation for Union / Common / Cut.
 ///
-/// ✅ OCCT-aligned: `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
+/// `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
 /// Uses BVH when both operands have faces.
 /// Generic boolean operation for Union / Common / Cut.
 ///
-/// ✅ OCCT-aligned: `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
+/// `BRepAlgoAPI_Fuse/Common/Cut::Shape()`
 /// Uses BVH when both operands have faces.
 pub fn boolean_op_generic(
  op: BooleanOpType, a: &topods::BRep, b: &topods::BRep,
@@ -375,12 +375,12 @@ pub fn boolean_op_generic(
 
 // ── Union (Fuse) shortcuts ─────────────────────────────────────────────
 
-/// ✅ OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`
+/// OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`
 pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }
 
-/// --OCCT-aligned: DS -- PaveFiller -- BooleanBuilder(Union) -- result.
+/// --DS -- PaveFiller -- BooleanBuilder(Union) -- result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
  let mut brep = rcad_kernel::topods::BRep::new();
@@ -429,7 +429,7 @@ pub(crate) fn fuse_with_history_par_bvh(
 
 // ── Common (Intersection) shortcuts ─────────────────────────────────────
 
-/// ✅ OCCT shortcut: `BRepAlgoAPI_Common(a, b).Shape()` with history.
+/// OCCT shortcut: `BRepAlgoAPI_Common(a, b).Shape()` with history.
 pub(crate) fn common_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  common_with_history_bvh(a, b, true)
 }
@@ -467,7 +467,7 @@ pub(crate) fn common_with_history_par_bvh(
 
 // ── Cut (Difference) shortcuts ──────────────────────────────────────────
 
-/// ✅ OCCT shortcut: `BRepAlgoAPI_Cut(a, b).Shape()` with history.
+/// OCCT shortcut: `BRepAlgoAPI_Cut(a, b).Shape()` with history.
 pub(crate) fn cut_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  cut_with_history_bvh(a, b, true)
 }

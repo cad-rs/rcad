@@ -3,7 +3,7 @@
 //! Provides a grid-based framework for approximating functions of two variables
 //! (parametric surfaces) with local polynomial patches.
 //!
-//! ✅ OCCT-aligned: AdvApp2Var_Framework, AdvApp2Var_Network, AdvApp2Var_Patch,
+//! AdvApp2Var_Framework, AdvApp2Var_Network, AdvApp2Var_Patch,
 //!                  AdvApp2Var_Node, AdvApp2Var_Iso, AdvApp2Var_Context
 //!
 //! # Structure
@@ -21,7 +21,7 @@ use glam::{DVec2, DVec3};
 // =============================================================================
 // IsoType
 // =============================================================================
-// ✅ OCCT-aligned: GeomAbs_IsoType
+// GeomAbs_IsoType
 
 /// Direction of an isoparametric line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum IsoType { IsoU, IsoV }
 // =============================================================================
 // Iso
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Iso
+// AdvApp2Var_Iso
 
 /// A single isoparametric line segment in the patch grid.
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ impl Iso {
 // =============================================================================
 // Node
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Node
+// AdvApp2Var_Node
 
 /// A node in the approximation grid, at UV coordinate `(u, v)`.
 /// Stores per-polynomial-order 3D point and error values.
@@ -145,7 +145,7 @@ impl Node {
 // =============================================================================
 // Patch
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Patch
+// AdvApp2Var_Patch
 
 /// A single rectangular patch in the UV parameter space.
 #[derive(Debug, Clone)]
@@ -172,7 +172,7 @@ impl Patch {
 // =============================================================================
 // Network
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Network
+// AdvApp2Var_Network
 
 /// A grid of patches forming the approximation network.
 #[derive(Debug, Clone)]
@@ -297,7 +297,7 @@ impl Network {
 // =============================================================================
 // Framework
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Framework
+// AdvApp2Var_Framework
 
 /// Top-level framework managing iso-line frontiers and node grid.
 #[derive(Debug, Clone)]
@@ -387,7 +387,7 @@ impl Framework {
 // =============================================================================
 // Context
 // =============================================================================
-// ✅ OCCT-aligned: AdvApp2Var_Context
+// AdvApp2Var_Context
 
 /// Tolerance context aggregating 1D/2D/3D tolerances for approximation.
 #[derive(Debug, Clone)]

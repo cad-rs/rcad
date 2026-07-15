@@ -1,11 +1,11 @@
-﻿/// ✅ OCCT-aligned: 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
+﻿/// 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
 use rcad_kernel::geom::Surface3;
 
-/// ✅ OCCT-aligned: Geom2dInt_Geom2dCurveTool::NbSamples.
+/// Geom2dInt_Geom2dCurveTool::NbSamples.
 ///   Returns the number of sample points for a curve over the given range.
 ///   OCCT: for lines nbs=2, for circles based on angle step (eps=0.01),
 ///   for BSpline nbs=NbKnots*Degree scaled by range ratio.
@@ -42,7 +42,7 @@ pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
     if nbs > 2 { nbs * 4 } else { nbs }
 }
 
-/// ✅ OCCT-aligned: collect UV boundary points with adaptive sampling.
+/// collect UV boundary points with adaptive sampling.
 ///   OCCT IntTools_FClass2d::Init (L77-420) samples each edge at NbSamples
 ///   intervals, tracks chordal deflection (FlecheU/FlecheV) and stores
 ///   first/last derivatives for edge junction continuity.
@@ -242,14 +242,14 @@ pub struct FClass2d {
     tol_uv: f64,
     pub u1: f64, pub v1: f64, pub u2: f64, pub v2: f64,
     is_hole: bool,
-    /// ✅ OCCT-aligned: periodic surface tracking for RecadreOnPeriodic
+    /// periodic surface tracking for RecadreOnPeriodic
     ///   (IntTools_FClass2d.cxx L655-678, L758-802).
     ///   U/V periodicity for sphere (U=2π, V=π) and cylinder (U=2π).
     is_u_periodic: bool,
     is_v_periodic: bool,
     u_period: f64,
     v_period: f64,
-    /// ✅ OCCT-aligned: UV resolution (BRepAdaptor_Surface::UResolution/VResolution).
+    /// UV resolution (BRepAdaptor_Surface::UResolution/VResolution).
     ///   Minimum UV step corresponding to TolUV in 3D space.
     u_res: f64,
     v_res: f64,
@@ -266,7 +266,7 @@ impl FClass2d {
 
         let outer_edges: Vec<(usize, bool)> = face.boundary_edges.iter().map(|&e| (e, true)).collect();
         let mut outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
-        // ✅ OCCT-aligned: for periodic surfaces with natural restriction (sphere, cylinder, cone),
+        // for periodic surfaces with natural restriction (sphere, cylinder, cone),
         //   the uv_boundary provides a proper closed polygon, while edge-based sampling may
         //   produce a degenerate polygon when degenerate edges lack pcurves (sphere poles).
         if outer_pts.len() < 3 && face.natural_restriction {
@@ -364,7 +364,7 @@ impl FClass2d {
             _ => (umin, umax, vmin, vmax),
         };
 
-        // ✅ OCCT-aligned: compute UV resolution (UResolution/VResolution).
+        // compute UV resolution (UResolution/VResolution).
         let char_len = (umax - umin).max(vmax - vmin).max(1.0);
         let u_res = tol_uv / char_len;
         let v_res = tol_uv / char_len;
@@ -378,7 +378,7 @@ impl FClass2d {
         }
     }
 
-    /// ✅ OCCT-aligned: Perform with RecadreOnPeriodic (IntTools_FClass2d.cxx L637-803).
+    /// Perform with RecadreOnPeriodic (IntTools_FClass2d.cxx L637-803).
     ///   For periodic surfaces (sphere U/V, cylinder U), when the UV point
     ///   falls outside the cached [Umin,Umax]×[Vmin,Vmax] bounds, shift the
     ///   point by the period and reclassify.  OCCT L666-678 adjusts the UV
@@ -553,7 +553,7 @@ fn chordal_deflection(pts: &[DVec2], tol_uv: f64) -> (f64, f64) {
     (fu.max(tol_uv), fv.max(tol_uv))
 }
 
-/// OCCT-aligned: detect polygon winding direction (signed area).
+/// detect polygon winding direction (signed area).
 ///   Positive area = counter-clockwise (FORWARD).  Used to set TabOrien.
 fn polygon_is_ccw(poly: &[DVec2]) -> bool {
     polygon_signed_area(poly) > 0.0

@@ -221,7 +221,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  DsBvh::build(indices, aabbs)
  }
- ///  OCCT-aligned: BOPDS_Iterator  ?build a single BVH for all elements
+ ///  BOPDS_Iterator  ?build a single BVH for all elements
  /// of the given shape type (both operands A and B combined), used for
  /// single-pass cross-operand pair traversal.
  pub(crate) fn build_ds_bvh_combined(&self, is_edge: bool) -> crate::bvh::DsBvh {
@@ -251,7 +251,7 @@ impl<'a> super::PaveFiller<'a> {
  DsBvh::build(indices, aabbs)
  }
  /// OCCT PaveFiller_2.cxx L141-206: PerformVE
- /// 閴?OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, EDGE) 閳?single pass.
+ /// 閴?BOPDS_Iterator::Initialize(VERTEX, EDGE) 閳?single pass.
  /// Cross-operand filtering is done by BOPDS_Iterator; this function
  /// applies remaining type-specific filters and calls intersect_ve.
  pub(crate) fn perform_ve_bvh(&mut self, pairs: &[(usize, usize)]) {
@@ -276,7 +276,7 @@ impl<'a> super::PaveFiller<'a> {
  self.intersect_ve(&filtered);
  }
 
- ///  OCCT-aligned: IntersectVE (PaveFiller_2.cxx L212-394).
+ ///  IntersectVE (PaveFiller_2.cxx L212-394).
  /// Processes vertex-edge pairs with SD vertex resolution, PB endpoint
  /// dedup (aMVPB), and aDMVSD fence map, matching OCCT's structure.
  fn intersect_ve(&mut self, pairs: &[(usize, usize)]) {
@@ -352,9 +352,9 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  /// OCCT PaveFiller_3.cxx L145-244: PerformEE
- /// 閴?OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, EDGE) 閳?single pass.
+ /// 閴?BOPDS_Iterator::Initialize(EDGE, EDGE) 閳?single pass.
  /// Cross-operand filtering via a_edge_count.
- /// OCCT-aligned: PerformEE (PaveFiller_3.cxx L145-590).
+ /// PerformEE (PaveFiller_3.cxx L145-590).
  /// Returns the set of edges that were modified (got new paves).
  /// The caller should call split_pave_blocks for remaining edges
  /// after treat_new_vertices has processed the new vertex edges.
@@ -612,7 +612,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  //
  // ------------------------------------------------------------------
- // Phase 3: Process results 閳?OCCT-aligned VERTEX/EDGE dispatch (OCCT L324-571)
+ // Phase 3: Process results 閳?VERTEX/EDGE dispatch (OCCT L324-571)
  // ------------------------------------------------------------------
  for k in 0..a_v_edge_face.len() {
  let task = &a_v_edge_face[k];
@@ -878,7 +878,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  DsBvh::build(indices, aabbs)
  }
- ///  OCCT-aligned: BOPDS_Iterator  ?combined face BVH (both operands).
+ ///  BOPDS_Iterator  ?combined face BVH (both operands).
  pub(crate) fn build_ds_bvh_face_all(&self) -> crate::bvh::DsBvh {
  use crate::bvh::{Aabb, DsBvh};
  let n = self.ds.faces.len();
@@ -990,7 +990,7 @@ impl<'a> super::PaveFiller<'a> {
  let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
  self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
  }
- /// 閴?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-132).
+ /// 閴?PerformVV (PaveFiller_1.cxx L45-132).
  /// Builds vertex-vertex connection map (FillMap), groups connected
  /// vertices (MakeBlocks), then creates SD vertices for each group.
  /// Pairs come pre-computed from BOPDS_Iterator (cross-operand, AABB-filtered).
@@ -1000,7 +1000,7 @@ impl<'a> super::PaveFiller<'a> {
   let a_size = a_vc * (self.ds.vertices.len() - a_vc);
   if a_size == 0 { return; }
 
-  // 閴?OCCT-aligned: BOPDS_Iterator(VERTEX, VERTEX) 閳?BVH-based pair enumeration.
+  // 閴?BOPDS_Iterator(VERTEX, VERTEX) 閳?BVH-based pair enumeration.
   // OCCT L68-76: myIterator->Initialize(VERTEX, VERTEX) returns overlapping AABB pairs.
   let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
@@ -1043,7 +1043,7 @@ impl<'a> super::PaveFiller<'a> {
   }
   }
 
- ///  OCCT-aligned: MakeSDVertices (PaveFiller_1.cxx L136-233).
+ ///  MakeSDVertices (PaveFiller_1.cxx L136-233).
  /// Merges a connected group of vertices into a single SD vertex.
  /// The first vertex in the block becomes the merge target; all other
  /// vertices in the block are remapped to it via AddShapeSD and
@@ -1214,7 +1214,7 @@ impl<'a> super::PaveFiller<'a> {
  let e2_curve = edge2.curve.clone();
  drop(edge1);
  drop(edge2);
- // 閴?OCCT-aligned: FillShrunkData computes shrunk ranges for each pave block.
+ // 閴?FillShrunkData computes shrunk ranges for each pave block.
  // If shrunk_range fails (edge too short), skip this pair entirely
  // (=OCCT BOPAlgo_PaveFiller_3: !aPB->IsSplittable() 閳?continue).
  let sr1 = match crate::inttools::curve_range::shrunk_range(
@@ -1272,17 +1272,17 @@ impl<'a> super::PaveFiller<'a> {
   }
  };
 
- //  OCCT-aligned: Process each intersection result (PaveFiller_3.cxx L682-750).
+ //  Process each intersection result (PaveFiller_3.cxx L682-750).
  // For each valid intersection, create a new vertex and record EE interference.
  // OCCT's UpdateVertex handles proximity via tolerance merging; rcad creates
  // vertices directly (architecture diff: rcad DSVertex has no UpdateVertex).
  for (t1, t2, point) in hits {
- // 閴?OCCT-aligned: restrict to shrunk range.  IntTools_EdgeEdge computes
+ // 閴?restrict to shrunk range.  IntTools_EdgeEdge computes
  // within the shrunk range; results at/outside the boundary are
  // endpoint-coincident (handled by VV/VE/VF) or coincide with an existing
  // pave vertex 閳?neither should create a new EE interference.
  if t1 < sr1[0] || t1 > sr1[1] || t2 < sr2[0] || t2 > sr2[1] { continue; }
- // 閴?OCCT-aligned: skip tangent/colinear edge pairs.  OCCT
+ // 閴?skip tangent/colinear edge pairs.  OCCT
  // (PaveFiller_3.cxx) checks aEECP.TangentEdges() after EE computation
  // and defers the entire range to ForceInterfEE (CommonBlocks).
  let is_parallel = match (&e1_curve, &e2_curve) {
@@ -1585,7 +1585,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- ///  OCCT-aligned: CheckVertexFace (PaveFiller_4.cxx L249-298).
+ ///  CheckVertexFace (PaveFiller_4.cxx L249-298).
  /// Vertex/Face proximity check with SD vertex resolution.
  /// OCCT: BOPAlgo_VertexFace parallel solver + result processing;
  /// rcad: sequential equivalent with same projection logic.
@@ -1642,11 +1642,11 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.increased_ss.insert(n_vsd);
  }
 
- //  OCCT-aligned: ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
+ //  ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
  self.ds.face_info_mut(fi).vertices_in.insert(n_vsd);
  }
  }
- /// OCCT-aligned: PerformEF (PaveFiller_5.cxx L165-300) 閳?LEGACY non-BVH path.
+ /// PerformEF (PaveFiller_5.cxx L165-300) 閳?LEGACY non-BVH path.
  /// Only kept for reference; use perform_ef() (the aligned BVH path) instead.
  /// OCCT PaveFiller_3.cxx L222-228: GetPBBox (PaveBlock range)
  pub(crate) fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
@@ -1868,7 +1868,7 @@ impl<'a> super::PaveFiller<'a> {
  .collect()
  }
  (Curve3::Ellipse(ellipse), Surface3::Plane(plane)) => {
- //  OCCT-aligned: IntAna_IntConicQuad Ellipse  ?Plane
+ //  IntAna_IntConicQuad Ellipse  ?Plane
  inttools::ellipse_intersection::intersect_ellipse_plane_with_tol(
  ellipse,
  ef_range,
@@ -1914,7 +1914,7 @@ impl<'a> super::PaveFiller<'a> {
  .collect()
  }
  (Curve3::Parabola(parabola), Surface3::Plane(plane)) => {
- //  OCCT-aligned: IntAna_IntConicQuad Parabola  ?Plane
+ //  IntAna_IntConicQuad Parabola  ?Plane
  inttools::parabola_intersection::intersect_parabola_plane_with_tol(
  parabola,
  ef_range,
@@ -1960,7 +1960,7 @@ impl<'a> super::PaveFiller<'a> {
  .collect()
  }
  (Curve3::Hyperbola(hyperbola), Surface3::Plane(plane)) => {
- //  OCCT-aligned: IntAna_IntConicQuad Hyperbola  ?Plane
+ //  IntAna_IntConicQuad Hyperbola  ?Plane
  inttools::hyperbola_intersection::intersect_hyperbola_plane_with_tol(
  hyperbola,
  ef_range,
@@ -2013,7 +2013,7 @@ impl<'a> super::PaveFiller<'a> {
  };
 
  for (point, edge_param) in hits {
- //  OCCT-aligned: IsPointInFace check for ALL surface types (PaveFiller_5.cxx L523)
+ //  IsPointInFace check for ALL surface types (PaveFiller_5.cxx L523)
  let in_face = self.is_point_in_face(point, face_idx, etf);
  if !in_face {
  let near_face_vert = match &face_surface {
@@ -2027,7 +2027,7 @@ impl<'a> super::PaveFiller<'a> {
  if !near_face_vert { continue; }
  }
 
- //  OCCT-aligned: Always create EF interference for intersection hits.
+ //  Always create EF interference for intersection hits.
  // OCCT IntTools_EdgeFace creates a new vertex for each hit, even when
  // the hit coincides with an existing edge endpoint.  SD vertex merging
  // handles near-coincident vertices later (MakeSDVerticesFF in PostTreat).
@@ -2045,7 +2045,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
  }
- //  OCCT-aligned: Create EF interference for EVERY hit, even at edge endpoints.
+ //  Create EF interference for EVERY hit, even at edge endpoints.
  // OCCT IntTools_EdgeFace creates a new vertex for each hit (no dedup).
  // rcad: remove the vertices_on skip check  ?always push interference.
  self.ds.interf_ef.push(InterferenceEF{

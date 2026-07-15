@@ -116,7 +116,7 @@ pub fn clip_line_to_convex_polygon(
     intervals.first().copied()
 }
 
-///  ?OCCT-aligned: compute_edge_face_criteria (IntTools_EdgeFace.cxx L528-548).
+///  ?compute_edge_face_criteria (IntTools_EdgeFace.cxx L528-548).
 /// Computes the tolerance sum for edge-face intersection.
 /// For BSpline/Bezier curves with large tolerance ratio, uses max.
 pub fn compute_edge_face_criteria(edge_tol: f64, face_tol: f64, curve_type: &Curve3) -> f64 {
@@ -137,7 +137,7 @@ pub fn compute_edge_face_criteria(edge_tol: f64, face_tol: f64, curve_type: &Cur
     }
 }
 
-///  ?OCCT-aligned: IsEqDistance (IntTools_EdgeFace.cxx L240-299).
+///  ?IsEqDistance (IntTools_EdgeFace.cxx L240-299).
 /// Checks if point is near the axis of a cylindrical/conical/toroidal surface,
 /// returning the surface's radius at that point.
 pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
@@ -179,7 +179,7 @@ pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
     }
 }
 
-///  ?OCCT-aligned: IsCoincident (IntTools_EdgeFace.cxx L62-163).
+///  ?IsCoincident (IntTools_EdgeFace.cxx L62-163).
 /// Checks if an edge is coincident with a face by sampling points along the
 /// edge, projecting onto the face, and classifying them.
 /// Returns true if >50% of sample points project within criteria AND are IN.
@@ -237,7 +237,7 @@ pub fn is_coincident_edge_face(
     coeff > a_tresh
 }
 
-///  ?OCCT-aligned: IsCoplanar (IntTools_EdgeFace.cxx L788-813).
+///  ?IsCoplanar (IntTools_EdgeFace.cxx L788-813).
 /// Checks if a curve lies in the plane of a planar surface.
 pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
     let Surface3::Plane(pl) = surface else { return false; };
@@ -249,7 +249,7 @@ pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
     }
 }
 
-///  ?OCCT-aligned: IsRadius (IntTools_EdgeFace.cxx L815-843).
+///  ?IsRadius (IntTools_EdgeFace.cxx L815-843).
 /// Checks if a curve's radius matches the surface's curvature radius.
 pub fn is_radius(curve: &Curve3, surface: &Surface3, criteria: f64) -> bool {
     match (curve, surface) {
@@ -268,7 +268,7 @@ pub fn is_radius(curve: &Curve3, surface: &Surface3, criteria: f64) -> bool {
     }
 }
 
-///  ?OCCT-aligned: MakeType (IntTools_EdgeFace.cxx L304-359).
+///  ?MakeType (IntTools_EdgeFace.cxx L304-359).
 /// Determines whether a common part is EDGE or VERTEX type.
 pub fn make_edge_face_type(
     edge_t_range: [f64; 2],
@@ -349,7 +349,7 @@ pub fn clip_line_to_polygon_with_tol(
         // line_dir × edge_dir  ?zero means parallel
         let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
-            // OCCT-aligned: when the line coincides with a polygon edge (parallel
+            // when the line coincides with a polygon edge (parallel
             // AND zero distance), use the edge endpoints as intersection t-values.
             // Without this, boundary-coincident intersection lines lose the portion
             // of the line that runs along the polygon edge (e.g. bfuse_simple B3
@@ -470,7 +470,7 @@ pub fn clip_line_to_polygon_with_tol(
     result
 }
 
-///  ?OCCT-aligned: IntTools_BeanFaceIntersector  ?edge-face intersection engine.
+///  ?IntTools_BeanFaceIntersector  ?edge-face intersection engine.
 ///
 /// Algorithm (Perform):
 ///   1. ComputeLinePlane if Line/Plane

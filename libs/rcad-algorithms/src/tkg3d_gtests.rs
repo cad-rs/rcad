@@ -1,4 +1,4 @@
-//! OCCT-aligned TKG3d GTest translations.
+//! TKG3d GTest translations.
 //!
 //! OCCT source: src/ModelingData/TKG3d/GTests/
 //!

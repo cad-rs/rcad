@@ -1,4 +1,4 @@
-﻿///  ?OCCT-aligned: BOPAlgo_Tools  ?CommonBlock merging and tolerance computation.
+﻿///  ?BOPAlgo_Tools  ?CommonBlock merging and tolerance computation.
 ///
 /// OCCT references:
 /// - `BOPAlgo_Tools::PerformCommonBlocks` (BOPAlgo_Tools.cxx L107-243)
@@ -19,7 +19,7 @@ use rcad_kernel::geom::{Curve3, CurveEval};
 
 //  € € PerformCommonBlocks  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-///  ?OCCT-aligned: `BOPAlgo_Tools::PerformCommonBlocks` (overload 1  ?PB B
+///  ?`BOPAlgo_Tools::PerformCommonBlocks` (overload 1  ?PB B
 /// connection map).
 ///
 /// Scans all edges in the DS, groups PaveBlocks that share the same
@@ -123,7 +123,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
  ds.common_blocks[cb_idx].set_tolerance(tol);
 
  // Mark local PaveBlocks as belonging to this CommonBlock.
- //  ?OCCT-aligned: BOPDS_PaveBlock::myCommonBlock (L103-108 in ds.cxx).
+ //  ?BOPDS_PaveBlock::myCommonBlock (L103-108 in ds.cxx).
  for &(global_pb, _) in entries {
  if let Some(&(ei, local_i)) = global_to_edge_local.get(&global_pb) {
  if let Some(local_pb) = ds.edges.get_mut(ei)
@@ -138,7 +138,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
 
 //  € € ComputeToleranceOfCB  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-///  ?OCCT-aligned: `BOPAlgo_Tools::ComputeToleranceOfCB`.
+///  ?`BOPAlgo_Tools::ComputeToleranceOfCB`.
 ///
 /// Computes the maximum tolerance for a CommonBlock by sampling points along
 /// the reference PaveBlock's curve and measuring the deviation to:

@@ -1,6 +1,6 @@
 ﻿//! LProp-style curve curvature extremum and inflection point storage.
 //!
-//! ✅ OCCT-aligned: LProp_CurAndInf — stores curvature extrema (min/max)
+//! LProp_CurAndInf — stores curvature extrema (min/max)
 //!                  and inflection points of a curve, sorted by parameter.
 
 /// Type of curvature/inflection point (OCCT LProp_CIType).
@@ -13,7 +13,7 @@ pub enum CIType {
 
 /// Storage for curvature extrema and inflection points.
 ///
-/// OCCT-aligned: LProp_CurAndInf. Points are stored sorted by parameter.
+/// LProp_CurAndInf. Points are stored sorted by parameter.
 #[derive(Debug, Clone)]
 pub struct CurAndInf {
     params: Vec<f64>,

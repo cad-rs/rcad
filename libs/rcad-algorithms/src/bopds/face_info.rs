@@ -2,7 +2,7 @@ use indexmap::IndexSet;
 
 /// Per-face intersection bookkeeping (OCCT: BOPDS_FaceInfo).
 ///
-/// ✅ OCCT-aligned: uses `IndexSet` which preserves insertion order,
+/// uses `IndexSet` which preserves insertion order,
 /// matching OCCT's `NCollection_IndexedMap` (not `NCollection_Map`/`HashSet`).
 #[derive(Debug, Clone, Default)]
 pub struct FaceInfo {
@@ -10,7 +10,7 @@ pub struct FaceInfo {
     pub pave_blocks_on: IndexSet<usize>,
     /// Indices of PaveBlocks that lie IN this face (from E-F intersection).
     pub pave_blocks_in: IndexSet<usize>,
-    /// ✅ OCCT-aligned: BOPDS_FaceInfo::PaveBlocksSc (hxx:115-117).
+    /// BOPDS_FaceInfo::PaveBlocksSc (hxx:115-117).
     ///   Section curve PaveBlock indices (sub-segments of intersection curves).
     ///   Populated by post_treat_ff from each curve's pave_blocks via update().
     pub pave_blocks_sc: IndexSet<usize>,
@@ -20,15 +20,15 @@ pub struct FaceInfo {
     pub vertices_on: IndexSet<usize>,
     /// Vertex indices that lie IN this face (from F-F intersection).
     pub vertices_in: IndexSet<usize>,
-    /// ✅ OCCT-aligned: BOPDS_FaceInfo::VerticesSc (hxx:122-123).
+    /// BOPDS_FaceInfo::VerticesSc (hxx:122-123).
     ///   Vertex indices from section curves (FF intersection).
     pub vertices_sc: IndexSet<usize>,
 }
 
 impl FaceInfo {
-    /// OCCT-aligned: `myDS->HasFaceInfo(i)` which checks for any PaveBlocksIn/On/Sc,
+    /// `myDS->HasFaceInfo(i)` which checks for any PaveBlocksIn/On/Sc,
     /// curves_sc, or alone vertices (VerticesIn/VerticesOn/VerticesSc).
-    /// ✅ OCCT-aligned: BOPDS_DS::HasFaceInfo + BOPDS_FaceInfo presence.
+    /// BOPDS_DS::HasFaceInfo + BOPDS_FaceInfo presence.
     pub fn has_any_interference(&self) -> bool {
         !self.pave_blocks_in.is_empty()
             || !self.pave_blocks_on.is_empty()

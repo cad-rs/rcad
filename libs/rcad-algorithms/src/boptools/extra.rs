@@ -46,7 +46,7 @@
  ds.edge_data_mut(ei).tolerance = tol_e;
 }
 
-///  ?OCCT-aligned: IsClosed (BOPTools_AlgoTools2D_1.cxx L289-311).
+///  ?IsClosed (BOPTools_AlgoTools2D_1.cxx L289-311).
 /// Checks if an edge appears twice in a face (closed seam edge on periodic surface).
 pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bopds::ds::DS) -> bool {
  // OCCT L293: BRep_Tool::IsClosed(aE, aF)  ?rcad: edge is closed when start==end
@@ -66,7 +66,7 @@ pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bopds::ds::DS) -> bo
  cnt == 2
 }
 
-///  ?OCCT-aligned: AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L44-160).
+///  ?AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L44-160).
 /// Attaches pcurve from an old edge to a new edge on the given face.
 /// Handles orientation reversal and range adjustment.
 ///
@@ -161,7 +161,7 @@ pub fn attach_existing_pcurve(
  0
 }
 
-///  ?OCCT-aligned: UpdateClosedPCurve (BOPTools_AlgoTools2D_1.cxx L164-285).
+///  ?UpdateClosedPCurve (BOPTools_AlgoTools2D_1.cxx L164-285).
 /// For a closed (seam) edge on a face, builds the second (shifted) pcurve.
 /// Returns 0 on success.
 pub fn update_closed_pcurve(
@@ -259,7 +259,7 @@ fn reverse_curve_2d(curve: &rcad_kernel::geom::Curve2d) -> rcad_kernel::geom::Cu
  }
 }
 
-/// OCCT-aligned: GeomLib::SameRange (GeomLib.cxx L842-970).
+/// GeomLib::SameRange (GeomLib.cxx L842-970).
 /// Adjusts the parameterization of a 2D curve from [src_t1, src_t2] to [dst_t1, dst_t2]
 /// while preserving the geometric shape. Returns None on degenerate source range.
 ///
@@ -333,7 +333,7 @@ fn same_range_2d(
  }
 }
 
-/// OCCT-aligned: IntTools_Tools::ComputeTolerance (IntTools_Tools.cxx L737-779).
+/// IntTools_Tools::ComputeTolerance (IntTools_Tools.cxx L737-779).
 /// Computes the maximum 3D deviation between a 3D curve and the surface evaluation
 /// of a pcurve over [t1, t2]. Samples uniformly; OCCT uses GeomLib_CheckCurveOnSurface
 /// with adaptive refinement. Returns the max distance * (1 + 1e-5) margin, matching OCCT.
@@ -399,7 +399,7 @@ fn shift_curve_2d(
  }
 }
 
-/// OCCT-aligned: CorrectTolerances (BOPTools_AlgoTools_1.cxx L309-317).
+/// CorrectTolerances (BOPTools_AlgoTools_1.cxx L309-317).
 /// Top-level tolerance correction: CorrectPointOnCurve -> CorrectCurveOnSurface.
 pub fn correct_tolerances(
  ds: &mut crate::bopds::ds::DS,
@@ -412,7 +412,7 @@ pub fn correct_tolerances(
  correct_curve_on_surface(ds, map_to_avoid, max_tol);
 }
 
-/// OCCT-aligned: CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx L322-344).
+/// CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx L322-344).
 /// Iterates all edges, for each calls CheckEdge (L430-517).
 pub fn correct_point_on_curve(
  ds: &mut crate::bopds::ds::DS,
@@ -488,7 +488,7 @@ pub fn correct_point_on_curve(
  }
 }
 
-/// OCCT-aligned: CorrectCurveOnSurface (BOPTools_AlgoTools_1.cxx L348-385).
+/// CorrectCurveOnSurface (BOPTools_AlgoTools_1.cxx L348-385).
 /// Iterates faces and their edges, corrects pcurve deviation tolerances.
 pub fn correct_curve_on_surface(
  ds: &mut crate::bopds::ds::DS,
@@ -518,7 +518,7 @@ pub fn correct_curve_on_surface(
  }
 }
 
-/// OCCT-aligned: ComputeState for point vs solid (BOPTools_AlgoTools.cxx L790-803).
+/// ComputeState for point vs solid (BOPTools_AlgoTools.cxx L790-803).
 /// Classifies a 3D point against a set of face indices representing a solid.
 pub fn compute_state_point_against_faces(
  point: glam::DVec3,
@@ -528,7 +528,7 @@ pub fn compute_state_point_against_faces(
  crate::classify::classify_point(point, solid_face_indices, ds)
 }
 
-/// OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1294-1312).
+/// IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1294-1312).
 /// Wrapper around is_split_to_reverse that logs warnings on error.
 pub fn is_split_to_reverse_with_warn(
  split_normal: glam::DVec3,
@@ -540,7 +540,7 @@ pub fn is_split_to_reverse_with_warn(
  is_split_to_reverse(original_normal, split_normal)
 }
 
-/// OCCT-aligned: Dimensions (BOPTools_AlgoTools.hxx L546-547).
+/// Dimensions (BOPTools_AlgoTools.hxx L546-547).
 /// Returns the min and max dimension of sub-shapes in the solid.
 pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> (i32, i32) {
  let mut d_min = 3i32;
@@ -569,14 +569,14 @@ pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> (i
  (d_min, d_max)
 }
 
-/// OCCT-aligned: Dimension (BOPTools_AlgoTools.hxx L550).
+/// Dimension (BOPTools_AlgoTools.hxx L550).
 /// Returns the uniform dimension of shapes in the solid. If mixed, returns -1.
 pub fn dimension(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> i32 {
  let (d_min, d_max) = dimensions(solid_face_indices, ds);
  if d_min == d_max { d_min } else { -1 }
 }
 
-/// OCCT-aligned: DoSplitSEAMOnFace (BOPTools_AlgoTools3D.hxx L43-49).
+/// DoSplitSEAMOnFace (BOPTools_AlgoTools3D.hxx L43-49).
 /// Checks if a split edge should be treated as a seam edge on a periodic surface.
 /// Returns true if the edge lies on the parametric seam (U=0 or U=2 ).
 pub fn do_split_seam_on_face(
@@ -595,7 +595,7 @@ pub fn do_split_seam_on_face(
  on_seam(uva.x) && on_seam(uvb.x)
 }
 
-/// OCCT-aligned: PointOnSurface (BOPTools_AlgoTools2D.cxx L107-122).
+/// PointOnSurface (BOPTools_AlgoTools2D.cxx L107-122).
 /// Evaluates UV parameters of an edge on a face at the given edge parameter.
 pub fn point_on_surface(
  ds: &crate::bopds::ds::DS,
@@ -611,7 +611,7 @@ pub fn point_on_surface(
  Some(glam::DVec2::new(pt.x, pt.y))
 }
 
-///  ?OCCT-aligned: SenseFlag (BOPTools_AlgoTools3D.cxx L380-402).
+///  ?SenseFlag (BOPTools_AlgoTools3D.cxx L380-402).
 /// Returns 1 if normals point same direction, -1 if opposite, 0 if not coincident.
 pub fn sense_flag(n1: glam::DVec3, n2: glam::DVec3) -> i8 {
  // OCCT L384: IntTools_Tools::IsDirsCoinside  ?checks parallelism
@@ -626,7 +626,7 @@ pub fn sense_flag(n1: glam::DVec3, n2: glam::DVec3) -> i8 {
  if sc_pr < 0.0 { -1 } else if sc_pr > 0.0 { 1 } else { -1 }
 }
 
-///  ?OCCT-aligned: GetNormalToSurface (BOPTools_AlgoTools3D.cxx L406-439).
+///  ?GetNormalToSurface (BOPTools_AlgoTools3D.cxx L406-439).
 /// Computes the normal to a surface at UV using the surface evaluation.
 pub fn get_normal_to_surface(
  surface: &rcad_kernel::geom::Surface3,
@@ -638,7 +638,7 @@ pub fn get_normal_to_surface(
  if normal.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { None } else { Some(normal.normalize()) }
 }
 
-///  ?OCCT-aligned: GetApproxNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L443-494).
+///  ?GetApproxNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L443-494).
 /// Computes the approximate normal to a face near an edge by evaluating
 /// the surface at a point offset from the edge toward the face interior.
 pub fn get_approx_normal_to_face_on_edge(
@@ -655,19 +655,19 @@ pub fn get_approx_normal_to_face_on_edge(
  Some((offset_pt, normal))
 }
 
-///  ?OCCT-aligned: MinStepIn2d (BOPTools_AlgoTools3D.hxx L215).
+///  ?MinStepIn2d (BOPTools_AlgoTools3D.hxx L215).
 /// Returns the minimum step used in 2D computations (1e-5).
 pub fn min_step_in_2d() -> f64 {
  1e-5
 }
 
-///  ?OCCT-aligned: IsEmptyShape (BOPTools_AlgoTools3D.cxx L732-788).
+///  ?IsEmptyShape (BOPTools_AlgoTools3D.cxx L732-788).
 /// Returns true if a shape has no geometry or is empty.
 pub fn is_empty_face(face: &crate::bopds::ds::DSFace) -> bool {
  face.boundary_edges.is_empty()
 }
 
-///  ?OCCT-aligned: IsEmptyShape for a general DS face list.
+///  ?IsEmptyShape for a general DS face list.
 pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bopds::ds::DS) -> bool {
  if shape_faces.is_empty() { return true; }
  // OCCT L732-788: calls HasGeometry recursively
@@ -677,7 +677,7 @@ pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bopds::ds::DS) -> bool 
  })
 }
 
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L807-891).
+/// IsInternalFace (BOPTools_AlgoTools.cxx L807-891).
 ///
 /// Checks if face `fi` is internal to a solid described by `solid_face_indices`.
 /// Uses two-level classification:
@@ -761,7 +761,7 @@ pub fn is_internal_face_against_solid(
  Some(state == crate::classify::Classification::In)
 }
 
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L939-990).
+/// IsInternalFace (BOPTools_AlgoTools.cxx L939-990).
 /// Core implementation: check if face `the_face` is internal relative to
 /// adjacent faces `the_face1` and `the_face2` sharing `the_edge`.
 /// Returns 0=not IN, 1=IN, 2=unable.
@@ -808,7 +808,7 @@ pub fn is_internal_face_core(
  }
 }
 
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L895-935).
+/// IsInternalFace (BOPTools_AlgoTools.cxx L895-935).
 /// Checks if face `the_face` is internal relative to a list of face candidates
 /// sharing `the_edge`.
 pub fn is_internal_face_against_list(
@@ -836,7 +836,7 @@ pub fn is_internal_face_against_list(
  }
 }
 
-///  ?OCCT-aligned: OrientEdgesOnWire (BOPTools_AlgoTools.cxx L262-359).
+///  ?OrientEdgesOnWire (BOPTools_AlgoTools.cxx L262-359).
 ///
 /// OCCT algorithm:
 /// 1. Build vertex dge map (MapShapesAndAncestors VERTEX DGE).
@@ -932,7 +932,7 @@ pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop
  *edges = a_wire_new;
 }
 
-///  ?OCCT-aligned: PointInFace (BOPTools_AlgoTools3D.cxx L906-941).
+///  ?PointInFace (BOPTools_AlgoTools3D.cxx L906-941).
 /// Computes an arbitrary point inside a DS face (uses boundary centroid).
 pub fn point_in_face(
  ds: &crate::bopds::ds::DS,
@@ -951,7 +951,7 @@ pub fn point_in_face(
  Some((p3d, uv))
 }
 
-/// OCCT-aligned: IsOpenShell (BOPTools_AlgoTools.cxx L2350-2394)  ?single-shell variant.
+/// IsOpenShell (BOPTools_AlgoTools.cxx L2350-2394)  ?single-shell variant.
 pub fn is_open_shell_slice(
  shell_faces: &[usize],
  ds: &crate::bopds::ds::DS,
@@ -959,7 +959,7 @@ pub fn is_open_shell_slice(
  is_open_shell(shell_faces, ds)
 }
 
-/// OCCT-aligned: ComputeState for face vs solid (BOPTools_AlgoTools.cxx L660-714).
+/// ComputeState for face vs solid (BOPTools_AlgoTools.cxx L660-714).
 /// Classifies a face against a solid's face set. Tries to find an edge of the
 /// face not on the solid boundary, or falls back to PointInFace.
 pub fn compute_state_face_against_solid(

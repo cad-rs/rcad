@@ -1,6 +1,6 @@
-﻿//! OCCT-aligned TKGeomBase property/analysis equivalents.
+﻿//! TKGeomBase property/analysis equivalents.
 //!
-//! 闁?OCCT-aligned implementations for:
+//! 闁?implementations for:
 //!   - GeomLProp_CLProps2d     (curvature, D1, D2, centre of curvature, normal)
 //!   - GeomLProp_CurAndInf2d   (curvature extrema, inflection points)
 //!   - GProp_PGProps           (point-set mass, centre of mass, inertia)
@@ -82,7 +82,7 @@ pub fn normal_at(curve: &Curve2d, t: f64) -> Option<DVec2> {
 // GeomLProp_CurAndInf2d 闁?curvature extrema and inflection points
 // =============================================================================
 
-/// OCCT-aligned: LProp_CIType
+/// LProp_CIType
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CIType2d {
     Inflection,
@@ -91,7 +91,7 @@ pub enum CIType2d {
 }
 
 /// Curvature extremum/inflection analysis result.
-/// OCCT-aligned: GeomLProp_CurAndInf2d
+/// GeomLProp_CurAndInf2d
 #[derive(Debug, Clone)]
 pub struct CurAndInf2d {
     params: Vec<f64>,
@@ -121,7 +121,7 @@ impl CurAndInf2d {
 }
 
 /// Find curvature extrema (min/max) of a 2D curve by scanning the domain.
-/// OCCT-aligned: GeomLProp_CurAndInf2d::PerformCurAndInf()
+/// GeomLProp_CurAndInf2d::PerformCurAndInf()
 pub fn curvature_extrema_2d(curve: &Curve2d) -> CurAndInf2d {
     let mut result = CurAndInf2d::new();
     let domain = curve.default_domain();
@@ -156,7 +156,7 @@ pub fn curvature_extrema_2d(curve: &Curve2d) -> CurAndInf2d {
 }
 
 /// Find inflection points of a 2D curve.
-/// OCCT-aligned: GeomLProp_CurAndInf2d (inflection subset)
+/// GeomLProp_CurAndInf2d (inflection subset)
 pub fn inflection_points_2d(curve: &Curve2d) -> CurAndInf2d {
     let full = curvature_extrema_2d(curve);
     let mut result = CurAndInf2d::new();

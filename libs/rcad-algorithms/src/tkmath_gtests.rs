@@ -1,4 +1,4 @@
-//! OCCT-aligned TKMath GTest translations for rcad-algorithms.
+//! TKMath GTest translations for rcad-algorithms.
 //!
 //! OCCT source: src/FoundationClasses/TKMath/GTests/
 

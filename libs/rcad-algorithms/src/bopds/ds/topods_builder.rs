@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 /// Build DS from two topods::BRep shapes.
 ///
-/// OCCT-aligned: per-operand in dimension order: A_V, A_E, A_F, B_V, B_E, B_F.
+/// per-operand in dimension order: A_V, A_E, A_F, B_V, B_E, B_F.
 pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS {
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
  let mut ds = DS {
@@ -66,7 +66,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  nb_source_shapes: 0,
  };
 
- // OCCT-aligned: per-operand loading A_V,A_E,A_F then B_V,B_E,B_F
+ // per-operand loading A_V,A_E,A_F then B_V,B_E,B_F
  load_topods_brep(&mut ds, a, ShapeOrigin::ShapeA);
  ds.a_vertex_count = ds.vertices.len();
  ds.a_edge_count = ds.edges.len();
@@ -81,7 +81,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  ds
 }
 
-/// OCCT-aligned: Recursive DFS traversal of topods shape hierarchy.
+/// Recursive DFS traversal of topods shape hierarchy.
 /// Process Solid → Shell → Face → Wire → Edge → Vertex, pushing each shape
 /// to ds.shapes[] and its type-specific flat array in depth-first order.
 /// Skips already-visited shapes via visited set, maps topods ti → DS index.
@@ -429,7 +429,7 @@ fn init_shape_topo(
     }
 }
 
-/// OCCT-aligned: Load one operand's shapes into DS using DFS hierarchy traversal.
+/// Load one operand's shapes into DS using DFS hierarchy traversal.
 /// Per-operand, calls init_shape_topo on top-level Solids/CompSolids, then
 /// transfers pcurves as a post-processing step.
 pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
@@ -515,7 +515,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
     }
 }
 
-/// OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
+/// reorder wire edges by traversal order (TopExp_Explorer).
 /// TopoDS version: reads edge vertex adjacency from topods::BRep.
 /// Returns (DS edge index, forward_in_wire) pairs in traversal order.
 pub fn reorder_wire_topods(

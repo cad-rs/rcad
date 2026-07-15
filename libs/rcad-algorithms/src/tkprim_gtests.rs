@@ -1,4 +1,4 @@
-//! OCCT-aligned TKPrim GTest translations.
+//! TKPrim GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKPrim/GTests/
 //!

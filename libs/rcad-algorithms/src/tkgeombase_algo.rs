@@ -1,6 +1,6 @@
 //! Remaining TKGeomBase algorithm implementations.
 //!
-//! ✅ OCCT-aligned: Hermit, CompCurveToBSplineCurve, ProjLib_Cone,
+//! Hermit, CompCurveToBSplineCurve, ProjLib_Cone,
 //!   ExtremaPC SearchMode/Comparison/ExtendedGeometry.
 //!
 //! OCCT source: src/ModelingData/TKGeomBase/
@@ -171,7 +171,7 @@ fn hermite_coeff(curve: &BSplineCurve3) -> [f64; 4] {
 
 /// Hermit::Solution equivalent — compute weight function as 2D BSpline.
 ///
-/// OCCT-aligned: Hermit.cxx L71-85 (Solution method)
+/// Hermit.cxx L71-85 (Solution method)
 /// Takes a rational BSpline curve, returns a BSpline2d curve whose
 /// Y-coordinate at parameter t equals 1/D(t), the reciprocal of the denominator.
 pub fn hermit_solution(curve: &BSplineCurve3) -> BSplineCurve2 {
@@ -201,7 +201,7 @@ pub fn hermit_solution(curve: &BSplineCurve3) -> BSplineCurve2 {
 
 /// Hermit::Solutionbis equivalent — compute knot range for weight function.
 ///
-/// OCCT-aligned: Hermit.cxx Solutionbis method
+/// Hermit.cxx Solutionbis method
 pub fn hermit_solutionbis(curve: &BSplineCurve3) -> (f64, f64) {
     // OCCT: compute knots of the Hermite result after PolyTest
     // For uniform weights, the Hermite coefficients are trivial (1,0,0,1)
@@ -346,7 +346,7 @@ fn reverse_bspline2(c: &BSplineCurve2) -> BSplineCurve2 {
 
 /// Concatenate two BSpline curves into one C0-continuous BSpline.
 ///
-/// OCCT-aligned: GeomConvert_CompCurveToBSplineCurve::Add
+/// GeomConvert_CompCurveToBSplineCurve::Add
 /// Follows the C++ implementation exactly:
 /// 1. Harmonize degrees
 /// 2. Compute reparam ratio from first derivative magnitudes
@@ -561,7 +561,7 @@ pub fn concat_bsplines_2d(c1: &BSplineCurve2, c2: &BSplineCurve2, tolerance: f64
 
 /// Project a 3D circle onto a conical surface.
 ///
-/// OCCT-aligned: ProjLib_Cone.cxx Project(gp_Circ) L81-130
+/// ProjLib_Cone.cxx Project(gp_Circ) L81-130
 /// Returns the projected pcurve as a Curve2d line when coaxial, otherwise None.
 pub fn project_circle_onto_cone(circle: &Circle3, cone: &ConicalSurface) -> Option<Curve2d> {
     let ang_tol = 1e-12; // OCCT Precision::Angular()
@@ -656,7 +656,7 @@ impl ExtremaResult {
 
 /// Find point-to-curve extrema with search mode control.
 ///
-/// OCCT-aligned: ExtremaPC_Curve::Perform(point, tol, searchMode)
+/// ExtremaPC_Curve::Perform(point, tol, searchMode)
 pub fn find_extrema_curve(curve: &Curve3, point: DVec3, tol: f64, mode: SearchMode) -> ExtremaResult {
     let domain = curve.default_domain();
     let t0 = domain[0];

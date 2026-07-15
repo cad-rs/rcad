@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
+//! IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.hxx L32-90 + .cxx L181-1964 (Perform method).
 //!

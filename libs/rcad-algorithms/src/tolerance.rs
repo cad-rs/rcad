@@ -65,7 +65,7 @@
 use glam::{DVec2, DVec3};
 use tracing::debug;
 
-// OCCT-aligned: re-export kernel Precision constants and tolerance helpers.
+// re-export kernel Precision constants and tolerance helpers.
 pub use rcad_kernel::{
  ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, edge_tolerance as kernel_edge_tolerance,
  face_tolerance as kernel_face_tolerance, INFINITE_VALUE, INTERSECTION, model_tolerance,
@@ -726,7 +726,7 @@ pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> 
  a.cross(b).length_squared() < ang_tol * ang_tol
 }
 
-/// OCCT-aligned: Precision::IsInfinite (Precision.hxx L350-353).
+/// Precision::IsInfinite (Precision.hxx L350-353).
 /// Returns true if `R` may be considered as an infinite number.
 /// OCCT: std::abs(R) >= 0.5 * Precision::Infinite() where Precision::Infinite() = 2e100.
 /// Delegates to rcad_kernel::is_infinite_value().
@@ -735,14 +735,14 @@ pub fn precision_is_infinite(r: f64) -> bool {
  rcad_kernel::tolerance::is_infinite_value(r)
 }
 
-/// OCCT-aligned: Precision::IsPositiveInfinite (Precision.hxx L357-360).
+/// Precision::IsPositiveInfinite (Precision.hxx L357-360).
 /// Returns true if R may be considered as a positive infinite number.
 #[inline]
 pub fn precision_is_positive_infinite(r: f64) -> bool {
  rcad_kernel::tolerance::is_positive_infinite_value(r)
 }
 
-/// OCCT-aligned: Precision::IsNegativeInfinite (Precision.hxx L364-367).
+/// Precision::IsNegativeInfinite (Precision.hxx L364-367).
 /// Returns true if R may be considered as a negative infinite number.
 #[inline]
 pub fn precision_is_negative_infinite(r: f64) -> bool {

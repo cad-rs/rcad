@@ -133,7 +133,7 @@ impl Section {
         self.ds = None;
         self.edge_to_ic = Vec::new();
 
-        // ✅ OCCT-aligned: Check for empty inputs
+        // Check for empty inputs
         if self.shape_a.solids().is_empty() || self.shape_b.solids().is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
@@ -144,16 +144,16 @@ impl Section {
         let a = self.ensure_geometry(&self.shape_a);
         let b = self.ensure_geometry(&self.shape_b);
 
-        // ✅ OCCT-aligned: Build BOPDS_DS
+        // Build BOPDS_DS
         let a_t = a;
         let b_t = b;
         let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
 
-        // ✅ OCCT-aligned: Build BVH for acceleration
+        // Build BVH for acceleration
         let bvh_a = Bvh::build(&a_t);
         let bvh_b = Bvh::build(&b_t);
 
-        // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
+        // Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         // This is the core intersection computation — it handles:
         // - Edge-Edge (EE) intersections
         // - Edge-Face (EF) intersections
@@ -161,10 +161,10 @@ impl Section {
         let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.perform(&a_t, &b_t);
 
-        // ✅ OCCT-aligned: FillImagesContainers
+        // FillImagesContainers
         ds.build_container_images();
 
-        // ✅ OCCT-aligned: Extract intersection curves from DS
+        // Extract intersection curves from DS
         // OCCT: BOPAlgo_Section collects the section edges from the DS
         // after PaveFiller has computed all face-face intersection curves.
         let (brep, edge_map) = Self::build_section_edges(&ds);
@@ -174,7 +174,7 @@ impl Section {
             // face intersections that were handled via EE/EF interferences).
             // Use the general brep_section which handles all surface types
             // via analytic intersection + triangle-soup fallback.
-            // ⏳ Architecture diff: OCCT BOPAlgo_Section extracts section
+            // Architecture diff: OCCT BOPAlgo_Section extracts section
             // edges from the builder's internal DS images. The fallback here
             // uses a separate intersection pipeline (brep_section).
             let section_brep = crate::section::brep_section(&a_t, &b_t);
@@ -190,7 +190,7 @@ impl Section {
         Ok(self.result.as_ref().unwrap())
     }
 
-    /// ✅ OCCT-aligned: BuildSection — Builds the result of Section operation
+    /// BuildSection — Builds the result of Section operation
     /// (BOPAlgo_Section.cxx L167-414).
     ///
     /// Collects section edges and vertices from the DS:
@@ -371,7 +371,7 @@ impl Section {
     /// Returns true if the section edge at `edge_idx` was produced by
     /// an intersection involving a face from shape 1.
     ///
-    /// ✅ OCCT-aligned: section edges from intersection curves always
+    /// section edges from intersection curves always
     /// involve both shapes, returning true for all valid edges.
     pub fn has_ancestor_face_on_1(&self, edge_idx: usize) -> bool {
         let Some(ref result) = self.result else {
@@ -380,7 +380,7 @@ impl Section {
         if edge_idx >= result.edges().len() {
             return false;
         }
-        // ✅ OCCT-aligned: All section edges result from face-face
+        // All section edges result from face-face
         // intersections between both shapes, so every edge has
         // an ancestor on both sides.
         true
@@ -396,7 +396,7 @@ impl Section {
         if edge_idx >= result.edges().len() {
             return false;
         }
-        // ✅ OCCT-aligned: Same reasoning as has_ancestor_face_on_1
+        // Same reasoning as has_ancestor_face_on_1
         true
     }
 

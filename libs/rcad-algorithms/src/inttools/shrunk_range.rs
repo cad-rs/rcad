@@ -3,7 +3,7 @@ use crate::bopds::pave::PaveBlock;
 use rcad_kernel::geom::Curve3;
 use super::curve_range::shrunk_range;
 
-/// ✅ OCCT-aligned: IntTools_ShrunkRange — compute the working (shrunk) range
+/// IntTools_ShrunkRange — compute the working (shrunk) range
 ///   for a 3D curve of an edge.  OCCT IntTools_ShrunkRange.hxx.
 ///   rcad: operates on DS index types instead of TopoDS handles.
 pub struct ShrunkRange {

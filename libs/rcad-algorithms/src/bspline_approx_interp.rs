@@ -1,6 +1,6 @@
 //! BSpline curve approximation and interpolation from scattered points.
 //!
-//! ✅ OCCT-aligned: Approx_BSplineApproxInterp
+//! Approx_BSplineApproxInterp
 
 use glam::DVec3;
 use rcad_kernel::geom::{BSplineCurve3, CurveEval};
@@ -23,7 +23,7 @@ fn chord_length_params(points: &[DVec3]) -> Vec<f64> {
 
 /// BSpline curve approximation/interpolation from point data.
 ///
-/// OCCT-aligned: Approx_BSplineApproxInterp.
+/// Approx_BSplineApproxInterp.
 /// Approximates a point set with a BSpline curve. Specific points can be
 /// marked for exact interpolation with optional kink (C0 break).
 #[derive(Debug, Clone)]

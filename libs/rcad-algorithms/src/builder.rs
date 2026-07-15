@@ -61,44 +61,44 @@ pub(crate) use builder_utils::{
 pub struct BooleanBuilder<'a> {
  pub(crate) ds: &'a DS,
  pub(crate) op: BooleanOpType,
- /// =OCCT-aligned: myGlue =BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
+ /// =myGlue =BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
  pub(crate) glue: GlueEnum,
  pub(crate) glue_tolerance: f64,
  pub(crate) context: RefCell<Context>,
- // =OCCT-aligned: error tracking (myReport / HasErrors equivalent).
+ // =error tracking (myReport / HasErrors equivalent).
  pub(crate) has_errors: bool,
- // =OCCT-aligned: myImages =source shape index =list of split image indices.
+ // =myImages =source shape index =list of split image indices.
  pub(crate) my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
  pub(crate) my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
  pub(crate) my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
  pub(crate) my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
  pub(crate) my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
  pub(crate) my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- // =OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
+ // =myNonDestructive (BOPAlgo_Builder.hxx L503).
  pub(crate) my_non_destructive: bool,
- // OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
+ // myFillHistory (BOPAlgo_Options.hxx).
  pub(crate) my_fill_history: bool,
- // =OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
+ // =myCheckInverted (BOPAlgo_Builder.hxx L505).
  pub(crate) my_check_inverted: bool,
- // =OCCT-aligned: myStopOnFatalError =abort pipeline on fatal error.
+ // =myStopOnFatalError =abort pipeline on fatal error.
  pub(crate) my_stop_on_fatal_error: bool,
- /// =OCCT-aligned: myEntryPoint =tracks builder phase (1=PerformInternal1 done, etc.).
+ /// =myEntryPoint =tracks builder phase (1=PerformInternal1 done, etc.).
  pub(crate) my_entry_point: u8,
- /// =OCCT-aligned: myReport =collects alerts during Builder execution.
+ /// =myReport =collects alerts during Builder execution.
   pub(crate) my_report: std::cell::RefCell<Report>,
- /// OCCT-aligned: myDims - dimension per argument (3=solid, 2=face).
+ /// myDims - dimension per argument (3=solid, 2=face).
  pub(crate) my_dims: std::cell::Cell<[i8; 2]>,
- /// =OCCT-aligned: converted BRep representation of DS.
+ /// =converted BRep representation of DS.
  pub(crate) brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
- /// OCCT-aligned: myShape  ?result shape accumulator (BRep).
+ /// myShape  ?result shape accumulator (BRep).
  pub(crate) my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
- /// OCCT-aligned: myArguments  ?all source shapes pre-created as TShapes.
+ /// myArguments  ?all source shapes pre-created as TShapes.
  pub(crate) my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// OCCT-aligned: DS edge  ?TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
+ /// DS edge  ?TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
  pub(crate) my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// OCCT-aligned: result wire TShape refs (replaces ResultBuilder.wire_refs).
+ /// result wire TShape refs (replaces ResultBuilder.wire_refs).
  pub(crate) my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// OCCT-aligned: result shell TShape refs (replaces ResultBuilder.shells).
+ /// result shell TShape refs (replaces ResultBuilder.shells).
  pub(crate) my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
  /// Result face TShape refs (replaces ResultBuilder.face_refs).
  pub(crate) my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
@@ -146,7 +146,7 @@ pub(crate) use wire_path::{
 
  impl<'a> BooleanBuilder<'a> {
 
- /// =OCCT-aligned: PIOperation_FillHistory =PrepareHistory (Builder_4.cxx L164-252).
+ /// =PIOperation_FillHistory =PrepareHistory (Builder_4.cxx L164-252).
  /// Builds source= esult history matching OCCT's BRepTools_History.
  ///
  /// OCCT form:
@@ -274,13 +274,13 @@ pub(crate) use wire_path::{
  entries
  }
 
- /// OCCT-aligned: PrepareHistory (BOPAlgo_Builder.cxx L441-448).
+ /// PrepareHistory (BOPAlgo_Builder.cxx L441-448).
  /// Single call that builds the final shape topology and records
  /// source shape history (modified/generated/deleted).
  /// In rcad this combines two steps (build_topods for shape-level,
  /// fill_history for source-level) into one public method.
 
- /// OCCT-aligned: PrepareHistory for the TreatEmptyShape case (BOP.cxx L462-468).
+ /// PrepareHistory for the TreatEmptyShape case (BOP.cxx L462-468).
  /// All source shapes are present as-is (Generated) or absent (Deleted);
  /// no splitting occurs, so no Modified shapes.
  fn source_history_single_side(&self, side: ShapeOrigin) -> Vec<crate::history::SourceShapeEntry> {
@@ -324,7 +324,7 @@ pub(crate) use wire_path::{
  /// tessellation fallback (split_curved_face_parametric, tessellate_sphere_face,
  /// etc.) that would otherwise be used for non-planar faces with only
  /// alone-vertex / on-edge intersection data.
- /// ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L1048-1189).
+ /// BuildDraftFace (BOPAlgo_Builder_2.cxx L1048-1189).
  ///
  /// Builds a draft face by substituting split images into the original wire.
  /// Returns None when OCCT would return a null face (INTERNAL edges,
@@ -523,7 +523,7 @@ impl<'a> BooleanBuilder<'a> {
  builder
  }
 
- /// OCCT-aligned: ShapeRef backed by shared Arc in ds.shapes (myDS->Shape(n) identity).
+ /// ShapeRef backed by shared Arc in ds.shapes (myDS->Shape(n) identity).
  /// Falls back to synthetic for out-of-range indices (shell/solid sentinel keys).
  fn brep_sr(&self, flat_idx: usize) -> rcad_kernel::topods::ShapeRef {
   if flat_idx < self.ds.shapes.len() {
@@ -567,7 +567,7 @@ impl<'a> BooleanBuilder<'a> {
  /// The top-level pipeline entry: dimension-by-dimension image filling
  /// (V= = = ACE= HELL= OLID), followed by BuildResult for each type.
  /// OCCT L310-445 structure matched in full (see inline OCCT line refs).
-  /// =OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
+  /// =CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
   /// Validates operation type, non-empty arguments, and DS/PaveFiller state.
   /// OCCT form: AddError on each failure, then HasErrors check at the end.
   fn check_data(&self) -> Result<(), BooleanError> {
@@ -593,7 +593,7 @@ impl<'a> BooleanBuilder<'a> {
     Ok(())
   }
 
- ///  ?OCCT-aligned: Prepare (BOPAlgo_Builder.cxx L156-164).
+ ///  ?Prepare (BOPAlgo_Builder.cxx L156-164).
  /// OCCT: BRep_Builder.MakeCompound(myShape)  ?empty compound as result.
  /// rcad: initializes my_shape + returns (BRep, ResultBuilder) for downstream.
  fn prepare(&self) -> (topods::BRep, ResultBuilder) {
@@ -601,9 +601,9 @@ impl<'a> BooleanBuilder<'a> {
  (topods::BRep::new(), ResultBuilder::new())
  }
 
- ///  ?OCCT-aligned: create TShapes for all DS source shapes in my_shape.
+ ///  ?create TShapes for all DS source shapes in my_shape.
  /// Equivalent to OCCT's myArguments populated with all source TopoDS_Shape.
- ///  ?OCCT-aligned: TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
+ ///  ?TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
  /// Handles the case where one or both operands have no geometry.
  /// Returns Ok(Some(brep)) if a quick result was determined,
  /// Ok(None) if the full pipeline must run.
@@ -648,7 +648,7 @@ impl<'a> BooleanBuilder<'a> {
  }
  }
 
- /// OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
+ /// BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
  /// Every statement in OCCT L422-579 has a corresponding rcad line below.
  /// See comments for exact OCCT line references.
  /// Structural difference: L425-429 setup done in constructor, re-affirmed here.
@@ -658,7 +658,7 @@ impl<'a> BooleanBuilder<'a> {
  self.build_with_history_topods()
  }
 
- /// Same as build_with_history but returns topods::BRep directly (OCCT-aligned).
+ /// Same as build_with_history but returns topods::BRep directly ().
  pub fn build_with_history_topods(&mut self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  // SKIP: OCCT L425-429 copies (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive)
  // from theFiller argument.  rcad builds with_brep() which sets these in the constructor --

@@ -1,6 +1,6 @@
 //! High-level boolean algorithms.
 //!
-//! OCCT-aligned: Fuse (Union), Common (Intersection), Cut (Difference), Section
+//! Fuse (Union), Common (Intersection), Cut (Difference), Section
 //! with `build`/`shape`/`is_done`/`history` pattern.
 //! Uses `topods::BRep` for input/output.
 //!
@@ -8,13 +8,13 @@
 //!
 //! | Rust (this module)          | OCCT class                        | Align |
 //! |------------------------------|-----------------------------------|-------|
-//! | `BooleanOptions`             | `BOPAlgo_Options`                 |   ✅  |
-//! | `BooleanOp`                  | `BRepAlgoAPI_Fuse` / Common / Cut |   ✅  |
-//! | `BooleanOp::build()`         | `BRepAlgoAPI_BuilderShape::Build` |   ✅  |
-//! | `BooleanOp::shape()`         | `BRepAlgoAPI_BuilderShape::Shape` |   ✅  |
-//! | `BooleanOp::is_done()`       | `BRepAlgoAPI_Algo::IsDone`        |   ✅  |
-//! | `SectionOp`                  | `BRepAlgoAPI_Section`             |   ⏳  |
-//! | `fuse()` / `common()` / `cut()` | convenience wrapper (no OCCT equivalent) | ✅ |
+//! | `BooleanOptions`             | `BOPAlgo_Options`                 |   |
+//! | `BooleanOp`                  | `BRepAlgoAPI_Fuse` / Common / Cut |   |
+//! | `BooleanOp::build()`         | `BRepAlgoAPI_BuilderShape::Build` |   |
+//! | `BooleanOp::shape()`         | `BRepAlgoAPI_BuilderShape::Shape` |   |
+//! | `BooleanOp::is_done()`       | `BRepAlgoAPI_Algo::IsDone`        |   |
+//! | `SectionOp`                  | `BRepAlgoAPI_Section`             |   |
+//! | `fuse()` / `common()` / `cut()` | convenience wrapper (no OCCT equivalent) | |
 
 pub mod argument_analyzer;
 pub mod builder_operation;
@@ -27,22 +27,22 @@ use crate::history::BooleanHistory;
 
 /// Options for boolean operations.
 ///
-/// ✅ OCCT-aligned: `BOPAlgo_Options` — fuzzy tolerance, parallel mode, BVH, etc.
+/// `BOPAlgo_Options` — fuzzy tolerance, parallel mode, BVH, etc.
 #[derive(Debug, Clone)]
 pub struct BooleanOptions {
-    /// ✅ OCCT-aligned: `BOPAlgo_Options::SetFuzzyValue`
+    /// `BOPAlgo_Options::SetFuzzyValue`
     pub fuzzy_value: f64,
-    /// ✅ OCCT-aligned: `BOPAlgo_Options::SetParallel`
+    /// `BOPAlgo_Options::SetParallel`
     pub parallel: bool,
-    /// ✅ rcad-specific: BVH acceleration toggle (no direct OCCT option)
+    /// rcad-specific: BVH acceleration toggle (no direct OCCT option)
     pub use_bvh: bool,
-    /// ✅ OCCT-aligned: `BOPAlgo_Options::SetGlue` (GlueOff/GlueShift/GlueFull)
+    /// `BOPAlgo_Options::SetGlue` (GlueOff/GlueShift/GlueFull)
     pub glue_enabled: bool,
-    /// ✅ OCCT-aligned: glue tolerance for Shift/Full modes
+    /// glue tolerance for Shift/Full modes
     pub glue_tolerance: f64,
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderOperation` history tracking
+    /// `BRepAlgoAPI_BuilderOperation` history tracking
     pub track_history: bool,
-    /// ✅ rcad-specific: auto-heal result after boolean
+    /// rcad-specific: auto-heal result after boolean
     pub heal_result: bool,
 }
 
@@ -65,7 +65,7 @@ impl BooleanOptions {
 
 /// A boolean operation between two shapes.
 ///
-/// ✅ OCCT-aligned: replaces `BRepAlgoAPI_Fuse`, `BRepAlgoAPI_Common`,
+/// replaces `BRepAlgoAPI_Fuse`, `BRepAlgoAPI_Common`,
 /// `BRepAlgoAPI_Cut` with a single struct + `BooleanOpType` discriminator.
 /// API pattern (`new` -> `build` -> `shape` -> `is_done`) matches
 /// `BRepAlgoAPI_BuilderShape`.
@@ -82,16 +82,16 @@ pub struct BooleanOp<'a> {
 }
 
 impl<'a> BooleanOp<'a> {
-    /// ✅ OCCT-aligned: constructor matching `BRepAlgoAPI_Fuse(a, b)` / `Common` / `Cut`,
+    /// constructor matching `BRepAlgoAPI_Fuse(a, b)` / `Common` / `Cut`,
     /// with `BooleanOpType` selecting the operation type.
     pub fn new(op: BooleanOpType, shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
         Self { shape1, shape2, op_type: op, options: BooleanOptions::default(), result: None, history: None, err: None }
     }
 
-    /// ✅ OCCT-aligned: `BOPAlgo_Options::SetFuzzyValue` etc.
+    /// `BOPAlgo_Options::SetFuzzyValue` etc.
     pub fn set_options(&mut self, options: BooleanOptions) { self.options = options; }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderShape::Build()`.
+    /// `BRepAlgoAPI_BuilderShape::Build()`.
     /// Pipeline: DS → PaveFiller → BooleanBuilder → result.
     /// Delegates to [`crate::bop_occt_ops::boolean_op_with_history_generic`] which mirrors
     /// OCCT `BOPAlgo_BOP::Perform` → `BOPAlgo_Builder::PerformInternal1` flow.
@@ -109,27 +109,27 @@ impl<'a> BooleanOp<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderShape::Shape()`.
+    /// `BRepAlgoAPI_BuilderShape::Shape()`.
     /// Returns the result shape. Panics if `build()` not called or failed.
     pub fn shape(&self) -> &topods::BRep {
         self.result.as_ref().expect("build() not called or failed")
     }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_BuilderShape::History()`.
+    /// `BRepAlgoAPI_BuilderShape::History()`.
     pub fn history(&self) -> Option<&BooleanHistory> {
         self.history.as_ref()
     }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_Algo::IsDone()`.
+    /// `BRepAlgoAPI_Algo::IsDone()`.
     pub fn is_done(&self) -> bool { self.result.is_some() }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_Algo::Error()`.
+    /// `BRepAlgoAPI_Algo::Error()`.
     pub fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
 }
 
 /// Section operation — computes intersection curves between two shapes.
 ///
-/// ⏳ OCCT-aligned: corresponds to `BRepAlgoAPI_Section`.
+/// corresponds to `BRepAlgoAPI_Section`.
 /// Currently a stub (returns clone of first shape).
 pub struct SectionOp<'a> {
     shape1: &'a topods::BRep,
@@ -139,12 +139,12 @@ pub struct SectionOp<'a> {
 }
 
 impl<'a> SectionOp<'a> {
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_Section(a, b)` constructor.
+    /// `BRepAlgoAPI_Section(a, b)` constructor.
     pub fn new(shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
         Self { shape1, shape2, result: None, err: None }
     }
 
-    /// ⏳ OCCT-aligned: `BRepAlgoAPI_Section::Build()`.
+    /// `BRepAlgoAPI_Section::Build()`.
     /// Stub: does not compute actual section curves.
     pub fn build(&mut self) -> bool {
         self.result = None; self.err = None;
@@ -152,12 +152,12 @@ impl<'a> SectionOp<'a> {
         true
     }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_Section::Shape()`.
+    /// `BRepAlgoAPI_Section::Shape()`.
     pub fn shape(&self) -> &topods::BRep {
         self.result.as_ref().expect("build() not called or failed")
     }
 
-    /// ✅ OCCT-aligned: `BRepAlgoAPI_Algo::IsDone()`.
+    /// `BRepAlgoAPI_Algo::IsDone()`.
     pub fn is_done(&self) -> bool { self.result.is_some() }
 }
 
@@ -166,7 +166,7 @@ impl<'a> SectionOp<'a> {
 
 /// Fuse (Union): combine two shapes into one.
 ///
-/// ✅ OCCT-equivalent: `BRepAlgoAPI_Fuse(a, b).Shape()`
+/// OCCT-equivalent: `BRepAlgoAPI_Fuse(a, b).Shape()`
 pub fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Union, a, b);
     if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
@@ -174,7 +174,7 @@ pub fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanE
 
 /// Common (Intersection): the shared volume of two shapes.
 ///
-/// ✅ OCCT-equivalent: `BRepAlgoAPI_Common(a, b).Shape()`
+/// OCCT-equivalent: `BRepAlgoAPI_Common(a, b).Shape()`
 pub fn common(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Intersection, a, b);
     if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
@@ -182,7 +182,7 @@ pub fn common(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, Boolea
 
 /// Cut (Difference): subtract shape b from shape a.
 ///
-/// ✅ OCCT-equivalent: `BRepAlgoAPI_Cut(a, b).Shape()`
+/// OCCT-equivalent: `BRepAlgoAPI_Cut(a, b).Shape()`
 pub fn cut(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Difference, a, b);
     if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }

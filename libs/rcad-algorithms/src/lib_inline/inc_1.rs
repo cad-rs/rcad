@@ -1643,7 +1643,7 @@ pub(crate) fn boolean_postprocess_pave_result_topods(
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
 /// difference branches (e.g. cylinder 閳?loft frustum after `cone 閳?cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
-/// OCCT-aligned: BOPAlgo_BOP::Perform.
+/// BOPAlgo_BOP::Perform.
 pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
  boolean_op_pave_fill_build(op, a, b)
 }

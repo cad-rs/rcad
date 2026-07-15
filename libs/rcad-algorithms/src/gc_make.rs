@@ -4,7 +4,7 @@
 //! GC (Geom_ Curve/Surface construction) and gce (gp_ primitive construction)
 //! packages.
 //!
-//! ✅ OCCT-aligned: GC_MakeSegment2d, GC_MakePlane, GC_MakeCircle2d,
+//! GC_MakeSegment2d, GC_MakePlane, GC_MakeCircle2d,
 //!                  GC_MakeArcOfCircle, GC_MakeParabola2d, GC_MakeConicalSurface,
 //!                  gce_MakeHypr, gce_MakeElips, gce_MakeCylinder,
 //!                  gce_MakeCone, gce_MakeCirc2d

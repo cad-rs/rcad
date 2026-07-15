@@ -201,7 +201,7 @@ impl Bvh {
  }
  }
 
- // ✅ OCCT : rcad_kernel::BRepBndLib::Add (rcad_kernel::BRepBndLib.cxx L83+) — AABB。
+ // OCCT : rcad_kernel::BRepBndLib::Add (rcad_kernel::BRepBndLib.cxx L83+) — AABB。
  // OCCT BndLib_AddSurface (BndLib_AddSurface.cxx L275-306):
  // Sphere: ± (L299-306); Cylinder/Cone/Torus: BndLib (L287-297)
  // Plane: 4 (L278-286); BSpline/Bezier:  /  (L315-316)
@@ -680,7 +680,7 @@ impl BvhStats {
 ///
 /// OCCT `BOPDS_Iterator` builds BVH trees over all DS sub-shapes to
 /// avoid O(n²) pair enumeration.  `DsBvh` provides the same culling
-/// OCCT-aligned BVH for DS entity pair filtering.
+/// BVH for DS entity pair filtering.
 /// Uses median-split builder (same algorithm as OCCT BVH_SpatialMedianBuilder).
 pub struct DsBvh {
  nodes: Vec<BvhNode>,
@@ -706,7 +706,7 @@ impl DsBvh {
  Self { nodes, indices: sorted_indices, aabbs: sorted_aabbs }
  }
 
- // OCCT-aligned: BVH_SpatialMedianBuilder — median-split construction.
+ // BVH_SpatialMedianBuilder — median-split construction.
  fn build_rec(
  order: &mut [usize],
  aabbs: &[Aabb],
@@ -764,7 +764,7 @@ impl DsBvh {
  }
 
  /// Candidate entity pairs between two DS BVHs whose AABBs overlap.
- /// OCCT-aligned: dual-tree BVH traversal (matching IntPatch_BVHTraversal).
+ /// dual-tree BVH traversal (matching IntPatch_BVHTraversal).
  pub fn candidate_pairs(bvh_a: &DsBvh, bvh_b: &DsBvh) -> Vec<(usize, usize)> {
  let mut pairs = Vec::new();
  if bvh_a.nodes.is_empty() || bvh_b.nodes.is_empty() {

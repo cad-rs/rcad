@@ -1,5 +1,5 @@
 ﻿//! 3D curve → 2D curve projection onto a plane surface.
-//! OCCT-aligned: GeomAPI::To2d (geomapi.cxx L311-340).
+//! GeomAPI::To2d (geomapi.cxx L311-340).
 
 use rcad_kernel::geom::*;
 use glam::{DVec2, DVec3};
@@ -18,7 +18,7 @@ pub(crate) fn project_point_to_plane_uv(point: DVec3, plane: &Plane) -> DVec2 {
     DVec2::new(d.dot(u_axis), d.dot(v_axis))
 }
 
-/// ✅ OCCT-aligned: GeomAPI::To2d — project a 3D curve onto a plane surface.
+/// GeomAPI::To2d — project a 3D curve onto a plane surface.
 ///
 /// Supports Line3, Circle3, Ellipse3. Returns None for unsupported curve types.
 /// The plane's coordinate frame defines the 2D space:

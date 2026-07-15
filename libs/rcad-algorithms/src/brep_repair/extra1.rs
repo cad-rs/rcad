@@ -1148,7 +1148,7 @@ pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
 
  let tol2 = tolerance * tolerance;
 
- // OCCT-aligned: compute degenerate edge vertex pairs to skip merging
+ // compute degenerate edge vertex pairs to skip merging
  let deg_skip: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::from_iter(
   each_edge(brep).filter_map(|(ei, ed)| {
    if ed.degenerated {

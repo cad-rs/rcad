@@ -12,7 +12,7 @@ use rcad_kernel::topology::*;
 
 /// Builds result BRep from accumulated DS face data.
 ///
-/// OCCT-aligned: pure conversion --BuildResult does no dedup/merge/cull.
+/// pure conversion --BuildResult does no dedup/merge/cull.
 #[allow(dead_code)]
 pub(crate) struct ResultBuilder {
  pub(crate) vertices: Vec<DVec3>,
@@ -32,23 +32,23 @@ pub(crate) struct ResultBuilder {
  pub(crate) face_internal_vtx: Vec<Vec<usize>>,
  pub(crate) deg_edge_indices: HashSet<usize>,
  pub(crate) ic_edge_map: HashMap<usize, usize>,
- /// OCCT-aligned: DS edge index --flat edge index.
+ /// DS edge index --flat edge index.
  /// Two faces sharing the same DS edge get the same flat edge index,
  /// matching OCCT's TopoDS_Edge identity sharing (same TShape* pointer).
  /// Populated by emit_wire_face_topods for DsEdge-sourced wire segments.
  pub(crate) ds_edge_to_flat: HashMap<usize, usize>,
  pub(crate) source_has_compound: bool,
  pub(crate) tmp_compsolid_groups: Vec<Vec<usize>>,
- /// OCCT-aligned: per-source side tracking for solids (0=ShapeA/Args, 1=ShapeB/Tools).
+ /// per-source side tracking for solids (0=ShapeA/Args, 1=ShapeB/Tools).
  /// Parallel to tmp_solids: solid_side_origin[i] = side that produced tmp_solids[i].
  pub(crate) solid_side_origin: Vec<usize>,
- /// OCCT-aligned: compound groups (FillImagesCompound output).
+ /// compound groups (FillImagesCompound output).
  /// Each entry is a Vec of solid indices (into result.solids) forming one compound.
  pub(crate) compound_groups: Vec<Vec<usize>>,
- /// OCCT-aligned: natural_restriction for each face in self.faces.
+ /// natural_restriction for each face in self.faces.
  /// Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
  pub(crate) face_natural_restriction: Vec<bool>,
- /// OCCT-aligned: maps result face index --array of DSWire indices for all its wires
+ /// maps result face index --array of DSWire indices for all its wires
  /// (outer first, then inners).  Parallel to face_origins.  Used by
  /// build_topods_faces to reference pre-built TShape::Wire from wire_refs.
  pub(crate) face_all_wire_idxs: Vec<Vec<usize>>,
@@ -73,10 +73,10 @@ impl ResultBuilder {
  if len > TOLERANCE_LEN_MIN { n / len } else { DVec3::ZERO }
  }
 
- /// OCCT-aligned: emit BRep face from WireFace (replaces emit_face_with_origin).
+ /// emit BRep face from WireFace (replaces emit_face_with_origin).
  /// Builds edges directly from WireSegments: seam edges use add_seam_edge /
  /// add_edge_seam_degenerate; IC edges use add_circle_edge for Circle3 curves.
-/// --OCCT-aligned: emit_wire_face --builds BRep edges/face from WireSegments.
+/// --emit_wire_face --builds BRep edges/face from WireSegments.
  pub(crate) fn emit_wire_face(
  &mut self,
  face_idx: usize,
@@ -102,7 +102,7 @@ impl ResultBuilder {
  let ow: Vec<&usize> = wf.outer_wire.iter().filter(|&&si| segments[si].start_vertex != segments[si].end_vertex).collect();
  for &&si in &ow {
  let seg = &segments[si];
- // --OCCT-aligned: canonical vertices use stored positions
+ // --canonical vertices use stored positions
  let get_pos = |vi: usize| -> DVec3 {
  vertex_positions.get(&vi).copied().unwrap_or(ds.vertex_point(vi))
  };
@@ -126,7 +126,7 @@ impl ResultBuilder {
  Surface3::Sphere(s) => s,
  _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
  };
- // --OCCT-aligned: canonical deg edges (vertex >= ds.vertices.len())
+ // --canonical deg edges (vertex >= ds.vertices.len())
  let is_canon_deg = seg.start_vertex >= ds.vertices.len() || seg.end_vertex >= ds.vertices.len();
  let ei = if seam_deg || is_canon_deg {
  self.add_edge_seam_degenerate(v1, v2, sphere_surf)
@@ -138,7 +138,7 @@ impl ResultBuilder {
  (ei, true)
  } else {
  let ei = match &seg.source {
- // --OCCT-aligned: IC edge identity (section edges shared).
+ // --IC edge identity (section edges shared).
  WireEdgeSource::IntersectionCurve(ci) => {
  let crv = &ds.intersection_curves[*ci].curve;
  self.add_ic_edge(*ci, v1, v2, crv.clone(), Some(seg.t_range))
@@ -166,7 +166,7 @@ impl ResultBuilder {
  iw_verts.push(v1);
  }
  let ei = match &seg.source {
- // --OCCT-aligned: IC edge identity (inner/internal wires).
+ // --IC edge identity (inner/internal wires).
  WireEdgeSource::IntersectionCurve(ci) => {
  let crv = &ds.intersection_curves[*ci].curve;
  self.add_ic_edge(*ci, v1, v2, crv.clone(), Some(seg.t_range))
@@ -180,7 +180,7 @@ impl ResultBuilder {
  iw_vert_indices_all.extend(iw_verts);
  }
 
- // --OCCT-aligned: Internal wire edges (TopAbs_INTERNAL).
+ // --Internal wire edges (TopAbs_INTERNAL).
  // Seam edges use add_seam_edge for curve-aware unique identity.
  let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
  for iw in &wf.internal_wires {
@@ -265,7 +265,7 @@ impl ResultBuilder {
  }
  }
 
- // --OCCT-aligned: No extra internal vertices needed --wire pipeline handles
+ // --No extra internal vertices needed --wire pipeline handles
  // seam edges via WireSegment virtual edges; BuilderFace does not add
  // degenerate vertices to the result face.
 
@@ -322,7 +322,7 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: emit_wire_face using WireSegmentTopoDS.
+ /// --emit_wire_face using WireSegmentTopoDS.
  /// Same logic as emit_wire_face but reads edge/vertex data through BRepTool.
  pub(crate) fn emit_wire_face_topods(
  &mut self,
@@ -344,8 +344,8 @@ impl ResultBuilder {
  match surf {
  Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
  Surface3::Sphere(s) => {
- // OCCT-aligned: use surface analytical normal (radial from center).
- // estimate_boundary_normal_from_segments_topo is not form-aligned
+ // use surface analytical normal (radial from center).
+ // estimate_boundary_normal_from_segments_topo is not 
  // and gives near-zero for CW (complement) wires (A5c).
  let center = s.center;
  let centroid = if !wf.outer_wire.is_empty() {
@@ -367,7 +367,7 @@ impl ResultBuilder {
  } else { return; };
 
  let get_pos = |vi: usize| -> DVec3 {
- // OCCT-aligned: use DS vertex world coordinate (TopLoc_Location already baked
+ // use DS vertex world coordinate (TopLoc_Location already baked
  // by from_topods_with_location / load_brep).  The BRepTool fallback is only
  // used when vi is NOT a DS vertex index.
  if vi < ds.vertices.len() {
@@ -429,7 +429,7 @@ impl ResultBuilder {
  // sr.index = e_base + ds_ei; use sr_index_to_ds_ei reverse
  // lookup to get the original DS edge index.
  if let Some(&ds_ei) = sr_index_to_ds_ei.get(&sr.index) {
- // OCCT-aligned: same DS edge --same flat edge index
+ // same DS edge --same flat edge index
  // (matching TopoDS_Edge identity sharing).
  if let Some(&existing) = self.ds_edge_to_flat.get(&ds_ei) {
  existing
@@ -642,7 +642,7 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: estimate face normal from wire segments (TopoDS variant).
+ /// --estimate face normal from wire segments (TopoDS variant).
  fn estimate_boundary_normal_from_segments_topo(
  outer_wire: &[usize],
  segments: &[super::types::WireSegmentTopoDS],
@@ -728,12 +728,12 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: BuildResult(EDGE) --build edges from split_edges.
- /// --OCCT-aligned: BuildResult(FACE) --build faces from accumulated face data.
+ /// --BuildResult(EDGE) --build edges from split_edges.
+ /// --BuildResult(FACE) --build faces from accumulated face data.
  /// OCCT Builder_1.cxx L130-168: iterate myImages for TopAbs_FACE, add to myShape.
  /// rcad: build faces from self.faces, referencing already-built self.edges.
  /// Maps each face's per-vertex-pair edges to the BRep edge indices from build_edges.
- /// --OCCT-aligned: BuildResult(FACE) --build faces from accumulated face data.
+ /// --BuildResult(FACE) --build faces from accumulated face data.
  /// OCCT Builder_1.cxx L130-168: iterate myImages for TopAbs_FACE, add to myShape.
  /// rcad: validate face edge refs against built edges, prepare for shell/solid assembly.
  pub(crate) fn build_faces(&mut self) {
@@ -753,12 +753,12 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: BuildResult(FACE) --add unmodified source face.
- /// --OCCT-aligned: BuildResult(FACE) --add original source face (Builder_1.cxx L146-152).
+ /// --BuildResult(FACE) --add unmodified source face.
+ /// --BuildResult(FACE) --add original source face (Builder_1.cxx L146-152).
  /// OCCT adds the original TopoDS_Face regardless of surface type.
  /// rcad: builds FaceEntry from DS boundary_edges + inner_boundary_edges.
  /// Handles all surface types (Plane, Cylinder, Sphere, Cone, Torus).
- /// --OCCT-aligned: BuildResult(FACE) --add original faces without images.
+ /// --BuildResult(FACE) --add original faces without images.
  /// Now creates TShape::Face directly (OCCT: adds existing TopoDS_Face to myShape).
  pub(crate) fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin,
  t: &mut topods::BRep, face_refs: &mut Vec<topods::ShapeRef>) {
@@ -826,7 +826,7 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: BuildResult(COMPSOLID) --build compsolids via BRepBuilder.
+ /// --BuildResult(COMPSOLID) --build compsolids via BRepBuilder.
  /// OCCT: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) iterates
  /// source COMPSOLID shapes and adds their split images to myShape via
  /// BRep_Builder::Add.  rcad: processes tmp_compsolid_groups (groups of
@@ -844,7 +844,7 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: BuildResult(COMPOUND) --build compounds via BRepBuilder.
+ /// --BuildResult(COMPOUND) --build compounds via BRepBuilder.
  /// OCCT: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) iterates
  /// source COMPOUND shapes and adds their split images to myShape via
  /// BRep_Builder::Add.  rcad: processes compound_groups (groups of solid
@@ -880,7 +880,7 @@ impl ResultBuilder {
  idx
  }
 
- /// --OCCT-aligned: add vertex by DS index identity (TopoDS_Vertex TShape).
+ /// --add vertex by DS index identity (TopoDS_Vertex TShape).
  pub(crate) fn add_ds_vertex(&mut self, ds_vi: usize, point: DVec3) -> usize {
  if let Some(&idx) = self.ds_vertex_map.get(&ds_vi) {
  return idx;
@@ -890,7 +890,7 @@ impl ResultBuilder {
  idx
  }
 
- /// Geometric edge key for OCCT-aligned edge-set matching (BOPTools_Set analog).
+ /// Geometric edge key for edge-set matching (BOPTools_Set analog).
  /// Returns a hash of the two quantized vertex positions, sorted for direction
  /// independence, so geometrically identical edges from different operands
  /// produce the same key regardless of traversal direction or edge index.
@@ -915,7 +915,7 @@ impl ResultBuilder {
  h
  }
 
- /// --OCCT-aligned: BRep_Builder::MakeEdge --creates new unique edge.
+ /// --BRep_Builder::MakeEdge --creates new unique edge.
  /// OCCT: each TopoDS_Edge is a distinct entity (per TShape identity).
  /// Even edges connecting the same vertices are distinct TopoDS_Edges.
  /// rcad: always appends a new edge, same semantics.
@@ -925,7 +925,7 @@ impl ResultBuilder {
  idx
  }
 
- /// --OCCT-aligned: BOPTools_AlgoTools::MakeSectEdge --shared section edge.
+ /// --BOPTools_AlgoTools::MakeSectEdge --shared section edge.
  /// OCCT: MakeSectEdge creates ONE TopoDS_Edge that both intersecting faces
  /// reference via BRep_Builder::Add (shared TShape identity).
  /// rcad: maps intersection curve index --result edge index so both faces
@@ -953,7 +953,7 @@ impl ResultBuilder {
  idx
  }
 
- /// --OCCT-aligned: BRep_Builder::Add edge sharing --dedup by (v1,v2) pair.
+ /// --BRep_Builder::Add edge sharing --dedup by (v1,v2) pair.
  /// OCCT: BRep_Builder::Add(theSameEdge, faceA) then Add(theSameEdge, faceB)
  /// shares the same TopoDS_Edge between faces (TShape identity).
  /// rcad: add_edge(v1,v2) returns the same index for the same vertex pair,
@@ -992,7 +992,7 @@ impl ResultBuilder {
  idx
  }
 
- /// --OCCT-aligned: create degenerate seam edge with hemisphere circle curve.
+ /// --create degenerate seam edge with hemisphere circle curve.
  /// OCCT sphere face outer wire always has a degenerate seam edge (same vertex at both ends).
  /// Adds a sphere horizontal circle curve to make the edge recognizable in STEP export.
  pub(crate) fn add_edge_seam_degenerate(&mut self, v1: usize, v2: usize, sphere_surf: &SphericalSurface) -> usize {
@@ -1002,7 +1002,7 @@ impl ResultBuilder {
  self.custom_edge_curves.push(None);
  }
  // Store seam circle curve for STEP writer
- // --OCCT-aligned: seam edge = sphere meridian through pole (not IC circle).
+ // --seam edge = sphere meridian through pole (not IC circle).
  // If normal = axis, it would coincide with plane-sphere IC causing curve merge errors.
  let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
  let seam_circle = Curve3::Circle(Circle3::new(sphere_surf.center, seam_normal, sphere_surf.radius,
@@ -1012,7 +1012,7 @@ impl ResultBuilder {
  idx
  }
 
- /// --OCCT-aligned: circle edge with curve-aware dedup.
+ /// --circle edge with curve-aware dedup.
  /// OCCT: TopoDS_Edge identity is per-TShape, not per vertex pair.
  /// Two edges sharing vertices but with different curves are distinct.
  /// rcad: dedup by both (v1,v2) AND curve identity (Circle3 geometry).
@@ -1046,7 +1046,7 @@ impl ResultBuilder {
  self.custom_edge_curves[idx] = Some(circle);
  idx
  }
- /// --OCCT-aligned: BOPTools_AlgoTools::MakeEdge --  , --
+ /// --BOPTools_AlgoTools::MakeEdge --  , --
  /// add_edge_occt, --
  /// seam IC OCCT TopoDS_Edge--
  pub(crate) fn add_circle_edge_occt(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
@@ -1060,7 +1060,7 @@ impl ResultBuilder {
  }
 
 
- /// --OCCT-aligned: MakeEdge for seam edges (BRep_Builder::MakeEdge pattern).
+ /// --MakeEdge for seam edges (BRep_Builder::MakeEdge pattern).
  /// OCCT: BRep_Builder::MakeEdge creates a TopoDS_Edge with the 3D curve.
  /// Seam edges and IC arcs at the same vertex pair are distinct TopoDS_Edges
  /// (different TShapes).  rcad: same vertex pair + same curve --reuse (shared
@@ -1106,7 +1106,7 @@ impl ResultBuilder {
 
 
 
- /// --OCCT-aligned: Architecture A1 --emit TShape for the face just added to self.faces.
+ /// --Architecture A1 --emit TShape for the face just added to self.faces.
  /// OCCT BRep_Builder creates edges/wires/faces incrementally during BuildSplitFaces.
  /// rcad previously deferred this to build_topods_faces; now creates TShapes per-face.
  pub(crate) fn emit_face_topods(&mut self, t: &mut topods::BRep, face_refs: &mut Vec<topods::ShapeRef>) {
@@ -1184,7 +1184,7 @@ impl ResultBuilder {
  }
 
  // Face
- // surface passed directly to add_tface (OCCT-aligned: geometry on TShape)
+ // surface passed directly to add_tface (geometry on TShape)
  let internal_vtx: Vec<ShapeRef> = Vec::new();
  let nr = self.face_natural_restriction.get(fi)
  .copied().unwrap_or(false);
@@ -1193,7 +1193,7 @@ impl ResultBuilder {
  face_refs.push(face_sr);
  }
 
- /// --OCCT-aligned: BuildResult(FACE) --create topods vertices, edges, wires, faces
+ /// --BuildResult(FACE) --create topods vertices, edges, wires, faces
  /// in t_brep from the flat arrays.  Called after fill_images_faces so that
  /// split faces have already been emitted as TShapes via emit_face_topods.
  pub(crate) fn build_topods_faces(&mut self, t: &mut topods::BRep, wire_refs: &[topods::ShapeRef], face_refs: &mut Vec<topods::ShapeRef>) {
@@ -1231,7 +1231,7 @@ impl ResultBuilder {
 
  // 3. Faces --TShape::Face (with wires) --only for faces NOT yet in face_refs.
  for (flat_fi, (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges)) in self.faces.iter().enumerate().skip(start_fi) {
- // OCCT-aligned: use pre-built wires from wire_refs when available.
+ // use pre-built wires from wire_refs when available.
  let wire_idxs: Option<&Vec<usize>> = self.face_all_wire_idxs.get(flat_fi);
 
  // Outer wire --use pre-built if available
@@ -1296,7 +1296,7 @@ impl ResultBuilder {
  }
  }
 
- /// --OCCT-aligned: Final assembly --return history (PIOperation_FillHistory).
+ /// --Final assembly --return history (PIOperation_FillHistory).
  /// Per-dimension BuildResult calls (Face/Shell/Solid/CompSolid) have already
  /// created the corresponding topods TShapes in t_brep. This method returns
  /// the BooleanHistory from the accumulated result data.

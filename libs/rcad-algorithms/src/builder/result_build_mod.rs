@@ -19,13 +19,13 @@ use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 
 impl<'a> BooleanBuilder<'a> {
-    /// OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L583-867, SOLID filtering part).
+    /// BuildRC (BOPAlgo_BOP.cxx L583-867, SOLID filtering part).
     ///   Filter result.tmp_solids by boolean operation type using args/tools face-set
     ///   comparison (BOPTools_Set):
     ///     1. Split solids by source side (solid_side_origin) into args and tools groups
     ///     2. For each args solid, build its DS face set and check if any tools solid
     ///        has the same face set (intersection region)
-    /// ✅ OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L583-867).
+    /// BuildRC (BOPAlgo_BOP.cxx L583-867).
     /// Filters split solids by boolean operation type using face-set comparison.
     /// A. FUSE: keep all split solids (fence-deduped).
     /// B. COMMON/CUT/CUT21: build args/tools building-element maps,
@@ -338,7 +338,7 @@ impl<'a> BooleanBuilder<'a> {
         result.tmp_solids = kept_solids;
     }
 
-    /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    /// FillInternalShapes (Builder_3.cxx L622-887).
     /// Settles internal sub-shapes (vertices, edges) into result solids.
     ///
     /// rcad: internal V/E are marked via is_internal flag in DS.
@@ -484,8 +484,8 @@ impl<'a> BooleanBuilder<'a> {
         result.tmp_solids = new_solids;
     }
 
-    /// --OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
-    /// OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    /// --FillInternalShapes (Builder_3.cxx L622-887).
+    /// FillInternalShapes (Builder_3.cxx L622-887).
     ///   Phase 1 (L648-709): Collect internal V/E/WIRE from arguments.
     ///   Phase 2 (L717-788): Internal V/E from source solids + build aMSx ancestry.
     ///   Phase 3 (L790-809): Filter shapes already attached via aMSx.
@@ -642,7 +642,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
+    /// --FillImagesCompounds (Builder_1.cxx L197-342).
     ///   Phase 7: group result solids into COMPSOLID/COMPOUND hierarchy.
     ///
     /// OCCT flow:
@@ -656,7 +656,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   reconstruction happens after result.build() in build_with_history
     ///   (see the rebuild_compound_for_step post-step) because the result
     ///   BRep solids don't exist until build() is called.
-    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217).
+    /// --FillImagesCompounds (Builder_1.cxx L197-217).
     ///
     /// OCCT FillImagesCompounds L197-217:
     ///   L200: aMFP fence map
@@ -672,13 +672,13 @@ impl<'a> BooleanBuilder<'a> {
     ///   Compound reconstruction from result solids is deferred to
     ///   build_with_history's post-step (L6834-6840) because the
     ///   result BRep solids don't exist until ResultBuilder::build().
-    /// --OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
+    /// --FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
     ///   L197-201: aMFP fence map; NbSourceShapes --filter TopAbs_COMPOUND.
     ///   L280-293: FillImagesCompound --fence skip if already processed.
     ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
     ///   L309-312: no modification --return.
     ///   L314-341: build new compound from sub-shape images; store in myImages.
-    /// OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
+    /// FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
     ///   L197-201: dispatcher with fence map; iterate source COMPOUND shapes.
     ///   L280-293: FillImagesCompound --fence skip if already processed.
     ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
@@ -686,9 +686,9 @@ impl<'a> BooleanBuilder<'a> {
     ///   L314-341: build new compound from sub-shape images; store in myImages.
     ///   --rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
     ///     The recursive FillImagesCompound is collapsed to a single level.
-    /// ✅ OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L199-341).
+    /// FillImagesCompounds (BOPAlgo_Builder_1.cxx L199-341).
     /// Wraps sub-shape images into compound containers for non-destructive history.
-    /// --OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216) +
+    /// --FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216) +
     ///   FillImagesCompound (L280-342).  OCCT iterates source shapes, filters COMPOUND,
     ///   recursively processes each compound.  rcad: iterate compsolid groups from DS
     ///   faces (compounds not in shape_info for standard BRep inputs).
@@ -793,10 +793,10 @@ impl<'a> BooleanBuilder<'a> {
             .map_or(false, |ei| ei.is_inside)
     }
 
-    /// --OCCT-aligned: face keep/discard policy (ComputeState --FillIn3DParts equivalent).
+    /// --face keep/discard policy (ComputeState --FillIn3DParts equivalent).
     ///   OCCT does NOT have a surface-type special case --ComputeState propagates
     ///   ON→IN/OUT based on face orientation + solid side, not surface type.
-    /// --OCCT-aligned: BOPAlgo_Builder::FillImagesFaces --face keep policy.
+    /// --BOPAlgo_Builder::FillImagesFaces --face keep policy.
     ///   OCCT: after ComputeState returns IN/OUT/ON for a face against the other solid:
     ///     FUSE: keep OUT + ON
     ///     COMMON: keep IN + ON
@@ -814,19 +814,19 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --OCCT-aligned: BuildResult --add split images to result (Builder_1.cxx L130-168).
+    /// --BuildResult --add split images to result (Builder_1.cxx L130-168).
     ///   OCCT: for each source shape of theType, if myImages bound --add images;
     ///   else add the original shape.  rcad: for Edge, creates topods edges in t_brep
     ///   (equivalent to OCCT's myShape) AND flat edge refs in result for face construction.
     ///   For Vertex/Wire/Shell/Solid, rcad handles these in other pipeline steps.
-    /// OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    /// BuildResult (Builder_1.cxx L130-168).
     ///   Add split images (or originals) of source shapes into the result.
     ///   OCCT L133: aMFence fence map.
     ///   L136-167: for each source argument of matching type --if myImages bound
     ///     --add all image shapes; else --add the original shape.
-    /// --OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    /// --BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form for ALL types.
-    /// ✅ OCCT-aligned: BuildResult (BOPAlgo_Builder.cxx L130-168).
+    /// BuildResult (BOPAlgo_Builder.cxx L130-168).
     ///   For each argument (myArguments):
     ///     Path A — argument's ShapeType == theType: process directly.
     ///     Path B — TopExp_Explorer traverses sub-shapes of theType:
@@ -892,7 +892,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// OCCT-aligned: add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
+    /// add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
     ///   Handles ALL shape types --populates ResultBuilder data structures.
     pub(super) fn add_to_result(&self, a_s: rcad_kernel::topods::ShapeRef, topods_type: rcad_kernel::topods::ShapeType,
                      result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
@@ -970,10 +970,10 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// OCCT-aligned: BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L485-891).
+    /// BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L485-891).
     ///   For BOP: (objects, tools, operation) --converts to IN/OUT states.
     ///   rcad: builds result from all classified face images with IN/OUT filtering.
-    /// ✅ OCCT-aligned: BuildBOP (BOPAlgo_BOP.cxx L492-897).
+    /// BuildBOP (BOPAlgo_BOP.cxx L492-897).
     /// Builds result from selected faces when both operands are 3D.
     pub(super) fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         if self.has_errors {
@@ -1237,7 +1237,7 @@ impl<'a> BooleanBuilder<'a> {
         None
     }
 
-    /// OCCT-aligned: CheckArgsForOpenSolid (BOP.cxx L1382-1470).
+    /// CheckArgsForOpenSolid (BOP.cxx L1382-1470).
     pub(super) fn check_args_for_open_solid(&self) -> bool {
         for shell in &self.ds.shells {
             // Check if the shell is closed (each edge appears twice).

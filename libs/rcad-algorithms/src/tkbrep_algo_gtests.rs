@@ -1,4 +1,4 @@
-//! OCCT-aligned TKTopAlgo GTest translations.
+//! TKTopAlgo GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
 //!

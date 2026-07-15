@@ -614,7 +614,7 @@ fn point_on_circle_angle(point: DVec3, circle: &Circle3) -> f64 {
 }
 
 /// Project a 3D point onto an `OffsetIntersectionCurve`, returning the closest
-/// point on the curve. This is the core geometric operation for OCCT-aligned
+/// point on the curve. This is the core geometric operation for 
 /// vertex computation: instead of using Cramer's rule on face normals, project
 /// the original vertex onto each incident edge's offset intersection curve and
 /// combine the results.

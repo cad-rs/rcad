@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_ArcFunction — F(t) = Q(C(t)).
+//! IntPatch_ArcFunction — F(t) = Q(C(t)).
 //!
 //! OCCT IntPatch_ArcFunction.hxx / .cxx
 //!
@@ -11,7 +11,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
 use super::super::super::inttools::int_surf_quadric::Quadric;
 
-/// OCCT-aligned: IntPatch_ArcFunction = math_FunctionWithDerivative
+/// IntPatch_ArcFunction = math_FunctionWithDerivative
 ///
 /// Fields (hxx:62-67):
 ///   myArc:  Handle(Adaptor2d_Curve2d) — boundary curve

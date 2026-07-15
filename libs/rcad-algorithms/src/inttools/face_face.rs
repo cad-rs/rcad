@@ -5,7 +5,7 @@ use crate::inttools::intss::{SurfaceSurfaceIntersection, SurfaceCurve};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ABS_SQ};
 use rcad_kernel::geom::CurveEval;
 
-/// ✅ OCCT-aligned: IntTools_FaceFace — face-face intersection result.
+/// IntTools_FaceFace — face-face intersection result.
 ///
 /// Wraps the intersection curves with tolerance computation and
 /// post-processing matching OCCT's IntTools_FaceFace.
@@ -50,7 +50,7 @@ fn surface_curve_to_curve3(sc: &SurfaceCurve) -> Option<(Curve3, [f64; 2])> {
     }
 }
 
-/// ✅ OCCT-aligned: ComputeTolReached3d (IntTools_FaceFace.cxx L613-691).
+/// ComputeTolReached3d (IntTools_FaceFace.cxx L613-691).
 ///
 /// Computes valid tolerance for each intersection curve as the max deviation
 /// between the 3D curve and the 2D pcurves on both surfaces.
@@ -123,7 +123,7 @@ fn find_max_distance(curve: &Curve3, t1: f64, t2: f64, surf: &Surface3) -> f64 {
     max_d
 }
 
-/// ✅ OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-2015).
+/// PrepareLines3D (IntTools_FaceFace.cxx L1932-2015).
 pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
     if !b_to_split { return; }
     let mut i = 0;
@@ -161,7 +161,7 @@ pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
     }
 }
 
-/// ✅ OCCT-aligned: Convert SurfaceSurfaceIntersection to IntersectionCurve list.
+/// Convert SurfaceSurfaceIntersection to IntersectionCurve list.
 pub fn intersection_to_curves(intss: &SurfaceSurfaceIntersection) -> Vec<IntersectionCurve> {
     let mut curves = Vec::new();
     for result in &intss.curves {
@@ -179,7 +179,7 @@ pub fn intersection_to_curves(intss: &SurfaceSurfaceIntersection) -> Vec<Interse
     curves
 }
 
-/// ✅ OCCT-aligned: CorrectSurfaceBoundaries (IntTools_FaceFace.cxx L2017-2210).
+/// CorrectSurfaceBoundaries (IntTools_FaceFace.cxx L2017-2210).
 pub fn correct_surface_boundaries(uv_bounds: &mut [f64; 4], margin: f64) {
     let [u_min, u_max, v_min, v_max] = *uv_bounds;
     let du = u_max - u_min;
@@ -191,7 +191,7 @@ pub fn correct_surface_boundaries(uv_bounds: &mut [f64; 4], margin: f64) {
     uv_bounds[3] = v_max + m;
 }
 
-/// ✅ OCCT-aligned: CorrectPlaneBoundaries (IntTools_FaceFace.cxx L3093-3111).
+/// CorrectPlaneBoundaries (IntTools_FaceFace.cxx L3093-3111).
 pub fn correct_plane_boundaries(uv_bounds: &mut [f64; 4]) {
     uv_bounds[0] = -1e10;
     uv_bounds[1] = 1e10;
@@ -199,7 +199,7 @@ pub fn correct_plane_boundaries(uv_bounds: &mut [f64; 4]) {
     uv_bounds[3] = 1e10;
 }
 
-/// ✅ OCCT-aligned: FaceFaceIntersector — top-level dispatch.
+/// FaceFaceIntersector — top-level dispatch.
 pub fn intersect_faces(
     surf1: &Surface3,
     surf2: &Surface3,

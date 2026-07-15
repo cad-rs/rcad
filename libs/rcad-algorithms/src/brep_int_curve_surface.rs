@@ -1,6 +1,6 @@
 ﻿//! BRepIntCurveSurface-style curve-surface intersection operations.
 //!
-//! OCCT-aligned:
+//! 
 //! - `CurveSurfaceInter` (class): iterate intersection points with
 //!   `init()` / `more()` / `next()` / `point()` / `face()` pattern.
 //! - Utility free functions: intersect_line_with_brep, ray_cast, etc.
@@ -19,10 +19,10 @@ use crate::inttools::curve_surface::{
 use rayon::prelude::*;
 
 // =============================================================================
-// BRepIntCurveSurface_Inter  ?curve-surface intersection (OCCT-aligned class)
+// BRepIntCurveSurface_Inter  ?curve-surface intersection (class)
 // =============================================================================
 
-/// OCCT-aligned: BRepIntCurveSurface_Inter  ?iterate intersection points
+/// BRepIntCurveSurface_Inter  ?iterate intersection points
 /// between a curve and a BRep shape.
 ///
 /// Usage:
@@ -44,7 +44,7 @@ pub struct CurveSurfaceInter {
 }
 
 impl CurveSurfaceInter {
-    /// OCCT-aligned: default constructor.
+    /// default constructor.
     pub fn new() -> Self {
         Self {
             results: Vec::new(),
@@ -56,7 +56,7 @@ impl CurveSurfaceInter {
         }
     }
 
-    /// OCCT-aligned: Init  ?set the shape, curve, and tolerance.
+    /// Init  ?set the shape, curve, and tolerance.
     pub fn init(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.shape = Some(shape.clone());
         self.curve = Some(curve.clone());
@@ -66,18 +66,18 @@ impl CurveSurfaceInter {
         self.initialized = false;
     }
 
-    /// OCCT-aligned: Perform  ?compute all intersection points at once.
+    /// Perform  ?compute all intersection points at once.
     pub fn perform(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.init(shape, curve, tol);
         self.compute();
     }
 
-    /// OCCT-aligned: More  ?returns true if there are more intersection points.
+    /// More  ?returns true if there are more intersection points.
     pub fn more(&self) -> bool {
         self.initialized && self.index < self.results.len()
     }
 
-    /// OCCT-aligned: Next  ?advance to the next intersection.
+    /// Next  ?advance to the next intersection.
     pub fn next(&mut self) {
         if !self.initialized {
             self.compute();
@@ -85,12 +85,12 @@ impl CurveSurfaceInter {
         self.index += 1;
     }
 
-    /// OCCT-aligned: Point  ?current intersection point.
+    /// Point  ?current intersection point.
     pub fn point(&self) -> &CurveBRepIntersection {
         &self.results[self.index]
     }
 
-    /// OCCT-aligned: Face  ?the face containing the current intersection.
+    /// Face  ?the face containing the current intersection.
     pub fn face(&self) -> usize {
         self.results[self.index].face_index
     }

@@ -856,7 +856,7 @@ fn det_3x3(m: [[f64; 3]; 3]) -> f64 {
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }
 
-/// ✅ OCCT-aligned: Geom2dGcc_Lin2d2Tan — tangent lines from a point to a 2D curve.
+/// Geom2dGcc_Lin2d2Tan — tangent lines from a point to a 2D curve.
 ///
 /// For ellipses centered at origin: solves analytically using the tangency condition
 /// distance² = a²m² + b². For other curve types: samples the curve and finds
@@ -936,7 +936,7 @@ pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f6
     }
 }
 
-/// ✅ OCCT-aligned: Geom2dGcc_Lin2d2Tan — common tangent lines between two 2D curves.
+/// Geom2dGcc_Lin2d2Tan — common tangent lines between two 2D curves.
 ///
 /// OCCT: GccAna_Lin2d2Tan.cxx L1-160 (two curves variant).
 /// rcad: sampling-based approach — samples both curves, finds line pairs where

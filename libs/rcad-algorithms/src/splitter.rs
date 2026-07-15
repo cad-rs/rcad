@@ -1,4 +1,4 @@
-//! OCCT-aligned splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
+//! splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
 //!
 //! OCCT's BOPAlgo_Splitter splits a shape (Object) by another shape (Tool),
 //! keeping only the Object's split parts. The Tool serves as cutting boundaries
@@ -197,7 +197,7 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
 
 /// Split a shape by a tool, keeping only the Object's split parts.
 ///
-/// This is the OCCT-aligned equivalent of BRepAlgoAPI_Splitter /
+/// This is the equivalent of BRepAlgoAPI_Splitter /
 /// BOPAlgo_Splitter. It:
 /// 1. Runs the full PaveFiller + BooleanBuilder pipeline (same as boolean ops).
 /// 2. Computes intersection curves between the two shapes.

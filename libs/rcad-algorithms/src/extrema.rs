@@ -1,6 +1,6 @@
 //! BRepExtrema-style distance/extrema calculations.
 //!
-//! OCCT-aligned:
+//! 
 //! - `DistShapeShape` (class): distance between two shapes, with
 //!   `perform()` / `is_done()` / `distance()` / `support_on_shape1()` / `support_on_shape2()`
 //! - Utility free functions: distance_point_curve, closest_point_on_curve, etc.
@@ -17,10 +17,10 @@ use crate::tolerance::*;
 const H: f64 = TOLERANCE_MESH_LEGACY;
 
 // =============================================================================
-// BRepExtrema_DistShapeShape 閳?distance between two shapes (OCCT-aligned class)
+// BRepExtrema_DistShapeShape 閳?distance between two shapes (class)
 // =============================================================================
 
-/// OCCT-aligned: BRepExtrema_DistShapeShape 閳?compute minimum distance
+/// BRepExtrema_DistShapeShape 閳?compute minimum distance
 /// between two shapes using BVH-accelerated surface sampling.
 ///
 /// Usage:
@@ -43,7 +43,7 @@ pub struct DistShapeShape {
 }
 
 impl DistShapeShape {
-    /// OCCT-aligned: default constructor.
+    /// default constructor.
     pub fn new() -> Self {
         Self {
             shape1: None, shape2: None,
@@ -54,7 +54,7 @@ impl DistShapeShape {
         }
     }
 
-    /// OCCT-aligned: constructor with both shapes.
+    /// constructor with both shapes.
     pub fn with_shapes(s1: &topods::BRep, s2: &topods::BRep) -> Self {
         let mut dss = Self::new();
         dss.load_s1(s1);
@@ -62,13 +62,13 @@ impl DistShapeShape {
         dss
     }
 
-    /// OCCT-aligned: LoadS1.
+    /// LoadS1.
     pub fn load_s1(&mut self, s1: &topods::BRep) { self.shape1 = Some(s1.clone()); }
 
-    /// OCCT-aligned: LoadS2.
+    /// LoadS2.
     pub fn load_s2(&mut self, s2: &topods::BRep) { self.shape2 = Some(s2.clone()); }
 
-    /// OCCT-aligned: Perform 閳?compute the minimum distance.
+    /// Perform 閳?compute the minimum distance.
     pub fn perform(&mut self) {
         let Some(ref s1) = self.shape1 else { return };
         let Some(ref s2) = self.shape2 else { return };
@@ -81,16 +81,16 @@ impl DistShapeShape {
         self.performed = true;
     }
 
-    /// OCCT-aligned: IsDone.
+    /// IsDone.
     pub fn is_done(&self) -> bool { self.performed }
 
-    /// OCCT-aligned: Distance.
+    /// Distance.
     pub fn distance(&self) -> f64 { self.distance }
 
-    /// OCCT-aligned: SupportOnShape1 閳?the support elements on shape 1.
+    /// SupportOnShape1 閳?the support elements on shape 1.
     pub fn support_on_shape1(&self) -> &[topods::ShapeRef] { &self.support1 }
 
-    /// OCCT-aligned: SupportOnShape2 閳?the support elements on shape 2.
+    /// SupportOnShape2 閳?the support elements on shape 2.
     pub fn support_on_shape2(&self) -> &[topods::ShapeRef] { &self.support2 }
 
     /// Convenience: closest point on shape 1.

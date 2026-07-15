@@ -1,4 +1,4 @@
-//! OCCT-aligned: BVH primitives for IntPatch polyhedron intersection.
+//! BVH primitives for IntPatch polyhedron intersection.
 //!
 //! OCCT sources: TKMath/BVH/{BVH_PrimitiveSet,BVH_LinearBuilder,BVH_Tree,BVH_Box}.hxx
 //! and IntPatch/{IntPatch_PolyhedronBVH,IntPatch_BVHTraversal}.hxx/cxx
@@ -102,7 +102,7 @@ impl Default for BVH_Tree {
 // BVH_PrimitiveSet — OCCT BVH_PrimitiveSet<double, 3> equivalent
 // =============================================================================
 
-/// OCCT-aligned: BVH_PrimitiveSet<double, 3> abstract interface.
+/// BVH_PrimitiveSet<double, 3> abstract interface.
 pub trait BVHPrimitiveSet {
     fn size(&self) -> usize;
     fn box_at(&self, index: usize) -> BVH_Box;
@@ -224,7 +224,7 @@ fn build_rec<T: BVHPrimitiveSet>(
 
 use super::polyhedron::Polyhedron;
 
-/// OCCT-aligned: IntPatch_PolyhedronBVH — wraps Polyhedron as BVH primitive set.
+/// IntPatch_PolyhedronBVH — wraps Polyhedron as BVH primitive set.
 pub struct PolyhedronBVH {
     poly: Option<Polyhedron>,
     /// Maps current (BVH-reordered) 0-based index → original 1-based triangle index.
@@ -319,7 +319,7 @@ impl PolyhedronBVH {
 // IntPatch_BVHTraversal — OCCT IntPatch_BVHTraversal equivalent
 // =============================================================================
 
-/// OCCT-aligned: IntPatch_BVHTraversal — dual-tree BVH traversal for triangle pairs.
+/// IntPatch_BVHTraversal — dual-tree BVH traversal for triangle pairs.
 pub struct BVHTraversal {
     pairs: Vec<(i32, i32)>,
     set1: Option<*const PolyhedronBVH>,

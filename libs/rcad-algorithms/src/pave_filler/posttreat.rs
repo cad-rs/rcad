@@ -1,4 +1,4 @@
-//! OCCT-aligned: PostTreatFF family of functions.
+//! PostTreatFF family of functions.
 //!
 //! OCCT ref: BOPAlgo_PaveFiller_6.cxx L1197-1701 (PostTreatFF),
 //! L2340-2400 (PutBoundPaveOnCurve), L3105-3310 (ProcessExistingPaveBlocks),
@@ -11,7 +11,7 @@ use crate::bopds::ds::BOPDS_Iterator;
 use rcad_kernel::topods::ShapeType;
 
 impl<'a> PaveFiller<'a> {
-    /// OCCT-aligned: BOPAlgo_PaveFiller::PostTreatFF (PaveFiller_6.cxx L1197-1701).
+    /// BOPAlgo_PaveFiller::PostTreatFF (PaveFiller_6.cxx L1197-1701).
     /// Performs post-treatment of section edges: fuses coincident vertices via
     /// a nested PaveFiller VV pass, creates SD mappings, updates section edge PBs.
     #[allow(non_snake_case)]
@@ -336,7 +336,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).
-    /// OCCT-aligned: equivalent to the VV pair tolerance computation.
+    /// equivalent to the VV pair tolerance computation.
     fn vv_pair_tol_ds(&self, ds: &DS, n1: usize, n2: usize) -> f64 {
         let tol1 = if n1 < ds.vertices.len() { ds.vertex_tolerance(n1) } else { TOLERANCE_ABS };
         let tol2 = if n2 < ds.vertices.len() { ds.vertex_tolerance(n2) } else { TOLERANCE_ABS };
@@ -344,7 +344,7 @@ impl<'a> PaveFiller<'a> {
         a_tol_vv + self.fuzzy_tolerance
     }
 
-    /// OCCT-aligned: BOPAlgo_PaveFiller::PutBoundPaveOnCurve (PaveFiller_6.cxx L2340-2400).
+    /// BOPAlgo_PaveFiller::PutBoundPaveOnCurve (PaveFiller_6.cxx L2340-2400).
     pub(super) fn put_bound_pave_on_curve(&mut self, n_f1: usize, n_f2: usize, ci: usize) {
         if ci >= self.ds.intersection_curves.len() { return; }
         let ic_data = {
@@ -390,7 +390,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: ProcessExistingPaveBlocks (PaveFiller_6.cxx L3105-3203).
+    /// ProcessExistingPaveBlocks (PaveFiller_6.cxx L3105-3203).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks(
         &mut self, a_cur_ind: usize, _j: usize, n_f1: usize, n_f2: usize,
@@ -430,7 +430,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: ProcessExistingPaveBlocks second overload (PaveFiller_6.cxx L3204-3310).
+    /// ProcessExistingPaveBlocks second overload (PaveFiller_6.cxx L3204-3310).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks_after(
         &mut self, _a_cur_ind: usize, n_f1: usize, n_f2: usize,

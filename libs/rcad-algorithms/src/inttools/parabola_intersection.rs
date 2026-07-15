@@ -2,8 +2,8 @@
 //! OCCT dispatches Parabola × {Cylinder, Cone, Sphere} through generic
 //! numeric EF intersection (IntTools_EdgeFace), same as rcad.
 //!
-//! ✅ Parabola × Plane: analytic quadratic solve, matching OCCT.
-//! ✅ Parabola × {Cylinder, Cone, Sphere}: numeric marching fallback,
+//! Parabola × Plane: analytic quadratic solve, matching OCCT.
+//! Parabola × {Cylinder, Cone, Sphere}: numeric marching fallback,
 //!    matching OCCT's generic EF path.
 
 use glam::DVec3;
@@ -36,7 +36,7 @@ pub struct ParabolaSurfaceHit {
 ///
 /// Returns 0, 1, or 2 hits within `t_range`.
 ///
-/// ✅ OCCT-aligned: same analytic method as IntAna_IntConicQuad for planes.
+/// same analytic method as IntAna_IntConicQuad for planes.
 pub fn intersect_parabola_plane(
     parabola: &Parabola3,
     t_range: [f64; 2],
@@ -120,7 +120,7 @@ pub fn intersect_parabola_plane_with_tol(
 
 /// Intersect a parabola arc with a cylindrical surface.  Numeric fallback.
 ///
-/// ✅ Partially aligned: OCCT IntAna_IntConicQuad handles cylinder, but
+/// Partially aligned: OCCT IntAna_IntConicQuad handles cylinder, but
 /// this is rare in boolean operations — the numeric marching fallback
 /// in `intersect_edge_face_numeric` handles it adequately.
 pub fn intersect_parabola_cylinder(

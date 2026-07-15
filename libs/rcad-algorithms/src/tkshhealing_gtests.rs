@@ -1,4 +1,4 @@
-//! OCCT-aligned TKShHealing GTest translations.
+//! TKShHealing GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKShHealing/GTests/
 //!

@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
+//! IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
 //!
 //! Triangle mesh approximation of a parametric surface for seed point
 //! detection in PrmPrm intersection. Matches OCCT IntPatch_Polyhedron.hxx/cxx.
@@ -6,7 +6,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 
-/// OCCT-aligned: IntPatch_Polyhedron — triangle mesh approximation
+/// IntPatch_Polyhedron — triangle mesh approximation
 pub struct Polyhedron {
     pub(crate) nb_u: i32,
     pub(crate) nb_v: i32,
@@ -70,11 +70,11 @@ impl Polyhedron {
     }
 
     pub fn point(&self, index: i32) -> DVec3 { self.points[(index - 1) as usize] }
-    /// OCCT-aligned: Size(nbU, nbV) — get grid dimensions.
+    /// Size(nbU, nbV) — get grid dimensions.
     pub fn size(&self) -> (i32, i32) { (self.nb_u, self.nb_v) }
     pub fn bbox(&self) -> (DVec3, DVec3) { (self.bbox_min, self.bbox_max) }
 
-    /// OCCT-aligned: TriConnex (IntPatch_Polyhedron.cxx L299-567).
+    /// TriConnex (IntPatch_Polyhedron.cxx L299-567).
     /// Finds the triangle adjacent to `triang` across the edge (pivot, pedge).
     /// Returns the adjacent triangle index (0 = boundary), sets `tri_con` and `other_p`.
     pub fn tri_connex(&self, triang: i32, pivot: i32, pedge: i32) -> (i32, i32) {
@@ -200,7 +200,7 @@ pub struct SeedPoint {
     pub u2: f64, pub v2: f64,
 }
 
-/// OCCT-aligned: IntPatch_InterferencePolyhedron — find intersecting triangles
+/// IntPatch_InterferencePolyhedron — find intersecting triangles
 pub struct InterferencePolyhedron {
     nb_section_lines: i32,
     seed_points: Vec<SeedPoint>,

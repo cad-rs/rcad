@@ -1,4 +1,4 @@
-//! OCCT-aligned TKBO GTest translations.
+//! TKBO GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKBO/GTests/
 //!
@@ -555,7 +555,7 @@ mod bop_common_simple_tests {
 // =============================================================================
 // IntAna_QuadQuadGeo — Additional analytic intersection tests (P0)
 //
-// OCCT-aligned: IntAna_QuadQuadGeo — closed-form intersections between
+// IntAna_QuadQuadGeo — closed-form intersections between
 // quadric surfaces. Tests complement the existing plane-plane and
 // cylinder-cylinder tests above.
 // =============================================================================
@@ -741,7 +741,7 @@ mod quad_quad_geo_tests {
 // =============================================================================
 // IntSurf_Quadric — Quadric surface tests (P1)
 //
-// OCCT-aligned: IntSurf_Quadric_Test.cxx — ConeApexGradientRemainsFinite
+// IntSurf_Quadric_Test.cxx — ConeApexGradientRemainsFinite
 // =============================================================================
 
 #[cfg(test)]
@@ -777,7 +777,7 @@ mod quadric_tests {
 // =============================================================================
 // IntTools_EdgeEdge — Pure helper function tests (edge_edge.rs)
 //
-// OCCT-aligned: curve_type_to_integer, point_box_distance,
+// curve_type_to_integer, point_box_distance,
 // split_range_on_segments, intersect_line_line_3d
 // =============================================================================
 
@@ -940,7 +940,7 @@ mod edge_edge_tools_tests {
 // =============================================================================
 // BOPTools — Pure helper function tests (boptools/mod.rs)
 //
-// OCCT-aligned: is_dirs_coinside, intermediate_point, is_on_pave,
+// is_dirs_coinside, intermediate_point, is_on_pave,
 // is_in_range, compute_int_range, is_split_to_reverse, point_near_edge,
 // curve_tolerance
 // =============================================================================
@@ -1074,7 +1074,7 @@ mod boptools_helpers_tests {
 // =============================================================================
 // DS data structure tests (try_add_interf, has_interf_*, allocate_pave_block)
 //
-// OCCT-aligned: BOPDS_DS interference fence and PaveBlock pool operations
+// BOPDS_DS interference fence and PaveBlock pool operations
 // =============================================================================
 
 #[cfg(test)]
@@ -1472,7 +1472,7 @@ mod pave_filler_internal_tests {
         ds
     }
 
-    /// OCCT-aligned: BOPAlgo_PaveFiller::GetFullShapeMap
+    /// BOPAlgo_PaveFiller::GetFullShapeMap
     /// (PaveFiller_6.cxx L2941-2958).
     /// The face itself, its boundary edges, and their endpoint vertices
     /// should all be present in the returned set.
@@ -1495,7 +1495,7 @@ mod pave_filler_internal_tests {
         assert_eq!(result.len(), 3, "set should contain {{0, 1, 2}}");
     }
 
-    /// OCCT-aligned: intersect_vertices (BOPAlgo_Tools::IntersectVertices).
+    /// intersect_vertices (BOPAlgo_Tools::IntersectVertices).
     /// Groups vertices by tolerance-sphere overlap.
     fn make_vertex_test_ds() -> DS {
         let mut ds = DS::new_empty();
@@ -1557,7 +1557,7 @@ mod pave_filler_internal_tests {
         assert_eq!(blocks[0], vec![0], "single vertex group must contain only v0");
     }
 
-    /// OCCT-aligned: PaveBlock::Update (BOPDS_PaveBlock.cxx L249-312).
+    /// PaveBlock::Update (BOPDS_PaveBlock.cxx L249-312).
     /// Sub-PB splitting from ext_paves with theFlag=false.
     /// When theFlag=false, only ext_paves (not pave1/pave2) define sub-PB boundaries.
     #[test]
@@ -1623,7 +1623,7 @@ mod pave_filler_internal_tests {
         assert_eq!(v2b, 3, "sub-PB[1] end = ext_pave3");
     }
 
-    /// OCCT-aligned: PaveBlock::Update (BOPDS_PaveBlock.cxx L249-312).
+    /// PaveBlock::Update (BOPDS_PaveBlock.cxx L249-312).
     /// Sub-PB splitting with theFlag=true includes pave1/pave2 as boundary paves.
     #[test]
     fn pave_block_update_true_includes_pave1_pave2() {
@@ -1647,7 +1647,7 @@ mod pave_filler_internal_tests {
 
     // ===== DS::shape_sd infrastructure =====
 
-    /// OCCT-aligned: AddShapeSD / HasShapeSD (BOPDS_DS).
+    /// AddShapeSD / HasShapeSD (BOPDS_DS).
     /// SD stores bi-directional entries and returns the minimum partner.
     #[test]
     fn shape_sd_direct_mapping() {
@@ -1685,7 +1685,7 @@ mod pave_filler_internal_tests {
 
     // ===== PaveBlock basic operations =====
 
-    /// OCCT-aligned: PaveBlock::Indices / Range / ExtPaves.
+    /// PaveBlock::Indices / Range / ExtPaves.
     use crate::bopds::pave::NO_EDGE;
 
     #[test]

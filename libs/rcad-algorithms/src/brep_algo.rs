@@ -1,4 +1,4 @@
-//! BRepAlgo-style algorithms — OCCT-aligned classes.
+//! BRepAlgo-style algorithms — classes.
 //!
 //! NormalProject (project shape onto face along normal),
 //! FaceSection (intersect shape with a face).

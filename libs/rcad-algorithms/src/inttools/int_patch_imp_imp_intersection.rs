@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
+//! IntPatch_ImpImpIntersection — intersection of two analytic surfaces.
 //!
 //! OCCT IntPatch_ImpImpIntersection.hxx / .cxx
 //!
@@ -18,7 +18,7 @@ use super::geom_abs_surface_type::GeomAbsSurfaceType;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntStatus { OK, InfiniteSectionCurve, Fail }
 
-/// OCCT-aligned: IntPatch_ImpImpIntersection
+/// IntPatch_ImpImpIntersection
 ///
 /// Fields (L117-124):
 ///   myDone: IntStatus

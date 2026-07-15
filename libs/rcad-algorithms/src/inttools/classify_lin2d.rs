@@ -1,4 +1,4 @@
-//! OCCT-aligned: ClassifyLin2d (IntTools_FaceFace.cxx L2574-2640).
+//! ClassifyLin2d (IntTools_FaceFace.cxx L2574-2640).
 //! Clips a 2D line to a UV rectangle, returning the parameter range where
 //! the line passes through the rectangle.
 

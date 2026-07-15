@@ -1,4 +1,4 @@
-//! OCCT-aligned TKG2d GTest translations.
+//! TKG2d GTest translations.
 //!
 //! OCCT source: src/ModelingData/TKG2d/GTests/
 //!

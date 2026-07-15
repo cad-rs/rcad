@@ -1,4 +1,4 @@
-//! ✅ Placeholder: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
+//! Placeholder: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.hxx / .cxx (3892 lines).
 //! See intersection.rs for the main Perform method.

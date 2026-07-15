@@ -1058,7 +1058,7 @@ fn fallback_bspline_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> BSplineC
 /// 2. Converts all surfaces to BSpline
 /// 3. Updates all geometry references
 ///
-/// ✅ OCCT-aligned: mirrors `ShapeCustom_ConvertToBSpline`.
+/// mirrors `ShapeCustom_ConvertToBSpline`.
 ///
 /// OCCT reference: ShapeCustom.cxx L123-189 (ConvertSurfaceToBSpline).
 ///   ShapeCustom_ConvertToBSpline iterates over all faces in a shape,

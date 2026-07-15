@@ -6,7 +6,7 @@
 /// - `BooleanBuilder::fill_same_domain_faces()` to identify shared edges
 ///   between coplanar faces
 ///
-/// ✅ OCCT-aligned: mirrors `BOPDS_CommonBlock` (BOPDS_CommonBlock.cxx / .hxx).
+/// mirrors `BOPDS_CommonBlock` (BOPDS_CommonBlock.cxx / .hxx).
 /// Field names follow OCCT convention (`myPaveBlocks`, `myFaces`, `myEdge`).
 #[allow(non_snake_case)]
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub struct CommonBlock {
 
 impl CommonBlock {
     /// Create an empty `CommonBlock`.
-    /// ✅ OCCT-aligned: default constructor.
+    /// default constructor.
     pub fn new() -> Self {
         Self {
             myPaveBlocks: Vec::new(),
@@ -42,7 +42,7 @@ impl CommonBlock {
     }
 
     /// Add a `PaveBlock` with its associated face index.
-    /// ✅ OCCT-aligned: `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
+    /// `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
     ///
     /// `pb_idx` — flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
     /// `face_idx` — face index in the DS that this PaveBlock belongs to.
@@ -56,7 +56,7 @@ impl CommonBlock {
     }
 
     /// Replace all `PaveBlock`/face pairs at once.
-    /// ✅ OCCT-aligned: `SetPaveBlocks(const BOPDS_ListOfPaveBlock&)`.
+    /// `SetPaveBlocks(const BOPDS_ListOfPaveBlock&)`.
     ///
     /// Each entry is `(pave_block_index, face_index)`.
     pub fn set_pave_blocks(&mut self, blocks: Vec<(usize, usize)>) {
@@ -64,7 +64,7 @@ impl CommonBlock {
     }
 
     /// Add a face index to this common block.
-    /// ✅ OCCT-aligned: `AddFace(const int)`.
+    /// `AddFace(const int)`.
     /// Duplicate faces are silently ignored.
     pub fn add_face(&mut self, face_idx: usize) {
         if !self.myFaces.contains(&face_idx) {
@@ -73,13 +73,13 @@ impl CommonBlock {
     }
 
     /// Replace all face indices at once.
-    /// ✅ OCCT-aligned: `SetFaces(const TColStd_ListOfInteger&)`.
+    /// `SetFaces(const TColStd_ListOfInteger&)`.
     pub fn set_faces(&mut self, faces: Vec<usize>) {
         self.myFaces = faces;
     }
 
     /// Append additional face indices to the existing set.
-    /// ✅ OCCT-aligned: `AppendFaces(const TColStd_ListOfInteger&)`.
+    /// `AppendFaces(const TColStd_ListOfInteger&)`.
     /// Duplicates are silently ignored.
     pub fn append_faces(&mut self, faces: &[usize]) {
         for &f in faces {
@@ -88,24 +88,24 @@ impl CommonBlock {
     }
 
     /// Get the `PaveBlock`/face pair list.
-    /// ✅ OCCT-aligned: `PaveBlocks()`.
+    /// `PaveBlocks()`.
     pub fn pave_blocks(&self) -> &[(usize, usize)] {
         &self.myPaveBlocks
     }
 
     /// Get the face indices.
-    /// ✅ OCCT-aligned: `Faces()`.
+    /// `Faces()`.
     pub fn faces(&self) -> &[usize] {
         &self.myFaces
     }
 
     /// Get the first `PaveBlock` index, if any.
-    /// ✅ OCCT-aligned: `PaveBlock1()`.
+    /// `PaveBlock1()`.
     pub fn pave_block1(&self) -> Option<usize> {
         self.myPaveBlocks.first().map(|&(pb, _)| pb)
     }
 
-    /// ✅ OCCT-aligned: sort PaveBlocks so that the block on the real edge
+    /// sort PaveBlocks so that the block on the real edge
     ///   (original_edge == myEdge) is first, matching OCCT's insertion order
     ///   invariant where `AddPaveBlock` inserts the real-edge block first.
     ///   `is_real_edge` is a closure `(pb_idx) -> bool` that returns true when
@@ -123,7 +123,7 @@ impl CommonBlock {
     }
 
     /// Get the `PaveBlock` on the real edge.
-    /// ✅ OCCT-aligned: `PaveBlockOnEdge()`.
+    /// `PaveBlockOnEdge()`.
     ///
     /// Returns the first `PaveBlock` whose original edge matches `myEdge`.
     /// Since the `CommonBlock` does not directly store the original edge per
@@ -136,50 +136,50 @@ impl CommonBlock {
     }
 
     /// Check if the given face index has a `PaveBlock` in this common block.
-    /// ✅ OCCT-aligned: `IsPaveBlockOnFace(const int)`.
+    /// `IsPaveBlockOnFace(const int)`.
     pub fn is_pave_block_on_face(&self, face_idx: usize) -> bool {
         self.myPaveBlocks.iter().any(|&(_, fi)| fi == face_idx)
     }
 
     /// Check if this common block has a `PaveBlock` on a real edge
     /// (i.e., `myEdge` is set).
-    /// ✅ OCCT-aligned: `IsPaveBlockOnEdge()`.
+    /// `IsPaveBlockOnEdge()`.
     pub fn is_pave_block_on_edge(&self) -> bool {
         self.myEdge.is_some()
     }
 
     /// Check if the given `PaveBlock` index is contained in this common block.
-    /// ✅ OCCT-aligned: `Contains(const Handle(BOPDS_PaveBlock)&)`.
+    /// `Contains(const Handle(BOPDS_PaveBlock)&)`.
     pub fn contains(&self, pb_idx: usize) -> bool {
         self.myPaveBlocks.iter().any(|&(pb, _)| pb == pb_idx)
     }
 
     /// Set the real edge index.
-    /// ✅ OCCT-aligned: `SetEdge(const int)`.
+    /// `SetEdge(const int)`.
     pub fn set_edge(&mut self, edge_idx: usize) {
         self.myEdge = Some(edge_idx);
     }
 
     /// Get the real edge index, if set.
-    /// ✅ OCCT-aligned: `Edge()`.
+    /// `Edge()`.
     pub fn edge(&self) -> Option<usize> {
         self.myEdge
     }
 
     /// Set the tolerance of this CommonBlock.
-    /// ✅ OCCT-aligned: `SetTolerance()`.
+    /// `SetTolerance()`.
     pub fn set_tolerance(&mut self, tol: f64) {
         self.myTolerance = tol;
     }
 
     /// Get the tolerance of this CommonBlock.
-    /// ✅ OCCT-aligned: `Tolerance()`.
+    /// `Tolerance()`.
     pub fn tolerance(&self) -> f64 {
         self.myTolerance
     }
 
     /// Debug dump.
-    /// ✅ OCCT-aligned: `Dump()`.
+    /// `Dump()`.
     pub fn dump(&self) -> String {
         let edge_str = match self.myEdge {
             Some(e) => format!("{}", e),

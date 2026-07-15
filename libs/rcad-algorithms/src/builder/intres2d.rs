@@ -1,10 +1,10 @@
 use glam::DVec2;
 
 // ============================================================================
-// OCCT-aligned: IntRes2d_Domain (IntRes2d_Domain.hxx/lxx)
+// IntRes2d_Domain (IntRes2d_Domain.hxx/lxx)
 // ============================================================================
 
-/// OCCT-aligned: IntRes2d_Domain — definition of the parameter domain on a 2D curve.
+/// IntRes2d_Domain — definition of the parameter domain on a 2D curve.
 ///
 /// status bits: bit0=HasFirstPoint, bit1=HasLastPoint, bit2=IsClosed
 #[derive(Debug, Clone)]
@@ -141,7 +141,7 @@ impl IntRes2dDomain {
 }
 
 // ============================================================================
-// OCCT-aligned: IntRes2d_Position / IntRes2d_TypeTrans / IntRes2d_Situation
+// IntRes2d_Position / IntRes2d_TypeTrans / IntRes2d_Situation
 //   (IntRes2d_Position.hxx, IntRes2d_TypeTrans.hxx, IntRes2d_Situation.hxx)
 // ============================================================================
 
@@ -155,10 +155,10 @@ pub enum IntRes2dTypeTrans { In, Out, Touch, Undecided }
 pub enum IntRes2dSituation { Inside, Outside, Unknown }
 
 // ============================================================================
-// OCCT-aligned: IntRes2d_Transition (IntRes2d_Transition.hxx/lxx)
+// IntRes2d_Transition (IntRes2d_Transition.hxx/lxx)
 // ============================================================================
 
-/// OCCT-aligned: transition type near an intersection point between two 2D curves.
+/// transition type near an intersection point between two 2D curves.
 #[derive(Debug, Clone)]
 pub struct IntRes2dTransition {
     tangent: bool,
@@ -250,10 +250,10 @@ impl IntRes2dTransition {
 }
 
 // ============================================================================
-// OCCT-aligned: IntRes2d_IntersectionPoint (IntRes2d_IntersectionPoint.hxx/lxx)
+// IntRes2d_IntersectionPoint (IntRes2d_IntersectionPoint.hxx/lxx)
 // ============================================================================
 
-/// OCCT-aligned: intersection point between two 2D curves.
+/// intersection point between two 2D curves.
 #[derive(Debug, Clone)]
 pub struct IntRes2dIntersectionPoint {
     pt: DVec2,
@@ -307,11 +307,11 @@ impl IntRes2dIntersectionPoint {
 }
 
 // ============================================================================
-// OCCT-aligned: IntRes2d_IntersectionSegment (IntRes2d_IntersectionSegment.hxx/lxx)
+// IntRes2d_IntersectionSegment (IntRes2d_IntersectionSegment.hxx/lxx)
 //   Definition of an intersection curve between two 2D curves.
 // ============================================================================
 
-/// OCCT-aligned: segment of intersection between two 2D curves.
+/// segment of intersection between two 2D curves.
 #[derive(Debug, Clone)]
 pub struct IntRes2dIntersectionSegment {
     oppos: bool,

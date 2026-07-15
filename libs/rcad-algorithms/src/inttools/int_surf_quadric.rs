@@ -1,4 +1,4 @@
-﻿//! ✅ OCCT-aligned: IntSurf_Quadric — quadric surface representation.
+﻿//! IntSurf_Quadric — quadric surface representation.
 //!
 //! OCCT IntSurf_Quadric.hxx / .cxx / .lxx
 //!
@@ -12,7 +12,7 @@ use rcad_kernel::geom::{Surface3, Plane, SphericalSurface, CylindricalSurface, C
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use super::geom_abs_surface_type::GeomAbsSurfaceType;
 
-/// OCCT-aligned: IntSurf_Quadric unified quadric surface.
+/// IntSurf_Quadric unified quadric surface.
 ///
 /// OCCT fields (L102-109):
 ///   ax3: gp_Ax3        — coordinate system
@@ -379,7 +379,7 @@ impl Quadric {
     pub fn location(&self) -> DVec3 { self.location }
 }
 
-/// Helper: compute a perpendicular pair to a given direction (OCCT-aligned).
+/// Helper: compute a perpendicular pair to a given direction ().
 fn any_perpendicular_pair(dir: DVec3) -> (DVec3, DVec3) {
     let x_dir = rcad_kernel::geom::any_perpendicular(dir);
     let y_dir = dir.cross(x_dir).normalize_or_zero();

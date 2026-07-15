@@ -1,8 +1,8 @@
-﻿//! OCCT-aligned BuilderSolid: builds closed solids from a set of faces.
+﻿//! BuilderSolid: builds closed solids from a set of faces.
 //!
 //! OCCT ref: BOPAlgo_BuilderSolid (BOPAlgo_BuilderSolid.cxx / .hxx)
 //!
-//! ✅ OCCT-aligned: full algorithm mirrors BOPAlgo_BuilderSolid.
+//! full algorithm mirrors BOPAlgo_BuilderSolid.
 //!
 //! Processing steps (BOPAlgo_BuilderSolid::Perform):
 //! 1. PerformShapesToAvoid — find INTERNAL/duplicate faces (L129-219)
@@ -10,7 +10,7 @@
 //! 3. PerformAreas — classify shells as Holes/Growths → solids (L397-598)
 //! 4. PerformInternalShapes — classify unused faces (L602-759)
 //!
-//! ✅ OCCT-aligned: full algorithm mirrors BOPAlgo_BuilderSolid.
+//! full algorithm mirrors BOPAlgo_BuilderSolid.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -23,7 +23,7 @@ use crate::bvh::Aabb as AABB;
 // IntTools_Context — OCCT L24-30: geometric context (cached classifier, proj)
 // ============================================================================
 
-/// OCCT-aligned: IntTools_Context equivalent.
+/// IntTools_Context equivalent.
 ///
 /// Provides `IsInfiniteFace`, `SolidClassifier`, and point projection.
 /// rcad: wraps DS access with natural_restriction for infinite-face check
@@ -36,13 +36,13 @@ impl BuilderSolidContext {
  Self
  }
 
- /// OCCT-aligned: IntTools_Context::IsInfiniteFace.
+ /// IntTools_Context::IsInfiniteFace.
  /// A face is "infinite" when it lacks natural bounds (e.g. unbounded plane).
  pub fn is_infinite_face(&self, fi: usize, ds: &DS) -> bool {
  ds.faces.get(fi).map_or(false, |f| f.natural_restriction)
  }
 
- /// OCCT-aligned: BRepClass3d_SolidClassifier::PerformInfinitePoint.
+ /// BRepClass3d_SolidClassifier::PerformInfinitePoint.
  /// Classifies an infinite point against a set of faces.
  pub fn is_hole_shell(&self, shell_faces: &[usize], ds: &DS) -> bool {
  let far_point = glam::DVec3::new(1e10, 1e10, 1e10);
@@ -50,7 +50,7 @@ impl BuilderSolidContext {
  state == classify::Classification::In
  }
 
- /// OCCT-aligned: IsInside (BOPAlgo_BuilderSolid L835-860).
+ /// IsInside (BOPAlgo_BuilderSolid L835-860).
  /// Checks if `hole_faces` shell is inside `solid_faces` solid.
  pub fn is_inside(&self, hole_faces: &[usize], solid_faces: &[usize], ds: &DS) -> bool {
  if hole_faces.is_empty() {
@@ -85,15 +85,15 @@ pub struct BuilderSolid {
  myContext: BuilderSolidContext,
  /// OCCT: unclassified faces collected for AlertSolidBuilderUnusedFaces.
  myUnusedFaces: Vec<usize>,
- ///  ?OCCT-aligned: myMergeEdges — merge coincident edges in result shells.
+ ///  ?myMergeEdges — merge coincident edges in result shells.
  myMergeEdges: bool,
- ///  ?OCCT-aligned: myMergeFaces — merge coincident faces in result shells.
+ ///  ?myMergeFaces — merge coincident faces in result shells.
  myMergeFaces: bool,
 }
 
 impl BuilderSolid {
  /// Empty constructor.
- /// ✅ OCCT-aligned: BOPAlgo_BuilderSolid().
+ /// BOPAlgo_BuilderSolid().
  pub fn new() -> Self {
  Self {
  myShapes: Vec::new(),
@@ -112,25 +112,25 @@ impl BuilderSolid {
  }
 
  /// Set the input faces.
- /// ✅ OCCT-aligned: SetShapes (inherited from BOPAlgo_BuilderArea/BOPAlgo_Algo).
+ /// SetShapes (inherited from BOPAlgo_BuilderArea/BOPAlgo_Algo).
  pub fn set_shapes(&mut self, faces: &[usize]) {
  self.myShapes = faces.to_vec();
  }
 
  /// Set whether to avoid internal shapes in the result.
- /// ✅ OCCT-aligned: SetAvoidInternalShapes.
+ /// SetAvoidInternalShapes.
  pub fn set_avoid_internal_shapes(&mut self, avoid: bool) {
  self.myAvoidInternalShapes = avoid;
  }
 
  /// Set tolerance.
- /// ✅ OCCT-aligned: SetTolerance.
+ /// SetTolerance.
  pub fn set_tolerance(&mut self, tol: f64) {
  self.myTolerance = tol;
  }
 
  /// Perform the algorithm: build solids from input faces.
- /// ✅ OCCT-aligned: Perform (L76-125).
+ /// Perform (L76-125).
  pub fn perform(&mut self, ds: &DS) {
  self.myShapesToAvoid.clear();
  self.myLoops.clear();
@@ -160,7 +160,7 @@ impl BuilderSolid {
  // PerformShapesToAvoid — OCCT L129-219
  // ========================================================================
 
- /// ✅ OCCT-aligned: PerformShapesToAvoid (L129-219).
+ /// PerformShapesToAvoid (L129-219).
  ///
  /// Iteratively find faces that should be excluded from shell building:
  /// - Faces with free edges (edge appears in only 1 face)
@@ -232,7 +232,7 @@ impl BuilderSolid {
  // PerformLoops — OCCT L223-393
  // ========================================================================
 
- /// ✅ OCCT-aligned: PerformLoops (L223-393).
+ /// PerformLoops (L223-393).
  ///
  /// 1. ShellSplitter on non-avoided faces → closed shells (myLoops)
  /// 2. Post-treatment: collect all processed faces, mark remaining as to-avoid
@@ -320,7 +320,7 @@ impl BuilderSolid {
  // PerformAreas — OCCT L397-598
  // ========================================================================
 
- /// ✅ OCCT-aligned: PerformAreas (L397-598).
+ /// PerformAreas (L397-598).
  ///
  /// Classify shells as Holes or Growths.  Growths → solids; Holes → put
  /// inside the closest Growth solid.
@@ -366,7 +366,7 @@ impl BuilderSolid {
 
  // --- Classify holes against solids (OCCT L460-530) ---
  // OCCT uses BOPTools_BoxTree (BVH) for spatial culling.
- // rcad: AABB pre-filtering (form-aligned to OCCT's BVH culling pattern).
+ // rcad: AABB pre-filtering ( to OCCT's BVH culling pattern).
  // Build AABBs for all solids and holes (OCCT L464-475, L493-501)
  let solid_aabbs: Vec<AABB> = a_new_solids.iter().map(|s| compute_aabb(s, ds)).collect();
  let hole_aabbs: Vec<AABB> = a_hole_shells.iter().map(|h| compute_aabb(h, ds)).collect();
@@ -434,7 +434,7 @@ impl BuilderSolid {
  // PerformInternalShapes — OCCT L602-759
  // ========================================================================
 
- /// ✅ OCCT-aligned: PerformInternalShapes (L602-759).
+ /// PerformInternalShapes (L602-759).
  ///
  /// Classify unused faces (myLoopsInternal) against result solids and add
  /// them as internal shells.  Unclassified faces → warning.
@@ -525,25 +525,25 @@ impl BuilderSolid {
  // ========================================================================
 
  /// Return the resulting areas (solids).  Each entry is a Vec of face indices.
- /// ✅ OCCT-aligned: Areas() (inherited from BOPAlgo_BuilderArea).
+ /// Areas() (inherited from BOPAlgo_BuilderArea).
  pub fn areas(&self) -> &[Vec<usize>] {
  &self.myAreas
  }
 
  /// Return the closed shells from PerformLoops.
- /// ✅ OCCT-aligned: myLoops accessor.
+ /// myLoops accessor.
  pub fn loops(&self) -> &[Vec<usize>] {
  &self.myLoops
  }
 
  /// Return internal shells.
- /// ✅ OCCT-aligned: myLoopsInternal accessor.
+ /// myLoopsInternal accessor.
  pub fn loops_internal(&self) -> &[Vec<usize>] {
  &self.myLoopsInternal
  }
 
  /// Return the bounding box map.
- /// ✅ OCCT-aligned: GetBoxesMap().
+ /// GetBoxesMap().
  pub fn boxes_map(&self) -> &HashMap<usize, AABB> {
  &self.myBoxes
  }
@@ -653,7 +653,7 @@ fn face_sample_point(fi: usize, ds: &DS) -> glam::DVec3 {
  }
 }
 
-/// ✅ OCCT-aligned: IsGrowthShell (L864-878).
+/// IsGrowthShell (L864-878).
 ///
 /// Fast check: if the shell contains any face from the hole-faces map,
 /// it is a growth (the hole is inside it).
@@ -669,7 +669,7 @@ fn is_growth_shell(shell_faces: &[usize], hole_face_map: &BTreeSet<usize>) -> bo
  false
 }
 
-/// ✅ OCCT-aligned: IsHole (L823-831).
+/// IsHole (L823-831).
 ///
 /// Classify an infinite point against the shell.  If the point is IN,
 /// the shell is a hole; otherwise it is a growth.
@@ -680,7 +680,7 @@ fn is_hole(shell_faces: &[usize], ds: &DS) -> bool {
  state == classify::Classification::In
 }
 
-/// ✅ OCCT-aligned: IsInside (L835-860).
+/// IsInside (L835-860).
 ///
 /// Check if shell `theS1` is inside solid `theS2`.
 fn is_inside(hole_faces: &[usize], solid_faces: &[usize], ds: &DS) -> bool {
@@ -693,7 +693,7 @@ fn is_inside(hole_faces: &[usize], solid_faces: &[usize], ds: &DS) -> bool {
  state == classify::Classification::In
 }
 
-/// ✅ OCCT-aligned: MakeInternalShells (L763-819).
+/// MakeInternalShells (L763-819).
 ///
 /// Group a set of internal faces into connected shells.
 fn make_internal_shells(faces: &[usize], ds: &DS) -> Vec<Vec<usize>> {

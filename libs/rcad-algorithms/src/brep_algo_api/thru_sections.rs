@@ -1,6 +1,6 @@
 //! BRepOffsetAPI_ThruSections — loft through a series of section wires.
 //!
-//! OCCT-aligned: creates a solid or shell by lofting through section wires,
+//! creates a solid or shell by lofting through section wires,
 //! interpolating between them.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKOffset/BRepOffsetAPI_ThruSections.cxx

@@ -1,4 +1,4 @@
-//! OCCT-aligned GTests for remaining ModelingAlgorithms modules.
+//! GTests for remaining ModelingAlgorithms modules.
 //!
 //! OCCT source: src/ModelingAlgorithms/{TKGeomAlgo,TKHelix,TKMesh,TKOffset,TKFillet,TKExpress,TKBO}/GTests/
 //!

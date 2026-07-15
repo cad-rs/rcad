@@ -1,6 +1,6 @@
 ﻿//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
 //!
-//! OCCT-aligned:
+//! 
 //! - `SolidClassifier` (class): classify point relative to a solid using
 //!   `new(brep, solid_ref)` / `perform(point, tol)` / `state()` / `is_done()`.
 //! - DS-based functions: classify_point, classify_solid_in_solid for the
@@ -21,10 +21,10 @@ use crate::tolerance::{
 };
 
 // =============================================================================
-// BRepClass3d_SolidClassifier  ?OCCT-aligned class
+// BRepClass3d_SolidClassifier  ?class
 // =============================================================================
 
-/// OCCT-aligned: BRepClass3d_SolidClassifier  ?classify point relative to a solid.
+/// BRepClass3d_SolidClassifier  ?classify point relative to a solid.
 ///
 /// Uses ray casting: cast a ray from the point in the +X direction, count
 /// face intersections. Odd  ?In, Even  ?Out. Also checks vertex/edge proximity
@@ -44,12 +44,12 @@ pub struct SolidClassifier<'a> {
 }
 
 impl<'a> SolidClassifier<'a> {
-    /// OCCT-aligned: constructor with solid.
+    /// constructor with solid.
     pub fn new(brep: &'a topods::BRep, solid_ref: topods::ShapeRef) -> Self {
         Self { brep, solid_ref, state: Classification::Out, performed: false }
     }
 
-    /// OCCT-aligned: Perform  ?classify point against the solid with tolerance.
+    /// Perform  ?classify point against the solid with tolerance.
     pub fn perform(&mut self, point: DVec3, tol: f64) {
         // Collect all face ShapeRefs from this solid
         let face_refs = collect_solid_faces(self.brep, self.solid_ref);
@@ -99,15 +99,15 @@ impl<'a> SolidClassifier<'a> {
         self.performed = true;
     }
 
-    /// OCCT-aligned: Perform with solid set in constructor.
+    /// Perform with solid set in constructor.
     pub fn perform_with_point(&mut self, point: DVec3, tol: f64) {
         self.perform(point, tol);
     }
 
-    /// OCCT-aligned: State  ?classification result.
+    /// State  ?classification result.
     pub fn state(&self) -> Classification { self.state }
 
-    /// OCCT-aligned: IsDone.
+    /// IsDone.
     pub fn is_done(&self) -> bool { self.performed }
 }
 
@@ -588,7 +588,7 @@ fn relaxed_tol_for_solid_face_set(
 // Core Classification Functions
 // =============================================================================
 
-///  ?OCCT-aligned: BRepClass3d_SolidClassifier::Perform (L171-211).
+///  ?BRepClass3d_SolidClassifier::Perform (L171-211).
 ///   Classify a 3D point relative to a solid defined by face indices.
 ///
 /// OCCT flow (BRepClass3d_SClassifier.cxx L203-253):
@@ -611,7 +611,7 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     result
 }
 
-///  ?OCCT-aligned: BRepClass3d_SClassifier::Perform (L203-253).
+///  ?BRepClass3d_SClassifier::Perform (L203-253).
 ///   Classify point via vertex/edge proximity + ray intersection.
 ///
 /// OCCT flow:
@@ -1005,7 +1005,7 @@ fn ray_cast_classify_point_on_face(
             for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
                 if t > ray_tol && t < nearest {
                     let hit = point + ray_dir * t;
-                    // OCCT-aligned: UV-space containment (IntTools_FClass2d) instead
+                    // UV-space containment (IntTools_FClass2d) instead
                     // of 3D AABB.  For periodic surfaces (sphere, cylinder), 3D
                     // boundary-vertex AABB may under-represent the face extent.
                     let in_face = if let Some(ref uv_bnd) = ds.faces[fi].uv_boundary {

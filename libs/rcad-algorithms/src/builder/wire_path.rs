@@ -94,7 +94,7 @@ pub(crate) fn refine_angles(
     }
 }
 
-/// OCCT-aligned: Path  (BOPAlgo_WireSplitter_1.cxx L359-618).
+/// Path  (BOPAlgo_WireSplitter_1.cxx L359-618).
 ///    walk path with ClockWiseAngle steering
 ///
 ///    per-EdgeInfo passed per vertex,
@@ -112,7 +112,7 @@ pub(crate) fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
     }
 }
 
-/// OCCT-aligned: Geom2dInt_GInter  ?intersect a ray with a 2D curve.
+/// Geom2dInt_GInter  ?intersect a ray with a 2D curve.
 /// Returns (param_on_curve, param_on_ray) for all intersections within [t_min, t_max].
 ///
 /// OCCT dispatch (IntCurve_IntCurveCurveGen.gxx L247-815):
@@ -276,7 +276,7 @@ pub(crate) fn intersect_ray_curve_2d(
     }
 }
 
-///  ?OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
+///  ?project a UV point onto a curve to find the nearest parameter.
 /// OCCT ref: BRep_Tool::Parameter (returns the parameter of a vertex on an edge's curve).
 pub(crate) fn project_uv_to_curve(
     uv: DVec2,
@@ -331,7 +331,7 @@ pub(crate) fn project_uv_to_curve(
     }
 }
 
-///  ?OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
+///  ?RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
 ///
 /// For an IC outgoing edge outside the boundary sweep, compute a refined
 /// angle by intersecting the edge's UV pcurve with rays along the boundary
@@ -382,7 +382,7 @@ pub(crate) fn refine_angle_2d(
             }
         }
         WireEdgeSource::DsEdge(_ei) => {
-            //  ?OCCT-aligned L1057: use actual pcurve (BRep_Tool::CurveOnSurface)
+            //  ?L1057: use actual pcurve (BRep_Tool::CurveOnSurface)
             //   from WireSegment when available.  Seam/deg edges on periodic
             //   surfaces store their DoSplitSEAMOnFace pcurves in first_pcurve
             //   (native U side) and second_pcurve (shifted U side).  The
@@ -420,7 +420,7 @@ pub(crate) fn refine_angle_2d(
         }
     };
 
-    //  ?OCCT-aligned L1060-1061: BRep_Tool::Parameter(aV, aE, myFace).
+    //  ?L1060-1061: BRep_Tool::Parameter(aV, aE, myFace).
     //   For DSEdge/SeamEdge: use DSEdge.vertex_params directly.
     //   For IntersectionCurve: vertex param = curve endpoint (t_min or t_max).
     let t_v = match &seg.source {
@@ -509,7 +509,7 @@ pub(crate) fn refine_angle_2d(
     }
     None
 }
-///  ?OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
+///  ?Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
 ///
 /// Key differences from the previous implementation:
 /// 1. Tracks UV coordinates of each visited vertex (aCoordVa).
@@ -577,7 +577,7 @@ pub(crate) fn walk_path_extract_wires(
         })
     };
 
-    // OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L663-674).
+    // Coord2d (BOPAlgo_WireSplitter_1.cxx L663-674).
     // Gets UV of a vertex on a specific edge by evaluating the edge's pcurve
     // at the vertex parameter.  Different edges at the same 3D vertex can
     // return DIFFERENT UVs if their pcurves are on different sides of the
@@ -591,7 +591,7 @@ pub(crate) fn walk_path_extract_wires(
                 // OCCT BRep_Tool::Parameter(aV, aE, aF): vertex parameter on
                 // edge's pcurve.  vi == ic.start_vertex  ?t_range[0];
                 // vi == ic.end_vertex  ?t_range[1].
-                //  ?OCCT-aligned: compare by 3D position, not index.  rcad's DS
+                //  ?compare by 3D position, not index.  rcad's DS
                 //   assigns different vertex indices to the same 3D point (remap_ic_v),
                 //   so vi == ic.start_vertex fails silently for remapped vertices.
                 //   Use geometric distance at remap_ic_v's tolerance.
@@ -602,7 +602,7 @@ pub(crate) fn walk_path_extract_wires(
                 Some(pc.point_at(t))
             }
             WireEdgeSource::DsEdge(_) if segment.is_closed_on_face => {
-                //  ?OCCT-aligned: Coord2d (WireSplitter_1.cxx L663-674) uses the
+                //  ?Coord2d (WireSplitter_1.cxx L663-674) uses the
                 //   edge's own pcurve, selected by orientation per CurveOnSurface
                 //   (BRep_Tool.cxx L354-361): FORWARD  ?PCurve (native U side),
                 //   REVERSED  ?PCurve2 (shifted U side).  rcad models a closed
@@ -614,7 +614,7 @@ pub(crate) fn walk_path_extract_wires(
                 //   the "out" end to (2 ? Vpole) at the "in" end, spanning the full
                 //   U circle at Vpole  ?exactly matching OCCT's pcurve for a sphere
                 //   degenerated edge.
-                //  ?OCCT-aligned: CurveOnSurface returns PCurve for FORWARD (L354-361),
+                //  ?CurveOnSurface returns PCurve for FORWARD (L354-361),
                 //   PCurve2 for REVERSED.  vertex_uv uses first_pcurve (PCurve) for
                 //   FORWARD segments, second_pcurve (PCurve2) for REVERSED, matching
                 //   Coord2d per-edge pcurve evaluation (WireSplitter_1.cxx L663-674).
@@ -642,7 +642,7 @@ pub(crate) fn walk_path_extract_wires(
                         }
                     }
                 } else {
-                    // OCCT-aligned: for REVERSED seam traversal, use second_pcurve
+                    // for REVERSED seam traversal, use second_pcurve
                     //   (shifted pcurve).  Fall back to world_to_uv when unavailable
                     //   (e.g. degenerated seam edge at sphere pole).
                     match &segment.second_pcurve {
@@ -661,7 +661,7 @@ pub(crate) fn walk_path_extract_wires(
         if let Some(uv) = pc_uv {
             return Some(uv);
         }
-        //  ?OCCT-aligned: non-seam DsEdge vertex_uv from first_pcurve (OCCT:
+        //  ?non-seam DsEdge vertex_uv from first_pcurve (OCCT:
         //   BRep_Tool::CurveOnSurface  ?C2D->D0(BRep_Tool::Parameter(aV,aE,aF), aP2D1)).
         if let WireEdgeSource::DsEdge(_) = &segment.source {
             if !segment.is_closed_on_face {
@@ -938,10 +938,10 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<Edg
     }
 }
 
-///  ?OCCT-aligned: wire 3D boundary polygon
+///  ?wire 3D boundary polygon
 ///     DS  3D
 
-///  ?OCCT-aligned: classify wires into growth/outer and holes
+///  ?classify wires into growth/outer and holes
 /// (BOPAlgo_BuilderFace::PerformAreas L387-606).
 ///
 /// OCCT creates a TopoDS_Face from each wire via BRepBuilderAPI_MakeFace,
@@ -952,7 +952,7 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<Edg
 /// then use ray-casting point-in-polygon.  Full-wrap wires (<3 unique
 /// vertices, spanning the full periodic domain) use the surface's full
 /// UV rectangle as their polygon.
-///  ?OCCT-aligned: merge sphere wires by interleaving seam+IC segments.
+///  ?merge sphere wires by interleaving seam+IC segments.
 ///    OCCT's DoSplitSEAMOnFace produces a single wire alternating between
 ///    seam sub-segments and IC arcs.  rcad produces 2 wires (one IC-loop,
 ///    one seam-loop) on the same vertices but opposite directions.
@@ -1002,7 +1002,7 @@ pub(crate) fn perform_areas(
     struct WireData { wire_idx: usize, uv_boundary: Vec<DVec2>, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let fsurf = &ds.faces[face_idx].surface;
-        //  ?OCCT-aligned: collect UV polygon by sampling each edge's pcurve
+        //  ?collect UV polygon by sampling each edge's pcurve
         //   at NbSamples points (OCCT IntTools_FClass2d Init L291-312).
         //   Convert each segment to (edge_idx, forward) pairs for DsEdge segments,
         //   fall back to world_to_uv for IC/SeamEdge segments.
@@ -1057,7 +1057,7 @@ pub(crate) fn perform_areas(
                 uv_bnd.push(uv);
             }
         }
-        // OCCT-aligned: collinear point filter (chordal deflection).
+        // collinear point filter (chordal deflection).
         uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
         let n_distinct = { let mut pts = uv_bnd.clone(); pts.sort_by(|a,b|a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y))); pts.dedup(); pts.len() };
         if uv_bnd.len() < 3 || n_distinct < 3 {
@@ -1116,7 +1116,7 @@ pub(crate) fn perform_areas(
         if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; }
         else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
-            //  ?OCCT-aligned: IsHole check via UV polygon signed area.
+            //  ?IsHole check via UV polygon signed area.
             //   OCCT IntTools_FClass2d derives myIsHole from the face's parametric
             //   area: negative (CW)  ?hole, positive (CCW)  ?growth.  Compute the
             //   signed area of the UV boundary directly  ?equivalent to OCCT's area
@@ -1153,7 +1153,7 @@ pub(crate) fn perform_areas(
         return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
     }
 
-    //  ?OCCT-aligned L468-555: assign holes to enclosing growths via UV-space
+    //  ?L468-555: assign holes to enclosing growths via UV-space
     //   bounding-box prefilter + point-in-polygon (FClass2d semantics).
     //   Build UV bounding boxes for each growth (OCCT Bnd_Box2d + BOPTools_Box2dTree).
     let growth_uv_bbox: Vec<Option<[f64; 4]>> = growths.iter().map(|&g| {
@@ -1225,7 +1225,7 @@ pub(crate) fn perform_areas(
     result
 }
 
-///  ?OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
+///  ?BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
 ///   Classify internal wire groups against result faces and add as internal wires.
 ///   L620-631: return early if no internal wires.
 ///   L634-666: build UV boxes for each face (rcad: UV boundary polygon).

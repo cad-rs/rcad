@@ -162,7 +162,7 @@ impl BuilderOperation {
         self.error = None;
         self.history = None;
 
-        // 鉁?OCCT-aligned: BOPAlgo_BOP::CheckInputData 鈥?verify valid inputs
+        // 鉁?BOPAlgo_BOP::CheckInputData 鈥?verify valid inputs
         if self.shape_a.solids().is_empty() || self.shape_b.solids().is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
@@ -173,15 +173,15 @@ impl BuilderOperation {
         let a = self.ensure_geometry(&self.shape_a);
         let b = self.ensure_geometry(&self.shape_b);
 
-        // 鉁?OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
+        // 鉁?Build BOPDS_DS (data structure) from the two shapes
         // OCCT ref: BOPAlgo_PaveFiller::Perform 鈫?BOPDS_DS::Alloc
         let mut ds = DS::new_from_topods(&a, &b, self.tolerance.max(TOLERANCE_ABS));
 
-        // 鉁?OCCT-aligned: Build BVH acceleration (optional in OCCT)
+        // 鉁?Build BVH acceleration (optional in OCCT)
         let bvh_a = Bvh::build(&a);
         let bvh_b = Bvh::build(&b);
 
-        // 鉁?OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
+        // 鉁?Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut brep_dst = rcad_kernel::topods::BRep::new();
         let (face_refs, ic_edge_map) = {
             let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep_dst);
@@ -189,10 +189,10 @@ impl BuilderOperation {
             (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
 
-        // 鉁?OCCT-aligned: FillImagesContainers 鈥?build wire/shell images
+        // 鉁?FillImagesContainers 鈥?build wire/shell images
         ds.build_container_images();
 
-        // 鉁?OCCT-aligned: Build result
+        // 鉁?Build result
         let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep_dst, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
@@ -241,7 +241,7 @@ impl BuilderOperation {
     // OCCT ref: BRepAlgoAPI_BuilderShape (BRepAlgoAPI_BuilderShape.hxx)
     //
     // These methods provide OCCT-compatible shape history tracking.
-    // 鉁?OCCT-aligned: stubs return all known history.
+    // 鉁?stubs return all known history.
     // 鈴?Side-distinction (A vs B) not implemented 鈥?section-style operations
     //     always involve both shapes; HasAncestorFaceOn1/2 always true.
 
@@ -252,7 +252,7 @@ impl BuilderOperation {
     /// Returns all result shapes whose origin traces back to an input shape
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
-    /// 鉁?OCCT-aligned: returns all modified shapes.
+    /// 鉁?returns all modified shapes.
     pub fn modified(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -311,7 +311,7 @@ impl BuilderOperation {
     /// Returns result shapes that were created as a direct result of the
     /// boolean operation (intersection edges, vertices, etc.).
     ///
-    /// 鉁?OCCT-aligned: returns generated faces/edges/vertices.
+    /// 鉁?returns generated faces/edges/vertices.
     pub fn generated(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -355,7 +355,7 @@ impl BuilderOperation {
     /// For faces: checks that the source face index appears in the deleted list.
     /// For edges/vertices: checks the deletion tracker.
     ///
-    /// 鉁?OCCT-aligned: face deletion tracking via history.
+    /// 鉁?face deletion tracking via history.
     pub fn is_deleted(&self, source: &ShapeRef) -> bool {
         let Some(ref h) = self.history else {
             return false;

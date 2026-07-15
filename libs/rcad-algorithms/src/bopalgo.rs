@@ -4,7 +4,7 @@ use crate::bopds::ds::DS;
 use crate::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
 
-/// ✅ OCCT-aligned: BOPAlgo_GlueEnum — glue mode for coincident-face detection.
+/// BOPAlgo_GlueEnum — glue mode for coincident-face detection.
 ///   GlueOff=0: no glue (standard intersection).
 ///   GlueFull=1: full glue (coincident faces create shared topology).
 ///   GlueShift=2: shift glue (same as full, but with tolerance shift).
@@ -19,7 +19,7 @@ impl Default for GlueEnum {
     fn default() -> Self { GlueEnum::GlueOff }
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Alert base — alert types for pipeline diagnostics.
+/// BOPAlgo_Alert base — alert types for pipeline diagnostics.
 ///   OCCT uses a polymorphic class hierarchy (BOPAlgo_Alert → subclasses).
 ///   rcad uses a flat enum since Rust naturally models "one of" variants.
 #[derive(Debug, Clone)]
@@ -33,19 +33,19 @@ pub enum Alert {
     SolidBuilderUnusedFaces(Vec<usize>),
     /// Edge has no curve (section edge without valid geometry).
     EdgeWithoutCurve(usize),
-    /// OCCT-aligned: BOPAlgo_AlertTooFewArguments.
+    /// BOPAlgo_AlertTooFewArguments.
     TooFewArguments,
-    /// OCCT-aligned: BOPAlgo_AlertNoFiller.
+    /// BOPAlgo_AlertNoFiller.
     NoFiller,
-    /// OCCT-aligned: BOPAlgo_AlertBOPNotAllowed.
+    /// BOPAlgo_AlertBOPNotAllowed.
     BOPNotAllowed,
-    /// OCCT-aligned: BOPAlgo_AlertBOPNotSet.
+    /// BOPAlgo_AlertBOPNotSet.
     BOPNotSet,
-    /// OCCT-aligned: BOPAlgo_AlertEmptyShape.
+    /// BOPAlgo_AlertEmptyShape.
     EmptyShape,
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Report — collects alerts during pipeline execution.
+/// BOPAlgo_Report — collects alerts during pipeline execution.
 ///   OCCT BOPAlgo_Report stores Handle(BOPAlgo_Alert) list + Dump() method.
 #[derive(Debug, Clone, Default)]
 pub struct Report {
@@ -59,7 +59,7 @@ impl Report {
     pub fn alerts(&self) -> &[Alert] { &self.alerts }
     pub fn clear(&mut self) { self.alerts.clear(); }
 
-    /// OCCT-aligned: HasErrors — checks for fatal alerts.
+    /// HasErrors — checks for fatal alerts.
     pub fn has_errors(&self) -> bool {
         self.alerts.iter().any(|a| matches!(a,
             Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)
@@ -67,27 +67,27 @@ impl Report {
             | Alert::BOPNotAllowed | Alert::BOPNotSet | Alert::EmptyShape))
     }
 
-    /// OCCT-aligned: HasAlert — check if a specific alert type is present.
+    /// HasAlert — check if a specific alert type is present.
     pub fn has_alert(&self, alert_type: &Alert) -> bool {
         self.alerts.iter().any(|a| std::mem::discriminant(a) == std::mem::discriminant(alert_type))
     }
 
-    /// OCCT-aligned: Merge — merge another report's alerts into this one.
+    /// Merge — merge another report's alerts into this one.
     pub fn merge(&mut self, other: &Report) {
         self.alerts.extend_from_slice(&other.alerts);
     }
 
-    /// OCCT-aligned: GetAlerts — get alerts matching a predicate, grouped.
+    /// GetAlerts — get alerts matching a predicate, grouped.
     ///   rcad: simplified — returns all alerts.
     pub fn get_alerts(&self) -> &[Alert] { &self.alerts }
 
-    /// OCCT-aligned: compatibility check for code that uses simple bool.
+    /// compatibility check for code that uses simple bool.
     pub fn has_error(&self) -> bool {
         self.alerts.iter().any(|a| matches!(a, Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)))
     }
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::FillMap (hxx L83-102).
+/// BOPAlgo_Tools::FillMap (hxx L83-102).
 /// rcad: specialization for usize keys.
 pub fn fill_map(
     map: &mut BTreeMap<usize, Vec<usize>>,
@@ -98,7 +98,7 @@ pub fn fill_map(
     map.entry(n2).or_default().push(n1);
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::MakeBlocks (hxx L45-80).
+/// BOPAlgo_Tools::MakeBlocks (hxx L45-80).
 /// rcad: specialization for `BTreeMap<usize, Vec<usize>>` → `Vec<Vec<usize>>`.
 pub fn make_blocks(map: &BTreeMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
     let mut fence: HashSet<usize> = HashSet::new();
@@ -124,7 +124,7 @@ pub fn make_blocks(map: &BTreeMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
     blocks
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::IntersectVertices (hxx L1119-1205).
+/// BOPAlgo_Tools::IntersectVertices (hxx L1119-1205).
 ///
 /// Groups vertices by geometric proximity (overlapping tolerance spheres).
 /// Each resulting chain contains vertex indices that should be merged.
@@ -190,7 +190,7 @@ pub fn intersect_vertices(
     }).collect()
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::EdgesToWires (hxx L360-663).
+/// BOPAlgo_Tools::EdgesToWires (hxx L360-663).
 /// Converts a set of edge indices into connected wires.
 /// The edges are expected to be planar; each resulting wire starts
 /// at a free end and follows connectivity through shared vertices.
@@ -312,7 +312,7 @@ pub fn edges_to_wires(
     Ok(a_lwires)
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::ClassifyFaces (hxx:1622-1747).
+/// BOPAlgo_Tools::ClassifyFaces (hxx:1622-1747).
 ///
 /// Classifies result faces relatively draft solids.  For each solid,
 /// collects the faces classified as IN into the returned Vec.
@@ -351,7 +351,7 @@ pub fn classify_faces(
     the_in_parts
 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::TrsfToPoint (hxx:1912-1937).
+/// BOPAlgo_Tools::TrsfToPoint (hxx:1912-1937).
 ///
 /// Computes a translation from the combined bounding box of two boxes to a point.
 /// Returns `Some(translation_vector)` when the point is sufficiently far from the

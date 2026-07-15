@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
+//! IntPatch_TheSurfFunction — F(u,v) = Q(P(u,v))
 //!
 //! OCCT IntPatch_TheSurfFunction.hxx / .cxx
 //!
@@ -12,7 +12,7 @@ use rcad_kernel::geom::{Surface3, SurfaceEval};
 use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 use super::super::super::inttools::int_surf_quadric::Quadric;
 
-/// OCCT-aligned: IntPatch_TheSurfFunction
+/// IntPatch_TheSurfFunction
 ///
 /// Fields (hxx:78-95):
 ///   surf:     void* — parametric surface (Handle(Adaptor3d_Surface))

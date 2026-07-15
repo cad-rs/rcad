@@ -1,4 +1,4 @@
-//!  ?OCCT-aligned: IntPatch_PrmPrmIntersection  ?intersection of two
+//!  ?IntPatch_PrmPrmIntersection  ?intersection of two
 //!   bi-parametrized (parametric-parametric) surfaces.
 //!
 //! OCCT source: TKGeomAlgo/IntPatch/IntPatch_PrmPrmIntersection.cxx (4144 lines)
@@ -32,7 +32,7 @@ pub enum Transition { In, Out, Undefined }
 // T3Bits  ?OCCT IntPatch_PrmPrmIntersection_T3Bits
 // ====================================================================
 
-///  ?OCCT-aligned: 1-D bit array for (size³) cells.
+///  ?1-D bit array for (size³) cells.
 pub struct T3Bits {
     p: Vec<u32>,
     isize: usize,
@@ -251,7 +251,7 @@ impl PrmPrmIntersection {
 
     // ── Perform (cxx:1827-2172): intersect from seed point list ─────
 
-    ///  ?OCCT-aligned: Perform(Surf1, D1, Surf2, D2, TolTangency, Epsilon, Deflection,
+    ///  ?Perform(Surf1, D1, Surf2, D2, TolTangency, Epsilon, Deflection,
     ///   Increment, ListOfPoints)
     ///
     ///   Walks from each seed point in `seed_points` along the intersection curve.
@@ -400,7 +400,7 @@ impl PrmPrmIntersection {
 
     // ── ComputeTransitions (OCCT L2094-2115) ────────────────────────
 
-    /// OCCT-aligned: compute In/Out transition from tangent × normal.
+    /// compute In/Out transition from tangent × normal.
     ///   tgline · (norm2 × norm1) >= 0  ?(Out, In) else (In, Out)
     fn compute_transitions(&self, s1: &rcad_kernel::geom::Surface3,
                            s2: &rcad_kernel::geom::Surface3,
@@ -568,7 +568,7 @@ pub fn point_depart(
     // Placeholder: OCCT computes UV bounds from grid indices
 }
 
-/// OCCT-aligned: IntSurf_LineOn2S  ?sequence of IntSurf_PntOn2S with bounding boxes.
+/// IntSurf_LineOn2S  ?sequence of IntSurf_PntOn2S with bounding boxes.
 pub struct IntSurf_LineOn2S {
     pub points: Vec<PntOn2S>,
 }

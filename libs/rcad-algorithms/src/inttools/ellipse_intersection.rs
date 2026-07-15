@@ -5,8 +5,8 @@
 //! numerical Edge-Face intersection (IntTools_EdgeFace), same as rcad's
 //! ImplicitSurface numeric path.
 //!
-//! ✅ Ellipse × Plane: analytic A + B·cosθ + C·sinθ = 0 solve, matching OCCT.
-//! ✅ Ellipse × {Cylinder, Cone, Sphere}: numeric Newton refinement, matching
+//! Ellipse × Plane: analytic A + B·cosθ + C·sinθ = 0 solve, matching OCCT.
+//! Ellipse × {Cylinder, Cone, Sphere}: numeric Newton refinement, matching
 //!    OCCT's generic EF fallback path in IntTools_EdgeFace.
 
 use glam::DVec3;
@@ -33,7 +33,7 @@ pub struct EllipseSurfaceHit {
 ///
 /// Returns 0, 1, or 2 hits within `t_range`.
 ///
-/// ✅ OCCT-aligned: same analytic method as IntAna_IntConicQuad for planes.
+/// same analytic method as IntAna_IntConicQuad for planes.
 pub fn intersect_ellipse_plane(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
@@ -105,7 +105,7 @@ pub fn intersect_ellipse_plane_with_tol(
 ///
 /// OCCT IntAna_IntConicQuad has no ellipse×cylinder path — falls back to
 /// IntTools_EdgeFace numeric.  rcad: Newton refinement on implicit equation.
-/// ✅ OCCT-equivalent: numeric fallback matches OCCT's generic EF path.
+/// OCCT-equivalent: numeric fallback matches OCCT's generic EF path.
 pub fn intersect_ellipse_cylinder(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
@@ -136,7 +136,7 @@ pub fn intersect_ellipse_cylinder_with_tol(
 }
 
 /// Intersect an ellipse arc with a spherical surface.
-/// ✅ OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
+/// OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
 pub fn intersect_ellipse_sphere(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
@@ -162,7 +162,7 @@ pub fn intersect_ellipse_sphere_with_tol(
 }
 
 /// Intersect an ellipse arc with a conical surface.
-/// ✅ OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
+/// OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
 pub fn intersect_ellipse_cone(
     ellipse: &Ellipse3,
     t_range: [f64; 2],

@@ -1,8 +1,8 @@
-//! OCCT-aligned ShellSplitter: partitions a set of connected faces into closed shells.
+//! ShellSplitter: partitions a set of connected faces into closed shells.
 //!
 //! OCCT ref: BOPAlgo_ShellSplitter (BOPAlgo_ShellSplitter.cxx / .hxx)
 //!
-//! ✅ OCCT-aligned: full algorithm mirrors BOPAlgo_ShellSplitter.
+//! full algorithm mirrors BOPAlgo_ShellSplitter.
 //!   - Perform → MakeConnexityBlocks + MakeShells (L137-149)
 //!   - MakeShells: regular blocks → MakeShell; irregular → SplitBlock via
 //!     parallel CBK (L621-679)
@@ -24,7 +24,7 @@ use crate::boptools;
 // BOPAlgo_CBK — OCCT L48-88: parallel SplitBlock wrapper
 // ============================================================================
 
-/// OCCT-aligned: BOPAlgo_CBK (L48-88).
+/// BOPAlgo_CBK (L48-88).
 /// Wraps a ConnexityBlock for parallel SplitBlock execution.
 #[derive(Debug, Clone)]
 #[allow(non_snake_case)]
@@ -60,10 +60,10 @@ impl SplitBlockCbk {
     }
 }
 
-/// OCCT-aligned: BOPAlgo_VectorOfCBK — dynamic array of CBK.
+/// BOPAlgo_VectorOfCBK — dynamic array of CBK.
 type VectorOfCbk = Vec<SplitBlockCbk>;
 
-/// OCCT-aligned: GetEdgeOff (BOPTools_AlgoTools.cxx L1099-1130).
+/// GetEdgeOff (BOPTools_AlgoTools.cxx L1099-1130).
 /// Given edge `theE1` and face `theF2`, find whether the edge appears
 /// in the face and return the same edge index.  Orientation matching
 /// is deferred to GetFaceOff; rcad returns the raw edge index.
@@ -109,10 +109,10 @@ fn is_shell_closed(shell_faces: &[usize], ds: &DS) -> bool {
     ef.values().all(|flist| flist.len() == 2)
 }
 
-/// OCCT-aligned: MakeShell (BOPAlgo_ShellSplitter.cxx L683-698).
+/// MakeShell (BOPAlgo_ShellSplitter.cxx L683-698).
 /// Creates a TopoDS_Shell from a list of faces.  In rcad this
 /// returns a Vec<usize> of face indices.
-/// ✅ OCCT-aligned: also calls OrientFacesOnShell.
+/// also calls OrientFacesOnShell.
 fn make_shell(faces: &[usize], ds: &DS) -> Vec<usize> {
     let mut reversed: HashSet<usize> = HashSet::new();
     boptools::orient_faces_on_shell(faces, ds, &mut reversed)
@@ -122,7 +122,7 @@ fn make_shell(faces: &[usize], ds: &DS) -> Vec<usize> {
 // MakeConnexityBlocks — OCCT BOPTools_AlgoTools::MakeConnexityBlocks (List)
 // ============================================================================
 
-/// OCCT-aligned: connectivity-block construction from face indices.
+/// connectivity-block construction from face indices.
 ///
 /// Maps OCCT BOPTools_AlgoTools::MakeConnexityBlocks (L187-256):
 ///   1. Build compound from unique shapes; detect duplicates (aMNRegular).
@@ -272,7 +272,7 @@ pub(crate) fn make_connexity_blocks(start_shapes: &[usize], ds: &DS, lcb: &mut V
 // RefineShell — OCCT BOPAlgo_ShellSplitter::RefineShell (L443-617)
 // ============================================================================
 
-/// OCCT-aligned: split a shell on multi-connected (branch) edges.
+/// split a shell on multi-connected (branch) edges.
 ///
 /// Finds edges with >2 adjacent faces (or same-orientation on both sides),
 /// then flood-fills through non-branch edges to create sub-shells.
@@ -436,7 +436,7 @@ pub struct ShellSplitter {
 
 impl ShellSplitter {
     /// Empty constructor.
-    /// ✅ OCCT-aligned: BOPAlgo_ShellSplitter().
+    /// BOPAlgo_ShellSplitter().
     pub fn new() -> Self {
         Self {
             myStartShapes: Vec::new(),
@@ -446,19 +446,19 @@ impl ShellSplitter {
     }
 
     /// Add a face (by DS index) to the processing set.
-    /// ✅ OCCT-aligned: AddStartElement(const TopoDS_Shape&).
+    /// AddStartElement(const TopoDS_Shape&).
     pub fn add_start_element(&mut self, fi: usize) {
         self.myStartShapes.push(fi);
     }
 
     /// Return the start elements.
-    /// ✅ OCCT-aligned: StartElements().
+    /// StartElements().
     pub fn start_elements(&self) -> &[usize] {
         &self.myStartShapes
     }
 
     /// Perform the shell splitting algorithm.
-    /// ✅ OCCT-aligned: Perform (L137-149):
+    /// Perform (L137-149):
     ///   1. MakeConnexityBlocks (edge-connectivity grouping)
     ///   2. MakeShells (regular→MakeShell, irregular→SplitBlock)
     pub fn perform(&mut self, ds: &DS) {
@@ -467,7 +467,7 @@ impl ShellSplitter {
         self.make_shells(ds);
     }
 
-    /// ✅ OCCT-aligned: MakeShells (L621-679).
+    /// MakeShells (L621-679).
     ///   Regular blocks → make_shell (single shell from all faces).
     ///   Irregular blocks → SplitBlock via parallel CBK vector.
     fn make_shells(&mut self, ds: &DS) {
@@ -492,7 +492,7 @@ impl ShellSplitter {
         }
 
         // OCCT L657-665: parallel execution via CBK vector
-        // ✅ OCCT-aligned: sequential execution (OCCT parallel); determinism preferred.
+        // sequential execution (OCCT parallel); determinism preferred.
         for cbk in a_vcbk.iter_mut() {
             cbk.perform(ds);
         }
@@ -508,7 +508,7 @@ impl ShellSplitter {
     }
 
     /// Return the resulting shells.
-    /// ✅ OCCT-aligned: Shells().
+    /// Shells().
     pub fn shells(&self) -> &[Vec<usize>] {
         &self.myShells
     }
@@ -524,7 +524,7 @@ impl ShellSplitter {
     }
 
     /// Clear all state.
-    /// ✅ OCCT-aligned: Clear().
+    /// Clear().
     pub fn clear(&mut self) {
         self.myStartShapes.clear();
         self.myShells.clear();
@@ -542,7 +542,7 @@ impl Default for ShellSplitter {
 // SplitBlock — OCCT BOPAlgo_ShellSplitter::SplitBlock (L153-421)
 // ============================================================================
 
-/// OCCT-aligned: SplitBlock(BOPTools_ConnexityBlock&).
+/// SplitBlock(BOPTools_ConnexityBlock&).
 ///
 /// Processes an irregular connectivity block:
 ///   1. Remove faces with free edges (iterative)
@@ -550,7 +550,7 @@ impl Default for ShellSplitter {
 ///   3. RefineShell to split on multi-connected edges
 ///   4. Collect closed shells into myLoops
 ///
-/// ✅ OCCT-aligned: GetFaceOff angle selection via boptools::get_face_off.
+/// GetFaceOff angle selection via boptools::get_face_off.
 fn split_block(faces: &[usize], ds: &DS, loops: &mut Vec<Vec<usize>>) {
     if faces.is_empty() {
         return;

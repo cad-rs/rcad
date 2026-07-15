@@ -158,10 +158,10 @@ fn greedy_order_points(pts: Vec<DVec3>, gap_floor: f64) -> Vec<Vec<DVec3>> {
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
-// OCCT-aligned UV-space Newton-Raphson refinement (IntPatch_TheSearchInside)
+// UV-space Newton-Raphson refinement (IntPatch_TheSearchInside)
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-/// OCCT-aligned: UV-space Newton-Raphson refinement of an intersection point.
+/// UV-space Newton-Raphson refinement of an intersection point.
 ///
 /// Given an initial guess `(u, v)` on `s1`, find `(u', v')` where
 /// F(u',v')  ?0, where F(u,v) = signed_distance(s2, s1.point_at(u,v)).
@@ -229,7 +229,7 @@ fn refine_uv_intersection(
  None
 }
 
-/// OCCT-aligned: IntStart_SearchInside  ?constrained Newton-Raphson on F(u,v)=0
+/// IntStart_SearchInside  ?constrained Newton-Raphson on F(u,v)=0
 /// within UV bounds [u0, u1] [v0, v1] (matching OCCT's Binf/Bsup box).
 /// After convergence, checks |F(u,v)| <= func_tol.
 fn refine_uv_intersection_bounded(
@@ -287,7 +287,7 @@ fn refine_uv_intersection_bounded(
 
  u += du;
  v += dv;
- // OCCT-aligned: clamp to search box (Binf/Bsup)
+ // clamp to search box (Binf/Bsup)
  u = u.clamp(u0, u1);
  v = v.clamp(v0, v1);
  }
@@ -296,10 +296,10 @@ fn refine_uv_intersection_bounded(
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
-// OCCT-aligned polyline  ?BSpline curve fitting
+// polyline  ?BSpline curve fitting
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-/// OCCT-aligned polyline-to-BSpline curve fitting for surface-surface intersection
+/// polyline-to-BSpline curve fitting for surface-surface intersection
 /// results.
 ///
 /// OCCT reference: `GeomInt_IntSS::MakeBSpline` (GeomInt_IntSS.cxx, lines ~180-280).
@@ -318,7 +318,7 @@ fn refine_uv_intersection_bounded(
 /// - Returns `Some(Curve3::BSpline(...))` on success, or `None` when there
 /// are too few points or fitting fails
 ///
-///  ?OCCT-aligned: Same least-squares + adaptive refinement strategy as
+///  ?Same least-squares + adaptive refinement strategy as
 /// `GeomInt_IntSS::MakeBSpline`. The chord-length parameterization and
 /// clamped cubic knot vector match OCCT's internal approach.
 pub fn polyline_to_bspline(points: &[DVec3], max_tol: f64) -> Option<Curve3> {
@@ -406,7 +406,7 @@ fn max_bspline_deviation(bspline: &BSplineCurve3, data_pts: &[DVec3], params: &[
 /// Convert all `SurfaceCurve::Polyline` entries in a
 /// `SurfaceSurfaceIntersection` to BSpline approximations when beneficial.
 ///
-///  ?OCCT-aligned: corresponds to the post-processing step in
+///  ?corresponds to the post-processing step in
 /// `GeomInt_IntSS::Perform` that replaces raw polylines with BSpline curves.
 ///
 /// Call this after [intersect_surfaces_with_density] or any surface-surface

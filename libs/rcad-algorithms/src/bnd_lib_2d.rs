@@ -3,7 +3,7 @@
 //! Provides analytical bounding-box computation for 2D curves,
 //! matching OCCT's `BndLib` (2D overloads) and `GeomBndLib_Curve2d` dispatch.
 //!
-//! ? OCCT-aligned: BndLib.hxx (2D), GeomBndLib_Curve2d
+//! ? BndLib.hxx (2D), GeomBndLib_Curve2d
 //!
 //! | Type           | Method                                        |
 //! |----------------|-----------------------------------------------|
@@ -28,11 +28,11 @@ use rcad_kernel::geom::{
 // =============================================================================
 // BoundingBox2d �� 2D Axis-Aligned Bounding Box
 // =============================================================================
-// ? OCCT-aligned: Bnd_Box2d (simplified �� no open/whole-space flags)
+// ? Bnd_Box2d (simplified �� no open/whole-space flags)
 
 /// A 2D axis-aligned bounding box.
 ///
-/// OCCT-aligned: Bnd_Box2d.  Provides `Add(point)`, `Enlarge(tol)`,
+/// Bnd_Box2d.  Provides `Add(point)`, `Enlarge(tol)`,
 /// `IsVoid()`, `Get()` accessors, and `from_corners`/`center`/etc.
 #[derive(Debug, Clone, Copy)]
 pub struct BoundingBox2d {
@@ -224,7 +224,7 @@ fn line_box(line: &Line2d, mut t1: f64, mut t2: f64, tol: f64) -> BoundingBox2d 
 }
 
 // ���� Circle2d ����������������������������������������������������������������������������������������������������������������������������
-// ? OCCT-aligned: GeomBndLib_Circle2d (same formula as 3D, 2 coordinates)
+// ? GeomBndLib_Circle2d (same formula as 3D, 2 coordinates)
 
 fn circle_box(circle: &Circle2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let r = circle.radius;

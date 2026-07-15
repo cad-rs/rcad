@@ -1,6 +1,6 @@
 /// Like [`boolean_op`] — standard path with tolerance correction.
 ///
-/// Calls [`boolean_op`] internally, then runs OCCT-aligned tolerance correction
+/// Calls [`boolean_op`] internally, then runs tolerance correction
 /// on the result before wrapping it as old rcad_kernel::BRep for backward compatibility.
 pub fn boolean_op_with_retry(
  op: BooleanOpType,

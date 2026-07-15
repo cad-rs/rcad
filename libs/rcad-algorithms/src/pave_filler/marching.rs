@@ -146,7 +146,7 @@ impl<'a> super::PaveFiller<'a> {
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // OCCT-aligned: use sign-change grid marching (IntTools_FaceFace / IntPatch_ImpPrmIntersection).
+        // use sign-change grid marching (IntTools_FaceFace / IntPatch_ImpPrmIntersection).
         // No BSpline demotion �?BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
         let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
         if any_curved {
@@ -333,13 +333,13 @@ impl<'a> super::PaveFiller<'a> {
             let dir = (curve.points[curve.points.len() - 1] - curve.points[0]).normalize_or_zero();
             let t_range = [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)];
 
-            // �?OCCT-aligned:reApprox �?validate pcurves; retry with loose tolerance
+            // �?reApprox �?validate pcurves; retry with loose tolerance
             // if validation fails.
             let (pcurve_a, pcurve_b) = self.make_marching_pcurves_with_reapprox(
                 &curve.points, &s1, &s2, f1, f2, &t_range,
             );
 
-            // OCCT-aligned: approximate marching polyline to BSpline (MakeCurve / GeomInt_IntSS::MakeBSpline)
+            // approximate marching polyline to BSpline (MakeCurve / GeomInt_IntSS::MakeBSpline)
             let approx_curve = if curve.points.len() >= 4 {
                 crate::inttools::intss::polyline_to_bspline(&curve.points, TOLERANCE_TOL_SCALE_MICRO)
                     .filter(|c| matches!(c, Curve3::BSpline(_)))
@@ -423,7 +423,7 @@ impl<'a> super::PaveFiller<'a> {
             return (pca, pcb);
         }
 
-        // �?OCCT-aligned:reApprox �?fallback with looser validation.
+        // �?reApprox �?fallback with looser validation.
         // Skip the self-intersection check (is_curve_valid_2d) since polyline
         // pcurves from marching can have V-folds that are geometrically correct.
         let valid_a2 = pca.as_ref().map_or(false, |pc| {

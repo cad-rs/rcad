@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntPatch_ALineToWLine — convert analytic line to walking point sequence.
+//! IntPatch_ALineToWLine — convert analytic line to walking point sequence.
 //!
 //! OCCT IntPatch_ALineToWLine.hxx / .cxx (33K)
 //!
@@ -10,7 +10,7 @@ use rcad_kernel::geom::{Curve3, Surface3};
 use rcad_kernel::CurveEval;
 use super::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
 
-/// OCCT-aligned: ALineToWLine — converts analytic lines to walking point sequences.
+/// ALineToWLine — converts analytic lines to walking point sequences.
 pub struct ALineToWLine {
     nb_points: usize,
     tol_open_domain: f64,

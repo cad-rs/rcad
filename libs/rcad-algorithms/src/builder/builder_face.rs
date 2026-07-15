@@ -6,7 +6,7 @@ use crate::bopds::ds::DS;
 use crate::builder::types::*;
 use crate::builder::{WireEdgeSource, FaceOrigin};
 
-/// OCCT-aligned: BOPAlgo_BuilderFace (BuilderFace.hxx).
+/// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
 /// Two lifetimes: 'a = DS (long-lived), 'b = BRep data (may be shorter).
 pub(crate) struct BuilderFace<'a, 'b> {
@@ -17,9 +17,9 @@ pub(crate) struct BuilderFace<'a, 'b> {
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
     face_idx: usize,
     is_a: bool,
-    /// OCCT-aligned: myShapes (aLE edge list).
+    /// myShapes (aLE edge list).
     shapes: Option<Vec<ShapeRef>>,
-    /// OCCT-aligned: myAreas — resulting split-face TShape refs.
+    /// myAreas — resulting split-face TShape refs.
     my_areas: Vec<ShapeRef>,
     /// Internal ResultBuilder for TShape creation during perform().
     my_result: crate::builder::result_builder::ResultBuilder,
@@ -51,7 +51,7 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         &self.my_areas
     }
 
-    /// ✅ OCCT-aligned: Perform (BuilderFace.cxx L117-148).
+    /// Perform (BuilderFace.cxx L117-148).
     /// Converts myShapes (aLE) to WireSegments, then runs the standard
     /// Avoid → Loops → Areas → InternalShapes pipeline.
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
@@ -70,7 +70,7 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         let face = &self.ds.faces[self.face_idx];
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
 
-        // OCCT-aligned: convert myShapes (aLE) to WireSegments.
+        // convert myShapes (aLE) to WireSegments.
         // Each ShapeRef is a DS edge with orientation from the original wire.
         for &sr in shapes {
             let ei = sr.index.saturating_sub(e_base);

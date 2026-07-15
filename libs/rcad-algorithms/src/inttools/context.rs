@@ -1,4 +1,4 @@
-/// 鉁?OCCT-aligned: IntTools_Context 鈥?shared computation context with caches.
+/// 鉁?IntTools_Context 鈥?shared computation context with caches.
 ///   OCCT IntTools_Context.hxx caches: FClass2d, ProjPS, ProjPC, ProjPT,
 ///   SurfaceData, SolidClassifier, Hatcher, SurfaceAdaptor, OBB.
 ///   rcad: caches FClass2d per face and surface/curve projectors.
@@ -38,7 +38,7 @@ pub struct Context {
     obb_map: std::collections::HashMap<usize, ()>,
 }
 
-/// OCCT-aligned: ComputeVE result error codes (IntTools_Context.cxx L500-542).
+/// ComputeVE result error codes (IntTools_Context.cxx L500-542).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VeError {
     DegeneratedEdge = -1,
@@ -47,14 +47,14 @@ pub enum VeError {
     DistanceTooLarge = -4,
 }
 
-/// OCCT-aligned: ComputeVE result on success.
+/// ComputeVE result on success.
 #[derive(Debug, Clone, Copy)]
 pub struct VeResult {
     pub param: f64,
     pub tolerance: f64,
 }
 
-/// OCCT-aligned: ComputePE result error codes (IntTools_Context.cxx L438-496).
+/// ComputePE result error codes (IntTools_Context.cxx L438-496).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeError {
     NotGeometric = -2,
@@ -62,14 +62,14 @@ pub enum PeError {
     DistanceTooLarge = -4,
 }
 
-/// OCCT-aligned: ComputePE result on success.
+/// ComputePE result on success.
 #[derive(Debug, Clone, Copy)]
 pub struct PeResult {
     pub param: f64,
     pub distance: f64,
 }
 
-/// OCCT-aligned: ComputeVF result error codes (IntTools_Context.cxx L546-591).
+/// ComputeVF result error codes (IntTools_Context.cxx L546-591).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VfError {
     ProjectionFailed = -1,
@@ -77,7 +77,7 @@ pub enum VfError {
     PointOutsideFace = -3,
 }
 
-/// OCCT-aligned: ComputeVF result on success.
+/// ComputeVF result on success.
 #[derive(Debug, Clone, Copy)]
 pub struct VfResult {
     pub u: f64,
@@ -168,7 +168,7 @@ impl Context {
         }
     }
 
-    /// OCCT-aligned: ComputeVE (IntTools_Context.cxx L500-542).
+    /// ComputeVE (IntTools_Context.cxx L500-542).
     /// Projects a vertex onto an edge's curve. Returns Ok(param, tolerance) on success,
     /// or Err(VeError) with OCCT error code:
     ///   DegeneratedEdge (-1): edge is degenerated
@@ -197,7 +197,7 @@ impl Context {
         Ok(VeResult { param: proj.0, tolerance: new_tol })
     }
 
-    /// OCCT-aligned: ComputePE (IntTools_Context.cxx L438-496).
+    /// ComputePE (IntTools_Context.cxx L438-496).
     /// Projects a 3D point onto an edge's curve. Returns Ok(param, distance) on success,
     /// or Err(PeError) with OCCT error code:
     ///   NotGeometric (-2): edge has no 3D curve
@@ -240,7 +240,7 @@ impl Context {
         }
     }
 
-    /// OCCT-aligned: ComputeVF (IntTools_Context.cxx L546-591).
+    /// ComputeVF (IntTools_Context.cxx L546-591).
     /// Projects a vertex onto a face surface and classifies the UV against the
     /// face's trimmed domain. Returns Ok(u, v, tolerance) on success, or Err(VfError).
     pub fn compute_vf(&mut self, ds: &DS, vi: usize, fi: usize, fuzz: f64) -> Result<VfResult, VfError> {
@@ -263,13 +263,13 @@ impl Context {
         Ok(VfResult { u: uv.x, v: uv.y, tolerance: new_tol })
     }
 
-    /// OCCT-aligned: ProjectPointOnEdge (IntTools_Context.cxx L997-1011).
+    /// ProjectPointOnEdge (IntTools_Context.cxx L997-1011).
     /// Projects a 3D point onto an edge's curve. Returns Some(param) on success.
     pub fn project_point_on_edge(&mut self, ds: &DS, p: DVec3, ei: usize) -> Option<f64> {
         self.proj_pc(ds, ei, p).map(|(param, _, _)| param)
     }
 
-    /// OCCT-aligned: ProjPT(theP, theC) 鈥?projects a 3D point onto a transient curve.
+    /// ProjPT(theP, theC) 鈥?projects a 3D point onto a transient curve.
     /// projector for one-off curve projections. Returns (param, 3d_point, distance).
     pub fn proj_pt(&mut self, curve: &Curve3, p: DVec3) -> Option<(f64, DVec3, f64)> {
         let proj = closest_point_on_curve(curve, p, 16);

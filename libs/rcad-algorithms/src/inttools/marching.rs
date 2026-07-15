@@ -67,7 +67,7 @@ impl Default for MarchingConfig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// OCCT-aligned adaptive continuation marching configuration
+// adaptive continuation marching configuration
 // ──────────────────────────────────────────────────────────────────────────────
 //
 // Reference: OCCT IntWalk_PWalking.hxx, IntWalk_PWalking.cxx (Perform)
@@ -86,7 +86,7 @@ impl Default for MarchingConfig {
 //   L3684-3685 — Fleche step formula: step = sqrt(8 * Deflection * R)
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// OCCT-aligned configuration for adaptive continuation marching.
+/// configuration for adaptive continuation marching.
 ///
 /// Mirrors the parameters used by OCCT IntWalk_PWalking:
 /// - `Deflection` — chordal error tolerance (fleche), OCCT constructor param
@@ -114,8 +114,8 @@ impl Default for MarchingConfig {
 ///
 /// # Alignment Status
 ///
-/// ✅ OCCT-aligned: Fields map 1:1 to IntWalk_PWalking constructor params.
-/// ✅ Partial: Marching loop integration of curvature step is new;
+/// Fields map 1:1 to IntWalk_PWalking constructor params.
+/// Partial: Marching loop integration of curvature step is new;
 ///     callers must pass this config to `march_intersection_with_config`.
 #[derive(Debug, Clone, Copy)]
 pub struct MarchingConfigOCCT {
@@ -380,7 +380,7 @@ fn compute_curvature_along_dir(
     }
 }
 
-/// OCCT-aligned curvature-aware step size computation.
+/// curvature-aware step size computation.
 ///
 /// Estimates the radius of curvature of the surface at `uv` along direction
 /// `dir` and returns the maximum step that keeps chord error (fleche) below
@@ -440,7 +440,7 @@ pub fn compute_fleche_step(
     fleche_step.clamp(min_step, max_step)
 }
 
-/// OCCT-aligned adaptive sampling density based on surface curvature.
+/// adaptive sampling density based on surface curvature.
 ///
 /// Evaluates surface curvature at sample points across the parametric domain
 /// and uses the minimum radius of curvature to compute a grid density suitable
@@ -1214,7 +1214,7 @@ fn march_one_direction_monitored_simple(
         let next_raw = current + dir * current_step.abs();
         let next = project_onto_intersection(s1, s2, next_raw);
 
-        // --- OCCT-aligned deflection check (chord error / fleche) ---
+        // --- deflection check (chord error / fleche) ---
         // Reference: OCCT IntWalk_PWalking::TestDeflection L3407-3916
         let step_dist = (next - current).length();
         let step_dist_sq = step_dist * step_dist;

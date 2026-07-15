@@ -121,7 +121,7 @@ fn intersect_conic_conic(c1: &Curve2d, typ1: G2dCurveType, c2: &Curve2d, typ2: G
     else { intersect_curve_curve(c1, c2, t1_min, t1_max, t2_min, t2_max, TOLERANCE_ABS) }
 }
 
-/// OCCT-aligned: IntCurve_IntConicConic::Perform(Circle, DC, Ellipse, DE)
+/// IntCurve_IntConicConic::Perform(Circle, DC, Ellipse, DE)
 ///   (IntCurve_IntConicConic.cxx L439-482).
 ///   Implicit circle (IConicTool) × Parametric ellipse (PConic):
 ///   solve |P(t) - C_center|² - R² = 0 via sampling + Newton.
@@ -209,7 +209,7 @@ fn intersect_circle_ellipse(circle: &Curve2d, ell: &Curve2d, tc_min: f64, tc_max
     dedup(results)
 }
 
-/// OCCT-aligned: IntCurve_IntConicConic::Perform(Ellipse, DE1, Ellipse, DE2)
+/// IntCurve_IntConicConic::Perform(Ellipse, DE1, Ellipse, DE2)
 ///   (IntCurve_IntConicConic.cxx L915-958).
 ///   Implicit ellipse1 × Parametric ellipse2: solve implicit form along parametric curve.
 ///   Domain closure: non-closed domains get period 2π.
@@ -288,7 +288,7 @@ fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f6
     dedup(results)
 }
 
-/// OCCT-aligned: IntCurve_IConicTool (IntCurve_IConicTool.hxx/lxx).
+/// IntCurve_IConicTool (IntCurve_IConicTool.hxx/lxx).
 ///   Implicit representation of a conic: F(P) = 0 defines the conic surface.
 struct IConicTool {
     conic: Curve2d,
@@ -318,7 +318,7 @@ impl IConicTool {
     }
 }
 
-/// OCCT-aligned: IntCurve_IntConicCurveGen (IntConicCurveGen.gxx/lxx L119-130).
+/// IntCurve_IntConicCurveGen (IntConicCurveGen.gxx/lxx L119-130).
 ///   Perform(IConicTool, D1, PCurve, D2, TolConf, Tol):
 ///   implicit conic × parametric curve intersection.
 ///   Algorithm: sample parametric curve �?find sign changes in implicit value �?Newton refine.
@@ -381,7 +381,7 @@ fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, t
     results
 }
 
-/// OCCT-aligned: IntCurve_IntPolyPolyGen (IntPolyPolyGen.gxx L93-107+).
+/// IntCurve_IntPolyPolyGen (IntPolyPolyGen.gxx L93-107+).
 ///   Polygon-based curve-curve intersection:
 ///   1. Sample both curves into polygons (OCCT uses ThePolygon2d + bounding boxes)
 ///   2. Find overlapping polygon segments

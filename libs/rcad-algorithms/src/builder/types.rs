@@ -14,7 +14,7 @@ pub enum BooleanOpType {
  Difference,
 }
 
-/// OCCT-aligned: TopAbs_ShapeEnum subset used by the Builder pipeline.
+/// TopAbs_ShapeEnum subset used by the Builder pipeline.
 /// Matches OCCT's dimension-by-dimension ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeType {
@@ -32,15 +32,15 @@ pub enum ShapeType {
 pub enum BooleanError {
  /// Operation type is not valid for the boolean operation.
  InvalidOperation,
- /// OCCT-aligned: AlertTooFewArguments 闁?fewer than 2 arguments.
+ /// AlertTooFewArguments 闁?fewer than 2 arguments.
  TooFewArguments,
- /// OCCT-aligned: AlertNoFiller 闁?PaveFiller not initialized.
+ /// AlertNoFiller 闁?PaveFiller not initialized.
  NoFiller,
- /// OCCT-aligned: AlertBOPNotAllowed 闁?non-licit operation for the arguments.
+ /// AlertBOPNotAllowed 闁?non-licit operation for the arguments.
  BOPNotAllowed,
- /// OCCT-aligned: AlertBOPNotSet 闁?operation type not set.
+ /// AlertBOPNotSet 闁?operation type not set.
  BOPNotSet,
- /// OCCT-aligned: AlertEmptyShape 闁?one argument is empty.
+ /// AlertEmptyShape 闁?one argument is empty.
  EmptyShape,
  EmptyInput,
  MissingGeometry(&'static str),
@@ -93,20 +93,20 @@ impl std::error::Error for BooleanError {}
 
 /// DEPRECATED: OCCT = ?  split_face + emit  闁逞屽厴閸? ?
 ///  闁?=  FaceSampleData (classify)  ?WireFace (emit) ?
-/// OCCT-aligned: wire grouping result 闁?ordered segment chains forming a face boundary.
+/// wire grouping result 闁?ordered segment chains forming a face boundary.
 #[derive(Clone)]
 pub struct WireFace {
  pub outer_wire: Vec<usize>,
  pub inner_wires: Vec<Vec<usize>>,
- /// OCCT-aligned: Internal wires from PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L327-382).
+ /// Internal wires from PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L327-382).
  pub internal_wires: Vec<Vec<usize>>,
 }
 
-/// 闁OCCT-aligned: collected sub-face result before classification.
+/// 闁collected sub-face result before classification.
 /// Holds either a wire-pipeline result (to emit via emit_wire_face) or
 /// a legacy split_face result (to emit via emit_face_with_origin).
 
-/// OCCT-aligned: Source of a virtual edge segment in the edge-to-wire pipeline.
+/// Source of a virtual edge segment in the edge-to-wire pipeline.
 #[derive(Debug, Clone)]
 pub(crate) enum WireEdgeSource {
  DsEdge(usize),
@@ -114,7 +114,7 @@ pub(crate) enum WireEdgeSource {
  SeamEdge,
 }
 
-/// OCCT-aligned: TopAbs_Orientation for WireSegment.
+/// TopAbs_Orientation for WireSegment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WireOrientation {
  Forward,
@@ -123,7 +123,7 @@ pub(crate) enum WireOrientation {
  External,
 }
 
-/// OCCT-aligned: Virtual edge used in the edge-to-wire pipeline.
+/// Virtual edge used in the edge-to-wire pipeline.
 #[derive(Debug, Clone)]
 pub(crate) struct WireSegment {
  pub(crate) start_vertex: usize,
@@ -137,7 +137,7 @@ pub(crate) struct WireSegment {
  /// wires. Set for seam segments on split-seam periodic surfaces.
  pub(crate) second_pcurve: Option<Curve2d>,
  pub(crate) first_pcurve: Option<Curve2d>,
- /// 闁OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
+ /// 闁vertex parameters on the pcurve (BRep_Tool::Parameter,
  /// WireSplitter_1.cxx L669). t_range[0] = start_vertex param,
  /// t_range[1] = end_vertex param.  vertex_uv evaluates pc.point_at(t).
  pub(crate) t_range: [f64; 2],
@@ -184,7 +184,7 @@ pub(crate) type FaceEntry = (
  Vec<Vec<(usize, bool)>>, // internal wire edges (TopAbs_INTERNAL)
 );
 
-/// 闁OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
+/// 闁intermediate result of the LOW-D phase (V+E+W creation)
 /// in the dimension-by-dimension pipeline.  Carries the data needed for
 /// HIGH-D face assembly from build_face_edges_and_wires to
 /// build_face_from_wire_edges, matching OCCT's separation of edge/wire
@@ -205,7 +205,7 @@ pub(crate) struct FaceWireEdges {
  outer_sig: Vec<usize>,
 }
 
-/// OCCT-aligned: Source of a virtual edge segment, TopoDS variant.
+/// Source of a virtual edge segment, TopoDS variant.
 #[derive(Debug, Clone)]
 pub(crate) enum WireEdgeSourceTopoDS {
  DsEdge(ShapeRef),
@@ -213,7 +213,7 @@ pub(crate) enum WireEdgeSourceTopoDS {
  SeamEdge,
 }
 
-/// OCCT-aligned: Virtual edge using ShapeRef handles instead of usize indices.
+/// Virtual edge using ShapeRef handles instead of usize indices.
 /// Designed to carry the same information as WireSegment but with TopoDS handles
 /// readable through BRepTool queries.
 #[derive(Debug, Clone)]
@@ -227,7 +227,7 @@ pub(crate) struct WireSegmentTopoDS {
  pub(crate) is_closed_on_face: bool,
  pub(crate) first_pcurve: Option<Curve2d>,
  pub(crate) second_pcurve: Option<Curve2d>,
- /// 闁OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
+ /// 闁vertex parameters on the pcurve (BRep_Tool::Parameter).
  /// t_range[0] = start_vertex param, t_range[1] = end_vertex param.
  pub(crate) t_range: [f64; 2],
 }

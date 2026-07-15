@@ -70,7 +70,7 @@ pub fn intersect_sphere_torus(
 
 /// On-axis case: sphere center on torus axis.
 ///
-/// �?OCCT-aligned (documented): OCCT `IntAna_QuadQuadGeo` uses the direct
+/// �?(documented): OCCT `IntAna_QuadQuadGeo` uses the direct
 /// anAlpha / aBeta analytic formula for coaxial sphere-torus intersection
 /// (`BOPAlgo_PaveFiller.cxx`, spherical surface pair dispatch).  The key OCCT
 /// expressions are:

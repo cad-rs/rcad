@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned: IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
+﻿//! IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
 //!
 //! OCCT IntAna_QuadQuadGeo.hxx / .cxx
 //!
@@ -28,7 +28,7 @@ pub enum AnaResultType {
     NoGeometricSolution,
 }
 
-/// OCCT-aligned: IntAna_QuadQuadGeo
+/// IntAna_QuadQuadGeo
 ///
 /// OCCT fields (L256-280):
 ///   done, nbint, typeres
@@ -555,7 +555,7 @@ impl QuadQuadGeo {
     }
 }
 
-/// Helper: compute a perpendicular pair to a given direction (OCCT-aligned).
+/// Helper: compute a perpendicular pair to a given direction ().
 fn any_perpendicular_pair(dir: DVec3) -> (DVec3, DVec3) {
     let x_dir = rcad_kernel::geom::any_perpendicular(dir);
     let y_dir = dir.cross(x_dir).normalize_or_zero();

@@ -1281,7 +1281,7 @@ pub fn offset_shell_with_options(
     }
 
     // Step 3: Compute offset vertex positions with position-based deduplication
-    // and OCCT-aligned edge-first computation.
+    // and edge-first computation.
     let pos_tol = 1e-8;
     let mut pos_to_group: Vec<usize> = vec![usize::MAX; brep.vertex_count()];
     let mut group_positions: Vec<DVec3> = Vec::new();
@@ -1305,7 +1305,7 @@ pub fn offset_shell_with_options(
         }
     }
 
-    // Compute offset for each group using edge-first projection (OCCT-aligned)
+    // Compute offset for each group using edge-first projection ()
     let mut group_offsets: Vec<DVec3> = Vec::with_capacity(group_positions.len());
     for gi in 0..group_positions.len() {
         let pt = group_positions[gi];

@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_TheSearchInside — interior starting point search.
+//! IntPatch_TheSearchInside — interior starting point search.
 //!
 //! OCCT IntStart_SearchInside.gxx (~300 lines) + .lxx.
 //!

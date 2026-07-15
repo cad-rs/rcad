@@ -22,7 +22,7 @@ pub fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 /// Compute the shrunk (valid) range for a curve segment, excluding the tolerance
 /// spheres around the endpoint vertices.
 ///
-/// OCCT-aligned: IntTools_ShrunkRange::Perform() (IntTools_ShrunkRange.cxx L107-191)
+/// IntTools_ShrunkRange::Perform() (IntTools_ShrunkRange.cxx L107-191)
 ///              + BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 ///
 /// The shrunk range [t_start, t_end] is the portion of [t1, t2] where the curve point

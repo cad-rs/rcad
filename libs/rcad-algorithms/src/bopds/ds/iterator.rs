@@ -1,7 +1,7 @@
 use super::DS;
 use rcad_kernel::topods::ShapeType;
 
-/// OCCT-aligned: BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
+/// BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
 ///
 /// Builds a single BVH tree over all DS sub-shapes (vertices, edges, faces),
 /// finds overlapping AABB pairs, buckets them by (type1, type2) combination,

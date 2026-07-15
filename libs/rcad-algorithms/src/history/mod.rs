@@ -833,7 +833,7 @@ impl HistoryStatistics {
 // BooleanHistory (backward compatible)
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-/// OCCT-aligned: history status for a source shape.
+/// history status for a source shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStatus {
  /// Source shape was split; at least one split is in the result.
@@ -844,7 +844,7 @@ pub enum HistoryStatus {
  Deleted,
 }
 
-/// OCCT-aligned: one entry in BRepTools_History per source shape.
+/// one entry in BRepTools_History per source shape.
 #[derive(Debug, Clone)]
 pub struct SourceShapeEntry {
  /// DS index of the source shape.
@@ -872,7 +872,7 @@ pub struct BooleanHistory {
  pub deleted_from_a: Vec<usize>,
  pub deleted_from_b: Vec<usize>,
  pub deletion_reasons: HashMap<(EntityType, usize), DeletionReason>,
- /// OCCT-aligned: source esult history (BRepTools_History equivalent).
+ /// source esult history (BRepTools_History equivalent).
  /// Populated by `BooleanBuilder::build_source_history` during PrepareHistory.
  pub source_history: Vec<SourceShapeEntry>,
 }
@@ -1262,7 +1262,7 @@ impl BooleanHistory {
  }
  }
 
- ///  ?OCCT-aligned: PostTreat history maps from DS image data.
+ ///  ?PostTreat history maps from DS image data.
  ///
  /// OCCT ref: BOPAlgo_Builder_3.cxx  ?`BOPAlgo_Builder::PostTreat`
  /// (L1-250: iterating `myImages` to build Modified/Generated/IsDeleted maps).

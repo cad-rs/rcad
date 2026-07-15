@@ -19,7 +19,7 @@ use super::geom_abs_surface_type::{GeomAbsSurfaceType, classify_surface_type};
 use super::int_patch_imp_imp_intersection::ImpImpIntersection;
 
 // ============================================================================
-// ✅ OCCT-aligned: IntPatch_Intersection (IntPatch_Intersection.hxx)
+// IntPatch_Intersection (IntPatch_Intersection.hxx)
 //
 // OCCT L240-254: member fields
 // ============================================================================
@@ -467,7 +467,7 @@ impl IntPatchIntersection {
         _typs1: GeomAbsSurfaceType,
         _typs2: GeomAbsSurfaceType,
     ) {
-        // ✅ OCCT-aligned: IntPatch_ImpImpIntersection
+        // IntPatch_ImpImpIntersection
         let mut imp_imp = ImpImpIntersection::new();
         imp_imp.perform(s1, s2, self.my_tol_arc, self.my_tol_tang);
         if imp_imp.is_done() {

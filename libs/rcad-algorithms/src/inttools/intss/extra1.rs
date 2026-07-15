@@ -55,7 +55,7 @@
  // original nn-distance is used to avoid altering sign-change patterns for
  // large default domains.
  //
- //  ?OCCT-aligned: Implicit signed distance for Plane (IntSurf_Quadric / gp_Pln),
+ //  ?Implicit signed distance for Plane (IntSurf_Quadric / gp_Pln),
  // matching IntPatch_ImpPrmIntersection which uses F(P) = n (P - origin) as the
  // signed-distance function.  Signed values enable zero-crossing detection when
  // the grid passes through the plane, rather than relying on threshold proximity.
@@ -269,7 +269,7 @@
  }
  }
 
- // OCCT-aligned: IntStart_SearchInside / IntPatch_TheSearchInside  ?
+ // IntStart_SearchInside / IntPatch_TheSearchInside  ?
  // scan all grid points, run UV-constrained Newton-Raphson on F(u,v)=0.
  // Catches intersection points that grid-edge crossing misses (e.g. when
  // ALL signed distances are on one side of the surface).
@@ -279,7 +279,7 @@
  // (~Binf/Bsup in OCCT), runs math_FunctionSetRoot, checks |F| <= Tol.
  {
  let mut near_zero_pts: Vec<DVec3> = Vec::new();
- // UV grid cell half-size for the OCCT-aligned search box
+ // UV grid cell half-size for the search box
  let half_du = du * 0.5;
  let half_dv = dv * 0.5;
  for i in 0..nn {
@@ -290,7 +290,7 @@
  continue;
  }
  let uv = uvs[k];
- // OCCT-aligned: search box = [uv du/2, uv dv/2] clamped to domain
+ // search box = [uv du/2, uv dv/2] clamped to domain
  let u0 = (uv.x - half_du).max(u1_0);
  let u1_b = (uv.x + half_du).min(u1_1);
  let v0 = (uv.y - half_dv).max(v1_0);
@@ -383,7 +383,7 @@
  continue;
  }
 
- //  ?OCCT-aligned: Try BSpline conversion for compact / evaluable
+ //  ?Try BSpline conversion for compact / evaluable
  // representation (GeomInt_IntSS::MakeBSpline).
  let curve_3d = if chain.len() >= 4 {
  polyline_to_bspline(&chain, TOLERANCE_TOL_SCALE_MICRO)

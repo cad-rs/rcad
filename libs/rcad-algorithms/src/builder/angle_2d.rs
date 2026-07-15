@@ -1,4 +1,4 @@
-﻿//  ?OCCT-aligned: Angle2D, dir_to_angle, ClockWiseAngle
+﻿//  ?Angle2D, dir_to_angle, ClockWiseAngle
 //   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
 //   tolerance_2d: 1.1x multiplier only for BSpline (OCCT L889-892)
 
@@ -7,7 +7,7 @@ use rcad_kernel::geom::*;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_UV_DIR_SQ_MIN};
 use super::curve_tools::*;
 
-/// OCCT-aligned: Tolerance2D  ?BOPAlgo_WireSplitter_1.cxx L859-881
+/// Tolerance2D  ?BOPAlgo_WireSplitter_1.cxx L859-881
 ///   aTol2D = max(UResolution(aTolV3D), VResolution(aTolV3D), aTolV3D)
 ///   For BSpline surface: multiplied by 1.1
 pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
@@ -20,7 +20,7 @@ pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f
     t2d
 }
 
-/// OCCT-aligned: BRepAdaptor_Surface::UResolution
+/// BRepAdaptor_Surface::UResolution
 ///   For Cone: tol / radius_at(V) where radius_at(V) = radius + V * tan(half_angle).
 ///   When v_opt is None, falls back to apex radius (radius at V=0).
 fn u_resolution(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
@@ -39,7 +39,7 @@ fn u_resolution(vt: f64, surface: &Surface3, v_opt: Option<f64>) -> f64 {
     }
 }
 
-/// OCCT-aligned: BRepAdaptor_Surface::VResolution
+/// BRepAdaptor_Surface::VResolution
 fn v_resolution(vt: f64, surface: &Surface3) -> f64 {
     match surface {
         Surface3::Sphere(s) => vt / s.radius.max(TOLERANCE_CLAMP_MIN),

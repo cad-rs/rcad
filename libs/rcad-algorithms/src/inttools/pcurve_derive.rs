@@ -62,7 +62,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
  .collect();
 
  let mut bspline = interpolate_points_2d(&pts).expect("circle samples should not be degenerate");
- // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+ // rescale knot vector from [0, 1] to [0, TAU] to match
  // the 3D circle curve's parameter range.
  let tau = std::f64::consts::TAU;
  for k in &mut bspline.knots { *k *= tau; }
@@ -124,7 +124,7 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 // Sphere functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Lin) — ProjLib_Sphere.cxx L181-184.
+/// ProjLib_Sphere::Project(gp_Lin) — ProjLib_Sphere.cxx L181-184.
 /// OCCT implementation is a stub: sets myType = GeomAbs_OtherCurve and relies on
 /// the generic ProjLib_Projector::BuildResult (sampling → BSpline fit) for the
 /// actual pcurve. rcad matches this by calling fallback_pcurve_by_projection.
@@ -140,7 +140,7 @@ pub fn line_pcurve_on_sphere(line: &Line3, sphere: &SphericalSurface) -> Curve2d
  fallback_pcurve_by_projection(&Curve3::Line(*line), &range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Elips) — ProjLib_Sphere.cxx L186-189.
+/// ProjLib_Sphere::Project(gp_Elips) — ProjLib_Sphere.cxx L186-189.
 /// OCCT: stub sets myType = GeomAbs_OtherCurve, generic BuildResult handles it.
 pub fn ellipse_pcurve_on_sphere(ellipse: &Ellipse3, sphere: &SphericalSurface) -> Curve2d {
  use rcad_kernel::geom::Curve3;
@@ -148,21 +148,21 @@ pub fn ellipse_pcurve_on_sphere(ellipse: &Ellipse3, sphere: &SphericalSurface) -
  fallback_pcurve_by_projection(&Curve3::Ellipse(*ellipse), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Parab) — stub → generic.
+/// ProjLib_Sphere::Project(gp_Parab) — stub → generic.
 pub fn parabola_pcurve_on_sphere(parabola: &Parabola3, sphere: &SphericalSurface) -> Curve2d {
  use rcad_kernel::geom::Curve3;
  let t_range = parabola.default_domain();
  fallback_pcurve_by_projection(&Curve3::Parabola(*parabola), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Hypr) — stub → generic.
+/// ProjLib_Sphere::Project(gp_Hypr) — stub → generic.
 pub fn hyperbola_pcurve_on_sphere(hyperbola: &Hyperbola3, sphere: &SphericalSurface) -> Curve2d {
  use rcad_kernel::geom::Curve3;
  let t_range = hyperbola.default_domain();
  fallback_pcurve_by_projection(&Curve3::Hyperbola(*hyperbola), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// ✅ OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) — form-aligned pcurve.
+/// ProjLib_Sphere::Project(gp_Circ) —  pcurve.
 ///
 /// OCCT ProJLib_Sphere_1.cxx L97-179 handles isoparametric circles analytically
 /// (isIsoU/isIsoV → Line2d), wrapping the result in Geom2d_TrimmedCurve at the caller.
@@ -202,7 +202,7 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
  eprintln!("[DBG_PCURVE] sphere pcurve: {} pts, BSpline, t_range=[{:.4},{:.4}]",
  n_samp, bspline.knots.first().unwrap_or(&0.0), bspline.knots.last().unwrap_or(&0.0));
  }
- // OCCT-aligned: interpolate_points_2d produces chords in [0, 1],
+ // interpolate_points_2d produces chords in [0, 1],
  // but the 3D circle curve is parameterized on [0, TAU].  Rescale
  // the knot vector to [0, TAU] so point_at(t) with t from the 3D
  // curve's parameter range maps to the correct UV position.
@@ -280,7 +280,7 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
  }
  match interpolate_points_2d(&pts) {
  Ok(mut bspline) => {
- // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+ // rescale knot vector from [0, 1] to [0, TAU] to match
  // the 3D circle curve's parameter range.
  let tau = std::f64::consts::TAU;
  for k in &mut bspline.knots { *k *= tau; }
@@ -381,7 +381,7 @@ pub fn ellipse_pcurve_on_cylinder(ellipse: &Ellipse3, cyl: &CylindricalSurface) 
 
  match interpolate_points_2d(&pts) {
  Ok(mut bspline) => {
- // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+ // rescale knot vector from [0, 1] to [0, TAU] to match
  // the 3D ellipse curve's parameter range.
  let tau = std::f64::consts::TAU;
  for k in &mut bspline.knots { *k *= tau; }
@@ -447,7 +447,7 @@ fn sampled_curve_pcurve_on_cone(
  }
 
  let mut bspline = interpolate_points_2d(&pts).expect("cone curve samples should not be degenerate");
- // OCCT-aligned: rescale knot vector from [0, 1] to [t_range[0], t_range[1]] to match
+ // rescale knot vector from [0, 1] to [t_range[0], t_range[1]] to match
  // the 3D curve's parameter range.
  let ts = t_range[0];
  let te = t_range[1];
@@ -554,7 +554,7 @@ pub fn fallback_pcurve_by_projection(
 
  match interpolate_points_2d(&pts) {
  Ok(bspline) => {
- // ✅ OCCT : Geom2d_TrimmedCurve — wrap in TrimmedCurve2 to
+ // OCCT : Geom2d_TrimmedCurve — wrap in TrimmedCurve2 to
  // preserve the mapping between 3D curve parameter range [t0, t1]
  // and BSpline's native [0, 1] parameterization.
  let tc = rcad_kernel::geom::TrimmedCurve2 {
@@ -699,7 +699,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 
 /// Check whether `pcurve` lies entirely within the given UV bounds.
 ///
-/// ✅ OCCT : CheckPCurve (IntTools_FaceFace.cxx L2924-2999)
+/// OCCT : CheckPCurve (IntTools_FaceFace.cxx L2924-2999)
 ///
 /// Samples each C0-interval at NPoints (OCCT uses 23 per interval) and
 /// verifies every sample lies within the UV bounds (plus a relative
@@ -779,7 +779,7 @@ pub fn check_pcurve_in_face(
 
 /// Check whether a 2D curve is free of self-intersections.
 ///
-/// ✅ OCCT : IsCurveValid (IntTools_FaceFace.cxx L2252-2289)
+/// OCCT : IsCurveValid (IntTools_FaceFace.cxx L2252-2289)
 ///
 /// For analytic curves (Line, Circle, Ellipse, etc.) trivially returns true.
 /// For BSpline/Bezier curves, samples the curve and checks for non-adjacent
@@ -851,7 +851,7 @@ fn segments_intersect_2d_open(p1: DVec2, p2: DVec2, p3: DVec2, p4: DVec2) -> boo
 
 /// Compute the maximum deviation between a 3D curve and its pcurve on a surface.
 ///
-/// ✅ OCCT : IntTools_Tools::ComputeTolerance / FindMaxDistance
+/// OCCT : IntTools_Tools::ComputeTolerance / FindMaxDistance
 /// (IntTools_FaceFace.cxx L603-681, L2813-2918)
 ///
 /// Uses golden-section search to find `t` in `[t0, t1]` that maximises
@@ -885,7 +885,7 @@ pub fn compute_max_deviation_3d_to_pcurve(
 /// Compute the maximum deviation between a 3D curve and a surface
 /// (when no pcurve is available).
 ///
-/// ✅ OCCT : FindMaxDistance (IntTools_FaceFace.cxx L2813-2847)
+/// OCCT : FindMaxDistance (IntTools_FaceFace.cxx L2813-2847)
 ///
 /// Projects equally-spaced samples onto the surface and uses golden-section
 /// search per segment to find the maximum distance.
@@ -924,7 +924,7 @@ pub fn compute_max_deviation_from_surface(
 /// Compute the tolerance and tangential tolerance for an intersection curve
 /// by evaluating the deviation between its 3D curve and pcurves on both surfaces.
 ///
-/// ✅ OCCT : ComputeTolReached3d (IntTools_FaceFace.cxx L603-681)
+/// OCCT : ComputeTolReached3d (IntTools_FaceFace.cxx L603-681)
 ///
 /// `current_tol` is the starting tolerance (e.g. from the intersection algorithm).
 /// Returns `(updated_tolerance, tangential_tolerance)`.
@@ -977,9 +977,9 @@ pub fn compute_intersection_curve_tolerance(
 /// Split a closed intersection curve (full circle / ellipse) into two halves
 /// at the u-parameter midpoint.
 ///
-/// ✅ OCCT : IntTools_Tools::SplitCurve (  PrepareLines3D)
+/// OCCT : IntTools_Tools::SplitCurve (  PrepareLines3D)
 ///
-/// ✅ OCCT-aligned: IntTools_Tools::SplitCurve (L191-250) + IsClosed check.
+/// IntTools_Tools::SplitCurve (L191-250) + IsClosed check.
 /// When a curve has coincident start/end points (closed curve), it cannot be
 /// properly trimmed as a single segment — OCCT splits it into complementary
 /// arcs at the parametric midpoint.
@@ -1011,7 +1011,7 @@ fn split_closed_curve(
  Some([[t0, tm], [tm, t1]])
 }
 
-/// OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967).
+/// PrepareLines3D (IntTools_FaceFace.cxx L1932-1967).
 /// Post-processes intersection curves:
 /// 1. Splits closed 3D curves at the parametric midpoint (OCCT SplitCurve).
 /// 2. Rejects redundant lines for Plane/Cone 4-line case (OCCT RejectLines).

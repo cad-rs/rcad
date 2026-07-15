@@ -596,7 +596,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: BOPAlgo_PaveFiller::ForceInterfVF (PaveFiller_5.cxx L631-681).
+    /// BOPAlgo_PaveFiller::ForceInterfVF (PaveFiller_5.cxx L631-681).
     /// Force Vertex-Face interference check for a vertex with increased tolerance.
     /// Returns true if a new VF interference was created.
     /// Note: named with `_pair` suffix to distinguish from the zero-arg version above.

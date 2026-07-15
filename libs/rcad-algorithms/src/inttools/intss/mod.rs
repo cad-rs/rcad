@@ -85,7 +85,7 @@ pub enum SurfaceCurve {
  Polyline(Vec<DVec3>),
  /// BSpline approximation of a polyline intersection curve.
  ///
- ///  ?OCCT-aligned: matches `GeomInt_IntSS::MakeBSpline` output.
+ ///  ?matches `GeomInt_IntSS::MakeBSpline` output.
  /// Provides C2 continuity and exact parameter evaluation for BRep edge construction.
  /// Boxed to keep the enum size manageable.
  BSplineCurve(Box<BSplineCurve3>),

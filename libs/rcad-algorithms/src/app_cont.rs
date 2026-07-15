@@ -3,7 +3,7 @@
 //! Provides Bernstein-basis mass/inverse/IP/IT matrices used in surface
 //! continuity constraints during approximation (OCCT AppCont_ContMatrices).
 //!
-//! ✅ OCCT-aligned: AppCont_ContMatrices (MMatrix, InvMMatrix, IBPMatrix,
+//! AppCont_ContMatrices (MMatrix, InvMMatrix, IBPMatrix,
 //!                  IBTMatrix, VBernstein)
 
 /// Compute binomial coefficient C(n,k).

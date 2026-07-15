@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use rcad_kernel::geom::{Curve2d, Curve3};
 
 /// A parametric point along an edge's curve (OCCT: BOPDS_Pave).
-/// ✅ OCCT-aligned: BOPDS_Pave (hxx:27-78).
+/// BOPDS_Pave (hxx:27-78).
 #[derive(Debug, Clone, Copy)]
 pub struct Pave {
     /// Index of the vertex at this parametric point (in DS.vertices).
@@ -30,23 +30,23 @@ pub const NO_EDGE: usize = usize::MAX;
 
 /// A segment of an edge between two paves (OCCT: BOPDS_PaveBlock).
 /// When an edge is split by intersections, it becomes multiple PaveBlocks.
-/// ✅ OCCT-aligned: BOPDS_PaveBlock (hxx:30-194, cxx:25-358).
+/// BOPDS_PaveBlock (hxx:30-194, cxx:25-358).
 #[derive(Debug, Clone)]
 pub struct PaveBlock {
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myOriginalEdge (cxx:32).
+    /// BOPDS_PaveBlock::myOriginalEdge (cxx:32).
     ///   Index of the original edge in DS.edges (NO_EDGE for section edge PaveBlocks).
     pub original_edge: usize,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myPave1 (hxx:186).
+    /// BOPDS_PaveBlock::myPave1 (hxx:186).
     pub pave1: Pave,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myPave2 (hxx:187).
+    /// BOPDS_PaveBlock::myPave2 (hxx:187).
     pub pave2: Pave,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myEdge (cxx:31).
+    /// BOPDS_PaveBlock::myEdge (cxx:31).
     ///   New edge index assigned during result building.
     pub new_edge: Option<usize>,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myExtPaves (hxx:188, cxx:29-31).
+    /// BOPDS_PaveBlock::myExtPaves (hxx:188, cxx:29-31).
     ///   Extra paves used to split this block via Update().
     pub ext_paves: Vec<Pave>,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myMFence (hxx:192, cxx:43).
+    /// BOPDS_PaveBlock::myMFence (hxx:192, cxx:43).
     ///   Dedup fence for AppendExtPave (maps vertex index → seen flag).
     pub ext_paves_fence: HashSet<usize>,
     /// 3D curve of this edge segment (trimmed to [pave1.param, pave2.param]).
@@ -55,14 +55,14 @@ pub struct PaveBlock {
     pub pcurve_on_a: Option<Curve2d>,
     /// 2D pcurve on face B.
     pub pcurve_on_b: Option<Curve2d>,
-    /// ✅ OCCT-aligned: shrunk range from IntTools_ShrunkRange (myTS1/myTS2, cxx:33-34).
+    /// shrunk range from IntTools_ShrunkRange (myTS1/myTS2, cxx:33-34).
     pub shrunk_range: Option<[f64; 2]>,
-    /// ✅ OCCT-aligned: myIsSplittable (hxx:193, cxx:35).
+    /// myIsSplittable (hxx:193, cxx:35).
     pub is_splittable: bool,
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myShrunkBox (hxx:191).
+    /// BOPDS_PaveBlock::myShrunkBox (hxx:191).
     ///   Bounding box of the shrunk range, used by GetPBBox.
     pub my_shrunk_box: Option<(glam::DVec3, glam::DVec3)>,
-    /// ✅ OCCT-aligned: index of the CommonBlock this PaveBlock belongs to,
+    /// index of the CommonBlock this PaveBlock belongs to,
     ///   or None if not on any CommonBlock (BOPDS_PaveBlock::myCommonBlock).
     pub common_block_idx: Option<usize>,
 }
@@ -106,7 +106,7 @@ impl PaveBlock {
         }
     }
 
-    // ----- OCCT-aligned: Edge accessors (cxx:54-100) -----
+    // ----- Edge accessors (cxx:54-100) -----
 
     /// OCCT: BOPDS_PaveBlock::IsSplitEdge (cxx:97-100).
     pub fn is_split_edge(&self) -> bool {
@@ -132,31 +132,31 @@ impl PaveBlock {
 
     // ----- ExtPave methods (cxx:167-312) -----
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
+    /// BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
     pub fn append_ext_pave(&mut self, pave: Pave) {
         if self.ext_paves_fence.insert(pave.vertex_idx) {
             self.ext_paves.push(pave);
         }
     }
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::AppendExtPave1 (cxx:177-180).
+    /// BOPDS_PaveBlock::AppendExtPave1 (cxx:177-180).
     pub fn append_ext_pave1(&mut self, pave: Pave) {
         self.ext_paves.push(pave);
     }
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
+    /// BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
     pub fn remove_ext_pave(&mut self, vertex_idx: usize) {
         if self.ext_paves_fence.remove(&vertex_idx) {
             self.ext_paves.retain(|p| p.vertex_idx != vertex_idx);
         }
     }
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::IsToUpdate (cxx:220-223).
+    /// BOPDS_PaveBlock::IsToUpdate (cxx:220-223).
     pub fn is_to_update(&self) -> bool {
         !self.ext_paves.is_empty()
     }
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::ContainsParameter (cxx:227-245).
+    /// BOPDS_PaveBlock::ContainsParameter (cxx:227-245).
     pub fn contains_parameter(&self, the_prm: f64, the_tol: f64, the_index: &mut usize) -> bool {
         for pave in &self.ext_paves {
             if (pave.param - the_prm).abs() < the_tol {
@@ -167,7 +167,7 @@ impl PaveBlock {
         false
     }
 
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::Update (cxx:249-312).
+    /// BOPDS_PaveBlock::Update (cxx:249-312).
     pub fn update(&mut self, the_flag: bool) -> Vec<PaveBlock> {
         let mut a_nb = self.ext_paves.len();
         if the_flag {
@@ -238,7 +238,7 @@ impl PaveBlock {
 
 
 
-/// OCCT-aligned: shared PaveBlock via `Arc<RwLock<PaveBlock>>`.
+/// shared PaveBlock via `Arc<RwLock<PaveBlock>>`.
 #[derive(Debug, Clone)]
 pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
 
@@ -364,7 +364,7 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_update_splits() {
-        // OCCT-aligned: BOPDS_PaveBlock::Update splits the block at ext_pave params
+        // BOPDS_PaveBlock::Update splits the block at ext_pave params
         let mut pb = PaveBlock::new(1,
             Pave { vertex_idx: 0, param: 0.0 },
             Pave { vertex_idx: 3, param: 3.0 });

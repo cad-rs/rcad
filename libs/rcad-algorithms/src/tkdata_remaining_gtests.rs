@@ -1,4 +1,4 @@
-//! OCCT-aligned GTests for remaining ModelingData files not yet translated.
+//! GTests for remaining ModelingData files not yet translated.
 //!
 //! OCCT source: src/ModelingData/{TKBRep,TKG2d,TKG3d,TKGeomBase}/GTests/
 //!
@@ -678,7 +678,7 @@ mod tkdata_tkg2d_tests {
             offset_distance: 2.0,
         };
         let c = Curve2d::Offset(off);
-        // rcad uses OCCT-aligned right-hand normal (Ty, -Tx).
+        // rcad uses right-hand normal (Ty, -Tx).
         // For CCW circle at t=0: C=(5,0), T=(0,5)锟?0,1), N=(1,0).
         // offset +2 along (1,0) gives (7,0) 锟?outward offset.
         let p = c.point_at(0.0);
@@ -940,7 +940,7 @@ mod tkdata_tkg2d_tests {
         let c = Curve2d::Offset(off);
         let p = c.point_at(5.0);
         assert!((p.x - 5.0).abs() < TOL);
-        // OCCT-aligned: right-hand normal N = (Ty, -Tx) = (0, -1)
+        // right-hand normal N = (Ty, -Tx) = (0, -1)
         assert!((p.y + 3.0).abs() < TOL, "offset line y={}, expected -3", p.y);
     }
 
@@ -1558,7 +1558,7 @@ mod tkdata_tkg2d_tests {
     }
 }
 
-// TKGeomBase/GTests 锟?OCCT-aligned tests
+// TKGeomBase/GTests 锟?tests
 // =============================================================================
 
 #[cfg(test)]

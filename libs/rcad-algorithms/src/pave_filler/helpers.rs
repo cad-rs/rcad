@@ -9,7 +9,7 @@ use crate::inttools;
 use rcad_kernel::closest_point_on_curve;
 use std::collections::HashSet;
 
-/// OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
+/// IntPatch_Intersection surface category (L1264-1294).
 ///   ParamParam = ts1==ts2==0 -> PrmPrmIntersection (parametric-parametric)
 
 // ---- Phase 2a helpers: vertex -> curve parameter projection ----
@@ -42,7 +42,7 @@ pub(crate) fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<
 }
 
 /// Project a vertex onto a curve, returning parameter t (if the vertex lies on the curve).
-/// OCCT-aligned: supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
+/// supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
 ///    OCCT GeomLib::Parameter uses Newton's method for all curve types.
 pub(crate) fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     match curve {
@@ -139,7 +139,7 @@ pub(crate) fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
     if speed < TOLERANCE_CLAMP_MIN { tol } else { tol / speed }
 }
 
-/// OCCT-aligned (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
+/// (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
 /// Step along the curve from one end until outside the vertex tolerance sphere,
 /// then binary-search to refine the exit parameter.
 ///
@@ -183,7 +183,7 @@ pub(crate) fn find_nearest_valid_point(
     Some(if is_first { u_out } else { u_in })
 }
 
-/// OCCT-aligned: BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
+/// BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 /// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
 /// `theTolE`  ?edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
@@ -215,7 +215,7 @@ pub(crate) fn find_valid_range(
 // ---- Seam Edge Shift Struct ----
 
 /// Result of checking whether a seam edge shift is needed between two faces.
-/// OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
+/// BOPAlgo_PaveFiller_6.cxx L393-479
 pub(crate) struct SeamEdgeShift {
     /// Translation vector to apply to one face's surface.
     pub(crate) shift_vector: DVec3,
@@ -232,7 +232,7 @@ pub(crate) struct SeamEdgeShift {
 /// appears to move in 3D space. Surface normals and parameterization are
 /// preserved.
 ///
-/// OCCT-aligned: gp_Trsf.SetTranslation -- moving the face before intersection
+/// gp_Trsf.SetTranslation -- moving the face before intersection
 pub(crate) fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
     match *surface {
         Surface3::Plane(p) => Surface3::Plane(Plane {
@@ -287,7 +287,7 @@ pub(crate) fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surfac
 /// Translate a 3D curve by a displacement vector.
 /// All control points and origin/center positions are shifted.
 ///
-/// OCCT-aligned:aFaceFace.ApplyTrsf() -- reversing the shift after intersection
+/// aFaceFace.ApplyTrsf() -- reversing the shift after intersection
 pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
     match *curve {
         Curve3::Line(l) => Curve3::Line(Line3 {
@@ -347,7 +347,7 @@ pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
 // ---- Phase 2a: MakeBlocks candidate injection helpers ----
 
 /// Find up-to-2 face indices that reference a given intersection curve.
-/// OCCT-aligned: checks curves_sc (PaveBlocksSc).
+/// checks curves_sc (PaveBlocksSc).
 pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
@@ -363,7 +363,7 @@ pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     result
 }
 
-/// OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
+/// PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
 ///    OCCT: EF vertices first (theMVEF), then ON/IN vertices (theMVOnIn) with
 ///    BBox filtering (aBoxC.IsOut(aBoxV), L2409) and IsNewShape check (L2413-2415).
 ///    This prevents projecting too many vertices onto each IC, which would cause
@@ -378,10 +378,10 @@ pub(crate) fn put_pave_on_curve_full(
     let a_tol_r3d = ic.geom_tol;
     let mut paves: Vec<(f64, usize)> = Vec::new();
 
-    // OCCT-aligned: compute curve bounding box for vertex filtering (L2409: aBoxC.IsOut(aBoxV)).
+    // compute curve bounding box for vertex filtering (L2409: aBoxC.IsOut(aBoxV)).
     let curve_bbox = curve_bounding_box_simple(&ic.curve, a_tol_r3d);
 
-    // OCCT-aligned: GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
+    // GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
     //   per FF pair.  Only EF vertices belonging to this specific pair are added to aMVEF.
     //   rcad: filter EF vertices by checking if the interference's face is in this pair.
     let ef_vertices: std::collections::HashSet<usize> = ds.interf_ef.iter()
@@ -446,11 +446,11 @@ pub(crate) fn put_pave_on_curve_full(
 }
 
 /// Compute a bounding box for a curve, expanded by tolerance.
-/// Used for OCCT-aligned vertex filtering in PutPavesOnCurve (L2409).
+/// Used for vertex filtering in PutPavesOnCurve (L2409).
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = match curve {
         Curve3::Line(l) => {
-            // OCCT-aligned: compute bounding box from line's infinite extent.
+            // compute bounding box from line's infinite extent.
             // OCCT's Bnd_Box uses SetGap to expand boxes, making them overlap.
             // For an unbounded line, use a large finite extent (1e6 = 1000 km)
             // to ensure the box encompasses all practical vertex positions.
@@ -509,7 +509,7 @@ pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVe
     bbox.map(|[mn, mx]| [mn - DVec3::splat(tol), mx + DVec3::splat(tol)])
 }
 
-/// OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
+/// FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
 /// OCCT uses a multi-candidate distance comparison + sin-angle check.
 /// rcad simplified: single-threshold filter against curve tolerance + fuzzy.
 /// OCCT L2449: aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance())
@@ -519,7 +519,7 @@ pub(crate) fn filter_paves_on_curves(
     paves: &[(f64, usize)],
 ) -> Vec<(f64, usize)> {
     let ic = &ds.intersection_curves[curve_idx];
-    // OCCT-aligned: curve tolerance + fuzzy (SUM matching PutPaveOnCurve L2976 aTolR3D + myFuzzyValue)
+    // curve tolerance + fuzzy (SUM matching PutPaveOnCurve L2976 aTolR3D + myFuzzyValue)
     let tol = ic.geom_tol + ds.fuzzy_tol;
     let tol_sq = tol * tol;
     paves.iter().filter(|&&(_, vi)| {
@@ -540,7 +540,7 @@ pub(crate) fn filter_paves_on_curves(
     }).copied().collect()
 }
 
-/// OCCT-aligned: PutClosingPaveOnCurve (L828-833)
+/// PutClosingPaveOnCurve (L828-833)
 ///    Only replace the last vertex when the curve spans a full closed period (parameter diff ~ 2*pi or full curve range).
 ///    Arc segments (parameter diff < pi) are not replaced, to avoid incorrectly changing arc endpoints to start points.
 pub(crate) fn put_closing_pave_on_curve(
@@ -685,7 +685,7 @@ pub(crate) fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: u
 }
 
 /// Compute the angular parameter of `point` on `circle` in [0, 2*pi).
-/// OCCT-aligned: uses deterministic reference direction (normal x DVec3::X).
+/// uses deterministic reference direction (normal x DVec3::X).
 pub(crate) fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
     let nm = circle.normal.normalize();
     let x_ax = if nm.x.abs() < 0.9 {
@@ -726,7 +726,7 @@ pub(crate) fn intersect_line_circle(
         // Line pierces the circle plane at one point.
         let t = -wn / dn;
         let p = o + d * t;
-        // OCCT-aligned: check distance to circle circumference, not inside-circle.
+        // check distance to circle circumference, not inside-circle.
         // (p - c).length_squared <= r_sq allows points at the circle CENTER (false positive).
         let dist = (p - c).length();
         if (dist - r).abs() <= tol {
@@ -997,7 +997,7 @@ pub(crate) fn intersect_edge_face_numeric(
     }
 
     // Stage 2 -- Newton refinement: polish each bisection result
-    // OCCT-aligned: IntCurveSurface_TheExactHInter two-stage approach
+    // IntCurveSurface_TheExactHInter two-stage approach
     //   coarse sign-change detection -> Newton-Raphson refinement.
     for (point, t) in hits.iter_mut() {
         let initial_t = *t;
@@ -1017,7 +1017,7 @@ pub(crate) fn intersect_edge_face_numeric(
                 eps,
             )
         {
-            // OCCT-aligned validation (Stage 3):
+            // validation (Stage 3):
             //   1. t within the curve's parametric range
             if refined_t < t_range[0] - eps || refined_t > t_range[1] + eps {
                 continue; // Keep bisection result

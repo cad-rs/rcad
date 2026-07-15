@@ -113,13 +113,13 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
 
  let tol = tolerance::TOLERANCE_ABS.max(1e-8);
  // Pass 1: removed orthogonal_face_fuse (self-created, no OCCT equivalent).
- //          OCCT-aligned FillSameDomainFaces below handles same-domain merging.
+ //          FillSameDomainFaces below handles same-domain merging.
  let m1 = deduplicate_edges(brep);
  // Surface deduplication: merge identical surface geometries (same plane,
  // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
  // separate entries for each sub-face even when they share the same geometry.
  let m1 = deduplicate_surfaces(m1);
- // ✅ OCCT : FillSameDomainFaces — edge-set  (BOPAlgo_Builder_2.cxx L636-L796)
+ // OCCT : FillSameDomainFaces — edge-set  (BOPAlgo_Builder_2.cxx L636-L796)
  let (m2, _) = crate::occt_fill_same_domain_faces(&m1);
  count_topo(&m2, "topo-pass2");
  let mut brep = m2;
@@ -334,7 +334,7 @@ pub fn boolean_op_with_retry(
 ) -> Result<BRep, BooleanError> {
  // First attempt: standard path including fast-paths (containment, box-box, etc.).
  let brep = if let Ok(mut t) = boolean_op(op, &a.to_topods(), &b.to_topods()) {
- // ✅ OCCT-aligned: correct_tolerances on topods::BRep directly.
+ // correct_tolerances on topods::BRep directly.
  rcad_kernel::tolerance::correct_tolerances_topods(&mut t, 23, 0.05);
  rcad_kernel::tolerance::correct_shape_tolerances_topods(&mut t);
  rcad_kernel::BRep::from_topods(&t)
@@ -344,7 +344,7 @@ pub fn boolean_op_with_retry(
  op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
  )
  .map(|(brep, _report)| brep)?;
- // ✅ OCCT-aligned: correct_tolerances on old BRep fallback.
+ // correct_tolerances on old BRep fallback.
  rcad_kernel::tolerance::correct_tolerances(&mut brep, 23, 0.05);
  rcad_kernel::tolerance::correct_shape_tolerances(&mut brep);
  brep

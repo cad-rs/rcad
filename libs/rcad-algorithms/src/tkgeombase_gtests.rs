@@ -1,4 +1,4 @@
-//! OCCT-aligned TKGeomBase GTest translations.
+//! TKGeomBase GTest translations.
 //!
 //! OCCT source: src/ModelingData/TKGeomBase/GTests/
 //!

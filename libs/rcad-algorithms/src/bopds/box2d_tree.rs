@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: BOPTools_Box2dTree / BOPTools_BoxSelector / Bnd_Box2d.
+/// BOPTools_Box2dTree / BOPTools_BoxSelector / Bnd_Box2d.
 use glam::DVec2;
 
 #[derive(Debug, Clone, Copy)]

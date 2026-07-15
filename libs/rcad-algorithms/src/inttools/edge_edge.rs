@@ -2,7 +2,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 
-///  ?OCCT-aligned: IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
+///  ?IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
 /// Describes a common part between two edges: either a VERTEX-type (point)
 /// or EDGE-type (overlapping segment) intersection.
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ impl CommonPrt {
     }
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::TypeToInteger (cxx L1456-1482).
+///  ?IntTools_EdgeEdge::TypeToInteger (cxx L1456-1482).
 /// Maps curve type to integer priority for edge swapping (lower = simpler).
 pub fn curve_type_to_integer(curve: &Curve3) -> i32 {
     match curve {
@@ -68,7 +68,7 @@ pub fn curve_type_to_integer(curve: &Curve3) -> i32 {
     }
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::PointBoxDistance (cxx L1423-1452).
+///  ?IntTools_EdgeEdge::PointBoxDistance (cxx L1423-1452).
 /// Computes min distance from a point to an axis-aligned bounding box.
 pub fn point_box_distance(p: DVec3, box_min: DVec3, box_max: DVec3) -> f64 {
     let mut dist = 0.0;
@@ -87,7 +87,7 @@ pub fn point_box_distance(p: DVec3, box_min: DVec3, box_max: DVec3) -> f64 {
     dist.sqrt()
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::SplitRangeOnSegments (cxx L1366-1406).
+///  ?IntTools_EdgeEdge::SplitRangeOnSegments (cxx L1366-1406).
 /// Splits range [aT1, aT2] into segments based on resolution. Returns number of segments.
 pub fn split_range_on_segments(t1: f64, t2: f64, resolution: f64, nb_seg: i32) -> (i32, Vec<[f64; 2]>) {
     let diff = t2 - t1;
@@ -112,7 +112,7 @@ pub fn split_range_on_segments(t1: f64, t2: f64, resolution: f64, nb_seg: i32) -
     (a_nb_segments, segments)
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::Resolution (cxx L1561-1607).
+///  ?IntTools_EdgeEdge::Resolution (cxx L1561-1607).
 /// Computes curve resolution (parameter step for a given 3D tolerance).
 /// For lines: returns theR3D directly.
 /// For circles: 2*asin(res_coeff * theR3D).
@@ -137,7 +137,7 @@ pub fn curve_resolution_edge(curve: &Curve3, res_coeff: f64, r3d: f64) -> f64 {
     }
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::ResolutionCoeff (cxx L1486-1557).
+///  ?IntTools_EdgeEdge::ResolutionCoeff (cxx L1486-1557).
 /// Computes the resolution coefficient for a curve type.
 /// For circles: 1/(2*radius). For ellipses: 1/major_radius.
 pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
@@ -168,7 +168,7 @@ pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     }
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge::CurveDeflection (cxx L1611-1638).
+///  ?IntTools_EdgeEdge::CurveDeflection (cxx L1611-1638).
 /// Computes total angular deflection of a curve over its range by sampling.
 pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     let nb_p = 10;
@@ -193,7 +193,7 @@ pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     defl
 }
 
-///  ?OCCT-aligned: IsClosed (IntTools_EdgeEdge.cxx L1642-1659).
+///  ?IsClosed (IntTools_EdgeEdge.cxx L1642-1659).
 /// Checks if the curve segment between aT1 and aT2 is closed.
 pub fn is_curve_segment_closed(curve: &Curve3, t1: f64, t2: f64, tol: f64, res: f64) -> bool {
     if (t1 - t2).abs() < res { return false; }
@@ -202,7 +202,7 @@ pub fn is_curve_segment_closed(curve: &Curve3, t1: f64, t2: f64, tol: f64, res: 
     (p1 - p2).length() < tol
 }
 
-///  ?OCCT-aligned: ComputeLineLine common part detection (cxx L902-1056).
+///  ?ComputeLineLine common part detection (cxx L902-1056).
 /// Determines if two line segments intersect, returning parameters if they do.
 pub fn intersect_line_line_3d(
     l1_origin: DVec3, l1_dir: DVec3, t1_range: [f64; 2],
@@ -268,7 +268,7 @@ pub fn intersect_line_line_3d(
     Some((range1, range2, false))
 }
 
-///  ?OCCT-aligned: IntTools_EdgeEdge full class.
+///  ?IntTools_EdgeEdge full class.
 ///
 /// Edge/Edge intersection engine based on bounding box refinement.
 /// Algorithm:

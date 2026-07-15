@@ -1,4 +1,4 @@
-/// OCCT-aligned CheckerSI: validates a single shape for self-interference.
+/// CheckerSI: validates a single shape for self-interference.
 ///
 /// OCCT reference: BOPAlgo_CheckerSI (BOPAlgo_CheckerSI.cxx L1-300).
 ///

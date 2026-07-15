@@ -35,7 +35,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  } else {
- //  OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+ //  BOPDS_Iterator cross-group face pair iteration.
  let a_fcount = self.ds.a_face_count;
  let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
  while fit.more() {
@@ -49,7 +49,7 @@ impl<'a> super::PaveFiller<'a> {
  fit.next();
  }
  }
- // OCCT-aligned: dedup FF interferences by pair (BOPDS_IndexRange).
+ // dedup FF interferences by pair (BOPDS_IndexRange).
  self.ds.dedup_ff_interferences();
  }
 
@@ -183,7 +183,7 @@ impl<'a> super::PaveFiller<'a> {
  let a_p2 = proj2.point;
  let shift_dist = a_p1.distance(a_p2);
 
- // OCCT-aligned: the seam edge shift is a SMALL tolerance
+ // the seam edge shift is a SMALL tolerance
  // correction, not a geometric transformation.  Verify both
  // projections are close to the EE vertex  ?if either is
  // far, the vertex is not near both edges and shifting would
@@ -326,7 +326,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  let mut lconstruct = crate::inttools::int_patch_line_constructor::GeomIntLineConstructor::new();
  lconstruct.load(f1, f2);
 
- // OCCT-aligned: IntPatch_Intersection: generic surface-surface intersection.
+ // IntPatch_Intersection: generic surface-surface intersection.
  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
  int_patch.perform(s_a, s_b, self.fuzzy_tolerance, self.fuzzy_tolerance);
  if int_patch.tangent_faces() {
@@ -338,7 +338,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  return;
  }
 
- // OCCT-aligned: PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
+ // PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
  // Projects intersection points onto each analytic line to create
  // boundary-crossing vertices.  These vertices split the line into
  // valid intervals for MakeCurve/TreatCircle.
@@ -346,7 +346,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  self.put_points_on_line(f1, f2, int_patch.line_mut(li));
  }
 
- // OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
+ // MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
  // Returns a Vec of IntersectionCurve 闁?one per valid part from the
  // LineConstructor (OCCT supports aNbParts > 1, e.g. multi-segment clipping).
  let mut ff_curve_indices: Vec<usize> = Vec::new();
@@ -395,7 +395,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // = =  Restore seam shift tol = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
  self.seam_shift_tol = old_shift_tol;
 
- // OCCT-aligned: ComputeTolReached3d + PrepareLines3D.
+ // ComputeTolReached3d + PrepareLines3D.
  if let Some(ff_curves) = self.find_face_face_curve_indices(f1, f2) {
  let t_a = self.ff_tol(f1, f1);
  let t_b = self.ff_tol(f2, f2);
@@ -418,7 +418,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // PrepareLines3D  ?split closed curves
  let n_curves_before_split = self.ds.intersection_curves.len();
  inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
- // OCCT-aligned: After PrepareLines3D splits closed curves, the split
+ // After PrepareLines3D splits closed curves, the split
  // segments are added to the same FF interference entry.  Update the
  // FF entry's curve list to include any newly created curve indices.
  if n_curves_before_split != self.ds.intersection_curves.len() {
@@ -428,7 +428,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
    }
   }
  }
- //  OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
+ //  After PrepareLines3D splits closed curves, new curve endpoints
  // must be updated to the split points. OCCT's BRepBuilderAPI_MakeEdge auto-sets
  // endpoints when creating edges. rcad's IntersectionCurve requires explicit update:
  // for start==end but non-full-period t_range (i.e. split half-circle), compute
@@ -462,7 +462,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
   self.ds.intersection_curves[ci].end_vertex = v_end;
  }
  }
- // OCCT-aligned: PreparePostTreatFF (PaveFiller_6.cxx L3642-3668).
+ // PreparePostTreatFF (PaveFiller_6.cxx L3642-3668).
  let post_ff_curves = self.find_face_face_curve_indices(f1, f2)
  .unwrap_or_default();
  self.ds.face_info_mut(f1).curves_sc.extend(&post_ff_curves);
@@ -485,7 +485,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
   } // if let Some(ff_curves)
 } // fn intersect_face_face
 
-/// OCCT-aligned: IndexType (IntTools_FaceFace.cxx L2844-2870).
+/// IndexType (IntTools_FaceFace.cxx L2844-2870).
 /// Maps Surface3 variant to an integer index for canonical ordering.
 /// Lower-typed surface is "simpler" (Plane<Cylinder<Cone<Sphere<Torus).
 fn surface_type_index(surf: &rcad_kernel::geom::Surface3) -> i32 {
@@ -552,7 +552,7 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
 
 
 
- /// OCCT-aligned: MakeCurve (IntTools_FaceFace.cxx L695-1846).
+ /// MakeCurve (IntTools_FaceFace.cxx L695-1846).
 /// Dispatches by line type (OCCT switch on IntPatch_IType):
 ///   - Walking:        approximate BSpline from marching points (L1097)
 ///   - Line/Parabola/Hyperbola: LineConstructor parts + per-part handling (L815-898)
@@ -913,7 +913,7 @@ fn make_analytic_periodic_curve(
  result
 }
 
-/// OCCT-aligned: LineConstructor (GeomInt_LineConstructor::Perform for GLine).
+/// LineConstructor (GeomInt_LineConstructor::Perform for GLine).
 /// Iterates over IntPatch_Point vertices on the line, tests the midpoint of
 /// each adjacent-vertex interval on both face domains, keeps valid intervals.
 ///
@@ -932,7 +932,7 @@ fn line_constructor_parts(
  vec![orig_t_range]
 }
 
-/// OCCT-aligned: TreatCircle (GeomInt_LineConstructor.cxx L481-560).
+/// TreatCircle (GeomInt_LineConstructor.cxx L481-560).
 /// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2閿?,
 /// creates intervals between sorted vertices, tests midpoints on both face
 /// domains.  Handles 0-crossing via PeriodicReparam + SeqFprm/SeqLprm.
@@ -941,7 +941,7 @@ fn line_constructor_parts(
 /// the sort and interval-building steps produce no valid intervals, and seqp
 /// remains empty.  The caller sees aNbParts=0 and creates no output curves.
 /// This function matches that behavior 闁?returns empty.
-/// OCCT-aligned: PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
+/// PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
 /// For each analytic line, computes boundary-crossing points where the
 /// curve projects to UV outside one of the face domains.  These points
 /// become vertices on the line, used by TreatCircle to split the curve.
@@ -1079,7 +1079,7 @@ fn treat_circle_parts(
 }
 
 
-/// OCCT-aligned: BuildPCurves for all curve-surface type combinations.
+/// BuildPCurves for all curve-surface type combinations.
 /// Matches OCCT GeomInt_IntSS::BuildPCurves (L822-846). Uses exact
 /// analytic pcurves when available; falls back to sampling + projection.
 fn compute_pcurve_on_surface(
