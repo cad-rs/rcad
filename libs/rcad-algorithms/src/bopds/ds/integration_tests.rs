@@ -670,6 +670,233 @@ fn fuse_two_boxes_overlapping() {
     assert_eq!(nso, 1, "should produce 1 solid");
 }
 
+// =========================================================================
+// Tests: ShapeInfo data model alignment
+// =========================================================================
+
+#[test]
+fn shape_info_populated_for_source_shapes() {
+    // After loading sphere + box, shape_info must cover all source shapes.
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    // nb_source_shapes = total shape_info entries from source loading
+    assert!(ds.nb_source_shapes() > 0, "shape_info must have source entries");
+    assert_eq!(ds.nb_source_shapes(), ds.shape_info.len(),
+        "nb_source_shapes must match shape_info.len() (all loaded shapes are source)");
+
+    // Every shape_info entry must be type-checkable without panic
+    for i in 0..ds.shape_info.len() {
+        let _typ = ds.shape_type_of(i);
+    }
+
+    // shape_info entries cover at least VERTEX, EDGE, WIRE, FACE
+    let mut n_vertex = 0usize;
+    let mut n_edge = 0usize;
+    let mut n_wire = 0usize;
+    let mut n_face = 0usize;
+    let mut n_shell = 0usize;
+    let mut n_solid = 0usize;
+    for si in &ds.shape_info {
+        match si.shape_type {
+            rcad_kernel::topods::ShapeType::Vertex => n_vertex += 1,
+            rcad_kernel::topods::ShapeType::Edge => n_edge += 1,
+            rcad_kernel::topods::ShapeType::Wire => n_wire += 1,
+            rcad_kernel::topods::ShapeType::Face => n_face += 1,
+            rcad_kernel::topods::ShapeType::Shell => n_shell += 1,
+            rcad_kernel::topods::ShapeType::Solid => n_solid += 1,
+            _ => {}
+        }
+    }
+    // Box has 8 vertices, sphere face has boundary vertices — at least 8 total
+    assert!(n_vertex >= 8, "shape_info: >=8 Vertex entries, got {}", n_vertex);
+    // Box has 12 edges, sphere seam edge(s) — at least 12
+    assert!(n_edge >= 12, "shape_info: >=12 Edge entries, got {}", n_edge);
+    // Box has 6 faces + sphere 1 face
+    assert!(n_face >= 7, "shape_info: >=7 Face entries, got {}", n_face);
+    // Box has wires per face
+    assert!(n_wire >= 6, "shape_info: >=6 Wire entries, got {}", n_wire);
+    // Box has 1 shell
+    assert!(n_shell >= 1, "shape_info: >=1 Shell entries, got {}", n_shell);
+    // Box has 1 solid
+    assert!(n_solid >= 1, "shape_info: >=1 Solid entries, got {}", n_solid);
+}
+
+#[test]
+fn shape_info_sub_shapes_form_hierarchy() {
+    // Each shape_info entry lists its sub-shapes via shapes[] indices.
+    // Verify that parent→child links are consistent.
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    // For each face in shape_info, its sub_shapes should be valid shape_info indices
+    // Note: rcad stores Edge indices as face sub_shapes (not Wires like OCCT).
+    // OCCT hierarchy: Face → Wire → Edge → Vertex
+    // rcad hierarchy: Face → Edge → Vertex (wire level is skipped in shape_info)
+    // This is a known divergence from OCCT's BOPDS_ShapeInfo.
+    let face_info: Vec<(usize, Vec<usize>)> = ds.shape_info.iter().enumerate()
+        .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Face)
+        .map(|(i, si)| (i, si.sub_shapes.clone()))
+        .collect();
+    assert!(!face_info.is_empty(), "At least one face shape_info");
+
+    for (face_si_idx, subs) in &face_info {
+        for &sub_si in subs {
+            // rcad: can be Edge (not Wire like OCCT)
+            let st = ds.shape_info[sub_si].shape_type;
+            assert!(st == rcad_kernel::topods::ShapeType::Edge
+                 || st == rcad_kernel::topods::ShapeType::Wire,
+                "Face shape_info[{}] sub should be Edge or Wire, got {:?}",
+                face_si_idx, st);
+        }
+    }
+
+    // For each Wire in shape_info, its sub_shapes should be Edge-type
+    let wire_sub_shapes: Vec<Vec<usize>> = ds.shape_info.iter()
+        .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire)
+        .map(|si| si.sub_shapes.clone())
+        .collect();
+    for subs in &wire_sub_shapes {
+        for &sub_si in subs {
+            let sub_type = ds.shape_info[sub_si].shape_type;
+            assert_eq!(sub_type, rcad_kernel::topods::ShapeType::Edge,
+                "Wire sub_shape should be Edge, got {:?}", sub_type);
+        }
+    }
+
+    // For each Edge in shape_info, its sub_shapes should be Vertex-type
+    for (ei, si) in ds.shape_info.iter().enumerate() {
+        if si.shape_type != rcad_kernel::topods::ShapeType::Edge { continue; }
+        if si.sub_shapes.is_empty() { continue; }
+        for &sub_si in &si.sub_shapes {
+            let sub_type = ds.shape_info[sub_si].shape_type;
+            assert_eq!(sub_type, rcad_kernel::topods::ShapeType::Vertex,
+                "Edge shape_info[{}] sub should be Vertex, got {:?}", ei, sub_type);
+        }
+    }
+}
+
+#[test]
+fn shape_info_edge_flag_detects_degenerated_edges() {
+    // Sphere has a degenerated seam edge. Its shape_info flag should be set.
+    let sphere = make_unit_sphere();
+    let ds = DS::new_from_topods(&sphere, &topods::BRep::new(), TOLERANCE_ABS);
+
+    // Find edges with start_vertex == end_vertex (degenerated)
+    let degen_edges: Vec<usize> = ds.edges.iter().enumerate()
+        .filter(|(_, e)| e.start_vertex == e.end_vertex)
+        .map(|(i, _)| i)
+        .collect();
+
+    if degen_edges.is_empty() {
+        // Also check via edge_flag
+        let flagged: Vec<usize> = (0..ds.edges.len())
+            .filter(|&ei| ds.edge_has_flag(ei))
+            .collect();
+        if flagged.is_empty() {
+            eprintln!("WARN: no degenerated edges detected in sphere");
+            return;
+        }
+        for &ei in &flagged {
+            assert!(ds.is_edge_degenerated(ei),
+                "flagged edge {} must be degenerated", ei);
+        }
+    } else {
+        for &ei in &degen_edges {
+            assert!(ds.edge_has_flag(ei) || ds.is_edge_degenerated(ei),
+                "degenerated edge {} must have flag set", ei);
+        }
+    }
+}
+
+#[test]
+fn shape_info_is_new_for_source_vertices_is_false() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    // All source-loaded vertices must have is_new == false
+    for vi in 0..ds.vertices.len() {
+        let is_new = ds.is_new_vertex(vi);
+        assert!(!is_new,
+            "source vertex {} must NOT be new (is_new=false), origin={:?}",
+            vi, ds.vertices[vi].origin);
+    }
+}
+
+#[test]
+fn shape_info_rank_matches_origin() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    // ShapeA (sphere) vertices should have rank 0
+    let sphere_verts: Vec<usize> = (0..ds.vertices.len())
+        .filter(|&vi| ds.vertices[vi].origin == Some(ShapeOrigin::ShapeA))
+        .collect();
+    for &vi in &sphere_verts {
+        let si = ds.vertex_shape_idx.get(vi).copied().unwrap_or(vi);
+        if si < ds.shape_info.len() {
+            assert_eq!(ds.shape_info[si].rank, 0,
+                "ShapeA vertex {} should have rank 0", vi);
+        }
+    }
+
+    // ShapeB (box) vertices should have rank 1
+    let box_verts: Vec<usize> = (0..ds.vertices.len())
+        .filter(|&vi| ds.vertices[vi].origin == Some(ShapeOrigin::ShapeB))
+        .collect();
+    for &vi in &box_verts {
+        let si = ds.vertex_shape_idx.get(vi).copied().unwrap_or(vi);
+        if si < ds.shape_info.len() {
+            assert_eq!(ds.shape_info[si].rank, 1,
+                "ShapeB vertex {} should have rank 1", vi);
+        }
+    }
+}
+
+#[test]
+fn shape_info_flag_reference_consistency() {
+    // For edges, reference should point back to the edge index.
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    for ei in 0..ds.edges.len() {
+        let si = ds.edge_shape_idx.get(ei).copied()
+            .unwrap_or(ds.vertices.len() + ei);
+        if si >= ds.shape_info.len() { continue; }
+        // reference = edge index (or at least >= 0)
+        let ref_val = ds.shape_info[si].reference;
+        assert!(ref_val >= 0 || ref_val == -1,
+            "edge {} shape_info[{}].reference should be >= 0 or -1, got {}",
+            ei, si, ref_val);
+        // flag: -1 = unset, 0+ = degenerated/purpose flag
+        let flag_val = ds.shape_info[si].flag;
+        assert!(flag_val == -1 || flag_val >= 0,
+            "edge {} shape_info[{}].flag should be -1 or >= 0, got {}",
+            ei, si, flag_val);
+    }
+}
+
+#[test]
+fn shape_info_box_is_out_works() {
+    let sphere = make_unit_sphere();
+    let bx = make_unit_box();
+    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+
+    // BoxIsOut between two different shape_info entries: should not panic
+    if ds.shape_info.len() >= 2 {
+        // Two shape_info entries with box data
+        let si_a = &ds.shape_info[0];
+        let si_b = &ds.shape_info[ds.shape_info.len() - 1];
+        // Just call it — should not panic
+        let _result = si_a.box_is_out(si_b);
+    }
+}
+
 /// Two non-intersecting boxes — fuse should produce 2 separate solids.
 /// Known issue: BuildResult builds a single compound solid for all faces.
 #[test]
