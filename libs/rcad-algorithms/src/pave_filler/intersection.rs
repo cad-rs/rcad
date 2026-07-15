@@ -1076,7 +1076,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
  let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
  if bv0 && bv1 {
- // OCCT L427-437: EDGE-type treatment
+ // OCCT L427-437: EDGE-type treatment — edge lies on face
  self.ds.interf_ef.push(InterferenceEF {
  edge: nE, face: nF,
  point: *point,
@@ -1087,6 +1087,9 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  a_mi_efc.insert(nF);
  continue;
  }
+ // OCCT L448-455: one vertex NOT on face → mark as processed, no EF
+ self.ds.try_add_interf(nE, nF);
+ continue;
  }
  // OCCT L442-444: splittable check
  if !b_is_pb_splittable {
