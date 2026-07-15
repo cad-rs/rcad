@@ -1,56 +1,458 @@
-﻿use super::*;
+use super::*;
 use crate::inttools::int_patch_type::IntPatchIType;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn perform_ff(&mut self) {
-  // before performing intersection (ensures FaceInfo is current).
-  let mut ff_face_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
-  ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeA));
-  ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeB));
-  for &fi in &ff_face_set {
-  self.ds.refine_face_info_on(fi);
- self.ds.refine_face_info_in(fi);
+  // OCCT BOPAlgo_PaveFiller_6.cxx L286-623: PerformFF
+
+  // ===== Step 1: Collect touched faces + Update FaceInfo (OCCT L291-314) =====
+
+  // Get FF candidate pairs (OCCT L291: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE))
+  let pairs = self.ff_candidate_pairs();
+  let i_size = pairs.len();
+
+  // Collect all touched faces (OCCT L295-302)
+  let mut a_mi_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  for &(n_f1, n_f2) in &pairs {
+    a_mi_fence.insert(n_f1);
+    a_mi_fence.insert(n_f2);
+  }
+
+  // OCCT L304-311: collect rest of touched faces (those with HasReference)
+  for fi in 0..self.ds.faces.len() {
+    if fi < self.ds.shape_info.len() && self.ds.shape_info[fi].has_reference() {
+      a_mi_fence.insert(fi);
+    }
+  }
+
+  // OCCT L313-314: UpdateFaceInfoOn/In
+  for &fi in &a_mi_fence {
+    self.ds.refine_face_info_on(fi);
+    self.ds.refine_face_info_in(fi);
+  }
+
+  // OCCT L316-320: early return if no intersection pairs
+  if i_size == 0 {
+    return;
+  }
+
+  // ===== Step 2: Build aEEMap from EE interferences (OCCT L334-361) =====
+  // Collects EE pairs with new vertices for seam edge shift detection.
+  let mut a_ee_map: std::collections::HashMap<(usize, usize), Vec<usize>> =
+    std::collections::HashMap::new();
+  for inf in &self.ds.interf_ee {
+    if inf.new_vertex == usize::MAX {
+      continue;
+    }
+    let e1 = inf.e1;
+    let e2 = inf.e2;
+    let n_vn = inf.new_vertex;
+    let a_pair = if e1 < e2 { (e1, e2) } else { (e2, e1) };
+    a_ee_map.entry(a_pair).or_default().push(n_vn);
+  }
+
+  // ===== Step 3: Process each FF pair (OCCT L363-622) =====
+  //
+  // OCCT splits this into two phases:
+  //   Phase A (L363-518): prepare BOPAlgo_FaceFace objects for each pair
+  //   Phase B (L528-534): parallel Perform on all objects
+  //   Phase C (L538-622): process results
+  //
+  // rcad performs each pair sequentially (no parallelism yet).
+
+  for &(n_f1, n_f2) in &pairs {
+    if self.ds.has_interf_ff(n_f1, n_f2) {
+      continue;
+    }
+
+    if !self.use_glue() {
+      // ---- Non-glue path (OCCT L374-508) ----
+
+      // Surface type checks for plane-plane fast path and seam edge shift
+      let is_plane1 = matches!(self.ds.faces[n_f1].surface, Surface3::Plane(_));
+      let is_plane2 = matches!(self.ds.faces[n_f2].surface, Surface3::Plane(_));
+
+      // OCCT L381-392: CheckPlanes - skip parallel planes that don't truly intersect
+      if is_plane1 && is_plane2 {
+        if !self.check_planes(n_f1, n_f2) {
+          // Planes do not geometrically intersect; register empty FF interference
+          self.ds.interf_ff.push(InterferenceFF {
+            f1: n_f1,
+            f2: n_f2,
+            curves: Vec::new(),
+            points: Vec::new(),
+            tangent_faces: false,
+          });
+          continue;
+        }
+      }
+
+      // OCCT L394-487: Seam edge shift detection for periodic surfaces
+      // Looks for EE intersections between seam edges of the two faces and
+      // shifts one face to align the seam edges precisely.
+      let old_shift_tol = self.seam_shift_tol;
+      let shift_info = if !is_plane1 || !is_plane2 {
+        let si = self.check_seam_edge_shift_with_ee_map(n_f1, n_f2, &a_ee_map);
+        if let Some(ref info) = si {
+          self.seam_shift_tol = info.shift_value;
+        }
+        si
+      } else {
+        None
+      };
+
+      // ---- Perform surface-surface intersection (OCCT L489-508) ----
+      // Equivalent to BOPAlgo_FaceFace::Perform (IntTools_FaceFace::Perform wrapper)
+      let (curves, points, b_tangent_faces) = self.intersect_faces(n_f1, n_f2);
+
+      // ---- Process results (OCCT L538-622) ----
+
+      // Reverse seam edge shift on intersection data (OCCT L561: ApplyTrsf)
+      if let Some(ref info) = shift_info {
+        self.reverse_seam_edge_shift(n_f1, n_f2, info);
+      }
+      self.seam_shift_tol = old_shift_tol;
+
+      // Tangent faces: no curves or points (OCCT L556)
+      if b_tangent_faces {
+        self.ds.interf_ff.push(InterferenceFF {
+          f1: n_f1,
+          f2: n_f2,
+          curves: Vec::new(),
+          points: Vec::new(),
+          tangent_faces: true,
+        });
+        continue;
+      }
+
+      let a_nb_curves = curves.len();
+      let a_nb_points = points.len();
+
+      // Store curves in DS (OCCT L592-609)
+      let mut a_ff_curve_indices: Vec<usize> = Vec::with_capacity(a_nb_curves);
+      for ic in curves {
+        let ci = self.ds.intersection_curves.len();
+        self.ds.intersection_curves.push(ic);
+        a_ff_curve_indices.push(ci);
+      }
+
+      // Store point-contact vertices in DS (OCCT L613-621)
+      let mut a_ff_point_indices: Vec<usize> = Vec::with_capacity(a_nb_points);
+      for pt in points {
+        let vi = self.ds.add_vertex(pt);
+        if vi < self.ds.vertices.len() {
+          self.ds.vertex_data_mut(vi).tolerance = TOLERANCE_ABS;
+        }
+        a_ff_point_indices.push(vi);
+      }
+
+      // Create FF interference entry (OCCT L574-577)
+      self.ds.interf_ff.push(InterferenceFF {
+        f1: n_f1,
+        f2: n_f2,
+        curves: a_ff_curve_indices,
+        points: a_ff_point_indices,
+        tangent_faces: false,
+      });
+    } else {
+      // ---- Glue mode (OCCT L511-517) ----
+      // Just register empty FF interference; intersection is handled by glue logic
+      self.ds.interf_ff.push(InterferenceFF {
+        f1: n_f1,
+        f2: n_f2,
+        curves: Vec::new(),
+        points: Vec::new(),
+        tangent_faces: false,
+      });
+    }
+  }
+
+  // Dedup FF interferences by pair (BOPDS_IndexRange equivalent)
+  self.ds.dedup_ff_interferences();
  }
 
- // OCCT PaveFiller_6.cxx: FillShrunkData + BVH pair iteration
- self.fill_shrunk_data(); // OCCT: FillShrunkData(FACE, FACE)
- let a_faces = self.faces_of(ShapeOrigin::ShapeA);
- let b_faces = self.faces_of(ShapeOrigin::ShapeB);
-
- if a_faces.is_empty() || b_faces.is_empty() {
- return;
+ pub(crate) fn ff_candidate_pairs(&self) -> Vec<(usize, usize)> {
+  // Get FF pair candidates from BVH or pair iterator.
+  // OCCT equivalent: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE) loop.
+  if let Some(ref fbvh) = self.face_bvh {
+    let candidates = crate::bvh::DsBvh::candidate_pairs(fbvh, fbvh);
+    candidates
+      .into_iter()
+      .filter(|&(fa, fb)| self.ds.face_origin(fa) != self.ds.face_origin(fb))
+      .collect()
+  } else {
+    let a_fcount = self.ds.a_face_count;
+    let mut result = Vec::new();
+    let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+    while fit.more() {
+      let pk = fit.value();
+      result.push((pk.i1, pk.i2));
+      fit.next();
+    }
+    result
+  }
  }
 
- if let (Some(ref fbvh)) = self.face_bvh {
- // DS-based BVH: indices are DS face indices, no a_rev/b_rev mapping.
- let candidates = crate::bvh::DsBvh::candidate_pairs(fbvh, fbvh);
- // Cross-origin filter + dedup.
- let mut processed_pairs = std::collections::HashSet::new();
- for &(fa, fb) in &candidates {
- if self.ds.face_origins[fa] == self.ds.face_origin(fb) { continue; }
- if !processed_pairs.insert((fa, fb)) { continue; }
- if self.ds.has_interf_ff(fa, fb) { continue; }
- if !self.should_skip_glued_face_pair(fa, fb) {
- self.intersect_face_face(fa, fb);
+ /// OCCT PaveFiller_6.cxx L419-486: seam edge shift using aEEMap.
+ /// Checks EE intersections between seam (closed) edges of a face pair
+ /// and returns the shift needed to align them, or None.
+ pub(crate) fn check_seam_edge_shift_with_ee_map(
+  &self,
+  f1: usize,
+  f2: usize,
+  ee_map: &std::collections::HashMap<(usize, usize), Vec<usize>>,
+ ) -> Option<SeamEdgeShift> {
+  let s1 = &self.ds.faces[f1].surface;
+  let s2 = &self.ds.faces[f2].surface;
+
+  // Skip if both faces are Planes
+  if matches!(s1, Surface3::Plane(_)) && matches!(s2, Surface3::Plane(_)) {
+    return None;
+  }
+
+  // Collect closed (seam) edge pairs from both faces
+  for &e1 in &self.ds.faces[f1].boundary_edges {
+    let is_closed1 = self.is_seam_edge(e1, f1);
+    for &e2 in &self.ds.faces[f2].boundary_edges {
+      let is_closed2 = self.is_seam_edge(e2, f2);
+      if !is_closed1 && !is_closed2 {
+        continue;
+      }
+
+      // Look up EE pair in pre-built aEEMap (OCCT L443-444)
+      let pair_key = if e1 < e2 { (e1, e2) } else { (e2, e1) };
+      let vertex_indices = match ee_map.get(&pair_key) {
+        Some(v) => v,
+        None => continue,
+      };
+
+      for &a_vertex_index in vertex_indices {
+        if a_vertex_index >= self.ds.vertices.len() {
+          continue;
+        }
+        let a_vertex_point = self.ds.vertex_point(a_vertex_index);
+
+        // Project vertex onto both edges' 3D curves (OCCT L458-469)
+        let curve1 = &self.ds.edges[e1].curve;
+        let curve2 = &self.ds.edges[e2].curve;
+        let proj1 = closest_point_on_curve(curve1, a_vertex_point, 64);
+        let proj2 = closest_point_on_curve(curve2, a_vertex_point, 64);
+
+        let a_p1 = proj1.point;
+        let a_p2 = proj2.point;
+
+        // Verify projections are valid (OCCT L462-465)
+        let d1 = a_p1.distance(a_vertex_point);
+        let d2 = a_p2.distance(a_vertex_point);
+        let sanity_tol = TOLERANCE_ABS * 1000.0;
+        if d1 > sanity_tol || d2 > sanity_tol {
+          continue;
+        }
+
+        // Check if shift exceeds vertex tolerance (OCCT L472)
+        let vtx_tol = self.ds.vertex_tolerance(a_vertex_index);
+        let shift_dist = a_p1.distance(a_p2);
+        if shift_dist > vtx_tol {
+          // OCCT L475-478: create translation and shift one face
+          let shift_vector = if is_closed1 {
+            a_p2 - a_p1 // Shift f1: move aP1 toward aP2
+          } else {
+            a_p1 - a_p2 // Shift f2: move aP2 toward aP1
+          };
+
+          return Some(SeamEdgeShift {
+            shift_vector,
+            shift_value: shift_dist,
+            shifted_face: if is_closed1 { 1 } else { 2 },
+          });
+        }
+      }
+    }
+  }
+  None
  }
+
+ /// Pure face-face intersection computation.
+ /// OCCT equivalent: IntTools_FaceFace::Perform.
+ /// Returns (intersection_curves, point_contacts_3d, tangent_faces_flag).
+ pub(crate) fn intersect_faces(
+  &mut self,
+  f1: usize,
+  f2: usize,
+ ) -> (
+  Vec<crate::bopds::ds::IntersectionCurve>,
+  Vec<glam::DVec3>,
+  bool,
+ ) {
+  let s_a = self.ds.faces[f1].surface.clone();
+  let s_b = self.ds.faces[f2].surface.clone();
+
+  // OCCT L351-375: SortTypes - canonical surface ordering
+  let type_idx1 = Self::surface_type_index(&s_a);
+  let type_idx2 = Self::surface_type_index(&s_b);
+  let b_reverse = type_idx1 < type_idx2;
+
+  let (surf_a, surf_b, ff1, ff2) = if b_reverse {
+    (&s_b, &s_a, f2, f1)
+  } else {
+    (&s_a, &s_b, f1, f2)
+  };
+
+  // Plane-plane fast path
+  if matches!(surf_a, Surface3::Plane(_)) && matches!(surf_b, Surface3::Plane(_)) {
+    let (curves, points, tangent) = self.intersect_plane_plane_raw(ff1, ff2);
+    let curves: Vec<crate::bopds::ds::IntersectionCurve> = if b_reverse {
+      curves
+        .into_iter()
+        .map(|mut ic| {
+          std::mem::swap(&mut ic.pcurve_on_a, &mut ic.pcurve_on_b);
+          ic
+        })
+        .collect()
+    } else {
+      curves
+    };
+    return (curves, points, tangent);
+  }
+
+  // IntPatch_Intersection: generic surface-surface intersection
+  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
+  int_patch.perform(surf_a, surf_b, self.fuzzy_tolerance, self.fuzzy_tolerance);
+
+  if int_patch.tangent_faces() {
+    return (Vec::new(), Vec::new(), true);
+  }
+
+  // PutPointsOnLine (IntPatch_Intersection.cxx L268-312)
+  for li in 0..int_patch.nb_lines() {
+    self.put_points_on_line(f1, f2, int_patch.line_mut(li));
+  }
+
+  // MakeCurve for each IntPatch line
+  let mut curves: Vec<crate::bopds::ds::IntersectionCurve> = Vec::new();
+  for i in 0..int_patch.nb_lines() {
+    let ics = self.make_intersection_curve(ff1, ff2, int_patch.line(i));
+    for mut ic in ics {
+      // OCCT L558-567: if reversed, swap pcurves
+      if b_reverse {
+        std::mem::swap(&mut ic.pcurve_on_a, &mut ic.pcurve_on_b);
+      }
+      curves.push(ic);
+    }
+  }
+
+  // Points (OCCT L576-608)
+  let mut points: Vec<glam::DVec3> = Vec::new();
+  for pi in 0..int_patch.nb_points() {
+    let pt = int_patch.point(pi);
+    let (uv_a, uv_b, f_a, f_b) = if b_reverse {
+      (
+        glam::DVec2::new(pt.u2, pt.v2),
+        glam::DVec2::new(pt.u1, pt.v1),
+        ff2,
+        ff1,
+      )
+    } else {
+      (
+        glam::DVec2::new(pt.u1, pt.v1),
+        glam::DVec2::new(pt.u2, pt.v2),
+        ff1,
+        ff2,
+      )
+    };
+    if !self.context.is_point_in_on_face(self.ds, f_a, uv_a) {
+      continue;
+    }
+    if !self.context.is_point_in_on_face(self.ds, f_b, uv_b) {
+      continue;
+    }
+    let p3d = if b_reverse { pt.p2 } else { pt.p1 };
+    points.push(p3d);
+  }
+
+  (curves, points, false)
  }
- } else {
- //  BOPDS_Iterator cross-group face pair iteration.
- let a_fcount = self.ds.a_face_count;
- let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
- while fit.more() {
- let pk = fit.value();
- let af = pk.i1; let bf = pk.i2;
- // OCCT: myDS->HasInterf(nF1, nF2)  ?skip if already interfered
- if self.ds.has_interf_ff(af, bf) { fit.next(); continue; }
- if !self.should_skip_glued_face_pair(af, bf) {
- self.intersect_face_face(af, bf);
- }
- fit.next();
- }
- }
- // dedup FF interferences by pair (BOPDS_IndexRange).
- self.ds.dedup_ff_interferences();
+
+ /// Plane-plane intersection returning raw data without DS storage.
+ /// Returns (curves, points, tangent_flag).
+ pub(crate) fn intersect_plane_plane_raw(
+  &mut self,
+  f1: usize,
+  f2: usize,
+ ) -> (
+  Vec<crate::bopds::ds::IntersectionCurve>,
+  Vec<glam::DVec3>,
+  bool,
+ ) {
+  use rcad_kernel::geom::{Curve3, Surface3};
+
+  let pln1 = match &self.ds.faces[f1].surface {
+    Surface3::Plane(p) => p,
+    _ => return (Vec::new(), Vec::new(), false),
+  };
+  let pln2 = match &self.ds.faces[f2].surface {
+    Surface3::Plane(p) => p,
+    _ => return (Vec::new(), Vec::new(), false),
+  };
+
+  let mut geo = crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo::new();
+  let q1 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln1);
+  let q2 = crate::inttools::int_surf_quadric::Quadric::from_plane(pln2);
+  geo.perform_plane_plane(&q1, &q2, 1e-8, self.fuzzy_tolerance);
+
+  if !geo.is_done() {
+    return (Vec::new(), Vec::new(), false);
+  }
+
+  use crate::inttools::int_ana_quad_quad_geo::AnaResultType;
+  match geo.type_inter() {
+    AnaResultType::Same => return (Vec::new(), Vec::new(), true),
+    AnaResultType::Empty => return (Vec::new(), Vec::new(), false),
+    _ => {}
+  }
+
+  let line3 = geo.line(1);
+  let line3d = Curve3::Line(line3.clone());
+  let pcurve1 = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line3, pln1);
+  let pcurve2 = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line3, pln2);
+
+  let uv1 = self.context.uv_bounds(self.ds, f1);
+  let uv2 = self.context.uv_bounds(self.ds, f2);
+  let tol = self.ds.face_tolerance(f1).max(self.ds.face_tolerance(f2));
+
+  let p1 = crate::inttools::classify_lin2d::classify_lin2d(&pcurve1, uv1, tol);
+  let p2 = crate::inttools::classify_lin2d::classify_lin2d(&pcurve2, uv2, tol);
+
+  let (Some([p11, p12]), Some([p21, p22])) = (p1, p2) else {
+    return (Vec::new(), Vec::new(), false);
+  };
+  if p21 >= p12 || p22 <= p11 {
+    return (Vec::new(), Vec::new(), false);
+  }
+  let pmin = p11.max(p21);
+  let pmax = p12.min(p22);
+  if pmax - pmin <= tol {
+    return (Vec::new(), Vec::new(), false);
+  }
+
+  let t_range = [pmin, pmax];
+  let mut curve_extra = crate::bopds::ds::CurveExtra::default();
+  curve_extra.tangential_tol = tol;
+
+  let ic = crate::bopds::ds::IntersectionCurve {
+    curve: line3d,
+    polyline: Vec::new(),
+    start_vertex: usize::MAX,
+    end_vertex: usize::MAX,
+    t_range,
+    pcurve_on_a: Some(pcurve1),
+    pcurve_on_b: Some(pcurve2),
+    geom_tol: tol,
+    pave_blocks: Vec::new(),
+    curve_extra,
+  };
+
+  (vec![ic], Vec::new(), false)
  }
 
  pub(crate) fn should_skip_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
