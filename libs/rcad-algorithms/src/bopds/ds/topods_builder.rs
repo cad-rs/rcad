@@ -108,23 +108,26 @@ fn init_shape_topo(
     if !visited.insert(ti) { return; }
     let ts = &brep.tshapes[ti];
     match &**ts {
+        // OCCT BOPDS_DS.cxx L328-352: InitShape
+        //   L342: myMapShapeIndex.Seek(aSubShape) — TopoDS identity check via
+        //         map/hash, NOT spatial proximity. Two TopoDS_Vertex objects at
+        //         the same position from different shapes are distinct and both
+        //         are Appended (L344). rcad follows the same rule:
+        //         visited.insert(ti) handles topological dedup (same OCCT shape
+        //         visited twice); find_vertex_near (position-based dedup) has
+        //         no OCCT equivalent and must NOT be called.
+        //   L344: Append(aSubShape) — always creates new shape info entry.
+        //         rcad: ds.push_vertex + v_map.insert + shape_info.push.
         topods::TShape::Vertex(vd) => {
-            let tol = vd.tolerance.max(TOLERANCE_ABS);
-            let vi = if let Some(existing) = ds.find_vertex_near(vd.point, tol) {
-                v_map.insert(ti, existing);
-                return; // vertex already existed, no ShapeInfo needed
-            } else {
-                let vi = ds.vertices.len();
-                ds.push_vertex(DSVertex {
-                    point: vd.point,
-                    origin: Some(origin),
-                    geom_tol: vd.tolerance,
-                    is_internal: false,
-                    location: 0,
-                }, Some(ts.clone()));
-                v_map.insert(ti, vi);
-                vi
-            };
+            let vi = ds.vertices.len();
+            ds.push_vertex(DSVertex {
+                point: vd.point,
+                origin: Some(origin),
+                geom_tol: vd.tolerance,
+                is_internal: false,
+                location: 0,
+            }, Some(ts.clone()));
+            v_map.insert(ti, vi);
             debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1,
                 "ShapeInfo must be 1:1 with shapes[]");
             ds.shape_info.push(ShapeInfo {
