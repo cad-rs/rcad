@@ -1258,17 +1258,31 @@ fn make_analytic_periodic_curve(
    });
 
  } else if is_full_period && aNbParts == 1 {
-   // 闁冲厜鍋撻柍鍏夊亾 Full-period, single part 闁?accept full circle 闁冲厜鍋撻柍鍏夊亾
+   // Full-period, single part — accept full circle
    // OCCT L996-1042: trimmed full circle + BuildPCurves + append + break.
    let pca = self.compute_pcurve_on_surface(curve, f1);
    let pcb = self.compute_pcurve_on_surface(curve, f2);
+   // For closed/full-period curves, create a single vertex for
+   // the common start/end point (OCCT: BRepBuilderAPI_MakeEdge
+   // creates a shared vertex for closed edges).
+   let (sv, ev) = {
+   let p_mid = curve.point_at(0.0);
+   if p_mid.is_finite() {
+   let vi = self.ds.vertices.len();
+   self.ds.push_vertex(DSVertex {
+   point: p_mid, geom_tol: geom_tol.max(TOLERANCE_ABS),
+   origin: None, is_internal: false, location: 0,
+   }, None);
+   (vi, vi)
+   } else { (usize::MAX, usize::MAX) }
+   };
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {
    curve: curve.clone(),
    polyline: Vec::new(),
-   start_vertex: usize::MAX,
-   end_vertex: usize::MAX,
+   start_vertex: sv,
+   end_vertex: ev,
    t_range: orig_t_range,
    pcurve_on_a: pca,
    pcurve_on_b: pcb,
