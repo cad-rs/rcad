@@ -1297,97 +1297,254 @@ impl<'a> PaveFiller<'a> {
    .filter(|(_, e)| e.origin == origin)
    .map(|(i, _)| i).collect()
  }
- /// BOPAlgo_PaveFiller::MakeSplitEdges (PaveFiller_7.cxx L371-549).
- /// For each PaveBlock on each edge, creates a new DSEdge representing the
- /// sub-range between the block's endpoints.  Edges that were not split by
- /// intersection (single PB, both vertices are from original shapes) retain
- /// their original edge.
+ // OCCT BOPAlgo_PaveFiller_7.cxx L371-549 MakeSplitEdges
  pub(crate) fn make_split_edges(&mut self) {
-   let mut processed_cbs: std::collections::HashSet<usize> =
-     std::collections::HashSet::new();
-   // Collect split edge work items (BorrowChecker-friendly collection).
-   struct SplitEdgeWork {
+   // L391: UpdateCommonBlocksWithSDVertices
+   self.ds.update_common_blocks_with_sd_vertices();
+   //
+   let n_edges = self.ds.edges.len();
+   // L377-380: return if no edges (aNbPBP == 0 equivalent)
+   if n_edges == 0 {
+     return;
+   }
+   //
+   // L386: aMCB — dedup set for CommonBlocks (store CB indices)
+   let mut a_mcb: HashSet<usize> = HashSet::new();
+   //
+   // ----- Phase 1 (L396-498): collect split edge tasks -----
+   //
+   struct SplitEdgeTask {
      edge_idx: usize,
-     v1: usize,
-     v2: usize,
-     t1: f64,
-     t2: f64,
-     pb_idx: usize,
+     n_v1: usize,
+     n_v2: usize,
+     a_t1: f64,
+     a_t2: f64,
+     // For non-CB: the PB to call SetEdge on; for CB: PaveBlock1
+     pb_shared: crate::bopds::pave::SharedPB,
      cb_idx: Option<usize>,
    }
-   let mut work: Vec<SplitEdgeWork> = Vec::new();
-
-   for ei in 0..self.ds.edges.len() {
-     if self.ds.is_edge_degenerated(ei) {
+   //
+   struct DeferredCBUpdate {
+     cb_idx: usize,
+     edge_idx: usize,
+   }
+   //
+   let mut tasks: Vec<SplitEdgeTask> = Vec::new();
+   let mut deferred_cb_updates: Vec<DeferredCBUpdate> = Vec::new();
+   //
+   for ei in 0..n_edges {
+     // L398-401: UserBreak check omitted in rcad (no progress range)
+     //
+     // aLPB = aPBP(i) — the list of PBs for this edge (L402)
+     let n_e = ei;
+     //
+     // L408-410: aSIE.HasFlag() → skip degenerated edges
+     if self.ds.is_edge_degenerated(n_e) {
        continue;
      }
-     let pbs = self.ds.edges[ei].pave_blocks.clone();
-     if pbs.is_empty() {
-       continue;
-     }
-     for (pi, spb) in pbs.iter().enumerate() {
-       let pb = spb.0.read().unwrap();
-       let cb_idx = pb.common_block_idx;
-       // CB dedup: process each CB only once (OCCT: aMCB set).
-       if let Some(cb) = cb_idx {
-         if !processed_cbs.insert(cb) {
-           continue;
-         }
-       }
-       let (v1, v2) = pb.indices();
-       let (t1, t2) = pb.range();
-       // OCCT L426-467: decide whether to split the edge.
-       let v1_new = v1 < self.ds.vertices.len()
-         && self.ds.vertex_origin(v1).is_none();
-       let v2_new = v2 < self.ds.vertices.len()
-         && self.ds.vertex_origin(v2).is_none();
-       if !v1_new && !v2_new && pbs.len() == 1 {
-         // No new vertex on this edge -- single PB keeps the original edge.
-         drop(pb);
-         spb.0.write().unwrap().new_edge = Some(ei);
+     //
+     // L402: aLPB = self.ds.edges[n_e].pave_blocks
+     let pb_count = self.ds.edges[n_e].pave_blocks.len();
+     //
+     // Clone PB references for iteration (avoids borrow during mutable Phase 1.5)
+     let edge_pbs: Vec<crate::bopds::pave::SharedPB> =
+       self.ds.edges[n_e].pave_blocks.clone();
+     //
+     for spb in &edge_pbs {
+       // L407-423: extract PB data with short-lived guard (avoids borrow conflicts)
+       let pb_orig_edge: usize;
+       let pb_cb_idx: Option<usize>;
+       let b_cb: bool;
+       let n_v1: usize;
+       let n_v2: usize;
+       {
+         let pb = spb.0.read().unwrap();
+         pb_orig_edge = pb.original_edge;
+         pb_cb_idx = pb.common_block_idx;
+         b_cb = pb_cb_idx.is_some();
+         let (nv1, nv2) = pb.indices();
+         n_v1 = nv1;
+         n_v2 = nv2;
+       } // pb guard dropped
+       //
+       // L409-414: skip if original edge is degenerated
+       if self.ds.is_edge_degenerated(pb_orig_edge) {
          continue;
        }
-       drop(pb);
-       work.push(SplitEdgeWork {
-         edge_idx: ei,
-         v1,
-         v2,
-         t1,
-         t2,
-         pb_idx: pi,
-         cb_idx,
+       //
+       // L416-421: Check CommonBlock, dedup CBs
+       if b_cb && !a_mcb.insert(pb_cb_idx.unwrap()) {
+         // CB already processed → skip (OCCT: aMCB.Add returns false)
+         continue;
+       }
+       //
+       // L425-468: Check if split is necessary
+       let mut b_to_split = true;
+       let b_v1 = self.ds.is_new_vertex(n_v1);
+       let b_v2 = self.ds.is_new_vertex(n_v2);
+       //
+       if !b_v1 && !b_v2 {
+         // L430: no new vertices — may avoid splitting
+         if !self.non_destructive || !b_cb {
+           if b_cb {
+             // L436-455: CB — find the PB whose original edge has 1 PB
+             let cb_idx = pb_cb_idx.unwrap();
+             let cb_pbs: Vec<(usize, usize)> = {
+               let cb = &self.ds.common_blocks[cb_idx];
+               cb.pave_blocks().to_vec()
+             };
+             //
+             let mut a_found_it = false;
+             let mut a_found_n_e = n_e;
+             for &(cb_pb_idx, _) in &cb_pbs {
+               if cb_pb_idx < self.ds.pave_blocks.len() {
+                 let oe = self.ds.pave_blocks[cb_pb_idx]
+                   .0.read().unwrap().original_edge;
+                 if oe < self.ds.edges.len()
+                   && self.ds.edges[oe].pave_blocks.len() == 1
+                 {
+                   a_found_it = true;
+                   a_found_n_e = oe;
+                   break;
+                 }
+               }
+             }
+             //
+             if a_found_it {
+               // L447-456: edge has only 1 PB → no split needed
+               b_to_split = false;
+               // L449: aCB->SetRealPaveBlock(it.Value())
+               // Reorder CB PBs so the matched PB is first.
+               if let Some(pos) = cb_pbs.iter().position(|&(cb_pb_idx, _)| {
+                 cb_pb_idx < self.ds.pave_blocks.len()
+                   && self.ds.pave_blocks[cb_pb_idx]
+                     .0.read().unwrap().original_edge == a_found_n_e
+               }) {
+                 if pos != 0 {
+                   let mut reordered = cb_pbs;
+                   reordered.swap(0, pos);
+                   self.ds.common_blocks[cb_idx].set_pave_blocks(reordered);
+                 }
+               }
+               // L450-454: SetEdge + ComputeTolerance + UpdateEdgeTol
+               deferred_cb_updates.push(DeferredCBUpdate {
+                 cb_idx,
+                 edge_idx: a_found_n_e,
+               });
+             }
+           } else if pb_count == 1 {
+             // L457-461: single PB, no new vertices → keep original edge
+             b_to_split = false;
+             // L460: aPB->SetEdge(nE) — short-lived guard for write
+             let orig = { let p = spb.0.read().unwrap(); p.original_edge };
+             spb.0.write().unwrap().new_edge = Some(orig);
+           }
+           // L462-465: if !bToSplit → skip (continue)
+           if !b_to_split {
+             continue;
+           }
+         }
+       }
+       //
+       // L470-496: This PB needs splitting
+       let (task_edge_idx, task_n_v1, task_n_v2, task_t1, task_t2, task_pb) = {
+         if b_cb {
+           // L471-476: use CB's PaveBlock1
+           let cb_idx = pb_cb_idx.unwrap();
+           let cb = &self.ds.common_blocks[cb_idx];
+           if let Some(pb1_idx) = cb.pave_block1() {
+             if pb1_idx < self.ds.pave_blocks.len() {
+               let pb1 = &self.ds.pave_blocks[pb1_idx];
+               let pb1g = pb1.0.read().unwrap();
+               let w_edge = pb1g.original_edge;
+               let (w_v1, w_v2) = pb1g.indices();
+               let (w_t1, w_t2) = pb1g.range();
+               drop(pb1g);
+               (w_edge, w_v1, w_v2, w_t1, w_t2, pb1.clone())
+             } else {
+               continue;
+             }
+           } else {
+             continue;
+           }
+         } else {
+           // L477: use current PB's data — short-lived guard
+           let (t1, t2) = { let p = spb.0.read().unwrap(); p.range() };
+           (pb_orig_edge, n_v1, n_v2, t1, t2, spb.clone())
+         }
+       };
+       //
+       // L488-496: create SplitEdge task
+       tasks.push(SplitEdgeTask {
+         edge_idx: task_edge_idx,
+         n_v1: task_n_v1,
+         n_v2: task_n_v2,
+         a_t1: task_t1,
+         a_t2: task_t2,
+         pb_shared: task_pb,
+         cb_idx: pb_cb_idx,
        });
      }
    }
-   // Process split edges (OCCT L500-548: BOPTools_Parallel::Perform).
-   for task in &work {
+   //
+   // ----- Phase 1.5: Apply deferred CB tolerance updates -----
+   // (OCCT L449-454: CB edge with 1 PB — no split, just tolerance)
+   for update in &deferred_cb_updates {
+     // L450: aCB->SetEdge(nE)
+     self.ds.common_blocks[update.cb_idx].set_edge(update.edge_idx);
+     // L453: ComputeToleranceOfCB
+     let a_tol = crate::bopds::tools::compute_tolerance_of_cb(
+       self.ds, update.cb_idx,
+     );
+     // L454: UpdateEdgeTolerance
+     self.update_edge_tolerance(update.edge_idx, a_tol);
+   }
+   //
+   // ----- Phase 2 (L500-548): create split edges and register in DS -----
+   // OCCT L500-508: BOPTools_Parallel::Perform (sequential in rcad)
+   //
+   for task in &tasks {
+     // L521-523: get split edge and box from BOPAlgo_SplitEdge result
      let orig = &self.ds.edges[task.edge_idx];
-     let new_ei = self.ds.edges.len();
+     //
+     // Build vertex_params map
      let mut vertex_params = std::collections::HashMap::new();
-     vertex_params.insert(task.v1, task.t1);
-     vertex_params.insert(task.v2, task.t2);
-     self.ds.push_edge(DSEdge {
-       start_vertex: task.v1,
-       end_vertex: task.v2,
-       curve: orig.curve.clone(),
-       t_range: [task.t1, task.t2],
-       origin: orig.origin,
-       geom_tol: orig.geom_tol,
-       paves: Vec::new(),
-       pave_blocks: Vec::new(),
-       face_reps: Vec::new(),
-       is_internal: orig.is_internal,
-       vertex_params,
-       face_tolerances: Vec::new(),
-       is_geometric: orig.is_geometric,
-       location: orig.location,
-     }, None);
-     // OCCT L539-547: assign new edge to CB or PB.
-     if let Some(cb) = task.cb_idx {
-       self.ds.common_blocks[cb].set_edge(new_ei);
+     vertex_params.insert(task.n_v1, task.a_t1);
+     vertex_params.insert(task.n_v2, task.a_t2);
+     //
+     // L529-537: create ShapeInfo for the new edge and Append to DS
+     let n_sp = self.ds.push_edge(
+       DSEdge {
+         start_vertex: task.n_v1,
+         end_vertex: task.n_v2,
+         curve: orig.curve.clone(),
+         t_range: [task.a_t1, task.a_t2],
+         origin: orig.origin,
+         geom_tol: orig.geom_tol,
+         paves: Vec::new(),
+         pave_blocks: Vec::new(),
+         face_reps: Vec::new(),
+         is_internal: orig.is_internal,
+         vertex_params,
+         face_tolerances: Vec::new(),
+         is_geometric: orig.is_geometric,
+         location: orig.location,
+       },
+       None,
+     );
+     //
+     // L539-547: register new edge on CB or PB
+     if let Some(cb_idx) = task.cb_idx {
+       // L541: UpdateEdgeTolerance(nSp, aBSE.Tolerance())
+       let cb_tol = self.ds.common_blocks[cb_idx].tolerance();
+       if cb_tol > 0.0 {
+         self.update_edge_tolerance(n_sp, cb_tol);
+       }
+       // L542: aCBk->SetEdge(nSp)
+       self.ds.common_blocks[cb_idx].set_edge(n_sp);
      } else {
-       self.ds.edges[task.edge_idx].pave_blocks[task.pb_idx]
-         .0.write().unwrap().new_edge = Some(new_ei);
+       // L546: aPBk->SetEdge(nSp)
+       task.pb_shared.0.write().unwrap().new_edge = Some(n_sp);
      }
    }
  }
