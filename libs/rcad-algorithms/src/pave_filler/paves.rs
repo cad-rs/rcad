@@ -1419,31 +1419,45 @@ impl<'a> super::PaveFiller<'a> {
  }
  pnts
  }
+ // OCCT BOPAlgo_PaveFiller_4.cxx L305-390: TreatVerticesEE
  pub(crate) fn treat_vertices_ee(&mut self) {
- let mut to_merge: Vec<(usize, usize)> = Vec::new();
- for i in 0..self.ds.interf_ee.len() {
- let vi = self.ds.interf_ee[i].new_vertex;
- if vi >= self.ds.vertices.len() { continue; }
- let v_pt = self.ds.vertex_point(vi);
- for j in (i + 1)..self.ds.interf_ee.len() {
- let vi2 = self.ds.interf_ee[j].new_vertex;
- if vi2 < self.ds.vertices.len() {
- let d = (v_pt - self.ds.vertex_point(vi2)).length();
- if d < TOLERANCE_ABS * 100.0 {
- to_merge.push((vi, vi2));
- }
- }
- }
- }
- for (keep, remove) in &to_merge {
- for ei in 0..self.ds.edges.len() {
-  for spb in &mut self.ds.edges[ei].pave_blocks {
-  let mut pb = spb.0.write().unwrap();
-  if pb.pave1.vertex_idx == *remove { pb.pave1.vertex_idx = *keep; }
-  if pb.pave2.vertex_idx == *remove { pb.pave2.vertex_idx = *keep; }
- }
- }
- }
+  // OCCT L307-313: collect unique new vertex indices from EE interferences
+  let mut a_liv: Vec<usize> = Vec::new();
+  let mut a_mi: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  for aee in &self.ds.interf_ee {
+   let n_v = aee.new_vertex;
+   if a_mi.insert(n_v) {
+    a_liv.push(n_v);
+   }
+  }
+  if a_liv.is_empty() { return; }
+  // OCCT L316-321: collect face indices
+  let mut a_lif: Vec<usize> = Vec::new();
+  for n_f in 0..self.ds.faces.len() {
+   a_lif.push(n_f);
+  }
+  if a_lif.is_empty() { return; }
+  // OCCT L324-387: cross-product iterate faces × EE vertices
+  for &n_f in &a_lif {
+   for &n_v in &a_liv {
+    // OCCT L328: if (!aFI.VerticesOn().Contains(nV))
+    if self.ds.face_info(n_f).vertices_on.contains(&n_v) { continue; }
+    // OCCT L330-332: ComputeVF (aV, aF, aT1, aT2, dummy, myFuzzyValue)
+    let tf = self.vf_tol(n_v, n_f);
+    if let Ok(vf_result) = self.context.compute_vf(self.ds, n_v, n_f, tf) {
+     // OCCT L334-335: aVF.SetIndices(nV, nF); aVF.SetUV(aT1, aT2);
+     // OCCT L336: myDS->AddInterf(nV, nF);
+     self.ds.try_add_interf(n_v, n_f);
+     self.ds.interf_vf.push(InterferenceVF {
+      vertex: n_v, face: n_f,
+      u: vf_result.u, v: vf_result.v,
+      index_new: None,
+     });
+     // OCCT L337: aFI.ChangeVerticesIn().Add(nV);
+     self.ds.face_info_mut(n_f).vertices_in.insert(n_v);
+    }
+   }
+  }
  }
 
  pub(crate) fn check_face_paves(&self, fi: usize, vi: usize) -> bool {
