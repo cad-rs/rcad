@@ -420,7 +420,7 @@ impl<'a> super::PaveFiller<'a> {
                 if has_bounds {
                     a_lbv.clear();
                     // L852: PutBoundPaveOnCurve(aF1, aF2, aNC, aLBV)
-                    self.put_bound_pave_on_curve(n_f1, n_f2, ci);
+                    self.put_bound_pave_on_curve(n_f1, n_f2, ci, &mut a_lbv);
                     // L854-862: collect bound vertices
                     if ci < self.ds.intersection_curves.len() {
                         if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {

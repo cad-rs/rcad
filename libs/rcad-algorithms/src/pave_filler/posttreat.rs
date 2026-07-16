@@ -345,48 +345,64 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// BOPAlgo_PaveFiller::PutBoundPaveOnCurve (PaveFiller_6.cxx L2340-2400).
-    pub(super) fn put_bound_pave_on_curve(&mut self, n_f1: usize, n_f2: usize, ci: usize) {
+    /// OCCT BOPAlgo_PaveFiller::PutBoundPaveOnCurve (PaveFiller_6.cxx L2340-2399).
+    /// Creates new vertices at curve endpoints (if none exist) and adds them as ext_paves.
+    pub(super) fn put_bound_pave_on_curve(&mut self, n_f1: usize, n_f2: usize, ci: usize, a_lbv: &mut Vec<usize>) {
         if ci >= self.ds.intersection_curves.len() { return; }
-        let ic_data = {
+        let (a_t, a_curve, a_geom_tol, a_tang_tol) = {
             let ic = &self.ds.intersection_curves[ci];
-            (ic.curve.clone(), ic.t_range, ic.geom_tol,
-             ic.pcurve_on_a.clone(), ic.pcurve_on_b.clone())
+            (ic.t_range, ic.curve.clone(), ic.geom_tol, ic.curve_extra.tangential_tol)
         };
-        let (a_curve, a_t_range, a_geom_tol, pcurve_on_a, pcurve_on_b) = ic_data;
-        let a_tol_r3d = a_geom_tol.max(TOLERANCE_ABS);
-        for (k, &fi) in ([n_f1, n_f2]).iter().enumerate() {
-            if fi >= self.ds.faces.len() { continue; }
-            let pc = if k == 0 { pcurve_on_a.as_ref() } else { pcurve_on_b.as_ref() };
-            let Some(pc) = pc else { continue };
-            let tt0 = a_t_range[0]; let tt1 = a_t_range[1];
-            let span = tt1 - tt0;
-            if span <= TOLERANCE_CLAMP_MIN { continue; }
-            let n_samp = 129;
-            let first_state = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(tt0));
-            let mut prev_t = tt0; let mut prev_state = first_state;
-            for i in 1..=n_samp {
-                let t = tt0 + span * i as f64 / n_samp as f64;
-                let state = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(t));
-                if state != prev_state {
-                    let mut lo = prev_t; let mut hi = t;
-                    for _ in 0..20 {
-                        let mid = (lo + hi) * 0.5;
-                        let mid_state = self.context.is_point_in_on_face(self.ds, fi, pc.point_at(mid));
-                        if mid_state == prev_state { lo = mid; } else { hi = mid; }
-                    }
-                    let ct = (lo + hi) * 0.5;
-                    let cp = a_curve.point_at(ct);
-                    let nv = self.ds.add_vertex(cp);
-                    self.ds.vertex_data_mut(nv).tolerance = a_tol_r3d;
-                    if ci < self.ds.intersection_curves.len() {
-                        if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
-                            pb.0.write().unwrap().append_ext_pave(Pave { vertex_idx: nv, param: ct });
-                        }
-                    }
-                    prev_state = state;
-                }
-                prev_t = t;
+        let a_p = [a_curve.point_at(a_t[0]), a_curve.point_at(a_t[1])];
+        let a_tol_r3d = a_geom_tol.max(a_tang_tol);
+
+        // getBoundPaves — find extreme ext_paves from PaveBlock1
+        let mut a_bnd_nv = [usize::MAX, usize::MAX];
+        if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
+            let r = pb.0.read().unwrap();
+            if !r.ext_paves.is_empty() {
+                let min_pave = r.ext_paves.iter().min_by(|a, b| a.param.partial_cmp(&b.param).unwrap());
+                let max_pave = r.ext_paves.iter().max_by(|a, b| a.param.partial_cmp(&b.param).unwrap());
+                if let Some(p) = min_pave { a_bnd_nv[0] = p.vertex_idx; }
+                if let Some(p) = max_pave { a_bnd_nv[1] = p.vertex_idx; }
             }
+        }
+
+        // Check if curve is closed (endpoints within tolerance)
+        let is_closed = a_p[0].distance_squared(a_p[1]) < TOLERANCE_ABS_SQ;
+        if is_closed && (a_bnd_nv[0] != usize::MAX || a_bnd_nv[1] != usize::MAX) {
+            return;
+        }
+
+        for j in 0..2 {
+            if a_bnd_nv[j] != usize::MAX {
+                // OCCT L2326-2335: verify bound vertex is near the endpoint
+                let n_v = a_bnd_nv[j];
+                if n_v < self.ds.vertices.len() {
+                    let v = &self.ds.vertices[n_v];
+                    let i_flag = crate::boptools::compute_vv_p(v, a_p[j], a_tol_r3d + TOLERANCE_ABS);
+                    if i_flag != 0 {
+                        // bound vertex NOT at this endpoint → treat as no bound, create new one
+                        a_bnd_nv[j] = usize::MAX;
+                    } else {
+                        continue; // bound vertex exists and matches
+                    }
+                }
+            }
+
+            // OCCT L2372-2397: No bound vertex, create new one if endpoint is valid for both faces
+            let b_vf = self.context.is_valid_point_for_faces(a_p[j], n_f1, n_f2, a_tol_r3d);
+            if !b_vf { continue; }
+
+            // Create new vertex at curve endpoint
+            let n_vn = crate::boptools::make_new_vertex(&mut self.ds, a_p[j], a_tol_r3d);
+
+            // Append ext_pave to PaveBlock1
+            if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
+                pb.0.write().unwrap().append_ext_pave(Pave { vertex_idx: n_vn, param: a_t[j] });
+            }
+
+            a_lbv.push(n_vn);
         }
     }
 
