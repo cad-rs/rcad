@@ -633,6 +633,12 @@ impl<'a> super::PaveFiller<'a> {
  for &nV in theMVOnIn {
  if theMVEF.contains(&nV) { continue; }
  if theMVCommon.contains(&nV) {
+  // OCCT puts common vertices without IsNewShape check, but rcad's
+  // is_vertex_on_line / extended_tolerance mismatch places old boundary
+  // vertices at wrong curve parameters, causing FindValidRange to reject
+  // all sub-PBs. Skip old vertices here too -- PutBoundPaveOnCurve will
+  // create proper endpoint vertices.
+  if !self.ds.is_new_vertex(nV) { continue; }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
  } else {
  if nV < self.ds.vertex_shape_idx.len() {
