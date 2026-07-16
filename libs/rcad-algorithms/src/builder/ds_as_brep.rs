@@ -1,4 +1,4 @@
-﻿/// OCCT BRepTool adaptor over the existing DS data source.
+/// OCCT BRepTool adaptor over the existing DS data source.
 ///
 /// During Phase 1 migration, this allows TopoDS-based wire path code to
 /// read from the existing DS by wrapping DS indices as ShapeRef handles.
@@ -104,6 +104,21 @@ impl BRepTool for DSAsBRep<'_> {
 
     fn face_surface(&self, _face: ShapeRef) -> Option<&Surface3> {
         Some(&self.ds.faces[self.face_idx].surface)
+    }
+
+    fn vertex_orientation(&self, v: ShapeRef) -> Orientation {
+        let is_internal = if v.index < self.ds.vertex_is_internal.len() {
+            self.ds.vertex_is_internal[v.index]
+        } else {
+            self.ds.vertices.get(v.index).map_or(false, |dv| dv.is_internal)
+        };
+        let is_new = v.index >= self.ds.vertex_is_internal.len()
+            && self.ds.vertices.get(v.index).map_or(false, |dv| dv.origin.is_none());
+        if is_internal || is_new {
+            Orientation::Internal
+        } else {
+            Orientation::Forward
+        }
     }
 
     fn face_surface_world(&self, _face: ShapeRef) -> Option<Surface3> {

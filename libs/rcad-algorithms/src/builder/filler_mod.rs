@@ -60,11 +60,11 @@ impl<'a> BooleanBuilder<'a> {
             // The small edges, having no pave blocks, will have the empty list
             // of images and, thus, will be avoided in the result.
             let mut my_images = self.my_images.borrow_mut();
-            let a_l_im = my_images.entry(a_e).or_default();
             for pb in a_pb_refs {
                 let n_sp_r = self.ds.real_pave_block_edge(ei, pb)
-                    .or(pb.0.read().unwrap().new_edge)
-                    .unwrap_or(ei);
+                    .or(pb.0.read().unwrap().new_edge);
+                let Some(n_sp_r) = n_sp_r else { continue; };
+                let a_l_im = my_images.entry(a_e).or_default();
                 let a_sp_r = self.brep_sr(a_nv + n_sp_r);
                 a_l_im.push(a_sp_r);
                 let mut my_origins = self.my_origins.borrow_mut();
