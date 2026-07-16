@@ -8,10 +8,15 @@ use crate::builder::ds_as_brep::DSAsBRep;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
-/// Uses &BRep as BRepTool (populated by populate_source_shapes_in_t_brep).
+/// Uses DSAsBRep as BRepTool (reads vertex_is_internal from DS) combined
+/// with the T BRep for shape data access. This is the rcad equivalent of
+/// OCCT's BRep_Tool: DS is the source of truth for shape properties.
 pub(crate) struct BuilderFace<'a> {
     ds: &'a DS,
+    /// T BRep for BRep shape data (Face TShape wire->edge hierarchy).
     brep: &'a topods::BRep,
+    /// DSAsBRep as BRepTool (reads from DS, supports vertex_orientation).
+    ds_tool: DSAsBRep<'a>,
     face_refs: &'a [ShapeRef],
     ic_edge_map: &'a [Option<ShapeRef>],
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
@@ -35,8 +40,9 @@ impl<'a> BuilderFace<'a> {
         face_idx: usize,
         is_a: bool,
     ) -> Self {
+        let ds_tool = DSAsBRep::new(ds, face_idx);
         Self {
-            ds, brep, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
+            ds, brep, ds_tool, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
             shapes: None,
             my_areas: Vec::new(),
             my_result: crate::builder::result_builder::ResultBuilder::new(),
@@ -116,7 +122,7 @@ impl<'a> BuilderFace<'a> {
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
             &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
-        let tool: &dyn BRepTool = self.brep;
+        let tool: &dyn BRepTool = &self.ds_tool;
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
             &segments_topo, tool);

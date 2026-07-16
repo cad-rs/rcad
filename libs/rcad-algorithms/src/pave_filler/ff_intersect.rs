@@ -857,9 +857,9 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
   let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
   let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
   let v_start = self.ds.vertices.len();
-  self.ds.push_vertex(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 }, None);
+  self.ds.push_vertex(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: true, location: 0 }, None);
   let v_end = self.ds.vertices.len();
-  self.ds.push_vertex(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 }, None);
+  self.ds.push_vertex(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: true, location: 0 }, None);
   self.ds.intersection_curves[ci].start_vertex = v_start;
   self.ds.intersection_curves[ci].end_vertex = v_end;
  }
@@ -1106,9 +1106,9 @@ fn make_analytic_nonperiodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 }, None);
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: true, location: 0 }, None);
      let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: false, location: 0 }, None);
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: true, location: 0 }, None);
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };
@@ -1235,9 +1235,9 @@ fn make_analytic_periodic_curve(
    let p_end = curve.point_at(lprm);
    if p_start.is_finite() && p_end.is_finite() {
      let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 }, None);
+     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: true, location: 0 }, None);
      let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: false, location: 0 }, None);
+     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: true, location: 0 }, None);
      (sv, ev)
    } else { (usize::MAX, usize::MAX) }
    };
@@ -1271,7 +1271,7 @@ fn make_analytic_periodic_curve(
    let vi = self.ds.vertices.len();
    self.ds.push_vertex(DSVertex {
    point: p_mid, geom_tol: geom_tol.max(TOLERANCE_ABS),
-   origin: None, is_internal: false, location: 0,
+   origin: None, is_internal: true, location: 0,
    }, None);
    (vi, vi)
    } else { (usize::MAX, usize::MAX) }

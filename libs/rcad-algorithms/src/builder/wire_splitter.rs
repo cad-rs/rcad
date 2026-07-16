@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -1162,6 +1162,9 @@ pub(crate) fn perform_shapes_to_avoid_topo(
  avoided_pids.insert(a_e1);
  } else if a_nb_e == 2 && a_le[0] == a_le[1] {
  // Self-coincident  ?same edge twice at this vertex
+ // OCCT: INTERNAL edges (section edges on face interior) are skipped.
+ if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
+ == rcad_kernel::topods::Orientation::Internal { continue; }
  let a_e2 = a_le[1];
  // Skip self-loop (edge whose endpoints are the same vertex)
  let (_tag, idx, a, b) = a_e1;

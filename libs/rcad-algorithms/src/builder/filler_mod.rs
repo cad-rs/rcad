@@ -584,8 +584,9 @@ impl<'a> BooleanBuilder<'a> {
                     let pb_ei = self.ds.pave_blocks[pb_idx].0.read().unwrap()
                         .new_edge.unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
                     let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
-                    a_le.push(e_sr);
-                    a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Reversed, ..e_sr });
+                    // OCCT L469-486: section edges are added with INTERNAL orientation.
+                    // In OCCT, PerformShapesToAvoid skips INTERNAL edges (section edges on face interior).
+                    a_le.push(topods::ShapeRef { index: e_sr.index, orientation: topods::Orientation::Internal, ..e_sr });
                 }
             }
             // OCCT L496-500: BuildPCurveForEdgesOnPlane — speed up for planar faces.

@@ -1,4 +1,4 @@
-﻿/// TopoDS-based walk_path_extract_wires using BRepTool.
+/// TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.
@@ -467,7 +467,20 @@ pub(crate) fn build_closed_wires(
         vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
     }
 
-    if std::env::var("RCAD_DUMP_FACE").is_ok() && !segments.is_empty() {
+    if std::env::var("RCAD_DEBUG_SPHERE").is_ok() && !segments.is_empty() {
+        eprintln!("[SPHERE] face={} n_seg={} n_avoided={} n_active={}", segments[0].face.index, segments.len(), avoided.len(), n - avoided.len());
+        for (v, segs) in &vert_to_segs {
+            eprintln!("[SPHERE]   v={} valence={} segs={:?}", v, segs.len(), segs);
+        }
+        for (si, seg) in segments.iter().enumerate() {
+            if avoided.contains(&si) { continue; }
+            eprintln!("[SPHERE]   seg[{}] v={}->{}", si, seg.start_vertex.index, seg.end_vertex.index);
+        }
+    }
+
+    if avoided.len() == n && !segments.is_empty() { return vec![]; }
+
+    if !segments.is_empty() {
         let face_id = segments[0].face.index;
         eprintln!("[FACE] face={} n_seg={} n_avoided={} n_active={}", face_id, segments.len(), avoided.len(), n - avoided.len());
         for (v, segs) in &vert_to_segs {

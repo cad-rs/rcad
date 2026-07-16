@@ -1529,7 +1529,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
      point: centroid,
      origin: None,
      geom_tol: bounding_tol,
-     is_internal: false,
+     is_internal: true,
      location: 0,
    }, None);
    // push_vertex does not maintain shape_info; push a matching entry
