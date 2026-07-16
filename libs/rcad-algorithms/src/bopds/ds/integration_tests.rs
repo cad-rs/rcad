@@ -1431,3 +1431,88 @@ fn pavefiller_stage_ref_sphere_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
     check_stage(&ds, "ss:MB", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(2),n_pb:Some(12),has_ics:Some(false),..Default::default()});
 }
+
+// =========================================================================
+// Builder stage-by-stage tests
+// =========================================================================
+
+use crate::builder::{BooleanBuilder, BooleanOpType};
+use crate::bopalgo::GlueEnum;
+use crate::inttools::context::Context;
+
+
+/// Run the full boolean pipeline stage by stage, returning Vec<StageSnapshot>.
+fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glue: bool)
+    -> Result<Vec<crate::builder::StageSnapshot>, crate::builder::BooleanError>
+{
+    // 1. PaveFiller
+    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut brep = topods::BRep::new();
+    let bvh_a = Bvh::build(a);
+    let bvh_b = Bvh::build(b);
+    {
+        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        filler.set_run_parallel(false);
+        if use_glue { filler.configure_glue(true, TOLERANCE_ABS); }
+        filler.perform(a, b);
+    }
+
+    // 2. Builder stage-by-stage
+    let mut builder = BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
+    let result = builder.build_with_history_stage_by_stage()?;
+    Ok(result.2) // snapshots
+}
+
+/// Builder stage diagnostic: bfuse_simple A1 (sphere + box).
+/// Prints rcad stage snapshots vs OCCT reference for manual comparison.
+#[test]
+fn builder_stage_ref_bfuse_simple_a1() {
+    let a = make_unit_sphere();
+    let b = make_unit_box();
+    let snaps = builder_stages(&a, &b, crate::builder::BooleanOpType::Union, false)
+        .expect("builder stage-by-stage failed");
+
+    // OCCT reference: (nV, nE, nF, brep_V, brep_E, brep_F) at each Builder stage
+    let occt: Vec<(i32, i32, i32, i32, i32, i32)> = vec![
+        (11, 24, 7, 0, 0, 0),    // after_FillImagesVertices
+        (11, 24, 7, 0, 0, 0),    // after_FillImagesEdges
+        (11, 24, 7, 0, 0, 0),    // after_BuildResultWire
+        (11, 24, 7, 108, 54, 27),// after_FillImagesFaces
+        (11, 24, 7, 108, 54, 27),// after_BuildResultShell
+        (11, 24, 7, 108, 54, 27),// after_FillImagesSolids
+        (11, 24, 7, 108, 54, 27),// after_BuildResultCompSolid
+        (11, 24, 7, 108, 54, 27),// after_FillImagesCompounds
+        (11, 24, 7, 56, 28, 18), // after_PrepareHistory
+        (11, 24, 7, 56, 28, 18), // after_PostTreat
+    ];
+    let snap_idx = [2, 4, 6, 8, 10, 12, 14, 16, 18, 18];
+    let names = [
+        "after_FillImagesVertices", "after_FillImagesEdges",
+        "after_BuildResultWire", "after_FillImagesFaces",
+        "after_BuildResultShell", "after_FillImagesSolids",
+        "after_BuildResultCompSolid", "after_FillImagesCompounds",
+        "after_PrepareHistory", "after_PostTreat",
+    ];
+
+    println!("=== Builder Stage Diagnostic: bfuse_simple A1 (sphere+box) ===");
+    println!("{:<30} | {:^8} | {:^8} | {:^8} | {:^8} | {:^8} | {:^8}",
+        "Stage", "rV/oV/dV", "rE/oE/dE", "rF/oF/dF", "brV/oV", "brE/oE", "brF/oF");
+    println!("{:-<30}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}","","","","","","","");
+
+    for i in 0..10 {
+        let s = &snaps[snap_idx[i]];
+        let (ov, oe, of, obv, obe, obf) = occt[i];
+        println!("{:<30} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2} | {:>2}/{:>2} | {:>2}/{:>2}",
+            names[i],
+            s.n_ds_vertices, ov, s.n_ds_vertices as i32 - ov,
+            s.n_ds_edges, oe, s.n_ds_edges as i32 - oe,
+            s.n_ds_faces, of, s.n_ds_faces as i32 - of,
+            s.n_brep_vertices, obv, s.n_brep_edges, obe, s.n_brep_faces, obf);
+    }
+
+    let last = &snaps[18];
+    println!("\nPipeline complete: {} stages, final V/E/F/Shell/Solid = {}/{}/{}/{}/{}",
+        snaps.len(), last.n_brep_vertices, last.n_brep_edges, last.n_brep_faces,
+        last.n_brep_shells, last.n_brep_solids);
+    assert!(!snaps.is_empty(), "no stages produced");
+}
