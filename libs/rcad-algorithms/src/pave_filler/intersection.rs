@@ -8,6 +8,7 @@ use crate::bopalgo::{GlueEnum, fill_map, make_blocks};
 use crate::bopds::ds::{DS, DSVertex, ShapeOrigin, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
 use crate::inttools;
+use crate::inttools::edge_edge::compute_curve_aabb;
 use crate::inttools::fclass2d::{FClass2d, State};
 use crate::pave_filler::helpers::*;
 use crate::tolerance::*;
@@ -580,7 +581,17 @@ impl<'a> super::PaveFiller<'a> {
      };
 
      // OCCT L245-248: if (aBB1.IsOut(aBB2)) continue
-     if (aTS12 - aTS11).abs() <= TOLERANCE_ABS || (aTS22 - aTS21).abs() <= TOLERANCE_ABS {
+     // rcad: compute AABB of each PB's curve segment (equivalent to GetPBBox + bbox cache).
+     let e1_curve = &self.ds.edges[nE1].curve;
+     let e2_curve = &self.ds.edges[nE2].curve;
+     let bbox_tol = self.ds.edge_tolerance(nE1).max(self.ds.edge_tolerance(nE2))
+         + crate::tolerance::TOLERANCE_ABS;
+     let bbox1 = compute_curve_aabb(e1_curve, aTS11.min(aTS12), aTS11.max(aTS12), bbox_tol);
+     let bbox2 = compute_curve_aabb(e2_curve, aTS21.min(aTS22), aTS21.max(aTS22), bbox_tol);
+     if bbox1.0.x > bbox2.1.x || bbox1.1.x < bbox2.0.x
+      || bbox1.0.y > bbox2.1.y || bbox1.1.y < bbox2.0.y
+      || bbox1.0.z > bbox2.1.z || bbox1.1.z < bbox2.0.z
+     {
       drop(pb2_r);
       continue;
      }
@@ -856,10 +867,16 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  if self.ds.edge_has_flag(nE) || self.ds.is_edge_degenerated(nE) {
  continue;
  }
- // OCCT L233-235: aE, aF, aBBF -- rcad: compute face AABB
- let a_bbf_min: DVec3;
- let a_bbf_max: DVec3;
- {
+ // OCCT L235: aBBF = myDS->ShapeInfo(nF).Box() -- face bounding box from DS shape info.
+ let tol = self.ds.edge_tolerance(nE).max(CONFUSION);
+ let (a_bbf_min, a_bbf_max): (DVec3, DVec3) = self.ds.shape_info.get(nF)
+ .and_then(|si| {
+ let mn = si.box_min?;
+ let mx = si.box_max?;
+ Some((mn - DVec3::splat(tol), mx + DVec3::splat(tol)))
+ })
+ .unwrap_or_else(|| {
+ // Fallback: compute from boundary vertices
  let f = &self.ds.faces[nF];
  let mut mn = DVec3::splat(f64::INFINITY);
  let mut mx = DVec3::splat(f64::NEG_INFINITY);
@@ -874,10 +891,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  mn = mn.min(s.center - DVec3::splat(r));
  mx = mx.max(s.center + DVec3::splat(r));
  }
- let tol = f.geom_tol.max(CONFUSION);
- a_bbf_min = mn - DVec3::splat(tol);
- a_bbf_max = mx + DVec3::splat(tol);
- }
+ (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
+ });
  // OCCT L237-241: FaceInfo -- ChangeFaceInfo + On/In sets
  let a_mpbf: Vec<usize> = {
  let fi = self.ds.face_info(nF);

@@ -964,18 +964,23 @@ impl EdgeEdgeIntersector {
 
     // ---- Helper: axis-aligned bounding box of a curve segment ----
     fn curve_aabb(&self, curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
-        let n = 23usize;
-        let dt = (t2 - t1) / n as f64;
-        let mut min_p = DVec3::splat(f64::MAX);
-        let mut max_p = DVec3::splat(f64::NEG_INFINITY);
-        for i in 0..=n {
-            let t = t1 + i as f64 * dt;
-            let p = curve.point_at(t);
-            min_p = min_p.min(p);
-            max_p = max_p.max(p);
-        }
-        (min_p - DVec3::splat(tol), max_p + DVec3::splat(tol))
+        compute_curve_aabb(curve, t1, t2, tol)
     }
+}
+
+/// Standalone curve AABB computation (used by perform_ee_bvh for PB bbox overlap check).
+pub(crate) fn compute_curve_aabb(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
+    let n = 23usize;
+    let dt = (t2 - t1) / n as f64;
+    let mut min_p = DVec3::splat(f64::MAX);
+    let mut max_p = DVec3::splat(f64::NEG_INFINITY);
+    for i in 0..=n {
+        let t = t1 + i as f64 * dt;
+        let p = curve.point_at(t);
+        min_p = min_p.min(p);
+        max_p = max_p.max(p);
+    }
+    (min_p - DVec3::splat(tol), max_p + DVec3::splat(tol))
 }
 
 impl Default for EdgeEdgeIntersector {

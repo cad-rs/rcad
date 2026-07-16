@@ -120,11 +120,18 @@ pub fn sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildErro
     let north = t.add_tvertex(c + DVec3::Z * r);
     let south = t.add_tvertex(c - DVec3::Z * r);
 
-    let seam_curve = Curve3::Line(Line3 { origin: c, direction: DVec3::Z });
+    // OCCT: sphere seam = circle on sphere surface (meridian at X=0 half-plane).
+    // rcad was using Line through sphere center which causes false EE intersections.
+    let seam_curve = Curve3::Circle(rcad_kernel::geom::Circle3 {
+        center: c, radius: r,
+        normal: DVec3::X,
+        x_dir: DVec3::Z,
+        y_dir: DVec3::Y,
+    });
     // Degenerate edge at north pole (start == end)
     let e_top = t.add_tedge(None, north, north, [0.0, std::f64::consts::PI * r]);
-    // Seam edge north→south
-    let e_seam = t.add_tedge(Some(seam_curve.clone()), north, south, [-r, r]);
+    // Seam edge north→south (parameter range: half-circle, 0 = north, π = south)
+    let e_seam = t.add_tedge(Some(seam_curve.clone()), north, south, [0.0, std::f64::consts::PI]);
     // Degenerate edge at south pole
     let e_bot = t.add_tedge(None, south, south, [0.0, std::f64::consts::PI * r]);
 

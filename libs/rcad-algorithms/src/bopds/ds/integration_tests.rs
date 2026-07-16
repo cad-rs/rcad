@@ -1212,21 +1212,21 @@ fn pavefiller_stage_ref_plane_plane() {
 fn pavefiller_stage_ref_plane_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
     let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "ps:VV", &StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:Some(0),n_vv:Some(1),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "ps:VE", &StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:Some(0),n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "ps:EE", &StageMetrics{n_v:Some(12),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:Some(12),n_vv:Some(1),n_ee:Some(1),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "ps:VF", &StageMetrics{n_v:Some(12),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:Some(12),n_vv:Some(1),n_ee:Some(1),n_vf:Some(11),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "ps:EF", &StageMetrics{n_v:Some(12),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:Some(24),n_vv:Some(1),n_ee:Some(1),n_vf:Some(11),n_ef:Some(3),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "ps:FF", &StageMetrics{n_v:Some(18),n_e:Some(15),n_f:Some(7),n_ic:Some(3),n_cb:Some(24),n_vv:Some(1),n_ee:Some(1),n_vf:Some(14),n_ef:Some(3),has_ics:Some(true),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "ps:MB", &StageMetrics{n_v:Some(18),n_e:Some(15),n_f:Some(7),n_ic:Some(3),n_cb:Some(24),n_vv:Some(1),n_ee:Some(1),n_vf:Some(14),n_ef:Some(3),has_ics:Some(true),..Default::default()});
+    // OCCT reference values from occt_bool_runner pipeline dumps (last PaveFiller run).
+    // n_pb/n_cb are always 0 in OCCT dumps (dump bug), so we use None (skip check).
+    let occt_stages: Vec<(&str, &str, StageMetrics)> = vec![
+        ("VV", "after_PerformVV", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
+        ("VE", "after_PerformVE", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
+        ("EE", "after_PerformEE", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
+        ("VF", "after_PerformVF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
+        ("EF", "after_PerformEF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
+        ("FF", "after_PerformFF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(11),n_e:Some(22),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+    ];
+    for (label, stage, occt_m) in &occt_stages {
+        let ds = pave_fill_stage(&a, &b, stage);
+        check_stage(&ds, label, occt_m);
+    }
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
 #[test]
