@@ -456,6 +456,67 @@ impl BRep {
         sr
     }
 
+    /// Ensure a Vertex TShape exists at the given flat index.
+    /// Grows tshapes vec if needed (fills with dummy vertices).
+    /// Returns ShapeRef with the correct flat index.
+    pub fn ensure_vertex_at(&mut self, idx: usize, point: DVec3) -> ShapeRef {
+        if idx < self.tshapes.len() {
+            if let TShape::Vertex(_) = &*self.tshapes[idx] {
+                let ptr_id = Arc::as_ptr(&self.tshapes[idx]) as u64;
+                return ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 };
+            }
+        }
+        let tshape = Arc::new(TShape::Vertex(TVertexData {
+            my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
+                | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
+            point, tolerance: 0.0, points: Vec::new(),
+        }));
+        let ptr_id = Arc::as_ptr(&tshape) as u64;
+        let dummy = Arc::new(TShape::Vertex(TVertexData {
+            my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
+                | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
+            point: DVec3::ZERO, tolerance: 0.0, points: Vec::new(),
+        }));
+        while self.tshapes.len() <= idx {
+            self.tshapes.push(dummy.clone());
+        }
+        self.tshapes[idx] = tshape;
+        ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 }
+    }
+
+    /// Ensure an Edge TShape exists at the given flat index.
+    /// Grows tshapes vec if needed. The vertex references (first/last) use
+    /// their own indices (caller must ensure they are set at correct flat indices).
+    pub fn ensure_edge_at(&mut self, idx: usize, curve: Option<Curve3>,
+        first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef
+    {
+        if idx < self.tshapes.len() {
+            if let TShape::Edge(_) = &*self.tshapes[idx] {
+                let ptr_id = Arc::as_ptr(&self.tshapes[idx]) as u64;
+                return ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 };
+            }
+        }
+        let tshape = Arc::new(TShape::Edge(TEdgeData {
+            my_shapes: vec![first, last],
+            flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+            curve, first, last, range, degenerated: false,
+            pcurves: HashMap::new(), representations: Vec::new(),
+            vertex_params: HashMap::new(), tolerance: 0.0,
+            same_parameter: true, same_range: true,
+        }));
+        let ptr_id = Arc::as_ptr(&tshape) as u64;
+        let dummy = Arc::new(TShape::Vertex(TVertexData {
+            my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
+                | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
+            point: DVec3::ZERO, tolerance: 0.0, points: Vec::new(),
+        }));
+        while self.tshapes.len() <= idx {
+            self.tshapes.push(dummy.clone());
+        }
+        self.tshapes[idx] = tshape;
+        ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 }
+    }
+
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Shell(TShellData { my_shapes: faces.clone(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, faces }));

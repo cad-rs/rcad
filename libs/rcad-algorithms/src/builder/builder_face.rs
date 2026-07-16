@@ -1,22 +1,22 @@
 use std::collections::HashMap;
-use glam::DVec3;
 use rcad_kernel::topods::{self, ShapeRef, Orientation, BRepTool};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
 use crate::builder::types::*;
 use crate::builder::{WireEdgeSource, FaceOrigin};
+use crate::builder::ds_as_brep::DSAsBRep;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
-/// Two lifetimes: 'a = DS (long-lived), 'b = BRep data (may be shorter).
-pub(crate) struct BuilderFace<'a, 'b> {
+/// Uses DSAsBRep as BRepTool since no TopoDS BRep exists at this pipeline stage.
+pub(crate) struct BuilderFace<'a> {
     ds: &'a DS,
-    brep: &'b topods::BRep,
-    face_refs: &'b [ShapeRef],
-    ic_edge_map: &'b [Option<ShapeRef>],
+    face_refs: &'a [ShapeRef],
+    ic_edge_map: &'a [Option<ShapeRef>],
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
     face_idx: usize,
     is_a: bool,
+    tool: DSAsBRep<'a>,
     /// myShapes (aLE edge list).
     shapes: Option<Vec<ShapeRef>>,
     /// myAreas — resulting split-face TShape refs.
@@ -25,18 +25,19 @@ pub(crate) struct BuilderFace<'a, 'b> {
     my_result: crate::builder::result_builder::ResultBuilder,
 }
 
-impl<'a, 'b> BuilderFace<'a, 'b> {
+impl<'a> BuilderFace<'a> {
     pub fn new(
         ds: &'a DS,
-        brep: &'b topods::BRep,
-        face_refs: &'b [ShapeRef],
-        ic_edge_map: &'b [Option<ShapeRef>],
+        face_refs: &'a [ShapeRef],
+        ic_edge_map: &'a [Option<ShapeRef>],
         my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
         face_idx: usize,
         is_a: bool,
     ) -> Self {
+        let tool = DSAsBRep::new(ds, face_idx);
         Self {
-            ds, brep, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
+            ds, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
+            tool,
             shapes: None,
             my_areas: Vec::new(),
             my_result: crate::builder::result_builder::ResultBuilder::new(),
@@ -53,13 +54,11 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
 
     /// Perform (BuilderFace.cxx L117-148).
     /// Converts myShapes (aLE) to WireSegments, then runs the standard
-    /// Avoid → Loops → Areas → InternalShapes pipeline.
+    /// Avoid -> Loops -> Areas -> InternalShapes pipeline.
+    /// Uses DSAsBRep (reads from DS directly) as BRepTool since the TopoDS BRep
+    /// is not yet populated at this pipeline stage.
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
         if self.face_idx >= self.face_refs.len() { return; }
-        let face_ref = self.face_refs[self.face_idx];
-        if face_ref.index >= self.brep.tshapes.len()
-            || !matches!(&*self.brep.tshapes[face_ref.index], topods::TShape::Face(_))
-        { return; }
 
         let shapes = match &self.shapes {
             Some(s) => s,
@@ -67,19 +66,15 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         };
 
         let e_base = self.ds.vertices.len();
-        let face = &self.ds.faces[self.face_idx];
+        let n_shapes = shapes.len();
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
 
         // convert myShapes (aLE) to WireSegments.
-        // Each ShapeRef is a DS edge with orientation from the original wire.
         for &sr in shapes {
             let ei = sr.index.saturating_sub(e_base);
             if ei >= self.ds.edges.len() { continue; }
             let edge = &self.ds.edges[ei];
 
-            // OCCT L371-378: INTERNAL → FORWARD + REVERSED
-            // OCCT L379-381: normal → as-is
-            // For FORWARD: start→end, for REVERSED: end→start
             let (sv, ev) = match sr.orientation {
                 Orientation::Forward | Orientation::Internal => (edge.start_vertex, edge.end_vertex),
                 Orientation::Reversed => (edge.end_vertex, edge.start_vertex),
@@ -116,14 +111,13 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             }
         }
 
-        // OCCT L467-494: IN and SC PaveBlock edges are already in aLE
-        // (added by build_split_faces L469-486), so they require no special handling.
-
-        if segments.is_empty() { return; }
+        if segments.is_empty() {
+            return;
+        }
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
             &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
-        let tool: &dyn BRepTool = self.brep;
+        let tool: &dyn BRepTool = &self.tool;
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
             &segments_topo, tool);
@@ -131,6 +125,7 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
 
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
+        println!("BF: fi={} n_shapes={} n_seg={} n_wires={} n_avoided={}", self.face_idx, n_shapes, segments.len(), wires.len(), avoided.len());
 
         let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {
@@ -139,6 +134,7 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
         let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
             &segments_topo, &avoided);
 
+        let face_ref = self.face_refs[self.face_idx];
         let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
@@ -162,14 +158,9 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
 
         // Store results in myAreas
-        let e_base = self.ds.vertices.len();
         let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments.iter()
             .filter_map(|seg| match &seg.source {
-                WireEdgeSource::DsEdge(ei) => {
-                    let idx = e_base + *ei;
-                    let ptr_id = std::sync::Arc::as_ptr(&self.brep.tshapes[idx]) as u64;
-                    Some((*ei, ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 }))
-                }
+                WireEdgeSource::DsEdge(ei) => Some((*ei, ShapeRef::synthetic(e_base + *ei))),
                 _ => None,
             }).collect();
         let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
@@ -208,5 +199,4 @@ impl<'a, 'b> BuilderFace<'a, 'b> {
             }
         }
     }
-
 }

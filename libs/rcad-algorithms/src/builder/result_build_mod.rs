@@ -876,6 +876,59 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
+            } else if the_type == rcad_kernel::topods::ShapeType::Vertex {
+                // Path B - all source DS vertices (OCCT: TopExp_Explorer VERTEX).
+                for vi in 0..self.ds.vertices.len() {
+                    let src_sr = self.brep_sr(vi);
+                    let has_images = self.my_images.borrow().contains_key(&src_sr);
+                    if !has_images {
+                        if a_m_fence.insert(src_sr.index) {
+                            self.add_to_result(src_sr, the_type, result, &mut *t);
+                        }
+                    } else if let Some(imgs) = self.my_images.borrow().get(&src_sr) {
+                        for &img_sr in imgs {
+                            if a_m_fence.insert(img_sr.index) {
+                                self.add_to_result(img_sr, the_type, result, &mut *t);
+                            }
+                        }
+                    }
+                }
+            } else if the_type == rcad_kernel::topods::ShapeType::Edge {
+                // Path B - all source DS edges (OCCT: TopExp_Explorer EDGE).
+                let e_base = self.ds.vertices.len();
+                for ei in 0..self.ds.edges.len() {
+                    let src_sr = self.brep_sr(e_base + ei);
+                    let has_images = self.my_images.borrow().contains_key(&src_sr);
+                    if !has_images {
+                        if a_m_fence.insert(src_sr.index) {
+                            self.add_to_result(src_sr, the_type, result, &mut *t);
+                        }
+                    } else if let Some(imgs) = self.my_images.borrow().get(&src_sr) {
+                        for &img_sr in imgs {
+                            if a_m_fence.insert(img_sr.index) {
+                                self.add_to_result(img_sr, the_type, result, &mut *t);
+                            }
+                        }
+                    }
+                }
+            } else if the_type == rcad_kernel::topods::ShapeType::Wire {
+                // Path B - all source DS wires (OCCT: TopExp_Explorer WIRE).
+                let w_base = self.ds.vertices.len() + self.ds.edges.len();
+                for wi in 0..self.ds.wires.len() {
+                    let src_sr = self.brep_sr(w_base + wi);
+                    let has_images = self.my_images.borrow().contains_key(&src_sr);
+                    if !has_images {
+                        if a_m_fence.insert(src_sr.index) {
+                            self.add_to_result(src_sr, the_type, result, &mut *t);
+                        }
+                    } else if let Some(imgs) = self.my_images.borrow().get(&src_sr) {
+                        for &img_sr in imgs {
+                            if a_m_fence.insert(img_sr.index) {
+                                self.add_to_result(img_sr, the_type, result, &mut *t);
+                            }
+                        }
+                    }
+                }
             }
             // Path B for other types (e.g. Edge inside Solid) — no sub-shape
             // explorer implemented; the requirement is handled upstream.
@@ -884,12 +937,16 @@ impl<'a> BooleanBuilder<'a> {
 
     /// add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
     ///   Handles ALL shape types --populates ResultBuilder data structures.
+    ///   Uses ensure_vertex_at/ensure_edge_at to place TShapes at flat indices
+    ///   matching OCCT TopoDS_Shape identity (architecture alignment).
     pub(super) fn add_to_result(&self, a_s: rcad_kernel::topods::ShapeRef, topods_type: rcad_kernel::topods::ShapeType,
                      result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
         match topods_type {
             rcad_kernel::topods::ShapeType::Vertex => {
                 let vi = a_s.index;
                 if vi < self.ds.vertices.len() {
+                    // Create vertex TShape at flat index vi
+                    t.ensure_vertex_at(vi, self.ds.vertex_point(vi));
                     result.add_ds_vertex(vi, self.ds.vertex_point(vi));
                 }
             }
@@ -898,9 +955,11 @@ impl<'a> BooleanBuilder<'a> {
                 let ei = a_s.index.saturating_sub(e_base);
                 if ei < self.ds.edges.len() {
                     let edge = &self.ds.edges[ei];
-                    let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
-                    let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
-                    let te = t.add_tedge(Some(edge.curve.clone()), sv_sr, ev_sr, edge.t_range);
+                    // Ensure vertex TShapes exist at correct flat indices
+                    let sv_sr = t.ensure_vertex_at(edge.start_vertex, self.ds.vertices[edge.start_vertex].point);
+                    let ev_sr = t.ensure_vertex_at(edge.end_vertex, self.ds.vertices[edge.end_vertex].point);
+                    // Create edge TShape at flat index e_base + ei
+                    let te = t.ensure_edge_at(e_base + ei, Some(edge.curve.clone()), sv_sr, ev_sr, edge.t_range);
                     self.my_edge_map.borrow_mut()[ei] = te;
                 }
             }
