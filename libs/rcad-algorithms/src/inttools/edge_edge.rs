@@ -1,5 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
+use crate::bnd_lib;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 
 ///  ?IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
@@ -968,139 +969,10 @@ impl EdgeEdgeIntersector {
     }
 }
 
-/// OCCT GeomBndLib type-specific curve bounding box.
-/// For each curve type, computes the exact AABB using the optimal method:
-///   Line:   endpoints
-///   Circle: center ± radius in each axis
-///   BSpline: knot-interval sampling + control point hull reduction (OCCT BoxOptimal)
-///   Fallback: adaptive sampling at 2*degree+1 points per knot span
+/// ✅ OCCT-aligned: delegates to bnd_lib::curve_bounds_optimal (GeomBndLib type-specific dispatch).
 pub(crate) fn compute_curve_aabb(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
-    match curve {
-        Curve3::Line(l) => {
-            // OCCT GeomBndLib_Line: bbox from two endpoints
-            let p1 = l.point_at(t1);
-            let p2 = l.point_at(t2);
-            (p1.min(p2) - DVec3::splat(tol), p1.max(p2) + DVec3::splat(tol))
-        }
-        Curve3::Circle(c) => {
-            // OCCT GeomBndLib_Circle: center ± radius, plus rotation into plane
-            let r = c.radius;
-            let t1 = t1.min(t2);
-            let t2 = t1.max(t2);
-            // Sample at endpoints + at critical points (where derivative = 0 for each axis).
-            // For a circle param: P(t) = C + r*(cos(t)*XDir + sin(t)*YDir)
-            // dP/dt = r*(-sin(t)*XDir + cos(t)*YDir)
-            // Axis extremum: derivative component = 0 → tan(t) = XDir_i / YDir_i
-            let angles = {
-                let mut a = Vec::with_capacity(6);
-                a.push(t1);
-                a.push(t2);
-                // Critical points: where cos(t)=0 (t=0,π) and sin(t)=0 (t=π/2,3π/2)
-                for &t_crit in &[0.0, std::f64::consts::FRAC_PI_2, std::f64::consts::PI,
-                                  3.0 * std::f64::consts::FRAC_PI_2] {
-                    if t_crit >= t1 && t_crit <= t2 {
-                        a.push(t_crit);
-                    }
-                }
-                a
-            };
-            let mut mn = DVec3::splat(f64::MAX);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &t in &angles {
-                let p = c.point_at(t);
-                mn = mn.min(p);
-                mx = mx.max(p);
-            }
-            (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
-        }
-        Curve3::Ellipse(e) => {
-            // OCCT GeomBndLib_Ellipse: similar to Circle but with two radii
-            let t1 = t1.min(t2);
-            let t2 = t1.max(t2);
-            // Parameterize: P(t) = C + maj*cos(t)*XDir + min*sin(t)*YDir
-            // Critical points at t = 0, π/2, π, 3π/2 (where sin or cos = 0)
-            let angles = {
-                let mut a = Vec::with_capacity(6);
-                a.push(t1);
-                a.push(t2);
-                for &t_crit in &[0.0, std::f64::consts::FRAC_PI_2, std::f64::consts::PI,
-                                  3.0 * std::f64::consts::FRAC_PI_2] {
-                    if t_crit >= t1 && t_crit <= t2 {
-                        a.push(t_crit);
-                    }
-                }
-                a
-            };
-            let mut mn = DVec3::splat(f64::MAX);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &t in &angles {
-                let p = e.point_at(t);
-                mn = mn.min(p);
-                mx = mx.max(p);
-            }
-            (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
-        }
-        Curve3::BSpline(b) => {
-            // OCCT GeomBndLib_BSplineCurve::BoxOptimal:
-            //   control point convex hull + knot-interval sampling.
-            let knots = &b.knots;
-            let cpts = &b.control_points;
-            let mut mn = DVec3::splat(f64::MAX);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for p in cpts {
-                mn = mn.min(*p);
-                mx = mx.max(*p);
-            }
-            for i in 0..knots.len().saturating_sub(1) {
-                let u_mid = (knots[i] + knots[i + 1]) * 0.5;
-                if u_mid >= t1 && u_mid <= t2 {
-                    let p = b.point_at(u_mid);
-                    mn = mn.min(p);
-                    mx = mx.max(p);
-                }
-            }
-            let k0 = knots.first().copied().unwrap_or(t1);
-            let k1 = knots.last().copied().unwrap_or(t2);
-            let p1 = b.point_at(t1.max(k0));
-            let p2 = b.point_at(t2.min(k1));
-            mn = mn.min(p1).min(p2);
-            mx = mx.max(p1).max(p2);
-            (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
-        }
-        Curve3::Bezier(b) => {
-            // OCCT GeomBndLib_BezierCurve: convex hull of control points.
-            let cpts = &b.control_points;
-            let mut mn = DVec3::splat(f64::MAX);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for p in cpts {
-                mn = mn.min(*p);
-                mx = mx.max(*p);
-            }
-            (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
-        }
-        Curve3::Offset(o) => {
-            // OCCT GeomBndLib_OffsetCurve: base curve bbox expanded by offset distance.
-            let offset = o.offset_distance;
-            let (bmn, bmx) = compute_curve_aabb(&o.basis, t1, t2, tol + offset.abs());
-            (bmn - DVec3::splat(offset.abs()), bmx + DVec3::splat(offset.abs()))
-        }
-        // Fallback: uniform sampling at critical points for remaining curve types
-        _ => {
-            let t1 = t1.min(t2);
-            let t2 = t1.max(t2);
-            let n = 23usize;
-            let dt = (t2 - t1) / n as f64;
-            let mut mn = DVec3::splat(f64::MAX);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for i in 0..=n {
-                let t = t1 + i as f64 * dt;
-                let p = curve.point_at(t);
-                mn = mn.min(p);
-                mx = mx.max(p);
-            }
-            (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
-        }
-    }
+    let bbox = bnd_lib::curve_bounds_optimal(curve, t1, t2, tol);
+    (bbox.min, bbox.max)
 }
 
 impl Default for EdgeEdgeIntersector {

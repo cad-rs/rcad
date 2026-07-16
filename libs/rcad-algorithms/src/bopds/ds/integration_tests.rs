@@ -1241,15 +1241,15 @@ fn pavefiller_stage_ref_plane_cylinder() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
     check_stage(&ds, "pc:VE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "pc:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pc:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "pc:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pc:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "pc:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pc:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "pc:FF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_vf:Some(6),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pc:FF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "pc:MB", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_vf:Some(6),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pc:MB", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:Some(3),n_vv:Some(0),n_ef:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
 }
 /// Stage ref: plane_cone (box x pcone)
 #[test]
@@ -1262,15 +1262,15 @@ fn pavefiller_stage_ref_plane_cone() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
     check_stage(&ds, "pco:VE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "pco:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pco:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "pco:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(9),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pco:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "pco:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(9),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "pco:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "pco:FF", &StageMetrics{n_v:Some(9),n_e:Some(5),n_f:Some(8),n_ic:Some(4),n_cb:Some(2),n_vv:Some(3),n_ef:Some(0),n_vf:Some(10),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "pco:FF", &StageMetrics{n_v:Some(8),n_e:Some(5),n_f:Some(8),n_ic:Some(4),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_vf:Some(4),has_ics:Some(true),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "pco:MB", &StageMetrics{n_v:Some(9),n_e:Some(5),n_f:Some(8),n_ic:Some(4),n_cb:Some(2),n_vv:Some(3),n_ef:Some(0),n_vf:Some(10),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "pco:MB", &StageMetrics{n_v:Some(9),n_e:Some(5),n_f:Some(8),n_ic:Some(4),n_cb:Some(2),n_vv:Some(0),n_ef:Some(0),n_vf:Some(4),has_ics:Some(true),..Default::default()});
 }
 /// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
 #[test]
@@ -1287,11 +1287,11 @@ fn pavefiller_stage_ref_cylinder_cylinder() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
     check_stage(&ds, "cc:VE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "cc:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(4),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "cc:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "cc:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(4),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "cc:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "cc:EF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(4),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "cc:EF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(4),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
     check_stage(&ds, "cc:FF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:Some(4),n_vv:Some(0),n_ef:Some(0),n_vf:Some(4),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
@@ -1312,11 +1312,11 @@ fn pavefiller_stage_ref_cylinder_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
     check_stage(&ds, "cs:VF", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:Some(2),n_vv:Some(2),n_ef:Some(0),n_ff:Some(0),n_vf:Some(6),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "cs:EF", &StageMetrics{n_v:Some(8),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:Some(4),n_vv:Some(2),n_ef:Some(4),n_ff:Some(0),n_vf:Some(6),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "cs:EF", &StageMetrics{n_v:Some(8),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_ff:Some(0),n_vf:Some(10),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cs:FF", &StageMetrics{n_v:Some(12),n_e:Some(6),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(4),n_vf:Some(8),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "cs:FF", &StageMetrics{n_v:Some(12),n_e:Some(6),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cs:MB", &StageMetrics{n_v:Some(12),n_e:Some(7),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(4),n_vf:Some(8),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "cs:MB", &StageMetrics{n_v:Some(12),n_e:Some(8),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
 #[test]
@@ -1423,15 +1423,15 @@ fn pavefiller_stage_ref_sphere_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
     check_stage(&ds, "ss:VE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "ss:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:Some(6),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "ss:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "ss:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:Some(6),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "ss:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "ss:EF", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(2),n_ff:Some(0),n_pb:Some(12),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "ss:EF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:Some(6),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "ss:FF", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(2),n_pb:Some(12),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "ss:FF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_pb:Some(6),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "ss:MB", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(2),n_pb:Some(12),has_ics:Some(false),..Default::default()});
+    check_stage(&ds, "ss:MB", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_pb:Some(6),has_ics:Some(false),..Default::default()});
 }
 
 // =========================================================================
