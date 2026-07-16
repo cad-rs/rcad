@@ -1119,6 +1119,39 @@ pub(crate) fn build_pid_maps_topo_ds(
 /// Builds vertex id adjacency map from segments (OCCT: TopExp::MapShapesAndAncestors),
 /// then removes dangling edges (valence 1) and self-coincident edges in a fixed-point loop.
 /// Returns avoided PIDs and pid egment map.
+/// PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
+/// OCCT writes:
+///   for (;;) {                              // fixed-point loop
+///     aMVE.Clear();
+///     aIt.Initialize(myShapes);
+///     for (; aIt.More(); aIt.Next())        // build MEF (Map Vertex->Edges)
+///       if (!myShapesToAvoid.Contains(aE))
+///         TopExp::MapShapesAndAncestors(aE, VERTEX, EDGE, aMVE);
+///     for (i = 1; i <= aMVE.Extent(); ++i) {
+///       const TopoDS_Vertex& aV = aMVE.FindKey(i);
+///       NCollection_List<TopoDS_Shape>& aLE = aMVE.ChangeFromKey(aV);
+///       aNbE = aLE.Extent();
+///       if (aNbE == 0) continue;
+///       const TopoDS_Edge& aE1 = aLE.First();
+///       if (aNbE == 1) {                       // dangling edge
+///         if (BRep_Tool::Degenerated(aE1)) continue;
+///         if (aV.Orientation() == TopAbs_INTERNAL) continue;  // OCCT L204
+///         myShapesToAvoid.Add(aE1);
+///       } else if (aNbE == 2) {
+///         if (aLE.Last().IsSame(aE1)) {          // OCCT L214: IsSame=TShape identity
+///           TopoDS_Vertex aV1x, aV2x;
+///           TopExp::Vertices(aE1, aV1x, aV2x);
+///           if (aV1x.IsSame(aV2x)) continue;    // self-loop → skip
+///           myShapesToAvoid.Add(aE1);
+///           myShapesToAvoid.Add(aLE.Last());
+///         }
+///       }
+///     }
+///   }
+///
+/// rcad maps: PID = (tag, idx, lo, hi) where lo/hi are sorted vertex indices.
+/// PID equality serves the same purpose as OCCT's IsSame (TShape identity
+/// ignoring orientation).  The `a == b` check in PID maps to aV1x.IsSame(aV2x).
 pub(crate) fn perform_shapes_to_avoid_topo(
  segments: &[super::types::WireSegmentTopoDS],
  tool: &dyn rcad_kernel::topods::BRepTool,
@@ -1137,7 +1170,7 @@ pub(crate) fn perform_shapes_to_avoid_topo(
 
  // Build aMVE: vertex  ?edges (same as OCCT MapShapesAndAncestors)
  let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
- for (si, seg) in segments.iter().enumerate() {
+ for seg in segments {
  let pid = physical_edge_id_topo_ds(seg);
  a_mve.entry(seg.start_vertex.index).or_default().push(pid);
  a_mve.entry(seg.end_vertex.index).or_default().push(pid);
@@ -1154,22 +1187,20 @@ pub(crate) fn perform_shapes_to_avoid_topo(
 
  let a_e1 = a_le[0];
  if a_nb_e == 1 {
- // Dangling edge  ?skip if degenerated or INTERNAL vertex
+ // OCCT L198-209: dangling edge
  if is_degenerate(&a_e1) { continue; }
+ // OCCT L204: skip if vertex has INTERNAL orientation
  if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
  == rcad_kernel::topods::Orientation::Internal { continue; }
  b_found = true;
  avoided_pids.insert(a_e1);
  } else if a_nb_e == 2 && a_le[0] == a_le[1] {
- // Self-coincident  ?same edge twice at this vertex
- // OCCT: INTERNAL edges (section edges on face interior) are skipped.
- if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
- == rcad_kernel::topods::Orientation::Internal { continue; }
- let a_e2 = a_le[1];
- // Skip self-loop (edge whose endpoints are the same vertex)
- let (_tag, idx, a, b) = a_e1;
+ // OCCT L213-226: aLE.Last().IsSame(aE1) -> same TShape (PID equality here)
+ // OCCT L218-221: self-loop check (aV1x.IsSame(aV2x))
+ let (_tag, _idx, a, b) = a_e1;
  if a == b { continue; }
  b_found = true;
+ let a_e2 = a_le[1];
  avoided_pids.insert(a_e1);
  avoided_pids.insert(a_e2);
  }

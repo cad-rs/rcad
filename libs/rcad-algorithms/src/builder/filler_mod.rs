@@ -452,6 +452,8 @@ impl<'a> BooleanBuilder<'a> {
             let mut a_le: Vec<topods::ShapeRef> = Vec::new();
             // OCCT L353: aMFence — fence for SEAM edge dedup.
             let mut a_m_fence_local: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            // TopExp_Explorer fence: process each edge TShape only once across all wires.
+            let mut a_m_explorer_set: std::collections::HashSet<u64> = std::collections::HashSet::new();
             // OCCT L387-393: surface closed state (computed once per face).
             let (is_u_closed, is_v_closed) = match &self.ds.faces[fi].surface {
                 s if s.is_u_closed() && s.is_v_closed() => (true, true),
@@ -474,6 +476,13 @@ impl<'a> BooleanBuilder<'a> {
                                     // OCCT L367: anOriE = edge orientation in this wire.
                                     let an_ori_e = e_sr.orientation;
                                     let my_images = self.my_images.borrow();
+
+                                    // OCCT TopExp_Explorer: process each edge TShape only once
+                                    // across all wires (outer + inner) to avoid duplicate
+                                    // entries in aLE from seam edges that appear twice.
+                                    if !a_m_explorer_set.insert(e_sr.ptr_id) {
+                                        continue;
+                                    }
 
                                     // OCCT L369-385: edge NOT in myImages.
                                     if !my_images.contains_key(&e_sr) {
@@ -618,6 +627,9 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             println!("BSF: creating BuilderFace fi={}", fi);
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[BSF] creating BuilderFace fi={} a_le.len={}", fi, a_le.len());
+            }
             let mut bf = crate::builder::BuilderFace::new(
                 self.ds,
                 &brep_owned,
@@ -627,9 +639,6 @@ impl<'a> BooleanBuilder<'a> {
                 fi,
                 is_a,
             );
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[BSF] creating BuilderFace fi={} a_le.len={}", fi, a_le.len());
-            }
             bf.set_shapes(a_le);
             a_vbf.push(bf);
             a_vbf_face_srs.push(f_sr);
