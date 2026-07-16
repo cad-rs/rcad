@@ -136,14 +136,15 @@ impl<'a> super::PaveFiller<'a> {
         a_ff_curve_indices.push(ci);
       }
 
-      // Store point-contact vertices in DS (OCCT L613-621)
-      let mut a_ff_point_indices: Vec<usize> = Vec::with_capacity(a_nb_points);
+      // Store FF points as BOPDS_Point equivalents (OCCT L612-621).
+      // OCCT stores them inline inside InterfFF, NOT as DS vertices.
+      let mut a_ff_points: Vec<crate::bopds::ds::types::FFPoint> = Vec::with_capacity(a_nb_points);
       for pt in points {
-        let vi = self.ds.add_vertex(pt);
-        if vi < self.ds.vertices.len() {
-          self.ds.vertex_data_mut(vi).tolerance = TOLERANCE_ABS;
-        }
-        a_ff_point_indices.push(vi);
+        a_ff_points.push(crate::bopds::ds::types::FFPoint::new(
+          pt,       // 3D point
+          DVec2::ZERO, // UV1 placeholder (BOPDS_Point::myPnt2D1)
+          DVec2::ZERO, // UV2 placeholder (BOPDS_Point::myPnt2D2)
+        ));
       }
 
       // Create FF interference entry (OCCT L574-577)
@@ -151,7 +152,7 @@ impl<'a> super::PaveFiller<'a> {
         f1: n_f1,
         f2: n_f2,
         curves: a_ff_curve_indices,
-        points: a_ff_point_indices,
+        points: a_ff_points,
         tangent_faces: false,
       });
     } else {
@@ -771,7 +772,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  }
 
  // OCCT L576-608: points 闁?filter by isPointInOnFace, append to myPnts.
- let mut ff_point_indices: Vec<usize> = Vec::new();
+ let mut ff_point_indices: Vec<crate::bopds::ds::types::FFPoint> = Vec::new();
  for pi in 0..int_patch.nb_points() {
  let pt = int_patch.point(pi);
  let (uv_a, uv_b, f_a, f_b) = if b_reverse {
@@ -781,9 +782,8 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  };
  if !self.context.is_point_in_on_face(self.ds, f_a, uv_a) { continue; }
  if !self.context.is_point_in_on_face(self.ds, f_b, uv_b) { continue; }
- let vi = self.ds.add_vertex(pt.p1);
- self.ds.vertex_data_mut(vi).tolerance = self.ds.vertex_tolerance(vi).max(pt.tolerance);
- ff_point_indices.push(vi);
+ // FFPoint stores point data inline (OCCT BOPDS_Point). No DS vertex created yet.
+ ff_point_indices.push(crate::bopds::ds::types::FFPoint::new(pt.p1, uv_a, uv_b));
  }
  if std::env::var("RCAD_DBG_FF").is_ok() { eprintln!("[FF]   -> curves={} nLines={}", ff_curve_indices.len(), int_patch.nb_lines()); }
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
@@ -844,7 +844,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
    }
    _ => false,
    };
-   half_circle && ic.start_vertex == ic.end_vertex
+   half_circle && ic.start_vertex != usize::MAX && ic.start_vertex == ic.end_vertex
  };
  if needs_fix {
   if std::env::var("RCAD_DBG_FF").is_ok() {
@@ -1100,18 +1100,13 @@ fn make_analytic_nonperiodic_curve(
    geom_tol.max(crate::tolerance::TOLERANCE_ABS)
    } else { geom_tol.max(crate::tolerance::TOLERANCE_ABS) };
 
-   // Create endpoint vertices (OCCT L872-890).
-   let (sv, ev) = {
+   // Create endpoint vertices (OCCT L872-890: BRepBuilderAPI_MakeVertex + myDS->Index).
+   // Uses add_vertex which deduplicates against existing vertices at the same position.
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
-   if p_start.is_finite() && p_end.is_finite() {
-     let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: ic_geom_tol, origin: None, is_internal: true, location: 0 }, None);
-     let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: ic_geom_tol, origin: None, is_internal: true, location: 0 }, None);
-     (sv, ev)
-   } else { (usize::MAX, usize::MAX) }
-   };
+   let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
+     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
+   } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
@@ -1229,18 +1224,13 @@ fn make_analytic_periodic_curve(
    let trimmed_pca = pca.as_ref().map(|pc| pc.clone());
    let trimmed_pcb = pcb.as_ref().map(|pc| pc.clone());
 
-   // Create endpoint vertices.
-   let (sv, ev) = {
+   // Create endpoint vertices (OCCT L960-990: BRepBuilderAPI_MakeVertex + myDS->Index).
+   // Uses add_vertex which deduplicates against existing vertices at the same position.
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
-   if p_start.is_finite() && p_end.is_finite() {
-     let sv = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_start, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: true, location: 0 }, None);
-     let ev = self.ds.vertices.len();
-     self.ds.push_vertex(DSVertex { point: p_end, geom_tol: geom_tol.max(TOLERANCE_ABS), origin: None, is_internal: true, location: 0 }, None);
-     (sv, ev)
-   } else { (usize::MAX, usize::MAX) }
-   };
+   let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
+     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
+   } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
@@ -1262,20 +1252,12 @@ fn make_analytic_periodic_curve(
    // OCCT L996-1042: trimmed full circle + BuildPCurves + append + break.
    let pca = self.compute_pcurve_on_surface(curve, f1);
    let pcb = self.compute_pcurve_on_surface(curve, f2);
-   // For closed/full-period curves, create a single vertex for
-   // the common start/end point (OCCT: BRepBuilderAPI_MakeEdge
-   // creates a shared vertex for closed edges).
-   let (sv, ev) = {
-   let p_mid = curve.point_at(0.0);
-   if p_mid.is_finite() {
-   let vi = self.ds.vertices.len();
-   self.ds.push_vertex(DSVertex {
-   point: p_mid, geom_tol: geom_tol.max(TOLERANCE_ABS),
-   origin: None, is_internal: true, location: 0,
-   }, None);
-   (vi, vi)
-   } else { (usize::MAX, usize::MAX) }
-   };
+   // OCCT: create one vertex for the closed circle start/end (BRepBuilderAPI_MakeVertex + myDS->Index)
+   let p_start = curve.point_at(0.0);
+   let (sv, ev) = if p_start.is_finite() {
+     let vi = self.ds.add_vertex(p_start);
+     (vi, vi)
+   } else { (usize::MAX, usize::MAX) };
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {

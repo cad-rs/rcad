@@ -434,6 +434,26 @@ pub struct InterferenceEF {
  pub new_vertex: usize,
 }
 
+/// BOPDS_Point (BOPDS_Point.hxx L29-72).
+/// Stores intersection point data before it is promoted to a DS vertex.
+#[derive(Debug, Clone)]
+pub struct FFPoint {
+    /// 3D intersection point (=BOPDS_Point::myPnt)
+    pub pnt: DVec3,
+    /// UV on face 1 (=BOPDS_Point::myPnt2D1)
+    pub uv1: DVec2,
+    /// UV on face 2 (=BOPDS_Point::myPnt2D2)
+    pub uv2: DVec2,
+    /// Index of the associated DS vertex, or usize::MAX if not yet assigned (=BOPDS_Point::myIndex, -1)
+    pub vertex_index: usize,
+}
+
+impl FFPoint {
+    pub fn new(pnt: DVec3, uv1: DVec2, uv2: DVec2) -> Self {
+        Self { pnt, uv1, uv2, vertex_index: usize::MAX }
+    }
+}
+
 /// FF entry: keyed by (Fmin,Fmax) pair with all curves and touch points merged.
 /// BOPDS_InterfFF (Interf.hxx L445-495).
 #[derive(Debug, Clone)]
@@ -441,7 +461,9 @@ pub struct InterferenceFF {
     pub f1: usize,
     pub f2: usize,
     pub curves: Vec<usize>,
-    pub points: Vec<usize>,
+    /// BOPDS_Point array stored inline (not as DS vertex indices).
+    /// OCCT equivalent: BOPDS_InterfFF::myPoints
+    pub points: Vec<FFPoint>,
     /// BOPDS_InterfFF::myTangentFaces (Interf.hxx L490-492).
     ///   True when the two faces are tangent at the intersection curve(s).
     ///   Used by FillSameDomainFaces to decide whether faces can be merged.

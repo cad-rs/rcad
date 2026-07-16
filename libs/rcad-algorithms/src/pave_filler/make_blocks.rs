@@ -327,7 +327,7 @@ impl<'a> super::PaveFiller<'a> {
         self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
 
         // Pre-collect FF data: (f1, f2, curves, points) to avoid borrow conflicts
-        let ff_data: Vec<(usize, usize, Vec<usize>, Vec<usize>)> = self.ds.interf_ff.iter()
+        let ff_data: Vec<(usize, usize, Vec<usize>, Vec<crate::bopds::ds::types::FFPoint>)> = self.ds.interf_ff.iter()
             .map(|ff| (ff.f1, ff.f2, ff.curves.clone(), ff.points.clone()))
             .collect();
 
@@ -370,9 +370,8 @@ impl<'a> super::PaveFiller<'a> {
             self.ds.shared_edges(n_f1, n_f2, &mut a_lse);
 
             // L775-793: 1. Treat Points (FF point contacts)
-            for &pi in points_of_ff {
-                if pi >= self.ds.ff_points.len() { continue; }
-                let a_p = self.ds.ff_points[pi];
+            for (pi, ffp) in points_of_ff.iter().enumerate() {
+                let a_p = ffp.pnt;
                 // L784: IsExistingVertex(aP, aTolFF, aMVOnIn)
                 let b_exist = self.is_existing_vertex_at_point(a_p, a_tol_ff, &a_mv_on_in);
                 if !b_exist {

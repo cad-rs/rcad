@@ -1555,6 +1555,7 @@ impl<'a> PaveFiller<'a> {
    let mut a_mcb: HashSet<usize> = HashSet::new();
    //
    // ----- Phase 1 (L396-498): collect split edge tasks -----
+   // ----- Phase 1 (L396-498): collect split edge tasks -----
    //
    struct SplitEdgeTask {
      edge_idx: usize,

@@ -134,7 +134,7 @@ impl CheckerSI {
             }
         }
         for inf in &ds.interf_ff {
-            let interf = Interference::FaceFace { f1: inf.f1, f2: inf.f2, curves: inf.curves.clone(), points: inf.points.clone() };
+            let interf = Interference::FaceFace { f1: inf.f1, f2: inf.f2, curves: inf.curves.clone(), points: inf.points.iter().map(|p| p.vertex_index).filter(|&i| i != usize::MAX).collect() };
             if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
                 filtered.push(interf);
             }

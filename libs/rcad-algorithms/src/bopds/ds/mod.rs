@@ -870,12 +870,17 @@ impl DS {
  /// dedup FaceFace interferences by (Fmin,Fmax) pair.
  /// Merges curves/points from duplicate entries in interf_ff.
  pub fn dedup_ff_interferences(&mut self) {
- let mut merged: std::collections::HashMap<(usize, usize), (Vec<usize>, Vec<usize>)> = std::collections::HashMap::new();
+ let mut merged: std::collections::HashMap<(usize, usize), (Vec<usize>, Vec<FFPoint>)> = std::collections::HashMap::new();
  for inf in &self.interf_ff {
  let key = if inf.f1 < inf.f2 { (inf.f1, inf.f2) } else { (inf.f2, inf.f1) };
  let entry = merged.entry(key).or_insert((Vec::new(), Vec::new()));
  for &c in &inf.curves { if !entry.0.contains(&c) { entry.0.push(c); } }
- for &p in &inf.points { if !entry.1.contains(&p) { entry.1.push(p); } }
+ // OCCT: points are BOPDS_Point stored inline; dedup by vertex_index when assigned.
+ for p in &inf.points {
+   if !entry.1.iter().any(|ep| ep.vertex_index != usize::MAX && ep.vertex_index == p.vertex_index) {
+     entry.1.push(p.clone());
+   }
+ }
  }
  self.interf_ff.clear();
   for ((f1, f2), (curves, points)) in &merged {

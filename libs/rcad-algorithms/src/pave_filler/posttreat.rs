@@ -112,10 +112,13 @@ impl<'a> PaveFiller<'a> {
                     self.ds.pave_blocks[pb_key].0.write().unwrap().new_edge = Some(new_ei);
                 }
             } else {
-                // It's a vertex
-                let i_v = self.ds.add_vertex(self.ds.vertex_point(key));
+                // It's a vertex: create a DS copy and set vertex_index on the FFPoint
+                let vp = self.ds.vertex_point(key);
+                let i_v = self.ds.add_vertex(vp);
                 if cur_ind < self.ds.interf_ff.len() {
-                    self.ds.interf_ff[cur_ind].points.push(i_v);
+                    let mut ffp = crate::bopds::ds::types::FFPoint::new(vp, glam::DVec2::ZERO, glam::DVec2::ZERO);
+                    ffp.vertex_index = i_v;
+                    self.ds.interf_ff[cur_ind].points.push(ffp);
                 }
             }
             return;
@@ -306,7 +309,26 @@ impl<'a> PaveFiller<'a> {
                             if j >= a_nb_c {
                                 let pt_idx = j - a_nb_c; // point index within this FF
                                 if pt_idx < self.ds.interf_ff[cur_ind].points.len() {
-                                    self.ds.interf_ff[cur_ind].points[pt_idx] = n_vx;
+                                    // Update vertex_index on existing FFPoint (OCCT BOPDS_Point::SetIndex)
+                                    let mut n_vx = n_vx;
+                                    // Check if this vertex already exists among FF points
+                                    let already_has = self.ds.interf_ff[cur_ind].points.iter()
+                                        .any(|p| p.vertex_index == n_vx);
+                                    if !already_has {
+                                        // Update existing point's vertex index (OCCT equivalent: aNP.SetIndex(nVX))
+                                        // If the point hasn't been assigned a vertex yet, assign it.
+                                        // n_vx is the new vertex index for this point.
+                                        if self.ds.interf_ff[cur_ind].points[pt_idx].vertex_index == usize::MAX
+                                            || self.ds.interf_ff[cur_ind].points[pt_idx].vertex_index == n_vx
+                                        {
+                                            // Update the existing point's vertex reference
+                                            let updated = crate::bopds::ds::types::FFPoint {
+                                                vertex_index: n_vx,
+                                                ..self.ds.interf_ff[cur_ind].points[pt_idx].clone()
+                                            };
+                                            self.ds.interf_ff[cur_ind].points[pt_idx] = updated;
+                                        }
+                                    }
                                 }
                             }
                         }

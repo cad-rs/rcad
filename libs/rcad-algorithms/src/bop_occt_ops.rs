@@ -278,8 +278,8 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  ));
  }
  }
- for &pv in &inf.points {
- if pv >= nv {
+ for pv in &inf.points {
+ if pv.vertex_index != usize::MAX && pv.vertex_index >= nv {
  return Err(BooleanError::InvalidResult(
  "bop: interference FaceFace point vertex out of range",
  ));
