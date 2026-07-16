@@ -19,17 +19,7 @@ use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 
 impl<'a> BooleanBuilder<'a> {
-    /// BuildRC (BOPAlgo_BOP.cxx L583-867, SOLID filtering part).
-    ///   Filter result.tmp_solids by boolean operation type using args/tools face-set
-    ///   comparison (BOPTools_Set):
-    ///     1. Split solids by source side (solid_side_origin) into args and tools groups
-    ///     2. For each args solid, build its DS face set and check if any tools solid
-    ///        has the same face set (intersection region)
-    /// BuildRC (BOPAlgo_BOP.cxx L583-867).
-    /// Filters split solids by boolean operation type using face-set comparison.
-    /// A. FUSE: keep all split solids (fence-deduped).
-    /// B. COMMON/CUT/CUT21: build args/tools building-element maps,
-    ///    resolve to split images, compare for intersection containment.
+    /// ✅ OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L597-881).
     pub(super) fn build_rc(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         
 
@@ -970,11 +960,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L485-891).
-    ///   For BOP: (objects, tools, operation) --converts to IN/OUT states.
-    ///   rcad: builds result from all classified face images with IN/OUT filtering.
-    /// BuildBOP (BOPAlgo_BOP.cxx L492-897).
-    /// Builds result from selected faces when both operands are 3D.
+    /// ✅ OCCT-aligned: BuildBOP (BOPAlgo_BOP.cxx L885-926, state-based); ref: BOPAlgo_Builder.cxx L490-895.
     pub(super) fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         if self.has_errors() {
             return;
@@ -1237,7 +1223,7 @@ impl<'a> BooleanBuilder<'a> {
         None
     }
 
-    /// CheckArgsForOpenSolid (BOP.cxx L1382-1470).
+    /// ✅ OCCT-aligned: CheckArgsForOpenSolid (BOPAlgo_BOP.cxx L1396-1470+).
     pub(super) fn check_args_for_open_solid(&self) -> bool {
         for shell in &self.ds.shells {
             // Check if the shell is closed (each edge appears twice).
