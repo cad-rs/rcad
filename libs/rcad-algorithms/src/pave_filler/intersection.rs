@@ -1581,7 +1581,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
      is_internal: true,
      location: 0,
    }, None);
-   // push_vertex does not maintain shape_info; push a matching entry
+   // Ensure shape_info for this vertex (push_vertex with None skips it).
    if n_v < self.ds.vertex_shape_idx.len() {
      let si = self.ds.vertex_shape_idx[n_v];
      if si >= self.ds.shape_info.len() {
@@ -1594,6 +1594,20 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
        new_si.box_gap = bounding_tol + TOLERANCE_ABS;
        self.ds.shape_info.push(new_si);
      }
+   } else {
+     let mut new_si = crate::bopds::ds::types::ShapeInfo::new(
+       rcad_kernel::topods::ShapeType::Vertex);
+     new_si.is_new = true;
+     new_si.rank = 0;
+     new_si.box_min = Some(centroid);
+     new_si.box_max = Some(centroid);
+     new_si.box_gap = bounding_tol + TOLERANCE_ABS;
+     let si = self.ds.shape_info.len();
+     self.ds.shape_info.push(new_si);
+     while self.ds.vertex_shape_idx.len() <= n_v {
+       self.ds.vertex_shape_idx.push(usize::MAX);
+     }
+     self.ds.vertex_shape_idx[n_v] = si;
    }
  }
  // L181-184: update bounding box for the SD vertex (both nSD and new)
