@@ -8,15 +8,15 @@ use crate::builder::ds_as_brep::DSAsBRep;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
-/// Uses DSAsBRep as BRepTool since no TopoDS BRep exists at this pipeline stage.
+/// Uses &BRep as BRepTool (populated by populate_source_shapes_in_t_brep).
 pub(crate) struct BuilderFace<'a> {
     ds: &'a DS,
+    brep: &'a topods::BRep,
     face_refs: &'a [ShapeRef],
     ic_edge_map: &'a [Option<ShapeRef>],
     my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
     face_idx: usize,
     is_a: bool,
-    tool: DSAsBRep<'a>,
     /// myShapes (aLE edge list).
     shapes: Option<Vec<ShapeRef>>,
     /// myAreas — resulting split-face TShape refs.
@@ -28,16 +28,15 @@ pub(crate) struct BuilderFace<'a> {
 impl<'a> BuilderFace<'a> {
     pub fn new(
         ds: &'a DS,
+        brep: &'a topods::BRep,
         face_refs: &'a [ShapeRef],
         ic_edge_map: &'a [Option<ShapeRef>],
         my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
         face_idx: usize,
         is_a: bool,
     ) -> Self {
-        let tool = DSAsBRep::new(ds, face_idx);
         Self {
-            ds, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
-            tool,
+            ds, brep, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
             shapes: None,
             my_areas: Vec::new(),
             my_result: crate::builder::result_builder::ResultBuilder::new(),
@@ -117,7 +116,7 @@ impl<'a> BuilderFace<'a> {
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
             &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
-        let tool: &dyn BRepTool = &self.tool;
+        let tool: &dyn BRepTool = self.brep;
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
             &segments_topo, tool);
