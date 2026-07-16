@@ -855,9 +855,6 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L194-217: variable declarations
  let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
  let mut a_v_edge_face: Vec<EfTask> = Vec::new();
- // OCCT L209-210: NCollection_IndexedDataMap<TopoDS_Shape, BOPDS_CoupleOfPaveBlocks> aMVCPB
- // rcad: (vertex_idx, edge_idx, param_on_edge) for PB splitting (OCCT PerformNewVertices)
- let mut a_mvcpb: Vec<(usize, usize, f64)> = Vec::new();
  self.ds.interf_ef.reserve(i_size);
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
@@ -1163,8 +1160,6 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L528-542: Create EF interference
  a_mi_efc.insert(nF);
  let new_v = self.ds.add_vertex(*point);
- // OCCT L537-542: aCPB.SetPaveBlocks + SetIndexInterf + aMVCPB.Add(aVnew, aCPB)
- a_mvcpb.push((new_v, nE, *a_t));
  self.ds.interf_ef.push(InterferenceEF {
  edge: nE, face: nF,
  point: *point,
@@ -1222,30 +1217,6 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  self.update_vertices_of_cb();
  self.treat_new_vertices();
- // OCCT L578+L687: IntersectVE(aMPBLI) — split PBs at EF new vertices
- for &(new_v, n_e, a_t_ef) in &a_mvcpb {
- if new_v == usize::MAX || n_e >= self.ds.edges.len() { continue; }
- // Only split if the edge has a single un-split PB
- if self.ds.edges[n_e].pave_blocks.len() != 1 { continue; }
- let pb_data = {
- let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
- (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
- };
- let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = pb_data;
- if pb_sv == new_v || pb_ev == new_v { continue; }
- // Split the PB at the new vertex parameter
- let a_t = a_t_ef.clamp(pb_t1 + 1e-12, pb_t2 - 1e-12);
- let pv1 = crate::bopds::pave::Pave { vertex_idx: pb_sv, param: pb_t1 };
- let pv_new = crate::bopds::pave::Pave { vertex_idx: new_v, param: a_t };
- let pv2 = crate::bopds::pave::Pave { vertex_idx: pb_ev, param: pb_t2 };
- let mut pb1 = crate::bopds::pave::PaveBlock::new(orig_e, pv1, pv_new);
- let mut pb2 = crate::bopds::pave::PaveBlock::new(orig_e, pv_new, pv2);
- pb1.set_shrunk_data(pb_t1, a_t, true);
- pb2.set_shrunk_data(a_t, pb_t2, true);
- self.ds.edges[n_e].pave_blocks.clear();
- self.ds.edges[n_e].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb1));
- self.ds.edges[n_e].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb2));
- }
  for &fi in &a_mi_efc {
  self.ds.update_face_info_in(fi);
  }
