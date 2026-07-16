@@ -856,7 +856,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
  let mut a_v_edge_face: Vec<EfTask> = Vec::new();
  // OCCT L209-210: IndexedDataMap<TopoDS_Shape, BOPDS_CoupleOfPaveBlocks> aMVCPB
- let mut a_mvcpb: Vec<crate::bopds::pave::CoupleOfPaveBlocks> = Vec::new();
+ // rcad: HashMap keyed by vertex_index (add_vertex deduplicates by position → same key)
+ let mut a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks> = std::collections::HashMap::new();
  self.ds.interf_ef.reserve(i_size);
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
@@ -1172,7 +1173,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  new_vertex: new_v,
  });
  self.ds.try_add_interf(nE, nF);
- a_mvcpb.push(crate::bopds::pave::CoupleOfPaveBlocks {
+ // OCCT L542: aMVCPB.Add(aVnew, aCPB) — IndexedDataMap dedup by shape key
+ a_mvcpb.insert(new_v, crate::bopds::pave::CoupleOfPaveBlocks {
  interf_idx,
  vertex_index: new_v,
  pb1: pb_for_cpb.clone(),
@@ -2016,7 +2018,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT PaveFiller_3.cxx L594-687: PerformNewVertices
  pub(crate) fn perform_new_vertices(
  &mut self,
- mut a_mvcpb: Vec<crate::bopds::pave::CoupleOfPaveBlocks>,
+ a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks>,
  b_is_ee_intersection: bool,
  ) {
  let a_nb_v = a_mvcpb.len();
@@ -2026,7 +2028,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let _survivors = self.treat_new_vertices();
  // Step 2+4: For each CPB, split the PB at the vertex (OCCT L655-687)
  use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
- for cpb in &a_mvcpb {
+ for (_v_key, cpb) in &a_mvcpb {
  // Get the fused vertex index from the EF/EE entry
  let (n_v, n_e, a_t) = if b_is_ee_intersection {
  let inf = &self.ds.interf_ee[cpb.interf_idx];
