@@ -517,6 +517,70 @@ impl BRep {
         ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 }
     }
 
+    /// Ensure a Wire TShape exists at the given flat index.
+    /// Grows tshapes vec if needed. The edges list contains ShapeRefs to edge TShapes.
+    pub fn ensure_wire_at(&mut self, idx: usize, edges: Vec<ShapeRef>) -> ShapeRef {
+        if idx < self.tshapes.len() {
+            if let TShape::Wire(_) = &*self.tshapes[idx] {
+                let ptr_id = Arc::as_ptr(&self.tshapes[idx]) as u64;
+                return ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 };
+            }
+        }
+        let tshape = Arc::new(TShape::Wire(TWireData {
+            my_shapes: edges.clone(),
+            flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+            edges,
+        }));
+        let ptr_id = Arc::as_ptr(&tshape) as u64;
+        let dummy = Arc::new(TShape::Vertex(TVertexData {
+            my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
+                | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
+            point: DVec3::ZERO, tolerance: 0.0, points: Vec::new(),
+        }));
+        while self.tshapes.len() <= idx {
+            self.tshapes.push(dummy.clone());
+        }
+        self.tshapes[idx] = tshape;
+        ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 }
+    }
+
+    /// Ensure a Face TShape exists at the given flat index.
+    /// Grows tshapes vec if needed.
+    pub fn ensure_face_at(&mut self, idx: usize, surface: Option<Surface3>,
+        outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>,
+        sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>,
+        internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef
+    {
+        if idx < self.tshapes.len() {
+            if let TShape::Face(_) = &*self.tshapes[idx] {
+                let ptr_id = Arc::as_ptr(&self.tshapes[idx]) as u64;
+                return ShapeRef { ptr_id, index: idx, orientation: Orientation::Forward, location: 0 };
+            }
+        }
+        let mut face_shapes = Vec::with_capacity(1 + inner_wires.len());
+        face_shapes.push(outer_wire);
+        face_shapes.extend_from_slice(&inner_wires);
+        let tshape = Arc::new(TShape::Face(TFaceData {
+            my_shapes: face_shapes,
+            flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+            surface, surface_location: 0, outer_wire, inner_wires,
+            sample_point, uv_domain, internal_vertices,
+            tolerance: 0.0, natural_restriction,
+        }));
+        let ptr_id = Arc::as_ptr(&tshape) as u64;
+        let dummy = Arc::new(TShape::Vertex(TVertexData {
+            my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
+                | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
+            point: DVec3::ZERO, tolerance: 0.0, points: Vec::new(),
+        }));
+        while self.tshapes.len() <= idx {
+            self.tshapes.push(dummy.clone());
+        }
+        self.tshapes[idx] = tshape;
+        let ptr_id2 = Arc::as_ptr(&self.tshapes[idx]) as u64;
+        ShapeRef { ptr_id: ptr_id2, index: idx, orientation: Orientation::Forward, location: 0 }
+    }
+
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Shell(TShellData { my_shapes: faces.clone(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, faces }));

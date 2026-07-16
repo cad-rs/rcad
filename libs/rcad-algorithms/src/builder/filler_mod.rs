@@ -139,14 +139,96 @@ impl<'a> BooleanBuilder<'a> {
     }
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     /// 3-step dispatcher: BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
+    /// Populates T BRep with source shape TShapes first (OCCT: BuildResult adds them).
     pub(super) fn fill_images_faces(&self) {
         let mut result = crate::builder::result_builder::ResultBuilder::new();
         let mut t = self.my_shape.borrow_mut();
+        // OCCT: BuildResult(FACE) would have added source Face TShapes to myShape before
+        // BuildSplitFaces. In rcad, add source face/wire/edge TShapes now so the
+        // TopExp_Explorer-equivalent iteration can read face->wire->edge from the T BRep.
+        self.populate_source_shapes_in_t_brep(&mut *t);
         self.build_split_faces(&mut result, &mut *t);
         if self.has_errors() { return; }
         self.fill_same_domain_faces(&mut result);
         if self.has_errors() { return; }
         self.fill_internal_vertices(&mut result);
+    }
+
+    /// Populate T BRep with source shape TShapes (Vertex/Edge/Wire/Face at correct flat indices).
+    /// Enables BuildSplitFaces to iterate face->wire->edge from the T BRep (1:1 with OCCT).
+    fn populate_source_shapes_in_t_brep(&self, t: &mut topods::BRep) {
+        use topods::ShapeRef;
+        let nV = self.ds.vertices.len();
+        let nE = self.ds.edges.len();
+        let nW = self.ds.wires.len();
+        let f_base = nV + nE + nW;
+
+        // 1. Source vertex TShapes at flat indices 0..nV
+        for vi in 0..nV {
+            t.ensure_vertex_at(vi, self.ds.vertex_point(vi));
+        }
+
+        // 2. Source edge TShapes at flat indices nV..nV+nE
+        for ei in 0..nE {
+            let e = &self.ds.edges[ei];
+            let sv = t.ensure_vertex_at(e.start_vertex, self.ds.vertex_point(e.start_vertex));
+            let ev = t.ensure_vertex_at(e.end_vertex, self.ds.vertex_point(e.end_vertex));
+            t.ensure_edge_at(nV + ei, Some(e.curve.clone()), sv, ev, e.t_range);
+        }
+
+        // 3. Source wire TShapes at flat indices nV+nE..nV+nE+nW
+        for wi in 0..nW {
+            let w = &self.ds.wires[wi];
+            let edge_refs: Vec<ShapeRef> = w.edges.iter().map(|&ei| {
+                ShapeRef::synthetic(nV + ei)
+            }).collect();
+            t.ensure_wire_at(nV + nE + wi, edge_refs);
+        }
+
+        // 4. Source face TShapes at flat indices f_base + side_offset + sf_idx
+        for fi in 0..self.ds.faces.len() {
+            let df = &self.ds.faces[fi];
+            let is_a = self.ds.face_origin(fi) == ShapeOrigin::ShapeA;
+            let sf_idx = self.ds.source_face_idx(fi);
+            let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+            let flat_idx = f_base + side_offset + sf_idx;
+
+            // Build outer wire edge refs from DS face boundary_edges
+            let outer_edge_refs: Vec<ShapeRef> = df.boundary_edges.iter().map(|&ei| {
+                ShapeRef::synthetic(nV + ei)
+            }).collect();
+            // Use face_outer_wire_idxs if available, else use fi as wire index
+            let wire_idx = if fi < self.ds.face_outer_wire_idxs.len() {
+                self.ds.face_outer_wire_idxs[fi].unwrap_or(nW + fi)
+            } else {
+                nW + fi
+            };
+            // Place the wire TShape at a unique index beyond existing wires
+            let outer_wire_sr = t.ensure_wire_at(nV + nE + wire_idx, outer_edge_refs);
+
+            // Inner wires
+            let inner_wire_refs: Vec<ShapeRef> = if fi < self.ds.face_inner_wire_idxs.len() {
+                self.ds.face_inner_wire_idxs[fi].iter().map(|&wi| {
+                    if wi < nW {
+                        let iw = &self.ds.wires[wi];
+                        let iw_edge_refs: Vec<ShapeRef> = iw.edges.iter().map(|&ei| {
+                            ShapeRef::synthetic(nV + ei)
+                        }).collect();
+                        t.ensure_wire_at(nV + nE + wi, iw_edge_refs)
+                    } else {
+                        ShapeRef::synthetic(nV + nE + wi)
+                    }
+                }).collect()
+            } else {
+                vec![]
+            };
+
+            // Sample point for the face (first boundary vertex)
+            let sample_point = df.boundary_verts.first().map(|&vi| self.ds.vertex_point(vi));
+
+            t.ensure_face_at(flat_idx, Some(df.surface.clone()), outer_wire_sr,
+                inner_wire_refs, sample_point, None, vec![], df.natural_restriction);
+        }
     }
 
     /// ✅ OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-486).
