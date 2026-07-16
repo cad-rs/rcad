@@ -1002,37 +1002,41 @@ impl<'a> super::PaveFiller<'a> {
  return false;
  }
  let vp = self.ds.vertex_point(nV);
- let mut found = false;
- // Use input aTolVExt as initial threshold (OCCT in-out semantics)
+ // OCCT L2607-2634: iterate EE then EF interferences, return on FIRST match
  let mut max_ext = *aTolVExt;
 
  if aType == 0 || aType == 1 {
  for inf in &self.ds.interf_ee {
- if inf.new_vertex != nV { continue; }
- if !aMI.contains(&inf.e1) { continue; }
- if inf.e1 < self.ds.edges.len() {
- let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param1);
- let p2 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param2);
- let d = vp.distance(p1).max(vp.distance(p2));
- if d > max_ext { max_ext = d; }
- found = true;
- }
+  if inf.new_vertex != nV { continue; }
+  // OCCT L2615: check BOTH indices in aMI (Index1=Edge1, Index2=Edge2)
+  if !aMI.contains(&inf.e1) || !aMI.contains(&inf.e2) { continue; }
+  if inf.e1 < self.ds.edges.len() && inf.e2 < self.ds.edges.len() {
+  let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param1);
+  let p2 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param2);
+  let d = vp.distance(p1).max(vp.distance(p2));
+  if d > max_ext { max_ext = d; }
+  // OCCT L2630: return on first match
+  *aTolVExt = max_ext;
+  return true;
+  }
  }
  }
  if aType == 0 || aType == 2 {
  for inf in &self.ds.interf_ef {
- if inf.new_vertex != nV { continue; }
- if !aMI.contains(&inf.edge) { continue; }
- if inf.edge < self.ds.edges.len() {
- let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.edge], inf.edge_param);
- let d = vp.distance(p1);
- if d > max_ext { max_ext = d; }
- found = true;
+  if inf.new_vertex != nV { continue; }
+  // OCCT L2615: check BOTH indices in aMI (Index1=Edge, Index2=Face)
+  if !aMI.contains(&inf.edge) || !aMI.contains(&inf.face) { continue; }
+  if inf.edge < self.ds.edges.len() {
+  let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.edge], inf.edge_param);
+  let d = vp.distance(p1);
+  if d > max_ext { max_ext = d; }
+  // OCCT L2630: return on first match
+  *aTolVExt = max_ext;
+  return true;
+  }
  }
  }
- }
- if found { *aTolVExt = max_ext; }
- found
+ false
  }
 
  pub(crate) fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
