@@ -622,6 +622,12 @@ impl<'a> super::PaveFiller<'a> {
  let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
  let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
  for &nV in theMVEF {
+ // OCCT does not need IsNewShape check since EF vertices are always new.
+ // rcad's extended_tolerance may incorrectly match old vertices.
+ if nV < self.ds.vertex_shape_idx.len() {
+  let si = self.ds.vertex_shape_idx[nV];
+  if si < self.ds.shape_info.len() && !self.ds.shape_info[si].is_new { continue; }
+ }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2);
  }
  for &nV in theMVOnIn {
@@ -645,15 +651,12 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  }
- if nV < self.ds.vertex_shape_idx.len() {
-  let si = self.ds.vertex_shape_idx[nV];
-  if si < self.ds.shape_info.len() && !self.ds.shape_info[si].is_new {
-   // OCCT L2445-2448: skip old (non-intersection) vertices.
-   // Only new vertices (created by intersection) should be put on
-   // the intersection curve. Old vertices create invalid sub-PBs
-   // that are rejected by FindValidRange.
-   continue;
-  }
+ if !self.ds.is_new_vertex(nV) {
+  // OCCT L2445-2448: skip old (non-intersection) vertices.
+  // Only new vertices (created by intersection) should be put on
+  // the intersection curve. Old vertices create invalid sub-PBs
+  // that are rejected by FindValidRange.
+  continue;
  }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
  }
