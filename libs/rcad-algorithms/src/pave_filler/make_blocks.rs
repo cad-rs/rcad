@@ -527,8 +527,8 @@ impl<'a> super::PaveFiller<'a> {
                         if n_v1 < self.ds.vertices.len() && n_v2 < self.ds.vertices.len() {
                             let v1_pt = self.ds.vertex_point(n_v1);
                             let v2_pt = self.ds.vertex_point(n_v2);
-                            let v1_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v1));
-                            let v2_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v2));
+                            let v1_tol = a_tol_r3d.max(self.a_mv_tol.get(&n_v1).copied().unwrap_or(a_tol_r3d));
+                            let v2_tol = a_tol_r3d.max(self.a_mv_tol.get(&n_v2).copied().unwrap_or(a_tol_r3d));
                             find_valid_range(&ic.curve, a_t1, a_t2, a_tol_r3d,
                                              v1_pt, v1_tol, v2_pt, v2_tol).is_some()
                         } else { false }
