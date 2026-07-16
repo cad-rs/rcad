@@ -193,9 +193,16 @@ impl<'a> BooleanBuilder<'a> {
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let flat_idx = f_base + side_offset + sf_idx;
 
-            // Build outer wire edge refs from DS face boundary_edges
-            let outer_edge_refs: Vec<ShapeRef> = df.boundary_edges.iter().map(|&ei| {
-                ShapeRef::synthetic(nV + ei)
+            // Build outer wire edge refs from DS face boundary_edges,
+            // using boundary_edge_forwards for correct orientation (OCCT L362-363).
+            let outer_edge_refs: Vec<ShapeRef> = df.boundary_edges.iter().enumerate().map(|(i, &ei)| {
+                let mut sr = ShapeRef::synthetic(nV + ei);
+                if df.boundary_edge_forwards.get(i).copied().unwrap_or(true) {
+                    sr.orientation = topods::Orientation::Forward;
+                } else {
+                    sr.orientation = topods::Orientation::Reversed;
+                }
+                sr
             }).collect();
             // Use face_outer_wire_idxs if available, else use fi as wire index
             let wire_idx = if fi < self.ds.face_outer_wire_idxs.len() {
@@ -472,9 +479,26 @@ impl<'a> BooleanBuilder<'a> {
                         for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
                             if wi.index >= t_shape.tshapes.len() { continue; }
                             if let topods::TShape::Wire(wd) = &*t_shape.tshapes[wi.index] {
+                                if fi == 3 {
+                                    eprintln!("[WIREDBG] fi=3 wire edges: {:?}", wd.edges.iter().map(|sr| (sr.index, sr.orientation)).collect::<Vec<_>>());
+                                }
                                 for &e_sr in &wd.edges {
                                     // OCCT L367: anOriE = edge orientation in this wire.
-                                    let an_ori_e = e_sr.orientation;
+                                    let mut an_ori_e = e_sr.orientation;
+                                    // OCCT L362-363: TopExp_Explorer(aFF, EDGE) returns each edge
+                                    // with its orientation in the face.  Since we build the TShape
+                                    // wire from DS boundary_edges (which may have orientations
+                                    // overridden by BuildResult steps), re-derive orientation from
+                                    // boundary_edge_forwards to match OCCT face-wire semantics.
+                                    if an_ori_e == topods::Orientation::Forward {
+                                        let ds_ei = e_sr.index.saturating_sub(e_base);
+                                        if let Some(pos) = self.ds.faces[fi].boundary_edges.iter().position(|&be| be == ds_ei) {
+                                            if !self.ds.faces[fi].boundary_edge_forwards.get(pos).copied().unwrap_or(true) {
+                                                an_ori_e = topods::Orientation::Reversed;
+                                                if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} set Reversed (ds_ei={} pos={})", e_sr.index, ds_ei, pos); }
+                                            } else if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} Forward (ds_ei={} pos={})", e_sr.index, ds_ei, pos); }
+                                        } else if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} NOT IN boundary_edges (ds_ei={})", e_sr.index, ds_ei); }
+                                    }
                                     let my_images = self.my_images.borrow();
 
                                     // OCCT TopExp_Explorer: process each edge TShape only once

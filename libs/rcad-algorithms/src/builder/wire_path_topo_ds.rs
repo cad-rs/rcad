@@ -610,9 +610,6 @@ fn build_smart_map(
         let is_circle_arc = false;
 
         
-        //   TopExp_Explorer of an oriented edge always returns:
-        //   first vertex = FORWARD → in_flag=false (outgoing from start)
-        //   second vertex = REVERSED → in_flag=true (incoming at end)
         let in_flag_start = false;
         let in_flag_end = true;
 

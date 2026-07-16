@@ -545,9 +545,12 @@ pub fn reorder_wire_topods(
    .expect("wire is not closed -- broken topology");
   used[next_i] = true;
   let we_sr = &wire_edges[next_i];
-  ordered.push((e_map.get(&we_sr.index).copied().unwrap_or(0), we_sr.orientation.is_forward()));
   let ed = brep.edge(*we_sr);
-  cur = if ed.first.index == cur { ed.last.index } else { ed.first.index };
+  // orientation = Forward if traversal enters through first vertex,
+  // Reversed if enters through last vertex (matches face wire winding).
+  let is_fwd = ed.first.index == cur;
+  ordered.push((e_map.get(&we_sr.index).copied().unwrap_or(0), is_fwd));
+  cur = if is_fwd { ed.last.index } else { ed.first.index };
  }
  ordered
 }

@@ -14,6 +14,40 @@ use crate::pave_filler::helpers::*;
 use crate::tolerance::*;
 
 /// OCCT IntTools_CommonPrt::Type() ??VERTEX or EDGE.
+
+/// BOPAlgo_VertexEdge (PaveFiller_2.cxx L40-134).
+/// Solver that projects a vertex onto an edge's curve via IntTools_Context::ComputeVE.
+/// Used by IntersectVE to compute the exact parameter for PB splitting.
+pub(crate) struct VertexEdgeSolver {
+    pub(crate) vi: usize,
+    pub(crate) ei: usize,
+    pub(crate) param: f64,
+    pub(crate) tol_vnew: f64,
+    flag: i32,
+}
+
+impl VertexEdgeSolver {
+    pub fn new() -> Self {
+        Self { vi: 0, ei: 0, param: -1.0, tol_vnew: -1.0, flag: -1 }
+    }
+    pub fn set_data(&mut self, vi: usize, ei: usize) {
+        self.vi = vi; self.ei = ei;
+    }
+    /// OCCT L104-121: Perform() = myContext->ComputeVE(myV, myE, myT, myTolVNew, myFuzzyValue)
+    pub fn perform(&mut self, ctx: &mut super::IntToolsContext,
+                   ds: &DS, fuzz: f64) {
+        match ctx.compute_ve(ds, self.vi, self.ei, fuzz) {
+            Ok(res) => {
+                self.flag = 0;
+                self.param = res.param;
+                self.tol_vnew = res.tolerance;
+            }
+            Err(_) => { self.flag = -3; }
+        }
+    }
+    pub fn is_done(&self) -> bool { self.flag == 0 }
+    pub fn flag(&self) -> i32 { self.flag }
+}
 #[derive(Clone, Copy)]
 enum EfHit {
   Vertex { point: DVec3, param: f64 },
@@ -2030,18 +2064,23 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
  for (_v_key, cpb) in &a_mvcpb {
  // Get the fused vertex index from the EF/EE entry
- let (n_v, n_e, a_t) = if b_is_ee_intersection {
+ let (n_v, n_e) = if b_is_ee_intersection {
  let inf = &self.ds.interf_ee[cpb.interf_idx];
- (inf.new_vertex, 0, 0.0) // EE: parameter computed by solver, simplified
+ (inf.new_vertex, inf.e1)
  } else {
  let inf = &self.ds.interf_ef[cpb.interf_idx];
  if inf.new_vertex == usize::MAX { continue; }
- (inf.new_vertex, inf.edge, inf.edge_param)
+ (inf.new_vertex, inf.edge)
  };
  if n_v == usize::MAX || n_e >= self.ds.edges.len() { continue; }
  // Check if edge has a single PB that spans the new vertex
- let edge_pbs_len = self.ds.edges[n_e].pave_blocks.len();
- if edge_pbs_len != 1 { continue; }
+ if self.ds.edges[n_e].pave_blocks.len() != 1 { continue; }
+ // OCCT IntersectVE: compute parameter via BOPAlgo_VertexEdge = ComputeVE
+ let mut a_ve = VertexEdgeSolver::new();
+ a_ve.set_data(n_v, n_e);
+ a_ve.perform(&mut self.context, &self.ds, self.ds.fuzzy_tol);
+ if !a_ve.is_done() { continue; }
+ let a_t = a_ve.param;
  let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = {
  let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
  (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
