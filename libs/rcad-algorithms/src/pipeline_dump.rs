@@ -5,6 +5,7 @@
 //! Grid/case labels from `RCAD_DUMP_GRID` / `RCAD_DUMP_CASE`.
 
 use crate::bopds::ds::DS;
+use crate::bopds::face_info::FaceInfo;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -103,18 +104,22 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
     }).collect();
 
     // Per-face details: surface type, edges, PBs, vertices in
-    // Note: face_info_vec + faces[fi].face_info are synced by face_info_mut().
+    // Note: face_info_vec is the single source of truth (face_info_mut syncs to it).
+    // faces[fi].face_info is NOT used here because the sync clone-before-mutate
+    // means the per-DSFace copy lags behind face_info_vec by one mutation.
     let faces: Vec<serde_json::Value> = ds.faces.iter().enumerate().map(|(fi, f)| {
         let st = format!("{:?}", f.surface);
+        let fi_info = if fi < ds.face_info_vec.len() { &ds.face_info_vec[fi] }
+                      else { &FaceInfo::default() };
         json!({"fi": fi, "surf": st, "nBE": f.boundary_edges.len(),
             "nIW": f.inner_boundary_edges.len(),
             "boundary_edges": f.boundary_edges,
-            "nPBsIn": f.face_info.pave_blocks_in.len(),
-            "nPBsSc": f.face_info.pave_blocks_sc.len(),
-            "nCurvesSc": f.face_info.curves_sc.len(),
-            "nVIn": f.face_info.vertices_in.len(),
-            "curves_sc": f.face_info.curves_sc.iter().copied().collect::<Vec<_>>(),
-            "vertices_in": f.face_info.vertices_in.iter().copied().collect::<Vec<_>>(),
+            "nPBsIn": fi_info.pave_blocks_in.len(),
+            "nPBsSc": fi_info.pave_blocks_sc.len(),
+            "nCurvesSc": fi_info.curves_sc.len(),
+            "nVIn": fi_info.vertices_in.len(),
+            "curves_sc": fi_info.curves_sc.iter().copied().collect::<Vec<_>>(),
+            "vertices_in": fi_info.vertices_in.iter().copied().collect::<Vec<_>>(),
         })
     }).collect();
 
