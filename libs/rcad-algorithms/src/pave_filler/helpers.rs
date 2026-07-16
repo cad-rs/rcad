@@ -7,6 +7,7 @@ use crate::bopds::pave::*;
 use crate::tolerance::*;
 use crate::inttools;
 use rcad_kernel::closest_point_on_curve;
+use crate::bnd_lib;
 use std::collections::HashSet;
 
 /// IntPatch_Intersection surface category (L1264-1294).
@@ -14,113 +15,10 @@ use std::collections::HashSet;
 
 // ---- Phase 2a helpers: vertex -> curve parameter projection ----
 
-/// Compute parameter t of a vertex on Line3.
-/// Line3: P(t) = origin + t * direction (t is free)
-pub(crate) fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
-    let dir = line.direction;
-    let to_pt = pt - line.origin;
-    let t = to_pt.dot(dir);
-    let proj = line.origin + t * dir;
-    let dist = proj.distance(pt);
-    if dist > tol { None } else { Some(t) }
-}
-
-/// Compute parameter t (angle, radians) of a vertex on Circle3.
-/// Circle3: P(t) = center + r*(cos(t)*u + sin(t)*v), t in [0, 2*pi)
-pub(crate) fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
-    let r = circle.radius;
-    let center = circle.center;
-    let normal = circle.normal;
-    let local = pt - center;
-    if local.dot(normal).abs() > tol { return None; }
-    let dist_to_center = local.length();
-    if (dist_to_center - r).abs() > tol { return None; }
-    // Use Circle3's own basis to match point_at(t), not a custom orthogonal frame.
-    let x = local.dot(circle.x_dir);
-    let y = local.dot(circle.y_dir);
-    Some(y.atan2(x))
-}
-
-/// Project a vertex onto a curve, returning parameter t (if the vertex lies on the curve).
-/// supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
-///    OCCT GeomLib::Parameter uses Newton's method for all curve types.
+/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
 pub(crate) fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
-    match curve {
-        Curve3::Line(line) => param_on_line3(pt, line, tol),
-        Curve3::Circle(circ) => param_on_circle3(pt, circ, tol),
-        Curve3::Ellipse(ell) => param_on_ellipse3(pt, ell, tol),
-        _ => param_on_curve3_numeric(pt, curve, tol),
-    }
-}
-
-/// Ellipse3 parameter projection: P(t)=center+major_r*cos(t)*u+minor_r*sin(t)*v, t in [0,2*pi)
-/// Sample 64 points to find nearest, Newton refinement.
-pub(crate) fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
-    use rcad_kernel::geom::CurveEval;
-    let local = pt - ellipse.center;
-    if local.dot(ellipse.normal).abs() > tol { return None; }
-    let y_ax = ellipse.normal.cross(ellipse.major_dir).normalize();
-    let n_sample = 64usize;
-    let mut best_t = 0.0f64;
-    let mut best_dist = f64::INFINITY;
-    for i in 0..n_sample {
-        let t = std::f64::consts::TAU * i as f64 / n_sample as f64;
-        let p = ellipse.point_at(t);
-        let d = p.distance_squared(pt);
-        if d < best_dist { best_dist = d; best_t = t; }
-    }
-    if best_dist.sqrt() > tol * 100.0 { return None; }
-    // Newton: f(t) = (C(t)-P).C'(t)=0
-    for _ in 0..6 {
-        let (ct, st) = (best_t.cos(), best_t.sin());
-        let c = ellipse.center + ellipse.major_radius * ct * ellipse.major_dir
-            + ellipse.minor_radius * st * y_ax;
-        let d = c - pt;
-        let cp = -ellipse.major_radius * st * ellipse.major_dir
-            + ellipse.minor_radius * ct * y_ax;
-        let f = d.dot(cp);
-        let cpp = -ellipse.major_radius * ct * ellipse.major_dir
-            - ellipse.minor_radius * st * y_ax;
-        let fp = cp.dot(cp) + d.dot(cpp);
-        if fp.abs() < TOLERANCE_CLAMP_MIN { break; }
-        best_t -= f / fp;
-        if (f/fp).abs() < 1e-12 { break; }
-    }
-    best_t = best_t.rem_euclid(std::f64::consts::TAU);
-    if ellipse.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
-}
-
-/// General numeric parameter projection (BSpline etc): sample 128 points, Newton refinement.
-pub(crate) fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
-    use rcad_kernel::geom::CurveEval;
-    let (t0, t1) = match curve {
-        Curve3::BSpline(bsp) => { let k = &bsp.knots;
-            if k.len() >= 2 { (k[0], k[k.len()-1]) } else { (0.0, 1.0) } }
-        _ => (0.0, 1.0),
-    };
-    if (t1 - t0).abs() < TOLERANCE_CLAMP_MIN { return None; }
-    let n_sample = 128usize;
-    let mut best_t = t0; let mut best_dist = f64::INFINITY;
-    for i in 0..n_sample {
-        let t = t0 + (t1 - t0) * i as f64 / (n_sample - 1) as f64;
-        let p = curve.point_at(t);
-        let d = p.distance_squared(pt);
-        if d < best_dist { best_dist = d; best_t = t; }
-    }
-    if best_dist.sqrt() > tol * 100.0 { return None; }
-    for _ in 0..6 {
-        let c = curve.point_at(best_t);
-        let cp = curve.tangent_at(best_t);
-        let f = (c - pt).dot(cp);
-        let eps = 1e-6_f64.max((best_t - t0).abs() * 1e-6);
-        let t_eps = (best_t + eps).min(t1);
-        let f2 = (curve.point_at(t_eps) - pt).dot(curve.tangent_at(t_eps));
-        let fp = (f2 - f) / (t_eps - best_t);
-        if fp.abs() < TOLERANCE_CLAMP_MIN { break; }
-        best_t = (best_t - f / fp).clamp(t0, t1);
-        if (f/fp).abs() < 1e-12 { break; }
-    }
-    if curve.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
+    let result = closest_point_on_curve(curve, pt, 128);
+    if result.distance <= tol { Some(result.param) } else { None }
 }
 
 // ---- FindValidRange / ShrunkData helper functions ----
@@ -445,68 +343,10 @@ pub(crate) fn put_pave_on_curve_full(
     paves
 }
 
-/// Compute a bounding box for a curve, expanded by tolerance.
-/// Used for vertex filtering in PutPavesOnCurve (L2409).
+/// ✅ OCCT-aligned: delegates to bnd_lib::curve_bounds (OCCT GeomBndLib per-type dispatch).
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
-    let bbox = match curve {
-        Curve3::Line(l) => {
-            // compute bounding box from line's infinite extent.
-            // OCCT's Bnd_Box uses SetGap to expand boxes, making them overlap.
-            // For an unbounded line, use a large finite extent (1e6 = 1000 km)
-            // to ensure the box encompasses all practical vertex positions.
-            // This allows put_paves_on_curve's box check to pass for any
-            // vertex within the modeling space.
-            let p0 = l.origin;
-            let d = l.direction.normalize_or_zero();
-            const LINE_EXTENT: f64 = 1e6;
-            let pm = p0 - d * LINE_EXTENT;
-            let px = p0 + d * LINE_EXTENT;
-            let bmin = pm.min(px);
-            let bmax = pm.max(px);
-            // Expand by tolerance to match OCCT's gap behavior
-            Some([bmin - DVec3::splat(tol.max(1.0)), bmax + DVec3::splat(tol.max(1.0))])
-        }
-        Curve3::Circle(c) => {
-            let n = c.normal.normalize();
-            let extent = DVec3::new(
-                c.radius * (1.0 - n.x * n.x).sqrt(),
-                c.radius * (1.0 - n.y * n.y).sqrt(),
-                c.radius * (1.0 - n.z * n.z).sqrt(),
-            );
-            Some([c.center - extent, c.center + extent])
-        }
-        Curve3::Ellipse(e) => {
-            let n = e.normal.normalize();
-            let max_r = e.major_radius.max(e.minor_radius);
-            let extent = DVec3::new(
-                max_r * (1.0 - n.x * n.x).sqrt(),
-                max_r * (1.0 - n.y * n.y).sqrt(),
-                max_r * (1.0 - n.z * n.z).sqrt(),
-            );
-            Some([e.center - extent, e.center + extent])
-        }
-        Curve3::BSpline(b) => {
-            let mut mn = DVec3::splat(f64::INFINITY);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &p in &b.control_points {
-                mn = mn.min(p);
-                mx = mx.max(p);
-            }
-            if mn.is_finite() { Some([mn, mx]) } else { None }
-        }
-        Curve3::Bezier(b) => {
-            let mut mn = DVec3::splat(f64::INFINITY);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &p in &b.control_points {
-                mn = mn.min(p);
-                mx = mx.max(p);
-            }
-            if mn.is_finite() { Some([mn, mx]) } else { None }
-        }
-        _ => None,
-    };
-    // Expand by tolerance (OCCT: aBox.Enlarge(aBoxExpandValue))
-    bbox.map(|[mn, mx]| [mn - DVec3::splat(tol), mx + DVec3::splat(tol)])
+    let bbox = bnd_lib::curve_bounds(curve, tol);
+    if bbox.is_valid() { Some([bbox.min, bbox.max]) } else { None }
 }
 
 /// FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).

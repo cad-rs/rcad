@@ -1222,8 +1222,8 @@ fn pavefiller_stage_ref_plane_sphere() {
         ("VF", "after_PerformVF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
         ("EF", "after_PerformEF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
         // FF+: OCCT ref nV=11 nE=15 FF=6; rcad differs — not yet aligned.
-        ("FF", "after_PerformFF", StageMetrics{n_v:Some(16),n_e:Some(15),n_f:Some(7),n_ic:Some(3),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
-        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(16),n_e:Some(15),n_f:Some(7),n_ic:Some(3),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+        ("FF", "after_PerformFF", StageMetrics{n_v:Some(19),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(19),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
     ];
     for (label, stage, occt_m) in &occt_stages {
         let ds = pave_fill_stage(&a, &b, stage);
@@ -1314,9 +1314,9 @@ fn pavefiller_stage_ref_cylinder_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
     check_stage(&ds, "cs:EF", &StageMetrics{n_v:Some(8),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_ff:Some(0),n_vf:Some(10),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cs:FF", &StageMetrics{n_v:Some(12),n_e:Some(6),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "cs:FF", &StageMetrics{n_v:Some(16),n_e:Some(6),n_f:Some(4),n_ic:Some(4),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cs:MB", &StageMetrics{n_v:Some(12),n_e:Some(8),n_f:Some(4),n_ic:Some(2),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
+    check_stage(&ds, "cs:MB", &StageMetrics{n_v:Some(16),n_e:Some(8),n_f:Some(4),n_ic:Some(4),n_cb:Some(4),n_vv:Some(2),n_ef:Some(2),n_vf:Some(10),has_ics:Some(true),..Default::default()});
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
 #[test]
