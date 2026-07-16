@@ -58,53 +58,57 @@ pub(crate) use builder_utils::{
  point_in_polygon_2d,
 };
 
+// OCCT BOPAlgo_Builder.hxx L75-507 + parent class fields (BOPAlgo_BuilderShape, BOPAlgo_Options, BOPAlgo_BOP).
+// Flattened into one Rust struct because Rust has no C++ inheritance.
 pub struct BooleanBuilder<'a> {
+ // BOPAlgo_Builder.hxx L495 =myPaveFiller — NOT stored; rcad runs PaveFiller before Builder, passes DS only.
+ // BOPAlgo_Builder.hxx L496 =myDS
  pub(crate) ds: &'a DS,
- pub(crate) op: BooleanOpType,
- /// =myGlue =BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
- pub(crate) glue: GlueEnum,
- pub(crate) glue_tolerance: f64,
+ // BOPAlgo_Builder.hxx L497 =myContext
  pub(crate) context: RefCell<Context>,
- // =error tracking (myReport / HasErrors equivalent).
- pub(crate) has_errors: bool,
- // =myImages =source shape index =list of split image indices.
- pub(crate) my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
- pub(crate) my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
- pub(crate) my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
- pub(crate) my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- pub(crate) my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- pub(crate) my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- // =myNonDestructive (BOPAlgo_Builder.hxx L503).
- pub(crate) my_non_destructive: bool,
- // myFillHistory (BOPAlgo_Options.hxx).
- pub(crate) my_fill_history: bool,
- // =myCheckInverted (BOPAlgo_Builder.hxx L505).
- pub(crate) my_check_inverted: bool,
- // =myStopOnFatalError =abort pipeline on fatal error.
- pub(crate) my_stop_on_fatal_error: bool,
- /// =myEntryPoint =tracks builder phase (1=PerformInternal1 done, etc.).
- pub(crate) my_entry_point: u8,
- /// =myReport =collects alerts during Builder execution.
-  pub(crate) my_report: std::cell::RefCell<Report>,
- /// myDims - dimension per argument (3=solid, 2=face).
- pub(crate) my_dims: std::cell::Cell<[i8; 2]>,
- /// =converted BRep representation of DS.
- pub(crate) brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
- /// myShape  ?result shape accumulator (BRep).
- pub(crate) my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
- /// myArguments  ?all source shapes pre-created as TShapes.
+ // BOPAlgo_Builder.hxx L492 =myArguments
  pub(crate) my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// DS edge  ?TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
+ // BOPAlgo_Builder.hxx L494 =myMapFence - fence map for argument uniqueness
+ pub(crate) my_map_fence: std::cell::RefCell<std::collections::HashSet<rcad_kernel::topods::ShapeRef>>,
+ // BOPAlgo_Builder.hxx L498 =myEntryPoint - controls deletion of PaveFiller
+ pub(crate) my_entry_point: u8,
+ // BOPAlgo_Builder.hxx L499 =myImages - map of Images of the sub-shapes of arguments
+ pub(crate) my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+ // BOPAlgo_Builder.hxx L500 =myShapesSD - map of SD Shapes
+ pub(crate) my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
+ // BOPAlgo_Builder.hxx L501 =myOrigins - back map of Images
+ pub(crate) my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+ // BOPAlgo_Builder.hxx L502 =myInParts - map of own and acquired IN faces of the arguments solids
+ // rcad: keyed by source solid index (usize) ← OCCT keys by TopoDS_Shape; Rust adaptation for DS-indexed access.
+ pub(crate) my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+ // BOPAlgo_Builder.hxx L503 =myNonDestructive
+ pub(crate) my_non_destructive: bool,
+ // BOPAlgo_Builder.hxx L504 =myGlue
+ pub(crate) my_glue: GlueEnum,
+ // BOPAlgo_Builder.hxx L505 =myCheckInverted
+ pub(crate) my_check_inverted: bool,
+
+ // BOPAlgo_Options.hxx L143-147 (parent class)
+ pub(crate) my_report: std::cell::RefCell<Report>,
+ pub(crate) my_run_parallel: bool,
+ pub(crate) my_fuzzy_value: f64,
+ pub(crate) my_use_obb: bool,
+
+ // BOPAlgo_BuilderShape.hxx L143-150 (parent class)
+ pub(crate) my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
+ pub(crate) my_fill_history: bool,
+
+ // BOPAlgo_BOP.hxx L124-126
+ pub(crate) my_operation: BooleanOpType,
+ pub(crate) my_dims: std::cell::Cell<[i8; 2]>,
+
+ // --- rcad-specific (BRep flat-storage tracking, no OCCT equivalent) ---
+ pub(crate) brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
  pub(crate) my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// result wire TShape refs (replaces ResultBuilder.wire_refs).
  pub(crate) my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// result shell TShape refs (replaces ResultBuilder.shells).
  pub(crate) my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// Result face TShape refs (replaces ResultBuilder.face_refs).
  pub(crate) my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// Result solid TShape refs (replaces ResultBuilder.solids).
  pub(crate) my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
- /// Result compsolid TShape refs (replaces ResultBuilder.compsolid_groups).
  pub(crate) my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
@@ -145,6 +149,10 @@ pub(crate) use wire_path::{
 };
 
  impl<'a> BooleanBuilder<'a> {
+ /// OCCT BOPAlgo_Options::HasErrors - checks for fail alerts in myReport.
+ fn has_errors(&self) -> bool {
+  self.my_report.borrow().has_errors()
+ }
 
  /// =PIOperation_FillHistory =PrepareHistory (Builder_4.cxx L164-252).
  /// Builds source= esult history matching OCCT's BRepTools_History.
@@ -161,7 +169,8 @@ pub(crate) use wire_path::{
  /// L233: aGenShapes = LocGenerated(aS);
  /// L239: if (myMapShape.Contains(aG)) =Generated
  /// L247: if (!isModified && !myMapShape.Contains(aS)) =Deleted
- fn fill_history(&self, t_brep: &mut topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
+ /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
+ fn prepare_history(&self, t_brep: &mut topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
  use crate::history::{HistoryStatus, SourceShapeEntry};
  use topods::TShape;
 
@@ -323,9 +332,7 @@ pub(crate) use wire_path::{
  /// single analytic face using the split boundary edges.  This avoids the
  /// tessellation fallback (split_curved_face_parametric, tessellate_sphere_face,
  /// etc.) that would otherwise be used for non-planar faces with only
- /// alone-vertex / on-edge intersection data.
- /// BuildDraftFace (BOPAlgo_Builder_2.cxx L1048-1189).
- ///
+ /// ✅ OCCT-aligned: BuildDraftFace (Builder_2.cxx L1052-1189).
  /// Builds a draft face by substituting split images into the original wire.
  /// Returns None when OCCT would return a null face (INTERNAL edges,
  /// multi-connected vertices, edge unification failures).
@@ -475,26 +482,32 @@ pub(crate) use wire_path::{
 
 /// Edge-like segment for wire building=can be a DS edge, an intersection curve,
 impl<'a> BooleanBuilder<'a> {
+ // OCCT BOPAlgo_Builder::BOPAlgo_Builder() (empty constructor)
  pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
  let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
  Self {
- ds, op, glue: GlueEnum::GlueOff, glue_tolerance: TOLERANCE_ABS, context, has_errors: false,
- my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_solid_images: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_solid_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
- my_non_destructive: false,
- my_fill_history: true, // OCCT default
- my_check_inverted: false,
- my_stop_on_fatal_error: true,
- my_entry_point: 0,
-  my_report: std::cell::RefCell::new(Report::new()),
- my_dims: std::cell::Cell::new([3, 3]),
- brep: std::cell::RefCell::new(None),
- my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
+ ds,
+ context,
  my_arguments: std::cell::RefCell::new(Vec::new()),
+ my_map_fence: std::cell::RefCell::new(std::collections::HashSet::new()),
+ my_entry_point: 0,
+ my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
+ my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
+ my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
+ my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
+ my_non_destructive: false,
+ my_glue: GlueEnum::GlueOff,
+ my_check_inverted: false,
+ my_report: std::cell::RefCell::new(Report::new()),
+ my_run_parallel: false,
+ my_fuzzy_value: TOLERANCE_ABS,
+ my_use_obb: false,
+ my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
+ my_fill_history: true, // OCCT default (BOPAlgo_BuilderShape.hxx L122)
+ my_operation: op,
+ my_dims: std::cell::Cell::new([3, 3]),
+ // --- rcad-specific ---
+ brep: std::cell::RefCell::new(None),
  my_edge_map: std::cell::RefCell::new(Vec::new()),
  my_wire_refs: std::cell::RefCell::new(Vec::new()),
  my_shells: std::cell::RefCell::new(Vec::new()),
@@ -535,8 +548,8 @@ impl<'a> BooleanBuilder<'a> {
  }
 
  pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
- self.glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
- self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
+ self.my_glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
+ self.my_fuzzy_value = tolerance.max(TOLERANCE_ABS);
  self
  }
 
@@ -566,9 +579,8 @@ impl<'a> BooleanBuilder<'a> {
 impl<'a> BooleanBuilder<'a> {
  /// The top-level pipeline entry: dimension-by-dimension image filling
  /// (V= = = ACE= HELL= OLID), followed by BuildResult for each type.
- /// OCCT L310-445 structure matched in full (see inline OCCT line refs).
-  /// =CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
-  /// Validates operation type, non-empty arguments, and DS/PaveFiller state.
+  /// OCCT BOPAlgo_Builder::CheckData (Builder.cxx L132-142).
+  /// Validates operation type and non-empty arguments.
   /// OCCT form: AddError on each failure, then HasErrors check at the end.
   fn check_data(&self) -> Result<(), BooleanError> {
     // OCCT L132-137: if (myArguments.Extent() < 2) -> AlertTooFewArguments
@@ -576,21 +588,28 @@ impl<'a> BooleanBuilder<'a> {
     if nb_args < 2 {
       self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::TooFewArguments);
     }
-    // OCCT L139-141: CheckFiller -> AlertNoFiller
-    if self.ds.vertices.is_empty() {
-      self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::NoFiller);
-    }
-    // OCCT: BOPAlgo_Builder::CheckData() — parent class checks.
-    // rcad: operation type validation.
-    match self.op {
+    // OCCT: BOPAlgo_BuilderShape::CheckData() — base class checks.
+    // rcad: operation type validation (BOPAlgo_BOP::CheckData adds this).
+    match self.my_operation {
       BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
       _ => self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::BOPNotSet),
     }
     // OCCT: if (HasErrors()) return;
-    if self.my_report.borrow().has_alerts() {
+    if self.has_errors() {
       return Err(BooleanError::InvalidOperation);
     }
     Ok(())
+  }
+
+  /// OCCT BOPAlgo_Builder::CheckFiller (Builder.cxx L144-152).
+  /// Checks if the PaveFiller has been set and merges its report.
+  fn check_filler(&self) {
+    // OCCT L146-149: if (!myPaveFiller) -> AlertNoFiller
+    // rcad: DS must be populated by PaveFiller (vertices exist = filler ran).
+    // OCCT L151: GetReport()->Merge(myPaveFiller->GetReport());
+    if self.ds.vertices.is_empty() {
+      self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::NoFiller);
+    }
   }
 
  ///  ?Prepare (BOPAlgo_Builder.cxx L156-164).
@@ -620,7 +639,7 @@ impl<'a> BooleanBuilder<'a> {
  return Ok(Some(topods::BRep::new()));
  }
  // OCCT L258-317: one side empty → result depends on operation
- match self.op {
+ match self.my_operation {
  BooleanOpType::Union => {
  // OCCT L270-279: return non-empty side
  let src = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
@@ -675,6 +694,12 @@ impl<'a> BooleanBuilder<'a> {
  let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
  self.check_data()?;
 
+ // OCCT BOPAlgo_BOP::CheckData L138: CheckFiller
+ self.check_filler();
+ if self.has_errors() {
+  return Err(BooleanError::InvalidOperation);
+ }
+
  // OCCT L438-443: Prepare
  // rcad: prepare() initializes my_shape + returns ResultBuilder.
  let mut result = self.prepare().1;
@@ -720,54 +745,54 @@ impl<'a> BooleanBuilder<'a> {
  // rcad: progress reporting not yet integrated.
  // OCCT L459-471: 3.1 FillImagesVertices + BuildResult(VERTEX)
  self.fill_images_vertices();
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Vertex, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesVertices", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L472-483: 3.2 FillImagesEdges + BuildResult(EDGE)
  self.fill_images_edges();
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Edge, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesEdges", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L484-496: 3.3 FillImagesContainers(WIRE) + BuildResult(WIRE)
  self.fill_images_container(ShapeType::Wire, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Wire, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_BuildResultWire", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L497-509: 3.4 FillImagesFaces + BuildResult(FACE)
  // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
  // Remaining unsplit faces have existing TShapes from pre-create_source_shapes.
  self.fill_images_faces();
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  // BuildResult(FACE) — generic loop over my_arguments, adds originals/splits to result.
  self.build_result(topods::ShapeType::Face, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesFaces", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L510-522: 3.5 FillImagesContainers(SHELL) + BuildResult(SHELL)
  self.fill_images_container(ShapeType::Shell, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Shell, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_BuildResultShell", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L523-535: 3.6 FillImagesSolids + BuildResult(SOLID)
  self.fill_images_solids(&mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Solid, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesSolids", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L536-548: 3.7 FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
  self.fill_images_container(ShapeType::CompSolid, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::CompSolid, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_BuildResultCompSolid", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L549-561: 3.8 FillImagesCompounds + BuildResult(COMPOUND)
  self.fill_images_compounds(&mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  self.build_result(topods::ShapeType::Compound, &mut result);
- if self.has_errors { return Err(BooleanError::DegenerateResult); }
+ if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesCompounds", self.ds, Some(&*self.my_shape.borrow()));
  // OCCT L563-568: 4. PrepareHistory — builds BRep TShapes + source shape history.
  let mut history = {
@@ -776,7 +801,7 @@ impl<'a> BooleanBuilder<'a> {
  &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(),
  &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
  let source_history = if self.my_fill_history {
- self.fill_history(&mut *t_brep)
+ self.prepare_history(&mut *t_brep)
  } else { vec![] };
  history.source_history = source_history;
  history
@@ -852,6 +877,10 @@ impl<'a> BooleanBuilder<'a> {
   let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
   let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
   self.check_data()?;
+  self.check_filler();
+  if self.has_errors() {
+   return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots));
+  }
 
   // OCCT L438-443: Prepare
   let mut result = self.prepare().1;
@@ -902,65 +931,65 @@ impl<'a> BooleanBuilder<'a> {
   // Stage 1: FillImagesVertices + BuildResult(Vertex)
   snap!(2, "before_FillImagesVertices");
   self.fill_images_vertices();
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Vertex, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(3, "after_FillImagesVertices");
 
   // Stage 2: FillImagesEdges + BuildResult(Edge)
   snap!(4, "before_FillImagesEdges");
   self.fill_images_edges();
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Edge, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(5, "after_FillImagesEdges");
 
   // Stage 3: FillImagesContainers(WIRE) + BuildResult(WIRE)
   snap!(6, "before_FillImagesContainers_Wire");
   self.fill_images_container(ShapeType::Wire, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Wire, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(7, "after_BuildResultWire");
 
   // Stage 4: FillImagesFaces + BuildResult(FACE)
   snap!(8, "before_FillImagesFaces");
   self.fill_images_faces();
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Face, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(9, "after_FillImagesFaces");
 
   // Stage 5: FillImagesContainers(SHELL) + BuildResult(SHELL)
   snap!(10, "before_FillImagesContainers_Shell");
   self.fill_images_container(ShapeType::Shell, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Shell, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(11, "after_BuildResultShell");
 
   // Stage 6: FillImagesSolids + BuildResult(SOLID)
   snap!(12, "before_FillImagesSolids");
   self.fill_images_solids(&mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Solid, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(13, "after_FillImagesSolids");
 
   // Stage 7: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
   snap!(14, "before_FillImagesContainers_CompSolid");
   self.fill_images_container(ShapeType::CompSolid, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::CompSolid, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(15, "after_BuildResultCompSolid");
 
   // Stage 8: FillImagesCompounds + BuildResult(COMPOUND)
   snap!(16, "before_FillImagesCompounds");
   self.fill_images_compounds(&mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   self.build_result(topods::ShapeType::Compound, &mut result);
-  if self.has_errors { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
+  if self.has_errors() { return Ok((self.my_shape.borrow().clone(), BooleanHistory::default(), snapshots)); }
   snap!(17, "after_FillImagesCompounds");
 
   // PrepareHistory
@@ -970,7 +999,7 @@ impl<'a> BooleanBuilder<'a> {
     &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(),
     &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
    let source_history = if self.my_fill_history {
-    self.fill_history(&mut *t_brep)
+    self.prepare_history(&mut *t_brep)
    } else { vec![] };
    history.source_history = source_history;
    history

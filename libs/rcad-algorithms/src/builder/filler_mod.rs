@@ -25,9 +25,7 @@ impl<'a> BooleanBuilder<'a> {
     //   BOPAlgo_Builder.cxx L310-440
     // ====================================================================
 
-    /// --FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
-    ///   Iterates ShapesSD --builds myImages(VERTEX) + myShapesSD + myOrigins.
-    /// FillImagesVertices (BOPAlgo_Builder_1.cxx L42-65).
+    /// ✅ OCCT-aligned: FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
     /// Maps each SD vertex pair as myImages[source]→[target], myShapesSD, myOrigins.
     pub(super) fn fill_images_vertices(&self) {
         for &(va, vb) in self.ds.shape_sd.sd_vertices_iter() {
@@ -40,10 +38,9 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// FillImagesEdges (BOPAlgo_Builder_1.cxx L71-125).
+    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     /// Maps source edges → split images via pave-block new_edge.
     /// Also handles CommonBlocks via myShapesSD.
-    /// FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     pub(super) fn fill_images_edges(&self) {
         let a_nb_s = self.ds.nb_source_shapes();
         let a_nv = self.ds.vertices.len();
@@ -83,16 +80,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
-    ///   OCCT FillImagesContainers(WIRE) (L172-193): iterates NbSourceShapes, filters
-    ///   by WIRE type, calls FillImagesContainer per wire.
-    ///   OCCT FillImagesContainer(theS, WIRE) (L221-276):
-    ///     1. Check if any sub-edge has modified images (L224-233),
-    ///        if none modified → return (L235-240).
-    ///     2. Build new wire from split edges (L247-272),
-    ///        apply IsSplitToReverseWithWarn orientation fix (L265-269).
-    ///     3. Bind new wire to myImages (L275).
-    ///   rcad: shape_info now has WIRE entries (flat index nv+ne..nv+ne+nw).
+    /// ✅ OCCT-aligned: FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_wire(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertices.len();
         let w_base = e_base + self.ds.edges.len();
@@ -149,22 +137,19 @@ impl<'a> BooleanBuilder<'a> {
             my_images_mut.entry(w_ref).or_default().extend(a_c_im);
         }
     }
-    /// FillImagesFaces (Builder_2.cxx L215-229).
+    /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     /// 3-step dispatcher: BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
     pub(super) fn fill_images_faces(&self) {
         let mut result = crate::builder::result_builder::ResultBuilder::new();
         let mut t = self.my_shape.borrow_mut();
         self.build_split_faces(&mut result, &mut *t);
-        if self.has_errors { return; }
+        if self.has_errors() { return; }
         self.fill_same_domain_faces(&mut result);
-        if self.has_errors { return; }
+        if self.has_errors() { return; }
         self.fill_internal_vertices(&mut result);
     }
 
-    /// PostTreat (BOPAlgo_Builder.cxx L456-481).
-    ///   1. Build MapToAvoid from non-destructive source shapes (L461-475).
-    ///   2. CorrectTolerances(myShape, aMA, 0.05) — adjust V/E tolerances (L478).
-    ///   3. CorrectShapeTolerances(myShape, aMA) — adjust shape tolerances (L480).
+    /// ✅ OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-486).
     pub(super) fn post_treat(&mut self) {
         // OCCT L461-475: build MapToAvoid from VERTEX/EDGE/FACE source shapes
         let a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
@@ -226,9 +211,9 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: not yet translated — adjusts shell closure tolerances.
     }
 
-    /// --BuildSplitFaces (Builder_2.cxx L233-374).
+    /// ✅ OCCT-aligned: BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-555).
     ///   Iterates source faces — splits each along intersection curves.
-    ///   For faces with IN/SC PBs: full BuilderFace::Perform (builder_face_perform).
+    ///   For faces with IN/SC PBs: full BuilderFace::Perform.
     ///   For ON-only faces: BuildDraftFace.
     ///   Faces with no interferences — skipped (no images).
     pub(super) fn build_split_faces(
@@ -552,7 +537,7 @@ impl<'a> BooleanBuilder<'a> {
             a_vbf[k].perform(t);
         }
 
-        if self.has_errors { return; }
+        if self.has_errors() { return; }
 
         let mut a_faces_im: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
             std::collections::HashMap::new();
@@ -588,15 +573,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
-    ///   L937-980: For each source FACE with split images:
-    ///     a) Get alone vertices (myDS->AloneVertices = VerticesIn + VerticesSc
-    ///        minus endpoints of PaveBlocksIn + PaveBlocksSc).
-    ///     b) For each alone vertex, create (vertex, split_face) pairs for
-    ///        classification via FClass2d.
-    ///   L997-1007: For pairs classified as INTERNAL — add vertex to face.
-    /// rcad: alone vertices computed from FaceInfo; classification via
-    ///   FClass2d::perform; results stored in face_internal_vtx.
+    /// ✅ OCCT-aligned: FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
     pub(super) fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
         // OCCT L937-980: iterate source faces with split images.
         for (ds_fi, ds_face) in self.ds.faces.iter().enumerate() {
@@ -670,14 +647,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --FillSameDomainFaces (BOPAlgo_Builder_2.cxx L580-925).
-    ///   OCCT structure:
-    ///   1. L584-589: Check FF interferences --return if none.
-    ///   2. L597-648: Build aFaceToParent map (source solid --face) + propagate
-    ///      to split images.  Prevents merging faces from the same operand solid.
-    ///   3. L659-684: Collect FF-interfering face indices into aFIVec.
-    ///   4. L690-739: Build edge-set map (BOPTools_Set) + planar-face set.
-    ///   5. L740+: Group by edge set, check AreFacesSameDomain, remove duplicates.
+    /// ✅ OCCT-aligned: FillSameDomainFaces (BOPAlgo_Builder_2.cxx L580-925).
     pub(super) fn fill_same_domain_faces(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf < 2 { return; }
@@ -1034,7 +1004,9 @@ impl<'a> BooleanBuilder<'a> {
     ///   Iterates source shapes, filters by type, calls FillImagesContainer.
     ///   rcad: dispatches to type-specific implementations.
     /// --FillImagesContainers (Builder_1.cxx L172-193).
-    ///   OCCT: iterates source shapes --filters by TopAbs_ShapeEnum --    ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
+    /// ✅ OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-193).
+    ///   OCCT: iterates source shapes, filters by theType, calls FillImagesContainer for each.
+    ///   rcad: dispatches to type-specific handlers.
     pub(super) fn fill_images_container(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         match shape_type {
@@ -1045,12 +1017,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --FillImagesContainer(SHELL) (BOPAlgo_Builder_1.cxx L221-276).
-    ///   OCCT: iterates sub-faces of source SHELL via TopoDS_Iterator (L224-233),
-    ///   checks if any face has myImages, rebuilds new shell from split/originals
-    ///   (L247-272), sets Closed flag (L274), binds to myImages (L275).
-    ///   rcad: shape_info has SHELL entries.  Iterate shape_info → filter SHELL →
-    ///   for each shell: check sub-face images → rebuild → bind.
+    /// ✅ OCCT-aligned: FillImagesContainer(SHELL) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_shell(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
         // Pre-build DS face → result face ShapeRef map for fast lookup
@@ -1162,9 +1129,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --FillImagesContainer(COMPSOLID) (BOPAlgo_Builder_1.cxx L221-276).
-    ///   Same generic template as WIRE/SHELL.  Iterates shape_info → filter COMPSOLID →
-    ///   checks sub-solid images → rebuilds → binds to myImages.
+    /// ✅ OCCT-aligned: FillImagesContainer(COMPSOLID) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_compsolid(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         let my_images = self.my_images.borrow();
         let my_solids = self.my_solids.borrow();
@@ -1241,7 +1206,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// --FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
+    /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     ///   3-step: FillIn3DParts → BuildSplitSolids → FillInternalShapes.
     ///   Plus OCCT BuildBOP IN/OUT filtering (build_rc) + fallback for open solids.
     pub(super) fn fill_images_solids(&self, result: &mut ResultBuilder) {
@@ -1267,12 +1232,12 @@ impl<'a> BooleanBuilder<'a> {
             if self.check_args_for_open_solid() {
                 let mut t = self.my_shape.borrow_mut();
                 self.build_bop(result, &mut *t);
-                if self.has_errors { /* fall through */ }
+                if self.has_errors() { /* fall through */ }
             }
         }
 
         // OCCT: for Union+3D, create a solid from all faces (when no result solids).
-        if self.op == BooleanOpType::Union && md3[0] == 3 {
+        if self.my_operation == BooleanOpType::Union && md3[0] == 3 {
             let face_refs: Vec<topods::ShapeRef> = self.my_face_refs.borrow().iter()
                 .filter(|sr| !sr.is_null()).copied().collect();
             if !face_refs.is_empty() {
@@ -1284,10 +1249,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// FillIn3DParts (Builder_3.cxx L97-232).
-    /// Classifies result faces against draft solids, returns shell assignments.
-    ///
-    /// BuildDraftSolid (Builder_3.cxx L267-368).
+    /// ✅ OCCT-aligned: BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368).
     /// Builds a draft solid from a source solid, replacing split faces with their images.
     pub(super) fn build_draft_solid(&self, result: &ResultBuilder, side: usize)
         -> (Vec<Vec<usize>>, Vec<usize>)
@@ -1384,11 +1346,7 @@ impl<'a> BooleanBuilder<'a> {
         (draft_shells, the_lif)
     }
 
-    /// FillIn3DParts (Builder_3.cxx L97-263).
-    ///   Phase 1: Collect all result faces (aLFaces).
-    ///   Phase 2: Build draft solids from each source solid (BuildDraftSolid).
-    ///   Phase 3: ClassifyFaces against draft solids.
-    ///   Phase 4: Analyze results — store in myInParts + return shell assignments.
+    /// ✅ OCCT-aligned: FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
     pub(super) fn fill_in_3d_parts(&self, result: &mut ResultBuilder) -> Vec<(usize, usize, &'static str)> {
         // === Phase 1: Collect all faces ===
         let mut a_l_faces: Vec<usize> = Vec::new();
@@ -1531,7 +1489,7 @@ impl<'a> BooleanBuilder<'a> {
         assignments
     }
 
-    /// BuildSplitSolids (Builder_3.cxx L413-618).
+    /// ✅ OCCT-aligned: BuildSplitSolids (BOPAlgo_Builder_3.cxx L413-618).
     /// Build result solids from draft solids and IN faces.
     pub(super) fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)],

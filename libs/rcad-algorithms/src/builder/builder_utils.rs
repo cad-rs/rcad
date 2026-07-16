@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::topods;
@@ -269,48 +269,6 @@ pub(crate) fn annotate_shell_and_solid_history(brep: &topods::BRep, history: &mu
  }
  history.shell_origins = shell_origins;
  history.solid_origins = solid_origins;
-}
-
-/// Boolean result builder (OCCT: BOPAlgo_BOP).
-/// Tracks face splice origins and participates in `BooleanHistory`.
-pub struct BooleanBuilder<'a> {
- ds: &'a DS,
- op: BooleanOpType,
- use_glue: bool,
- glue_tolerance: f64,
- context: RefCell<Context>,
- //  error tracking (myReport / HasErrors equivalent).
- has_errors: bool,
- //  myImages  ?source shape index  ?list of split image indices.
- // Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
- my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  myOrigins  ?split shape index  ?list of source origin indices.
- my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  myShapesSD  ?source shape index  ?same-domain shape index.
- my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
- //  split edges created by FillImagesEdges (PaveBlock  ?new DSEdge).
- // Stored here because DS is immutable (rcad uses &'a DS); their indices start
- // at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
- split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
- //  myInParts  ?source solid index  ?list of its IN face indices
- // (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
- // FillIn3DParts / BuildDraftSolid for solid assembly.
- my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
- // OCCT BuildSplitSolids stores split solids in myImages[source_solid].
- // rcad: maps source side (0=A, 1=B)  ?result solid indices from
- // build_split_solids.  Used by annotate_shell_and_solid_history and
- // for OCCT-form history tracking.
- my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
- // Reverse map: result solid index  ?list of source sides.
- my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
- //  myNonDestructive (BOPAlgo_Builder.hxx L503).
- // Safe processing  ?avoids modifying input shapes. Used in PostTreat.
- my_non_destructive: bool,
- //  myCheckInverted (BOPAlgo_Builder.hxx L505).
- // Enables/disables inverted-solid check on input shapes.
- my_check_inverted: bool,
 }
 
 // =============================================================================

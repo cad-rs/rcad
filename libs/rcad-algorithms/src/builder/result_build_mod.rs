@@ -38,7 +38,7 @@ impl<'a> BooleanBuilder<'a> {
         if sides.len() != solids.len() { return; }
 
         // A. FUSE -- keep all split solids (fence-deduped)
-        if self.op == BooleanOpType::Union {
+        if self.my_operation == BooleanOpType::Union {
             let mut a_m_fence: std::collections::HashSet<Vec<usize>> =
                 std::collections::HashSet::new();
             let mut kept: Vec<Vec<usize>> = Vec::new();
@@ -184,7 +184,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         
-        let b_common = self.op == BooleanOpType::Intersection;
+        let b_common = self.my_operation == BooleanOpType::Intersection;
         let b_cut21 = false; // --rcad: CUT21 not supported
 
         
@@ -484,8 +484,7 @@ impl<'a> BooleanBuilder<'a> {
         result.tmp_solids = new_solids;
     }
 
-    /// --FillInternalShapes (Builder_3.cxx L622-887).
-    /// FillInternalShapes (Builder_3.cxx L622-887).
+    /// ✅ OCCT-aligned: FillInternalShapes (BOPAlgo_Builder_3.cxx L622-887).
     ///   Phase 1 (L648-709): Collect internal V/E/WIRE from arguments.
     ///   Phase 2 (L717-788): Internal V/E from source solids + build aMSx ancestry.
     ///   Phase 3 (L790-809): Filter shapes already attached via aMSx.
@@ -687,9 +686,9 @@ impl<'a> BooleanBuilder<'a> {
     ///   --rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
     ///     The recursive FillImagesCompound is collapsed to a single level.
     /// FillImagesCompounds (BOPAlgo_Builder_1.cxx L199-341).
+    /// ✅ OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216 + L280-342).
     /// Wraps sub-shape images into compound containers for non-destructive history.
-    /// --FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216) +
-    ///   FillImagesCompound (L280-342).  OCCT iterates source shapes, filters COMPOUND,
+    /// OCCT iterates source shapes, filters COMPOUND,
     ///   recursively processes each compound.  rcad: iterate compsolid groups from DS
     ///   faces (compounds not in shape_info for standard BRep inputs).
     ///
@@ -700,6 +699,7 @@ impl<'a> BooleanBuilder<'a> {
     ///     3. L314-315: MakeContainer(TopAbs_COMPOUND, aCIm) for new compound.
     ///     4. L317-337: Add sub-shapes with orientation propagation (aSXIm.Orientation(aOrX)).
     ///     5. L339-341: myImages.Bind(theS, aLSIm).
+    /// ✅ OCCT-aligned: FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-216) + FillImagesCompound (L280-342).
     pub(super) fn fill_images_compounds(&self, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         // OCCT: NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> aMFP — fence
@@ -804,7 +804,7 @@ impl<'a> BooleanBuilder<'a> {
     ///       face from A --keep if OUT or ON (A outside B)
     ///       face from B --keep if IN or ON (B inside A, the cut surface)
     pub(super) fn classification_keep_policy(&self, source: SourceSide, class: Classification, _fi: usize) -> bool {
-        match self.op {
+        match self.my_operation {
             BooleanOpType::Intersection => class == Classification::In || class == Classification::On,
             BooleanOpType::Difference => match source {
                 SourceSide::A => class != Classification::In,
@@ -976,7 +976,7 @@ impl<'a> BooleanBuilder<'a> {
     /// BuildBOP (BOPAlgo_BOP.cxx L492-897).
     /// Builds result from selected faces when both operands are 3D.
     pub(super) fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
-        if self.has_errors {
+        if self.has_errors() {
             return;
         }
         let my_face_refs = self.my_face_refs.borrow();
@@ -990,8 +990,8 @@ impl<'a> BooleanBuilder<'a> {
             return;
         }
         // State validation
-        let the_obj_state_in   = matches!(self.op, BooleanOpType::Intersection);
-        let the_tools_state_in = matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference);
+        let the_obj_state_in   = matches!(self.my_operation, BooleanOpType::Intersection);
+        let the_tools_state_in = matches!(self.my_operation, BooleanOpType::Intersection | BooleanOpType::Difference);
         // Build face maps per source solid.
         // rcad: iterate DS faces per side (A=0, B=1), collect face images with orientation.
         let f_base = self.ds.vertices.len() + self.ds.edges.len();
