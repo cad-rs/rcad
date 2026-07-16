@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -754,22 +754,9 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
     }
 }
 
-/// Project a point onto a surface using Newton iteration.
-pub fn project_onto_surface(surface: &Surface3, point: DVec3, max_iter: usize) -> DVec3 {
-    let mut p = point;
-    for _ in 0..max_iter {
-        let f = surface_implicit(surface, p);
-        if f.abs() < TOLERANCE_ABS {
-            break;
-        }
-        let g = surface_gradient(surface, p);
-        let g_len_sq = g.length_squared();
-        if g_len_sq < TOLERANCE_ABS * TOLERANCE_ABS {
-            break;
-        }
-        p -= g * (f / g_len_sq);
-    }
-    p
+/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type + Newton).
+pub fn project_onto_surface(surface: &Surface3, point: DVec3, _max_iter: usize) -> DVec3 {
+    rcad_kernel::closest_point_on_surface(surface, point, 100).point
 }
 
 /// Project a point onto the intersection of two surfaces within `tol`.

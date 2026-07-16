@@ -1,4 +1,4 @@
-﻿//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
+//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
 //!
 //! 
 //! - `SolidClassifier` (class): classify point relative to a solid using
@@ -1305,54 +1305,10 @@ pub fn classify_point_on_edge(
     }
 }
 
-/// Project a point onto a curve and return the closest point and parameter.
+/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
 fn project_point_to_curve(point: DVec3, curve: &Curve3) -> (DVec3, f64) {
-    match curve {
-        Curve3::Line(line) => {
-            let t = (point - line.origin).dot(line.direction);
-            let closest = line.origin + line.direction * t;
-            (closest, t)
-        }
-        Curve3::Circle(circle) => {
-            let to_point = point - circle.center;
-            let in_plane = to_point - circle.normal * to_point.dot(circle.normal);
-            let t = in_plane.normalize_or_zero();
-            let angle = t.x.atan2(t.y);
-            let closest = circle.center + circle.radius * t;
-            (closest, angle)
-        }
-        Curve3::Ellipse(ellipse) => {
-            // Approximate projection for ellipse
-            let to_point = point - ellipse.center;
-            let angle = (to_point.x / ellipse.major_radius).atan2(to_point.y / ellipse.minor_radius);
-            let minor_dir = ellipse.normal.cross(ellipse.major_dir).normalize_or_zero();
-            let closest = ellipse.center
-                + ellipse.major_dir * angle.cos() * ellipse.major_radius
-                + minor_dir * angle.sin() * ellipse.minor_radius;
-            (closest, angle)
-        }
-        _ => {
-            // Generic case: sample curve and find closest
-            let domain = curve.default_domain();
-            let n_samples = 100;
-            let mut best_dist = f64::INFINITY;
-            let mut best_point = point;
-            let mut best_param = domain[0];
-
-            for i in 0..n_samples {
-                let t = domain[0] + (domain[1] - domain[0]) * i as f64 / n_samples as f64;
-                let p = curve.point_at(t);
-                let d = (p - point).length();
-                if d < best_dist {
-                    best_dist = d;
-                    best_point = p;
-                    best_param = t;
-                }
-            }
-
-            (best_point, best_param)
-        }
-    }
+    let result = rcad_kernel::closest_point_on_curve(curve, point, 128);
+    (result.point, result.param)
 }
 
 // =============================================================================
@@ -1517,27 +1473,10 @@ fn distance_to_surface(point: DVec3, surface: &Surface3) -> f64 {
 }
 
 /// Project point to surface UV coordinates.
+/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type dispatch).
 fn project_point_to_surface_uv(point: DVec3, surface: &Surface3) -> glam::DVec2 {
-    match surface {
-        Surface3::Plane(plane) => {
-            let (u_axis, v_axis) = inttools::edge_face::plane_local_basis(plane);
-            let d = point - plane.origin;
-            glam::DVec2::new(d.dot(u_axis), d.dot(v_axis))
-        }
-        Surface3::Sphere(s) => s.world_to_uv(point),
-        Surface3::Cylinder(c) => {
-            let axis = c.axis.normalize();
-            let v = point - c.origin;
-            let h = v.dot(axis);
-            let radial = v - axis * h;
-            let phi = cylinder_angle(c, radial);
-            glam::DVec2::new(phi, h)
-        }
-        _ => {
-            let proj = rcad_kernel::projection::closest_point_on_surface(surface, point, 16);
-            glam::DVec2::new(proj.params.0, proj.params.1)
-        }
-    }
+    let proj = rcad_kernel::closest_point_on_surface(surface, point, 100);
+    glam::DVec2::new(proj.params.0, proj.params.1)
 }
 
 /// Check if a UV point is inside a UV polygon.
