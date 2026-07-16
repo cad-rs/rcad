@@ -855,6 +855,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L194-217: variable declarations
  let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
  let mut a_v_edge_face: Vec<EfTask> = Vec::new();
+ // OCCT L209-210: IndexedDataMap<TopoDS_Shape, BOPDS_CoupleOfPaveBlocks> aMVCPB
+ let mut a_mvcpb: Vec<crate::bopds::pave::CoupleOfPaveBlocks> = Vec::new();
  self.ds.interf_ef.reserve(i_size);
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
@@ -1160,6 +1162,9 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L528-542: Create EF interference
  a_mi_efc.insert(nF);
  let new_v = self.ds.add_vertex(*point);
+ // OCCT L530-542: set indices, common part, CPB, add to aMVCPB
+ let interf_idx = self.ds.interf_ef.len();
+ let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_v_edge_face[k].pb_local_idx].clone();
  self.ds.interf_ef.push(InterferenceEF {
  edge: nE, face: nF,
  point: *point,
@@ -1167,6 +1172,13 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  new_vertex: new_v,
  });
  self.ds.try_add_interf(nE, nF);
+ a_mvcpb.push(crate::bopds::pave::CoupleOfPaveBlocks {
+ interf_idx,
+ vertex_index: new_v,
+ pb1: pb_for_cpb.clone(),
+ pb2: pb_for_cpb,
+ tolerance: a_tol_vnew,
+ });
  // rcad: update face info and edge paves
  self.ds.faces[nF].face_info.vertices_on.insert(new_v);
  if nE < self.ds.edge_paves.len() {
@@ -1216,7 +1228,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  crate::bopds::tools::perform_common_blocks(&mut self.ds);
  }
  self.update_vertices_of_cb();
- self.treat_new_vertices();
+ // OCCT L578+L612+L687: PerformNewVertices → TreatNewVertices → IntersectVE
+ self.perform_new_vertices(a_mvcpb, false);
  for &fi in &a_mi_efc {
  self.ds.update_face_info_in(fi);
  }
@@ -1999,6 +2012,52 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  survivors.push(new_vi);
  }
  survivors
+ }
+ // OCCT PaveFiller_3.cxx L594-687: PerformNewVertices
+ pub(crate) fn perform_new_vertices(
+ &mut self,
+ mut a_mvcpb: Vec<crate::bopds::pave::CoupleOfPaveBlocks>,
+ b_is_ee_intersection: bool,
+ ) {
+ let a_nb_v = a_mvcpb.len();
+ if a_nb_v == 0 { return; }
+ // Step 1: Treat/Fuse new vertices (OCCT L609-612: TreatNewVertices)
+ // rcad: treat_new_vertices fuses nearby vertices, updates EF/EE entries.
+ let _survivors = self.treat_new_vertices();
+ // Step 2+4: For each CPB, split the PB at the vertex (OCCT L655-687)
+ use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
+ for cpb in &a_mvcpb {
+ // Get the fused vertex index from the EF/EE entry
+ let (n_v, n_e, a_t) = if b_is_ee_intersection {
+ let inf = &self.ds.interf_ee[cpb.interf_idx];
+ (inf.new_vertex, 0, 0.0) // EE: parameter computed by solver, simplified
+ } else {
+ let inf = &self.ds.interf_ef[cpb.interf_idx];
+ if inf.new_vertex == usize::MAX { continue; }
+ (inf.new_vertex, inf.edge, inf.edge_param)
+ };
+ if n_v == usize::MAX || n_e >= self.ds.edges.len() { continue; }
+ // Check if edge has a single PB that spans the new vertex
+ let edge_pbs_len = self.ds.edges[n_e].pave_blocks.len();
+ if edge_pbs_len != 1 { continue; }
+ let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = {
+ let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
+ (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
+ };
+ if pb_sv == n_v || pb_ev == n_v { continue; }
+ // Split at the EF's edge_param, clamped within the PB range
+ let a_t_split = a_t.clamp(pb_t1 + 1e-12, pb_t2 - 1e-12);
+ let pv1 = Pave { vertex_idx: pb_sv, param: pb_t1 };
+ let pv_new = Pave { vertex_idx: n_v, param: a_t_split };
+ let pv2 = Pave { vertex_idx: pb_ev, param: pb_t2 };
+ let mut pb1 = PaveBlock::new(orig_e, pv1, pv_new);
+ let mut pb2 = PaveBlock::new(orig_e, pv_new, pv2);
+ pb1.set_shrunk_data(pb_t1, a_t_split, true);
+ pb2.set_shrunk_data(a_t_split, pb_t2, true);
+ self.ds.edges[n_e].pave_blocks.clear();
+ self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb1));
+ self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb2));
+ }
  }
  // OCCT BOPAlgo_PaveFiller.cxx L376-441: RepeatIntersection
  pub(crate) fn repeat_intersection(&mut self) {

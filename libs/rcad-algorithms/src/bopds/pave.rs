@@ -242,6 +242,23 @@ impl SharedPB {
     pub fn new(pb: PaveBlock) -> Self { SharedPB(Arc::new(RwLock::new(pb))) }
 }
 
+/// BOPDS_CoupleOfPaveBlocks (hxx:28-108).
+/// Stores two PaveBlocks and satellite data for PB splitting during
+/// PerformNewVertices.  For EF intersections both PBs are the same.
+#[derive(Debug, Clone)]
+pub struct CoupleOfPaveBlocks {
+    /// Index of the EF/EE interference (myIndexInterf).
+    pub interf_idx: usize,
+    /// The new vertex index (myIndex). Set after vertex creation/fusion.
+    pub vertex_index: usize,
+    /// First PaveBlock (always the same as second for EF).
+    pub pb1: SharedPB,
+    /// Second PaveBlock.
+    pub pb2: SharedPB,
+    /// Tolerance of the new vertex.
+    pub tolerance: f64,
+}
+
 #[cfg(test)]
 mod pave_block_tests {
     use super::*;
