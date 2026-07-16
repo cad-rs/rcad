@@ -903,7 +903,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  fi.vertices_in.iter().copied().collect()
  };
  let a_mv_on: Vec<usize> = {
- let fi = &self.ds.faces[nF].face_info;
+ let fi = self.ds.face_info(nF);
  fi.vertices_on.iter().copied().collect()
  };
  // OCCT L243-244: aTolE, aTolF

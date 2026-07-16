@@ -648,8 +648,11 @@ impl<'a> super::PaveFiller<'a> {
  if nV < self.ds.vertex_shape_idx.len() {
   let si = self.ds.vertex_shape_idx[nV];
   if si < self.ds.shape_info.len() && !self.ds.shape_info[si].is_new {
-   // OCCT does NOT skip old vertices — boundary vertices must be
-   // put on the IC as paves so Update() can create sub-PBs.
+   // OCCT L2445-2448: skip old (non-intersection) vertices.
+   // Only new vertices (created by intersection) should be put on
+   // the intersection curve. Old vertices create invalid sub-PBs
+   // that are rejected by FindValidRange.
+   continue;
   }
  }
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
@@ -670,9 +673,12 @@ impl<'a> super::PaveFiller<'a> {
  let ic = &self.ds.intersection_curves[ci];
  (ic.start_vertex, ic.end_vertex, ic.t_range, ic.curve.clone(), ic.geom_tol)
  };
- if start_vertex < self.ds.vertices.len() && end_vertex < self.ds.vertices.len() {
- return;
- }
+ // OCCT L2794-2798: getBoundPaves checks if BOTH curve ends already have
+ // assigned vertices (via PaveBlock). Only return when both exist.
+ // rcad: getBoundPaves is not implemented; approximate by checking if
+ // start_vertex and end_vertex exist AND the first PB references them.
+ // For now, process stick vertices regardless — FilterPavesOnCurves
+ // will dedup duplicates.
  let a_mv: std::collections::HashSet<usize> = aMVStick.iter().copied().collect();
  if a_mv.is_empty() { return; }
 
@@ -1585,10 +1591,31 @@ impl<'a> super::PaveFiller<'a> {
  if nV >= self.ds.vertices.len() { return; }
  let a_tol_v = self.ds.vertex_tolerance(nV);
  let a_pv = self.ds.vertex_point(nV);
- let a_tol_p = ic.geom_tol.max(1e-12) + 1e-12;
+ // OCCT L3594: aTolP = max(aNC.Tolerance(), aNC.TangentialTolerance()) + Precision::Confusion()
+ let ic_extra = &self.ds.intersection_curves[curve_idx].curve_extra;
+ let a_tol_p = ic.geom_tol.max(ic_extra.tangential_tol) + TOLERANCE_ABS;
  let a_dist_vp = a_pv.distance(a_p_op);
+ // OCCT L3598: if (aDistVP > aTolV + aTolP) return (curve not closed)
  if a_dist_vp > a_tol_v + a_tol_p { return; }
 
+ // OCCT L3604-3620: FindValidRange check before adding closing pave
+ let a_new_tol_v = a_tol_v.max(a_dist_vp + TOLERANCE_ABS);
+ let has_valid_range = {
+  use crate::pave_filler::helpers::find_valid_range;
+  use rcad_kernel::geom::CurveEval;
+  let v1_pt = self.ds.vertex_point(nV);
+  let v2_pt = a_p_op;
+  find_valid_range(&ic.curve, aT[0], aT[1], ic.geom_tol,
+                   v1_pt, a_new_tol_v, v2_pt, a_new_tol_v).is_some()
+ };
+ if !has_valid_range { return; }
+
+ // OCCT L3622-3631: Update vertex tolerance if needed
+ if a_new_tol_v > a_tol_v && nV < self.ds.vertices.len() {
+  self.ds.vertex_data_mut(nV).tolerance = a_new_tol_v;
+ }
+
+ // OCCT L3633-3637: Add closing pave to the curve
  if let Some(mut pb) = self.ds.intersection_curves[curve_idx].pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
   pb.append_ext_pave(Pave { vertex_idx: nV, param: a_t_op });
  }

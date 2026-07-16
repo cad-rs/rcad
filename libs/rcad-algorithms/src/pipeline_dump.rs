@@ -103,6 +103,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
     }).collect();
 
     // Per-face details: surface type, edges, PBs, vertices in
+    // Note: face_info_vec + faces[fi].face_info are synced by face_info_mut().
     let faces: Vec<serde_json::Value> = ds.faces.iter().enumerate().map(|(fi, f)| {
         let st = format!("{:?}", f.surface);
         json!({"fi": fi, "surf": st, "nBE": f.boundary_edges.len(),

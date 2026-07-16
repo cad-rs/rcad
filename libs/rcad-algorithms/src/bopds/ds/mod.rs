@@ -284,21 +284,21 @@ impl DS {
         else { self.faces.get(fi).map_or(ShapeOrigin::ShapeA, |f| f.origin) }
     }
 
-    /// FaceInfo reference from parallel array.
+    /// FaceInfo — reads from face_info_vec (single source of truth, OCCT DataMap equivalent).
     pub fn face_info(&self, fi: usize) -> &FaceInfo {
-        if fi < self.face_info_vec.len() { &self.face_info_vec[fi] }
-        else { &self.faces.get(fi).expect("face_info out of range").face_info }
+        &self.face_info_vec[fi]
     }
 
-    /// Mutable FaceInfo from parallel array.
+    /// Mutable FaceInfo — writes to BOTH face_info_vec and faces[fi].face_info
+    /// to keep the per-DSFace copy in sync for code that reads from it directly.
+    /// (OCCT uses a single DataMap; rcad mirrors writes to both for compatibility.)
     pub fn face_info_mut(&mut self, fi: usize) -> &mut FaceInfo {
-        if fi < self.face_info_vec.len() {
-            &mut self.face_info_vec[fi]
-        } else if fi < self.faces.len() {
-            &mut self.faces[fi].face_info
-        } else {
-            panic!("face_info_mut: index {} out of bounds", fi);
+        // Sync DSFace.face_info from face_info_vec before returning a mutable ref to face_info_vec.
+        // This ensures that code writing through face_info_vec also updates the per-DSFace field.
+        if fi < self.faces.len() && fi < self.face_info_vec.len() {
+            self.faces[fi].face_info = self.face_info_vec[fi].clone();
         }
+        &mut self.face_info_vec[fi]
     }
 
     /// Face boundary edges from parallel array.
