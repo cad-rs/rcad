@@ -2149,7 +2149,12 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
  (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
  };
- if pb_sv == n_v || pb_ev == n_v { continue; }
+ if pb_sv == n_v || pb_ev == n_v {
+  // OCCT: distinct vertex objects at same position → different IDs.
+  // rcad: add_vertex dedup may make EF vertex == PB endpoint.
+  // EF vertex at PB endpoint still needs split (creates new sub-edge).
+  if b_is_ee_intersection { continue; }
+ }
  // Split at the EF's edge_param, clamped within the PB range
  let a_t_split = a_t.clamp(pb_t1 + 1e-12, pb_t2 - 1e-12);
  let pv1 = Pave { vertex_idx: pb_sv, param: pb_t1 };
