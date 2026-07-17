@@ -1285,10 +1285,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  // rcad: update face info and edge paves
  self.ds.faces[nF].face_info.vertices_on.insert(new_v);
  if nE < self.ds.edge_paves.len() {
- self.ds.edge_paves[nE].push(Pave {
- vertex_idx: new_v,
- param: *a_t,
- });
+ self.add_pave_to_edge(nE, Pave { vertex_idx: new_v, param: *a_t });
  }
  } // EfHit::Vertex
  EfHit::Edge { t1, t2 } => {
@@ -1764,7 +1761,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let fuzz = self.fuzzy_tolerance;
  if let Ok(res) = self.context.compute_ve(self.ds, vi, ei, fuzz) {
   self.ds.interf_ve.push(InterferenceVE{vertex: vi, edge: ei, param: res.param, index_new: vi});
-  self.ds.edge_paves[ei].push(Pave {vertex_idx: vi, param: res.param});
+  self.add_pave_to_edge(ei, Pave {vertex_idx: vi, param: res.param});
  }
  }
  /// OCCT PaveFiller_3.cxx L145-244: PerformEE
@@ -1923,8 +1920,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
     param1: range1[0], param2: range2[0],
     new_vertex: new_v,
    });
-   self.ds.edge_paves[e1].push(Pave { vertex_idx: new_v, param: range1[0] });
-   self.ds.edge_paves[e2].push(Pave { vertex_idx: new_v, param: range2[0] });
+   self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: range1[0] });
+   self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: range2[0] });
    modified.insert(e1);
    modified.insert(e2);
    return;
@@ -1940,8 +1937,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  self.ds.interf_ee.push(InterferenceEE{
  e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
  });
- self.ds.edge_paves[e1].push(Pave { vertex_idx: new_v, param: t1 });
- self.ds.edge_paves[e2].push(Pave { vertex_idx: new_v, param: t2 });
+ self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: t1 });
+ self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: t2 });
  modified.insert(e1);
  modified.insert(e2);
  }
@@ -2000,14 +1997,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  param2: t2,
  new_vertex: new_v,
  });
- self.ds.edge_paves[e1].push(Pave {
- vertex_idx: new_v,
- param: t1,
- });
- self.ds.edge_paves[e2].push(Pave {
- vertex_idx: new_v,
- param: t2,
- });
+ self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: t1 });
+ self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: t2 });
  }
  }
  /// OCCT PaveFiller L575-590: TreatNewVertices (merge EE/EF new vertices)
@@ -2753,10 +2744,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  if !self.ds.faces[face_idx].face_info.vertices_on.contains(&new_v) {
  self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
  }
- self.ds.edge_paves[edge_idx].push(Pave {
- vertex_idx: new_v,
- param: edge_param,
- });
+ self.add_pave_to_edge(edge_idx, Pave { vertex_idx: new_v, param: edge_param });
  }
  }
  /// OCCT HasInterf: skip already-processed pairs
