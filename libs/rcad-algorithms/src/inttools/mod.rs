@@ -72,3 +72,4 @@ pub const CHORD_TOLERANCE: f64 = crate::tolerance::TOLERANCE_MESH_LEGACY;
 pub const CHORD_REFINE_DEPTH: usize = 2;
 
 pub mod shrunk_range;
+pub mod bean_face_intersector;
