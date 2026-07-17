@@ -158,7 +158,8 @@ impl<'a> super::PaveFiller<'a> {
      // OCCT L819-823: set gap on the edge's bounding box
      // OCCT: Bnd_Box& aBox = myDS->ChangeShapeInfo(nE).ChangeBox();
      //        aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
-     if let Some(sr) = pb.0.read().unwrap().shrunk_range {
+     let shrunk = { pb.0.read().unwrap().shrunk_range };
+     if let Some(sr) = shrunk {
          let gap = self.ds.edge_tolerance(ei).max(TOLERANCE_ABS) + self.fuzzy_tolerance / 2.0;
          pb.0.write().unwrap().shrunk_range = Some([sr[0] - gap * 0.01, sr[1] + gap * 0.01]);
          // rcad: also update edge's bounding box gap (OCCT does this via ChangeBox().SetGap())

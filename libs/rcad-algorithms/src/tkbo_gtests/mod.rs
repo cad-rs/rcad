@@ -426,6 +426,45 @@ mod pave_filler_tests {
             .expect("Boolean fuse should succeed");
         assert!(get_volume(&result) > 0.0);
     }
+
+    /// Generate pipeline dumps for bcommon_simple A1.
+    /// Run with: RCAD_DUMP_PIPELINE=1 RCAD_DUMP_DIR=./target/pipeline_dumps RCAD_DUMP_GRID=bcommon RCAD_DUMP_CASE=A1
+    #[test]
+    fn dump_bcommon_simple_a1() {
+        let sphere = make_unit_sphere();
+        let box_b = make_unit_box();
+
+        // Use the internal PaveFiller directly (same path as boolean_op_generic)
+        let mut ds = crate::bopds::ds::DS::new_empty();
+        {
+            let mut filler = crate::pave_filler::PaveFiller::new(&mut ds);
+            filler.configure_fuzzy(crate::tolerance::TOLERANCE_ABS);
+            filler.perform(&sphere, &box_b);
+        }
+
+        let n_v = ds.vertices.len();
+        let n_e = ds.edges.len();
+        let n_f = ds.faces.len();
+        let n_ic = ds.intersection_curves.len();
+        let n_pb = ds.pave_blocks.len();
+        let n_cb = ds.common_blocks.len();
+
+        println!("=== bcommon_simple A1 PF dump ===");
+        println!("DS: V={} E={} F={} IC={} PB={} CB={}", n_v, n_e, n_f, n_ic, n_pb, n_cb);
+        println!("Interfs: VV={} VE={} EE={} VF={} EF={} FF={}",
+            ds.interf_vv.len(), ds.interf_ve.len(), ds.interf_ee.len(),
+            ds.interf_vf.len(), ds.interf_ef.len(), ds.interf_ff.len());
+
+        let n_new_verts = ds.vertices.iter().filter(|v| v.origin.is_none()).count();
+        println!("New V={}", n_new_verts);
+
+        // Print edge counts per edge to see which got split
+        for (ei, e) in ds.edges.iter().enumerate() {
+            if e.pave_blocks.len() > 1 {
+                println!("  Edge[{}]: {} PBs, origin={:?}", ei, e.pave_blocks.len(), e.origin);
+            }
+        }
+    }
 }
 
 // =============================================================================
