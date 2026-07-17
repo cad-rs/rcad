@@ -774,7 +774,7 @@ impl<'a> PaveFiller<'a> {
           // OCCT L117-125: increase tolerance if needed
           if a_tol_v < a_tol_new {
               self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_new;
-              self.my_increased_ss.insert(n_v);
+              self.my_increased_ss.insert(n_v_new);
           }
           return n_v_new;
       }
@@ -790,7 +790,7 @@ impl<'a> PaveFiller<'a> {
       self.verts_to_avoid_extension.insert(n_v_new);
       // OCCT L156-159: mark increased tolerance on old vertex
       if a_tol_v < a_tol_new {
-          self.my_increased_ss.insert(n_v);
+          self.my_increased_ss.insert(n_v_new);
       }
       n_v_new
   }
