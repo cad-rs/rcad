@@ -141,6 +141,7 @@ pub fn sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildErro
     let face = t.add_tface(Some(surface), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true);
     let shell = t.add_tshell(vec![face]);
     t.add_tsolid(vec![shell]);
+    t.same_parameter();
     Ok(t)
 }
 
