@@ -104,12 +104,9 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
     }).collect();
 
     // Per-face details: surface type, edges, PBs, vertices in
-    // Note: face_info_vec is the single source of truth (face_info_mut syncs to it).
-    // faces[fi].face_info is NOT used here because the sync clone-before-mutate
-    // means the per-DSFace copy lags behind face_info_vec by one mutation.
     let faces: Vec<serde_json::Value> = ds.faces.iter().enumerate().map(|(fi, f)| {
         let st = format!("{:?}", f.surface);
-        let fi_info = if fi < ds.face_info_vec.len() { &ds.face_info_vec[fi] }
+        let fi_info = if fi < ds.faces.len() { &ds.faces[fi].face_info }
                       else { &FaceInfo::default() };
         json!({"fi": fi, "surf": st, "nBE": f.boundary_edges.len(),
             "nIW": f.inner_boundary_edges.len(),

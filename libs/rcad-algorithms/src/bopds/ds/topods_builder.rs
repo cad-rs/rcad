@@ -27,7 +27,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
  face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
  face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
  face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
- face_normals: Vec::new(), face_origins: Vec::new(), face_info_vec: Vec::new(),
+ face_normals: Vec::new(), face_origins: Vec::new(),
  source_face_idxs: Vec::new(), face_locations: Vec::new(), face_uv_boundary: Vec::new(),
  source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(), face_shape_idx: Vec::new(),
  wire_shape_idx: Vec::new(), shell_shape_idx: Vec::new(), solid_shape_idx: Vec::new(), compsolid_shape_idx: Vec::new(),

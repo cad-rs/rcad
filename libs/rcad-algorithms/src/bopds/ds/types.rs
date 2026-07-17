@@ -302,8 +302,7 @@ pub struct DSFace {
  pub normal: DVec3,
  pub origin: ShapeOrigin,
  /// OCCT: single DataMap<int, BOPDS_FaceInfo>.
- /// rcad: face_info_vec (parallel array) is the write target for MakeBlocks etc.
- /// The per-DSFace copy exists for backward compatibility; face_info_mut syncs both.
+ /// DSFace.face_info is the single source of truth (OCCT BOPDS_ShapeInfo equivalent).
  pub face_info: FaceInfo,
  /// Original face index within the source BRep's flattened face list.
  pub source_face_idx: usize,
@@ -676,7 +675,6 @@ pub struct DS {
  pub face_inner_wire_idxs: Vec<Vec<usize>>,
  pub face_normals: Vec<DVec3>,
  pub face_origins: Vec<ShapeOrigin>,
- pub face_info_vec: Vec<FaceInfo>,
  pub source_face_idxs: Vec<usize>,
  pub face_locations: Vec<u32>,
  pub face_uv_boundary: Vec<Option<Vec<DVec2>>>,

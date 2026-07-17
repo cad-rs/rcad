@@ -38,7 +38,7 @@ impl DS {
             face_boundary_verts: Vec::new(), face_boundary_edges: Vec::new(),
             face_boundary_forwards: Vec::new(), face_inner_boundary: Vec::new(),
             face_outer_wire_idxs: Vec::new(), face_inner_wire_idxs: Vec::new(),
-            face_normals: Vec::new(), face_origins: Vec::new(), face_info_vec: Vec::new(),
+            face_normals: Vec::new(), face_origins: Vec::new(),
             source_face_idxs: Vec::new(), face_locations: Vec::new(), face_uv_boundary: Vec::new(),
             source_shell_idxs: Vec::new(), source_solid_idxs: Vec::new(), source_compsolid_idxs: Vec::new(), face_shape_idx: Vec::new(),
             wire_shape_idx: Vec::new(), shell_shape_idx: Vec::new(), solid_shape_idx: Vec::new(), compsolid_shape_idx: Vec::new(),
@@ -286,21 +286,14 @@ impl DS {
         else { self.faces.get(fi).map_or(ShapeOrigin::ShapeA, |f| f.origin) }
     }
 
-    /// FaceInfo — reads from face_info_vec (single source of truth, OCCT DataMap equivalent).
+    /// FaceInfo from faces array (OCCT BOPDS_ShapeInfo equivalent).
     pub fn face_info(&self, fi: usize) -> &FaceInfo {
-        &self.face_info_vec[fi]
+        &self.faces[fi].face_info
     }
 
-    /// Mutable FaceInfo — writes to BOTH face_info_vec and faces[fi].face_info
-    /// to keep the per-DSFace copy in sync for code that reads from it directly.
-    /// (OCCT uses a single DataMap; rcad mirrors writes to both for compatibility.)
+    /// Mutable FaceInfo — writes directly to DSFace (OCCT BOPDS_ShapeInfo equivalent).
     pub fn face_info_mut(&mut self, fi: usize) -> &mut FaceInfo {
-        // Sync DSFace.face_info from face_info_vec before returning a mutable ref to face_info_vec.
-        // This ensures that code writing through face_info_vec also updates the per-DSFace field.
-        if fi < self.faces.len() && fi < self.face_info_vec.len() {
-            self.faces[fi].face_info = self.face_info_vec[fi].clone();
-        }
-        &mut self.face_info_vec[fi]
+        &mut self.faces[fi].face_info
     }
 
     /// Face boundary edges from parallel array.
@@ -530,7 +523,6 @@ impl DS {
         let source_shell_idx = df.source_shell_idx;
         let source_solid_idx = df.source_solid_idx;
         let source_compsolid_idx = df.source_compsolid_idx;
-        let face_info = df.face_info.clone();
         self.faces.push(df);
         // Phase 4: populate parallel arrays
         self.face_boundary_verts.push(boundary_verts);
@@ -541,7 +533,6 @@ impl DS {
         self.face_inner_wire_idxs.push(inner_wire_idxs);
         self.face_normals.push(normal);
         self.face_origins.push(origin);
-        self.face_info_vec.push(face_info);
         self.source_face_idxs.push(source_face_idx);
         self.face_locations.push(location);
         self.face_uv_boundary.push(uv_boundary);
