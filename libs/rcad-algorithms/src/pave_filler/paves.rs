@@ -1383,7 +1383,12 @@ impl<'a> super::PaveFiller<'a> {
            + cross_dir * (c.radius * theta.sin())
            + c.axis * h
       }
-      _ => a_p3d,
+      // OCCT: generic surface evaluation for all other types (Sphere, Cone,
+      // Torus, BSpline, Bezier, etc.) using SurfaceEval::point_at.
+      _ => {
+       use rcad_kernel::geom::SurfaceEval;
+       face_surface.point_at(uv.x, uv.y)
+      }
      };
      let d2 = a_p3d.distance_squared(proj);
      if d2 > a_tol_v * a_tol_v {
