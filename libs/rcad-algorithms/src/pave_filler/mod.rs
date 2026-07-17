@@ -356,8 +356,18 @@ pub(crate) fn build_face_shape_map(ds: &DS, fi: usize) -> std::collections::Hash
  for &ei in &ds.faces[fi].boundary_edges {
  aMI.insert(ei);
  if ei < ds.edges.len() {
- aMI.insert(ds.edge_start_vertex_ds(ei));
- aMI.insert(ds.edge_end_vertex_ds(ei));
+ let v_start = ds.edge_start_vertex_ds(ei);
+ let v_end = ds.edge_end_vertex_ds(ei);
+ aMI.insert(v_start);
+ aMI.insert(v_end);
+ // OCCT: resolve SD vertices — if a boundary vertex has an SD
+ // partner, include it so IsSubShape checks match.
+ if let Some(n_sd) = ds.has_shape_sd(v_start) {
+ aMI.insert(n_sd);
+ }
+ if let Some(n_sd) = ds.has_shape_sd(v_end) {
+ aMI.insert(n_sd);
+ }
  }
  }
  }
