@@ -199,6 +199,45 @@ impl<'a> super::PaveFiller<'a> {
 
       // Clone old PBs — allows self.ds access while processing sub-PBs
       let old_pbs = self.ds.edges[n_e].pave_blocks.clone();
+
+      // OCCT: distribute NEW paves from edge.paves to the correct sub-PB's ext_paves.
+      // After init_pave_blocks_for_edge, ALL existing paves are boundaries of sub-PBs.
+      // NEW paves (added by VE/EE/EF after init) need to be added to ext_paves of the
+      // containing sub-PB so that update() can split them.
+      let edge_paves: Vec<Pave> = self.ds.edges[n_e].paves.clone();
+      if old_pbs.len() == 1 && old_pbs[0].0.read().unwrap().ext_paves.is_empty() {
+        // Edge has only 1 PB with no ext_paves — distribute ALL non-endpoint paves
+        let (sv, ev) = {
+          let r = old_pbs[0].0.read().unwrap();
+          (r.pave1.vertex_idx, r.pave2.vertex_idx)
+        };
+        let mut pb = old_pbs[0].0.write().unwrap();
+        for p in &edge_paves {
+          if p.vertex_idx != sv && p.vertex_idx != ev {
+            pb.append_ext_pave(*p);
+          }
+        }
+      } else {
+        // Edge has multiple sub-PBs or PBs with ext_paves.
+        // Find which sub-PB contains each non-boundary pave.
+        let pb_ranges: Vec<(usize, f64, f64)> = old_pbs.iter().enumerate().map(|(i, spb)| {
+          let r = spb.0.read().unwrap();
+          (i, r.pave1.param, r.pave2.param)
+        }).collect();
+        for p in &edge_paves {
+          for &(pbi, p1, p2) in &pb_ranges {
+            let is_endpoint = {
+              let r = old_pbs[pbi].0.read().unwrap();
+              p.vertex_idx == r.pave1.vertex_idx || p.vertex_idx == r.pave2.vertex_idx
+            };
+            if !is_endpoint && p.param >= p1 && p.param <= p2 {
+              old_pbs[pbi].0.write().unwrap().append_ext_pave(*p);
+              break;
+            }
+          }
+        }
+      }
+
       let mut new_pbs: Vec<crate::bopds::pave::SharedPB> = Vec::new();
 
       // OCCT L438-527: Process each old PaveBlock
