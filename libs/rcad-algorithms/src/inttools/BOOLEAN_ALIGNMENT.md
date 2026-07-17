@@ -114,7 +114,8 @@
 | 优先级 | OCCT 函数 | rcad 文件 | 问题 |
 |--------|-----------|-----------|------|
 | **P0** | `FillImagesFaces` (BOPAlgo_Builder_1.cxx:128-170) | filler.rs:181 | 面分裂+分类，直接影响 F=7→final BRep |
-| **P0** | `PutPaveOnCurve` (BOPAlgo_PaveFiller_6.cxx:2940-3010) | paves.rs:244 | 顶点在曲线上投影+登记，影响 V=15 |
+| **P0** | `PutPaveOnCurve` (BOPAlgo_PaveFiller_6.cxx:2991-3055) | paves.rs:532 | ✅ 结构对齐（IsVertexOnLine→ExtendedTolerance→ContainsParameter→AddPave） |
+| **P0** | `FillImagesFaces` (BOPAlgo_Builder_1.cxx:128-170→Builder_2.cxx:215-680) | filler_mod.rs:143 | ❌ BuildSplitFaces ~400行复杂边缘循环，需独立 session |
 | **P1** | `IsValidBlockForFaces` | make_blocks.rs:438 | pcurve 求值方式不同 |
 
 ### rcad 独有 / OCCT 没有（需删除）
