@@ -15,23 +15,22 @@
 | OCCT | rcad | 状态 | 差异 |
 |------|------|------|------|
 | `BOPAlgo_PaveFiller::Perform` | `PaveFiller::perform` (mod.rs) | ⏳ | 整体流程一致，部分检查/容差计算不同 |
-| `BOPAlgo_PaveFiller::PerformEE` | EE 交线计算 (edge_edge.rs) | ⏳ | 结构等价，容差常数不同 |
-| `BOPAlgo_PaveFiller::PerformEF` | EF 交线 (edge_face.rs + helpers.rs) | ✅ | 通用路径使用 `BeanFaceIntersector`（已接入） |
+| `BOPAlgo_PaveFiller::PerformEE` | EE 交线 (intersection.rs:551) | ⏳ | 结构等价（BVH→PB对→EdgeEdge计算），rcad为顺序执行（OCCT并行） |
+| `BOPAlgo_PaveFiller::PerformEF` | EF 交线 (intersection.rs) | ✅ | 通用路径使用 `BeanFaceIntersector`（已接入） |
 | `IntTools_BeanFaceIntersector` | `BeanFaceIntersector` (bean_face_intersector.rs) | ✅ | **1:1 翻译**（4020行，35单测），已接入 EF 管线 |
-| `BOPAlgo_PaveFiller::PerformVF` | VF 交线 | ❌ | rcad 有 unique 逻辑 |
+| `BOPAlgo_PaveFiller::PerformVF` | VF 交线 (intersection.rs:2274) | ⏳ | 结构对齐（FillShrunkData + VF对遍历），`has_interf_ve_via_faces` 为额外检查 |
 | `BOPAlgo_PaveFiller::PerformVV` | VV → DsBvh | ✅ | OCCT 对齐 — BVH 配对 |
 | `BOPAlgo_PaveFiller::MakeBlocks` | `make_blocks` (make_blocks.rs:15) | ⏳ | 结构对齐（子函数全部存在：PutBound/Stick/EF/ClosingPaveOnCurve, IsExistingPB×2, ProcessExistingPB, PreparePostTreatFF） |
-| `BOPAlgo_PaveFiller::PerformVF` | `perform_vf` (intersection.rs:2274) | ⏳ | 结构对齐（FillShrunkData + VF对遍历），`has_interf_ve_via_faces` 为 rcad 额外检查 |
 | `IntTools_Context::IsVertexOnLine` | `is_vertex_on_line` (paves.rs:449) | ✅ | **刚对齐** |
 
 ### PutPaveOnCurve 系列
 
 | OCCT | rcad | 状态 | 差异 |
 |------|------|------|------|
-| `PutPaveOnCurve` (单vertex) | `put_pave_on_curve` (paves.rs:244) | ⏳ | OCCT L2950+ 有 extended tolerance 逻辑；rcad 省略了部分分支 |
-| `PutPavesOnCurve` (批量) | `put_paves_on_curve` (paves.rs:314) | ⏳ | 结构类似 |
-| `PutBoundPaveOnCurve` | 内联在 make_blocks.rs:290-379 | ⏳ | 逻辑分散，没有独立函数 |
-| `PutStickPavesOnCurve` | `put_stick_paves_on_curve` (paves.rs) | ⏳ | 未逐行对齐 |
+| `PutPaveOnCurve` (单vertex) | `put_pave_on_curve` (paves.rs:532) | ✅ | 已对齐（IsVertexOnLine→ExtendedTolerance→ContainsParameter→AddPave） |
+| `PutPavesOnCurve` (批量) | `put_paves_on_curve` (paves.rs:619) | ⏳ | 调用 put_pave_on_curve 循环，结构类似 |
+| `PutBoundPaveOnCurve` | `put_bound_pave_on_curve` (posttreat.rs:372) | ⏳ | 独立函数，已验证存在 |
+| `PutStickPavesOnCurve` | `put_stick_paves_on_curve` (paves.rs:681) | ⏳ | 独立函数，已验证存在 |
 | `FilterPavesOnCurves` | `filter_paves_on_curves` (paves.rs) | ⏳ | 部分对齐 |
 
 ### Face-Face 交线
