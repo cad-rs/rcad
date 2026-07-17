@@ -889,7 +889,15 @@ impl<'a> PaveFiller<'a> {
             Surface3::Plane(p) => (pt - p.origin).dot(p.normal).abs() <= tol,
             Surface3::Sphere(s) => ((pt - s.center).length() - s.radius).abs() <= tol,
             Surface3::Cylinder(c) => { let v = pt - c.origin; let radial = v - c.axis.normalize() * v.dot(c.axis.normalize()); (radial.length() - c.radius).abs() <= tol }
-            Surface3::Cone(c) => { let v = pt - c.apex; let a = c.axis_dir(); let pj = v.dot(a); (v - a*pj).length(); false }
+            Surface3::Cone(c) => { 
+                let v = pt - c.apex; 
+                let a = c.axis_dir(); 
+                let along = v.dot(a); 
+                let r = (v - a * along).length(); 
+                let half_ang = c.half_angle_rad; 
+                let expected_r = c.radius + along * half_ang.tan(); 
+                (r - expected_r).abs() * half_ang.cos() <= tol 
+            }
             _ => false,
         }
     }
@@ -912,14 +920,19 @@ impl<'a> PaveFiller<'a> {
             }
             Surface3::Sphere(s) => {
                 let d = (v_pt - s.center).normalize();
-                (d.z.atan2(d.x), d.y.asin())
+                let u = d.dot(s.ref_dir_perp()).atan2(d.dot(s.ref_dir));
+                let v = d.dot(s.axis).asin();
+                (u, v)
             }
             Surface3::Cylinder(c) => {
                 let ax = c.axis.normalize();
                 let d = v_pt - c.origin;
-                let t = d.dot(ax);
-                let r_dir = (d - ax * t).normalize();
-                (r_dir.z.atan2(r_dir.x), t)
+                let v = d.dot(ax);
+                let radial = d - ax * v;
+                let ref_dir = c.ref_dir.normalize();
+                let cross_dir = ax.cross(ref_dir).normalize();
+                let u = radial.dot(cross_dir).atan2(radial.dot(ref_dir));
+                (u, v)
             }
             _ => (0.0, 0.0),
         };
