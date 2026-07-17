@@ -503,66 +503,6 @@ impl<'a> super::PaveFiller<'a> {
     }
   }
 
- pub(crate) fn split_ics_at_periodic_boundary(&mut self) {
- let n_curves = self.ds.intersection_curves.len();
- let mut curve_faces = std::collections::HashMap::new();
- for ff in &self.ds.interf_ff {
- for &ci in &ff.curves {
- curve_faces.entry(ci).or_insert((ff.f1, ff.f2));
- }
- }
- for ci in 0..n_curves {
- let Some(&(fa, fb)) = curve_faces.get(&ci) else { continue };
- let t0 = self.ds.intersection_curves[ci].t_range[0];
- let t1 = self.ds.intersection_curves[ci].t_range[1];
- if (t1 - t0).abs() < TOLERANCE_ABS { continue; }
- // Clone the curve to avoid borrow conflict when push_vertex is needed later.
- let ic_curve = self.ds.intersection_curves[ci].curve.clone();
- for &(fi, use_a) in &[(fa, true), (fb, false)] {
- let (period, _, _) = match &self.ds.faces[fi].surface {
- Surface3::Sphere(_) => (std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
- Surface3::Cylinder(_) => (std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
- _ => continue,
- };
- let pcurve_owned = if use_a { self.ds.intersection_curves[ci].pcurve_on_a.clone() } else { self.ds.intersection_curves[ci].pcurve_on_b.clone() };
- let Some(pc) = pcurve_owned else { continue };
- const N_SAMP: usize = 64;
- let mut prev_u: Option<f64> = None;
- for i in 0..=N_SAMP {
- let frac = i as f64 / N_SAMP as f64;
- let u = pc.point_at(t0 + (t1 - t0) * frac).x;
- if let Some(pu) = prev_u {
- if (u - pu).abs() > period * 0.5 {
- let mut lo = (i as f64 - 1.0) / N_SAMP as f64;
- let mut hi = i as f64 / N_SAMP as f64;
- for _ in 0..32 {
- let mid = (lo + hi) * 0.5;
- let u_mid = pc.point_at(t0 + (t1 - t0) * mid).x;
- if u_mid < (pu / period).round() * period { lo = mid; }
- else { hi = mid; }
- }
- let t_cross = t0 + (t1 - t0) * (lo + hi) * 0.5;
- let pt = ic_curve.point_at(t_cross);
- let v_new = match self.ds.find_vertex_near(pt, TOLERANCE_ABS * 1000.0) {
- Some(v) => v,
- None => {
- let vi = self.ds.vertices.len();
- self.ds.push_vertex(crate::bopds::ds::DSVertex {
- point: pt, geom_tol: TOLERANCE_ABS, origin: None,
- is_internal: false, location: 0,
- }, None);
- vi
- }
- };
- self.ds.face_info_mut(fa).vertices_in.insert(v_new);
- self.ds.face_info_mut(fb).vertices_in.insert(v_new);
- }
- }
- prev_u = Some(u);
- }
- }
- }
- }
 
  pub(crate) fn put_pave_on_curve(
  &mut self,
@@ -1767,53 +1707,6 @@ impl<'a> super::PaveFiller<'a> {
   }
  }
 
- pub(crate) fn check_face_paves(&self, fi: usize, vi: usize) -> bool {
- let face = &self.ds.faces[fi];
- let tol = face.geom_tol.max(TOLERANCE_ABS);
- for &ei in &face.boundary_edges {
- if ei >= self.ds.edges.len() { continue; }
- for pb in &self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == vi || pb.0.read().unwrap().pave2.vertex_idx == vi {
- return true;
- }
- }
- }
- false
- }
-
- pub(crate) fn get_full_shape_map(&self, fi: usize) -> Vec<usize> {
- let mut indices: Vec<usize> = Vec::new();
- indices.push(fi);
- for &ei in &self.ds.faces[fi].boundary_edges { indices.push(ei); }
- for &vi in &self.ds.faces[fi].boundary_verts { indices.push(vi); }
- indices
- }
-
- pub(crate) fn remove_used_vertices(&self, verts: &mut Vec<usize>, used: &std::collections::BTreeSet<usize>) {
- verts.retain(|v| !used.contains(v));
- }
-
- pub(crate) fn correct_t_range(&self, ei: usize, t_start: f64, t_end: f64) -> [f64; 2] {
- let edge = &self.ds.edges[ei];
- let mut ts = t_start.max(edge.t_range[0]);
- let mut te = t_end.min(edge.t_range[1]);
- if te < ts { std::mem::swap(&mut ts, &mut te); }
- [ts, te]
- }
-
- pub(crate) fn is_block_in_on_face(&self, ei: usize, pbi: usize, fi: usize) -> bool {
- if ei >= self.ds.edges.len() { return false; }
- if fi >= self.ds.faces.len() { return false; }
- let pb = &self.ds.edge_pave_blocks(ei)[pbi];
- let mid_param = (pb.0.read().unwrap().pave1.param + pb.0.read().unwrap().pave2.param) * 0.5;
- let mid_pt = self.ds.edges[ei].curve.point_at(mid_param);
- let face = &self.ds.faces[fi];
- let tol = face.geom_tol.max(TOLERANCE_ABS);
- match &face.surface {
- Surface3::Plane(p) => (mid_pt - p.origin).dot(p.normal).abs() <= tol,
- _ => false,
- }
- }
 
  pub(crate) fn make_sd_vertices_ff(&mut self) {
  let overlaps = self.ds.same_domain_overlaps.clone();
