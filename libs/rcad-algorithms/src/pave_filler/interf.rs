@@ -228,28 +228,62 @@ impl<'a> PaveFiller<'a> {
                 self.ds.fuzzy_tol
             };
 
-            // OCCT UseQuickCoincidenceCheck (BOPAlgo_EdgeEdge): midpoint projection
-            // ForceInterfEE only accepts EDGE-type common parts (coincident ranges).
+            // OCCT L1131-1133: midpoint of edge1's range
             let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
             let mid_p1 = curve1.point_at(mid_t1);
-            let proj_on_2 = closest_point_on_curve(&curve2, mid_p1, 64);
-            let d_at_mid = mid_p1.distance(curve2.point_at(proj_on_2.param));
-            let is_coincident = d_at_mid <= fuzzy;
 
-            let result: Option<(InterferenceEE, bool)> = if is_coincident {
-                let mid_param2 = proj_on_2.param;
-                let mid_pt = (curve1.point_at(mid_t1) + curve2.point_at(mid_param2)) * 0.5;
+            // OCCT L1167-1202: angle check at midpoint
+            // Returns false only if both curves are non-linear AND angle < 25°
+            let b_use_add_tol = {
+                let is_ic_line = matches!(&curve1, Curve3::Line(_));
+                let is_edge_line = matches!(&curve2, Curve3::Line(_));
+                if is_ic_line || is_edge_line {
+                    true
+                } else {
+                    let proj_mid = closest_point_on_curve(&curve2, mid_p1, 64);
+                    let p2_at_mid = curve2.point_at(proj_mid.param);
+                    let d_at_mid = mid_p1.distance(p2_at_mid);
+                    if d_at_mid > fuzzy { continue; }
+                    let v_tgt1 = curve1.tangent_at(mid_t1);
+                    if v_tgt1.length_squared() < 1e-60 { continue; }
+                    let v_tgt2 = curve2.tangent_at(proj_mid.param);
+                    if v_tgt2.length_squared() < 1e-60 { continue; }
+                    let a_cos = v_tgt1.normalize().dot(v_tgt2.normalize());
+                    a_cos.abs() >= 0.9063
+                }
+            };
+
+            // OCCT L1208-1218: EdgeEdge intersection — full curve-curve check
+            // OCCT uses recursive bounding-box subdivision solver (IntTools_EdgeEdge).
+            // rcad: multi-point check for coincident range within PB bounds.
+            let n_samples = 12;
+            let mut all_within_tol = true;
+            let mut sum_t1 = 0.0;
+            let mut sum_t2 = 0.0;
+            for k in 0..n_samples {
+                let frac = (k as f64 + 0.5) / n_samples as f64;
+                let t1 = tr1[0] + frac * (tr1[1] - tr1[0]);
+                let p1 = curve1.point_at(t1);
+                let proj = closest_point_on_curve(&curve2, p1, 64);
+                let dist = p1.distance(curve2.point_at(proj.param));
+                if dist > fuzzy { all_within_tol = false; break; }
+                sum_t1 += t1;
+                sum_t2 += proj.param;
+            }
+
+            let result: Option<(InterferenceEE, bool)> = if all_within_tol {
+                let avg_t1 = sum_t1 / n_samples as f64;
+                let avg_t2 = sum_t2 / n_samples as f64;
+                let avg_pt = (curve1.point_at(avg_t1) + curve2.point_at(avg_t2)) * 0.5;
                 Some((InterferenceEE {
                     e1: entry.n_e1,
                     e2: entry.n_e2,
-                    point: mid_pt,
-                    param1: mid_t1,
-                    param2: mid_param2,
+                    point: avg_pt,
+                    param1: avg_t1,
+                    param2: avg_t2,
                     new_vertex: entry.n_v1,
                 }, true))
             } else {
-                // OCCT L1287-1291: only accept EDGE-type (coincident range).
-                // Point-type results belong to PerformEE, not ForceInterfEE.
                 None
             };
 
