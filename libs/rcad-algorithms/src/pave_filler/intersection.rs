@@ -2185,6 +2185,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  //
  // Build VV pairs: cross-operand involving extra vertices
+ // Build VV pairs: cross-operand involving extra vertices
  // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) uses BVH to find
  // candidate pairs involving the extra vertices only.
  let a_vc = self.ds.a_vertex_count;
@@ -2218,6 +2219,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
   }
  }
  self.perform_ve_bvh(&ve_pairs);
+ eprintln!("[DBG] repeat VE: {} pairs, V={}", ve_pairs.len(), self.ds.vertices.len());
  self.ds.update_pave_blocks_with_sd_vertices();
  // Build VF pairs: cross-operand where vertex is in the extra set
  // OCCT L414: BVH-filtered via IntersectExt.
