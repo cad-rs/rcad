@@ -141,8 +141,25 @@ fn compute_ef_hits(
       crate::inttools::hyperbola_intersection::intersect_hyperbola_cone_with_tol(hyperbola, *ef_range, cone, etf)
       .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.hyperbola_param }).collect(),
     _ => {
-      let pt_hits = intersect_edge_face_numeric(edge_curve, face_surface, *ef_range, etf);
-      pt_hits.into_iter().map(|(p, t)| EfHit::Vertex { point: p, param: t }).collect()
+      use crate::inttools::bean_face_intersector::BeanFaceIntersector;
+      use rcad_kernel::geom::SurfaceEval;
+      let mut bfi = BeanFaceIntersector::from_curve_surface(edge_curve.clone(), face_surface.clone());
+      bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+      let [u_min, u_max, v_min, v_max] = face_surface.default_domain();
+      bfi.set_surface_parameters(u_min, u_max, v_min, v_max);
+      bfi.init_curve_surface(edge_curve.clone(), ds.edge_tolerance(edge_idx),
+                              face_surface.clone(), ds.face_tolerance(face_idx));
+      bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+      bfi.perform();
+      let mut result = Vec::new();
+      if bfi.is_done() {
+        for r in bfi.result() {
+          let t = (r.first() + r.last()) * 0.5;
+          let p = edge_curve.point_at(t);
+          result.push(EfHit::Vertex { point: p, param: t });
+        }
+      }
+      result
     }
   };
   // Phase 2: if no VERTEX hits, check for EDGE-type (edge coincident with face)
@@ -2666,9 +2683,25 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  .collect()
  }
  _ => {
- // Numeric fallback: sample the curve, find sign changes of the
- // surface implicit function. Works for any Curve3  ?Surface3 pair.
- intersect_edge_face_numeric(&edge_curve, &face_surface, ef_range, etf)
+ // Use BeanFaceIntersector for generic curve-surface pairs.
+ use crate::inttools::bean_face_intersector::BeanFaceIntersector;
+ use rcad_kernel::geom::SurfaceEval;
+ let mut bfi = BeanFaceIntersector::from_curve_surface(edge_curve.clone(), face_surface.clone());
+ bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+ let [u_min, u_max, v_min, v_max] = face_surface.default_domain();
+ bfi.set_surface_parameters(u_min, u_max, v_min, v_max);
+ bfi.init_curve_surface(edge_curve.clone(), etf, face_surface.clone(), etf);
+ bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+ bfi.perform();
+ let mut pts = Vec::new();
+ if bfi.is_done() {
+   for r in bfi.result() {
+     let t = (r.first() + r.last()) * 0.5;
+     let p = edge_curve.point_at(t);
+     pts.push((p, t));
+   }
+ }
+ pts
  }
  };
 
