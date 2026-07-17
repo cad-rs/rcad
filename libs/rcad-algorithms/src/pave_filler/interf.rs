@@ -292,8 +292,8 @@ impl<'a> PaveFiller<'a> {
         // L1262-1330: Process results
         // rcad: build connection map for CommonBlock creation
         // OCCT: IndexedDataMap<handle<PaveBlock>, List<handle<PaveBlock>>>
-        // rcad: BTreeMap<usize, Vec<usize>> keyed by encoded (ei, local_i)
-        let mut a_mpblpb: std::collections::BTreeMap<usize, Vec<usize>> =
+        // rcad: BTreeMap<(usize, usize), Vec<(usize, usize)>> (unencoded tuples, no collision risk)
+        let mut a_mpblpb: std::collections::BTreeMap<(usize, usize), Vec<(usize, usize)>> =
             std::collections::BTreeMap::new();
 
         for (idx, opt_ee) in a_ee_results.iter().enumerate() {
@@ -322,10 +322,9 @@ impl<'a> PaveFiller<'a> {
             );
 
             // L1312-1329: Fill map for common blocks creation
-            // Encode (ei, local_i) into a single usize for BTreeMap key
-            let encode = |ei: usize, li: usize| ei.wrapping_mul(1_000_003).wrapping_add(li);
-            let key1 = encode(entry.ei1, entry.pb1_local);
-            let key2 = encode(entry.ei2, entry.pb2_local);
+            // Use (ei, local_i) tuple keys directly (no collision risk vs encoded scalar).
+            let key1 = (entry.ei1, entry.pb1_local);
+            let key2 = (entry.ei2, entry.pb2_local);
 
             let pb1 = &self.ds.edges[entry.ei1].pave_blocks[entry.pb1_local];
             let pb2 = &self.ds.edges[entry.ei2].pave_blocks[entry.pb2_local];

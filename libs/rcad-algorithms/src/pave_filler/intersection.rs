@@ -166,11 +166,11 @@ fn compute_ef_hits(
   if hits.is_empty() {
     let on_face = match (edge_curve, face_surface) {
       (Curve3::Line(l), Surface3::Plane(p)) => {
-        (l.direction.dot(p.normal)).abs() <= etf
+        (l.direction.dot(p.normal)).abs() <= crate::tolerance::TOLERANCE_ANG
           && crate::inttools::vertex_ops::vertex_on_plane_with_tol(l.origin, p, etf)
       }
       (Curve3::Circle(c), Surface3::Plane(p)) => {
-        (c.normal.dot(p.normal)).abs() >= 1.0 - etf
+        (c.normal.dot(p.normal)).abs() >= 1.0 - crate::tolerance::TOLERANCE_ANG
           && crate::inttools::vertex_ops::vertex_on_plane_with_tol(c.center, p, etf)
       }
       _ => {

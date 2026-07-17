@@ -98,21 +98,22 @@ impl Report {
 }
 
 /// BOPAlgo_Tools::FillMap (hxx L83-102).
-/// rcad: specialization for usize keys.
-pub fn fill_map(
-    map: &mut BTreeMap<usize, Vec<usize>>,
-    n1: usize,
-    n2: usize,
+/// BOPAlgo_Tools::FillMap (generic, supports any Ord + Copy key type).
+/// rcad: fills bidirectional adjacency in a connection map.
+pub fn fill_map<K: std::cmp::Ord + Copy>(
+    map: &mut BTreeMap<K, Vec<K>>,
+    n1: K,
+    n2: K,
 ) {
     map.entry(n1).or_default().push(n2);
     map.entry(n2).or_default().push(n1);
 }
 
 /// BOPAlgo_Tools::MakeBlocks (hxx L45-80).
-/// rcad: specialization for `BTreeMap<usize, Vec<usize>>` → `Vec<Vec<usize>>`.
-pub fn make_blocks(map: &BTreeMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
-    let mut fence: HashSet<usize> = HashSet::new();
-    let mut blocks: Vec<Vec<usize>> = Vec::new();
+/// rcad: generic version for `BTreeMap<K, Vec<K>>` → `Vec<Vec<K>>`.
+pub fn make_blocks<K: std::cmp::Ord + Copy + std::hash::Hash>(map: &BTreeMap<K, Vec<K>>) -> Vec<Vec<K>> {
+    let mut fence: std::collections::HashSet<K> = std::collections::HashSet::new();
+    let mut blocks: Vec<Vec<K>> = Vec::new();
     for (&key, _) in map {
         if !fence.insert(key) {
             continue;
