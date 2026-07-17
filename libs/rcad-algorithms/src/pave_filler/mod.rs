@@ -764,7 +764,7 @@ impl<'a> PaveFiller<'a> {
       let mut n_v_new = n_v;
       // OCCT L112: check is_new, has_sd, or non-destructive not in force
       let sd_opt = self.ds.has_shape_sd(n_v);
-      if self.ds.is_new_vertex(n_v) || sd_opt.is_some() || !self.non_destructive {
+      if self.ds.is_new_vertex(n_v) || sd_opt.is_some() {
           // OCCT L115: if HasShapeSD(nV, nVNew), nVNew becomes the SD partner
           if let Some(n_sd) = sd_opt {
               n_v_new = n_sd;
@@ -778,21 +778,11 @@ impl<'a> PaveFiller<'a> {
           }
           return n_v_new;
       }
-      // OCCT L129-131: nV is old vertex in non-destructive mode
-      let a_tol_v = self.ds.vertex_tolerance(n_v);
-      // OCCT L133-136: create new vertex with max(old, new) tolerance
-      let a_pv = self.ds.vertex_point(n_v);
-      n_v_new = self.ds.add_vertex(a_pv);
-      self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_v.max(a_tol_new);
-      // OCCT L150-151: register SD mapping old -> new
-      self.ds.add_shape_sd(n_v, n_v_new);
-      // OCCT L154: avoid further extension of this new vertex
-      self.verts_to_avoid_extension.insert(n_v_new);
-      // OCCT L156-159: mark increased tolerance on old vertex
-      if a_tol_v < a_tol_new {
-          self.my_increased_ss.insert(n_v_new);
-      }
-      n_v_new
+      // OCCT L129-159: non-destructive mode only (rcad: never reached)
+      // rcad's non_destructive is always false, so old vertices without SD
+      // partners are returned directly without tolerance increase or
+      // myIncreasedSS registration — matching OCCT behavior.
+      return n_v;
   }
 
   /// BOPAlgo_PaveFiller::UpdateCommonBlocksWithSDVertices (PaveFiller_10.cxx L173-221).

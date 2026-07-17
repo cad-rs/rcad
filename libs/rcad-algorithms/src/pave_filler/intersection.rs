@@ -2182,36 +2182,36 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  self.perform_vv(&vv_pairs);
  self.ds.update_pave_blocks_with_sd_vertices();
  // Build VE pairs: cross-operand where vertex is in the extra set
+ // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) returns
+ // BVH-filtered pairs involving extra vertices only.
  let a_ec = self.ds.a_edge_count;
  let n_edges = self.ds.edges.len();
+ let vert_bvh = self.build_ds_bvh_combined(false);
+ let edge_bvh = self.build_ds_bvh_combined(true);
+ let all_ve_candidates = crate::bvh::DsBvh::candidate_pairs(&vert_bvh, &edge_bvh);
  let mut ve_pairs: Vec<(usize, usize)> = Vec::new();
- for &vi in &a_extra_map {
- if vi < a_vc {
- for ei in a_ec..n_edges {
- ve_pairs.push((vi, ei));
- }
- } else {
- for ei in 0..a_ec {
- ve_pairs.push((vi, ei));
- }
- }
+ for &(vi, ei) in &all_ve_candidates {
+  let vi_x = a_extra_map.contains(&vi);
+  let is_cross = (vi < a_vc) != (ei < a_ec);
+  if vi_x && is_cross {
+   ve_pairs.push((vi, ei));
+  }
  }
  self.perform_ve_bvh(&ve_pairs);
  self.ds.update_pave_blocks_with_sd_vertices();
  // Build VF pairs: cross-operand where vertex is in the extra set
+ // OCCT L414: BVH-filtered via IntersectExt.
  let a_fc = self.ds.a_face_count;
  let n_faces = self.ds.faces.len();
+ let face_bvh = self.build_ds_bvh_face_all();
+ let all_vf_candidates = crate::bvh::DsBvh::candidate_pairs(&vert_bvh, &face_bvh);
  let mut vf_pairs: Vec<(usize, usize)> = Vec::new();
- for &vi in &a_extra_map {
- if vi < a_vc {
- for fi in a_fc..n_faces {
- vf_pairs.push((vi, fi));
- }
- } else {
- for fi in 0..a_fc {
- vf_pairs.push((vi, fi));
- }
- }
+ for &(vi, fi) in &all_vf_candidates {
+  let vi_x = a_extra_map.contains(&vi);
+  let is_cross = (vi < a_vc) != (fi < a_fc);
+  if vi_x && is_cross {
+   vf_pairs.push((vi, fi));
+  }
  }
  self.perform_vf_bvh(&vf_pairs);
  self.ds.update_pave_blocks_with_sd_vertices();
