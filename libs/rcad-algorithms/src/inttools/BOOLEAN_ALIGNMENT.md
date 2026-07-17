@@ -16,8 +16,8 @@
 |------|------|------|------|
 | `BOPAlgo_PaveFiller::Perform` | `PaveFiller::perform` (mod.rs) | ⏳ | 整体流程一致，部分检查/容差计算不同 |
 | `BOPAlgo_PaveFiller::PerformEE` | EE 交线计算 (edge_edge.rs) | ⏳ | 结构等价，容差常数不同 |
-| `BOPAlgo_PaveFiller::PerformEF` | EF 交线 (edge_face.rs + helpers.rs) | ⏳ | 使用 `compute_ef_hits()` 分析解分发 + `intersect_edge_face_numeric` 回退 |
-| `IntTools_BeanFaceIntersector` | `BeanFaceIntersector` (bean_face_intersector.rs) | ✅ | **已新增 1:1 翻译**（4020行，35单测）。尚未接入管线（当前管线使用独立的 `compute_ef_hits` 分发） |
+| `BOPAlgo_PaveFiller::PerformEF` | EF 交线 (edge_face.rs + helpers.rs) | ✅ | 通用路径使用 `BeanFaceIntersector`（已接入） |
+| `IntTools_BeanFaceIntersector` | `BeanFaceIntersector` (bean_face_intersector.rs) | ✅ | **1:1 翻译**（4020行，35单测），已接入 EF 管线 |
 | `BOPAlgo_PaveFiller::PerformVF` | VF 交线 | ❌ | rcad 有 unique 逻辑 |
 | `BOPAlgo_PaveFiller::PerformVV` | VV → DsBvh | ✅ | OCCT 对齐 — BVH 配对 |
 | `BOPAlgo_PaveFiller::MakeBlocks` | `make_blocks` (make_blocks.rs:15) | ⏳ | 循环+变量结构与 OCCT L725-1107 大致对齐，但细节差异多 |
