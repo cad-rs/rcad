@@ -401,8 +401,7 @@ impl<'a> PaveFiller<'a> {
             let a_p2 = self.ds.edges[ne].curve.point_at(shrunk[1]);
             let a_pb_box = crate::bvh::Aabb {
                 min: a_p1.min(a_p2),
-                max: a_p1.max(a_p2),
-            };
+                max: a_p1.max(a_p2), gap: 0.0 };
             // L870: aBBTree.Add(aPBMap.Add(aPB), Bnd_Tools::Bnd2BVH(aPBBox));
             a_pb_aabbs.push(a_pb_box);
             a_pb_indices.push(i_pb);

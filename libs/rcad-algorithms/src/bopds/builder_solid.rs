@@ -423,6 +423,7 @@ impl BuilderSolid {
  bb = AABB {
  min: glam::DVec3::splat(f64::NEG_INFINITY),
  max: glam::DVec3::splat(f64::INFINITY),
+ gap: 0.0,
  };
  }
  self.myBoxes.insert(idx, bb);

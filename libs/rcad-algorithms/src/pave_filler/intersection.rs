@@ -244,16 +244,19 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.vertices[e.end_vertex].point];
  let mut a = Aabb::empty();
  for &p in &pts { a.expand_point(p); }
- // Expand for edge tolerance
- let tol = e.geom_tol.max(CONFUSION);
- a.min -= DVec3::splat(tol);
- a.max += DVec3::splat(tol);
+ // Expand for edge tolerance — OCCT: extents + gap
+ let gap_tol = e.geom_tol.max(CONFUSION);
+ a.min -= DVec3::splat(gap_tol);
+ a.max += DVec3::splat(gap_tol);
+ a.gap = gap_tol;
  a
  } else {
  let pt = self.ds.vertex_point(ds_i);
- // OCCT BOPDS_ShapeInfo::Box() uses fixed gap, not tolerance-expanded
- let tol = CONFUSION;
- Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
+ // OCCT BOPDS_ShapeInfo::Box(): extents = point, gap = tolerance
+ // OCCT: use box_gap from shape_info (set at Init, NOT updated during VE)
+ let si = self.ds.vertex_shape_idx.get(ds_i).copied().unwrap_or(ds_i);
+ let gap = if si < self.ds.shape_info.len() { self.ds.shape_info[si].box_gap } else { CONFUSION };
+ Aabb { min: pt, max: pt, gap }
  };
  aabbs.push(aabb);
  }
@@ -289,15 +292,18 @@ impl<'a> super::PaveFiller<'a> {
   let p = curve.point_at(t);
   a.expand_point(p);
  }
- let tol = e.geom_tol.max(CONFUSION);
- a.min -= DVec3::splat(tol);
- a.max += DVec3::splat(tol);
+ let gap_tol = e.geom_tol.max(CONFUSION);
+ a.min -= DVec3::splat(gap_tol);
+ a.max += DVec3::splat(gap_tol);
+ a.gap = gap_tol;
  a
  } else {
  let pt = self.ds.vertex_point(ds_i);
- // OCCT BOPDS_ShapeInfo::Box() uses fixed gap, not tolerance-expanded
- let tol = CONFUSION;
- Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
+ // OCCT BOPDS_ShapeInfo::Box(): extents = point, gap = tolerance
+ // OCCT: use box_gap from shape_info (set at Init, NOT updated during VE)
+ let si = self.ds.vertex_shape_idx.get(ds_i).copied().unwrap_or(ds_i);
+ let gap = if si < self.ds.shape_info.len() { self.ds.shape_info[si].box_gap } else { CONFUSION };
+ Aabb { min: pt, max: pt, gap }
  };
  aabbs.push(aabb);
  }
@@ -2021,6 +2027,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  bvh_aabbs.push(Aabb {
  min: v.pos - DVec3::splat(half),
  max: v.pos + DVec3::splat(half),
+ gap: 0.0,
  });
  }
  let bvh = DsBvh::build(bvh_indices, bvh_aabbs);

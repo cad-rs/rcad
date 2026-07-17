@@ -19,6 +19,7 @@ use crate::tolerance::*;
 pub struct Aabb {
  pub min: DVec3,
  pub max: DVec3,
+ pub gap: f64,
 }
 
 impl Aabb {
@@ -27,6 +28,7 @@ impl Aabb {
  Self {
  min: DVec3::splat(f64::INFINITY),
  max: DVec3::splat(f64::NEG_INFINITY),
+ gap: 0.0,
  }
  }
 
@@ -67,12 +69,13 @@ impl Aabb {
 
  /// Whether this AABB intersects another.
  pub fn intersects(&self, other: &Aabb) -> bool {
- self.min.x <= other.max.x
- && self.max.x >= other.min.x
- && self.min.y <= other.max.y
- && self.max.y >= other.min.y
- && self.min.z <= other.max.z
- && self.max.z >= other.min.z
+ // OCCT Bnd_Box::IsOut
+ self.min.x - self.gap <= other.max.x + other.gap
+  && self.max.x + self.gap >= other.min.x - other.gap
+  && self.min.y - self.gap <= other.max.y + other.gap
+  && self.max.y + self.gap >= other.min.y - other.gap
+  && self.min.z - self.gap <= other.max.z + other.gap
+  && self.max.z + self.gap >= other.min.z - other.gap
  }
 
  /// Ray–AABB intersection; returns entry parameter `t` along the ray (forward hits only).

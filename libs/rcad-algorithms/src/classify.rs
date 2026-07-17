@@ -455,8 +455,7 @@ impl ClassifyContext {
             if !cache.aabb.contains_point(point) {
                 let expanded_aabb = Aabb {
                     min: cache.aabb.min - DVec3::splat(coarse_tol),
-                    max: cache.aabb.max + DVec3::splat(coarse_tol),
-                };
+                    max: cache.aabb.max + DVec3::splat(coarse_tol), gap: 0.0 };
                 if !expanded_aabb.contains_point(point) {
                     return Classification::Out;
                 }
@@ -669,8 +668,7 @@ fn classify_point_internal(
     // OCCT L218-230: Vertex/Edge proximity via UB-tree -> On
     let query_aabb = Aabb {
         min: point - DVec3::splat(edge_tol),
-        max: point + DVec3::splat(edge_tol),
-    };
+        max: point + DVec3::splat(edge_tol), gap: 0.0 };
     for &ei in &edge_tree.query_aabb(&query_aabb) {
         if let Some(edge) = ds.edges.get(ei) {
             let sv = ds.vertices[edge.start_vertex].point;
@@ -767,8 +765,7 @@ fn classify_point_internal(
         let line_ext = edge_tol * 100.0;
         let line_aabb = Aabb {
             min: point - DVec3::splat(line_ext),
-            max: point + DVec3::splat(line_ext),
-        };
+            max: point + DVec3::splat(line_ext), gap: 0.0 };
         // OCCT L314-316: collect vertex hits
         let mut lv_ints: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &fi in solid_face_indices {

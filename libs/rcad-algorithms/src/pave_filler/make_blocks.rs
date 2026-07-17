@@ -204,8 +204,7 @@ impl<'a> super::PaveFiller<'a> {
         let candidates: Vec<usize> = if let Some(pb_tree) = a_pb_tree.as_ref() {
             let query_box = Aabb {
                 min: a_pm - DVec3::splat(a_tol_v1 + a_tol_check),
-                max: a_pm + DVec3::splat(a_tol_v1 + a_tol_check),
-            };
+                max: a_pm + DVec3::splat(a_tol_v1 + a_tol_check), gap: 0.0 };
             pb_tree.query_aabb(&query_box)
         } else { Vec::new() };
 
@@ -772,7 +771,7 @@ impl<'a> super::PaveFiller<'a> {
                 let mn = ds.vertex_point(sv).min(ds.vertex_point(ev)) - DVec3::splat(tol);
                 let mx = ds.vertex_point(sv).max(ds.vertex_point(ev)) + DVec3::splat(tol);
                 a_pb_indices.push(pb_idx);
-                a_pb_aabbs.push(Aabb { min: mn, max: mx });
+                a_pb_aabbs.push(Aabb { min: mn, max: mx, gap: 0.0 });
             }
         }
         if !a_pb_indices.is_empty() {
