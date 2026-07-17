@@ -666,6 +666,7 @@ impl<'a> super::PaveFiller<'a> {
   let a_nb_edge_edge = a_vee.len();
 
   // OCCT L285-556: Process results
+  let old_ee_len = self.ds.interf_ee.len();
   for k in 0..a_nb_edge_edge {
    let task = &a_vee[k];
    let nE1 = task.nE1;
@@ -690,8 +691,33 @@ impl<'a> super::PaveFiller<'a> {
    crate::bopds::tools::perform_common_blocks(&mut self.ds);
   }
   self.update_vertices_of_cb();
+
+  // Build aMVCPB from new EE interference entries
+  // (OCCT builds this map inside the CommonPart processing loop;
+  //  rcad builds it retroactively from interf_ee entries.)
+  let mut a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks> =
+    std::collections::HashMap::new();
+  for k in old_ee_len..self.ds.interf_ee.len() {
+   let inf = &self.ds.interf_ee[k];
+   if inf.new_vertex == usize::MAX { continue; }
+   use crate::bopds::pave::{CoupleOfPaveBlocks, PaveBlock, Pave, SharedPB};
+   let dummy_pb = SharedPB::new(PaveBlock::new(
+     inf.e1,
+     Pave { vertex_idx: 0, param: 0.0 },
+     Pave { vertex_idx: 0, param: 0.0 },
+   ));
+   a_mvcpb.insert(inf.new_vertex, CoupleOfPaveBlocks {
+     interf_idx: k,
+     vertex_index: inf.new_vertex,
+     pb1: dummy_pb.clone(),
+     pb2: dummy_pb,
+     tolerance: self.ee_tol(inf.e1, inf.e2),
+   });
+  }
+
   // OCCT L565: PerformNewVertices (TreatNewVertices + IntersectVE)
-  self.treat_new_vertices();
+  // rcad: perform_new_vertices wraps treat_new_vertices + splits PBs via VE.
+  self.perform_new_vertices(a_mvcpb, true);
 
   // OCCT L571-585: if (aMEdges.Extent()) { SplitPaveBlocks(aMEdges, false); }
   if !a_m_edges.is_empty() {
@@ -718,7 +744,8 @@ impl<'a> super::PaveFiller<'a> {
  /// OCCT PaveFiller_4.cxx L139-301: PerformVF
 /// OCCT PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
- // OCCT L141: myIterator->Initialize(TopAbs_VERTEX, TopAbs_FACE)
+ // OCCT L141: FillShrunkData(VERTEX, FACE) + myIterator->Initialize(VERTEX, FACE)
+ self.fill_shrunk_data();
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
  // OCCT L142: iSize = myIterator->ExpectedLength()
@@ -2340,54 +2367,20 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  [a_new_first, a_new_last]
  }
- /// OCCT IntTools_FClass2d: point-in-face check
- pub(crate) fn is_point_in_face(&self, point: DVec3, face_idx: usize, tol: f64) -> bool {
+ /// OCCT IntTools_FClass2d: point-in-face check.
+ /// Uses fclass2d for all surface types to properly check
+ /// against the face's trimming wires (not just parametric bounds).
+ pub(crate) fn is_point_in_face(&mut self, point: DVec3, face_idx: usize, tol: f64) -> bool {
  let face = &self.ds.faces[face_idx];
  match &face.surface {
  Surface3::Plane(plane) => {
  let verts = self.ds.face_boundary_points(face_idx);
  inttools::edge_face::point_in_planar_face_with_tol(point, plane, &verts, tol)
  }
- Surface3::Sphere(sphere) => {
- let uv = sphere.world_to_uv(point);
- uv.x >= -tol && uv.x <= std::f64::consts::TAU + tol
- && uv.y >= -std::f64::consts::FRAC_PI_2 - tol
- && uv.y <= std::f64::consts::FRAC_PI_2 + tol
+ _ => {
+ // OCCT IntTools_FClass2d: project to UV, check within face wires.
+ self.context.is_point_in_face_3d(&self.ds, face_idx, point, tol)
  }
- Surface3::Cylinder(cyl) => {
- let axis = cyl.axis.normalize_or_zero();
- if axis.length_squared() < 0.5 { return true; }
- let local = point - cyl.origin;
- let v = local.dot(axis);
- let radial = local - axis * v;
- let u = radial.y.atan2(radial.x);
- let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
- u >= -tol && u <= std::f64::consts::TAU + tol
- }
- Surface3::Cone(cone) => {
- let axis = cone.axis_dir();
- let ap = point - cone.apex;
- let v = ap.dot(axis);
- let radial = ap - axis * v;
- let u = radial.y.atan2(radial.x);
- let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
- u >= -tol && u <= std::f64::consts::TAU + tol
- }
- Surface3::Torus(torus) => {
- let axis = torus.axis.normalize_or_zero();
- if axis.length_squared() < 0.5 { return true; }
- let local = point - torus.center;
- let v = local.dot(axis);
- let radial = local - axis * v;
- let r = radial.length();
- let u = radial.y.atan2(radial.x);
- let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
- let v_angle = ((r - torus.major_radius) / torus.minor_radius.max(tol)).acos();
- let v = if (r - torus.major_radius).abs() <= torus.minor_radius + tol { v_angle } else { 0.0 };
- u >= -tol && u <= std::f64::consts::TAU + tol
- && v >= -tol && v <= std::f64::consts::TAU + tol
- }
- _ => true,
  }
  }
  /// OCCT PaveFiller_5.cxx L340-480: IntersectEdgeFace

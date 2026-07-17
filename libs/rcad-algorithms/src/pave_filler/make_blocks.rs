@@ -154,7 +154,7 @@ impl<'a> super::PaveFiller<'a> {
         for &sei in a_lse {
             if sei >= self.ds.edges.len() { continue; }
             let se = &self.ds.edges[sei];
-            let a_tol_check = se.geom_tol.max(a_tol);
+            let a_tol_check = se.geom_tol.max(a_tol) + self.ds.fuzzy_tol;
             let (_t, a_proj) = crate::extrema::closest_point_on_curve(&se.curve, a_pm);
             let dist = (a_proj - a_pm).length();
             if dist <= a_tol_check && dist < best_dist {
@@ -526,8 +526,8 @@ impl<'a> super::PaveFiller<'a> {
                         if n_v1 < self.ds.vertices.len() && n_v2 < self.ds.vertices.len() {
                             let v1_pt = self.ds.vertex_point(n_v1);
                             let v2_pt = self.ds.vertex_point(n_v2);
-                            let v1_tol = a_tol_r3d.max(self.a_mv_tol.get(&n_v1).copied().unwrap_or(a_tol_r3d));
-                            let v2_tol = a_tol_r3d.max(self.a_mv_tol.get(&n_v2).copied().unwrap_or(a_tol_r3d));
+                            let v1_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v1));
+                            let v2_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v2));
                             find_valid_range(&ic.curve, a_t1, a_t2, a_tol_r3d,
                                              v1_pt, v1_tol, v2_pt, v2_tol).is_some()
                         } else { false }
@@ -675,6 +675,19 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.vertex_data_mut(n_v).tolerance = saved_tol;
                 }
             }
+            // OCCT L1117-1121: reset vertex bounding boxes after tolerance restore
+            for &(n_v, _) in &saved_tols {
+                if let Some(si) = self.ds.vertex_shape_idx.get(n_v) {
+                    if *si < self.ds.shape_info.len() {
+                        let vp = self.ds.vertex_point(n_v);
+                        let vt = self.ds.vertex_tolerance(n_v);
+                        let si_mut = &mut self.ds.shape_info[*si];
+                        si_mut.box_min = Some(vp);
+                        si_mut.box_max = Some(vp);
+                        si_mut.box_gap = vt + crate::tolerance::CONFUSION;
+                    }
+                }
+            }
             // L1123-1126: forget SD groups of restored vertices
             for &(n_v, _) in &saved_tols {
                 a_dm_vlv.remove(&n_v);
@@ -722,11 +735,6 @@ impl<'a> super::PaveFiller<'a> {
 
         // L1168: PutSEInOtherFaces
         self.put_se_in_other_faces();
-
-        // build_edge_images is called at the end of Perform() in OCCT, not inside MakeBlocks.
-        // It is kept here because the rcad pipeline depends on it being called from
-        // make_blocks. This will be moved to Perform() when that function is aligned.
-        self.ds.build_edge_images();
     }
 
     /// Build PB BVH tree from a set of pave blocks ON/IN.

@@ -160,7 +160,8 @@ impl AssemblyNode {
         let world = parent_xform * self.transform;
         match &self.content {
             NodeContent::Leaf(brep) => {
-                let materialized = brep.transformed(world);
+                let mut materialized = (**brep).clone();
+                materialized.apply_transform(world);
                 append_brep(dst, materialized);
             }
             NodeContent::Assembly(children) => {

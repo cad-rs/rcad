@@ -2043,15 +2043,31 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  /// index in the SD pair.  rcad: iterates all pave_blocks on all edges
  /// plus the global pave_blocks pool.
  pub fn update_pave_blocks_with_sd_vertices(&mut self) {
- // Build SD vertex replacement map: for each pair (a,b), pick the
- // canonical vertex (the one from ShapeA, i.e., the lower index).
+ // OCCT BOPAlgo_PaveFiller_10.cxx L166-246:
+ // ShapesSD() is a one-directional DataMap<source, sd_vertex>.
+ // For each entry (source → sd_vertex), replace source with sd_vertex
+ // in all PaveBlocks.  There is never a reverse entry (sd_vertex → source).
+ //
+ // rcad's ShapeSD stores bidirectionally for lookup convenience.
+ // To match OCCT semantics, we must infer the direction:
+ //   - If exactly one vertex is is_new, the new one is the SD target.
+ //   - If both are old (shared topology), the lower index is the target.
+ // Then only insert source → target (never target → source).
  let sd_pairs: Vec<(usize, usize)> = self.shape_sd.sd_vertices_iter().copied().collect();
  if sd_pairs.is_empty() { return; }
  let mut replace: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
  for &(a, b) in &sd_pairs {
- let canon = a.min(b);
- replace.entry(a).or_insert(canon);
- replace.entry(b).or_insert(canon);
+ // Determine which vertex is the SD target (the one that survives)
+ let target = if self.is_new_vertex(a) && !self.is_new_vertex(b) {
+ a
+ } else if self.is_new_vertex(b) && !self.is_new_vertex(a) {
+ b
+ } else {
+ a.min(b) // both old or both new: lower index per OCCT convention
+ };
+ // Only insert source → target (the replacement direction)
+ let source = if a == target { b } else { a };
+ replace.entry(source).or_insert(target);
  }
 
   // Apply SD replacement through SharedPB.

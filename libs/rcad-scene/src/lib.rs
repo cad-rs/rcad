@@ -2,12 +2,14 @@ pub mod assembly;
 pub use assembly::{Assembly, AssemblyMetadata, AssemblyNode, NodeContent, assembly_from_parts};
 
 use glam::DVec3;
-use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
+use rcad_kernel::topods::{self, BRep, TShape};
+use rcad_kernel::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};
 use rcad_render::{
  Camera, DEFAULT_EDGE_PICK_RADIUS_PX, SelectionMode, SelectionState, cursor_point_on_plane,
 };
 use std::collections::HashSet;
+use std::sync::Arc;
 
 const WORK_PLANE_ORIGIN: DVec3 = DVec3::ZERO;
 
@@ -215,7 +217,8 @@ impl CreationController {
  let selected_edges: HashSet<usize> = selection.selected_edges.iter().copied().collect();
  let mut faces: Vec<usize> = Vec::new();
  let mut face_idx = 0usize;
- for solid in &brep.solids {
+ let solids = brep.solids();
+ for solid in &solids {
  for shell in &solid.shells {
  for face in &shell.faces {
  let hit_outer = face
@@ -241,9 +244,11 @@ impl CreationController {
  if selection.selected_faces.is_empty() {
  return;
  }
- let mut edge_to_faces: Vec<Vec<usize>> = vec![Vec::new(); brep.edges.len()];
+ let edge_count = brep.edges().len();
+ let mut edge_to_faces: Vec<Vec<usize>> = vec![Vec::new(); edge_count];
  let mut face_idx = 0usize;
- for solid in &brep.solids {
+ let solids = brep.solids();
+ for solid in &solids {
  for shell in &solid.shells {
  for face in &shell.faces {
  for edge in &face.outer_wire.edges {
@@ -296,14 +301,14 @@ impl CreationController {
 
  let mut seed_vertices: HashSet<usize> = HashSet::new();
  for &edge_idx in &selection.selected_edges {
- if let Some(edge) = brep.edges.get(edge_idx) {
+ if let Some(edge) = brep.edges().get(edge_idx) {
  seed_vertices.insert(edge.start);
  seed_vertices.insert(edge.end);
  }
  }
 
  let mut grown: HashSet<usize> = selection.selected_edges.iter().copied().collect();
- for (idx, edge) in brep.edges.iter().enumerate() {
+ for (idx, edge) in brep.edges().iter().enumerate() {
  if seed_vertices.contains(&edge.start) || seed_vertices.contains(&edge.end) {
  grown.insert(idx);
  }
@@ -798,13 +803,14 @@ impl CreationController {
  }
 }
 
-fn face_by_index(brep: &BRep, face_index: usize) -> Option<&Face> {
+fn face_by_index(brep: &BRep, face_index: usize) -> Option<Face> {
  let mut current = 0usize;
- for solid in &brep.solids {
+ let solids = brep.solids();
+ for solid in &solids {
  for shell in &solid.shells {
  for face in &shell.faces {
  if current == face_index {
- return Some(face);
+ return Some(face.clone());
  }
  current += 1;
  }
@@ -870,93 +876,54 @@ fn build_torus_from_points(center: DVec3, major_radius: f64, minor_radius: f64) 
  make_torus_brep(center, DVec3::Z, DVec3::X, major_radius, minor_radius).ok()
 }
 pub fn append_brep(dst: &mut BRep, src: BRep) {
- let vertex_offset = dst.vertices.len();
- let edge_offset = dst.edges.len();
- let curve_offset = dst.geom.curves.len();
- let surface_offset = dst.geom.surfaces.len();
- let src_face_surface = src.geom.face_surface.clone();
-
- dst.vertices.extend(src.vertices.iter().cloned());
- dst.edges.extend(src.edges.iter().map(|edge| Edge {
- start: edge.start + vertex_offset,
- end: edge.end + vertex_offset,
- }));
-
- dst.geom.curves.extend(src.geom.curves.iter().cloned());
- dst.geom.surfaces.extend(src.geom.surfaces.iter().cloned());
- dst.geom.edge_curve.extend(
- src.geom
- .edge_curve
- .iter()
- .map(|curve| curve.map(|idx| idx + curve_offset)),
- );
- // edge_curve_range has no index offset  ?parameters are curve-local values
- dst.geom
- .edge_curve_range
- .extend(src.geom.edge_curve_range.iter().cloned());
- dst.geom
- .edge_degenerated
- .extend(src.geom.edge_degenerated.iter().cloned());
-
- let mut face_counter = 0usize;
- for solid in src.solids {
- let mut new_shells = Vec::with_capacity(solid.shells.len());
- for shell in solid.shells {
- let mut new_faces = Vec::with_capacity(shell.faces.len());
- for face in shell.faces {
- let surface = src_face_surface
- .get(face_counter)
- .copied()
- .flatten()
- .map(|idx| idx + surface_offset);
- dst.geom.face_surface.push(surface);
- face_counter += 1;
-
- new_faces.push(Face {
- outer_wire: Wire {
- edges: face
- .outer_wire
- .edges
- .into_iter()
- .map(|we| WireEdge {
- idx: we.idx + edge_offset,
- forward: we.forward,
- })
- .collect(),
- },
- inner_wires: face
- .inner_wires
- .into_iter()
- .map(|wire| Wire {
- edges: wire
- .edges
- .into_iter()
- .map(|we| WireEdge {
- idx: we.idx + edge_offset,
- forward: we.forward,
- })
- .collect(),
- })
- .collect(),
- normal: face.normal,
- triangles: face
- .triangles
- .into_iter()
- .map(|tri| {
- [
- tri[0] + vertex_offset,
- tri[1] + vertex_offset,
- tri[2] + vertex_offset,
- ]
- })
- .collect(),
- sample_point: face.sample_point,
- mesh_dirty: face.mesh_dirty,
- surface_idx: face.surface_idx,
- });
+ let base = dst.tshapes.len();
+ // Clone all TShapes from src into dst with index offsets.
+ // All ShapeRef.index values are offset by the number of existing
+ // tshapes in dst so they point to the correct entries.
+ for mut ts in src.tshapes {
+  // Offset all ShapeRef.index values in the TShape
+  offset_shape_refs(&mut ts, base);
+  dst.tshapes.push(ts);
  }
- new_shells.push(Shell { faces: new_faces });
+}
+
+/// Recursively offset all ShapeRef.index values in a TShape by `base`.
+fn offset_shape_refs(ts: &mut Arc<TShape>, base: usize) {
+ let inner = Arc::make_mut(ts);
+ match inner {
+ TShape::Vertex(vd) => {
+  for sr in &mut vd.my_shapes { sr.index += base; }
  }
- dst.solids.push(Solid { shells: new_shells });
+ TShape::Edge(ed) => {
+  ed.first.index += base;
+  ed.last.index += base;
+  for sr in &mut ed.my_shapes { sr.index += base; }
+ }
+ TShape::Wire(wd) => {
+  for sr in &mut wd.my_shapes { sr.index += base; }
+  for sr in &mut wd.edges { sr.index += base; }
+ }
+ TShape::Face(fd) => {
+  fd.outer_wire.index += base;
+  for sr in &mut fd.inner_wires { sr.index += base; }
+  for sr in &mut fd.my_shapes { sr.index += base; }
+  for sr in &mut fd.internal_vertices { sr.index += base; }
+ }
+ TShape::Shell(sd) => {
+  for sr in &mut sd.my_shapes { sr.index += base; }
+  for sr in &mut sd.faces { sr.index += base; }
+ }
+ TShape::Solid(sd) => {
+  for sr in &mut sd.my_shapes { sr.index += base; }
+  for sr in &mut sd.shells { sr.index += base; }
+  for sr in &mut sd.internal_vertices { sr.index += base; }
+  for sr in &mut sd.internal_edges { sr.index += base; }
+ }
+ TShape::Compound(cd) => {
+  for sr in cd.iter_mut() { sr.index += base; }
+ }
+ TShape::CompSolid(csd) => {
+  for sr in csd.iter_mut() { sr.index += base; }
+ }
  }
 }

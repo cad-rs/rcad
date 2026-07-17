@@ -652,6 +652,10 @@ impl<'a> PaveFiller<'a> {
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
   if self.check_stop("after_MakeBlocks") { return; }
 
+ // OCCT: BuildEdgeImages (in Perform, after MakeBlocks)
+ // rcad: build_edge_images constructs myImages/myOrigins from DS edge data.
+ self.ds.build_edge_images();
+
  // OCCT L351: CheckSelfInterference
  let _si_warnings = self.check_self_interference();
 

@@ -981,7 +981,7 @@ pub(crate) fn make_intersection_curve(
  // OCCT L815-1095: switch on line type.
  match typl {
  IntPatchIType::Line | IntPatchIType::Parabola | IntPatchIType::Hyperbola =>
-   self.make_analytic_nonperiodic_curve(f1, f2, &curve, orig_t_range, typl, geom_tol, line.tang_tolerance),
+   self.make_analytic_nonperiodic_curve(f1, f2, &curve, orig_t_range, typl, geom_tol, line.tang_tolerance, &line.vertices),
  IntPatchIType::Circle | IntPatchIType::Ellipse =>
    self.make_analytic_periodic_curve(f1, f2, &curve, orig_t_range, typl, geom_tol, line.tang_tolerance, &line.vertices),
  _ => Vec::new(),
@@ -1060,6 +1060,7 @@ fn make_analytic_nonperiodic_curve(
   &mut self, f1: usize, f2: usize,
   curve: &Curve3, orig_t_range: [f64; 2], typl: IntPatchIType,
   geom_tol: f64, tang_tolerance: f64,
+  vertices: &[crate::inttools::int_patch_line::IntPatchVertex],
 ) -> Vec<crate::bopds::ds::IntersectionCurve> {
  use rcad_kernel::geom::Curve2dEval;
  use std::f64::consts::TAU;
@@ -1070,7 +1071,7 @@ fn make_analytic_nonperiodic_curve(
  // OCCT L828-840: LineConstructor.Perform(L).
  // LineConstructor iterates over vertex intervals; with nbvtx=0 (rcad)
  // it returns a single part with the full parameter range.
- let parts = self.line_constructor_parts(curve, orig_t_range, typl);
+ let parts = self.line_constructor_parts(curve, orig_t_range, typl, vertices, f1, f2);
  if parts.is_empty() {
  return Vec::new();
  }
@@ -1319,15 +1320,67 @@ fn make_analytic_periodic_curve(
 /// full parameter range [FirstParameter, LastParameter] is kept as one part.
 /// The caller's test-point logic decides whether to keep or reject it.
 fn line_constructor_parts(
-  &self, _curve: &Curve3, orig_t_range: [f64; 2], _typl: IntPatchIType,
+  &mut self, curve: &Curve3, orig_t_range: [f64; 2], _typl: IntPatchIType,
+  vertices: &[crate::inttools::int_patch_line::IntPatchVertex],
+  f1: usize, f2: usize,
 ) -> Vec<[f64; 2]> {
- // OCCT: nbvtx = GeomInt_LineTool::NbVertex(L).
- //       intrvtested = false; for (i=1; i<nbvtx; ++i) {...}
- //       if (!intrvtested) { seqp.Append(FirstParameter(L), LastParameter(L)); }
- //
- // For both finite and infinite ranges: OCCT returns the full range.
- // The caller decides based on the test-point approach.
- vec![orig_t_range]
+ // OCCT GeomInt_LineConstructor: split line at vertex positions,
+ // test each interval's midpoint on both face domains.
+ if vertices.is_empty() {
+   return vec![orig_t_range];
+ }
+ let a_tol_pc: f64 = 1000.0 * 1e-12;
+ let mut sorted: Vec<f64> = vertices.iter()
+   .map(|v| v.param_on_line)
+   .filter(|&t| t >= orig_t_range[0] - a_tol_pc && t <= orig_t_range[1] + a_tol_pc)
+   .collect();
+ sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+ // Dedup
+ let mut deduped: Vec<f64> = Vec::new();
+ for &p in &sorted {
+   if deduped.is_empty() || (p - *deduped.last().unwrap()).abs() > a_tol_pc {
+     deduped.push(p);
+   }
+ }
+ // Add range boundaries if needed
+ let t0 = if deduped.is_empty() || (deduped[0] - orig_t_range[0]).abs() > a_tol_pc {
+   orig_t_range[0]
+ } else {
+   deduped[0]
+ };
+ let t1 = if deduped.is_empty() || (orig_t_range[1] - *deduped.last().unwrap()).abs() > a_tol_pc {
+   orig_t_range[1]
+ } else {
+   *deduped.last().unwrap()
+ };
+ let mut all_breaks: Vec<f64> = Vec::new();
+ all_breaks.push(t0);
+ all_breaks.extend(deduped.iter().filter(|&&p| p > t0 + a_tol_pc && p < t1 - a_tol_pc));
+ if (t1 - *all_breaks.last().unwrap()).abs() > a_tol_pc {
+   all_breaks.push(t1);
+ }
+ // For each adjacent pair, test midpoint on both face domains
+ let mut result = Vec::new();
+ for i in 0..(all_breaks.len().saturating_sub(1)) {
+   let b1 = all_breaks[i];
+   let b2 = all_breaks[i + 1];
+   if (b2 - b1).abs() <= 1e-12 { continue; }
+   let t_mid = (b1 + b2) * 0.5;
+   let p3d = curve.point_at(t_mid);
+   if !p3d.is_finite() { continue; }
+   let uv1 = self.context.proj_ps(self.ds, f1, p3d).map(|(uv, _, _)| uv);
+   let uv2 = self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv);
+   let in1 = uv1.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f1, uv));
+   let in2 = uv2.map_or(false, |uv| self.context.is_point_in_on_face(self.ds, f2, uv));
+   if in1 && in2 {
+     result.push([b1, b2]);
+   }
+ }
+ if result.is_empty() {
+   // Fallback: no valid intervals found, try the full range
+   result.push(orig_t_range);
+ }
+ result
 }
 
 /// TreatCircle (GeomInt_LineConstructor.cxx L481-560).

@@ -128,8 +128,8 @@ impl<'a> super::PaveFiller<'a> {
 
  /// BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
  pub(crate) fn analyze_shrunk_data(&mut self, ei: usize, pb_idx: usize) {
-     if pb_idx >= self.ds.pave_blocks.len() { return; }
-     let pb = &self.ds.pave_blocks[pb_idx];
+     if pb_idx >= self.ds.edges[ei].pave_blocks.len() { return; }
+     let pb = &self.ds.edges[ei].pave_blocks[pb_idx];
      let (has_shrunk, is_splittable, p1, p2, pe1, pe2, oei) = {
          let r = pb.0.read().unwrap();
          (r.shrunk_range.is_some(), r.is_splittable, r.pave1.param, r.pave2.param, r.pave1.vertex_idx, r.pave2.vertex_idx, r.original_edge)
