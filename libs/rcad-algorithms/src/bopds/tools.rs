@@ -14,6 +14,7 @@ use super::common_block::CommonBlock;
 use super::ds::DS;
 use crate::tolerance::*;
 
+use crate::bopds::pave::NO_EDGE;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
@@ -63,6 +64,10 @@ pub fn perform_common_blocks(ds: &mut DS) {
  for (ei, edge) in ds.edges.iter().enumerate() {
  for local_i in 0..edge.pave_blocks.len() {
  let pb = &edge.pave_blocks[local_i];
+ // OCCT: skip section edges (no original edge)
+ if pb.0.read().unwrap().original_edge == NO_EDGE {
+ continue;
+ }
  let v1 = pb.0.read().unwrap().pave1.vertex_idx;
  let v2 = pb.0.read().unwrap().pave2.vertex_idx;
  let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
@@ -72,23 +77,8 @@ pub fn perform_common_blocks(ds: &mut DS) {
  None => continue,
  };
 
- // Find which faces reference this PaveBlock's original edge.
- // A face whose boundary_edges contains this PB's original_edge
- // is a candidate.  In OCCT the mapping is more direct (the face
- // index is recorded at EF intersection time); here we derive it
- // from the edge-face topology.
- let face_indices: Vec<usize> = ds
- .faces
- .iter()
- .enumerate()
- .filter(|(_, f)| {
- f.boundary_edges.contains(&pb.0.read().unwrap().original_edge)
- || f.inner_boundary_edges
- .iter()
- .any(|wire| wire.iter().any(|(ei, _)| *ei == pb.0.read().unwrap().original_edge))
- })
- .map(|(fi, _)| fi)
- .collect();
+ // Derive face indices from edge's face_reps (OCCT records this at EF intersection).
+ let face_indices: Vec<usize> = edge.face_reps.iter().map(|r| r.face_idx).collect();
 
  for &fi in &face_indices {
  vertex_groups.entry(key).or_default().push((global_pb, fi));
@@ -110,11 +100,22 @@ pub fn perform_common_blocks(ds: &mut DS) {
  continue;
  }
 
+ let a_original_edge = entries.first().and_then(|(gp, _)| {
+ ds.pave_blocks.get(*gp)
+ }).map_or(usize::MAX, |spb| spb.0.read().unwrap().original_edge);
  let mut cb = CommonBlock::new();
+ // OCCT: set the real edge index for sort_by_edge
+ cb.set_edge(a_original_edge);
  for &(global_pb, fi) in entries {
  cb.add_pave_block(global_pb, fi);
  }
  cb.set_faces(unique_faces);
+ // OCCT 1:1: ensure the real-edge PB comes first
+ cb.sort_by_edge(|pbi| {
+ ds.pave_blocks.get(pbi).map_or(false, |spb| {
+ a_original_edge == a_original_edge
+ })
+ });
 
  // Compute tolerance for this CommonBlock.
  let cb_idx = ds.common_blocks.len();

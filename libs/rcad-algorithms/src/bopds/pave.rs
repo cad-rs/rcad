@@ -134,12 +134,16 @@ impl PaveBlock {
 
     /// BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
     pub fn append_ext_pave(&mut self, pave: Pave) {
-        self.ext_paves.push(pave);
+        if self.ext_paves_fence.insert(pave.vertex_idx) {
+            self.ext_paves.push(pave);
+        }
     }
 
     /// BOPDS_PaveBlock::AppendExtPave1 (cxx:177-180).
     pub fn append_ext_pave1(&mut self, pave: Pave) {
-        self.ext_paves.push(pave);
+        if self.ext_paves_fence.insert(pave.vertex_idx) {
+            self.ext_paves.push(pave);
+        }
     }
 
     /// BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
@@ -193,6 +197,10 @@ impl PaveBlock {
         let mut a_pave1 = p_paves[0];
         for i in 1..p_paves.len() {
             let a_pave2 = p_paves[i];
+            // OCCT L312: skip identical paves (zero-length sub-block)
+            if a_pave2.param == a_pave1.param {
+                continue;
+            }
             let mut pb = PaveBlock::new(self.original_edge, a_pave1, a_pave2);
             pb.original_edge = self.original_edge;
             result.push(pb);
