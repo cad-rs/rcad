@@ -185,28 +185,21 @@ impl<'a> super::PaveFiller<'a> {
     self.ds.edges[ei].paves.push(pave);
     // Find the correct sub-PB and add to its ext_paves
     let pbs = &self.ds.edges[ei].pave_blocks.clone();
-    let tol = self.ds.edge_tolerance(ei).max(crate::tolerance::CONFUSION);
     if pbs.len() == 1 {
       // Single PB — add directly (it will be split by update())
       pbs[0].0.write().unwrap().append_ext_pave(pave);
     } else {
       // Multiple sub-PBs — find the one whose range contains this pave
-      let mut added = false;
+      // OCCT: parameter ranges partition the full edge domain exactly
       for spb in pbs {
         let r = spb.0.read().unwrap();
         let p1 = r.pave1.param.min(r.pave2.param);
         let p2 = r.pave1.param.max(r.pave2.param);
-        // Use tolerance to handle floating-point drift at boundaries
-        if pave.param >= p1 - tol && pave.param <= p2 + tol {
+        if pave.param >= p1 && pave.param <= p2 {
           drop(r);
           spb.0.write().unwrap().append_ext_pave(pave);
-          added = true;
           break;
         }
-      }
-      // Fallback: if no PB matched (floating-point edge case), add to first PB
-      if !added && !pbs.is_empty() {
-        pbs[0].0.write().unwrap().append_ext_pave(pave);
       }
     }
   }
