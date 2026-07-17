@@ -1793,12 +1793,30 @@ impl<'a> PaveFiller<'a> {
      //
      // L539-547: register new edge on CB or PB
      if let Some(cb_idx) = task.cb_idx {
-       // L541: UpdateEdgeTolerance(nSp, aBSE.Tolerance())
-       let cb_tol = self.ds.common_blocks[cb_idx].tolerance();
-       if cb_tol > 0.0 {
-         self.update_edge_tolerance(n_sp, cb_tol);
-       }
-       // L542: aCBk->SetEdge(nSp)
+       // OCCT L541: UpdateEdgeTolerance(nSp, aBSE.Tolerance())
+       // OCCT's BOPAlgo_SplitEdge computes tolerance from actual
+       // vertex-to-curve distance at the split parameters.
+       let (v1_p, v2_p, orig_curve, orig_tol) = {
+         let o = &self.ds.edges[task.edge_idx];
+         (self.ds.vertex_point(task.n_v1),
+          self.ds.vertex_point(task.n_v2),
+          o.curve.clone(),
+          o.geom_tol)
+       };
+       let (_t1, cp1) = crate::extrema::closest_point_on_curve(
+         &orig_curve, v1_p);
+       let (_t2, cp2) = crate::extrema::closest_point_on_curve(
+         &orig_curve, v2_p);
+       let v1_dist = (v1_p - cp1).length();
+       let v2_dist = (v2_p - cp2).length();
+       let a_tol_e = orig_tol.max(crate::tolerance::CONFUSION);
+       let a_tol_v1 = self.ds.vertex_tolerance(task.n_v1);
+       let a_tol_v2 = self.ds.vertex_tolerance(task.n_v2);
+       let se_tol = a_tol_v1.max(a_tol_v2)
+         .max(v1_dist + a_tol_e)
+         .max(v2_dist + a_tol_e);
+       self.update_edge_tolerance(n_sp, se_tol);
+       // OCCT L542: aCBk->SetEdge(nSp)
        self.ds.common_blocks[cb_idx].set_edge(n_sp);
      } else {
        // L546: aPBk->SetEdge(nSp)
