@@ -251,7 +251,8 @@ impl<'a> super::PaveFiller<'a> {
  a
  } else {
  let pt = self.ds.vertex_point(ds_i);
- let tol = self.ds.vertex_tolerance(ds_i).max(CONFUSION);
+ // OCCT BOPDS_ShapeInfo::Box() uses fixed gap, not tolerance-expanded
+ let tol = CONFUSION;
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
@@ -294,7 +295,8 @@ impl<'a> super::PaveFiller<'a> {
  a
  } else {
  let pt = self.ds.vertex_point(ds_i);
- let tol = self.ds.vertex_tolerance(ds_i).max(CONFUSION);
+ // OCCT BOPDS_ShapeInfo::Box() uses fixed gap, not tolerance-expanded
+ let tol = CONFUSION;
  Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
  };
  aabbs.push(aabb);
