@@ -98,6 +98,7 @@ pub fn make_box_brep(
     }
     let shell = t.add_tshell(face_refs);
     t.add_tsolid(vec![shell]);
+    t.same_parameter();
     Ok(t)
 }
 

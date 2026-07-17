@@ -1488,6 +1488,99 @@ impl BRep {
     pub fn geom(&self) -> crate::GeomStore {
         crate::GeomStore::new()
     }
+
+    /// OCCT BRepLib::SameParameter.
+    /// For each edge: compute pcurves on adjacent faces (if missing) and update
+    /// edge tolerance to max(sampled_3D_2D_deviation, CONFUSION).
+    pub fn same_parameter(&mut self) {
+        use crate::geom::{any_perpendicular, Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval};
+        use glam::DVec2;
+        // Build edge → faces map
+        let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (ti, ts) in self.tshapes.iter().enumerate() {
+            if let TShape::Face(fd) = &**ts {
+                let process_wire = |sr: &ShapeRef, map: &mut std::collections::HashMap<usize, Vec<usize>>| {
+                    if sr.index < self.tshapes.len() {
+                        if let TShape::Wire(wd) = &*self.tshapes[sr.index] {
+                            for esr in &wd.edges {
+                                if esr.index < self.tshapes.len() {
+                                    map.entry(esr.index).or_default().push(ti);
+                                }
+                            }
+                        }
+                    }
+                };
+                process_wire(&fd.outer_wire, &mut edge_faces);
+                for iw_sr in &fd.inner_wires {
+                    process_wire(iw_sr, &mut edge_faces);
+                }
+            }
+        }
+        // Process each edge
+        for (ei, face_indices) in &edge_faces {
+            if *ei >= self.tshapes.len() { continue; }
+            let edge_data = match &*self.tshapes[*ei] {
+                TShape::Edge(ed) => ed.clone(),
+                _ => continue,
+            };
+            let Some(ref curve3) = edge_data.curve else { continue };
+            let t_range = edge_data.range;
+            let mut max_dev = 0.0f64;
+            for &fi in face_indices {
+                let face_data = match &*self.tshapes[fi] {
+                    TShape::Face(fd) => fd.clone(),
+                    _ => continue,
+                };
+                let Some(ref surf) = face_data.surface else { continue };
+                // Compute pcurve if missing (planar surfaces only)
+                let has_pcurve = edge_data.pcurves.contains_key(&fi);
+                if !has_pcurve {
+                    if let Surface3::Plane(p) = surf {
+                        let p0 = curve3.point_at(t_range[0]);
+                        let p1 = curve3.point_at(t_range[1]);
+                        // Project 3D points to UV on plane
+                        let u_axis = crate::geom::any_perpendicular(p.normal);
+                        let v_axis = p.normal.cross(u_axis);
+                        let to_uv = |pt: DVec3| -> DVec2 {
+                            let local = pt - p.origin;
+                            DVec2::new(local.dot(u_axis), local.dot(v_axis))
+                        };
+                        let uv0 = to_uv(p0);
+                        let uv1 = to_uv(p1);
+                        let du = uv1.x - uv0.x;
+                        let dv = uv1.y - uv0.y;
+                        let duv_len = (du * du + dv * dv).sqrt();
+                        if duv_len > 1e-15 {
+                            let dir2d = glam::DVec2::new(du, dv) / duv_len;
+                            let pc = Curve2d::Line(Line2d { origin: uv0, direction: dir2d });
+                            // Insert pcurve into edge
+                            if let TShape::Edge(ed) = Arc::make_mut(&mut self.tshapes[*ei]) {
+                                ed.pcurves.insert(fi, (pc.clone(), t_range[0], t_range[1]));
+                            }
+                            // Sample deviation
+                            let n_samples = 7;
+                            for si in 0..=n_samples {
+                                let t = t_range[0] + (t_range[1] - t_range[0]) * si as f64 / n_samples as f64;
+                                let p3d = curve3.point_at(t);
+                                let uv = pc.point_at(t);
+                                if !uv.is_finite() { continue; }
+                                let p_surf = surf.point_at(uv.x, uv.y);
+                                let dev = (p3d - p_surf).length();
+                                if dev > max_dev { max_dev = dev; }
+                            }
+                        }
+                    }
+                }
+            }
+            // Update edge tolerance
+            let new_tol = max_dev.max(crate::tolerance::CONFUSION);
+            if let TShape::Edge(ed) = Arc::make_mut(&mut self.tshapes[*ei]) {
+                ed.tolerance = ed.tolerance.max(new_tol);
+                ed.same_parameter = true;
+            }
+        }
+    }
 }
 
 impl BRepBuilder {
