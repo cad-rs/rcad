@@ -2218,8 +2218,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  for &(vi, vj) in &all_candidates {
   let vi_x = a_extra_map.contains(&vi);
   let vj_x = a_extra_map.contains(&vj);
-  // Only cross-operand pairs where exactly one vertex is "extra"
-  if vi_x != vj_x && ((vi < a_vc) != (vj < a_vc)) {
+  // OCCT L414: IntersectExt returns pairs where >=1 vertex is extra
+  if (vi_x || vj_x) && ((vi < a_vc) != (vj < a_vc)) {
    vv_pairs.push((vi, vj));
   }
  }

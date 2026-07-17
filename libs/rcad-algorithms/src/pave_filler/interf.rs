@@ -609,9 +609,15 @@ impl<'a> PaveFiller<'a> {
                 // L1038-1052: non-plane/non-line → angle check for bUseAddTol
                 // OCCT: if (aSurfAdaptor.GetType() != GeomAbs_Plane || aBAC.GetType() != GeomAbs_Line)
                 let a_face = &self.ds.faces[n_f];
-                if !matches!(a_face.surface, Surface3::Plane(_))
-                    || !matches!(*a_e_curve, Curve3::Line(_))
-                {
+                let is_plane = matches!(a_face.surface, Surface3::Plane(_));
+                let is_line = matches!(*a_e_curve, Curve3::Line(_));
+                if !is_plane || !is_line {
+                    // L1040-1041: projection point (closest on surface)
+                    // OCCT: aProjPS.Perform(aPOnE); aProjPS.LowerDistanceParameters(...)
+                    // aProjPS.LowerDistanceParameter() — project to get tangent
+                    // ComputePE(aPOnE, aTolCheck, aE, aTLdp, aDistOnE)
+                    // Compute tangent at projected point: aBAC.D1(aTLdp, aPm2, aVTgt2)
+                    // Check angle: cos >= 0.9063 (25°) → edges parallel → bUseAddTol = true
                     // L1040-1041: projection point (closest on surface)
                     // rcad: re-project to get the nearest surface point
                     let (_, a_p_on_s_re, _) =
@@ -715,7 +721,20 @@ impl<'a> PaveFiller<'a> {
 
         for pair in &a_v_edge_face {
             // L1154-1159: check IsDone / HasErrors
-            // rcad: pairs that reached this point passed the selection criteria
+            // rcad: verify with multi-point projection (OCCT UseQuickCoincidenceCheck)
+            let mut all_on_face = true;
+            let n_samples = 8;
+            for k in 0..n_samples {
+                let frac = (k as f64 + 0.5) / n_samples as f64;
+                let t = pair.a_ts[0] + frac * (pair.a_ts[1] - pair.a_ts[0]);
+                let pt = self.ds.edges[pair.n_e].curve.point_at(t);
+                let proj = self.context.proj_ps(&self.ds, pair.n_f, pt);
+                match proj {
+                    Some((_, _, dist)) if dist <= pair.a_tol_add + self.ds.fuzzy_tol + self.ds.face_tolerance(pair.n_f) => {}
+                    _ => { all_on_face = false; break; }
+                }
+            }
+            if !all_on_face { continue; }
 
             // L1161-1171: exactly 1 CommonPart of type EDGE expected
             // rcad: the coordinate check above implies edge-on-face coincidence,

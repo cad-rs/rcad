@@ -1425,13 +1425,14 @@ impl<'a> super::PaveFiller<'a> {
  pub(crate) fn check_planes(&self, f1: usize, f2: usize) -> bool {
  let s1 = &self.ds.faces[f1].surface;
  let s2 = &self.ds.faces[f2].surface;
+ let a_tol = self.ds.face_tolerance(f1).max(self.ds.face_tolerance(f2));
  match (s1, s2) {
  (Surface3::Plane(p1), Surface3::Plane(p2)) => {
  let dot = p1.normal.dot(p2.normal).abs();
  if dot > 0.9999 {
  // Nearly parallel — check if coincident (OCCT: same plane within tolerance)
  let d = (p2.origin - p1.origin).dot(p1.normal).abs();
- d < TOLERANCE_ABS * 100.0
+ d < a_tol
  } else {
  // Non-parallel = planes DO intersect (OCCT CheckPlanes returns true)
  true
