@@ -270,10 +270,24 @@ impl<'a> super::PaveFiller<'a> {
  indices.push(ds_i);
  let aabb = if is_edge {
  let e = &self.ds.edges[ds_i];
- let pts = [self.ds.vertices[e.start_vertex].point,
- self.ds.vertices[e.end_vertex].point];
+ // OCCT BOPDS_ShapeInfo::Box() computes AABB from full curve geometry,
+ // not just endpoint vertices. For Line edges, endpoints suffice.
+ // For Circle/Ellipse edges, endpoints alone miss the full extent.
  let mut a = Aabb::empty();
- for &p in &pts { a.expand_point(p); }
+ let curve = &e.curve;
+ // Sample curve along its range to capture full geometric extent
+ let t_range = e.t_range;
+ let n_samples = match curve {
+  Curve3::Line(_) => 2,      // Line: endpoints are sufficient
+  Curve3::Circle(_) => 16,   // Circle: sample around the circle
+  Curve3::Ellipse(_) => 16,  // Ellipse: sample around the ellipse
+  _ => 8,                     // Other curves: conservative sampling
+ };
+ for si in 0..n_samples {
+  let t = t_range[0] + (t_range[1] - t_range[0]) * si as f64 / (n_samples - 1).max(1) as f64;
+  let p = curve.point_at(t);
+  a.expand_point(p);
+ }
  let tol = e.geom_tol.max(CONFUSION);
  a.min -= DVec3::splat(tol);
  a.max += DVec3::splat(tol);
