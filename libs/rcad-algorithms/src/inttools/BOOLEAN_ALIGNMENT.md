@@ -20,7 +20,8 @@
 | `IntTools_BeanFaceIntersector` | `BeanFaceIntersector` (bean_face_intersector.rs) | ✅ | **1:1 翻译**（4020行，35单测），已接入 EF 管线 |
 | `BOPAlgo_PaveFiller::PerformVF` | VF 交线 | ❌ | rcad 有 unique 逻辑 |
 | `BOPAlgo_PaveFiller::PerformVV` | VV → DsBvh | ✅ | OCCT 对齐 — BVH 配对 |
-| `BOPAlgo_PaveFiller::MakeBlocks` | `make_blocks` (make_blocks.rs:15) | ⏳ | 循环+变量结构与 OCCT L725-1107 大致对齐，但细节差异多 |
+| `BOPAlgo_PaveFiller::MakeBlocks` | `make_blocks` (make_blocks.rs:15) | ⏳ | 结构对齐（子函数全部存在：PutBound/Stick/EF/ClosingPaveOnCurve, IsExistingPB×2, ProcessExistingPB, PreparePostTreatFF） |
+| `BOPAlgo_PaveFiller::PerformVF` | `perform_vf` (intersection.rs:2274) | ⏳ | 结构对齐（FillShrunkData + VF对遍历），`has_interf_ve_via_faces` 为 rcad 额外检查 |
 | `IntTools_Context::IsVertexOnLine` | `is_vertex_on_line` (paves.rs:449) | ✅ | **刚对齐** |
 
 ### PutPaveOnCurve 系列
@@ -114,7 +115,6 @@
 |--------|-----------|-----------|------|
 | **P0** | `FillImagesFaces` (BOPAlgo_Builder_1.cxx:128-170) | filler.rs:181 | 面分裂+分类，直接影响 F=7→final BRep |
 | **P0** | `PutPaveOnCurve` (BOPAlgo_PaveFiller_6.cxx:2940-3010) | paves.rs:244 | 顶点在曲线上投影+登记，影响 V=15 |
-| **P1** | `MakeBlocks` 主循环 (L725-1107) | make_blocks.rs:15 | 多重循环+变量，影响全部 |
 | **P1** | `IsValidBlockForFaces` | make_blocks.rs:438 | pcurve 求值方式不同 |
 
 ### rcad 独有 / OCCT 没有（需删除）
