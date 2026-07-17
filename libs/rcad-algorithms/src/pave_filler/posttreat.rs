@@ -358,12 +358,11 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).
-    /// equivalent to the VV pair tolerance computation.
+    /// OCCT PerformVV: aTolSum = Tol(V1) + Tol(V2) + myFuzzyValue
     fn vv_pair_tol_ds(&self, ds: &DS, n1: usize, n2: usize) -> f64 {
         let tol1 = if n1 < ds.vertices.len() { ds.vertex_tolerance(n1) } else { TOLERANCE_ABS };
         let tol2 = if n2 < ds.vertices.len() { ds.vertex_tolerance(n2) } else { TOLERANCE_ABS };
-        let a_tol_vv = tol1.max(tol2);
-        a_tol_vv + self.fuzzy_tolerance
+        tol1 + tol2 + self.fuzzy_tolerance
     }
 
     /// BOPAlgo_PaveFiller::PutBoundPaveOnCurve (PaveFiller_6.cxx L2340-2400).

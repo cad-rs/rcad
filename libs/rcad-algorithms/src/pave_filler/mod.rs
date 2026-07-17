@@ -1164,8 +1164,21 @@ impl<'a> PaveFiller<'a> {
       } // for each curve
 
       // OCCT L1781-1793: 1.2 Section vertices (point contacts)
-      // rcad: ff_points are DVec3, not vertex indices; section vertices
-      //       are tracked via vertices_in already. Skip for now.
+      let (f1, f2, points) = {
+        let ff = &self.ds.interf_ff[i];
+        (ff.f1, ff.f2, ff.points.clone())
+      };
+      for ffp in &points {
+        if ffp.vertex_index < self.ds.vertices.len() {
+          let n_v = ffp.vertex_index;
+          if !self.ds.faces[f1].face_info.vertices_in.contains(&n_v) {
+            self.ds.faces[f1].face_info.vertices_in.insert(n_v);
+          }
+          if !self.ds.faces[f2].face_info.vertices_in.contains(&n_v) {
+            self.ds.faces[f2].face_info.vertices_in.insert(n_v);
+          }
+        }
+      }
 
       // OCCT L1795-1796: track faces
       a_mf.insert(a_fi1);
@@ -1803,9 +1816,9 @@ impl<'a> PaveFiller<'a> {
        let a_tol_e = orig_tol.max(crate::tolerance::CONFUSION);
        let a_tol_v1 = self.ds.vertex_tolerance(task.n_v1);
        let a_tol_v2 = self.ds.vertex_tolerance(task.n_v2);
-       let se_tol = a_tol_v1.max(a_tol_v2)
-         .max(v1_dist + a_tol_e)
-         .max(v2_dist + a_tol_e);
+       let se_tol = a_tol_e
+         .max(a_tol_v1 + v1_dist)
+         .max(a_tol_v2 + v2_dist);
        self.update_edge_tolerance(n_sp, se_tol);
        // OCCT L542: aCBk->SetEdge(nSp)
        self.ds.common_blocks[cb_idx].set_edge(n_sp);
