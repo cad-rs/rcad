@@ -341,7 +341,9 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_faces_im_draft: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
             std::collections::HashMap::new();
 
-        println!("BSF: n_ds_faces={} face_refs.len={}", n_ds_faces, face_refs_owned.len());
+        if std::env::var("RCAD_DEBUG_BSF").is_ok() {
+            println!("BSF: n_ds_faces={} face_refs.len={}", n_ds_faces, face_refs_owned.len());
+        }
         for i in 0..a_nb_s {
             if i >= self.ds.shape_info.len() { continue; }
             let si = &self.ds.shape_info[i];
@@ -350,7 +352,9 @@ impl<'a> BooleanBuilder<'a> {
             face_counter += 1;
             if fi >= self.ds.faces.len() { continue; }
             let is_a = self.ds.face_origins[fi] == ShapeOrigin::ShapeA;
-            println!("BUILD_SPLIT_FACES face={} is_a={}", fi, is_a);
+            if std::env::var("RCAD_DEBUG_BSF").is_ok() {
+                println!("BUILD_SPLIT_FACES face={} is_a={}", fi, is_a);
+            }
 
             let has_pb_in = !self.ds.face_info(fi).pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.face_info(fi).pave_blocks_sc.is_empty();
@@ -377,7 +381,9 @@ impl<'a> BooleanBuilder<'a> {
                 alone
             };
 
-            println!("BSF: face={} pb_in={} pb_sc={} pb_on={} av={} skip={}", fi, has_pb_in, has_pb_sc, has_pb_on, a_nb_av, !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0);
+            if std::env::var("RCAD_DEBUG_BSF").is_ok() {
+                println!("BSF: face={} pb_in={} pb_sc={} pb_on={} av={} skip={}", fi, has_pb_in, has_pb_sc, has_pb_on, a_nb_av, !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0);
+            }
             // OCCT L275-279 + L293-296: skip if no PBs (IN/ON/SC) and no alone vertices.
             if !has_pb_in && !has_pb_sc && !has_pb_on && a_nb_av == 0 {
                 continue;
@@ -479,9 +485,9 @@ impl<'a> BooleanBuilder<'a> {
                         for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
                             if wi.index >= t_shape.tshapes.len() { continue; }
                             if let topods::TShape::Wire(wd) = &*t_shape.tshapes[wi.index] {
-                                if fi == 3 {
-                                    eprintln!("[WIREDBG] fi=3 wire edges: {:?}", wd.edges.iter().map(|sr| (sr.index, sr.orientation)).collect::<Vec<_>>());
-                                }
+                                if std::env::var("RCAD_DEBUG_WIREDBG").is_ok() {
+                    eprintln!("[WIREDBG] wire edges: {:?}", wd.edges.iter().map(|sr| (sr.index, sr.orientation)).collect::<Vec<_>>());
+                }
                                 for &e_sr in &wd.edges {
                                     // OCCT L367: anOriE = edge orientation in this wire.
                                     let mut an_ori_e = e_sr.orientation;
@@ -495,9 +501,15 @@ impl<'a> BooleanBuilder<'a> {
                                         if let Some(pos) = self.ds.faces[fi].boundary_edges.iter().position(|&be| be == ds_ei) {
                                             if !self.ds.faces[fi].boundary_edge_forwards.get(pos).copied().unwrap_or(true) {
                                                 an_ori_e = topods::Orientation::Reversed;
-                                                if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} set Reversed (ds_ei={} pos={})", e_sr.index, ds_ei, pos); }
-                                            } else if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} Forward (ds_ei={} pos={})", e_sr.index, ds_ei, pos); }
-                                        } else if fi == 3 { eprintln!("[ORIOVER] fi=3 edge {} NOT IN boundary_edges (ds_ei={})", e_sr.index, ds_ei); }
+                                                if std::env::var("RCAD_DEBUG_WIREDBG").is_ok() {
+                                                    eprintln!("[ORIOVER] edge {} set Reversed (ds_ei={})", e_sr.index, ds_ei);
+                                                }
+                                            } else if std::env::var("RCAD_DEBUG_WIREDBG").is_ok() {
+                                                eprintln!("[ORIOVER] edge {} Forward (ds_ei={})", e_sr.index, ds_ei);
+                                            }
+                                        } else if std::env::var("RCAD_DEBUG_WIREDBG").is_ok() {
+                                            eprintln!("[ORIOVER] edge {} NOT IN boundary_edges (ds_ei={})", e_sr.index, ds_ei);
+                                        }
                                     }
                                     let my_images = self.my_images.borrow();
 
@@ -650,9 +662,13 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            println!("BSF: creating BuilderFace fi={}", fi);
+            if std::env::var("RCAD_DEBUG_BSF").is_ok() {
+                println!("BSF: creating BuilderFace fi={}", fi);
+            }
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[BSF] creating BuilderFace fi={} a_le.len={}", fi, a_le.len());
+                if std::env::var("RCAD_DEBUG_BSF").is_ok() {
+                    eprintln!("[BSF] creating BuilderFace fi={} a_le.len={}", fi, a_le.len());
+                }
             }
             let mut bf = crate::builder::BuilderFace::new(
                 self.ds,

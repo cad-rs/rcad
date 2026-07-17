@@ -130,7 +130,9 @@ impl<'a> BuilderFace<'a> {
 
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
-        println!("BF: fi={} n_shapes={} n_seg={} n_wires={} n_avoided={}", self.face_idx, n_shapes, segments.len(), wires.len(), avoided.len());
+        if std::env::var("RCAD_DEBUG_BF").is_ok() {
+            println!("BF: fi={} n_shapes={} n_seg={} n_wires={} n_avoided={}", self.face_idx, n_shapes, segments.len(), wires.len(), avoided.len());
+        }
 
         let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {

@@ -143,7 +143,7 @@ pub(crate) use wire_splitter::{
  are_verts_coincident,
 };
 pub(crate) use wire_path::{
- perform_areas, intersect_ray_curve_2d,
+ intersect_ray_curve_2d,
  refine_angles, pc_parameter_range,
  walk_path_extract_wires,
 };
