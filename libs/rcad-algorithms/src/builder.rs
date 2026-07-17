@@ -808,7 +808,9 @@ impl<'a> BooleanBuilder<'a> {
  };
  // OCCT L577-578: 5. PostTreat
  // Corrects tolerances of the result shape (CorrectTolerances + CorrectShapeTolerances).
+ dump_ctx.snapshot("after_PrepareHistory", self.ds, Some(&*self.my_shape.borrow()));
  self.post_treat();
+ dump_ctx.snapshot("after_PostTreat", self.ds, Some(&*self.my_shape.borrow()));
  let result_brep = self.my_shape.borrow().clone();
 
  Ok((result_brep, history))

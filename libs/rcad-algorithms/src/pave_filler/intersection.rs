@@ -1013,7 +1013,8 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  let a_tol_e = self.ds.edge_tolerance(nE);
  let a_tol_f = self.ds.face_tolerance(nF);
  // OCCT L246-248: ChangePaveBlocks + PB iterator
- let n_pbs = self.ds.edge_pave_blocks(nE).len();
+ let n_pbs = self.ds.edge_pave_blocks_mut(nE).len();
+ if n_pbs == 0 { continue; }
  for pb_local_idx in 0..n_pbs {
  let pb = &self.ds.edge_pave_blocks(nE)[pb_local_idx];
  let pb_ref = pb.0.read().unwrap();

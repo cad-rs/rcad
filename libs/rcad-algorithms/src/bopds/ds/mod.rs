@@ -192,11 +192,13 @@ impl DS {
         else { &[] }
     }
 
-    /// Mutable edge pave_blocks.
-    /// OCCT: myDS->ChangePaveBlocks(nE) — single path.
-    /// rcad: prefer edges[ei].pave_blocks over parallel array.
+    /// OCCT: myDS->ChangePaveBlocks(nE) — lazy init via HasReference check.
+    /// rcad: auto-init empty PB arrays (matching OCCT lazy InitPaveBlocks).
     pub fn edge_pave_blocks_mut(&mut self, ei: usize) -> &mut Vec<crate::bopds::pave::SharedPB> {
         if ei < self.edges.len() {
+            if self.edges[ei].pave_blocks.is_empty() {
+                self.init_pave_blocks_for_edge(ei);
+            }
             &mut self.edges[ei].pave_blocks
         } else if ei < self.edge_pave_blocks.len() {
             &mut self.edge_pave_blocks[ei]
@@ -718,46 +720,42 @@ impl DS {
  /// parametric range [t_range[0], t_range[1]].  For closed edges (seam
  /// edges where start == end), both endpoint paves are added to ext_paves
  /// via AppendExtPave (fence-protected), matching OCCT's closed-edge
- /// split preparation (L477-483).
+ /// InitPaveBlocks for an edge (OCCT BOPDS_DS.cxx L437-500).
+ /// Transfers all existing paves from edge.paves to the PB as ext_paves,
+ /// then calls update() to sort and create sub-PBs — one per vertex-to-vertex segment.
  pub fn init_pave_blocks_for_edge(&mut self, edge_idx: usize) {
  if edge_idx >= self.edges.len() { return; }
  let (sv, ev, tr0, tr1) = {
  let e = &self.edges[edge_idx];
  (e.start_vertex, e.end_vertex, e.t_range[0], e.t_range[1])
  };
- // OCCT L437-445: shape type check  ?rcad edge is always an edge
- // OCCT L447: curve null check  ?rcad edge always has a curve
- // OCCT L449: BRep_Tool::Range  ?rcad: stored in t_range
- // OCCT L451: BRepAdaptor_Curve  ?rcad: not needed
- // OCCT L453-455: TopExp::FirstVertex / LastVertex  ?rcad: start_vertex/end_vertex
  // OCCT L457-467: create PaveBlock and set pave1/pave2/original_edge
  let pv1 = Pave { vertex_idx: sv, param: tr0 };
  let pv2 = Pave { vertex_idx: ev, param: tr1 };
-  let pb = SharedPB::new(PaveBlock::new(edge_idx, pv1, pv2));
-  // OCCT L469-471: ChangePaveBlocksPool  ?store in DS
-  self.edges[edge_idx].pave_blocks = vec![pb];
-  // Seed edge.paves with endpoint vertices so split_pave_blocks can
-  // create sub-PBs between endpoint and intersection paves.
-  self.edges[edge_idx].paves.push(Pave { vertex_idx: sv, param: tr0 });
-  self.edges[edge_idx].paves.push(Pave { vertex_idx: ev, param: tr1 });
- // OCCT L473-475: loaded edge check  ?rcad: always new construction
- // OCCT L477-483: closed edges  ?add BOTH endpoint paves to ext_paves
- if sv == ev {
- // OCCT L479: aPB->AppendExtPave(aP1)  ?first endpoint
- self.edges[edge_idx].pave_blocks[0]
- .0.write().unwrap().append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
- // OCCT L481: aPB->AppendExtPave(aP2)  ?second endpoint
- // (fence dedups by vertex_idx, so second push is accepted
- //  because vertex_idx differs from the first push? No, same
- //  vertex  ?the OCCT fence check also uses vertex_idx.
- //  The second AppendExtPave is rejected by fence in both
- //  implementations; OCCT still writes it for form clarity.)
- self.edges[edge_idx].pave_blocks[0]
- .0.write().unwrap().append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
+ let mut pb = PaveBlock::new(edge_idx, pv1, pv2);
+ // OCCT L469+: add ALL existing paves (from edge.paves) as ext_paves
+ // excluding endpoint paves (they are pave1/pave2 already).
+ let existing_paves: Vec<Pave> = self.edges[edge_idx].paves.clone();
+ for p in &existing_paves {
+  if p.vertex_idx != sv && p.vertex_idx != ev {
+   pb.append_ext_pave(*p);
+  }
  }
- // OCCT L499: aPaveBlock->Update(myPaveBlocksPool.Appended(), false);
- // OCCT L500: anEdgeInfo.SetReference(myPaveBlocksPool.Length() - 1);
- // rcad: shape index for this edge = edge_shape_idx[edge_idx]
+ // OCCT L477-483: closed edges — add both endpoint paves as ext_paves
+ if sv == ev {
+  pb.append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
+  pb.append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
+ }
+ // OCCT L499: aPaveBlock->Update(...) — sort ext_paves and create sub-PBs
+ let sub_pbs = pb.update(true);
+ // Replace the single PB with sub-PBs. If update returned empty (degenerate),
+ // keep the original single PB.
+ if sub_pbs.is_empty() {
+  self.edges[edge_idx].pave_blocks = vec![SharedPB::new(pb)];
+ } else {
+  self.edges[edge_idx].pave_blocks = sub_pbs.into_iter().map(SharedPB::new).collect();
+ }
+ // OCCT L500: anEdgeInfo.SetReference(...)
  let si_idx = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { self.vertices.len() + edge_idx };
  if si_idx < self.shape_info.len() {
   self.shape_info[si_idx].reference = edge_idx as i64;

@@ -169,7 +169,8 @@ fn init_shape_topo(
                 face_tolerances: Vec::new(), is_geometric, location: 0,
             }, Some(ts.clone()));
             e_map.insert(ti, ds_ei);
-            ds.init_pave_blocks_for_edge(ds_ei);
+            // OCCT: PBs are lazily created via ChangePaveBlocks() on first access.
+            // rcad: init is deferred to edge_pave_blocks_mut().
 
             // ShapeInfo: sub_shapes = shapes[] indices of endpoint vertices
             let sv_si = *ds.vertex_shape_idx.get(start).unwrap_or(&start);
