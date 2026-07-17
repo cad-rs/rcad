@@ -419,7 +419,7 @@ impl BRep {
             return sr;
         }
         let index = self.tshapes.len();
-        let tshape = Arc::new(TShape::Edge(TEdgeData { my_shapes: vec![first, last], flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true }));
+        let tshape = Arc::new(TShape::Edge(TEdgeData { my_shapes: vec![first, last], flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: CONFUSION, same_parameter: true, same_range: true }));
         let ptr_id = Arc::as_ptr(&tshape) as u64;
         let sr = ShapeRef { ptr_id, index, orientation: Orientation::Forward, location: 0 };
         self.edge_by_key.insert(ekey, sr);

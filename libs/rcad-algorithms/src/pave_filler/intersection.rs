@@ -2164,6 +2164,12 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
      }
    }
  }
+ //
+ // OCCT L409-411: if (anExtraInterfMap.IsEmpty()) return
+ if a_extra_map.is_empty() {
+  return;
+ }
+ //
  // Build VV pairs: cross-operand involving extra vertices
  // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) uses BVH to find
  // candidate pairs involving the extra vertices only.
