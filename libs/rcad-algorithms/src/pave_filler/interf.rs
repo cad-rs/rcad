@@ -493,16 +493,20 @@ impl<'a> PaveFiller<'a> {
 
                 // L952-955: skip if PB already in face's PB sets
                 // OCCT: if (pMPBF[0]->Contains(aPB) || ...)
-                if a_fi.pave_blocks_on.contains(&a_pb_idx)
-                    || a_fi.pave_blocks_in.contains(&a_pb_idx)
-                    || a_fi.pave_blocks_sc.contains(&a_pb_idx)
-                {
-                    continue;
-                }
-
-                // L958-964: check if face contains both vertices of the PB
+                // rcad: compare by original_edge (PB identity) since a_pb_idx is
+                // a local BVH index, NOT a global DS PB index (namespace mismatch).
                 let (n_v1, n_v2) = {
                     let r = a_pb.0.read().unwrap();
+                    let a_pb_ne = r.original_edge;
+                    // Check if any global pool PB with same original_edge is already in face's sets
+                    let skip = a_fi.pave_blocks_on.iter()
+                        .chain(a_fi.pave_blocks_in.iter())
+                        .chain(a_fi.pave_blocks_sc.iter())
+                        .any(|&pb_gi| {
+                            pb_gi < self.ds.pave_blocks.len()
+                                && self.ds.pave_blocks[pb_gi].0.read().unwrap().original_edge == a_pb_ne
+                        });
+                    if skip { continue; }
                     (r.pave1.vertex_idx, r.pave2.vertex_idx)
                 };
                 if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) {
