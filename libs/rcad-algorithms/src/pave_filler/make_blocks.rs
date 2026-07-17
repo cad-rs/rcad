@@ -91,7 +91,15 @@ impl<'a> super::PaveFiller<'a> {
         a_mv_tol: &mut HashMap<usize, f64>,
     ) {
         if n_e >= self.ds.edges.len() { return; }
-        let n_vs = [self.ds.edge_start_vertex_ds(n_e), self.ds.edge_end_vertex_ds(n_e)];
+        // OCCT L630-645: iterate SubShapes() — all vertex sub-shapes of the edge
+        // including internal vertices (paves). rcad: start/end vertices + paves.
+        let n_vs: Vec<usize> = {
+            let mut v = vec![self.ds.edge_start_vertex_ds(n_e), self.ds.edge_end_vertex_ds(n_e)];
+            for pave in &self.ds.edges[n_e].paves {
+                v.push(pave.vertex_idx);
+            }
+            v
+        };
         for &n_v in &n_vs {
             if n_v >= self.ds.vertices.len() { continue; }
             if let Some(&tol_saved) = a_mv_tol.get(&n_v) {
@@ -489,7 +497,7 @@ impl<'a> super::PaveFiller<'a> {
                     let (a_t1, a_t2) = a_pb.range();
                     // L938: if (fabs(aT1 - aT2) < Precision::PConfusion())
                     let a_t_range = a_t2 - a_t1;
-                    if a_t_range.abs() < 1e-9 { continue; }
+                    if a_t_range.abs() < CONFUSION { continue; }
 
                     // L943-950: IsValidBlockForFaces (midpoint check)
                     let ic = &self.ds.intersection_curves[ci];
