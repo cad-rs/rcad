@@ -32,14 +32,20 @@ impl<'a> super::PaveFiller<'a> {
     // OCCT: aLPBD = myDS->ChangePaveBlocks(anEdgeIndex)
     // OCCT: aPBD = aLPBD.First()
     if an_edge_index < self.ds.edges.len() {
-     let a_lpbd = &self.ds.edges[an_edge_index].pave_blocks;
-     if !a_lpbd.is_empty() {
-      let a_pbd = a_lpbd[0].clone();
+     let has_pbs = !self.ds.edges[an_edge_index].pave_blocks.is_empty();
+     if has_pbs {
+      let a_pbd = self.ds.edges[an_edge_index].pave_blocks[0].clone();
       // OCCT: FillPaves(nV, anEdgeIndex, nF, aLPBOut, aPBD);
       self.fill_paves(n_v, an_edge_index, n_f, &a_lpb_out, &a_pbd);
-      // OCCT: myDS->UpdatePaveBlock(aPBD);
-      // rcad: PaveBlock update (shrunk range etc.) is applied during
-      // SplitPaveBlocks, not here.
+      // OCCT L131: myDS->UpdatePaveBlock(aPBD);
+      let sub_pbs: Vec<SharedPB> = a_pbd.0.write().unwrap()
+       .update(true)
+       .into_iter()
+       .map(|pb| SharedPB::new(pb))
+       .collect();
+      if !sub_pbs.is_empty() {
+       self.ds.edges[an_edge_index].pave_blocks = sub_pbs;
+      }
      }
     }
    }

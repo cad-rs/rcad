@@ -1197,7 +1197,7 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: c.radius  }), perim))
  } else { None }
  }
- //  ?compute pcurve for curved surfaces by projecting
+ // compute pcurve for curved surfaces by projecting
  // the edge's 3D curve start/end points onto UV space.
  // OCCT BRep_Tool::CurveOnSurface returns a parametric curve on
  // the face surface for every boundary edge (BRep_CurveRepresentation).

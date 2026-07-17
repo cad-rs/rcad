@@ -97,24 +97,25 @@ fn update_existing_pave_blocks(
 
     // 1. Determine the set of old PBs (from aPBf's CB, or just aPBf)
     let b_cb: bool;
-    let old_pbs: Vec<usize>;
+    // Preserve (pb_idx, face_idx) pairs from the CommonBlock.
+    let old_pbs: Vec<(usize, usize)>;
     {
         let spb = &ds.pave_blocks[a_pbf];
         let pb = spb.0.read().unwrap();
         b_cb = pb.common_block_idx.is_some();
         if let Some(cb_idx) = pb.common_block_idx {
             if let Some(cb) = ds.common_blocks.get(cb_idx) {
-                old_pbs = cb.pave_blocks().iter().map(|&(pbi, _)| pbi).collect();
+                old_pbs = cb.pave_blocks().to_vec();
             } else {
-                old_pbs = vec![a_pbf];
+                old_pbs = vec![(a_pbf, 0)];
             }
         } else {
-            old_pbs = vec![a_pbf];
+            old_pbs = vec![(a_pbf, 0)];
         }
     }
 
     // 2. Remove old PBs from edge PB lists
-    for &old_pb_idx in &old_pbs {
+    for &(old_pb_idx, _) in &old_pbs {
         let orig_e = {
             let spb = &ds.pave_blocks[old_pb_idx];
             spb.0.read().unwrap().original_edge
@@ -153,7 +154,7 @@ fn update_existing_pave_blocks(
                 rp_pave2 = rp_pb.pave2.clone();
             }
 
-            for &old_pb_idx in &old_pbs {
+            for &(old_pb_idx, old_face_idx) in &old_pbs {
                 let orig_e = {
                     let spb = &ds.pave_blocks[old_pb_idx];
                     spb.0.read().unwrap().original_edge
@@ -170,7 +171,7 @@ fn update_existing_pave_blocks(
                 // Register in DS
                 let new_g_idx = ds.pave_blocks.len();
                 ds.pave_blocks.push(crate::bopds::pave::SharedPB::new(pb2n));
-                a_cb.add_pave_block(new_g_idx, 0);
+                a_cb.add_pave_block(new_g_idx, old_face_idx);
                 // Append to edge's PB list
                 if orig_e < ds.edges.len() {
                     ds.edges[orig_e].pave_blocks.push(ds.pave_blocks[new_g_idx].clone());
@@ -258,7 +259,7 @@ fn update_existing_pave_blocks(
                     if !found_cb {
                         // OCCT L3520-3522: create new CommonBlock
                         let mut new_cb = crate::bopds::common_block::CommonBlock::new();
-                        new_cb.add_pave_block(new_pb_idx, 0);
+                        new_cb.add_pave_block(new_pb_idx, fi);
                         new_cb.add_face(fi);
                         let cb_idx = ds.common_blocks.len();
                         ds.pave_blocks[new_pb_idx].0.write().unwrap().common_block_idx = Some(cb_idx);
