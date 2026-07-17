@@ -1432,6 +1432,19 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  return i;
  }
  }
+ self.add_vertex_no_dedup(point)
+ }
+
+ /// Create a new DS vertex at the given position, always creating a
+ /// distinct entry even if one exists at the same position.
+ /// OCCT creates separate TopoDS_Vertex objects for each intersection
+ /// (EF vs VV vs EE), even at the same geometric point.  rcad's
+ /// `add_vertex` deduplicates by position, which collapses distinct
+ /// intersection vertices into one.  Use `no_dedup` when the caller
+ /// needs a distinct vertex entity (e.g. EF intersection at a VV SD
+ /// vertex position).
+ pub fn add_vertex_no_dedup(&mut self, point: DVec3) -> usize {
+ let new_base = self.fuzzy_tol.max(TOLERANCE_ABS);
  let idx = self.vertices.len();
  self.vertices.push(DSVertex {
  point,

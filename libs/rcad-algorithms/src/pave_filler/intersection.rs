@@ -1245,7 +1245,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  // OCCT L528-542: Create EF interference
  a_mi_efc.insert(nF);
- let new_v = self.ds.add_vertex(*point);
+ let new_v = self.ds.add_vertex_no_dedup(*point);
  // OCCT L530-542: set indices, common part, CPB, add to aMVCPB
  let interf_idx = self.ds.interf_ef.len();
  let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_v_edge_face[k].pb_local_idx].clone();
