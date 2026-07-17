@@ -398,6 +398,8 @@ pub struct InterferenceVE {
  pub vertex: usize,
  pub edge: usize,
  pub param: f64,
+ /// OCCT IndexNew: new vertex index after tolerance-based fusing (UpdateVertex).
+ pub index_new: usize,
 }
 
 #[derive(Debug, Clone)]

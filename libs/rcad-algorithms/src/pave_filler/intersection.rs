@@ -477,12 +477,12 @@ impl<'a> super::PaveFiller<'a> {
        vertex: n_v_old,
        edge: task.n_e,
        param: a_t,
+       index_new: n_vx,
       });
       // OCCT L380: myDS->AddInterf(nVOld, nE)
       self.ds.try_add_interf(n_v_old, task.n_e);
       // OCCT L382-385: if new shape, SetIndexNew
-      // rcad: no index_new field on InterferenceVE ??skip SetIndexNew
-      _ = b_new; // marker for potential future alignment
+      // rcad: index_new is set directly above
      }
     }
    }
@@ -1723,7 +1723,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  pub(crate) fn compute_ve(&mut self, vi: usize, ei: usize) {
  let fuzz = self.fuzzy_tolerance;
  if let Ok(res) = self.context.compute_ve(self.ds, vi, ei, fuzz) {
-  self.ds.interf_ve.push(InterferenceVE{vertex: vi, edge: ei, param: res.param});
+  self.ds.interf_ve.push(InterferenceVE{vertex: vi, edge: ei, param: res.param, index_new: vi});
   self.ds.edge_paves[ei].push(Pave {vertex_idx: vi, param: res.param});
  }
  }
