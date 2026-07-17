@@ -764,7 +764,8 @@ impl<'a> PaveFiller<'a> {
       let mut n_v_new = n_v;
       // OCCT L112: check is_new, has_sd, or non-destructive not in force
       let sd_opt = self.ds.has_shape_sd(n_v);
-      if self.ds.is_new_vertex(n_v) || sd_opt.is_some() {
+      // OCCT L112: IsNewShape || HasShapeSD || !NonDestructive
+      if self.ds.is_new_vertex(n_v) || sd_opt.is_some() || !self.non_destructive {
           // OCCT L115: if HasShapeSD(nV, nVNew), nVNew becomes the SD partner
           if let Some(n_sd) = sd_opt {
               n_v_new = n_sd;
@@ -774,14 +775,14 @@ impl<'a> PaveFiller<'a> {
           // OCCT L117-125: increase tolerance if needed
           if a_tol_v < a_tol_new {
               self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_new;
-              self.my_increased_ss.insert(n_v_new);
+              // OCCT L124: myIncreasedSS.Add(nV) — adds the original vertex
+              self.my_increased_ss.insert(n_v);
           }
           return n_v_new;
       }
-      // OCCT L129-159: non-destructive mode only (rcad: never reached)
-      // rcad's non_destructive is always false, so old vertices without SD
-      // partners are returned directly without tolerance increase or
-      // myIncreasedSS registration — matching OCCT behavior.
+      // OCCT L129-159: nV is old vertex — create new SD vertex (non-destructive mode)
+      // rcad: non_destructive is always false, so this path is never reached.
+      // The branch above handles all cases (is_new || has_sd || !non_destructive).
       return n_v;
   }
 
