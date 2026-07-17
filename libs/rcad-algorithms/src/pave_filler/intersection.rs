@@ -373,8 +373,8 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // OCCT L186-190: aLPB empty
-   if self.ds.edge_pave_blocks(n_e).is_empty() {
+   // OCCT L186-190: aLPB empty (use _mut to trigger lazy PB init)
+   if self.ds.edge_pave_blocks_mut(n_e).is_empty() {
     continue;
    }
 
@@ -1729,7 +1729,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
+ if self.ds.edge_pave_blocks_mut(ei).is_empty() { continue; }
  if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
  self.compute_ve(vi, ei);
  }
@@ -1750,7 +1750,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
  if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edge_pave_blocks(ei).is_empty() { continue; }
+ if self.ds.edge_pave_blocks_mut(ei).is_empty() { continue; }
  if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
  self.compute_ve(vi, ei);
  }
