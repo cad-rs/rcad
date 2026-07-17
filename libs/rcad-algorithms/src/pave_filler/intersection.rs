@@ -2701,18 +2701,11 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  //  IsPointInFace check for ALL surface types (PaveFiller_5.cxx L523)
  let in_face = self.is_point_in_face(point, face_idx, etf);
  if !in_face {
- let near_face_vert = match &face_surface {
- Surface3::Plane(_) => {
- self.ds.face_boundary_points(face_idx).iter().any(|&vp| {
- (vp - point).length() <= etf
- })
- }
- _ => false,
- };
+ let near_face_vert = self.ds.face_boundary_points(face_idx).iter().any(|&vp| {
+  (vp - point).length() <= etf * 2.0
+ });
  if !near_face_vert { continue; }
  }
-
- //  Always create EF interference for intersection hits.
  // OCCT IntTools_EdgeFace creates a new vertex for each hit, even when
  // the hit coincides with an existing edge endpoint.  SD vertex merging
  // handles near-coincident vertices later (MakeSDVerticesFF in PostTreat).

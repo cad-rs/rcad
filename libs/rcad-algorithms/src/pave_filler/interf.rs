@@ -253,40 +253,39 @@ impl<'a> PaveFiller<'a> {
                 }
             };
 
-            // OCCT L1208-1218: EdgeEdge intersection — full curve-curve check
-            // OCCT uses recursive bounding-box subdivision solver (IntTools_EdgeEdge).
-            // rcad: multi-point check for coincident range within PB bounds.
-            let n_samples = 12;
-            let mut all_within_tol = true;
-            let mut sum_t1 = 0.0;
-            let mut sum_t2 = 0.0;
-            for k in 0..n_samples {
-                let frac = (k as f64 + 0.5) / n_samples as f64;
-                let t1 = tr1[0] + frac * (tr1[1] - tr1[0]);
-                let p1 = curve1.point_at(t1);
-                let proj = closest_point_on_curve(&curve2, p1, 64);
-                let dist = p1.distance(curve2.point_at(proj.param));
-                if dist > fuzzy { all_within_tol = false; break; }
-                sum_t1 += t1;
-                sum_t2 += proj.param;
-            }
+            // OCCT L1208-1218: BOPAlgo_EdgeEdge intersection with quick coincidence check
+            // OCCT uses IntTools_EdgeEdge recursively; rcad has EdgeEdgeIntersector equivalent.
+            let mut ee_int = crate::inttools::edge_edge::EdgeEdgeIntersector::new();
+            ee_int.set_edges(entry.n_e1, tr1, entry.n_e2, tr2, self.ds);
+            ee_int.use_quick_coincidence_check(true);
+            ee_int.set_fuzzy_value(fuzzy);
+            ee_int.perform();
 
-            let result: Option<(InterferenceEE, bool)> = if all_within_tol {
-                let avg_t1 = sum_t1 / n_samples as f64;
-                let avg_t2 = sum_t2 / n_samples as f64;
-                let avg_pt = (curve1.point_at(avg_t1) + curve2.point_at(avg_t2)) * 0.5;
-                Some((InterferenceEE {
-                    e1: entry.n_e1,
-                    e2: entry.n_e2,
-                    point: avg_pt,
-                    param1: avg_t1,
-                    param2: avg_t2,
-                    new_vertex: entry.n_v1,
-                }, true))
+            let result: Option<(InterferenceEE, bool)> = if ee_int.is_done() {
+                let cp = &ee_int.common_parts()[0];
+                // OCCT L1287-1291: only EDGE-type common parts are accepted
+                if cp.is_edge_type {
+                    let mid_t1 = (cp.range1[0] + cp.range1[1]) * 0.5;
+                    let mid_t2 = if let Some(r2) = cp.ranges2.first() {
+                        (r2[0] + r2[1]) * 0.5
+                    } else {
+                        continue;
+                    };
+                    let avg_pt = (curve1.point_at(mid_t1) + curve2.point_at(mid_t2)) * 0.5;
+                    Some((InterferenceEE {
+                        e1: entry.n_e1,
+                        e2: entry.n_e2,
+                        point: avg_pt,
+                        param1: mid_t1,
+                        param2: mid_t2,
+                        new_vertex: entry.n_v1,
+                    }, true))
+                } else {
+                    None
+                }
             } else {
                 None
             };
-
             a_ee_results[idx] = result;
         }
 
@@ -782,72 +781,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    fn force_interf_ve(&mut self) {
-        // Build set of existing VE interferences for dedup
-        let mut ve_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        for inf in &self.ds.interf_ve {
-            ve_done.insert((inf.vertex, inf.edge));
-        }
-
-        for fi in 0..self.ds.faces.len() {
-            // Collect all boundary edges of this face (outer + inner wires)
-            let face = &self.ds.faces[fi];
-            let face_vertices: Vec<usize> = face.face_info.vertices_on
-                .iter()
-                .chain(face.face_info.vertices_in.iter())
-                .copied()
-                .collect();
-            if face_vertices.is_empty() {
-                continue;
-            }
-
-            let boundary_edges: Vec<usize> = {
-                let f = &self.ds.faces[fi];
-                let mut edges = f.boundary_edges.clone();
-                for inner in &f.inner_boundary_edges {
-                    for &(ei, _) in inner {
-                        edges.push(ei);
-                    }
-                }
-                edges
-            };
-
-            for &vi in &face_vertices {
-                let v_origin = self.ds.vertex_origin(vi);
-                if v_origin.is_none() { continue; }
-                for &ei in &boundary_edges {
-                    let e_origin = self.ds.edge_origin(ei);
-                    if e_origin == v_origin.unwrap() { continue; }
-                    if self.ds.is_edge_degenerated(ei) { continue; }
-                    if ve_done.contains(&(vi, ei)) { continue; }
-
-                    self.compute_ve(vi, ei);
-                }
-            }
-        }
-    }
-
-    fn force_interf_vf(&mut self) {
-        // Build set of existing VF interferences for dedup
-        let mut vf_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        for inf in &self.ds.interf_vf {
-            vf_done.insert((inf.vertex, inf.face));
-        }
-
-        for vi in 0..self.ds.vertices.len() {
-            let v_origin = self.ds.vertex_origin(vi);
-            let opposite_faces: Vec<usize> = match v_origin {
-                Some(ShapeOrigin::ShapeA) => self.faces_of(ShapeOrigin::ShapeB),
-                Some(ShapeOrigin::ShapeB) => self.faces_of(ShapeOrigin::ShapeA),
-                _ => continue,
-            };
-
-            for &fi in &opposite_faces {
-                if vf_done.contains(&(vi, fi)) { continue; }
-                self.check_vertex_face(vi, fi);
-            }
-        }
-    }
 
     pub(crate) fn put_se_in_other_faces(&mut self) {
         let n_faces = self.ds.faces.len();
