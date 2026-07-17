@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use crate::geom::{Curve2d, Curve3, Surface3};
+use crate::tolerance::CONFUSION;
 
 /// Quantized vertex position for identity-based sharing.
 /// Two geometrically coincident points at TOLERANCE_ABS scale produce the same key.
@@ -403,7 +404,7 @@ impl BRep {
             return sr;
         }
         let index = self.tshapes.len();
-        let tshape = Arc::new(TShape::Vertex(TVertexData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX, point, tolerance: 0.0, points: Vec::new() }));
+        let tshape = Arc::new(TShape::Vertex(TVertexData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX, point, tolerance: CONFUSION, points: Vec::new() }));
         let ptr_id = Arc::as_ptr(&tshape) as u64;
         self.tshapes.push(tshape);
         let sr = ShapeRef { ptr_id, index, orientation: Orientation::Forward, location: 0 };
@@ -469,7 +470,7 @@ impl BRep {
         let tshape = Arc::new(TShape::Vertex(TVertexData {
             my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED
                 | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX,
-            point, tolerance: 0.0, points: Vec::new(),
+            point, tolerance: CONFUSION, points: Vec::new(),
         }));
         let ptr_id = Arc::as_ptr(&tshape) as u64;
         let dummy = Arc::new(TShape::Vertex(TVertexData {
