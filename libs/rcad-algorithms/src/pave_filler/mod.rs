@@ -1442,7 +1442,7 @@ impl<'a> PaveFiller<'a> {
  }
  }
  for (ei, param) in new_paves {
- self.ds.edge_paves[ei].push(Pave { vertex_idx: n_v, param });
+ self.add_pave_to_edge(ei, Pave { vertex_idx: n_v, param });
  }
  }
  }

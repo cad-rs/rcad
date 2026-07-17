@@ -180,27 +180,35 @@ impl<'a> super::PaveFiller<'a> {
   /// Must be called instead of raw edge_paves[ei].push() in intersection code.
   pub(crate) fn add_pave_to_edge(&mut self, ei: usize, pave: Pave) {
     // OCCT ChangePaveBlocks: ensure PBs are initialized
-    let _pbs = self.ds.edge_pave_blocks_mut(ei);
+    let _ = self.ds.edge_pave_blocks_mut(ei);
+    // Also push to edge.paves for collect_paveblock_ranges / get_pb_boxes
+    self.ds.edges[ei].paves.push(pave);
     // Find the correct sub-PB and add to its ext_paves
     let pbs = &self.ds.edges[ei].pave_blocks.clone();
+    let tol = self.ds.edge_tolerance(ei).max(crate::tolerance::CONFUSION);
     if pbs.len() == 1 {
       // Single PB — add directly (it will be split by update())
       pbs[0].0.write().unwrap().append_ext_pave(pave);
     } else {
-      // Multiple sub-PBs — find the one containing this pave
+      // Multiple sub-PBs — find the one whose range contains this pave
+      let mut added = false;
       for spb in pbs {
         let r = spb.0.read().unwrap();
         let p1 = r.pave1.param.min(r.pave2.param);
         let p2 = r.pave1.param.max(r.pave2.param);
-        if pave.param >= p1 && pave.param <= p2 {
+        // Use tolerance to handle floating-point drift at boundaries
+        if pave.param >= p1 - tol && pave.param <= p2 + tol {
           drop(r);
           spb.0.write().unwrap().append_ext_pave(pave);
+          added = true;
           break;
         }
       }
+      // Fallback: if no PB matched (floating-point edge case), add to first PB
+      if !added && !pbs.is_empty() {
+        pbs[0].0.write().unwrap().append_ext_pave(pave);
+      }
     }
-    // Also push to edge.paves for collect_paveblock_ranges / get_pb_boxes
-    self.ds.edges[ei].paves.push(pave);
   }
 
   /// BOPAlgo_PaveFiller::SplitPaveBlocks (BOPAlgo_PaveFiller_2.cxx L419-626).
