@@ -88,6 +88,37 @@ fn compute_ef_hits(
     (Curve3::Line(line), Surface3::Cone(cone)) =>
       crate::inttools::curve_surface::intersect_line_cone_with_tol(line, *ef_range, cone, etf)
       .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
+    (Curve3::Circle(circle), Surface3::Plane(plane)) => {
+      // OCCT MakeType: coplanar full-range → EDGE type (no new vertex).
+      // Non-coplanar → use BeanFaceIntersector for Vertex hits.
+      let is_coplanar = (circle.normal.dot(plane.normal)).abs() >= 1.0 - TOLERANCE_ANG
+        && crate::inttools::vertex_ops::vertex_on_plane_with_tol(circle.center, plane, etf);
+      if is_coplanar {
+        vec![] // Phase 2→Edge hit (matches OCCT coplanar EDGE)
+      } else {
+        // Non-coplanar: BeanFaceIntersector (matching OCCT IntTools_EdgeFace)
+        use crate::inttools::bean_face_intersector::BeanFaceIntersector;
+        use rcad_kernel::geom::SurfaceEval;
+        let mut bfi = BeanFaceIntersector::from_curve_surface(
+          Curve3::Circle(*circle), Surface3::Plane(*plane));
+        bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+        let [u_min, u_max, v_min, v_max] = plane.default_domain();
+        bfi.set_surface_parameters(u_min, u_max, v_min, v_max);
+        bfi.init_curve_surface(Curve3::Circle(*circle), etf,
+                                Surface3::Plane(*plane), etf);
+        bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+        bfi.perform();
+        let mut result = Vec::new();
+        if bfi.is_done() {
+          for r in bfi.result() {
+            let t = (r.first() + r.last()) * 0.5;
+            let p = circle.point_at(t);
+            result.push(EfHit::Vertex { point: p, param: t });
+          }
+        }
+        result
+      }
+    }
     (Curve3::Circle(circle), Surface3::Cylinder(cyl)) =>
       crate::inttools::curve_surface::intersect_circle_cylinder_with_tol(circle, *ef_range, cyl, etf)
       .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
