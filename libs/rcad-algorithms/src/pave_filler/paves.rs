@@ -773,11 +773,82 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// IntTools_Context::IsVertexOnLine (L786-992).
- /// Form-identical logic:
- ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
- ///   2. First endpoint  ?local projection (Newton from aFirst),
- ///      then global fallback (closest_point_on_curve).
+/// Extrema_ExtPC equivalent: find ALL local minima of distance from point to curve,
+/// then select the best one. Uses multi-start Newton refinement from every valley
+ /// identified by dense sampling. Returns (parameter, point, distance) or None.
+ fn extrema_ext_pc_min(point: DVec3, curve: &Curve3, tol: f64) -> Option<(f64, DVec3, f64)> {
+  let [t0, t1] = curve.default_domain();
+  if !t0.is_finite() || !t1.is_finite() {
+   return None;
+  }
+  let n: usize = 128;
+  let clamp = |t: f64| t.clamp(t0, t1);
+ 
+  // Step 1: dense sampling
+  let mut t_vals: Vec<f64> = Vec::with_capacity(n + 1);
+  let mut d_vals: Vec<f64> = Vec::with_capacity(n + 1);
+  for i in 0..=n {
+   let t = t0 + (t1 - t0) * i as f64 / n as f64;
+   let p = curve.point_at(t);
+   let d = (p - point).length();
+   t_vals.push(t);
+   d_vals.push(d);
+  }
+ 
+  // Step 2: identify local minima and refine each with Newton
+  let mut results: Vec<(f64, f64)> = Vec::new(); // (t, dist)
+  let dt = 1e-7;
+  let max_iter = 30;
+  for i in 1..n {
+   let d_prev = d_vals[i - 1];
+   let d_cur = d_vals[i];
+   let d_next = d_vals[i + 1];
+   // A local minimum must have middle point <= both neighbors (with a meaningful drop)
+   if d_cur < d_prev - 1e-20 && d_cur <= d_next {
+    let mut t = t_vals[i];
+    let mut best_d = d_cur;
+    for _ in 0..max_iter {
+     let p = curve.point_at(t);
+     let diff = p - point;
+     let deriv = curve.derivative_at(t);
+     let deriv_sq = deriv.dot(deriv);
+     if deriv_sq < 1e-20 { break; }
+     let curv = (curve.point_at(t + 2.0 * dt) - 2.0 * p
+      + curve.point_at(t - 2.0 * dt)) / (dt * dt);
+     let denom = deriv_sq + diff.dot(curv);
+     if denom.abs() < 1e-20 { break; }
+     let delta = diff.dot(deriv) / denom;
+     let new_t = clamp(t - delta);
+     let new_d = (curve.point_at(new_t) - point).length();
+     if new_d < best_d {
+      best_d = new_d;
+      t = new_t;
+     } else {
+      break;
+     }
+     if delta.abs() < tol { break; }
+    }
+    results.push((t, best_d));
+   }
+  }
+ 
+  if results.is_empty() {
+   return None;
+  }
+ 
+  // Step 3: sort by distance, pick the best
+  results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Less));
+  let best_t = results[0].0;
+  let best_p = curve.point_at(best_t);
+  let best_d = (best_p - point).length();
+  Some((best_t, best_p, best_d))
+ }
+ 
+  /// IntTools_Context::IsVertexOnLine (L786-992).
+  /// Form-identical logic:
+  ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
+  ///   2. First endpoint  ?local projection (Newton from aFirst),
+  ///      then global fallback (closest_point_on_curve).
  ///   3. Last endpoint  ?same with bFirstValid shortcut.
  ///   4. Global projection  ?GeomAPI_ProjectPointOnCurve style
  ///      with NbPoints==0 fallback to bounded-curve endpoints.
@@ -857,15 +928,20 @@ impl<'a> super::PaveFiller<'a> {
  *aT = t_local;
  }
  } else {
- // L856-880: local projection failed  ?global fallback
- use rcad_kernel::projection::closest_point_on_curve;
- let proj = closest_point_on_curve(&ic.curve, vp, 64);
+ // L856-880: local projection failed -> global fallback (Extrema_ExtPC)
  let mid = (aLast + aFirst) * 0.5;
- if (proj.param > mid) || (proj.distance > aTolSum)
- || (p_first.distance(proj.point) < TOLERANCE_ABS) {
- *aT = aFirst;
+ if let Some((t_glob, p_glob, d_glob)) =
+  Self::extrema_ext_pc_min(vp, &ic.curve, TOLERANCE_LINEAR_ULTRA_STRICT)
+ {
+  if (t_glob <= mid) && (d_glob <= aTolSum)
+   && (p_first.distance(p_glob) >= TOLERANCE_ABS)
+  {
+   *aT = t_glob;
+  } else {
+   *aT = aFirst;
+  }
  } else {
- *aT = proj.param;
+  *aT = aFirst;
  }
  }
  }
@@ -921,15 +997,20 @@ impl<'a> super::PaveFiller<'a> {
  *aT = t_local;
  }
  } else {
- // L916-940: local projection failed  ?global fallback
- use rcad_kernel::projection::closest_point_on_curve;
- let proj = closest_point_on_curve(&ic.curve, vp, 64);
+ // L916-940: local projection failed -> global fallback (Extrema_ExtPC)
  let mid = (aLast + aFirst) * 0.5;
- if (proj.param < mid) || (proj.distance > aTolSum)
- || (p_last.distance(proj.point) < TOLERANCE_ABS) {
- *aT = aLast;
+ if let Some((t_glob, p_glob, d_glob)) =
+  Self::extrema_ext_pc_min(vp, &ic.curve, TOLERANCE_LINEAR_ULTRA_STRICT)
+ {
+  if (t_glob >= mid) && (d_glob <= aTolSum)
+   && (p_last.distance(p_glob) >= TOLERANCE_ABS)
+  {
+   *aT = t_glob;
+  } else {
+   *aT = aLast;
+  }
  } else {
- *aT = proj.param;
+  *aT = aLast;
  }
  }
  }

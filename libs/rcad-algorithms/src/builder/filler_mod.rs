@@ -64,6 +64,7 @@ impl<'a> BooleanBuilder<'a> {
                 let n_sp_r = self.ds.real_pave_block_edge(ei, pb)
                     .or(pb.0.read().unwrap().new_edge);
                 let Some(n_sp_r) = n_sp_r else { continue; };
+                if n_sp_r == usize::MAX { continue; }
                 let a_l_im = my_images.entry(a_e).or_default();
                 let a_sp_r = self.brep_sr(a_nv + n_sp_r);
                 a_l_im.push(a_sp_r);
@@ -72,6 +73,7 @@ impl<'a> BooleanBuilder<'a> {
                 p_l_or.push(a_e);
                 if pb.0.read().unwrap().common_block_idx.is_some() {
                     if let Some(n_sp) = pb.0.read().unwrap().new_edge {
+                        if n_sp == usize::MAX { continue; }
                         let a_sp = self.brep_sr(a_nv + n_sp);
                         self.my_shapes_sd.borrow_mut().insert(a_sp, a_sp_r);
                     }
@@ -296,8 +298,87 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L480: CorrectShapeTolerances(myShape, aMA, myRunParallel)
-        // rcad: not yet translated — adjusts shell closure tolerances.
+        // OCCT L485: CorrectShapeTolerances(myShape, aMA, myRunParallel)
+        //   Propagates edge tolerances to their vertices, and face tolerances to their edges.
+        //   OCCT BOPTools_AlgoTools_1.cxx L389-423 + L1005-1055.
+        {
+            let t = self.my_shape.borrow();
+            let mut updates: Vec<(topods::ShapeRef, f64, rcad_kernel::topods::ShapeType)> = Vec::new();
+
+            // Phase 1: Edge → Vertex — if vertex tolerance < edge tolerance, update vertex
+            for (ti, ts) in t.tshapes.iter().enumerate() {
+                if let rcad_kernel::topods::TShape::Edge(ed) = &**ts {
+                    let a_tol_e = ed.tolerance;
+                    // OCCT: TopExp_Explorer on edge finds vertex sub-shapes.
+                    // rcad: edge.first and edge.last are the start/end vertex ShapeRefs
+                    let vert_refs = [ed.first, ed.last];
+                    for &v_sr in &vert_refs {
+                        let vi = v_sr.ptr_id as usize;
+                        if vi < t.tshapes.len() {
+                            if let rcad_kernel::topods::TShape::Vertex(vd) = &*t.tshapes[vi] {
+                                if vd.tolerance < a_tol_e {
+                                    updates.push((v_sr, a_tol_e,
+                                        rcad_kernel::topods::ShapeType::Vertex));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Phase 2: Face → Edge — if edge tolerance < face tolerance, update edge
+            for (ti, ts) in t.tshapes.iter().enumerate() {
+                if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+                    let a_tol_f = fd.tolerance;
+                    // Collect edge ShapeRefs from outer and inner wires
+                    for w_sr in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                        let wi = w_sr.ptr_id as usize;
+                        if wi < t.tshapes.len() {
+                            if let rcad_kernel::topods::TShape::Wire(wd) = &*t.tshapes[wi] {
+                                for &e_sr in &wd.edges {
+                                    let ei = e_sr.ptr_id as usize;
+                                    if ei < t.tshapes.len() {
+                                        if let rcad_kernel::topods::TShape::Edge(ed) =
+                                            &*t.tshapes[ei]
+                                        {
+                                            if ed.tolerance < a_tol_f {
+                                                updates.push((e_sr, a_tol_f,
+                                                    rcad_kernel::topods::ShapeType::Edge));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            drop(t);
+            if !updates.is_empty() {
+                let mut t = self.my_shape.borrow_mut();
+                for (sr, tol, st) in updates {
+                    let ti = sr.ptr_id as usize;
+                    if st == rcad_kernel::topods::ShapeType::Edge {
+                        if let rcad_kernel::topods::TShape::Edge(ed) = &*t.tshapes[ti].clone() {
+                            t.tshapes[ti] = std::sync::Arc::new(
+                                rcad_kernel::topods::TShape::Edge(
+                                    rcad_kernel::topods::TEdgeData {
+                                        tolerance: tol, ..ed.clone()
+                                    }));
+                        }
+                    } else {
+                        if let rcad_kernel::topods::TShape::Vertex(vd) = &*t.tshapes[ti].clone() {
+                            t.tshapes[ti] = std::sync::Arc::new(
+                                rcad_kernel::topods::TShape::Vertex(
+                                    rcad_kernel::topods::TVertexData {
+                                        tolerance: tol, ..vd.clone()
+                                    }));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-555).

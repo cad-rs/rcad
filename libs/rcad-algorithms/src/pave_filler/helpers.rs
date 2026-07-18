@@ -42,7 +42,7 @@ pub(crate) fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 /// then binary-search to refine the exit parameter.
 ///
 /// OCCT differences:
-/// 1. OCCT uses `theCurve.Resolution(theTol) * 1.01` (L61) -- rcad omits the `* 1.01`.
+/// 1. OCCT uses `theCurve.Resolution(theTol) * 1.01` (L61) -- rcad now adds * 1.01.
 /// 2. OCCT has BSpline/Bezier specific handling (aD1Mag threshold, L70-81) to
 ///    accelerate through near-singular derivative regions -- rcad does not implement this.
 /// 3. OCCT checks `aP.SquareDistance(theVertPnt) > aSqTol` as the exit condition -- rcad matches.
@@ -58,17 +58,52 @@ pub(crate) fn find_nearest_valid_point(
     // 1. Check if endpoint is inside tolerance sphere
     if curve.point_at(start_u).distance_squared(vert_pt) > tol_sq { return None; }
 
-    // 2. Step until outside tolerance sphere
-    let step = curve_resolution(curve, start_u, vert_tol).max(eps);
+    // 2. Step until outside tolerance sphere (OCCT L55-63: `theCurve.Resolution(theTol) * 1.01`)
+    let step = (curve_resolution(curve, start_u, vert_tol) * 1.01).max(eps);
     let step = if is_first { step } else { -step };
+
+    // OCCT L70-82: aD1Mag threshold for BSpline/Bezier singularity detection
+    //   aD1Mag = (1. / theCurve.Resolution(1.)) * 0.01;  aD1Mag *= aD1Mag;
+    //   = (speed_at_start * 0.01)^2  since curve_resolution(c,u,1) = 1/speed
+    let a_d1_mag = if matches!(curve, Curve3::BSpline(_) | Curve3::Bezier(_)) {
+        let speed = curve.tangent_at(start_u).length();
+        let d1mag = speed * 0.01;
+        d1mag * d1mag
+    } else { 0.0 };
+
     let (mut u_in, mut u_out) = (start_u, start_u);
-    loop {
+    let mut is_out = false;
+    while !is_out {
         u_in = u_out; u_out += step;
         if (is_first && u_out > end_u) || (!is_first && u_out < end_u) {
             if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq { return None; }
-            u_out = end_u; break;
+            u_out = end_u; is_out = true; break;
         }
-        if curve.point_at(u_out).distance_squared(vert_pt) > tol_sq { break; }
+        if a_d1_mag > 0.0 {
+            // OCCT L108-137: singularity handling — double step through near-zero derivative regions
+            let mut step_local = step.abs();
+            loop {
+                let a_p = curve.point_at(u_out);
+                let is_out_local = a_p.distance_squared(vert_pt) > tol_sq;
+                if is_out_local { is_out = true; break; }
+                let a_d1 = curve.derivative_at(u_out);
+                if a_d1.length_squared() < a_d1_mag {
+                    step_local *= 2.0;
+                    let new_out = if is_first { u_out + step_local } else { u_out - step_local };
+                    if (is_first && new_out > end_u) || (!is_first && new_out < end_u) {
+                        // went out of range — check if end point is outside
+                        if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq { return None; }
+                        u_out = end_u; is_out = true; break;
+                    }
+                    u_out = new_out;
+                    continue;
+                }
+                if is_out_local { is_out = true; }
+                break;
+            }
+        } else {
+            is_out = curve.point_at(u_out).distance_squared(vert_pt) > tol_sq;
+        }
     }
 
     // 3. Bisection refinement
