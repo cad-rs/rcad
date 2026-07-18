@@ -773,11 +773,11 @@ fn make_analytic_nonperiodic_curve(
    } else { geom_tol.max(crate::tolerance::TOLERANCE_ABS) };
 
    // Create endpoint vertices (OCCT L872-890: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // Uses add_vertex_no_dedup to keep IC endpoints distinct from face boundary vertices.
+   // OCCT: BRepBuilderAPI_MakeVertex + myDS->Index (myDS->Index deduplicates).
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
    let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex_no_dedup(p_start), self.ds.add_vertex_no_dedup(p_end))
+     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
    } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -897,12 +897,11 @@ fn make_analytic_periodic_curve(
    let trimmed_pcb = pcb.as_ref().map(|pc| pc.clone());
 
    // Create endpoint vertices (OCCT L960-990: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // OCCT creates a unique TopoDS_Vertex for each IC endpoint — no dedup.
-   // add_vertex_no_dedup ensures IC endpoints are distinct from face boundary vertices.
+   // OCCT: BRepBuilderAPI_MakeVertex + myDS->Index (myDS->Index deduplicates).
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
    let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex_no_dedup(p_start), self.ds.add_vertex_no_dedup(p_end))
+     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
    } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -928,7 +927,7 @@ fn make_analytic_periodic_curve(
    // OCCT: create one vertex for the closed circle start/end (BRepBuilderAPI_MakeVertex + myDS->Index)
    let p_start = curve.point_at(0.0);
    let (sv, ev) = if p_start.is_finite() {
-     let vi = self.ds.add_vertex_no_dedup(p_start);
+     let vi = self.ds.add_vertex(p_start);
      (vi, vi)
    } else { (usize::MAX, usize::MAX) };
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();

@@ -185,10 +185,20 @@ impl<'a> super::PaveFiller<'a> {
   /// Also pushes to edge.paves so collect_paveblock_ranges still works.
   /// Must be called instead of raw edge_paves[ei].push() in intersection code.
   pub(crate) fn add_pave_to_edge(&mut self, ei: usize, pave: Pave) {
+    // 1:1 alignment: OCCT pushes paves to edge's internal list (read by InitPaveBlock).
+    // rcad must push to both edge.paves and parallel edge_paves so split_pave_blocks
+    // can read them via ChangePaveBlocks-equivalent init_pave_blocks_for_edge.
+    eprintln!("[DBG_ADD] add_pave_to_edge ei={} vert={}", ei, pave.vertex_idx);
     // OCCT ChangePaveBlocks: ensure PBs are initialized
     let _ = self.ds.edge_pave_blocks_mut(ei);
-    // Also push to edge.paves for collect_paveblock_ranges / get_pb_boxes
+    // Push to BOTH edge.paves and the parallel edge_paves array.
+    // OCCT: InitPaveBlock reads from the edge's internal pave list, which is
+    // equivalent to edge_paves (parallel array). split_pave_blocks checks
+    // edge_paves.len(), so both must be in sync.
     self.ds.edges[ei].paves.push(pave);
+    if ei < self.ds.edge_paves.len() {
+      self.ds.edge_paves[ei].push(pave);
+    }
     // Find the correct sub-PB and add to its ext_paves
     let pbs = &self.ds.edges[ei].pave_blocks.clone();
     if pbs.len() == 1 {
@@ -230,7 +240,10 @@ impl<'a> super::PaveFiller<'a> {
     for &n_e in edges {
       // OCCT L435-436: nE, aLPB = ChangePaveBlocks(nE)
       if n_e >= self.ds.edges.len() { continue; }
-      if self.ds.edge_paves(n_e).len() < 2 { continue; }
+      // OCCT: aLPB.Extent() < 2 checks PB count after InitPaveBlock (which
+      // includes edge.paves).  rcad: PBs are NOT split during init (paves
+      // are added after PB creation), so check the actual pave list instead.
+      if self.ds.edges[n_e].paves.is_empty() { continue; }
 
       // Clone old PBs — allows self.ds access while processing sub-PBs
       let old_pbs = self.ds.edges[n_e].pave_blocks.clone();

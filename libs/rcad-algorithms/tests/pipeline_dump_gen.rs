@@ -34,7 +34,7 @@ fn generate_bcommon_simple_a1_dump() {
         n_vv, n_ve, n_ee, n_vf, n_ef, n_ff);
 
     // Count edges by type: edges with no origin set are new (section) edges
-    let n_new_edges = ds.edges.iter().filter(|e| e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::A || e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::B).count();
+    let n_new_edges = ds.edges.iter().filter(|e| e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::ShapeA || e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::ShapeB).count();
     println!("Edges: total={} source={}",
         ds.edges.len(), n_new_edges);
 }
