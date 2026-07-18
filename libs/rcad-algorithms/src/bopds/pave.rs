@@ -203,6 +203,8 @@ impl PaveBlock {
             }
             let mut pb = PaveBlock::new(self.original_edge, a_pave1, a_pave2);
             pb.original_edge = self.original_edge;
+            // OCCT: sub-PBs inherit curve from parent (needed for PostTreatFF edge creation)
+            pb.curve = self.curve.clone();
             result.push(pb);
             a_pave1 = a_pave2;
         }

@@ -2,10 +2,7 @@
 //! Run with: RCAD_DUMP_PIPELINE=1 RCAD_DUMP_DIR=./target/pipeline_dumps cargo test --test pipeline_dump_gen -- --nocapture
 
 use glam::DVec3;
-use rcad_algorithms::pave_filler::PaveFiller;
-use rcad_algorithms::bopds::ds::DS;
 use rcad_algorithms::bop_occt_ops::pave_fill;
-use rcad_algorithms::BooleanOpType;
 use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 
@@ -36,8 +33,8 @@ fn generate_bcommon_simple_a1_dump() {
     println!("Interfs: VV={} VE={} EE={} VF={} EF={} FF={}",
         n_vv, n_ve, n_ee, n_vf, n_ef, n_ff);
 
-    // Count edges by type
-    let n_new_edges = ds.edges.iter().filter(|e| e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::None).count();
-    println!("Edges: total={} new={}",
+    // Count edges by type: edges with no origin set are new (section) edges
+    let n_new_edges = ds.edges.iter().filter(|e| e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::A || e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::B).count();
+    println!("Edges: total={} source={}",
         ds.edges.len(), n_new_edges);
 }

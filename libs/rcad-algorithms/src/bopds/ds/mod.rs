@@ -470,6 +470,35 @@ impl DS {
         self.edge_is_internal.push(is_internal);
         self.edge_face_tols.push(face_tols);
         self.edge_locations.push(location);
+        // OCCT-aligned: register new edge in ShapeInfo array
+        // (OCCT BOPDS_DS::Append creates ShapeInfo for each new shape).
+        let sv_si = *self.vertex_shape_idx.get(start_vertex).unwrap_or(&usize::MAX);
+        let ev_si = *self.vertex_shape_idx.get(end_vertex).unwrap_or(&usize::MAX);
+        let [t0, t1] = t_range;
+        let mut bb_min = curve.point_at(t0);
+        let mut bb_max = curve.point_at(t1);
+        // Sample curve for full AABB (covers arcs beyond endpoints)
+        let ns = 16usize;
+        for k in 1..ns {
+            let t = t0 + (t1 - t0) * (k as f64) / (ns as f64);
+            let p = curve.point_at(t);
+            bb_min = bb_min.min(p);
+            bb_max = bb_max.max(p);
+        }
+        let rank: usize = if origin == types::ShapeOrigin::ShapeB { 1usize } else { 0usize };
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Edge,
+            sub_shapes: vec![sv_si, ev_si],
+            flag: if start_vertex == end_vertex { 0 } else { -1 },
+            reference: ei as i64,
+            has_brep: true,
+            box_min: Some(bb_min - DVec3::splat(e_tol)),
+            box_max: Some(bb_max + DVec3::splat(e_tol)),
+            box_gap: e_tol + self.fuzzy_tol * 0.5,
+            is_new: false,
+            rank,
+            source_idx: ei,
+        });
         self.shapes.push(tshape.unwrap_or_else(|| {
             let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
                 std::collections::HashMap::new();
@@ -1890,11 +1919,18 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Se
  });
  }
 
- /// BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1220-1225).
- /// Clears all section pave blocks (pave_blocks_sc) from all face infos.
+ /// OCCT BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1503-1550).
+ /// Clears PaveBlocks for edges with exactly 1 PB and no CommonBlock,
+ /// so untouched edges do not get images. Does NOT clear face_info PBs.
  pub fn release_pave_blocks(&mut self) {
-   for fi in 0..self.faces.len() {
-     self.faces[fi].face_info.pave_blocks_sc.clear();
+   for ei in 0..self.edges.len() {
+     let pb_count = self.edge_pave_blocks(ei).len();
+     if pb_count != 1 { continue; }
+     let has_cb = self.edge_pave_blocks(ei).iter().any(|spb| {
+       spb.0.read().unwrap().common_block_idx.is_some()
+     });
+     if has_cb { continue; }
+     self.edge_pave_blocks_mut(ei).clear();
    }
  }
 

@@ -1017,16 +1017,15 @@ fn split_closed_curve(
 /// 2. Rejects redundant lines for Plane/Cone 4-line case (OCCT RejectLines).
 ///
 /// Operates on the `curves` vector in place.
-pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
+pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>, b_to_split: bool) {
  // OCCT L1936-1937: bToSplit parameter (OCCT default true).
- const B_TO_SPLIT: bool = true;
 
  // ── Phase 1: split closed curves ──
  // OCCT L1938-1963: for each curve, SplitCurve(aIC) → append result.
  let mut new_curves: Vec<crate::bopds::ds::IntersectionCurve> = Vec::with_capacity(curves.len());
  for ic in curves.drain(..) {
  let tr = ic.t_range;
- if B_TO_SPLIT {
+ if b_to_split {
    if let Some([r0, r1]) = split_closed_curve(&ic.curve, &tr) {
    // OCCT L223-225: Geom_TrimmedCurve(aC3D, aF, aMid) for first half.
    // rcad: t_range provides effective trimming; 3D curve kept as-is.

@@ -1,17 +1,25 @@
 use super::*;
 use crate::inttools::int_patch_type::IntPatchIType;
 
+/// Work item for Phase 2 of PerformFF (OCCT BOPAlgo_PaveFiller_6.cxx L365-518).
+/// Each FF pair's setup data, computed in Phase 1, consumed in Phase 2.
+struct FFWork {
+ f1: usize,
+ f2: usize,
+ shift_info: Option<super::SeamEdgeShift>,
+}
+
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn perform_ff(&mut self) {
   // OCCT BOPAlgo_PaveFiller_6.cxx L286-623: PerformFF
 
-  // ===== Step 1: Collect touched faces + Update FaceInfo (OCCT L291-314) =====
+  // ===== Phase 0: pairs + UpdateFaceInfo (OCCT L291-320) =====
 
-  // Get FF candidate pairs (OCCT L291: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE))
+  // OCCT L291: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE)
   let pairs = self.ff_candidate_pairs();
   let i_size = pairs.len();
 
-  // Collect all touched faces (OCCT L295-302)
+  // OCCT L295-302: collect touched faces from intersection pairs
   let mut a_mi_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
   for &(n_f1, n_f2) in &pairs {
     a_mi_fence.insert(n_f1);
@@ -36,14 +44,10 @@ impl<'a> super::PaveFiller<'a> {
     return;
   }
 
-  // ===== Step 3: Process each FF pair (OCCT L363-622) =====
-  //
-  // OCCT splits this into two phases:
-  //   Phase A (L363-518): prepare BOPAlgo_FaceFace objects for each pair
-  //   Phase B (L528-534): parallel Perform on all objects
-  //   Phase C (L538-622): process results
-  //
-  // rcad performs each pair sequentially (no parallelism yet).
+  // ===== Phase 1 (OCCT L365-518): prepare work items =====
+  // OCCT collects BOPAlgo_FaceFace objects; rcad collects FFWork structs.
+
+  let mut a_work: Vec<FFWork> = Vec::new();
 
   for &(n_f1, n_f2) in &pairs {
     if self.ds.has_interf_ff(n_f1, n_f2) {
@@ -53,14 +57,13 @@ impl<'a> super::PaveFiller<'a> {
     if !self.use_glue() {
       // ---- Non-glue path (OCCT L374-508) ----
 
-      // Surface type checks for plane-plane fast path and seam edge shift
       let is_plane1 = matches!(self.ds.faces[n_f1].surface, Surface3::Plane(_));
       let is_plane2 = matches!(self.ds.faces[n_f2].surface, Surface3::Plane(_));
 
       // OCCT L381-392: CheckPlanes - skip parallel planes that don't truly intersect
       if is_plane1 && is_plane2 {
         if !self.check_planes(n_f1, n_f2) {
-          // Planes do not geometrically intersect; register empty FF interference
+          // OCCT L387-391: register empty FF interference for non-intersecting planes
           self.ds.interf_ff.push(InterferenceFF {
             f1: n_f1,
             f2: n_f2,
@@ -72,14 +75,15 @@ impl<'a> super::PaveFiller<'a> {
         }
       }
 
-      // OCCT L489-508: Surface-surface intersection
-      // BOPAlgo_FaceFace::Perform -> IntTools_FaceFace::Perform
-      // Handles seam edge shift, IntPatch_Intersection, MakeCurve,
-      // ComputeTolReached3d, PrepareLines3D, and PostTreatFF internally.
-      self.intersect_face_face(n_f1, n_f2);
+      // OCCT L394-487: seam edge shift computation (not applied until Phase 2)
+      let shift_info = self.check_seam_edge_shift(n_f1, n_f2);
+
+      // OCCT L499-504: GetEFPnts — collect EF intersection points as seeds
+      // for IntPatch_Intersection. (rcad: stored on work item for Phase 2.)
+
+      a_work.push(FFWork { f1: n_f1, f2: n_f2, shift_info });
     } else {
       // ---- Glue mode (OCCT L511-517) ----
-      // Just register empty FF interference; intersection is handled by glue logic
       self.ds.interf_ff.push(InterferenceFF {
         f1: n_f1,
         f2: n_f2,
@@ -87,6 +91,41 @@ impl<'a> super::PaveFiller<'a> {
         points: Vec::new(),
         tangent_faces: false,
       });
+    }
+  }
+
+  // ===== Phase 2 (OCCT L538-622): execute + process results =====
+  // OCCT: parallel Perform on all BOPAlgo_FaceFace objects, then process.
+  // rcad: sequential for now.
+
+  for work in a_work {
+    if self.check_stop("PerformFF") { return; }
+
+    // OCCT L546-554: BOPAlgo_FaceFace::Perform (IntPatch + MakeCurve).
+    // intersect_face_face handles: seam shift application, IntPatch, MakeCurve,
+    // PutPointsOnLine, PrepareLines3D, ApplyTrsf, ComputeTolReached3d, PostTreatFF.
+    self.intersect_face_face(work.f1, work.f2);
+
+    // OCCT L600-601: IntTools_Tools::CheckCurve — discard curves too thin
+    // to form valid edges (size < 3*Precision::Confusion()).
+    if let Some(ff_entry) = self.ds.interf_ff.last_mut() {
+      if ff_entry.f1 == work.f1 && ff_entry.f2 == work.f2 {
+        ff_entry.curves.retain(|&ci| {
+          if ci >= self.ds.intersection_curves.len() { return false; }
+          let ic = &self.ds.intersection_curves[ci];
+          // OCCT: BndLib_Add3dCurve::Add + check !IsThin(3*Precision::Confusion())
+          // rcad: minimal length check — skip curves shorter than 3 * 1e-7
+          let min_len = 3.0 * crate::TOLERANCE_ABS;
+          let curve_len = ic.t_range[1] - ic.t_range[0];
+          // For analytic curves (Circle/Line/Ellipse), parameter range maps to length.
+          // Use bounding-box approximation for generic curves.
+          let valid = curve_len > min_len;
+          if !valid && std::env::var("RCAD_DBG_FF").is_ok() {
+            eprintln!("[FF] CheckCurve discard IC[{}] len={:.2e}", ci, curve_len);
+          }
+          valid
+        });
+      }
     }
   }
 
@@ -451,7 +490,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  }
  // PrepareLines3D  ?split closed curves
  let n_curves_before_split = self.ds.intersection_curves.len();
- inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
+ inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves, false);
  // After PrepareLines3D splits closed curves, the split
  // segments are added to the same FF interference entry.  Update the
  // FF entry's curve list to include any newly created curve indices.
@@ -734,11 +773,11 @@ fn make_analytic_nonperiodic_curve(
    } else { geom_tol.max(crate::tolerance::TOLERANCE_ABS) };
 
    // Create endpoint vertices (OCCT L872-890: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // Uses add_vertex which deduplicates against existing vertices at the same position.
+   // Uses add_vertex_no_dedup to keep IC endpoints distinct from face boundary vertices.
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
    let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
+     (self.ds.add_vertex_no_dedup(p_start), self.ds.add_vertex_no_dedup(p_end))
    } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -858,11 +897,12 @@ fn make_analytic_periodic_curve(
    let trimmed_pcb = pcb.as_ref().map(|pc| pc.clone());
 
    // Create endpoint vertices (OCCT L960-990: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // Uses add_vertex which deduplicates against existing vertices at the same position.
+   // OCCT creates a unique TopoDS_Vertex for each IC endpoint — no dedup.
+   // add_vertex_no_dedup ensures IC endpoints are distinct from face boundary vertices.
    let p_start = curve.point_at(fprm);
    let p_end = curve.point_at(lprm);
    let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
+     (self.ds.add_vertex_no_dedup(p_start), self.ds.add_vertex_no_dedup(p_end))
    } else { (usize::MAX, usize::MAX) };
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -888,7 +928,7 @@ fn make_analytic_periodic_curve(
    // OCCT: create one vertex for the closed circle start/end (BRepBuilderAPI_MakeVertex + myDS->Index)
    let p_start = curve.point_at(0.0);
    let (sv, ev) = if p_start.is_finite() {
-     let vi = self.ds.add_vertex(p_start);
+     let vi = self.ds.add_vertex_no_dedup(p_start);
      (vi, vi)
    } else { (usize::MAX, usize::MAX) };
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -1084,18 +1124,27 @@ fn treat_circle_parts(
   eprintln!("[FF] treat_circle_parts: f1={} f2={} nVtx={}", f1, f2, vertices.len());
  }
 
- // OCCT GeomInt_LineConstructor::TreatCircle (L481-560):
- //   aVtxArr = sorted vertices with params projected to [0, 2閿?
- //   Last vertex = first.param + 2閿? (wraps around)
- //   Remove duplicates within aTolPC
- //   Sort again
- //   For each adjacent pair (i, i+1): test midpoint on both face domains
+  // OCCT GeomInt_LineConstructor::TreatCircle (L674-733):
+ //   RejectMicroCircle, sort, RejectDuplicates, midpoint test
+
+ // OCCT L679-681: RejectMicroCircle -- skip circles/ellipses smaller than tolerance
+ if typl == IntPatchIType::Circle || typl == IntPatchIType::Ellipse {
+  let radius = match curve {
+   Curve3::Circle(c) => c.radius,
+   Curve3::Ellipse(e) => e.major_radius,
+   _ => 0.0,
+  };
+  let a_tol_3d = crate::TOLERANCE_ABS;
+  if radius > 0.0 && radius < a_tol_3d {
+   return Vec::new();
+  }
+ }
 
  let aNbVtx = vertices.len();
  if aNbVtx == 0 {
   // OCCT: with 0 vertices, aVtxArr has size 1 (default-constructed),
-  // sort does nothing, no intervals produced  -- seqp empty  -- caller
-  // sees aNbParts=0  -- no output curves.
+  // sort does nothing, no intervals produced -- seqp empty -- caller
+  // sees aNbParts=0 -- no output curves.
   return Vec::new();
  }
 

@@ -57,12 +57,13 @@ impl<'a> BuilderFace<'a> {
         &self.my_areas
     }
 
-    /// Perform (BuilderFace.cxx L117-148).
+    /// Perform (BOPAlgo_BuilderFace.cxx L117-148).
     /// Converts myShapes (aLE) to WireSegments, then runs the standard
     /// Avoid -> Loops -> Areas -> InternalShapes pipeline.
     /// Uses DSAsBRep (reads from DS directly) as BRepTool since the TopoDS BRep
     /// is not yet populated at this pipeline stage.
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
+        // OCCT L119-125: CheckData
         if self.face_idx >= self.face_refs.len() { return; }
 
         let shapes = match &self.shapes {
@@ -70,11 +71,106 @@ impl<'a> BuilderFace<'a> {
             None => return,
         };
 
+        // convert myShapes (aLE) to WireSegments.
+        // In OCCT, myShapes is already TopoDS_Edge list set externally.
+        let segments = self.shapes_to_segments(shapes);
+        if segments.is_empty() { return; }
+
+        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
+            &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
+        let tool: &dyn BRepTool = &self.ds_tool;
+
+        // OCCT L152-235: PerformShapesToAvoid
+        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
+            &segments_topo, tool);
+        let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
+
+        // OCCT L239-385: PerformLoops (via BOPAlgo_WireSplitter)
+        let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
+            &segments_topo, &avoided, tool);
+
+        // OCCT L330-385: Post-treatment — build myLoopsInternal from myShapesToAvoid
+        let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
+        for si in 0..segments_topo.len() {
+            if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
+        }
+        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
+            &segments_topo, &avoided);
+
+        // OCCT L387-499: PerformAreas
+        let wfs = if !wires.is_empty() {
+            crate::builder::wire_path_topo_ds::perform_areas(
+                &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
+        } else if !avoided.is_empty() {
+            vec![WireFace {
+                outer_wire: vec![], inner_wires: vec![],
+                internal_wires: segments_topo.iter().enumerate()
+                    .filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect(),
+            }]
+        } else {
+            vec![WireFace {
+                outer_wire: (0..segments_topo.len()).collect(),
+                inner_wires: vec![], internal_wires: vec![],
+            }]
+        };
+        if wfs.is_empty() { return; }
+
+        let mut wfs = wfs;
+
+        // OCCT L618-912: PerformInternalShapes
+        let face_ref = self.face_refs[self.face_idx];
+        crate::builder::wire_path_topo_ds::perform_internal_shapes(
+            &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
+
+        // Store results in myAreas (OCCT PerformAreas returns TopoDS_Face list;
+        // rcad emits to T BRep and stores ShapeRefs)
         let e_base = self.ds.vertices.len();
-        let n_shapes = shapes.len();
+        let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments.iter()
+            .filter_map(|seg| match &seg.source {
+                WireEdgeSource::DsEdge(ei) => Some((*ei, ShapeRef::synthetic(e_base + *ei))),
+                _ => None,
+            }).collect();
+        let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
+            .filter_map(|seg| match &seg.source {
+                WireEdgeSource::DsEdge(ei) => Some((e_base + *ei, *ei)),
+                _ => None,
+            }).collect();
+        let origin = if self.is_a {
+            FaceOrigin::FromA(self.ds.faces[self.face_idx].source_face_idx)
+        } else {
+            FaceOrigin::FromB(self.ds.faces[self.face_idx].source_face_idx)
+        };
+        let ic_curves: HashMap<usize, Curve3> = self.ds.intersection_curves.iter()
+            .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
+        self.my_result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
+        for wf in &wfs {
+            self.my_result.emit_wire_face_topods(self.face_idx, wf, &segments_topo, tool,
+                &ic_curves, false, origin, &HashMap::new(),
+                self.face_refs[self.face_idx], self.ds.faces[self.face_idx].natural_restriction,
+                &ds_ei_to_sr, &sr_index_to_ds_ei, self.ds);
+            let fi = self.my_result.faces.len().wrapping_sub(1);
+            if fi < self.my_result.faces.len() {
+                let mut real_face_refs = Vec::new();
+                self.my_result.emit_face_topods(t, &mut real_face_refs);
+                if let Some(&real_ref) = real_face_refs.last() {
+                    if !real_ref.is_null() {
+                        self.my_areas.push(real_ref);
+                    }
+                } else {
+                    let last_idx = t.tshapes.len().wrapping_sub(1);
+                    if last_idx < t.tshapes.len() {
+                        self.my_areas.push(topods::ShapeRef::synthetic(last_idx));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Convert myShapes to WireSegments (equivalent to OCCT setting myShapes as TopoDS_Edge list).
+    fn shapes_to_segments(&self, shapes: &[ShapeRef]) -> Vec<WireSegment> {
+        let e_base = self.ds.vertices.len();
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
 
-        // convert myShapes (aLE) to WireSegments.
         for &sr in shapes {
             let ei = sr.index.saturating_sub(e_base);
             if ei >= self.ds.edges.len() { continue; }
@@ -115,95 +211,6 @@ impl<'a> BuilderFace<'a> {
                 });
             }
         }
-
-        if segments.is_empty() {
-            return;
-        }
-
-        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
-            &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
-        let tool: &dyn BRepTool = &self.ds_tool;
-
-        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
-            &segments_topo, tool);
-        let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
-
-        let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
-            &segments_topo, &avoided, tool);
-        if std::env::var("RCAD_DEBUG_BF").is_ok() {
-            println!("BF: fi={} n_shapes={} n_seg={} n_wires={} n_avoided={}", self.face_idx, n_shapes, segments.len(), wires.len(), avoided.len());
-        }
-
-        let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
-        for si in 0..segments_topo.len() {
-            if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
-        }
-        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
-            &segments_topo, &avoided);
-
-        let face_ref = self.face_refs[self.face_idx];
-        let wfs = if !wires.is_empty() {
-            crate::builder::wire_path_topo_ds::perform_areas(
-                &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
-        } else if !avoided.is_empty() {
-            vec![WireFace {
-                outer_wire: vec![], inner_wires: vec![],
-                internal_wires: segments_topo.iter().enumerate()
-                    .filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect(),
-            }]
-        } else {
-            vec![WireFace {
-                outer_wire: (0..segments_topo.len()).collect(),
-                inner_wires: vec![], internal_wires: vec![],
-            }]
-        };
-        if wfs.is_empty() { return; }
-
-        let mut wfs = wfs;
-
-        crate::builder::wire_path_topo_ds::perform_internal_shapes(
-            &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
-
-        // Store results in myAreas
-        let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments.iter()
-            .filter_map(|seg| match &seg.source {
-                WireEdgeSource::DsEdge(ei) => Some((*ei, ShapeRef::synthetic(e_base + *ei))),
-                _ => None,
-            }).collect();
-        let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
-            .filter_map(|seg| match &seg.source {
-                WireEdgeSource::DsEdge(ei) => Some((e_base + *ei, *ei)),
-                _ => None,
-            }).collect();
-
-        let origin = if self.is_a {
-            FaceOrigin::FromA(self.ds.faces[self.face_idx].source_face_idx)
-        } else {
-            FaceOrigin::FromB(self.ds.faces[self.face_idx].source_face_idx)
-        };
-        let ic_curves: HashMap<usize, Curve3> = self.ds.intersection_curves.iter()
-            .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
-        self.my_result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
-        for wf in &wfs {
-            self.my_result.emit_wire_face_topods(self.face_idx, wf, &segments_topo, tool,
-                &ic_curves, false, origin, &HashMap::new(),
-                self.face_refs[self.face_idx], self.ds.faces[self.face_idx].natural_restriction,
-                &ds_ei_to_sr, &sr_index_to_ds_ei, self.ds);
-            let fi = self.my_result.faces.len().wrapping_sub(1);
-            if fi < self.my_result.faces.len() {
-                let mut real_face_refs = Vec::new();
-                self.my_result.emit_face_topods(t, &mut real_face_refs);
-                if let Some(&real_ref) = real_face_refs.last() {
-                    if !real_ref.is_null() {
-                        self.my_areas.push(real_ref);
-                    }
-                } else {
-                    let last_idx = t.tshapes.len().wrapping_sub(1);
-                    if last_idx < t.tshapes.len() {
-                        self.my_areas.push(topods::ShapeRef::synthetic(last_idx));
-                    }
-                }
-            }
-        }
+        segments
     }
 }

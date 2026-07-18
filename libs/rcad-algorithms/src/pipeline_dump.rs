@@ -6,6 +6,7 @@
 
 use crate::bopds::ds::DS;
 use crate::bopds::face_info::FaceInfo;
+use rcad_kernel::topods::ShapeType;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -187,10 +188,18 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         }).collect();
 
     json!({"ds": {
-        "nV": nv, "nA": av.min(nv), "nB": nv.saturating_sub(av),
-        "nE": ds.edges.len(), "nF": ds.faces.len(),
-        "nIC": ds.intersection_curves.len(),
+        // OCCT-aligned: count ShapeInfo entries by type (matches OCCT's
+        // BOPDS_ShapeInfo::ShapeType counting in pipeline_dump.h).
+        "nV": ds.shape_info.iter().filter(|si| si.shape_type == ShapeType::Vertex).count(),
+        "nE": ds.shape_info.iter().filter(|si| si.shape_type == ShapeType::Edge).count(),
+        "nF": ds.shape_info.iter().filter(|si| si.shape_type == ShapeType::Face).count(),
         "nPB": ds.pave_blocks.len(), "nCB": ds.common_blocks.len(),
+        // rcad raw counts (total entities, all types)
+        "nV_raw": nv, "nE_raw": ds.edges.len(), "nF_raw": ds.faces.len(),
+        "nIC": ds.intersection_curves.len(),
+        // OCCT-aligned: source & total shape count
+        "nSource": ds.nb_source_shapes(),
+        "nTotal": ds.shape_info.len(),
         "interf": { "EE": interf_ee.len(), "EF": interf_ef.len(), "FF": interf_ff.len(), "total": n_interf_total },
         "vertices": vertices,
         "edges": edges,

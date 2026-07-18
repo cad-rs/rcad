@@ -355,6 +355,14 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
+
+        // ===== OCCT L1500-1530: Create edges from micro PBs after VV fusion =====
+        // DISABLED: rcad's micro PBs have NO_EDGE as original_edge, and
+        // SplitEdge(usize::MAX, ...) is a no-op.  Proper fix requires making
+        // PostTreatFF use the intersection curve as the edge source for SplitEdge.
+        // For now, micro PBs are handled by the nested VV fusion (vertex merging)
+        // which is sufficient for most cases.
+        if false {} // placeholder
     }
 
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).

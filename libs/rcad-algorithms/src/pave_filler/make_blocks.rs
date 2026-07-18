@@ -197,8 +197,10 @@ impl<'a> super::PaveFiller<'a> {
 
         let a_tol_v11 = if n_v1 < self.ds.vertices.len() { self.ds.vertex_tolerance(n_v1) } else { a_tol_r3d };
         let a_tol_v12 = if n_v2 < self.ds.vertices.len() { self.ds.vertex_tolerance(n_v2) } else { a_tol_r3d };
-        let a_tol_v1 = a_tol_v11.max(a_tol_v12);
-        let a_tol_check = a_tol_r3d;
+        // OCCT L2093: std::max(aTolV11, aTolV12) + myFuzzyValue
+        let a_tol_v1 = a_tol_v11.max(a_tol_v12) + self.ds.fuzzy_tol;
+        // OCCT L2095: theTolR3D + myFuzzyValue
+        let a_tol_check = a_tol_r3d + self.ds.fuzzy_tol;
 
         // Query BVH
         let candidates: Vec<usize> = if let Some(pb_tree) = a_pb_tree.as_ref() {
@@ -220,14 +222,19 @@ impl<'a> super::PaveFiller<'a> {
             let (n_v21, n_v22) = existing_pb.0.read().unwrap().indices();
             let a_tol_v21 = if n_v21 < self.ds.vertices.len() { self.ds.vertex_tolerance(n_v21) } else { a_tol_r3d };
             let a_tol_v22 = if n_v22 < self.ds.vertices.len() { self.ds.vertex_tolerance(n_v22) } else { a_tol_r3d };
-            let a_tol_v2 = a_tol_v21.max(a_tol_v22);
-            let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
-
+            // OCCT L2117: std::max(aTolV21, aTolV22) + myFuzzyValue
+            let a_tol_v2 = a_tol_v21.max(a_tol_v22) + self.ds.fuzzy_tol;
             let edge_ei = existing_pb.0.read().unwrap().new_edge
                 .unwrap_or(existing_pb.0.read().unwrap().original_edge);
+            // OCCT L2123: iFlag1 = (nV11 == nV21 || nV11 == nV22) ? 2 : 1
+            //             iFlag2 = (nV12 == nV21 || nV12 == nV22) ? 2 : (!aBoxSp.IsOut(aBoxP2) ? 1 : 0)
+            // rcad: iFlag1 == 2 maps to true (vertex match), 1 maps to false (AABB check needed)
+            //       iFlag2 == 2 maps to true (vertex match), 1 maps to false (AABB check needed)
+            let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
             let i_flag2 = if n_v2 == n_v21 || n_v2 == n_v22 {
                 true
             } else if edge_ei < self.ds.edges.len() {
+                // AABB overlap: does the edge's tolerance box contain a_p2?
                 let sv = self.ds.edge_start_vertex_ds(edge_ei);
                 let ev = self.ds.edge_end_vertex_ds(edge_ei);
                 let e_min = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
@@ -249,10 +256,60 @@ impl<'a> super::PaveFiller<'a> {
 
             if edge_ei >= self.ds.edges.len() { continue; }
             let existing_edge = &self.ds.edges[edge_ei];
+            // OCCT L2132-2176: tolerance adjustment based on common-block / thin-face
             let mut a_real_tol = a_tol_check;
-            if a_mpb_common.contains(&pb_idx) {
+            // OCCT L2134: if (myDS->IsCommonBlock(aPB))
+            let is_cb = self.ds.is_common_block(&self.ds.pave_blocks[pb_idx]);
+            if is_cb {
+                // OCCT L2135-2137: aRealTol = max(aRealTol, max(aTolV1, aTolV2))
                 a_real_tol = a_real_tol.max(a_tol_v1.max(a_tol_v2));
-                a_real_tol *= 2.0;
+                // OCCT L2138: if (theMPBCommon.Contains(aPB)) aRealTol *= 2.
+                if a_mpb_common.contains(&pb_idx) {
+                    a_real_tol *= 2.0;
+                }
+            } else if i_flag1 && i_flag2 {
+                // OCCT L2139-2176: thin-face tangent-angle check
+                // Skip if one edge is closed and the other is not
+                let n_v11_closed = n_v1 == n_v2;
+                let n_v21_closed = n_v21 == n_v22;
+                let b_skip_processing =
+                    (n_v11_closed && !n_v21_closed) || (!n_v11_closed && n_v21_closed);
+                if !b_skip_processing {
+                    // Check tangent alignment
+                    let a_ic = &self.ds.intersection_curves[ci];
+                    // OCCT L2103-2105: aC3d->D1(aTm, aPm, aVTgt1)
+                    let a_pm_ic = a_ic.curve.point_at(a_tm);
+                    let a_vtgt1 = a_ic.curve.derivative_at(a_tm);
+                    let is_vtgt1_valid = a_vtgt1.length_squared() > f64::EPSILON;
+                    if is_vtgt1_valid {
+                        let a_vtgt1_n = a_vtgt1.normalize();
+                        // OCCT L2147: if (aIC.Type() != GeomAbs_Line || aBAC2.GetType() != GeomAbs_Line)
+                        let is_ic_line = matches!(a_ic.curve, Curve3::Line(_));
+                        let is_edge_line = matches!(existing_edge.curve, Curve3::Line(_));
+                        if !is_ic_line || !is_edge_line {
+                            // OCCT L2096-2100, L2148-2150: aMaxTolAdd = 0.001
+                            //   aMaxTolAdd = min(aMaxTolAdd, aCoeffTolAdd * aTolCheck)
+                            //   aTolAdd = 2 * min(aMaxTolAdd, max(aRealTol, max(aTolV1, aTolV2)))
+                            let a_max_tol_add = (0.001_f64).min(10.0 * a_tol_check);
+                            let a_tol_add = 2.0 * a_max_tol_add.min(a_real_tol.max(a_tol_v1.max(a_tol_v2)));
+                            let (_a_t, a_dist_m1m2) =
+                                crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
+                            // OCCT L2157: if (aPEStatus == 0)
+                            // Compute tangent on existing edge at projection point
+                            let a_vtgt2 = existing_edge.curve.derivative_at(_a_t);
+                            if a_vtgt2.length_squared() > f64::EPSILON {
+                                let a_vtgt2_n = a_vtgt2.normalize();
+                                // OCCT L2161: cos = aVTgt1.Dot(aVTgt2.Normalized())
+                                let a_cos = a_vtgt1_n.dot(a_vtgt2_n);
+                                // OCCT L2162: if (abs(aCos) >= 0.9063) — 25-degree threshold
+                                if a_cos.abs() >= 0.9063 {
+                                    a_real_tol = a_tol_add;
+                                    a_real_tol *= 2.0;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             let (_t, proj) = crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
             let dist_to_sp = (proj - a_pm).length();
@@ -310,6 +367,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut a_dm_new_sd: HashMap<usize, usize> = HashMap::new();
         let mut a_dm_vlv: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut a_micro_pb: Vec<PaveBlock> = Vec::new();
+        let mut a_micro_pb_set: HashSet<(usize, usize)> = HashSet::new();
         let mut a_verts_on_rejected_pb: HashSet<usize> = HashSet::new();
         let mut a_pb_faces_map: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut a_ff_to_recheck: Vec<usize> = Vec::new();
@@ -398,7 +456,13 @@ impl<'a> super::PaveFiller<'a> {
                 if ci >= self.ds.intersection_curves.len() { continue; }
                 // L810: aNC.InitPaveBlock1()
                 if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
-                    let pb = PaveBlock::new_curve_block();
+                    let mut pb = PaveBlock::new_curve_block();
+                    // Set curve data from intersection curve (needed for sub-PB curve propagation)
+                    pb.curve = Some(self.ds.intersection_curves[ci].curve.clone());
+                    pb.pave1 = Pave { vertex_idx: self.ds.intersection_curves[ci].start_vertex,
+                                      param: self.ds.intersection_curves[ci].t_range[0] };
+                    pb.pave2 = Pave { vertex_idx: self.ds.intersection_curves[ci].end_vertex,
+                                      param: self.ds.intersection_curves[ci].t_range[1] };
                     self.ds.intersection_curves[ci].pave_blocks.push(SharedPB::new(pb));
                 }
                 // L818: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
@@ -453,8 +517,8 @@ impl<'a> super::PaveFiller<'a> {
             // L874-895: Build PB BVH tree from aMPBOnIn
             let a_pb_tree = Self::build_pb_tree(self.ds, &a_mpb_on_in);
 
-            // L899: isToRecheck
-            let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
+            // L899: isToRecheck — OCCT: (aNbP > 0) && (aNbC == 0) — points but no curves
+            let mut is_to_recheck = a_nb_p > 0 && a_nb_c == 0 && i < a_nb_ff_prev;
 
             // L901-1098: 4. Make section edges
             for (j, &ci) in curves_of_ff.iter().enumerate() {
@@ -489,6 +553,9 @@ impl<'a> super::PaveFiller<'a> {
                     is_to_recheck = false;
                 }
 
+                if std::env::var("RCAD_DBG_MB").is_ok() {
+                    eprintln!("[DBG_MB] curve j={} ci={} a_lpb.len={}", j, ci, a_lpb.len());
+                }
                 // L931-1095: iterate sub-PBs
                 for a_pb in &a_lpb {
                     // L935-936: aPB->Indices(nV1, nV2); aPB->Range(aT1, aT2);
@@ -514,13 +581,20 @@ impl<'a> super::PaveFiller<'a> {
                         };
                         if !ok { b_valid_2d = false; break; }
                     }
-                    if !b_valid_2d { continue; }
+                    if !b_valid_2d {
+                        if std::env::var("RCAD_DBG_MB").is_ok() {
+                            eprintln!("[DBG_MB]   sub-PB ({},{}) REJECTED by IsValidBlockForFaces", n_v1, n_v2);
+                        }
+                        continue; }
 
                     // L952-962: IsExistingPaveBlock via LSE (shared edges)
                     let mut n_e_out: usize = usize::MAX;
                     let mut a_tol_new: f64 = -1.0;
                     let b_exist_lse = self.is_existing_pb_via_lse(&a_lse, a_pb, ci, &mut n_e_out, &mut a_tol_new);
                     if b_exist_lse {
+                        if std::env::var("RCAD_DBG_MB").is_ok() {
+                            eprintln!("[DBG_MB]   sub-PB ({},{}) EXISTING via LSE n_e={}", n_v1, n_v2, n_e_out);
+                        }
                         // L958: UpdateEdgeTolerance(nEOut, aTolNew)
                         self.update_edge_tolerance(n_e_out, a_tol_new);
                         // L960: UpdateSavedTolerance(myDS, nEOut, aTolNew, aMVTol)
@@ -540,9 +614,14 @@ impl<'a> super::PaveFiller<'a> {
                         } else { false }
                     };
                     if !has_valid_range {
+                        if std::env::var("RCAD_DBG_MB").is_ok() {
+                            eprintln!("[DBG_MB]   sub-PB ({},{}) REJECTED by FindValidRange", n_v1, n_v2);
+                        }
                         // L984-990: if not bound, add to aMicroPB
                         if !a_mv_bounds.contains(&n_v1) && !a_mv_bounds.contains(&n_v2) {
-                            a_micro_pb.push(a_pb.clone());
+                            if a_micro_pb_set.insert((n_v1.min(n_v2), n_v1.max(n_v2))) {
+                                a_micro_pb.push(a_pb.clone());
+                            }
                             a_mvi.insert(n_v1, n_v1);
                             a_mvi.insert(n_v2, n_v2);
                         }
@@ -557,6 +636,9 @@ impl<'a> super::PaveFiller<'a> {
                         &a_mpb_common, &mut a_pb_out, &mut a_tol_new2,
                     );
                     if b_exist_on_in {
+                        if std::env::var("RCAD_DBG_MB").is_ok() {
+                            eprintln!("[DBG_MB]   sub-PB ({},{}) EXISTING via BVH a_pb_out={}", n_v1, n_v2, a_pb_out);
+                        }
                         if a_pb_out < self.ds.pave_blocks.len() {
                             let edge_of_pb = {
                                 let pb_r = self.ds.pave_blocks[a_pb_out].0.read().unwrap();
@@ -612,6 +694,9 @@ impl<'a> super::PaveFiller<'a> {
                     }
 
                     // L1055-1094: Make section edge
+                    if std::env::var("RCAD_DBG_MB").is_ok() {
+                        eprintln!("[DBG_MB]   sub-PB ({},{}) → MAKE EDGE", n_v1, n_v2);
+                    }
                     let a_curve = &self.ds.intersection_curves[ci].curve;
                     let pca = self.ds.intersection_curves[ci].pcurve_on_a.clone();
                     let pcb = self.ds.intersection_curves[ci].pcurve_on_b.clone();
@@ -763,16 +848,33 @@ impl<'a> super::PaveFiller<'a> {
             // L888-891: if (myDS->ShapeInfo(aPB->OriginalEdge()).HasFlag()) continue;
             if ds.edge_has_flag(ei) { continue; }
             // L893: aPBTree.Add(iPB, Bnd_Tools::Bnd2BVH(myDS->ShapeInfo(aPB->Edge()).Box()));
-            // rcad: compute AABB from edge start/end vertices
+            // OCCT uses the precomputed ShapeInfo Box which covers the full 3D curve geometry.
+            // rcad: compute AABB from edge's 3D curve by sampling points along it.
+            let edge = &ds.edges[ei];
+            let tol = ds.edge_tolerance(ei);
+            let [t0, t1] = edge.t_range;
+            let n_samples = 8.max(((t1 - t0).abs() / 0.1).ceil() as usize).min(32);
+            let mut mn = DVec3::splat(f64::MAX);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for k in 0..=n_samples {
+                let t = t0 + (t1 - t0) * (k as f64) / (n_samples as f64);
+                let pt = edge.curve.point_at(t);
+                mn = mn.min(pt);
+                mx = mx.max(pt);
+            }
+            // Also include start/end vertex points for safety
             let sv = ds.edge_start_vertex_ds(ei);
             let ev = ds.edge_end_vertex_ds(ei);
-            if sv < ds.vertices.len() && ev < ds.vertices.len() {
-                let tol = ds.edge_tolerance(ei);
-                let mn = ds.vertex_point(sv).min(ds.vertex_point(ev)) - DVec3::splat(tol);
-                let mx = ds.vertex_point(sv).max(ds.vertex_point(ev)) + DVec3::splat(tol);
-                a_pb_indices.push(pb_idx);
-                a_pb_aabbs.push(Aabb { min: mn, max: mx, gap: 0.0 });
+            if sv < ds.vertices.len() {
+                let vp = ds.vertex_point(sv);
+                mn = mn.min(vp); mx = mx.max(vp);
             }
+            if ev < ds.vertices.len() {
+                let vp = ds.vertex_point(ev);
+                mn = mn.min(vp); mx = mx.max(vp);
+            }
+            a_pb_indices.push(pb_idx);
+            a_pb_aabbs.push(Aabb { min: mn - DVec3::splat(tol), max: mx + DVec3::splat(tol), gap: 0.0 });
         }
         if !a_pb_indices.is_empty() {
             Some(DsBvh::build(a_pb_indices, a_pb_aabbs))

@@ -1168,12 +1168,16 @@ pub(crate) fn perform_shapes_to_avoid_topo(
  }
  };
 
- // Build aMVE: vertex  ?edges (same as OCCT MapShapesAndAncestors)
+ // Build aMVE: vertex  ?edges (unique PID per edge, OCCT MapShapesAndAncestors)
+ // rcad: each DSEdge has two segments (forward + reverse) with same PID.
+ // Dedup PIDs per vertex to match OCCT (one TopoDS_Edge per physical edge).
  let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
  for seg in segments {
- let pid = physical_edge_id_topo_ds(seg);
- a_mve.entry(seg.start_vertex.index).or_default().push(pid);
- a_mve.entry(seg.end_vertex.index).or_default().push(pid);
+   let pid = physical_edge_id_topo_ds(seg);
+   let entry = a_mve.entry(seg.start_vertex.index).or_default();
+   if !entry.contains(&pid) { entry.push(pid); }
+   let entry = a_mve.entry(seg.end_vertex.index).or_default();
+   if !entry.contains(&pid) { entry.push(pid); }
  }
 
  let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
@@ -1211,8 +1215,10 @@ pub(crate) fn perform_shapes_to_avoid_topo(
  for seg in segments {
  let pid = physical_edge_id_topo_ds(seg);
  if avoided_pids.contains(&pid) { continue; }
- a_mve.entry(seg.start_vertex.index).or_default().push(pid);
- a_mve.entry(seg.end_vertex.index).or_default().push(pid);
+ let entry = a_mve.entry(seg.start_vertex.index).or_default();
+ if !entry.contains(&pid) { entry.push(pid); }
+ let entry = a_mve.entry(seg.end_vertex.index).or_default();
+ if !entry.contains(&pid) { entry.push(pid); }
  }
  }
 

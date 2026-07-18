@@ -172,35 +172,7 @@ fn init_shape_topo(
             // OCCT: PBs are lazily created via ChangePaveBlocks() on first access.
             // rcad: init is deferred to edge_pave_blocks_mut().
 
-            // ShapeInfo: sub_shapes = shapes[] indices of endpoint vertices
-            let sv_si = *ds.vertex_shape_idx.get(start).unwrap_or(&start);
-            let ev_si = *ds.vertex_shape_idx.get(end).unwrap_or(&end);
-            let p1 = ds.vertex_point(start);
-            let p2 = ds.vertex_point(end);
-            debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
-            let mut box_min = p1.min(p2);
-            let mut box_max = p1.max(p2);
-            // OCCT BOPDS_ShapeInfo::Box() uses full curve geometry.
-            // Sample edge curve to capture extent beyond endpoints (e.g., circles).
-            if let Some(ref edge_curve) = ed.curve {
-                let n_samples = 16;
-                let t_range = ed.range;
-                for si in 0..n_samples {
-                    let t = t_range[0] + (t_range[1] - t_range[0]) * si as f64 / (n_samples - 1).max(1) as f64;
-                    let p = edge_curve.point_at(t);
-                    box_min = box_min.min(p);
-                    box_max = box_max.max(p);
-                }
-            }
-            ds.shape_info.push(ShapeInfo {
-                shape_type: rcad_kernel::topods::ShapeType::Edge,
-                sub_shapes: vec![sv_si, ev_si],
-                flag: if start == end { 0 } else { -1 },
-                reference: ds_ei as i64, has_brep: true,
-                box_min: Some(box_min), box_max: Some(box_max),
-                box_gap: ed.tolerance + ds.fuzzy_tol * 0.5,
-                is_new: false, rank, source_idx: ds_ei,
-            });
+            // ShapeInfo is now created by push_edge() — no duplicate needed.
         }
         topods::TShape::Wire(wd) => {
             for esr in &wd.edges {
