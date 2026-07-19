@@ -804,6 +804,23 @@ impl<'a> BooleanBuilder<'a> {
                 p_lf_im.push(out_sr);
             }
         }
+
+        // OCCT BuildResult(FACE): source faces WITHOUT split images are passed through
+        // as-is (unsplit faces).  rcad's build_split_faces skips these at L469/L507.
+        // Add their T BRep ShapeRefs to my_face_refs at position [fi] so build_result
+        // can find them (build_result reads my_face_refs[fi] at result_build_mod.rs L865).
+        for (fi, f_sr) in face_refs_owned.iter().enumerate() {
+            if fi >= self.ds.faces.len() { continue; }
+            if !a_faces_im.contains_key(f_sr) {
+                let mut mfr = self.my_face_refs.borrow_mut();
+                if fi >= mfr.len() {
+                    mfr.resize(fi + 1, topods::ShapeRef::NULL);
+                }
+                if mfr[fi].is_null() {
+                    mfr[fi] = *f_sr;
+                }
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
