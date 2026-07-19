@@ -1221,9 +1221,9 @@ fn pavefiller_stage_ref_plane_sphere() {
         // VF: OCCT dump doesn't include VF counts; skip n_vf/n_vf_side checks.
         ("VF", "after_PerformVF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
         ("EF", "after_PerformEF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        // FF+: OCCT ref nV=11 nE=15 FF=6; rcad differs — not yet aligned.
-        ("FF", "after_PerformFF", StageMetrics{n_v:Some(19),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
-        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(19),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+        // FF+: OCCT ref nV=11 nE=15 FF=6
+        ("FF", "after_PerformFF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
+        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(11),n_e:None,n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
     ];
     for (label, stage, occt_m) in &occt_stages {
         let ds = pave_fill_stage(&a, &b, stage);

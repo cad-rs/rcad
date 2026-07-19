@@ -291,8 +291,17 @@ impl DS {
         &self.faces[fi].face_info
     }
 
-    /// Mutable FaceInfo — writes directly to DSFace (OCCT BOPDS_ShapeInfo equivalent).
+    /// Mutable FaceInfo — OCCT: ChangeFaceInfo → InitFaceInfo → UpdateFaceInfoOn.
+    /// lazy-init: on first access, add boundary vertices to vertices_on.
     pub fn face_info_mut(&mut self, fi: usize) -> &mut FaceInfo {
+        if fi < self.faces.len() && self.faces[fi].face_info.vertices_on.is_empty() {
+            let bverts: Vec<usize> = self.faces[fi].boundary_verts.clone();
+            if !bverts.is_empty() {
+                for &vi in &bverts {
+                    self.faces[fi].face_info.vertices_on.insert(vi);
+                }
+            }
+        }
         &mut self.faces[fi].face_info
     }
 

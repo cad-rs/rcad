@@ -1270,7 +1270,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  {
  let near_face_vx = a_mif_on.iter().chain(a_mif_in.iter()).any(|&vi| {
  vi < self.ds.vertices.len()
- && (self.ds.vertex_point(vi) - *point).length() <= a_tol_e.max(a_tol_f)
+ && (self.ds.vertex_point(vi) - *point).length() <= a_tol_e.max(a_tol_f).max(tol_ef * 10.0)
  });
  if near_face_vx {
  continue;

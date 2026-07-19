@@ -177,12 +177,27 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         }
 
-        // EF pairs: edge vs face (all cross-operand)
+        // EF pairs: edge vs face (all cross-operand) with AABB overlap filter (OCCT BVH spatial pruning)
         for ei in 0..ne {
             let is_a = ei < a_ec;
+            let si_e = if ei < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ei] } else { self.ds.vertices.len() + ei };
             for fi in 0..nf {
                 let is_f_a = fi < a_fc;
                 if is_a == is_f_a { continue; }
+                // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check
+                let si_f = if fi < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[fi] } else { fi };
+                if let (Some(si_e_info), Some(si_f_info)) = (self.ds.shape_info.get(si_e), self.ds.shape_info.get(si_f)) {
+                    if let (Some(e_min), Some(e_max), Some(f_min), Some(f_max)) =
+                        (si_e_info.box_min, si_e_info.box_max, si_f_info.box_min, si_f_info.box_max)
+                    {
+                        if e_max.x < f_min.x || e_min.x > f_max.x
+                            || e_max.y < f_min.y || e_min.y > f_max.y
+                            || e_max.z < f_min.z || e_min.z > f_max.z
+                        {
+                            continue;
+                        }
+                    }
+                }
                 add_pair(ei, fi, ShapeType::Edge, ShapeType::Face);
             }
         }
