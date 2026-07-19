@@ -1287,7 +1287,21 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  // OCCT L528-542: Create EF interference
  a_mi_efc.insert(nF);
- let new_v = self.ds.add_vertex_no_dedup(*point);
+ // OCCT: check if point coincides with edge endpoint — reuse existing vertex
+ let sv = self.ds.edges[nE].start_vertex;
+ let ev = self.ds.edges[nE].end_vertex;
+ let sv_pt = if sv < self.ds.vertices.len() { self.ds.vertex_point(sv) } else { DVec3::ZERO };
+ let ev_pt = if ev < self.ds.vertices.len() { self.ds.vertex_point(ev) } else { DVec3::ZERO };
+ let d_sv = if sv < self.ds.vertices.len() { (sv_pt - point).length() } else { f64::MAX };
+ let d_ev = if ev < self.ds.vertices.len() { (ev_pt - point).length() } else { f64::MAX };
+ let near_endpoint = d_sv <= a_tol_vnew || d_ev <= a_tol_vnew;
+ let new_v = if near_endpoint {
+     if d_sv < d_ev && d_sv <= a_tol_vnew { sv }
+     else if d_ev <= a_tol_vnew { ev }
+     else { self.ds.add_vertex_no_dedup(*point) }
+ } else {
+     self.ds.add_vertex_no_dedup(*point)
+ };
  // OCCT L530-542: set indices, common part, CPB, add to aMVCPB
  let interf_idx = self.ds.interf_ef.len();
  let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_v_edge_face[k].pb_local_idx].clone();
@@ -2039,6 +2053,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  }
  for inf in &self.ds.interf_ef {
+ if inf.new_vertex == 0 { continue; } // EfHit::Edge — no new vertex
  if seen.insert(inf.new_vertex) {
  let v_tol = self.ds.vertices[inf.new_vertex].geom_tol.max(self.ds.fuzzy_tol);
  new_verts.push(NewVertInfo { idx: inf.new_vertex, pos: inf.point, tol: v_tol });
