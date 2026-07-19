@@ -25,12 +25,6 @@ impl<'a> BooleanBuilder<'a> {
 
         let solids = std::mem::take(&mut result.tmp_solids);
         let sides: Vec<usize> = result.solid_side_origin.clone();
-        // When solids is empty (e.g., BuildResult consumed them), fall through to
-        // building-element comparison below and rebuild t_brep from keep_set.
-        let solids_empty = solids.is_empty();
-        let sides_empty = sides.is_empty();
-        // If both empty, there's nothing to filter.
-        if solids_empty && sides_empty { return; }
 
         // A. FUSE -- keep all split solids (fence-deduped)
         if self.my_operation == BooleanOpType::Union {
@@ -107,17 +101,11 @@ impl<'a> BooleanBuilder<'a> {
                     self.my_images.borrow().contains_key(
                         &self.brep_sr(flat_idx))
                 } else if is_face {
-                    let (o_exp, sfi) = if side_is_args {
-                        (ShapeOrigin::ShapeA, local_idx)
-                    } else {
-                        (ShapeOrigin::ShapeB, local_idx)
-                    };
-                    let result_count = result.face_origins.iter().filter(|fo| match fo {
-                        FaceOrigin::FromA(s) if side_is_args => *s == sfi,
-                        FaceOrigin::FromB(s) if !side_is_args => *s == sfi,
-                        _ => false,
-                    }).count();
-                    result_count > 1
+                    // Use my_images (OCCT myImages) instead of result.face_origins
+                    // which may be consumed by fill_same_domain_faces.
+                    let im = self.my_images.borrow().contains_key(
+                        &self.brep_sr(flat_idx));
+                    im
                 } else {
                     false
                 };
@@ -130,14 +118,13 @@ impl<'a> BooleanBuilder<'a> {
                     };
 
                     if is_face {
-                        for (rfi, fo) in result.face_origins.iter().enumerate() {
-                            let matches = match fo {
-                                FaceOrigin::FromA(s) if side_is_args => *s == sfi,
-                                FaceOrigin::FromB(s) if !side_is_args => *s == sfi,
-                                _ => false,
-                            };
-                            if matches {
-                                a_ms_im.insert(f_base + rfi);
+                        // Use my_images (OCCT myImages) instead of result.face_origins
+                        // which may be consumed by fill_same_domain_faces.
+                        if let Some(imgs) = self.my_images.borrow().get(
+                            &self.brep_sr(flat_idx))
+                        {
+                            for &sr in imgs {
+                                a_ms_im.insert(f_base + sr.index);
                             }
                         }
                     } else if is_edge {
@@ -332,28 +319,22 @@ impl<'a> BooleanBuilder<'a> {
 
         result.tmp_solids = kept_solids;
 
-        // When solids was empty, rebuild t_brep from DS faces in keep_set.
-        // OCCT L800-823: replace myShape with filtered compound (myRC).
-        if solids_empty && !keep_set.is_empty() {
+        // Rebuild t_brep from DS faces in keep_set (OCCT L800-823: myRC).
+        if !keep_set.is_empty() {
             let mut kept_refs: Vec<topods::ShapeRef> = Vec::new();
-            for dsfi in 0..self.ds.faces.len() {
-                let flat_fi = f_base + dsfi;
-                if !keep_set.contains(&flat_fi) { continue; }
-                // Find matching my_face_refs for this DS face
-                for (rfi, fo) in result.face_origins.iter().enumerate() {
-                    let (origin, sfi) = match fo {
-                        FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
-                        FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
-                        _ => continue,
-                    };
-                    if self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin && f.source_face_idx == sfi) {
-                        if let Some(&sr) = self.my_face_refs.borrow().get(rfi) {
-                            if !sr.is_null() { kept_refs.push(sr); }
-                        }
+            let fr = self.my_face_refs.borrow();
+            for (rfi, &sr) in fr.iter().enumerate() {
+                if sr.is_null() { continue; }
+                let dsfi = if sr.index >= f_base && sr.index < f_base + self.ds.faces.len() {
+                    Some(sr.index - f_base)
+                } else { None };
+                if let Some(dsfi) = dsfi {
+                    if keep_set.contains(&(f_base + dsfi)) {
+                        kept_refs.push(sr);
                     }
                 }
             }
-            if !kept_refs.is_empty() {
+            if !kept_refs.is_empty() && kept_refs.len() < fr.len() {
                 let mut nb = topods::BRep::new();
                 nb.add_tshell(kept_refs);
                 *t_brep = nb;
