@@ -1468,37 +1468,6 @@ impl<'a> BooleanBuilder<'a> {
             self.build_split_solids(result, &shell_assignments, &mut *t);
         }
         self.fill_internal_shapes(result);
-
-        // OCCT BuildBOP: IN/OUT filtering for COMMON/CUT operations.
-        // rcad build_rc filters result.tmp_solids based on building-element containment.
-        {
-            let mut t = self.my_shape.borrow_mut();
-            self.build_rc(result, &mut *t);
-        }
-
-        // OCCT BuildShape (BuildBOP variant for open solids)
-        let md3 = self.my_dims.get();
-        if md3[0] == 3 && md3[1] == 3 {
-            if self.check_args_for_open_solid() {
-                let mut t = self.my_shape.borrow_mut();
-                self.build_bop(result, &mut *t);
-                if self.has_errors() { /* fall through */ }
-            }
-        }
-
-        // OCCT: for Union+3D, create a solid from all faces (when no result solids).
-        // build_topods PrepareHistory also has a fallback, but this one runs earlier
-        // and populates my_solids for downstream history tracking.
-        if self.my_operation == BooleanOpType::Union && md3[0] == 3 {
-            let face_refs: Vec<topods::ShapeRef> = self.my_face_refs.borrow().iter()
-                .filter(|sr| !sr.is_null()).copied().collect();
-            if !face_refs.is_empty() {
-                let mut t = self.my_shape.borrow_mut();
-                let shell_ref = t.add_tshell(face_refs);
-                let solid_ref = t.add_tsolid(vec![shell_ref]);
-                self.my_solids.borrow_mut().push(solid_ref);
-            }
-        }
     }
 
     /// ✅ OCCT-aligned: BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368).

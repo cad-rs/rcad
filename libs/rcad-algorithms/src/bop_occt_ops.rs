@@ -309,7 +309,7 @@ fn build_topods_bvh(brep: &topods::BRep) -> bvh::Bvh {
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
 /// DS is created empty and populated by PaveFiller::init()
 /// inside perform(), mirroring BOPAlgo_PaveFiller::Init.
-fn pave_fill(a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
+pub fn pave_fill(a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
  brep: &mut rcad_kernel::topods::BRep,
  fuzzy_tol: f64) -> (bopds::ds::DS,
  Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)

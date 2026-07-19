@@ -1,4 +1,4 @@
-//! Generate PaveFiller pipeline dumps for bcommon_simple A1.
+//! Generate PaveFiller + Builder pipeline dumps for bcommon_simple A1.
 //! Run with: RCAD_DUMP_PIPELINE=1 RCAD_DUMP_DIR=./target/pipeline_dumps cargo test --test pipeline_dump_gen -- --nocapture
 
 use glam::DVec3;
@@ -15,7 +15,7 @@ fn generate_bcommon_simple_a1_dump() {
 
     // Run the PaveFiller pipeline with dump enabled
     let mut brep = topods::BRep::new();
-    let (mut ds, face_refs, ic_edge_map) = rcad_algorithms::bop_occt_ops::pave_fill(
+    let (mut ds, _face_refs, _ic_edge_map) = rcad_algorithms::bop_occt_ops::pave_fill(
         &sphere, &box_b, true, &mut brep, rcad_algorithms::tolerance::TOLERANCE_ABS);
 
     println!("DS: V={} E={} F={} IC={} PB={} CB={}",
@@ -37,4 +37,17 @@ fn generate_bcommon_simple_a1_dump() {
     let n_new_edges = ds.edges.iter().filter(|e| e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::ShapeA || e.origin == rcad_algorithms::bopds::ds::ShapeOrigin::ShapeB).count();
     println!("Edges: total={} source={}",
         ds.edges.len(), n_new_edges);
+}
+
+#[test]
+fn generate_bcommon_simple_a1_builder_dump() {
+    // Same shapes as bcommon_simple A1, run full builder pipeline for Intersection.
+    let sphere = make_sphere_brep(DVec3::ZERO, 1.0).expect("psphere s 1");
+    let box_b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+        .expect("box b 1 1 1");
+    let result = rcad_algorithms::bop_occt_ops::boolean_op_generic(
+        rcad_algorithms::BooleanOpType::Intersection, &sphere, &box_b).expect("bcommon A1 failed");
+    let vol = rcad_kernel::volume(&result);
+    let area = rcad_kernel::surface_area(&result);
+    println!("bcommon_simple A1 builder: V={:.6} SA={:.6}", vol, area);
 }
