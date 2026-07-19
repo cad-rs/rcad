@@ -933,6 +933,29 @@ impl<'a> BooleanBuilder<'a> {
             // Path B for other types (e.g. Edge inside Solid) — no sub-shape
             // explorer implemented; the requirement is handled upstream.
         }
+
+        // OCCT BuildResult(TopAbs_SOLID): builds result solids from split solids
+        // created by BuildSplitSolids. rcad: process result.tmp_solids.
+        if the_type == rcad_kernel::topods::ShapeType::Solid {
+            let solids = std::mem::take(&mut result.tmp_solids);
+            let mfr = self.my_face_refs.borrow();
+            for shell_faces in &solids {
+                let mut wire_refs: Vec<topods::ShapeRef> = Vec::new();
+                for &fi in shell_faces {
+                    if let Some(&face_sr) = mfr.get(fi) {
+                        if face_sr.is_null() { continue; }
+                        let face_tshape = &t.tshapes[face_sr.index];
+                        if let topods::TShape::Face(fd) = &**face_tshape {
+                            wire_refs.push(fd.outer_wire);
+                        }
+                    }
+                }
+                if !wire_refs.is_empty() {
+                    let shell_sr = t.add_tshell(wire_refs);
+                    t.add_tsolid(vec![shell_sr]);
+                }
+            }
+        }
     }
 
     /// add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
@@ -1035,6 +1058,7 @@ impl<'a> BooleanBuilder<'a> {
             return;
         }
         // State validation
+  eprintln!("[DBG_BOP] build_bop: n_faces_refs={} n_in_parts={}", my_face_refs.len(), my_in_parts.len());
         let the_obj_state_in   = matches!(self.my_operation, BooleanOpType::Intersection);
         let the_tools_state_in = matches!(self.my_operation, BooleanOpType::Intersection | BooleanOpType::Difference);
         // Build face maps per source solid.
