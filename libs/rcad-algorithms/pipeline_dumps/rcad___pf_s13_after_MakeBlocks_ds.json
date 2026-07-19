@@ -1,0 +1,1481 @@
+{
+  "ds": {
+    "common_blocks": [
+      {
+        "cbi": 0,
+        "faces": [
+          1,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          1,
+          1
+        ]
+      },
+      {
+        "cbi": 1,
+        "faces": [
+          1,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          4,
+          4
+        ]
+      },
+      {
+        "cbi": 2,
+        "faces": [
+          2,
+          4
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          7,
+          7
+        ]
+      },
+      {
+        "cbi": 3,
+        "faces": [
+          2,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          6,
+          6
+        ]
+      },
+      {
+        "cbi": 4,
+        "faces": [
+          2,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          8,
+          8
+        ]
+      },
+      {
+        "cbi": 5,
+        "faces": [
+          1,
+          4
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          3,
+          3
+        ]
+      },
+      {
+        "cbi": 6,
+        "faces": [
+          4,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          12,
+          12
+        ]
+      },
+      {
+        "cbi": 7,
+        "faces": [
+          1,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          2,
+          2
+        ]
+      },
+      {
+        "cbi": 8,
+        "faces": [
+          3,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          9,
+          9
+        ]
+      },
+      {
+        "cbi": 9,
+        "faces": [
+          3,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          10,
+          10
+        ]
+      },
+      {
+        "cbi": 10,
+        "faces": [
+          2,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          5,
+          5
+        ]
+      },
+      {
+        "cbi": 11,
+        "faces": [
+          4,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          11,
+          11
+        ]
+      },
+      {
+        "cbi": 12,
+        "faces": [
+          4,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          24,
+          24
+        ]
+      },
+      {
+        "cbi": 13,
+        "faces": [
+          4,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          25,
+          25
+        ]
+      },
+      {
+        "cbi": 14,
+        "faces": [
+          2,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          21,
+          21
+        ]
+      },
+      {
+        "cbi": 15,
+        "faces": [
+          3,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          22,
+          22
+        ]
+      },
+      {
+        "cbi": 16,
+        "faces": [
+          1,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          17,
+          17
+        ]
+      },
+      {
+        "cbi": 17,
+        "faces": [
+          1,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          14,
+          14
+        ]
+      },
+      {
+        "cbi": 18,
+        "faces": [
+          1,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          15,
+          15
+        ]
+      },
+      {
+        "cbi": 19,
+        "faces": [
+          1,
+          4
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          16,
+          16
+        ]
+      },
+      {
+        "cbi": 20,
+        "faces": [
+          2,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          18,
+          18
+        ]
+      },
+      {
+        "cbi": 21,
+        "faces": [
+          2,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          19,
+          19
+        ]
+      },
+      {
+        "cbi": 22,
+        "faces": [
+          2,
+          4
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          20,
+          20
+        ]
+      },
+      {
+        "cbi": 23,
+        "faces": [
+          3,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          23,
+          23
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 1.0), direction: DVec3(0.0, 0.0, 0.0) })",
+        "ei": 0,
+        "ev": 0,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 0,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(1.0, 0.0, 0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(0.0, 1.0, 0.0), radius: 1.0 })",
+        "ei": 1,
+        "ev": 1,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 1,
+        "origin": "ShapeA",
+        "sv": 0,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, -1.0), direction: DVec3(0.0, 0.0, 0.0) })",
+        "ei": 2,
+        "ev": 1,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 1,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 0.0), direction: DVec3(1.0, 0.0, 0.0) })",
+        "ei": 3,
+        "ev": 3,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 2,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 0.0), direction: DVec3(0.0, 1.0, 0.0) })",
+        "ei": 4,
+        "ev": 4,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 3,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 0.0), direction: DVec3(-1.0, -0.0, -0.0) })",
+        "ei": 5,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 4,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 0.0), direction: DVec3(-0.0, -1.0, -0.0) })",
+        "ei": 6,
+        "ev": 2,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 5,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 1.0), direction: DVec3(1.0, 0.0, 0.0) })",
+        "ei": 7,
+        "ev": 7,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 6,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 1.0), direction: DVec3(0.0, 1.0, 0.0) })",
+        "ei": 8,
+        "ev": 8,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 7,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 1.0), direction: DVec3(-1.0, -0.0, -0.0) })",
+        "ei": 9,
+        "ev": 9,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 8,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 1.0), direction: DVec3(-0.0, -1.0, -0.0) })",
+        "ei": 10,
+        "ev": 6,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 9,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 0.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 11,
+        "ev": 7,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 3,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 12,
+        "ev": 6,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 2,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(1.0, 1.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 13,
+        "ev": 8,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 4,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 14,
+        "ev": 9,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeB",
+        "sv": 5,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ei": 15,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 3,
+        "tol": "9.69e-1"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, 0.0, 1.0), radius: 1.0 })",
+        "ei": 16,
+        "ev": 10,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 3,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(0.0, 1.0, 0.0), radius: 1.0 })",
+        "ei": 17,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 10,
+        "tol": "7.27e-1"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(1.0, 0.0, 0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(0.0, 1.0, 0.0), radius: 1.0 })",
+        "ei": 18,
+        "ev": 1,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeA",
+        "sv": 10,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 1.0), direction: DVec3(1.0, 0.0, 0.0) })",
+        "ei": 19,
+        "ev": 7,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeB",
+        "sv": 10,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 1.0, 1.0), direction: DVec3(-0.0, -1.0, -0.0) })",
+        "ei": 20,
+        "ev": 10,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeB",
+        "sv": 9,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Line(Line3 { origin: DVec3(0.0, 0.0, 0.0), direction: DVec3(0.0, 0.0, 1.0) })",
+        "ei": 21,
+        "ev": 10,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 0,
+        "n_face_reps": 0,
+        "origin": "ShapeB",
+        "sv": 2,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, 0.0, 1.0), radius: 1.0 })",
+        "ei": 22,
+        "ev": 10,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeA",
+        "sv": 3,
+        "tol": "1.00e-7"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ei": 23,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeA",
+        "sv": 3,
+        "tol": "9.69e-1"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ei": 24,
+        "ev": 3,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeA",
+        "sv": 5,
+        "tol": "9.69e-1"
+      },
+      {
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(0.0, 1.0, 0.0), radius: 1.0 })",
+        "ei": 25,
+        "ev": 5,
+        "is_internal": false,
+        "my_images": [],
+        "nPBs": 1,
+        "n_face_reps": 2,
+        "origin": "ShapeA",
+        "sv": 0,
+        "tol": "7.27e-1"
+      }
+    ],
+    "faces": [
+      {
+        "boundary_edges": [
+          0,
+          1,
+          2,
+          1
+        ],
+        "curves_sc": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "fi": 0,
+        "nBE": 4,
+        "nCurvesSc": 4,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 4,
+        "nVIn": 9,
+        "surf": "Sphere(SphericalSurface { center: DVec3(0.0, 0.0, 0.0), axis: DVec3(0.0, 1.0, 0.0), radius: 1.0, ref_dir: DVec3(1.0, 0.0, 0.0) })",
+        "vertices_in": [
+          2,
+          3,
+          4,
+          5,
+          10,
+          7,
+          8,
+          9,
+          0
+        ]
+      },
+      {
+        "boundary_edges": [
+          3,
+          4,
+          5,
+          6
+        ],
+        "curves_sc": [
+          0,
+          1
+        ],
+        "fi": 1,
+        "nBE": 4,
+        "nCurvesSc": 2,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 2,
+        "nVIn": 2,
+        "surf": "Plane(Plane { origin: DVec3(0.5, 0.5, 0.0), normal: DVec3(-0.0, -0.0, -1.0), u_dir: DVec3(1.0, 0.0, 0.0), v_dir: DVec3(0.0, -1.0, 0.0) })",
+        "vertices_in": [
+          3,
+          5
+        ]
+      },
+      {
+        "boundary_edges": [
+          7,
+          8,
+          9,
+          10
+        ],
+        "curves_sc": [],
+        "fi": 2,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 1,
+        "surf": "Plane(Plane { origin: DVec3(0.5, 0.5, 1.0), normal: DVec3(0.0, 0.0, 1.0), u_dir: DVec3(1.0, 0.0, 0.0), v_dir: DVec3(0.0, 1.0, 0.0) })",
+        "vertices_in": [
+          10
+        ]
+      },
+      {
+        "boundary_edges": [
+          3,
+          11,
+          7,
+          12
+        ],
+        "curves_sc": [
+          2
+        ],
+        "fi": 3,
+        "nBE": 4,
+        "nCurvesSc": 1,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 1,
+        "nVIn": 3,
+        "surf": "Plane(Plane { origin: DVec3(0.5, 0.0, 0.5), normal: DVec3(-0.0, -1.0, -0.0), u_dir: DVec3(1.0, 0.0, 0.0), v_dir: DVec3(0.0, 0.0, 1.0) })",
+        "vertices_in": [
+          10,
+          3,
+          0
+        ]
+      },
+      {
+        "boundary_edges": [
+          5,
+          14,
+          9,
+          13
+        ],
+        "curves_sc": [],
+        "fi": 4,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 0,
+        "surf": "Plane(Plane { origin: DVec3(0.5, 1.0, 0.5), normal: DVec3(0.0, 1.0, 0.0), u_dir: DVec3(1.0, 0.0, 0.0), v_dir: DVec3(0.0, 0.0, -1.0) })",
+        "vertices_in": []
+      },
+      {
+        "boundary_edges": [
+          6,
+          12,
+          10,
+          14
+        ],
+        "curves_sc": [
+          3
+        ],
+        "fi": 5,
+        "nBE": 4,
+        "nCurvesSc": 1,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 1,
+        "nVIn": 5,
+        "surf": "Plane(Plane { origin: DVec3(0.0, 0.5, 0.5), normal: DVec3(-1.0, -0.0, -0.0), u_dir: DVec3(0.0, 0.0, 1.0), v_dir: DVec3(0.0, 1.0, 0.0) })",
+        "vertices_in": [
+          2,
+          5,
+          9,
+          6,
+          0
+        ]
+      },
+      {
+        "boundary_edges": [
+          4,
+          13,
+          8,
+          11
+        ],
+        "curves_sc": [],
+        "fi": 6,
+        "nBE": 4,
+        "nCurvesSc": 0,
+        "nIW": 0,
+        "nPBsIn": 0,
+        "nPBsSc": 0,
+        "nVIn": 0,
+        "surf": "Plane(Plane { origin: DVec3(1.0, 0.5, 0.5), normal: DVec3(1.0, 0.0, 0.0), u_dir: DVec3(0.0, 0.0, 1.0), v_dir: DVec3(0.0, -1.0, 0.0) })",
+        "vertices_in": []
+      }
+    ],
+    "interf": {
+      "EE": 0,
+      "EF": 1,
+      "FF": 6,
+      "total": 19
+    },
+    "interf_ee": [],
+    "interf_ef": [
+      {
+        "edge": 1,
+        "face": 5,
+        "new_v": 10
+      }
+    ],
+    "interf_ff": [
+      {
+        "curves": [
+          2
+        ],
+        "f1": 0,
+        "f2": 3,
+        "n_curves": 1,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [
+          0,
+          1
+        ],
+        "f1": 0,
+        "f2": 1,
+        "n_curves": 2,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [],
+        "f1": 0,
+        "f2": 4,
+        "n_curves": 0,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [
+          3
+        ],
+        "f1": 0,
+        "f2": 5,
+        "n_curves": 1,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [],
+        "f1": 0,
+        "f2": 2,
+        "n_curves": 0,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [],
+        "f1": 0,
+        "f2": 6,
+        "n_curves": 0,
+        "n_points": 0,
+        "tangent": false
+      }
+    ],
+    "intersection_curves": [
+      {
+        "ci": 0,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ev": 5,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 0,
+        "sv": 3,
+        "t_range": [
+          "0.000000",
+          "4.712389"
+        ]
+      },
+      {
+        "ci": 1,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
+        "ev": 3,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 0,
+        "sv": 5,
+        "t_range": [
+          "4.712389",
+          "6.283185"
+        ]
+      },
+      {
+        "ci": 2,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(1.0, 0.0, 0.0), y_dir: DVec3(0.0, 0.0, 1.0), radius: 1.0 })",
+        "ev": 0,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 0,
+        "sv": 3,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ]
+      },
+      {
+        "ci": 3,
+        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(0.0, 1.0, 0.0), radius: 1.0 })",
+        "ev": 5,
+        "has_pca": true,
+        "has_pcb": true,
+        "n_pave_blocks": 0,
+        "sv": 0,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ]
+      }
+    ],
+    "my_images": [],
+    "nCB": 24,
+    "nE": 26,
+    "nE_raw": 26,
+    "nF": 7,
+    "nF_raw": 7,
+    "nIC": 4,
+    "nPB": 34,
+    "nSource": 43,
+    "nTotal": 55,
+    "nV": 11,
+    "nV_raw": 11,
+    "n_comp_solids": 0,
+    "n_shells": 2,
+    "n_solids": 2,
+    "pave_blocks": [
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 18,
+        "orig_edge": 1,
+        "pbi": 0,
+        "t_range": [
+          "0.000000",
+          "3.141593"
+        ],
+        "v1": 10,
+        "v2": 1
+      },
+      {
+        "common_block": 17,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 3,
+        "pbi": 1,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 2,
+        "v2": 3
+      },
+      {
+        "common_block": 18,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 4,
+        "pbi": 2,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 3,
+        "v2": 4
+      },
+      {
+        "common_block": 19,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 5,
+        "pbi": 3,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 4,
+        "v2": 5
+      },
+      {
+        "common_block": 16,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 6,
+        "pbi": 4,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 5,
+        "v2": 2
+      },
+      {
+        "common_block": 20,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 7,
+        "pbi": 5,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 10,
+        "v2": 7
+      },
+      {
+        "common_block": 21,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 8,
+        "pbi": 6,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 7,
+        "v2": 8
+      },
+      {
+        "common_block": 22,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 9,
+        "pbi": 7,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 8,
+        "v2": 9
+      },
+      {
+        "common_block": 14,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 10,
+        "pbi": 8,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 9,
+        "v2": 10
+      },
+      {
+        "common_block": 15,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 11,
+        "pbi": 9,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 3,
+        "v2": 7
+      },
+      {
+        "common_block": 23,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 12,
+        "pbi": 10,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 2,
+        "v2": 10
+      },
+      {
+        "common_block": 12,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 13,
+        "pbi": 11,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 4,
+        "v2": 8
+      },
+      {
+        "common_block": 13,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 14,
+        "pbi": 12,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 5,
+        "v2": 9
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 18,
+        "orig_edge": 1,
+        "pbi": 13,
+        "t_range": [
+          "0.000000",
+          "3.141593"
+        ],
+        "v1": 10,
+        "v2": 1
+      },
+      {
+        "common_block": 17,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 3,
+        "pbi": 14,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 2,
+        "v2": 3
+      },
+      {
+        "common_block": 18,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 4,
+        "pbi": 15,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 3,
+        "v2": 4
+      },
+      {
+        "common_block": 19,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 5,
+        "pbi": 16,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 4,
+        "v2": 5
+      },
+      {
+        "common_block": 16,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 6,
+        "pbi": 17,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 5,
+        "v2": 2
+      },
+      {
+        "common_block": 20,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 7,
+        "pbi": 18,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 10,
+        "v2": 7
+      },
+      {
+        "common_block": 21,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 8,
+        "pbi": 19,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 7,
+        "v2": 8
+      },
+      {
+        "common_block": 22,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 9,
+        "pbi": 20,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 8,
+        "v2": 9
+      },
+      {
+        "common_block": 14,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 10,
+        "pbi": 21,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 9,
+        "v2": 10
+      },
+      {
+        "common_block": 15,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 11,
+        "pbi": 22,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 3,
+        "v2": 7
+      },
+      {
+        "common_block": 23,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 12,
+        "pbi": 23,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 2,
+        "v2": 10
+      },
+      {
+        "common_block": 12,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 13,
+        "pbi": 24,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 4,
+        "v2": 8
+      },
+      {
+        "common_block": 13,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 14,
+        "pbi": 25,
+        "t_range": [
+          "0.000000",
+          "1.000000"
+        ],
+        "v1": 5,
+        "v2": 9
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 15,
+        "orig_edge": 0,
+        "pbi": 26,
+        "t_range": [
+          "0.000000",
+          "4.712389"
+        ],
+        "v1": 3,
+        "v2": 5
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": null,
+        "orig_edge": 0,
+        "pbi": 27,
+        "t_range": [
+          "4.712389",
+          "6.283185"
+        ],
+        "v1": 5,
+        "v2": 3
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 16,
+        "orig_edge": 0,
+        "pbi": 28,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ],
+        "v1": 3,
+        "v2": 10
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 17,
+        "orig_edge": 0,
+        "pbi": 29,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ],
+        "v1": 10,
+        "v2": 5
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 22,
+        "orig_edge": 18446744073709551615,
+        "pbi": 30,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ],
+        "v1": 3,
+        "v2": 10
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 23,
+        "orig_edge": 18446744073709551615,
+        "pbi": 31,
+        "t_range": [
+          "0.000000",
+          "4.712389"
+        ],
+        "v1": 3,
+        "v2": 5
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 24,
+        "orig_edge": 18446744073709551615,
+        "pbi": 32,
+        "t_range": [
+          "4.712389",
+          "6.283185"
+        ],
+        "v1": 5,
+        "v2": 3
+      },
+      {
+        "common_block": null,
+        "n_ext": 0,
+        "new_edge": 25,
+        "orig_edge": 18446744073709551615,
+        "pbi": 33,
+        "t_range": [
+          "0.000000",
+          "1.570796"
+        ],
+        "v1": 0,
+        "v2": 5
+      }
+    ],
+    "vertices": [
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeA)",
+        "pt": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 0
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeA)",
+        "pt": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 1
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 2
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 3
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          1.0,
+          1.0,
+          0.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 4
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 5
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 6
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          1.0,
+          0.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 7
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 8
+      },
+      {
+        "is_internal": false,
+        "origin": "Some(ShapeB)",
+        "pt": [
+          0.0,
+          1.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 9
+      },
+      {
+        "is_internal": true,
+        "origin": "None",
+        "pt": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "tol": "1.00e-7",
+        "vi": 10
+      }
+    ],
+    "wire_images": []
+  }
+}

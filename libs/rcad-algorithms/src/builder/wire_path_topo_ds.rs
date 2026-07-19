@@ -560,7 +560,15 @@ fn build_smart_map(
             let a_v = seg.start_vertex.index;
             // OCCT: aV.Orientation() when edge iter starts.
             // For a segment: start_vertex orientation = FORWARD if seg is FORWARD, REVERSED if seg is REVERSED
-            let b_is_in = seg.orientation == Orientation::Reversed;
+            // OCCT TopExp: FORWARD edge → first vertex FORWARD(OUT), last REVERSED(IN)
+            //              REVERSED edge → first vertex REVERSED(IN), last FORWARD(OUT)
+            // rcad swaps start/end for REVERSED, so:
+            //   REVERSED start = TShape last vertex → FORWARD → OUT
+            //   REVERSED end = TShape first vertex → REVERSED → IN
+            //   FORWARD start = TShape first vertex → FORWARD → OUT
+            //   FORWARD end = TShape last vertex → REVERSED → IN
+            // Result: b_is_in=false for start, true for end, regardless of orientation.
+            let b_is_in = false;
 
             // Deduplicate: only add if this physical edge hasn't been added at this vertex
             let added = vert_edge_added.entry(a_v).or_default();
@@ -589,8 +597,9 @@ fn build_smart_map(
             let added = vert_edge_added.entry(a_v).or_default();
             if added.insert(src_key) {
                 let entry = smart_map.entry(a_v).or_default();
-                // OCCT: last vertex orientation is always the opposite of first
-                let b_is_in = seg.orientation != Orientation::Reversed;
+                // For FORWARD: end = TShape last vertex -> REVERSED -> bIsIN=true
+                // For REVERSED: end = TShape first vertex -> REVERSED -> bIsIN=true
+                let b_is_in = true;
                 entry.push(EdgeInfo {
                     seg_idx: si, passed: false, in_flag: b_is_in,
                     is_inside: false, is_circle_arc: false, angle: 0.0,
@@ -684,29 +693,34 @@ fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option
     // For a regular block, each vertex has exactly 2 incident segments.
     // Walk from the first segment's start vertex, following end→start chain.
     let mut wire: Vec<usize> = Vec::with_capacity(block.len());
-    let mut used = vec![false; block.len()];
 
     let start_si = block[0];
     let start_seg = &segments[start_si];
     let start_v = start_seg.start_vertex.index;
     wire.push(start_si);
-    used[0] = true;
+
+    // Track used segment indices (NOT block positions).
+    // BUG HISTORY: used[] was previously indexed by block position, but
+    // vert_to_segs uses segment indices. When block order != [0,1,2..],
+    // the wrong used entry was checked, causing duplicate visits.
+    let mut used_si: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    used_si.insert(start_si);
 
     let mut cur_v = start_seg.end_vertex.index;
     loop {
         // Find the next unused segment with cur_v as start vertex
         let next = vert_to_segs.get(&cur_v).and_then(|neighbors| {
-            neighbors.iter().find(|&&ni| !used[ni] && segments[ni].start_vertex.index == cur_v)
+            neighbors.iter().find(|&&ni| !used_si.contains(&ni) && segments[ni].start_vertex.index == cur_v)
                 .or_else(|| {
                     // Try matching end vertex (reversed orientation)
-                    neighbors.iter().find(|&&ni| !used[ni] && segments[ni].end_vertex.index == cur_v)
+                    neighbors.iter().find(|&&ni| !used_si.contains(&ni) && segments[ni].end_vertex.index == cur_v)
                 })
                 .copied()
         });
 
         match next {
             Some(si) => {
-                used[block.iter().position(|&x| x == si).unwrap()] = true;
+                used_si.insert(si);
                 wire.push(si);
                 let seg = &segments[si];
                 if seg.start_vertex.index == cur_v {
