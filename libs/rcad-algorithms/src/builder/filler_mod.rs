@@ -1487,6 +1487,8 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT: for Union+3D, create a solid from all faces (when no result solids).
+        // build_topods PrepareHistory also has a fallback, but this one runs earlier
+        // and populates my_solids for downstream history tracking.
         if self.my_operation == BooleanOpType::Union && md3[0] == 3 {
             let face_refs: Vec<topods::ShapeRef> = self.my_face_refs.borrow().iter()
                 .filter(|sr| !sr.is_null()).copied().collect();
