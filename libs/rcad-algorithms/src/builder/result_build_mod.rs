@@ -25,7 +25,12 @@ impl<'a> BooleanBuilder<'a> {
 
         let solids = std::mem::take(&mut result.tmp_solids);
         let sides: Vec<usize> = result.solid_side_origin.clone();
-        if sides.len() != solids.len() { return; }
+        // When solids is empty (e.g., BuildResult consumed them), fall through to
+        // building-element comparison below and rebuild t_brep from keep_set.
+        let solids_empty = solids.is_empty();
+        let sides_empty = sides.is_empty();
+        // If both empty, there's nothing to filter.
+        if solids_empty && sides_empty { return; }
 
         // A. FUSE -- keep all split solids (fence-deduped)
         if self.my_operation == BooleanOpType::Union {
@@ -326,6 +331,34 @@ impl<'a> BooleanBuilder<'a> {
         // Result edges are embedded in pre-assembled solids — no standalone DEs.
 
         result.tmp_solids = kept_solids;
+
+        // When solids was empty, rebuild t_brep from DS faces in keep_set.
+        // OCCT L800-823: replace myShape with filtered compound (myRC).
+        if solids_empty && !keep_set.is_empty() {
+            let mut kept_refs: Vec<topods::ShapeRef> = Vec::new();
+            for dsfi in 0..self.ds.faces.len() {
+                let flat_fi = f_base + dsfi;
+                if !keep_set.contains(&flat_fi) { continue; }
+                // Find matching my_face_refs for this DS face
+                for (rfi, fo) in result.face_origins.iter().enumerate() {
+                    let (origin, sfi) = match fo {
+                        FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                        FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
+                        _ => continue,
+                    };
+                    if self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin && f.source_face_idx == sfi) {
+                        if let Some(&sr) = self.my_face_refs.borrow().get(rfi) {
+                            if !sr.is_null() { kept_refs.push(sr); }
+                        }
+                    }
+                }
+            }
+            if !kept_refs.is_empty() {
+                let mut nb = topods::BRep::new();
+                nb.add_tshell(kept_refs);
+                *t_brep = nb;
+            }
+        }
     }
 
     /// FillInternalShapes (Builder_3.cxx L622-887).
