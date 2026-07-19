@@ -816,7 +816,7 @@ impl<'a> BooleanBuilder<'a> {
     ///     --add all image shapes; else --add the original shape.
     /// --BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form for ALL types.
-    /// BuildResult (BOPAlgo_Builder.cxx L130-168).
+    /// ✅ OCCT-aligned: BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).
     ///   For each argument (myArguments):
     ///     Path A — argument's ShapeType == theType: process directly.
     ///     Path B — TopExp_Explorer traverses sub-shapes of theType:
