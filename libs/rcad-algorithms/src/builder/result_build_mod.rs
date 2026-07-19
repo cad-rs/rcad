@@ -858,15 +858,11 @@ impl<'a> BooleanBuilder<'a> {
                     let src_sr = self.brep_sr(f_base + side_offset + df.source_face_idx);
                     let has_images = self.my_images.borrow().contains_key(&src_sr);
                     if !has_images {
-                        // Narrow scope for my_face_refs borrow to avoid conflict
-                        // with add_to_result which borrows my_face_refs mutably.
-                        let add_sr = {
-                            let mfr = self.my_face_refs.borrow();
-                            let face_sr = mfr.get(fi).copied().unwrap_or(topods::ShapeRef::NULL);
-                            if !face_sr.is_null() { face_sr } else { src_sr }
-                        };
-                        if a_m_fence.insert(add_sr.index) {
-                            self.add_to_result(add_sr, the_type, result, &mut *t);
+                        // OCCT BuildResult: no images → add original shape as-is.
+                        // BRep_Builder().Add(myShape, aS) adds the original TopoDS_Face.
+                        // rcad: source face TShape at flat index src_sr.index.
+                        if a_m_fence.insert(src_sr.index) {
+                            self.add_to_result(src_sr, the_type, result, &mut *t);
                         }
                     } else if let Some(imgs) = self.my_images.borrow().get(&src_sr) {
                         for &img_sr in imgs {
@@ -1022,7 +1018,13 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             rcad_kernel::topods::ShapeType::Face => {
-                // Face TShape already created by build_topods_faces or emit_face_topods.
+                // OCCT BuildResult: BRep_Builder().Add(myShape, aS) — adds original
+                // face TShape. rcad: source face TShape created by
+                // populate_source_shapes_in_t_brep at flat index a_s.index.
+                // Ensure the face TShape exists in my_shape.
+                if a_s.index >= t.tshapes.len() {
+                    return;
+                }
                 if !self.my_face_refs.borrow().iter().any(|&r| !r.is_null() && r.index == a_s.index) {
                     self.my_face_refs.borrow_mut().push(a_s);
                 }
