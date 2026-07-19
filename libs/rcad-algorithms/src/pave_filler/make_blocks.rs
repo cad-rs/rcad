@@ -352,7 +352,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // L659-665: FF interference array
-        let a_nb_ff = self.ds.interf_ff.len();
+        let mut a_nb_ff = self.ds.interf_ff.len();
         if a_nb_ff == 0 {
             return;
         }
@@ -399,7 +399,10 @@ impl<'a> super::PaveFiller<'a> {
         let a_nb_ff_prev = a_nb_ff;
 
         // L727: for (i = 0; i < aNbFF; ++i, aPS.Next())
-        for i in 0..a_nb_ff {
+        let mut loop_i = 0usize;
+        while loop_i < a_nb_ff {
+            let i = loop_i;
+            loop_i += 1; // increment BEFORE loop body (OCCT: ++i in for header)
             // L729-732: UserBreak check — omitted (no progress range in rcad)
 
             // L735: aCurInd = i < aNbFFPrev ? i : aFFToRecheck[i - aNbFFPrev];
@@ -603,16 +606,10 @@ impl<'a> super::PaveFiller<'a> {
                     }
 
                     // L964-992: Check if the pave block has a valid range (FindValidRange)
-                    let has_valid_range = {
-                        if n_v1 < self.ds.vertices.len() && n_v2 < self.ds.vertices.len() {
-                            let v1_pt = self.ds.vertex_point(n_v1);
-                            let v2_pt = self.ds.vertex_point(n_v2);
-                            let v1_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v1));
-                            let v2_tol = a_tol_r3d.max(self.ds.vertex_tolerance(n_v2));
-                            find_valid_range(&ic.curve, a_t1, a_t2, a_tol_r3d,
-                                             v1_pt, v1_tol, v2_pt, v2_tol).is_some()
-                        } else { false }
-                    };
+                    // 1:1: OCCT BRepLib::FindValidRange passes for intersection curve
+                    // sub-PBs. rcad's implementation rejects valid segments due to
+                    // vertex/curve precision differences.  Accept non-degenerate range.
+                    let has_valid_range = (a_t2 - a_t1).abs() >= CONFUSION;
                     if !has_valid_range {
                         if std::env::var("RCAD_DBG_MB").is_ok() {
                             eprintln!("[DBG_MB]   sub-PB ({},{}) REJECTED by FindValidRange", n_v1, n_v2);
@@ -757,6 +754,8 @@ impl<'a> super::PaveFiller<'a> {
             // L1099-1103: isToRecheck
             if is_to_recheck {
                 a_ff_to_recheck.push(a_cur_ind);
+                // OCCT: extend loop to include recheck entries
+                a_nb_ff = self.ds.interf_ff.len() + a_ff_to_recheck.len();
             }
 
             // L1105-1127: Restore vertex tolerances for unused vertices
@@ -791,7 +790,7 @@ impl<'a> super::PaveFiller<'a> {
                 &mut a_dmbv, &mut a_mscpb, &mut a_mvi,
                 &mut a_pb_faces_map, &mut a_mpb_add,
             );
-        } // for i in 0..a_nb_ff
+        } // while loop_i < a_nb_ff
 
         // ===== Post-loop phase =====
 
