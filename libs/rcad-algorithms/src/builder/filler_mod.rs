@@ -1477,6 +1477,8 @@ impl<'a> BooleanBuilder<'a> {
         let origin_side = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
         let mut the_lif: Vec<usize> = Vec::new();
+        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+        let side_offset = if side == 0 { 0usize } else { self.ds.a_face_count };
 
         // Iterate sub-shapes (shells) of the solid.
         for ds_shell in &self.ds.shells {
@@ -1493,73 +1495,20 @@ impl<'a> BooleanBuilder<'a> {
                 if dsf.origin != origin_side { continue; }
 
                 // Check if face has split images.
-                let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
-                    .filter(|(_, fo)| match fo {
-                        FaceOrigin::FromA(sfi) => dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == *sfi,
-                        FaceOrigin::FromB(sfi) => dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == *sfi,
-                        _ => false,
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                if result_faces.is_empty() { continue; }
-
-                if result_faces.len() > 1 {
-                    
-                    for &a_fx in &result_faces {
-                        let a_fx_dfi_opt = match &result.face_origins[a_fx] {
-                            FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
-                                f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *s),
-                            FaceOrigin::FromB(s) => self.ds.faces.iter().position(|f|
-                                f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *s),
-                            _ => None,
-                        };
-                        let is_sd = a_fx_dfi_opt.map_or(false, |fx_dfi|
-                            self.ds.shape_sd.has_sd_face(dsfi, fx_dfi)
-                                || self.ds.shape_sd.has_sd_face(fx_dfi, dsfi));
-
-                        if is_sd {
-                            // Same-domain image face --check reverse
-                            let b_to_reverse = a_fx_dfi_opt.map_or(false, |fx_dfi|
-                                crate::boptools::is_split_to_reverse(
-                                    self.ds.face_normal(dsfi), self.ds.face_normal(fx_dfi)));
-                            if !b_to_reverse {
-                                i_flag = true;
-                                if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); }
-                            }
-                        } else {
-                            // Not same-domain --use original orientation
-                            i_flag = true;
-                            if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); }
-                        }
-                    }
-                } else {
-                    // No images --add original face directly
-                    let fi = result_faces[0];
-                    i_flag = true;
-                    if !a_sh_d.contains(&fi) { a_sh_d.push(fi); }
-                }
+                // OCCT BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368): use myImages.
+                let src_key = self.brep_sr(f_base + side_offset + dsf.source_face_idx);
+                let _has_splits = self.my_images.borrow().get(&src_key)
+                    .map(|imgs| imgs.len() > 1).unwrap_or(false);
+                // Use parent DS face index whether split or not (split children
+                // belong to same DS face; classify_faces uses DS face indices).
+                if !a_sh_d.contains(&dsfi) { a_sh_d.push(dsfi); }
+                i_flag = true;
             }
 
             if i_flag && !a_sh_d.is_empty() {
-                // Map result face indices -> DS face indices for classify_point
-                let mut ds_sh = Vec::with_capacity(a_sh_d.len());
-                for &rfi in &a_sh_d {
-                    let dfi_opt = match result.face_origins.get(rfi) {
-                        Some(FaceOrigin::FromA(sfi)) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                        Some(FaceOrigin::FromB(sfi)) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                        _ => None,
-                    };
-                    if let Some(dfi) = dfi_opt {
-                        if !ds_sh.contains(&dfi) {
-                            ds_sh.push(dfi);
-                        }
-                    }
-                }
-                if !ds_sh.is_empty() {
-                    draft_shells.push(ds_sh);
-                }
+                // a_sh_d already contains DS face indices (not rfi).
+                // No need to map via result.face_origins (OCCT operates on BRep directly).
+                draft_shells.push(a_sh_d.clone());
             }
         }
 
@@ -1569,18 +1518,35 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
     pub(super) fn fill_in_3d_parts(&self, result: &mut ResultBuilder) -> Vec<(usize, usize, &'static str)> {
         // === Phase 1: Collect all faces ===
+        // OCCT ClassifyFaces (BOPAlgo_Builder_3.cxx L97-263): iterate result BRep faces.
+        // rcad: use DS face indices (my_face_refs + my_images) instead of result.face_origins
+        // which is never populated (OCCT operates on BRep, has no result.face_origins).
+        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
         let mut a_l_faces: Vec<usize> = Vec::new();
         let mut a_m_fence: std::collections::HashSet<usize> =
             std::collections::HashSet::new();
 
-        for (fi, fo) in result.face_origins.iter().enumerate() {
-            let is_face = match fo {
-                FaceOrigin::FromA(_) | FaceOrigin::FromB(_) => true,
-                _ => false,
-            };
-            if !is_face { continue; }
-            if a_m_fence.insert(fi) {
-                a_l_faces.push(fi);
+        // Add source DS faces that have non-null refs
+        let fr = self.my_face_refs.borrow();
+        for (rfi, &sr) in fr.iter().enumerate() {
+            if sr.is_null() { continue; }
+            // Map rfi to DS face index via flat index computation
+            for (dsfi, df) in self.ds.faces.iter().enumerate() {
+                let src_flat = f_base + (if df.origin == ShapeOrigin::ShapeA { 0 } else { self.ds.a_face_count }) + df.source_face_idx;
+                if rfi == src_flat || rfi == dsfi {
+                    if a_m_fence.insert(dsfi) { a_l_faces.push(dsfi); }
+                    break;
+                }
+            }
+        }
+        // Also add DS faces that have split images in my_images
+        let imgs = self.my_images.borrow();
+        for dsfi in 0..self.ds.faces.len() {
+            let df = &self.ds.faces[dsfi];
+            let src_flat = f_base + (if df.origin == ShapeOrigin::ShapeA { 0 } else { self.ds.a_face_count }) + df.source_face_idx;
+            let src_key = self.brep_sr(src_flat);
+            if imgs.contains_key(&src_key) {
+                if a_m_fence.insert(dsfi) { a_l_faces.push(dsfi); }
             }
         }
 
@@ -1607,29 +1573,28 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // === Phase 3: ClassifyFaces ===
+        // OCCT: use BRep face geometry for sample points + AABBs. rcad: use DS face data.
         let face_samples: Vec<DVec3> = a_l_faces.iter()
-            .map(|&fi| if fi < result.faces.len() { result.faces[fi].8 } else { DVec3::ZERO })
-            .collect();
-        let aabb_of_face: Vec<Aabb> = a_l_faces.iter().map(|&fi| {
-            // Build minimal AABB from face boundary vertices via DS
-            if fi < result.face_origins.len() {
-                let dfi_opt = match &result.face_origins[fi] {
-                    FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                        f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                    FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                        f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                    _ => None,
-                };
-                if let Some(dfi) = dfi_opt {
-                    let mut aabb = Aabb::empty();
-                    for &vi in &self.ds.faces[dfi].boundary_verts {
-                        if vi < self.ds.vertices.len() {
-                            aabb.expand_point(self.ds.vertex_point(vi));
-                        }
+            .map(|&dfi| {
+                if let Some(df) = self.ds.faces.get(dfi) {
+                    let mut c = DVec3::ZERO;
+                    let mut n = 0u32;
+                    for &vi in &df.boundary_verts {
+                        if let Some(v) = self.ds.vertices.get(vi) { c += v.point; n += 1; }
                     }
-                    aabb
-                } else { Aabb::empty() }
-            } else { Aabb::empty() }
+                    if n > 0 { c /= n as f64; }
+                    c
+                } else { DVec3::ZERO }
+            })
+            .collect();
+        let aabb_of_face: Vec<Aabb> = a_l_faces.iter().map(|&dfi| {
+            let mut aabb = Aabb::empty();
+            if let Some(df) = self.ds.faces.get(dfi) {
+                for &vi in &df.boundary_verts {
+                    if let Some(v) = self.ds.vertices.get(vi) { aabb.expand_point(v.point); }
+                }
+            }
+            aabb
         }).collect();
         let aabb_of_solid: Vec<Aabb> = a_l_solids.iter().map(|shells| {
             let mut aabb = Aabb::empty();
