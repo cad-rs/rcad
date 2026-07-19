@@ -99,6 +99,8 @@ pub(crate) fn select_best_outgoing_topo<'a>(
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
 /// Analogous to walk_path_extract_wires but uses ShapeRef handles and BRepTool
+/// OCCT-aligned: BOPAlgo_WireSplitter::Path (WireSplitter_1.cxx L358-626).
+/// Walks from start segment through smart_map forming closed wires by min-angle selection.
 pub(crate) fn walk_path_extract_wires(
     start_si: usize,
     segments: &[WireSegmentTopoDS],
@@ -107,237 +109,140 @@ pub(crate) fn walk_path_extract_wires(
     tool: &dyn BRepTool,
 ) {
     let start_seg = &segments[start_si];
-    // If this segment has no EdgeInfo, it cannot be walked.
-    let has_info = smart_map.values().any(|v| v.iter().any(|ei| ei.seg_idx == start_si));
-    if !has_info {
-        smart_map.entry(start_seg.start_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: start_si, passed: true, in_flag: false,
-            is_inside: false, is_circle_arc: false, angle: 0.0,
-        });
-        smart_map.entry(start_seg.end_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: start_si, passed: true, in_flag: true,
-            is_inside: false, is_circle_arc: false, angle: 0.0,
-        });
-        return;
-    }
 
-    let max_iter = segments.len() * 4 + 200;
-
-    // Build a per-vertex map: does this vertex belong to a closed/degenerate edge?
-    let is_vert_closed = |smart_map: &IndexMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
-        smart_map.get(&v).map_or(false, |infos| {
-            infos.iter().any(|ei| {
-                let seg = &segments[ei.seg_idx];
-                seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face
-            })
-        })
-    };
-
-    // Coord2d (BOPAlgo_WireSplitter_1.cxx L677-688).
-    let coord2d = |vi: ShapeRef, edge: ShapeRef, face: ShapeRef| -> Option<DVec2> {
-        let t = tool.parameter_on_edge(vi, edge, face)?;
-        let (pc, _, _) = tool.curve_on_surface(edge, face)?;
-        Some(pc.point_at(t))
-    };
-    // Coord2dVf (BOPAlgo_WireSplitter_1.cxx L692-711).
-    // Uses oriented_first_vertex to respect edge orientation in the face wire.
-    let coord2d_vf = |seg: &WireSegmentTopoDS| -> Option<DVec2> {
-        let fwd_v = tool.oriented_first_vertex(seg.edge, seg.orientation);
-        coord2d(fwd_v, seg.edge, seg.face)
-    };
-
-    // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L873-912)
-    let face_ref = segments[start_si].face;
-    let is_bspline = matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_)));
-    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::synthetic(vi)) };
-    let tolerance_2d = |vi: usize| -> f64 {
-        let vt = vtol(vi);
-        let u = tool.u_resolution(face_ref, vt);
-        let v = tool.v_resolution(face_ref, vt);
-        let mut t = u.max(v);
-        if t < vt { t = vt; }
-        if is_bspline { t *= 1.1; }
-        t
-    };
-    let u_tolerance_2d = |vi: usize| -> f64 { tool.u_resolution(face_ref, vtol(vi)) };
-    let v_tolerance_2d = |vi: usize| -> f64 { tool.v_resolution(face_ref, vtol(vi)) };
-    let uv_tolerance = |vi: usize| -> f64 { 2.0 * tolerance_2d(vi) };
+    // OCCT L382-384: init
+    let mut a_va = start_seg.start_vertex.index;
+    let mut a_e_outa = start_si;
 
     let mut edge_seq: Vec<usize> = Vec::new();
     let mut vert_seq: Vec<usize> = Vec::new();
-    let mut uv_seq: Vec<DVec2> = Vec::new();
-    let mut info_seq: Vec<usize> = Vec::new();
 
-    let mut ci = start_si;
-    let mut arrived_vertex = start_seg.end_vertex.index;
+    // OCCT Tolerance2D (WireSplitter_1.cxx L883-905)
+    let face_ref = start_seg.face;
+    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::synthetic(vi)) };
+    let u_tolerance = |vi: usize| -> f64 { tool.u_resolution(face_ref, vtol(vi)) };
+    let v_tolerance = |vi: usize| -> f64 { tool.v_resolution(face_ref, vtol(vi)) };
+    let tolerance_2d = |vi: usize| -> f64 {
+        let vt = vtol(vi);
+        let u = u_tolerance(vi);
+        let v = v_tolerance(vi);
+        let mut t = u.max(v);
+        if t < vt { t = vt; }
+        if matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_))) { t *= 1.1; }
+        t
+    };
 
-    for _iter in 0..max_iter {
-        
-        
-        if edge_seq.len() == 1 {
-            let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
-                (WireEdgeSourceTopoDS::DsEdge(ea), WireEdgeSourceTopoDS::DsEdge(eb)) => {
-                    ea.index == eb.index && segments[edge_seq[0]].orientation == segments[ci].orientation
-                }
-                (WireEdgeSourceTopoDS::IntersectionCurve(ca), WireEdgeSourceTopoDS::IntersectionCurve(cb)) => {
-                    ca.index == cb.index && segments[edge_seq[0]].orientation == segments[ci].orientation
-                }
-                (WireEdgeSourceTopoDS::SeamEdge, WireEdgeSourceTopoDS::SeamEdge) => true,
-                _ => false,
-            };
-            if ci == edge_seq[0] || same_edge {
-                return;
-            }
-        }
+    // OCCT Coord2d (WireSplitter_1.cxx L677-683)
+    let coord2d = |vi: usize, si: usize| -> DVec2 {
+        let s = &segments[si];
+        let t = tool.parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
+            .unwrap_or(if vi == s.start_vertex.index { s.t_range[0] } else { s.t_range[1] });
+        let pc = tool.curve_on_surface(s.edge, s.face);
+        pc.and_then(|(pc, _, _)| Some(pc.point_at(t))).unwrap_or(DVec2::ZERO)
+    };
 
-        let seg = &segments[ci];
-        mark_edge_passed(smart_map, ci, seg.start_vertex.index, false);
+    // OCCT L392: for (;;)
+    loop {
+        edge_seq.push(a_e_outa);
 
-        edge_seq.push(ci);
-        vert_seq.push(seg.start_vertex.index);
-        let cur_uv = coord2d(seg.start_vertex, seg.edge, seg.face);
-        uv_seq.push(cur_uv.unwrap_or(DVec2::ZERO));
-        info_seq.push(ci);
+        let seg = &segments[a_e_outa];
+        let a_vb = if seg.start_vertex.index == a_va { seg.end_vertex.index } else { seg.start_vertex.index };
 
-        // ── Loop Detection (OCCT L424-523) ──
-        
-        //   Using arrived vertex (not current edge) matches OCCT's aVertMap:
-        //   a vertex is "closed" if any incident edge is degenerated or closed
-        //   on the face (BOPAlgo_WireSplitter_1.cxx L147-148, L184-194).
-        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = coord2d(ShapeRef::synthetic(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
-        let a_tol_2d = uv_tolerance(arrived_vertex);
-        let a_tol_2d_sq = a_tol_2d * a_tol_2d;
+        // OCCT L416-422: append to sequences (vert + UV coord)
+        vert_seq.push(a_vb);
+        let a_pb = coord2d(a_vb, a_e_outa);
 
-        let mut b_has_edge = false;
-        let a_nb = edge_seq.len();
-        for i in (0..a_nb).rev() {
-            let prev_v = vert_seq[i];
-            let prev_uv = uv_seq[i];
-            let prev_si = edge_seq[i];
+        // OCCT L414: anEdgeInfo->SetPassed(true)
+        mark_edge_passed(smart_map, a_e_outa, a_va, false);
 
-            
-            if !b_has_edge {
-                b_has_edge = match &segments[prev_si].source {
-                    WireEdgeSourceTopoDS::DsEdge(ei) => !tool.is_edge_degenerated(*ei),
-                    _ => true,
-                };
-                if !b_has_edge { continue; }
-            }
+        // OCCT L428-523: Loop detection
+        let a_nb = edge_seq.len() - 1;  // number of entries BEFORE current append
+        let a_tol_2d_2 = 2.0 * tolerance_2d(a_vb);
+        let a_tol_2d_sq = a_tol_2d_2 * a_tol_2d_2;
+        // Inline is_vert_closed to avoid borrow conflict
+        let b_is_closed = smart_map.get(&a_vb).map_or(false, |infos| {
+            infos.iter().any(|ei| {
+                let s = &segments[ei.seg_idx];
+                s.start_vertex.index == s.end_vertex.index || s.is_closed_on_face
+            })
+        });
 
-            let is_same_v = prev_v == arrived_vertex;
-            let mut is_same_v_2d = is_same_v;
+        let mut loop_found = false;
+        // OCCT L466: for (j = aNb; j >= 0; --j)
+        // aNb is aLS.Length() before append (1-indexed). After append, aLS has aNb+1 entries.
+        // j = aNb checks the last entry (the one just appended). In rcad 0-indexed,
+        // the last entry is at index a_nb (edge_seq.len()-1). OCCT extracts aLS(j..aNb)
+        // so j=aNb gives empty range → skip by using (0..a_nb).rev() (excludes a_nb).
+        for j in (0..a_nb).rev() {
+            // OCCT L468: aVertVa(j+1).IsSame(aVb)
+            if vert_seq[j] != a_vb { continue; }
 
-            if is_same_v {
-                if b_is_closed {
-                    let a_d2 = prev_uv.distance_squared(a_pb);
-                    is_same_v_2d = a_d2 < a_tol_2d_sq;
-                    if is_same_v_2d {
-                        let u_dist = (prev_uv.x - a_pb.x).abs();
-                        let v_dist = (prev_uv.y - a_pb.y).abs();
-                        let a_tol_u = 2.0 * u_tolerance_2d(arrived_vertex);
-                        let a_tol_v = 2.0 * v_tolerance_2d(arrived_vertex);
-                        if u_dist > a_tol_u || v_dist > a_tol_v {
-                            is_same_v_2d = false;
-                        }
-                    }
-                }
-            }
+            // OCCT L472-474: if (aVertMap.IsBound(aVb) && aVertMap.Find(aVb))
+            // → vertex belongs to closed/degenerated edge: check 2D proximity
+            let is_same_v_2d = if b_is_closed {
+                let a_d2 = coord2d(vert_seq[j], edge_seq[j]).distance_squared(a_pb);
+                // OCCT L484-488: additional UV tolerance check
+                if a_d2 < a_tol_2d_sq {
+                    let prev_uv = coord2d(vert_seq[j], edge_seq[j]);
+                    let u_dist = (prev_uv.x - a_pb.x).abs();
+                    let v_dist = (prev_uv.y - a_pb.y).abs();
+                    u_dist <= 2.0 * u_tolerance(a_vb) && v_dist <= 2.0 * v_tolerance(a_vb)
+                } else { false }
+            } else { true };
 
-            if is_same_v && is_same_v_2d {
-                let wire: Vec<usize> = edge_seq[i..].to_vec();
-
-                let mut is_valid = true;
-                if wire.len() == 2 {
-                    let a = &segments[wire[0]];
-                    let b = &segments[wire[1]];
-                    let same_edge = match (&a.source, &b.source) {
-                        (WireEdgeSourceTopoDS::DsEdge(ea), WireEdgeSourceTopoDS::DsEdge(eb)) => ea.index == eb.index,
-                        (WireEdgeSourceTopoDS::IntersectionCurve(ca), WireEdgeSourceTopoDS::IntersectionCurve(cb)) => ca.index == cb.index,
+            // OCCT L476: if (anIsSameV && anIsSameV2d) → found loop
+            if is_same_v_2d {
+                // OCCT L478-496: MakeWire from aLS(j..aNb)
+                let wire: Vec<usize> = edge_seq[j..].to_vec();
+                let same_edge = wire.len() == 2
+                    && match (&segments[wire[0]].source, &segments[wire[1]].source) {
+                        (WireEdgeSourceTopoDS::DsEdge(a), WireEdgeSourceTopoDS::DsEdge(b)) => a.index == b.index,
+                        (WireEdgeSourceTopoDS::IntersectionCurve(a), WireEdgeSourceTopoDS::IntersectionCurve(b)) => a.index == b.index,
                         (WireEdgeSourceTopoDS::SeamEdge, WireEdgeSourceTopoDS::SeamEdge) => true,
                         _ => false,
                     };
-                    if same_edge { is_valid = false; }
-                }
-                if is_valid { wires.push(wire); }
+                if !same_edge { wires.push(wire); }
 
-                let a_nbj = i;
-                if a_nbj == 0 {
-                    edge_seq.clear();
-                    vert_seq.clear();
-                    uv_seq.clear();
-                    return;
-                }
-
-                let continue_vertex = vert_seq[i];
-                edge_seq.truncate(a_nbj);
-                vert_seq.truncate(a_nbj);
-                uv_seq.truncate(a_nbj);
-                info_seq.truncate(a_nbj);
-
-                // L532-535: update state to last kept edge + continuation vertex
-                ci = *info_seq.last().unwrap();
-                arrived_vertex = continue_vertex;
+                // OCCT L505-523: backtrack
+                if j == 0 { return; }
+                a_va = vert_seq[j - 1];
+                a_e_outa = edge_seq[j - 1];
+                edge_seq.truncate(j);
+                vert_seq.truncate(j);
+                loop_found = true;
                 break;
             }
         }
+        if loop_found { continue; }
 
-        // ── Outgoing Edge Selection (OCCT L526-616) ──
-        let angle_in = match find_angle_at(smart_map, ci, arrived_vertex, true) {
-            Some(a) => a,
-            None => return,
-        };
-        let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
-        
-        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = coord2d(ShapeRef::synthetic(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
+        // OCCT L526-616: Outgoing edge selection
+        let i_cnt = smart_map.get(&a_vb).map_or(0, |infos| {
+            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).count()
+        });
+        if i_cnt == 0 { return; }
 
-        
-        let mut p_edge_info: Option<usize> = None;
-        let mut a_min_angle = 100.0;
-        let le_info = smart_map.get(&arrived_vertex).map(|v| v.as_slice()).unwrap_or(&[]);
-        let i_cnt = le_info.iter().filter(|ei| !ei.passed && !ei.in_flag).count();
-        let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSourceTopoDS::IntersectionCurve(_));
-        let mut a_nb_ways_inside = 0i32;
-        let mut p_only_way_in: Option<usize> = None;
+        let an_angle_in = find_angle_at(smart_map, a_e_outa, a_vb, true).unwrap_or(0.0);
+        let incoming_is_boundary = !matches!(segments[a_e_outa].source, WireEdgeSourceTopoDS::IntersectionCurve(_));
 
-        for ei in le_info {
-            let an_is_out = !ei.in_flag;
-            let an_is_not_passed = !ei.passed;
-            if !an_is_out || !an_is_not_passed { continue; }
-            
-            if i_cnt == 0 { return; }
-            
-            if i_cnt == 1 { p_edge_info = Some(ei.seg_idx); break; }
-            let an_angle = if ei.seg_idx == ci { std::f64::consts::TAU }
-            else {
-                
-                if b_is_closed {
-                    let cand_uv = coord2d_vf(&segments[ei.seg_idx])
-                        .unwrap_or(DVec2::ZERO);
-                    if cand_uv.distance_squared(a_pb) >= a_tol_2d_sq { continue; }
-                }
-                let an_angle_out = ei.angle;
-                clock_wise_angle(angle_in, an_angle_out)
-            };
-            
-            if incoming_is_boundary && ei.is_inside {
-                a_nb_ways_inside += 1;
-                p_only_way_in = Some(ei.seg_idx);
-            }
-            
-            if an_angle < a_min_angle - std::f64::EPSILON {
-                a_min_angle = an_angle;
-                p_edge_info = Some(ei.seg_idx);
-            }
+        let le_info: Vec<&EdgeInfo> = smart_map.get(&a_vb)
+            .map(|v| v.iter().filter(|ei| !ei.passed && !ei.in_flag).collect())
+            .unwrap_or_default();
+
+        if le_info.is_empty() { return; }
+
+        if le_info.len() == 1 {
+            a_va = a_vb;
+            a_e_outa = le_info[0].seg_idx;
+            continue;
         }
-        
-        if a_nb_ways_inside == 1 { p_edge_info = p_only_way_in; }
-        
-        let best_si = match p_edge_info { Some(si) => si, None => return };
-        
-        ci = best_si;
-        arrived_vertex = segments[ci].end_vertex.index;
+
+        let best = select_best_outgoing(&le_info, an_angle_in, incoming_is_boundary, a_e_outa);
+        if let Some(best_ei) = best {
+            a_va = a_vb;
+            a_e_outa = best_ei.seg_idx;
+        } else {
+            return;
+        }
     }
 }
 
@@ -543,8 +448,9 @@ pub(crate) fn build_closed_wires(
         };
 
         if is_regular {
-            // Regular: simple cyclic wire from block
-            if let Some(wire) = build_regular_wire(block) {
+            // Regular block: use build_regular_wire for chain-order wire
+            // (OCCT MakeWire for regular blocks)
+            if let Some(wire) = build_regular_wire(block, segments) {
                 wires.push(wire);
             }
         } else {
@@ -559,88 +465,132 @@ pub(crate) fn build_closed_wires(
     wires
 }
 
-/// Build SmartMap for TopoDS segments with angle computation.
-/// Returns (smart_map, aVertMap) — SplitBlock L137-196 + L298-319.
+/// OCCT-aligned: BOPAlgo_WireSplitter::SplitBlock (WireSplitter_1.cxx L136-195, L298-318).
+/// Fills mySmartMap: for each edge in block, traverse vertices and build EdgeInfo list.
+/// Also builds aVertMap (vertex closed/degenerated tracking).
 fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
 ) -> (IndexMap<usize, Vec<EdgeInfo>>, HashMap<usize, bool>) {
-    use super::angle_2d::angle_2d;
-    use super::wire_path::pc_parameter_range;
-
-    
-    // Non-closed edges appearing an even number of times are internal (IsInside=true).
-    // Uses orientation-aware key matching OCCT TopoDS_Shape hashing (orientation
-    // in the face wire distinguishes FWD and REV occurrences of the same edge).
-    let src_key_of = |seg: &WireSegmentTopoDS, si: usize| -> usize {
-        let base = match seg.source {
+    // OCCT L134: NCollection_Map<TopoDS_Shape> aMS — edge parity tracking
+    // Orientation-independent key: same physical edge = same key (OCCT TopoDS_Shape ignores orientation)
+    let src_key_of = |seg: &WireSegmentTopoDS| -> usize {
+        match seg.source {
             WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
             WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
-            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
-        };
-        base ^ ((seg.orientation as usize) << 24)
+            WireEdgeSourceTopoDS::SeamEdge => usize::MAX,
+        }
     };
     let mut a_ms: HashSet<usize> = HashSet::new();
-    for &si in block {
-        let seg = &segments[si];
-        let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
-            || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
-        if !has_pcurve { continue; }
-
-        let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
-
-        let src_key = src_key_of(seg, si);
-        
-        if !a_ms.insert(src_key) && !b_closed {
-            a_ms.remove(&src_key);
-        }
-    }
 
     let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
-    for &si in block {
-        let seg = &segments[si];
-        let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
-            || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
-        if !has_pcurve { continue; }
-
-        
-        let src_key = src_key_of(seg, si);
-        let is_inside = !a_ms.contains(&src_key);
-        let is_circle_arc = false;
-
-        
-        let in_flag_start = false;
-        let in_flag_end = true;
-
-        smart_map.entry(seg.start_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: si, passed: false, in_flag: in_flag_start, is_inside, is_circle_arc, angle: 0.0,
-        });
-        smart_map.entry(seg.end_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: si, passed: false, in_flag: in_flag_end, is_inside, is_circle_arc, angle: 0.0,
-        });
-    }
-
-    
     let mut a_vert_map: HashMap<usize, bool> = HashMap::new();
+
+    // Track which physical edges have been added at each vertex, to deduplicate
+    // FORWARD/REVERSED copies of the same physical edge matching OCCT TopoDS_Shape behavior.
+    let mut vert_edge_added: HashMap<usize, HashSet<usize>> = HashMap::new();
+
+    // OCCT L154: aV1 tracks first vertex for closed-edge detection
+    let mut a_v1: Option<usize> = None;
+
+    // OCCT L137-195: 1.Filling mySmartMap
     for &si in block {
         let seg = &segments[si];
+        // OCCT L141-144: skip edges without pcurve on face
         let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
             || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
         if !has_pcurve { continue; }
-        let closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
-        if closed {
-            a_vert_map.entry(seg.start_vertex.index).or_insert(true);
-            a_vert_map.entry(seg.end_vertex.index).or_insert(true);
+
+        // OCCT L146: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace)
+        let b_is_closed = seg.start_vertex.index == seg.end_vertex.index
+            || seg.is_closed_on_face;
+
+        // OCCT L148-151: aMS parity (insert; if already exists and not closed, remove)
+        let src_key = src_key_of(seg);
+        if !a_ms.insert(src_key) && !b_is_closed {
+            a_ms.remove(&src_key);
+        }
+
+        // OCCT L154-194: iterate vertices of the edge
+        // aE has 2 vertices: i=0 (first), i=1 (last)
+        // OCCT L168-171: aEI.SetEdge(aE); aOr = aV.Orientation(); bIsIN = (aOr == REVERSED)
+        // In OCCT, TopExp_Explorer of an edge returns vertices in TShape order.
+        // aV.Orientation() is the vertex's orientation WITHIN the edge:
+        //   First vertex (i=0): FORWARD → bIsIN=false
+        //   Last vertex (i=1): REVERSED → bIsIN=true
+        // For REVERSED orientation of the edge in the face wire, the vertex
+        // orientations are swapped by TopExp_Explorer:
+        //   First vertex: REVERSED → bIsIN=true
+        //   Last vertex: FORWARD → bIsIN=false
+
+        // First vertex (i=0): orientation matches edge orientation in face
+        {
+            let a_v = seg.start_vertex.index;
+            // OCCT: aV.Orientation() when edge iter starts.
+            // For a segment: start_vertex orientation = FORWARD if seg is FORWARD, REVERSED if seg is REVERSED
+            let b_is_in = seg.orientation == Orientation::Reversed;
+
+            // Deduplicate: only add if this physical edge hasn't been added at this vertex
+            let added = vert_edge_added.entry(a_v).or_default();
+            if added.insert(src_key) {
+                let entry = smart_map.entry(a_v).or_default();
+                entry.push(EdgeInfo {
+                    seg_idx: si, passed: false, in_flag: b_is_in,
+                    is_inside: false, is_circle_arc: false, angle: 0.0,
+                });
+            }
+
+            a_v1 = Some(a_v);
+
+            // OCCT L183-193: aVertMap
+            let closed = b_is_closed;
+            a_vert_map.entry(a_v)
+                .and_modify(|v| { if closed { *v = true; } })
+                .or_insert(closed);
+        }
+
+        // Last vertex (i=1): opposite orientation
+        {
+            let a_v = seg.end_vertex.index;
+
+            // Deduplicate: only add if this physical edge hasn't been added at this vertex
+            let added = vert_edge_added.entry(a_v).or_default();
+            if added.insert(src_key) {
+                let entry = smart_map.entry(a_v).or_default();
+                // OCCT: last vertex orientation is always the opposite of first
+                let b_is_in = seg.orientation != Orientation::Reversed;
+                entry.push(EdgeInfo {
+                    seg_idx: si, passed: false, in_flag: b_is_in,
+                    is_inside: false, is_circle_arc: false, angle: 0.0,
+                });
+            }
+
+            // OCCT L178-181: bIsClosed = bIsClosed || aV1.IsSame(aV)
+            let a_v1_v = a_v1.unwrap();
+            let b_is_closed = b_is_closed || a_v1_v == a_v;
+
+            // OCCT L183-193: aVertMap
+            let closed = b_is_closed;
+            a_vert_map.entry(a_v)
+                .and_modify(|v| { if closed { *v = true; } })
+                .or_insert(closed);
         }
     }
 
-    // Compute angles using BRepTool (OCCT Angle2D equivalent).
+    // OCCT L298-318: 3.Angles in mySmartMap
+    // Compute angles using BRepTool (equivalent to OCCT Angle2D)
     for (v, infos) in smart_map.iter_mut() {
         let v_ref = ShapeRef::synthetic(*v);
         let geom_tol = tool.vertex_tolerance(v_ref);
         for ei in infos.iter_mut() {
+            // OCCT L308: aEI.SetIsInside(!aMS.Contains(aE))
+            // If edge appears an even number of times (removed from set), it is "inside"
             let seg = &segments[ei.seg_idx];
+            let src_key = src_key_of(seg);
+            ei.is_inside = !a_ms.contains(&src_key);
+
+            // OCCT L311-316: compute Angle2D
             let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
                 .unwrap_or_else(|| {
                     if *v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] }
@@ -650,7 +600,7 @@ fn build_smart_map(
                 WireEdgeSourceTopoDS::IntersectionCurve(_) => {
                     match seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()) {
                         Some(pc) => {
-                            let (ta, tb) = pc_parameter_range(pc);
+                            let (ta, tb) = super::wire_path::pc_parameter_range(pc);
                             (pc, [ta, tb])
                         }
                         None => continue,
@@ -668,59 +618,86 @@ fn build_smart_map(
             };
             let default_surf = Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
             let surf = tool.face_surface(seg.face).unwrap_or(&default_surf);
-            let new_angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
+            let new_angle = super::angle_2d::angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
                 .unwrap_or(0.0);
-            if std::env::var("RCAD_ANGLE_DUMP").is_ok() {
-                let face_idx = segments[0].face.index;
-                let curve_type = match curve { Curve2d::Line(_) => "Line", Curve2d::Circle(_) => "Circle", Curve2d::Ellipse(_) => "Ellipse", Curve2d::BSpline(_) => "BSpline", _ => "Other" };
-                eprintln!("[ANGLE] face={} v={} seg={} in={} t_v={:.10} dom=[{:.6},{:.6}] curve={} angle={:.10} deg={:.4}",
-                    face_idx, v, ei.seg_idx, ei.in_flag, t_v, curve_domain[0], curve_domain[1],
-                    curve_type, new_angle, new_angle.to_degrees());
-            }
             ei.angle = new_angle;
         }
     }
+
     (smart_map, a_vert_map)
 }
 
 /// Build a regular wire from a block (all vertices have degree 2).
 /// OCCT BOPAlgo_WireSplitter::MakeWire (WireSplitter_1.cxx L735-800).
 /// Follows vertex adjacency to build a properly ordered cyclic wire.
-fn build_regular_wire(block: &[usize]) -> Option<Vec<usize>> {
+/// NOTE: Unlike OCCT's MakeWire which adds edges from the list as-is,
+/// this function reorders edges into chain order. rcad's make_connexity_blocks
+/// uses BFS which may not produce chain order, so explicit ordering is needed.
+/// OCCT-aligned: BOPAlgo_WireSplitter.lxx MakeWire (BRep_Builder::Add loop)
+/// + implicit edge ordering from BOPTools_AlgoTools::MakeConnexityBlocks.
+fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option<Vec<usize>> {
     if block.is_empty() { return None; }
     if block.len() == 1 {
         // Single edge → self-loop
         return Some(vec![block[0]]);
     }
-    // Build vertex → segment index adjacency (only start/end vertex matching)
-    // Uses segments directly — the block only contains segment indices.
-    // vert_to_segs maps each vertex to the list of segment indices that have
-    // that vertex as either start or end.
-    // For regular blocks, each vertex appears exactly twice (once as start,
-    // once as end of two different edges).
-    // We must match start→end: find the next segment whose start vertex
-    // equals the current segment's end vertex.
-    
-    // Build adjacency: for each vertex, collect the segments that have it as start or end
-    // Since we don't have direct segment data in this function, we use a simpler approach:
-    // Start from first segment, then iteratively find the next segment whose
-    // start vertex matches our current end vertex.
-    
-    // For a regular block without the segments array, we just need to follow
-    // vertex chains. But we don't have vertex data here — the segments are
-    // referenced by index only.
-    // 
-    // The caller (build_closed_wires) uses the segments array and passes blocks
-    // of indices. To build a proper cyclic wire, we need vertex connectivity.
-    // Since this function doesn't receive the segments, we delegate to the caller
-    // via the segments array that IS available in build_closed_wires.
-    //
-    // For now, return the block as-is; the caller's SimpleWalk already handles
-    // regular cases via make_connexity_blocks which groups by vertex connectivity.
-    // The edge ordering within a regular block doesn't affect the resulting face
-    // orientation — the perform_areas function uses signed area which only depends
-    // on the set of edges, not their order.
-    Some(block.to_vec())
+
+    // Build vertex → segment adjacency
+    let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &si in block {
+        let seg = &segments[si];
+        vert_to_segs.entry(seg.start_vertex.index).or_default().push(si);
+        vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
+    }
+
+    // For a regular block, each vertex has exactly 2 incident segments.
+    // Walk from the first segment's start vertex, following end→start chain.
+    let mut wire: Vec<usize> = Vec::with_capacity(block.len());
+    let mut used = vec![false; block.len()];
+
+    let start_si = block[0];
+    let start_seg = &segments[start_si];
+    let start_v = start_seg.start_vertex.index;
+    wire.push(start_si);
+    used[0] = true;
+
+    let mut cur_v = start_seg.end_vertex.index;
+    loop {
+        // Find the next unused segment with cur_v as start vertex
+        let next = vert_to_segs.get(&cur_v).and_then(|neighbors| {
+            neighbors.iter().find(|&&ni| !used[ni] && segments[ni].start_vertex.index == cur_v)
+                .or_else(|| {
+                    // Try matching end vertex (reversed orientation)
+                    neighbors.iter().find(|&&ni| !used[ni] && segments[ni].end_vertex.index == cur_v)
+                })
+                .copied()
+        });
+
+        match next {
+            Some(si) => {
+                used[block.iter().position(|&x| x == si).unwrap()] = true;
+                wire.push(si);
+                let seg = &segments[si];
+                if seg.start_vertex.index == cur_v {
+                    cur_v = seg.end_vertex.index;
+                } else {
+                    cur_v = seg.start_vertex.index;
+                }
+                // Check if we returned to start
+                if cur_v == start_v && wire.len() == block.len() {
+                    break;
+                }
+            }
+            None => break, // No more edges to follow
+        }
+    }
+
+    if wire.len() != block.len() {
+        // Fallback: return block as-is if we couldn't form a complete chain
+        return Some(block.to_vec());
+    }
+
+    Some(wire)
 }
 
 /// Connected-component grouping for TopoDS segments.
