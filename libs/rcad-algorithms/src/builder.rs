@@ -795,38 +795,11 @@ impl<'a> BooleanBuilder<'a> {
  if self.has_errors() { return Err(BooleanError::DegenerateResult); }
  dump_ctx.snapshot("after_FillImagesCompounds", self.ds, Some(&*self.my_shape.borrow()));
          // OCCT L563-568: 4. BuildShape (BOPAlgo_BOP.cxx L885+)
-        // BuildRC: filter my_shape by building element membership (OCCT L597-881).
-        {
-            let my_op = self.my_operation;
-            let md3 = self.my_dims.get();
-            // A. Fuse: keep all (already done in BuildResult)
-            // B. Common/Cut/Cut21
-            if my_op == BooleanOpType::Intersection && md3[0] == 3 && md3[1] == 3 {
-                let mut t = self.my_shape.borrow_mut();
-                // OCCT L597-881: collect building elements of each side from DS
-                let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
-                let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-                // OCCT L800-823: for COMMON, filter by dimension (SOLID→SHELL→FACE)
-                // Build a compound of faces that are IN the other shape.
-                let in_parts = self.my_in_parts.borrow();
-                if !in_parts.is_empty() {
-                    let side0_faces: &[usize] = in_parts.get(&0).map(|v| v.as_slice()).unwrap_or(&[]);
-                    let side1_faces: &[usize] = in_parts.get(&1).map(|v| v.as_slice()).unwrap_or(&[]);
-                    let fr = self.my_face_refs.borrow();
-                    let mut kept: Vec<topods::ShapeRef> = Vec::new();
-                    for &rfi in side0_faces.iter().chain(side1_faces.iter()) {
-                        if let Some(&sr) = fr.get(rfi) {
-                            if !sr.is_null() { kept.push(sr); }
-                        }
-                    }
-                    if !kept.is_empty() {
-                        let mut nb = topods::BRep::new();
-                        let sh = nb.add_tshell(kept);
-                        nb.add_tsolid(vec![sh]);
-                        *t = nb;
-                    }
-                }
-            }
+        // OCCT L563-568: 4. BuildShape (BOPAlgo_BOP.cxx L885+)
+        // BuildRC: filter by building element membership (BOPAlgo_BOP.cxx L597-881).
+        if self.my_operation != BooleanOpType::Union {
+            let mut t = self.my_shape.borrow_mut();
+            self.build_rc(&mut result, &mut *t);
         }
         // OCCT L569-573: 5. PrepareHistory — builds BRep TShapes + source shape history.
  let mut history = {

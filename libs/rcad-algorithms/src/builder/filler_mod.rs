@@ -1457,8 +1457,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
-    ///   3-step: FillIn3DParts → BuildSplitSolids → FillInternalShapes.
-    ///   Plus OCCT BuildBOP IN/OUT filtering (build_rc) + fallback for open solids.
+    ///   OCCT BOPAlgo_Builder_3.cxx L60-93: FillIn3DParts → BuildSplitSolids → FillInternalShapes.
     pub(super) fn fill_images_solids(&self, result: &mut ResultBuilder) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
