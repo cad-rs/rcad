@@ -427,7 +427,11 @@ impl<'a> PaveFiller<'a> {
             if !b_vf { continue; }
 
             // Create new vertex at curve endpoint
-            let n_vn = crate::boptools::make_new_vertex(&mut self.ds, a_p[j], a_tol_r3d);
+            // OCCT: myDS->Append(aV) uses TopoDS identity (not position dedup), but the
+            // new vertex at the curve endpoint may later be SD-merged with coincident
+            // vertices. rcad: use add_vertex (position-based dedup) to avoid creating
+            // duplicate vertices at the same position as existing intersection vertices.
+            let n_vn = self.ds.add_vertex(a_p[j]);
 
             // Append ext_pave to PaveBlock1
             if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
