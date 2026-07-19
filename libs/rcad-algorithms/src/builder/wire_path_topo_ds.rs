@@ -782,9 +782,10 @@ fn make_connexity_blocks(
 
 /// TopoDS-based perform_areas — classifies wires as growth/hole.
 ///
-/// BOPAlgo_BuilderFace::PerformAreas (L420-499).
-///   Uses IsGrowthWire fast pre-check + IsHole classification via UV signed area.
-///   Returns Vec<WireFace> for backward compatibility with emit_wire_face_topods.
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformAreas (BOPAlgo_BuilderFace.cxx L387-614).
+/// Classifies wires as growth (outer boundary) or hole (inner boundary),
+/// assigns holes to the nearest enclosing growth face, and handles orphan holes
+/// on unbounded (open) faces.
 pub(crate) fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
