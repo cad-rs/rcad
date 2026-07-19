@@ -188,7 +188,6 @@ impl<'a> super::PaveFiller<'a> {
     // 1:1 alignment: OCCT pushes paves to edge's internal list (read by InitPaveBlock).
     // rcad must push to both edge.paves and parallel edge_paves so split_pave_blocks
     // can read them via ChangePaveBlocks-equivalent init_pave_blocks_for_edge.
-    eprintln!("[DBG_ADD] add_pave_to_edge ei={} vert={}", ei, pave.vertex_idx);
     // OCCT ChangePaveBlocks: ensure PBs are initialized
     let _ = self.ds.edge_pave_blocks_mut(ei);
     // Push to BOTH edge.paves and the parallel edge_paves array.
