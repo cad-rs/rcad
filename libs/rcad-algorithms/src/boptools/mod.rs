@@ -1781,6 +1781,20 @@ pub fn make_edge(
 ) -> usize {
  // OCCT L1730: aNeedTol = theTolR3D + DTolerance()
  let need_tol = tol_r3d + crate::tolerance::TOLERANCE_LEN_MIN;
+ // OCCT: ensure section edge vertices exist (should already be present
+ // from curve endpoint creation, but create if missing in rcad)
+ let v1 = if v1 >= ds.vertices.len() {
+     let pt = if ci < ds.intersection_curves.len() {
+         ds.intersection_curves[ci].curve.point_at(t1)
+     } else { DVec3::ZERO };
+     ds.add_vertex_no_dedup(pt)
+ } else { v1 };
+ let v2 = if v2 >= ds.vertices.len() {
+     let pt = if ci < ds.intersection_curves.len() {
+         ds.intersection_curves[ci].curve.point_at(t2)
+     } else { DVec3::ZERO };
+     ds.add_vertex_no_dedup(pt)
+ } else { v2 };
  // OCCT L1732-1733: UpdateVertex theV1/theV2 with aNeedTol
  if v1 < ds.vertices.len() {
  ds.vertex_data_mut(v1).tolerance = ds.vertex_tolerance(v1).max(need_tol);
