@@ -434,6 +434,18 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
    std::mem::swap(&mut adjusted_ic.pcurve_on_a, &mut adjusted_ic.pcurve_on_b);
    }
    self.ds.intersection_curves.push(adjusted_ic);
+   // OCCT: init IC pave_blocks so MakeSplitEdges can create section edges
+   {
+    use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
+    let sv = self.ds.intersection_curves[ci].start_vertex;
+    let ev = self.ds.intersection_curves[ci].end_vertex;
+    let t0 = self.ds.intersection_curves[ci].t_range[0];
+    let t1 = self.ds.intersection_curves[ci].t_range[1];
+    let pb = PaveBlock::new(0, Pave{vertex_idx:sv, param:t0}, Pave{vertex_idx:ev, param:t1});
+    let spb = SharedPB::new(pb);
+    self.ds.intersection_curves[ci].pave_blocks.push(spb.clone());
+    self.ds.pave_blocks.push(spb);
+   }
    if std::env::var("RCAD_DBG_MB").is_ok() {
     let ic2 = &self.ds.intersection_curves[ci];
     eprintln!("[DBG_IC3] PUSHED IC[{}]: geom_tol={:.6e} t_range={:.6} {:.6}", ci, ic2.geom_tol, ic2.t_range[0], ic2.t_range[1]);
