@@ -1725,77 +1725,20 @@ impl<'a> BooleanBuilder<'a> {
                 a_mst.push(ds_set);
 
                 
-                let result_faces: Vec<usize> = ds_shell.faces.iter()
-                    .flat_map(|&dsfi| {
-                        let dsf = &self.ds.faces[dsfi];
-                        result.face_origins.iter().enumerate()
-                            .filter(|(_, fo)| match (dsf.origin, fo) {
-                                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == *sfi,
-                                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == *sfi,
-                                _ => false,
-                            })
-                            .map(|(fi, _)| fi)
-                    })
-                    .collect();
-                if result_faces.is_empty() { continue; }
-                // create TShape::Solid in my_images.
-                // Build real face refs for the shell. Use existing real refs from
-                // my_face_refs (split faces from BuilderFace). For non-split faces
-                // whose ref in my_face_refs is a flat-DS-index synthetic, create a
-                // real tface from DS data so that solids() can traverse the topology.
-                {
-                    let mut sf: Vec<topods::ShapeRef> = Vec::new();
-                    for &rfi in &result_faces {
-                        let sr = self.my_face_refs.borrow().get(rfi).copied().unwrap_or(topods::ShapeRef::NULL);
-                        if sr.ptr_id != 0 {
-                            sf.push(sr);
-                        } else {
-                            // Synthetic ref — build real tface from DS data.
-                            let origin = &result.face_origins[rfi];
-                            let dsfi = match origin {
-                                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                                _ => None,
-                            };
-                            if let Some(dfi) = dsfi {
-                                let face = &self.ds.faces[dfi];
-                                let e_base = self.ds.vertices.len();
-                                let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
-                                for &ei in &face.boundary_edges {
-                                    if ei >= self.ds.edges.len() { continue; }
-                                    let e = &self.ds.edges[ei];
-                                    let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
-                                    let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
-                                    let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
-                                    outer_edges.push(e_sr);
-                                }
-                                if outer_edges.len() >= 3 {
-                                    let ow = t.add_twire(outer_edges);
-                                    let real_sr = t.add_tface(Some(face.surface.clone()), ow, vec![],
-                                        Some(self.ds.vertices[face.boundary_verts[0]].point),
-                                        None, vec![], face.natural_restriction);
-                                    if let Some(slot) = self.my_face_refs.borrow_mut().get_mut(rfi) {
-                                        *slot = real_sr;
-                                    }
-                                    sf.push(real_sr);
-                                }
-                            }
-                        }
-                    }
-                    if !sf.is_empty() {
-                        let shell_ref = t.add_tshell(sf);
-                        let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - self.my_solids.borrow().len());
-                        self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                        self.my_solids.borrow_mut().push(solid_ref);
+                                // OCCT L451-461: non-interfered solid -> use source faces directly.
+                let mut sf: Vec<topods::ShapeRef> = Vec::new();
+                let fr = self.my_face_refs.borrow();
+                for &dsfi in &ds_shell.faces {
+                    if let Some(&sr) = fr.get(dsfi) {
+                        if !sr.is_null() { sf.push(sr); }
                     }
                 }
-                let csi = result.tmp_shells.len();
-                result.tmp_shells.push(result_faces);
-                result_solids.push(vec![csi]);
-                result.solid_side_origin.push(side);
+                if sf.is_empty() { continue; }
+                let shell_ref = t.add_tshell(sf);
+                let solid_ref = t.add_tsolid(vec![shell_ref]);
+                let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - self.my_solids.borrow().len());
+                self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
+                self.my_solids.borrow_mut().push(solid_ref);
             }
         }
 
