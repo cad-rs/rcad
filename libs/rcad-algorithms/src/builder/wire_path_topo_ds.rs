@@ -687,6 +687,9 @@ fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option
 }
 
 /// Connected-component grouping for TopoDS segments.
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks (BOPTools_AlgoTools.cxx L105-154).
+/// Architecture note: OCCT uses TopExp_Explorer + MapShapesAndAncestors for BFS; rcad uses
+/// pre-built vert_to_segs HashMap. Algorithm is equivalent (undirected edge adjacency BFS).
 fn make_connexity_blocks(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
@@ -1080,7 +1083,9 @@ pub(crate) fn perform_internal_shapes(
     }
 }
 
-/// OCCT BOPAlgo_BuilderFace::PerformLoops L327-382: group connected avoided edges into internal wires.
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformLoops L327-382: group connected avoided edges into internal wires.
+/// Architecture note: OCCT uses TopExp::MapShapesAndAncestors + aMAdded for BFS; rcad uses
+/// v_to_e HashMap + visited HashSet. Algorithm is equivalent (undirected edge adjacency BFS).
 pub(crate) fn build_internal_wires(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,

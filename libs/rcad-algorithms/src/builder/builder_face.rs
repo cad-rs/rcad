@@ -166,7 +166,12 @@ impl<'a> BuilderFace<'a> {
         }
     }
 
-    /// Convert myShapes to WireSegments (equivalent to OCCT setting myShapes as TopoDS_Edge list).
+    /// ✅ OCCT-aligned: Convert myShapes (ShapeRef list from aLE) to WireSegments.
+    /// Architecture note: OCCT TopExp_Explorer iterates TopoDS_Edge directly in
+    /// BuildSplitFaces (Builder_2.cxx L362-465). rcad builds aLE as ShapeRef list
+    /// in build_split_faces (filler_mod.rs), then converts to WireSegment here for
+    /// segment-based wire walking (WireSegmentTopoDS). INTERNAL edges get forward+reverse
+    /// copies matching OCCT L371-378.
     fn shapes_to_segments(&self, shapes: &[ShapeRef]) -> Vec<WireSegment> {
         let e_base = self.ds.vertices.len();
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
