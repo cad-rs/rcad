@@ -965,6 +965,12 @@ impl<'a> BooleanBuilder<'a> {
                     t.add_tsolid(vec![shell_sr]);
                 }
             }
+            // OCCT BuildResult(SOLID): also add non-interfered solids from my_solids.
+            for &solid_sr in self.my_solids.borrow().iter() {
+                if a_m_fence.insert(solid_sr.index) {
+                    self.add_to_result(solid_sr, the_type, result, &mut *t);
+                }
+            }
         }
     }
 
