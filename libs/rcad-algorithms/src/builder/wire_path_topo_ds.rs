@@ -320,10 +320,24 @@ fn refine_angles(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
+    a_ms: &HashSet<usize>,
+    src_key_of: impl Fn(&WireSegmentTopoDS) -> usize,
 ) {
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &vertices {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        // OCCT L308: aEI.SetIsInside(!aMS.Contains(aE))
+        // IsInside: edge whose src_key is NOT in a_ms (appeared odd times) → interior edge
+        {
+            let infos_mut = smart_map.get_mut(&v).unwrap();
+            for ei in infos_mut.iter_mut() {
+                let seg = &segments[ei.seg_idx];
+                let src_key = src_key_of(seg);
+                ei.is_inside = !a_ms.contains(&src_key);
+            }
+        }
+        // Refresh infos after mutation
+        let infos = smart_map.get(&v).unwrap().clone();
         let mut cnt_bnd = 0;
         let mut cnt_int = 0;
         let mut a1_bnd = 0.0;
@@ -394,11 +408,23 @@ pub(crate) fn split_block(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
+    a_ms: &HashSet<usize>,
 ) {
-    
-    refine_angles(smart_map, segments, tool);
-    
+    // OCCT L197-227: vertex-level check + bNothingToDo
+    // (rcad: skip bNothingToDo optimization — always run Path extraction)
+
+    // OCCT L227-285: Path extraction
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
+
+    // src_key_of: maps segment → physical edge key (same as in build_smart_map)
+    let src_key_of = |seg: &WireSegmentTopoDS| -> usize {
+        match seg.source {
+            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::SeamEdge => usize::MAX,
+        }
+    };
+
     for &v in &order_keys {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
         for ei in &infos {
@@ -409,6 +435,11 @@ pub(crate) fn split_block(
             }
         }
     }
+
+    // OCCT L298-318: Angles in mySmartMap (COMPUTE_ANGLES)
+    // rcad: refine_angles matches OCCT's angle refinement after Path.
+    // Must be called AFTER Path extraction to match OCCT order.
+    refine_angles(smart_map, segments, tool, a_ms, src_key_of);
 }
 
 /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).
@@ -443,13 +474,13 @@ pub(crate) fn build_closed_wires(
         }
 
         // Build SmartMap
-        let (smart_map, _a_vert_map) = build_smart_map(block, segments, tool);
+        let (smart_map, _a_vert_map, a_ms) = build_smart_map(block, segments, tool);
         if smart_map.is_empty() {
             continue;
         }
 
         // OCCT SplitBlock L227-285: Path extraction (always, no regular fast path)
-        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
+        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool, &a_ms);
     }
     wires
 }
@@ -461,7 +492,7 @@ fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
-) -> (IndexMap<usize, Vec<EdgeInfo>>, HashMap<usize, bool>) {
+) -> (IndexMap<usize, Vec<EdgeInfo>>, HashMap<usize, bool>, HashSet<usize>) {
     // OCCT L134: NCollection_Map<TopoDS_Shape> aMS — edge parity tracking
     // Orientation-independent key: same physical edge = same key (OCCT TopoDS_Shape ignores orientation)
     let src_key_of = |seg: &WireSegmentTopoDS| -> usize {
@@ -582,13 +613,9 @@ fn build_smart_map(
         let v_ref = ShapeRef::synthetic(*v);
         let geom_tol = tool.vertex_tolerance(v_ref);
         for ei in infos.iter_mut() {
-            // OCCT L308: aEI.SetIsInside(!aMS.Contains(aE))
-            // If edge appears an even number of times (removed from set), it is "inside"
-            let seg = &segments[ei.seg_idx];
-            let src_key = src_key_of(seg);
-            ei.is_inside = !a_ms.contains(&src_key);
-
             // OCCT L311-316: compute Angle2D
+            // IsInside flag (OCCT L308) moved to refine_angles (after Path walk, matching OCCT order).
+            let seg = &segments[ei.seg_idx];
             let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
                 .unwrap_or_else(|| {
                     if *v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] }
@@ -622,7 +649,7 @@ fn build_smart_map(
         }
     }
 
-    (smart_map, a_vert_map)
+    (smart_map, a_vert_map, a_ms)
 }
 
 /// Build a regular wire from a block (all vertices have degree 2).
