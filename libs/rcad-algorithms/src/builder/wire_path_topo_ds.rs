@@ -508,7 +508,8 @@ fn build_smart_map(
 
     // Track which physical edges have been added at each vertex, to deduplicate
     // FORWARD/REVERSED copies of the same physical edge matching OCCT TopoDS_Shape behavior.
-    let mut vert_edge_added: HashMap<usize, HashSet<usize>> = HashMap::new();
+    // But allow both directions: use (src_key, in_flag) as dedup key, not src_key alone.
+    let mut vert_edge_added: HashMap<usize, HashSet<(usize, bool)>> = HashMap::new();
 
     // OCCT L154: aV1 tracks first vertex for closed-edge detection
     let mut a_v1: Option<usize> = None;
@@ -558,9 +559,9 @@ fn build_smart_map(
             // Result: b_is_in=false for start, true for end, regardless of orientation.
             let b_is_in = false;
 
-            // Deduplicate: only add if this physical edge hasn't been added at this vertex
+            // Deduplicate: use (src_key, in_flag) to allow both directions
             let added = vert_edge_added.entry(a_v).or_default();
-            if added.insert(src_key) {
+            if added.insert((src_key, b_is_in)) {
                 let entry = smart_map.entry(a_v).or_default();
                 entry.push(EdgeInfo {
                     seg_idx: si, passed: false, in_flag: b_is_in,
@@ -581,13 +582,13 @@ fn build_smart_map(
         {
             let a_v = seg.end_vertex.index;
 
-            // Deduplicate: only add if this physical edge hasn't been added at this vertex
+            // For FORWARD: end = TShape last vertex -> REVERSED -> bIsIN=true
+            // For REVERSED: end = TShape first vertex -> REVERSED -> bIsIN=true
+            let b_is_in = true;
+            // Deduplicate: use (src_key, in_flag) to allow both directions
             let added = vert_edge_added.entry(a_v).or_default();
-            if added.insert(src_key) {
+            if added.insert((src_key, b_is_in)) {
                 let entry = smart_map.entry(a_v).or_default();
-                // For FORWARD: end = TShape last vertex -> REVERSED -> bIsIN=true
-                // For REVERSED: end = TShape first vertex -> REVERSED -> bIsIN=true
-                let b_is_in = true;
                 entry.push(EdgeInfo {
                     seg_idx: si, passed: false, in_flag: b_is_in,
                     is_inside: false, is_circle_arc: false, angle: 0.0,
