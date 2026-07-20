@@ -5,16 +5,28 @@
         "cbi": 0,
         "faces": [
           3,
-          6
+          5
         ],
         "n_pbs": 2,
         "pbs": [
-          9,
-          9
+          10,
+          10
         ]
       },
       {
         "cbi": 1,
+        "faces": [
+          1,
+          4
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          3,
+          3
+        ]
+      },
+      {
+        "cbi": 2,
         "faces": [
           4,
           6
@@ -26,7 +38,7 @@
         ]
       },
       {
-        "cbi": 2,
+        "cbi": 3,
         "faces": [
           4,
           5
@@ -38,7 +50,7 @@
         ]
       },
       {
-        "cbi": 3,
+        "cbi": 4,
         "faces": [
           2,
           3
@@ -50,31 +62,7 @@
         ]
       },
       {
-        "cbi": 4,
-        "faces": [
-          1,
-          6
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          2,
-          2
-        ]
-      },
-      {
         "cbi": 5,
-        "faces": [
-          1,
-          4
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          3,
-          3
-        ]
-      },
-      {
-        "cbi": 6,
         "faces": [
           2,
           4
@@ -86,27 +74,39 @@
         ]
       },
       {
-        "cbi": 7,
+        "cbi": 6,
         "faces": [
-          3,
-          5
+          1,
+          3
         ],
         "n_pbs": 2,
         "pbs": [
-          10,
-          10
+          1,
+          1
+        ]
+      },
+      {
+        "cbi": 7,
+        "faces": [
+          2,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          6,
+          6
         ]
       },
       {
         "cbi": 8,
         "faces": [
           1,
-          5
+          6
         ],
         "n_pbs": 2,
         "pbs": [
-          4,
-          4
+          2,
+          2
         ]
       },
       {
@@ -124,77 +124,29 @@
       {
         "cbi": 10,
         "faces": [
-          2,
-          6
+          1,
+          5
         ],
         "n_pbs": 2,
         "pbs": [
-          6,
-          6
+          4,
+          4
         ]
       },
       {
         "cbi": 11,
         "faces": [
-          1,
-          3
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          1,
-          1
-        ]
-      },
-      {
-        "cbi": 12,
-        "faces": [
-          1,
-          5
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          17,
-          17
-        ]
-      },
-      {
-        "cbi": 13,
-        "faces": [
-          2,
-          5
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          21,
-          21
-        ]
-      },
-      {
-        "cbi": 14,
-        "faces": [
           3,
           6
         ],
         "n_pbs": 2,
         "pbs": [
-          22,
-          22
+          9,
+          9
         ]
       },
       {
-        "cbi": 15,
-        "faces": [
-          3,
-          5
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          23,
-          23
-        ]
-      },
-      {
-        "cbi": 16,
+        "cbi": 12,
         "faces": [
           4,
           5
@@ -206,19 +158,43 @@
         ]
       },
       {
-        "cbi": 17,
+        "cbi": 13,
         "faces": [
-          2,
-          4
+          3,
+          6
         ],
         "n_pbs": 2,
         "pbs": [
-          20,
-          20
+          22,
+          22
         ]
       },
       {
-        "cbi": 18,
+        "cbi": 14,
+        "faces": [
+          4,
+          6
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          24,
+          24
+        ]
+      },
+      {
+        "cbi": 15,
+        "faces": [
+          2,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          18,
+          18
+        ]
+      },
+      {
+        "cbi": 16,
         "faces": [
           2,
           6
@@ -227,6 +203,30 @@
         "pbs": [
           19,
           19
+        ]
+      },
+      {
+        "cbi": 17,
+        "faces": [
+          1,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          17,
+          17
+        ]
+      },
+      {
+        "cbi": 18,
+        "faces": [
+          1,
+          3
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          14,
+          14
         ]
       },
       {
@@ -244,18 +244,6 @@
       {
         "cbi": 20,
         "faces": [
-          4,
-          6
-        ],
-        "n_pbs": 2,
-        "pbs": [
-          24,
-          24
-        ]
-      },
-      {
-        "cbi": 21,
-        "faces": [
           1,
           4
         ],
@@ -266,27 +254,39 @@
         ]
       },
       {
-        "cbi": 22,
+        "cbi": 21,
         "faces": [
-          1,
-          3
+          2,
+          4
         ],
         "n_pbs": 2,
         "pbs": [
-          14,
-          14
+          20,
+          20
+        ]
+      },
+      {
+        "cbi": 22,
+        "faces": [
+          3,
+          5
+        ],
+        "n_pbs": 2,
+        "pbs": [
+          23,
+          23
         ]
       },
       {
         "cbi": 23,
         "faces": [
           2,
-          3
+          5
         ],
         "n_pbs": 2,
         "pbs": [
-          18,
-          18
+          21,
+          21
         ]
       }
     ],
@@ -713,6 +713,22 @@
     ],
     "interf_ff": [
       {
+        "curves": [],
+        "f1": 0,
+        "f2": 2,
+        "n_curves": 0,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
+        "curves": [],
+        "f1": 0,
+        "f2": 4,
+        "n_curves": 0,
+        "n_points": 0,
+        "tangent": false
+      },
+      {
         "curves": [
           3
         ],
@@ -725,7 +741,7 @@
       {
         "curves": [],
         "f1": 0,
-        "f2": 2,
+        "f2": 6,
         "n_curves": 0,
         "n_points": 0,
         "tangent": false
@@ -748,22 +764,6 @@
         "f1": 0,
         "f2": 3,
         "n_curves": 1,
-        "n_points": 0,
-        "tangent": false
-      },
-      {
-        "curves": [],
-        "f1": 0,
-        "f2": 4,
-        "n_curves": 0,
-        "n_points": 0,
-        "tangent": false
-      },
-      {
-        "curves": [],
-        "f1": 0,
-        "f2": 6,
-        "n_curves": 0,
         "n_points": 0,
         "tangent": false
       }
@@ -852,7 +852,7 @@
         "v2": 1
       },
       {
-        "common_block": 22,
+        "common_block": 18,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 3,
@@ -878,7 +878,7 @@
         "v2": 4
       },
       {
-        "common_block": 21,
+        "common_block": 20,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 5,
@@ -891,7 +891,7 @@
         "v2": 5
       },
       {
-        "common_block": 12,
+        "common_block": 17,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 6,
@@ -904,7 +904,7 @@
         "v2": 2
       },
       {
-        "common_block": 23,
+        "common_block": 15,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 7,
@@ -917,7 +917,7 @@
         "v2": 7
       },
       {
-        "common_block": 18,
+        "common_block": 16,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 8,
@@ -930,7 +930,7 @@
         "v2": 8
       },
       {
-        "common_block": 17,
+        "common_block": 21,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 9,
@@ -943,7 +943,7 @@
         "v2": 9
       },
       {
-        "common_block": 13,
+        "common_block": 23,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 10,
@@ -956,7 +956,7 @@
         "v2": 10
       },
       {
-        "common_block": 14,
+        "common_block": 13,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 11,
@@ -969,7 +969,7 @@
         "v2": 7
       },
       {
-        "common_block": 15,
+        "common_block": 22,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 12,
@@ -982,7 +982,7 @@
         "v2": 10
       },
       {
-        "common_block": 20,
+        "common_block": 14,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 13,
@@ -995,7 +995,7 @@
         "v2": 8
       },
       {
-        "common_block": 16,
+        "common_block": 12,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 14,
@@ -1021,7 +1021,7 @@
         "v2": 1
       },
       {
-        "common_block": 22,
+        "common_block": 18,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 3,
@@ -1047,7 +1047,7 @@
         "v2": 4
       },
       {
-        "common_block": 21,
+        "common_block": 20,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 5,
@@ -1060,7 +1060,7 @@
         "v2": 5
       },
       {
-        "common_block": 12,
+        "common_block": 17,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 6,
@@ -1073,7 +1073,7 @@
         "v2": 2
       },
       {
-        "common_block": 23,
+        "common_block": 15,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 7,
@@ -1086,7 +1086,7 @@
         "v2": 7
       },
       {
-        "common_block": 18,
+        "common_block": 16,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 8,
@@ -1099,7 +1099,7 @@
         "v2": 8
       },
       {
-        "common_block": 17,
+        "common_block": 21,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 9,
@@ -1112,7 +1112,7 @@
         "v2": 9
       },
       {
-        "common_block": 13,
+        "common_block": 23,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 10,
@@ -1125,7 +1125,7 @@
         "v2": 10
       },
       {
-        "common_block": 14,
+        "common_block": 13,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 11,
@@ -1138,7 +1138,7 @@
         "v2": 7
       },
       {
-        "common_block": 15,
+        "common_block": 22,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 12,
@@ -1151,7 +1151,7 @@
         "v2": 10
       },
       {
-        "common_block": 20,
+        "common_block": 14,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 13,
@@ -1164,7 +1164,7 @@
         "v2": 8
       },
       {
-        "common_block": 16,
+        "common_block": 12,
         "n_ext": 0,
         "new_edge": null,
         "orig_edge": 14,
