@@ -340,31 +340,7 @@ impl ResultBuilder {
  sr_index_to_ds_ei: &HashMap<usize, usize>,
  ds: &crate::bopds::ds::DS,
  ) {
- let normal = if let Some(surf) = tool.face_surface(face_ref) {
- match surf {
- Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
- Surface3::Sphere(s) => {
- // use surface analytical normal (radial from center).
- // estimate_boundary_normal_from_segments_topo is not 
- // and gives near-zero for CW (complement) wires (A5c).
- let center = s.center;
- let centroid = if !wf.outer_wire.is_empty() {
- let mut sum = DVec3::ZERO;
- for &si in &wf.outer_wire {
- sum += tool.vertex_position(segments[si].start_vertex);
- }
- sum / wf.outer_wire.len() as f64
- } else { return; };
- let outward = (centroid - center).normalize_or_zero();
- if outward.length_squared() > 1e-12 { if flip { -outward } else { outward } } else { return; }
- }
- _ => {
- let n = Self::estimate_boundary_normal_from_segments_topo(
- &wf.outer_wire, segments, tool, vertex_positions);
- if n.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO { n } else { return; }
- }
- }
- } else { return; };
+ 
 
  let get_pos = |vi: usize| -> DVec3 {
  // use DS vertex world coordinate (TopLoc_Location already baked
@@ -537,108 +513,26 @@ impl ResultBuilder {
  internal_wire_edges.push(iw_edges);
  }
 
- // Triangulation
- let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
- let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
- let mut pts = Vec::new();
- for &(ei, _) in iw_es {
- let (a, b) = self.edges[ei];
- if pts.is_empty() || pts.last() != Some(&a) { pts.push(a); }
- }
- pts.iter().map(|&vi| self.vertices[vi]).collect()
- }).collect();
- let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
- let mut tris = if iw_boundaries.is_empty() {
- triangulate_polygon(&outer_boundary, normal)
- } else {
- triangulate_polygon_with_holes(&outer_boundary, &iw_boundaries, normal)
- };
- for tri in &mut tris {
- for idx in tri.iter_mut() {
- *idx = all_vert_indices[*idx];
- }
- }
-
- let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
- let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
- let cw_centroid_antipode = if area < 0.0 {
- if let Some(Surface3::Sphere(s)) = tool.face_surface(face_ref) {
- let to_centroid = centroid - s.center;
- let len = to_centroid.length();
- if len > TOLERANCE_LEN_MIN {
- Some(s.center - to_centroid / len * s.radius)
- } else { None }
- } else { None }
- } else { None };
- let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
- outer_sig.sort_unstable();
- let nlen = normal.length();
- let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
- // Same coincident face dedup as emit_wire_face
- for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal,
- _surf, _uv, existing_centroid, existing_area, _existing_sp, _existing_iw))
- in self.faces.iter().enumerate()
- {
- let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
- for iw_edges in existing_inner {
- ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
- }
- ex_sig.sort_unstable();
- let elen = existing_normal.length();
- if elen <= TOLERANCE_LEN_MIN { continue; }
- let eunit = *existing_normal / elen;
- let sig_match = ex_sig == outer_sig;
- let geo_match = nunit.dot(eunit).abs() >= 0.99
- && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
- && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
- if sig_match || geo_match {
- self.co_face_origins.push((existing_idx, origin));
- return;
- }
- }
-
- // UV domain for sphere faces
- let sphere_uv = if let Some(Surface3::Sphere(sph)) = tool.face_surface(face_ref) {
- let uvs: Vec<DVec2> = if !wf.outer_wire.is_empty() {
- wf.outer_wire.iter().map(|&si| {
- let pos = get_pos(segments[si].start_vertex.index);
- sph.world_to_uv(pos)
- }).collect()
- } else { vec![] };
- if !uvs.is_empty() {
- let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
- let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
- let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
- let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
- if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
- Some([u_min, u_max, v_min, v_max])
- } else { None }
- } else { None }
- } else { None };
-
+ // OCCT L611-612: store face (no triangulation, no dedup).
  let surface = tool.face_surface(face_ref)
- .cloned().unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane::new(glam::DVec3::ZERO, glam::DVec3::Z)));
-
+ .cloned().unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)));
  let sample_pt = if !wf.outer_wire.is_empty() {
- if let Some(ap) = cw_centroid_antipode {
- ap
- } else {
- get_pos(segments[wf.outer_wire[0]].start_vertex.index)
- }
+  get_pos(segments[wf.outer_wire[0]].start_vertex.index)
  } else { DVec3::ZERO };
-
  self.face_internal_vtx.push(Vec::new());
  self.faces.push((
- edge_indices, inner_wire_edges, tris, normal, surface,
- sphere_uv, centroid, area, sample_pt, internal_wire_edges,
+  edge_indices, inner_wire_edges, vec![],
+  DVec3::Z, surface,
+  None, DVec3::ZERO, 0.0,
+  sample_pt, internal_wire_edges,
  ));
  self.face_origins.push(origin);
  self.face_natural_restriction.push(natural_restriction);
  {
- let mut widxs = Vec::new();
- if let Some(owi) = ds.face_outer_wire_idx(face_idx) { widxs.push(owi); }
- widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
- self.face_all_wire_idxs.push(widxs);
+  let mut widxs = Vec::new();
+  if let Some(owi) = ds.face_outer_wire_idx(face_idx) { widxs.push(owi); }
+  widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
+  self.face_all_wire_idxs.push(widxs);
  }
  }
 
