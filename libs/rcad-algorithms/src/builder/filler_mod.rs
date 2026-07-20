@@ -1779,12 +1779,11 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            
-            for &rfi in &in_faces_this {
-                if let Some(dfi) = result_to_ds(rfi, other_origin) {
-                    ds_face_set.push(dfi);
-                    ds_face_set.push(dfi);
-                }
+            // in_faces_this now contains DS face indices (classify_faces uses DS face indices).
+            // OCCT L501-511: add IN faces twice (FORWARD + REVERSED) for BuilderSolid.
+            for &dfi in &in_faces_this {
+                ds_face_set.push(dfi);
+                ds_face_set.push(dfi);
             }
             ds_face_set.sort_unstable();
             ds_face_set.dedup();
