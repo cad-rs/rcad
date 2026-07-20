@@ -107,6 +107,7 @@ pub(crate) fn walk_path_extract_wires(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
+    a_vert_map: &HashMap<usize, bool>,
 ) {
     let start_seg = &segments[start_si];
 
@@ -173,12 +174,7 @@ pub(crate) fn walk_path_extract_wires(
         let a_tol_2d_2 = 2.0 * tolerance_2d(a_vb);
         let a_tol_2d_sq = a_tol_2d_2 * a_tol_2d_2;
         // Inline is_vert_closed to avoid borrow conflict
-        let b_is_closed = smart_map.get(&a_vb).map_or(false, |infos| {
-            infos.iter().any(|ei| {
-                let s = &segments[ei.seg_idx];
-                s.start_vertex.index == s.end_vertex.index || s.is_closed_on_face
-            })
-        });
+        let b_is_closed = a_vert_map.get(&a_vb).copied().unwrap_or(false);
 
         let mut loop_found = false;
         // OCCT L466: for (j = aNb; j >= 0; --j)
@@ -411,6 +407,7 @@ pub(crate) fn split_block(
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
     a_ms: &HashSet<usize>,
+    a_vert_map: &HashMap<usize, bool>,
 ) {
     // OCCT L197-227: vertex-level check + bNothingToDo
     // (rcad: skip bNothingToDo optimization — always run Path extraction)
@@ -433,7 +430,7 @@ pub(crate) fn split_block(
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
             {
-                walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
+                walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool, a_vert_map);
             }
         }
     }
@@ -476,13 +473,13 @@ pub(crate) fn build_closed_wires(
         }
 
         // Build SmartMap
-        let (smart_map, _a_vert_map, a_ms) = build_smart_map(block, segments, tool);
+        let (smart_map, a_vert_map, a_ms) = build_smart_map(block, segments, tool);
         if smart_map.is_empty() {
             continue;
         }
 
         // OCCT SplitBlock L227-285: Path extraction (always, no regular fast path)
-        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool, &a_ms);
+        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool, &a_ms, &a_vert_map);
     }
     wires
 }
