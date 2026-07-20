@@ -62,6 +62,8 @@ pub(crate) fn edge_angle_2d(
 ) -> Option<f64> {
  let range = (domain[1] - domain[0]).abs();
  if range < TOLERANCE_CLAMP_MIN { return None; }
+ // OCCT L790-793: Precision::IsInfinite(aTV) → return 0
+ if !t.is_finite() { return Some(0.0); }
  // Angle2D via 3D curve  ?UV mapping (WireSplitter_1.cxx L768-854).
  let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(geom_tol, surface, None);
  let mut dt = a_tol_2d.max(1e-9);
