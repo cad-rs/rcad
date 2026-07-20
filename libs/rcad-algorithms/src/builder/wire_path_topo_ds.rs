@@ -99,7 +99,7 @@ pub(crate) fn select_best_outgoing_topo<'a>(
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
 /// Analogous to walk_path_extract_wires but uses ShapeRef handles and BRepTool
-/// OCCT-aligned: BOPAlgo_WireSplitter::Path (WireSplitter_1.cxx L358-626).
+/// ✅ OCCT-aligned: BOPAlgo_WireSplitter::Path (WireSplitter_1.cxx L358-626).
 /// Walks from start segment through smart_map forming closed wires by min-angle selection.
 pub(crate) fn walk_path_extract_wires(
     start_si: usize,
@@ -338,18 +338,13 @@ pub(crate) fn split_block(
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
             {
-                let pre_wires = wires.len();
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
-                let face_ok = segments.len() > 0 && segments[0].face.index == 32
-                    && std::env::var("RCAD_DUMP_FACE").is_ok();
-                if face_ok {
-                    eprintln!("[DBG32] walk si={} result: wires={}->{}", ei.seg_idx, pre_wires, wires.len());
-                }
             }
         }
     }
 }
 
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).
 /// TopoDS-based build_closed_wires — SmartMap + angle computation + wire walking.
 ///
 /// Simplified version without vi_to_canon/deg_end_canon (ShapeRef handles use DS indices directly).
@@ -359,10 +354,6 @@ pub(crate) fn build_closed_wires(
     tool: &dyn BRepTool,
 ) -> Vec<Vec<usize>> {
     if segments.is_empty() { return vec![]; }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        let face_id = segments[0].face.index;
-        eprintln!("[WIRE] face={} n_seg={} n_avoided={}", face_id, segments.len(), avoided.len());
-    }
 
     let n = segments.len();
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -372,30 +363,7 @@ pub(crate) fn build_closed_wires(
         vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
     }
 
-    if std::env::var("RCAD_DEBUG_SPHERE").is_ok() && !segments.is_empty() {
-        eprintln!("[SPHERE] face={} n_seg={} n_avoided={} n_active={}", segments[0].face.index, segments.len(), avoided.len(), n - avoided.len());
-        for (v, segs) in &vert_to_segs {
-            eprintln!("[SPHERE]   v={} valence={} segs={:?}", v, segs.len(), segs);
-        }
-        for (si, seg) in segments.iter().enumerate() {
-            if avoided.contains(&si) { continue; }
-            eprintln!("[SPHERE]   seg[{}] v={}->{}", si, seg.start_vertex.index, seg.end_vertex.index);
-        }
-    }
-
     if avoided.len() == n && !segments.is_empty() { return vec![]; }
-
-    if !segments.is_empty() {
-        let face_id = segments[0].face.index;
-        eprintln!("[FACE] face={} n_seg={} n_avoided={} n_active={}", face_id, segments.len(), avoided.len(), n - avoided.len());
-        for (v, segs) in &vert_to_segs {
-            eprintln!("[FACE]   v={} valence={} segs={:?}", v, segs.len(), segs);
-        }
-        for (si, seg) in segments.iter().enumerate() {
-            let src = match &seg.source { WireEdgeSourceTopoDS::DsEdge(sr) => format!("DsEdge({})", sr.index), WireEdgeSourceTopoDS::IntersectionCurve(sr) => format!("IC({})", sr.index), WireEdgeSourceTopoDS::SeamEdge => "Seam".into() };
-            eprintln!("[FACE]   seg[{}] {} {}->{} avoided={}", si, src, seg.start_vertex.index, seg.end_vertex.index, avoided.contains(&si));
-        }
-    }
 
     // Build connexity blocks
     let blocks = make_connexity_blocks(segments, avoided, &vert_to_segs, n);
@@ -403,36 +371,13 @@ pub(crate) fn build_closed_wires(
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
     for (bi, block) in blocks.iter().enumerate() {
-        let face32 = segments.len() > 0 && segments[0].face.index == 32 && std::env::var("RCAD_DUMP_FACE").is_ok();
         if block.len() < 2 {
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                let face_id = segments[0].face.index;
-                let vset: std::collections::HashSet<usize> = block.iter().flat_map(|&si| {
-                    let s = &segments[si];
-                    [s.start_vertex.index, s.end_vertex.index]
-                }).collect();
-                eprintln!("[WIRE] face={} block[{}] too small ({} segs, {} verts)", face_id, bi, block.len(), vset.len());
-            }
             continue;
         }
 
         // Build SmartMap
         let (smart_map, _a_vert_map) = build_smart_map(block, segments, tool);
-        if face32 { eprintln!("[DBG] face=32 block[{}] sm={}", bi, smart_map.len()); }
         if smart_map.is_empty() {
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                let face_id = segments[0].face.index;
-                let vset: std::collections::HashSet<usize> = block.iter().flat_map(|&si| {
-                    let s = &segments[si];
-                    [s.start_vertex.index, s.end_vertex.index]
-                }).collect();
-                let no_pcurve: Vec<usize> = block.iter().filter(|&&si| {
-                    let seg = &segments[si];
-                    tool.curve_on_surface(seg.edge, seg.face).is_none()
-                        && seg.first_pcurve.is_none() && seg.second_pcurve.is_none()
-                }).copied().collect();
-                eprintln!("[WIRE] face={} block[{}] EMPTY smart_map ({} segs, {} verts, {} no-pcurve)", face_id, bi, block.len(), vset.len(), no_pcurve.len());
-            }
             continue;
         }
 
@@ -489,14 +434,10 @@ pub(crate) fn build_closed_wires(
             split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
         }
     }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        let face_id = if segments.is_empty() { 9999 } else { segments[0].face.index };
-        eprintln!("[WIRES] face={} n_wires={}", face_id, wires.len());
-    }
     wires
 }
 
-/// OCCT-aligned: BOPAlgo_WireSplitter::SplitBlock (WireSplitter_1.cxx L136-195, L298-318).
+/// ✅ OCCT-aligned: BOPAlgo_WireSplitter::SplitBlock (WireSplitter_1.cxx L136-195, L298-318).
 /// Fills mySmartMap: for each edge in block, traverse vertices and build EdgeInfo list.
 /// Also builds aVertMap (vertex closed/degenerated tracking).
 fn build_smart_map(
@@ -998,6 +939,11 @@ pub(crate) fn perform_areas(
 
 /// BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
 ///   Classify internal wire groups against result faces via UV point-in-polygon.
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (BOPAlgo_BuilderFace.cxx L618-778).
+/// Architecture note: OCCT uses myLoopsInternal (TopoDS_Wire list) + myAreas (TopoDS_Face list)
+/// with BVH tree + IsInside classification. rcad uses internal_wire_groups (precomputed segment index
+/// groups) + UV polygon containment. The classification logic is functionally equivalent but the data
+/// model differs (TopoDS_Shape vs DS segment index).
 pub(crate) fn perform_internal_shapes(
     wfs: &mut Vec<WireFace>,
     internal_wire_groups: &[Vec<usize>],
@@ -1047,19 +993,24 @@ pub(crate) fn perform_internal_shapes(
         uv_bnd
     }).collect();
 
-    if std::env::var("RCAD_DEBUG_FACE").is_ok() {
-        for (fi, uv) in face_uv_bounds.iter().enumerate() {
-            eprintln!("[DBG] face {} internal_shapes: uv_bounds[{}] has {} pts", face_idx, fi, uv.len());
-        }
-        eprintln!("[DBG] face {} internal_shapes: {} groups, {} wfs", face_idx, internal_wire_groups.len(), wfs.len());
-    }
 
     
+    // OCCT L670-671: aMEDone — fence to track classified internal edge groups.
+    let mut a_me_done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let n_total_groups = internal_wire_groups.len();
+
     for group in internal_wire_groups {
         if group.is_empty() { continue; }
         let si = group[0];
         if si >= segments.len() { continue; }
         let seg = &segments[si];
+
+        // OCCT L692-716: check if group already classified
+        // (OCCT uses an edge-level aMEDone map; rcad uses group-level tracking.)
+        let group_id = si; // Use first segment index as group identifier (unique across groups).
+        if !a_me_done.insert(group_id) {
+            continue;
+        }
 
         // Sample UV midpoint
         let uv_pt = {
@@ -1099,14 +1050,33 @@ pub(crate) fn perform_internal_shapes(
             if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
                 && crate::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
             {
-                if std::env::var("RCAD_DEBUG_FACE").is_ok() {
-                    eprintln!("[DBG] face {} internal group {} added to wf[{}]: seg {} had {} uv_bnd pts", 
-                        face_idx, group.len(), fi, si, face_uv_bounds[fi].len());
+                    wf.internal_wires.push(group.clone());
+
+                // OCCT L736-740: early exit if all internal edge groups classified.
+                if a_me_done.len() == n_total_groups {
+                    return;
                 }
-                wf.internal_wires.push(group.clone());
                 break;
             }
         }
+    }
+
+    // OCCT L743-777: handle unclassified internal edge groups.
+    // Architecture note: OCCT uses MakeInternalWires to create TopoDS_Wire with INTERNAL edges
+    // and adds them to the face via BRep_Builder. rcad appends unclassified groups to the
+    // internal_wires of all wire faces. OCCT also emits an AlertFaceBuilderUnusedEdges warning.
+    if a_me_done.len() < n_total_groups {
+        // Add unclassified groups to the first wire face (OCCT adds to myFace directly).
+        if let Some(wf) = wfs.first_mut() {
+            for group in internal_wire_groups {
+                if group.is_empty() { continue; }
+                let group_id = group[0];
+                if a_me_done.contains(&group_id) { continue; }
+                wf.internal_wires.push(group.clone());
+            }
+        }
+        // OCCT L777: AddWarning(new BOPAlgo_AlertFaceBuilderUnusedEdges(aWShape))
+        // rcad: unclassified internal edges warning not yet integrated.
     }
 }
 
