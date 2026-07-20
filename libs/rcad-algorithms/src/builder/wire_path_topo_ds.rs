@@ -776,6 +776,12 @@ fn make_connexity_blocks(
 /// Classifies wires as growth (outer boundary) or hole (inner boundary),
 /// assigns holes to the nearest enclosing growth face, and handles orphan holes
 /// on unbounded (open) faces.
+///
+/// Architecture note: OCCT uses IsGrowthWire + IntTools_FClass2d::IsHole() for
+/// classification; rcad uses IsGrowthWire + UV signed area (equivalent: CW = hole).
+/// OCCT uses BVH tree + IsInside for hole→growth assignment; rcad uses UV box
+/// prefilter + point_in_uv_polygon. Algorithm steps (classify → match → build)
+/// follow OCCT L387-614.
 pub(crate) fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
@@ -785,6 +791,7 @@ pub(crate) fn perform_areas(
     ds: &crate::bopds::ds::DS,
 ) -> Vec<WireFace> {
     
+    // OCCT L400-414: no loops -> handle NaturalRestriction / infinite face
     if wires.is_empty() {
         if ds.face_natural_restriction(face_idx) {
             return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
@@ -792,7 +799,7 @@ pub(crate) fn perform_areas(
         return vec![];
     }
 
-    
+    // OCCT L416-424: aNewFaces (growth), aHoleFaces, aMHE (hole edge map)
     let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
 
     
