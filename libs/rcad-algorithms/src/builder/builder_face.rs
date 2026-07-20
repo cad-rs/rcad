@@ -101,17 +101,8 @@ impl<'a> BuilderFace<'a> {
         let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
-        } else if !avoided.is_empty() {
-            vec![WireFace {
-                outer_wire: vec![], inner_wires: vec![],
-                internal_wires: segments_topo.iter().enumerate()
-                    .filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect(),
-            }]
         } else {
-            vec![WireFace {
-                outer_wire: (0..segments_topo.len()).collect(),
-                inner_wires: vec![], internal_wires: vec![],
-            }]
+            vec![]
         };
         if wfs.is_empty() { return; }
 
