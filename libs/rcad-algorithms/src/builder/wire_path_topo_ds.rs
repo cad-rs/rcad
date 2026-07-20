@@ -12,7 +12,7 @@ use crate::tolerance::*;
 use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS, WireFace};
 use super::wire_splitter::{
     EdgeInfo, mark_edge_passed,
-    find_angle_at, select_best_outgoing,
+    find_angle_at,
 };
 use super::angle_2d::clock_wise_angle;
 use crate::inttools::fclass2d::curve2d_nb_samples;
@@ -143,6 +143,17 @@ pub(crate) fn walk_path_extract_wires(
 
     // OCCT L392: for (;;)
     loop {
+        // OCCT L394-403: Do not escape through edge from which you enter
+        {
+            let a_nb = edge_seq.len();
+            if a_nb == 1 {
+                let an_e_prev = edge_seq[a_nb - 1];
+                if an_e_prev == a_e_outa {
+                    return;
+                }
+            }
+        }
+
         edge_seq.push(a_e_outa);
 
         let seg = &segments[a_e_outa];
@@ -236,8 +247,64 @@ pub(crate) fn walk_path_extract_wires(
             continue;
         }
 
-        let best = select_best_outgoing(&le_info, an_angle_in, incoming_is_boundary, a_e_outa);
-        if let Some(best_ei) = best {
+        // OCCT L526-624: Outgoing edge selection (inlined for 1:1 alignment)
+        let a_two_pi = std::f64::consts::TAU;
+        let eps = std::f64::EPSILON;
+        let mut a_min_angle = 100.0;
+        let mut a_nb_ways_inside: i32 = 0;
+        let mut p_only_way_in: Option<&EdgeInfo> = None;
+        let mut p_edge_info: Option<&EdgeInfo> = None;
+
+        for an_ei in &le_info {
+            // OCCT L541-542: anIsOut=!IsIn, anIsNotPassed=!Passed → already filtered above
+            // OCCT L551-562: iCnt==0/1 handled above
+
+            // OCCT L564-591: compute angle for this candidate
+            let a_angle = if an_ei.seg_idx == a_e_outa {
+                // OCCT L566: same edge → maximum angle (lowest priority)
+                a_two_pi
+            } else {
+                // OCCT L570-582: bIsClosed 2D distance check (Coord2dVf)
+                if b_is_closed {
+                    let candidate_seg = &segments[an_ei.seg_idx];
+                    let pc_opt = tool.curve_on_surface(candidate_seg.edge, candidate_seg.face)
+                        .map(|(pc, _, _)| pc)
+                        .or(candidate_seg.first_pcurve.as_ref()
+                            .or(candidate_seg.second_pcurve.as_ref()));
+                    if let Some(pc) = pc_opt {
+                        let t_mid = (candidate_seg.t_range[0] + candidate_seg.t_range[1]) * 0.5;
+                        let a_p2_dx = pc.point_at(t_mid);
+                        let a_d2 = a_p2_dx.distance_squared(a_pb);
+                        if a_d2 > a_tol_2d_sq {
+                            continue; // OCCT L580-581
+                        }
+                    }
+                }
+                // OCCT L584-586: anAngleOut + ClockWiseAngle
+                let an_angle_out = an_ei.angle;
+                clock_wise_angle(an_angle_in, an_angle_out)
+            };
+
+            // OCCT L594-598: boundary/inside tracking
+            if incoming_is_boundary && an_ei.is_inside {
+                a_nb_ways_inside += 1;
+                p_only_way_in = Some(an_ei);
+            }
+
+            // OCCT L600-604: minimum angle selection
+            if a_angle < a_min_angle - eps {
+                a_min_angle = a_angle;
+                p_edge_info = Some(an_ei);
+            }
+        }
+
+        // OCCT L607-610: single inside way → forced selection
+        if a_nb_ways_inside == 1 {
+            p_edge_info = p_only_way_in;
+        }
+
+        // OCCT L612-616: no way out → return
+        if let Some(best_ei) = p_edge_info {
             a_va = a_vb;
             a_e_outa = best_ei.seg_idx;
         } else {
