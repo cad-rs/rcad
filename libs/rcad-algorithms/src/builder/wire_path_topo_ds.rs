@@ -133,12 +133,14 @@ pub(crate) fn walk_path_extract_wires(
     };
 
     // OCCT Coord2d (WireSplitter_1.cxx L677-683)
+    // OCCT Coord2d (WireSplitter_1.cxx L677-683): aP2D1 from pcurve at vertex parameter.
+    // OCCT uses BRep_Tool::Parameter (real, no Option) and BRep_Tool::CurveOnSurface (handle, no Option).
     let coord2d = |vi: usize, si: usize| -> DVec2 {
         let s = &segments[si];
         let t = tool.parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
-            .unwrap_or(if vi == s.start_vertex.index { s.t_range[0] } else { s.t_range[1] });
+            .unwrap_or(DVec2::ZERO.x); // OCCT never fails; rcad fallback for missing DS data
         let pc = tool.curve_on_surface(s.edge, s.face);
-        pc.and_then(|(pc, _, _)| Some(pc.point_at(t))).unwrap_or(DVec2::ZERO)
+        pc.map(|(pc, _, _)| pc.point_at(t)).unwrap_or(DVec2::ZERO)
     };
 
     // OCCT L392: for (;;)
