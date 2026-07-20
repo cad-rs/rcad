@@ -448,58 +448,8 @@ pub(crate) fn build_closed_wires(
             continue;
         }
 
-        // Check regularity: each vertex has exactly 1 in + 1 out
-        let mut is_regular = true;
-        for (_, infos) in &smart_map {
-            let in_cnt = infos.iter().filter(|ei| ei.in_flag).count();
-            let out_cnt = infos.iter().filter(|ei| !ei.in_flag).count();
-            if in_cnt != 1 || out_cnt != 1 { is_regular = false; break; }
-        }
-
-        // OCCT SplitBlock L229-284: TShape coincidence check
-        // Even if all vertices are regular (1 in + 1 out), edges with the same
-        // TShape appearing multiple times require SplitBlock treatment.
-        if is_regular {
-            // Group edges by physical edge ID (OCCT: by TopoDS_Shape ignoring orientation)
-            let mut a_map_ee: HashMap<usize, Vec<usize>> = HashMap::new();
-            for &si in block {
-                let key = match &segments[si].source {
-                    WireEdgeSourceTopoDS::DsEdge(sr) => sr.index,
-                    WireEdgeSourceTopoDS::IntersectionCurve(sr) => sr.index,
-                    WireEdgeSourceTopoDS::SeamEdge => usize::MAX,
-                };
-                a_map_ee.entry(key).or_default().push(si);
-            }
-            let mut b_flag = true;
-            for (_key, group) in &a_map_ee {
-                let a_nb_e = group.len();
-                if a_nb_e == 1 {
-                    continue;
-                } else if a_nb_e == 2 {
-                    let s0 = &segments[group[0]];
-                    let s1 = &segments[group[1]];
-                    if s0.orientation == s1.orientation {
-                        b_flag = false;
-                        break;
-                    }
-                } else {
-                    b_flag = false;
-                    break;
-                }
-            }
-            is_regular = is_regular && b_flag;
-        }
-
-        if is_regular {
-            // Regular block: use build_regular_wire for chain-order wire
-            // (OCCT MakeWire for regular blocks)
-            if let Some(wire) = build_regular_wire(block, segments) {
-                wires.push(wire);
-            }
-        } else {
-            // Irregular: split via path walk
-            split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
-        }
+        // OCCT SplitBlock L227-285: Path extraction (always, no regular fast path)
+        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
     }
     wires
 }
