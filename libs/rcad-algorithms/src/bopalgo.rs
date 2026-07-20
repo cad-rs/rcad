@@ -354,7 +354,7 @@ pub fn classify_faces(
             if pi >= face_samples.len() { continue; }
             if !aabb_of_face[pi].intersects(sbox) { continue; }
             let class = classify_point(face_samples[pi], sfaces, ds);
-            if class == Classification::In || class == Classification::On {
+            if class == Classification::In {
                 the_in_parts[si].push(fi);
             }
         }

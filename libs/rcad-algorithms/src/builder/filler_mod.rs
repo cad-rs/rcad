@@ -1812,57 +1812,34 @@ impl<'a> BooleanBuilder<'a> {
                 a_mst.push(ds_set);
 
                 
-                let mut result_faces: Vec<usize> = Vec::new();
-                let mut mapped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-                for &dfi in area_ds {
-                    if let Some(rfi) = ds_to_result(dfi) {
-                        if mapped.insert(rfi) { result_faces.push(rfi); }
-                    }
-                }
+                // DS face indices from BuilderSolid (OCCT L539-551: aSolidsIm).
+                let result_faces: Vec<usize> = area_ds.iter().copied().collect();
                 if result_faces.is_empty() { continue; }
 
                 
                 {
                     let mut sf: Vec<topods::ShapeRef> = Vec::new();
-                    for &rfi in &result_faces {
-                        let sr = self.my_face_refs.borrow().get(rfi).copied().unwrap_or(topods::ShapeRef::NULL);
-                        if sr.ptr_id != 0 {
-                            sf.push(sr);
-                        } else {
-                            // Build real TShape::Face for synthetic refs (same as Phase 0).
-                            let origin = &result.face_origins[rfi];
-                            let dsfi = match origin {
-                                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                                _ => None,
-                            };
-                            if let Some(dfi) = dsfi {
-                                let face = &self.ds.faces[dfi];
-                                let e_base = self.ds.vertices.len();
-                                let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
-                                for &ei in &face.boundary_edges {
-                                    if ei >= self.ds.edges.len() { continue; }
-                                    let e = &self.ds.edges[ei];
-                                    let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
-                                    let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
-                                    let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
-                                    outer_edges.push(e_sr);
-                                }
-                                if outer_edges.len() >= 3 {
-                                    let ow = t.add_twire(outer_edges);
-                                    let real_sr = t.add_tface(Some(face.surface.clone()), ow, vec![],
-                                        Some(self.ds.vertices[face.boundary_verts[0]].point),
-                                        None, vec![], face.natural_restriction);
-                                    if let Some(slot) = self.my_face_refs.borrow_mut().get_mut(rfi) {
-                                        *slot = real_sr;
-                                    }
-                                    sf.push(real_sr);
-                                }
+                    for &dfi in &result_faces {
+                        if let Some(df) = self.ds.faces.get(dfi) {
+                            let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+                            for &ei in &df.boundary_edges {
+                                if ei >= self.ds.edges.len() { continue; }
+                                let e = &self.ds.edges[ei];
+                                let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
+                                let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
+                                let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
+                                outer_edges.push(e_sr);
+                            }
+                            if outer_edges.len() >= 3 {
+                                let ow = t.add_twire(outer_edges);
+                                let real_sr = t.add_tface(Some(df.surface.clone()), ow, vec![],
+                                    df.boundary_verts.first().and_then(|&vi| self.ds.vertices.get(vi)).map(|v| v.point),
+                                    None, vec![], df.natural_restriction);
+                                sf.push(real_sr);
                             }
                         }
                     }
+
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
