@@ -538,6 +538,14 @@ impl<'a> PaveFiller<'a> {
   self.dump_ctx.snapshot("after_Init", self.ds, None);
   if self.check_stop("after_Init") { return; }
 
+  // OCCT L251-366: pipeline body (Prepare → ProcessDE)
+  self.perform_body();
+ }
+
+ /// Run the pipeline body (Prepare through ProcessDE) on an already-initialized DS.
+ /// This is the equivalent of PerformInternal after Init, and is used by
+ /// PostTreatFF for the nested PaveFiller (OCCT PaveFiller_6.cxx L1392: aPF.Perform()).
+ pub(crate) fn perform_body(&mut self) {
   // OCCT L251: Prepare =build pcurves on planar faces.
   self.prepare();
   if self.my_report.has_errors() { return; }

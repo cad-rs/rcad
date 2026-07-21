@@ -215,17 +215,18 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ===== OCCT L1389-1398: Nested PaveFiller → aPF.Perform() =====
+        // ===== OCCT L1387-1398: Nested PaveFiller → aPF.Perform() =====
+        // OCCT: BOPAlgo_PaveFiller aPF(theAllocator);
+        // OCCT: aPF.SetIsPrimary(false);
+        // OCCT: aPF.SetNonDestructive(myNonDestructive);
         // OCCT: aPF.SetRunParallel(myRunParallel);
         // OCCT: aPF.SetArguments(aLS);
         // OCCT: aPF.Perform(aPS.Next());
-        // rcad: manual VV pass on a nested DS (functional equivalent)
+        // OCCT: aPDS = aPF.PDS();
         if a_ls.is_empty() { return; }
 
-        // OCCT L1398: aPDS = aPF.PDS();
-        // Create nested DS (equivalent of aPDS) and populate with vertices
+        // Create nested DS (aPDS) and populate with vertices from aLS
         let mut a_pds = DS::new_empty();
-        // Map from nested DS vertex index → main DS vertex index
         let mut a_map_nested_to_main: Vec<usize> = Vec::new();
         for &(shape_idx, st) in &a_ls {
             if st == 0 && shape_idx < self.ds.vertices.len() {
@@ -238,12 +239,9 @@ impl<'a> PaveFiller<'a> {
                 a_map_nested_to_main.push(shape_idx);
             }
         }
+        if a_map_nested_to_main.len() < 2 { return; }
 
-        if a_map_nested_to_main.len() < 2 {
-            return;
-        }
-
-        // Build VV iterator (equivalent of BOPDS_Iterator in nested PF)
+        // Set up DS for PaveFiller pipeline
         a_pds.a_vertex_count = a_map_nested_to_main.len() / 2;
         a_pds.nb_source_shapes = a_map_nested_to_main.len();
         for i in 0..a_map_nested_to_main.len() {
@@ -257,32 +255,15 @@ impl<'a> PaveFiller<'a> {
         }
         a_pds.build_map_ve();
 
-        // Perform VV: check distances and create SD mappings in nested DS
-        // (equivalent to nested PaveFiller PerformVV step)
-        let vv_pairs: Vec<(usize, usize)> = {
-            let n_a = a_pds.a_vertex_count;
-            let n_b = a_pds.vertices.len();
-            let mut pairs = Vec::new();
-            for i in 0..n_a {
-                for j in n_a..n_b {
-                    pairs.push((i, j));
-                }
-            }
-            pairs
-        };
-        for &(n1, n2) in &vv_pairs {
-            let tol = if n1 < a_pds.vertices.len() && n2 < a_pds.vertices.len() {
-                self.vv_pair_tol_ds(&a_pds, n1, n2)
-            } else { TOLERANCE_ABS };
-            let dist = if n1 < a_pds.vertices.len() && n2 < a_pds.vertices.len() {
-                (a_pds.vertex_point(n1) - a_pds.vertex_point(n2)).length()
-            } else { f64::MAX };
-            if dist <= tol {
-                a_pds.add_shape_sd(n1, n2);
-            }
-        }
+        // Create nested PaveFiller and run full pipeline
+        let mut a_pf = super::PaveFiller::new(&mut a_pds);
+        a_pf.is_primary = false;
+        a_pf.non_destructive = self.non_destructive;
+        a_pf.run_parallel = self.run_parallel;
+        a_pf.context.resize(a_pf.ds.faces.len());
+        a_pf.perform_body();
 
-        // ===== OCCT L1398-1466: Process VERTEX results from nested PaveFiller =====
+        // ===== OCCT L1398-1466: Process results from nested PaveFiller =====
         // OCCT: aItLS.Initialize(aLS); for (; aItLS.More(); aItLS.Next())
         // For each shape in aLS: get type, if VERTEX handle SD or FF point update
         let sd_pairs: Vec<(usize, usize)> = a_pds.shape_sd.sd_vertices_iter()
