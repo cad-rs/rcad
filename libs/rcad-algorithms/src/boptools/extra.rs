@@ -12,9 +12,10 @@
  pcurve_range_b: Option<[f64; 2]>,
 ) {
  if ei >= ds.edges.len() { return; }
- let edge = &ds.edges[ei];
- let t_range = edge.t_range;
- let tol_e = edge.geom_tol;
+ let t_range = ds.edges[ei].t_range;
+ let tol_e = ds.edges[ei].geom_tol;
+ // Clone edge curve for projection fallback (avoids holding immutable borrow on ds.edges)
+ let edge_curve = ds.edges[ei].curve.clone();
 
  for i in 0..2usize {
  let b_pc = if i == 0 { b_pc1 } else { b_pc2 };
@@ -23,10 +24,15 @@
  let fi = if i == 0 { fi_a } else { fi_b };
  let src_pc = if i == 0 { pcurve_a } else { pcurve_b };
  let src_range = if i == 0 { pcurve_range_a } else { pcurve_range_b };
- let face = &ds.faces[fi];
 
  // OCCT L1691-1701: get pcurve from intersection curve or build it
  let pc = src_pc.cloned();
+ // OCCT L1692-1702: if pcurve is null, build via projection (BuildPCurveForEdgeOnFace)
+ let pc = pc.or_else(|| {
+     let surf = ds.faces[fi].surface.clone();
+     DS::compute_edge_pcurve(&edge_curve, &surf, None)
+         .map(|(pc2, _span)| pc2)
+ });
 
  // Store pcurve on edge's face_reps
  let pc_range = src_range.unwrap_or(t_range);
