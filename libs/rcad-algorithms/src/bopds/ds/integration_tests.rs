@@ -1,9 +1,14 @@
 //! Integration tests for DS + PaveFiller + boolean pipeline.
-//! These tests verify alignment with OCCT reference data.
-//! All reference values come from OCCT DRAW runs (bfuse_simple A1).
 //!
-//! Stage-by-stage tests: set RCAD_STOP_AFTER to stop PaveFiller at a specific
-//! stage and inspect DS invariants at that point.
+//! STATUS: One OCCT-verified test (pavefiller_stage_ref_plane_sphere) asserts
+//! real reference data from occt_bool_runner pipeline dumps.
+//! It FAILS at PerformFF/MakeBlocks due to known nIC alignment gap.
+//! All other stage_ref tests print data only (no OCCT verification yet).
+//!
+//! Problem discovered 2026-07-21: The stage_ref tests asserted rcad's own
+//! measured values, NOT verified OCCT reference data. Comments saying
+//! "OCCT ref:" were aspirational annotations, not confirmed values.
+//! These fake assertions have been deleted — what remains is honest.
 
 use super::types::*;
 use super::DS;
@@ -899,9 +904,8 @@ fn shape_info_box_is_out_works() {
     }
 }
 
-/// Temporary debug helper — prints stage metrics without assertions.
-/// Temporary debug helper — prints stage metrics without assertions.
-/// Used for data collection; replaced by check_stage() with expected values.
+/// Debug output helper — prints DS stage metrics without assertions.
+/// All stage_ref tests use this until real OCCT reference data is available.
 fn dbg_stage(ds: &DS, stage_name: &str) {
     eprintln!("  {}: nV={} nE={} nF={} nIC={} nCB={} nPB={}",
         stage_name, ds.vertices.len(), ds.edges.len(), ds.faces.len(),
@@ -915,120 +919,28 @@ fn dbg_stage(ds: &DS, stage_name: &str) {
     assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
         "{}: origins same length as edges", stage_name);
 }
-/// Each test calls check_stage() at each stop point to verify DS state
-/// matches expected counts (from OCCT reference when available).
-#[derive(Default)]
-struct StageMetrics {
-    n_v: Option<usize>,
-    n_e: Option<usize>,
-    n_f: Option<usize>,
-    n_ic: Option<usize>,      // intersection curves
-    n_cb: Option<usize>,      // common blocks
-    n_pb: Option<usize>,      // pave blocks global pool
-    n_vv: Option<usize>,      // VV interferences
-    n_ve: Option<usize>,      // VE interferences
-    n_ee: Option<usize>,      // EE interferences
-    n_vf: Option<usize>,      // VF interferences
-    n_ef: Option<usize>,      // EF interferences
-    n_ff: Option<usize>,      // FF interferences
-    // Additional flags
-    has_ics: Option<bool>,
-    has_ff: Option<bool>,
-    has_cb: Option<bool>,
-    has_pbs_on_edges: Option<bool>,
-    has_pbs_sc: Option<bool>,
-}
 
-fn check_stage(ds: &DS, stage_name: &str, m: &StageMetrics) {
-    // Debug: print actual counts
-    eprintln!("  {}: nV={} nE={} nF={} nIC={} nCB={} nPB={}",
-        stage_name, ds.vertices.len(), ds.edges.len(), ds.faces.len(),
-        ds.intersection_curves.len(), ds.common_blocks.len(), ds.pave_blocks.len());
-    eprintln!("    VV={} VE={} EE={} VF={} EF={} FF={}",
-        ds.interf_vv.len(), ds.interf_ve.len(), ds.interf_ee.len(),
-        ds.interf_vf.len(), ds.interf_ef.len(), ds.interf_ff.len());
-    if let Some(exp) = m.n_v {
-        assert_eq!(ds.vertices.len(), exp,
-            "{}: nV", stage_name);
-    }
-    if let Some(exp) = m.n_e {
-        assert_eq!(ds.edges.len(), exp,
-            "{}: nE", stage_name);
-    }
-    if let Some(exp) = m.n_f {
-        assert_eq!(ds.faces.len(), exp,
-            "{}: nF", stage_name);
-    }
-    if let Some(exp) = m.n_ic {
-        assert_eq!(ds.intersection_curves.len(), exp,
-            "{}: nIC", stage_name);
-    }
-    if let Some(exp) = m.n_cb {
-        assert_eq!(ds.common_blocks.len(), exp,
-            "{}: nCB", stage_name);
-    }
-    if let Some(exp) = m.n_pb {
-        assert_eq!(ds.pave_blocks.len(), exp,
-            "{}: nPB", stage_name);
-    }
-    if let Some(exp) = m.n_vv {
-        assert_eq!(ds.interf_vv.len(), exp,
-            "{}: nVV", stage_name);
-    }
-    if let Some(exp) = m.n_ve {
-        assert_eq!(ds.interf_ve.len(), exp,
-            "{}: nVE", stage_name);
-    }
-    if let Some(exp) = m.n_ee {
-        assert_eq!(ds.interf_ee.len(), exp,
-            "{}: nEE", stage_name);
-    }
-    if let Some(exp) = m.n_vf {
-        assert_eq!(ds.interf_vf.len(), exp,
-            "{}: nVF", stage_name);
-    }
-    if let Some(exp) = m.n_ef {
-        assert_eq!(ds.interf_ef.len(), exp,
-            "{}: nEF", stage_name);
-    }
-    if let Some(exp) = m.n_ff {
-        assert_eq!(ds.interf_ff.len(), exp,
-            "{}: nFF", stage_name);
-    }
-    if let Some(exp) = m.has_ics {
-        assert_eq!(!ds.intersection_curves.is_empty(), exp,
-            "{}: has_ICs (expected={})", stage_name, exp);
-    }
-    if let Some(exp) = m.has_ff {
-        assert_eq!(!ds.interf_ff.is_empty(), exp,
-            "{}: has_FF (expected={})", stage_name, exp);
-    }
-    if let Some(exp) = m.has_cb {
-        assert_eq!(!ds.common_blocks.is_empty(), exp,
-            "{}: has_CBs (expected={})", stage_name, exp);
-    }
-    if let Some(exp) = m.has_pbs_on_edges {
-        let any_pbs = (0..ds.edges.len()).any(|ei| !ds.edge_pave_blocks(ei).is_empty());
-        assert_eq!(any_pbs, exp,
-            "{}: has_PBs_on_edges (expected={})", stage_name, exp);
-    }
-    if let Some(exp) = m.has_pbs_sc {
-        let any_sc = ds.faces.iter().any(|f| !f.face_info.pave_blocks_sc.is_empty());
-        assert_eq!(any_sc, exp,
-            "{}: has_PBs_sc (expected={})", stage_name, exp);
-    }
-    // Array consistency (always checked)
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "{}: start/end arrays same length", stage_name);
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
-        "{}: origins same length as edges", stage_name);
-    // All vertex indices in range
-    for ei in 0..ds.edges.len() {
-        assert!(ds.edges[ei].start_vertex < ds.vertices.len(),
-            "{}: edge {} start vertex in range", stage_name, ei);
-        assert!(ds.edges[ei].end_vertex < ds.vertices.len(),
-            "{}: edge {} end vertex in range", stage_name, ei);
-    }
+/// Assert DS counts against OCCT reference data (from pipeline dump).
+/// nV_min allows for sphere vertex count difference (OCCT=3, rcad=4).
+/// All other fields assert exact equality — any deviation is a real gap.
+fn check_stage_occt(ds: &DS, stage_name: &str,
+    nV_min: usize, exp_nE: usize, exp_nF: usize, exp_nIC: usize,
+    exp_VV: usize, exp_EE: usize, exp_EF: usize, exp_FF: usize)
+{
+    eprintln!("  {}: OCCT ref: nV>={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
+        stage_name, nV_min, exp_nE, exp_nF, exp_nIC, exp_VV, exp_EE, exp_EF, exp_FF);
+    eprintln!("    rcad:    nV={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
+        ds.vertices.len(), ds.edges.len(), ds.faces.len(),
+        ds.intersection_curves.len(),
+        ds.interf_vv.len(), ds.interf_ee.len(), ds.interf_ef.len(), ds.interf_ff.len());
+    assert!(ds.vertices.len() >= nV_min, "{}: nV >= {}", stage_name, nV_min);
+    assert_eq!(ds.edges.len(), exp_nE, "{}: nE", stage_name);
+    assert_eq!(ds.faces.len(), exp_nF, "{}: nF", stage_name);
+    assert_eq!(ds.intersection_curves.len(), exp_nIC, "{}: nIC", stage_name);
+    assert_eq!(ds.interf_vv.len(), exp_VV, "{}: VV", stage_name);
+    assert_eq!(ds.interf_ee.len(), exp_EE, "{}: EE", stage_name);
+    assert_eq!(ds.interf_ef.len(), exp_EF, "{}: EF", stage_name);
+    assert_eq!(ds.interf_ff.len(), exp_FF, "{}: FF", stage_name);
 }
 
 #[test]
@@ -1091,188 +1003,104 @@ fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
 }
 
 /// Stage ref: plane_plane (box x box)
-/// Tests the full PaveFiller pipeline on two identical boxes at origin.
-/// rcad/OCCT ref counts; OCCT values noted when different.
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_plane_plane() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
 
-    // PerformVV — OCCT ref: VV=8, nV=16
+    eprintln!("--- Stage ref: plane_plane ---");
+    eprintln!("PerformVV");
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "plane_plane:PerformVV", &StageMetrics {
-        n_v: Some(24), n_e: Some(24), n_f: Some(12),
-        n_ic: Some(0), n_cb:None /*OCCT ref: 0*/,
-        n_vv:None /*OCCT ref: 8*/, n_ve: Some(0), n_ee: Some(0),
-        n_vf: Some(0), n_ef: Some(0), n_ff: Some(0),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // PerformVE — OCCT ref: VV=8, nV=24
+    dbg_stage(&ds, "VV");
+    eprintln!("PerformVE");
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "plane_plane:PerformVE", &StageMetrics {
-        n_v: Some(24), n_e: Some(24), n_f: Some(12),
-        n_ic: Some(0), n_cb:None /*OCCT ref: 0*/,
-        n_vv:None /*OCCT ref: 8*/, n_ee: Some(0),
-        n_ef: Some(0), n_ff: Some(0),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // PerformEE — OCCT ref: VV=8, EE=12, nV=36
+    dbg_stage(&ds, "VE");
+    eprintln!("PerformEE");
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "plane_plane:PerformEE", &StageMetrics {
-        n_v: Some(36), n_e: Some(24), n_f: Some(12),
-        n_ic: Some(0), n_cb:None /*OCCT ref: 24*/,
-        n_vv:None /*OCCT ref: 8*/,
-        n_ef: Some(0), n_ff: Some(0),
-        has_ics: Some(false),
-        // rcad EE=0 vs OCCT EE=12: perform_ee_bvh needs alignment
-        ..Default::default()
-    });
-
-    // PerformVF — OCCT ref: VV=8, EE=12, nV=24
+    dbg_stage(&ds, "EE");
+    eprintln!("PerformVF");
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "plane_plane:PerformVF", &StageMetrics {
-        n_v: Some(36), n_e: Some(24), n_f: Some(12),
-        n_ic: Some(0), n_cb:None /*OCCT ref: 24*/,
-        n_vv:None /*OCCT ref: 8*/,
-        n_ef: Some(0), n_ff: Some(0),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // PerformEF — OCCT ref: VV=8, EE=12, EF=0, nV=24
+    dbg_stage(&ds, "VF");
+    eprintln!("PerformEF");
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "plane_plane:PerformEF", &StageMetrics {
-        n_v: Some(36), n_e: Some(24), n_f: Some(12),
-        n_ic: Some(0), n_cb:None /*OCCT ref: 48*/,
-        n_vv:None /*OCCT ref: 8*/,
-        n_ff: Some(0),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // PerformFF — OCCT ref: VV=8, EE=12, EF=0, FF=30, nV=24
+    dbg_stage(&ds, "EF");
+    eprintln!("PerformFF");
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "plane_plane:PerformFF", &StageMetrics {
-        n_v: Some(36), n_e: Some(24), n_f: Some(12),
-        n_vv:None /*OCCT ref: 8*/,
-        // rcad FF=36 vs OCCT FF=30: plane-plane line count diff
-        n_ff:None /*OCCT ref: 36*/,
-        n_cb:None /*OCCT ref: 48*/,
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // MakeSplitEdges — edges created + new edges
+    dbg_stage(&ds, "FF");
+    eprintln!("MakeSplitEdges");
     let ds = pave_fill_stage(&a, &b, "after_MakeSplitEdges");
-    check_stage(&ds, "plane_plane:MakeSplitEdges", &StageMetrics {
-        n_v: Some(36),
-        n_ic: Some(0),
-        n_cb:None /*OCCT ref: 48*/,
-        n_vv:None /*OCCT ref: 8*/,
-        has_pbs_on_edges: Some(true),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // MakeBlocks — OCCT ref: VV=8, EE=12, EF=0, FF=30
+    dbg_stage(&ds, "MakeSplitEdges");
+    eprintln!("MakeBlocks");
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "plane_plane:MakeBlocks", &StageMetrics {
-        n_v: Some(36),
-        n_ic: Some(0),
-        n_cb:None /*OCCT ref: 48*/,
-        n_vv:None /*OCCT ref: 8*/,
-        has_pbs_on_edges: Some(true),
-        has_pbs_sc: Some(false),
-        has_ics: Some(false),
-        ..Default::default()
-    });
-
-    // MakePCurves
+    dbg_stage(&ds, "MakeBlocks");
+    eprintln!("MakePCurves");
     let ds = pave_fill_stage(&a, &b, "after_MakePCurves");
-    check_stage(&ds, "plane_plane:MakePCurves", &StageMetrics {
-        n_v: Some(36),
-        n_ic: Some(0),
-        ..Default::default()
-    });
-
-    // ProcessDE
+    dbg_stage(&ds, "MakePCurves");
+    eprintln!("ProcessDE");
     let ds = pave_fill_stage(&a, &b, "after_ProcessDE");
-    check_stage(&ds, "plane_plane:ProcessDE", &StageMetrics {
-        n_v: Some(36),
-        n_ic: Some(0),
-        ..Default::default()
-    });
+    dbg_stage(&ds, "ProcessDE");
 }
 /// Stage ref: plane_sphere (box x psphere)
+/// OCCT reference data from occt_bool_runner pipeline dump.
+///
+/// OCCT ref (bfuse_simple A1 sphere+box):
+///   PerformVV/VE/EE/VF: nV=10 nE=15 nF=7 nIC=0 | VV=1 EE=0 EF=0 FF=0
+///   PerformEF:          nV=10 nE=15 nF=7 nIC=0 | VV=1 EE=0 EF=1 FF=0
+///   PerformFF:          nV=10 nE=15 nF=7 nIC=3 | VV=1 EE=0 EF=1 FF=6
+///   MakeBlocks:         nV=10 nE=15 nF=7 nIC=3 | VV=1 EE=0 EF=1 FF=6
+///
+/// KNOWN: rcad sphere has 4 vertices vs OCCT 3 (nV_min accounts for this).
+/// ALIGNMENT GAP: rcad nIC=4 vs OCCT nIC=3 (after FF), cascades to nE=24 vs 15 (MakeBlocks).
+/// These gaps cause fuse_sphere_box_ref_topology to fail (V=20 vs OCCT V=8).
 #[test]
 fn pavefiller_stage_ref_plane_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
     let b = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
-    // OCCT reference: EE stage now matches (seam Line→Circle fix). EF+ are rcad actuals (not yet aligned).
-    // n_pb/n_cb are always 0 in OCCT dumps (dump bug), skip via None.
-    let occt_stages: Vec<(&str, &str, StageMetrics)> = vec![
-        ("VV", "after_PerformVV", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        ("VE", "after_PerformVE", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        ("EE", "after_PerformEE", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        // VF: OCCT dump doesn't include VF counts; skip n_vf/n_vf_side checks.
-        ("VF", "after_PerformVF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        ("EF", "after_PerformEF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(0),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(0),has_ics:Some(false),..Default::default()}),
-        // FF+: OCCT ref nV=11 nE=15 FF=6
-        ("FF", "after_PerformFF", StageMetrics{n_v:Some(11),n_e:Some(15),n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
-        ("MB", "after_MakeBlocks", StageMetrics{n_v:Some(11),n_e:None,n_f:Some(7),n_ic:Some(4),n_cb:None,n_pb:None,n_vv:Some(1),n_ee:Some(0),n_ef:Some(1),n_ff:Some(6),has_ics:Some(true),..Default::default()}),
-    ];
-    for (label, stage, occt_m) in &occt_stages {
-        let ds = pave_fill_stage(&a, &b, stage);
-        check_stage(&ds, label, occt_m);
-    }
+
+    // Stages VV through VF: all counts match OCCT exactly
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    check_stage_occt(&ds, "VV",  10, 15, 7, 0, 1, 0, 0, 0);
+    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
+    check_stage_occt(&ds, "VE",  10, 15, 7, 0, 1, 0, 0, 0);
+    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
+    check_stage_occt(&ds, "EE",  10, 15, 7, 0, 1, 0, 0, 0);
+    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
+    check_stage_occt(&ds, "VF",  10, 15, 7, 0, 1, 0, 0, 0);
+    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
+    check_stage_occt(&ds, "EF",  10, 15, 7, 0, 1, 0, 1, 0);
+
+    // FF: nIC=3, rcad=4 — ALIGNMENT GAP (extra intersection curve)
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    check_stage_occt(&ds, "FF",  10, 15, 7, 3, 1, 0, 1, 6);
+
+    // MakeBlocks: nE=15 (OCCT) vs rcad nE=24 — cascaded from extra IC
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    check_stage_occt(&ds, "MB",  10, 15, 7, 3, 1, 0, 1, 6);
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
+/// OCCT reference: bopsurf_pairs P1 (Box(2x2x2) n Cyl(R=0.5, H=2)).
+/// GAP: rcad finds NO intersection (nIC=0, FF=0) vs OCCT nIC=1, FF=1.
 #[test]
 fn pavefiller_stage_ref_plane_cylinder() {
     let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
     let b = make_cyl(0.5, 2.0);
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "pc:VV", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "pc:VE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "pc:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "pc:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "pc:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 3*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "pc:FF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 3*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "pc:MB", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(9),n_ic:Some(0),n_cb:None /*OCCT ref: 3*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:Some(false),..Default::default()});
+    check_stage_occt(&ds, "FF", 10, 15, 9, 1, 0, 0, 1, 1);
 }
 /// Stage ref: plane_cone (box x pcone)
+/// OCCT reference: bopsurf_pairs P2 (Box(2x2x2) n Cone(R1=1, R2=0, H=2)).
+/// GAP: rcad nIC=0 vs OCCT nIC=1 — intersection not detected.
 #[test]
 fn pavefiller_stage_ref_plane_cone() {
     let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
     let b = make_cone_fn(1.0, 2.0);
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "pco:VV", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "pco:VE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "pco:EE", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "pco:VF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "pco:EF", &StageMetrics{n_v:Some(4),n_e:Some(5),n_f:Some(8),n_ic:Some(0),n_cb:None /*OCCT ref: 2*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "pco:FF", &StageMetrics{n_v:None /*OCCT ref: 8*/,n_e:Some(5),n_f:Some(8),n_ic:None /*OCCT ref: 4*/,n_cb:None /*OCCT ref: 2*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:None /*OCCT ref: true*/,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "pco:MB", &StageMetrics{n_v:None /*OCCT ref: 9*/,n_e:Some(5),n_f:Some(8),n_ic:None /*OCCT ref: 4*/,n_cb:None /*OCCT ref: 2*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:None /*OCCT ref: true*/,..Default::default()});
+    check_stage_occt(&ds, "FF", 10, 15, 8, 1, 0, 0, 4, 9);
 }
 /// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
+/// OCCT reference: bopsurf_pairs C1 (Cyl(R=1,H=3) n Cyl(R=1,H=3) rotated 90Y).
+/// GAP: rcad nIC=0 vs OCCT nIC=7 after FF — intersection not detected.
 #[test]
 fn pavefiller_stage_ref_cylinder_cylinder() {
     let a = make_cyl(1.0, 3.0);
@@ -1281,63 +1109,28 @@ fn pavefiller_stage_ref_cylinder_cylinder() {
         c.apply_transform(glam::DAffine3::from_rotation_y(std::f64::consts::FRAC_PI_2));
         c
     };
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "cc:VV", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "cc:VE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "cc:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "cc:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "cc:EF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 4*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cc:FF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 4*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cc:MB", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(6),n_ic:Some(0),n_cb:None /*OCCT ref: 4*/,n_vv:Some(0),n_ef:Some(0),n_vf:None /*OCCT ref: 4*/,has_ics:Some(false),..Default::default()});
+    check_stage_occt(&ds, "FF", 4, 6, 6, 7, 0, 2, 1, 4);
 }
 /// Stage ref: cylinder_sphere (pcylinder x psphere)
+/// OCCT reference: bopsurf_pairs C2 (Cyl(R=0.8,H=3) n Sphere(R=1.5)).
+/// GAP: rcad nIC=0 vs OCCT nIC=1 after FF — intersection not detected.
 #[test]
 fn pavefiller_stage_ref_cylinder_sphere() {
     let a = make_cyl(0.8, 3.0);
     let b = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.5).unwrap();
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "cs:VV", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:None /*OCCT ref: 2*/,n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "cs:VE", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:None /*OCCT ref: 2*/,n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "cs:EE", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:None /*OCCT ref: 2*/,n_vv:None /*OCCT ref: 2*/,n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "cs:VF", &StageMetrics{n_v:Some(6),n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:None /*OCCT ref: 2*/,n_vv:None /*OCCT ref: 2*/,n_ef:Some(0),n_ff:Some(0),n_vf:None /*OCCT ref: 6*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "cs:EF", &StageMetrics{n_v:None /*OCCT ref: 8*/,n_e:Some(6),n_f:Some(4),n_ic:Some(0),n_cb:None /*OCCT ref: 4*/,n_vv:None /*OCCT ref: 2*/,n_ef:None /*OCCT ref: 2*/,n_ff:Some(0),n_vf:None /*OCCT ref: 10*/,has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cs:FF", &StageMetrics{n_v:None /*OCCT ref: 16*/,n_e:Some(6),n_f:Some(4),n_ic:Some(4),n_cb:None /*OCCT ref: 4*/,n_vv:None /*OCCT ref: 2*/,n_ef:None /*OCCT ref: 2*/,n_vf:None /*OCCT ref: 10*/,has_ics:Some(true),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cs:MB", &StageMetrics{n_v:None /*OCCT ref: 16*/,n_e:Some(8),n_f:Some(4),n_ic:Some(4),n_cb:None /*OCCT ref: 4*/,n_vv:None /*OCCT ref: 2*/,n_ef:None /*OCCT ref: 2*/,n_vf:None /*OCCT ref: 10*/,has_ics:Some(true),..Default::default()});
+    check_stage_occt(&ds, "FF", 4, 6, 4, 1, 0, 1, 0, 2);
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
+/// OCCT reference: bopsurf_pairs C3 (Cyl(R=1,H=5) n Torus(R=3,r=1)).
+/// GAP: rcad FF=0 vs OCCT FF=2 — no torus-cylinder intersection.
 #[test]
 fn pavefiller_stage_ref_cylinder_torus() {
     let a = make_cyl(1.0, 5.0);
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 1.0).unwrap();
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "ct:VV", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "ct:VE", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "ct:EE", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "ct:VF", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "ct:EF", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "ct:FF", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "ct:MB", &StageMetrics{n_v:Some(3),n_e:Some(4),n_f:Some(4),n_ic:Some(0),n_cb:Some(0),n_vv:Some(0),n_ef:Some(0),n_vf:Some(0),has_ics:Some(false),..Default::default()});
+    check_stage_occt(&ds, "FF", 3, 5, 4, 0, 0, 0, 0, 2);
 }
 /// Stage ref: cone_cone (pcone x pcone)
 #[test]
@@ -1412,25 +1205,14 @@ fn pavefiller_stage_ref_cone_cone() {
 
 }
 /// Stage ref: sphere_sphere (psphere x psphere)
+/// OCCT reference: bopsurf_pairs S1 (Sphere(R=2) n Sphere(R=2) at X=1).
+/// GAP: rcad nIC=0 vs OCCT nIC=2 after FF — sphere-sphere intersection not detected.
 #[test]
 fn pavefiller_stage_ref_sphere_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
     let b = rcad_modeling::make_sphere_brep(DVec3::new(1.0, 0.0, 0.0), 2.0).unwrap();
-
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "ss:VV", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ve:Some(0),n_ee:Some(0),n_vf:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage(&ds, "ss:VE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ee:Some(0),n_ef:Some(0),n_ff:Some(0),has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage(&ds, "ss:EE", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:None /*OCCT ref: 0*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage(&ds, "ss:VF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:None /*OCCT ref: 0*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage(&ds, "ss:EF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_ff:Some(0),n_pb:None /*OCCT ref: 6*/,has_ics:Some(false),..Default::default()});
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "ss:FF", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_pb:None /*OCCT ref: 6*/,has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "ss:MB", &StageMetrics{n_v:Some(4),n_e:Some(6),n_f:Some(2),n_ic:Some(0),n_cb:None /*OCCT ref: 0*/,n_vv:Some(0),n_ef:Some(0),n_pb:None /*OCCT ref: 6*/,has_ics:Some(false),..Default::default()});
+    check_stage_occt(&ds, "FF", 4, 6, 2, 2, 0, 0, 2, 1);
 }
 
 // =========================================================================
@@ -1438,133 +1220,123 @@ fn pavefiller_stage_ref_sphere_sphere() {
 // =========================================================================
 
 /// Stage ref: plane_torus (box x torus)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_plane_torus() {
     let a = box_at(DVec3::new(-3.0, -1.5, -1.5), 6.0, 3.0, 3.0);
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "pt:VV", &StageMetrics{n_v:None,n_e:None,n_f:None,n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "pt:FF", &StageMetrics{n_ic:None,has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "pt:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: cylinder_cone (pcylinder x cone)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_cylinder_cone() {
     let a = make_cyl(1.0, 3.0);
     let b = make_cone_fn(1.5, 2.0);
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "cc:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cc:FF", &StageMetrics{has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cc:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: cone_sphere (cone x sphere)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_cone_sphere() {
     let a = make_cone_fn(1.5, 2.0);
     let b = rcad_modeling::make_sphere_brep(DVec3::new(0.0, 0.0, 3.0), 1.5).unwrap();
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "cs:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "cs:FF", &StageMetrics{has_ics:Some(true),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "cs:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: cone_torus (cone x torus)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_cone_torus() {
     let a = make_cone_fn(1.5, 3.0);
     let b = rcad_modeling::make_torus_brep(DVec3::new(0.0, 0.0, 1.5), DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "ct:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "ct:FF", &StageMetrics{has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "ct:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: sphere_torus (sphere x torus)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_sphere_torus() {
     let a = rcad_modeling::make_sphere_brep(DVec3::new(-1.0, 0.0, 0.0), 1.5).unwrap();
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "st:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "st:FF", &StageMetrics{has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "st:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: torus_torus (torus x torus)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_torus_torus() {
     let a = rcad_modeling::make_torus_brep(DVec3::new(-1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5).unwrap();
     let b = rcad_modeling::make_torus_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5).unwrap();
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "tt:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "tt:FF", &StageMetrics{has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "tt:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: box_box_offset (two overlapping boxes offset)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_offset() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
     let b = box_at(DVec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0);
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "bbo:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "bbo:FF", &StageMetrics{has_ics:Some(false),n_cb:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "bbo:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: box_box_tangent (two boxes touching at a face)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_tangent() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
     let b = box_at(DVec3::new(2.0, 0.0, 0.0), 2.0, 2.0, 2.0);
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "bbt:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "bbt:FF", &StageMetrics{has_ics:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "bbt:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: box_box_contained (one box inside another)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_contained() {
     let a = box_at(DVec3::ZERO, 3.0, 3.0, 3.0);
     let b = box_at(DVec3::new(0.5, 0.5, 0.5), 1.0, 1.0, 1.0);
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "bbc:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "bbc:FF", &StageMetrics{has_ics:Some(false),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "bbc:MB", &StageMetrics{..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 /// Stage ref: box_box_disjoint (two separated boxes)
+/// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_disjoint() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b = box_at(DVec3::new(5.0, 0.0, 0.0), 1.0, 1.0, 1.0);
-    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage(&ds, "bbdj:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage(&ds, "bbdj:FF", &StageMetrics{n_ic:Some(0),has_ics:Some(false),n_ff:None,..Default::default()});
-    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage(&ds, "bbdj:MB", &StageMetrics{n_ic:Some(0),has_ics:Some(false),..Default::default()});
+    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+        let ds = pave_fill_stage(&a, &b, s);
+        dbg_stage(&ds, s);
+    }
 }
 
 use crate::builder::{BooleanBuilder, BooleanOpType};
@@ -1595,7 +1367,8 @@ fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glu
 }
 
 /// Builder stage diagnostic: bfuse_simple A1 (sphere + box).
-/// Prints rcad stage snapshots vs OCCT reference for manual comparison.
+/// Prints rcad stage snapshots for manual inspection.
+/// No assertions — see fuse_sphere_box_ref_topology for real OCCT topology check.
 #[test]
 fn builder_stage_ref_bfuse_simple_a1() {
     let a = make_unit_sphere();
@@ -1603,45 +1376,18 @@ fn builder_stage_ref_bfuse_simple_a1() {
     let snaps = builder_stages(&a, &b, crate::builder::BooleanOpType::Union, false)
         .expect("builder stage-by-stage failed");
 
-    // OCCT reference: (nV, nE, nF, brep_V, brep_E, brep_F) at each Builder stage
-    let occt: Vec<(i32, i32, i32, i32, i32, i32)> = vec![
-        (11, 24, 7, 0, 0, 0),    // after_FillImagesVertices
-        (11, 24, 7, 0, 0, 0),    // after_FillImagesEdges
-        (11, 24, 7, 0, 0, 0),    // after_BuildResultWire
-        (11, 24, 7, 108, 54, 27),// after_FillImagesFaces
-        (11, 24, 7, 108, 54, 27),// after_BuildResultShell
-        (11, 24, 7, 108, 54, 27),// after_FillImagesSolids
-        (11, 24, 7, 108, 54, 27),// after_BuildResultCompSolid
-        (11, 24, 7, 108, 54, 27),// after_FillImagesCompounds
-        (11, 24, 7, 56, 28, 18), // after_PrepareHistory
-        (11, 24, 7, 56, 28, 18), // after_PostTreat
-    ];
-    let snap_idx = [2, 4, 6, 8, 10, 12, 14, 16, 18, 18];
-    let names = [
-        "after_FillImagesVertices", "after_FillImagesEdges",
-        "after_BuildResultWire", "after_FillImagesFaces",
-        "after_BuildResultShell", "after_FillImagesSolids",
-        "after_BuildResultCompSolid", "after_FillImagesCompounds",
-        "after_PrepareHistory", "after_PostTreat",
-    ];
-
     println!("=== Builder Stage Diagnostic: bfuse_simple A1 (sphere+box) ===");
-    println!("{:<30} | {:^8} | {:^8} | {:^8} | {:^8} | {:^8} | {:^8}",
-        "Stage", "rV/oV/dV", "rE/oE/dE", "rF/oF/dF", "brV/oV", "brE/oE", "brF/oF");
-    println!("{:-<30}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}-+-{:-<8}","","","","","","","");
+    println!("{:<30} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+        "Stage", "nDS_V", "nDS_E", "nDS_F", "br_V", "br_E", "br_F");
+    println!("{:-<30}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}","","","","","","","");
 
-    for i in 0..10 {
-        let s = &snaps[snap_idx[i]];
-        let (ov, oe, of, obv, obe, obf) = occt[i];
-        println!("{:<30} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2}/{:+>3} | {:>2}/{:>2} | {:>2}/{:>2} | {:>2}/{:>2}",
-            names[i],
-            s.n_ds_vertices, ov, s.n_ds_vertices as i32 - ov,
-            s.n_ds_edges, oe, s.n_ds_edges as i32 - oe,
-            s.n_ds_faces, of, s.n_ds_faces as i32 - of,
-            s.n_brep_vertices, obv, s.n_brep_edges, obe, s.n_brep_faces, obf);
+    for (i, s) in snaps.iter().enumerate() {
+        println!("{:>2} {:<27} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+            i, s.stage_name, s.n_ds_vertices, s.n_ds_edges, s.n_ds_faces,
+            s.n_brep_vertices, s.n_brep_edges, s.n_brep_faces);
     }
 
-    let last = &snaps[18];
+    let last = &snaps[snaps.len()-1];
     println!("\nPipeline complete: {} stages, final V/E/F/Shell/Solid = {}/{}/{}/{}/{}",
         snaps.len(), last.n_brep_vertices, last.n_brep_edges, last.n_brep_faces,
         last.n_brep_shells, last.n_brep_solids);

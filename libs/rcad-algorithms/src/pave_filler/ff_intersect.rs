@@ -394,6 +394,19 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
  // OCCT L384-393: tolerance setup
  // OCCT: myTolF1 = BRep_Tool::Tolerance(myFace1) + aFuzz, etc.
  // rcad: tolerance handled by PaveFiller's fuzzy_tolerance and face geom_tols.
+// Compute TolFF = max(face tolerances) per OCCT ToleranceFF (BOPAlgo_PaveFiller_6.cxx L3918-3942).
+let tol1 = self.ds.faces.get(f1).map_or(1e-7, |f| f.geom_tol);
+let tol2 = self.ds.faces.get(f2).map_or(1e-7, |f| f.geom_tol);
+let mut a_tol_ff = tol1.max(tol2);
+fn is_analytic_ff(surf: &Surface3) -> bool {
+    matches!(surf, Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_))
+}
+if !is_analytic_ff(&self.ds.faces[f1].surface) || !is_analytic_ff(&self.ds.faces[f2].surface) {
+    a_tol_ff = a_tol_ff.max(5e-6);
+}
+// Ensure minimum tolerance for IntPatch to work
+a_tol_ff = a_tol_ff.max(1e-7);
+if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_tol_ff={:.2e}", f1, tol1, f2, tol2, a_tol_ff); }
 
  // OCCT L395-401: isFace1Quad/isFace2Quad  -- skip; rcad uses IntPatchIntersection
  // which dispatches by quad type internally.
@@ -414,7 +427,7 @@ pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
 
  // IntPatch_Intersection: generic surface-surface intersection.
  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
- int_patch.perform(s_a, s_b, self.fuzzy_tolerance, self.fuzzy_tolerance);
+ int_patch.perform(s_a, s_b, a_tol_ff, a_tol_ff);
  if int_patch.tangent_faces() {
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
  f1, f2, curves: Vec::new(), points: Vec::new(), tangent_faces: true,
