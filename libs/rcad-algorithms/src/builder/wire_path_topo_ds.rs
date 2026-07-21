@@ -111,12 +111,17 @@ pub(crate) fn walk_path_extract_wires(
 ) {
     let start_seg = &segments[start_si];
 
-    // OCCT L382-384: init
+    // OCCT L382-384: init from arguments
     let mut a_va = start_seg.start_vertex.index;
     let mut a_e_outa = start_si;
 
-    let mut edge_seq: Vec<usize> = Vec::new();
-    let mut vert_seq: Vec<usize> = Vec::new();
+    // OCCT L386: aTwoPI
+    let a_two_pi = std::f64::consts::TAU;
+
+    // rcad sequences (OCCT: aLS, aVertVa, aCoordVa)
+    let mut a_ls: Vec<usize> = Vec::new();
+    let mut a_vert_va: Vec<usize> = Vec::new();
+    let mut a_coord_va: Vec<DVec2> = Vec::new();
 
     // OCCT Tolerance2D (WireSplitter_1.cxx L883-905)
     let face_ref = start_seg.face;
@@ -134,135 +139,156 @@ pub(crate) fn walk_path_extract_wires(
     };
 
     // OCCT Coord2d (WireSplitter_1.cxx L677-683)
-    // OCCT Coord2d (WireSplitter_1.cxx L677-683): aP2D1 from pcurve at vertex parameter.
-    // OCCT uses BRep_Tool::Parameter (real, no Option) and BRep_Tool::CurveOnSurface (handle, no Option).
     let coord2d = |vi: usize, si: usize| -> DVec2 {
         let s = &segments[si];
         let t = tool.parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
-            .unwrap_or(DVec2::ZERO.x); // OCCT never fails; rcad fallback for missing DS data
+            .unwrap_or(DVec2::ZERO.x);
         let pc = tool.curve_on_surface(s.edge, s.face);
         pc.map(|(pc, _, _)| pc.point_at(t)).unwrap_or(DVec2::ZERO)
     };
 
-    // OCCT L392: for (;;)
-    loop {
-        // OCCT L394-403: Do not escape through edge from which you enter
-        {
-            let a_nb = edge_seq.len();
-            if a_nb == 1 {
-                let an_e_prev = edge_seq[a_nb - 1];
-                if an_e_prev == a_e_outa {
-                    return;
-                }
+    // SetPassed helper
+    let set_passed = |sm: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize, v: usize| {
+        if let Some(infos) = sm.get_mut(&v) {
+            for ei in infos.iter_mut() {
+                if ei.seg_idx == seg_idx { ei.passed = true; return; }
             }
         }
+    };
 
-        edge_seq.push(a_e_outa);
+    // OCCT L392-625: main loop
+    loop {
+        // OCCT L394-403: Do not escape through edge from which you enter
+        let a_nb = a_ls.len();
+        if a_nb == 1 {
+            let an_e_prev = a_ls[a_nb - 1];
+            if an_e_prev == a_e_outa { return; }
+        }
 
+        // OCCT L405-408: SetPassed, append edge/vertex/coord
+        set_passed(smart_map, a_e_outa, a_va);
+        a_ls.push(a_e_outa);
+        a_vert_va.push(a_va);
+        let a_pa = coord2d(a_va, a_e_outa);
+        a_coord_va.push(a_pa);
+
+        // OCCT L415: GetNextVertex
         let seg = &segments[a_e_outa];
         let a_vb = if seg.start_vertex.index == a_va { seg.end_vertex.index } else { seg.start_vertex.index };
 
-        // OCCT L416-422: append to sequences (vert + UV coord)
-        vert_seq.push(a_vb);
+        // OCCT L417: aPb = Coord2d(aVb, aEOuta, myFace)
         let a_pb = coord2d(a_vb, a_e_outa);
 
-        // OCCT L414: anEdgeInfo->SetPassed(true)
-        mark_edge_passed(smart_map, a_e_outa, a_va, false);
-
-        // OCCT L428-523: Loop detection
-        let a_nb = edge_seq.len() - 1;  // number of entries BEFORE current append
-        let a_tol_2d_2 = 2.0 * tolerance_2d(a_vb);
-        let a_tol_2d_sq = a_tol_2d_2 * a_tol_2d_2;
-        // Inline is_vert_closed to avoid borrow conflict
+        // OCCT L421-424: tolerance + closed
+        let a_tol_2d = 2.0 * tolerance_2d(a_vb);
+        let a_tol_2d_2 = a_tol_2d * a_tol_2d;
         let b_is_closed = a_vert_map.get(&a_vb).copied().unwrap_or(false);
+        let eps = std::f64::EPSILON;
 
+        // OCCT L426-523: Loop detection
+        let _a_nb = a_ls.len();
         let mut loop_found = false;
-        // OCCT L466: for (j = aNb; j >= 0; --j)
-        // aNb is aLS.Length() before append (1-indexed). After append, aLS has aNb+1 entries.
-        // j = aNb checks the last entry (the one just appended). In rcad 0-indexed,
-        // the last entry is at index a_nb (edge_seq.len()-1). OCCT extracts aLS(j..aNb)
-        // so j=aNb gives empty range → skip by using (0..a_nb).rev() (excludes a_nb).
-        for j in (0..a_nb).rev() {
-            // OCCT L468: aVertVa(j+1).IsSame(aVb)
-            if vert_seq[j] != a_vb { continue; }
+        for ii in (0.._a_nb).rev() {
+            let a_v_prev = a_vert_va[ii];
+            let a_e_prev = a_ls[ii];
 
-            // OCCT L472-474: if (aVertMap.IsBound(aVb) && aVertMap.Find(aVb))
-            // → vertex belongs to closed/degenerated edge: check 2D proximity
-            let is_same_v_2d = if b_is_closed {
-                let a_d2 = coord2d(vert_seq[j], edge_seq[j]).distance_squared(a_pb);
-                // OCCT L484-488: additional UV tolerance check
-                if a_d2 < a_tol_2d_sq {
-                    let prev_uv = coord2d(vert_seq[j], edge_seq[j]);
+            // OCCT L437-445: degenerated edge skip (OCCT: do not create wire from degenerated only)
+            let has_non_degen = if ii > 0 {
+                (0..=ii).any(|k| {
+                    let ek = a_ls[k];
+                    segments[ek].start_vertex.index != segments[ek].end_vertex.index
+                        || !segments[ek].is_closed_on_face
+                })
+            } else {
+                segments[a_e_prev].start_vertex.index != segments[a_e_prev].end_vertex.index
+                    || !segments[a_e_prev].is_closed_on_face
+            };
+            if !has_non_degen { continue; }
+
+            // OCCT L447: anIsSameV
+            let an_is_same_v = a_v_prev == a_vb;
+            let mut an_is_same_v_2d = an_is_same_v;
+            if an_is_same_v && b_is_closed {
+                let a_d2 = coord2d(a_vert_va[ii], a_ls[ii]).distance_squared(a_pb);
+                an_is_same_v_2d = a_d2 < a_tol_2d_2;
+                if an_is_same_v_2d {
+                    let prev_uv = coord2d(a_vert_va[ii], a_ls[ii]);
                     let u_dist = (prev_uv.x - a_pb.x).abs();
                     let v_dist = (prev_uv.y - a_pb.y).abs();
-                    u_dist <= 2.0 * u_tolerance(a_vb) && v_dist <= 2.0 * v_tolerance(a_vb)
-                } else { false }
-            } else { true };
+                    if u_dist > 2.0 * u_tolerance(a_vb) || v_dist > 2.0 * v_tolerance(a_vb) {
+                        an_is_same_v_2d = false;
+                    }
+                }
+            }
 
-            // OCCT L476: if (anIsSameV && anIsSameV2d) → found loop
-            if is_same_v_2d {
-                // OCCT L478-496: MakeWire from aLS(j..aNb)
-                let wire: Vec<usize> = edge_seq[j..].to_vec();
-                let same_edge = wire.len() == 2
-                    && match (&segments[wire[0]].source, &segments[wire[1]].source) {
-                        (WireEdgeSourceTopoDS::DsEdge(a), WireEdgeSourceTopoDS::DsEdge(b)) => a.index == b.index,
-                        (WireEdgeSourceTopoDS::IntersectionCurve(a), WireEdgeSourceTopoDS::IntersectionCurve(b)) => a.index == b.index,
-                        (WireEdgeSourceTopoDS::SeamEdge, WireEdgeSourceTopoDS::SeamEdge) => true,
-                        _ => false,
-                    };
-                if !same_edge { wires.push(wire); }
+            // OCCT L470-496: found loop
+            if an_is_same_v && an_is_same_v_2d {
+                let i_priz = 1; // rcad: always make wire (no iPriz=0 optimization)
+                if i_priz != 0 {
+                    // OCCT L478-496: MakeWire from aLS(i..aNb)
+                    let wire: Vec<usize> = a_ls[ii..].to_vec();
+                    // same-edge degenerate check (OCCT L490-494)
+                    let same_edge = wire.len() == 2 &&
+                        segments[wire[0]].start_vertex.index == segments[wire[0]].end_vertex.index &&
+                        segments[wire[1]].start_vertex.index == segments[wire[1]].end_vertex.index;
+                    if !same_edge && wire.len() >= 2 {
+                        wires.push(wire);
+                    }
 
-                // OCCT L505-523: backtrack
-                if j == 0 { return; }
-                a_va = vert_seq[j - 1];
-                a_e_outa = edge_seq[j - 1];
-                edge_seq.truncate(j);
-                vert_seq.truncate(j);
-                loop_found = true;
-                break;
+                    // OCCT L503-523: backtrack
+                    if ii == 0 { return; }
+                    let loop_start_v = a_vert_va[ii];
+                    a_ls.truncate(ii);
+                    a_vert_va.truncate(ii);
+                    a_coord_va.truncate(ii);
+                    a_e_outa = *a_ls.last().unwrap_or(&start_si);
+                    a_va = loop_start_v;  // OCCT L503: aVb=aVertVa(i), L622: aVa=aVb
+                    loop_found = true;
+                    break;
+                }
             }
         }
         if loop_found { continue; }
 
-        // OCCT L526-616: Outgoing edge selection
+        // OCCT L526-624: Outgoing edge selection
+        // Count unpassed outgoing edges at aVb
         let i_cnt = smart_map.get(&a_vb).map_or(0, |infos| {
             infos.iter().filter(|ei| !ei.passed && !ei.in_flag).count()
         });
         if i_cnt == 0 { return; }
 
+        // OCCT L529: anAngleIn
         let an_angle_in = find_angle_at(smart_map, a_e_outa, a_vb, true).unwrap_or(0.0);
-        let incoming_is_boundary = !matches!(segments[a_e_outa].source, WireEdgeSourceTopoDS::IntersectionCurve(_));
 
+        // OCCT L533: isBoundary = !anEdgeInfo->IsInside()
+        let incoming_is_boundary = smart_map.get(&a_vb)
+            .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == a_e_outa))
+            .map(|ei| !ei.is_inside)
+            .unwrap_or(true);
+
+        // Collect unpassed outgoing edges
         let le_info: Vec<&EdgeInfo> = smart_map.get(&a_vb)
             .map(|v| v.iter().filter(|ei| !ei.passed && !ei.in_flag).collect())
             .unwrap_or_default();
-
         if le_info.is_empty() { return; }
-
         if le_info.len() == 1 {
             a_va = a_vb;
             a_e_outa = le_info[0].seg_idx;
             continue;
         }
 
-        // OCCT L526-624: Outgoing edge selection (inlined for 1:1 alignment)
-        let a_two_pi = std::f64::consts::TAU;
-        let eps = std::f64::EPSILON;
+        // OCCT L564-616: compute and compare angles for all candidates
         let mut a_min_angle = 100.0;
         let mut a_nb_ways_inside: i32 = 0;
         let mut p_only_way_in: Option<&EdgeInfo> = None;
         let mut p_edge_info: Option<&EdgeInfo> = None;
 
         for an_ei in &le_info {
-            // OCCT L541-542: anIsOut=!IsIn, anIsNotPassed=!Passed → already filtered above
-            // OCCT L551-562: iCnt==0/1 handled above
-
-            // OCCT L564-591: compute angle for this candidate
+            // OCCT L564-591: angle for this candidate
             let a_angle = if an_ei.seg_idx == a_e_outa {
-                // OCCT L566: same edge → maximum angle (lowest priority)
                 a_two_pi
             } else {
-                // OCCT L570-582: bIsClosed 2D distance check (Coord2dVf)
+                // OCCT L570-582: bIsClosed 2D check (Coord2dVf)
                 if b_is_closed {
                     let candidate_seg = &segments[an_ei.seg_idx];
                     let pc_opt = tool.curve_on_surface(candidate_seg.edge, candidate_seg.face)
@@ -273,12 +299,9 @@ pub(crate) fn walk_path_extract_wires(
                         let t_mid = (candidate_seg.t_range[0] + candidate_seg.t_range[1]) * 0.5;
                         let a_p2_dx = pc.point_at(t_mid);
                         let a_d2 = a_p2_dx.distance_squared(a_pb);
-                        if a_d2 > a_tol_2d_sq {
-                            continue; // OCCT L580-581
-                        }
+                        if a_d2 > a_tol_2d_2 { continue; }
                     }
                 }
-                // OCCT L584-586: anAngleOut + ClockWiseAngle
                 let an_angle_out = an_ei.angle;
                 clock_wise_angle(an_angle_in, an_angle_out)
             };
@@ -289,14 +312,14 @@ pub(crate) fn walk_path_extract_wires(
                 p_only_way_in = Some(an_ei);
             }
 
-            // OCCT L600-604: minimum angle selection
+            // OCCT L600-604: min angle
             if a_angle < a_min_angle - eps {
                 a_min_angle = a_angle;
                 p_edge_info = Some(an_ei);
             }
         }
 
-        // OCCT L607-610: single inside way → forced selection
+        // OCCT L607-610: single inside way → forced
         if a_nb_ways_inside == 1 {
             p_edge_info = p_only_way_in;
         }
@@ -412,9 +435,6 @@ pub(crate) fn split_block(
     // OCCT L197-227: vertex-level check + bNothingToDo
     // (rcad: skip bNothingToDo optimization — always run Path extraction)
 
-    // OCCT L227-285: Path extraction
-    let order_keys: Vec<usize> = smart_map.keys().copied().collect();
-
     // src_key_of: maps segment → physical edge key (same as in build_smart_map)
     let src_key_of = |seg: &WireSegmentTopoDS| -> usize {
         match seg.source {
@@ -424,6 +444,12 @@ pub(crate) fn split_block(
         }
     };
 
+    // OCCT L297-323: COMPUTE_ANGLES + RefineAngles BEFORE Path extraction.
+    // Angles guide edge selection during Path walking (minimal turn angle).
+    refine_angles(smart_map, segments, tool, a_ms, src_key_of);
+
+    // OCCT L331-350: Path extraction (after angles are set)
+    let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
         for ei in &infos {
@@ -434,11 +460,6 @@ pub(crate) fn split_block(
             }
         }
     }
-
-    // OCCT L298-318: Angles in mySmartMap (COMPUTE_ANGLES)
-    // rcad: refine_angles matches OCCT's angle refinement after Path.
-    // Must be called AFTER Path extraction to match OCCT order.
-    refine_angles(smart_map, segments, tool, a_ms, src_key_of);
 }
 
 /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).

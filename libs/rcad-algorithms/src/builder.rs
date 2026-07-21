@@ -81,6 +81,8 @@ pub struct BooleanBuilder<'a> {
  // BOPAlgo_Builder.hxx L502 =myInParts - map of own and acquired IN faces of the arguments solids
  // rcad: keyed by source solid index (usize) ← OCCT keys by TopoDS_Shape; Rust adaptation for DS-indexed access.
  pub(crate) my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+ /// rcad: ptr_ids of split face images classified as IN in fill_in_3d_parts.
+ pub(crate) my_split_images_in: std::cell::RefCell<std::collections::HashMap<usize, std::collections::HashSet<u64>>>,
  // BOPAlgo_Builder.hxx L503 =myNonDestructive
  pub(crate) my_non_destructive: bool,
  // BOPAlgo_Builder.hxx L504 =myGlue
@@ -495,6 +497,7 @@ impl<'a> BooleanBuilder<'a> {
  my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
  my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
  my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
+ my_split_images_in: std::cell::RefCell::new(std::collections::HashMap::new()),
  my_non_destructive: false,
  my_glue: GlueEnum::GlueOff,
  my_check_inverted: false,

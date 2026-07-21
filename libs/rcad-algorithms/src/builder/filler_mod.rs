@@ -1488,40 +1488,95 @@ impl<'a> BooleanBuilder<'a> {
         (draft_shells, the_lif)
     }
 
+    /// Compute sample point and AABB for a split face image from the T BRep.
+    /// OCCT: IntTools_Context::ComputeSamplePoints on the BRep face.
+    fn split_face_sample_point(&self, sr: &topods::ShapeRef, t: &topods::BRep) -> (DVec3, Aabb) {
+        let idx = sr.index;
+        if idx >= t.tshapes.len() {
+            return (DVec3::ZERO, Aabb::empty());
+        }
+        match &*t.tshapes[idx] {
+            topods::TShape::Face(fd) => {
+                let mut pts: Vec<DVec3> = Vec::new();
+                let mut seen_v: std::collections::HashSet<usize> = std::collections::HashSet::new();
+                for w_sr in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                    if w_sr.index >= t.tshapes.len() { continue; }
+                    if let topods::TShape::Wire(wd) = &*t.tshapes[w_sr.index] {
+                        for e_sr in &wd.edges {
+                            if e_sr.index >= t.tshapes.len() { continue; }
+                            if let topods::TShape::Edge(ed) = &*t.tshapes[e_sr.index] {
+                                for &v_sr in &[ed.first, ed.last] {
+                                    if v_sr.index < t.tshapes.len() && seen_v.insert(v_sr.index) {
+                                        if let topods::TShape::Vertex(vd) = &*t.tshapes[v_sr.index] {
+                                            pts.push(vd.point);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let n = pts.len() as f64;
+                let center = if n > 0.0 {
+                    pts.iter().copied().sum::<DVec3>() / n
+                } else {
+                    DVec3::ZERO
+                };
+                let mut aabb = Aabb::empty();
+                for p in &pts { aabb.expand_point(*p); }
+                (center, aabb)
+            }
+            _ => (DVec3::ZERO, Aabb::empty()),
+        }
+    }
+
     /// ✅ OCCT-aligned: FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
     pub(super) fn fill_in_3d_parts(&self, result: &mut ResultBuilder) -> Vec<(usize, usize, &'static str)> {
         // === Phase 1: Collect all faces ===
-        // OCCT ClassifyFaces (BOPAlgo_Builder_3.cxx L97-263): iterate result BRep faces.
-        // rcad: use DS face indices (my_face_refs + my_images) instead of result.face_origins
-        // which is never populated (OCCT operates on BRep, has no result.face_origins).
+        // OCCT BOPAlgo_Builder_3.cxx L97-150: for each source FACE,
+        // if myImages bound -> add each split image individually (each has own sample point).
+        // rcad 1:1: split images get individual entries with their own sample point.
         let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
-        let mut a_l_faces: Vec<usize> = Vec::new();
-        let mut a_m_fence: std::collections::HashSet<usize> =
+        // FaceEntry: one per source face or per split image.
+        struct FaceEntry { dsfi: usize, sample: DVec3, aabb: Aabb, ptr_id: u64 }
+        let mut face_entries: Vec<FaceEntry> = Vec::new();
+        let mut a_m_fence: std::collections::HashSet<u64> =
             std::collections::HashSet::new();
 
-        // Add source DS faces that have non-null refs
-        let fr = self.my_face_refs.borrow();
-        for (rfi, &sr) in fr.iter().enumerate() {
-            if sr.is_null() { continue; }
-            // Map rfi to DS face index via flat index computation
-            for (dsfi, df) in self.ds.faces.iter().enumerate() {
-                let src_flat = f_base + (if df.origin == ShapeOrigin::ShapeA { 0 } else { self.ds.a_face_count }) + df.source_face_idx;
-                if rfi == src_flat || rfi == dsfi {
-                    if a_m_fence.insert(dsfi) { a_l_faces.push(dsfi); }
-                    break;
-                }
-            }
-        }
-        // Also add DS faces that have split images in my_images
         let imgs = self.my_images.borrow();
         for dsfi in 0..self.ds.faces.len() {
             let df = &self.ds.faces[dsfi];
             let src_flat = f_base + (if df.origin == ShapeOrigin::ShapeA { 0 } else { self.ds.a_face_count }) + df.source_face_idx;
             let src_key = self.brep_sr(src_flat);
-            if imgs.contains_key(&src_key) {
-                if a_m_fence.insert(dsfi) { a_l_faces.push(dsfi); }
+
+            if let Some(split_faces) = imgs.get(&src_key) {
+                // OCCT L131-143: each split image is a separate face for classification.
+                let t = self.my_shape.borrow();
+                for &split_sr in split_faces {
+                    if a_m_fence.insert(split_sr.ptr_id) {
+                        let (samp, aabb) = self.split_face_sample_point(&split_sr, &*t);
+                        face_entries.push(FaceEntry { dsfi, sample: samp, aabb, ptr_id: split_sr.ptr_id });
+                    }
+                }
+            } else {
+                // OCCT L145-149: source face with no splits -> add directly.
+                let mut c = DVec3::ZERO;
+                let mut n = 0u32;
+                for &vi in &df.boundary_verts {
+                    if let Some(v) = self.ds.vertices.get(vi) { c += v.point; n += 1; }
+                }
+                if n > 0 { c /= n as f64; }
+                let mut aabb = Aabb::empty();
+                for &vi in &df.boundary_verts {
+                    if let Some(v) = self.ds.vertices.get(vi) { aabb.expand_point(v.point); }
+                }
+                face_entries.push(FaceEntry { dsfi, sample: c, aabb, ptr_id: 0 });
             }
         }
+
+        let a_l_faces: Vec<usize> = (0..face_entries.len()).collect();
+        let face_samples: Vec<DVec3> = face_entries.iter().map(|e| e.sample).collect();
+        let aabb_of_face: Vec<Aabb> = face_entries.iter().map(|e| e.aabb).collect();
 
         // === Phase 2: Build draft solids ===
         let mut a_l_solids: Vec<Vec<Vec<usize>>> = Vec::new();
@@ -1533,7 +1588,6 @@ impl<'a> BooleanBuilder<'a> {
             if draft_shells.is_empty() { continue; }
             a_l_solids.push(draft_shells);
             a_solids_if.push(the_lif);
-            // Find the DS shell(s) matching this side (OCCT: iterate DS ShapeInfo SOLID).
             let origin_side = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
             for (si, ds_shell) in self.ds.shells.iter().enumerate() {
                 if ds_shell.faces.iter().any(|&dfi|
@@ -1545,30 +1599,6 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // === Phase 3: ClassifyFaces ===
-        // OCCT: use BRep face geometry for sample points + AABBs. rcad: use DS face data.
-        let face_samples: Vec<DVec3> = a_l_faces.iter()
-            .map(|&dfi| {
-                if let Some(df) = self.ds.faces.get(dfi) {
-                    let mut c = DVec3::ZERO;
-                    let mut n = 0u32;
-                    for &vi in &df.boundary_verts {
-                        if let Some(v) = self.ds.vertices.get(vi) { c += v.point; n += 1; }
-                    }
-                    if n > 0 { c /= n as f64; }
-                    c
-                } else { DVec3::ZERO }
-            })
-            .collect();
-        let aabb_of_face: Vec<Aabb> = a_l_faces.iter().map(|&dfi| {
-            let mut aabb = Aabb::empty();
-            if let Some(df) = self.ds.faces.get(dfi) {
-                for &vi in &df.boundary_verts {
-                    if let Some(v) = self.ds.vertices.get(vi) { aabb.expand_point(v.point); }
-                }
-            }
-            aabb
-        }).collect();
         let aabb_of_solid: Vec<Aabb> = a_l_solids.iter().map(|shells| {
             let mut aabb = Aabb::empty();
             for sh in shells {
@@ -1590,11 +1620,34 @@ impl<'a> BooleanBuilder<'a> {
         );
         let mut an_in_parts: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
-        for (dsi, in_faces) in an_in_parts_list.into_iter().enumerate() {
-            if !in_faces.is_empty() {
-                an_in_parts.insert(dsi, in_faces);
+        let mut in_split_images: std::collections::HashMap<usize, std::collections::HashSet<u64>> =
+            std::collections::HashMap::new();
+        // Build per-solid IN face lists and track which split images are IN.
+        for (dsi, in_entries) in an_in_parts_list.into_iter().enumerate() {
+            if !in_entries.is_empty() {
+                // in_entries contains face_entries indices classified IN.
+                // Build DS face index list and track IN split images.
+                let mut in_dsfi: Vec<usize> = Vec::new();
+                for &ei in &in_entries {
+                    if let Some(fe) = face_entries.get(ei) {
+                        if fe.ptr_id != 0 {
+                            // Skip split images from faces of the same solid.
+                            let fo = self.ds.faces.get(fe.dsfi).map(|f| &f.origin);
+                            let same_solid = (dsi == 0 && *fo.unwrap_or(&ShapeOrigin::ShapeA) == ShapeOrigin::ShapeA) ||
+                                             (dsi == 1 && *fo.unwrap_or(&ShapeOrigin::ShapeB) == ShapeOrigin::ShapeB);
+                            if !same_solid {
+                                in_split_images.entry(dsi).or_default().insert(fe.ptr_id);
+                            }
+                        }
+                        if !in_dsfi.contains(&fe.dsfi) {
+                            in_dsfi.push(fe.dsfi);
+                        }
+                    }
+                }
+                an_in_parts.insert(dsi, in_dsfi);
             }
         }
+        *self.my_split_images_in.borrow_mut() = in_split_images;
 
         // === Phase 4: Analyze classification results ===
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
@@ -1606,17 +1659,16 @@ impl<'a> BooleanBuilder<'a> {
             if n_in == 0 {
                 let mut has_image = false;
                 if let Some(ds_shell) = self.ds.shells.get(si) {
-                    let v_base = self.ds.vertices.len();
+                    let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+                    let origin_side = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
                     for &dsfi in &ds_shell.faces {
-                        if let Some(dsf) = self.ds.faces.get(dsfi) {
-                            for &ei in &dsf.boundary_edges {
-                                if self.my_images.borrow().contains_key(
-                                    &self.brep_sr(v_base + ei))
-                                {
-                                    has_image = true; break;
-                                }
+                        if let Some(df) = self.ds.faces.get(dsfi) {
+                            if df.origin != origin_side { continue; }
+                            let side_offset = if side == 0 { 0usize } else { self.ds.a_face_count };
+                            let src_key = self.brep_sr(f_base + side_offset + df.source_face_idx);
+                            if self.my_images.borrow().contains_key(&src_key) {
+                                has_image = true; break;
                             }
-                            if has_image { break; }
                         }
                     }
                 }
@@ -1631,6 +1683,15 @@ impl<'a> BooleanBuilder<'a> {
             if a_nb_int > 0 || n_in > 0 {
                 let p_lin = my_in_parts.entry(side).or_default();
                 for &fi in &in_faces {
+                    // OCCT: skip faces from the same solid (classifier returns IN for
+                    // surface points due to numerical precision).
+                    if fi < self.ds.faces.len() {
+                        let fo = &self.ds.faces[fi].origin;
+                        if (side == 0 && *fo == ShapeOrigin::ShapeA) ||
+                           (side == 1 && *fo == ShapeOrigin::ShapeB) {
+                            continue;
+                        }
+                    }
                     if !p_lin.contains(&fi) {
                         p_lin.push(fi);
                     }
@@ -1731,104 +1792,87 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // === Phase 1a: Collect interfered solid tasks (OCCT L467-518: build aVBS) ===
-        struct SolidTask {
-            side: usize,
-            builder_solid: crate::bopds::builder_solid::BuilderSolid,
-        }
-        let mut tasks: Vec<SolidTask> = Vec::new();
-        for &(si, side, _state) in assignments {
+        // === Phase 1a: Interfered solids — build result solid in T BRep ===
+        // OCCT L467-518: BOPAlgo_SplitSolid with draft solid faces + IN faces.
+        // rcad: build T BRep solid from OUTSIDE split images directly (BuilderSolid
+        // does not support cutting).  OCCT BuildDraftSolid replaces source faces with
+        // split images — rcad does the same here by selecting OUTSIDE split images.
+        let in_split = self.my_split_images_in.borrow();
+        let imgs = self.my_images.borrow();
+        for (dsi, &(si, side, _state)) in assignments.iter().enumerate() {
             let in_faces_this: Vec<usize> = my_in_parts.get(&side).cloned().unwrap_or_default();
-            if !has_in_faces || in_faces_this.is_empty() { continue; }
             let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
-            let other_origin = if side == 0 { ShapeOrigin::ShapeB } else { ShapeOrigin::ShapeA };
+            let in_side = in_split.get(&dsi);
+            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+            let e_base = self.ds.vertices.len();
 
-            
-            let mut ds_face_set: Vec<usize> = Vec::new();
+            // Collect T BRep face refs: OUTSIDE split images + unsplit faces.
+            let mut sf: Vec<topods::ShapeRef> = Vec::new();
+            let mut outside_dsfi: Vec<usize> = Vec::new();
             if let Some(ds_shell) = self.ds.shells.get(si) {
                 for &dsfi in &ds_shell.faces {
-                    if self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin) {
-                        ds_face_set.push(dsfi);
-                    }
-                }
-            }
-            // in_faces_this now contains DS face indices (classify_faces uses DS face indices).
-            // OCCT L501-511: add IN faces twice (FORWARD + REVERSED) for BuilderSolid.
-            for &dfi in &in_faces_this {
-                ds_face_set.push(dfi);
-                ds_face_set.push(dfi);
-            }
-            ds_face_set.sort_unstable();
-            ds_face_set.dedup();
-            if ds_face_set.is_empty() { continue; }
-
-            let mut bs = crate::bopds::builder_solid::BuilderSolid::new();
-            bs.set_shapes(&ds_face_set);
-            tasks.push(SolidTask { side, builder_solid: bs });
-        }
-
-        // === Phase 1b: BOPTools_Parallel::Perform (OCCT L531) ===
-        // OCCT runs aVBS in parallel when myRunParallel==true.
-        // rcad uses rayon::par_iter_mut for the same effect.
-        use rayon::prelude::*;
-        let ds_ref: &crate::bopds::ds::DS = self.ds;
-        tasks.par_iter_mut().for_each(|task| {
-            task.builder_solid.perform(ds_ref);
-        });
-
-        // === Phase 2: Collect areas --aSolidsIm + myImages (OCCT L539-617) ===
-        for task in &tasks {
-            for area_ds in task.builder_solid.areas() {
-                
-                let ds_set: std::collections::BTreeSet<usize> = area_ds.iter().copied().collect();
-                if a_mst.iter().any(|s| s == &ds_set) { continue; }
-                a_mst.push(ds_set);
-
-                
-                // DS face indices from BuilderSolid (OCCT L539-551: aSolidsIm).
-                let result_faces: Vec<usize> = area_ds.iter().copied().collect();
-                if result_faces.is_empty() { continue; }
-
-                
-                {
-                    let mut sf: Vec<topods::ShapeRef> = Vec::new();
-                    for &dfi in &result_faces {
-                        if let Some(df) = self.ds.faces.get(dfi) {
-                            let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
-                            for &ei in &df.boundary_edges {
-                                if ei >= self.ds.edges.len() { continue; }
-                                let e = &self.ds.edges[ei];
-                                let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
-                                let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
-                                let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
-                                outer_edges.push(e_sr);
+                    if !self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin) { continue; }
+                    let df = &self.ds.faces[dsfi];
+                    let side_offset = if side == 0 { 0usize } else { self.ds.a_face_count };
+                    let src_key = self.brep_sr(f_base + side_offset + df.source_face_idx);
+                    if let Some(split_refs) = imgs.get(&src_key) {
+                        // OCCT: use split images from myImages (BuildDraftSolid pattern).
+                        for &s_sr in split_refs {
+                            let is_in = in_side.map_or(false, |s| s.contains(&s_sr.ptr_id));
+                            if !is_in {
+                                sf.push(s_sr);
+                                if !outside_dsfi.contains(&dsfi) {
+                                    outside_dsfi.push(dsfi);
+                                }
                             }
-                            if outer_edges.len() >= 3 {
-                                let ow = t.add_twire(outer_edges);
-                                let real_sr = t.add_tface(Some(df.surface.clone()), ow, vec![],
-                                    df.boundary_verts.first().and_then(|&vi| self.ds.vertices.get(vi)).map(|v| v.point),
-                                    None, vec![], df.natural_restriction);
-                                sf.push(real_sr);
+                        }
+                    } else {
+                        // No split images: create T BRep face from DS data.
+                        let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+                        for &ei in &df.boundary_edges {
+                            if ei >= self.ds.edges.len() { continue; }
+                            let e = &self.ds.edges[ei];
+                            let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
+                            let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
+                            let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
+                            outer_edges.push(e_sr);
+                        }
+                        if outer_edges.len() >= 3 {
+                            let ow = t.add_twire(outer_edges);
+                            let real_sr = t.add_tface(Some(df.surface.clone()), ow, vec![],
+                                df.boundary_verts.first().and_then(|&vi| self.ds.vertices.get(vi)).map(|v| v.point),
+                                None, vec![], df.natural_restriction);
+                            sf.push(real_sr);
+                        }
+                        if !in_faces_this.contains(&dsfi) {
+                            if !outside_dsfi.contains(&dsfi) {
+                                outside_dsfi.push(dsfi);
                             }
                         }
                     }
-
-                    if !sf.is_empty() {
-                        let shell_ref = t.add_tshell(sf);
-                        let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - self.my_solids.borrow().len());
-                        self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                        self.my_solids.borrow_mut().push(solid_ref);
-                    }
                 }
+            }
+            if sf.is_empty() { continue; }
+            let shell_ref = t.add_tshell(sf);
+            let solid_ref = t.add_tsolid(vec![shell_ref]);
+            let src_key = topods::ShapeRef::synthetic(side);
+            self.my_images.borrow_mut().entry(src_key).or_default().push(solid_ref);
+            self.my_solids.borrow_mut().push(solid_ref);
+
+            // Store in tmp_shells/tmp_solids for build_topods.
+            if !outside_dsfi.is_empty() {
                 let csi = result.tmp_shells.len();
-                result.tmp_shells.push(result_faces);
+                result.tmp_shells.push(outside_dsfi);
                 result_solids.push(vec![csi]);
-                result.solid_side_origin.push(task.side);
+                result.solid_side_origin.push(side);
             }
         }
+        drop(imgs);
+        drop(in_split);
 
-        
+        // OCCT L579-617: store split results in myImages (Phase 1a already built T BRep solids).
+        // OCCT L520-531: BuilderSolid parallel execution — rcad bypasses, builds solids directly.
+        // OCCT L539-577: collect BuilderSolid areas into aSolidsIm — rcad Phase 1a stored in tmp_shells.
         result.tmp_solids = result_solids;
 
         // OCCT BuilderSolid::PerformAreas (BuilderSolid.cxx L397-576): void detection.

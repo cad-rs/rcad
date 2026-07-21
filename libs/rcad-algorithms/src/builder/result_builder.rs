@@ -1197,13 +1197,16 @@ impl ResultBuilder {
  /// When `fill_history` is false (OCCT: !HasHistory --!myFillHistory),
  /// returns an empty history with no origins tracking.
  pub(crate) fn build_topods(&mut self, t: &mut topods::BRep, fill_history: bool, shells: &[topods::ShapeRef], face_refs: &mut Vec<topods::ShapeRef>, solids: &[topods::ShapeRef], compsolid_groups: &[topods::ShapeRef]) -> BooleanHistory {
- // Fallback: if no solids were created by BuildResult but faces exist,
- // create a default shell + solid (OCCT: defaults to single shell/solid).
- // Use tmp_solids (filtered by BuildRC) when available.
+ // Use tmp_solids when BuildResult did not create solids.
+ // tmp_solids entries contain shell indices (into tmp_shells).
+ // OCCT L1203 fallback: BuildResult(SOLID) already created tshapes when
+ // BuildRC/ComputeState ran, but if skipped (no images), create from scratch.
  if shells.is_empty() && !self.tmp_solids.is_empty() {
      for tmp_solid in std::mem::take(&mut self.tmp_solids) {
          let faces: Vec<topods::ShapeRef> = tmp_solid.iter()
-             .filter_map(|&rfi| face_refs.get(rfi).copied())
+             .filter_map(|&shi| self.tmp_shells.get(shi))
+             .flat_map(|v| v.iter())
+             .filter_map(|&fi| face_refs.get(fi).copied())
              .filter(|sr| !sr.is_null())
              .collect();
          if !faces.is_empty() {
@@ -1211,7 +1214,7 @@ impl ResultBuilder {
              t.add_tsolid(vec![shell]);
          }
      }
- } else if shells.is_empty() && !face_refs.is_empty() {
+ } else if !face_refs.is_empty() {
  let shell = t.add_tshell(std::mem::take(face_refs));
  t.add_tsolid(vec![shell]);
  }
