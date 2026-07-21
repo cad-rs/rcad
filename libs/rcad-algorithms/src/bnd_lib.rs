@@ -163,6 +163,7 @@ fn curve_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
         Curve3::BSpline(c) => bspline_curve_box(c, t1, t2, tol),
         Curve3::Bezier(c)  => bezier_curve_box(c, t1, t2, tol),
         Curve3::Offset(c)  => offset_curve_box(c, t1, t2, tol),
+        Curve3::Trimmed(tc) => curve_box(tc.basis_curve(), t1, t2, tol),
         // CircularHelix and SineWave have no analytical evaluator in OCCT;
         // fall through to sampling-based OtherCurve handler.
         _                  => other_curve_box(curve, t1, t2, tol),
@@ -181,6 +182,7 @@ fn curve_box_optimal(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox 
         Curve3::BSpline(c) => bspline_curve_box_optimal(c, t1, t2, tol),
         Curve3::Bezier(c)  => bezier_curve_box_optimal(c, t1, t2, tol),
         Curve3::Offset(c)  => offset_curve_box_optimal(c, t1, t2, tol),
+        Curve3::Trimmed(tc) => curve_box_optimal(tc.basis_curve(), t1, t2, tol),
         _                  => other_curve_box_optimal(curve, t1, t2, tol),
     }
 }

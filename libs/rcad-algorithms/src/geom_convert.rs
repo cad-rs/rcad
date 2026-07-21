@@ -30,7 +30,7 @@ use std::f64::consts::PI;
 use rcad_kernel::geom::{
     any_perpendicular, BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3,
     BezierSurface, Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3,
-    Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface,
+    Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3,
 };
 use rcad_kernel::fit::interpolate_points;
 
@@ -265,6 +265,7 @@ pub fn curve_to_bspline(curve: &Curve3, params: &ConvertParams) -> BSplineCurve3
         Curve3::Ellipse(e) => ellipse_to_bspline(e, params.max_degree),
         Curve3::BSpline(b) => b.clone(),
         Curve3::Bezier(b) => bezier_to_bspline(b),
+        Curve3::Trimmed(tc) => curve_to_bspline(tc.basis_curve(), params),
         Curve3::Offset(_)
         | Curve3::Hyperbola(_)
         | Curve3::Parabola(_)

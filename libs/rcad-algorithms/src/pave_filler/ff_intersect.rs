@@ -16,14 +16,8 @@ impl<'a> super::PaveFiller<'a> {
   // ===== Phase 0: pairs + UpdateFaceInfo (OCCT L291-320) =====
 
   // OCCT L291: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE)
-  #[allow(unused_variables)]
   let pairs = self.ff_candidate_pairs();
   let i_size = pairs.len();
-  // Phase 1 diagnostic
-  let mut n_has_interf = 0usize;
-  let mut n_check_planes_skip = 0usize;
-  let mut n_glue_reg = 0usize;
-  let mut n_work = 0usize;
 
   // OCCT L295-302: collect touched faces from intersection pairs
   let mut a_mi_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -57,7 +51,6 @@ impl<'a> super::PaveFiller<'a> {
 
   for &(n_f1, n_f2) in &pairs {
     if self.ds.has_interf_ff(n_f1, n_f2) {
-      n_has_interf += 1;
       continue;
     }
 
@@ -72,13 +65,11 @@ impl<'a> super::PaveFiller<'a> {
         if !self.check_planes(n_f1, n_f2) {
           // OCCT L387-391: register empty FF interference for non-intersecting planes
           self.ds.interf_ff.push(InterferenceFF {
-            f1: n_f1,
-            f2: n_f2,
+            f1: n_f1, f2: n_f2,
             curves: Vec::new(),
             points: Vec::new(),
             tangent_faces: false,
           });
-          n_check_planes_skip += 1;
           continue;
         }
       }
@@ -90,23 +81,16 @@ impl<'a> super::PaveFiller<'a> {
       // for IntPatch_Intersection. (rcad: stored on work item for Phase 2.)
 
       a_work.push(FFWork { f1: n_f1, f2: n_f2, shift_info });
-      n_work += 1;
     } else {
       // ---- Glue mode (OCCT L511-517) ----
       self.ds.interf_ff.push(InterferenceFF {
-        f1: n_f1,
-        f2: n_f2,
+        f1: n_f1, f2: n_f2,
         curves: Vec::new(),
         points: Vec::new(),
         tangent_faces: false,
       });
-      n_glue_reg += 1;
     }
   }
-
-  // Phase 1 diagnostic
-  panic!("[DIAG] Phase 1: candidate_pairs={} has_interf={} check_planes_skip={} glue_reg={} work={}",
-    i_size, n_has_interf, n_check_planes_skip, n_glue_reg, n_work);
 
   // ===== Phase 2 (OCCT L538-622): execute + process results =====
   // OCCT: parallel Perform on all BOPAlgo_FaceFace objects, then process.
@@ -115,7 +99,7 @@ impl<'a> super::PaveFiller<'a> {
 
   for work in a_work {
     if self.check_stop("PerformFF") { return; }
-    panic!("[DIAG] Phase 2 entered: work.f1={} f2={}", work.f1, work.f2);
+
 
     // OCCT L546-554: BOPAlgo_FaceFace::Perform (IntPatch + MakeCurve).
     // intersect_face_face handles: seam shift application, IntPatch, MakeCurve,
@@ -480,6 +464,10 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
  self.put_points_on_line(f1, f2, int_patch.line_mut(li));
  }
 
+ // OCCT L498-504: GetEFPnts → SetList passes EF points to IntPatch's PutPointsOnLine.
+ // rcad: IntPatch skips PutPointsOnLine; EF=0 for sphere-sphere (PerformEF gap).
+ // EF projection here would require EF>0. Currently EF=0, so no points to project.
+
  // MakeCurve (IntTools_FaceFace.cxx L695-1846) for each IntPatch line.
  // Returns a Vec of IntersectionCurve  -- one per valid part from the
  // LineConstructor (OCCT supports aNbParts > 1, e.g. multi-segment clipping).
@@ -494,6 +482,18 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
    std::mem::swap(&mut adjusted_ic.pcurve_on_a, &mut adjusted_ic.pcurve_on_b);
    }
    self.ds.intersection_curves.push(adjusted_ic);
+   // OCCT: vertices created after MakeCurve (in Process/PerformFF).
+   // BRepBuilderAPI_MakeVertex(P3D) + myDS->Index for each endpoint.
+   let (p_start, p_end, t0, t1) = {
+     let ic_ref = &self.ds.intersection_curves[ci];
+     let t0 = ic_ref.t_range[0];
+     let t1 = ic_ref.t_range[1];
+     (ic_ref.curve.point_at(t0), ic_ref.curve.point_at(t1), t0, t1)
+   };
+   let sv = if p_start.is_finite() { self.ds.add_vertex(p_start) } else { usize::MAX };
+   let ev = if p_end.is_finite() { self.ds.add_vertex(p_end) } else { usize::MAX };
+   self.ds.intersection_curves[ci].start_vertex = sv;
+   self.ds.intersection_curves[ci].end_vertex = ev;
    // OCCT: init IC pave_blocks so MakeSplitEdges can create section edges
    {
     use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
@@ -574,9 +574,8 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
   }
  }
  //  After PrepareLines3D splits closed curves, new curve endpoints
- // must be updated to the split points. OCCT's BRepBuilderAPI_MakeEdge auto-sets
- // endpoints when creating edges. rcad's IntersectionCurve requires explicit update:
- // for start==end but non-full-period t_range (i.e. split half-circle), compute
+ // must be updated to the split points. For start==end but
+ // non-full-period t_range (i.e. split half-circle), compute
  // correct endpoint positions via point_at and create new DS vertices.
  for ci in 0..self.ds.intersection_curves.len() {
  let needs_fix = {
@@ -666,6 +665,8 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  let line3d = Curve3::Line(line3.clone());
  let pcurve1 = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line3, pln1);
  let pcurve2 = crate::inttools::pcurve_derive::line_pcurve_on_plane(&line3, pln2);
+ // OCCT L2514: new Geom_TrimmedCurve(aGLin, pmin, pmax)
+ // OCCT L2521: new Geom2d_TrimmedCurve(C2d, pmin, pmax)
  let uv1 = self.context.uv_bounds(self.ds, f1);
  let uv2 = self.context.uv_bounds(self.ds, f2);
  let tol = self.ds.face_tolerance(f1).max(self.ds.face_tolerance(f2));
@@ -679,13 +680,25 @@ fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
  let t_range = [pmin, pmax];
  let mut curve_extra = crate::bopds::ds::CurveExtra::default();
  curve_extra.tangential_tol = tol;
+ // OCCT L2514: new Geom_TrimmedCurve(aGLin, pmin, pmax)
+ // OCCT L2521: new Geom2d_TrimmedCurve(C2d, pmin, pmax)
+ let trimmed_curve = Curve3::Trimmed(Box::new(TrimmedCurve3::new(line3d.clone(), pmin, pmax)));
+ let trimmed_pca = Some(Curve2d::Trimmed(TrimmedCurve2 { curve: Box::new(pcurve1), t_min: pmin, t_max: pmax }));
+ let trimmed_pcb = Some(Curve2d::Trimmed(TrimmedCurve2 { curve: Box::new(pcurve2), t_min: pmin, t_max: pmax }));
  let ic = crate::bopds::ds::IntersectionCurve {
- curve: line3d, polyline: Vec::new(),
+ curve: trimmed_curve, polyline: Vec::new(),
  start_vertex: usize::MAX, end_vertex: usize::MAX,
  t_range,
- pcurve_on_a: Some(pcurve1), pcurve_on_b: Some(pcurve2),
+ pcurve_on_a: trimmed_pca, pcurve_on_b: trimmed_pcb,
  geom_tol: tol, pave_blocks: Vec::new(), curve_extra,
  };
+ // OCCT: vertices created by BRepBuilderAPI_MakeVertex + myDS->Index
+ // after the curve is stored (matching the MakeCurve caller pattern).
+ let sv = self.ds.add_vertex(ic.curve.point_at(t_range[0]));
+ let ev = self.ds.add_vertex(ic.curve.point_at(t_range[1]));
+ let mut ic = ic;
+ ic.start_vertex = sv;
+ ic.end_vertex = ev;
  let ci = self.ds.intersection_curves.len();
  self.ds.intersection_curves.push(ic);
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
@@ -866,38 +879,53 @@ fn make_analytic_nonperiodic_curve(
    // OCCT L835-870: Geom_TrimmedCurve + BuildPCurves + Geom2d_TrimmedCurve.
    let ic_t_range = [fprm, lprm];
 
-   // BuildPCurves on the trimmed range (OCCT L846-863).
-   let pca = self.compute_pcurve_on_surface(curve, f1);
-   let pcb = self.compute_pcurve_on_surface(curve, f2);
-
-   // OCCT L868-870: SetCurve(TrimmedCurve) + SetFirstCurve2d(TrimmedCurve(...)).
-   // rcad: analytic curve retained, t_range provides effective trimming.
-   let trimmed_pca = pca.as_ref().map(|pc| pc.clone());
-   let trimmed_pcb = pcb.as_ref().map(|pc| pc.clone());
-
-   // OCCT: for Parabola, CurveTolerance(aCT3D, myTol)
+   // OCCT L816-820: for Parabola, CurveTolerance(aCT3D, myTol)
    let ic_geom_tol = if typl == IntPatchIType::Parabola {
-   geom_tol.max(crate::tolerance::TOLERANCE_ABS)
-   } else { geom_tol.max(crate::tolerance::TOLERANCE_ABS) };
+     // OCCT: IntTools_Tools::CurveTolerance(aCT3D, myTol)
+     crate::boptools::curve_tolerance(curve, geom_tol)
+   } else {
+     geom_tol.max(crate::tolerance::TOLERANCE_ABS)
+   };
 
-   // Create endpoint vertices (OCCT L872-890: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // OCCT: BRepBuilderAPI_MakeVertex + myDS->Index (myDS->Index deduplicates).
-   let p_start = curve.point_at(fprm);
-   let p_end = curve.point_at(lprm);
-   let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
-   } else { (usize::MAX, usize::MAX) };
+   // OCCT L822-846: BuildPCurves on the trimmed range.
+   // OCCT: GeomInt_IntSS::BuildPCurves(fprm, lprm, Tolpc, surface, newc, C2d)
+   // OCCT L822-832: if (myApprox1) { ... }
+   let pca;
+   let pcb;
+   // myApprox1 (always true in rcad)
+   {
+     let raw = self.compute_pcurve_on_surface(curve, f1);
+     if raw.is_none() { continue; }
+     // OCCT L832: aCurve.SetFirstCurve2d(new Geom2d_TrimmedCurve(C2d, fprm, lprm))
+     pca = Some(Curve2d::Trimmed(TrimmedCurve2 {
+       curve: Box::new(raw.unwrap()),
+       t_min: fprm, t_max: lprm,
+     }));
+   }
+   // myApprox2 (always true in rcad)
+   {
+     let raw = self.compute_pcurve_on_surface(curve, f2);
+     if raw.is_none() { continue; }
+     pcb = Some(Curve2d::Trimmed(TrimmedCurve2 {
+       curve: Box::new(raw.unwrap()),
+       t_min: fprm, t_max: lprm,
+     }));
+   }
 
+   // OCCT L814-815: new Geom_TrimmedCurve(newc, fprm, lprm)
+   let trimmed_curve = Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
+
+   // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {
-   curve: curve.clone(),
+   curve: trimmed_curve,
    polyline: Vec::new(),
-   start_vertex: sv,
-   end_vertex: ev,
-   t_range: ic_t_range,
-   pcurve_on_a: trimmed_pca,
-   pcurve_on_b: trimmed_pcb,
+   start_vertex: usize::MAX,
+   end_vertex: usize::MAX,
+   t_range: [fprm, lprm],
+   pcurve_on_a: pca,
+   pcurve_on_b: pcb,
    geom_tol: ic_geom_tol,
    pave_blocks: Vec::new(),
    curve_extra,
@@ -915,39 +943,74 @@ fn make_analytic_nonperiodic_curve(
    // !bFNIt && bLPIt: only upper bound infinite
    fprm + dT
    } else {
-   // bFNIt && bLPIt: both infinite  -- IntermediatePoint(-dT, dT)
-   0.0
+   // bFNIt && bLPIt: both infinite  -- OCCT IntTools_Tools::IntermediatePoint(-dT, dT)
+   crate::boptools::intermediate_point_occt(-dT, dT)
    };
 
    let p3d = curve.point_at(test_t);
    if !p3d.is_finite() { continue; }
 
-   // OCCT L865-880: classify test point on both face domains.
+   // OCCT L865-867: get surface types for the test-point branch
+   let surf1 = &self.ds.faces[f1].surface;
+   let surf2 = &self.ds.faces[f2].surface;
+   let is_extrusion_rev_offset = |s: &Surface3| -> bool {
+     matches!(s, Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Offset(_))
+   };
+
+   // OCCT L875-882: if either surface is extrusion/offset/revolution,
+   // append curve with empty pcurves (= H1, H1 in OCCT) and skip Classify.
+   if is_extrusion_rev_offset(surf1) || is_extrusion_rev_offset(surf2) {
+     let mut curve_extra = crate::bopds::ds::CurveExtra::default();
+     curve_extra.tangential_tol = tang_tolerance;
+     result.push(crate::bopds::ds::IntersectionCurve {
+       curve: curve.clone(),
+       polyline: Vec::new(),
+       start_vertex: usize::MAX,
+       end_vertex: usize::MAX,
+       t_range: [fprm, lprm],
+       pcurve_on_a: None,
+       pcurve_on_b: None,
+       geom_tol: geom_tol.max(crate::tolerance::TOLERANCE_ABS),
+       pave_blocks: Vec::new(),
+       curve_extra,
+     });
+     continue;
+   }
+
+   // OCCT L886-892: Parameters + Classify on both face domains.
+   // OCCT: Tol = Precision::Confusion()
+   // OCCT: Parameters(myHS1, myHS2, ptref, u1, v1, u2, v2)
    let uv1 = self.context.proj_ps(self.ds, f1, p3d);
    let uv2 = self.context.proj_ps(self.ds, f2, p3d);
-   let in1 = uv1.map_or(false, |(uv, _, _)| self.context.is_point_in_on_face(self.ds, f1, uv));
-   let in2 = uv2.map_or(false, |(uv, _, _)| self.context.is_point_in_on_face(self.ds, f2, uv));
-   if !in1 || !in2 { continue; }
+   // OCCT L888: ok = (dom1->Classify(gp_Pnt2d(u1, v1), Tol) != TopAbs_OUT)
+   // rcad uses fclass2d with CONFUION tolerance for 1:1 match
+   let in1 = uv1.map_or(false, |(uv, _, _)| {
+     let fc = self.context.fclass2d(self.ds, f1);
+     fc.perform(uv, true) != crate::inttools::fclass2d::State::Out
+   });
+   if !in1 { continue; }
+   // OCCT L890-891: if (ok) { ok = dom2->Classify(...) }
+   let in2 = uv2.map_or(false, |(uv, _, _)| {
+     let fc = self.context.fclass2d(self.ds, f2);
+     fc.perform(uv, true) != crate::inttools::fclass2d::State::Out
+   });
+   if !in2 { continue; }
 
-   // OCCT L882-895: if both inside, append curve WITHOUT pcurves
-   // (Geom2d_BSplineCurve H1; SeqOfCurve.Append(IntTools_Curve(newc, H1, H1))).
-   // rcad: compute pcurves for downstream use.
-   let pca = self.compute_pcurve_on_surface(curve, f1);
-   let pcb = self.compute_pcurve_on_surface(curve, f2);
-
+   // OCCT L893-896: append curve with empty pcurves (H1, H1 in OCCT).
+   // rcad note: OCCT does not compute pcurves here; keeping empty to match.
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {
-   curve: curve.clone(),
-   polyline: Vec::new(),
-   start_vertex: usize::MAX,
-   end_vertex: usize::MAX,
-   t_range: [fprm, lprm],
-   pcurve_on_a: pca,
-   pcurve_on_b: pcb,
-   geom_tol: geom_tol.max(crate::tolerance::TOLERANCE_ABS),
-   pave_blocks: Vec::new(),
-   curve_extra,
+     curve: curve.clone(),
+     polyline: Vec::new(),
+     start_vertex: usize::MAX,
+     end_vertex: usize::MAX,
+     t_range: [fprm, lprm],
+     pcurve_on_a: None,
+     pcurve_on_b: None,
+     geom_tol: geom_tol.max(crate::tolerance::TOLERANCE_ABS),
+     pave_blocks: Vec::new(),
+     curve_extra,
    });
  }
  }
@@ -1001,24 +1064,17 @@ fn make_analytic_periodic_curve(
    // OCCT L968-990: BuildPCurves with surface UV bounds for Circle/Ellipse.
    let pca = self.compute_pcurve_on_surface(curve, f1);
    let pcb = self.compute_pcurve_on_surface(curve, f2);
-   let trimmed_pca = pca.as_ref().map(|pc| pc.clone());
-   let trimmed_pcb = pcb.as_ref().map(|pc| pc.clone());
-
-   // Create endpoint vertices (OCCT L960-990: BRepBuilderAPI_MakeVertex + myDS->Index).
-   // OCCT: BRepBuilderAPI_MakeVertex + myDS->Index (myDS->Index deduplicates).
-   let p_start = curve.point_at(fprm);
-   let p_end = curve.point_at(lprm);
-   let (sv, ev) = if p_start.is_finite() && p_end.is_finite() {
-     (self.ds.add_vertex(p_start), self.ds.add_vertex(p_end))
-   } else { (usize::MAX, usize::MAX) };
+   let trimmed_pca = pca.clone();
+   let trimmed_pcb = pcb.clone();
+   let trimmed_curve = Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
 
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {
-   curve: curve.clone(),
+   curve: trimmed_curve,
    polyline: Vec::new(),
-   start_vertex: sv,
-   end_vertex: ev,
+   start_vertex: usize::MAX,
+   end_vertex: usize::MAX,
    t_range: [fprm, lprm],
    pcurve_on_a: trimmed_pca,
    pcurve_on_b: trimmed_pcb,
@@ -1032,19 +1088,15 @@ fn make_analytic_periodic_curve(
    // OCCT L996-1042: trimmed full circle + BuildPCurves + append + break.
    let pca = self.compute_pcurve_on_surface(curve, f1);
    let pcb = self.compute_pcurve_on_surface(curve, f2);
-   // OCCT: create one vertex for the closed circle start/end (BRepBuilderAPI_MakeVertex + myDS->Index)
-   let p_start = curve.point_at(0.0);
-   let (sv, ev) = if p_start.is_finite() {
-     let vi = self.ds.add_vertex(p_start);
-     (vi, vi)
-   } else { (usize::MAX, usize::MAX) };
+   // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
+   let trimmed_curve = Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
    let mut curve_extra = crate::bopds::ds::CurveExtra::default();
    curve_extra.tangential_tol = tang_tolerance;
    result.push(crate::bopds::ds::IntersectionCurve {
-   curve: curve.clone(),
+   curve: trimmed_curve,
    polyline: Vec::new(),
-   start_vertex: sv,
-   end_vertex: ev,
+   start_vertex: usize::MAX,
+   end_vertex: usize::MAX,
    t_range: orig_t_range,
    pcurve_on_a: pca,
    pcurve_on_b: pcb,
@@ -1218,6 +1270,70 @@ fn put_points_on_line(
   }
  }
  line.vertices.sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
+ // OCCT PutPointsOnLine projects parametric boundary points (seam/pole) onto the line.
+ // rcad's IntPatch skips this; detect via proj_ps UV seam wrap (periodic u-jump).
+ if matches!(typl, IntPatchIType::Circle | IntPatchIType::Ellipse)
+   || matches!(typl, IntPatchIType::Line | IntPatchIType::Parabola | IntPatchIType::Hyperbola)
+ {
+   self.project_parametric_boundary(f1, f2, line, curve.clone(), t_range);
+ }
+}
+
+/// OCCT PutPointsOnLine equivalent: projects each face's parametric boundary (seam)
+/// onto the intersection line. Detects the u-seam wrap via proj_ps UV sampling.
+/// For closed curves, adds a complementary splitting point when only one seam
+/// crossing is found (mimicking EF GetEFPnts which rcad lacks).
+fn project_parametric_boundary(
+  &mut self, f1: usize, f2: usize,
+  line: &mut crate::inttools::int_patch_line::IntPatchLine,
+  curve: Curve3, t_range: [f64; 2],
+) {
+ let n_samples = 200usize;
+ let mut candidates: Vec<f64> = Vec::new();
+ for &fi in &[f1, f2] {
+  if fi >= self.ds.faces.len() { continue; }
+  let mut prev_uv: Option<DVec2> = None;
+  for si in 0..=n_samples {
+   let t = t_range[0] + (t_range[1] - t_range[0]) * (si as f64) / (n_samples as f64);
+   let p3d = curve.point_at(t);
+   if !p3d.is_finite() { prev_uv = None; continue; }
+   let uv = self.context.proj_ps(self.ds, fi, p3d).map(|(u, _, _)| u);
+   let Some(uv) = uv else { prev_uv = None; continue; };
+   if let Some(puv) = prev_uv {
+    // Seam crossing: UV jumps across the periodic boundary (π→-π or -π→π).
+    if (uv.x - puv.x).abs() > std::f64::consts::PI {
+     candidates.push(t.clamp(t_range[0], t_range[1]));
+    }
+   }
+   prev_uv = Some(uv);
+  }
+ }
+ candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+ candidates.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+ // OCCT also projects EF points onto the line (GetEFPnts). Without EF>0, add
+ // diametrically opposite point so the closed curve is split into two intervals.
+ if candidates.len() == 1 && (t_range[1] - t_range[0]).abs() >= std::f64::consts::TAU - 1e-8 {
+  let t_opp = candidates[0] + std::f64::consts::PI;
+  let t_opp = if t_opp > t_range[1] { t_opp - std::f64::consts::TAU } else { t_opp };
+  candidates.push(t_opp);
+ }
+ candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+ candidates.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
+ for &t in &candidates {
+  if t < t_range[0] || t > t_range[1] { continue; }
+  let is_dup = line.vertices.iter().any(|ev| (ev.param_on_line - t).abs() < 1e-10);
+  if is_dup { continue; }
+  let p3d = curve.point_at(t);
+  let pca = self.compute_pcurve_on_surface(&curve, f1);
+  let pcb = self.compute_pcurve_on_surface(&curve, f2);
+  let uv1 = pca.as_ref().map(|pc| pc.point_at(t)).unwrap_or(DVec2::ZERO);
+  let uv2 = pcb.as_ref().map(|pc| pc.point_at(t)).unwrap_or(DVec2::ZERO);
+  line.vertices.push(crate::inttools::int_patch_line::IntPatchVertex {
+    param_on_line: t, p3d, u1: uv1.x, v1: uv1.y, u2: uv2.x, v2: uv2.y,
+  });
+ }
+ line.vertices.sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
+ line.vertices.dedup_by(|a, b| (a.param_on_line - b.param_on_line).abs() < 1e-10);
 }
 
 fn treat_circle_parts(
@@ -1249,9 +1365,6 @@ fn treat_circle_parts(
 
  let aNbVtx = vertices.len();
  if aNbVtx == 0 {
-  // OCCT: with 0 vertices, aVtxArr has size 1 (default-constructed),
-  // sort does nothing, no intervals produced -- seqp empty -- caller
-  // sees aNbParts=0 -- no output curves.
   return Vec::new();
  }
 

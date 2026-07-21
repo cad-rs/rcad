@@ -112,7 +112,8 @@ pub fn arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
         | Curve3::Offset(_)
         | Curve3::Hyperbola(_)
         | Curve3::Parabola(_)
-        | Curve3::SineWave(_) => gl16_arc_length(curve, t1, t2),
+        | Curve3::SineWave(_)
+        | Curve3::Trimmed(_) => gl16_arc_length(curve, t1, t2),
     }
 }
 

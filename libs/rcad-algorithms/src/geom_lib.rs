@@ -35,7 +35,7 @@ use glam::{DAffine3, DVec3};
 use rcad_kernel::geom::{
     any_perpendicular, BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3,
     ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedSurface,
+    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3, TrimmedSurface,
 };
 
 // =============================================================================
@@ -464,6 +464,11 @@ pub fn reverse_curve(curve: Curve3) -> Curve3 {
             s.phase = -s.phase;
             Curve3::SineWave(s)
         }
+        Curve3::Trimmed(tc) => {
+            let c = tc.curve.as_ref().clone();
+            let reversed = reverse_curve(c);
+            Curve3::Trimmed(Box::new(TrimmedCurve3::new(reversed, tc.first, tc.last)))
+        }
     }
 }
 
@@ -713,6 +718,10 @@ pub fn transform_curve(curve: &Curve3, transform: DAffine3) -> Curve3 {
                 frequency: s.frequency,
                 phase: s.phase,
             })
+        }
+        Curve3::Trimmed(tc) => {
+            let transformed = transform_curve(tc.basis_curve(), transform);
+            Curve3::Trimmed(Box::new(TrimmedCurve3::new(transformed, tc.first, tc.last)))
         }
     }
 }
@@ -1110,6 +1119,7 @@ pub fn check_curve_continuity(curve: &Curve3, tol: f64) -> usize {
         Curve3::Offset(offset) => check_curve_continuity(&offset.basis, tol),
         Curve3::CircularHelix(_) => usize::MAX,
         Curve3::SineWave(_) => usize::MAX,
+        Curve3::Trimmed(tc) => check_curve_continuity(tc.basis_curve(), tol),
     }
 }
 

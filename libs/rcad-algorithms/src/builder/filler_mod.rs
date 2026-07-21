@@ -1797,9 +1797,9 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: build T BRep solid from OUTSIDE split images directly (BuilderSolid
         // does not support cutting).  OCCT BuildDraftSolid replaces source faces with
         // split images — rcad does the same here by selecting OUTSIDE split images.
-        let in_split = self.my_split_images_in.borrow();
-        let imgs = self.my_images.borrow();
         for (dsi, &(si, side, _state)) in assignments.iter().enumerate() {
+            let in_split = self.my_split_images_in.borrow();
+            let imgs = self.my_images.borrow();
             let in_faces_this: Vec<usize> = my_in_parts.get(&side).cloned().unwrap_or_default();
             let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
             let in_side = in_split.get(&dsi);
@@ -1853,6 +1853,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             if sf.is_empty() { continue; }
+            drop(imgs);
+            drop(in_split);
             let shell_ref = t.add_tshell(sf);
             let solid_ref = t.add_tsolid(vec![shell_ref]);
             let src_key = topods::ShapeRef::synthetic(side);
@@ -1867,8 +1869,6 @@ impl<'a> BooleanBuilder<'a> {
                 result.solid_side_origin.push(side);
             }
         }
-        drop(imgs);
-        drop(in_split);
 
         // OCCT L579-617: store split results in myImages (Phase 1a already built T BRep solids).
         // OCCT L520-531: BuilderSolid parallel execution — rcad bypasses, builds solids directly.

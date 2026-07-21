@@ -245,6 +245,22 @@ pub struct SineWave3 {
     pub phase: f64,
 }
 
+/// OCCT Geom_TrimmedCurve equivalent: wraps a base Curve3 with parameter domain [first, last].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrimmedCurve3 {
+    pub curve: Box<Curve3>,
+    pub first: f64,
+    pub last: f64,
+}
+
+impl TrimmedCurve3 {
+    pub fn new(curve: Curve3, first: f64, last: f64) -> Self {
+        Self { curve: Box::new(curve), first, last }
+    }
+    pub fn map_param(&self, t: f64) -> f64 { t }
+    pub fn basis_curve(&self) -> &Curve3 { &self.curve }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
@@ -257,6 +273,8 @@ pub enum Curve3 {
     Parabola(Parabola3),
     CircularHelix(CircularHelix3),
     SineWave(SineWave3),
+    /// OCCT Geom_TrimmedCurve: a curve bounded to a parameter range [first, last].
+    Trimmed(Box<TrimmedCurve3>),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -1389,6 +1407,21 @@ impl CurveEval for SineWave3 {
     }
 }
 
+impl CurveEval for TrimmedCurve3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        self.curve.point_at(self.map_param(t))
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        self.curve.tangent_at(self.map_param(t))
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        self.curve.derivative_at(self.map_param(t))
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [self.first, self.last]
+    }
+}
+
 impl CurveEval for Curve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         match self {
@@ -1402,6 +1435,7 @@ impl CurveEval for Curve3 {
             Curve3::Parabola(c) => c.point_at(t),
             Curve3::CircularHelix(c) => c.point_at(t),
             Curve3::SineWave(c) => c.point_at(t),
+            Curve3::Trimmed(tc) => tc.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -1416,6 +1450,7 @@ impl CurveEval for Curve3 {
             Curve3::Parabola(c) => c.tangent_at(t),
             Curve3::CircularHelix(c) => c.tangent_at(t),
             Curve3::SineWave(c) => c.tangent_at(t),
+            Curve3::Trimmed(tc) => tc.tangent_at(t),
         }
     }
     fn derivative_at(&self, t: f64) -> DVec3 {
@@ -1430,6 +1465,7 @@ impl CurveEval for Curve3 {
             Curve3::Parabola(c) => c.derivative_at(t),
             Curve3::CircularHelix(c) => c.derivative_at(t),
             Curve3::SineWave(c) => c.derivative_at(t),
+            Curve3::Trimmed(tc) => tc.derivative_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -1444,6 +1480,7 @@ impl CurveEval for Curve3 {
             Curve3::Parabola(c) => c.default_domain(),
             Curve3::CircularHelix(c) => c.default_domain(),
             Curve3::SineWave(c) => c.default_domain(),
+            Curve3::Trimmed(tc) => tc.default_domain(),
         }
     }
 }

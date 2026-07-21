@@ -155,6 +155,11 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         })
     }).collect();
 
+    // Vertex-Vertex interference details (VV): which vertex pairs are merged
+    let interf_vv: Vec<serde_json::Value> = ds.interf_vv.iter().map(|ivv| {
+        json!({"v1": ivv.v1, "v2": ivv.v2, "merged": ivv.merged_vertex})
+    }).collect();
+
     // Edge interference details (EE): which edge pairs intersect
     let interf_ee: Vec<serde_json::Value> = ds.interf_ee.iter().map(|iee| {
         json!({"e1": iee.e1, "e2": iee.e2, "new_v": iee.new_vertex})
@@ -200,13 +205,14 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         // OCCT-aligned: source & total shape count
         "nSource": ds.nb_source_shapes(),
         "nTotal": ds.shape_info.len(),
-        "interf": { "EE": interf_ee.len(), "EF": interf_ef.len(), "FF": interf_ff.len(), "total": n_interf_total },
+        "interf": { "VV": interf_vv.len(), "EE": interf_ee.len(), "EF": interf_ef.len(), "FF": interf_ff.len(), "total": n_interf_total },
         "vertices": vertices,
         "edges": edges,
         "faces": faces,
         "intersection_curves": ics,
         "pave_blocks": pbs,
         "common_blocks": cbs,
+        "interf_vv": interf_vv,
         "interf_ee": interf_ee,
         "interf_ef": interf_ef,
         "interf_ff": interf_ff,

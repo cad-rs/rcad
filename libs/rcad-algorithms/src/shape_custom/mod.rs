@@ -29,7 +29,7 @@ use rcad_kernel::{
     Curve3, Surface3,
     geom::{
         any_perpendicular, BSplineCurve3, BSplineSurface, CurveEval, SurfaceEval,
-        Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface,
+        Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, TrimmedCurve3,
     },
     nurbs_convert::{
         curve_to_bspline, surface_to_bspline,
@@ -1890,6 +1890,7 @@ fn resolve_to_direct_curve(curve: &Curve3) -> Curve3 {
         | c @ Curve3::Parabola(_)
         | c @ Curve3::CircularHelix(_)
         | c @ Curve3::SineWave(_) => c.clone(),
+        Curve3::Trimmed(tc) => Curve3::Trimmed(Box::new(TrimmedCurve3::new(resolve_to_direct_curve(tc.basis_curve()), tc.first, tc.last))),
     }
 }
 

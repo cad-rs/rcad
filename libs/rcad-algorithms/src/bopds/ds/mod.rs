@@ -762,6 +762,17 @@ impl DS {
  let pv1 = Pave { vertex_idx: sv, param: tr0 };
  let pv2 = Pave { vertex_idx: ev, param: tr1 };
  let mut pb = PaveBlock::new(edge_idx, pv1, pv2);
+ // OCCT: BOPDS_PaveBlock::SetShrunkData sets isSplittable=true for initial edge PBs.
+ pb.is_splittable = true;
+ // OCCT: SetShrunkData with full edge range for AABB overlap in EF intersection.
+ pb.set_shrunk_data(tr0, tr1, true);
+ // OCCT: initial edge PaveBlock stores start/end paves in edge's internal list.
+ self.edges[edge_idx].paves.push(pv1);
+ self.edges[edge_idx].paves.push(pv2);
+ if edge_idx < self.edge_paves.len() {
+   self.edge_paves[edge_idx].push(pv1);
+   self.edge_paves[edge_idx].push(pv2);
+ }
  // OCCT L469+: add ALL existing paves (from edge.paves) as ext_paves
  // excluding endpoint paves (they are pave1/pave2 already).
  let existing_paves: Vec<Pave> = self.edges[edge_idx].paves.clone();

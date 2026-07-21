@@ -272,6 +272,11 @@ pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
             sw.origin += shift;
             Curve3::SineWave(sw)
         }
+        Curve3::Trimmed(ref tc) => {
+            let (inner, first, last) = (tc.curve.clone(), tc.first, tc.last);
+            let translated = translate_curve3(&inner, shift);
+            Curve3::Trimmed(Box::new(TrimmedCurve3::new(translated, first, last)))
+        }
     }
 }
 

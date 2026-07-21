@@ -739,6 +739,7 @@ fn determine_curve_continuity(curve: &Curve3) -> ContinuityLevel {
             else { ContinuityLevel::C0 }
         }
         Curve3::Offset(_) => ContinuityLevel::C1, // Conservative estimate
+        Curve3::Trimmed(tc) => determine_curve_continuity(tc.basis_curve()),
     }
 }
 

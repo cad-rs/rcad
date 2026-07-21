@@ -315,11 +315,13 @@
       "EE": 0,
       "EF": 0,
       "FF": 0,
+      "VV": 0,
       "total": 0
     },
     "interf_ee": [],
     "interf_ef": [],
     "interf_ff": [],
+    "interf_vv": [],
     "intersection_curves": [],
     "my_images": [],
     "nCB": 0,

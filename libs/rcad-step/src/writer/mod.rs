@@ -2616,9 +2616,10 @@ impl Part21Writer {
  let vector = self.vector("edge_vec", direction, magnitude);
  self.line("edge_line", p0, vector)
  }
- }
- }
-
+        Curve3::Trimmed(tc) => self.write_curve3_entity(tc.basis_curve(), start_point, end_point),
+    }
+}
+ 
  /// Write a B_SPLINE_CURVE_WITH_KNOTS entity for a BSpline curve.
  /// Falls back to a straight line if the curve has no control points.
  fn write_bspline_curve(

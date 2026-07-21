@@ -677,6 +677,7 @@ impl BRep {
                     s.baseline_dir = mat.transform_vector3(s.baseline_dir).normalize_or_zero();
                     s.amplitude_dir = mat.transform_vector3(s.amplitude_dir).normalize_or_zero();
                 }
+                Curve3::Trimmed(tc) => xf_curve(&mut tc.curve, mat),
             }
         }
 

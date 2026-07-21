@@ -13,6 +13,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{topods, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
+use rcad_kernel::geom::TrimmedCurve3;
 use rcad_kernel::topods::TShape;
 use std::f64::consts::PI;
 
@@ -185,7 +186,10 @@ impl<'a> EdgeAdaptor<'a> {
         let Some(curve) = self.curve else {
             return None;
         };
+        Self::period_of_curve(curve)
+    }
 
+    fn period_of_curve(curve: &Curve3) -> Option<f64> {
         match curve {
             Curve3::Circle(_) => Some(2.0 * PI),
             Curve3::Ellipse(_) => Some(2.0 * PI),
@@ -197,6 +201,7 @@ impl<'a> EdgeAdaptor<'a> {
             Curve3::Parabola(_) => None,
             Curve3::CircularHelix(_) => None,
             Curve3::SineWave(_) => None,
+            Curve3::Trimmed(tc) => Self::period_of_curve(tc.basis_curve()),
         }
     }
 

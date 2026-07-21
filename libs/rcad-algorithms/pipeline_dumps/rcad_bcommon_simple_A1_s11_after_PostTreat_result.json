@@ -2,11 +2,11 @@
   "brep": {
     "Comp": 0,
     "CompSolid": 0,
-    "E": 39,
-    "F": 21,
-    "Shell": 6,
-    "Solid": 5,
-    "V": 21,
-    "total": 92
+    "E": 38,
+    "F": 17,
+    "Shell": 4,
+    "Solid": 3,
+    "V": 20,
+    "total": 82
   }
 }
