@@ -141,6 +141,11 @@ impl<'a> super::PaveFiller<'a> {
           }
           valid
         });
+        // OCCT L568-570: myDS->AddInterf(nF1, nF2) — mark FF pair as processed
+        // if it has valid curves or points.
+        if !ff_entry.curves.is_empty() || !ff_entry.points.is_empty() {
+          self.ds.try_add_interf(work.f1, work.f2);
+        }
       }
     }
   }
