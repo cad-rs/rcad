@@ -19,6 +19,11 @@ impl<'a> super::PaveFiller<'a> {
   #[allow(unused_variables)]
   let pairs = self.ff_candidate_pairs();
   let i_size = pairs.len();
+  // Phase 1 diagnostic
+  let mut n_has_interf = 0usize;
+  let mut n_check_planes_skip = 0usize;
+  let mut n_glue_reg = 0usize;
+  let mut n_work = 0usize;
 
   // OCCT L295-302: collect touched faces from intersection pairs
   let mut a_mi_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -52,6 +57,7 @@ impl<'a> super::PaveFiller<'a> {
 
   for &(n_f1, n_f2) in &pairs {
     if self.ds.has_interf_ff(n_f1, n_f2) {
+      n_has_interf += 1;
       continue;
     }
 
@@ -72,6 +78,7 @@ impl<'a> super::PaveFiller<'a> {
             points: Vec::new(),
             tangent_faces: false,
           });
+          n_check_planes_skip += 1;
           continue;
         }
       }
@@ -83,6 +90,7 @@ impl<'a> super::PaveFiller<'a> {
       // for IntPatch_Intersection. (rcad: stored on work item for Phase 2.)
 
       a_work.push(FFWork { f1: n_f1, f2: n_f2, shift_info });
+      n_work += 1;
     } else {
       // ---- Glue mode (OCCT L511-517) ----
       self.ds.interf_ff.push(InterferenceFF {
@@ -92,8 +100,13 @@ impl<'a> super::PaveFiller<'a> {
         points: Vec::new(),
         tangent_faces: false,
       });
+      n_glue_reg += 1;
     }
   }
+
+  // Phase 1 diagnostic
+  panic!("[DIAG] Phase 1: candidate_pairs={} has_interf={} check_planes_skip={} glue_reg={} work={}",
+    i_size, n_has_interf, n_check_planes_skip, n_glue_reg, n_work);
 
   // ===== Phase 2 (OCCT L538-622): execute + process results =====
   // OCCT: parallel Perform on all BOPAlgo_FaceFace objects, then process.
@@ -102,6 +115,7 @@ impl<'a> super::PaveFiller<'a> {
 
   for work in a_work {
     if self.check_stop("PerformFF") { return; }
+    panic!("[DIAG] Phase 2 entered: work.f1={} f2={}", work.f1, work.f2);
 
     // OCCT L546-554: BOPAlgo_FaceFace::Perform (IntPatch + MakeCurve).
     // intersect_face_face handles: seam shift application, IntPatch, MakeCurve,
