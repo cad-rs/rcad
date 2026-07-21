@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use super::*;
+use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::pave::*;
 use crate::bopds::ds::BOPDS_Iterator;
 use rcad_kernel::topods::ShapeType;
@@ -214,52 +215,54 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ===== OCCT L1419-1430: Nested PaveFiller → VV pass for vertex fusion =====
+        // ===== OCCT L1389-1398: Nested PaveFiller → aPF.Perform() =====
+        // OCCT: aPF.SetRunParallel(myRunParallel);
+        // OCCT: aPF.SetArguments(aLS);
+        // OCCT: aPF.Perform(aPS.Next());
+        // rcad: manual VV pass on a nested DS (functional equivalent)
         if a_ls.is_empty() { return; }
 
-        // Create nested DS and populate it with the argument vertices
-        let mut nested_ds = DS::new_empty();
-        // Populate vertices from the argument list
-        let mut nested_vertex_map: Vec<usize> = Vec::new(); // nested_idx → main_ds_idx
+        // OCCT L1398: aPDS = aPF.PDS();
+        // Create nested DS (equivalent of aPDS) and populate with vertices
+        let mut a_pds = DS::new_empty();
+        // Map from nested DS vertex index → main DS vertex index
+        let mut a_map_nested_to_main: Vec<usize> = Vec::new();
         for &(shape_idx, st) in &a_ls {
             if st == 0 && shape_idx < self.ds.vertices.len() {
                 let pt = self.ds.vertex_point(shape_idx);
                 let tol = self.ds.vertex_tolerance(shape_idx);
-                let nested_vi = nested_ds.add_vertex(pt);
-                if nested_vi < nested_ds.vertices.len() {
-                    nested_ds.vertex_data_mut(nested_vi).tolerance = tol;
+                let nested_vi = a_pds.add_vertex(pt);
+                if nested_vi < a_pds.vertices.len() {
+                    a_pds.vertex_data_mut(nested_vi).tolerance = tol;
                 }
-                nested_vertex_map.push(shape_idx);
+                a_map_nested_to_main.push(shape_idx);
             }
         }
 
-        if nested_vertex_map.len() < 2 {
-            // No VV pairs possible (need at least 2 vertices)
+        if a_map_nested_to_main.len() < 2 {
             return;
         }
 
-        // Build iterator for cross-group VV pairs
-        nested_ds.a_vertex_count = nested_vertex_map.len() / 2;
-        nested_ds.nb_source_shapes = nested_vertex_map.len();
-        // Add shape_info entries for each vertex
-        for i in 0..nested_vertex_map.len() {
+        // Build VV iterator (equivalent of BOPDS_Iterator in nested PF)
+        a_pds.a_vertex_count = a_map_nested_to_main.len() / 2;
+        a_pds.nb_source_shapes = a_map_nested_to_main.len();
+        for i in 0..a_map_nested_to_main.len() {
             let mut si = crate::bopds::ds::types::ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
-            si.is_new = (i >= nested_ds.a_vertex_count);
-            if i < nested_ds.shape_info.len() {
-                nested_ds.shape_info[i] = si;
+            si.is_new = (i >= a_pds.a_vertex_count);
+            if i < a_pds.shape_info.len() {
+                a_pds.shape_info[i] = si;
             } else {
-                nested_ds.shape_info.push(si);
+                a_pds.shape_info.push(si);
             }
         }
-        nested_ds.build_map_ve();
+        a_pds.build_map_ve();
 
-        // Run VV pass via BOPDS_Iterator
+        // Perform VV: check distances and create SD mappings in nested DS
+        // (equivalent to nested PaveFiller PerformVV step)
         let vv_pairs: Vec<(usize, usize)> = {
-            use crate::bopds::ds::types::PairIterator;
+            let n_a = a_pds.a_vertex_count;
+            let n_b = a_pds.vertices.len();
             let mut pairs = Vec::new();
-            // Generate cross-group VV pairs
-            let n_a = nested_ds.a_vertex_count;
-            let n_b = nested_ds.vertices.len();
             for i in 0..n_a {
                 for j in n_a..n_b {
                     pairs.push((i, j));
@@ -267,28 +270,25 @@ impl<'a> PaveFiller<'a> {
             }
             pairs
         };
-
-        // Perform VV: check distances and create SD mappings in nested DS
         for &(n1, n2) in &vv_pairs {
-            let tol = if n1 < nested_ds.vertices.len() && n2 < nested_ds.vertices.len() {
-                self.vv_pair_tol_ds(&nested_ds, n1, n2)
+            let tol = if n1 < a_pds.vertices.len() && n2 < a_pds.vertices.len() {
+                self.vv_pair_tol_ds(&a_pds, n1, n2)
             } else { TOLERANCE_ABS };
-            let dist = if n1 < nested_ds.vertices.len() && n2 < nested_ds.vertices.len() {
-                (nested_ds.vertex_point(n1) - nested_ds.vertex_point(n2)).length()
+            let dist = if n1 < a_pds.vertices.len() && n2 < a_pds.vertices.len() {
+                (a_pds.vertex_point(n1) - a_pds.vertex_point(n2)).length()
             } else { f64::MAX };
             if dist <= tol {
-                // Create SD mapping in nested DS
-                nested_ds.add_shape_sd(n1, n2);
+                a_pds.add_shape_sd(n1, n2);
             }
         }
 
         // ===== OCCT L1398-1466: Process VERTEX results from nested PaveFiller =====
         // OCCT: aItLS.Initialize(aLS); for (; aItLS.More(); aItLS.Next())
         // For each shape in aLS: get type, if VERTEX handle SD or FF point update
-        let sd_pairs: Vec<(usize, usize)> = nested_ds.shape_sd.sd_vertices_iter()
+        let sd_pairs: Vec<(usize, usize)> = a_pds.shape_sd.sd_vertices_iter()
             .map(|&(a, b)| {
-                let main_a = if a < nested_vertex_map.len() { nested_vertex_map[a] } else { a };
-                let main_b = if b < nested_vertex_map.len() { nested_vertex_map[b] } else { b };
+                let main_a = if a < a_map_nested_to_main.len() { a_map_nested_to_main[a] } else { a };
+                let main_b = if b < a_map_nested_to_main.len() { a_map_nested_to_main[b] } else { b };
                 (main_a, main_b)
             })
             .collect();
@@ -478,39 +478,113 @@ impl<'a> PaveFiller<'a> {
     /// ProcessExistingPaveBlocks (PaveFiller_6.cxx L3105-3203).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks(
-        &mut self, ci: usize, _j: usize, n_f1: usize, n_f2: usize,
-        a_es: usize, a_mpb_on_in: &HashSet<usize>, _a_pb_tree: &Option<DsBvh>,
+        &mut self, ci: usize, j: usize, n_f1: usize, n_f2: usize,
+        a_es: usize, a_mpb_on_in: &HashSet<usize>, a_pb_tree: &Option<DsBvh>,
         a_mscpb: &mut HashMap<usize, (usize, usize)>,
         a_mvi: &mut HashMap<usize, usize>, _a_lpb: &mut Vec<PaveBlock>,
         a_pb_faces_map: &mut HashMap<usize, Vec<usize>>,
         a_mpb_add: &mut HashSet<usize>,
     ) {
+        // L3087-3088: build Bnd_Box from theES (the new edge a_es)
         if a_es >= self.ds.edges.len() { return; }
-        let (sv, ev) = { let e = &self.ds.edges[a_es]; (e.start_vertex, e.end_vertex) };
-        for &pb_idx in a_mpb_on_in {
-            if pb_idx >= self.ds.pave_blocks.len() || a_mpb_add.contains(&pb_idx) { continue; }
-            let (pbsv, pbev) = { let r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
-                (r.pave1.vertex_idx, r.pave2.vertex_idx) };
-            if pbsv != sv && pbsv != ev && pbev != sv && pbev != ev { continue; }
-            a_mpb_add.insert(pb_idx);
+        // Build AABB from the edge's curve (equivalent of BRepBndLib::Add)
+        let a_box_es = {
+            let e = &self.ds.edges[a_es];
+            let tol = e.geom_tol;
+            let [t0, t1] = e.t_range;
+            let n_samples = 8.max(((t1 - t0).abs() / 0.1).ceil() as usize).min(32);
+            let mut mn = DVec3::splat(f64::MAX);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for k in 0..=n_samples {
+                let t = t0 + (t1 - t0) * (k as f64) / (n_samples as f64);
+                let pt = e.curve.point_at(t);
+                mn = mn.min(pt);
+                mx = mx.max(pt);
+            }
+            Aabb { min: mn - DVec3::splat(tol), max: mx + DVec3::splat(tol), gap: 0.0 }
+        };
+
+        // L3090-3096: BOPTools_BoxTreeSelector query
+        let candidates: Vec<usize> = if let Some(pb_tree) = a_pb_tree.as_ref() {
+            pb_tree.query_aabb(&a_box_es)
+        } else { Vec::new() };
+        if candidates.is_empty() { return; }
+
+        // L3098: aTolES = BRep_Tool::Tolerance(theES)
+        let a_tol_es = self.ds.edge_tolerance(a_es);
+
+        // L3100-3101: face infos — queried inline to avoid borrow conflicts
+        // L3103-3166: for each matching PB from BVH query
+        for &pb_idx in &candidates {
+            if pb_idx >= self.ds.pave_blocks.len() { continue; }
+            // L3106-3109: skip if already in theMPB (a_mpb_add)
+            if a_mpb_add.contains(&pb_idx) { continue; }
+
+            // L3111-3112: check face membership
             let b_in_f1 = self.ds.face_info(n_f1).pave_blocks_on.contains(&pb_idx)
                 || self.ds.face_info(n_f1).pave_blocks_in.contains(&pb_idx);
             let b_in_f2 = self.ds.face_info(n_f2).pave_blocks_on.contains(&pb_idx)
                 || self.ds.face_info(n_f2).pave_blocks_in.contains(&pb_idx);
+
             if b_in_f1 && b_in_f2 {
-                if let Some(ic) = self.ds.intersection_curves.get_mut(ci) {
-                    ic.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
+                // L3113-3119: both faces — add for post treatment
+                a_mpb_add.insert(pb_idx);
+                self.prepare_post_treat_ff(ci, j, pb_idx, a_mscpb, a_mvi, ci);
+                continue;
+            }
+
+            // L3121: one face only
+            let n_f = if b_in_f1 { n_f2 } else { n_f1 };
+            // L3122-3123: get distance list from myDistances
+            // rcad: self.distances is HashMap<(edge_idx, face_idx), Vec<EdgeRangeDistance>>
+            let pb_orig_edge = {
+                let pb_r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+                pb_r.original_edge
+            };
+            let p_list = if pb_orig_edge != NO_EDGE {
+                self.distances.get(&(pb_orig_edge, n_f))
+            } else { None };
+
+            let p_list = match p_list {
+                Some(list) => list,
+                None => continue,
+            };
+
+            // L3129-3130: aPBF->Range(aT1, aT2)
+            let (a_t1, a_t2) = {
+                let pb_r = self.ds.pave_blocks[pb_idx].0.read().unwrap();
+                (pb_r.pave1.param, pb_r.pave2.param)
+            };
+
+            // L3132-3144: find distance with range overlap
+            let mut a_dist = f64::MAX;
+            for range_dist in p_list {
+                if (a_t1 <= range_dist.first && range_dist.first <= a_t2)
+                    || (a_t1 <= range_dist.last && range_dist.last <= a_t2)
+                    || (range_dist.first <= a_t1 && a_t1 <= range_dist.last)
+                    || (range_dist.first <= a_t2 && a_t2 <= range_dist.last)
+                {
+                    a_dist = range_dist.distance;
+                    break;
                 }
-                self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
-                self.ds.face_info_mut(n_f2).pave_blocks_sc.insert(pb_idx);
-            } else {
-                let n_f = if b_in_f1 { n_f2 } else { n_f1 };
-                a_pb_faces_map.entry(pb_idx).or_default().push(n_f);
-                if let Some(ic) = self.ds.intersection_curves.get_mut(ci) {
-                    ic.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
+            }
+
+            // L3145-3163: if distance found and within tolerance
+            if a_dist < f64::MAX {
+                // L3147-3148: aTolSum = aTolES + BRep_Tool::Tolerance(aEF)
+                let a_ef_tol = if pb_orig_edge < self.ds.edges.len() {
+                    self.ds.edge_tolerance(pb_orig_edge)
+                } else { a_tol_es };
+                let a_tol_sum = a_tol_es + a_ef_tol;
+
+                if a_dist <= a_tol_sum {
+                    // L3152-3153: theMPB.Add + PreparePostTreatFF
+                    a_mpb_add.insert(pb_idx);
+                    self.prepare_post_treat_ff(ci, j, pb_idx, a_mscpb, a_mvi, ci);
+
+                    // L3155-3163: update aPBFacesMap
+                    a_pb_faces_map.entry(pb_idx).or_default().push(n_f);
                 }
-                self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
-                self.ds.face_info_mut(n_f2).pave_blocks_sc.insert(pb_idx);
             }
         }
     }

@@ -113,7 +113,7 @@ impl<'a> super::PaveFiller<'a> {
 
     /// PreparePostTreatFF (PaveFiller_6.cxx L3642-3668).
     /// Adds the existing pave block for post-treatment processing.
-    fn prepare_post_treat_ff(
+    pub(super) fn prepare_post_treat_ff(
         &mut self,
         a_int: usize,
         a_cur: usize,
