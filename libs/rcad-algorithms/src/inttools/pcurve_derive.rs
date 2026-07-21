@@ -61,7 +61,18 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
  })
  .collect();
 
- let mut bspline = interpolate_points_2d(&pts).expect("circle samples should not be degenerate");
+ let mut bspline = match interpolate_points_2d(&pts) {
+ Ok(b) => b,
+ Err(_) => {
+ // Fallback to Line pcurve if points are degenerate
+ let tau = std::f64::consts::TAU;
+ let a = pts[0];
+ let b = *pts.last().unwrap_or(&a);
+ let d = b - a;
+ let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN { d.normalize() } else { DVec2::X };
+ return Curve2d::Line(Line2d { origin: a, direction: dir });
+ }
+ };
  // rescale knot vector from [0, 1] to [0, TAU] to match
  // the 3D circle curve's parameter range.
  let tau = std::f64::consts::TAU;
@@ -446,7 +457,27 @@ fn sampled_curve_pcurve_on_cone(
  }
  }
 
- let mut bspline = interpolate_points_2d(&pts).expect("cone curve samples should not be degenerate");
+ let mut bspline = match interpolate_points_2d(&pts) {
+ Ok(b) => b,
+ Err(_) => {
+ // Fallback to Line pcurve if points are degenerate
+ let a = pts[0];
+ let b = *pts.last().unwrap_or(&a);
+ let d = b - a;
+ let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+ d.normalize()
+ } else {
+ DVec2::X
+ };
+ let line = Curve2d::Line(Line2d { origin: a, direction: dir });
+ // rescale knot vector to match t_range
+ let span = t_range[1] - t_range[0];
+ if span > 0.0 {
+ return Curve2d::Line(Line2d { origin: DVec2::new(a.x * span + t_range[0], a.y), direction: DVec2::new(dir.x * span, dir.y) });
+ }
+ return line;
+ }
+ };
  // rescale knot vector from [0, 1] to [t_range[0], t_range[1]] to match
  // the 3D curve's parameter range.
  let ts = t_range[0];

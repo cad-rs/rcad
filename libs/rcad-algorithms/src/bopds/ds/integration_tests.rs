@@ -1341,7 +1341,6 @@ fn pavefiller_stage_ref_cylinder_torus() {
 }
 /// Stage ref: cone_cone (pcone x pcone)
 #[test]
-#[ignore = "cone pcurve degenerated: pre-existing bug"]
 fn pavefiller_stage_ref_cone_cone() {
     let a = {
         let mut c = make_cone_fn(1.0, 2.0);
@@ -1451,22 +1450,17 @@ fn pavefiller_stage_ref_plane_torus() {
     check_stage(&ds, "pt:MB", &StageMetrics{..Default::default()});
 }
 
-/// Stage ref: cylinder_cone (pcylinder x cone) — known crash in pcurve_derive
+/// Stage ref: cylinder_cone (pcylinder x cone)
 #[test]
 fn pavefiller_stage_ref_cylinder_cone() {
     let a = make_cyl(1.0, 3.0);
     let b = make_cone_fn(1.5, 2.0);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-        check_stage(&ds, "cc:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
-        let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-        check_stage(&ds, "cc:FF", &StageMetrics{has_ics:None,..Default::default()});
-        let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-        check_stage(&ds, "cc:MB", &StageMetrics{..Default::default()});
-    }));
-    if let Err(_) = result {
-        eprintln!("cylinder_cone: CRASHED (known DegeneratePoints bug in pcurve_derive:449, skipping)");
-    }
+    let ds = pave_fill_stage(&a, &b, "after_PerformVV");
+    check_stage(&ds, "cc:VV", &StageMetrics{n_ic:Some(0),..Default::default()});
+    let ds = pave_fill_stage(&a, &b, "after_PerformFF");
+    check_stage(&ds, "cc:FF", &StageMetrics{has_ics:None,..Default::default()});
+    let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
+    check_stage(&ds, "cc:MB", &StageMetrics{..Default::default()});
 }
 
 /// Stage ref: cone_sphere (cone x sphere)
