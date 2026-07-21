@@ -353,7 +353,8 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT PaveFiller_2.cxx L141-208: PerformVE
  // Groups cross-operand (nV, nE) pairs by edge, then calls IntersectVE.
  // rcad: receives pre-computed cross-operand pairs from BOPDS_Iterator.
- pub(crate) fn perform_ve_bvh(&mut self, pairs: &[(usize, usize)]) {
+// OCCT BOPAlgo_PaveFiller_2.cxx L141: PerformVE
+ pub(crate) fn perform_ve(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L143: FillShrunkData(VERTEX, EDGE)
   self.fill_shrunk_data();
 
@@ -572,7 +573,8 @@ impl<'a> super::PaveFiller<'a> {
  //   - treat_new_vertices() called separately from perform() (not inside)
  //   - No aMVCPB / aMPBLPB coupling (common blocks handled elsewhere)
  //   - Sequential execution (no BOPTools_Parallel)
- pub(crate) fn perform_ee_bvh(&mut self, pairs: &[(usize, usize)]) {
+// OCCT BOPAlgo_PaveFiller_3.cxx L145: PerformEE
+ pub(crate) fn perform_ee(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L147: FillShrunkData(EDGE, EDGE)
   self.fill_shrunk_data();
 
@@ -805,8 +807,8 @@ impl<'a> super::PaveFiller<'a> {
  ranges
  }
  /// OCCT PaveFiller_4.cxx L139-301: PerformVF
-/// OCCT PaveFiller_4.cxx L139-301: PerformVF
-pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
+/// OCCT BOPAlgo_PaveFiller_4.cxx L139: PerformVF
+pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L141: FillShrunkData(VERTEX, FACE) + myIterator->Initialize(VERTEX, FACE)
  self.fill_shrunk_data();
  let a_vc = self.ds.a_vertex_count;
@@ -1746,54 +1748,6 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  }
  /// OCCT PaveFiller_2.cxx L141-206: PerformVE
- pub(crate) fn perform_ve(&mut self) {
- // with HasSubShape / HasFlag / HasInterf / HasInterfShapeSubShapes skips.
- self.fill_shrunk_data();
- let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
- let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
- // shrink data is computed on-the-fly in compute_ve via ve_tol().
- //
- // rcad: manual O(n ? loop (see PairIterator in perform_ee for BVH pattern).
-
- for &vi in &a_verts {
- for &ei in &b_edges {
- if self.ds.edge_has_vertex(vi, ei) { continue; }
- if self.ds.edge_has_flag(ei) { continue; }
- if self.ds.has_interf_ve(vi, ei) { continue; }
- // OCCT L180-184: HasInterfShapeSubShapes(nV, nE) — VV with edge endpoints
- if let Some(edge) = self.ds.edges.get(ei) {
-   if self.ds.has_interf_vv(vi, edge.start_vertex)
-   || self.ds.has_interf_vv(vi, edge.end_vertex) { continue; }
- }
- if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
- if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edge_pave_blocks_mut(ei).is_empty() { continue; }
- if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
- self.compute_ve(vi, ei);
- }
- }
-
- let b_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeB);
- let a_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeA);
-
- for &vi in &b_verts {
- for &ei in &a_edges {
- if self.ds.edge_has_vertex(vi, ei) { continue; }
- if self.ds.edge_has_flag(ei) { continue; }
- if self.ds.has_interf_ve(vi, ei) { continue; }
- // OCCT L180-184: HasInterfShapeSubShapes(nV, nE)
- if let Some(edge) = self.ds.edges.get(ei) {
-   if self.ds.has_interf_vv(vi, edge.start_vertex)
-   || self.ds.has_interf_vv(vi, edge.end_vertex) { continue; }
- }
- if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
- if self.ds.is_edge_degenerated(ei) { continue; }
- if self.ds.edge_pave_blocks_mut(ei).is_empty() { continue; }
- if !self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable { continue; }
- self.compute_ve(vi, ei);
- }
- }
- }
  /// OCCT PaveFiller_2.cxx L104-121: ComputeVE
  pub(crate) fn compute_ve(&mut self, vi: usize, ei: usize) {
  let fuzz = self.fuzzy_tolerance;
@@ -1803,72 +1757,6 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  }
  }
  /// OCCT PaveFiller_3.cxx L145-244: PerformEE
- pub(crate) fn perform_ee(&mut self) {
- // with HasFlag / PaveBlock emptiness / GetPBBox skip conditions.
- self.fill_shrunk_data();
- let a_count = self.ds.a_edge_count;
-
- // Build a set of shared edge pairs for fast lookup when glue is enabled
- let shared_edge_set: std::collections::HashSet<(usize, usize)> = if self.use_glue() {
- self.ds
- .shared_topology
- .shared_edges
- .iter()
- .map(|(e1, e2)| (*e1, *e2))
- .collect()
- } else {
- std::collections::HashSet::new()
- };
- // rcad: PairIterator for cross-group pairs (A-edges  ?B-edges).
- // For PaveBlock-level precision (OCCT L200-232), iterate sub-ranges
- // of each edge defined by existing paves (from VE or prior intersections).
- // Each sub-range = one logical PaveBlock.
- let mut it = crate::bopds::ds::PairIterator::prepare_ab(a_count, self.ds.edges.len());
- while it.more() {
- let pk = it.value();
- let ae = pk.i1; let be = pk.i2;
- if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) {
- it.next(); continue;
- }
- if self.ds.has_interf_ee(ae, be) {
- it.next(); continue;
- }
-
- if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) {
- it.next(); continue;
- }
- // PaveBlocks of each edge).  rcad: build sub-ranges from existing
- // paves to limit intersection to relevant sub-segments.
- let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edge_range(ae));
- let ranges_b = self.collect_paveblock_ranges(be, self.ds.edge_range(be));
-
- if ranges_a.is_empty() || ranges_b.is_empty() {
- it.next(); continue;
- }
-
- if self.use_glue() && shared_edge_set.contains(&(ae, be)) {
- // Glue: use first pave point as shared vertex
- let pv = self.ds.edge_start_vertex_ds(ae);
- if !self.ds.has_interf_ee(ae, be) {
- self.ds.interf_ee.push(InterferenceEE{
- e1: ae, e2: be,
- point: self.ds.vertex_point(pv),
- param1: self.ds.edge_range(ae)[0],
- param2: self.ds.edge_range(be)[0],
- new_vertex: pv,
- });
- }
- } else {
- let mut _ee_modified: std::collections::HashSet<usize> = std::collections::HashSet::new();
- for ra in &ranges_a {
- for rb in &ranges_b {
- self.intersect_ee(ae, be, *ra, *rb, &mut _ee_modified);
- }
- }
- }
- it.next();
- }
- }
  /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
  pub(crate) fn intersect_ee(&mut self, e1: usize, e2: usize,
  range1: [f64; 2], range2: [f64; 2],
@@ -2280,7 +2168,7 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
    ve_pairs.push((vi, ei));
   }
  }
- self.perform_ve_bvh(&ve_pairs);
+ self.perform_ve(&ve_pairs);
  eprintln!("[DBG] repeat VE: {} pairs, V={}", ve_pairs.len(), self.ds.vertices.len());
  self.ds.update_pave_blocks_with_sd_vertices();
  // Build VF pairs: cross-operand where vertex is in the extra set
@@ -2297,124 +2185,11 @@ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
    vf_pairs.push((vi, fi));
   }
  }
- self.perform_vf_bvh(&vf_pairs);
+ self.perform_vf(&vf_pairs);
  self.ds.update_pave_blocks_with_sd_vertices();
  self.update_interfs_with_sd_vertices();
  }
  /// OCCT PaveFiller_4.cxx: PerformVF
- pub(crate) fn perform_vf(&mut self) {
- // OCCT PaveFiller_4.cxx: FillShrunkData + BVH pair iteration
- // with HasInterf skip condition.
- self.fill_shrunk_data(); // OCCT: FillShrunkData(VERTEX, FACE)
- let a_verts = self.verts_of(ShapeOrigin::ShapeA);
- let b_faces = self.faces_of(ShapeOrigin::ShapeB);
- for &vi in &a_verts {
- for &fi in &b_faces {
- if self.ds.has_interf_vf(vi, fi) { continue; }
- if self.ds.has_interf_ve_via_faces(vi, fi) { continue; }
- self.check_vertex_face(vi, fi);
- }
- }
- let b_verts = self.verts_of(ShapeOrigin::ShapeB);
- let a_faces = self.faces_of(ShapeOrigin::ShapeA);
- for &vi in &b_verts {
- for &fi in &a_faces {
- if self.ds.has_interf_vf(vi, fi) { continue; }
- if self.ds.has_interf_ve_via_faces(vi, fi) { continue; }
- self.check_vertex_face(vi, fi);
- }
- }
- }
-
- ///  CheckVertexFace (PaveFiller_4.cxx L249-298).
- /// Vertex/Face proximity check with SD vertex resolution.
- /// OCCT: BOPAlgo_VertexFace parallel solver + result processing;
- /// rcad: sequential equivalent with same projection logic.
- pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
- let n_vsd = self.ds.has_shape_sd(vi).unwrap_or(vi);
- let point = self.ds.vertex_point(n_vsd);
- let face = &self.ds.faces[fi];
- let tf = self.vf_tol(n_vsd, fi);
-    let (is_on, proj_dist, proj_u, proj_v): (bool, f64, f64, f64) = match &face.surface {
-        Surface3::Plane(plane) => {
-            if inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf) {
-                let face_verts = self.ds.face_boundary_points(fi);
-                let on_face = inttools::edge_face::point_in_planar_face_with_tol(
-                    point, plane, &face_verts, tf);
-                // UV: project point onto plane UV coordinate system
-                let u_axis = plane.u_dir;
-                let v_axis = plane.v_dir;
-                let diff = point - plane.origin;
-                let u = diff.dot(u_axis);
-                let v = diff.dot(v_axis);
-                (on_face, 0.0, u, v)
-            } else {
-                (false, f64::MAX, 0.0, 0.0)
-            }
-        }
-        surface => {
-            let proj = rcad_kernel::projection::closest_point_on_surface(
-                surface, point, 16);
-            let a_tol_v = self.ds.vertex_tolerance(n_vsd);
-            let a_tol_f = face.geom_tol;
-            let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
-            if proj.distance <= a_tol_sum {
-                let uv = DVec2::new(proj.params.0, proj.params.1);
-                let fclass = FClass2d::new(self.ds, fi, tf);
-                let inside = fclass.perform(uv, false) == State::In;
-                (inside, proj.distance, proj.params.0, proj.params.1)
-            } else {
-                (false, f64::MAX, 0.0, 0.0)
-            }
-        }
-    };
-
-    if is_on {
-        self.ds.interf_vf.push(InterferenceVF{
-            vertex: n_vsd,
-            face: fi,
-            u: proj_u,
-            v: proj_v,
-            index_new: None,
-        });
- if proj_dist > 0.0 && proj_dist < f64::MAX
- && proj_dist > self.ds.vertex_tolerance(n_vsd)
- {
- self.ds.vertex_data_mut(n_vsd).tolerance = proj_dist;
- self.my_increased_ss.insert(n_vsd);
- }
-
- //  ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
- self.ds.face_info_mut(fi).vertices_in.insert(n_vsd);
- }
- }
- /// PerformEF (PaveFiller_5.cxx L165-300) ??LEGACY non-BVH path.
- /// Only kept for reference; use perform_ef() (the aligned BVH path) instead.
- /// OCCT PaveFiller_3.cxx L222-228: GetPBBox (PaveBlock range)
- pub(crate) fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
- let paves = &self.ds.edge_paves(edge_idx);
- if paves.is_empty() {
- return vec![edge_t_range];
- }
- let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
- params.sort_by(|a, b| a.partial_cmp(b).unwrap());
- let edge_tol = self.ds.edge_tolerance(edge_idx).max(self.tol());
- // Deduplicate
- params.dedup_by(|a, b| (*a - *b).abs() < edge_tol);
- // Include endpoints
- let mut bounds = vec![edge_t_range[0]];
- bounds.extend(params);
- bounds.push(edge_t_range[1]);
- // Build ranges
- let mut ranges = Vec::new();
- for w in bounds.windows(2) {
- if w[1] - w[0] > edge_tol {
- ranges.push([w[0], w[1]]);
- }
- }
- ranges
- }
- /// OCCT BOPTools_AlgoTools::CorrectRange (AlgoTools_2.cxx L364-434).
  /// Shrinks the range by the face tolerance converted to parametric space.
  pub(crate) fn correct_range_for_face(edge_curve: &Curve3, etf: f64, range: [f64; 2]) -> [f64; 2] {
  const DT: f64 = 1e-12;

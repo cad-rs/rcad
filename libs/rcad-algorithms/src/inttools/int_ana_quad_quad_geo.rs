@@ -204,83 +204,147 @@ impl QuadQuadGeo {
     }
 
     /// OCCT L105-109: Perform(P, C, TolAng, Tol, H) — Plane/Cylinder
-    pub fn perform_plane_cylinder(&mut self, p: &Quadric, c: &Quadric, tol_ang: f64, tol: f64, _h: f64) {
+    ///
+    /// Rewritten to match OCCT IntAna_QuadQuadGeo.cxx L543-722 algorithm.
+    /// 1. Angle-dependent tolerance adjustment (H for short cylinders).
+    /// 2. If axis parallel to plane: 0/1/2 lines (generatrices).
+    /// 3. If not parallel: Circle or Ellipse at the piercing point.
+    pub fn perform_plane_cylinder(&mut self, p: &Quadric, c: &Quadric, tol_ang: f64, tol: f64, h: f64) {
         self.init_tolerances();
         self.done = true;
         self.typeres = AnaResultType::Empty;
         self.nbint = 0;
+        self.param2bis = 0.0;
 
-        let (a, b, c_n, d) = p.plane_coeffs();
-        let plane_normal = DVec3::new(a, b, c_n);
-        let axis_dir = c.axis_dir();
+        let (a, b, cc, d) = p.plane_coeffs();
+        let normp = DVec3::new(a, b, cc);
         let radius = c.radius();
-        let center = c.axis_loc();
+        let axis_loc = c.axis_loc();
+        let axis_dir = c.axis_dir();
+        let (ax, ay, az) = (axis_loc.x, axis_loc.y, axis_loc.z);
 
-        // OCCT: dot product of plane normal and cylinder axis
-        let dot = plane_normal.dot(axis_dir);
-        let cos_ang = dot / (plane_normal.length() * axis_dir.length());
+        // OCCT L554-565: signed distance from axis origin to plane
+        let dist = a * ax + b * ay + cc * az + d;
 
-        // OCCT: cylinder axis parallel to plane?
-        if cos_ang.abs() < tol_ang.cos() {
-            // Parallel: intersection is 1-2 line(s) or empty/circle
-            // Distance from cylinder axis to plane
-            let dist_to_plane = (a * center.x + b * center.y + c_n * center.z + d).abs()
-                / plane_normal.length();
+        // OCCT L571-598: angle-dependent tolerance adjustment
+        let mut tolang = tol_ang;
+        let mut toltang = tol;
+        let mut newparams = false;
 
-            if dist_to_plane > radius + tol {
-                return; // Empty
+        let n_len = normp.length();
+        let d_len = axis_dir.length();
+        let cos_da = normp.dot(axis_dir) / (n_len * d_len);
+        let d_a = cos_da.acos().abs();
+
+        if d_a > std::f64::consts::FRAC_PI_4 {
+            let dang = d_a - std::f64::consts::FRAC_PI_2;
+            let dangle = dang.abs();
+            if dangle > tol_ang {
+                let sinda = dangle.sin().abs();
+                let dif = (sinda - tol).abs();
+                if dif < tol || (h > 0.0 && sinda * h < 2.0 * tol) {
+                    tolang = sinda * 2.0;
+                    toltang = tol.max(sinda * h * 1.01);
+                    newparams = true;
+                }
             }
-            if dist_to_plane < tol {
-                // Cylinder axis lies in plane → 2 lines (generatrices)
-                self.pt1 = center - radius * axis_dir.cross(plane_normal).normalize_or_zero();
-                self.dir1 = axis_dir;
-                self.pt2 = center + radius * axis_dir.cross(plane_normal).normalize_or_zero();
-                self.dir2 = axis_dir;
-                self.nbint = 2;
+        }
+
+        // OCCT L600-601: IntAna_IntConicQuad parallel check
+        let dot_nd = normp.dot(axis_dir);
+        let is_parallel = dot_nd.abs() / (n_len * d_len) <= tolang.sin();
+
+        if is_parallel {
+            // OCCT L603-683: parallel -> 0/1/2 lines
+            let omega = DVec3::new(ax - dist * a, ay - dist * b, az - dist * cc);
+            let abs_dist = dist.abs();
+
+            if (abs_dist - radius).abs() < tol {
+                self.nbint = 1;
+                self.pt1 = omega;
+                self.dir1 = if newparams {
+                    let omega_xyz_trnsl = axis_loc + 100.0 * axis_dir;
+                    let distt = a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
+                    let omega1 = DVec3::new(
+                        omega_xyz_trnsl.x - distt * a,
+                        omega_xyz_trnsl.y - distt * b,
+                        omega_xyz_trnsl.z - distt * cc,
+                    );
+                    (omega1 - omega).normalize_or_zero()
+                } else {
+                    axis_dir
+                };
                 self.typeres = AnaResultType::Line;
-                return;
+            } else if abs_dist < radius {
+                self.nbint = 2;
+                let axey = axis_dir.cross(normp).normalize_or_zero();
+                let hh = (radius * radius - dist * dist).sqrt().max(0.0);
+                self.pt1 = omega - hh * axey;
+                self.pt2 = omega + hh * axey;
+
+                if newparams {
+                    let omega_xyz_trnsl = axis_loc + 100.0 * axis_dir;
+                    let distt = a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
+                    let an_sqrt_arg = radius * radius - distt * distt;
+                    let ht = if an_sqrt_arg > 0.0 { an_sqrt_arg.sqrt() } else { 0.0 };
+                    let omega1 = DVec3::new(
+                        omega_xyz_trnsl.x - distt * a,
+                        omega_xyz_trnsl.y - distt * b,
+                        omega_xyz_trnsl.z - distt * cc,
+                    );
+                    self.dir1 = (omega1 - ht * axey - self.pt1).normalize_or_zero();
+                    self.dir2 = (omega1 + ht * axey - self.pt2).normalize_or_zero();
+                } else {
+                    self.dir1 = axis_dir;
+                    self.dir2 = axis_dir;
+                }
+                self.typeres = AnaResultType::Line;
             }
-            // 2 lines (generatrices at intersection)
-            let offset = (radius * radius - dist_to_plane * dist_to_plane).sqrt();
-            let perp = axis_dir.cross(plane_normal).normalize_or_zero();
-            self.pt1 = center - dist_to_plane * plane_normal.normalize_or_zero() - offset * perp;
-            self.dir1 = axis_dir;
-            self.pt2 = center - dist_to_plane * plane_normal.normalize_or_zero() + offset * perp;
-            self.dir2 = axis_dir;
-            self.nbint = 2;
-            self.typeres = AnaResultType::Line;
-            return;
-        }
-
-        // OCCT: non-parallel → ellipse or circle
-        let normal = plane_normal.normalize_or_zero();
-        let proj_center = center - (plane_normal.dot(center) + d) / plane_normal.length_squared() * plane_normal;
-        let x_dir = axis_dir - dot / plane_normal.length_squared() * plane_normal;
-        let y_dir = normal.cross(axis_dir);
-        let x_len = x_dir.length();
-        let y_len = y_dir.length();
-
-        if x_len < TOLERANCE_CLAMP_MIN || y_len < TOLERANCE_CLAMP_MIN { return; }
-
-        // OCCT: semi-axes of the ellipse
-        let a_ellipse = radius / cos_ang.abs();
-        let b_ellipse = radius;
-
-        self.pt1 = proj_center;
-        self.dir1 = x_dir / x_len;
-        self.dir2 = y_dir / y_len;
-        self.dir3 = normal;
-        self.param1 = a_ellipse; // major
-        self.param2 = b_ellipse; // minor
-
-        // OCCT: check if close to circle
-        if (a_ellipse - b_ellipse).abs() < tol {
-            self.typeres = AnaResultType::Circle;
-            self.param1 = (a_ellipse + b_ellipse) / 2.0;
+            // else: dist > radius -> keep Empty
         } else {
-            self.typeres = AnaResultType::Ellipse;
+            // OCCT L685-719: not parallel -> circle or ellipse
+            self.nbint = 1;
+
+            // Piercing point of cylinder axis through plane
+            let denom = normp.dot(axis_dir);
+            let t_param = if denom.abs() > 1e-15 {
+                -(normp.dot(axis_loc) + d) / denom
+            } else {
+                0.0
+            };
+            let pierce_pt = axis_loc + t_param * axis_dir;
+            self.pt1 = pierce_pt;
+
+            let axey = normp.cross(axis_dir);
+            let sint = axey.length() / (n_len * d_len);
+
+            if sint < tol / radius.max(1e-15) {
+                // OCCT L695-703: Circle
+                self.typeres = AnaResultType::Circle;
+                let up = if axis_dir.x.abs() > 0.1 || axis_dir.y.abs() > 0.1 {
+                    DVec3::Z
+                } else {
+                    DVec3::X
+                };
+                let x_dir = axis_dir.cross(up).cross(axis_dir).normalize_or_zero();
+                self.dir1 = axis_dir.normalize_or_zero(); // circle X = cylinder axis
+                self.dir2 = x_dir;                         // circle Y
+                self.dir3 = normp.normalize_or_zero();     // circle normal = plane normal
+                self.param1 = radius;
+            } else {
+                // OCCT L706-718: Ellipse
+                self.typeres = AnaResultType::Ellipse;
+                let cost = (axis_dir.dot(normp) / (d_len * n_len)).abs();
+                let axex = axey.cross(normp);
+                self.dir1 = normp.normalize_or_zero();
+                self.dir2 = axex.normalize_or_zero();
+                self.dir3 = axis_dir.normalize_or_zero();
+                self.param1 = radius / cost.max(1e-15);
+                self.param1bis = radius;
+            }
         }
-        self.nbint = 1;
+
+        self.done = true;
     }
 
     /// OCCT L115: Perform(P, S) — Plane/Sphere

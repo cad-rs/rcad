@@ -573,7 +573,7 @@ impl<'a> PaveFiller<'a> {
   if self.check_stop("after_PerformVV") { return; }
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE)
-  self.perform_ve_bvh(&ve_pairs);
+  self.perform_ve(&ve_pairs);
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
   if self.check_stop("after_PerformVE") { return; }
@@ -581,7 +581,7 @@ impl<'a> PaveFiller<'a> {
   self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE)
-  self.perform_ee_bvh(&ee_pairs);
+  self.perform_ee(&ee_pairs);
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if self.check_stop("after_PerformEE") { return; }
@@ -589,7 +589,7 @@ impl<'a> PaveFiller<'a> {
   self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE)
-  self.perform_vf_bvh(&vf_pairs);
+  self.perform_vf(&vf_pairs);
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
   if self.check_stop("after_PerformVF") { return; }

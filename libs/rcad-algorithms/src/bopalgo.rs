@@ -69,10 +69,10 @@ impl Report {
     pub fn alerts(&self) -> &[Alert] { &self.alerts }
     pub fn clear(&mut self) { self.alerts.clear(); }
 
-    /// HasErrors — checks for fatal alerts.
+    /// HasErrors — checks for fatal alerts (OCCT: TooSmallRange is warning, not error).
     pub fn has_errors(&self) -> bool {
         self.alerts.iter().any(|a| matches!(a,
-            Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)
+            Alert::EdgeWithoutCurve(_)
             | Alert::TooFewArguments | Alert::NoFiller
             | Alert::BOPNotAllowed | Alert::BOPNotSet | Alert::EmptyShape))
     }

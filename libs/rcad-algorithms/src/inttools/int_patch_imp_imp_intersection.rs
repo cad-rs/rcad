@@ -56,46 +56,99 @@ impl ImpImpIntersection {
     pub fn point(&self, i: usize) -> &IntPatchPoint { &self.spnt[i] }
 
     // =====================================================================
-    // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, ...)
+    // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, theIsReqToKeepRLine)
     // rcad: Surface3 instead of Adaptor3d_Surface. No TopolTool.
     // =====================================================================
     pub fn perform(&mut self, s1: &Surface3, s2: &Surface3, tol_arc: f64, tol_tang: f64) {
+        // OCCT L2525-2533: myDone=Fail, spnt/slin clear, empt/tgte/oppo init
         self.my_done = IntStatus::Fail;
         self.spnt.clear();
         self.slin.clear();
         self.empt = true; self.tgte = false; self.oppo = false;
 
-        // OCCT: SetQuad — convert Surface3 to Quadric + type index
+        // OCCT L2529: isPostProcessingRequired = true
+        // OCCT L2535-2546: all1, all2, SameSurf, multpoint, nosolonS1, nosolonS2
+        //   edg1, edg2, pnt1, pnt2 — IntPatch_TheSOnBounds (needs TopolTool)
+        // GAP: rcad has no TopolTool; SOnBounds post-processing is done upstream.
+        let _is_post_processing_required = true;
+
+        // OCCT L2548-2556: SetQuad — convert Surface3 to Quadric + type index
         let Some(q1) = Quadric::from_surface3(s1) else { return; };
         let Some(q2) = Quadric::from_surface3(s2) else { return; };
+        // OCCT L2555: typs1, typs2 — surface type enums (rcad: inferred from Quadric)
+        let _typs1 = q1.surface_type();
+        let _typs2 = q2.surface_type();
+        // OCCT L2553: bool bEmpty = false
+        let mut b_empty = false;
+
+        // OCCT L2558-2562: if (!iT1 || !iT2) throw ConstructionError
         let i_t1 = quad_type_index(&q1);
         let i_t2 = quad_type_index(&q2);
         if i_t1 == 0 || i_t2 == 0 { return; }
 
+        // OCCT L2564-2565: bReverse = iT1 > iT2, iTT = iT1 * 10 + iT2
         let b_reverse = i_t1 > i_t2;
         let i_tt = i_t1 * 10 + i_t2;
 
-        // OCCT: dispatch based on iTT
+        // OCCT L2567-2769: switch(iTT)
         match i_tt {
             11 => self.int_pp(&q1, &q2, tol_tang),
+            // OCCT L2577-2594: case 12/21 Plane/Cylinder: H from surface bounds
             12 | 21 => self.int_pcy(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            // OCCT L2596-2604: case 13/31 Plane/Cone
             13 | 31 => self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            // OCCT L2606-2614: case 14/41 Plane/Sphere
             14 | 41 => self.int_psp(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            // OCCT L2616-2624: case 15/51 Plane/Torus
             15 | 51 => self.int_pto(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2626-2677: case 22 Cylinder/Cylinder (aBox1,aBox2,a2DTol)
             22 => self.int_cycy(&q1, &q2, tol_tang),
+            // OCCT L2679-2687: case 23/32 Cylinder/Cone
             23 | 32 => self.int_cyco(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2689-2697: case 24/42 Cylinder/Sphere
             24 | 42 => self.int_cysp(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2699-2707: case 25/52 Cylinder/Torus
             25 | 52 => self.int_cyto(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2709-2716: case 33 Cone/Cone
             33 => self.int_coco(&q1, &q2, tol_tang),
+            // OCCT L2718-2726: case 34/43 Cone/Sphere
             34 | 43 => self.int_cosp(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2728-2735: case 35/53 Cone/Torus
             35 | 53 => self.int_coto(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2737-2744: case 44 Sphere/Sphere
             44 => self.int_spsp(&q1, &q2, tol_tang),
+            // OCCT L2746-2754: case 45/54 Sphere/Torus
             45 | 54 => self.int_spto(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2756-2763: case 55 Torus/Torus
             55 => self.int_toto(&q1, &q2, tol_tang),
-            _ => {}
+            // OCCT L2765-2768: default throw ConstructionError
+            _ => { return; }
         }
 
-        // OCCT post-processing (skipped: PutPointsOnLine, ProcessSegments, ProcessRLine)
+        // OCCT L2771-2779: if bEmpty { myDone = OK; return }
+        if b_empty {
+            if self.my_done == IntStatus::Fail {
+                self.my_done = IntStatus::OK;
+            }
+            return;
+        }
+
+        // OCCT L2782-2934: isPostProcessingRequired block
+        // OCCT: solrst.Perform(AFunc, D1/D2, TolArc, TolTang) — boundary intersection
+        //       PutPointsOnLine, ProcessSegments, ProcessRLine
+        // GAP: rcad has no TopolTool / IntPatch_TheSOnBounds.
+        //       Boundary clipping is done upstream in IntPatch_Intersection.
+
+        // OCCT L2936-2995: ComputeVertexParameters for each line
+        for i in 0..self.slin.len() {
+            // OCCT L2976-2995: ComputeVertexParameters(TolArc) for GLine/ALine/RLine
+            // GAP: rcad IntPatchLine has no ComputeVertexParameters equivalent.
+            //       Vertex parameters are computed in MakeCurve (upstream).
+            let _ = i;
+        }
+
+        // OCCT L2997-3040+: additional vertex placement for circles without vertices
+        // GAP: handled upstream in MakeCurve / TreatCircle.
     }
 
     // =====================================================================
