@@ -499,7 +499,11 @@ impl<'a> PaveFiller<'a> {
  /// Architecture diff: rcad borrows DS from caller (not new + SetArguments).
  /// Guard: allows pre-populated DS (rcad pattern), matching OCCT Init fresh.
  fn init(&mut self, a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) {
+ // OCCT L178-182: check arguments non-empty
  if !self.ds.faces.is_empty() { return; }
+ // OCCT L196: Clear() — reset report and state
+ self.my_report.clear();
+ // OCCT L199-201: myDS = new BOPDS_DS; myDS->SetArguments(myArguments); myDS->Init(myFuzzyValue)
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
  self.ds.fuzzy_tol = tol;
  load_topods_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
@@ -509,13 +513,14 @@ impl<'a> PaveFiller<'a> {
  load_topods_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
  self.ds.compute_uv_boundaries();
  self.ds.build_face_reps();
- // ShapeInfo is built during load_topods_brep (init_shape_topo traversal).
  self.ds.nb_source_shapes = self.ds.shape_info.len();
  self.ds.build_map_ve();
- // Resize context to match the actual number of faces now loaded
+ // OCCT L204: myContext = new IntTools_Context — rcad: resize context
  if self.ds.faces.len() != self.context.num_faces {
      self.context.resize(self.ds.faces.len());
  }
+ // OCCT L213: SetNonDestructive()
+ self.set_non_destructive_auto();
  }
 
  /// Check whether to stop after the given stage name.
