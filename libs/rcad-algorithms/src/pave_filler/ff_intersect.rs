@@ -115,15 +115,29 @@ impl<'a> super::PaveFiller<'a> {
         ff_entry.curves.retain(|&ci| {
           if ci >= self.ds.intersection_curves.len() { return false; }
           let ic = &self.ds.intersection_curves[ci];
-          // OCCT: BndLib_Add3dCurve::Add + check !IsThin(3*Precision::Confusion())
-          // rcad: minimal length check — skip curves shorter than 3 * 1e-7
-          let min_len = 3.0 * crate::TOLERANCE_ABS;
-          let curve_len = ic.t_range[1] - ic.t_range[0];
-          // For analytic curves (Circle/Line/Ellipse), parameter range maps to length.
-          // Use bounding-box approximation for generic curves.
-          let valid = curve_len > min_len;
+          // OCCT L558-572: IntTools_Tools::CheckCurve — build 3D bounding box
+          // via BndLib_Add3dCurve::Add, then check !IsThin(3*Precision::Confusion()).
+          let tol_cmp = 3.0 * crate::TOLERANCE_ABS;
+          let mut bb_min = DVec3::splat(f64::INFINITY);
+          let mut bb_max = DVec3::splat(f64::NEG_INFINITY);
+          let n_samples = 100usize.max(2);
+          for si in 0..n_samples {
+            let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * (si as f64) / ((n_samples - 1) as f64);
+            let p = ic.curve.point_at(t);
+            bb_min = bb_min.min(p);
+            bb_max = bb_max.max(p);
+          }
+          // Expand box by tolerance (OCCT BndLib_Add3dCurve::Add uses max(tol, tang_tol))
+          let expand = ic.geom_tol.max(ic.curve_extra.tangential_tol).max(crate::TOLERANCE_ABS);
+          bb_min -= DVec3::splat(expand);
+          bb_max += DVec3::splat(expand);
+          // IsThin check: reject if box is thin in ALL three directions
+          let dx = bb_max.x - bb_min.x;
+          let dy = bb_max.y - bb_min.y;
+          let dz = bb_max.z - bb_min.z;
+          let valid = dx > tol_cmp || dy > tol_cmp || dz > tol_cmp;
           if !valid && std::env::var("RCAD_DBG_FF").is_ok() {
-            eprintln!("[FF] CheckCurve discard IC[{}] len={:.2e}", ci, curve_len);
+            eprintln!("[FF] CheckCurve discard IC[{}] box=({:.2e},{:.2e},{:.2e}) tol={:.2e}", ci, dx, dy, dz, tol_cmp);
           }
           valid
         });
