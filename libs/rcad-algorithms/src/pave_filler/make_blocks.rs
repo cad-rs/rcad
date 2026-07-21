@@ -799,8 +799,8 @@ impl<'a> super::PaveFiller<'a> {
         // L1141-1142: RemoveMicroSectionEdges
         self.remove_micro_section_edges(&mut a_mscpb, &mut a_micro_pb);
 
-        // L1145: MakeSDVerticesFF
-        self.make_sd_vertices_ff();
+        // L1145: MakeSDVerticesFF(aDMVLV, aDMNewSD)
+        self.make_sd_vertices_ff(&a_dm_vlv, &mut a_dm_new_sd);
 
         // L1146-1156: PostTreatFF (vertex fusion)
         self.post_treat_ff(

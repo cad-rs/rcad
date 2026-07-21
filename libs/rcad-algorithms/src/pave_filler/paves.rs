@@ -1801,20 +1801,27 @@ impl<'a> super::PaveFiller<'a> {
  }
 
 
- pub(crate) fn make_sd_vertices_ff(&mut self) {
- let overlaps = self.ds.same_domain_overlaps.clone();
- for (f1, f2, polygon) in &overlaps {
- let tol = self.ff_tol(*f1, *f2);
- for &pt in polygon {
- let v_idx = if let Some(idx) = self.ds.find_vertex_near(pt, tol) {
- idx
- } else {
- self.ds.add_vertex(pt)
- };
- self.ds.faces[*f1].face_info.vertices_in.insert(v_idx);
- self.ds.faces[*f2].face_info.vertices_in.insert(v_idx);
- }
- }
+ /// BOPAlgo_PaveFiller::MakeSDVerticesFF (PaveFiller_6.cxx L1141-1161).
+ /// Creates a new SD vertex for each group of coinciding vertices
+ /// (theDMVLV) and puts new substitutions to theDMNewSD.
+ pub(crate) fn make_sd_vertices_ff(
+     &mut self,
+     a_dm_vlv: &std::collections::HashMap<usize, Vec<usize>>,
+     a_dm_new_sd: &mut std::collections::HashMap<usize, usize>,
+ ) {
+     for (_, a_list) in a_dm_vlv.iter() {
+         // L1152: make SD vertices w/o creation of interfs
+         self.make_sd_vertices_vv(a_list);
+         // Determine the SD vertex index produced by make_sd_vertices_vv
+         // (it stores the result in myDS->ShapeSD)
+         let n_sd = if !a_list.is_empty() {
+                self.ds.has_shape_sd(a_list[0]).unwrap_or(a_list[0])
+            } else { continue; };
+            // L1154-1159: update theDMNewSD
+         for &n_v in a_list {
+             a_dm_new_sd.insert(n_v, n_sd);
+         }
+     }
  }
 
  ///  create section edges for intersecton curves lacking PaveBlocks.

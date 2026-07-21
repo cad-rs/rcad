@@ -282,7 +282,9 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ===== Translate nested DS SD mappings back to main DS =====
+        // ===== OCCT L1398-1466: Process VERTEX results from nested PaveFiller =====
+        // OCCT: aItLS.Initialize(aLS); for (; aItLS.More(); aItLS.Next())
+        // For each shape in aLS: get type, if VERTEX handle SD or FF point update
         let sd_pairs: Vec<(usize, usize)> = nested_ds.shape_sd.sd_vertices_iter()
             .map(|&(a, b)| {
                 let main_a = if a < nested_vertex_map.len() { nested_vertex_map[a] } else { a };
@@ -290,48 +292,88 @@ impl<'a> PaveFiller<'a> {
                 (main_a, main_b)
             })
             .collect();
+        let mut sd_map: std::collections::HashMap<usize, usize> = HashMap::new();
+        for &(a, b) in &sd_pairs {
+            sd_map.insert(a, b);
+        }
 
-        // Register SD mappings in main DS and update aDMNewSD
-        for &(main_a, main_b) in &sd_pairs {
-            if main_a != main_b && main_a < self.ds.vertices.len() && main_b < self.ds.vertices.len() {
-                let n_vx = main_b;
-                // Register in SD map
-                self.ds.add_shape_sd(main_a, n_vx);
-                a_dm_new_sd.insert(main_a, n_vx);
-                
-                // Update FF interference point indices if this vertex was an intersection point
-                let b_intersection_point = a_mscpb.contains_key(&main_a);
-                if b_intersection_point {
-                    if let Some(&(cur_ind, j)) = a_mscpb.get(&main_a) {
+        // OCCT L1407-1600: iterate aLS shapes
+        for &(shape_idx, st) in &a_ls {
+            // OCCT L1411-1418: flatten COMPOUND — not needed in rcad (no compounds in a_ls)
+
+            // OCCT L1419-1422: nSx = aPDS->Index(aSx); aType = aSIx.ShapeType()
+            // In rcad, shape_idx is already the main DS index; st is 0=VERTEX, 1=EDGE
+
+            if st == 0 {
+                // ===== VERTEX (OCCT L1424-1466) =====
+                // OCCT L1426: bIntersectionPoint = theMSCPB.Contains(aSx)
+                let b_intersection_point = a_mscpb.contains_key(&shape_idx);
+                // OCCT L1428-1435: if (aPDS->HasShapeSD(nSx, nVSD)) aV = aPDS->Shape(nVSD); else aV = aSx
+                // rcad: check nested VV pass result — was this vertex fused?
+                let n_vx = if let Some(&sd_target) = sd_map.get(&shape_idx) {
+                    sd_target
+                } else {
+                    shape_idx
+                };
+                // OCCT L1437-1443: iV = myDS->Index(aV); if (iV<0) { append to myDS }
+                // rcad: n_vx is already the main DS index (vertices have fixed indices)
+                let i_v = n_vx;
+                // OCCT L1445-1465: if (!bIntersectionPoint) save SD; else update FF point
+                if !b_intersection_point {
+                    // OCCT L1448-1453: save SD connection
+                    let n_sx = shape_idx;
+                    if n_sx != i_v {
+                        a_dm_new_sd.insert(n_sx, i_v);
+                        self.ds.add_shape_sd(n_sx, i_v);
+                    }
+                } else {
+                    // OCCT L1457-1464: update FF interference point
+                    if let Some(&(cur_ind, j)) = a_mscpb.get(&shape_idx) {
                         if cur_ind < self.ds.interf_ff.len() {
-                            // Check if j is a point index (not curve index)
                             let a_nb_c = self.ds.interf_ff[cur_ind].curves.len();
                             if j >= a_nb_c {
-                                let pt_idx = j - a_nb_c; // point index within this FF
+                                let pt_idx = j - a_nb_c;
                                 if pt_idx < self.ds.interf_ff[cur_ind].points.len() {
-                                    // Update vertex_index on existing FFPoint (OCCT BOPDS_Point::SetIndex)
-                                    let mut n_vx = n_vx;
-                                    // Check if this vertex already exists among FF points
-                                    let already_has = self.ds.interf_ff[cur_ind].points.iter()
-                                        .any(|p| p.vertex_index == n_vx);
-                                    if !already_has {
-                                        // Update existing point's vertex index (OCCT equivalent: aNP.SetIndex(nVX))
-                                        // If the point hasn't been assigned a vertex yet, assign it.
-                                        // n_vx is the new vertex index for this point.
-                                        if self.ds.interf_ff[cur_ind].points[pt_idx].vertex_index == usize::MAX
-                                            || self.ds.interf_ff[cur_ind].points[pt_idx].vertex_index == n_vx
-                                        {
-                                            // Update the existing point's vertex reference
-                                            let updated = crate::bopds::ds::types::FFPoint {
-                                                vertex_index: n_vx,
-                                                ..self.ds.interf_ff[cur_ind].points[pt_idx].clone()
-                                            };
-                                            self.ds.interf_ff[cur_ind].points[pt_idx] = updated;
-                                        }
-                                    }
+                                    // OCCT: aNP.SetIndex(iV)
+                                    self.ds.interf_ff[cur_ind].points[pt_idx].vertex_index = i_v;
                                 }
                             }
                         }
+                    }
+                }
+            } else if st == 1 {
+                // ===== EDGE (OCCT L1468-1600) =====
+                if shape_idx >= self.ds.edges.len() { continue; }
+                // OCCT L1470-1474: get CPB from theMSCPB, iX, iC, aPB1
+                let cpb_entry = match a_mscpb.get(&shape_idx) {
+                    Some(&val) => val,
+                    None => continue,
+                };
+                let (_i_x, _i_c) = (cpb_entry.0, cpb_entry.1);
+                // OCCT L1474: aPB1 = theCPB.PaveBlock1()
+                let a_pb1_idx = shape_idx;
+                // OCCT L1476: bOld = aPB1->HasEdge()
+                let b_old = a_pb1_idx < self.ds.pave_blocks.len()
+                    && self.ds.pave_blocks[a_pb1_idx].0.read().unwrap().new_edge.is_some();
+                // OCCT L1477-1481: if (bOld) aDMExEdges.Bind(aPB1, aLPBx)
+                if b_old {
+                    if !a_dm_ex_edges.contains_key(&a_pb1_idx) {
+                        a_dm_ex_edges.insert(a_pb1_idx, Vec::new());
+                    }
+                }
+                // OCCT L1470: bHasPaveBlocks = aPDS->HasPaveBlocks(nSx)
+                // rcad nested VV pass does not split edges, so bHasPaveBlocks is always false
+                let b_has_pave_blocks = false;
+                if !b_has_pave_blocks {
+                    // OCCT L1483-1497: if (!bHasPaveBlocks)
+                    if b_old {
+                        // OCCT L1485-1488: aDMExEdges.ChangeFind(aPB1).Append(aPB1)
+                        a_dm_ex_edges.get_mut(&a_pb1_idx).unwrap().push(a_pb1_idx);
+                    } else {
+                        // OCCT L1489-1496: create new edge in myDS
+                        // aSI.SetShapeType(aType); aSI.SetShape(aSx);
+                        // iE = myDS->Append(aSI); aPB1->SetEdge(iE);
+                        // rcad: edge already created by MakeEdge in make_blocks()
                     }
                 }
             }
@@ -341,7 +383,6 @@ impl<'a> PaveFiller<'a> {
         let sd_keys: Vec<usize> = a_dm_new_sd.keys().copied().collect();
         for &k in &sd_keys {
             if let Some(&v) = a_dm_new_sd.get(&k) {
-                // Follow chain
                 let mut chain = v;
                 let mut depth = 0;
                 while let Some(&next) = a_dm_new_sd.get(&chain) {
@@ -355,57 +396,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
-
-        // ===== OCCT L1468-1600: Process edges after VV fusion =====
-        // Iterate a_ls looking for edges (st == 1)
-        // OCCT: for (; aItLS.More(); aItLS.Next()) { aType = aSIx.ShapeType();
-        //  if (aType == TopAbs_EDGE) { ... } }
-        for &(shape_idx, st) in &a_ls {
-            if st != 1 { continue; }  // only edges
-            if shape_idx >= self.ds.edges.len() { continue; }
-
-            // OCCT L1470-1474: get CPB from theMSCPB
-            let cpb_entry = match a_mscpb.get(&shape_idx) {
-                Some(&val) => val,
-                None => continue,
-            };
-            let (i_x, i_c) = (cpb_entry.0, cpb_entry.1);
-
-            // OCCT L1474: aPB1 = theCPB.PaveBlock1()
-            let a_pb1_idx = shape_idx;
-            let a_pb1_has_edge = {
-                if a_pb1_idx < self.ds.pave_blocks.len() {
-                    self.ds.pave_blocks[a_pb1_idx].0.read().unwrap().new_edge.is_some()
-                } else { false }
-            };
-
-            // OCCT L1477-1481: if (bOld) aDMExEdges.Bind(aPB1, aLPBx);
-            if a_pb1_has_edge {
-                if !a_dm_ex_edges.contains_key(&a_pb1_idx) {
-                    a_dm_ex_edges.insert(a_pb1_idx, Vec::new());
-                }
-            }
-
-            // OCCT L1483-1497: if (!bHasPaveBlocks)
-            // In rcad, the nested DS is a simplified VV-only pass,
-            // so edges cannot be split. bHasPaveBlocks is always false.
-            let b_has_pave_blocks = false;
-            if !b_has_pave_blocks {
-                if a_pb1_has_edge {
-                    // OCCT L1486-1488: aDMExEdges.ChangeFind(aPB1).Append(aPB1)
-                    a_dm_ex_edges.get_mut(&a_pb1_idx).unwrap().push(a_pb1_idx);
-                } else {
-                    // OCCT L1490-1496: Create new edge in myDS
-                    // aSI.SetShapeType(aType); aSI.SetShape(aSx);
-                    // iE = myDS->Append(aSI); aPB1->SetEdge(iE);
-                    // The edge will be created by MakeEdge/ProcessDE later.
-                    // For now, the PB already has new_edge set from the
-                    // MakeEdge call in make_blocks().
-                }
-                continue;
-            }
-        }
-    }
+    } // end post_treat_ff
 
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).
     /// OCCT PerformVV: aTolSum = Tol(V1) + Tol(V2) + myFuzzyValue
