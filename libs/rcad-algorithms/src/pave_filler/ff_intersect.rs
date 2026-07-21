@@ -16,6 +16,7 @@ impl<'a> super::PaveFiller<'a> {
   // ===== Phase 0: pairs + UpdateFaceInfo (OCCT L291-320) =====
 
   // OCCT L291: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE)
+  #[allow(unused_variables)]
   let pairs = self.ff_candidate_pairs();
   let i_size = pairs.len();
 
@@ -97,6 +98,7 @@ impl<'a> super::PaveFiller<'a> {
   // ===== Phase 2 (OCCT L538-622): execute + process results =====
   // OCCT: parallel Perform on all BOPAlgo_FaceFace objects, then process.
   // rcad: sequential for now.
+
 
   for work in a_work {
     if self.check_stop("PerformFF") { return; }
