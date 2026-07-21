@@ -134,9 +134,21 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  pub(crate) fn ff_candidate_pairs(&self) -> Vec<(usize, usize)> {
+  // Build face BVH locally (OCCT builds BOPTools_BoxTree inside PerformFF)
+  // Equivalent to BOPDS_Iterator::Initialize(TopAbs_FACE, TopAbs_FACE)
+  let face_bvh = {
+      let mut indices = Vec::new();
+      let mut aabbs = Vec::new();
+      for (fi, _f) in self.ds.faces.iter().enumerate() {
+          indices.push(fi);
+          aabbs.push(crate::bopds::ds::face_aabb::face_aabb(self.ds, fi));
+      }
+      if indices.len() >= 20 { Some(crate::bvh::DsBvh::build(indices, aabbs)) } else { None }
+  };
+
   // Get FF pair candidates from BVH or pair iterator.
   // OCCT equivalent: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE) loop.
-  if let Some(ref fbvh) = self.face_bvh {
+  if let Some(ref fbvh) = face_bvh {
     let candidates = crate::bvh::DsBvh::candidate_pairs(fbvh, fbvh);
     candidates
       .into_iter()

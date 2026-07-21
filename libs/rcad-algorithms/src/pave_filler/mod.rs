@@ -286,10 +286,7 @@ pub struct PaveFiller<'a> {
  bvh_b: Option<&'a Bvh>,
  /// DS-based face BVH for FF pair detection. Uses DS face indices directly,
  /// matching OCCT's BOPTools_BoxTree which operates on source shape indices.
- /// BVH index space equals DS index space (no a_rev/b_rev needed).
- pub(crate) face_bvh: Option<crate::bvh::DsBvh>,
- ///  BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
- glue: GlueEnum,
+pub(crate) glue: GlueEnum,
  glue_tolerance: f64,
  /// convenience  ?true when glue is active (not GlueOff).
  /// =BOPAlgo_Options::SetFuzzyValue
@@ -536,21 +533,6 @@ impl<'a> PaveFiller<'a> {
   self.dump_ctx.snapshot("after_Init", self.ds, None);
   if self.check_stop("after_Init") { return; }
 
-  // Build face BVH for FF pair detection (analogous to BOPTools_BoxTree).
-  // Must happen after init() populates the DS faces.
-  {
-  let mut indices = Vec::new();
-  let mut aabbs = Vec::new();
-  for (fi, f) in self.ds.faces.iter().enumerate() {
-  indices.push(fi);
-  aabbs.push(crate::bopds::ds::face_aabb::face_aabb(self.ds, fi));
-  }
-  self.face_bvh = if indices.len() >= 20 { Some(DsBvh::build(indices, aabbs)) } else { None };
-  }
-
-  // =early return if stop_after env var is set and matches
-  // (allows stage-by-stage testing without modifying production logic)
-
   // OCCT L251: Prepare =build pcurves on planar faces.
   self.prepare();
   if self.my_report.has_errors() { return; }
@@ -662,10 +644,6 @@ impl<'a> PaveFiller<'a> {
  if self.my_report.has_errors() { return; }
  self.dump_ctx.snapshot("after_MakeBlocks", self.ds, None);
   if self.check_stop("after_MakeBlocks") { return; }
-
- // OCCT: BuildEdgeImages (in Perform, after MakeBlocks)
- // rcad: build_edge_images constructs myImages/myOrigins from DS edge data.
- self.ds.build_edge_images();
 
  // OCCT L351: CheckSelfInterference
  let _si_warnings = self.check_self_interference();
