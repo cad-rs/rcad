@@ -697,22 +697,59 @@ pub(crate) fn make_intersection_curve(
  use rcad_kernel::geom::Curve2dEval;
  use std::f64::consts::TAU;
 
- // OCCT L1097-1846: IntPatch_Walking  -- approximate BSpline from marching points.
- if line.is_wline() {
- return self.make_walking_curve(f1, f2, line);
- }
+ // ===== OCCT IntTools_FaceFace.cxx L695-751 =====
+ // OCCT L700-714: local vars
+ // OCCT L717: reapprox label (not needed in sequential rcad)
+ // OCCT L719: Tolpc = myTolApprox
+ // OCCT L720: bAvoidLineConstructor = false
+ let mut b_avoid_line_constructor = false;
 
- let curve = line.curve.clone();
- let orig_t_range = line.t_range;
- let geom_tol = line.tolerance;
+ // OCCT L721-722: L = myIntersector.Line(Index); typl = L->ArcType();
  let typl = line.line_type;
 
- // OCCT L815-1095: switch on line type.
+ // OCCT L724-744: IntPatch_Walking special handling
+ if line.is_wline() {
+   let nbp = line.nb_points();
+   if nbp >= 2 {
+     let p1 = line.point(0).p3d;
+     let p2 = line.point(nbp - 1).p3d;
+     // OCCT L740-743: if endpoints are nearly coincident, use LineConstructor
+     if p1.distance_squared(p2) < 1e-14 {
+       b_avoid_line_constructor = false;
+     }
+   }
+ }
+
+ // OCCT L748-751: IntPatch_Restriction — skip LineConstructor
+ if typl == crate::inttools::int_patch_type::IntPatchIType::Restriction {
+   b_avoid_line_constructor = true;
+ }
+
+ // OCCT L755-773: LineConstructor.Perform(L)
+ // If !IsDone → return empty. If NbParts <= 0 → return empty.
+ let parts: Vec<[f64; 2]> = if !b_avoid_line_constructor {
+   let p = self.line_constructor_parts(
+     &line.curve, line.t_range, typl, &line.vertices, f1, f2);
+   if p.is_empty() { return Vec::new(); }
+   p
+ } else {
+   // OCCT L748-750: for Restriction, skip LineConstructor, use full range
+   // rcad: use the full t_range as a single part
+   vec![line.t_range]
+ };
+
+ // OCCT L776-1846: switch(typl)
  match typl {
- IntPatchIType::Line | IntPatchIType::Parabola | IntPatchIType::Hyperbola =>
-   self.make_analytic_nonperiodic_curve(f1, f2, &curve, orig_t_range, typl, geom_tol, line.tang_tolerance, &line.vertices),
- IntPatchIType::Circle | IntPatchIType::Ellipse =>
-   self.make_analytic_periodic_curve(f1, f2, &curve, orig_t_range, typl, geom_tol, line.tang_tolerance, &line.vertices),
+ crate::inttools::int_patch_type::IntPatchIType::Line
+ | crate::inttools::int_patch_type::IntPatchIType::Parabola
+ | crate::inttools::int_patch_type::IntPatchIType::Hyperbola =>
+   self.make_analytic_nonperiodic_curve(f1, f2, &line.curve, &parts, typl, line.tolerance, line.tang_tolerance),
+ crate::inttools::int_patch_type::IntPatchIType::Circle
+ | crate::inttools::int_patch_type::IntPatchIType::Ellipse =>
+   self.make_analytic_periodic_curve(f1, f2, &line.curve, line.t_range, typl, line.tolerance, line.tang_tolerance, &line.vertices),
+ crate::inttools::int_patch_type::IntPatchIType::Walking
+ | crate::inttools::int_patch_type::IntPatchIType::Restriction =>
+   self.make_walking_curve(f1, f2, line),
  _ => Vec::new(),
  }
 }
@@ -787,9 +824,8 @@ fn make_walking_curve(
 ///   a single part with the original t_range (always infinite for lines).
 fn make_analytic_nonperiodic_curve(
   &mut self, f1: usize, f2: usize,
-  curve: &Curve3, orig_t_range: [f64; 2], typl: IntPatchIType,
+  curve: &Curve3, parts: &Vec<[f64; 2]>, typl: IntPatchIType,
   geom_tol: f64, tang_tolerance: f64,
-  vertices: &[crate::inttools::int_patch_line::IntPatchVertex],
 ) -> Vec<crate::bopds::ds::IntersectionCurve> {
  use rcad_kernel::geom::Curve2dEval;
  use std::f64::consts::TAU;
@@ -797,10 +833,9 @@ fn make_analytic_nonperiodic_curve(
  // OCCT L815-826: create analytic 3D curve from the GLine.
  // rcad: curve is already the correct analytic type in IntPatchLine.
 
- // OCCT L828-840: LineConstructor.Perform(L).
- // LineConstructor iterates over vertex intervals; with nbvtx=0 (rcad)
- // it returns a single part with the full parameter range.
- let parts = self.line_constructor_parts(curve, orig_t_range, typl, vertices, f1, f2);
+ // OCCT L828-840: LineConstructor.Perform(L) already done upstream.
+ // parts already computed by make_intersection_curve.
+
  if parts.is_empty() {
  return Vec::new();
  }
@@ -808,7 +843,8 @@ fn make_analytic_nonperiodic_curve(
  let mut result = Vec::with_capacity(parts.len());
 
  // OCCT L842-898: per-part loop.
- for &[fprm, lprm] in &parts {
+ for part in parts.iter() {
+ let &[fprm, lprm] = part;
  let b_finite = fprm.is_finite() && lprm.is_finite() && lprm > fprm + 1e-12;
 
  if b_finite {
@@ -892,7 +928,7 @@ fn make_analytic_nonperiodic_curve(
    polyline: Vec::new(),
    start_vertex: usize::MAX,
    end_vertex: usize::MAX,
-   t_range: orig_t_range,
+   t_range: [fprm, lprm],
    pcurve_on_a: pca,
    pcurve_on_b: pcb,
    geom_tol: geom_tol.max(crate::tolerance::TOLERANCE_ABS),
