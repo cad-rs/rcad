@@ -520,8 +520,10 @@ impl<'a> super::PaveFiller<'a> {
             // L874-895: Build PB BVH tree from aMPBOnIn
             let a_pb_tree = Self::build_pb_tree(self.ds, &a_mpb_on_in);
 
-            // L899: isToRecheck — OCCT: (aNbP > 0) && (aNbC == 0) — points but no curves
-            let mut is_to_recheck = a_nb_p > 0 && a_nb_c == 0 && i < a_nb_ff_prev;
+            // L899: isToRecheck — OCCT: (aNbC > 0) && (i < aNbFFPrev)
+            // If there are any intersection curves, recheck is needed to
+            // avoid missing section edges due to FF processing order.
+            let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
 
             // L901-1098: 4. Make section edges
             for (j, &ci) in curves_of_ff.iter().enumerate() {
@@ -739,7 +741,7 @@ impl<'a> super::PaveFiller<'a> {
                     // Adds existing pave blocks for post treatment
                     let mut tmp_lpb: Vec<PaveBlock> = Vec::new();
                     self.process_existing_pave_blocks(
-                        a_cur_ind, j, n_f1, n_f2, new_ei,
+                        ci, j, n_f1, n_f2, new_ei,
                         &a_mpb_on_in, &a_pb_tree, &mut a_mscpb, &mut a_mvi,
                         &mut tmp_lpb, &mut a_pb_faces_map, &mut a_mpb_add,
                     );

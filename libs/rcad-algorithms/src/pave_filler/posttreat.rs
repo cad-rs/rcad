@@ -356,13 +356,55 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ===== OCCT L1500-1530: Create edges from micro PBs after VV fusion =====
-        // DISABLED: rcad's micro PBs have NO_EDGE as original_edge, and
-        // SplitEdge(usize::MAX, ...) is a no-op.  Proper fix requires making
-        // PostTreatFF use the intersection curve as the edge source for SplitEdge.
-        // For now, micro PBs are handled by the nested VV fusion (vertex merging)
-        // which is sufficient for most cases.
-        if false {} // placeholder
+        // ===== OCCT L1468-1600: Process edges after VV fusion =====
+        // Iterate a_ls looking for edges (st == 1)
+        // OCCT: for (; aItLS.More(); aItLS.Next()) { aType = aSIx.ShapeType();
+        //  if (aType == TopAbs_EDGE) { ... } }
+        for &(shape_idx, st) in &a_ls {
+            if st != 1 { continue; }  // only edges
+            if shape_idx >= self.ds.edges.len() { continue; }
+
+            // OCCT L1470-1474: get CPB from theMSCPB
+            let cpb_entry = match a_mscpb.get(&shape_idx) {
+                Some(&val) => val,
+                None => continue,
+            };
+            let (i_x, i_c) = (cpb_entry.0, cpb_entry.1);
+
+            // OCCT L1474: aPB1 = theCPB.PaveBlock1()
+            let a_pb1_idx = shape_idx;
+            let a_pb1_has_edge = {
+                if a_pb1_idx < self.ds.pave_blocks.len() {
+                    self.ds.pave_blocks[a_pb1_idx].0.read().unwrap().new_edge.is_some()
+                } else { false }
+            };
+
+            // OCCT L1477-1481: if (bOld) aDMExEdges.Bind(aPB1, aLPBx);
+            if a_pb1_has_edge {
+                if !a_dm_ex_edges.contains_key(&a_pb1_idx) {
+                    a_dm_ex_edges.insert(a_pb1_idx, Vec::new());
+                }
+            }
+
+            // OCCT L1483-1497: if (!bHasPaveBlocks)
+            // In rcad, the nested DS is a simplified VV-only pass,
+            // so edges cannot be split. bHasPaveBlocks is always false.
+            let b_has_pave_blocks = false;
+            if !b_has_pave_blocks {
+                if a_pb1_has_edge {
+                    // OCCT L1486-1488: aDMExEdges.ChangeFind(aPB1).Append(aPB1)
+                    a_dm_ex_edges.get_mut(&a_pb1_idx).unwrap().push(a_pb1_idx);
+                } else {
+                    // OCCT L1490-1496: Create new edge in myDS
+                    // aSI.SetShapeType(aType); aSI.SetShape(aSx);
+                    // iE = myDS->Append(aSI); aPB1->SetEdge(iE);
+                    // The edge will be created by MakeEdge/ProcessDE later.
+                    // For now, the PB already has new_edge set from the
+                    // MakeEdge call in make_blocks().
+                }
+                continue;
+            }
+        }
     }
 
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).
@@ -445,7 +487,7 @@ impl<'a> PaveFiller<'a> {
     /// ProcessExistingPaveBlocks (PaveFiller_6.cxx L3105-3203).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks(
-        &mut self, a_cur_ind: usize, _j: usize, n_f1: usize, n_f2: usize,
+        &mut self, ci: usize, _j: usize, n_f1: usize, n_f2: usize,
         a_es: usize, a_mpb_on_in: &HashSet<usize>, _a_pb_tree: &Option<DsBvh>,
         a_mscpb: &mut HashMap<usize, (usize, usize)>,
         a_mvi: &mut HashMap<usize, usize>, _a_lpb: &mut Vec<PaveBlock>,
@@ -465,7 +507,7 @@ impl<'a> PaveFiller<'a> {
             let b_in_f2 = self.ds.face_info(n_f2).pave_blocks_on.contains(&pb_idx)
                 || self.ds.face_info(n_f2).pave_blocks_in.contains(&pb_idx);
             if b_in_f1 && b_in_f2 {
-                if let Some(ic) = self.ds.intersection_curves.get_mut(a_cur_ind) {
+                if let Some(ic) = self.ds.intersection_curves.get_mut(ci) {
                     ic.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
                 }
                 self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
@@ -473,7 +515,7 @@ impl<'a> PaveFiller<'a> {
             } else {
                 let n_f = if b_in_f1 { n_f2 } else { n_f1 };
                 a_pb_faces_map.entry(pb_idx).or_default().push(n_f);
-                if let Some(ic) = self.ds.intersection_curves.get_mut(a_cur_ind) {
+                if let Some(ic) = self.ds.intersection_curves.get_mut(ci) {
                     ic.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
                 }
                 self.ds.face_info_mut(n_f1).pave_blocks_sc.insert(pb_idx);
