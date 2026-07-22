@@ -396,47 +396,38 @@ impl QuadQuadGeo {
         self.done = true;
     }
 
-    /// OCCT L115: Perform(P, S) — Plane/Sphere
+    /// OCCT IntAna_QuadQuadGeo.cxx L980-1021: Perform(P, S) — Plane/Sphere
     pub fn perform_plane_sphere(&mut self, p: &Quadric, s: &Quadric) {
         self.init_tolerances();
-        self.done = true;
+        self.done = false;
         self.typeres = AnaResultType::Empty;
         self.nbint = 0;
 
+        // OCCT L991-993: P.Coefficients(A,B,C,D); S.Location(X,Y,Z); radius = S.Radius()
         let (a, b, c_n, d) = p.plane_coeffs();
-        let plane_normal = DVec3::new(a, b, c_n);
-        let n_len = plane_normal.length();
-        let sphere_center = s.axis_loc();
-        let sphere_radius = s.radius();
+        let (x, y, z) = (s.axis_loc().x, s.axis_loc().y, s.axis_loc().z);
+        let radius = s.radius();
 
-        // OCCT: distance from sphere center to plane
-        let dist = (a * sphere_center.x + b * sphere_center.y
-            + c_n * sphere_center.z + d).abs() / n_len;
+        // OCCT L995: dist = A*X + B*Y + C*Z + D
+        let dist = a * x + b * y + c_n * z + d;
 
-        if dist > sphere_radius + 1e-10 {
-            return; // Empty
-        }
-        if dist > sphere_radius - 1e-10 {
-            // Tangent: single point
-            self.pt1 = sphere_center - plane_normal / n_len * dist;
-            self.typeres = AnaResultType::Point;
+        // OCCT L997-1004: if (Abs(Abs(dist)-radius) < Epsilon(radius)) — tangent
+        if (dist.abs() - radius).abs() < radius.abs().max(1.0) * 1e-15 {
             self.nbint = 1;
-            return;
+            self.typeres = AnaResultType::Point;
+            self.pt1 = DVec3::new(x - dist * a, y - dist * b, z - dist * c_n);
+        // OCCT L1005-1018: else if (Abs(dist) < radius) — Circle
+        } else if dist.abs() < radius {
+            self.nbint = 1;
+            self.typeres = AnaResultType::Circle;
+            self.pt1 = DVec3::new(x - dist * a, y - dist * b, z - dist * c_n);
+            self.dir1 = p.axis_dir();
+            if !p.ax3_direct() { self.dir1 = -self.dir1; }
+            self.dir2 = p.x_dir();
+            self.param1 = (radius * radius - dist * dist).sqrt();
         }
-
-        // Circle
-        let r = (sphere_radius * sphere_radius - dist * dist).sqrt();
-        let normal = plane_normal / n_len;
-        let center = sphere_center - normal * dist;
-        let (x_dir, y_dir) = any_perpendicular_pair(normal);
-
-        self.pt1 = center;
-        self.dir1 = x_dir;
-        self.dir2 = y_dir;
-        self.dir3 = normal;
-        self.param1 = r; // radius
-        self.typeres = AnaResultType::Circle;
-        self.nbint = 1;
+        self.param2bis = 0.0;
+        self.done = true;
     }
 
     // =====================================================================

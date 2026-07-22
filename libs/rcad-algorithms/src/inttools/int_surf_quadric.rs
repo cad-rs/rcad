@@ -377,6 +377,10 @@ impl Quadric {
     pub fn axis_dir(&self) -> DVec3 { self.axis_dir }
     pub fn axis_loc(&self) -> DVec3 { self.axis_loc }
     pub fn location(&self) -> DVec3 { self.location }
+    pub fn x_dir(&self) -> DVec3 { self.x_dir }
+    pub fn y_dir(&self) -> DVec3 { self.y_dir }
+    pub fn z_dir(&self) -> DVec3 { self.z_dir }
+    pub fn ax3_direct(&self) -> bool { self.ax3direc }
 }
 
 /// Helper: compute a perpendicular pair to a given direction ().
