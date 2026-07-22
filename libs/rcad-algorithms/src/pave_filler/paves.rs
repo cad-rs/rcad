@@ -1673,7 +1673,7 @@ impl<'a> super::PaveFiller<'a> {
  for pave in &aPB.0.read().unwrap().ext_paves {
  let a_tc = pave.param;
  for j in 0..2 {
- if (a_tc - aT[j]).abs() < crate::tolerance::TOLERANCE_ABS * 100.0 {
+ if (a_tc - aT[j]).abs() < rcad_kernel::tolerance::PCONFUSION {
  nV = Some(pave.vertex_idx);
  a_t_op = if j == 0 { aT[1] } else { aT[0] };
  a_p_op = if j == 0 { aP[1] } else { aP[0] };
