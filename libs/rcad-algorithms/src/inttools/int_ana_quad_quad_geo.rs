@@ -159,48 +159,97 @@ impl QuadQuadGeo {
     // OCCT Perform methods — one per quadric pair
     // =====================================================================
 
-    /// OCCT L76-79: Perform(P1, P2, TolAng, Tol) — Plane/Plane
+    /// OCCT IntAna_QuadQuadGeo.cxx L389-512: Perform(P1, P2, TolAng, Tol) — Plane/Plane
     pub fn perform_plane_plane(&mut self, p1: &Quadric, p2: &Quadric, tol_ang: f64, tol: f64) {
         self.init_tolerances();
-        self.done = true;
+        self.done = false;
         self.typeres = AnaResultType::Empty;
         self.nbint = 0;
+        self.param2bis = 0.0;
 
-        // OCCT: plane1/2 coefficients
+        // OCCT L394: double A1,B1,C1,D1, A2,B2,C2,D2, dist1, dist2, aMVD
         let (a1, b1, c1, d1) = p1.plane_coeffs();
         let (a2, b2, c2, d2) = p2.plane_coeffs();
-        let n1 = DVec3::new(a1, b1, c1);
-        let n2 = DVec3::new(a2, b2, c2);
-        let n1_len = n1.length();
-        let n2_len = n2.length();
 
-        // OCCT: cross product magnitude = |sin(angle)| * |n1| * |n2|
-        let cross_mag = n1.cross(n2).length();
-        // OCCT: if aMVD <= TolAng — normals are collinear (parallel planes)
-        if cross_mag <= tol_ang * n1_len.max(n2_len).max(1.0) {
-            // OCCT: check if identical
-            let dist = d1 / n1_len - d2 / n2_len;
-            if dist.abs() < tol {
-                self.typeres = AnaResultType::Same;
+        // OCCT L402-404: gp_Vec aVN1(A1,B1,C1), aVN2(A2,B2,C2), vd = aVN1.Crossed(aVN2)
+        let a_vn1 = DVec3::new(a1, b1, c1);
+        let a_vn2 = DVec3::new(a2, b2, c2);
+        let vd = a_vn1.cross(a_vn2);
+
+        // OCCT L406-407: const gp_Pnt& aLocP1 = P1.Location(), aLocP2 = P2.Location()
+        let a_loc_p1 = p1.axis_loc();
+        let a_loc_p2 = p2.axis_loc();
+
+        // OCCT L409-410: dist1 = A2*X + B2*Y + C2*Z + D2, dist2 = A1*X + B1*Y + C1*Z + D1
+        let dist1 = a2 * a_loc_p1.x + b2 * a_loc_p1.y + c2 * a_loc_p1.z + d2;
+        let dist2 = a1 * a_loc_p2.x + b1 * a_loc_p2.y + c1 * a_loc_p2.z + d1;
+
+        // OCCT L412-417: if (aMVD <= TolAng) — normals collinear
+        let a_mvd = vd.length();
+        if a_mvd <= tol_ang {
+            self.typeres = if dist1.abs() <= tol && dist2.abs() <= tol {
+                AnaResultType::Same
             } else {
-                self.typeres = AnaResultType::Empty;
-            }
+                AnaResultType::Empty
+            };
+            self.done = true;
             return;
         }
 
-        // OCCT: non-parallel → intersection line
-        let cross = n1.cross(n2);
-        let cross_len = cross.length();
-        let dir = cross / cross_len;
-        // Find a point on the line: solve n1·p = -d1, n2·p = -d2
-        // Using formula: P = (d2*(n1×n2) + d1*(n2×n1)) / |n1×n2|² ?
-        // Actually OCCT uses a different approach but the result is a line
-        let origin = (n2 * d1 - n1 * d2).cross(cross) / (cross_len * cross_len);
+        // OCCT L420-447: compute intersection line
+        let a_eps = 1e-16;
+        let denom = a1 * a2 + b1 * b2 + c1 * c2;
+        let denom2 = denom * denom;
+        let mut ddenom = 1.0 - denom2;
+        if ddenom.abs() <= a_eps { ddenom = a_eps; }
 
-        self.pt1 = origin;
-        self.dir1 = dir;
+        let par1 = dist1 / ddenom;
+        let par2 = -dist2 / ddenom;
+
+        let inter1 = a_vn1.cross(vd);
+        let inter2 = a_vn2.cross(vd);
+
+        let x1 = a_loc_p1.x + par1 * inter1.x;
+        let y1 = a_loc_p1.y + par1 * inter1.y;
+        let z1 = a_loc_p1.z + par1 * inter1.z;
+        let x2 = a_loc_p2.x + par2 * inter2.x;
+        let y2 = a_loc_p2.y + par2 * inter2.y;
+        let z2 = a_loc_p2.z + par2 * inter2.z;
+
+        // OCCT L443-446: pt1 = midpoint, dir1 = vd normalized
+        self.pt1 = DVec3::new((x1 + x2) * 0.5, (y1 + y2) * 0.5, (z1 + z2) * 0.5);
+        self.dir1 = vd.normalize_or_zero();
         self.typeres = AnaResultType::Line;
         self.nbint = 1;
+
+        // OCCT L458-509: refine origin when angle between planes is small
+        let a_tresh_ang = 2e-6;
+        let a_tresh_dist = 1e-12;
+        if a_mvd < a_tresh_ang {
+            let a_dist1 = a1 * self.pt1.x + b1 * self.pt1.y + c1 * self.pt1.z + d1;
+            let a_dist2 = a2 * self.pt1.x + b2 * self.pt1.y + c2 * self.pt1.z + d2;
+            if a_dist1.abs() > a_tresh_dist || a_dist2.abs() > a_tresh_dist {
+                // OCCT L475-486: Perform(line along plane1 normal through pt1, plane1)
+                let a_dn1 = a_vn1.normalize_or_zero();
+                let a_pt1 = self.pt1; // copy before refinement
+                // Line: P = a_pt1 + t * a_dn1, intersect with plane1: a_vn1 · P + d1 = 0
+                let t_param1 = -(a1 * a_pt1.x + b1 * a_pt1.y + c1 * a_pt1.z + d1)
+                    / (a1 * a_dn1.x + b1 * a_dn1.y + c1 * a_dn1.z).max(1e-16);
+                let a_pnt1 = a_pt1 + t_param1 * a_dn1;
+
+                // OCCT L489-507: line along dir1×norm1 through a_pnt1, intersect plane2
+                let a_dl2 = self.dir1.cross(a_dn1);
+                let a_l2_dir = a_dl2.normalize_or_zero();
+                // Line: P = a_pnt1 + t * a_l2_dir, intersect with plane2
+                let denom2_l = a2 * a_l2_dir.x + b2 * a_l2_dir.y + c2 * a_l2_dir.z;
+                if denom2_l.abs() > 1e-16 {
+                    let t_param2 = -(a2 * a_pnt1.x + b2 * a_pnt1.y + c2 * a_pnt1.z + d2) / denom2_l;
+                    self.pt1 = a_pnt1 + t_param2 * a_l2_dir;
+                }
+            }
+        }
+
+        self.done = true;
     }
 
     /// OCCT L105-109: Perform(P, C, TolAng, Tol, H) — Plane/Cylinder
