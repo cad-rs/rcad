@@ -101,8 +101,11 @@ pub fn shrunk_range(
     let a_tol_v1 = v1_tol.max(edge_tol) + confusion;
     let a_tol_v2 = v2_tol.max(edge_tol) + confusion;
     // Compute parametric steps for vertex spheres (OCCT: BRepLib_1.cxx L61: Resolution)
-    let step1 = curve_resolution(curve, t1, a_tol_v1) * 0.1;
-    let step2 = curve_resolution(curve, t2, a_tol_v2) * 0.1;
+    // OCCT L162-169: parametric tolerance for edge
+    let step1 = curve_resolution(curve, t1, a_tol_v1);
+    let step2 = curve_resolution(curve, t2, a_tol_v2);
+    let step1 = step1 * 5.0;
+    let step2 = step2 * 5.0;
     // OCCT L146-151: FindValidRange — find parametric bounds outside vertex spheres
     let p1 = curve.point_at(t1);
     let p2 = curve.point_at(t2);
