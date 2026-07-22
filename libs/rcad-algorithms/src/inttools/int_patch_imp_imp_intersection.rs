@@ -261,19 +261,184 @@ impl ImpImpIntersection {
         self.post_process_geo(&geo);
     }
 
+    // OCCT L3446-3706: IntPCo — Plane/Cone intersection
+    // GAP: OCCT computes transitions (trans1/trans2, situp/situco) on each GLine.
+    //       rcad IntPatchLine has no transition fields; transitions dropped.
     fn int_pco(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (plane, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_plane_cone(plane, cone, tol_ang, tol);
-        self.post_process_geo(&geo);
+        if !geo.is_done() { return; }
+        let typint = geo.type_inter();
+        let _nb_sol = geo.nb_solutions();
+        self.empt = false;
+
+        // OCCT L3489-3701: switch(typint)
+        match typint {
+            AnaResultType::Point => {
+                // OCCT L3491-3501: IntAna_Point → spnt
+                let psol = geo.point(1);
+                // GAP: OCCT computes UV from Quad1.Parameters(psol, U1, V1) etc.
+                let ptsol = IntPatchPoint {
+                    p1: psol, p2: psol,
+                    u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0,
+                    tolerance: tol,
+                };
+                self.spnt.push(ptsol);
+                // OCCT L3499: spnt.Append(ptsol)
+                self.my_done = IntStatus::OK;
+            }
+            AnaResultType::Line => {
+                // OCCT L3503-3677: IntAna_Line
+                // GAP: rcad lacks GLine transition/situation fields.
+                //       Falls back to post_process_geo for line conversion.
+                for c in geo.to_curves() {
+                    let line_type = IntPatchIType::Line;
+                    let t_range = [f64::NEG_INFINITY, f64::INFINITY];
+                    self.slin.push(IntPatchLine {
+                        line_type, curve: c, t_range, vertices: Vec::new(),
+                        pcurve1: None, pcurve2: None,
+                        tolerance: 1e-7, tang_tolerance: 1e-7,
+                        wline_pnts: Vec::new(), is_purging_allowed: false,
+                        wl_type: WLineType::Unknown,
+                    });
+                }
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            AnaResultType::Circle => {
+                // OCCT L3680-3701: IntAna_Circle
+                // GAP: OCCT calls AdjustToSeam(Co, cirsol); rcad skips seam adjustment.
+                let c = geo.circle();
+                self.slin.push(IntPatchLine {
+                    line_type: IntPatchIType::Circle,
+                    curve: Curve3::Circle(c), t_range: [0.0, std::f64::consts::TAU],
+                    vertices: Vec::new(),
+                    pcurve1: None, pcurve2: None,
+                    tolerance: 1e-7, tang_tolerance: 1e-7,
+                    wline_pnts: Vec::new(), is_purging_allowed: false,
+                    wl_type: WLineType::Unknown,
+                });
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            AnaResultType::Ellipse => {
+                // OCCT L3704-3717: IntAna_Ellipse
+                let e = geo.ellipse();
+                self.slin.push(IntPatchLine {
+                    line_type: IntPatchIType::Ellipse,
+                    curve: Curve3::Ellipse(e), t_range: [0.0, std::f64::consts::TAU],
+                    vertices: Vec::new(),
+                    pcurve1: None, pcurve2: None,
+                    tolerance: 1e-7, tang_tolerance: 1e-7,
+                    wline_pnts: Vec::new(), is_purging_allowed: false,
+                    wl_type: WLineType::Unknown,
+                });
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            AnaResultType::Empty => {
+                self.empt = true;
+            }
+            // OCCT L3340: default — Hyperbola, Parabola, etc.
+            _ => {
+                for c in geo.to_curves() {
+                    let line_type = match &c {
+                        Curve3::Line(_) => IntPatchIType::Line,
+                        Curve3::Circle(_) => IntPatchIType::Circle,
+                        Curve3::Ellipse(_) => IntPatchIType::Ellipse,
+                        Curve3::Parabola(_) => IntPatchIType::Parabola,
+                        Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
+                        _ => IntPatchIType::Unknown,
+                    };
+                    let t_range = match &c {
+                        Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
+                        Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
+                        _ => [0.0, 1.0],
+                    };
+                    self.slin.push(IntPatchLine {
+                        line_type, curve: c, t_range, vertices: Vec::new(),
+                        pcurve1: None, pcurve2: None,
+                        tolerance: 1e-7, tang_tolerance: 1e-7,
+                        wline_pnts: Vec::new(), is_purging_allowed: false,
+                        wl_type: WLineType::Unknown,
+                    });
+                }
+                if !self.slin.is_empty() || !self.spnt.is_empty() {
+                    self.empt = false;
+                    self.my_done = IntStatus::OK;
+                }
+            }
+        }
     }
 
+    // OCCT L3352-3432: IntPSp — Plane/Sphere intersection
+    // GAP: OCCT computes trans1/trans2 on GLine; rcad IntPatchLine drops transitions.
     fn int_psp(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, _tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
-        // perform_plane_sphere expects (plane, sphere). b_reverse=true means q1=Sphere, q2=Plane.
         let (plane, sphere) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_plane_sphere(plane, sphere);
-        self.post_process_geo(&geo);
+        if !geo.is_done() { return; }
+        let typint = geo.type_inter();
+        self.empt = false;
+
+        // OCCT L3391-3431: switch(typint)
+        match typint {
+            AnaResultType::Empty => {
+                self.empt = true;
+            }
+            AnaResultType::Point => {
+                // OCCT L3398-3407: IntAna_Point → spnt
+                let psol = geo.point(1);
+                // GAP: OCCT computes UV from Quad1/Quad2.Parameters
+                let ptsol = IntPatchPoint {
+                    p1: psol, p2: psol,
+                    u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0,
+                    tolerance: _tol,
+                };
+                self.spnt.push(ptsol);
+                self.my_done = IntStatus::OK;
+            }
+            AnaResultType::Circle => {
+                // OCCT L3410-3431: IntAna_Circle → GLine
+                let c = geo.circle();
+                self.slin.push(IntPatchLine {
+                    line_type: IntPatchIType::Circle,
+                    curve: Curve3::Circle(c), t_range: [0.0, std::f64::consts::TAU],
+                    vertices: Vec::new(),
+                    pcurve1: None, pcurve2: None,
+                    tolerance: 1e-7, tang_tolerance: 1e-7,
+                    wline_pnts: Vec::new(), is_purging_allowed: false,
+                    wl_type: WLineType::Unknown,
+                });
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            _ => {
+                for c in geo.to_curves() {
+                    let line_type = match &c {
+                        Curve3::Line(_) => IntPatchIType::Line,
+                        Curve3::Circle(_) => IntPatchIType::Circle,
+                        Curve3::Ellipse(_) => IntPatchIType::Ellipse,
+                        Curve3::Parabola(_) => IntPatchIType::Parabola,
+                        Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
+                        _ => IntPatchIType::Unknown,
+                    };
+                    let t_range = match &c {
+                        Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
+                        Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
+                        _ => [0.0, 1.0],
+                    };
+                    self.slin.push(IntPatchLine {
+                        line_type, curve: c, t_range, vertices: Vec::new(),
+                        pcurve1: None, pcurve2: None,
+                        tolerance: 1e-7, tang_tolerance: 1e-7,
+                        wline_pnts: Vec::new(), is_purging_allowed: false,
+                        wl_type: WLineType::Unknown,
+                    });
+                }
+                if !self.slin.is_empty() || !self.spnt.is_empty() {
+                    self.empt = false;
+                    self.my_done = IntStatus::OK;
+                }
+            }
+        }
     }
 
     fn int_pto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
