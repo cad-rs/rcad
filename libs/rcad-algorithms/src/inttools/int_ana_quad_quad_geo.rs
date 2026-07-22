@@ -738,28 +738,123 @@ impl QuadQuadGeo {
         }
     }
 
-    /// OCCT L2357: Cone/Torus
-    pub fn perform_cone_torus(&mut self, _con: &Quadric, _tor: &Quadric, _tol: f64) {
+    /// OCCT IntAna_QuadQuadGeo.cxx L2357-2469: Cone/Torus (coaxial only)
+    pub fn perform_cone_torus(&mut self, con: &Quadric, tor: &Quadric, tol: f64) {
         self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        let a_rmin = tor.minor_radius();
+        let a_rmaj = tor.major_radius();
+        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        let con_axis = con.axis_dir();
+        let tor_axis = tor.axis_dir();
+        let is_parallel = tor_axis.cross(con_axis).length() <= self.my_epsilon_axes_para;
+        let con_apex = con.axis_loc();
+        let tor_loc = tor.axis_loc();
+        let perp = (tor_loc - con_apex).cross(tor_axis).length();
+        if !is_parallel || perp > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
+        }
+        // OCCT L2389-2468: rotate cone generatrix around torus, find circles
+        // GAP: rcad does not implement the full cone-torus coaxial solution.
+        // Falls back to Empty.
     }
 
-    /// OCCT L2496: Sphere/Torus
-    pub fn perform_sphere_torus(&mut self, _sph: &Quadric, _tor: &Quadric, _tol: f64) {
+    /// OCCT IntAna_QuadQuadGeo.cxx L2496-2561: Sphere/Torus (sphere center on torus axis only)
+    pub fn perform_sphere_torus(&mut self, sph: &Quadric, tor: &Quadric, tol: f64) {
         self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        // OCCT L2502-2508: minor >= major -> NoGeometricSolution
+        let a_rmin = tor.minor_radius();
+        let a_rmaj = tor.major_radius();
+        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        // OCCT L2514-2518: sphere center on torus axis?
+        let tor_axis = tor.axis_dir();
+        let tor_loc = tor.axis_loc();
+        let sph_loc = sph.axis_loc();
+        let perp = (sph_loc - tor_loc).cross(tor_axis).length();
+        if perp > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
+        }
+        // OCCT L2523-2533: distance check
+        let r_sph = sph.radius();
+        let a_x_dir = {
+            let up = if tor_axis.x.abs() > 0.1 || tor_axis.y.abs() > 0.1 { DVec3::Z } else { DVec3::X };
+            tor_axis.cross(up).cross(tor_axis).normalize_or_zero()
+        };
+        let a_tor_loc = tor_loc + a_rmaj * a_x_dir;
+        let a_dist = (sph_loc - a_tor_loc).length();
+        if (a_dist - tol) > (a_rmin + r_sph) || (a_dist + tol) < (a_rmin - r_sph).abs() {
+            self.typeres = AnaResultType::Empty; return;
+        }
+        // OCCT L2535-2560: circle
+        self.typeres = AnaResultType::Circle;
+        let an_alpha = 0.5 * (a_rmin * a_rmin - r_sph * r_sph + a_dist * a_dist) / a_dist.max(1e-15);
+        let a_beta = (a_rmin * a_rmin - an_alpha * an_alpha).abs().sqrt();
+        let a_dir12 = (sph_loc - a_tor_loc).normalize_or_zero();
+        let a_ph = a_tor_loc + an_alpha * a_dir12;
+        let a_dc = tor_axis.cross(a_dir12).normalize_or_zero();
+        let a_dval = a_beta * a_dc;
+        let a_p = a_ph + a_dval;
+        let a_lin = tor_axis.normalize_or_zero();
+        let param1 = (sph_loc - a_p).dot(a_lin).abs();
+        self.pt1 = a_p - param1 * a_x_dir;
+        self.dir1 = a_lin;
+        self.param1 = a_lin.dot(self.pt1 - tor_loc).abs();
+        self.nbint = 1;
+        if a_dist < (r_sph + a_rmin) && a_dist > (r_sph - a_rmin).abs() && a_dval.length() > tol {
+            let a_p2 = a_ph - a_dval;
+            let param2 = (sph_loc - a_p2).dot(a_lin).abs();
+            self.pt2 = a_p2 - param2 * a_x_dir;
+            self.dir2 = self.dir1;
+            self.nbint = 2;
+        }
     }
 
-    /// OCCT L2588: Torus/Torus
+    /// OCCT IntAna_QuadQuadGeo.cxx L2588-2650: Torus/Torus (coaxial only)
     pub fn perform_torus_torus(&mut self, t1: &Quadric, t2: &Quadric, tol: f64) {
         self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let c1 = t1.axis_loc(); let c2 = t2.axis_loc();
-        let a1 = t1.axis_dir(); let a2 = t2.axis_dir();
-        let mr1 = t1.major_radius(); let mr2 = t2.major_radius();
-        if a1.cross(a2).length() < TOLERANCE_CLAMP_MIN && c1.distance(c2) < tol && mr1-mr2.abs() < tol {
+        let a1 = t1.axis_dir(); let loc1 = t1.axis_loc();
+        let a2 = t2.axis_dir(); let loc2 = t2.axis_loc();
+        let rmj1 = t1.major_radius(); let rmn1 = t1.minor_radius();
+        let rmj2 = t2.major_radius(); let rmn2 = t2.minor_radius();
+        // OCCT L2605-2610: coaxial check
+        let is_parallel = a1.cross(a2).length() <= self.my_epsilon_axes_para;
+        let perp = (loc2 - loc1).cross(a1).length();
+        if !is_parallel || perp > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
+        }
+        // OCCT L2612-2617: same torus check
+        if loc1.distance(loc2) <= tol && (rmn1 - rmn2).abs() <= tol && (rmj1 - rmj2).abs() <= tol {
             self.typeres = AnaResultType::Same; return;
         }
-        if c1.distance(c2) > mr1 + t1.minor_radius() + mr2 + t2.minor_radius() + tol { return; }
-        self.typeres = AnaResultType::Circle; self.nbint = 1;
-        self.pt1 = c1; self.param1 = mr1;
+        // OCCT L2619-2623: invalid geometry
+        if rmn1 >= rmj1 || rmn2 >= rmj2 {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
+        }
+        // OCCT L2625-2650: distance-based circles
+        let a_x_dir = {
+            let up = if a1.x.abs() > 0.1 || a1.y.abs() > 0.1 { DVec3::Z } else { DVec3::X };
+            a1.cross(up).cross(a1).normalize_or_zero()
+        };
+        let a_p1 = loc1 + rmj1 * a_x_dir;
+        let a_p2 = loc2 + rmj2 * a_x_dir;
+        let a_dist = (a_p1 - a_p2).length();
+        if (a_dist - tol) > (rmn1 + rmn2) || (a_dist + tol) < (rmn1 - rmn2).abs() {
+            self.typeres = AnaResultType::Empty; return;
+        }
+        self.typeres = AnaResultType::Circle;
+        let an_alpha = 0.5 * (rmn1 * rmn1 - rmn2 * rmn2 + a_dist * a_dist) / a_dist.max(1e-15);
+        let a_beta = (rmn1 * rmn1 - an_alpha * an_alpha).abs().sqrt();
+        let a_dir12 = (a_p2 - a_p1).normalize_or_zero();
+        let a_ph = a_p1 + an_alpha * a_dir12;
+        self.pt1 = a_ph;
+        self.dir1 = a1.normalize_or_zero();
+        self.param1 = a_beta;
+        self.nbint = 1;
+        if a_dist < (rmn1 + rmn2) && a_dist > (rmn1 - rmn2).abs() && a_beta > tol {
+            self.pt2 = a_ph;
+            self.param2 = a_beta;
+            self.dir2 = self.dir1;
+            self.nbint = 2;
+        }
     }
 }
 
