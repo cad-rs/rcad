@@ -1361,6 +1361,54 @@ impl IntCurveSurfaceHInter {
         let surf = surface.surface();
         let first = curve.first_parameter();
         let last = curve.last_parameter();
+
+        // OCCT IntCurveSurface_Inter.pxx PerformBounds L119-137:
+        //   Analytic curves (Line/Circle/Ellipse/Parabola/Hyperbola) use
+        //   IntAna_IntConicQuad (thePerformConic path) for exact intersection.
+        //   Only BSpline/Bezier/OtherCurve falls through to sampling below.
+        let crv_type = curve.get_type();
+        let srf_type = surface.get_type();
+
+        // ThePerformConic: exact analytic intersection per type pair
+        // OCCT L119-137: Line/Circle/Ellipse/Parabola/Hyperbola use IntAna_IntConicQuad
+        let analytic_hits = match (crv_type, srf_type) {
+            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Plane) => {
+                let line3 = curve.line();
+                let plane3 = surface.plane();
+                let hits = crate::inttools::edge_face::intersect_line_plane_with_tol(
+                    &line3, [first, last], &plane3, precision_confusion());
+                hits.into_iter().map(|h| {
+                    IntCurveSurfaceIntersectionPoint::new(h.edge_param, 0.0, 0.0)
+                }).collect::<Vec<_>>()
+            }
+            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cylinder) => {
+                let line3 = curve.line();
+                let cyl3 = surface.cylinder();
+                let hits = crate::inttools::curve_surface::intersect_line_cylinder_with_tol(
+                    &line3, [first, last], &cyl3, precision_confusion());
+                hits.into_iter().map(|h| {
+                    IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
+                }).collect::<Vec<_>>()
+            }
+            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Sphere) => {
+                let line3 = curve.line();
+                let sph3 = surface.sphere();
+                let hits = crate::inttools::curve_surface::intersect_line_sphere_with_tol(
+                    &line3, [first, last], &sph3, precision_confusion());
+                hits.into_iter().map(|h| {
+                    IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
+                }).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        };
+
+        if !analytic_hits.is_empty() {
+            self.points.extend(analytic_hits);
+            self.is_done = true;
+            return;
+        }
+
+        // OCCT L138-179: non-analytic curves (BSpline/Bezier) — sampling path
         let tol = precision_confusion() * 20.0;
 
         // Phase 1: coarse sampling (100 points) to detect transition intervals
