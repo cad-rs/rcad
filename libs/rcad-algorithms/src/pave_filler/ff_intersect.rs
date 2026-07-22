@@ -1024,7 +1024,8 @@ fn make_analytic_nonperiodic_curve(
 ///     not full-period  -- trimmed curve + BuildPCurves(with UV bounds) + vertices
 ///     full-period (aNbParts=1)  -- test 18 points around circle  -- keep/reject
 /// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2閿滅 interval.
-fn make_analytic_periodic_curve(
+    // OCCT L904-1095: MakeCurve for Circle/Ellipse
+    fn make_analytic_periodic_curve(
   &mut self, f1: usize, f2: usize,
   curve: &Curve3, orig_t_range: [f64; 2], typl: IntPatchIType,
   geom_tol: f64, tang_tolerance: f64,
