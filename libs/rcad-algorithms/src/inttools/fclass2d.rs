@@ -119,8 +119,11 @@ impl CSLibClass2d {
         let rv = if (self.vmax - self.vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { self.vmax - self.vmin } else { 1.0 };
 
         // OCCT L155-160: quick rejection outside tolerance-expanded bounding box
-        if uv.x < (self.umin - self.tol_u) || uv.x > (self.umax + self.tol_u)
-            || uv.y < (self.vmin - self.tol_v) || uv.y > (self.vmax + self.tol_v)
+        // OCCT: aTolU = myTolU * (myUMax - myUMin); check uses UV-space tolerance
+        let tol_u_uv = self.tol_u * ru;
+        let tol_v_uv = self.tol_v * rv;
+        if uv.x < (self.umin - tol_u_uv) || uv.x > (self.umax + tol_u_uv)
+            || uv.y < (self.vmin - tol_v_uv) || uv.y > (self.vmax + tol_v_uv)
         {
             return CSLibResult::Outside;
         }
