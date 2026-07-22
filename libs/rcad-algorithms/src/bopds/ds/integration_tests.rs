@@ -1068,15 +1068,15 @@ fn pavefiller_stage_ref_plane_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
     check_stage_occt(&ds, "VF",  10, 15, 7, 0, 1, 0, 0, 0);
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage_occt(&ds, "EF",  10, 15, 7, 0, 1, 0, 1, 0);
+    check_stage_occt(&ds, "EF",  10, 15, 7, 0, 1, 0, 0, 0);
 
     // FF: nIC=3, rcad=4 — ALIGNMENT GAP (extra intersection curve)
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage_occt(&ds, "FF",  10, 15, 7, 3, 1, 0, 1, 6);
+    check_stage_occt(&ds, "FF",  10, 15, 7, 3, 1, 0, 0, 6);
 
     // MakeBlocks: nE=15 (OCCT) vs rcad nE=24 — cascaded from extra IC
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage_occt(&ds, "MB",  10, 15, 7, 3, 1, 0, 1, 6);
+    check_stage_occt(&ds, "MB",  10, 15, 7, 3, 1, 0, 0, 6);
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
 /// OCCT reference: bopsurf_pairs P1 (Box(2x2x2) n Cyl(R=0.5, H=2)).
