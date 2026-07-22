@@ -54,10 +54,24 @@ impl ShrunkRange {
     pub fn perform(&mut self, curve: &Curve3) {
         match shrunk_range(curve, [self.t1, self.t2], self.v1_tol, self.v2_tol, self.edge_tol) {
             Some([ts1, ts2]) => {
+                // OCCT L162-169: parametric tolerance for length computation
+                let a_ptol_e = crate::inttools::curve_range::curve_resolution_global(
+                    curve, self.t1, self.t2, self.edge_tol);
+                let a_ptol_e_min = (self.t2 - self.t1).abs() / 100.0;
+                let a_ptol = if a_ptol_e > a_ptol_e_min { a_ptol_e_min } else { a_ptol_e };
+                // OCCT L170-175: GCPnts_AbscissaPoint::Length — compute arc length
+                let my_length = rcad_kernel::arc_length::arc_length(curve, ts1, ts2).abs();
+                let a_dtol = crate::tolerance::CONFUSION;
+                if my_length < a_dtol {
+                    self.is_done = false;
+                    self.is_splittable = false;
+                    return;
+                }
                 self.ts1 = ts1;
                 self.ts2 = ts2;
                 self.is_done = true;
-                self.is_splittable = (ts2 - ts1) > 2.0 * self.edge_tol + 2.0 * crate::tolerance::TOLERANCE_ABS;
+                // OCCT L184-187: is_splittable if length > 2*TolE + 2*Confusion
+                self.is_splittable = my_length > 2.0 * self.edge_tol + 2.0 * a_dtol;
             }
             None => {
                 self.is_done = false;
