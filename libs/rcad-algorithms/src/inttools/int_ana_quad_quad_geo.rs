@@ -635,31 +635,107 @@ impl QuadQuadGeo {
     }
 
     /// OCCT L2163: Plane/Torus
+    /// OCCT IntAna_QuadQuadGeo.cxx L2163-2249: Plane/Torus
     pub fn perform_plane_torus(&mut self, p: &Quadric, tor: &Quadric, tol: f64) {
         self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let (a,b,c_n,d) = p.plane_coeffs();
-        let np = DVec3::new(a,b,c_n).normalize_or_zero();
-        let tc = tor.axis_loc(); let ta = tor.axis_dir();
-        let mr = tor.major_radius(); let mnr = tor.minor_radius();
-        let dist = a*tc.x + b*tc.y + c_n*tc.z + d;
-        let st = np.cross(ta).length();
-        if st < TOLERANCE_CLAMP_MIN {
-            let da = dist.abs();
-            if da > mnr + tol { return; }
-            if da > mnr - tol { self.typeres = AnaResultType::Circle; self.nbint = 1; self.pt1 = tc - dist*np; self.param1 = mr; return; }
-            self.typeres = AnaResultType::Circle; self.nbint = 2;
-            let r = (mnr*mnr - da*da).sqrt();
-            self.pt1 = tc - dist*np + r*ta; self.pt2 = tc - dist*np - r*ta; self.param1 = mr; return;
+        // OCCT L2169-2170: aRMin, aRMaj
+        let a_rmaj = tor.major_radius();
+        let a_rmin = tor.minor_radius();
+        // OCCT L2171-2175: if aRMin >= aRMaj -> NoGeometricSolution
+        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+
+        let p_axis_dir = p.axis_dir();
+        let t_axis_dir = tor.axis_dir();
+        // OCCT L2182-2183: bParallel, bNormal
+        let is_parallel = t_axis_dir.cross(p_axis_dir).length() <= self.my_epsilon_axes_para;
+        let is_normal = if !is_parallel {
+            t_axis_dir.dot(p_axis_dir).abs() <= self.my_epsilon_axes_para
+        } else { false };
+        // OCCT L2184-2188: if neither ∥ nor ⟂ -> NoGeometricSolution
+        if !is_normal && !is_parallel {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
         }
-        let dc = dist/st; let rs = (mr*mr - dc*dc).sqrt().max(0.0);
-        if rs < tol { self.typeres = AnaResultType::Point; self.nbint = 1; return; }
-        if dc <= mr + tol { self.typeres = AnaResultType::Circle; self.nbint = 1; self.pt1 = tc - dist*np; self.param1 = rs; }
+
+        let t_loc = tor.axis_loc();
+        let (a, b, c_n, d) = p.plane_coeffs();
+
+        if is_parallel {
+            // OCCT L2193-2228: parallel case
+            let a_dist = a * t_loc.x + b * t_loc.y + c_n * t_loc.z + d;
+            let a_dr = a_dist.abs() - a_rmin;
+            if a_dr > self.my_epsilon_cylinder_delta_radius {
+                self.typeres = AnaResultType::Empty; return;
+            }
+            let adj_dist = if a_dr.abs() < self.my_epsilon_cylinder_delta_radius {
+                if a_dist < 0.0 { -a_rmin } else { a_rmin }
+            } else { a_dist };
+            self.typeres = AnaResultType::Circle;
+            self.pt1 = DVec3::new(t_loc.x - adj_dist * a, t_loc.y - adj_dist * b, t_loc.z - adj_dist * c_n);
+            let a_dt = (a_rmin * a_rmin - a_dist * a_dist).abs().sqrt();
+            self.param1 = a_rmaj + a_dt;
+            self.dir1 = t_axis_dir.normalize_or_zero();
+            self.nbint = 1;
+            if a_dr < -self.my_epsilon_cylinder_delta_radius && a_dt > tol {
+                self.pt2 = self.pt1;
+                self.param2 = a_rmaj - a_dt;
+                self.dir2 = self.dir1;
+                self.nbint = 2;
+            }
+        } else {
+            // OCCT L2231-2248: normal case
+            let a_dist = (a * t_loc.x + b * t_loc.y + c_n * t_loc.z + d).abs() / (a*a + b*b + c_n*c_n).sqrt();
+            if a_dist > self.my_epsilon_distance {
+                self.typeres = AnaResultType::NoGeometricSolution; return;
+            }
+            self.typeres = AnaResultType::Circle;
+            self.param1 = a_rmin;
+            self.param2 = a_rmin;
+            self.dir1 = p_axis_dir.normalize_or_zero();
+            self.dir2 = self.dir1;
+            self.nbint = 2;
+            let a_dir = t_axis_dir.cross(self.dir1).normalize_or_zero();
+            self.pt1 = t_loc + a_rmaj * a_dir;
+            self.pt2 = t_loc - a_rmaj * a_dir;
+        }
     }
 
-    /// OCCT L2278: Cylinder/Torus
-    pub fn perform_cylinder_torus(&mut self, cyl: &Quadric, tor: &Quadric, _tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Circle; self.nbint = 1;
-        self.pt1 = cyl.axis_loc(); self.param1 = cyl.radius();
+    /// OCCT IntAna_QuadQuadGeo.cxx L2278-2330: Cylinder/Torus (coaxial only)
+    pub fn perform_cylinder_torus(&mut self, cyl: &Quadric, tor: &Quadric, tol: f64) {
+        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        // OCCT L2284-2290: minor >= major -> NoGeometricSolution
+        let a_rmin = tor.minor_radius();
+        let a_rmaj = tor.major_radius();
+        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+
+        let cyl_axis = cyl.axis_dir();
+        let tor_axis = tor.axis_dir();
+        // OCCT L2298-2303: check coaxial + distance
+        let para = tor_axis.cross(cyl_axis).length() <= self.my_epsilon_axes_para;
+        let cyl_loc = cyl.axis_loc();
+        let tor_loc = tor.axis_loc();
+        let perp = (tor_loc - cyl_loc).cross(tor_axis).length();
+        if !para || perp > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution; return;
+        }
+        // OCCT L2305-2312: cylinder radius vs torus radii
+        let r_cyl = cyl.radius();
+        if (r_cyl + tol) < (a_rmaj - a_rmin) || (r_cyl - tol) > (a_rmaj + a_rmin) {
+            self.typeres = AnaResultType::Empty; return;
+        }
+        // OCCT L2314-2329: 1 or 2 circles
+        self.typeres = AnaResultType::Circle;
+        let a_dist = (a_rmin * a_rmin - (r_cyl - a_rmaj) * (r_cyl - a_rmaj)).abs().sqrt();
+        let tor_loc_xyz = tor_loc;
+        self.dir1 = tor_axis.normalize_or_zero();
+        self.pt1 = tor_loc_xyz + a_dist * self.dir1;
+        self.param1 = r_cyl;
+        self.nbint = 1;
+        if a_dist > tol && r_cyl > (a_rmaj - a_rmin) && r_cyl < (a_rmaj + a_rmin) {
+            self.dir2 = self.dir1;
+            self.pt2 = tor_loc_xyz - a_dist * self.dir2;
+            self.param2 = self.param1;
+            self.nbint = 2;
+        }
     }
 
     /// OCCT L2357: Cone/Torus
