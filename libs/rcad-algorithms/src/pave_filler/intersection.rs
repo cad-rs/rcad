@@ -587,6 +587,17 @@ impl<'a> super::PaveFiller<'a> {
    return;
   }
 
+  // OCCT L157-166: variable declarations
+  //   bExpressCompute, bIsPBSplittable1/2, i, iX, nE1, nE2, aNbCPrts, k, aNbEdgeEdge
+  //   nV11-22, aTS11-22, aT11-22, aType
+  //   NCollection_List::Iterator aIt1, aIt2
+  //   NCollection_Map<int> aMEdges  -- modified edges set
+  // OCCT L169-176: allocator + data maps
+  //   aMPBLPB: IndexedDataMap<PB, List<PB>>
+  //   aMVCPB:  IndexedDataMap<Shape, CoupleOfPaveBlocks>
+  //   aDMPBBox: DataMap<PB, Bnd_Box>
+  // GAP: rcad uses EeTask struct + inline iteration instead of persistent maps.
+
   // rcad EeTask replaces BOPAlgo_EdgeEdge (no TopoDS_Shape, no handle types)
   struct EeTask {
    nE1: usize,
@@ -729,6 +740,9 @@ impl<'a> super::PaveFiller<'a> {
 
   // OCCT L269: aNbEdgeEdge = aVEdgeEdge.Length()
   let a_nb_edge_edge = a_vee.len();
+
+  // OCCT L271-278: SetProgressRange + BOPTools_Parallel::Perform
+  // GAP: rcad runs sequentially (no parallel execution)
 
   // OCCT L285-556: Process results
   let old_ee_len = self.ds.interf_ee.len();
