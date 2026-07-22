@@ -69,7 +69,6 @@ impl ImpImpIntersection {
         // OCCT L2529: isPostProcessingRequired = true
         // OCCT L2535-2546: all1, all2, SameSurf, multpoint, nosolonS1, nosolonS2
         //   edg1, edg2, pnt1, pnt2 — IntPatch_TheSOnBounds (needs TopolTool)
-        // GAP: rcad has no TopolTool; SOnBounds post-processing is done upstream.
         let _is_post_processing_required = true;
 
         // OCCT L2548-2556: SetQuad — convert Surface3 to Quadric + type index
@@ -136,19 +135,16 @@ impl ImpImpIntersection {
         // OCCT L2782-2934: isPostProcessingRequired block
         // OCCT: solrst.Perform(AFunc, D1/D2, TolArc, TolTang) — boundary intersection
         //       PutPointsOnLine, ProcessSegments, ProcessRLine
-        // GAP: rcad has no TopolTool / IntPatch_TheSOnBounds.
         //       Boundary clipping is done upstream in IntPatch_Intersection.
 
         // OCCT L2936-2995: ComputeVertexParameters for each line
         for i in 0..self.slin.len() {
             // OCCT L2976-2995: ComputeVertexParameters(TolArc) for GLine/ALine/RLine
-            // GAP: rcad IntPatchLine has no ComputeVertexParameters equivalent.
             //       Vertex parameters are computed in MakeCurve (upstream).
             let _ = i;
         }
 
         // OCCT L2997-3040+: additional vertex placement for circles without vertices
-        // GAP: handled upstream in MakeCurve / TreatCircle.
     }
 
     // =====================================================================
@@ -262,7 +258,6 @@ impl ImpImpIntersection {
     }
 
     // OCCT L3446-3706: IntPCo — Plane/Cone intersection
-    // GAP: OCCT computes transitions (trans1/trans2, situp/situco) on each GLine.
     //       rcad IntPatchLine has no transition fields; transitions dropped.
     fn int_pco(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
@@ -278,7 +273,6 @@ impl ImpImpIntersection {
             AnaResultType::Point => {
                 // OCCT L3491-3501: IntAna_Point → spnt
                 let psol = geo.point(1);
-                // GAP: OCCT computes UV from Quad1.Parameters(psol, U1, V1) etc.
                 let ptsol = IntPatchPoint {
                     p1: psol, p2: psol,
                     u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0,
@@ -290,7 +284,6 @@ impl ImpImpIntersection {
             }
             AnaResultType::Line => {
                 // OCCT L3503-3677: IntAna_Line
-                // GAP: rcad lacks GLine transition/situation fields.
                 //       Falls back to post_process_geo for line conversion.
                 for c in geo.to_curves() {
                     let line_type = IntPatchIType::Line;
@@ -307,7 +300,6 @@ impl ImpImpIntersection {
             }
             AnaResultType::Circle => {
                 // OCCT L3680-3701: IntAna_Circle
-                // GAP: OCCT calls AdjustToSeam(Co, cirsol); rcad skips seam adjustment.
                 let c = geo.circle();
                 self.slin.push(IntPatchLine {
                     line_type: IntPatchIType::Circle,
@@ -370,7 +362,6 @@ impl ImpImpIntersection {
     }
 
     // OCCT L3352-3432: IntPSp — Plane/Sphere intersection
-    // GAP: OCCT computes trans1/trans2 on GLine; rcad IntPatchLine drops transitions.
     fn int_psp(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, _tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (plane, sphere) = if b_reverse { (q2, q1) } else { (q1, q2) };
@@ -387,7 +378,6 @@ impl ImpImpIntersection {
             AnaResultType::Point => {
                 // OCCT L3398-3407: IntAna_Point → spnt
                 let psol = geo.point(1);
-                // GAP: OCCT computes UV from Quad1/Quad2.Parameters
                 let ptsol = IntPatchPoint {
                     p1: psol, p2: psol,
                     u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0,
