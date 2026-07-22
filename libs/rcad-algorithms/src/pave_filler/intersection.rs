@@ -71,146 +71,21 @@ struct EfTask {
 fn compute_ef_hits(
   ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2],
 ) -> Vec<EfHit> {
-  let edge_curve = &ds.edges[edge_idx].curve;
-  let face_surface = &ds.faces[face_idx].surface;
   let etf = ds.edge_tolerance(edge_idx).max(ds.face_tolerance(face_idx)).max(CONFUSION);
-  // Phase 1: try point-based (VERTEX-type) intersection
-  let mut hits: Vec<EfHit> = match (edge_curve, face_surface) {
-    (Curve3::Line(line), Surface3::Plane(plane)) =>
-      crate::inttools::edge_face::intersect_line_plane_with_tol(line, *ef_range, plane, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.edge_param }).collect(),
-    (Curve3::Line(line), Surface3::Cylinder(cyl)) =>
-      crate::inttools::curve_surface::intersect_line_cylinder_with_tol(line, *ef_range, cyl, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Line(line), Surface3::Sphere(sph)) =>
-      crate::inttools::curve_surface::intersect_line_sphere_with_tol(line, *ef_range, sph, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Line(line), Surface3::Cone(cone)) =>
-      crate::inttools::curve_surface::intersect_line_cone_with_tol(line, *ef_range, cone, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Circle(circle), Surface3::Plane(plane)) => {
-      // OCCT MakeType: coplanar full-range → EDGE type (no new vertex).
-      // Non-coplanar → use BeanFaceIntersector for Vertex hits.
-      let is_coplanar = (circle.normal.dot(plane.normal)).abs() >= 1.0 - TOLERANCE_ANG
-        && crate::inttools::vertex_ops::vertex_on_plane_with_tol(circle.center, plane, etf);
-      if is_coplanar {
-        vec![] // Phase 2→Edge hit (matches OCCT coplanar EDGE)
-      } else {
-        // Non-coplanar: BeanFaceIntersector (matching OCCT IntTools_EdgeFace)
-        use crate::inttools::bean_face_intersector::BeanFaceIntersector;
-        use rcad_kernel::geom::SurfaceEval;
-        let mut bfi = BeanFaceIntersector::from_curve_surface(
-          Curve3::Circle(*circle), Surface3::Plane(*plane));
-        bfi.set_bean_parameters(ef_range[0], ef_range[1]);
-        let [u_min, u_max, v_min, v_max] = plane.default_domain();
-        bfi.set_surface_parameters(u_min, u_max, v_min, v_max);
-        bfi.init_curve_surface(Curve3::Circle(*circle), etf,
-                                Surface3::Plane(*plane), etf);
-        bfi.set_bean_parameters(ef_range[0], ef_range[1]);
-        bfi.perform();
-        let mut result = Vec::new();
-        if bfi.is_done() {
-          for r in bfi.result() {
-            let t = (r.first() + r.last()) * 0.5;
-            let p = circle.point_at(t);
-            result.push(EfHit::Vertex { point: p, param: t });
-          }
-        }
-        result
-      }
-    }
-    (Curve3::Circle(circle), Surface3::Cylinder(cyl)) =>
-      crate::inttools::curve_surface::intersect_circle_cylinder_with_tol(circle, *ef_range, cyl, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Circle(circle), Surface3::Sphere(sph)) =>
-      crate::inttools::curve_surface::intersect_circle_sphere_with_tol(circle, *ef_range, sph, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Circle(circle), Surface3::Cone(cone)) =>
-      crate::inttools::curve_surface::intersect_circle_cone_with_tol(circle, *ef_range, cone, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
-    (Curve3::Ellipse(ellipse), Surface3::Plane(plane)) =>
-      crate::inttools::ellipse_intersection::intersect_ellipse_plane_with_tol(ellipse, *ef_range, plane, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.ellipse_param }).collect(),
-    (Curve3::Ellipse(ellipse), Surface3::Cylinder(cyl)) =>
-      crate::inttools::ellipse_intersection::intersect_ellipse_cylinder_with_tol(ellipse, *ef_range, cyl, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.ellipse_param }).collect(),
-    (Curve3::Ellipse(ellipse), Surface3::Sphere(sph)) =>
-      crate::inttools::ellipse_intersection::intersect_ellipse_sphere_with_tol(ellipse, *ef_range, sph, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.ellipse_param }).collect(),
-    (Curve3::Ellipse(ellipse), Surface3::Cone(cone)) =>
-      crate::inttools::ellipse_intersection::intersect_ellipse_cone_with_tol(ellipse, *ef_range, cone, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.ellipse_param }).collect(),
-    (Curve3::Parabola(parabola), Surface3::Plane(plane)) =>
-      crate::inttools::parabola_intersection::intersect_parabola_plane_with_tol(parabola, *ef_range, plane, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.parabola_param }).collect(),
-    (Curve3::Parabola(parabola), Surface3::Cylinder(cyl)) =>
-      crate::inttools::parabola_intersection::intersect_parabola_cylinder_with_tol(parabola, *ef_range, cyl, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.parabola_param }).collect(),
-    (Curve3::Parabola(parabola), Surface3::Sphere(sph)) =>
-      crate::inttools::parabola_intersection::intersect_parabola_sphere_with_tol(parabola, *ef_range, sph, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.parabola_param }).collect(),
-    (Curve3::Parabola(parabola), Surface3::Cone(cone)) =>
-      crate::inttools::parabola_intersection::intersect_parabola_cone_with_tol(parabola, *ef_range, cone, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.parabola_param }).collect(),
-    (Curve3::Hyperbola(hyperbola), Surface3::Plane(plane)) =>
-      crate::inttools::hyperbola_intersection::intersect_hyperbola_plane_with_tol(hyperbola, *ef_range, plane, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.hyperbola_param }).collect(),
-    (Curve3::Hyperbola(hyperbola), Surface3::Cylinder(cyl)) =>
-      crate::inttools::hyperbola_intersection::intersect_hyperbola_cylinder_with_tol(hyperbola, *ef_range, cyl, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.hyperbola_param }).collect(),
-    (Curve3::Hyperbola(hyperbola), Surface3::Sphere(sph)) =>
-      crate::inttools::hyperbola_intersection::intersect_hyperbola_sphere_with_tol(hyperbola, *ef_range, sph, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.hyperbola_param }).collect(),
-    (Curve3::Hyperbola(hyperbola), Surface3::Cone(cone)) =>
-      crate::inttools::hyperbola_intersection::intersect_hyperbola_cone_with_tol(hyperbola, *ef_range, cone, etf)
-      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.hyperbola_param }).collect(),
-    _ => {
-      use crate::inttools::bean_face_intersector::BeanFaceIntersector;
-      use rcad_kernel::geom::SurfaceEval;
-      let mut bfi = BeanFaceIntersector::from_curve_surface(edge_curve.clone(), face_surface.clone());
-      bfi.set_bean_parameters(ef_range[0], ef_range[1]);
-      let [u_min, u_max, v_min, v_max] = face_surface.default_domain();
-      bfi.set_surface_parameters(u_min, u_max, v_min, v_max);
-      bfi.init_curve_surface(edge_curve.clone(), ds.edge_tolerance(edge_idx),
-                              face_surface.clone(), ds.face_tolerance(face_idx));
-      bfi.set_bean_parameters(ef_range[0], ef_range[1]);
-      bfi.perform();
-      let mut result = Vec::new();
-      if bfi.is_done() {
-        for r in bfi.result() {
-          let t = (r.first() + r.last()) * 0.5;
-          let p = edge_curve.point_at(t);
-          result.push(EfHit::Vertex { point: p, param: t });
-        }
-      }
-      result
-    }
-  };
-  // Phase 2: if no VERTEX hits, check for EDGE-type (edge coincident with face)
-  if hits.is_empty() {
-    let on_face = match (edge_curve, face_surface) {
-      (Curve3::Line(l), Surface3::Plane(p)) => {
-        (l.direction.dot(p.normal)).abs() <= crate::tolerance::TOLERANCE_ANG
-          && crate::inttools::vertex_ops::vertex_on_plane_with_tol(l.origin, p, etf)
-      }
-      (Curve3::Circle(c), Surface3::Plane(p)) => {
-        (c.normal.dot(p.normal)).abs() >= 1.0 - crate::tolerance::TOLERANCE_ANG
-          && crate::inttools::vertex_ops::vertex_on_plane_with_tol(c.center, p, etf)
-      }
-      _ => {
-        let mut all_on = true;
-        for i in 0..5 {
-          let t = ef_range[0] + (ef_range[1] - ef_range[0]) * (i as f64 / 4.0);
-          let pt = edge_curve.point_at(t);
-          let proj = rcad_kernel::projection::closest_point_on_surface(face_surface, pt, 8);
-          if proj.distance > etf * 10.0 { all_on = false; break; }
-        }
-        all_on
-      }
-    };
-    if on_face {
-      hits.push(EfHit::Edge { t1: ef_range[0], t2: ef_range[1] });
-    }
+  // OCCT IntTools_EdgeFace::Perform L565-570: BeanFaceIntersector
+  use crate::inttools::bean_face_intersector::BeanFaceIntersector;
+  let mut bfi = BeanFaceIntersector::new();
+  bfi.init_curve_surface(
+    ds.edges[edge_idx].curve.clone(), etf,
+    ds.faces[face_idx].surface.clone(), etf);
+  bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+  bfi.perform();
+  if !bfi.is_done() { return Vec::new(); }
+  let mut hits: Vec<EfHit> = Vec::new();
+  for r in bfi.result() {
+    let t = (r.first() + r.last()) * 0.5;
+    let p = ds.edges[edge_idx].curve.point_at(t);
+    hits.push(EfHit::Vertex { point: p, param: t });
   }
   hits
 }
