@@ -434,7 +434,7 @@ impl QuadQuadGeo {
     // Remaining 12 Perform methods
     // =====================================================================
 
-    /// OCCT L752: Plane/Cone
+    /// OCCT IntAna_QuadQuadGeo.cxx L752-922: Plane/Cone
     pub fn perform_plane_cone(&mut self, p: &Quadric, co: &Quadric, tol_ang: f64, tol: f64) {
         self.init_tolerances(); self.done = false; self.nbint = 0;
         self.typeres = AnaResultType::Empty;
@@ -469,7 +469,8 @@ impl QuadQuadGeo {
                 self.param1 = (dist / semi_angle.tan()).abs(); self.param2 = self.param1;
                 self.param1bis = dist.abs(); self.param2bis = dist.abs();
             } else {
-                let centre = apex - dist * axis_dir / (cost + TOLERANCE_LEN_SQ_DIV_SAFE);
+                let denom = a * axis_dir.x + b * axis_dir.y + c_n * axis_dir.z;
+                let centre = apex - dist * axis_dir / denom.max(1e-16);
                 let distance = apex.distance(centre);
                 if costa.abs() < tol_ang {
                     self.typeres = AnaResultType::Parabola; self.nbint = 1;
