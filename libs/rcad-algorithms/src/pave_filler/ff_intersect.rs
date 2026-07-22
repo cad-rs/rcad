@@ -1225,13 +1225,20 @@ fn line_constructor_parts(
 /// remains empty.  The caller sees aNbParts=0 and creates no output curves.
 /// This function matches that behavior  -- returns empty.
 /// PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
-/// For each analytic line, computes boundary-crossing points where the
-/// curve projects to UV outside one of the face domains.  These points
-/// become vertices on the line, used by TreatCircle to split the curve.
+/// OCCT-aligned: PutPointsOnLine equivalent (IntPatch_Intersection / GetEFPnts flow).
 ///
-/// rcad: pcurve evaluation + face UV boundary detection.  OCCT uses
-/// IntPatch_Point vertices from the VV/VE/VF intersection phases,
-/// projected onto each GLine via PutPointsOnLine.
+/// Projects only EF intersection points (from DS interf_ef) onto the analytic
+/// intersection line, mirroring OCCT's GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2608-2687).
+///
+/// OCCT does NOT project all boundary vertices of the two faces onto the line.
+/// Boundary-vertex projection creates spurious splitting vertices, causing
+/// nIC (number of intersection curves) to be inflated (e.g. plane_sphere
+/// expects nIC=3 but old code produced nIC=6).
+///
+/// For circle/ellipse lines, the EF points provide the boundary-crossing
+/// vertices that split the closed curve into valid face-domain intervals.
+/// Without EF points (when EF=0), no vertices are added and the curve
+/// is not split (nIC=1).
 fn put_points_on_line(
   &mut self, f1: usize, f2: usize,
   line: &mut crate::inttools::int_patch_line::IntPatchLine,
@@ -1243,13 +1250,29 @@ fn put_points_on_line(
  let curve = &line.curve;
  let t_range = line.t_range;
  let a_tol_c = line.tolerance;
- for &fi in &[f1, f2] {
-  if fi >= self.ds.faces.len() { continue; }
-  let verts: Vec<usize> = self.ds.faces[fi].boundary_verts.clone();
-  for &vi in &verts {
-   if vi >= self.ds.vertices.len() { continue; }
-   let v_pt = self.ds.vertex_point(vi);
-   let t_opt = project_vertex_to_curve(v_pt, curve, a_tol_c);
+
+ // OCCT GetEFPnts: collect EF intersection points between the two faces.
+ // (BOPAlgo_PaveFiller_6.cxx L2608-2687)
+ let mut ef_points: Vec<DVec3> = Vec::new();
+ let edges_f1: Vec<usize> = self.ds.face_boundary_edges(f1).to_vec();
+ let edges_f2: Vec<usize> = self.ds.face_boundary_edges(f2).to_vec();
+ for ef in &self.ds.interf_ef {
+   // Determine which face the edge belongs to using opposite-face matching
+   if ef.face == f1 {
+     // edge belongs to f2, opposite face is f1
+     if edges_f2.contains(&ef.edge) {
+       ef_points.push(ef.point);
+     }
+   } else if ef.face == f2 {
+     // edge belongs to f1, opposite face is f2
+     if edges_f1.contains(&ef.edge) {
+       ef_points.push(ef.point);
+     }
+   }
+ }
+
+ for &pt in &ef_points {
+   let t_opt = project_vertex_to_curve(pt, curve, a_tol_c);
    let t = match t_opt {
     Some(t) if t >= t_range[0] - a_tol_c && t <= t_range[1] + a_tol_c => t,
     _ => continue,
@@ -1268,74 +1291,10 @@ fn put_points_on_line(
     u2: uv2.map_or(0.0, |uv| uv.x),
     v2: uv2.map_or(0.0, |uv| uv.y),
    });
-  }
  }
  line.vertices.sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
- // OCCT PutPointsOnLine projects parametric boundary points (seam/pole) onto the line.
- // rcad's IntPatch skips this; detect via proj_ps UV seam wrap (periodic u-jump).
- if matches!(typl, IntPatchIType::Circle | IntPatchIType::Ellipse)
-   || matches!(typl, IntPatchIType::Line | IntPatchIType::Parabola | IntPatchIType::Hyperbola)
- {
-   self.project_parametric_boundary(f1, f2, line, curve.clone(), t_range);
- }
 }
 
-/// OCCT PutPointsOnLine equivalent: projects each face's parametric boundary (seam)
-/// onto the intersection line. Detects the u-seam wrap via proj_ps UV sampling.
-/// For closed curves, adds a complementary splitting point when only one seam
-/// crossing is found (mimicking EF GetEFPnts which rcad lacks).
-fn project_parametric_boundary(
-  &mut self, f1: usize, f2: usize,
-  line: &mut crate::inttools::int_patch_line::IntPatchLine,
-  curve: Curve3, t_range: [f64; 2],
-) {
- let n_samples = 200usize;
- let mut candidates: Vec<f64> = Vec::new();
- for &fi in &[f1, f2] {
-  if fi >= self.ds.faces.len() { continue; }
-  let mut prev_uv: Option<DVec2> = None;
-  for si in 0..=n_samples {
-   let t = t_range[0] + (t_range[1] - t_range[0]) * (si as f64) / (n_samples as f64);
-   let p3d = curve.point_at(t);
-   if !p3d.is_finite() { prev_uv = None; continue; }
-   let uv = self.context.proj_ps(self.ds, fi, p3d).map(|(u, _, _)| u);
-   let Some(uv) = uv else { prev_uv = None; continue; };
-   if let Some(puv) = prev_uv {
-    // Seam crossing: UV jumps across the periodic boundary (π→-π or -π→π).
-    if (uv.x - puv.x).abs() > std::f64::consts::PI {
-     candidates.push(t.clamp(t_range[0], t_range[1]));
-    }
-   }
-   prev_uv = Some(uv);
-  }
- }
- candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
- candidates.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
- // OCCT also projects EF points onto the line (GetEFPnts). Without EF>0, add
- // diametrically opposite point so the closed curve is split into two intervals.
- if candidates.len() == 1 && (t_range[1] - t_range[0]).abs() >= std::f64::consts::TAU - 1e-8 {
-  let t_opp = candidates[0] + std::f64::consts::PI;
-  let t_opp = if t_opp > t_range[1] { t_opp - std::f64::consts::TAU } else { t_opp };
-  candidates.push(t_opp);
- }
- candidates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
- candidates.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
- for &t in &candidates {
-  if t < t_range[0] || t > t_range[1] { continue; }
-  let is_dup = line.vertices.iter().any(|ev| (ev.param_on_line - t).abs() < 1e-10);
-  if is_dup { continue; }
-  let p3d = curve.point_at(t);
-  let pca = self.compute_pcurve_on_surface(&curve, f1);
-  let pcb = self.compute_pcurve_on_surface(&curve, f2);
-  let uv1 = pca.as_ref().map(|pc| pc.point_at(t)).unwrap_or(DVec2::ZERO);
-  let uv2 = pcb.as_ref().map(|pc| pc.point_at(t)).unwrap_or(DVec2::ZERO);
-  line.vertices.push(crate::inttools::int_patch_line::IntPatchVertex {
-    param_on_line: t, p3d, u1: uv1.x, v1: uv1.y, u2: uv2.x, v2: uv2.y,
-  });
- }
- line.vertices.sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
- line.vertices.dedup_by(|a, b| (a.param_on_line - b.param_on_line).abs() < 1e-10);
-}
 
 fn treat_circle_parts(
   &mut self, curve: &Curve3, orig_t_range: [f64; 2], typl: IntPatchIType,

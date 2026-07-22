@@ -615,25 +615,12 @@ impl<'a> super::PaveFiller<'a> {
  let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
  let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
  for &nV in theMVEF {
- // OCCT does not need IsNewShape check since EF vertices are always new.
- // rcad's extended_tolerance may incorrectly match old vertices.
- if nV < self.ds.vertex_shape_idx.len() {
-  let si = self.ds.vertex_shape_idx[nV];
-  if si < self.ds.shape_info.len() && !self.ds.shape_info[si].is_new { continue; }
- }
+ // OCCT L2386-2392: Put EF vertices first — no IsNewShape check
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2);
  }
  for &nV in theMVOnIn {
  if theMVEF.contains(&nV) { continue; }
- if theMVCommon.contains(&nV) {
-  // OCCT puts common vertices without IsNewShape check, but rcad's
-  // is_vertex_on_line / extended_tolerance mismatch places old boundary
-  // vertices at wrong curve parameters, causing FindValidRange to reject
-  // all sub-PBs. Skip old vertices here too -- PutBoundPaveOnCurve will
-  // create proper endpoint vertices.
-  if !self.ds.is_new_vertex(nV) { continue; }
- self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
- } else {
+ if !theMVCommon.contains(&nV) {
  if nV < self.ds.vertex_shape_idx.len() {
  let nv_si = self.ds.vertex_shape_idx[nV];
  if nv_si < self.ds.shape_info.len() {
@@ -651,14 +638,12 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  if !self.ds.is_new_vertex(nV) {
-  // OCCT L2445-2448: skip old (non-intersection) vertices.
-  // Only new vertices (created by intersection) should be put on
-  // the intersection curve. Old vertices create invalid sub-PBs
-  // that are rejected by FindValidRange.
-  continue;
+   // OCCT L2444-2446: skip old (non-intersection) vertices
+   continue;
+  }
  }
+ // OCCT L2419-2421: common (no checks) + non-common that passed
  self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
- }
  }
  }
 
@@ -726,22 +711,39 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- /// PutEFPavesOnCurve (PaveFiller_6.cxx L2724-2778).
+ /// OCCT-aligned: PutEFPavesOnCurve (PaveFiller_6.cxx L2690-2744).
  /// For single-curve FF pairs, put EF-intersection vertices onto the curve.
+ /// Only processes Bezier/BSpline curves.
  pub(crate) fn put_ef_paves_on_curve(
   &mut self,
   ci: usize,
   aMI: &std::collections::HashSet<usize>,
   aMVEF: &std::collections::HashSet<usize>,
  ) {
+  if aMVEF.is_empty() { return; }
+  // OCCT L2702-2705: only process Bezier/BSpline curves
+  let is_bspline_or_bezier = {
+   let ic = &self.ds.intersection_curves[ci];
+   matches!(&ic.curve,
+    rcad_kernel::geom::Curve3::BSpline(_) | rcad_kernel::geom::Curve3::Bezier(_))
+  };
+  if !is_bspline_or_bezier { return; }
+  // OCCT L2707-2713: RemoveUsedVertices — skip vertices already on curve
+  let already_used: std::collections::HashSet<usize> = {
+   if let Some(pb) = self.ds.intersection_curves.get(ci)
+    .and_then(|ic| ic.pave_blocks.first())
+   {
+    pb.0.read().unwrap().ext_paves.iter().map(|p| p.vertex_idx).collect()
+   } else { std::collections::HashSet::new() }
+  };
   let a_tol_r3d = {
    let ic = &self.ds.intersection_curves[ci];
    ic.geom_tol.max(ic.curve_extra.tangential_tol)
   };
   for &n_v in aMVEF {
-   if n_v < self.ds.vertices.len() {
-    self.put_pave_on_curve(n_v, a_tol_r3d, ci, aMI, 1);
-   }
+   if n_v >= self.ds.vertices.len() { continue; }
+   if already_used.contains(&n_v) { continue; }
+   self.put_pave_on_curve(n_v, a_tol_r3d, ci, aMI, 1);
   }
  }
 

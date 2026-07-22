@@ -33,6 +33,10 @@ pub const INTERSECTION: f64 = CONFUSION * 0.01;
 pub const COMPUTATIONAL: f64 = f64::EPSILON;
 pub const SQUARE_COMPUTATIONAL: f64 = COMPUTATIONAL * COMPUTATIONAL;
 
+/// Parametric tolerance for small-range checks.
+/// Analogous to `Precision::PConfusion()` = 1e-12 in OCCT.
+pub const PCONFUSION: f64 = 1e-12;
+
 /// Square of CONFUSION — used for squared-distance comparisons.
 pub const SQUARE_CONFUSION: f64 = CONFUSION * CONFUSION;
 
@@ -42,6 +46,13 @@ pub const INFINITE_VALUE: f64 = 2e100;
 /// OCCT-aligned: Precision::IsInfinite (Precision.hxx L350-353).
 /// OCCT: std::abs(R) >= 0.5 * Precision::Infinite() where Precision::Infinite() = 2e100.
 pub fn is_infinite_value(r: f64) -> bool { r.abs() >= 0.5 * INFINITE_VALUE }
+
+/// OCCT-aligned: Precision::Epsilon (Precision.hxx L336-341).
+/// Returns `|thePar| * 1e-12` (or `1e-12` if thePar is zero).
+/// Used by BRepLib::FindValidRange for parametric convergence threshold.
+pub fn parametric_epsilon(the_par: f64) -> f64 {
+    if the_par == 0.0 { 1e-12 } else { the_par.abs() * 1e-12 }
+}
 
 /// OCCT-aligned: Precision::IsPositiveInfinite (Precision.hxx L357-360).
 pub fn is_positive_infinite_value(r: f64) -> bool { r >= 0.5 * INFINITE_VALUE }

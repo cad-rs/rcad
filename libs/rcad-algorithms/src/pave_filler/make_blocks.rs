@@ -304,7 +304,6 @@ impl<'a> super::PaveFiller<'a> {
                                 // OCCT L2162: if (abs(aCos) >= 0.9063) — 25-degree threshold
                                 if a_cos.abs() >= 0.9063 {
                                     a_real_tol = a_tol_add;
-                                    a_real_tol *= 2.0;
                                 }
                             }
                         }
@@ -607,11 +606,19 @@ impl<'a> super::PaveFiller<'a> {
                         continue;
                     }
 
-                    // L964-992: Check if the pave block has a valid range (FindValidRange)
-                    // 1:1: OCCT BRepLib::FindValidRange passes for intersection curve
-                    // sub-PBs. rcad's implementation rejects valid segments due to
-                    // vertex/curve precision differences.  Accept non-degenerate range.
-                    let has_valid_range = (a_t2 - a_t1).abs() >= CONFUSION;
+                    // OCCT L937-960: BRepLib::FindValidRange — check if the pave block
+                    // has a valid range outside the vertex tolerance spheres.
+                    let has_valid_range = {
+                        let ic = &self.ds.intersection_curves[ci];
+                        let v1_pt = if n_v1 < self.ds.vertices.len() { self.ds.vertex_point(n_v1) } else { continue; };
+                        let v2_pt = if n_v2 < self.ds.vertices.len() { self.ds.vertex_point(n_v2) } else { continue; };
+                        let a_tol_v1 = a_tol_r3d.max(self.ds.vertex_tolerance(n_v1));
+                        let a_tol_v2 = a_tol_r3d.max(self.ds.vertex_tolerance(n_v2));
+                        crate::pave_filler::helpers::find_valid_range(
+                            &ic.curve, a_t1, a_t2, a_tol_r3d,
+                            v1_pt, a_tol_v1, v2_pt, a_tol_v2,
+                        ).is_some()
+                    };
                     if !has_valid_range {
                         if std::env::var("RCAD_DBG_MB").is_ok() {
                             eprintln!("[DBG_MB]   sub-PB ({},{}) REJECTED by FindValidRange", n_v1, n_v2);

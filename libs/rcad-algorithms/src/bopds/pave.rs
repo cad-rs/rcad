@@ -177,6 +177,7 @@ impl PaveBlock {
             eprintln!("[MB_update] a_nb={} the_flag={} ext={}", a_nb, the_flag, self.ext_paves.len());
         }
 
+        // OCCT L288: aNb <= 1 → return (no split possible).
         if a_nb <= 1 {
             self.ext_paves.clear();
             self.ext_paves_fence.clear();
