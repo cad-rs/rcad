@@ -82,6 +82,45 @@ fn collect_wire_uv_with_mult(ds: &DS, face_idx: usize, edges: &[(usize, bool)], 
     pts
 }
 
+/// OCCT GCPnts_QuasiUniformDeflection — adaptive curve sampling by chordal deflection.
+/// Recursive subdivision: if chord-to-curve midpoint distance exceeds max_deflection_sq,
+/// insert the midpoint and recurse on both halves.
+/// Equivalent to OCCT's QuasiFleche (GCPnts_QuasiUniformDeflection.cxx L55-185).
+fn quasi_uniform_deflection_2d(
+    curve: &Curve2d, t0: f64, t1: f64, max_deflection_sq: f64,
+    params: &mut Vec<f64>,
+) {
+    let max_calls = 2000;
+    let mut nb_calls = 0usize;
+    quasi_fleche_2d(curve, t0, t1, max_deflection_sq, params, &mut nb_calls, max_calls);
+}
+
+/// Recursive QuasiFleche for Curve2d.
+/// OCCT GCPnts_QuasiUniformDeflection.cxx L55-185 (template QuasiFleche).
+fn quasi_fleche_2d(
+    curve: &Curve2d, u_deb: f64, u_fin: f64, defl_sq: f64,
+    params: &mut Vec<f64>, nb_calls: &mut usize, max_calls: usize,
+) {
+    *nb_calls += 1;
+    if *nb_calls >= max_calls { return; }
+
+    let p_deb = curve.point_at(u_deb);
+    let p_fin = curve.point_at(u_fin);
+    let u_mid = (u_deb + u_fin) * 0.5;
+    let p_mid = curve.point_at(u_mid);
+
+    // Chord midpoint
+    let chord_mid = DVec2::new((p_deb.x + p_fin.x) * 0.5, (p_deb.y + p_fin.y) * 0.5);
+    let fleche_sq = (p_mid - chord_mid).length_squared();
+
+    if fleche_sq <= defl_sq {
+        params.push(u_mid);
+    } else {
+        quasi_fleche_2d(curve, u_deb, u_mid, defl_sq, params, nb_calls, max_calls);
+        quasi_fleche_2d(curve, u_mid, u_fin, defl_sq, params, nb_calls, max_calls);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State { In, On, Out }
 
@@ -280,19 +319,43 @@ impl FClass2d {
         let mut fleche_u = tol_uv;
         let mut fleche_v = tol_uv;
 
-        // OCCT L456-565: self-intersection polygon refinement.
+        // OCCT L456-528: self-intersection polygon refinement.
         //   If chordal deflection is too large relative to area/perimeter ratio,
-        //   the polygon may self-intersect.  Re-discretize with tighter tolerance.
+        //   the polygon may self-intersect.  Re-discretize with GCPnts_QuasiUniformDeflection.
         if outer_pts.len() >= 3 {
             let mut outer_area = polygon_signed_area(&outer_pts);
             let mut outer_perim = polygon_perimeter(&outer_pts);
             let mut an_exp_thick = (2.0 * outer_area.abs() / outer_perim).max(1e-7);
             let (mut fu, mut fv) = chordal_deflection(&outer_pts, tol_uv);
             let mut a_defl = fu.max(fv);
-            let mut refine_iter = 0;
-            while a_defl > an_exp_thick && a_defl > 1e-7 && refine_iter < 5 {
-                let new_mult = ((a_defl / an_exp_thick) * 2.0).ceil().min(32.0);
-                let new_pts = collect_wire_uv_with_mult(ds, face_idx, &outer_edges, new_mult);
+            let mut a_discr_defl = (a_defl * 0.1).min(an_exp_thick * 10.0);
+            // OCCT L456: while (aDefl > anExpThick && aDiscrDefl > 1e-7)
+            while a_defl > an_exp_thick && a_discr_defl > 1e-7 {
+                // OCCT L465-495: GCPnts_QuasiUniformDeflection on each edge
+                let mut new_pts: Vec<DVec2> = Vec::new();
+                fu = 0.0; fv = 0.0;
+                for &(ei, fwd) in &outer_edges {
+                    if let Some(rep) = ds.edge_on_face(ei, face_idx) {
+                        let (t0, t1) = if fwd { (rep.start_param, rep.end_param) }
+                                       else { (rep.end_param, rep.start_param) };
+                        let mut edge_params = Vec::new();
+                        edge_params.push(t0);
+                        quasi_uniform_deflection_2d(
+                            &rep.pcurve, t0, t1, a_discr_defl * a_discr_defl, &mut edge_params);
+                        edge_params.push(t1);
+                        for i in 1..edge_params.len() {
+                            let uv = rep.pcurve.point_at(edge_params[i]);
+                            new_pts.push(uv);
+                            // OCCT L493-495: chordal deflection update (lin2d projection)
+                            let n = new_pts.len();
+                            if n >= 3 {
+                                let a = new_pts[n - 3]; let b = new_pts[n - 2]; let c = new_pts[n - 1];
+                                let d_u = ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)).abs();
+                                if d_u > fu { fu = d_u; }
+                            }
+                        }
+                    }
+                }
                 if new_pts.len() <= outer_pts.len() { break; }
                 outer_pts = new_pts;
                 outer_area = polygon_signed_area(&outer_pts);
@@ -301,8 +364,8 @@ impl FClass2d {
                 let (new_fu, new_fv) = chordal_deflection(&outer_pts, tol_uv);
                 fu = new_fu; fv = new_fv;
                 a_defl = fu.max(fv);
-                if a_defl <= an_exp_thick { break; }
-                refine_iter += 1;
+                // OCCT L524-528: aDiscrDefl = min(aDiscrDefl * 0.1, anExpThick * 10.)
+                a_discr_defl = (a_discr_defl * 0.1).min(an_exp_thick * 10.0);
             }
             fleche_u = fu; fleche_v = fv;
         }
