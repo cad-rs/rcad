@@ -541,16 +541,44 @@ impl QuadQuadGeo {
         self.pt1 = con.axis_loc(); self.param1 = cyl.radius(); self.param2 = con.ref_radius();
     }
 
-    /// OCCT L1373: Cylinder/Sphere
+    /// OCCT IntAna_QuadQuadGeo.cxx L1373-1405: Cylinder/Sphere
     pub fn perform_cylinder_sphere(&mut self, cyl: &Quadric, sph: &Quadric, _tol: f64) {
         self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let r_cyl = cyl.radius(); let cyl_axis = cyl.axis_dir(); let cyl_origin = cyl.axis_loc();
-        let r_sph = sph.radius(); let sph_center = sph.axis_loc();
-        let d = sph_center - cyl_origin; let proj = d.dot(cyl_axis);
-        let perp = (d - proj*cyl_axis).length();
-        if perp > r_cyl + r_sph + _tol { return; }
-        self.typeres = AnaResultType::Circle; self.nbint = 1;
-        self.pt1 = cyl_origin + proj*cyl_axis; self.param1 = r_cyl;
+        // OCCT L1377: AxeOperator + coaxial check
+        let cyl_axis = cyl.axis_dir();
+        let cyl_origin = cyl.axis_loc();
+        let sph_center = sph.axis_loc();
+        let sph_radius = sph.radius();
+        let cyl_radius = cyl.radius();
+        // Check if sphere center lies on cylinder axis
+        let to_center = sph_center - cyl_origin;
+        let proj = to_center.dot(cyl_axis);
+        let perp = (to_center - proj * cyl_axis).length();
+        if perp <= _tol.max(1e-15) {
+            // OCCT L1378: coaxial — sphere center on cylinder axis
+            if sph_radius < cyl_radius {
+                // OCCT L1380-1383: sphere inside cylinder, no intersection
+                self.typeres = AnaResultType::Empty;
+            } else {
+                // OCCT L1386-1398: 1 or 2 circles (parallel)
+                let dist = (sph_radius * sph_radius - cyl_radius * cyl_radius).sqrt();
+                let dir = cyl_axis.normalize_or_zero();
+                self.dir1 = dir;
+                self.dir2 = dir;
+                self.typeres = AnaResultType::Circle;
+                self.pt1 = sph_center + dist * dir;
+                self.nbint = 1;
+                self.param1 = cyl_radius;
+                if dist > 1e-15 {
+                    self.pt2 = sph_center - dist * dir;
+                    self.param2 = cyl_radius;
+                    self.nbint = 2;
+                }
+            }
+        } else {
+            // OCCT L1401-1404: not coaxial
+            self.typeres = AnaResultType::NoGeometricSolution;
+        }
     }
 
     /// OCCT L1433: Cone/Cone
