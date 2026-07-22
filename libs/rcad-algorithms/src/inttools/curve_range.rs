@@ -94,14 +94,16 @@ pub fn shrunk_range(
     curve: &Curve3, t_range: [f64; 2], v1_tol: f64, v2_tol: f64, edge_tol: f64,
 ) -> Option<[f64; 2]> {
     let [t1, t2] = t_range;
-    // OCCT L117-120: if range < PConfusion  ?micro-edge
+    // OCCT IntTools_ShrunkRange.cxx L117-120: if range < PConfusion → micro-edge
     if (t2 - t1).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
-    // OCCT L129-142: aTolV = max(aTolV, aTolE) + Confusion
+    // OCCT L124-142: tolerance adjustments
     let confusion = rcad_kernel::tolerance::CONFUSION;
     let a_tol_v1 = v1_tol.max(edge_tol) + confusion;
     let a_tol_v2 = v2_tol.max(edge_tol) + confusion;
+    // Compute parametric steps for vertex spheres (OCCT: BRepLib_1.cxx L61: Resolution)
     let step1 = curve_resolution(curve, t1, a_tol_v1) * 0.1;
     let step2 = curve_resolution(curve, t2, a_tol_v2) * 0.1;
+    // OCCT L146-151: FindValidRange — find parametric bounds outside vertex spheres
     let p1 = curve.point_at(t1);
     let p2 = curve.point_at(t2);
     let ts1 = find_nearest_valid_point(curve, t1, t2, p1, a_tol_v1, step1);
@@ -110,8 +112,13 @@ pub fn shrunk_range(
         (Some(f), Some(l)) => (f, l), (Some(f), None) => (f, t2),
         (None, Some(l)) => (t1, l), (None, None) => return None,
     };
-    // OCCT L152-155: if shrunk range < PConfusion  ?micro-edge
+    // OCCT L152-156: if shrunk range < PConfusion → micro-edge
     if the_first >= the_last || (the_last - the_first) < rcad_kernel::tolerance::CONFUSION { return None; }
+    // OCCT L162-169: parametric tolerance for length computation
+    // OCCT L170-175: GCPnts_AbscissaPoint::Length — compute arc length of shrunk range
+    // rcad: skip length check — edges with valid FindValidRange are accepted.
+    // OCCT L184-187: check splittable (length > 2*TolE + 2*Confusion)
+    // rcad: splittable check done by caller (analyze_shrunk_data).
     Some([the_first, the_last])
 }
 
