@@ -250,11 +250,62 @@ impl ImpImpIntersection {
         }
     }
 
-    fn int_pcy(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, tol: f64, b_reverse: bool) {
+    // OCCT L3157-3345: IntPCy — Plane/Cylinder intersection
+    fn int_pcy(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (plane, cyl) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_plane_cylinder(plane, cyl, 1e-8, tol, 0.0);
-        self.post_process_geo(&geo);
+        // OCCT L3184: inter.Perform(Pl, Cy, Tolang, TolTang, H)
+        geo.perform_plane_cylinder(plane, cyl, tol_ang, tol, 0.0);
+        // OCCT L3185-3188: if (!inter.IsDone()) return false
+        if !geo.is_done() { return; }
+        // OCCT L3189-3191: typint, NbSol, Empty=false
+        let typint = geo.type_inter();
+        let _nb_sol = geo.nb_solutions();
+        self.empt = false;
+
+        // OCCT L3193-3343: switch(typint)
+        match typint {
+            // OCCT L3195-3198: case IntAna_Empty
+            AnaResultType::Empty => {
+                self.empt = true;
+            }
+            // OCCT L3200-3290: case IntAna_Line — 1 or 2 lines
+            AnaResultType::Line => {
+                // OCCT L3201: linsol = inter.Line(1)
+                let linsol = geo.line(1);
+                // OCCT L3258-3289: 2 lines (NbSol==2 path, no transition drop)
+                self.slin.push(IntPatchLine::analytic(
+                    IntPatchIType::Line, Curve3::Line(linsol),
+                    [f64::NEG_INFINITY, f64::INFINITY]));
+                if _nb_sol >= 2 {
+                    let linsol2 = geo.line(2);
+                    self.slin.push(IntPatchLine::analytic(
+                        IntPatchIType::Line, Curve3::Line(linsol2),
+                        [f64::NEG_INFINITY, f64::INFINITY]));
+                }
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            // OCCT L3293-3316: case IntAna_Circle
+            AnaResultType::Circle => {
+                // OCCT L3298: cirsol = inter.Circle(1)
+                let cirsol = geo.circle();
+                // GLine(cirsol, false, trans1, trans2) — transitions not in IntPatchLine
+                self.slin.push(IntPatchLine::analytic(
+                    IntPatchIType::Circle, Curve3::Circle(cirsol),
+                    [0.0, std::f64::consts::TAU]));
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            // OCCT L3319-3337: case IntAna_Ellipse
+            AnaResultType::Ellipse => {
+                let elipsol = geo.ellipse();
+                self.slin.push(IntPatchLine::analytic(
+                    IntPatchIType::Ellipse, Curve3::Ellipse(elipsol),
+                    [0.0, std::f64::consts::TAU]));
+                self.empt = false; self.my_done = IntStatus::OK;
+            }
+            // OCCT L3340-3342: default
+            _ => {}
+        }
     }
 
     // OCCT L3446-3706: IntPCo — Plane/Cone intersection
