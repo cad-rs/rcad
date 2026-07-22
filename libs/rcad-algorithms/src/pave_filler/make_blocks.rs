@@ -594,7 +594,7 @@ impl<'a> super::PaveFiller<'a> {
                             self.context.is_point_in_on_face(self.ds, fi, uv)
                         } else {
                             let mid_pt = ic.curve.point_at(mid_t);
-                            self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d)
+                            self.context.is_valid_point_for_face(self.ds, mid_pt, fi, a_tol_r3d)
                         };
                         if !ok { b_valid_2d = false; break; }
                     }

@@ -437,7 +437,7 @@ impl<'a> PaveFiller<'a> {
             // Ensure surface cache is populated (OCCT BRepAdaptor_Surface is lazy).
             self.context.surface_adaptor(&self.ds, n_f1);
             self.context.surface_adaptor(&self.ds, n_f2);
-            let b_vf = self.context.is_valid_point_for_faces(a_p[j], n_f1, n_f2, a_tol_r3d);
+            let b_vf = self.context.is_valid_point_for_faces(self.ds, a_p[j], n_f1, n_f2, a_tol_r3d);
             if !b_vf { continue; }
 
             // Create new vertex at curve endpoint

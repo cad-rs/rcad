@@ -124,15 +124,15 @@ impl Context {
         self.fclass2d(ds, face_idx).perform(uv, true) == State::In
     }
 
-    /// OCCT: IsValidPointForFace(theP, theFace, theTol) 鈥?checks if a 3D point
-    /// projects onto the face surface within tolerance.
-    pub fn is_valid_point_for_face(&self, p: DVec3, face_idx: usize, tol: f64) -> bool {
+        /// OCCT-aligned: IsValidPointForFace(theP, theFace, theTol)
+    /// projects onto the face surface within tolerance and UV in/on the face.
+    /// OCCT IntTools_Context.cxx L648-674.
+    pub fn is_valid_point_for_face(&mut self, ds: &DS, p: DVec3, face_idx: usize, tol: f64) -> bool {
         if face_idx >= self.num_faces { return false; }
-        if let Some(surf) = &self.surface_cache[face_idx] {
-            let proj = closest_point_on_surface(surf, p, 16);
-            return proj.distance < tol && proj.distance.is_finite();
-        }
-        false
+        let proj = self.proj_ps(ds, face_idx, p);
+        let Some((uv, _p3d, dist)) = proj else { return false; };
+        if dist > tol { return false; }
+        self.is_point_in_on_face(ds, face_idx, uv)
     }
 
     /// OCCT: ProjPS(theFace) 鈥?projects a 3D point onto the face surface.
@@ -327,8 +327,8 @@ impl Context {
 
     /// OCCT: IsValidPointForFaces(theP, theF1, theF2, theTol) 鈥?returns true
     /// if the 3D point is valid on BOTH faces.
-    pub fn is_valid_point_for_faces(&self, p: DVec3, fi1: usize, fi2: usize, tol: f64) -> bool {
-        self.is_valid_point_for_face(p, fi1, tol) && self.is_valid_point_for_face(p, fi2, tol)
+    pub fn is_valid_point_for_faces(&mut self, ds: &DS, p: DVec3, fi1: usize, fi2: usize, tol: f64) -> bool {
+        self.is_valid_point_for_face(ds, p, fi1, tol) && self.is_valid_point_for_face(ds, p, fi2, tol)
     }
 
     /// OCCT: IsInfiniteFace(theFace) 鈥?returns true if the face has infinite bounds.
@@ -441,10 +441,10 @@ mod tests {
         let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         ctx.surface_adaptor(&ds, 1);
-        let on_face0 = ctx.is_valid_point_for_face(DVec3::new(0.5, 0.5, 0.0), 0, 1e-4);
+        let on_face0 = ctx.is_valid_point_for_face(&ds, DVec3::new(0.5, 0.5, 0.0), 0, 1e-4);
         // Only test that it runs without panic; the actual result depends on
         // whether the point is within tolerance of the face surface.
-        let _ = ctx.is_valid_point_for_faces(DVec3::new(0.5, 0.5, 0.0), 0, 1, 1e-4);
+        let _ = ctx.is_valid_point_for_faces(&ds, DVec3::new(0.5, 0.5, 0.0), 0, 1, 1e-4);
     }
 
     /// OCCT IsInfiniteFace: plane is infinite.
