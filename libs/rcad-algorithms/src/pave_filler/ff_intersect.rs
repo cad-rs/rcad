@@ -1365,7 +1365,9 @@ fn treat_circle_parts(
 
  let aNbVtx = vertices.len();
  if aNbVtx == 0 {
-  return Vec::new();
+  // OCCT L3007-3016: GLine without vertices — place vertex at parameter 0.
+  // Return full-period [0, 2*PI] so the circle is accepted as one part.
+  return vec![[0.0, TAU]];
  }
 
  // Build vertex array with parameters projected to [0, 2閿? (OCCT L492-495).
