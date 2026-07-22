@@ -68,26 +68,42 @@ struct EfTask {
 
 /// OCCT IntTools_EdgeFace (PaveFiller_5.cxx L340-480): compute edge-face intersection hits.
 /// Returns VERTEX-type (point) and EDGE-type (range) common parts.
-fn compute_ef_hits(
-  ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2],
-) -> Vec<EfHit> {
-  // OCCT IntTools_EdgeFace::Perform L529-549: separate tolE and tolF
-  let a_tol_e = ds.edge_tolerance(edge_idx) + ds.fuzzy_tol * 0.5;
-  let a_tol_f = ds.face_tolerance(face_idx) + ds.fuzzy_tol * 0.5;
-  // OCCT L565-570: BeanFaceIntersector(myC, myS, aTolE, aTolF)
-  use crate::inttools::bean_face_intersector::BeanFaceIntersector;
-  let mut bfi = BeanFaceIntersector::new();
-  bfi.init_curve_surface(
-    ds.edges[edge_idx].curve.clone(), a_tol_e,
-    ds.faces[face_idx].surface.clone(), a_tol_f);
-  bfi.set_bean_parameters(ef_range[0], ef_range[1]);
-  bfi.perform();
-  if !bfi.is_done() { return Vec::new(); }
-  let mut hits: Vec<EfHit> = Vec::new();
-  for r in bfi.result() {
-    let t = (r.first() + r.last()) * 0.5;
-    let p = ds.edges[edge_idx].curve.point_at(t);
-    hits.push(EfHit::Vertex { point: p, param: t });
+fn compute_ef_hits(ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2], ef_tol: f64) -> Vec<EfHit> {
+  let edge_curve = &ds.edges[edge_idx].curve;
+  let face_surface = &ds.faces[face_idx].surface;
+  let mut hits: Vec<EfHit> = match (edge_curve, face_surface) {
+    (Curve3::Line(line), Surface3::Plane(plane)) =>
+      crate::inttools::edge_face::intersect_line_plane_with_tol(line, *ef_range, plane, ef_tol)
+      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.edge_param }).collect(),
+    (Curve3::Line(line), Surface3::Cylinder(cyl)) =>
+      crate::inttools::curve_surface::intersect_line_cylinder_with_tol(line, *ef_range, cyl, ef_tol)
+      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
+    (Curve3::Line(line), Surface3::Sphere(sph)) =>
+      crate::inttools::curve_surface::intersect_line_sphere_with_tol(line, *ef_range, sph, ef_tol)
+      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
+    (Curve3::Line(line), Surface3::Cone(cone)) =>
+      crate::inttools::curve_surface::intersect_line_cone_with_tol(line, *ef_range, cone, ef_tol)
+      .into_iter().map(|h| EfHit::Vertex { point: h.point, param: h.curve_param }).collect(),
+    _ => Vec::new(),
+  };
+  // Phase 2: edge coincident with face (OCCT MakeType EDGE)
+  if hits.is_empty() && ef_range[1] - ef_range[0] > ef_tol {
+    let mid_t = (ef_range[0] + ef_range[1]) * 0.5;
+    let mid_pt = edge_curve.point_at(mid_t);
+    use crate::inttools::bean_face_intersector::BeanFaceIntersector;
+    let mut bfi = BeanFaceIntersector::new();
+    bfi.init_curve_surface(
+      ds.edges[edge_idx].curve.clone(), ef_tol,
+      ds.faces[face_idx].surface.clone(), ef_tol);
+    bfi.set_bean_parameters(ef_range[0], ef_range[1]);
+    bfi.perform();
+    if bfi.is_done() && !bfi.result().is_empty() {
+      for r in bfi.result() {
+        let t = (r.first() + r.last()) * 0.5;
+        let p = ds.edges[edge_idx].curve.point_at(t);
+        hits.push(EfHit::Vertex { point: p, param: t });
+      }
+    }
   }
   hits
 }
@@ -1013,7 +1029,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  let ef_corr = Self::correct_range_for_face(
  &self.ds.edges[task.nE].curve, tol_ef, ef_range);
  if ef_corr[1] - ef_corr[0] <= tol_ef { continue; }
- let hits = compute_ef_hits(&self.ds, task.nE, task.nF, &ef_corr);
+ let hits = compute_ef_hits(&self.ds, task.nE, task.nF, &ef_corr, tol_ef);
  drop(task);
  a_v_edge_face[index].hits = hits;
  }
