@@ -71,13 +71,15 @@ struct EfTask {
 fn compute_ef_hits(
   ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2],
 ) -> Vec<EfHit> {
-  let etf = ds.edge_tolerance(edge_idx).max(ds.face_tolerance(face_idx)).max(CONFUSION);
-  // OCCT IntTools_EdgeFace::Perform L565-570: BeanFaceIntersector
+  // OCCT IntTools_EdgeFace::Perform L529-549: separate tolE and tolF
+  let a_tol_e = ds.edge_tolerance(edge_idx) + ds.fuzzy_tol * 0.5;
+  let a_tol_f = ds.face_tolerance(face_idx) + ds.fuzzy_tol * 0.5;
+  // OCCT L565-570: BeanFaceIntersector(myC, myS, aTolE, aTolF)
   use crate::inttools::bean_face_intersector::BeanFaceIntersector;
   let mut bfi = BeanFaceIntersector::new();
   bfi.init_curve_surface(
-    ds.edges[edge_idx].curve.clone(), etf,
-    ds.faces[face_idx].surface.clone(), etf);
+    ds.edges[edge_idx].curve.clone(), a_tol_e,
+    ds.faces[face_idx].surface.clone(), a_tol_f);
   bfi.set_bean_parameters(ef_range[0], ef_range[1]);
   bfi.perform();
   if !bfi.is_done() { return Vec::new(); }

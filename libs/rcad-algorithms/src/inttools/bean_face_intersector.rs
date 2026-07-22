@@ -1993,7 +1993,7 @@ impl BeanFaceIntersector {
         self.my_trsf_surface = Some(self.my_surface.geom_surface_transformed());
         self.my_bean_tolerance = bean_tol;
         self.my_face_tolerance = face_tol;
-        self.my_criteria = bean_tol + face_tol + precision_confusion();
+        self.my_criteria = bean_tol + face_tol;
         self.my_curve_resolution = self.my_curve.resolution(self.my_criteria);
         self.set_surface_parameters(
             self.my_surface.first_u_parameter(),
