@@ -486,7 +486,7 @@ impl ImpImpIntersection {
         let mut geo = QuadQuadGeo::new();
         let (plane, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_plane_torus(plane, torus, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_cycy(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
@@ -527,7 +527,7 @@ impl ImpImpIntersection {
         let mut geo = QuadQuadGeo::new();
         let (cyl, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_cylinder_cone(cyl, cone, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
@@ -535,33 +535,33 @@ impl ImpImpIntersection {
         // perform_cylinder_sphere expects (cylinder, sphere)
         let (cyl, sph) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_cylinder_sphere(cyl, sph, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_cyto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (cyl, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_cylinder_torus(cyl, torus, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_coco(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
         let mut geo = QuadQuadGeo::new();
         geo.perform_cone_cone(q1, q2, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (sph, con) = if b_reverse { (q1, q2) } else { (q2, q1) };
         geo.perform_sphere_cone(sph, con, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_coto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         geo.perform_cone_torus(q1, q2, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_spsp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
@@ -588,24 +588,41 @@ impl ImpImpIntersection {
     fn int_spto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         geo.perform_sphere_torus(q1, q2, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
     fn int_toto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
         let mut geo = QuadQuadGeo::new();
         geo.perform_torus_torus(q1, q2, tol);
-        self.post_process_geo(&geo);
+        self.post_process_geo(&geo, tol);
     }
 
-    // =====================================================================
-    // Post-process QuadQuadGeo results into self.slin / self.spnt
-    // =====================================================================
-    fn post_process_geo(&mut self, geo: &QuadQuadGeo) {
+    // Post-process QuadQuadGeo results into self.slin / self.spnt.
+    // Used by IntXX functions where OCCT creates GLine with transitions
+    // (rcad IntPatchLine drops transitions).
+    fn post_process_geo(&mut self, geo: &QuadQuadGeo, tol: f64) {
         if !geo.is_done() { return; }
-        self.empt = geo.type_inter() == AnaResultType::Empty;
+        let typ = geo.type_inter();
+        // OCCT: Same → tgte=true
+        if typ == AnaResultType::Same {
+            self.empt = false; self.tgte = true; self.my_done = IntStatus::OK;
+            return;
+        }
+        self.empt = typ == AnaResultType::Empty;
         self.tgte = false;
         self.oppo = false;
         if self.empt && geo.nb_solutions() == 0 { return; }
+        // OCCT L678: Point → spnt
+        if typ == AnaResultType::Point {
+            let psol = geo.point(1);
+            self.spnt.push(IntPatchPoint {
+                p1: psol, p2: psol,
+                u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0,
+                tolerance: tol,
+            });
+            self.my_done = IntStatus::OK;
+            return;
+        }
         for c in geo.to_curves() {
             let line_type = match &c {
                 Curve3::Line(_) => IntPatchIType::Line,
