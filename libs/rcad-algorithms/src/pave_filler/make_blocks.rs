@@ -478,7 +478,20 @@ impl<'a> super::PaveFiller<'a> {
             for (j, &ci) in curves_of_ff.iter().enumerate() {
                 if ci >= self.ds.intersection_curves.len() { continue; }
                 // L841: PutStickPavesOnCurve(aF1, aF2, aMI, aVC, j, aMVStick, aMVTol, aDMVLV)
-                self.put_stick_paves_on_curve(ci, &a_mi, &a_mv_stick);
+                // OCCT L2928-2955: RemoveUsedVertices — remove vertices already on any curve
+                let a_mv_filtered: std::collections::HashSet<usize> = {
+                    let mut mv = a_mv_stick.clone();
+                    for &oci in curves_of_ff {
+                        if oci >= self.ds.intersection_curves.len() { continue; }
+                        let Some(aPB) = self.ds.intersection_curves[oci].pave_blocks.first() else { continue };
+                        let r = aPB.0.read().unwrap();
+                        for pave in &r.ext_paves { mv.remove(&pave.vertex_idx); }
+                        mv.remove(&r.pave1.vertex_idx);
+                        mv.remove(&r.pave2.vertex_idx);
+                    }
+                    mv
+                };
+                self.put_stick_paves_on_curve(ci, &a_mi, &a_mv_filtered);
                 // L843-846: if aNbC == 1: PutEFPavesOnCurve
                 if a_nb_c == 1 {
                     self.put_ef_paves_on_curve(ci, &a_mi, &a_mv_ef);
