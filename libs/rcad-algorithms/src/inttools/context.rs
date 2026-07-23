@@ -7,6 +7,7 @@ use glam::DVec3;
 use crate::bopds::ds::DS;
 use super::fclass2d::{FClass2d, State};
 use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
+use rcad_kernel::CurveEval;
 use rcad_kernel::projection::{closest_point_on_surface, closest_point_on_curve,
     SurfaceProjection, CurveProjection};
 
@@ -185,7 +186,20 @@ impl Context {
         // Project vertex point onto edge curve (OCCT ProjPC + Perform)
         let p = ds.vertex_point(vi);
         let proj = self.proj_pc(ds, ei, p).ok_or(VeError::ProjectionFailed)?;
-        let dist = proj.2;
+        let mut t = proj.0;
+        let mut pt = proj.1;
+        let mut dist = proj.2;
+        // OCCT: clamp projection parameter to edge's trim range (Geom_TrimmedCurve)
+        let [t0, t1] = ds.edges[ei].t_range;
+        let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
+        if t < t_min || t > t_max {
+            let t_clamped = if t < t_min { t_min } else { t_max };
+            let e_curve = &ds.edges[ei].curve;
+            let new_pt = e_curve.point_at(t_clamped);
+            dist = (new_pt - p).length();
+            t = t_clamped;
+            pt = new_pt;
+        }
         // OCCT L531-533: tolerance sum
         let tol_v = ds.vertex_tolerance(vi);
         let tol_e = ds.edge_tolerance(ei);
@@ -193,8 +207,11 @@ impl Context {
         // OCCT L535: theTol = aDist + aTolE
         let new_tol = dist + tol_e;
         // OCCT L537-540: check distance against tolerance sum
+        eprintln!("[RCAD_VE] vi={} ei={} dist={:.6e} tol_sum={:.6e} t_calc={:.6e} t_range=[{:.3},{:.3}] p=({:.3},{:.3},{:.3})",
+            vi, ei, dist, tol_sum, t, t0, t1,
+            ds.vertex_point(vi).x, ds.vertex_point(vi).y, ds.vertex_point(vi).z);
         if dist > tol_sum { return Err(VeError::DistanceTooLarge); }
-        Ok(VeResult { param: proj.0, tolerance: new_tol })
+        Ok(VeResult { param: t, tolerance: new_tol })
     }
 
     /// ComputePE (IntTools_Context.cxx L438-496).
@@ -477,6 +494,41 @@ mod tests {
             assert!((res.param - 0.0).abs() < 1e-6 || (res.param - 1.0).abs() < 1e-6,
                 "param should be at endpoint (~0 or ~1), got {}", res.param);
         }
+    }
+
+    #[test]
+    fn proj_pc_rotated_cylinder_vertex_on_cap_circle() {
+        let a = rcad_modeling::make_cylinder_brep(
+            DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0,
+        ).expect("make cylinder a");
+        let mut b = rcad_modeling::make_cylinder_brep(
+            DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0,
+        ).expect("make cylinder b");
+        crate::brep_tools::transform_shape_topods(
+            &mut b,
+            glam::DAffine3::from_rotation_z(45.0_f64.to_radians()),
+        );
+        let ds = new_from_topods(&a, &b, TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let cap_edge = (0..ds.a_edge_count)
+            .find(|&edge_idx| matches!(
+                ds.edges[edge_idx].curve,
+                Curve3::Circle(circle) if (circle.center.z - 1.0).abs() <= 1.0e-10
+            ))
+            .expect("cylinder cap circle");
+        let rotated_vertex = (ds.a_vertex_count..ds.vertices.len())
+            .find(|&vertex_idx| {
+                (ds.vertex_point(vertex_idx) - DVec3::new(
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    1.0,
+                )).length() <= 1.0e-10
+            })
+            .expect("rotated cylinder cap vertex");
+        let projection = ctx.proj_pc(&ds, cap_edge, ds.vertex_point(rotated_vertex))
+            .expect("projection onto cylinder cap circle");
+
+        assert!(projection.2 <= 1.0e-10, "projection = {projection:?}");
     }
 
     /// OCCT ComputeVE: vertex far from edge should fail with DistanceTooLarge.

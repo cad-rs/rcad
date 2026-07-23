@@ -3,7 +3,7 @@ use super::{
     transform_brep, translate_brep, validate_point, validate_positive,
 };
 use glam::{DMat3, DVec3};
-use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+use rcad_kernel::geom::{Circle3, Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
 use rcad_kernel::{topods, BRep, PrimitiveSolid};
 
@@ -176,34 +176,38 @@ pub fn cylinder_brep(
 
     let half = h * 0.5;
     let mut t = topods::BRep::new();
-    let top_v = t.add_tvertex(p(0.0, half, 0.0));
-    let bot_v = t.add_tvertex(p(0.0, -half, 0.0));
+    // OCCT BRepPrimAPI_MakeCylinder(R, H) from z=0 to z=H
+    let top_pos = p(r, h, 0.0);      // (R, 0, H) — top vertex
+    let bot_pos = p(r, 0.0, 0.0);    // (R, 0, 0) — bottom vertex
+    let top_center = p(0.0, h, 0.0); // (0, 0, H) — top face center
+    let bot_center = p(0.0, 0.0, 0.0); // (0, 0, 0) — bottom face center
+    let top_v = t.add_tvertex(top_pos);
+    let bot_v = t.add_tvertex(bot_pos);
 
-    // Degenerate edges at centers
-    let e_top = t.add_tedge(None, top_v, top_v, [0.0, r * std::f64::consts::TAU]);
-    let e_bot = t.add_tedge(None, bot_v, bot_v, [0.0, r * std::f64::consts::TAU]);
-    // Seam edge
-    let seam_curve = Curve3::Line(Line3 { origin: p(0.0, half, 0.0), direction: z_axis });
-    let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [-half, half]);
+    // Top and bottom circular edges (on the rim)
+    let top_circle = Circle3::new(top_center, y_axis, r);
+    let bot_circle = Circle3::new(bot_center, -y_axis, r);
+    let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v, top_v, [0.0, std::f64::consts::TAU]);
+    let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v, bot_v, [0.0, std::f64::consts::TAU]);
+    // Seam edge: from top_pos downward along -y_axis (top → bottom)
+    let seam_curve = Curve3::Line(Line3 { origin: top_pos, direction: -y_axis });
+    let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [0.0, h]);
 
     // Faces
-    let cyl_surface = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-        origin: c, axis: z_axis, ref_dir: x_axis, radius: r,
-    });
     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
     let top_wire = t.add_twire(vec![e_top]);
     let bot_wire = t.add_twire(vec![rev(e_bot)]);
 
     let cyl_surface = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-        origin: c, axis: z_axis, ref_dir: x_axis, radius: r,
+        origin: c, axis: y_axis, ref_dir: x_axis, radius: r,
     });
     let lateral_face = t.add_tface(Some(cyl_surface), lateral_wire, vec![], Some(p(0.0, 0.0, r)), None, vec![], true);
 
-    let top_plane = Surface3::Plane(Plane::new(p(0.0, half, 0.0), z_axis));
-    let top_face = t.add_tface(Some(top_plane), top_wire, vec![], Some(p(0.0, half, 0.0)), None, vec![], false);
+    let top_plane = Surface3::Plane(Plane::new(p(0.0, h, 0.0), y_axis));
+    let top_face = t.add_tface(Some(top_plane), top_wire, vec![], Some(p(0.0, h, 0.0)), None, vec![], false);
 
-    let bot_plane = Surface3::Plane(Plane::new(p(0.0, -half, 0.0), -z_axis));
-    let bot_face = t.add_tface(Some(bot_plane), bot_wire, vec![], Some(p(0.0, -half, 0.0)), None, vec![], false);
+    let bot_plane = Surface3::Plane(Plane::new(p(0.0, 0.0, 0.0), -y_axis));
+    let bot_face = t.add_tface(Some(bot_plane), bot_wire, vec![], Some(p(0.0, 0.0, 0.0)), None, vec![], false);
 
     let shell = t.add_tshell(vec![lateral_face, top_face, bot_face]);
     t.add_tsolid(vec![shell]);
@@ -342,15 +346,15 @@ pub fn make_conical_frustum_brep(
     let v_bottom = d_bottom / cos_ha;
     let v_top = (d_bottom + height) / cos_ha;
 
-    let bottom_pt = DVec3::new(rb, -half_h, 0.0);
-    let top_pt = DVec3::new(rt, half_h, 0.0);
+    let bottom_pt = DVec3::new(rb, 0.0, 0.0);
+    let top_pt = DVec3::new(rt, height, 0.0);
 
     let mut t = topods::BRep::new();
     let v0 = t.add_tvertex(bottom_pt);
     let v1 = t.add_tvertex(top_pt);
 
-    let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, rb));
-    let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y, rt));
+    let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0), -DVec3::Y, rb));
+    let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, height, 0.0), DVec3::Y, rt));
     let seam_dir = (top_pt - bottom_pt).normalize();
     let seam_curve = Curve3::Line(Line3 { origin: bottom_pt, direction: seam_dir });
 
@@ -359,15 +363,15 @@ pub fn make_conical_frustum_brep(
     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
 
         // Surfaces
-    let apex = DVec3::new(0.0, -half_h - d_bottom, 0.0);
+    let apex = DVec3::new(0.0, -d_bottom, 0.0);
     let cone_surf = Surface3::Cone(geom::ConicalSurface {
         apex,
         axis: DVec3::Y,
         radius: 0.0,
         half_angle_rad: half_angle,
     });
-    let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y));
-    let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y));
+    let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 0.0), -DVec3::Y));
+    let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, height, 0.0), DVec3::Y));
 
     let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
 
@@ -376,10 +380,10 @@ pub fn make_conical_frustum_brep(
     let f0 = t.add_tface(Some(cone_surf), w0, vec![], Some(DVec3::new(0.0, 0.0, rb)), None, vec![], true);
 
     let w1 = t.add_twire(vec![rev(e0)]);
-    let f1 = t.add_tface(Some(bottom_plane), w1, vec![], Some(DVec3::new(0.0, -half_h, 0.0)), None, vec![], false);
+    let f1 = t.add_tface(Some(bottom_plane), w1, vec![], Some(DVec3::new(0.0, 0.0, 0.0)), None, vec![], false);
 
     let w2 = t.add_twire(vec![e1]);
-    let f2 = t.add_tface(Some(top_plane), w2, vec![], Some(DVec3::new(0.0, half_h, 0.0)), None, vec![], false);
+    let f2 = t.add_tface(Some(top_plane), w2, vec![], Some(DVec3::new(0.0, height, 0.0)), None, vec![], false);
 
     // PCurves on edges (keyed by face.index)
     let e0_on_cone = Curve2d::Line(Line2d {

@@ -1,5 +1,6 @@
 use super::DS;
 use rcad_kernel::topods::ShapeType;
+use glam::DVec3;
 
 /// BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
 ///
@@ -160,9 +161,25 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         }
 
-        // EE pairs: cross-operand edges
+        // EE pairs: cross-operand edges with AABB overlap filter
+        // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check (shared for all pair types)
         for ea in 0..a_ec {
+            let si_ea = if ea < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ea] } else { self.ds.vertices.len() + ea };
             for eb in a_ec..ne {
+                let si_eb = if eb < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[eb] } else { self.ds.vertices.len() + eb };
+                // OCCT: AABB overlap check via BVH (Bnd_Tools::Bnd2BVH + BoxTree.Select)
+                if let (Some(si_a_info), Some(si_b_info)) = (self.ds.shape_info.get(si_ea), self.ds.shape_info.get(si_eb)) {
+                    if let (Some(a_min), Some(a_max), Some(b_min), Some(b_max)) =
+                        (si_a_info.box_min, si_a_info.box_max, si_b_info.box_min, si_b_info.box_max)
+                    {
+                        if a_max.x < b_min.x || a_min.x > b_max.x
+                            || a_max.y < b_min.y || a_min.y > b_max.y
+                            || a_max.z < b_min.z || a_min.z > b_max.z
+                        {
+                            continue;
+                        }
+                    }
+                }
                 add_pair(ea, eb, ShapeType::Edge, ShapeType::Edge);
             }
         }

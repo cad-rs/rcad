@@ -202,8 +202,8 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                 return CurveProjection { point: pt, param: 0.0, distance: (pt - query).length() };
             }
             // Circle axes (OCCT: C.XAxis().Direction() and C.YAxis().Direction())
-            let cx = crate::geom::any_perpendicular(axis).normalize();
-            let cy = axis.cross(cx).normalize();
+            let cx = circ.x_dir.normalize();
+            let cy = circ.y_dir.normalize();
             let x = opp.dot(cx);
             let y = opp.dot(cy);
             // OCCT L138: Usol[0] = XAxis.AngleWithRef(OPp, Axis) → atan2 of (X×OPp)·Axis, X·OPp
@@ -519,8 +519,8 @@ pub fn closest_point_on_surface(
             let point = query - plane.normal * d;
             let distance = d.abs();
             // (u, v) = coordinates in plane (not strictly needed, but provide them)
-            let u_axis = any_perpendicular(plane.normal);
-            let v_axis = plane.normal.cross(u_axis);
+            let u_axis = plane.u_dir;
+            let v_axis = plane.v_dir;
             let diff = point - plane.origin;
             SurfaceProjection {
                 point,
@@ -539,7 +539,7 @@ pub fn closest_point_on_surface(
             };
             // Compute (theta, phi) from point relative to center
             let w = (point - sph.center).normalize_or_zero();
-            let u_axis = any_perpendicular(sph.axis);
+            let u_axis = sph.ref_dir;
             let v_axis = sph.axis.cross(u_axis);
             let theta = w.dot(sph.axis).clamp(-1.0, 1.0).acos();
             let phi = w.dot(v_axis).atan2(w.dot(u_axis));
@@ -607,8 +607,13 @@ pub fn closest_point_on_surface(
             let along = v.dot(torus.axis);
             let radial = v - torus.axis * along;
             let radial_len = radial.length();
+            // Compute a reference direction in the equatorial plane (like any_perpendicular)
+            let torus_ref_dir = {
+                let ref_dir = if torus.axis.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+                (ref_dir - torus.axis * ref_dir.dot(torus.axis)).normalize_or_zero()
+            };
             let major_dir = if radial_len < 1e-14 {
-                any_perpendicular(torus.axis)
+                torus_ref_dir
             } else {
                 radial / radial_len
             };
@@ -622,8 +627,8 @@ pub fn closest_point_on_surface(
                 tube_center + w / w_len * torus.minor_radius
             };
             let u = major_dir
-                .dot(any_perpendicular(torus.axis))
-                .atan2(major_dir.dot(torus.axis.cross(any_perpendicular(torus.axis))));
+                .dot(torus_ref_dir)
+                .atan2(major_dir.dot(torus.axis.cross(torus_ref_dir)));
             let w_dir = (point - tube_center).normalize_or_zero();
             let v_param = w_dir.dot(torus.axis).atan2(w_dir.dot(major_dir));
             SurfaceProjection {

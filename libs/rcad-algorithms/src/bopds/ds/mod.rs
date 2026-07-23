@@ -764,8 +764,8 @@ impl DS {
  let mut pb = PaveBlock::new(edge_idx, pv1, pv2);
  // OCCT: BOPDS_PaveBlock::SetShrunkData sets isSplittable=true for initial edge PBs.
  pb.is_splittable = true;
- // OCCT: SetShrunkData with full edge range for AABB overlap in EF intersection.
- pb.set_shrunk_data(tr0, tr1, true);
+ // OCCT: shrunk data computed later by FillShrunkData (PaveFiller_9.cxx).
+ // Don't set it here — let fill_shrunk_data compute the correct range.
  // OCCT: initial edge PaveBlock stores start/end paves in edge's internal list.
  self.edges[edge_idx].paves.push(pv1);
  self.edges[edge_idx].paves.push(pv2);
@@ -787,7 +787,13 @@ impl DS {
   pb.append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
  }
  // OCCT L499: aPaveBlock->Update(...) — sort ext_paves and create sub-PBs
- let sub_pbs = pb.update(true);
+ // For an initial PB with no ext_paves (empty ext_paves, non-closed edge),
+ // keep the single PB so FillShrunkData can compute proper shrunk data.
+ let sub_pbs = if pb.ext_paves.is_empty() && sv != ev {
+  Vec::new()
+ } else {
+  pb.update(true)
+ };
  // Replace the single PB with sub-PBs. If update returned empty (degenerate),
  // keep the original single PB.
  if sub_pbs.is_empty() {
