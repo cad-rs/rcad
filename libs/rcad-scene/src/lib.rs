@@ -869,7 +869,7 @@ fn build_cylinder_from_points(center: DVec3, radius: f64, height: f64) -> Option
 
 fn build_cone_from_points(center: DVec3, base_radius: f64, height: f64) -> Option<topods::BRep> {
  let height = height.abs().max(0.01);
- make_cone_brep(center, DVec3::Z, DVec3::X, base_radius, height).ok()
+ make_cone_brep(center, DVec3::Z, DVec3::X, base_radius, 0.0, height).ok()
 }
 
 fn build_torus_from_points(center: DVec3, major_radius: f64, minor_radius: f64) -> Option<topods::BRep> {

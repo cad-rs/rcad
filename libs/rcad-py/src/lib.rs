@@ -611,6 +611,7 @@ impl PyBRep {
             vec3_tuple(axis),
             vec3_tuple(ref_dir),
             base_radius,
+            0.0,
             height,
         )
         .map_err(py_build_err)?;

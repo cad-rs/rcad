@@ -38,7 +38,7 @@ fn make_cylinder(radius: f64, height: f64) -> topods::BRep {
 }
 
 fn make_cone(base_radius: f64, height: f64) -> topods::BRep {
-    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, height)
+    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, 0.0, height)
         .expect("Cone creation failed")
 }
 

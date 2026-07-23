@@ -156,7 +156,7 @@ fn boolean_intersection_roundtrip() {
 /// OCCT TKDESTEP coverage: conical_surface_boolean, complex_geometry_result.
 #[test]
 fn boolean_cone_box_intersection_roundtrip() {
-    let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 4.0).expect("cone");
+    let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 0.0, 4.0).expect("cone");
     let box_shape =
         make_box_brep(DVec3::new(-1.0, -1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0)
             .expect("box");
@@ -454,7 +454,7 @@ fn torus_roundtrip() {
 /// OCCT TKDESTEP coverage: conical_surface, surface_of_revolution.
 #[test]
 fn cone_roundtrip() {
-    let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 6.0).expect("cone");
+    let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 0.0, 6.0).expect("cone");
 
     let step = StepWriter::write_string(&cone.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse cone");

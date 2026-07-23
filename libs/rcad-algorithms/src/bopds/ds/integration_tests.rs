@@ -999,7 +999,7 @@ fn make_cyl(radius: f64, height: f64) -> topods::BRep {
     rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height).unwrap()
 }
 fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
-    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, height).unwrap()
+    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, 0.0, height).unwrap()
 }
 
 /// Stage ref: plane_plane (box x box)

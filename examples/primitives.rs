@@ -21,7 +21,7 @@ fn main() {
     write_step(&cylinder, "output_cylinder.step");
 
     // ── Cone ───────────────────────────────────────────────────────────
-    let cone = make_cone_brep(DVec3::ZERO, DVec3::Y, DVec3::X, 2.0, 5.0).expect("cone");
+    let cone = make_cone_brep(DVec3::ZERO, DVec3::Y, DVec3::X, 2.0, 0.0, 5.0).expect("cone");
     write_step(&cone, "output_cone.step");
 
     // ── Torus ──────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ fn main() {
     append_brep(&mut all, cyl2);
 
     let cone2 =
-        make_cone_brep(DVec3::new(12.0, 0.0, 0.0), DVec3::Y, DVec3::X, 2.0, 5.0).expect("cone");
+        make_cone_brep(DVec3::new(12.0, 0.0, 0.0), DVec3::Y, DVec3::X, 2.0, 0.0, 5.0).expect("cone");
     append_brep(&mut all, cone2);
 
     let torus2 =

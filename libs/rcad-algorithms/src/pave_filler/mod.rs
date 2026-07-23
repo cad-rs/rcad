@@ -12,7 +12,6 @@ use crate::bopds::ds::{
  DS, DSEdge, DSCurveRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
  InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
 };
-use crate::bopds::ds::topods_builder::load_topods_brep;
 use crate::bopds::ds::face_aabb;
 use crate::bvh::DsBvh;
 use crate::bopds::pave::*;
@@ -428,6 +427,7 @@ impl<'a> PaveFiller<'a> {
  /// edges that build_face_reps may have missed (non-boundary or intersection-relevant).
  // OCCT PaveFiller_7.cxx L850-932
  fn prepare(&mut self) {
+  // OCCT L850: void BOPAlgo_PaveFiller::Prepare
   // OCCT L852-856: in non-destructive mode, do not modify original edges
   if self.non_destructive {
    return;
@@ -435,56 +435,91 @@ impl<'a> PaveFiller<'a> {
   // OCCT L857-879: Iterate V/E/F vs F via Iterator to find planar faces
   use crate::bopds::ds::BOPDS_Iterator;
   use rcad_kernel::topods::ShapeType;
+  // OCCT L858: bool bIsBasedOnPlane
   let mut a_mf: std::collections::HashSet<usize> = std::collections::HashSet::new();
-  let a_types = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
-  for &a_type in &a_types {
+  // OCCT L857: TopAbs_ShapeEnum aType[] = {TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE}
+  let a_type = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
+  // OCCT L863: aNb = 3
+  let a_nb = 3;
+  // OCCT L864: Message_ProgressScope aPSOuter (rcad: sequential, no progress)
+  for i in 0..a_nb {
+   // OCCT L867: myIterator->Initialize(aType[i], aType[2])
    let mut it = BOPDS_Iterator::new(self.ds);
    it.prepare();
-   let pairs = it.pairs(a_type, ShapeType::Face);
+   let pairs = it.pairs(a_type[i], ShapeType::Face);
+   // OCCT L868-878: iterate pairs
    for &(_n1, n_f) in pairs.iter() {
     if n_f < self.ds.faces.len()
+     // OCCT L873: IsBasedOnPlane(aF)
      && matches!(self.ds.faces[n_f].surface, Surface3::Plane(_))
     {
+     // OCCT L876: aMF.Add(aF)
      a_mf.insert(n_f);
     }
    }
   }
-  // OCCT L881-885: if no planar faces found, return
-  if a_mf.is_empty() { return; }
+  // OCCT L881: aNbF = aMF.Extent()
+  let a_nb_f = a_mf.len();
+  // OCCT L882-884: if (!aNbF) { return; }
+  if a_nb_f == 0 { return; }
 
   // OCCT L888-901: collect edge-face pairs from planar faces' boundary topology
+  // OCCT L888: BOPAlgo_VectorOfBPC aVBPC (rcad: Vec<(usize, usize)> pairs)
   use crate::bopds::ds::DSCurveRepOnFace;
-  let mut ef_pairs: Vec<(usize, usize)> = Vec::new();
-  for &fi in &a_mf {
+  let mut a_vbpc: Vec<(usize, usize)> = Vec::new();
+  // OCCT L890: for (i = 1; i <= aNbF; ++i)
+  for i in 0..a_nb_f {
+   // OCCT L891: const TopoDS_Face& aF = *(TopoDS_Face*)&aMF(i)
+   // Architecture diff: HashSet iteration order is arbitrary (not IndexedMap order)
+   let fi = *a_mf.iter().nth(i).unwrap();
    let f = &self.ds.faces[fi];
-   let surf = f.surface.clone();
+   // OCCT L893: aExp.Init(aF, aType[1]) — explore EDGE sub-shapes
+   // rcad: boundary_edges + inner_boundary_edges (same semantics)
    for &ei in &f.boundary_edges {
     if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
-     ef_pairs.push((ei, fi));
+     // OCCT L898: aBPC.SetEdge(aE); aBPC.SetFace(aF)
+     a_vbpc.push((ei, fi));
     }
    }
    for w in &f.inner_boundary_edges {
     for &(ei, _) in w {
      if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
-      ef_pairs.push((ei, fi));
+      a_vbpc.push((ei, fi));
      }
     }
    }
   }
-  // OCCT L903-910: run pcurve computation (rcad: sequential, no BOPTools_Parallel)
-  for &(ei, fi) in &ef_pairs {
+  // OCCT L903-910: Build pcurves (BOPTools_Parallel)
+  // OCCT L904-908: prepare BPC list  (rcad: sequential, compute inline)
+  // OCCT L909: BOPTools_Parallel::Perform (rcad: sequential loop)
+  let mut pcurve_results: Vec<(usize, usize, rcad_kernel::geom::Curve2d, f64)> = Vec::new();
+  for &(ei, fi) in &a_vbpc {
    let surf = self.ds.faces[fi].surface.clone();
-   if let Some(edge) = self.ds.edges.get_mut(ei) {
+   if let Some(edge) = self.ds.edges.get(ei) {
     if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf, None) {
-     edge.face_reps.push(DSCurveRepOnFace {
-      face_idx: fi,
-      pcurve,
-      pcurve2: None,
-      pcurve_range: [0.0, span],
-      start_param: 0.0,
-      end_param: span,
-     });
+     pcurve_results.push((ei, fi, pcurve, span));
     }
+   }
+  }
+  // OCCT L916-931: Update edges with pcurves
+  // OCCT L917: BRep_Builder aBB (rcad: direct DS update)
+  for &(ei, fi, ref pcurve, span) in &pcurve_results {
+   // OCCT L926: if (aBPC.IsToUpdate())
+   if let Some(edge) = self.ds.edges.get_mut(ei) {
+    if edge.face_reps.iter().any(|r| r.face_idx == fi) { continue; }
+    // OCCT L928: double aTolE = BRep_Tool::Tolerance(aBPC.GetEdge())
+    #[allow(unused_variables)]
+    let a_tol_e = edge.geom_tol;
+    // OCCT L929: aBB.UpdateEdge(aBPC.GetEdge(), aBPC.GetCurve2d(), aBPC.GetFace(), aTolE)
+    edge.face_reps.push(DSCurveRepOnFace {
+     face_idx: fi,
+     pcurve: pcurve.clone(),
+     pcurve2: None,
+     pcurve_range: [0.0, span],
+     start_param: 0.0,
+     end_param: span,
+    });
+    // OCCT: UpdateEdge also updates edge tolerance (here aTolE == current, no change)
    }
   }
  }
@@ -502,15 +537,16 @@ impl<'a> PaveFiller<'a> {
  // OCCT L178-182: check arguments non-empty
  if !self.ds.faces.is_empty() { return; }
  // OCCT L196: Clear() — reset report and state
- self.my_report.clear();
+ self.clear();
  // OCCT L199-201: myDS = new BOPDS_DS; myDS->SetArguments(myArguments); myDS->Init(myFuzzyValue)
  let tol = fuzzy_tol.max(TOLERANCE_ABS);
  self.ds.fuzzy_tol = tol;
- load_topods_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
- self.ds.a_vertex_count = self.ds.vertices.len();
- self.ds.a_edge_count = self.ds.edges.len();
- self.ds.a_face_count = self.ds.faces.len();
- load_topods_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
+ // OCCT BOPDS_DS::Init: prepareVertices → prepareEdges → prepareFaces → prepareSolids
+ self.prepare_vertices(a, b);
+ self.prepare_edges(a, b);
+ self.prepare_faces(a, b);
+ self.prepare_solids(a, b);
+ // Post-processing (shared by all prepare steps)
  self.ds.compute_uv_boundaries();
  self.ds.build_face_reps();
  self.ds.nb_source_shapes = self.ds.shape_info.len();
@@ -521,9 +557,55 @@ impl<'a> PaveFiller<'a> {
  }
  // OCCT L213: SetNonDestructive()
  self.set_non_destructive_auto();
- }
+}
 
- /// Check whether to stop after the given stage name.
+/// OCCT BOPAlgo_PaveFiller::Clear (PaveFiller.cxx L185-192).
+/// Resets PaveFiller state while keeping the DS intact.
+pub fn clear(&mut self) {
+    self.my_report.clear();
+    self.fpbdone.clear();
+    self.verts_to_avoid_extension.clear();
+    self.my_increased_ss.clear();
+    self.a_mv_tol.clear();
+    self.a_dmv_lv.clear();
+    self.distances.clear();
+}
+
+/// OCCT BOPDS_DS::prepareVertices — traverse both operands and load all shapes into DS.
+/// Architecture diff: rcad loads all shape types in a single pass. Captures per-operand A counts
+/// between the two operand loads (matching original init() interleaving).
+fn prepare_vertices(&mut self, a: &topods::BRep, b: &topods::BRep) {
+    use crate::bopds::ds::topods_builder::load_vertices_from_brep;
+    load_vertices_from_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
+    // Capture A counts before loading B (original init() interleaving behavior)
+    self.ds.a_vertex_count = self.ds.vertices.len();
+    self.ds.a_edge_count = self.ds.edges.len();
+    self.ds.a_face_count = self.ds.faces.len();
+    load_vertices_from_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
+}
+
+/// OCCT BOPDS_DS::prepareEdges — structural no-op (loading done in prepareVertices).
+fn prepare_edges(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
+    use crate::bopds::ds::topods_builder::load_edges_from_brep;
+    load_edges_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
+    load_edges_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
+}
+
+/// OCCT BOPDS_DS::prepareFaces — structural no-op (loading done in prepareVertices).
+fn prepare_faces(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
+    use crate::bopds::ds::topods_builder::load_faces_from_brep;
+    load_faces_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
+    load_faces_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
+}
+
+/// OCCT BOPDS_DS::prepareSolids — structural no-op (loading done in prepareVertices).
+fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
+    use crate::bopds::ds::topods_builder::load_solids_from_brep;
+    load_solids_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
+    load_solids_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
+}
+
+/// Check whether to stop after the given stage name.
  /// Returns true if perform() should return early.
  fn check_stop(&self, stage: &str) -> bool {
      if self.stop_after.as_deref() == Some(stage) { return true; }

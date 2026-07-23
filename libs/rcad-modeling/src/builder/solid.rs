@@ -238,12 +238,19 @@ pub fn cone_brep(
     axis: DVec3,
     ref_dir: DVec3,
     base_radius: f64,
+    top_radius: f64,
     height: f64,
 ) -> Result<topods::BRep, BuildError> {
     let c = validate_point("center", center)?;
     let r = validate_positive("base_radius", base_radius)?;
     let h = validate_positive("height", height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
+
+    // When top_radius > 0, delegate to the conical frustum builder
+    if top_radius > 0.0 {
+        return make_conical_frustum_brep_topods(center, axis, ref_dir, base_radius, top_radius, height);
+    }
+
     use rcad_kernel::topods::Orientation;
     let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
     let p = |dx: f64, dy: f64, dz: f64| c + x_axis * dx + y_axis * dy + z_axis * dz;
@@ -279,9 +286,10 @@ pub fn make_cone_brep(
     axis: DVec3,
     ref_dir: DVec3,
     base_radius: f64,
+    top_radius: f64,
     height: f64,
 ) -> Result<topods::BRep, BuildError> {
-    cone_brep(center, axis, ref_dir, base_radius, height)
+    cone_brep(center, axis, ref_dir, base_radius, top_radius, height)
 }
 
 /// Right conical frustum (truncated cone), matching OCCT `pcone` when both bottom and top radii are positive.

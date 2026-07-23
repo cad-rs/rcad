@@ -727,3 +727,29 @@ mod tests {
         assert_eq!(ds.faces.len(), 7, "total faces = 7 (6 box + 1 sphere)");
     }
 }
+
+// ───── OCCT-aligned per-type loading functions (prepareVertices/Edges/Faces/Solids) ─────
+// Architecture diff: rcad loads all shape types in a single traversal (via load_topods_brep
+// inside load_vertices_from_brep). The remaining prepare methods are structural no-ops since
+// loading happens in the first pass. OCCT's BOPDS_DS Init uses four separate TopExp_Explorer
+// passes (one per shape type), but rcad's flat topods::BRep storage allows a single scan.
+
+/// OCCT BOPDS_DS::prepareVertices — load all shapes from a topods::BRep into DS.
+/// Architecture diff: rcad loads all shape types in a single pass.
+/// Captures per-operand A counts between the two operand loads.
+pub fn load_vertices_from_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
+    // Guard: skip if shapes already loaded (re-entrant call from prepare_edges/faces/solids)
+    if !ds.shape_info.is_empty() && ds.shape_info.iter().any(|si| si.rank == (if origin == ShapeOrigin::ShapeA { 0 } else { 1 })) {
+        return;
+    }
+    load_topods_brep(ds, brep, origin);
+}
+
+/// OCCT BOPDS_DS::prepareEdges — structural no-op (loading done in prepareVertices).
+pub fn load_edges_from_brep(_ds: &mut DS, _brep: &topods::BRep, _origin: ShapeOrigin) {}
+
+/// OCCT BOPDS_DS::prepareFaces — structural no-op (loading done in prepareVertices).
+pub fn load_faces_from_brep(_ds: &mut DS, _brep: &topods::BRep, _origin: ShapeOrigin) {}
+
+/// OCCT BOPDS_DS::prepareSolids — structural no-op (loading done in prepareVertices).
+pub fn load_solids_from_brep(_ds: &mut DS, _brep: &topods::BRep, _origin: ShapeOrigin) {}

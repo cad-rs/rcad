@@ -50,7 +50,7 @@ fn cylinder_face_count() {
 
 #[test]
 fn cone_face_count() {
-    let brep = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+    let brep = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 0.0, 2.0).unwrap();
     // Cone: bottom cap + lateral face = 2
     assert_eq!(face_count(&brep), 2, "cone must have 2 faces");
 }
