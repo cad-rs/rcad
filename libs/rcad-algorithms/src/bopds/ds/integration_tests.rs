@@ -1370,7 +1370,7 @@ fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glu
 /// Prints rcad stage snapshots for manual inspection.
 /// No assertions — see fuse_sphere_box_ref_topology for real OCCT topology check.
 #[test]
-fn builder_stage_ref_bfuse_simple_a1() {
+fn builder_diagnostic_bfuse_simple_a1() {
     let a = make_unit_sphere();
     let b = make_unit_box();
     let snaps = builder_stages(&a, &b, crate::builder::BooleanOpType::Union, false)
