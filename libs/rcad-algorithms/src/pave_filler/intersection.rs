@@ -468,6 +468,7 @@ impl<'a> super::PaveFiller<'a> {
  //   - No aMVCPB / aMPBLPB coupling (common blocks handled elsewhere)
  //   - Sequential execution (no BOPTools_Parallel)
 // OCCT BOPAlgo_PaveFiller_3.cxx L145: PerformEE
+ // OCCT BOPAlgo_PaveFiller_3.cxx L145-585: PerformEE
  pub(crate) fn perform_ee(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L147: FillShrunkData(EDGE, EDGE)
   self.fill_shrunk_data();
