@@ -29,49 +29,47 @@ struct StageExpect {
     interf_FF: usize,
 }
 
-/// Run PaveFiller for two shapes and check against OCCT reference.
+/// Run PaveFiller for two shapes and check all stages against OCCT reference.
 fn check_pf_stages(
     a: &topods::BRep, b: &topods::BRep,
     label: &str, stages: &[StageExpect],
 ) {
-    // Run PaveFiller
-    let mut ds = DS::new_empty();
-    let mut brep = topods::BRep::new();
-    {
-        let mut filler = PaveFiller::new(&mut ds);
-        filler.brep = Some(&mut brep);
-        filler.set_run_parallel(false);
-        filler.configure_fuzzy(TOLERANCE_ABS);
-        filler.set_non_destructive(false);
-        filler.configure_glue(false, TOLERANCE_ABS);
-        filler.set_use_obb(false);
-        filler.stop_after = Some("after_Init".into());
-        filler.perform(a, b);
-    }
+    for (si, expected) in stages.iter().enumerate() {
+        let mut ds = DS::new_empty();
+        let mut brep = topods::BRep::new();
+        {
+            let mut filler = PaveFiller::new(&mut ds);
+            filler.brep = Some(&mut brep);
+            filler.set_run_parallel(false);
+            filler.configure_fuzzy(TOLERANCE_ABS);
+            filler.set_non_destructive(false);
+            filler.configure_glue(false, TOLERANCE_ABS);
+            filler.set_use_obb(false);
+            filler.stop_after = Some(expected.stage_name.into());
+            filler.perform(a, b);
+        }
 
-    // Check Init DS state (match against _init_direct entry)
-    // stop_after ensures we check before any intersection processing.
-    if let Some(init) = stages.first() {
-        assert_eq!(ds.vertices.len(), init.nV,
-            "{}: Init nV mismatch", label);
-        assert_eq!(ds.edges.len(), init.nE,
-            "{}: Init nE mismatch", label);
-        assert_eq!(ds.faces.len(), init.nF,
-            "{}: Init nF mismatch", label);
-        assert_eq!(ds.intersection_curves.len(), init.nIC,
-            "{}: Init nIC mismatch", label);
-        assert_eq!(ds.interf_vv.len(), init.interf_VV,
-            "{}: Init VV mismatch", label);
-        assert_eq!(ds.interf_ve.len(), init.interf_VE,
-            "{}: Init VE mismatch", label);
-        assert_eq!(ds.interf_vf.len(), init.interf_VF,
-            "{}: Init VF mismatch", label);
-        assert_eq!(ds.interf_ee.len(), init.interf_EE,
-            "{}: Init EE mismatch", label);
-        assert_eq!(ds.interf_ef.len(), init.interf_EF,
-            "{}: Init EF mismatch", label);
-        assert_eq!(ds.interf_ff.len(), init.interf_FF,
-            "{}: Init FF mismatch", label);
+        // Check DS state matches OCCT reference for this stage
+        assert_eq!(ds.vertices.len(), expected.nV,
+            "{} [{}] nV mismatch: got {}, expected {}", label, expected.stage_name, ds.vertices.len(), expected.nV);
+        assert_eq!(ds.edges.len(), expected.nE,
+            "{} [{}] nE mismatch: got {}, expected {}", label, expected.stage_name, ds.edges.len(), expected.nE);
+        assert_eq!(ds.faces.len(), expected.nF,
+            "{} [{}] nF mismatch: got {}, expected {}", label, expected.stage_name, ds.faces.len(), expected.nF);
+        assert_eq!(ds.intersection_curves.len(), expected.nIC,
+            "{} [{}] nIC mismatch: got {}, expected {}", label, expected.stage_name, ds.intersection_curves.len(), expected.nIC);
+        assert_eq!(ds.interf_vv.len(), expected.interf_VV,
+            "{} [{}] VV mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_vv.len(), expected.interf_VV);
+        assert_eq!(ds.interf_ve.len(), expected.interf_VE,
+            "{} [{}] VE mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_ve.len(), expected.interf_VE);
+        assert_eq!(ds.interf_vf.len(), expected.interf_VF,
+            "{} [{}] VF mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_vf.len(), expected.interf_VF);
+        assert_eq!(ds.interf_ee.len(), expected.interf_EE,
+            "{} [{}] EE mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_ee.len(), expected.interf_EE);
+        assert_eq!(ds.interf_ef.len(), expected.interf_EF,
+            "{} [{}] EF mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_ef.len(), expected.interf_EF);
+        assert_eq!(ds.interf_ff.len(), expected.interf_FF,
+            "{} [{}] FF mismatch: got {}, expected {}", label, expected.stage_name, ds.interf_ff.len(), expected.interf_FF);
     }
 }
 
@@ -96,22 +94,6 @@ fn pf_stage_box_x_box_rotated() {
 
     // OCCT reference stages
     let stages: &[StageExpect] = &[
-        StageExpect {
-            stage_name: "after_Init",
-            nV: 16,
-            nE: 24,
-            nF: 12,
-            nNewV: 0,
-            nNewE: 0,
-            nIC: 0,
-            nPB: 0,
-            interf_VV: 0,
-            interf_VE: 0,
-            interf_VF: 0,
-            interf_EE: 0,
-            interf_EF: 0,
-            interf_FF: 0,
-        },
         StageExpect {
             stage_name: "after_Init",
             nV: 16,
