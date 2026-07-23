@@ -52,26 +52,75 @@ fn check_pf_stages(
     // Check Init DS state (match against _init_direct entry)
     // stop_after ensures we check before any intersection processing.
     if let Some(init) = stages.first() {
-        assert_eq!(ds.vertices.len(), init.nV,
+        let nV = ds.vertices.len();
+        let nE = ds.edges.len();
+        let nF = ds.faces.len();
+        let nIC = ds.intersection_curves.len();
+        let nVV = ds.interf_vv.len();
+        let nVE = ds.interf_ve.len();
+        let nVF = ds.interf_vf.len();
+        let nEE = ds.interf_ee.len();
+        let nEF = ds.interf_ef.len();
+        let nFF = ds.interf_ff.len();
+        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
+            init.stage_name, nV, init.nV, nE, init.nE, nF, init.nF, nIC, init.nIC,
+            nVV, init.interf_VV, nVE, init.interf_VE, nVF, init.interf_VF,
+            nEE, init.interf_EE, nEF, init.interf_EF, nFF, init.interf_FF);
+        assert_eq!(nV, init.nV,
             "{}: Init nV mismatch", label);
-        assert_eq!(ds.edges.len(), init.nE,
+        assert_eq!(nE, init.nE,
             "{}: Init nE mismatch", label);
-        assert_eq!(ds.faces.len(), init.nF,
+        assert_eq!(nF, init.nF,
             "{}: Init nF mismatch", label);
-        assert_eq!(ds.intersection_curves.len(), init.nIC,
+        assert_eq!(nIC, init.nIC,
             "{}: Init nIC mismatch", label);
-        assert_eq!(ds.interf_vv.len(), init.interf_VV,
+        assert_eq!(nVV, init.interf_VV,
             "{}: Init VV mismatch", label);
-        assert_eq!(ds.interf_ve.len(), init.interf_VE,
+        assert_eq!(nVE, init.interf_VE,
             "{}: Init VE mismatch", label);
-        assert_eq!(ds.interf_vf.len(), init.interf_VF,
+        assert_eq!(nVF, init.interf_VF,
             "{}: Init VF mismatch", label);
-        assert_eq!(ds.interf_ee.len(), init.interf_EE,
+        assert_eq!(nEE, init.interf_EE,
             "{}: Init EE mismatch", label);
-        assert_eq!(ds.interf_ef.len(), init.interf_EF,
+        assert_eq!(nEF, init.interf_EF,
             "{}: Init EF mismatch", label);
-        assert_eq!(ds.interf_ff.len(), init.interf_FF,
+        assert_eq!(nFF, init.interf_FF,
             "{}: Init FF mismatch", label);
+    }
+    // Additional: print comparison for all stages with --nocapture
+    eprintln!("  --- additional stages ---");
+    for s in stages {
+        let mut ds2 = DS::new_empty();
+        let mut brep2 = topods::BRep::new();
+        {
+            let mut f2 = PaveFiller::new(&mut ds2);
+            f2.brep = Some(&mut brep2);
+            f2.set_run_parallel(false);
+            f2.configure_fuzzy(TOLERANCE_ABS);
+            f2.set_non_destructive(false);
+            f2.configure_glue(false, TOLERANCE_ABS);
+            f2.set_use_obb(false);
+            f2.stop_after = Some(s.stage_name.into());
+            f2.perform(a, b);
+        }
+        let nV2 = ds2.vertices.len(); let nE2 = ds2.edges.len(); let nF2 = ds2.faces.len();
+        let nIC2 = ds2.intersection_curves.len();
+        let nVV2 = ds2.interf_vv.len(); let nVE2 = ds2.interf_ve.len(); let nVF2 = ds2.interf_vf.len();
+        let nEE2 = ds2.interf_ee.len(); let nEF2 = ds2.interf_ef.len(); let nFF2 = ds2.interf_ff.len();
+        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
+            s.stage_name, nV2, s.nV, nE2, s.nE, nF2, s.nF, nIC2, s.nIC,
+            nVV2, s.interf_VV, nVE2, s.interf_VE, nVF2, s.interf_VF,
+            nEE2, s.interf_EE, nEF2, s.interf_EF, nFF2, s.interf_FF);
+        assert_eq!(nV2, s.nV, "{} [{}] nV", label, s.stage_name);
+        assert_eq!(nE2, s.nE, "{} [{}] nE", label, s.stage_name);
+        assert_eq!(nF2, s.nF, "{} [{}] nF", label, s.stage_name);
+        assert_eq!(nIC2, s.nIC, "{} [{}] nIC", label, s.stage_name);
+        assert_eq!(nVV2, s.interf_VV, "{} [{}] VV", label, s.stage_name);
+        assert_eq!(nVE2, s.interf_VE, "{} [{}] VE", label, s.stage_name);
+        assert_eq!(nVF2, s.interf_VF, "{} [{}] VF", label, s.stage_name);
+        assert_eq!(nEE2, s.interf_EE, "{} [{}] EE", label, s.stage_name);
+        assert_eq!(nEF2, s.interf_EF, "{} [{}] EF", label, s.stage_name);
+        assert_eq!(nFF2, s.interf_FF, "{} [{}] FF", label, s.stage_name);
     }
 }
 
