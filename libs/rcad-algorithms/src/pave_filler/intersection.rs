@@ -247,6 +247,7 @@ impl<'a> super::PaveFiller<'a> {
  // Groups cross-operand (nV, nE) pairs by edge, then calls IntersectVE.
  // rcad: receives pre-computed cross-operand pairs from BOPDS_Iterator.
 // OCCT BOPAlgo_PaveFiller_2.cxx L141: PerformVE
+ // OCCT BOPAlgo_PaveFiller_2.cxx L141-207: PerformVE
  pub(crate) fn perform_ve(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L143: FillShrunkData(VERTEX, EDGE)
   self.fill_shrunk_data();
