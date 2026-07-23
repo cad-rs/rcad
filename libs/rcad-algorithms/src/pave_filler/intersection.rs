@@ -713,8 +713,7 @@ impl<'a> super::PaveFiller<'a> {
  if (edge_t_range[1] - prev).abs() > tol { ranges.push([prev, edge_t_range[1]]); }
  ranges
  }
- /// OCCT PaveFiller_4.cxx L139-301: PerformVF
-/// OCCT BOPAlgo_PaveFiller_4.cxx L139: PerformVF
+// OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L141: FillShrunkData(VERTEX, FACE) + myIterator->Initialize(VERTEX, FACE)
  self.fill_shrunk_data();
