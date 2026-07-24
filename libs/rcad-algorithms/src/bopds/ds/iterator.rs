@@ -184,6 +184,8 @@ impl<'a> BOPDS_Iterator<'a> {
                     if !v_abb.intersects(&e_abb) {
                         continue;
                     }
+                } else {
+                    continue; // edge has no valid AABB (type mismatch or missing)
                 }
                 add_pair(vi, ei, ShapeType::Vertex, ShapeType::Edge);
             }

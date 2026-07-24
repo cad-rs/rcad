@@ -128,16 +128,16 @@ fn init_shape_topo(
                 location: 0,
             }, Some(ts.clone()));
             v_map.insert(ti, vi);
-            debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1,
-                "ShapeInfo must be 1:1 with shapes[]");
-            ds.shape_info.push(ShapeInfo {
-                shape_type: rcad_kernel::topods::ShapeType::Vertex,
-                sub_shapes: Vec::new(),
-                flag: -1, reference: -1, has_brep: true,
-                box_min: Some(vd.point), box_max: Some(vd.point),
-                box_gap: vd.tolerance + ds.fuzzy_tol * 0.5,
-                is_new: false, rank, source_idx: vi,
-            });
+            debug_assert_eq!(ds.shape_info.len(), ds.shapes.len(),
+                "ShapeInfo must be 1:1 with shapes[] (push_vertex now creates both)");
+            // push_vertex already created the ShapeInfo (keeps 1:1). Update it
+            // with source-vertex data (not-new, proper rank, BRep box_gap).
+            let last_si = ds.shape_info.len() - 1;
+            ds.shape_info[last_si].has_brep = true;
+            ds.shape_info[last_si].is_new = false;
+            ds.shape_info[last_si].rank = rank;
+            ds.shape_info[last_si].source_idx = vi;
+            ds.shape_info[last_si].box_gap = vd.tolerance + ds.fuzzy_tol * 0.5;
         }
         topods::TShape::Edge(ed) => {
             init_shape_topo(ds, brep, ed.first.index, origin, rank, visited, v_map, e_map, f_map, w_map, shell_map, solid_map, compsolid_map, shell_counter, solid_counter);

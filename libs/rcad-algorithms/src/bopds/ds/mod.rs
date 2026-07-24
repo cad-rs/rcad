@@ -193,10 +193,12 @@ impl DS {
     }
 
     /// OCCT: myDS->ChangePaveBlocks(nE) — lazy init via HasReference check.
-    /// rcad: auto-init empty PB arrays (matching OCCT lazy InitPaveBlocks).
+    /// OCCT BOPDS_DS.cxx L425-431: if (!HasReference()) InitPaveBlocks(theIndex).
     pub fn edge_pave_blocks_mut(&mut self, ei: usize) -> &mut Vec<crate::bopds::pave::SharedPB> {
         if ei < self.edges.len() {
-            if self.edges[ei].pave_blocks.is_empty() {
+            let si = *self.edge_shape_idx.get(ei).unwrap_or(&usize::MAX);
+            let has_ref = si < self.shape_info.len() && self.shape_info[si].has_reference();
+            if !has_ref {
                 self.init_pave_blocks_for_edge(ei);
             }
             &mut self.edges[ei].pave_blocks
@@ -447,6 +449,20 @@ impl DS {
             },
         ))));
         self.vertex_shape_idx.push(self.shapes.len() - 1);
+        // OCCT BOPDS_DS::Append: push ShapeInfo for this vertex (keep 1:1 with shapes[]).
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Vertex,
+            sub_shapes: Vec::new(),
+            flag: -1,
+            reference: -1,
+            has_brep: true,
+            box_min: Some(point),
+            box_max: Some(point),
+            box_gap: geom_tol + self.fuzzy_tol * 0.5,
+            is_new: true,
+            rank: 0,
+            source_idx: usize::MAX,
+        });
         vi
     }
 
@@ -625,7 +641,7 @@ impl DS {
             shape_type: rcad_kernel::topods::ShapeType::Edge,
             sub_shapes: vec![sv_si, ev_si],
             flag: -1,
-            reference: ei as i64,
+            reference: -1, // OCCT BOPDS_DS: initialized without reference; set by InitPaveBlocks
             has_brep: true,
             box_min: Some(bb_min - DVec3::splat(e_tol)),
             box_max: Some(bb_max + DVec3::splat(e_tol)),
@@ -887,11 +903,12 @@ impl DS {
 
  // ----- PaveBlock pool accessors (BOPDS_DS.hxx L156-177) -----
 
- ///  ?BOPDS_DS::HasPaveBlocks (hxx:162-164).
- /// Returns true if the edge with the given index has PaveBlocks.
- pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
- self.edges.get(edge_idx).map_or(false, |e| !e.pave_blocks.is_empty())
- }
+///  BOPDS_DS::HasPaveBlocks (hxx:162-164, cxx L708: ShapeInfo(theIndex).HasReference()).
+/// Returns true if the edge with the given index has PaveBlocks reference set.
+pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
+    let si = if edge_idx < self.edge_shape_idx.len() { self.edge_shape_idx[edge_idx] } else { edge_idx };
+    si < self.shape_info.len() && self.shape_info[si].has_reference()
+}
 
  ///  ?BOPDS_DS::ChangePaveBlocks (hxx:172-174).
  /// Returns a mutable reference to the PaveBlocks list for an edge.

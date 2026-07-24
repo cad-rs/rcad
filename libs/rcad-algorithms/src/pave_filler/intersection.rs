@@ -646,12 +646,16 @@ impl<'a> super::PaveFiller<'a> {
       b_is_pb_splittable1,
       b_is_pb_splittable2,
      });
+     if nE1 == 3 && nE2 == 15 {
+     }
     }
    }
   }
 
   // OCCT L269: aNbEdgeEdge = aVEdgeEdge.Length()
   let a_nb_edge_edge = a_vee.len();
+   for k in 0..a_nb_edge_edge {
+   }
 
   // OCCT L271-278: SetProgressRange + BOPTools_Parallel::Perform
   // rcad architecture difference: sequential execution (no BOPTools_Parallel)
@@ -668,7 +672,6 @@ impl<'a> super::PaveFiller<'a> {
    let task = &a_vee[k];
    let nE1 = task.nE1;
    let nE2 = task.nE2;
-
    // Use PB's FULL range [aT11, aT12] for intersection computation
    // (OCCT BOPAlgo_EdgeEdge uses the full curve geometry, not shrunk range)
    let sr1 = [task.aT11.min(task.aT12), task.aT11.max(task.aT12)];
@@ -740,7 +743,6 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // OCCT L529-551: coincident/collinear edges — CommonPart EDGE type
    // rcad: collinear lines produce point-like hits from intersect_line_line
    // (midpoint of overlap).  OCCT's BOPAlgo_EdgeEdge produces EDGE-type
    // CommonParts which are handled by the case TopAbs_EDGE processing.
@@ -748,17 +750,41 @@ impl<'a> super::PaveFiller<'a> {
    // InterfEE w/o new vertex (HasSameBounds → aMPBLPB).
    // Since intersect_line_line returns point-like hits for overlapping
    // collinear ranges, skip them here (match OCCT: no VERTEX created).
+   if nE1 == 3 && nE2 == 15 {
+   }
    let b_collinear = match (&e1_curve, &e2_curve) {
     (Curve3::Line(l1), Curve3::Line(l2)) => {
      let cross = l1.direction.cross(l2.direction);
-     cross.length() <= tol
+     cross.length_squared() <= tol * tol
      && (l2.origin - l1.origin).cross(l1.direction).length() <= tol
     }
     _ => false,
    };
    if b_collinear {
-    // OCCT L530+535-540: EDGE type with !HasSameBounds → skip
-    // (no InterfEE, no vertex)
+    // OCCT L529-550: process EDGE-type CommonPart
+    // If HasSameBounds (PBs have same range), create InterfEE + FillMap.
+    // Otherwise skip (no InterfEE, no vertex).
+    let pb1_range = [task.aT11.min(task.aT12), task.aT11.max(task.aT12)];
+    let pb2_range = [task.aT21.min(task.aT22), task.aT21.max(task.aT22)];
+    let b_has_same_bounds =
+        (pb1_range[0] - pb2_range[0]).abs() <= crate::tolerance::TOLERANCE_ABS
+        && (pb1_range[1] - pb2_range[1]).abs() <= crate::tolerance::TOLERANCE_ABS;
+    if b_has_same_bounds {
+        // OCCT L541-549: create InterfEE (no new vertex — edges already share bounds).
+        self.ds.interf_ee.push(InterferenceEE {
+            e1: nE1, e2: nE2,
+            point: self.ds.edges[nE1].curve.point_at(pb1_range[0]),
+            param1: pb1_range[0],
+            param2: pb2_range[0],
+            new_vertex: usize::MAX,
+        });
+        a_m_edges.insert(nE1);
+        a_m_edges.insert(nE2);
+        // OCCT L549: BOPAlgo_Tools::FillMap(aPB1, aPB2, aMPBLPB) → PerformCommonBlocks
+        // rcad: split_pave_blocks handles common blocks via a_cb_idx.
+        // The InterfEE + a_m_edges entries ensure edges are processed by
+        // split_pave_blocks; CommonBlock creation is a separate alignment step.
+    }
     continue;
    }
 
@@ -792,12 +818,13 @@ impl<'a> super::PaveFiller<'a> {
 
     // OCCT L370-373: if (!bIsPBSplittable1 || !bIsPBSplittable2) continue
     if !task.b_is_pb_splittable1 || !task.b_is_pb_splittable2 {
+     if nE1 == 3 && nE2 == 15 {
+     }
      continue;
     }
 
     // OCCT L375-377: bIsOnPave[4], nV[4], j
     // OCCT L378: TopoDS_Vertex aVnew;
-    // OCCT L381: IntTools_Tools::VertexParameters(aCPart, aT1, aT2);
     //   aT1, aT2 are already from the hit
     // OCCT L382: aTol = Precision::Confusion();
     let a_tol_confusion = crate::tolerance::CONFUSION;
@@ -821,13 +848,14 @@ impl<'a> super::PaveFiller<'a> {
 
     // OCCT L399-403: if both sides on pave -> continue
     if (b0 && b2) || (b0 && b3) || (b1 && b2) || (b1 && b3) {
+     if nE1 == 3 && nE2 == 15 {
+     }
      continue;
     }
 
     // OCCT L405-417: ForceInterfVE for individual on-pave
     // rcad: skipped (architecture difference: ForceInterfVE handled separately)
 
-    // OCCT L419: BOPTools_AlgoTools::MakeNewVertex(aE1, aT1, aE2, aT2, aVnew);
     // rcad: ds.add_vertex(point)
     // OCCT L420: const gp_Pnt aPnew = BRep_Tool::Pnt(aVnew);
 
@@ -1836,37 +1864,21 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
      is_internal: true,
      location: 0,
    }, None);
-   // Ensure shape_info for this vertex (push_vertex with None skips it).
+   // push_vertex now creates ShapeInfo (keeps shapes:shape_info 1:1).
+   // Update the SD vertex box/gap with merged values.
    if n_v < self.ds.vertex_shape_idx.len() {
      let si = self.ds.vertex_shape_idx[n_v];
-     if si >= self.ds.shape_info.len() {
-       let mut new_si = crate::bopds::ds::types::ShapeInfo::new(
-         rcad_kernel::topods::ShapeType::Vertex);
-       new_si.is_new = true;
-       new_si.rank = 0;
-       new_si.box_min = Some(centroid);
-       new_si.box_max = Some(centroid);
-       new_si.box_gap = bounding_tol + TOLERANCE_ABS;
-       self.ds.shape_info.push(new_si);
+     if let Some(si_mut) = self.ds.shape_info.get_mut(si) {
+       si_mut.box_min = Some(centroid);
+       si_mut.box_max = Some(centroid);
+       si_mut.box_gap = bounding_tol + TOLERANCE_ABS;
      }
-   } else {
-     let mut new_si = crate::bopds::ds::types::ShapeInfo::new(
-       rcad_kernel::topods::ShapeType::Vertex);
-     new_si.is_new = true;
-     new_si.rank = 0;
-     new_si.box_min = Some(centroid);
-     new_si.box_max = Some(centroid);
-     new_si.box_gap = bounding_tol + TOLERANCE_ABS;
-     let si = self.ds.shape_info.len();
-     self.ds.shape_info.push(new_si);
-     while self.ds.vertex_shape_idx.len() <= n_v {
-       self.ds.vertex_shape_idx.push(usize::MAX);
-     }
-     self.ds.vertex_shape_idx[n_v] = si;
    }
  }
- // L181-184: update bounding box for the SD vertex (both nSD and new)
- if let Some(si_mut) = self.ds.shape_info.get_mut(n_v) {
+ // L181-184: update bounding box for the SD vertex (both nSD and new).
+ // Use shapes-index si (not vertex index n_v) to stay 1:1 with shape_info.
+ let si = self.ds.vertex_shape_idx.get(n_v).copied().unwrap_or(usize::MAX);
+ if let Some(si_mut) = self.ds.shape_info.get_mut(si) {
    si_mut.box_min = Some(centroid);
    si_mut.box_max = Some(centroid);
    si_mut.box_gap = bounding_tol + TOLERANCE_ABS;
