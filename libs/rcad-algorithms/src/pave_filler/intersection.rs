@@ -630,14 +630,6 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // rcad: additional skip conditions (OCCT applies these earlier)
-   if self.ds.has_interf_ee(nE1, nE2) {
-    continue;
-   }
-   if self.ds.is_edge_degenerated(nE1) || self.ds.is_edge_degenerated(nE2) {
-    continue;
-   }
-
    // OCCT L215-266: PB pair iteration — using get_pb_box for AABB + cache (OCCT L914-955)
    for pb1 in a_lpb1.iter() {
     let mut aT11 = 0.0;
