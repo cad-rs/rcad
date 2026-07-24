@@ -470,6 +470,7 @@ impl EdgeEdgeIntersector {
             std::mem::swap(&mut self.edge1, &mut self.edge2);
             std::mem::swap(&mut self.curve1, &mut self.curve2);
             std::mem::swap(&mut self.range1, &mut self.range2);
+            std::mem::swap(&mut self.edge_tol1, &mut self.edge_tol2);
             self.swapped = true;
         }
 
