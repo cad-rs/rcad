@@ -28,11 +28,12 @@ pub struct CommonPrt {
 
 impl CommonPrt {
     /// Create a VERTEX-type common part (point intersection).
-    pub fn new_vertex(t1: f64, t2: f64, p: DVec3) -> Self {
+    pub fn new_vertex(t1: f64, t2: f64, p: DVec3,
+        range1: [f64; 2], ranges2: Vec<[f64; 2]>) -> Self {
         Self {
             is_edge_type: false,
-            range1: [t1, t1],
-            ranges2: vec![[t2, t2]],
+            range1,
+            ranges2,
             vertex_param1: t1,
             vertex_param2: t2,
             bounding_point1: p,
@@ -1002,7 +1003,9 @@ impl EdgeEdgeIntersector {
         } else {
             let t1 = if self.swapped { t21 } else { t11 };
             let t2 = if self.swapped { t11 } else { t21 };
-            CommonPrt::new_vertex(t1, t2, p1)
+            let r1 = if self.swapped { [t21, t22] } else { [t11, t12] };
+            let r2 = vec![if self.swapped { [t11, t12] } else { [t21, t22] }];
+            CommonPrt::new_vertex(t1, t2, p1, r1, r2)
         };
         self.common_parts.push(cp);
     }

@@ -733,10 +733,10 @@ impl<'a> super::PaveFiller<'a> {
    drop(edge1);
    drop(edge2);
    // OCCT IntTools_EdgeEdge computes CommonParts from the curve geometry.
-   let hits: Vec<(f64, f64, DVec3)> = match (&e1_curve, &e2_curve) {
+   let hits: Vec<(f64, f64, DVec3, [f64; 2])> = match (&e1_curve, &e2_curve) {
     (Curve3::Line(l1), Curve3::Line(l2)) => {
      intersect_line_line(l1, sr1, l2, sr2, tol)
-     .into_iter().map(|(t1, t2, p)| (t1, t2, p)).collect()
+     .into_iter().map(|(t1, t2, p)| (t1, t2, p, [t1, t1])).collect()
     }
     _ => {
      use crate::inttools::edge_edge::EdgeEdgeIntersector;
@@ -745,7 +745,7 @@ impl<'a> super::PaveFiller<'a> {
      ee.set_fuzzy_value(tol);
      ee.perform();
      ee.common_parts().iter().filter_map(|cp| {
-      Some((cp.vertex_param1, cp.vertex_param2, cp.bounding_point1))
+      Some((cp.vertex_param1, cp.vertex_param2, cp.bounding_point1, cp.range1))
      }).collect()
     }
    };
@@ -783,7 +783,7 @@ impl<'a> super::PaveFiller<'a> {
    // OCCT L355: for (i = 1; i <= aNbCPrts; ++i)
    for i in 0..a_nb_cprts {
     // OCCT L357-361: get CommonPart
-    let (a_t1, a_t2, a_pnew) = hits[i];
+    let (a_t1, a_t2, a_pnew, a_cr1) = hits[i];
 
     // OCCT L366-368: aType = aCPart.Type()
     // rcad: determine type based on collinearity
@@ -895,11 +895,9 @@ impl<'a> super::PaveFiller<'a> {
     let mut a_tol_vnew = tol;
 
     // OCCT L455-466: bAnalytical tolerance adjustment
+    // OCCT: aCR1 = aCPart.Range1(); aTolMin = (aCR1.Last() - aCR1.First()) / 2.
     if b_analytical {
-     let a_tol_min = match &e1_curve {
-      Curve3::Line(_) => (a_r11[1] - a_r11[0]).abs() * 0.5,
-      _ => (a_r21[1] - a_r21[0]).abs() * 0.5,
-     };
+     let a_tol_min = (a_cr1[1] - a_cr1[0]).abs() * 0.5;
      if a_tol_min > a_tol_vnew {
       a_tol_vnew = a_tol_min;
      }
