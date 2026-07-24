@@ -180,32 +180,65 @@ impl Context {
     ///   ProjectionFailed (-3): projection algorithm could not find any point
     ///   DistanceTooLarge (-4): distance > tolV + tolE + max(fuzz, Precision::Confusion())
     /// Tolerance in the success case = distance + edge_tolerance (matching OCCT).
+    ///
+    /// OCCT source lines 499-542:
+    /// ```cpp
+    /// int IntTools_Context::ComputeVE(const TopoDS_Vertex& theV,
+    ///                                 const TopoDS_Edge&   theE,
+    ///                                 double&              theT,
+    ///                                 double&              theTol,
+    ///                                 const double         theFuzz)
+    /// {
+    ///   if (BRep_Tool::Degenerated(theE))        { return -1; }
+    ///   if (!BRep_Tool::IsGeometric(theE))       { return -2; }
+    ///   double aDist, aTolV, aTolE, aTolSum; int aNbProj; gp_Pnt aP;
+    ///   aP = BRep_Tool::Pnt(theV);
+    ///   GeomAPI_ProjectPointOnCurve& aProjector = ProjPC(theE);
+    ///   aProjector.Perform(aP);
+    ///   aNbProj = aProjector.NbPoints();
+    ///   if (!aNbProj)                            { return -3; }
+    ///   aDist = aProjector.LowerDistance();
+    ///   aTolV   = BRep_Tool::Tolerance(theV);
+    ///   aTolE   = BRep_Tool::Tolerance(theE);
+    ///   aTolSum = aTolV + aTolE + std::max(theFuzz, Precision::Confusion());
+    ///   theTol = aDist + aTolE;
+    ///   theT   = aProjector.LowerDistanceParameter();
+    ///   std::cerr << "[OCCT_VE] pt=" << theT << " V=(" << aP.X() << ","
+    ///             << aP.Y() << "," << aP.Z() << ") dist=" << aDist
+    ///             << " tolSum=" << aTolSum << " tolV=" << aTolV
+    ///             << " tolE=" << aTolE << std::endl;
+    ///   if (aDist > aTolSum)                     { return -4; }
+    ///   return 0;
+    /// }
+    /// ```
     pub fn compute_ve(&mut self, ds: &DS, vi: usize, ei: usize, fuzz: f64) -> Result<VeResult, VeError> {
         use crate::tolerance::CONFUSION;
-        // -1: degenerated edge (OCCT BRep_Tool::Degenerated)
+        // L505-508: OCCT BRep_Tool::Degenerated
         if ds.is_edge_degenerated(ei) { return Err(VeError::DegeneratedEdge); }
-        // -2: not geometric (OCCT BRep_Tool::IsGeometric)
+        // L509-512: OCCT BRep_Tool::IsGeometric
         if !ds.edge_is_geometric(ei) { return Err(VeError::NotGeometric); }
-        // Project vertex point onto edge curve (OCCT ProjPC + Perform L519-520)
+        // L513-517: aP = BRep_Tool::Pnt(theV)
         let p = ds.vertex_point(vi);
+        // L519-526: ProjPC(theE).Perform(aP) -> check NbPoints
         let proj = self.proj_pc(ds, ei, p).ok_or(VeError::ProjectionFailed)?;
-        let t = proj.0;
+        // L528: aDist = aProjector.LowerDistance()
         let dist = proj.2;
-        // OCCT L530-536: tolerance sum + compute result
+        // L530-532: aTolV, aTolE, aTolSum
         let tol_v = ds.vertex_tolerance(vi);
         let tol_e = ds.edge_tolerance(ei);
         let tol_sum = tol_v + tol_e + fuzz.max(CONFUSION);
-        // OCCT L535: theTol = aDist + aTolE
+        // L534: theTol = aDist + aTolE
         let new_tol = dist + tol_e;
-        // OCCT L536-540: check distance against tolerance sum
+        // L535: theT = aProjector.LowerDistanceParameter()
+        let t = proj.0;
+        // L536: OCCT debug trace (always on)
+        eprintln!("[OCCT_VE] pt={} V=({},{},{}) dist={} tolSum={} tolV={} tolE={}",
+            t, p.x, p.y, p.z, dist, tol_sum, tol_v, tol_e);
+        // L537-539: distance check
         if dist > tol_sum {
-            if std::env::var("RCAD_DEBUG_VE").is_ok() {
-                let pt_v = ds.vertex_point(vi);
-                eprintln!("[VE_DIST] nV={} nE={} dist={:.12e} tol_sum={:.12e} tolV={:.12e} tolE={:.12e} fuzz={:.12e} V=({:.12e},{:.12e},{:.12e})",
-                    vi, ei, dist, tol_sum, tol_v, tol_e, fuzz, pt_v.x, pt_v.y, pt_v.z);
-            }
             return Err(VeError::DistanceTooLarge);
         }
+        // L541: return 0
         Ok(VeResult { param: t, tolerance: new_tol })
     }
 

@@ -329,3 +329,103 @@ pub fn shrunk_range(
     Some([ts1, ts2])
 }
 
+/// OCCT BRepLib::FindValidRange (BRepLib_1.cxx L173-258), Adaptor3d_Curve overload.
+///
+/// Find a valid (shrunk) sub-range `[theFirst, theLast]` ⊆ `[theParV1, theParV2]`
+/// such that the curve points at theFirst and theLast are outside the tolerance
+/// spheres of their respective endpoint vertices, while staying as close as
+/// possible to the original endpoints.
+///
+/// # Arguments
+/// * `curve` - The 3D curve.
+/// * `the_tol_e` - Edge tolerance.
+/// * `the_par_v1` - Parameter of the first (start) vertex on curve.
+/// * `the_pnt_v1` - 3D point of the first vertex.
+/// * `the_tol_v1` - Tolerance of the first vertex.
+/// * `the_par_v2` - Parameter of the second (end) vertex on curve.
+/// * `the_pnt_v2` - 3D point of the second vertex.
+/// * `the_tol_v2` - Tolerance of the second vertex.
+///
+/// # Returns
+/// * `Some([the_first, the_last])` — valid range with `the_first < the_last`.
+/// * `None` — no valid range exists (micro-edge or overlapping tolerance spheres).
+///
+/// OCCT: BRepLib_1.cxx L173-258
+pub fn find_valid_range(
+    curve: &Curve3,
+    the_tol_e: f64,
+    the_par_v1: f64,
+    the_pnt_v1: DVec3,
+    the_tol_v1: f64,
+    the_par_v2: f64,
+    the_pnt_v2: DVec3,
+    the_tol_v2: f64,
+) -> Option<[f64; 2]> {
+    // OCCT L184-187: if range < PConfusion → degenerate
+    if the_par_v2 - the_par_v1 < PCONFUSION {
+        return None;
+    }
+
+    let is_inf_par_v1 = is_infinite_value(the_par_v1);
+    let is_inf_par_v2 = is_infinite_value(the_par_v2);
+
+    // OCCT L191-199: aMaxPar = max(|theParV1|, |theParV2|) when finite
+    let a_max_par = {
+        let mut m = 0.0;
+        if !is_inf_par_v1 {
+            m = the_par_v1.abs();
+        }
+        if !is_inf_par_v2 {
+            m = m.max(the_par_v2.abs());
+        }
+        m
+    };
+
+    // OCCT L201-202:
+    // anEps = max(curve.Resolution(theTolE) * 0.1, Epsilon(aMaxPar), PConfusion())
+    let an_eps = {
+        let res = curve_resolution_global(curve, the_par_v1, the_par_v2, the_tol_e) * 0.1;
+        let eps = parametric_epsilon(a_max_par);
+        res.max(eps).max(PCONFUSION)
+    };
+
+    // OCCT L204-225: find theFirst (first vertex side)
+    let the_first = if is_inf_par_v1 {
+        the_par_v1
+    } else {
+        match find_nearest_valid_point(curve, the_par_v1, the_par_v2, true, the_pnt_v1, the_tol_v1, an_eps) {
+            Some(val) => {
+                // OCCT L221-224: if (theParV2 - theFirst < anEps) → too close to other end
+                if the_par_v2 - val < an_eps {
+                    return None;
+                }
+                val
+            }
+            None => return None,
+        }
+    };
+
+    // OCCT L227-248: find theLast (second vertex side)
+    let the_last = if is_inf_par_v2 {
+        the_par_v2
+    } else {
+        match find_nearest_valid_point(curve, the_par_v1, the_par_v2, false, the_pnt_v2, the_tol_v2, an_eps) {
+            Some(val) => {
+                // OCCT L244-247: if (theLast - theParV1 < anEps) → too close to other end
+                if val - the_par_v1 < an_eps {
+                    return None;
+                }
+                val
+            }
+            None => return None,
+        }
+    };
+
+    // OCCT L250-255: if theFirst > theLast → overlapping tolerance spheres
+    if the_first > the_last {
+        return None;
+    }
+
+    Some([the_first, the_last])
+}
+

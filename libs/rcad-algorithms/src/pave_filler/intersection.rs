@@ -15,6 +15,64 @@ use crate::inttools::fclass2d::{FClass2d, State};
 use crate::pave_filler::helpers::*;
 use crate::tolerance::*;
 
+/// OCCT BRepLib::BoundingVertex (BRepLib.cxx L3013-3123).
+/// Given vertex indices, compute the fused vertex center and tolerance.
+///
+/// For 2 vertices: if one completely encloses the other (distance <= tolerance
+/// difference), the larger tolerance vertex is returned. Otherwise the midpoint
+/// is shifted toward the larger-tolerance vertex proportional to dR / distance.
+///
+/// For 3+ vertices: positions are sorted for deterministic floating-point order,
+/// then averaged for the center. Tolerance is max(vertex_dist_to_center + vertex_tolerance).
+pub fn bounding_vertex(vi: &[usize], ds: &crate::bopds::ds::DS) -> (glam::DVec3, f64) {
+    let n = vi.len();
+    if n == 0 {
+        return (glam::DVec3::ZERO, 0.0);
+    }
+    if n == 1 {
+        return (ds.vertex_point(vi[0]), ds.vertex_tolerance(vi[0]));
+    }
+    if n == 2 {
+        let p0 = ds.vertex_point(vi[0]);
+        let p1 = ds.vertex_point(vi[1]);
+        let t0 = ds.vertex_tolerance(vi[0]);
+        let t1 = ds.vertex_tolerance(vi[1]);
+        // m = vertex with larger tolerance, n = vertex with smaller
+        let (pm, pn, rm, rn) = if t0 >= t1 {
+            (p0, p1, t0, t1)
+        } else {
+            (p1, p0, t1, t0)
+        };
+        let dr = rm - rn; // >= 0
+        let vd = pn - pm; // vector from larger-tol vertex to smaller-tol vertex
+        let d = vd.length();
+        if d <= dr || d < f64::EPSILON {
+            return (pm, rm);
+        }
+        // OCCT: aRr = 0.5*(aR[m]+aR[n]+aD); aXYZr = 0.5*(Pm+Pn - VD*(dR/aD))
+        let new_tol = 0.5 * (rm + rn + d);
+        let new_center = 0.5 * (pm + pn - vd * (dr / d));
+        return (new_center, new_tol);
+    }
+    // n > 2
+    let mut points: Vec<glam::DVec3> = vi.iter().map(|&i| ds.vertex_point(i)).collect();
+    // OCCT sorts for deterministic float-sum order (issue 0027540)
+    points.sort_by(|a, b| {
+        a.x.partial_cmp(&b.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let center = points.iter().sum::<glam::DVec3>() / points.len() as f64;
+    // aDmax = max(vertex_dist + vertex_tolerance)
+    let tol = vi
+        .iter()
+        .map(|&i| (ds.vertex_point(i) - center).length() + ds.vertex_tolerance(i))
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(0.0);
+    (center, tol)
+}
+
 /// OCCT IntTools_CommonPrt::Type() ??VERTEX or EDGE.
 
 /// BOPAlgo_VertexEdge (PaveFiller_2.cxx L40-134).
@@ -2256,18 +2314,11 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  }
 
  // OCCT: BRepLib::BoundingVertex computes center + tolerance.
- // rcad: compute centroid of all member vertex positions.
- let centroid = members.iter()
- .map(|&vi| self.ds.vertex_point(vi))
- .sum::<DVec3>() / members.len() as f64;
- let max_tol = members.iter()
- .map(|&vi| self.ds.vertex_tolerance(vi))
- .max_by(|a, b| a.partial_cmp(b).unwrap())
- .unwrap_or(self.ds.fuzzy_tol);
+ let (center, tol) = bounding_vertex(members, &self.ds);
 
- // OCCT BRep_Builder::MakeVertex: create new vertex at centroid.
- let new_vi = self.ds.add_vertex_no_dedup(centroid);
- self.ds.vertex_data_mut(new_vi).tolerance = max_tol;
+ // OCCT BRep_Builder::MakeVertex: create new vertex at center.
+ let new_vi = self.ds.add_vertex_no_dedup(center);
+ self.ds.vertex_data_mut(new_vi).tolerance = tol;
  // OCCT: myIncreasedSS.Add(nV)  ?mark tolerance as increased.
  self.my_increased_ss.insert(new_vi);
 
