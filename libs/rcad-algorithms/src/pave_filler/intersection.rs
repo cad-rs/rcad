@@ -15,6 +15,98 @@ use crate::inttools::fclass2d::{FClass2d, State};
 use crate::pave_filler::helpers::*;
 use crate::tolerance::*;
 
+// ── OCCT BRepLib::BoundingVertex translation ──────────────────────────────────────────
+//
+// Computes centroid (theNewCenter) and bounding tolerance (theNewTol) for a list of
+// vertices, such that the output tolerance encloses all input vertices.
+//
+// Cases:
+//   aNb < 2  → no-op (centroid/tol unchanged — caller should guard)
+//   aNb == 2 → special logic: when vertices are close or one tolerance dominates,
+//              use the larger-tolerance vertex directly; otherwise compute a weighted
+//              midpoint and combined tolerance.
+//   aNb > 2  → sort points for stable floating-point sum, compute centroid, then
+//              tolerance = max_{vi}( distance(centroid, vi) + tolerance(vi) ).
+fn bounding_vertex(ds: &DS, vertex_indices: &[usize]) -> (DVec3, f64) {
+    let a_nb = vertex_indices.len();
+    if a_nb < 2 {
+        // OCCT: return without modifying outputs (caller must handle <2).
+        // Return a sentinel: centroid at first vertex, tolerance at its tolerance.
+        if a_nb == 1 {
+            let p = ds.vertex_point(vertex_indices[0]);
+            let t = ds.vertex_tolerance(vertex_indices[0]);
+            return (p, t);
+        }
+        return (DVec3::ZERO, 0.0);
+    }
+
+    if a_nb == 2 {
+        // ── OCCT aNb == 2 ──────────────────────────────────────────────
+        let a_eps = f64::EPSILON; // RealEpsilon()
+        let mut a_p = [DVec3::ZERO; 2];
+        let mut a_r = [0.0f64; 2];
+        for m in 0..2 {
+            let vi = vertex_indices[m];
+            a_p[m] = ds.vertex_point(vi);
+            a_r[m] = ds.vertex_tolerance(vi);
+        }
+
+        // m = index with larger tolerance, n = index with smaller tolerance
+        let (m, n) = if a_r[0] < a_r[1] { (1, 0) } else { (0, 1) };
+
+        let d_r = a_r[m] - a_r[n]; // dR >= 0
+        let vd = a_p[n] - a_p[m];  // gp_Vec(aP[m], aP[n]) = aP[n] - aP[m]
+        let a_d = vd.length();     // distance between the two positions
+
+        if a_d <= d_r || a_d < a_eps {
+            // The larger-tolerance vertex dominates
+            (a_p[m], a_r[m])
+        } else {
+            // Weighted center and combined tolerance
+            let a_rr = 0.5 * (a_r[m] + a_r[n] + a_d);
+            // aXYZr = 0.5 * (aP[m] + aP[n] - aVD * (dR / aD))
+            let xyz = 0.5 * (a_p[m] + a_p[n] - vd * (d_r / a_d));
+            (xyz, a_rr)
+        }
+    } else {
+        // ── OCCT aNb > 2 ──────────────────────────────────────────────
+        // Collect points and sort by coordinate (X, then Y, then Z) for
+        // stable floating-point summation (OCCT BRepLib_ComparePoints).
+        let mut a_points: Vec<DVec3> = vertex_indices
+            .iter()
+            .map(|&vi| ds.vertex_point(vi))
+            .collect();
+        a_points.sort_by(|a, b| {
+            // BRepLib_ComparePoints: compare X, then Y, then Z
+            if a.x < b.x { return std::cmp::Ordering::Less; }
+            if a.x > b.x { return std::cmp::Ordering::Greater; }
+            if a.y < b.y { return std::cmp::Ordering::Less; }
+            if a.y > b.y { return std::cmp::Ordering::Greater; }
+            if a.z < b.z { return std::cmp::Ordering::Less; }
+            if a.z > b.z { return std::cmp::Ordering::Greater; }
+            std::cmp::Ordering::Equal
+        });
+
+        // Centroid = average of sorted points
+        let sum: DVec3 = a_points.iter().copied().sum();
+        let centroid = sum / a_nb as f64;
+
+        // aDmax = max_{vi}( sqrt(distance²) + tolerance(vi) )
+        let a_dmax = vertex_indices
+            .iter()
+            .map(|&vi| {
+                let p = ds.vertex_point(vi);
+                let tol = ds.vertex_tolerance(vi);
+                let dist = (p - centroid).length();
+                dist + tol
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+
+        (centroid, a_dmax)
+    }
+}
+
 /// OCCT IntTools_CommonPrt::Type() ??VERTEX or EDGE.
 
 /// BOPAlgo_VertexEdge (PaveFiller_2.cxx L40-134).
@@ -1937,12 +2029,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // L162: MakeVertex(aLV, aVn) — compute centroid + bounding tolerance.
  // OCCT calls BRepLib::BoundingVertex to compute centroid and tolerance
  // large enough to enclose all input vertices.
- let centroid: DVec3 = a_lv.iter()
-   .map(|&vi| self.ds.vertex_point(vi))
-   .fold(DVec3::ZERO, |acc, p| acc + p) / a_lv.len() as f64;
- let bounding_tol: f64 = a_lv.iter()
-   .map(|&vi| (self.ds.vertex_point(vi) - centroid).length() + self.ds.vertex_tolerance(vi))
-   .fold(TOLERANCE_ABS, |acc, d| acc.max(d));
+ let (centroid, bounding_tol) = bounding_vertex(&self.ds, &a_lv);
  // L163-179: 2. Determine nV — either update existing SD or append new
  let n_v: usize;
  if let Some(n_sd_idx) = n_sd {
@@ -2257,17 +2344,11 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
 
  // OCCT: BRepLib::BoundingVertex computes center + tolerance.
  // rcad: compute centroid of all member vertex positions.
- let centroid = members.iter()
- .map(|&vi| self.ds.vertex_point(vi))
- .sum::<DVec3>() / members.len() as f64;
- let max_tol = members.iter()
- .map(|&vi| self.ds.vertex_tolerance(vi))
- .max_by(|a, b| a.partial_cmp(b).unwrap())
- .unwrap_or(self.ds.fuzzy_tol);
+ let (centroid, new_tol) = bounding_vertex(&self.ds, members);
 
  // OCCT BRep_Builder::MakeVertex: create new vertex at centroid.
  let new_vi = self.ds.add_vertex_no_dedup(centroid);
- self.ds.vertex_data_mut(new_vi).tolerance = max_tol;
+ self.ds.vertex_data_mut(new_vi).tolerance = new_tol;
  // OCCT: myIncreasedSS.Add(nV)  ?mark tolerance as increased.
  self.my_increased_ss.insert(new_vi);
 
