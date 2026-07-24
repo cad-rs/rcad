@@ -287,6 +287,10 @@ pub struct EdgeEdgeIntersector {
     tol2: f64,
     /// Combined tolerance
     tol: f64,
+    /// Per-edge tolerance from DS (edge1)
+    edge_tol1: f64,
+    /// Per-edge tolerance from DS (edge2)
+    edge_tol2: f64,
     /// Fuzzy value
     fuzzy_value: f64,
     /// Resolution for edge1
@@ -324,6 +328,8 @@ impl EdgeEdgeIntersector {
             curve1: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
             curve2: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
             tol1: 0.0, tol2: 0.0, tol: 0.0,
+            edge_tol1: 0.0,
+            edge_tol2: 0.0,
             fuzzy_value: 0.0,
             res1: 0.0, res2: 0.0,
             res_coeff1: 0.0, res_coeff2: 0.0,
@@ -347,6 +353,8 @@ impl EdgeEdgeIntersector {
     ) -> &mut Self {
         self.edge1 = ei1;
         self.edge2 = ei2;
+        self.edge_tol1 = ds.edge_tolerance(ei1);
+        self.edge_tol2 = ds.edge_tolerance(ei2);
         self.curve1 = ds.edges[ei1].curve.clone();
         self.curve2 = ds.edges[ei2].curve.clone();
         self.range1 = range1;
@@ -465,11 +473,13 @@ impl EdgeEdgeIntersector {
             self.swapped = true;
         }
 
-        // OCCT L149-152: set tolerances
+        // OCCT L149-152: set tolerances from actual edge data
+        // OCCT: myTol1 = myCurve1.Tolerance() + myFuzzyValue / 2.
+        //        myTol2 = myCurve2.Tolerance() + myFuzzyValue / 2.
+        // rcad: edge_tol1/2 from set_edges(), fuzzy_value from set_fuzzy_value()
         let a_tol_add = self.fuzzy_value / 2.0;
-        // OCCT: myCurve1.Tolerance() — use TOLERANCE_ABS as approximation
-        self.tol1 = TOLERANCE_ABS + a_tol_add;
-        self.tol2 = TOLERANCE_ABS + a_tol_add;
+        self.tol1 = self.edge_tol1 + a_tol_add;
+        self.tol2 = self.edge_tol2 + a_tol_add;
         self.tol = self.tol1 + self.tol2;
 
         // OCCT L154-180: compute resolution coefficients and resolutions
@@ -737,10 +747,10 @@ impl EdgeEdgeIntersector {
             let a_small_step2 = (a_tb22 - a_tb21) / 250.0;
             let ss1 = a_small_step1.max(self.res1);
             let ss2 = a_small_step2.max(self.res2);
-            if (a_t11 - a_tb11).abs() < ss1
-                && (a_t12 - a_tb12).abs() < ss1
-                && (a_t21 - a_tb21).abs() < ss2
-                && (a_t22 - a_tb22).abs() < ss2
+            if (a_t11 - a_tb11) < ss1
+                && (a_tb12 - a_t12) < ss1
+                && (a_t21 - a_tb21) < ss2
+                && (a_tb22 - a_t22) < ss2
             {
                 b_stop = true;
             }
@@ -812,6 +822,8 @@ impl EdgeEdgeIntersector {
     ) -> bool {
         const CF: f64 = 0.6180339887498948482045868343656;
         let a_tol_box = tol_val;
+        // OCCT L574: aCBx.SetGap(aCBx.GetGap() + theTol);
+        let a_cbox_with_gap = (cbox.0 - DVec3::splat(tol_val), cbox.1 + DVec3::splat(tol_val));
         let max_dt = (t2 - t1) * 0.01;
 
         for side in 0..2i32 {
@@ -826,7 +838,7 @@ impl EdgeEdgeIntersector {
             // OCCT L576-617: march until inside box
             while a_c * (a_t_end - a_tb) >= 0.0 {
                 let p = curve.point_at(a_tb);
-                let a_dist = point_box_distance(p, cbox.0, cbox.1);
+                let a_dist = point_box_distance(p, a_cbox_with_gap.0, a_cbox_with_gap.1);
                 if a_dist > a_tol_box {
                     if a_dist_p > 0.0 {
                         if (a_dist_p - a_dist).abs() / a_dist_p < 0.1 {
@@ -871,7 +883,7 @@ impl EdgeEdgeIntersector {
                 while diff.abs() > p_tol {
                     let t_mid = t_out + diff * CF;
                     let p = curve.point_at(t_mid);
-                    if point_box_distance(p, cbox.0, cbox.1) > a_tol_box {
+                    if point_box_distance(p, a_cbox_with_gap.0, a_cbox_with_gap.1) > a_tol_box {
                         t_out = t_mid;
                     } else {
                         t_in = t_mid;
