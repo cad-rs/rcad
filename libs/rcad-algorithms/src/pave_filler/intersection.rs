@@ -486,6 +486,61 @@ impl<'a> super::PaveFiller<'a> {
  //   - treat_new_vertices() called separately from perform() (not inside)
  //   - No aMVCPB / aMPBLPB coupling (common blocks handled elsewhere)
  //   - Sequential execution (no BOPTools_Parallel)
+// OCCT BOPAlgo_PaveFiller_3.cxx L914-955: GetPBBox
+ /// Translates OCCT's BOPAlgo_PaveFiller::GetPBBox.
+ /// Returns false if the pave block's range is degenerate (length ≤ TOLERANCE_LEN_MIN).
+ /// On return, `the_box` contains the AABB of the PB's curve segment.
+ pub(crate) fn get_pb_box(
+     &self,
+     the_e: usize,
+     the_pb: &crate::bopds::pave::PaveBlock,
+     the_pb_box: &mut std::collections::HashMap<usize, (glam::DVec3, glam::DVec3)>,
+     the_first: &mut f64,
+     the_last: &mut f64,
+     the_s_first: &mut f64,
+     the_s_last: &mut f64,
+     the_box: &mut (glam::DVec3, glam::DVec3),
+ ) -> bool {
+     // OCCT L916: thePB->Range(theFirst, theLast)
+     let (r1, r2) = the_pb.range();
+     *the_first = r1;
+     *the_last = r2;
+
+     // OCCT L917: bValid = theLast - theFirst > Precision::PConfusion()
+     let b_valid = *the_last - *the_first > crate::tolerance::TOLERANCE_LEN_MIN;
+     if !b_valid {
+         return b_valid;
+     }
+
+     // OCCT L918-920: if (HasShrunkData) { ShrunkData(...); return bValid; }
+     // NOTE: rcad's shrunk_data() does NOT return a Bnd_Box, so we fall through
+     // to compute the AABB (either from cache or by evaluating the curve).
+     if the_pb.has_shrunk_data() {
+         let (ts1, ts2, _spl) = the_pb.shrunk_data();
+         *the_s_first = ts1;
+         *the_s_last = ts2;
+     } else {
+         // OCCT L922: theSFirst = theFirst; theSLast = theLast
+         *the_s_first = *the_first;
+         *the_s_last = *the_last;
+     }
+
+     // OCCT L923-927: cache lookup
+     let key = the_pb as *const crate::bopds::pave::PaveBlock as usize;
+     if let Some(cached) = the_pb_box.get(&key) {
+         *the_box = *cached;
+     } else {
+         // OCCT L928-933: BRepAdaptor_Curve + BndLib_Add3dCurve
+         let curve = &self.ds.edges[the_e].curve;
+         let a_tol = self.ds.edge_tolerance(the_e) + crate::tolerance::CONFUSION;
+         let aabb = compute_curve_aabb(curve, *the_s_first, *the_s_last, a_tol);
+         the_pb_box.insert(key, aabb);
+         *the_box = aabb;
+     }
+
+     b_valid
+ }
+
 // OCCT BOPAlgo_PaveFiller_3.cxx L145: PerformEE
  // OCCT BOPAlgo_PaveFiller_3.cxx L145-585: PerformEE
  pub(crate) fn perform_ee(&mut self, pairs: &[(usize, usize)]) {
@@ -583,18 +638,20 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // OCCT L215-266: PB pair iteration
+   // OCCT L215-266: PB pair iteration — using get_pb_box for AABB + cache (OCCT L914-955)
    for pb1 in a_lpb1.iter() {
+    let mut aT11 = 0.0;
+    let mut aT12 = 0.0;
+    let mut aTS11 = 0.0;
+    let mut aTS12 = 0.0;
+    let mut aBB1 = (glam::DVec3::ZERO, glam::DVec3::ZERO);
     let pb1_r = pb1.0.read().unwrap();
-
-    // OCCT L222-229: GetPBBox
-    let (aT11, aT12) = pb1_r.range();
-    let (aTS11, aTS12, b_is_pb_splittable1) = if pb1_r.has_shrunk_data() {
-     let (ts1, ts2, spl) = pb1_r.shrunk_data();
-     (ts1, ts2, spl)
-    } else {
-     (aT11, aT12, false)
-    };
+    if !self.get_pb_box(nE1, &pb1_r, &mut a_dmpbbox,
+                        &mut aT11, &mut aT12, &mut aTS11, &mut aTS12, &mut aBB1) {
+     drop(pb1_r);
+     continue;
+    }
+    let b_is_pb_splittable1 = pb1_r.has_shrunk_data() && pb1_r.is_splittable;
 
     // OCCT L231: aPB1->Indices(nV11, nV12)
     let (nV11, nV12) = pb1_r.indices();
@@ -602,28 +659,23 @@ impl<'a> super::PaveFiller<'a> {
 
     // OCCT L233-265: aIt2.Initialize(aLPB2); for (; aIt2.More(); aIt2.Next())
     for pb2 in a_lpb2.iter() {
+     let mut aT21 = 0.0;
+     let mut aT22 = 0.0;
+     let mut aTS21 = 0.0;
+     let mut aTS22 = 0.0;
+     let mut aBB2 = (glam::DVec3::ZERO, glam::DVec3::ZERO);
      let pb2_r = pb2.0.read().unwrap();
+     if !self.get_pb_box(nE2, &pb2_r, &mut a_dmpbbox,
+                         &mut aT21, &mut aT22, &mut aTS21, &mut aTS22, &mut aBB2) {
+      drop(pb2_r);
+      continue;
+     }
+     let b_is_pb_splittable2 = pb2_r.has_shrunk_data() && pb2_r.is_splittable;
 
-     // OCCT L238-243: GetPBBox
-     let (aT21, aT22) = pb2_r.range();
-     let (aTS21, aTS22, b_is_pb_splittable2) = if pb2_r.has_shrunk_data() {
-      let (ts1, ts2, spl) = pb2_r.shrunk_data();
-      (ts1, ts2, spl)
-     } else {
-      (aT21, aT22, false)
-     };
-
-     // OCCT L222-229: GetPBBox — computes AABB from the edge geometry
-     // using the PB's FULL parameter range [aT11, aT12] (not the shrunk range).
-     let e1_curve = &self.ds.edges[nE1].curve;
-     let e2_curve = &self.ds.edges[nE2].curve;
-     let bbox_tol = self.ds.edge_tolerance(nE1).max(self.ds.edge_tolerance(nE2))
-         + crate::tolerance::TOLERANCE_ABS;
-     let bbox1 = compute_curve_aabb(e1_curve, aT11.min(aT12), aT11.max(aT12), bbox_tol);
-     let bbox2 = compute_curve_aabb(e2_curve, aT21.min(aT22), aT21.max(aT22), bbox_tol);
-     if bbox1.0.x > bbox2.1.x || bbox1.1.x < bbox2.0.x
-      || bbox1.0.y > bbox2.1.y || bbox1.1.y < bbox2.0.y
-      || bbox1.0.z > bbox2.1.z || bbox1.1.z < bbox2.0.z
+     // OCCT L245: if (aBB1.IsOut(aBB2)) continue;
+     if aBB1.0.x > aBB2.1.x || aBB1.1.x < aBB2.0.x
+      || aBB1.0.y > aBB2.1.y || aBB1.1.y < aBB2.0.y
+      || aBB1.0.z > aBB2.1.z || aBB1.1.z < aBB2.0.z
      {
       drop(pb2_r);
       continue;
