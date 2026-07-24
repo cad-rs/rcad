@@ -500,6 +500,14 @@ impl<'a> super::PaveFiller<'a> {
    return;
   }
 
+  if i_size == 6 {
+   for ei in 0..self.ds.edges.len() {
+    let fl = self.ds.edge_has_flag(ei);
+    let n_pb = self.ds.edge_pave_blocks(ei).len();
+    let sp = if n_pb == 0 { false } else { self.ds.edge_pave_blocks(ei)[0].0.read().unwrap().is_splittable };
+   }
+  }
+
   // OCCT L157-166: variable declarations
   //   bExpressCompute, bIsPBSplittable1/2, i, iX, nE1, nE2, aNbCPrts, k, aNbEdgeEdge
   //   nV11-22, aTS11-22, aT11-22, aType
@@ -673,7 +681,7 @@ impl<'a> super::PaveFiller<'a> {
    let nE1 = task.nE1;
    let nE2 = task.nE2;
    // Use PB's FULL range [aT11, aT12] for intersection computation
-   // (OCCT BOPAlgo_EdgeEdge uses the full curve geometry, not shrunk range)
+   // OCCT IntTools_EdgeEdge: uses full curve range, not shrunk.
    let sr1 = [task.aT11.min(task.aT12), task.aT11.max(task.aT12)];
    let sr2 = [task.aT21.min(task.aT22), task.aT21.max(task.aT22)];
 
@@ -694,36 +702,6 @@ impl<'a> super::PaveFiller<'a> {
      intersect_line_line(l1, sr1, l2, sr2, tol)
      .into_iter().map(|(t1, t2, p)| (t1, t2, p)).collect()
     }
-    (Curve3::Line(l), Curve3::Circle(c)) =>
-     intersect_line_circle(l, c, tol)
-     .into_iter()
-     .filter(|(t_line, t_circle, _)| {
-      in_range(*t_line, sr1, tol)
-      && in_range(*t_circle, sr2, tol)
-     })
-     .map(|(t_line, t_circle, p)| (t_line, t_circle, p))
-     .collect(),
-    (Curve3::Circle(c), Curve3::Line(l)) =>
-     intersect_line_circle(l, c, tol)
-     .into_iter()
-     .filter(|(t_line, t_circle, _)| {
-      in_range(*t_line, sr2, tol)
-      && in_range(*t_circle, sr1, tol)
-     })
-     .map(|(t_line, t_circle, p)| (t_circle, t_line, p))
-     .collect(),
-    (Curve3::Circle(c1), Curve3::Circle(c2)) =>
-     intersect_circle_circle(c1, c2, tol)
-     .into_iter()
-     .filter_map(|p| {
-      let t1 = circle_param(p, c1);
-      let t2 = circle_param(p, c2);
-      if in_range(t1, sr1, tol)
-      && in_range(t2, sr2, tol) {
-       Some((t1, t2, p))
-      } else { None }
-     })
-     .collect(),
     _ => {
      use crate::inttools::edge_edge::EdgeEdgeIntersector;
    let mut ee = EdgeEdgeIntersector::new();
