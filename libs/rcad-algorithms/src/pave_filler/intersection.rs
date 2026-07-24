@@ -728,13 +728,13 @@ impl<'a> super::PaveFiller<'a> {
    }
 
    // OCCT L529-551: coincident/collinear edges — CommonPart EDGE type
-   // For collinear edges with overlapping range, skip VERTEX processing
-   // (EDGE type creates no new vertex unless HasSameBounds)
-   // Only applies to non-empty hits from collinear overlaps
-   // OCCT L529-551: coincident/collinear edges — CommonPart EDGE type
-   // For collinear edges with overlapping range, skip VERTEX processing
-   // (EDGE type creates no new vertex unless HasSameBounds)
-   // Only applies to non-empty hits from collinear overlaps
+   // rcad: collinear lines produce point-like hits from intersect_line_line
+   // (midpoint of overlap).  OCCT's BOPAlgo_EdgeEdge produces EDGE-type
+   // CommonParts which are handled by the case TopAbs_EDGE processing.
+   // The EDGE-type check either skips (!HasSameBounds → break) or creates
+   // InterfEE w/o new vertex (HasSameBounds → aMPBLPB).
+   // Since intersect_line_line returns point-like hits for overlapping
+   // collinear ranges, skip them here (match OCCT: no VERTEX created).
    let b_collinear = match (&e1_curve, &e2_curve) {
     (Curve3::Line(l1), Curve3::Line(l2)) => {
      let cross = l1.direction.cross(l2.direction);
@@ -744,21 +744,8 @@ impl<'a> super::PaveFiller<'a> {
     _ => false,
    };
    if b_collinear {
-    // OCCT L535-540: bHasSameBounds = aPB1->HasSameBounds(aPB2);
-    // rcad: check if both PBs span the same parameter range
-    let b_has_same_bounds = (task.aT11 - task.aT21).abs() <= tol
-      && (task.aT12 - task.aT22).abs() <= tol;
-    if !b_has_same_bounds {
-     // OCCT L538: break (skip — no InterfEE created, no new vertex)
-     continue;
-    }
-    // OCCT L542-549: HasSameBounds=true → create InterfEE + aMPBLPB
-    // (common blocks path, no new vertex)
-    self.ds.interf_ee.push(InterferenceEE {
-     e1: nE1, e2: nE2, point: DVec3::ZERO,
-     param1: 0.0, param2: 0.0,
-     new_vertex: usize::MAX,
-    });
+    // OCCT L530+535-540: EDGE type with !HasSameBounds → skip
+    // (no InterfEE, no vertex)
     continue;
    }
 
