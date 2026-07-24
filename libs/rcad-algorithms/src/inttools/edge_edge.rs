@@ -568,24 +568,53 @@ impl EdgeEdgeIntersector {
         ranges2: &mut Vec<[f64; 2]>,
         b_split2: &mut bool,
     ) {
-        let [t11, t12] = self.range1;
-        let [t21, t22] = self.range2;
+        // OCCT L296-349
         *b_split2 = false;
+        let [a_t11, a_t12] = self.range1;
+        let [a_t21, a_t22] = self.range2;
 
-        let b_is_closed2 = is_curve_segment_closed(&self.curve2, t21, t22, self.tol2, self.res2);
+        // OCCT L302: bIsClosed2 = IsClosed(myGeom2, ...)
+        let mut b_is_closed2 = is_curve_segment_closed(&self.curve2, a_t21, a_t22, self.tol2, self.res2);
+
+        // OCCT L304-310: if closed, check if curve2 start is inside curve1's box
         if b_is_closed2 {
-            // Build box for curve1, check if curve2 start point is inside
-            let box1_min = self.curve_aabb(&self.curve1, t11, t12, self.tol1);
-            let p2_start = self.curve2.point_at(t21);
-            if !point_in_aabb(p2_start, box1_min.0, box1_min.1) {
-                // Not closed for this intersection
-            }
+            let a_b1 = self.curve_aabb(&self.curve1, a_t11, a_t12, self.tol1);
+            // OCCT L308-309: gp_Pnt aP = myGeom2->Value(aT21); bIsClosed2 = !aB1.IsOut(aP);
+            // rcad point_in_aabb returns true=inside (inverse of OCCT IsOut=true=outside)
+            b_is_closed2 = point_in_aabb(self.curve2.point_at(a_t21), a_b1.0, a_b1.1);
         }
 
-        // OCCT L312-317: direct call if not closed
-        let box1 = self.curve_aabb(&self.curve1, t11, t12, self.tol1);
-        let box2 = self.curve_aabb(&self.curve2, t21, t22, self.tol2);
-        self.find_solutions_rec(t11, t12, box1, t21, t22, box2, ranges1, ranges2);
+        // OCCT L312-318: if not closed, direct FindSolutions
+        if !b_is_closed2 {
+            let a_b1 = self.curve_aabb(&self.curve1, a_t11, a_t12, self.tol1);
+            let a_b2 = self.curve_aabb(&self.curve2, a_t21, a_t22, self.tol2);
+            self.find_solutions_rec(a_t11, a_t12, a_b1, a_t21, a_t22, a_b2, ranges1, ranges2);
+            return;
+        }
+
+        // OCCT L320-325: closed path — CheckCoincidence
+        if self.check_coincidence(a_t11, a_t12, a_t21, a_t22, self.tol, self.res1) == 0 {
+            ranges1.push([a_t11, a_t12]);
+            ranges2.push([a_t21, a_t22]);
+            return;
+        }
+
+        // OCCT L327-348: split ranges and recurse for each segment
+        let (a_nb1, a_segments1) = split_range_on_segments(a_t11, a_t12, self.res1,
+            if is_curve_segment_closed(&self.curve1, a_t11, a_t12, self.tol1, self.res1) { 2 } else { 1 });
+        let (a_nb2, a_segments2) = split_range_on_segments(a_t21, a_t22, self.res2, 2);
+        *b_split2 = a_nb2 > 1;
+
+        for i in 0..a_nb1 as usize {
+            let a_r1 = a_segments1[i];
+            let a_b1 = self.curve_aabb(&self.curve1, a_r1[0], a_r1[1], self.tol1);
+            for j in 0..a_nb2 as usize {
+                let a_r2 = a_segments2[j];
+                let a_b2 = self.curve_aabb(&self.curve2, a_r2[0], a_r2[1], self.tol2);
+                self.find_solutions_rec(a_r1[0], a_r1[1], a_b1, a_r2[0], a_r2[1], a_b2,
+                    ranges1, ranges2);
+            }
+        }
     }
 
     /// OCCT L353-549: FindSolutions (recursive)
