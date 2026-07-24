@@ -126,14 +126,18 @@ fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize
   match &face.surface {
     Surface3::Plane(plane) => {
       if crate::inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, vf_tol) {
-        let fv = ds.face_boundary_points(nF);
-        let on_face = crate::inttools::edge_face::point_in_planar_face_with_tol(point, plane, &fv, vf_tol);
-        let u_ax = plane.u_dir; let v_ax = plane.v_dir; let diff = point - plane.origin;
-        let u = diff.dot(u_ax); let v = diff.dot(v_ax);
-        if on_face { r.is_on = true; r.proj_u = u; r.proj_v = v; }
-        else {
-          let on_bdy = fv.iter().any(|&p| (point - p).length() <= vf_tol);
-          if on_bdy { r.is_on = true; r.is_on_boundary = true; r.proj_u = u; r.proj_v = v; }
+        let diff = point - plane.origin;
+        let u = diff.dot(plane.u_dir);
+        let v = diff.dot(plane.v_dir);
+        // OCCT BOPAlgo_VertexFace::Perform → IntTools_Context::ComputeVF
+        // → projects vertex to face surface → IntTools_FClass2d classifies UV
+        let fclass = crate::inttools::fclass2d::FClass2d::new(ds, nF, vf_tol);
+        let st = fclass.perform(DVec2::new(u, v), false);
+        r.proj_u = u; r.proj_v = v;
+        match st {
+          crate::inttools::fclass2d::State::In => { r.is_on = true; }
+          crate::inttools::fclass2d::State::On => { r.is_on = true; r.is_on_boundary = true; }
+          _ => {}
         }
       }
     }
@@ -938,8 +942,7 @@ impl<'a> super::PaveFiller<'a> {
  }
 // OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
- // OCCT L141: FillShrunkData(VERTEX, FACE) + myIterator->Initialize(VERTEX, FACE)
- self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Face);
+ // OCCT L141: myIterator->Initialize(VERTEX, FACE)
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
  // OCCT L142: iSize = myIterator->ExpectedLength()
@@ -984,7 +987,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    self.ds.face_info_mut(nF);
    //
    // OCCT L200-203: if (myDS->HasInterfShapeSubShapes(nV, nF)) continue;
-   //   Checks if nV has interference with any sub-shape (edge) of nF.
+   //   Checks if nV has interference with any sub-shape (edge or vertex) of nF.
    {
      let mut has_interf = false;
      let face_edges = self.ds.face_boundary_edges(nF).to_vec();
@@ -992,6 +995,14 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
        if self.ds.has_interf_ve(nV, ei) {
          has_interf = true;
          break;
+       }
+       // OCCT: also check vertex sub-shapes (VV)
+       if let Some(edge) = self.ds.edges.get(ei) {
+         if self.ds.has_interf_vv(nV, edge.start_vertex)
+           || self.ds.has_interf_vv(nV, edge.end_vertex) {
+           has_interf = true;
+           break;
+         }
        }
      }
      if !has_interf {
@@ -1001,6 +1012,14 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
            if self.ds.has_interf_ve(nV, ei) {
              has_interf = true;
              break;
+           }
+           // OCCT: VV for inner wire edges too
+           if let Some(edge) = self.ds.edges.get(ei) {
+             if self.ds.has_interf_vv(nV, edge.start_vertex)
+               || self.ds.has_interf_vv(nV, edge.end_vertex) {
+               has_interf = true;
+               break;
+             }
            }
          }
          if has_interf { break; }
