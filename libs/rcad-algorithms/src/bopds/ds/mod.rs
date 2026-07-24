@@ -887,12 +887,11 @@ impl DS {
       return;
     }
     // OCCT L1495-1498: for each edge, ChangePaveBlocks(anEdgeIndex)
-    // rcad: per-edge pave_blocks Vec is always allocated at creation time.
-    // No additional initialization needed.  The SD vertex will be
-    // incorporated into these PaveBlocks by the subsequent
-    // update_pave_blocks_with_sd_vertices() call in the pipeline.
-    for _ei in &incident_edges {
-      // OCCT: ChangePaveBlocks(anEdgeIndex) ensures pool entry exists.
+    //   ensures edge has initial PaveBlock (pool entry).
+    for &ei in &incident_edges {
+      if self.edges[ei].pave_blocks.is_empty() {
+        self.init_pave_blocks_for_edge(ei);
+      }
     }
   }
 
