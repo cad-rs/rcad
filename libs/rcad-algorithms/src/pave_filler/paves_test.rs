@@ -88,7 +88,7 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- pub(crate) fn fill_shrunk_data(&mut self) {
+ pub(crate) fn fill_shrunk_data(&mut self, _a_type1: rcad_kernel::topods::ShapeType, _a_type2: rcad_kernel::topods::ShapeType) {
   // OCCT BOPAlgo_PaveFiller_9.cxx L65-138: FillShrunkData
   // Collect all edge PBs
   let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();

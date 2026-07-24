@@ -504,6 +504,25 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
 /// let result = closest_point_on_surface(&sphere, q, 16);
 /// assert!((result.point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
 /// ```
+/// OCCT-aligned: closest_point_on_curve with range restriction [t0, t1].
+/// Calls closest_point_on_curve then clamps parameter to [t0, t1] and
+/// re-evaluates at the endpoint if the original projection fell outside range.
+/// Matches OCCT GeomAPI_ProjectPointOnCurve::Init(curve, f, l).
+pub fn closest_point_on_curve_range(curve: &Curve3, query: DVec3, t0: f64, t1: f64, n_samples: usize) -> CurveProjection {
+    let mut result = closest_point_on_curve(curve, query, n_samples);
+    if result.param < t0 || result.param > t1 {
+        let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
+        let t_clamped = if result.param < t_min { t_min } else { t_max };
+        let pt = curve.point_at(t_clamped);
+        result = CurveProjection {
+            point: pt,
+            param: t_clamped,
+            distance: (pt - query).length(),
+        };
+    }
+    result
+}
+
 pub fn closest_point_on_surface(
     surface: &Surface3,
     query: DVec3,

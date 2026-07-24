@@ -132,7 +132,8 @@ pub use nurbs_convert::{
  plane_to_bspline, sphere_to_bspline, surface_to_bspline,
 };
 pub use projection::{
- CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_surface,
+ CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_curve_range,
+ closest_point_on_surface,
  closest_point_on_surface_near, make_pcurve_on_surface,
 };
 

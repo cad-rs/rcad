@@ -9,6 +9,7 @@ use super::fclass2d::{FClass2d, State};
 use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::CurveEval;
 use rcad_kernel::projection::{closest_point_on_surface, closest_point_on_curve,
+    closest_point_on_curve_range,
     SurfaceProjection, CurveProjection};
 
 pub struct Context {
@@ -156,7 +157,9 @@ impl Context {
     pub fn proj_pc(&mut self, ds: &DS, edge_idx: usize, p: DVec3) -> Option<(f64, DVec3, f64)> {
         if edge_idx >= ds.edges.len() { return None; }
         let curve = &ds.edges[edge_idx].curve;
-        let proj = closest_point_on_curve(curve, p, 16);
+        let [t0, t1] = ds.edges[edge_idx].t_range;
+        // OCCT L281: pProjPC->Init(aC3D, f, l) - restrict projection to edge trim range
+        let proj = closest_point_on_curve_range(curve, p, t0, t1, 16);
         if proj.distance.is_finite() && proj.param.is_finite() {
             if edge_idx >= self.proj_pc_latest.len() {
                 self.proj_pc_latest.resize_with(edge_idx + 1, || None);
@@ -183,33 +186,18 @@ impl Context {
         if ds.is_edge_degenerated(ei) { return Err(VeError::DegeneratedEdge); }
         // -2: not geometric (OCCT BRep_Tool::IsGeometric)
         if !ds.edge_is_geometric(ei) { return Err(VeError::NotGeometric); }
-        // Project vertex point onto edge curve (OCCT ProjPC + Perform)
+        // Project vertex point onto edge curve (OCCT ProjPC + Perform L519-520)
         let p = ds.vertex_point(vi);
         let proj = self.proj_pc(ds, ei, p).ok_or(VeError::ProjectionFailed)?;
-        let mut t = proj.0;
-        let mut pt = proj.1;
-        let mut dist = proj.2;
-        // OCCT: clamp projection parameter to edge's trim range (Geom_TrimmedCurve)
-        let [t0, t1] = ds.edges[ei].t_range;
-        let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
-        if t < t_min || t > t_max {
-            let t_clamped = if t < t_min { t_min } else { t_max };
-            let e_curve = &ds.edges[ei].curve;
-            let new_pt = e_curve.point_at(t_clamped);
-            dist = (new_pt - p).length();
-            t = t_clamped;
-            pt = new_pt;
-        }
-        // OCCT L531-533: tolerance sum
+        let t = proj.0;
+        let dist = proj.2;
+        // OCCT L530-536: tolerance sum + compute result
         let tol_v = ds.vertex_tolerance(vi);
         let tol_e = ds.edge_tolerance(ei);
         let tol_sum = tol_v + tol_e + fuzz.max(CONFUSION);
         // OCCT L535: theTol = aDist + aTolE
         let new_tol = dist + tol_e;
-        // OCCT L537-540: check distance against tolerance sum
-        eprintln!("[RCAD_VE] vi={} ei={} dist={:.6e} tol_sum={:.6e} t_calc={:.6e} t_range=[{:.3},{:.3}] p=({:.3},{:.3},{:.3})",
-            vi, ei, dist, tol_sum, t, t0, t1,
-            ds.vertex_point(vi).x, ds.vertex_point(vi).y, ds.vertex_point(vi).z);
+        // OCCT L536-540: check distance against tolerance sum
         if dist > tol_sum { return Err(VeError::DistanceTooLarge); }
         Ok(VeResult { param: t, tolerance: new_tol })
     }

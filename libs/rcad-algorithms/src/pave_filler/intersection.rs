@@ -7,6 +7,7 @@ use rcad_kernel::CurveEval;
 use crate::bopalgo::{GlueEnum, fill_map, make_blocks};
 use crate::bopds::ds::{DS, DSVertex, ShapeOrigin, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
+use rcad_kernel::topods::ShapeType;
 use crate::inttools;
 use crate::inttools::edge_edge::compute_curve_aabb;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -250,7 +251,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT BOPAlgo_PaveFiller_2.cxx L141-207: PerformVE
  pub(crate) fn perform_ve(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L143: FillShrunkData(VERTEX, EDGE)
-  self.fill_shrunk_data();
+  self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Edge);
 
   // OCCT L148-152: iSize = myIterator->ExpectedLength()
   let i_size = pairs.len();
@@ -301,6 +302,7 @@ impl<'a> super::PaveFiller<'a> {
    if !self.ds.edge_pave_blocks(n_e)[0].0.read().unwrap().is_splittable {
     continue;
    }
+
 
    // OCCT L199-204: group vertices by edge (keyed by first PB)
    a_mve_pairs.entry(n_e).or_default().push(n_v);
@@ -409,6 +411,7 @@ impl<'a> super::PaveFiller<'a> {
    let pb_idx = a_lpb.iter().position(|spb| {
     let pb = spb.0.read().unwrap();
     let (a_t1, a_t2) = pb.range();
+    // OCCT L380: if (aT > aT1 && aT < aT2)
     a_t > a_t1 && a_t < a_t2
    });
    let pb_idx = match pb_idx {
@@ -471,7 +474,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT BOPAlgo_PaveFiller_3.cxx L145-585: PerformEE
  pub(crate) fn perform_ee(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L147: FillShrunkData(EDGE, EDGE)
-  self.fill_shrunk_data();
+  self.fill_shrunk_data(ShapeType::Edge, ShapeType::Edge);
 
   // OCCT L149-150: myIterator->Initialize(EDGE, EDGE)
   // iSize = myIterator->ExpectedLength()
@@ -716,7 +719,7 @@ impl<'a> super::PaveFiller<'a> {
 // OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L141: FillShrunkData(VERTEX, FACE) + myIterator->Initialize(VERTEX, FACE)
- self.fill_shrunk_data();
+ self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Face);
  let a_vc = self.ds.a_vertex_count;
  let a_fc = self.ds.a_face_count;
  // OCCT L142: iSize = myIterator->ExpectedLength()
@@ -870,7 +873,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
 }
  /// OCCT PaveFiller_5.cxx L165-592: PerformEF
  pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
- self.fill_shrunk_data(); // OCCT L167
+ self.fill_shrunk_data(ShapeType::Edge, ShapeType::Face); // OCCT L167
  let i_size = pairs.len();
  if i_size == 0 {
  return;

@@ -1,4 +1,5 @@
 use super::*;
+use rcad_kernel::topods::ShapeType;
 
 impl<'a> super::PaveFiller<'a> {
  /// OCCT BOPAlgo_PaveFiller_8.cxx L54-131: ProcessDE
@@ -88,19 +89,44 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- pub(crate) fn fill_shrunk_data(&mut self) {
+ pub(crate) fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
   // OCCT BOPAlgo_PaveFiller_9.cxx L65-138: FillShrunkData
-  // Collect all edge PBs
+  // OCCT L68: myIterator->Initialize(aType1, aType2)
+  use crate::bopds::ds::BOPDS_Iterator;
+  let ve_pairs: Vec<(usize, usize)> = {
+   let mut it = BOPDS_Iterator::new(self.ds);
+   it.prepare();
+   it.pairs(a_type1, a_type2).to_vec()
+  };
+  // OCCT L69-73: if no pairs, return
+  if ve_pairs.is_empty() { return; }
+  // OCCT L78: NCollection_Map<int> aMI — edge dedup set
+  let mut a_mi = std::collections::HashSet::new();
+  // Collect all unique edges from iterator pairs
   let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
-  for ei in 0..self.ds.edges.len() {
-   if self.ds.edge_has_flag(ei) || self.ds.is_edge_degenerated(ei) { continue; }
-   let n_pbs = self.ds.edges[ei].pave_blocks.len();
-   if n_pbs == 0 { continue; }
-   for pi in 0..n_pbs {
-    let pb = &self.ds.edges[ei].pave_blocks[pi];
-    let r = pb.0.read().unwrap();
-    if r.shrunk_range.is_some() { continue; }
-    all_pb.push((ei, r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param));
+  // OCCT L82-92: for each pair, extract edge index, dedup
+  for &(n1, n2) in &ve_pairs {
+   // OCCT L86: for (i = 0; i < 2; ++i)
+   let pair_elems = [n1, n2];
+   for i in 0..2 {
+    let n_s = pair_elems[i];
+    // OCCT L89: if aType[i] != TopAbs_EDGE || !aMI.Add(nE) — only process EDGE elements
+    let a_type_i = if i == 0 { a_type1 } else { a_type2 };
+    if a_type_i != ShapeType::Edge { continue; }
+    let n_e = n_s;
+    if !a_mi.insert(n_e) { continue; }
+    // OCCT L94-98: skip flagged edges
+    if self.ds.edge_has_flag(n_e) { continue; }
+    // OCCT L100: myDS->ChangePaveBlocks(nE) — mutable, triggers lazy init
+    let a_lpb = self.ds.edge_pave_blocks_mut(n_e);
+    for pi in 0..a_lpb.len() {
+     let pb = &a_lpb[pi];
+     let r = pb.0.read().unwrap();
+     // OCCT L105-108: skip if has shrunk data and is valid
+     if r.shrunk_range.is_some() { continue; }
+     all_pb.push((n_e, r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param));
+    }
+    // OCCT: only process EDGE elements, VERTEX/FACE are skipped by aType check
    }
   }
   if all_pb.is_empty() { return; }

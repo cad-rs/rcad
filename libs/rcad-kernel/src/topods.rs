@@ -637,6 +637,9 @@ impl BRep {
                 Curve3::Circle(c3) => {
                     c3.center = mat.transform_point3(c3.center);
                     c3.normal = mat.transform_vector3(c3.normal).normalize_or_zero();
+                    // OCCT gp_Circ::Transform updates all frame axes.
+                    c3.x_dir = mat.transform_vector3(c3.x_dir).normalize_or_zero();
+                    c3.y_dir = c3.normal.cross(c3.x_dir).normalize();
                 }
                 Curve3::Ellipse(e) => {
                     e.center = mat.transform_point3(e.center);

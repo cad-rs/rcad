@@ -498,7 +498,7 @@ impl DS {
         self.shape_info.push(types::ShapeInfo {
             shape_type: rcad_kernel::topods::ShapeType::Edge,
             sub_shapes: vec![sv_si, ev_si],
-            flag: if start_vertex == end_vertex { 0 } else { -1 },
+            flag: -1,
             reference: ei as i64,
             has_brep: true,
             box_min: Some(bb_min - DVec3::splat(e_tol)),
@@ -693,10 +693,39 @@ impl DS {
  /// Also falls back to start==end check for edges loaded before
  /// shape_info initialization.
  pub fn is_edge_degenerated(&self, edge_idx: usize) -> bool {
- if edge_idx < self.edges.len() && self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex {
- return true;
+ if edge_idx < self.edges.len() {
+  let e = &self.edges[edge_idx];
+  if e.start_vertex == e.end_vertex {
+   // Closed edge - check curve type. Circle/Ellipse with start==end
+   // is a full geometric curve (not degenerate, matching OCCT BRep_Tool::Degenerated).
+   return match &e.curve {
+    rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => false,
+    _ => true,
+   };
+  }
+  return false;
  }
  self.edge_has_flag(edge_idx)
+ }
+
+ /// OCCT: BOPDS_DS::IsValidShrunkData (BOPDS_DS.cxx L1547-1578).
+ /// Returns true if the PB's shrunk range endpoints are within tolerance
+ /// of their corresponding vertex positions.
+ pub fn is_valid_shrunk_data(&self, pb: &crate::bopds::pave::PaveBlock) -> bool {
+ use crate::tolerance::CONFUSION;
+ if !pb.has_shrunk_data() { return false; }
+ let (ts1, ts2, _splittable) = pb.shrunk_data();
+ let (v1i, v2i) = pb.indices();
+ let an_epsilon = self.edge_tolerance(pb.original_edge) * 0.01;
+ for &(vi, ts) in &[(v1i, ts1), (v2i, ts2)] {
+  let vp = self.vertex_point(vi);
+  let a_tol = self.vertex_tolerance(vi) + CONFUSION;
+  if let Some(curve) = self.edges.get(pb.original_edge) {
+   let pp = curve.curve.point_at(ts);
+   if a_tol - vp.distance(pp) > an_epsilon { return false; }
+  }
+ }
+ true
  }
 
  // ----- OCCT BOPDS_DS data layer methods -----

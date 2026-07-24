@@ -1,6 +1,5 @@
 use super::DS;
 use rcad_kernel::topods::ShapeType;
-use glam::DVec3;
 
 /// BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
 ///
@@ -86,12 +85,9 @@ impl<'a> BOPDS_Iterator<'a> {
     /// filters by cross-operand, skips shape-subshape pairs, and buckets into my_lists.
     ///
     /// OCCT uses BOPTools_BoxPairSelector with a BVH tree (Bnd_Box-based). rcad uses
-    /// cross-operand direct enumeration, which is functionally equivalent and correct
-    /// for all cases since the BVH tree's median split can separate operands' shapes
-    /// into non-overlapping spatial regions.
+    /// cross-operand direct enumeration with AABB overlap check per type combination.
     ///
     /// OCCT BOPDS_Iterator.cxx L247-265: Prepare calls Intersect(L270-359).
-    /// rcad: for each cross-operand pair of vertices, edges, and faces, check AABB overlap.
     pub fn prepare(&mut self) {
         // Clear all lists (OCCT L254-258)
         for list in &mut self.my_lists {
@@ -138,10 +134,36 @@ impl<'a> BOPDS_Iterator<'a> {
             let bucket = Self::type_to_bucket(t1, t2);
             if bucket >= 0 && (bucket as usize) < self.my_lists.len() {
                 // Push (s1, s2) preserving type-specific ordering.
-                // OCCT BOPDS_Pair stores (min, max), but each bucket is type-specific
-                // so the ordering is irrelevant for type detection.
                 self.my_lists[bucket as usize].push((s1, s2));
             }
+        };
+
+        // Helper: get edge AABB from shape_info, expanded by box_gap + fuzzy_tol
+        // (matching OCCT Bnd_Box::SetGap behavior for BVH AABB overlap).
+        let edge_aabb = |ei: usize| -> Option<([f64; 3], [f64; 3])> {
+            let si = if ei < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ei] } else { self.ds.vertices.len() + ei };
+            self.ds.shape_info.get(si).and_then(|info| {
+                info.box_min.zip(info.box_max).map(|(min, max)| {
+                    let gap = info.box_gap + self.ds.fuzzy_tol;
+                    ([min.x - gap, min.y - gap, min.z - gap],
+                     [max.x + gap, max.y + gap, max.z + gap])
+                })
+            })
+        };
+
+        // Helper: vertex AABB = point ± (tolerance + fuzzy_tol) matching OCCT Bnd_Box::SetGap
+        let vertex_aabb = |vi: usize| -> ([f64; 3], [f64; 3]) {
+            let p = self.ds.vertex_point(vi);
+            let tol = self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol;
+            ([p.x - tol, p.y - tol, p.z - tol],
+             [p.x + tol, p.y + tol, p.z + tol])
+        };
+
+        // AABB overlap test
+        let aabb_overlap = |a_min: [f64; 3], a_max: [f64; 3], b_min: [f64; 3], b_max: [f64; 3]| -> bool {
+            !(a_max[0] < b_min[0] || a_min[0] > b_max[0]
+                || a_max[1] < b_min[1] || a_min[1] > b_max[1]
+                || a_max[2] < b_min[2] || a_min[2] > b_max[2])
         };
 
         // VV pairs: cross-operand vertices
@@ -151,7 +173,9 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         }
 
-        // VE pairs: vertex vs edge (all cross-operand)
+        // VE pairs: vertex vs edge (cross-operand, no AABB filter)
+        // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check for ALL pair types.
+        // rcad: cross-operand enumeration matching OCCT BVH output.
         for vi in 0..nv {
             let is_a = vi < a_vc;
             for ei in 0..ne {

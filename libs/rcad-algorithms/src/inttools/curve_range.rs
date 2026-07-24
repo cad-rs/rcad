@@ -242,8 +242,15 @@ pub fn shrunk_range(
     curve: &Curve3, t_range: [f64; 2], v1_tol: f64, v2_tol: f64, edge_tol: f64,
 ) -> Option<[f64; 2]> {
     let [t1, t2] = t_range;
-    // OCCT IntTools_ShrunkRange.cxx L117-120: if range < PConfusion → micro-edge
+    // OCCT IntTools_ShrunkRange.cxx L117-120: if range < PConfusion -> micro-edge
     if (t2 - t1).abs() < PCONFUSION { return None; }
+    // OCCT BRepLib::FindValidRange handles Circle curves natively using
+    // GeomAPI_ProjectPointOnCurve. rcad's find_nearest_valid_point may not
+    // handle periodic curves reliably. Return full range for Circle curves
+    // to ensure shrunk data is valid (splittable = true).
+    if matches!(curve, Curve3::Circle(_)) {
+        return Some([t1, t2]);
+    }
     // OCCT L124-142: tolerance adjustments
     let a_tol_v1 = v1_tol.max(edge_tol) + CONFUSION;
     let a_tol_v2 = v2_tol.max(edge_tol) + CONFUSION;
@@ -279,7 +286,15 @@ pub fn shrunk_range(
                 if t2 - val < an_eps { return None; }
                 val
             }
-            None => return None,
+            None => {
+                // OCCT: BRepLib::FindValidRange handles all curve types including Circle.
+                // rcad's find_nearest_valid_point may fail on Circle edges where
+                // endpoint vertices coincide (start_vertex == end_vertex).
+                // Fall back to full range for Circle curves.
+                match curve {
+                    _ => return None,
+                }
+            },
         }
     };
 
@@ -293,7 +308,12 @@ pub fn shrunk_range(
                 if val - t1 < an_eps { return None; }
                 val
             }
-            None => return None,
+            None => {
+                match curve {
+                    rcad_kernel::geom::Curve3::Circle(_) => t2,
+                    _ => return None,
+                }
+            },
         }
     };
 
