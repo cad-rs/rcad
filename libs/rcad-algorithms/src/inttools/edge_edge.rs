@@ -58,7 +58,7 @@ impl CommonPrt {
     }
 }
 
-///  ?IntTools_EdgeEdge::TypeToInteger (cxx L1456-1482).
+/// 1:1 from IntTools_EdgeEdge::TypeToInteger (cxx L1456-1482).
 /// Maps curve type to integer priority for edge swapping (lower = simpler).
 pub fn curve_type_to_integer(curve: &Curve3) -> i32 {
     match curve {
@@ -70,7 +70,7 @@ pub fn curve_type_to_integer(curve: &Curve3) -> i32 {
     }
 }
 
-///  ?IntTools_EdgeEdge::PointBoxDistance (cxx L1423-1452).
+/// 1:1 from IntTools_EdgeEdge::PointBoxDistance (cxx L1423-1452).
 /// Computes min distance from a point to an axis-aligned bounding box.
 pub fn point_box_distance(p: DVec3, box_min: DVec3, box_max: DVec3) -> f64 {
     let mut dist = 0.0;
@@ -112,7 +112,7 @@ pub fn split_range_on_segments(t1: f64, t2: f64, resolution: f64, nb_seg: i32) -
     (a_nb_segments, segments)
 }
 
-///  ?IntTools_EdgeEdge::Resolution (cxx L1561-1607).
+/// 1:1 from IntTools_EdgeEdge::Resolution (cxx L1561-1607).
 /// Computes curve resolution (parameter step for a given 3D tolerance).
 /// For lines: returns theR3D directly.
 /// For circles: 2*asin(res_coeff * theR3D).
@@ -124,10 +124,8 @@ pub fn curve_resolution_edge(curve: &Curve3, res_coeff: f64, r3d: f64) -> f64 {
             let dt = res_coeff * r3d;
             if dt <= 1.0 { 2.0 * dt.asin() } else { std::f64::consts::TAU }
         }
-        Curve3::Ellipse(_) => {
-            let dt = res_coeff * r3d;
-            if dt <= 1.0 { 2.0 * dt.asin() } else { std::f64::consts::TAU }
-        }
+        // OCCT: Ellipse falls through to default (theResCoeff * theR3D), NOT 2*asin
+        Curve3::Ellipse(_) | Curve3::Hyperbola(_) | Curve3::Parabola(_) => res_coeff * r3d,
         Curve3::BSpline(_) | Curve3::Bezier(_) => {
             // OCCT: theCurve->Resolution(theR3D, aRes)
             // rcad: approximate using curve resolution
@@ -137,7 +135,7 @@ pub fn curve_resolution_edge(curve: &Curve3, res_coeff: f64, r3d: f64) -> f64 {
     }
 }
 
-///  ?IntTools_EdgeEdge::ResolutionCoeff (cxx L1486-1557).
+/// 1:1 from IntTools_EdgeEdge::ResolutionCoeff (cxx L1486-1557).
 /// Computes the resolution coefficient for a curve type.
 /// For circles: 1/(2*radius). For ellipses: 1/major_radius.
 pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
@@ -168,7 +166,7 @@ pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     }
 }
 
-///  ?IntTools_EdgeEdge::CurveDeflection (cxx L1611-1638).
+/// 1:1 from IntTools_EdgeEdge::CurveDeflection (cxx L1611-1638).
 /// Computes total angular deflection of a curve over its range by sampling.
 pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     let nb_p = 10;
@@ -193,7 +191,7 @@ pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     defl
 }
 
-///  ?IsClosed (IntTools_EdgeEdge.cxx L1642-1659).
+/// 1:1 from IntTools_EdgeEdge::IsClosed (cxx L1642-1659).
 /// Checks if the curve segment between aT1 and aT2 is closed.
 pub fn is_curve_segment_closed(curve: &Curve3, t1: f64, t2: f64, tol: f64, res: f64) -> bool {
     if (t1 - t2).abs() < res { return false; }
@@ -1187,6 +1185,7 @@ impl Default for EdgeEdgeIntersector {
 // Free helper functions
 // ============================================================================
 
+/// 1:1 from IntTools_EdgeEdge::BndBuildBox (cxx L1410-1419).
 /// Compute axis-aligned bounding box for a curve segment (delegates to bnd_lib).
 pub(crate) fn compute_curve_aabb(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
     let bbox = bnd_lib::curve_bounds_optimal(curve, t1, t2, tol);
@@ -1226,6 +1225,143 @@ fn box_is_y_thin(b: (DVec3, DVec3), tol: f64) -> bool {
 /// Check if box is "thin" in Z dimension.
 fn box_is_z_thin(b: (DVec3, DVec3), tol: f64) -> bool {
     (b.1.z - b.0.z) < tol
+}
+
+/// 1:1 from IntTools_EdgeEdge::BndBuildBox (cxx L1410-1419).
+/// Builds an axis-aligned bounding box for a curve segment.
+/// In OCCT this wraps BndLib_Add3dCurve::Add. In rcad, delegates to bnd_lib.
+pub fn bnd_build_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
+    let bbox = bnd_lib::curve_bounds_optimal(curve, t1, t2, tol);
+    (bbox.min, bbox.max)
+}
+
+/// 1:1 from IntTools_EdgeEdge::DistPC first overload (cxx L1332-1362).
+/// Projects a point on curve1 at parameter aT1 onto curve2.
+/// Returns error code: 0=success, 1=can't project, 2=distance exceeds/below criteria.
+///
+/// In OCCT this uses a reusable GeomAPI_ProjectPointOnCurve projector;
+/// in rcad we project directly via closest_point_on_curve.
+#[allow(clippy::too_many_arguments)]
+pub fn dist_pc(
+    t1: f64,
+    curve1: &Curve3,
+    curve2: &Curve3,
+    criteria: f64,
+    d: &mut f64,
+    t2: &mut f64,
+    ic: i32,
+) -> i32 {
+    let p1 = curve1.point_at(t1);
+    let proj = rcad_kernel::projection::closest_point_on_curve(curve2, p1, 16);
+    // OCCT: check NbPoints() -- rcad always returns a result, so always found
+    *d = proj.distance;
+    *t2 = proj.param;
+    if (ic as f64) * (*d - criteria) > 0.0 {
+        return 2; // the distance is too big or small
+    }
+    0
+}
+
+/// 1:1 from IntTools_EdgeEdge::DistPC second overload (cxx L1301-1328).
+/// Same as dist_pc but also tracks max distance and parameters.
+/// Calls the first overload internally.
+#[allow(clippy::too_many_arguments)]
+pub fn dist_pc_with_tracking(
+    t1: f64,
+    curve1: &Curve3,
+    curve2: &Curve3,
+    criteria: f64,
+    d: &mut f64,
+    t2: &mut f64,
+    d_max: &mut f64,
+    t1_max: &mut f64,
+    t2_max: &mut f64,
+    ic: i32,
+) -> i32 {
+    let i_err = dist_pc(t1, curve1, curve2, criteria, d, t2, ic);
+    if i_err == 1 {
+        return i_err;
+    }
+    if (ic as f64) * (*d - *d_max) > 0.0 {
+        *d_max = *d;
+        *t1_max = t1;
+        *t2_max = *t2;
+    }
+    i_err
+}
+
+/// 1:1 from IntTools_EdgeEdge::FindDistPC (cxx L1210-1297).
+/// Golden-section search to find the maximum (or minimum, if b_max_dist=false)
+/// distance between a point moving along curve1 and curve2.
+#[allow(clippy::too_many_arguments)]
+pub fn find_dist_pc(
+    t1a: f64,
+    t1b: f64,
+    curve1: &Curve3,
+    curve2: &Curve3,
+    criteria: f64,
+    eps: f64,
+    d_max: &mut f64,
+    t1_max: &mut f64,
+    t2_max: &mut f64,
+    b_max_dist: bool,
+) -> i32 {
+    let ic = if b_max_dist { 1 } else { -1 };
+    let gs = 0.6180339887498948482045868343656; // golden-section ratio
+    let mut a = t1a;
+    let mut b = t1b;
+    let mut a_yp = 0.0;
+    let mut a_yl = 0.0;
+    let mut a_t2p = 0.0;
+    let mut a_t2l = 0.0;
+
+    // check bounds
+    let mut i_err = dist_pc_with_tracking(a, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+    if i_err == 2 { return i_err; }
+
+    i_err = dist_pc_with_tracking(b, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
+    if i_err == 2 { return i_err; }
+
+    let mut xp = a + (b - a) * gs;
+    let mut xl = b - (b - a) * gs;
+
+    i_err = dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+    if i_err != 0 { return i_err; }
+
+    i_err = dist_pc_with_tracking(xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
+    if i_err != 0 { return i_err; }
+
+    let an_eps = eps.max(f64::EPSILON * a.abs().max(b.abs()) * 10.0);
+
+    loop {
+        if ic as f64 * (a_yp - a_yl) > 0.0 {
+            a = xl;
+            xl = xp;
+            a_yl = a_yp;
+            xp = a + (b - a) * gs;
+            i_err = dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+        } else {
+            b = xp;
+            xp = xl;
+            a_yp = a_yl;
+            xl = b - (b - a) * gs;
+            i_err = dist_pc_with_tracking(xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
+        }
+
+        if i_err != 0 {
+            if i_err == 2 && !b_max_dist {
+                let xp = (a + b) * 0.5;
+                dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+            }
+            return i_err;
+        }
+
+        if (b - a) < an_eps {
+            break;
+        }
+    }
+
+    0
 }
 
 // Legacy alias for external callers
