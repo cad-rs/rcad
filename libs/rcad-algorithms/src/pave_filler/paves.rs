@@ -1793,6 +1793,7 @@ impl<'a> super::PaveFiller<'a> {
   let mut a_liv: Vec<usize> = Vec::new();
   let mut a_mi: std::collections::HashSet<usize> = std::collections::HashSet::new();
   for aee in &self.ds.interf_ee {
+   if aee.new_vertex == usize::MAX { continue; }
    let n_v = aee.new_vertex;
    if a_mi.insert(n_v) {
     a_liv.push(n_v);
