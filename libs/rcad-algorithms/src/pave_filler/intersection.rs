@@ -750,8 +750,6 @@ impl<'a> super::PaveFiller<'a> {
    // InterfEE w/o new vertex (HasSameBounds → aMPBLPB).
    // Since intersect_line_line returns point-like hits for overlapping
    // collinear ranges, skip them here (match OCCT: no VERTEX created).
-   if nE1 == 3 && nE2 == 15 {
-   }
    let b_collinear = match (&e1_curve, &e2_curve) {
     (Curve3::Line(l1), Curve3::Line(l2)) => {
      let cross = l1.direction.cross(l2.direction);
@@ -762,30 +760,30 @@ impl<'a> super::PaveFiller<'a> {
    };
    if b_collinear {
     // OCCT L529-550: process EDGE-type CommonPart
-    // If HasSameBounds (PBs have same range), create InterfEE + FillMap.
-    // Otherwise skip (no InterfEE, no vertex).
-    let pb1_range = [task.aT11.min(task.aT12), task.aT11.max(task.aT12)];
-    let pb2_range = [task.aT21.min(task.aT22), task.aT21.max(task.aT22)];
-    let b_has_same_bounds =
-        (pb1_range[0] - pb2_range[0]).abs() <= crate::tolerance::TOLERANCE_ABS
-        && (pb1_range[1] - pb2_range[1]).abs() <= crate::tolerance::TOLERANCE_ABS;
+    // OCCT BOPDS_PaveBlock::HasSameBounds (PaveBlock.cxx L148-160):
+    //   checks vertex INDICES, NOT parameter ranges:
+    //     bFlag1 = (n11 == n21) && (n12 == n22);
+    //     bFlag2 = (n11 == n22) && (n12 == n21);
+    let (n11, n12) = (task.nV11, task.nV12);
+    let (n21, n22) = (task.nV21, task.nV22);
+    let b_has_same_bounds = (n11 == n21 && n12 == n22) || (n11 == n22 && n12 == n21);
     if b_has_same_bounds {
-        // OCCT L541-549: create InterfEE (no new vertex — edges already share bounds).
+        // OCCT L541-549: create InterfEE (no new vertex — edges share vertices).
         self.ds.interf_ee.push(InterferenceEE {
             e1: nE1, e2: nE2,
-            point: self.ds.edges[nE1].curve.point_at(pb1_range[0]),
-            param1: pb1_range[0],
-            param2: pb2_range[0],
+            point: self.ds.edges[nE1].curve.point_at(task.aT11),
+            param1: task.aT11,
+            param2: task.aT21,
             new_vertex: usize::MAX,
         });
         a_m_edges.insert(nE1);
         a_m_edges.insert(nE2);
-        // OCCT L549: BOPAlgo_Tools::FillMap(aPB1, aPB2, aMPBLPB) → PerformCommonBlocks
-        // rcad: split_pave_blocks handles common blocks via a_cb_idx.
-        // The InterfEE + a_m_edges entries ensure edges are processed by
-        // split_pave_blocks; CommonBlock creation is a separate alignment step.
+        // OCCT L549: BOPAlgo_Tools::FillMap → PerformCommonBlocks (separate step).
+        continue; // OCCT: EDGE case ends (no further processing for this pair).
     }
-    continue;
+    // OCCT L537-539: !HasSameBounds → break → fall through to Phase 4.
+    // rcad: VERTEX-type hit (overlap midpoint) enters the hits loop below,
+    // which matches OCCT's Phase 4 PerformNewVertices behavior.
    }
 
    // OCCT L310-322: aPB1->Range(aT11, aT12); HasShrunkData -> aTS11/12
