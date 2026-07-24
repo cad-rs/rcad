@@ -62,8 +62,10 @@ fn check_pf_stages(
         let nEE = ds.interf_ee.len();
         let nEF = ds.interf_ef.len();
         let nFF = ds.interf_ff.len();
-        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
-            init.stage_name, nV, init.nV, nE, init.nE, nF, init.nF, nIC, init.nIC,
+        let nPB = ds.edges.iter().map(|e| e.pave_blocks.len()).sum::<usize>();
+        let nNewV = (0..ds.vertices.len()).filter(|&vi| ds.is_new_vertex(vi)).count();
+        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} nPB={}/{} nNewV={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
+            init.stage_name, nV, init.nV, nE, init.nE, nF, init.nF, nIC, init.nIC, nPB, init.nPB, nNewV, init.nNewV,
             nVV, init.interf_VV, nVE, init.interf_VE, nVF, init.interf_VF,
             nEE, init.interf_EE, nEF, init.interf_EF, nFF, init.interf_FF);
         assert_eq!(nV, init.nV,
@@ -86,6 +88,10 @@ fn check_pf_stages(
             "{}: Init EF mismatch", label);
         assert_eq!(nFF, init.interf_FF,
             "{}: Init FF mismatch", label);
+        assert_eq!(nPB, init.nPB,
+            "{}: Init nPB mismatch", label);
+        assert_eq!(nNewV, init.nNewV,
+            "{}: Init nNewV mismatch", label);
     }
     // Additional: print comparison for all stages with --nocapture
     eprintln!("  --- additional stages ---");
@@ -107,8 +113,10 @@ fn check_pf_stages(
         let nIC2 = ds2.intersection_curves.len();
         let nVV2 = ds2.interf_vv.len(); let nVE2 = ds2.interf_ve.len(); let nVF2 = ds2.interf_vf.len();
         let nEE2 = ds2.interf_ee.len(); let nEF2 = ds2.interf_ef.len(); let nFF2 = ds2.interf_ff.len();
-        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
-            s.stage_name, nV2, s.nV, nE2, s.nE, nF2, s.nF, nIC2, s.nIC,
+        let nPB2 = ds2.edges.iter().map(|e| e.pave_blocks.len()).sum::<usize>();
+        let nNewV2 = (0..ds2.vertices.len()).filter(|&vi| ds2.is_new_vertex(vi)).count();
+        eprintln!("  {}: V={}/{} E={}/{} F={}/{} IC={}/{} nPB={}/{} nNewV={}/{} | VV={}/{} VE={}/{} VF={}/{} EE={}/{} EF={}/{} FF={}/{}",
+            s.stage_name, nV2, s.nV, nE2, s.nE, nF2, s.nF, nIC2, s.nIC, nPB2, s.nPB, nNewV2, s.nNewV,
             nVV2, s.interf_VV, nVE2, s.interf_VE, nVF2, s.interf_VF,
             nEE2, s.interf_EE, nEF2, s.interf_EF, nFF2, s.interf_FF);
         assert_eq!(nV2, s.nV, "{} [{}] nV", label, s.stage_name);
@@ -121,6 +129,8 @@ fn check_pf_stages(
         assert_eq!(nEE2, s.interf_EE, "{} [{}] EE", label, s.stage_name);
         assert_eq!(nEF2, s.interf_EF, "{} [{}] EF", label, s.stage_name);
         assert_eq!(nFF2, s.interf_FF, "{} [{}] FF", label, s.stage_name);
+        assert_eq!(nPB2, s.nPB, "{} [{}] nPB", label, s.stage_name);
+        assert_eq!(nNewV2, s.nNewV, "{} [{}] nNewV", label, s.stage_name);
     }
 }
 
