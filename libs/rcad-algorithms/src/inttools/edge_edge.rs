@@ -93,16 +93,14 @@ pub fn point_box_distance(p: DVec3, box_min: DVec3, box_max: DVec3) -> f64 {
 /// Splits range [aT1, aT2] into segments based on resolution. Returns number of segments.
 pub fn split_range_on_segments(t1: f64, t2: f64, resolution: f64, nb_seg: i32) -> (i32, Vec<[f64; 2]>) {
     let diff = t2 - t1;
+    // OCCT L1409-1412: theResolution * 1000, not raw resolution
     if diff < resolution || nb_seg == 1 {
         return (1, vec![[t1, t2]]);
     }
-    let mut a_nb_segments = nb_seg;
-    let mut a_dt = diff / a_nb_segments as f64;
-    if a_dt < resolution {
-        let seg = (diff / resolution) as i32;
-        a_nb_segments = seg + 1;
-        a_dt = diff / a_nb_segments as f64;
-    }
+    // OCCT L1414: aStep = max(theResolution * 1000., (aT2 - aT1) / theNbSeg)
+    let a_step = (diff / nb_seg as f64).max(resolution * 1000.0);
+    let a_nb_segments = (diff / a_step) as i32 + 1;
+    let a_dt = diff / a_nb_segments as f64;
     let mut segments = Vec::new();
     let mut t1x = t1;
     for _ in 1..a_nb_segments {
@@ -477,11 +475,12 @@ impl EdgeEdgeIntersector {
 
         // OCCT L149-152: set tolerances from actual edge data
         // OCCT: myTol1 = myCurve1.Tolerance() + myFuzzyValue / 2.
-        //        myTol2 = myCurve2.Tolerance() + myFuzzyValue / 2.
-        // rcad: edge_tol1/2 from set_edges(), fuzzy_value from set_fuzzy_value()
+        //        myCurve1.Tolerance() always >= Precision::Confusion() (~1e-7)
+        // rcad: edge_tol1 from set_edges(), fuzzy_value from set_fuzzy_value()
+        //        edge_tol may be 0 for constructed geometry, so floor at TOLERANCE_ABS
         let a_tol_add = self.fuzzy_value / 2.0;
-        self.tol1 = self.edge_tol1 + a_tol_add;
-        self.tol2 = self.edge_tol2 + a_tol_add;
+        self.tol1 = self.edge_tol1.max(crate::tolerance::TOLERANCE_ABS) + a_tol_add;
+        self.tol2 = self.edge_tol2.max(crate::tolerance::TOLERANCE_ABS) + a_tol_add;
         self.tol = self.tol1 + self.tol2;
 
         // OCCT L154-180: compute resolution coefficients and resolutions
@@ -804,6 +803,7 @@ impl EdgeEdgeIntersector {
             let a_b1_seg = compute_curve_aabb(&self.curve1, a_r[0], a_r[1], self.tol1);
             if aabb_overlap(a_b1_seg, a_b2)
                 && (a_nb1 == 1 || aabb_sq_extent(a_b1_seg) < a_b1_sq_extent)
+                && a_nb1 > 1
             {
                 self.find_solutions_impl(a_r, a_b1_seg, [a_t21, a_t22], a_b2,
                     the_ranges1, the_ranges2);
