@@ -783,6 +783,8 @@ impl DS {
  /// then calls update() to sort and create sub-PBs — one per vertex-to-vertex segment.
  pub fn init_pave_blocks_for_edge(&mut self, edge_idx: usize) {
  if edge_idx >= self.edges.len() { return; }
+ // OCCT ChangePaveBlocks internal: if pool is empty, initialize
+ if !self.edges[edge_idx].pave_blocks.is_empty() { return; }
  let (sv, ev, tr0, tr1) = {
  let e = &self.edges[edge_idx];
  (e.start_vertex, e.end_vertex, e.t_range[0], e.t_range[1])
@@ -889,9 +891,7 @@ impl DS {
     // OCCT L1495-1498: for each edge, ChangePaveBlocks(anEdgeIndex)
     //   ensures edge has initial PaveBlock (pool entry).
     for &ei in &incident_edges {
-      if self.edges[ei].pave_blocks.is_empty() {
-        self.init_pave_blocks_for_edge(ei);
-      }
+      self.init_pave_blocks_for_edge(ei);
     }
   }
 
