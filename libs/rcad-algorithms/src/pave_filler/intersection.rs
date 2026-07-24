@@ -159,8 +159,8 @@ fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize
 
 impl<'a> super::PaveFiller<'a> {
  /// OCCT PaveFiller L145: BOPDS_Iterator  ?BVH pair enumeration
- pub(crate) fn build_ds_bvh(&self, is_a: bool, is_edge: bool) -> crate::bvh::DsBvh {
- use crate::bvh::{Aabb, DsBvh};
+ pub(crate) fn build_box_tree(&self, is_a: bool, is_edge: bool) -> crate::bvh::BoxTree {
+ use crate::bvh::{Aabb, BoxTree};
  let (ds_start, end) = if is_edge {
  if is_a { (0, self.ds.a_edge_count) }
  else { (self.ds.a_edge_count, self.ds.edges.len()) }
@@ -197,13 +197,13 @@ impl<'a> super::PaveFiller<'a> {
  };
  aabbs.push(aabb);
  }
- DsBvh::build(indices, aabbs)
+ BoxTree::build(indices, aabbs)
  }
  ///  BOPDS_Iterator  ?build a single BVH for all elements
  /// of the given shape type (both operands A and B combined), used for
  /// single-pass cross-operand pair traversal.
- pub(crate) fn build_ds_bvh_combined(&self, is_edge: bool) -> crate::bvh::DsBvh {
- use crate::bvh::{Aabb, DsBvh};
+ pub(crate) fn build_box_tree_combined(&self, is_edge: bool) -> crate::bvh::BoxTree {
+ use crate::bvh::{Aabb, BoxTree};
  let n = if is_edge { self.ds.edges.len() } else { self.ds.vertices.len() };
  let mut indices = Vec::with_capacity(n);
  let mut aabbs = Vec::with_capacity(n);
@@ -244,7 +244,7 @@ impl<'a> super::PaveFiller<'a> {
  };
  aabbs.push(aabb);
  }
- DsBvh::build(indices, aabbs)
+ BoxTree::build(indices, aabbs)
  }
  // OCCT PaveFiller_2.cxx L141-208: PerformVE
  // Groups cross-operand (nV, nE) pairs by edge, then calls IntersectVE.
@@ -275,8 +275,8 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // OCCT L165-168: aSIE.HasSubShape(nV)
-   if self.ds.edge_has_vertex(n_e, n_v) {
+   // OCCT L165-168: aSIE.HasSubShape(nV) — vertex is subshape of edge?
+   if self.ds.edge_has_vertex(n_v, n_e) {
     continue;
    }
 
@@ -394,8 +394,21 @@ impl<'a> super::PaveFiller<'a> {
    let res = match self.context.compute_ve(
     self.ds, task.n_v, task.n_e, self.fuzzy_tolerance,
    ) {
-    Ok(res) => res,
-    Err(_) => {
+    Ok(res) => {
+     if std::env::var("RCAD_DEBUG_VE").is_ok() {
+      let pt_v = self.ds.vertex_point(task.n_v);
+      let tol_v = self.ds.vertex_tolerance(task.n_v);
+      let tol_e = self.ds.edge_tolerance(task.n_e);
+      eprintln!("[VE_OK] nV={} nE={} aT={:.12e} dist={:.12e} tolV={:.12e} tolE={:.12e} V=({:.12e},{:.12e},{:.12e})",
+       task.n_v, task.n_e, res.param, res.tolerance - tol_e, tol_v, tol_e,
+       pt_v.x, pt_v.y, pt_v.z);
+     }
+     res
+    },
+    Err(e) => {
+     if std::env::var("RCAD_DEBUG_VE").is_ok() {
+      eprintln!("[VE_ERR] nV={} nE={} err={:?}", task.n_v, task.n_e, e);
+     }
      // OCCT L324-328: HasErrors ??AddIntersectionFailedWarning
      self.add_intersection_failed_warning(task.n_v, task.n_e);
      continue;
@@ -1558,8 +1571,8 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  }
  }
  /// OCCT BOPDS_Iterator: face BVH construction
- pub(crate) fn build_ds_bvh_face(&self, is_a: bool) -> crate::bvh::DsBvh {
- use crate::bvh::{Aabb, DsBvh};
+ pub(crate) fn build_box_tree_face(&self, is_a: bool) -> crate::bvh::BoxTree {
+ use crate::bvh::{Aabb, BoxTree};
  let (start, end) = if is_a {
  (0, self.ds.a_face_count)
  } else {
@@ -1594,11 +1607,11 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  aabb.max += DVec3::splat(tol);
  aabbs.push(aabb);
  }
- DsBvh::build(indices, aabbs)
+ BoxTree::build(indices, aabbs)
  }
  ///  BOPDS_Iterator  ?combined face BVH (both operands).
- pub(crate) fn build_ds_bvh_face_all(&self) -> crate::bvh::DsBvh {
- use crate::bvh::{Aabb, DsBvh};
+ pub(crate) fn build_box_tree_face_all(&self) -> crate::bvh::BoxTree {
+ use crate::bvh::{Aabb, BoxTree};
  let n = self.ds.faces.len();
  let mut indices = Vec::with_capacity(n);
  let mut aabbs = Vec::with_capacity(n);
@@ -1621,7 +1634,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  aabb.max += DVec3::splat(tol);
  aabbs.push(aabb);
  }
- DsBvh::build(indices, aabbs)
+ BoxTree::build(indices, aabbs)
  }
  /// rcad glue-mode acceleration (no OCCT equivalent)
  pub(crate) fn should_skip_ve_pass(&self) -> bool {
@@ -1885,17 +1898,9 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    }
  }
  }
- /// OCCT PaveFiller_2.cxx L141-206: PerformVE
- /// OCCT PaveFiller_2.cxx L104-121: ComputeVE
- pub(crate) fn compute_ve(&mut self, vi: usize, ei: usize) {
- let fuzz = self.fuzzy_tolerance;
- if let Ok(res) = self.context.compute_ve(self.ds, vi, ei, fuzz) {
-  self.ds.interf_ve.push(InterferenceVE{vertex: vi, edge: ei, param: res.param, index_new: vi});
-  self.add_pave_to_edge(ei, Pave {vertex_idx: vi, param: res.param});
- }
- }
- /// OCCT PaveFiller_3.cxx L145-244: PerformEE
- /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
+ /// OCCT BOPAlgo_PaveFiller_3.cxx L145: PerformEE
+ /// OCCT BOPAlgo_PaveFiller_3.cxx L145-585: PerformEE
+ /// OCCT BOPAlgo_PaveFiller_3.cxx L580-640: CheckEdgeEdge
  pub(crate) fn intersect_ee(&mut self, e1: usize, e2: usize,
  range1: [f64; 2], range2: [f64; 2],
  modified: &mut std::collections::HashSet<usize>) {
@@ -2092,7 +2097,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // = =  Phase 2: IntersectVertices (BOPAlgo_Tools.hxx L1119-1205) = = =
  let gap = self.ds.fuzzy_tol / 2.0;
 
- use crate::bvh::{Aabb, DsBvh};
+ use crate::bvh::{Aabb, BoxTree};
  let nv = new_verts.len();
  let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
  let mut bvh_aabbs: Vec<Aabb> = Vec::with_capacity(nv);
@@ -2106,9 +2111,9 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  gap: 0.0,
  });
  }
- let bvh = DsBvh::build(bvh_indices, bvh_aabbs);
+ let bvh = BoxTree::build(bvh_indices, bvh_aabbs);
 
- let pairs = DsBvh::candidate_pairs(&bvh, &bvh);
+ let pairs = BoxTree::candidate_pairs(&bvh, &bvh);
  let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
  for &(ia, ib) in &pairs {
    let geom_vi = self.ds.vertices[new_verts[ia].idx].geom_tol;
@@ -2279,8 +2284,8 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) uses BVH to find
  // candidate pairs involving the extra vertices only.
  let a_vc = self.ds.a_vertex_count;
- let vv_bvh = self.build_ds_bvh_combined(false);
- let all_candidates = crate::bvh::DsBvh::candidate_pairs(&vv_bvh, &vv_bvh);
+ let vv_bvh = self.build_box_tree_combined(false);
+ let all_candidates = crate::bvh::BoxTree::candidate_pairs(&vv_bvh, &vv_bvh);
  let mut vv_pairs: Vec<(usize, usize)> = Vec::new();
  for &(vi, vj) in &all_candidates {
   let vi_x = a_extra_map.contains(&vi);
@@ -2297,9 +2302,9 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // BVH-filtered pairs involving extra vertices only.
  let a_ec = self.ds.a_edge_count;
  let n_edges = self.ds.edges.len();
- let vert_bvh = self.build_ds_bvh_combined(false);
- let edge_bvh = self.build_ds_bvh_combined(true);
- let all_ve_candidates = crate::bvh::DsBvh::candidate_pairs(&vert_bvh, &edge_bvh);
+ let vert_bvh = self.build_box_tree_combined(false);
+ let edge_bvh = self.build_box_tree_combined(true);
+ let all_ve_candidates = crate::bvh::BoxTree::candidate_pairs(&vert_bvh, &edge_bvh);
  let mut ve_pairs: Vec<(usize, usize)> = Vec::new();
  for &(vi, ei) in &all_ve_candidates {
   let vi_x = a_extra_map.contains(&vi);
@@ -2315,8 +2320,8 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L414: BVH-filtered via IntersectExt.
  let a_fc = self.ds.a_face_count;
  let n_faces = self.ds.faces.len();
- let face_bvh = self.build_ds_bvh_face_all();
- let all_vf_candidates = crate::bvh::DsBvh::candidate_pairs(&vert_bvh, &face_bvh);
+ let face_bvh = self.build_box_tree_face_all();
+ let all_vf_candidates = crate::bvh::BoxTree::candidate_pairs(&vert_bvh, &face_bvh);
  let mut vf_pairs: Vec<(usize, usize)> = Vec::new();
  for &(vi, fi) in &all_vf_candidates {
   let vi_x = a_extra_map.contains(&vi);

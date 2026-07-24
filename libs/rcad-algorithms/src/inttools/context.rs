@@ -198,7 +198,14 @@ impl Context {
         // OCCT L535: theTol = aDist + aTolE
         let new_tol = dist + tol_e;
         // OCCT L536-540: check distance against tolerance sum
-        if dist > tol_sum { return Err(VeError::DistanceTooLarge); }
+        if dist > tol_sum {
+            if std::env::var("RCAD_DEBUG_VE").is_ok() {
+                let pt_v = ds.vertex_point(vi);
+                eprintln!("[VE_DIST] nV={} nE={} dist={:.12e} tol_sum={:.12e} tolV={:.12e} tolE={:.12e} fuzz={:.12e} V=({:.12e},{:.12e},{:.12e})",
+                    vi, ei, dist, tol_sum, tol_v, tol_e, fuzz, pt_v.x, pt_v.y, pt_v.z);
+            }
+            return Err(VeError::DistanceTooLarge);
+        }
         Ok(VeResult { param: t, tolerance: new_tol })
     }
 

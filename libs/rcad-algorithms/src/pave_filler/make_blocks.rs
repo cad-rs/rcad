@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
-use crate::bvh::{Aabb, DsBvh};
+use crate::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::{
     DS, DSEdge, DSCurveRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
 };
@@ -181,7 +181,7 @@ impl<'a> super::PaveFiller<'a> {
     fn is_existing_pb_via_bvh(
         &self, a_pb: &PaveBlock, ci: usize, a_tol_r3d: f64,
         a_mpb_on_in: &HashSet<usize>,
-        a_pb_tree: &Option<DsBvh>,
+        a_pb_tree: &Option<BoxTree>,
         a_mpb_common: &HashSet<usize>,
         a_pb_out: &mut usize,
         a_tol_new: &mut f64,
@@ -855,7 +855,7 @@ impl<'a> super::PaveFiller<'a> {
     fn build_pb_tree(
         ds: &DS,
         a_mpb_on_in: &HashSet<usize>,
-    ) -> Option<DsBvh> {
+    ) -> Option<BoxTree> {
         let mut a_pb_indices: Vec<usize> = Vec::new();
         let mut a_pb_aabbs: Vec<Aabb> = Vec::new();
         for &pb_idx in a_mpb_on_in {
@@ -898,7 +898,7 @@ impl<'a> super::PaveFiller<'a> {
             a_pb_aabbs.push(Aabb { min: mn - DVec3::splat(tol), max: mx + DVec3::splat(tol), gap: 0.0 });
         }
         if !a_pb_indices.is_empty() {
-            Some(DsBvh::build(a_pb_indices, a_pb_aabbs))
+            Some(BoxTree::build(a_pb_indices, a_pb_aabbs))
         } else {
             None
         }

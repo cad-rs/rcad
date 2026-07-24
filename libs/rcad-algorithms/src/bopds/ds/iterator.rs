@@ -1,4 +1,5 @@
 use super::DS;
+use crate::bvh::Aabb;
 use rcad_kernel::topods::ShapeType;
 
 /// BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
@@ -138,25 +139,20 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         };
 
-        // Helper: get edge AABB from shape_info, expanded by box_gap + fuzzy_tol
-        // (matching OCCT Bnd_Box::SetGap behavior for BVH AABB overlap).
-        let edge_aabb = |ei: usize| -> Option<([f64; 3], [f64; 3])> {
+        // Helper: edge AABB = (box_min, box_max) with gap = box_gap + fuzzy_tol
+        let edge_aabb = |ei: usize| -> Option<Aabb> {
             let si = if ei < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ei] } else { self.ds.vertices.len() + ei };
             self.ds.shape_info.get(si).and_then(|info| {
                 info.box_min.zip(info.box_max).map(|(min, max)| {
-                    let gap = info.box_gap + self.ds.fuzzy_tol;
-                    ([min.x - gap, min.y - gap, min.z - gap],
-                     [max.x + gap, max.y + gap, max.z + gap])
+                    Aabb { min, max, gap: info.box_gap + self.ds.fuzzy_tol }
                 })
             })
         };
 
-        // Helper: vertex AABB = point ± (tolerance + fuzzy_tol) matching OCCT Bnd_Box::SetGap
-        let vertex_aabb = |vi: usize| -> ([f64; 3], [f64; 3]) {
+        // Helper: vertex AABB = point, gap = vertex_tolerance + fuzzy_tol
+        let vertex_aabb = |vi: usize| -> Aabb {
             let p = self.ds.vertex_point(vi);
-            let tol = self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol;
-            ([p.x - tol, p.y - tol, p.z - tol],
-             [p.x + tol, p.y + tol, p.z + tol])
+            Aabb { min: p, max: p, gap: self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol }
         };
 
         // AABB overlap test
@@ -173,35 +169,32 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         }
 
-        // VE pairs: vertex vs edge (cross-operand, no AABB filter)
-        // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check for ALL pair types.
-        // rcad: cross-operand enumeration matching OCCT BVH output.
+        // VE pairs: vertex vs edge (cross-operand) with AABB overlap filter
+        // OCCT BOPDS_Iterator::Intersect (L270-359) uses a single BVH with
+        // Bnd_Box + SetGap. rcad: O(n²) enumeration with Aabb::intersects
+        // (gap = box_gap + fuzzy_tol) — functionally equivalent AABB overlap.
+        // Architecture diff: OCCT uses single BVH + SetSame; rcad per-type O(n²).
         for vi in 0..nv {
             let is_a = vi < a_vc;
             for ei in 0..ne {
                 let is_e_a = ei < a_ec;
                 if is_a == is_e_a { continue; }
+                let v_abb = vertex_aabb(vi);
+                if let Some(e_abb) = edge_aabb(ei) {
+                    if !v_abb.intersects(&e_abb) {
+                        continue;
+                    }
+                }
                 add_pair(vi, ei, ShapeType::Vertex, ShapeType::Edge);
             }
         }
 
         // EE pairs: cross-operand edges with AABB overlap filter
-        // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check (shared for all pair types)
         for ea in 0..a_ec {
-            let si_ea = if ea < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ea] } else { self.ds.vertices.len() + ea };
             for eb in a_ec..ne {
-                let si_eb = if eb < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[eb] } else { self.ds.vertices.len() + eb };
-                // OCCT: AABB overlap check via BVH (Bnd_Tools::Bnd2BVH + BoxTree.Select)
-                if let (Some(si_a_info), Some(si_b_info)) = (self.ds.shape_info.get(si_ea), self.ds.shape_info.get(si_eb)) {
-                    if let (Some(a_min), Some(a_max), Some(b_min), Some(b_max)) =
-                        (si_a_info.box_min, si_a_info.box_max, si_b_info.box_min, si_b_info.box_max)
-                    {
-                        if a_max.x < b_min.x || a_min.x > b_max.x
-                            || a_max.y < b_min.y || a_min.y > b_max.y
-                            || a_max.z < b_min.z || a_min.z > b_max.z
-                        {
-                            continue;
-                        }
+                if let (Some(ea_abb), Some(eb_abb)) = (edge_aabb(ea), edge_aabb(eb)) {
+                    if !ea_abb.intersects(&eb_abb) {
+                        continue;
                     }
                 }
                 add_pair(ea, eb, ShapeType::Edge, ShapeType::Edge);
@@ -218,24 +211,20 @@ impl<'a> BOPDS_Iterator<'a> {
             }
         }
 
-        // EF pairs: edge vs face (all cross-operand) with AABB overlap filter (OCCT BVH spatial pruning)
+        // EF pairs: edge vs face (all cross-operand) with AABB overlap filter
         for ei in 0..ne {
             let is_a = ei < a_ec;
-            let si_e = if ei < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ei] } else { self.ds.vertices.len() + ei };
             for fi in 0..nf {
                 let is_f_a = fi < a_fc;
                 if is_a == is_f_a { continue; }
-                // OCCT BOPDS_Iterator::Intersect: BVH AABB overlap check
                 let si_f = if fi < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[fi] } else { fi };
-                if let (Some(si_e_info), Some(si_f_info)) = (self.ds.shape_info.get(si_e), self.ds.shape_info.get(si_f)) {
-                    if let (Some(e_min), Some(e_max), Some(f_min), Some(f_max)) =
-                        (si_e_info.box_min, si_e_info.box_max, si_f_info.box_min, si_f_info.box_max)
-                    {
-                        if e_max.x < f_min.x || e_min.x > f_max.x
-                            || e_max.y < f_min.y || e_min.y > f_max.y
-                            || e_max.z < f_min.z || e_min.z > f_max.z
-                        {
-                            continue;
+                if let Some(e_abb) = edge_aabb(ei) {
+                    if let Some(f_info) = self.ds.shape_info.get(si_f) {
+                        if let (Some(f_min), Some(f_max)) = (f_info.box_min, f_info.box_max) {
+                            let f_abb = Aabb { min: f_min, max: f_max, gap: f_info.box_gap + self.ds.fuzzy_tol };
+                            if !e_abb.intersects(&f_abb) {
+                                continue;
+                            }
                         }
                     }
                 }

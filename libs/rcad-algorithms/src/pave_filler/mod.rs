@@ -13,7 +13,7 @@ use crate::bopds::ds::{
  InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::ds::face_aabb;
-use crate::bvh::DsBvh;
+use crate::bvh::BoxTree;
 use crate::bopds::pave::*;
 use crate::bopalgo::{GlueEnum, Alert, Report};
 use crate::bvh::Bvh;

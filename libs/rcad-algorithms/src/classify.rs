@@ -663,7 +663,7 @@ fn classify_point_internal(
     }
     let edge_indices: Vec<usize> = edge_aabbs.iter().map(|(ei, _)| *ei).collect();
     let aabbs: Vec<Aabb> = edge_aabbs.iter().map(|(_, a)| *a).collect();
-    let edge_tree = crate::bvh::DsBvh::build(edge_indices.clone(), aabbs);
+    let edge_tree = crate::bvh::BoxTree::build(edge_indices.clone(), aabbs);
 
     // OCCT L218-230: Vertex/Edge proximity via UB-tree -> On
     let query_aabb = Aabb {

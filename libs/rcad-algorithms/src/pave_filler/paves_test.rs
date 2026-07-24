@@ -201,7 +201,7 @@ impl<'a> super::PaveFiller<'a> {
         let r = spb.0.read().unwrap();
         let p1 = r.pave1.param.min(r.pave2.param);
         let p2 = r.pave1.param.max(r.pave2.param);
-        if pave.param >= p1 && pave.param <= p2 {
+        if pave.param > p1 && pave.param < p2 {
           drop(r);
           spb.0.write().unwrap().append_ext_pave(pave);
           break;

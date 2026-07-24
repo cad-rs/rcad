@@ -6,7 +6,7 @@ use rcad_kernel::topods;
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
-use crate::bvh::{Aabb, DsBvh};
+use crate::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};
@@ -432,7 +432,7 @@ impl<'a> BooleanBuilder<'a> {
         // Build BVH of hole shells
         let hole_key: Vec<usize> = in_si.clone();
         let hole_aabbs: Vec<Aabb> = in_si.iter().map(|&i| aabbs[i]).collect();
-        let hole_bvh = crate::bvh::DsBvh::build(hole_key, hole_aabbs);
+        let hole_bvh = crate::bvh::BoxTree::build(hole_key, hole_aabbs);
 
         // Classify holes against growth solids
         let mut a_hole_solid_map: std::collections::HashMap<usize, usize> =

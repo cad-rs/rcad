@@ -414,7 +414,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // L842-874: Fill the tree with bounding boxes of the pave blocks
-        // rcad: build DsBvh from PB AABBs (shrunk data or edge endpoint fallback).
+        // rcad: build BoxTree from PB AABBs (shrunk data or edge endpoint fallback).
         let mut a_pb_aabbs: Vec<crate::bvh::Aabb> = Vec::with_capacity(the_mpb.len());
         let mut a_pb_indices: Vec<usize> = Vec::with_capacity(the_mpb.len());
         // L848-870: for each PB, get ShrunkData and add to tree
@@ -439,7 +439,7 @@ impl<'a> PaveFiller<'a> {
             a_pb_indices.push(i_pb);
         }
         // L873-874: Build BVH tree
-        let a_bb_tree = DsBvh::build(a_pb_indices, a_pb_aabbs);
+        let a_bb_tree = BoxTree::build(a_pb_indices, a_pb_aabbs);
 
         // L876: bSICheckMode — Self-Interference check mode (one argument)
         // OCCT: myArguments.Extent() == 1

@@ -162,13 +162,13 @@ impl<'a> super::PaveFiller<'a> {
           indices.push(fi);
           aabbs.push(crate::bopds::ds::face_aabb::face_aabb(self.ds, fi));
       }
-      if indices.len() >= 20 { Some(crate::bvh::DsBvh::build(indices, aabbs)) } else { None }
+      if indices.len() >= 20 { Some(crate::bvh::BoxTree::build(indices, aabbs)) } else { None }
   };
 
   // Get FF pair candidates from BVH or pair iterator.
   // OCCT equivalent: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE) loop.
   if let Some(ref fbvh) = face_bvh {
-    let candidates = crate::bvh::DsBvh::candidate_pairs(fbvh, fbvh);
+    let candidates = crate::bvh::BoxTree::candidate_pairs(fbvh, fbvh);
     candidates
       .into_iter()
       .filter(|&(fa, fb)| self.ds.face_origin(fa) != self.ds.face_origin(fb))

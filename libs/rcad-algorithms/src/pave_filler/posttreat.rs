@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use super::*;
-use crate::bvh::{Aabb, DsBvh};
+use crate::bvh::{Aabb, BoxTree};
 use crate::bopds::pave::*;
 use crate::bopds::ds::BOPDS_Iterator;
 use rcad_kernel::topods::ShapeType;
@@ -460,7 +460,7 @@ impl<'a> PaveFiller<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks(
         &mut self, ci: usize, j: usize, n_f1: usize, n_f2: usize,
-        a_es: usize, a_mpb_on_in: &HashSet<usize>, a_pb_tree: &Option<DsBvh>,
+        a_es: usize, a_mpb_on_in: &HashSet<usize>, a_pb_tree: &Option<BoxTree>,
         a_mscpb: &mut HashMap<usize, (usize, usize)>,
         a_mvi: &mut HashMap<usize, usize>, _a_lpb: &mut Vec<PaveBlock>,
         a_pb_faces_map: &mut HashMap<usize, Vec<usize>>,
@@ -574,7 +574,7 @@ impl<'a> PaveFiller<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn process_existing_pave_blocks_after(
         &mut self, _a_cur_ind: usize, n_f1: usize, n_f2: usize,
-        a_mpb_on_in: &HashSet<usize>, _a_pb_tree: &Option<DsBvh>,
+        a_mpb_on_in: &HashSet<usize>, _a_pb_tree: &Option<BoxTree>,
         _a_dmbv: &mut HashMap<usize, Vec<usize>>,
         a_mscpb: &mut HashMap<usize, (usize, usize)>,
         a_mvi: &mut HashMap<usize, usize>,

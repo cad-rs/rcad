@@ -36,6 +36,8 @@ pub mod builder;
 pub mod debug_trace;
 pub mod pipeline_dump;
 pub mod bvh;
+pub mod bvh_tree;
+pub mod bnd_box;
 pub mod classify;
 pub mod defeature;
 pub mod draft;
@@ -790,3 +792,4 @@ pub use triangulate::{
     mesh_brep, triangulate_surface,
 };
 
+pub mod box_tree;

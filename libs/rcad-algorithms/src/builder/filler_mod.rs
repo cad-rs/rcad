@@ -7,7 +7,7 @@ use rcad_kernel::topods;
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
-use crate::bvh::{Aabb, DsBvh};
+use crate::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};

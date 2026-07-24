@@ -486,13 +486,139 @@ impl DS {
         let [t0, t1] = t_range;
         let mut bb_min = curve.point_at(t0);
         let mut bb_max = curve.point_at(t1);
-        // Sample curve for full AABB (covers arcs beyond endpoints)
-        let ns = 16usize;
-        for k in 1..ns {
-            let t = t0 + (t1 - t0) * (k as f64) / (ns as f64);
-            let p = curve.point_at(t);
-            bb_min = bb_min.min(p);
-            bb_max = bb_max.max(p);
+        // OCCT BndLib_Add3dCurve::Add + GeomBndLib_Curve:
+        // Per-type optimal AABB computation.
+        match &curve {
+            Curve3::Line(_) => {
+                // OCCT GeomBndLib_Line: endpoints only.
+            }
+            Curve3::Circle(circ) => {
+                // OCCT GeomBndLib_Circle::Box L23-43, L48-113 (1:1)
+                // For each axis k (0,1,2):
+                //   aXk = XAxis.Direction().Coord(k+1) = x_dir dot axis_k
+                //   aYk = YAxis.Direction().Coord(k+1) = y_dir dot axis_k
+                // Full circle: aAmp = sqrt(R²*aXk² + R²*aYk²), box = center ± aAmp
+                // Arc: per-axis analytical extrema via atan(aYk/aXk)
+                use std::f64::consts::PI;
+                let aR = circ.radius;
+                let aO = circ.center;
+                let aXd = circ.x_dir;
+                let aYd = circ.y_dir;
+                let t_range_span = (t1 - t0).abs();
+                let a_period = 2.0 * PI - 1e-12; // Precision::PConfusion approximation
+                if t_range_span >= a_period {
+                    // Full circle: OCCT L32-43 — aBox.Update(aMin[0..2], aMax[0..2])
+                    // Compute per-axis extrema, then set all 3 dims at once.
+                    let axes = [DVec3::X, DVec3::Y, DVec3::Z];
+                    let a_min = axes.map(|ax| aO.dot(ax) - (aR * aR * aXd.dot(ax) * aXd.dot(ax) + aR * aR * aYd.dot(ax) * aYd.dot(ax)).sqrt());
+                    let a_max = axes.map(|ax| aO.dot(ax) + (aR * aR * aXd.dot(ax) * aXd.dot(ax) + aR * aR * aYd.dot(ax) * aYd.dot(ax)).sqrt());
+                    // Replace bb_min/bb_max with analytical extrema, then endpoints below are added after match.
+                    bb_min = DVec3::new(a_min[0], a_min[1], a_min[2]);
+                    bb_max = DVec3::new(a_max[0], a_max[1], a_max[2]);
+                } else {
+                    // Arc: OCCT L63-109
+                    let a_u1 = t0;
+                    let a_u2 = t1;
+                    // OCCT L64-65: ElCLib::AdjustPeriodic(0., 2.*M_PI, Epsilon(1.), aU1, aU2)
+                    let tau = 2.0 * PI;
+                    let a_period_inner = tau - 0.0; // ULast - UFirst = 2π
+                    let preci = f64::EPSILON;
+                    // OCCT L128-147: AdjustPeriodic
+                    let adj_a_u1 = a_u1 - (a_u1 / a_period_inner).floor() * a_period_inner;
+                    let adj_a_u1 = if tau - adj_a_u1 < preci { adj_a_u1 - a_period_inner } else { adj_a_u1 };
+                    let adj_a_u2 = a_u2 - ((a_u2 - adj_a_u1) / a_period_inner).floor() * a_period_inner;
+                    let adj_a_u2 = if adj_a_u2 - adj_a_u1 < preci { adj_a_u2 + a_period_inner } else { adj_a_u2 };
+                    // OCCT L95-111: ElCLib::InPeriod helper (theU → [base, base+period))
+                    let in_period = |the_u: f64, base: f64| -> f64 {
+                        let period = tau;
+                        if period < f64::EPSILON { return the_u; }
+                        let shifted = the_u + period * ((base - the_u) / period).ceil();
+                        if shifted >= base { shifted } else { base }
+                    };
+                    // Add arc endpoints (OCCT L68-70) — already done above via start_pt/end_pt.
+                    let axes = [DVec3::X, DVec3::Y, DVec3::Z];
+                    for (k, axis) in axes.iter().enumerate() {
+                        let aXk = aXd.dot(*axis);
+                        let aYk = aYd.dot(*axis);
+                        // OCCT L79-88: extremal parameter for min
+                        let a_t_extr_min;
+                        if aXk.abs() > 1e-15 { // gp::Resolution()
+                            a_t_extr_min = in_period((aYk / aXk).atan(), 0.0);
+                        } else {
+                            a_t_extr_min = PI / 2.0;
+                        }
+                        // OCCT L89: aTExtrMax = aTExtrMin <= PI ? +PI : -PI
+                        let a_t_extr_max = if a_t_extr_min <= PI {
+                            a_t_extr_min + PI
+                        } else {
+                            a_t_extr_min - PI
+                        };
+                        // OCCT L91-92: compute coordinate values
+                        let a_val_min = aR * a_t_extr_min.cos() * aXk
+                            + aR * a_t_extr_min.sin() * aYk
+                            + aO.dot(*axis);
+                        let a_val_max = aR * a_t_extr_max.cos() * aXk
+                            + aR * a_t_extr_max.sin() * aYk
+                            + aO.dot(*axis);
+                        // OCCT L93-97: swap both values AND extremal params
+                        let mut a_t_extr_min_mut = a_t_extr_min;
+                        let mut a_t_extr_max_mut = a_t_extr_max;
+                        if a_val_min > a_val_max {
+                            // std::swap(aValMin, aValMax) — values implicitly swapped via usage
+                            // std::swap(aTExtrMin, aTExtrMax)
+                            std::mem::swap(&mut a_t_extr_min_mut, &mut a_t_extr_max_mut);
+                        }
+                        // OCCT L99-108: check if in arc range via InPeriod
+                        let t_k = in_period(a_t_extr_min_mut, adj_a_u1);
+                        if t_k >= adj_a_u1 && t_k <= adj_a_u2 {
+                            let p = curve.point_at(a_t_extr_min_mut);
+                            bb_min = bb_min.min(p);
+                            bb_max = bb_max.max(p);
+                        }
+                        let t_k2 = in_period(a_t_extr_max_mut, adj_a_u1);
+                        if t_k2 >= adj_a_u1 && t_k2 <= adj_a_u2 {
+                            let p = curve.point_at(a_t_extr_max_mut);
+                            bb_min = bb_min.min(p);
+                            bb_max = bb_max.max(p);
+                        }
+                    }
+                }
+            }
+            Curve3::Ellipse(_) => {
+                // OCCT GeomBndLib_Ellipse: sample at 32 points.
+                let ns = 32usize;
+                for k in 1..ns {
+                    let t = t0 + (t1 - t0) * (k as f64) / (ns as f64);
+                    let p = curve.point_at(t);
+                    bb_min = bb_min.min(p);
+                    bb_max = bb_max.max(p);
+                }
+            }
+            _ => {
+                // OCCT GeomBndLib_BSplineCurve/BezierCurve/OtherCurve:
+                // sample at 32 points + tolerance.
+                let ns = 32usize;
+                for k in 1..ns {
+                    let t = t0 + (t1 - t0) * (k as f64) / (ns as f64);
+                    let p = curve.point_at(t);
+                    bb_min = bb_min.min(p);
+                    bb_max = bb_max.max(p);
+                }
+            }
+        }
+        // OCCT L1678-1685: anEdgeBoundBox.Add(aVertexInfo.Box()) —
+        // include endpoint vertex boxes (with tolerance) in edge AABB.
+        if let Some(sv_p) = self.vertices.get(start_vertex).map(|v| v.point) {
+            let sv_tol = self.vertex_tolerance(start_vertex);
+            bb_min = bb_min.min(sv_p - DVec3::splat(sv_tol + self.fuzzy_tol));
+            bb_max = bb_max.max(sv_p + DVec3::splat(sv_tol + self.fuzzy_tol));
+        }
+        if end_vertex != start_vertex {
+            if let Some(ev_p) = self.vertices.get(end_vertex).map(|v| v.point) {
+                let ev_tol = self.vertex_tolerance(end_vertex);
+                bb_min = bb_min.min(ev_p - DVec3::splat(ev_tol + self.fuzzy_tol));
+                bb_max = bb_max.max(ev_p + DVec3::splat(ev_tol + self.fuzzy_tol));
+            }
         }
         let rank: usize = if origin == types::ShapeOrigin::ShapeB { 1usize } else { 0usize };
         self.shape_info.push(types::ShapeInfo {
