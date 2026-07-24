@@ -733,10 +733,10 @@ impl<'a> super::PaveFiller<'a> {
    drop(edge1);
    drop(edge2);
    // OCCT IntTools_EdgeEdge computes CommonParts from the curve geometry.
-   let hits: Vec<(f64, f64, DVec3, [f64; 2])> = match (&e1_curve, &e2_curve) {
+   let hits: Vec<(f64, f64, DVec3, [f64; 2], [f64; 2])> = match (&e1_curve, &e2_curve) {
     (Curve3::Line(l1), Curve3::Line(l2)) => {
      intersect_line_line(l1, sr1, l2, sr2, tol)
-     .into_iter().map(|(t1, t2, p)| (t1, t2, p, [t1, t1])).collect()
+     .into_iter().map(|(t1, t2, p)| (t1, t2, p, [t1, t1], [t2, t2])).collect()
     }
     _ => {
      use crate::inttools::edge_edge::EdgeEdgeIntersector;
@@ -745,7 +745,8 @@ impl<'a> super::PaveFiller<'a> {
      ee.set_fuzzy_value(tol);
      ee.perform();
      ee.common_parts().iter().filter_map(|cp| {
-      Some((cp.vertex_param1, cp.vertex_param2, cp.bounding_point1, cp.range1))
+      Some((cp.vertex_param1, cp.vertex_param2, cp.bounding_point1,
+            cp.range1, *cp.ranges2.first().unwrap_or(&[0.0, 0.0])))
      }).collect()
     }
    };
@@ -783,7 +784,11 @@ impl<'a> super::PaveFiller<'a> {
    // OCCT L355: for (i = 1; i <= aNbCPrts; ++i)
    for i in 0..a_nb_cprts {
     // OCCT L357-361: get CommonPart
-    let (a_t1, a_t2, a_pnew, a_cr1) = hits[i];
+    let (a_t1, a_t2, a_pnew, a_cr1_range, a_cr2_range) = hits[i];
+    let a_cr1_first = a_cr1_range[0];
+    let a_cr1_last = a_cr1_range[1];
+    let a_cr2_first = a_cr2_range[0];
+    let a_cr2_last = a_cr2_range[1];
 
     // OCCT L366-368: aType = aCPart.Type()
     // rcad: determine type based on collinearity
@@ -800,6 +805,10 @@ impl<'a> super::PaveFiller<'a> {
     };
 
     if b_is_edge_type {
+     // OCCT L530-531: if (aNbCPrts > 1) break;
+     if a_nb_cprts > 1 {
+      continue;
+     }
      // OCCT L529-550: case TopAbs_EDGE:
      // OCCT L530-531: if (aNbCPrts > 1) break;
      // (rcad: collinear lines produce one hit, so aNbCPrts == 1 always)
@@ -892,12 +901,23 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     // OCCT L454: double aTolVnew = BRep_Tool::Tolerance(aVnew);
-    let mut a_tol_vnew = tol;
+    // OCCT BOPTools_AlgoTools::MakeNewVertex (AlgoTools_2.cxx L224-250):
+    //   aDist = aPnt1.Distance(aPnt2); aMaxTol = max(tol1, tol2) + 0.5 * aDist
+    let e1_pt = self.ds.edges[nE1].curve.point_at(a_t1);
+    let e2_pt = self.ds.edges[nE2].curve.point_at(a_t2);
+    let a_dist = (e1_pt - e2_pt).length();
+    let mut a_tol_vnew = self.ds.edge_tolerance(nE1).max(self.ds.edge_tolerance(nE2)) + 0.5 * a_dist;
 
     // OCCT L455-466: bAnalytical tolerance adjustment
-    // OCCT: aCR1 = aCPart.Range1(); aTolMin = (aCR1.Last() - aCR1.First()) / 2.
+    // OCCT: if (bAnalytical) {
+    //   aTolMin = BRepAdaptor_Curve(aE1).GetType() == GeomAbs_Line
+    //           ? (aCR1.Last() - aCR1.First()) / 2.
+    //           : (aCR2.Last() - aCR2.First()) / 2.;
     if b_analytical {
-     let a_tol_min = (a_cr1[1] - a_cr1[0]).abs() * 0.5;
+     let a_tol_min = match &e1_curve {
+      Curve3::Line(_) => (a_cr1_last - a_cr1_first).abs() * 0.5,
+      _ => (a_cr2_last - a_cr2_first).abs() * 0.5,
+     };
      if a_tol_min > a_tol_vnew {
       a_tol_vnew = a_tol_min;
      }
