@@ -131,14 +131,12 @@ fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize
         let v = diff.dot(plane.v_dir);
         // OCCT BOPAlgo_VertexFace::Perform → IntTools_Context::ComputeVF
         // → projects vertex to face surface → IntTools_FClass2d classifies UV
+        // OCCT IsPointInFace: aState != TopAbs_OUT && aState != TopAbs_ON
+        // → only In state (NOT On/Out) creates VF interference
         let fclass = crate::inttools::fclass2d::FClass2d::new(ds, nF, vf_tol);
         let st = fclass.perform(DVec2::new(u, v), false);
         r.proj_u = u; r.proj_v = v;
-        match st {
-          crate::inttools::fclass2d::State::In => { r.is_on = true; }
-          crate::inttools::fclass2d::State::On => { r.is_on = true; r.is_on_boundary = true; }
-          _ => {}
-        }
+        if st == crate::inttools::fclass2d::State::In { r.is_on = true; }
       }
     }
     surface => {
@@ -151,8 +149,8 @@ fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize
         let uv = DVec2::new(proj.params.0, proj.params.1);
         let fclass = crate::inttools::fclass2d::FClass2d::new(ds, nF, vf_tol);
         let st = fclass.perform(uv, false);
+        // OCCT IsPointInFace: only In (not On/Out)
         if st == State::In { r.is_on = true; r.proj_u = proj.params.0; r.proj_v = proj.params.1; r.proj_dist = proj.distance; }
-        else if st == State::On { r.is_on = true; r.is_on_boundary = true; r.proj_u = proj.params.0; r.proj_v = proj.params.1; r.proj_dist = proj.distance; }
       }
     }
   }
