@@ -295,8 +295,8 @@ impl<'a> super::PaveFiller<'a> {
     continue;
    }
 
-   // OCCT L186-190: aLPB empty (use _mut to trigger lazy PB init)
-   if self.ds.edge_pave_blocks_mut(n_e).is_empty() {
+   // OCCT L186-190: aLPB empty (const accessor, no lazy init)
+   if self.ds.edge_pave_blocks(n_e).is_empty() {
     continue;
    }
 
