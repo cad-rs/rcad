@@ -1114,7 +1114,17 @@ impl EdgeEdgeIntersector {
         let p21 = self.curve2.point_at(t21);
         let p22 = self.curve2.point_at(t22);
 
-        let criteria = 100.0 * self.tol;
+                let mut a_coef = 1e5;
+        if (t12 - t11) > a_coef * self.res1 && (t22 - t21) > a_coef * self.res2 {
+            a_coef = 5000.0;
+        } else {
+            let a_tr_min = ((t12 - t11) / self.res1).min((t22 - t21) / self.res2);
+            a_coef = a_tr_min / 100.0;
+            if a_coef < 1.0 {
+                a_coef = 1.0;
+            }
+        }
+        let criteria = a_coef * self.tol;
         let criteria2 = criteria * criteria;
 
         let d11_21 = (p11 - p21).length_squared();
