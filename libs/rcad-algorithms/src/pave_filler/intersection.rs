@@ -2169,80 +2169,76 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: t2 });
  }
  }
- /// OCCT PaveFiller L575-590: TreatNewVertices (merge EE/EF new vertices)
- pub(crate) fn treat_new_vertices(&mut self) -> Vec<usize> {
- // = =  Phase 1: Collect new vertices (OCCT L696-702) = = = = = = = = = = = = = = = 
+ /// OCCT PaveFiller L575-590 (L692-723 in source): TreatNewVertices
+ pub(crate) fn treat_new_vertices(
+    &mut self,
+    a_mvcpb: &std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks>,
+) -> Vec<usize> {
+    let a_nb_v = a_mvcpb.len();
+    if a_nb_v == 0 { return vec![]; }
+
+ // = =  Phase 1: Collect new vertices from a_mvcpb (OCCT L696-702) = = = = = = = = = 
  #[derive(Clone, Copy)]
  struct NewVertInfo { idx: usize, pos: DVec3, tol: f64 }
- let mut new_verts: Vec<NewVertInfo> = Vec::new();
- let mut seen = std::collections::BTreeSet::new();
- for inf in &self.ds.interf_ee {
- if inf.new_vertex == usize::MAX { continue; }
- if seen.insert(inf.new_vertex) {
- let v_tol = self.ds.vertices[inf.new_vertex].geom_tol.max(self.ds.fuzzy_tol);
- new_verts.push(NewVertInfo { idx: inf.new_vertex, pos: inf.point, tol: v_tol });
+ let mut new_verts: Vec<NewVertInfo> = Vec::with_capacity(a_nb_v);
+ for (&vi, cpb) in a_mvcpb {
+     let pos = self.ds.vertex_point(vi);
+     let tol = cpb.tolerance.max(self.ds.fuzzy_tol);
+     new_verts.push(NewVertInfo { idx: vi, pos, tol });
  }
- }
- for inf in &self.ds.interf_ef {
- if inf.new_vertex == 0 { continue; } // EfHit::Edge — no new vertex
- if seen.insert(inf.new_vertex) {
- let v_tol = self.ds.vertices[inf.new_vertex].geom_tol.max(self.ds.fuzzy_tol);
- new_verts.push(NewVertInfo { idx: inf.new_vertex, pos: inf.point, tol: v_tol });
- }
- }
- if new_verts.len() < 2 { return vec![]; }
+ if new_verts.len() < 2 { return new_verts.iter().map(|v| v.idx).collect(); }
 
- // = =  Phase 2: IntersectVertices (BOPAlgo_Tools.hxx L1119-1205) = = =
+ // = =  Phase 2: IntersectVertices — group nearby vertices into chains = = =
+ // OCCT L704-708: BOPAlgo_Tools::IntersectVertices(aVerts, myFuzzyValue, aChains)
+ // rcad: BVH-based grouping (equivalent to IntersectVertices)
  let gap = self.ds.fuzzy_tol / 2.0;
-
  use crate::bvh::{Aabb, BoxTree};
  let nv = new_verts.len();
  let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
  let mut bvh_aabbs: Vec<Aabb> = Vec::with_capacity(nv);
  for i in 0..nv {
- let v = &new_verts[i];
- bvh_indices.push(i);
- let half = v.tol + gap;
- bvh_aabbs.push(Aabb {
- min: v.pos - DVec3::splat(half),
- max: v.pos + DVec3::splat(half),
- gap: 0.0,
- });
+     let v = &new_verts[i];
+     bvh_indices.push(i);
+     let half = v.tol + gap;
+     bvh_aabbs.push(Aabb {
+         min: v.pos - DVec3::splat(half),
+         max: v.pos + DVec3::splat(half),
+         gap: 0.0,
+     });
  }
  let bvh = BoxTree::build(bvh_indices, bvh_aabbs);
-
  let pairs = BoxTree::candidate_pairs(&bvh, &bvh);
  let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
  for &(ia, ib) in &pairs {
-   let geom_vi = self.ds.vertices[new_verts[ia].idx].geom_tol;
-   let geom_vj = self.ds.vertices[new_verts[ib].idx].geom_tol;
-   let merge_tol = geom_vi + geom_vj + self.ds.fuzzy_tol;
-   if (new_verts[ia].pos - new_verts[ib].pos).length() <= merge_tol {
-     fill_map(&mut a_mili, ia, ib);
-   }
+     let tol_a = new_verts[ia].tol;
+     let tol_b = new_verts[ib].tol;
+     let merge_tol = tol_a + tol_b + self.ds.fuzzy_tol;
+     if (new_verts[ia].pos - new_verts[ib].pos).length() <= merge_tol {
+         fill_map(&mut a_mili, ia, ib);
+     }
  }
  let a_blocks = make_blocks(&a_mili);
  let mut groups: Vec<Vec<usize>> = a_blocks.iter()
-   .map(|block| block.iter().map(|&i| new_verts[i].idx).collect())
-   .collect();
+     .map(|block| block.iter().map(|&i| new_verts[i].idx).collect())
+     .collect();
  {
-   let mut taken: HashSet<usize> = HashSet::new();
-   for group in &groups {
-     for &vi in group {
-       taken.insert(vi);
+     let mut taken: HashSet<usize> = HashSet::new();
+     for group in &groups {
+         for &vi in group {
+             taken.insert(vi);
+         }
      }
-   }
-   for i in 0..nv {
-     if !taken.contains(&new_verts[i].idx) {
-       groups.push(vec![new_verts[i].idx]);
+     for i in 0..nv {
+         if !taken.contains(&new_verts[i].idx) {
+             groups.push(vec![new_verts[i].idx]);
+         }
      }
-   }
  }
 
  // = =  Phase 3: MakeVertex for each chain (BOPTools_AlgoTools::MakeVertex) = = =
- // Single element -> reuse the vertex.
- // Multiple elements -> BRepLib::BoundingVertex computes center + tolerance.
- let mut survivors: Vec<usize> = Vec::new();
+ // OCCT L714-721: for each chain, create a new TopoDS_Vertex via MakeVertex
+ // rcad: groups with >1 member get a new fused vertex; singletons reuse the old index.
+ let mut survivors: Vec<usize> = Vec::with_capacity(groups.len());
  for members in &groups {
  if members.len() < 2 {
  survivors.push(members[0]);
@@ -2260,7 +2256,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  .unwrap_or(self.ds.fuzzy_tol);
 
  // OCCT BRep_Builder::MakeVertex: create new vertex at centroid.
- let new_vi = self.ds.add_vertex(centroid);
+ let new_vi = self.ds.add_vertex_no_dedup(centroid);
  self.ds.vertex_data_mut(new_vi).tolerance = max_tol;
  // OCCT: myIncreasedSS.Add(nV)  ?mark tolerance as increased.
  self.my_increased_ss.insert(new_vi);
@@ -2292,62 +2288,96 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  }
  survivors
  }
- // OCCT PaveFiller_3.cxx L594-687: PerformNewVertices
- pub(crate) fn perform_new_vertices(
- &mut self,
- a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks>,
- b_is_ee_intersection: bool,
- ) {
- let a_nb_v = a_mvcpb.len();
- if a_nb_v == 0 { return; }
- // Step 1: Treat/Fuse new vertices (OCCT L609-612: TreatNewVertices)
- // rcad: treat_new_vertices fuses nearby vertices, updates EF/EE entries.
- let _survivors = self.treat_new_vertices();
- // Step 2+4: For each CPB, split the PB at the vertex (OCCT L655-687)
- use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
- for (_v_key, cpb) in &a_mvcpb {
- // Get the fused vertex index from the EF/EE entry
- let (n_v, n_e) = if b_is_ee_intersection {
- let inf = &self.ds.interf_ee[cpb.interf_idx];
- (inf.new_vertex, inf.e1)
- } else {
- let inf = &self.ds.interf_ef[cpb.interf_idx];
- if inf.new_vertex == usize::MAX { continue; }
- (inf.new_vertex, inf.edge)
- };
- if n_v == usize::MAX || n_e >= self.ds.edges.len() { continue; }
- // Check if edge has a single PB that spans the new vertex
- if self.ds.edges[n_e].pave_blocks.len() != 1 { continue; }
- // OCCT IntersectVE: compute parameter via BOPAlgo_VertexEdge = ComputeVE
- let mut a_ve = VertexEdgeSolver::new();
- a_ve.set_data(n_v, n_e);
- a_ve.perform(&mut self.context, &self.ds, self.ds.fuzzy_tol);
- if !a_ve.is_done() { continue; }
- let a_t = a_ve.param;
- let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = {
- let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
- (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
- };
- if pb_sv == n_v || pb_ev == n_v {
-  // OCCT: distinct vertex objects at same position → different IDs.
-  // rcad: add_vertex dedup may make EF vertex == PB endpoint.
-  // EF vertex at PB endpoint still needs split (creates new sub-edge).
-  if b_is_ee_intersection { continue; }
- }
- // Split at the EF's edge_param, clamped within the PB range
- let a_t_split = a_t.clamp(pb_t1 + 1e-12, pb_t2 - 1e-12);
- let pv1 = Pave { vertex_idx: pb_sv, param: pb_t1 };
- let pv_new = Pave { vertex_idx: n_v, param: a_t_split };
- let pv2 = Pave { vertex_idx: pb_ev, param: pb_t2 };
- let mut pb1 = PaveBlock::new(orig_e, pv1, pv_new);
- let mut pb2 = PaveBlock::new(orig_e, pv_new, pv2);
- pb1.set_shrunk_data(pb_t1, a_t_split, true);
- pb2.set_shrunk_data(a_t_split, pb_t2, true);
- self.ds.edges[n_e].pave_blocks.clear();
- self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb1));
- self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb2));
- }
- }
+// OCCT BOPAlgo_PaveFiller_3.cxx L594-687: PerformNewVertices
+pub(crate) fn perform_new_vertices(
+    &mut self,
+    a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks>,
+    b_is_ee_intersection: bool,
+) {
+    let a_nb_v = a_mvcpb.len();
+    if a_nb_v == 0 { return; }
+
+    // Step 1: Fuse the new vertices via TreatNewVertices (OCCT L609-612)
+    let _survivors = self.treat_new_vertices(&a_mvcpb);
+
+    // Steps 2-4: Build edge→vertices map and call IntersectVE (OCCT L655-687)
+    // OCCT builds aMPBLI (PB → vertices) then calls IntersectVE(aMPBLI, ..., false).
+    // rcad: build edge→vertices map and call self.intersect_ve().
+    //
+    // For EF intersections where the vertex coincides with a PB endpoint,
+    // OCCT's TreatNewVertices creates a new vertex index so IntersectVE
+    // doesn't skip it. In rcad, if the vertex wasn't fused (singleton group),
+    // it keeps its old index → IntersectVE skips it. Handle this case manually.
+    let mut edge_verts: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut ef_endpoint_cases: Vec<(usize, usize)> = Vec::new(); // (edge, vertex)
+
+    for (_v_key, cpb) in &a_mvcpb {
+        let (n_v, n_e) = if b_is_ee_intersection {
+            let inf = &self.ds.interf_ee[cpb.interf_idx];
+            (inf.new_vertex, inf.e1)
+        } else {
+            let inf = &self.ds.interf_ef[cpb.interf_idx];
+            if inf.new_vertex == usize::MAX { continue; }
+            (inf.new_vertex, inf.edge)
+        };
+        if n_v == usize::MAX || n_e >= self.ds.edges.len() { continue; }
+
+        // Check if vertex is a PB endpoint
+        let is_endpoint = {
+            let pbs = self.ds.edge_pave_blocks(n_e);
+            if pbs.is_empty() { continue; }
+            let mut ep_set: HashSet<usize> = HashSet::new();
+            for spb in pbs {
+                let pb = spb.0.read().unwrap();
+                ep_set.insert(pb.pave1.vertex_idx);
+                ep_set.insert(pb.pave2.vertex_idx);
+            }
+            ep_set.contains(&n_v)
+        };
+
+        if is_endpoint && !b_is_ee_intersection {
+            // EF vertex at PB endpoint: handle manually
+            ef_endpoint_cases.push((n_e, n_v));
+        } else if !is_endpoint {
+            edge_verts.entry(n_e).or_default().push(n_v);
+        }
+        // EE endpoint case: skip (IntersectVE skips them too)
+    }
+
+    // Step 4a: Split PBs at new vertices via IntersectVE (OCCT L687)
+    if !edge_verts.is_empty() {
+        self.intersect_ve(&edge_verts, false);
+    }
+
+    // Step 4b: Handle EF endpoint cases (rcad-specific, preserves existing behavior)
+    if !ef_endpoint_cases.is_empty() {
+        use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
+        for (n_e, n_v) in ef_endpoint_cases {
+            if self.ds.edges[n_e].pave_blocks.len() != 1 { continue; }
+            let mut a_ve = VertexEdgeSolver::new();
+            a_ve.set_data(n_v, n_e);
+            a_ve.perform(&mut self.context, &self.ds, self.ds.fuzzy_tol);
+            if !a_ve.is_done() { continue; }
+            let a_t = a_ve.param;
+            let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = {
+                let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
+                (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param, pb.original_edge)
+            };
+            let a_t_split = a_t.clamp(pb_t1 + 1e-12, pb_t2 - 1e-12);
+            let pv1 = Pave { vertex_idx: pb_sv, param: pb_t1 };
+            let pv_new = Pave { vertex_idx: n_v, param: a_t_split };
+            let pv2 = Pave { vertex_idx: pb_ev, param: pb_t2 };
+            let mut pb1 = PaveBlock::new(orig_e, pv1, pv_new);
+            let mut pb2 = PaveBlock::new(orig_e, pv_new, pv2);
+            pb1.set_shrunk_data(pb_t1, a_t_split, true);
+            pb2.set_shrunk_data(a_t_split, pb_t2, true);
+            self.ds.edges[n_e].pave_blocks.clear();
+            self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb1));
+            self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb2));
+        }
+    }
+}
  // OCCT BOPAlgo_PaveFiller.cxx L376-441: RepeatIntersection
  pub(crate) fn repeat_intersection(&mut self) {
  let mut a_extra_map: HashSet<usize> = HashSet::new();
