@@ -735,6 +735,31 @@ impl DS {
             },
         ))));
         self.face_shape_idx.push(self.shapes.len() - 1);
+        // OCCT BOPDS_DS::Append: push ShapeInfo for this face with OBB from boundary vertices.
+        let (box_min, box_max) = {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for &vi in &self.face_boundary_verts[self.faces.len() - 1] {
+                if vi < self.vertices.len() {
+                    let p = self.vertices[vi].point;
+                    mn = mn.min(p); mx = mx.max(p);
+                }
+            }
+            if mn.x.is_finite() { (Some(mn), Some(mx)) } else { (None, None) }
+        };
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Face,
+            sub_shapes: Vec::new(),
+            flag: -1,
+            reference: -1,
+            has_brep: true,
+            box_min,
+            box_max,
+            box_gap: geom_tol + self.fuzzy_tol * 0.5,
+            is_new: false,
+            rank: if fi < self.a_face_count { 0 } else { 1 },
+            source_idx: source_face_idx,
+        });
         fi
     }
 

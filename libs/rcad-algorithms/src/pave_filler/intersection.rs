@@ -1351,22 +1351,19 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
       let (nV1, nV2) = pb_ref.indices();
       // OCCT L268-271: AABB overlap check (aBBF.IsOut(aBBE))
       let a_bbf = {
-        let fi_si = self.ds.face_shape_idx.get(nF).copied();
-        fi_si.and_then(|si| {
-          let info = self.ds.shape_info.get(si)?;
-          Some((info.box_min?, info.box_max?))
-        })
+        let si = self.ds.face_shape_idx[nF];
+        let info = &self.ds.shape_info[si];
+        info.box_min.zip(info.box_max)
       };
       let a_bbe = pb_ref.my_shrunk_box;
-      let overlap = match (a_bbf, a_bbe) {
-        (Some((f_min, f_max)), Some((e_min, e_max))) => {
-          !(f_max.x < e_min.x || f_min.x > e_max.x
-            || f_max.y < e_min.y || f_min.y > e_max.y
-            || f_max.z < e_min.z || f_min.z > e_max.z)
-        }
-        _ => true, // missing box data — don't filter
+      let ((f_min, f_max), (e_min, e_max)) = match (a_bbf, a_bbe) {
+        (Some(fb), Some(eb)) => (fb, eb),
+        _ => continue,
       };
-      if !overlap { continue; }
+      if f_min.x > e_max.x || f_max.x < e_min.x
+        || f_min.y > e_max.y || f_max.y < e_min.y
+        || f_min.z > e_max.z || f_max.z < e_min.z
+      { continue; }
       let b_express_compute =
         (a_mv_in.contains(&nV1) || a_mv_on.contains(&nV1)) &&
         (a_mv_in.contains(&nV2) || a_mv_on.contains(&nV2));
