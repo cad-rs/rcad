@@ -362,6 +362,22 @@ impl DS {
         }
     }
 
+    /// Return the surface of face `fi` with its Location baked in (world coordinates).
+    /// OCCT equivalent: BRepAdaptor_Surface(aFace) — transparently applies TopLoc_Location
+    /// and unwraps RectangularTrimmedSurface.
+    /// rcad: there is no TrimmedSurface wrapper in Surface3, so this only applies the
+    /// location transformation matrix stored in `self.locations[loc_idx]`.
+    /// When the location index is 0 (identity), returns the raw surface unchanged.
+    pub fn locate_surface(&self, fi: usize) -> rcad_kernel::geom::Surface3 {
+        let surface = self.faces[fi].surface.clone();
+        let loc_idx = self.face_location(fi) as usize;
+        if loc_idx == 0 || loc_idx >= self.locations.len() {
+            return surface;
+        }
+        let loc = &self.locations[loc_idx];
+        rcad_kernel::geom::transform_surface(&surface, loc)
+    }
+
     /// Source face index from parallel array.
     pub fn source_face_idx(&self, fi: usize) -> usize {
         if fi < self.source_face_idxs.len() { self.source_face_idxs[fi] }

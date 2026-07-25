@@ -109,8 +109,11 @@ impl<'a> super::PaveFiller<'a> {
       // ===== Non-glue path (OCCT L374-508) =====
 
       // L375-378: const TopoDS_Face& aF1, aF2; const BRepAdaptor_Surface& aBAS1, aBAS2
-      let is_plane1 = matches!(self.ds.faces[n_f1].surface, Surface3::Plane(_));
-      let is_plane2 = matches!(self.ds.faces[n_f2].surface, Surface3::Plane(_));
+      // rcad: BRepAdaptor equivalent = locate_surface (applies Location + unwraps TrimmedSurface)
+      let a_surf1 = self.ds.locate_surface(n_f1);
+      let a_surf2 = self.ds.locate_surface(n_f2);
+      let is_plane1 = matches!(a_surf1, Surface3::Plane(_));
+      let is_plane2 = matches!(a_surf2, Surface3::Plane(_));
 
       // L380-391: CheckPlanes — skip parallel planes without vertex overlap
       if is_plane1 && is_plane2 {
@@ -130,12 +133,10 @@ impl<'a> super::PaveFiller<'a> {
       // OCCT L393-486: Seam edge shift (inline in PerformFF)
       // L400: TopoDS_Face aFShifted1 = aF1, aFShifted2 = aF2;
       // L402: double aShiftValue = 0.;
-      // OCCT L404-416: if (!isPlane1 || !isPlane2) — rcad: skip only when both planes
+      // OCCT L404-416: if (!isPlane1 || !isPlane2)
       let shift_info: Option<SeamEdgeShift>;
       let a_shift_value: f64;
-      let s1 = &self.ds.faces[n_f1].surface;
-      let s2 = &self.ds.faces[n_f2].surface;
-      if matches!(s1, Surface3::Plane(_)) && matches!(s2, Surface3::Plane(_)) {
+      if is_plane1 && is_plane2 {
         shift_info = None;
         a_shift_value = 0.0;
       } else {
@@ -437,8 +438,8 @@ impl<'a> super::PaveFiller<'a> {
  /// given face_idx with pcurve2.is_some() (CurveOnClosedSurface in TOPODS).
  pub(crate) fn is_seam_edge(&self, edge_idx: usize, face_idx: usize) -> bool {
   // L112: if (!theIsPlane)
-  let face = &self.ds.faces[face_idx];
-  let the_is_plane = matches!(face.surface, Surface3::Plane(_));
+  let a_surf = self.ds.locate_surface(face_idx);
+  let the_is_plane = matches!(a_surf, Surface3::Plane(_));
   if !the_is_plane {
    // L115-129: iterate over edge's curve representations
    // L124: IsCurveOnSurface(theSurface, aLocation) && IsCurveOnClosedSurface()
