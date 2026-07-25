@@ -116,6 +116,25 @@ enum EfHit {
 }
 
 /// OCCT L55-93: BOPAlgo_EdgeFace (architecture diff: rcad equivalent).
+// OCCT L55-162: BOPAlgo_EdgeFace — target for future alignment
+struct EdgeFaceTask {
+  myIE: usize,
+  myIF: usize,
+  myFlag: i32,
+  myPB: usize,
+  myNewSR: [f64; 2],
+  myRange: [f64; 2],
+  myBox1: Option<(DVec3, DVec3)>,
+  myBox2: Option<(DVec3, DVec3)>,
+  myFuzzyValue: f64,
+  bExpressCompute: bool,
+  myCommonParts: Vec<EfHit>,
+  myMinDist: f64,
+  myHasErrors: bool,
+  myIsDone: bool,
+}
+
+// OCCT IntTools_EdgeFace: current rcad EF task struct used by perform_ef
 struct EfTask {
   nE: usize, nF: usize,
   nV1: usize, nV2: usize,
