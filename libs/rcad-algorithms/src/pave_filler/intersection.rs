@@ -1452,7 +1452,6 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
             }
             // OCCT L448-455: one vertex NOT on face, just AddInterf
             self.ds.try_add_interf(nE, nF);
-            continue;
           }
           // OCCT L442-444: splittable — if PB not splittable, skip
           if !self.ds.edge_pave_blocks(nE)[a_pb_local].0.read().unwrap().is_splittable {
