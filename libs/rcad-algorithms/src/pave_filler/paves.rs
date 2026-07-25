@@ -1494,24 +1494,30 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
 
- pub(crate) fn check_planes(&self, f1: usize, f2: usize) -> bool {
- let s1 = &self.ds.faces[f1].surface;
- let s2 = &self.ds.faces[f2].surface;
- let a_tol = self.ds.face_tolerance(f1).max(self.ds.face_tolerance(f2));
- match (s1, s2) {
- (Surface3::Plane(p1), Surface3::Plane(p2)) => {
- let dot = p1.normal.dot(p2.normal).abs();
- if dot > 0.9999 {
- // Nearly parallel — check if coincident (OCCT: same plane within tolerance)
- let d = (p2.origin - p1.origin).dot(p1.normal).abs();
- d < a_tol
- } else {
- // Non-parallel = planes DO intersect (OCCT CheckPlanes returns true)
- true
- }
- }
- _ => false,
- }
+ pub(crate) fn check_planes(&self, n_f1: usize, n_f2: usize) -> bool {
+  // OCCT BOPAlgo_PaveFiller_6.cxx L3639-3675: CheckPlanes
+  // Checks if two plane faces share enough vertices to truly intersect.
+  // Returns true when they share >1 vertex (iCnt > 1).
+  let a_fi1 = self.ds.face_info(n_f1);
+  let a_fi2 = self.ds.face_info(n_f2);
+  let a_mv_in1 = &a_fi1.vertices_in;
+  let a_mv_on1 = &a_fi1.vertices_on;
+  let mut i_cnt = 0;
+  let mut b_to_intersect = false;
+  for i in 0..2 {
+    if b_to_intersect { break; }
+    let a_mv2 = if i == 0 { &a_fi2.vertices_in } else { &a_fi2.vertices_on };
+    for &n_v2 in a_mv2 {
+      if a_mv_in1.contains(&n_v2) || a_mv_on1.contains(&n_v2) {
+        i_cnt += 1;
+        if i_cnt > 1 {
+          b_to_intersect = !b_to_intersect;
+          break;
+        }
+      }
+    }
+  }
+  b_to_intersect
  }
 
  pub(crate) fn make_sd_vertices(&mut self, verts: &[usize]) {
