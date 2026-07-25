@@ -1,4 +1,5 @@
 use super::*;
+use rcad_kernel::topods::ShapeType;
 
 impl<'a> PaveFiller<'a> {
     // OCCT BOPAlgo_PaveFiller_3.cxx L997-1333
@@ -15,46 +16,53 @@ impl<'a> PaveFiller<'a> {
         // rcad: PBs already initialized in earlier pipeline steps; skip.
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
-        // OCCT: iterates over NbSourceShapes, filters to EDGE type.
-        // rcad: source edges are 0..a_edge_count; skip intersection-created edges.
-        let a_nb_s = self.ds.a_edge_count;
+        let a_nb_s = self.ds.nb_source_shapes();
+        // Fence map of pave blocks (OCCT L1030: NCollection_Map<handle<BOPDS_PaveBlock>> aMPBFence)
+        let mut a_mpb_fence: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
         // rcad: HashMap keyed by (v_min, v_max), value = Vec<(edge_idx, local_pb_idx)>
         // OCCT: NCollection_IndexedDataMap<BOPDS_Pair, NCollection_List<handle<PaveBlock>>>
         let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
 
         for i in 0..a_nb_s {
-            // L1034-1038: only edges (rcad: edges vec contains only edges)
-
-            // L1040-1044: edge must have PBs (HasReference equivalent)
-            if self.ds.edges[i].pave_blocks.is_empty() {
-                // L1042-1044: No pave blocks
+            // L1034-1038: only edges
+            if self.ds.shape_type_of(i) != ShapeType::Edge {
                 continue;
             }
-
-            // L1046-1050: skip degenerated edges
-            if self.ds.is_edge_degenerated(i) {
+            // L1041-1044: edge must have PBs (HasReference equivalent)
+            let ei = self.ds.shape_info_at(i).source_idx;
+            if ei >= self.ds.edges.len() || self.ds.edges[ei].pave_blocks.is_empty() {
+                continue;
+            }
+            // L1047-1051: skip degenerated edges
+            if self.ds.edge_has_flag(ei) {
                 continue;
             }
 
             // L1056-1079: iterate PBs of this edge
-            let a_lpb = &self.ds.edges[i].pave_blocks;
+            let a_lpb = &self.ds.edges[ei].pave_blocks;
             for local_i in 0..a_lpb.len() {
                 let a_pb = &a_lpb[local_i];
 
-                // L1060-1065: get real PaveBlock + fence
-                // rcad: PBs are unique per (edge, local). No RealPaveBlock indirection.
-                // rcad: PBs have no CommonBlock indirection - skip fence check.
+                // L1060-1061: get real PaveBlock (OCCT: myDS->RealPaveBlock(aPB))
+                // rcad: no CommonBlock indirection — a_pb IS the real PB
+                let a_pbr_key = (ei, local_i);
+                // L1062-1065: fence map — skip if already processed
+                if !a_mpb_fence.insert(a_pbr_key) {
+                    continue;
+                }
 
-                // L1067-1069: get vertex indices
+                // L1068-1069: get vertex indices
                 let (n_v1, n_v2) = {
                     let pbr = a_pb.0.read().unwrap();
                     (pbr.pave1.vertex_idx, pbr.pave2.vertex_idx)
                 };
 
-                // L1071-1078: add PB to map keyed by vertex pair
+                // L1072-1078: add PB to map keyed by vertex pair
+                // OCCT: BOPDS_Pair aPair(nV1, nV2); aPBMap(aPBMap.Add(aPair, ...))
                 let a_pair = if n_v1 <= n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-                a_pb_map.entry(a_pair).or_default().push((i, local_i));
+                a_pb_map.entry(a_pair).or_default().push(a_pbr_key);
             }
         }
 
