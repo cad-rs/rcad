@@ -453,8 +453,9 @@ impl<'a> PaveFiller<'a> {
    // OCCT L868-878: iterate pairs
    for &(_n1, n_f) in pairs.iter() {
     if n_f < self.ds.faces.len()
-     // OCCT L873: IsBasedOnPlane(aF)
-     && matches!(self.ds.faces[n_f].surface, Surface3::Plane(_))
+     // OCCT L873: IsBasedOnPlane(aF) — checks Geom_Plane with TrimmedSurface unwrap
+     // rcad: Surface3 has no TrimmedSurface wrapper; locate_surface applies Location
+     && matches!(self.ds.locate_surface(n_f), Surface3::Plane(_))
     {
      // OCCT L876: aMF.Add(aF)
      a_mf.insert(n_f);
