@@ -17,16 +17,12 @@ impl<'a> PaveFiller<'a> {
         };
         Self {
             ds,
-            brep: None,
             my_iterator,
-            face_refs: Vec::new(),
-            ic_edge_map: Vec::new(),
             bvh_a: None,
             bvh_b: None,
             glue: GlueEnum::default(),
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
-            seam_shift_tol: 0.0,
             run_parallel: false,
             non_destructive: false,
             use_obb: false,
@@ -51,56 +47,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Create PaveFiller with BRep-based BVH (EE/EF/VF pair paths) + BRep output.
-    pub fn with_bvh_and_brep(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh, brep: &'a mut rcad_kernel::topods::BRep) -> Self {
-        let total_faces = ds.faces.len();
-        let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
-        // SAFETY: see PaveFiller::new()
-        let my_iterator = {
-            let ds_ptr: *const DS = &*ds;
-            unsafe {
-                std::mem::transmute::<crate::bopds::ds::BOPDS_Iterator<'_>, crate::bopds::ds::BOPDS_Iterator<'static>>(
-                    crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr })
-                )
-            }
-        };
-        Self {
-            ds,
-            brep: Some(brep),
-            my_iterator,
-            face_refs: Vec::new(),
-            ic_edge_map: Vec::new(),
-            bvh_a: if total_faces >= BVH_THRESHOLD { Some(bvh_a) } else { None },
-            bvh_b: if total_faces >= BVH_THRESHOLD { Some(bvh_b) } else { None },
-            glue: GlueEnum::default(),
-            glue_tolerance: TOLERANCE_ABS,
-            fuzzy_tolerance: 0.0,
-            seam_shift_tol: 0.0,
-            run_parallel: false,
-            non_destructive: false,
-            use_obb: false,
-            context,
-            my_arguments: Vec::new(),
-            section_attribute: SectionAttribute::default(),
-            is_primary: true,
-            avoid_build_pcurve: false,
-            fpbdone: std::collections::HashMap::new(),
-            verts_to_avoid_extension: std::collections::HashSet::new(),
-            my_increased_ss: std::collections::HashSet::new(),
-            a_mv_tol: std::collections::HashMap::new(),
-            a_dmv_lv: std::collections::HashMap::new(),
-            distances: std::collections::HashMap::new(),
-            my_report: Report::new(),
-            dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(
-                &std::env::var("RCAD_DUMP_GRID").unwrap_or_default(),
-                &std::env::var("RCAD_DUMP_CASE").unwrap_or_default(),
-                "pf",
-            ),
-            stop_after: None,
-        }
-    }
-
-    /// Create PaveFiller with BRep-based BVH (EE/EF/VF paths), no BRep output.
+    /// Create PaveFiller with BRep-based BVH (EE/EF/VF pair paths).
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
         let total_faces = ds.faces.len();
         let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
@@ -115,16 +62,12 @@ impl<'a> PaveFiller<'a> {
         };
         Self {
             ds,
-            brep: None,
             my_iterator,
-            face_refs: Vec::new(),
-            ic_edge_map: Vec::new(),
             bvh_a: if total_faces >= BVH_THRESHOLD { Some(bvh_a) } else { None },
             bvh_b: if total_faces >= BVH_THRESHOLD { Some(bvh_b) } else { None },
             glue: GlueEnum::default(),
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
-            seam_shift_tol: 0.0,
             run_parallel: false,
             non_destructive: false,
             use_obb: false,

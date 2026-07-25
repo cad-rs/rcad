@@ -163,9 +163,8 @@ mod bop_algo_direct_tests {
         let mut ds = DS::new_from_topods(&b1, &b2, TOLERANCE_ABS);
         let bvh_a = Bvh::build(&b1);
         let bvh_b = Bvh::build(&b2);
-        let mut brep = rcad_kernel::topods::BRep::new();
         {
-            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
             filler.perform(&b1, &b2);
         }
@@ -218,14 +217,13 @@ mod bop_algo_two_step_tests {
         let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
         let bvh_a = Bvh::build(&a_br);
         let bvh_b = Bvh::build(&b_br);
-        let mut brep = rcad_kernel::topods::BRep::new();
-        let (face_refs, ic_edge_map) = {
-            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        let brep = rcad_kernel::topods::BRep::new();
+        {
+            let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
             filler.perform(a, b);
-            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
-        };
-        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+        }
+        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
         let (result, _history) = builder.build_with_history_topods().expect("Two-step BOP failed");
         result
     }
@@ -1299,14 +1297,13 @@ mod stage_classification_tests {
         let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
         let bvh_a = Bvh::build(&a_br);
         let bvh_b = Bvh::build(&b_br);
-        let mut brep = rcad_kernel::topods::BRep::new();
-        let (face_refs, ic_edge_map) = {
-            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        let brep = rcad_kernel::topods::BRep::new();
+        {
+            let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
             filler.perform(a, b);
-            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
-        };
-        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
+        }
+        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
 
         let (_result_brep, _history, snapshots) = builder.build_with_history_stage_by_stage()
             .expect("stage_by_stage pipeline failed");
@@ -1387,12 +1384,10 @@ mod stage_classification_tests {
         let mut ds = DS::new_from_topods(&a_br, &b_br, TOLERANCE_ABS);
         let bvh_a = Bvh::build(&a_br);
         let bvh_b = Bvh::build(&b_br);
-        let mut brep = rcad_kernel::topods::BRep::new();
-        let (_face_refs, _ic_edge_map) = {
-            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        {
+            let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
             filler.perform(&a, &b);
-            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
         eprintln!("\n── DS state after pave_fill ──");
         eprintln!("V={} E={} F={} IC={} PB={}",

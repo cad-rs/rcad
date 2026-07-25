@@ -274,16 +274,9 @@ fn update_existing_pave_blocks(
 
 pub struct PaveFiller<'a> {
  pub ds: &'a mut DS,
- /// Optional BRep for direct output (dual-write mode). When set, PaveFiller
- /// populates the BRep on completion, eliminating the need for ds_to_brep.
- pub brep: Option<&'a mut rcad_kernel::topods::BRep>,
  /// =myIterator (BOPAlgo_PaveFiller.hxx) — BOPDS_Iterator for pair enumeration.
  /// Uses 'static lifetime via unsafe transmute (see config.rs for safety).
  pub(crate) my_iterator: crate::bopds::ds::BOPDS_Iterator<'static>,
- /// Output: face_refs by ds_face_idx (populated by export_to_brep).
- pub face_refs: Vec<rcad_kernel::topods::ShapeRef>,
- /// Output: ic_edge_map: ci -> BRep edge ShapeRef (populated by export_to_brep).
- pub ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
  bvh_a: Option<&'a Bvh>,
  bvh_b: Option<&'a Bvh>,
  /// DS-based face BVH for FF pair detection. Uses DS face indices directly,
@@ -293,8 +286,6 @@ pub(crate) glue: GlueEnum,
  /// convenience  ?true when glue is active (not GlueOff).
  /// =BOPAlgo_Options::SetFuzzyValue
  fuzzy_tolerance: f64,
- /// =PaveFiller_6.cxx L393-479 seam edge shift tolerance
- seam_shift_tol: f64,
  /// =BOPAlgo_Algo::myRunParallel
  run_parallel: bool,
  /// =BOPAlgo_PaveFiller::myNonDestructive

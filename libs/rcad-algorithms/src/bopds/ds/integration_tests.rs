@@ -39,11 +39,10 @@ fn box_at(origin: DVec3, dx: f64, dy: f64, dz: f64) -> topods::BRep {
 /// Uses RCAD_STOP_AFTER env var to stop PaveFiller::perform() early.
 fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
-    let mut brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
     {
-        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
         filler.stop_after = Some(stage.to_string());
         filler.perform(a, b);
@@ -54,11 +53,11 @@ fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
 /// Run PaveFiller on two BReps, return the filled DS.
 fn pave_fill_two(a: &topods::BRep, b: &topods::BRep) -> (DS, topods::BRep) {
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
-    let mut brep = topods::BRep::new();
+    let brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
     {
-        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
         filler.perform(a, b);
     }
@@ -68,17 +67,16 @@ fn pave_fill_two(a: &topods::BRep, b: &topods::BRep) -> (DS, topods::BRep) {
 /// Run full fuse on two BReps, return the result BRep.
 fn fuse(a: &topods::BRep, b: &topods::BRep) -> topods::BRep {
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
-    let mut brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
-    let (face_refs, ic_edge_map) = {
-        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+    let brep = topods::BRep::new();
+    {
+        let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
         filler.perform(a, b);
-        (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
-    };
+    }
     let mut builder = crate::builder::BooleanBuilder::with_brep(
-        &ds, crate::BooleanOpType::Union, brep, face_refs, ic_edge_map);
+        &ds, crate::BooleanOpType::Union, brep, Vec::new(), Vec::new());
     builder.build_with_history().map(|(r, _)| r).expect("fuse failed")
 }
 
@@ -1350,11 +1348,11 @@ fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glu
 {
     // 1. PaveFiller
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
-    let mut brep = topods::BRep::new();
+    let brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
     {
-        let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+        let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
         if use_glue { filler.configure_glue(true, TOLERANCE_ABS); }
         filler.perform(a, b);

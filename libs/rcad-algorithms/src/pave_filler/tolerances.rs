@@ -46,7 +46,6 @@ impl<'a> PaveFiller<'a> {
         self.tol()
             .max(self.ds.face_tolerance(f1))
             .max(self.ds.face_tolerance(f2))
-            .max(self.seam_shift_tol)
     }
 
     /// OCCT: find FF curve indices by face pair

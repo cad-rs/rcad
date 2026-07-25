@@ -254,12 +254,7 @@ impl<'a> super::PaveFiller<'a> {
     //   IntTools_FaceFace::Perform(aF1,aF2) = IntPatch + MakeCurve
     // Rcad: intersect_face_face = IntPatch + MakeCurve + ApplyTrsf
     //   PrepareLines3D/ComputeTolReached3d/PostTreatFF called from results loop below
-    let old_seam_tol = self.seam_shift_tol;
-    if work.a_shift_value > 0.0 {
-      self.seam_shift_tol = work.a_shift_value;
-    }
     self.intersect_face_face(&work);
-    self.seam_shift_tol = old_seam_tol;
   }
 
   // ====================================================================
@@ -297,7 +292,7 @@ impl<'a> super::PaveFiller<'a> {
     // OCCT L555: bool bTangentFaces = aFaceFace.TangentFaces();
     // OCCT L556: double aTolFF = aFaceFace.TolFF();
     // rcad: a_tol_ff stored in FFWork, bTangentFaces stored in InterfFF by intersect_face_face
-    self.compute_tol_and_prepare_lines_3d(k_n_f1, k_n_f2, b_split_curve);
+    self.compute_tol_and_prepare_lines_3d(k_n_f1, k_n_f2, b_split_curve, work.a_shift_value);
     // OCCT L560: ApplyTrsf (reverse seam shift on intersection results)
     // rcad: reverse_seam_edge_shift reverses the shift applied during intersect_face_face
     if let Some(ref shift) = work.shift_info {
@@ -543,11 +538,6 @@ pub(crate) fn intersect_face_face(&mut self, work: &FFWork) {
  let shift_info = work.shift_info.as_ref();
  let dbg_ff = std::env::var("RCAD_DBG_FF").is_ok();
  if dbg_ff { eprintln!("[FF] intersect_face_face: f1={} f2={}", f1, f2); }
- // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
- let old_shift_tol = self.seam_shift_tol;
- if let Some(info) = shift_info {
- self.seam_shift_tol = info.shift_value;
- }
 
  let s1_orig = self.ds.faces[f1].surface.clone();
  let s2_orig = self.ds.faces[f2].surface.clone();
@@ -599,7 +589,6 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
    && matches!(s_b, rcad_kernel::geom::Surface3::Plane(_))
  {
  self.perform_plane_plane(f1, f2);
- self.seam_shift_tol = old_shift_tol;
  return;
  }
 
@@ -614,7 +603,6 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
  f1, f2, curves: Vec::new(), points: Vec::new(), tangent_faces: true,
  });
- self.seam_shift_tol = old_shift_tol;
  return;
  }
 
@@ -695,8 +683,6 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
  f1, f2, curves: ff_curve_indices, points: ff_point_indices, tangent_faces: false,
  });
 
- // = =  Restore seam shift tol = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
- self.seam_shift_tol = old_shift_tol;
 } // fn intersect_face_face
 
 /// PrepareLines3D (OCCT PerformFF L558 + IntTools_FaceFace::PrepareLines3D L1932).
@@ -707,7 +693,7 @@ if dbg_ff { eprintln!("[FF] ToleranceFF: f1={} tol={:.2e} f2={} tol={:.2e} -> a_
 /// - PrepareLines3D L1932-1976: split closed curves at their closing vertex
 ///   b_split_curve controls whether curves are split (OCCT L558: bSplitCurve)
 /// - Curve split fixup: ensure split curves have distinct start/end vertices
-pub(crate) fn compute_tol_and_prepare_lines_3d(&mut self, f1: usize, f2: usize, b_split_curve: bool) {
+pub(crate) fn compute_tol_and_prepare_lines_3d(&mut self, f1: usize, f2: usize, b_split_curve: bool, _shift_tol: f64) {
  let ff_curves_opt = self.find_face_face_curve_indices(f1, f2);
  if ff_curves_opt.is_none() { return; }
  let ff_curves = ff_curves_opt.unwrap();
