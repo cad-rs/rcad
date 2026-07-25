@@ -134,18 +134,6 @@ struct EdgeFaceTask {
   myIsDone: bool,
 }
 
-// OCCT IntTools_EdgeFace: current rcad EF task struct used by perform_ef
-struct EfTask {
-  nE: usize, nF: usize,
-  nV1: usize, nV2: usize,
-  aT1: f64, aT2: f64,
-  aTS1: f64, aTS2: f64,
-  bExpressCompute: bool,
-  bIsPBSplittable: bool,
-  pb_local_idx: usize,
-  hits: Vec<EfHit>,
-}
-
 impl EdgeFaceTask {
   fn new() -> Self {
     EdgeFaceTask {
@@ -1408,6 +1396,7 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
       continue;
     }
     let nV = [self.ds.edges[nE].start_vertex, self.ds.edges[nE].end_vertex];
+    let a_pb_local = task.pave_block();
     let new_sr = task.myNewSR;
     let pb_range = task.myRange;
     let a_r1 = [pb_range[0].min(new_sr[0]), pb_range[0].max(new_sr[0])];
@@ -1424,27 +1413,96 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
       let a_cpart = &a_cprts[i];
       match a_cpart {
         EfHit::Vertex { point, param: a_t } => {
+          // OCCT L406-543: TopAbs_VERTEX
           let a_tol_to_decide = 5e-8;
           let mut b_is_on_pave = [false, false];
           b_is_on_pave[0] = (a_t - a_r1[0]).abs() <= a_tol_to_decide
             || (a_t - a_r1[1]).abs() <= a_tol_to_decide;
           b_is_on_pave[1] = (a_t - a_r2[0]).abs() <= a_tol_to_decide
             || (a_t - a_r2[1]).abs() <= a_tol_to_decide;
+          // OCCT L421-439: both on pave or (bLinePlane && one on pave)
           if (b_is_on_pave[0] && b_is_on_pave[1])
             || (b_line_plane && (b_is_on_pave[0] || b_is_on_pave[1]))
           {
+            // OCCT L423-425: CheckFacePaves(nV[0..1], aMIFOn, aMIFIn)
             let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
             let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
             if bv0 && bv1 {
-              self.ds.interf_ef.push(InterferenceEF { edge: nE, face: nF, point: *point, edge_param: *a_t, new_vertex: 0 });
+              // OCCT L427-437: EDGE-type treatment — set CommonPart
+              self.ds.interf_ef.push(InterferenceEF {
+                edge: nE, face: nF, point: *point, edge_param: *a_t, new_vertex: 0,
+              });
               self.ds.try_add_interf(nE, nF);
               a_mi_efc.insert(nF);
               continue;
             }
+            // OCCT L448-455: one vertex NOT on face, just AddInterf
             self.ds.try_add_interf(nE, nF);
             continue;
           }
-          continue;
+          // OCCT L442-444: splittable — if PB not splittable, skip
+          if !self.ds.edge_pave_blocks(nE)[a_pb_local].0.read().unwrap().is_splittable {
+            continue;
+          }
+          // OCCT L447-457: ForceInterfVF for on-pave vertices
+          for j in 0..2 {
+            if b_is_on_pave[j] {
+              let bv = a_mif_on.contains(&nV[j]) || a_mif_in.contains(&nV[j]);
+              if !bv {
+                b_is_on_pave[j] = self.force_interf_vf_pair(nV[j], nF);
+              }
+            }
+          }
+          // OCCT L459-502: real intersection check for on-pave vertices
+          if b_is_on_pave[0] || b_is_on_pave[1] {
+            for j in 0..2 {
+              if b_is_on_pave[j] {
+                let dist_pp = (self.ds.vertex_point(nV[j]) - *point).length();
+                let a_tol = self.ds.vertex_tolerance(nV[j]);
+                let mut a_max_dist = 1e4 * a_tol;
+                if a_tol < 0.01 { a_max_dist = a_max_dist.min(0.1); }
+                if dist_pp < a_max_dist {
+                  self.update_vertex(nV[j], dist_pp);
+                  self.verts_to_avoid_extension.insert(nV[j]);
+                }
+              }
+            }
+            continue;
+          }
+          // OCCT L505-508: CheckFacePaves(aVnew, aMIFOn)
+          {
+            let near_face_vx = a_mif_on.iter().chain(a_mif_in.iter()).any(|&vi| {
+              vi < self.ds.vertices.len()
+              && (self.ds.vertex_point(vi) - *point).length() <= a_tol_e.max(a_tol_f).max(CONFUSION * 10.0)
+            });
+            if near_face_vx { continue; }
+          }
+          // OCCT L510-526: aTolVnew + IsPointInFace
+          let mut a_tol_vnew = a_tol_e.max(a_tol_f);
+          if b_line_plane {
+            // OCCT L513-518: increase tolerance for Line/Plane
+            a_tol_vnew = a_tol_vnew.max(CONFUSION * 100.0);
+          }
+          // OCCT L523-526: IsPointInFace 3D
+          if !self.is_point_in_face(*point, nF, a_tol_vnew) { continue; }
+          // OCCT L528-542: Create EF interference + CPB
+          a_mi_efc.insert(nF);
+          let new_v = self.ds.add_vertex_no_dedup(*point);
+          let interf_idx = self.ds.interf_ef.len();
+          let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_pb_local].clone();
+          self.ds.interf_ef.push(InterferenceEF {
+            edge: nE, face: nF, point: *point, edge_param: *a_t, new_vertex: new_v,
+          });
+          self.ds.try_add_interf(nE, nF);
+          a_mvcpb.insert(new_v, crate::bopds::pave::CoupleOfPaveBlocks {
+            interf_idx, vertex_index: new_v,
+            pb1: pb_for_cpb.clone(), pb2: pb_for_cpb,
+            tolerance: a_tol_vnew,
+          });
+          self.ds.faces[nF].face_info.vertices_on.insert(new_v);
+          if nE < self.ds.edge_paves.len() {
+            self.add_pave_to_edge(nE, Pave { vertex_idx: new_v, param: *a_t });
+          }
         }
         EfHit::Edge { t1, t2 } => {
           a_mi_efc.insert(nF);
