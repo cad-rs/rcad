@@ -1349,6 +1349,24 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
         None => continue,
       };
       let (nV1, nV2) = pb_ref.indices();
+      // OCCT L268-271: AABB overlap check (aBBF.IsOut(aBBE))
+      let a_bbf = {
+        let fi_si = self.ds.face_shape_idx.get(nF).copied();
+        fi_si.and_then(|si| {
+          let info = self.ds.shape_info.get(si)?;
+          Some((info.box_min?, info.box_max?))
+        })
+      };
+      let a_bbe = pb_ref.my_shrunk_box;
+      let overlap = match (a_bbf, a_bbe) {
+        (Some((f_min, f_max)), Some((e_min, e_max))) => {
+          !(f_max.x < e_min.x || f_min.x > e_max.x
+            || f_max.y < e_min.y || f_min.y > e_max.y
+            || f_max.z < e_min.z || f_min.z > e_max.z)
+        }
+        _ => true, // missing box data — don't filter
+      };
+      if !overlap { continue; }
       let b_express_compute =
         (a_mv_in.contains(&nV1) || a_mv_on.contains(&nV1)) &&
         (a_mv_in.contains(&nV2) || a_mv_on.contains(&nV2));
