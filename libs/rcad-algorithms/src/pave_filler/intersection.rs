@@ -1204,7 +1204,7 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  //
  // OCCT L181: for (; myIterator->More(); myIterator->Next())
  for &(nV, nF) in pairs {
-   // OCCT L183-186: UserBreak check (not ported)
+   // OCCT L183-186: UserBreak
    //
    // OCCT L187: myIterator->Value(nV, nF)
    //
@@ -1234,14 +1234,9 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    }
    //
    // OCCT L222-230: Create BOPAlgo_VertexFace task
-   //   (architecture diff: rcad stores indices only, not TopoDS shapes)
-   a_vv_f.push(VertexFaceTask {
-     myIV: nVx, myIF: nF,
-     myFlag: -1,
-     myT1: -1.0, myT2: -1.0,
-     myTolVNew: -1.0,
-     myHasErrors: false,
-   });
+   let mut a_task = VertexFaceTask::new();
+   a_task.set_indices(nVx, nF);
+   a_vv_f.push(a_task);
  } // for (; myIterator->More(); myIterator->Next()) {
  //
  // OCCT L234-240: SetProgressRange
