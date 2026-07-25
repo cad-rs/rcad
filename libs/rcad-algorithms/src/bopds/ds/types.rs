@@ -359,6 +359,8 @@ pub enum Interference {
  param1: f64,
  param2: f64,
  new_vertex: usize,
+ range1: [f64; 2],
+ range2: [f64; 2],
  },
  VertexFace {
  vertex: usize,
@@ -409,6 +411,10 @@ pub struct InterferenceEE {
  pub param1: f64,
  pub param2: f64,
  pub new_vertex: usize,
+ /// OCCT BOPDS_InterfEE::myCommonPart::Range1
+ pub range1: [f64; 2],
+ /// OCCT BOPDS_InterfEE::myCommonPart::Range2
+ pub range2: [f64; 2],
 }
 
 #[derive(Debug, Clone)]

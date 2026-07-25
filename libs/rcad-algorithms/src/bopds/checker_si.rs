@@ -122,7 +122,7 @@ impl CheckerSI {
             }
         }
         for inf in &ds.interf_ee {
-            let interf = Interference::EdgeEdge { e1: inf.e1, e2: inf.e2, point: inf.point, param1: inf.param1, param2: inf.param2, new_vertex: inf.new_vertex };
+            let interf = Interference::EdgeEdge { e1: inf.e1, e2: inf.e2, point: inf.point, param1: inf.param1, param2: inf.param2, new_vertex: inf.new_vertex, range1: inf.range1, range2: inf.range2 };
             if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
                 filtered.push(interf);
             }

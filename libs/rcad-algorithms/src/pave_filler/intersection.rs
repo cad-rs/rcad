@@ -935,6 +935,8 @@ impl<'a> super::PaveFiller<'a> {
       param1: a_t1,
       param2: a_t2,
       new_vertex: usize::MAX,
+      range1: [a_t1, a_t1],
+      range2: [a_t2, a_t2],
      });
      a_m_edges.insert(nE1);
      a_m_edges.insert(nE2);
@@ -1075,6 +1077,8 @@ impl<'a> super::PaveFiller<'a> {
      param1: a_t1,
      param2: a_t2,
      new_vertex: new_v,
+     range1: [a_t1, a_t1],
+     range2: [a_t2, a_t2],
     });
     let i_x = self.ds.interf_ee.len() - 1;
 
@@ -2028,6 +2032,7 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
     e1, e2, point: mid_pt,
     param1: range1[0], param2: range2[0],
     new_vertex: new_v,
+    range1, range2,
    });
    self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: range1[0] });
    self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: range2[0] });
@@ -2045,6 +2050,7 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
  let new_v = self.ds.add_vertex(point);
  self.ds.interf_ee.push(InterferenceEE{
  e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
+ range1: [t1, t1], range2: [t2, t2],
  });
  self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: t1 });
  self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: t2 });
@@ -2105,6 +2111,8 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
  param1: t1,
  param2: t2,
  new_vertex: new_v,
+ range1: [t1, t1],
+ range2: [t2, t2],
  });
  self.add_pave_to_edge(e1, Pave { vertex_idx: new_v, param: t1 });
  self.add_pave_to_edge(e2, Pave { vertex_idx: new_v, param: t2 });

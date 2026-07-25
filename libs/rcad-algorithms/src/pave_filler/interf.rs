@@ -302,6 +302,8 @@ impl<'a> PaveFiller<'a> {
                         param1: mid_t1,
                         param2: mid_t2,
                         new_vertex: entry.n_v1,
+                        range1: cp.range1,
+                        range2: cp.ranges2.first().copied().unwrap_or([mid_t2, mid_t2]),
                     }, true))
                 } else {
                     None
