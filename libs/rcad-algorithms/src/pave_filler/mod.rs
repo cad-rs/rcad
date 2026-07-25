@@ -1832,40 +1832,6 @@ fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
      }
    }
    // OCCT: process intersection curve PBs (pool continuation after edges)
-   let ic_pb_data: Vec<(Vec<crate::bopds::pave::SharedPB>, Curve3, f64)> = self.ds.intersection_curves.iter()
-     .map(|ic| (ic.pave_blocks.clone(), ic.curve.clone(), ic.geom_tol)).collect();
-   let mut dedup_ic: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-   for (pbs, curve, geom_tol) in &ic_pb_data {
-     for spb in pbs {
-       let (n_v1, n_v2, a_t1, a_t2) = {
-         let pb = spb.0.read().unwrap();
-         (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param)
-       };
-       if n_v1 == crate::bopds::pave::NO_EDGE || n_v2 == crate::bopds::pave::NO_EDGE { continue; }
-       // Dedup same endpoints (IC0↔IC1 reverse)
-       let key = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-       if !dedup_ic.insert(key) { continue; }
-       // OCCT: only process first IC (V3→V5). Remaining ICs (V3→V10, V10→V5)
-       // are handled by MakeBlocks through the normal edge PB splitting path.
-       let vpos1 = self.ds.vertex_point(n_v1);
-       let vpos2 = self.ds.vertex_point(n_v2);
-       let is_seam = (vpos1 - DVec3::Z).length() < 1e-6 || (vpos1 + DVec3::Z).length() < 1e-6
-                  || (vpos2 - DVec3::Z).length() < 1e-6 || (vpos2 + DVec3::Z).length() < 1e-6;
-       if is_seam { continue; }
-       // Create section edge directly from IC (OCCT: SplitEdge for curve PBs)
-       let mut vp = std::collections::HashMap::new();
-       vp.insert(n_v1, a_t1); vp.insert(n_v2, a_t2);
-       let n_sp = self.ds.push_edge(DSEdge {
-         start_vertex: n_v1, end_vertex: n_v2, curve: curve.clone(),
-         t_range: [a_t1, a_t2], origin: crate::bopds::ds::ShapeOrigin::ShapeA,
-         geom_tol: *geom_tol, paves: Vec::new(), pave_blocks: Vec::new(),
-         face_reps: Vec::new(), is_internal: false, vertex_params: vp,
-         face_tolerances: Vec::new(), is_geometric: true, location: 0,
-       }, None);
-       spb.0.write().unwrap().new_edge = Some(n_sp);
-     }
-   }
-   //
    // ----- Phase 1.5: Apply deferred CB tolerance updates -----
    // (OCCT L449-454: CB edge with 1 PB — no split, just tolerance)
    for update in &deferred_cb_updates {
