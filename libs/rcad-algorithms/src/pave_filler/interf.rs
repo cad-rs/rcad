@@ -13,10 +13,22 @@ impl<'a> PaveFiller<'a> {
 
         // L1005-1023: Initialize pave blocks for all vertices which participated
         // in intersections
-        // rcad: PBs already initialized in earlier pipeline steps; skip.
+        // OCCT: for (int i = 0; i < aNbS; ++i) if VERTEX && HasInterf(i) -> InitPaveBlocksForVertex(i)
+        let a_nb_s = self.ds.nb_source_shapes();
+        for i in 0..a_nb_s {
+            if self.ds.shape_type_of(i) != ShapeType::Vertex {
+                continue;
+            }
+            // OCCT L1014: if (myDS->HasInterf(i))
+            // rcad: HasInterf(i) checks if vertex i has any interference.
+            // Check via interf_tb for any pair involving i.
+            let has_interf = self.ds.interf_tb.iter().any(|&(a, b)| a == i || b == i);
+            if has_interf {
+                self.ds.init_pave_blocks_for_vertex(i);
+            }
+        }
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
-        let a_nb_s = self.ds.nb_source_shapes();
         // Fence map of pave blocks (OCCT L1030: NCollection_Map<handle<BOPDS_PaveBlock>> aMPBFence)
         let mut a_mpb_fence: std::collections::HashSet<(usize, usize)> =
             std::collections::HashSet::new();
@@ -71,8 +83,8 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // L1088: Self-Interference check mode (single argument)
-        let b_si_check_mode = self.my_arguments.len() <= 1;
+        // OCCT L1088: const bool bSICheckMode = (myArguments.Extent() == 1);
+        let b_si_check_mode = self.my_arguments.len() == 1;
 
         // L1090-1225: Prepare pairs for intersection
         // rcad: Vec of struct to hold pair data before intersection.
@@ -202,7 +214,10 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // L1233-1238: close preparation step (rcad: no allocator to cleanup)
+        // L1233-1238: close preparation step
+        // OCCT: aPBMap.Clear(); aMPBFence.Clear(); anAlloc->Reset(false);
+        a_pb_map.clear();
+        a_mpb_fence.clear();
 
         // L1240-1252: Perform intersection (rcad: sequential, no parallel dispatch)
         // L1253-1257: get EE array reference (rcad: already exists as Vec)
