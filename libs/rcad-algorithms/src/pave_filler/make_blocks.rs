@@ -386,6 +386,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut a_dmbv: HashMap<usize, Vec<usize>> = HashMap::new();
         // aMVTol uses Default Allocator (UnBind operations require proper Free).
         let mut a_mv_tol: HashMap<usize, f64> = HashMap::new();
+        let mut a_dmv_lv: HashMap<usize, Vec<usize>> = HashMap::new();
 
         // Ensure section_edge_refs is populated
         self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
@@ -424,6 +425,7 @@ impl<'a> super::PaveFiller<'a> {
             a_mpb_common.clear();
             a_dmbv.clear();
             a_mv_tol.clear();
+            a_dmv_lv.clear();
             a_lse.clear();
             a_lbv.clear();
             a_mv_stick.clear();
@@ -468,11 +470,11 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.intersection_curves[ci].pave_blocks.push(SharedPB::new(pb));
                 }
                 // L818: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
-                self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &a_mi, &a_mv_ef);
+                self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &a_mi, &a_mv_ef, &mut a_mv_tol, &mut a_dmv_lv);
             }
 
             // L834: FilterPavesOnCurves
-            self.filter_paves_on_curves(curves_of_ff);
+            self.filter_paves_on_curves(curves_of_ff, &mut a_mv_tol);
 
             // L836-864: 3. PutStickPavesOnCurve + PutEFPavesOnCurve + PutBoundPaveOnCurve
             for (j, &ci) in curves_of_ff.iter().enumerate() {
@@ -491,10 +493,10 @@ impl<'a> super::PaveFiller<'a> {
                     }
                     mv
                 };
-                self.put_stick_paves_on_curve(ci, &a_mi, &a_mv_filtered);
+                self.put_stick_paves_on_curve(ci, &a_mi, &a_mv_filtered, &mut a_mv_tol, &mut a_dmv_lv);
                 // L843-846: if aNbC == 1: PutEFPavesOnCurve
                 if a_nb_c == 1 {
-                    self.put_ef_paves_on_curve(ci, &a_mi, &a_mv_ef);
+                    self.put_ef_paves_on_curve(ci, &a_mi, &a_mv_ef, &mut a_mv_tol, &mut a_dmv_lv);
                 }
                 // L848-863: aIC.HasBounds() → PutBoundPaveOnCurve
                 let has_bounds = {

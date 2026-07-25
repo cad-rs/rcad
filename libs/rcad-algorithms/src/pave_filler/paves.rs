@@ -549,10 +549,12 @@ impl<'a> super::PaveFiller<'a> {
  curve_idx: usize,
  aMI: &std::collections::HashSet<usize>,
  iCheckExtend: i32,
+ a_mv_tol: &mut std::collections::HashMap<usize, f64>,
+ a_dmv_lv: &mut std::collections::HashMap<usize, Vec<usize>>,
  ) -> Option<f64> {
  let ic_curve = self.ds.intersection_curves[curve_idx].curve.clone();
  let aV_tol = self.ds.vertex_tolerance(nV);
- let mut aTolV = self.a_mv_tol.get(&nV).copied().unwrap_or(aV_tol);
+ let mut aTolV = a_mv_tol.get(&nV).copied().unwrap_or(aV_tol);
 
  let mut aT: f64 = 0.0;
  let mut bIsVertexOnLine = self.is_vertex_on_line(nV, aTolV, curve_idx, aTolR3D + self.fuzzy_tolerance, &mut aT);
@@ -586,22 +588,22 @@ impl<'a> super::PaveFiller<'a> {
   let mut pb = spb.0.write().unwrap();
  let bExist = pb.contains_parameter(aT, aPTol, &mut nVUsed);
  if bExist {
- let pList = self.a_dmv_lv.entry(nVUsed).or_insert_with(|| {
+ let pList = a_dmv_lv.entry(nVUsed).or_insert_with(|| {
  let mut list = Vec::new();
  list.push(nVUsed);
- if !self.a_mv_tol.contains_key(&nVUsed) {
+ if !a_mv_tol.contains_key(&nVUsed) {
  let aVUsed_tol = if nVUsed < self.ds.vertices.len() {
  self.ds.vertex_tolerance(nVUsed)
  } else { aTolV };
- self.a_mv_tol.insert(nVUsed, aVUsed_tol);
+ a_mv_tol.insert(nVUsed, aVUsed_tol);
  }
  list
  });
  if !pList.contains(&nV) {
  pList.push(nV);
  }
- if !self.a_mv_tol.contains_key(&nV) {
- self.a_mv_tol.insert(nV, aV_tol);
+ if !a_mv_tol.contains_key(&nV) {
+ a_mv_tol.insert(nV, aV_tol);
  }
  } else {
  pb.append_ext_pave(Pave { vertex_idx: nV, param: aT });
@@ -610,8 +612,8 @@ impl<'a> super::PaveFiller<'a> {
  let aP2 = self.ds.vertex_point(nV);
  let aDist = aP1.distance(aP2);
  if aTolV < aDist + aDTol {
- if !self.a_mv_tol.contains_key(&nV) {
- self.a_mv_tol.insert(nV, aTolV);
+ if !a_mv_tol.contains_key(&nV) {
+ a_mv_tol.insert(nV, aTolV);
  }
  // Tolerance update (lock is dropped with spb scope)
  let new_tol = aDist + aDTol;
@@ -636,13 +638,15 @@ impl<'a> super::PaveFiller<'a> {
  curve_idx: usize,
  aMI: &std::collections::HashSet<usize>,
  theMVEF: &std::collections::HashSet<usize>,
+ a_mv_tol: &mut std::collections::HashMap<usize, f64>,
+ a_dmv_lv: &mut std::collections::HashMap<usize, Vec<usize>>,
  ) {
  let ic = &self.ds.intersection_curves[curve_idx];
  let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
  let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
  for &nV in theMVEF {
  // OCCT L2386-2392: Put EF vertices first — no IsNewShape check
- self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2);
+ self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2, a_mv_tol, a_dmv_lv);
  }
  for &nV in theMVOnIn {
  if theMVEF.contains(&nV) { continue; }
@@ -669,7 +673,7 @@ impl<'a> super::PaveFiller<'a> {
   }
  }
  // OCCT L2419-2421: common (no checks) + non-common that passed
- self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
+ self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1, a_mv_tol, a_dmv_lv);
  }
  }
 
@@ -681,6 +685,8 @@ impl<'a> super::PaveFiller<'a> {
  ci: usize,
  aMI: &std::collections::HashSet<usize>,
  aMVStick: &std::collections::HashSet<usize>,
+ a_mv_tol: &mut std::collections::HashMap<usize, f64>,
+ a_dmv_lv: &mut std::collections::HashMap<usize, Vec<usize>>,
  ) {
  let (start_vertex, end_vertex, t_range, curve, geom_tol) = {
  let ic = &self.ds.intersection_curves[ci];
@@ -731,7 +737,7 @@ impl<'a> super::PaveFiller<'a> {
  if sc_pr > a_d_sc_pr { continue; }
  let a_d = d2.sqrt();
  let a_tol_r3d_use = a_tol_r3d.max(self.ds.vertex_tolerance(n_v));
- self.put_pave_on_curve(n_v, a_d.min(a_tol_r3d_use), ci, aMI, 1);
+ self.put_pave_on_curve(n_v, a_d.min(a_tol_r3d_use), ci, aMI, 1, a_mv_tol, a_dmv_lv);
  break;
  }
  }
@@ -745,6 +751,8 @@ impl<'a> super::PaveFiller<'a> {
   ci: usize,
   aMI: &std::collections::HashSet<usize>,
   aMVEF: &std::collections::HashSet<usize>,
+  a_mv_tol: &mut std::collections::HashMap<usize, f64>,
+  a_dmv_lv: &mut std::collections::HashMap<usize, Vec<usize>>,
  ) {
   if aMVEF.is_empty() { return; }
   // OCCT L2702-2705: only process Bezier/BSpline curves
@@ -769,7 +777,7 @@ impl<'a> super::PaveFiller<'a> {
   for &n_v in aMVEF {
    if n_v >= self.ds.vertices.len() { continue; }
    if already_used.contains(&n_v) { continue; }
-   self.put_pave_on_curve(n_v, a_tol_r3d, ci, aMI, 1);
+   self.put_pave_on_curve(n_v, a_tol_r3d, ci, aMI, 1, a_mv_tol, a_dmv_lv);
   }
  }
 
@@ -1629,7 +1637,7 @@ impl<'a> super::PaveFiller<'a> {
  self.project_vertex_on_curve_with_tol(vi, ic, tl)
  }
 
- pub(crate) fn filter_paves_on_curves(&mut self, curve_idxs: &[usize]) {
+ pub(crate) fn filter_paves_on_curves(&mut self, curve_idxs: &[usize], a_mv_tol: &mut std::collections::HashMap<usize, f64>) {
  #[derive(Clone)]
  struct PBD { pb_idx: usize, sq_dist: f64, sin_angle: f64, tolerance: f64 }
  let anEps = f64::EPSILON;
@@ -1683,7 +1691,7 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  if isRemoved && aMaxDistKept > 0.0 {
- if let Some(&pTol) = self.a_mv_tol.get(&nV) {
+ if let Some(&pTol) = a_mv_tol.get(&nV) {
  let aRealTol = pTol.max(aMaxDistKept.sqrt() + CONFUSION);
  if nV < self.ds.vertices.len() {
  self.ds.vertex_data_mut(nV).tolerance = aRealTol;

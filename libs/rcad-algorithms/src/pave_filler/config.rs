@@ -34,8 +34,6 @@ impl<'a> PaveFiller<'a> {
             fpbdone: std::collections::HashMap::new(),
             verts_to_avoid_extension: std::collections::HashSet::new(),
             my_increased_ss: std::collections::HashSet::new(),
-            a_mv_tol: std::collections::HashMap::new(),
-            a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
             my_report: Report::new(),
             dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(
@@ -79,8 +77,6 @@ impl<'a> PaveFiller<'a> {
             fpbdone: std::collections::HashMap::new(),
             verts_to_avoid_extension: std::collections::HashSet::new(),
             my_increased_ss: std::collections::HashSet::new(),
-            a_mv_tol: std::collections::HashMap::new(),
-            a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
             my_report: Report::new(),
             dump_ctx: crate::pipeline_dump::DumpCtx::new_with_module(

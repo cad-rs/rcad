@@ -312,10 +312,6 @@ pub(crate) glue: GlueEnum,
  /// =myIncreasedSS (PaveFiller.hxx L651) — sub-shapes with increased tolerance.
  /// OCCT: NCollection_Map<int> on PaveFiller, NOT on DS.
  my_increased_ss: std::collections::HashSet<usize>,
- /// aMVTol -- per-vertex tolerance map (PaveFiller_6.cxx L2409).
- a_mv_tol: std::collections::HashMap<usize, f64>,
- /// aDMVLV -- duplicate vertex map (PaveFiller_6.cxx L2410).
- a_dmv_lv: std::collections::HashMap<usize, Vec<usize>>,
  /// =myDistances =minimal edge-face distances for non-intersecting
  /// pairs.  Map: (edge_idx, face_idx) =Vec<EdgeRangeDistance>.
  distances: std::collections::HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
@@ -561,8 +557,6 @@ pub fn clear(&mut self) {
     self.fpbdone.clear();
     self.verts_to_avoid_extension.clear();
     self.my_increased_ss.clear();
-    self.a_mv_tol.clear();
-    self.a_dmv_lv.clear();
     self.distances.clear();
 }
 
