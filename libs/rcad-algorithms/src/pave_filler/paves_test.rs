@@ -1679,30 +1679,43 @@ impl<'a> super::PaveFiller<'a> {
    }
   }
   if a_liv.is_empty() { return; }
-  // OCCT L316-321: collect face indices
+  // OCCT L339-352: collect all face indices
+  //   (OCCT: iterate NbSourceShapes() + check ShapeType() == TopAbs_FACE;
+  //    rcad: iterate faces[] — equivalent at this stage)
   let mut a_lif: Vec<usize> = Vec::new();
   for n_f in 0..self.ds.faces.len() {
    a_lif.push(n_f);
   }
   if a_lif.is_empty() { return; }
-  // OCCT L324-387: cross-product iterate faces 脳 EE vertices
+  //
+  // OCCT L354: NCollection_DynamicArray<BOPDS_InterfVF>& aVFs = myDS->InterfVF()
+  // OCCT L356-362: BOPDS_SubIterator setup (architecture diff: rcad uses nested loops)
+  //   BOPDS_SubIterator aIt; aIt.SetSubSet1(aLIF); aIt.SetSubSet2(aLIV);
+  //
+  // OCCT L363-389: iterate
   for &n_f in &a_lif {
    for &n_v in &a_liv {
-    // OCCT L328: if (!aFI.VerticesOn().Contains(nV))
-    if self.ds.face_info(n_f).vertices_on.contains(&n_v) { continue; }
-    // OCCT L330-332: ComputeVF (aV, aF, aT1, aT2, dummy, myFuzzyValue)
-    let tf = self.vf_tol(n_v, n_f);
-    if let Ok(vf_result) = self.context.compute_vf(self.ds, n_v, n_f, tf) {
-     // OCCT L334-335: aVF.SetIndices(nV, nF); aVF.SetUV(aT1, aT2);
-     // OCCT L336: myDS->AddInterf(nV, nF);
-     self.ds.try_add_interf(n_v, n_f);
+    // OCCT L367: BOPDS_FaceInfo& aFI = myDS->ChangeFaceInfo(nF);
+    let a_fi = self.ds.face_info_mut(n_f);
+    // OCCT L368: const NCollection_Map<int>& aMVOn = aFI.VerticesOn();
+    if a_fi.vertices_on.contains(&n_v) { continue; }
+    //
+    // OCCT L370-374: TopoDS shapes + ComputeVF(myV, myF, aT1, aT2, dummy, myFuzzyValue)
+    //   (architecture diff: rcad uses DS indices, not TopoDS)
+    if let Ok(vf_result) = self.context.compute_vf(self.ds, n_v, n_f, self.fuzzy_tolerance) {
+     // OCCT L377-381: BOPDS_InterfVF& aVF = aVFs.Appended();
+     //   aVF.SetIndices(nV, nF); aVF.SetUV(aT1, aT2);
      self.ds.interf_vf.push(InterferenceVF {
       vertex: n_v, face: n_f,
       u: vf_result.u, v: vf_result.v,
       index_new: None,
      });
-     // OCCT L337: aFI.ChangeVerticesIn().Add(nV);
-     self.ds.face_info_mut(n_f).vertices_in.insert(n_v);
+     // OCCT L383: myDS->AddInterf(nV, nF);
+     self.ds.try_add_interf(n_v, n_f);
+     //
+     // OCCT L386-387: NCollection_Map<int>& aMVIn = aFI.ChangeVerticesIn(); aMVIn.Add(nV);
+     let a_fi = self.ds.face_info_mut(n_f);
+     a_fi.vertices_in.insert(n_v);
     }
    }
   }

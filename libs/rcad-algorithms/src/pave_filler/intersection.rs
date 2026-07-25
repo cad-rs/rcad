@@ -10,6 +10,7 @@ use crate::bopds::ds::{DS, DSVertex, ShapeOrigin, InterferenceVV, InterferenceVE
 use crate::bopds::pave::Pave;
 use rcad_kernel::topods::ShapeType;
 use crate::inttools;
+use crate::inttools::context::VfError;
 use crate::inttools::edge_edge::compute_curve_aabb;
 use crate::inttools::fclass2d::{FClass2d, State};
 use crate::pave_filler::helpers::*;
@@ -168,53 +169,19 @@ fn compute_ef_hits(ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2
   hits
 }
 
-/// OCCT L55-93: BOPAlgo_VertexFace (architecture diff: rcad equivalent).
-struct VfTask {
-  nV: usize, nF: usize,
-  is_on: bool,
-  is_on_boundary: bool,
-  proj_u: f64, proj_v: f64,
-  proj_dist: f64,
+/// OCCT L37-132: BOPAlgo_VertexFace equivalent.
+/// BOPAlgo_VertexFace inherits from BOPAlgo_ParallelAlgo with a Perform()
+/// method that calls myContext->ComputeVF(). rcad: sequential struct.
+struct VertexFaceTask {
+  myIV: usize,
+  myIF: usize,
+  myFlag: i32,        // -1 = not computed, 0 = success (vertex on face), 1+ = failed
+  myT1: f64,
+  myT2: f64,
+  myTolVNew: f64,
+  myHasErrors: bool,
 }
 
-/// OCCT BOPAlgo_VertexFace: compute vertex projection on face.
-fn compute_vf_on_face(ds: &DS, vf_tol: f64, fuzzy_tol: f64, nV: usize, nF: usize) -> VfTask {
-  let point = ds.vertex_point(nV);
-  let face = &ds.faces[nF];
-  let mut r = VfTask { nV, nF, is_on: false, is_on_boundary: false, proj_u: 0.0, proj_v: 0.0, proj_dist: f64::MAX };
-  match &face.surface {
-    Surface3::Plane(plane) => {
-      if crate::inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, vf_tol) {
-        let diff = point - plane.origin;
-        let u = diff.dot(plane.u_dir);
-        let v = diff.dot(plane.v_dir);
-        // OCCT BOPAlgo_VertexFace::Perform → IntTools_Context::ComputeVF
-        // → projects vertex to face surface → IntTools_FClass2d classifies UV
-        // OCCT IsPointInFace: aState != TopAbs_OUT && aState != TopAbs_ON
-        // → only In state (NOT On/Out) creates VF interference
-        let fclass = crate::inttools::fclass2d::FClass2d::new(ds, nF, vf_tol);
-        let st = fclass.perform(DVec2::new(u, v), false);
-        r.proj_u = u; r.proj_v = v;
-        if st == crate::inttools::fclass2d::State::In { r.is_on = true; }
-      }
-    }
-    surface => {
-      let proj = rcad_kernel::projection::closest_point_on_surface(surface, point, 16);
-      let a_tol_v = ds.vertex_tolerance(nV);
-      let a_tol_f = face.geom_tol;
-      let a_tol_sum = a_tol_v + a_tol_f + fuzzy_tol.max(vf_tol);
-      if proj.distance <= a_tol_sum {
-        use crate::inttools::fclass2d::State;
-        let uv = DVec2::new(proj.params.0, proj.params.1);
-        let fclass = crate::inttools::fclass2d::FClass2d::new(ds, nF, vf_tol);
-        let st = fclass.perform(uv, false);
-        // OCCT IsPointInFace: only In (not On/Out)
-        if st == State::In { r.is_on = true; r.proj_u = proj.params.0; r.proj_v = proj.params.1; r.proj_dist = proj.distance; }
-      }
-    }
-  }
-  r
-}
 
 impl<'a> super::PaveFiller<'a> {
  /// OCCT PaveFiller L145: BOPDS_Iterator  ?BVH pair enumeration
@@ -1123,13 +1090,22 @@ pub(crate) fn force_interf_ve(
 // OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L141: myIterator->Initialize(VERTEX, FACE)
- let a_vc = self.ds.a_vertex_count;
- let a_fc = self.ds.a_face_count;
+ // (pairs pre-computed externally — architecture diff: rcad extracts
+ //  all pair lists upfront due to Rust borrow limits)
  // OCCT L142: iSize = myIterator->ExpectedLength()
  let i_size = pairs.len();
- // OCCT L147-160: myGlue == GlueFull handled in mod.rs
  //
- // OCCT L162: InterfVF()  -- aVFs
+ // OCCT L147-160: myGlue == GlueFull
+ if self.glue == GlueEnum::GlueFull {
+   for &(nV, nF) in pairs {
+     if !self.ds.is_sub_shape(nV, nF) {
+       self.ds.face_info_mut(nF);
+     }
+   }
+   return;
+ }
+ //
+ // OCCT L162: NCollection_DynamicArray<BOPDS_InterfVF>& aVFs = myDS->InterfVF()
  // OCCT L163-170: if (!iSize)
  if i_size == 0 {
    // OCCT L165: iSize = 10
@@ -1139,9 +1115,10 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    self.treat_vertices_ee();
    return;
  }
+ //
  // OCCT L172-174: variable declarations
  // OCCT L174: BOPAlgo_VectorOfVertexFace aVVF
- let mut a_vv_f: Vec<VfTask> = Vec::new();
+ let mut a_vv_f: Vec<VertexFaceTask> = Vec::new();
  //
  // OCCT L176: aVFs.SetIncrement(iSize)
  self.ds.interf_vf.reserve(i_size);
@@ -1157,56 +1134,17 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    // OCCT L187: myIterator->Value(nV, nF)
    //
    // OCCT L189-192: IsSubShape
-   let same_range = (nV < a_vc) == (nF < a_fc);
-   if same_range { continue; }
+   if self.ds.is_sub_shape(nV, nF) { continue; }
    //
    // OCCT L194-197: if (myDS->HasInterf(nV, nF)) continue;
-   if self.ds.has_interf_vf(nV, nF) { continue; }
+   if self.ds.has_interf(nV, nF) { continue; }
    //
    // OCCT L199: myDS->ChangeFaceInfo(nF)
    self.ds.face_info_mut(nF);
    //
    // OCCT L200-203: if (myDS->HasInterfShapeSubShapes(nV, nF)) continue;
-   //   Checks if nV has interference with any sub-shape (edge or vertex) of nF.
-   {
-     let mut has_interf = false;
-     let face_edges = self.ds.face_boundary_edges(nF).to_vec();
-     for &ei in &face_edges {
-       if self.ds.has_interf_ve(nV, ei) {
-         has_interf = true;
-         break;
-       }
-       // OCCT: also check vertex sub-shapes (VV)
-       if let Some(edge) = self.ds.edges.get(ei) {
-         if self.ds.has_interf_vv(nV, edge.start_vertex)
-           || self.ds.has_interf_vv(nV, edge.end_vertex) {
-           has_interf = true;
-           break;
-         }
-       }
-     }
-     if !has_interf {
-       let inner = self.ds.face_inner_boundary(nF);
-       for iw in inner {
-         for &(ei, _) in iw {
-           if self.ds.has_interf_ve(nV, ei) {
-             has_interf = true;
-             break;
-           }
-           // OCCT: VV for inner wire edges too
-           if let Some(edge) = self.ds.edges.get(ei) {
-             if self.ds.has_interf_vv(nV, edge.start_vertex)
-               || self.ds.has_interf_vv(nV, edge.end_vertex) {
-               has_interf = true;
-               break;
-             }
-           }
-         }
-         if has_interf { break; }
-       }
-     }
-     if has_interf { continue; }
-   }
+   //   (default theAnyInterference=false = ALL_OF)
+   if self.ds.has_interf_shape_sub_shapes(nV, nF, false) { continue; }
    //
    // OCCT L205-209: SD resolution
    let nVx = self.ds.has_shape_sd(nV).unwrap_or(nV);
@@ -1221,10 +1159,13 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    }
    //
    // OCCT L222-230: Create BOPAlgo_VertexFace task
-   a_vv_f.push(VfTask {
-     nV: nVx, nF,
-     is_on: false, is_on_boundary: false,
-     proj_u: 0.0, proj_v: 0.0, proj_dist: f64::MAX,
+   //   (architecture diff: rcad stores indices only, not TopoDS shapes)
+   a_vv_f.push(VertexFaceTask {
+     myIV: nVx, myIF: nF,
+     myFlag: -1,
+     myT1: 0.0, myT2: 0.0,
+     myTolVNew: f64::MAX,
+     myHasErrors: false,
    });
  } // for (; myIterator->More(); myIterator->Next()) {
  //
@@ -1233,9 +1174,30 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // ------------------------------------------------------------------
  // OCCT L234-240: SetProgressRange (not ported)
  // OCCT L242: BOPTools_Parallel::Perform(myRunParallel, aVVF, myContext);
+ //   (architecture diff: sequential execution)
  for task in &mut a_vv_f {
-   let tf = self.vf_tol(task.nV, task.nF);
-   *task = compute_vf_on_face(&self.ds, tf, self.fuzzy_tolerance, task.nV, task.nF);
+   // OCCT BOPAlgo_VertexFace::Perform → myContext->ComputeVF(myV, myF, myT1, myT2, myTolVNew, myFuzzyValue)
+   //   returns: 0=success, -1=projection failed, -2=distance too large, -3=point outside face
+   //   HasErrors()=true only on exception (catch(Standard_Failure)), not on non-zero return.
+   // rcad: pass self.fuzzy_tolerance (equivalent to myFuzzyValue)
+   match self.context.compute_vf(self.ds, task.myIV, task.myIF, self.fuzzy_tolerance) {
+     Ok(res) => {
+       task.myFlag = 0;
+       task.myT1 = res.u;
+       task.myT2 = res.v;
+       task.myTolVNew = res.tolerance;
+     }
+     Err(VfError::ProjectionFailed) => {
+       task.myFlag = -1;
+       // myHasErrors stays false — OCCT: myFlag=-1 is normal failure, not exception
+     }
+     Err(VfError::DistanceTooLarge) => {
+       task.myFlag = -2;
+     }
+     Err(VfError::PointOutsideFace) => {
+       task.myFlag = -3;
+     }
+   }
  }
  // OCCT L244-247: UserBreak check (not ported)
  //
@@ -1247,16 +1209,22 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    // OCCT L251-254: UserBreak check (not ported)
    //
    // OCCT L257-265: iFlag = aVertexFace.Flag();
-   if !task.is_on { continue; }
+   if task.myFlag != 0 {
+     // OCCT L260-265: error handling
+     if task.myHasErrors {
+       // Warn about failed intersection (architecture diff: no TopoDS shapes to pass)
+     }
+     continue;
+   }
    //
    // OCCT L268: aVertexFace.Indices(nVx, nF)
-   let mut nVx = task.nV;
-   let nF = task.nF;
+   let mut nVx = task.myIV;
+   let nF = task.myIF;
    // OCCT L269: aVertexFace.Parameters(aT1, aT2)
-   let a_t1 = task.proj_u;
-   let a_t2 = task.proj_v;
+   let a_t1 = task.myT1;
+   let a_t2 = task.myT2;
    // OCCT L270: double aTolVNew = aVertexFace.VertexNewTolerance()
-   let a_tol_vnew = task.proj_dist;
+   let a_tol_vnew = task.myTolVNew;
    //
    // OCCT L272-273: aMVFPairs.Find(aVFPair) - get all original vertices
    let key = (nVx, nF);
@@ -1266,23 +1234,26 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    };
    // OCCT L275: for (; itMV.More(); itMV.Next())
    for &nV in &orig_verts {
-     // OCCT L279-281: BOPDS_InterfVF& aVF = aVFs.Appended();
-     //   aVF.SetIndices(nV, nF);
-     //   aVF.SetUV(aT1, aT2);
-     // OCCT L283: myDS->AddInterf(nV, nF);
-     self.ds.try_add_interf(nV, nF);
-     // OCCT L286: nVx = UpdateVertex(nV, aTolVNew);  [shadows outer nVx]
-     nVx = self.update_vertex(nV, a_tol_vnew);
-     // OCCT L289-292: if (myDS->IsNewShape(nVx)) { aVF.SetIndexNew(nVx); }
-     let idx_new = if self.ds.is_new_vertex(nVx) { Some(nVx) } else { None };
-     // OCCT L279-281 (InterfVF pushed after UpdateVertex due to Rust borrow checker)
+     // 1: OCCT L279-281: BOPDS_InterfVF& aVF = aVFs.Appended();
+     //   aVF.SetIndices(nV, nF); aVF.SetUV(aT1, aT2);
+     let a_vf_idx = self.ds.interf_vf.len();
      self.ds.interf_vf.push(InterferenceVF {
        vertex: nV, face: nF,
        u: a_t1, v: a_t2,
-       index_new: idx_new,
+       index_new: None,
      });
+     // 2: OCCT L283: myDS->AddInterf(nV, nF);
+     self.ds.try_add_interf(nV, nF);
+     // 3: OCCT L286: nVx = UpdateVertex(nV, aTolVNew);  [shadows outer nVx]
+     nVx = self.update_vertex(nV, a_tol_vnew);
+     // 4: OCCT L289-292: if (myDS->IsNewShape(nVx)) { aVF.SetIndexNew(nVx); }
+     if self.ds.is_new_vertex(nVx) {
+       if let Some(a_vf) = self.ds.interf_vf.get_mut(a_vf_idx) {
+         a_vf.index_new = Some(nVx);
+       }
+     }
    }
-   // OCCT L295-297: FaceInfo VerticesIn (nVx = last shadowed value from UpdateVertex)
+   // 5: OCCT L295-297: FaceInfo VerticesIn (nVx = last shadowed value from UpdateVertex)
    let a_fi = self.ds.face_info_mut(nF);
    a_fi.vertices_in.insert(nVx);
  } // for (k=0; k < aNbVF; ++k) {

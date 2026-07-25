@@ -990,6 +990,17 @@ pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
 
  // ----- OCCT HasInterf / HasSubShape equivalents -----
 
+ /// OCCT BOPDS_DS::IsSubShape (DS.cxx L1335-1342).
+ /// Checks if theCandidate is a direct sub-shape of theParent
+ /// by looking up shape_info[theParent].sub_shapes.
+ pub fn is_sub_shape(&self, the_candidate: usize, the_parent: usize) -> bool {
+   if the_parent < self.shape_info.len() {
+     self.shape_info[the_parent].sub_shapes.contains(&the_candidate)
+   } else {
+     false
+   }
+ }
+
  ///  ?HasSubShape(nV, nE) =check if vertex is a sub-shape of edge.
  /// Returns true when vertex nV is an endpoint of edge nE.
  pub fn edge_has_vertex(&self, nV: usize, nE: usize) -> bool {
@@ -1077,6 +1088,18 @@ pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
   ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
   ///   if it already exists.  Call before adding to any typed interference vec.
   ///   The fence prevents duplicate shape pairs across all interference types.
+  /// OCCT BOPDS_DS::HasInterf (DS.cxx L398-403).
+  /// Checks if the pair (i1, i2) has been registered in the global interference fence.
+  pub fn has_interf(&self, i1: usize, i2: usize) -> bool {
+    let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
+    self.interf_tb.contains(&key)
+  }
+
+  /// OCCT BOPDS_DS::AddInterf (DS.cxx L410-420).
+  ///   Global interference pair fence.  Checks (i1, i2) with i1 < i2 against
+  ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
+  ///   if it already exists.  Call before adding to any typed interference vec.
+  ///   The fence prevents duplicate shape pairs across all interference types.
   pub fn try_add_interf(&mut self, i1: usize, i2: usize) -> bool {
   let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
   self.interf_tb.insert(key)
@@ -1105,7 +1128,27 @@ pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
  }
 
 
- /// myDS->HasInterfShapeSubShapes(nV, nE)  ?checks if
+ /// OCCT BOPDS_DS::HasInterfShapeSubShapes (DS.cxx L356-375).
+ /// Checks if theIndex1 has interference with sub-shapes of theIndex2.
+ /// When theAnyInterference is false (default), ALL sub-shapes must have interference.
+ /// When true, ANY sub-shape having interference is sufficient.
+ /// Returns false when the parent has no sub-shapes (empty list),
+ /// matching OCCT behavior where V-Wire interference is never registered.
+ pub fn has_interf_shape_sub_shapes(&self, the_index1: usize, the_index2: usize, the_any_interference: bool) -> bool {
+   if the_index2 < self.shape_info.len() {
+     let sub_shapes = &self.shape_info[the_index2].sub_shapes;
+     if sub_shapes.is_empty() { return false; }
+     if the_any_interference {
+       sub_shapes.iter().any(|&ss| self.has_interf(the_index1, ss))
+     } else {
+       sub_shapes.iter().all(|&ss| self.has_interf(the_index1, ss))
+     }
+   } else {
+     false
+   }
+ }
+
+ /// myDS->HasInterfShapeSubShapes(nV, nE) checks if
  /// vertex already has interference with any sub-shape (face) of the edge.
  pub fn has_interf_ve_via_faces(&self, vi: usize, ei: usize) -> bool {
  // Check if the vertex has VF interference with any face that references this edge
