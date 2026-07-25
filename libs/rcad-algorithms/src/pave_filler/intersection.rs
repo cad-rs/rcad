@@ -1310,6 +1310,7 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
     for &(nE, nF) in pairs {
       // OCCT L186: if (!myDS->ShapeInfo(nE).HasFlag())
       if !self.ds.edge_has_flag(nE) {
+        // OCCT L188: myDS->ChangeFaceInfo(nF)
         self.ds.face_info_mut(nF);
       }
     }
