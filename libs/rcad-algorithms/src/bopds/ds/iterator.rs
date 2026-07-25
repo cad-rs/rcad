@@ -1,6 +1,7 @@
 use super::DS;
 use crate::bvh::Aabb;
 use rcad_kernel::topods::ShapeType;
+use std::collections::HashSet;
 
 /// BOPDS_Iterator — BVH-based pair enumeration with type bucketing.
 ///
@@ -15,6 +16,10 @@ pub struct BOPDS_Iterator<'a> {
     // Per-type-combo pair buckets, indexed by TypeToInteger(t1, t2) result:
     //   0=VV, 1=VE, 2=EE, 3=VF, 4=EF, 5=FF, 6=VZ, 7=EZ, 8=FZ, 9=ZZ
     my_lists: Vec<Vec<(usize, usize)>>,
+    // Extra interference lists for IntersectExt (OCCT BOPDS_Iterator::myExtLists)
+    my_ext_lists: Vec<Vec<(usize, usize)>>,
+    // Flag indicating IntersectExt has been called (OCCT BOPDS_Iterator::myUseExt)
+    my_use_ext: bool,
     // Current iteration state
     current_list: Vec<(usize, usize)>,  // pairs being iterated (cloned from bucket)
     current_pos: usize,                // index into current_list
@@ -30,7 +35,9 @@ impl<'a> BOPDS_Iterator<'a> {
         }
         BOPDS_Iterator {
             ds,
+            my_ext_lists: my_lists.clone(),
             my_lists,
+            my_use_ext: false,
             current_list: Vec::new(),
             current_pos: 0,
             my_run_parallel: false,
@@ -94,6 +101,10 @@ impl<'a> BOPDS_Iterator<'a> {
         for list in &mut self.my_lists {
             list.clear();
         }
+        for list in &mut self.my_ext_lists {
+            list.clear();
+        }
+        self.my_use_ext = false;
 
         let nv = self.ds.vertices.len();
         let ne = self.ds.edges.len();
@@ -294,6 +305,146 @@ impl<'a> BOPDS_Iterator<'a> {
             &self.my_lists[bucket as usize]
         } else {
             &[]
+        }
+    }
+
+    /// OCCT BOPDS_Iterator.cxx L363-463: IntersectExt
+    ///
+    /// Builds extra interference pairs for vertices whose tolerance was
+    /// increased (theIndices).  Builds a single BVH over all source shapes,
+    /// using the SD vertex box (expanded tolerance) for extra vertices.
+    /// For each extra vertex, finds all overlapping shapes, filters by
+    /// cross-operand and sub-shape relationship, deduplicates, and
+    /// appends the pairs to my_lists in the appropriate type bucket.
+    pub fn intersect_ext(&mut self, extra_map: &HashSet<usize>) {
+        // L365-368: if (!myDS) return; (rcad: ds always present)
+        // L370: const int aNb = myDS->NbSourceShapes();
+        let a_nb = self.ds.nb_source_shapes();
+
+        // L372-374: BOPTools_BoxTree aBoxTree; aBoxTree.SetSize(aNb);
+        // BOPDS_VectorOfTSR aVTSR(theIndices.Extent());
+        // rcad: single BoxTree for all shapes + extra vertex index list (TSR equivalents)
+
+        let mut all_indices: Vec<usize> = Vec::new();
+        let mut all_aabbs: Vec<Aabb> = Vec::new();
+        let mut extra_vert_indices: Vec<usize> = Vec::new();
+
+        // L376-402: for (int i = 0; i < aNb; ++i)
+        for i in 0..a_nb {
+            let si = self.ds.shape_info_at(i);
+            // L378-382: if (!aSI.IsInterfering() || (aSI.ShapeType() == TopAbs_SOLID)) continue;
+            // rcad: IsInterfering = Vertex | Edge | Face only
+            match si.shape_type {
+                ShapeType::Vertex | ShapeType::Edge | ShapeType::Face => {},
+                _ => continue,
+            }
+            all_indices.push(i);
+
+            // L384-401: theIndices.Contains(i) ? SD box : normal box
+            if extra_map.contains(&i) {
+                // L386-388: int nVSD = i; myDS->HasShapeSD(i, nVSD);
+                let n_vsd = self.ds.has_shape_sd(i).unwrap_or(i);
+                let si_sd = self.ds.shape_info_at(n_vsd);
+                // L389: const Bnd_Box& aBox = aSISD.Box();
+                if let (Some(min), Some(max)) = (si_sd.box_min, si_sd.box_max) {
+                    all_aabbs.push(Aabb { min, max, gap: si_sd.box_gap });
+                    extra_vert_indices.push(i);
+                }
+            } else {
+                // L400: aBoxTree.Add(i, Bnd_Tools::Bnd2BVH(aSI.Box()));
+                if let (Some(min), Some(max)) = (si.box_min, si.box_max) {
+                    all_aabbs.push(Aabb { min, max, gap: si.box_gap });
+                }
+            }
+        }
+
+        // L404: aBoxTree.Build();
+        let tree = crate::box_tree::BoxTree::build(all_indices, all_aabbs);
+
+        // L406-407: BOPTools_Parallel::Perform(myRunParallel, aVTSR);
+        // rcad: sequential (no parallel framework)
+
+        // L412: NCollection_Map<BOPDS_Pair> aMPFence;
+        let mut fence: HashSet<(usize, usize)> = HashSet::new();
+
+        // L414: const int aNbV = aVTSR.Length();
+        // For each extra vertex (TSR entry), find all intersecting shapes
+        for &i in &extra_vert_indices {
+            // L424-428: get shape info, rank, type for the extra vertex
+            let si_i = self.ds.shape_info_at(i);
+            let i_rank = si_i.rank;
+            let ti = si_i.shape_type;
+            let i_rank_ti = Self::type_rank(ti);
+
+            // Get SD box for TSR query (OCCT L392-396: BOPDS_TSR box = SD box)
+            let n_vsd = self.ds.has_shape_sd(i).unwrap_or(i);
+            let si_sd = self.ds.shape_info_at(n_vsd);
+            let (qmin, qmax) = match (si_sd.box_min, si_sd.box_max) {
+                (Some(min), Some(max)) => (min, max),
+                _ => continue,
+            };
+            let qgap = si_sd.box_gap;
+
+            // rcad: single-node BoxTree = OCCT BOPDS_TSR with SetBVHSet + SetBox
+            let tsr_tree = crate::box_tree::BoxTree::build(
+                vec![i],
+                vec![Aabb { min: qmin, max: qmax, gap: qgap }],
+            );
+            let candidates = crate::box_tree::BoxTree::candidate_pairs(&tsr_tree, &tree);
+
+            // L430-459: Treat selections
+            for &(_, j) in &candidates {
+                if i == j { continue; }
+
+                let sj = self.ds.shape_info_at(j);
+                // L435-437: if (iRankI == iRankJ) continue;
+                if i_rank == sj.rank { continue; }
+
+                // L440-442: get j's type
+                let tj = sj.shape_type;
+                let j_rank_tj = Self::type_rank(tj);
+
+                // L444-448: avoid interfering of the shape with its sub-shapes
+                if (i_rank_ti < j_rank_tj && si_i.has_sub_shape(j))
+                    || (i_rank_ti > j_rank_tj && sj.has_sub_shape(i))
+                {
+                    continue;
+                }
+
+                // L450-458: dedup via fence map + bucket to myExtLists
+                let key = if i < j { (i, j) } else { (j, i) };
+                if !fence.insert(key) { continue; }
+
+                let bucket = Self::type_to_bucket(ti, tj);
+                if bucket >= 0 && (bucket as usize) < self.my_ext_lists.len() {
+                    self.my_ext_lists[bucket as usize].push((i, j));
+                }
+            }
+        }
+
+        // OCCT L462: myUseExt = true;
+        // Append my_ext_lists to my_lists, matching OCCT Initialize merge
+        self.my_use_ext = true;
+        for (bucket, ext_list) in self.my_ext_lists.iter().enumerate() {
+            self.my_lists[bucket].extend(ext_list);
+        }
+    }
+
+    /// OCCT BOPDS_Tools::TypeToInteger — hierarchy depth ordering
+    /// (Vertex=0, Edge=1, Face=2, ...), matching OCCT's TopAbs enum.
+    /// Used in IntersectExt for subshape comparison (rcad's type_to_int
+    /// uses inverted values and is not suitable for this comparison).
+    fn type_rank(t: ShapeType) -> i32 {
+        match t {
+            ShapeType::Vertex => 0,
+            ShapeType::Edge => 1,
+            ShapeType::Face => 2,
+            ShapeType::Wire => 3,
+            ShapeType::Shell => 4,
+            ShapeType::Solid => 5,
+            ShapeType::CompSolid => 6,
+            ShapeType::Compound => 7,
+            _ => 8,
         }
     }
 }

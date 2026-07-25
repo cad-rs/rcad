@@ -354,12 +354,13 @@ impl<'a> super::PaveFiller<'a> {
  // rcad: receives pre-computed cross-operand pairs from BOPDS_Iterator.
 // OCCT BOPAlgo_PaveFiller_2.cxx L141: PerformVE
  // OCCT BOPAlgo_PaveFiller_2.cxx L141-207: PerformVE
- pub(crate) fn perform_ve(&mut self, pairs: &[(usize, usize)]) {
+ pub(crate) fn perform_ve(&mut self) {
   // OCCT L143: FillShrunkData(VERTEX, EDGE)
   self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Edge);
 
   // OCCT L148-152: iSize = myIterator->ExpectedLength()
-  let i_size = pairs.len();
+  self.my_iterator.initialize(ShapeType::Vertex, ShapeType::Edge);
+  let i_size = self.my_iterator.expected_length();
   if i_size == 0 {
    return;
   }
@@ -372,7 +373,9 @@ impl<'a> super::PaveFiller<'a> {
    std::collections::HashMap::new();
 
   // OCCT L156-205: for (; myIterator->More(); myIterator->Next())
-  for &(n_v, n_e) in pairs {
+  for _ in 0..i_size {
+   let (n_v, n_e) = self.my_iterator.value();
+   self.my_iterator.next();
    // rcad: cross-operand filter (OCCT: BOPDS_Iterator enforces this)
    if (n_v < a_vc) == (n_e < a_ec) {
     continue;
@@ -645,13 +648,14 @@ impl<'a> super::PaveFiller<'a> {
 
 // OCCT BOPAlgo_PaveFiller_3.cxx L145: PerformEE
  // OCCT BOPAlgo_PaveFiller_3.cxx L145-585: PerformEE
- pub(crate) fn perform_ee(&mut self, pairs: &[(usize, usize)]) {
+ pub(crate) fn perform_ee(&mut self) {
   // OCCT L147: FillShrunkData(EDGE, EDGE)
   self.fill_shrunk_data(ShapeType::Edge, ShapeType::Edge);
 
   // OCCT L149-150: myIterator->Initialize(EDGE, EDGE)
   // iSize = myIterator->ExpectedLength()
-  let i_size = pairs.len();
+  self.my_iterator.initialize(ShapeType::Edge, ShapeType::Edge);
+  let i_size = self.my_iterator.expected_length();
 
   // OCCT L152-155: if (!iSize) return
   if i_size == 0 {
@@ -709,7 +713,9 @@ impl<'a> super::PaveFiller<'a> {
   let a_ec = self.ds.a_edge_count;
   let mut a_vee: Vec<EeTask> = Vec::new();
 
-  for &(nE1, nE2) in pairs {
+  for _ in 0..i_size {
+   let (nE1, nE2) = self.my_iterator.value();
+   self.my_iterator.next();
    // rcad: cross-operand filter (OCCT: done by BOPDS_Iterator)
    if (nE1 < a_ec) == (nE2 < a_ec) {
     continue;
@@ -1165,14 +1171,17 @@ pub(crate) fn force_interf_ve(
  ranges
  }
 // OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
-pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
+pub(crate) fn perform_vf(&mut self) {
  // OCCT L141: myIterator->Initialize(VERTEX, FACE)
  // OCCT L142: iSize = myIterator->ExpectedLength()
- let i_size = pairs.len();
+ self.my_iterator.initialize(ShapeType::Vertex, ShapeType::Face);
+ let i_size = self.my_iterator.expected_length();
  //
  // OCCT L147-160: myGlue == GlueFull
  if self.glue == GlueEnum::GlueFull {
-   for &(nV, nF) in pairs {
+   for _ in 0..i_size {
+     let (nV, nF) = self.my_iterator.value();
+     self.my_iterator.next();
      if !self.ds.is_sub_shape(nV, nF) {
        self.ds.face_info_mut(nF);
      }
@@ -1203,10 +1212,12 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    std::collections::HashMap::new();
  //
  // OCCT L181: for (; myIterator->More(); myIterator->Next())
- for &(nV, nF) in pairs {
+ for _ in 0..i_size {
    // OCCT L183-186: UserBreak
    //
    // OCCT L187: myIterator->Value(nV, nF)
+   let (nV, nF) = self.my_iterator.value();
+   self.my_iterator.next();
    //
    // OCCT L189-192: IsSubShape
    let flat_f = self.ds.face_shape_idx[nF];
@@ -1763,10 +1774,11 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
  self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
  }
  // OCCT BOPAlgo_PaveFiller_1.cxx L45-132: PerformVV
- pub(crate) fn perform_vv(&mut self, pairs: &[(usize, usize)]) {
+ pub(crate) fn perform_vv(&mut self) {
    // L47-48: n1, n2, iFlag, aSize; aAllocator
    // L50-51: myIterator->Initialize(VERTEX, VERTEX); aSize = ExpectedLength()
-   let a_size = pairs.len();
+   self.my_iterator.initialize(ShapeType::Vertex, ShapeType::Vertex);
+   let a_size = self.my_iterator.expected_length();
    // L52: Message_ProgressScope (rcad: sequential, no progress)
    // L53-56: if (!aSize) return
    if a_size == 0 {
@@ -1780,9 +1792,11 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
    let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
    // L66-98: 1. Map V/LV
    // L68: Message_ProgressScope aPSLoop (rcad: sequential)
-   for &(n1, n2) in pairs {
+   for _ in 0..a_size {
      // L71-74: UserBreak check (rcad: not ported)
      // L75: myIterator->Value(n1, n2)
+     let (n1, n2) = self.my_iterator.value();
+     self.my_iterator.next();
      //
      // L77-81: if HasInterf(n1, n2) -> FillMap + continue
      let key = if n1 < n2 { (n1, n2) } else { (n2, n1) };
@@ -2298,89 +2312,65 @@ pub(crate) fn perform_new_vertices(
         }
     }
 }
- // OCCT BOPAlgo_PaveFiller.cxx L376-441: RepeatIntersection
+ // OCCT BOPAlgo_PaveFiller.cxx L383-448: RepeatIntersection
  pub(crate) fn repeat_intersection(&mut self) {
- let mut a_extra_map: HashSet<usize> = HashSet::new();
- // OCCT L382-407: iterate source vertices (0..NbSourceShapes, VERTEX only)
- // whose tolerance was increased, or whose SD root tolerance was increased.
- let a_nb_s = self.ds.nb_source_shapes;
- for vi in 0..self.ds.vertices.len() {
-   let si = self.ds.vertex_shape_idx.get(vi).copied().unwrap_or(usize::MAX);
-   if si >= a_nb_s {
-     continue; // skip non-source vertices (OCCT L385: ShapeType check)
-   }
-   // L390-393: vertex directly in myIncreasedSS
-   if self.my_increased_ss.contains(&vi) {
-     a_extra_map.insert(vi);
-     continue;
-   }
-   // L396-406: SD root whose tolerance was increased
-   if let Some(n_vsd) = self.ds.has_shape_sd(vi) {
-     if self.my_increased_ss.contains(&n_vsd) {
-       a_extra_map.insert(vi);
-     }
-   }
- }
- //
- // OCCT L409-411: if (anExtraInterfMap.IsEmpty()) return
- if a_extra_map.is_empty() {
-  return;
- }
- //
- // Build VV pairs: cross-operand involving extra vertices
- // Build VV pairs: cross-operand involving extra vertices
- // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) uses BVH to find
- // candidate pairs involving the extra vertices only.
- let a_vc = self.ds.a_vertex_count;
- let vv_bvh = self.build_box_tree_combined(false);
- let all_candidates = crate::bvh::BoxTree::candidate_pairs(&vv_bvh, &vv_bvh);
- let mut vv_pairs: Vec<(usize, usize)> = Vec::new();
- for &(vi, vj) in &all_candidates {
-  let vi_x = a_extra_map.contains(&vi);
-  let vj_x = a_extra_map.contains(&vj);
-  // OCCT L414: IntersectExt returns pairs where >=1 vertex is extra
-  if (vi_x || vj_x) && ((vi < a_vc) != (vj < a_vc)) {
-   vv_pairs.push((vi, vj));
-  }
- }
- self.perform_vv(&vv_pairs);
- self.ds.update_pave_blocks_with_sd_vertices();
- // Build VE pairs: cross-operand where vertex is in the extra set
- // OCCT L414: myIterator->IntersectExt(anExtraInterfMap) returns
- // BVH-filtered pairs involving extra vertices only.
- let a_ec = self.ds.a_edge_count;
- let n_edges = self.ds.edges.len();
- let vert_bvh = self.build_box_tree_combined(false);
- let edge_bvh = self.build_box_tree_combined(true);
- let all_ve_candidates = crate::bvh::BoxTree::candidate_pairs(&vert_bvh, &edge_bvh);
- let mut ve_pairs: Vec<(usize, usize)> = Vec::new();
- for &(vi, ei) in &all_ve_candidates {
-  let vi_x = a_extra_map.contains(&vi);
-  let is_cross = (vi < a_vc) != (ei < a_ec);
-  if vi_x && is_cross {
-   ve_pairs.push((vi, ei));
-  }
- }
- self.perform_ve(&ve_pairs);
- eprintln!("[DBG] repeat VE: {} pairs, V={}", ve_pairs.len(), self.ds.vertices.len());
- self.ds.update_pave_blocks_with_sd_vertices();
- // Build VF pairs: cross-operand where vertex is in the extra set
- // OCCT L414: BVH-filtered via IntersectExt.
- let a_fc = self.ds.a_face_count;
- let n_faces = self.ds.faces.len();
- let face_bvh = self.build_box_tree_face_all();
- let all_vf_candidates = crate::bvh::BoxTree::candidate_pairs(&vert_bvh, &face_bvh);
- let mut vf_pairs: Vec<(usize, usize)> = Vec::new();
- for &(vi, fi) in &all_vf_candidates {
-  let vi_x = a_extra_map.contains(&vi);
-  let is_cross = (vi < a_vc) != (fi < a_fc);
-  if vi_x && is_cross {
-   vf_pairs.push((vi, fi));
-  }
- }
- self.perform_vf(&vf_pairs);
- self.ds.update_pave_blocks_with_sd_vertices();
- self.update_interfs_with_sd_vertices();
+    // OCCT L385-386: NCollection_Map<int> anExtraInterfMap;
+    let mut an_extra_interf_map: HashSet<usize> = HashSet::new();
+    // OCCT L387: const int aNbS = myDS->NbSourceShapes();
+    let a_nb_s = self.ds.nb_source_shapes;
+    // OCCT L388: Message_ProgressScope aPS(theRange, "Repeat intersection", 3);
+    // OCCT L389-414: for (int i = 0; i < aNbS; ++i)
+    for i in 0..a_nb_s {
+        // OCCT L391-395: if ShapeType != VERTEX, continue
+        if self.ds.shape_type_of(i) != ShapeType::Vertex {
+            continue;
+        }
+        // OCCT L397-401: if (myIncreasedSS.Contains(i)) { anExtraInterfMap.Add(i); continue; }
+        if self.my_increased_ss.contains(&i) {
+            an_extra_interf_map.insert(i);
+            continue;
+        }
+        // OCCT L404-408: int nVSD; if (!myDS->HasShapeSD(i, nVSD)) { continue; }
+        if let Some(n_vsd) = self.ds.has_shape_sd(i) {
+            // OCCT L410-413: if (myIncreasedSS.Contains(nVSD)) { anExtraInterfMap.Add(i); }
+            if self.my_increased_ss.contains(&n_vsd) {
+                an_extra_interf_map.insert(i);
+            }
+        } // else: OCCT L405-407 continue (handled by if-let None)
+    }
+    // OCCT L416-419: if (anExtraInterfMap.IsEmpty()) return;
+    if an_extra_interf_map.is_empty() {
+        return;
+    }
+
+    // OCCT L422: myIterator->IntersectExt(anExtraInterfMap);
+    self.my_iterator.intersect_ext(&an_extra_interf_map);
+
+    // OCCT L426-430: PerformVV(aPS.Next());
+    self.perform_vv();
+    if self.my_report.has_errors() {
+        return;
+    }
+    // OCCT L431: UpdatePaveBlocksWithSDVertices();
+    self.ds.update_pave_blocks_with_sd_vertices();
+
+    // OCCT L433-438: PerformVE(aPS.Next());
+    self.perform_ve();
+    if self.my_report.has_errors() {
+        return;
+    }
+    // OCCT L438: UpdatePaveBlocksWithSDVertices();
+    self.ds.update_pave_blocks_with_sd_vertices();
+
+    // OCCT L440-444: PerformVF(aPS.Next());
+    self.perform_vf();
+    if self.my_report.has_errors() {
+        return;
+    }
+
+    // OCCT L446-447: UpdatePaveBlocksWithSDVertices(); UpdateInterfsWithSDVertices();
+    self.ds.update_pave_blocks_with_sd_vertices();
+    self.update_interfs_with_sd_vertices();
  }
  /// OCCT PaveFiller_4.cxx: PerformVF
  /// Shrinks the range by the face tolerance converted to parametric space.

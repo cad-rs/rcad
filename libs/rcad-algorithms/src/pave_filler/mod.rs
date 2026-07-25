@@ -277,6 +277,9 @@ pub struct PaveFiller<'a> {
  /// Optional BRep for direct output (dual-write mode). When set, PaveFiller
  /// populates the BRep on completion, eliminating the need for ds_to_brep.
  pub brep: Option<&'a mut rcad_kernel::topods::BRep>,
+ /// =myIterator (BOPAlgo_PaveFiller.hxx) — BOPDS_Iterator for pair enumeration.
+ /// Uses 'static lifetime via unsafe transmute (see config.rs for safety).
+ pub(crate) my_iterator: crate::bopds::ds::BOPDS_Iterator<'static>,
  /// Output: face_refs by ds_face_idx (populated by export_to_brep).
  pub face_refs: Vec<rcad_kernel::topods::ShapeRef>,
  /// Output: ic_edge_map: ci -> BRep edge ShapeRef (populated by export_to_brep).
@@ -634,28 +637,19 @@ fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
   self.dump_ctx.snapshot("after_Prepare", self.ds, None);
   if self.check_stop("after_Prepare") { return; }
 
-  // BOPDS_Iterator — single BVH, type bucketing, stable_sort.
-  // rcad: extract all pair lists upfront (Rust borrow limits prevent
-  // keeping a persistent iterator as a member like OCCT's myIterator).
+  // OCCT L265: myIterator->Intersect(/*...*/) → BOPDS_Iterator with BVH
+  // rcad: prepare iterator with all cross-operand pairs (stored in my_lists)
   use crate::bopds::ds::BOPDS_Iterator;
   use rcad_kernel::topods::ShapeType;
-  let (vv_pairs, ve_pairs, ee_pairs, vf_pairs) = {
-  let mut iterator = BOPDS_Iterator::new(self.ds);
-  iterator.prepare();
-  let vv = iterator.pairs(ShapeType::Vertex, ShapeType::Vertex).to_vec();
-  let ve = iterator.pairs(ShapeType::Vertex, ShapeType::Edge).to_vec();
-  let ee = iterator.pairs(ShapeType::Edge, ShapeType::Edge).to_vec();
-  let vf = iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
-  (vv, ve, ee, vf)
-  };
+  self.my_iterator.prepare();
 
-  self.perform_vv(&vv_pairs);
+  self.perform_vv();
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVV", self.ds, None);
   if self.check_stop("after_PerformVV") { return; }
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE)
-  self.perform_ve(&ve_pairs);
+  self.perform_ve();
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVE", self.ds, None);
   if self.check_stop("after_PerformVE") { return; }
@@ -663,7 +657,7 @@ fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
   self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(EDGE, EDGE)
-  self.perform_ee(&ee_pairs);
+  self.perform_ee();
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformEE", self.ds, None);
   if self.check_stop("after_PerformEE") { return; }
@@ -671,7 +665,7 @@ fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
   self.ds.update_pave_blocks_with_sd_vertices();
 
   // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE)
-  self.perform_vf(&vf_pairs);
+  self.perform_vf();
   if self.my_report.has_errors() { return; }
   self.dump_ctx.snapshot("after_PerformVF", self.ds, None);
   if self.check_stop("after_PerformVF") { return; }

@@ -4,9 +4,21 @@ impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
         let n_faces = ds.faces.len();
         let context = IntToolsContext::new(n_faces, TOLERANCE_ABS * 100.0);
+        // SAFETY: BOPDS_Iterator borrows ds (lifetime 'a). Transmute to 'static
+        // via raw pointer because Rust cannot hold two fields borrowing same data
+        // with different mutabilities. PaveFiller<'a> ensures actual lifetime is 'a.
+        let my_iterator = {
+            let ds_ptr: *const DS = &*ds;
+            unsafe {
+                std::mem::transmute::<crate::bopds::ds::BOPDS_Iterator<'_>, crate::bopds::ds::BOPDS_Iterator<'static>>(
+                    crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr })
+                )
+            }
+        };
         Self {
             ds,
             brep: None,
+            my_iterator,
             face_refs: Vec::new(),
             ic_edge_map: Vec::new(),
             bvh_a: None,
@@ -43,9 +55,19 @@ impl<'a> PaveFiller<'a> {
     pub fn with_bvh_and_brep(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh, brep: &'a mut rcad_kernel::topods::BRep) -> Self {
         let total_faces = ds.faces.len();
         let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
+        // SAFETY: see PaveFiller::new()
+        let my_iterator = {
+            let ds_ptr: *const DS = &*ds;
+            unsafe {
+                std::mem::transmute::<crate::bopds::ds::BOPDS_Iterator<'_>, crate::bopds::ds::BOPDS_Iterator<'static>>(
+                    crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr })
+                )
+            }
+        };
         Self {
             ds,
             brep: Some(brep),
+            my_iterator,
             face_refs: Vec::new(),
             ic_edge_map: Vec::new(),
             bvh_a: if total_faces >= BVH_THRESHOLD { Some(bvh_a) } else { None },
@@ -82,9 +104,19 @@ impl<'a> PaveFiller<'a> {
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
         let total_faces = ds.faces.len();
         let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
+        // SAFETY: see PaveFiller::new()
+        let my_iterator = {
+            let ds_ptr: *const DS = &*ds;
+            unsafe {
+                std::mem::transmute::<crate::bopds::ds::BOPDS_Iterator<'_>, crate::bopds::ds::BOPDS_Iterator<'static>>(
+                    crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr })
+                )
+            }
+        };
         Self {
             ds,
             brep: None,
+            my_iterator,
             face_refs: Vec::new(),
             ic_edge_map: Vec::new(),
             bvh_a: if total_faces >= BVH_THRESHOLD { Some(bvh_a) } else { None },
