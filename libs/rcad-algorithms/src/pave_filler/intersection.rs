@@ -1209,17 +1209,20 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    // OCCT L187: myIterator->Value(nV, nF)
    //
    // OCCT L189-192: IsSubShape
-   if self.ds.is_sub_shape(nV, nF) { continue; }
+   let flat_f = self.ds.face_shape_idx[nF];
+   let flat_v = self.ds.vertex_shape_idx[nV];
+   if self.ds.is_sub_shape(flat_v, flat_f) { continue; }
    //
    // OCCT L194-197: if (myDS->HasInterf(nV, nF)) continue;
+   //   (type-specific indices — matches rcad's interference matrix)
    if self.ds.has_interf(nV, nF) { continue; }
    //
    // OCCT L199: myDS->ChangeFaceInfo(nF)
    self.ds.face_info_mut(nF);
    //
-   // OCCT L200-203: if (myDS->HasInterfShapeSubShapes(nV, nF)) continue;
-   //   (default theAnyInterference=false = ALL_OF)
-   if self.ds.has_interf_shape_sub_shapes(nV, nF, false) { continue; }
+   // OCCT L200-203: HasInterfShapeSubShapes(nV, nF)
+   //   (architecture: face sub_shapes are wire indices; V-Wire interference
+   //    never registered in OCCT either — effectively always false)
    //
    // OCCT L205-209: SD resolution
    let nVx = self.ds.has_shape_sd(nV).unwrap_or(nV);
