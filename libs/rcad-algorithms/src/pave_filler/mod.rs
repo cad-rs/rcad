@@ -849,6 +849,21 @@ fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
           // OCCT L117-125: increase tolerance if needed
           if a_tol_v < a_tol_new {
               self.ds.vertex_data_mut(n_v_new).tolerance = a_tol_new;
+              // OCCT L120-123: update bounding box in shape_info
+              //   BOPDS_ShapeInfo& aSIV = myDS->ChangeShapeInfo(nVNew);
+              //   Bnd_Box& aBoxV = aSIV.ChangeBox();
+              //   BRepBndLib::Add(aVSD, aBoxV);
+              //   aBoxV.SetGap(aBoxV.GetGap() + Precision::Confusion());
+              let si_idx = self.ds.vertex_shape_idx.get(n_v_new).copied();
+              if let Some(si) = si_idx {
+                  if si < self.ds.shape_info.len() {
+                      let pt = self.ds.vertex_point(n_v_new);
+                      let new_gap = a_tol_new + self.fuzzy_tolerance * 0.5;
+                      self.ds.shape_info[si].box_min = Some(pt - DVec3::splat(a_tol_new));
+                      self.ds.shape_info[si].box_max = Some(pt + DVec3::splat(a_tol_new));
+                      self.ds.shape_info[si].box_gap = new_gap + crate::tolerance::CONFUSION;
+                  }
+              }
               // OCCT L124: myIncreasedSS.Add(nV) — adds the original vertex
               self.my_increased_ss.insert(n_v);
           }

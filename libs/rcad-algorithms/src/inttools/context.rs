@@ -123,6 +123,7 @@ impl Context {
 
     /// OCCT: IsPointInFace(theFace, theUV) 鈥?convenience wrapper.
     pub fn is_point_in_face(&mut self, ds: &DS, face_idx: usize, uv: DVec2) -> bool {
+        // OCCT: StatePointFace -> Perform(aP2d) with RecadreOnPeriodic=true (default)
         self.fclass2d(ds, face_idx).perform(uv, true) == State::In
     }
 
