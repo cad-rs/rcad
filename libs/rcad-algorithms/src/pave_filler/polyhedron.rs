@@ -49,12 +49,23 @@ impl Polyhedron {
             }
         }
 
-        Self { nb_u: n_u, nb_v: n_v, points: pts, u_params, v_params,
-            bbox_min, bbox_max }
+        Self {
+            nb_u: n_u,
+            nb_v: n_v,
+            points: pts,
+            u_params,
+            v_params,
+            bbox_min,
+            bbox_max,
+        }
     }
 
-    pub fn nb_triangles(&self) -> i32 { self.nb_u * self.nb_v * 2 }
-    pub fn nb_points(&self) -> i32 { (self.nb_u + 1) * (self.nb_v + 1) }
+    pub fn nb_triangles(&self) -> i32 {
+        self.nb_u * self.nb_v * 2
+    }
+    pub fn nb_points(&self) -> i32 {
+        (self.nb_u + 1) * (self.nb_v + 1)
+    }
 
     /// Get triangle vertex indices (1-indexed, OCCT convention)
     pub fn triangle(&self, index: i32) -> (i32, i32, i32) {
@@ -69,10 +80,16 @@ impl Polyhedron {
         }
     }
 
-    pub fn point(&self, index: i32) -> DVec3 { self.points[(index - 1) as usize] }
+    pub fn point(&self, index: i32) -> DVec3 {
+        self.points[(index - 1) as usize]
+    }
     /// Size(nbU, nbV) — get grid dimensions.
-    pub fn size(&self) -> (i32, i32) { (self.nb_u, self.nb_v) }
-    pub fn bbox(&self) -> (DVec3, DVec3) { (self.bbox_min, self.bbox_max) }
+    pub fn size(&self) -> (i32, i32) {
+        (self.nb_u, self.nb_v)
+    }
+    pub fn bbox(&self) -> (DVec3, DVec3) {
+        (self.bbox_min, self.bbox_max)
+    }
 
     /// TriConnex (IntPatch_Polyhedron.cxx L299-567).
     /// Finds the triangle adjacent to `triang` across the edge (pivot, pedge).
@@ -89,9 +106,17 @@ impl Polyhedron {
         let (lig_e, col_e, typ_e) = if pedge != 0 {
             let lig_e = (pedge - 1) / nbdeltaVp1;
             let col_e = (pedge - 1) - lig_e * nbdeltaVp1;
-            let typ_e = if lig_p == lig_e { 1 }      // Horizontal
-                   else if col_p == col_e { 2 }      // Vertical
-                   else { 3 };                        // Oblique
+            let typ_e = if lig_p == lig_e {
+                1
+            }
+            // Horizontal
+            else if col_p == col_e {
+                2
+            }
+            // Vertical
+            else {
+                3
+            }; // Oblique
             (lig_e, col_e, typ_e)
         } else {
             (0, 0, 0)
@@ -99,7 +124,7 @@ impl Polyhedron {
 
         let (mut lin_t, mut col_t, mut lin_o, mut col_o);
         if triang != 0 {
-            let t  = (triang - 1) / nbdeltaVm2;
+            let t = (triang - 1) / nbdeltaVm2;
             let tt = (triang - 1) - t * nbdeltaVm2;
             lin_t = 1 + t;
             col_t = 1 + tt;
@@ -112,37 +137,90 @@ impl Polyhedron {
                 } else {
                     (lig_p + 1, col_p + 1, 3)
                 }
-            } else { (lig_e, col_e, typ_e) };
+            } else {
+                (lig_e, col_e, typ_e)
+            };
             let (_lig_e, _col_e, typ_e) = typ_e;
 
             match typ_e {
-                1 => { // Horizontal
-                    if lin_t == lig_p { lin_t += 1; lin_o = lig_p + 1; col_o = col_p.max(col_e); }
-                    else               { lin_t -= 1; lin_o = lig_p - 1; col_o = col_p.min(col_e); }
+                1 => {
+                    // Horizontal
+                    if lin_t == lig_p {
+                        lin_t += 1;
+                        lin_o = lig_p + 1;
+                        col_o = col_p.max(col_e);
+                    } else {
+                        lin_t -= 1;
+                        lin_o = lig_p - 1;
+                        col_o = col_p.min(col_e);
+                    }
                 }
-                2 => { // Vertical
-                    if col_t == col_p + col_p { col_t += 1; lin_o = lig_p.max(lig_e); col_o = col_p + 1; }
-                    else                      { col_t -= 1; lin_o = lig_p.min(lig_e); col_o = col_p - 1; }
+                2 => {
+                    // Vertical
+                    if col_t == col_p + col_p {
+                        col_t += 1;
+                        lin_o = lig_p.max(lig_e);
+                        col_o = col_p + 1;
+                    } else {
+                        col_t -= 1;
+                        lin_o = lig_p.min(lig_e);
+                        col_o = col_p - 1;
+                    }
                 }
-                3 => { // Oblique
-                    if (col_t & 1) == 0 { col_t -= 1; lin_o = lig_p.max(lig_e); col_o = col_p.min(col_e); }
-                    else                { col_t += 1; lin_o = lig_p.min(lig_e); col_o = col_p.max(col_e); }
+                3 => {
+                    // Oblique
+                    if (col_t & 1) == 0 {
+                        col_t -= 1;
+                        lin_o = lig_p.max(lig_e);
+                        col_o = col_p.min(col_e);
+                    } else {
+                        col_t += 1;
+                        lin_o = lig_p.min(lig_e);
+                        col_o = col_p.max(col_e);
+                    }
                 }
-                _ => { lin_o = 0; col_o = 0; }
+                _ => {
+                    lin_o = 0;
+                    col_o = 0;
+                }
             }
         } else {
             // Unknown triangle position
             if pedge == 0 {
                 lin_t = 1.max(lig_p);
                 col_t = 1.max(col_p + col_p);
-                if lig_p == 0 { lin_o = lig_p + 1; } else { lin_o = lig_p - 1; }
+                if lig_p == 0 {
+                    lin_o = lig_p + 1;
+                } else {
+                    lin_o = lig_p - 1;
+                }
                 col_o = col_p;
             } else {
                 match typ_e {
-                    1 => { lin_t = lig_p + 1; col_t = col_p.max(col_e) * 2; lin_o = lig_p + 1; col_o = col_p.max(col_e); }
-                    2 => { lin_t = lig_p.max(lig_e); col_t = col_p + col_p; lin_o = lig_p.min(lig_e); col_o = col_p - 1; }
-                    3 => { lin_t = lig_p.max(lig_e); col_t = col_p + col_e; lin_o = lig_p.max(lig_e); col_o = col_p.min(col_e); }
-                    _ => { lin_t = 0; col_t = 0; lin_o = 0; col_o = 0; }
+                    1 => {
+                        lin_t = lig_p + 1;
+                        col_t = col_p.max(col_e) * 2;
+                        lin_o = lig_p + 1;
+                        col_o = col_p.max(col_e);
+                    }
+                    2 => {
+                        lin_t = lig_p.max(lig_e);
+                        col_t = col_p + col_p;
+                        lin_o = lig_p.min(lig_e);
+                        col_o = col_p - 1;
+                    }
+                    3 => {
+                        lin_t = lig_p.max(lig_e);
+                        col_t = col_p + col_e;
+                        lin_o = lig_p.max(lig_e);
+                        col_o = col_p.min(col_e);
+                    }
+                    _ => {
+                        lin_t = 0;
+                        col_t = 0;
+                        lin_o = 0;
+                        col_o = 0;
+                    }
                 }
             }
         }
@@ -151,34 +229,64 @@ impl Polyhedron {
 
         // Boundary checks
         if lin_t < 1 {
-            lin_o = 0; col_o = col_p + col_p - col_e;
-            if col_o < 0 { col_o = 0; lin_o = 1; }
-            else if col_o > self.nb_v { col_o = self.nb_v; lin_o = 1; }
+            lin_o = 0;
+            col_o = col_p + col_p - col_e;
+            if col_o < 0 {
+                col_o = 0;
+                lin_o = 1;
+            } else if col_o > self.nb_v {
+                col_o = self.nb_v;
+                lin_o = 1;
+            }
             tri_con = 0;
         } else if lin_t > self.nb_u {
-            lin_o = self.nb_u; col_o = col_p + col_p - col_e;
-            if col_o < 0 { col_o = 0; lin_o = self.nb_u - 1; }
-            else if col_o > self.nb_v { col_o = self.nb_v; lin_o = self.nb_u - 1; }
+            lin_o = self.nb_u;
+            col_o = col_p + col_p - col_e;
+            if col_o < 0 {
+                col_o = 0;
+                lin_o = self.nb_u - 1;
+            } else if col_o > self.nb_v {
+                col_o = self.nb_v;
+                lin_o = self.nb_u - 1;
+            }
             tri_con = 0;
         }
         if col_t < 1 {
-            col_o = 0; lin_o = lig_p + lig_p - lig_e;
-            if lin_o < 0 { lin_o = 0; col_o = 1; }
-            else if lin_o > self.nb_u { lin_o = self.nb_u; col_o = 1; }
+            col_o = 0;
+            lin_o = lig_p + lig_p - lig_e;
+            if lin_o < 0 {
+                lin_o = 0;
+                col_o = 1;
+            } else if lin_o > self.nb_u {
+                lin_o = self.nb_u;
+                col_o = 1;
+            }
             tri_con = 0;
         } else if col_t > self.nb_v {
-            col_o = self.nb_v; lin_o = lig_p + lig_p - lig_e;
-            if lin_o < 0 { lin_o = 0; col_o = self.nb_v - 1; }
-            else if lin_o > self.nb_u { lin_o = self.nb_u; col_o = self.nb_v - 1; }
+            col_o = self.nb_v;
+            lin_o = lig_p + lig_p - lig_e;
+            if lin_o < 0 {
+                lin_o = 0;
+                col_o = self.nb_v - 1;
+            } else if lin_o > self.nb_u {
+                lin_o = self.nb_u;
+                col_o = self.nb_v - 1;
+            }
             tri_con = 0;
         }
 
         let other_p = lin_o * nbdeltaVp1 + col_o + 1;
-        if pedge != 0 && self.point(pivot).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
+        if pedge != 0
+            && self.point(pivot).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE
+        {
             return (triang, 0);
         }
-        if pedge != 0 && other_p > 0 && other_p <= self.points.len() as i32
-            && self.point(other_p).distance_squared(self.point(pedge)) <= LONGUEUR_MINI_EDGE_TRIANGLE {
+        if pedge != 0
+            && other_p > 0
+            && other_p <= self.points.len() as i32
+            && self.point(other_p).distance_squared(self.point(pedge))
+                <= LONGUEUR_MINI_EDGE_TRIANGLE
+        {
             return (0, 0);
         }
         (tri_con, other_p)
@@ -196,8 +304,10 @@ impl Polyhedron {
 #[derive(Clone, Debug)]
 pub struct SeedPoint {
     pub p3d: DVec3,
-    pub u1: f64, pub v1: f64,
-    pub u2: f64, pub v2: f64,
+    pub u1: f64,
+    pub v1: f64,
+    pub u2: f64,
+    pub v2: f64,
 }
 
 /// IntPatch_InterferencePolyhedron — find intersecting triangles
@@ -217,7 +327,10 @@ impl InterferencePolyhedron {
             && (bmin1.z <= bmax2.z && bmax1.z >= bmin2.z);
 
         if !overlap {
-            return Self { nb_section_lines: 0, seed_points: Vec::new() };
+            return Self {
+                nb_section_lines: 0,
+                seed_points: Vec::new(),
+            };
         }
 
         let mut seeds: Vec<SeedPoint> = Vec::new();
@@ -237,9 +350,13 @@ impl InterferencePolyhedron {
             let tmax = p1.max(p2).max(p3);
 
             // Quick reject vs poly2 bbox
-            if tmax.x < bmin2.x || tmin.x > bmax2.x
-                || tmax.y < bmin2.y || tmin.y > bmax2.y
-                || tmax.z < bmin2.z || tmin.z > bmax2.z {
+            if tmax.x < bmin2.x
+                || tmin.x > bmax2.x
+                || tmax.y < bmin2.y
+                || tmin.y > bmax2.y
+                || tmax.z < bmin2.z
+                || tmin.z > bmax2.z
+            {
                 continue;
             }
 
@@ -251,22 +368,29 @@ impl InterferencePolyhedron {
 
                 // Triangle-triangle intersection test: check if any edge
                 // of one triangle crosses the plane of the other
-                if let Some(seed) = Self::intersect_triangles(
-                    p1, p2, p3, q1, q2, q3,
-                    &poly1, &poly2,
-                ) {
+                if let Some(seed) =
+                    Self::intersect_triangles(p1, p2, p3, q1, q2, q3, &poly1, &poly2)
+                {
                     seeds.push(seed);
                 }
             }
         }
 
-        Self { nb_section_lines: seeds.len() as i32, seed_points: seeds }
+        Self {
+            nb_section_lines: seeds.len() as i32,
+            seed_points: seeds,
+        }
     }
 
     fn intersect_triangles(
-        p1: DVec3, p2: DVec3, p3: DVec3,
-        q1: DVec3, q2: DVec3, q3: DVec3,
-        poly1: &Polyhedron, poly2: &Polyhedron,
+        p1: DVec3,
+        p2: DVec3,
+        p3: DVec3,
+        q1: DVec3,
+        q2: DVec3,
+        q3: DVec3,
+        poly1: &Polyhedron,
+        poly2: &Polyhedron,
     ) -> Option<SeedPoint> {
         let n1 = (p2 - p1).cross(p3 - p1).normalize_or_zero();
         let n2 = (q2 - q1).cross(q3 - q1).normalize_or_zero();
@@ -277,12 +401,14 @@ impl InterferencePolyhedron {
 
         // All same sign → no intersection
         if (d1_plane > 0.0 && d2_plane > 0.0 && d3_plane > 0.0)
-            || (d1_plane < 0.0 && d2_plane < 0.0 && d3_plane < 0.0) {
+            || (d1_plane < 0.0 && d2_plane < 0.0 && d3_plane < 0.0)
+        {
             return None;
         }
 
         // Find the midpoint of the intersection segment
-        let (hit_q, _) = Self::closest_edge_point(q1, q2, q3, p1, n1, d1_plane, d2_plane, d3_plane)?;
+        let (hit_q, _) =
+            Self::closest_edge_point(q1, q2, q3, p1, n1, d1_plane, d2_plane, d3_plane)?;
 
         // Project back to both surfaces to get UV
         let (u1, v1) = poly1.parameters(1); // approximate: use first triangle vertex
@@ -292,16 +418,23 @@ impl InterferencePolyhedron {
         // rcad: intersect at the midpoint of the intersection edge
         Some(SeedPoint {
             p3d: hit_q,
-            u1: 0.0, v1: 0.0, // approximate — real UV requires surface projection
-            u2: 0.0, v2: 0.0,
+            u1: 0.0,
+            v1: 0.0, // approximate — real UV requires surface projection
+            u2: 0.0,
+            v2: 0.0,
         })
     }
 
     /// Find the intersection point of a triangle edge with the plane
     fn closest_edge_point(
-        q1: DVec3, q2: DVec3, q3: DVec3,
-        _p1: DVec3, n1: DVec3,
-        d1: f64, d2: f64, d3: f64,
+        q1: DVec3,
+        q2: DVec3,
+        q3: DVec3,
+        _p1: DVec3,
+        n1: DVec3,
+        d1: f64,
+        d2: f64,
+        d3: f64,
     ) -> Option<(DVec3, i32)> {
         let edges = [(q1, q2, d1, d2), (q2, q3, d2, d3), (q3, q1, d3, d1)];
         for (ea, eb, da, db) in edges {
@@ -314,11 +447,14 @@ impl InterferencePolyhedron {
         None
     }
 
-    pub fn nb_section_lines(&self) -> i32 { self.nb_section_lines }
-    pub fn seed_points(&self) -> &[SeedPoint] { &self.seed_points }
+    pub fn nb_section_lines(&self) -> i32 {
+        self.nb_section_lines
+    }
+    pub fn seed_points(&self) -> &[SeedPoint] {
+        &self.seed_points
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // OCCT tests: IntPatch_Polyhedron_Test.cxx + IntPatch_PolyhedronBVH_Test.cxx
 // ═══════════════════════════════════════════════════════════════════════
-

@@ -1,13 +1,13 @@
-use glam::{DVec2, DVec3};
-use rcad_kernel::geom::*;
+use crate::bnd_lib;
 use crate::bopds::ds::{
-    DS, DSEdge, DSCurveRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
+    DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, NearTangentType, ShapeOrigin, DS,
 };
 use crate::bopds::pave::*;
-use crate::tolerance::*;
 use crate::inttools;
+use crate::tolerance::*;
+use glam::{DVec2, DVec3};
 use rcad_kernel::closest_point_on_curve;
-use crate::bnd_lib;
+use rcad_kernel::geom::*;
 use std::collections::HashSet;
 
 /// IntPatch_Intersection surface category (L1264-1294).
@@ -18,7 +18,11 @@ use std::collections::HashSet;
 /// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
 pub(crate) fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     let result = closest_point_on_curve(curve, pt, 128);
-    if result.distance <= tol { Some(result.param) } else { None }
+    if result.distance <= tol {
+        Some(result.param)
+    } else {
+        None
+    }
 }
 
 // ---- FindValidRange / ShrunkData helper functions ----
@@ -34,7 +38,11 @@ pub(crate) fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Op
 pub(crate) fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
     use rcad_kernel::geom::CurveEval;
     let speed = curve.tangent_at(t).length();
-    if speed < TOLERANCE_CLAMP_MIN { tol } else { tol / speed }
+    if speed < TOLERANCE_CLAMP_MIN {
+        tol
+    } else {
+        tol / speed
+    }
 }
 
 /// (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
@@ -48,15 +56,26 @@ pub(crate) fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 /// 3. OCCT checks `aP.SquareDistance(theVertPnt) > aSqTol` as the exit condition -- rcad matches.
 /// 4. OCCT mid-point refinement exits when `aDelta <= theEps` -- rcad matches.
 pub(crate) fn find_nearest_valid_point(
-    curve: &Curve3, first: f64, last: f64, is_first: bool,
-    vert_pt: DVec3, vert_tol: f64, eps: f64,
+    curve: &Curve3,
+    first: f64,
+    last: f64,
+    is_first: bool,
+    vert_pt: DVec3,
+    vert_tol: f64,
+    eps: f64,
 ) -> Option<f64> {
     use rcad_kernel::geom::CurveEval;
-    let (start_u, end_u) = if is_first { (first, last) } else { (last, first) };
+    let (start_u, end_u) = if is_first {
+        (first, last)
+    } else {
+        (last, first)
+    };
     let tol_sq = vert_tol * vert_tol;
 
     // 1. Check if endpoint is inside tolerance sphere
-    if curve.point_at(start_u).distance_squared(vert_pt) > tol_sq { return None; }
+    if curve.point_at(start_u).distance_squared(vert_pt) > tol_sq {
+        return None;
+    }
 
     // 2. Step until outside tolerance sphere (OCCT L55-63: `theCurve.Resolution(theTol) * 1.01`)
     let step = (curve_resolution(curve, start_u, vert_tol) * 1.01).max(eps);
@@ -69,15 +88,22 @@ pub(crate) fn find_nearest_valid_point(
         let speed = curve.tangent_at(start_u).length();
         let d1mag = speed * 0.01;
         d1mag * d1mag
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     let (mut u_in, mut u_out) = (start_u, start_u);
     let mut is_out = false;
     while !is_out {
-        u_in = u_out; u_out += step;
+        u_in = u_out;
+        u_out += step;
         if (is_first && u_out > end_u) || (!is_first && u_out < end_u) {
-            if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq { return None; }
-            u_out = end_u; is_out = true; break;
+            if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq {
+                return None;
+            }
+            u_out = end_u;
+            is_out = true;
+            break;
         }
         if a_d1_mag > 0.0 {
             // OCCT L108-137: singularity handling — double step through near-zero derivative regions
@@ -85,20 +111,33 @@ pub(crate) fn find_nearest_valid_point(
             loop {
                 let a_p = curve.point_at(u_out);
                 let is_out_local = a_p.distance_squared(vert_pt) > tol_sq;
-                if is_out_local { is_out = true; break; }
+                if is_out_local {
+                    is_out = true;
+                    break;
+                }
                 let a_d1 = curve.derivative_at(u_out);
                 if a_d1.length_squared() < a_d1_mag {
                     step_local *= 2.0;
-                    let new_out = if is_first { u_out + step_local } else { u_out - step_local };
+                    let new_out = if is_first {
+                        u_out + step_local
+                    } else {
+                        u_out - step_local
+                    };
                     if (is_first && new_out > end_u) || (!is_first && new_out < end_u) {
                         // went out of range — check if end point is outside
-                        if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq { return None; }
-                        u_out = end_u; is_out = true; break;
+                        if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq {
+                            return None;
+                        }
+                        u_out = end_u;
+                        is_out = true;
+                        break;
                     }
                     u_out = new_out;
                     continue;
                 }
-                if is_out_local { is_out = true; }
+                if is_out_local {
+                    is_out = true;
+                }
                 break;
             }
         } else {
@@ -111,7 +150,9 @@ pub(crate) fn find_nearest_valid_point(
         let mid = (u_in + u_out) * 0.5;
         if curve.point_at(mid).distance_squared(vert_pt) > tol_sq {
             u_out = mid;
-        } else { u_in = mid; }
+        } else {
+            u_in = mid;
+        }
     }
     Some(if is_first { u_out } else { u_in })
 }
@@ -121,28 +162,58 @@ pub(crate) fn find_nearest_valid_point(
 /// `theTolE`  ?edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
 pub(crate) fn find_valid_range(
-    curve: &Curve3, t0: f64, t1: f64, theTolE: f64,
-    sv_pt: DVec3, sv_tol: f64, ev_pt: DVec3, ev_tol: f64,
+    curve: &Curve3,
+    t0: f64,
+    t1: f64,
+    theTolE: f64,
+    sv_pt: DVec3,
+    sv_tol: f64,
+    ev_pt: DVec3,
+    ev_tol: f64,
 ) -> Option<(f64, f64)> {
     use rcad_kernel::geom::CurveEval;
-    if (t1 - t0).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
+    if (t1 - t0).abs() < rcad_kernel::tolerance::CONFUSION {
+        return None;
+    }
     let abs_max = t0.abs().max(t1.abs()).max(1.0);
     let eps = curve_resolution(curve, (t0 + t1) * 0.5, theTolE * 0.1)
         .max(abs_max * f64::EPSILON)
         .max(rcad_kernel::tolerance::CONFUSION);
-    let first = if t0.is_infinite() { t0 } else {
+    let first = if t0.is_infinite() {
+        t0
+    } else {
         match find_nearest_valid_point(curve, t0, t1, true, sv_pt, sv_tol, eps) {
-            Some(f) => { if t1 - f < eps { return None; } f }
-            None => { return None; }
+            Some(f) => {
+                if t1 - f < eps {
+                    return None;
+                }
+                f
+            }
+            None => {
+                return None;
+            }
         }
     };
-    let last = if t1.is_infinite() { t1 } else {
+    let last = if t1.is_infinite() {
+        t1
+    } else {
         match find_nearest_valid_point(curve, t0, t1, false, ev_pt, ev_tol, eps) {
-            Some(l) => { if l - t0 < eps { return None; } l }
-            None => { return None; }
+            Some(l) => {
+                if l - t0 < eps {
+                    return None;
+                }
+                l
+            }
+            None => {
+                return None;
+            }
         }
     };
-    if first > last { None } else { Some((first, last)) }
+    if first > last {
+        None
+    } else {
+        Some((first, last))
+    }
 }
 
 // ---- Seam Edge Shift Struct ----
@@ -209,8 +280,8 @@ pub(crate) fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surfac
         Surface3::LinearExtrusion(ref le) => {
             let mut le = le.clone();
             le.direction = le.direction; // direction unchanged
-            // The profile curve's origin is not directly accessible as a field;
-            // clone without position modification for now
+                                         // The profile curve's origin is not directly accessible as a field;
+                                         // clone without position modification for now
             Surface3::LinearExtrusion(le)
         }
         ref other => other.clone(),
@@ -280,8 +351,6 @@ pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
     }
 }
 
-
-
 // ---- Phase 2a: MakeBlocks candidate injection helpers ----
 
 /// Find up-to-2 face indices that reference a given intersection curve.
@@ -290,8 +359,7 @@ pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
     for (fi, face) in ds.faces.iter().enumerate() {
-        if face.face_info.curves_sc.contains(&ci)
-        {
+        if face.face_info.curves_sc.contains(&ci) {
             if idx < 2 {
                 result[idx] = fi;
                 idx += 1;
@@ -322,21 +390,31 @@ pub(crate) fn put_pave_on_curve_full(
     // GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
     //   per FF pair.  Only EF vertices belonging to this specific pair are added to aMVEF.
     //   rcad: filter EF vertices by checking if the interference's face is in this pair.
-    let ef_vertices: std::collections::HashSet<usize> = ds.interf_ef.iter()
+    let ef_vertices: std::collections::HashSet<usize> = ds
+        .interf_ef
+        .iter()
         .filter_map(|inf| {
             //   Both sub-shapes belong to the two faces -- the EF vertex involves this pair.
             if inf.face == face_idxs[0] || inf.face == face_idxs[1] {
                 Some(inf.new_vertex)
-            } else { None }
+            } else {
+                None
+            }
         })
         .collect();
 
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
         for &vi in &face.face_info.vertices_on {
-            if !ef_vertices.contains(&vi) { continue; } // OCCT GetStickVertices: skip non-pair EF
-            if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
-            if paves.iter().any(|&(_, v)| v == vi) { continue; }
+            if !ef_vertices.contains(&vi) {
+                continue;
+            } // OCCT GetStickVertices: skip non-pair EF
+            if vi == ic.start_vertex || vi == ic.end_vertex {
+                continue;
+            }
+            if paves.iter().any(|&(_, v)| v == vi) {
+                continue;
+            }
             let pt = ds.vertex_point(vi);
             if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
                 if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
@@ -345,17 +423,27 @@ pub(crate) fn put_pave_on_curve_full(
             }
         }
         for &vi in &face.face_info.vertices_in {
-            if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
-            if ef_vertices.contains(&vi) { continue; }
-            if paves.iter().any(|&(_, v)| v == vi) { continue; }
+            if vi == ic.start_vertex || vi == ic.end_vertex {
+                continue;
+            }
+            if ef_vertices.contains(&vi) {
+                continue;
+            }
+            if paves.iter().any(|&(_, v)| v == vi) {
+                continue;
+            }
             if let Some([c_min, c_max]) = curve_bbox {
                 let v_pt = ds.vertex_point(vi);
                 let v_tol = ds.vertex_tolerance(vi).max(a_tol_r3d);
                 let v_min = v_pt - DVec3::splat(v_tol);
                 let v_max = v_pt + DVec3::splat(v_tol);
-                if v_max.x < c_min.x || v_min.x > c_max.x ||
-                   v_max.y < c_min.y || v_min.y > c_max.y ||
-                   v_max.z < c_min.z || v_min.z > c_max.z {
+                if v_max.x < c_min.x
+                    || v_min.x > c_max.x
+                    || v_max.y < c_min.y
+                    || v_min.y > c_max.y
+                    || v_max.z < c_min.z
+                    || v_min.z > c_max.z
+                {
                     continue;
                 }
             }
@@ -386,7 +474,11 @@ pub(crate) fn put_pave_on_curve_full(
 /// ✅ OCCT-aligned: delegates to bnd_lib::curve_bounds (OCCT GeomBndLib per-type dispatch).
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = bnd_lib::curve_bounds(curve, tol);
-    if bbox.is_valid() { Some([bbox.min, bbox.max]) } else { None }
+    if bbox.is_valid() {
+        Some([bbox.min, bbox.max])
+    } else {
+        None
+    }
 }
 
 /// FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
@@ -402,32 +494,35 @@ pub(crate) fn filter_paves_on_curves(
     // curve tolerance + fuzzy (SUM matching PutPaveOnCurve L2976 aTolR3D + myFuzzyValue)
     let tol = ic.geom_tol + ds.fuzzy_tol;
     let tol_sq = tol * tol;
-    paves.iter().filter(|&&(_, vi)| {
-        let pt = ds.vertex_point(vi);
-        let dist_sq = match &ic.curve {
-            Curve3::Line(line) => {
-                let to_pt = pt - line.origin;
-                let proj = line.origin + line.direction * to_pt.dot(line.direction);
-                proj.distance_squared(pt)
-            }
-            Curve3::Circle(circ) => {
-                let center_dist = pt.distance(circ.center);
-                (center_dist - circ.radius).powi(2)
-            }
-            _ => 0.0,
-        };
-        dist_sq < tol_sq
-    }).copied().collect()
+    paves
+        .iter()
+        .filter(|&&(_, vi)| {
+            let pt = ds.vertex_point(vi);
+            let dist_sq = match &ic.curve {
+                Curve3::Line(line) => {
+                    let to_pt = pt - line.origin;
+                    let proj = line.origin + line.direction * to_pt.dot(line.direction);
+                    proj.distance_squared(pt)
+                }
+                Curve3::Circle(circ) => {
+                    let center_dist = pt.distance(circ.center);
+                    (center_dist - circ.radius).powi(2)
+                }
+                _ => 0.0,
+            };
+            dist_sq < tol_sq
+        })
+        .copied()
+        .collect()
 }
 
 /// PutClosingPaveOnCurve (L828-833)
 ///    Only replace the last vertex when the curve spans a full closed period (parameter diff ~ 2*pi or full curve range).
 ///    Arc segments (parameter diff < pi) are not replaced, to avoid incorrectly changing arc endpoints to start points.
-pub(crate) fn put_closing_pave_on_curve(
-    paves: &mut Vec<(f64, usize)>,
-    is_closed: bool,
-) {
-    if paves.len() < 2 { return; }
+pub(crate) fn put_closing_pave_on_curve(paves: &mut Vec<(f64, usize)>, is_closed: bool) {
+    if paves.len() < 2 {
+        return;
+    }
     if is_closed {
         let first_t = paves[0].0;
         let last_t = paves[paves.len() - 1].0;
@@ -552,9 +647,14 @@ pub(crate) fn sample_cone(
 }
 
 /// Sample `n` points on a circular arc from `t_start` to `t_end`.
-pub(crate) fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Vec<DVec3> {
-    use rcad_kernel::CurveEval;
+pub(crate) fn sample_circle_arc(
+    circle: &Circle3,
+    t_start: f64,
+    t_end: f64,
+    n: usize,
+) -> Vec<DVec3> {
     use rcad_kernel::geom::Curve3;
+    use rcad_kernel::CurveEval;
     let curve = Curve3::Circle(*circle);
     (0..n)
         .map(|i| {
@@ -669,11 +769,7 @@ pub(crate) fn intersect_coplanar_circles(c1: &Circle3, c2: &Circle3, tol: f64) -
 
 /// Intersect two 3D circles that may lie in different planes.
 /// Returns up to 2 intersection points.
-pub(crate) fn intersect_circle_circle(
-    c1: &Circle3,
-    c2: &Circle3,
-    tol: f64,
-) -> Vec<DVec3> {
+pub(crate) fn intersect_circle_circle(c1: &Circle3, c2: &Circle3, tol: f64) -> Vec<DVec3> {
     let n1 = c1.normal;
     let n2 = c2.normal;
     let cross = n1.cross(n2);
@@ -729,9 +825,7 @@ pub(crate) fn intersect_circle_circle(
     if (p1 - c2.center).length_squared() <= r2_tol_sq {
         results.push(p1);
     }
-    if (p2 - p1).length_squared() > tol * tol
-        && (p2 - c2.center).length_squared() <= r2_tol_sq
-    {
+    if (p2 - p1).length_squared() > tol * tol && (p2 - c2.center).length_squared() <= r2_tol_sq {
         results.push(p2);
     }
     results
@@ -887,16 +981,9 @@ pub(crate) fn intersect_edge_face_numeric(
         let proj = closest_point_on_surface(surface, initial_point, 8);
         let initial_uv = DVec2::new(proj.params.0, proj.params.1);
 
-        if let Some((refined_t, refined_uv)) =
-            inttools::curve_surface::newton_refine_curve_surface(
-                curve,
-                initial_t,
-                surface,
-                initial_uv,
-                20,
-                eps,
-            )
-        {
+        if let Some((refined_t, refined_uv)) = inttools::curve_surface::newton_refine_curve_surface(
+            curve, initial_t, surface, initial_uv, 20, eps,
+        ) {
             // validation (Stage 3):
             //   1. t within the curve's parametric range
             if refined_t < t_range[0] - eps || refined_t > t_range[1] + eps {

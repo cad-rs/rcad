@@ -16,45 +16,35 @@ impl<'a> super::PaveFiller<'a> {
         // if available.  For cylinders this encodes the actual face height range,
         // ensuring the intersection polyline endpoints fall *inside* the UV
         // boundary rectangle and can be used to split it.
-        let dom1 = self.ds.faces[f1]
-            .uv_boundary
-            .as_ref()
-            .and_then(|uv| {
-                if uv.len() >= 3 {
-                    let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                    let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                    let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-                    let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-                    if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite() {
-                        return Some([u_min, u_max, v_min, v_max]);
-                    }
+        let dom1 = self.ds.faces[f1].uv_boundary.as_ref().and_then(|uv| {
+            if uv.len() >= 3 {
+                let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite()
+                {
+                    return Some([u_min, u_max, v_min, v_max]);
                 }
-                None
-            });
-        let dom2 = self.ds.faces[f2]
-            .uv_boundary
-            .as_ref()
-            .and_then(|uv| {
-                if uv.len() >= 3 {
-                    let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                    let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                    let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-                    let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-                    if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite() {
-                        return Some([u_min, u_max, v_min, v_max]);
-                    }
+            }
+            None
+        });
+        let dom2 = self.ds.faces[f2].uv_boundary.as_ref().and_then(|uv| {
+            if uv.len() >= 3 {
+                let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite()
+                {
+                    return Some([u_min, u_max, v_min, v_max]);
                 }
-                None
-            });
+            }
+            None
+        });
 
-        let result = numeric_intss_with_domains(
-            s1,
-            s2,
-            grid_n,
-            dom1,
-            dom2,
-            Some(self.ff_tol(f1, f2)),
-        );
+        let result =
+            numeric_intss_with_domains(s1, s2, grid_n, dom1, dom2, Some(self.ff_tol(f1, f2)));
         if result.is_empty() {
             return;
         }
@@ -113,9 +103,9 @@ impl<'a> super::PaveFiller<'a> {
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
-            pave_blocks: Vec::new(),
-            curve_extra: crate::bopds::ds::CurveExtra::default(),
-        });
+                pave_blocks: Vec::new(),
+                curve_extra: crate::bopds::ds::CurveExtra::default(),
+            });
 
             self.ds.face_info_mut(f1).curves_sc.insert(curve_idx);
             self.ds.face_info_mut(f2).curves_sc.insert(curve_idx);
@@ -128,13 +118,13 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if !curve_indices.is_empty() {
-            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
                 f1,
                 f2,
                 curves: curve_indices,
-  points: vec![],
-  tangent_faces: false,
-  });
+                points: vec![],
+                tangent_faces: false,
+            });
         }
     }
 
@@ -164,7 +154,8 @@ impl<'a> super::PaveFiller<'a> {
                             let mut mx = DVec3::splat(f64::NEG_INFINITY);
                             for row in &bsp.control_points {
                                 for p in row {
-                                    mn = mn.min(*p); mx = mx.max(*p);
+                                    mn = mn.min(*p);
+                                    mx = mx.max(*p);
                                 }
                             }
                             (mx - mn).length().max(0.5) * 0.5
@@ -178,7 +169,8 @@ impl<'a> super::PaveFiller<'a> {
                             let mut mx = DVec3::splat(f64::NEG_INFINITY);
                             for row in &bez.control_points {
                                 for p in row {
-                                    mn = mn.min(*p); mx = mx.max(*p);
+                                    mn = mn.min(*p);
+                                    mx = mx.max(*p);
                                 }
                             }
                             (mx - mn).length().max(0.5) * 0.5
@@ -271,7 +263,9 @@ impl<'a> super::PaveFiller<'a> {
         let aabb_max = mx1.max(mx2) + DVec3::splat(margin);
 
         // Use adaptive step size based on characteristic lengths
-        let char_len = sampling1.characteristic_length.min(sampling2.characteristic_length);
+        let char_len = sampling1
+            .characteristic_length
+            .min(sampling2.characteristic_length);
         let step_size = base_step.min(char_len * 0.5).max(TOLERANCE_MESH_LEGACY);
 
         // Configure marching with convergence monitoring
@@ -335,14 +329,16 @@ impl<'a> super::PaveFiller<'a> {
 
             // �?reApprox �?validate pcurves; retry with loose tolerance
             // if validation fails.
-            let (pcurve_a, pcurve_b) = self.make_marching_pcurves_with_reapprox(
-                &curve.points, &s1, &s2, f1, f2, &t_range,
-            );
+            let (pcurve_a, pcurve_b) =
+                self.make_marching_pcurves_with_reapprox(&curve.points, &s1, &s2, f1, f2, &t_range);
 
             // approximate marching polyline to BSpline (MakeCurve / GeomInt_IntSS::MakeBSpline)
             let approx_curve = if curve.points.len() >= 4 {
-                crate::inttools::intss::polyline_to_bspline(&curve.points, TOLERANCE_TOL_SCALE_MICRO)
-                    .filter(|c| matches!(c, Curve3::BSpline(_)))
+                crate::inttools::intss::polyline_to_bspline(
+                    &curve.points,
+                    TOLERANCE_TOL_SCALE_MICRO,
+                )
+                .filter(|c| matches!(c, Curve3::BSpline(_)))
             } else {
                 None
             };
@@ -363,9 +359,9 @@ impl<'a> super::PaveFiller<'a> {
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
-            pave_blocks: Vec::new(),
-            curve_extra: crate::bopds::ds::CurveExtra::default(),
-        });
+                pave_blocks: Vec::new(),
+                curve_extra: crate::bopds::ds::CurveExtra::default(),
+            });
 
             self.ds.face_info_mut(f1).curves_sc.insert(curve_idx);
             self.ds.face_info_mut(f2).curves_sc.insert(curve_idx);
@@ -378,13 +374,13 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if !curve_indices.is_empty() {
-            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
                 f1,
                 f2,
                 curves: curve_indices,
-  points: vec![],
-  tangent_faces: false,
-  });
+                points: vec![],
+                tangent_faces: false,
+            });
         }
     }
 
@@ -401,10 +397,24 @@ impl<'a> super::PaveFiller<'a> {
     ) -> (Option<Curve2d>, Option<Curve2d>) {
         let uv_bounds1 = s1.default_domain();
         let uv_bounds2 = s2.default_domain();
-        let is_u_periodic1 = matches!(s1, Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_));
-        let is_u_periodic2 = matches!(s2, Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_));
-        let u_per1 = if is_u_periodic1 { Some(std::f64::consts::TAU) } else { None };
-        let u_per2 = if is_u_periodic2 { Some(std::f64::consts::TAU) } else { None };
+        let is_u_periodic1 = matches!(
+            s1,
+            Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_)
+        );
+        let is_u_periodic2 = matches!(
+            s2,
+            Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_)
+        );
+        let u_per1 = if is_u_periodic1 {
+            Some(std::f64::consts::TAU)
+        } else {
+            None
+        };
+        let u_per2 = if is_u_periodic2 {
+            Some(std::f64::consts::TAU)
+        } else {
+            None
+        };
 
         // Attempt 1: default tolerance
         let pca = inttools::pcurve_derive::polyline_pcurve_by_projection(points, s1);
@@ -412,11 +422,15 @@ impl<'a> super::PaveFiller<'a> {
 
         let valid_a = pca.as_ref().map_or(false, |pc| {
             inttools::pcurve_derive::is_curve_valid_2d(pc)
-                && inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds1, u_per1, None)
+                && inttools::pcurve_derive::check_pcurve_in_face(
+                    pc, *t_range, uv_bounds1, u_per1, None,
+                )
         });
         let valid_b = pcb.as_ref().map_or(false, |pc| {
             inttools::pcurve_derive::is_curve_valid_2d(pc)
-                && inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds2, u_per2, None)
+                && inttools::pcurve_derive::check_pcurve_in_face(
+                    pc, *t_range, uv_bounds2, u_per2, None,
+                )
         });
 
         if valid_a && valid_b {
@@ -443,7 +457,12 @@ impl<'a> super::PaveFiller<'a> {
 
     /// OCCT: generate surface sample points
     /// OCCT: generate surface samples
-    pub(crate) fn generate_surface_samples(&self, surface: &Surface3, n1: usize, n2: usize) -> Vec<DVec3> {
+    pub(crate) fn generate_surface_samples(
+        &self,
+        surface: &Surface3,
+        n1: usize,
+        n2: usize,
+    ) -> Vec<DVec3> {
         match surface {
             Surface3::Cylinder(cyl) => {
                 inttools::marching::sample_cylinder(cyl, [-20.0, 20.0], n1, n2)
@@ -483,8 +502,7 @@ impl<'a> super::PaveFiller<'a> {
                 let v_ax = cyl.axis.cross(u_ax);
                 let mut pts = Vec::with_capacity(n_u * n_v);
                 for iu in 0..n_u {
-                    let theta =
-                        2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
+                    let theta = 2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
                     for iv in 0..n_v {
                         let h = height_range[0]
                             + (height_range[1] - height_range[0]) * iv as f64
@@ -507,8 +525,7 @@ impl<'a> super::PaveFiller<'a> {
                 let v_ax = sph.axis.cross(u_ax);
                 let mut pts = Vec::with_capacity(n_u * n_v);
                 for iu in 0..n_u {
-                    let theta =
-                        2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
+                    let theta = 2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
                     for iv in 0..n_v {
                         let phi = std::f64::consts::PI * iv as f64 / (n_v - 1).max(1) as f64;
                         pts.push(

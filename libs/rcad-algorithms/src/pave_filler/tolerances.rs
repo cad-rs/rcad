@@ -8,37 +8,27 @@ impl<'a> PaveFiller<'a> {
 
     #[inline]
     pub(crate) fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
-        self.ds.vertex_tolerance(vi)
-            + self.ds.vertex_tolerance(vj)
-            + self.tol()
+        self.ds.vertex_tolerance(vi) + self.ds.vertex_tolerance(vj) + self.tol()
     }
 
     #[inline]
     pub(crate) fn ve_tol(&self, vi: usize, ei: usize) -> f64 {
-        self.ds.vertex_tolerance(vi)
-            + self.ds.edge_tolerance(ei)
-            + self.tol()
+        self.ds.vertex_tolerance(vi) + self.ds.edge_tolerance(ei) + self.tol()
     }
 
     #[inline]
     pub(crate) fn ee_tol(&self, e1: usize, e2: usize) -> f64 {
-        self.ds.edge_tolerance(e1)
-            + self.ds.edge_tolerance(e2)
-            + self.tol()
+        self.ds.edge_tolerance(e1) + self.ds.edge_tolerance(e2) + self.tol()
     }
 
     #[inline]
     pub(crate) fn vf_tol(&self, vi: usize, fi: usize) -> f64 {
-        self.ds.vertex_tolerance(vi)
-            + self.ds.face_tolerance(fi)
-            + self.tol()
+        self.ds.vertex_tolerance(vi) + self.ds.face_tolerance(fi) + self.tol()
     }
 
     #[inline]
     pub(crate) fn ef_tol(&self, ei: usize, fi: usize) -> f64 {
-        self.ds.edge_tolerance(ei)
-            + self.ds.face_tolerance(fi)
-            + self.tol()
+        self.ds.edge_tolerance(ei) + self.ds.face_tolerance(fi) + self.tol()
     }
 
     #[inline]
@@ -59,8 +49,14 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT: sample face boundary points
-    pub(crate) fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
-        let Some(face) = self.ds.faces.get(face_idx) else { return vec![] };
+    pub(crate) fn sampled_face_boundary_points(
+        &self,
+        face_idx: usize,
+        samples_per_edge: usize,
+    ) -> Vec<DVec3> {
+        let Some(face) = self.ds.faces.get(face_idx) else {
+            return vec![];
+        };
         let mut pts = Vec::new();
         for &ei in &face.boundary_edges {
             if let Some(edge) = self.ds.edges.get(ei) {
@@ -83,7 +79,11 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT: closest point on boundary samples
-    pub(crate) fn closest_point_on_boundary_samples(&self, point: DVec3, samples: &[DVec3]) -> DVec3 {
+    pub(crate) fn closest_point_on_boundary_samples(
+        &self,
+        point: DVec3,
+        samples: &[DVec3],
+    ) -> DVec3 {
         samples
             .iter()
             .copied()
@@ -114,13 +114,19 @@ impl<'a> PaveFiller<'a> {
 
         let snap_start_a = self.closest_point_on_boundary_samples(chain[0], &boundary_a);
         let snap_start_b = self.closest_point_on_boundary_samples(chain[0], &boundary_b);
-        let snap_end_a = self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_a);
-        let snap_end_b = self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_b);
+        let snap_end_a =
+            self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_a);
+        let snap_end_b =
+            self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_b);
 
         let choose_better = |orig: DVec3, p1: DVec3, p2: DVec3| {
             let d1 = (p1 - orig).length_squared();
             let d2 = (p2 - orig).length_squared();
-            if d1 <= d2 { p1 } else { p2 }
+            if d1 <= d2 {
+                p1
+            } else {
+                p2
+            }
         };
 
         let start = choose_better(chain[0], snap_start_a, snap_start_b);

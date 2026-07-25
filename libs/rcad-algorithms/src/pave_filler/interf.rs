@@ -73,7 +73,11 @@ impl<'a> PaveFiller<'a> {
 
                 // L1072-1078: add PB to map keyed by vertex pair
                 // OCCT: BOPDS_Pair aPair(nV1, nV2); aPBMap(aPBMap.Add(aPair, ...))
-                let a_pair = if n_v1 <= n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+                let a_pair = if n_v1 <= n_v2 {
+                    (n_v1, n_v2)
+                } else {
+                    (n_v2, n_v1)
+                };
                 a_pb_map.entry(a_pair).or_default().push(a_pbr_key);
             }
         }
@@ -114,7 +118,10 @@ impl<'a> PaveFiller<'a> {
             let a_tol_add = if b_si_check_mode {
                 self.ds.fuzzy_tol
             } else {
-                2.0 * self.ds.vertex_tolerance(n_v1).max(self.ds.vertex_tolerance(n_v2))
+                2.0 * self
+                    .ds
+                    .vertex_tolerance(n_v1)
+                    .max(self.ds.vertex_tolerance(n_v2))
             };
 
             // L1120-1225: iterate all PBs in this group as pairs (i < j)
@@ -241,7 +248,9 @@ impl<'a> PaveFiller<'a> {
             let a_tol_add = if b_si {
                 self.ds.fuzzy_tol
             } else {
-                2.0 * self.ds.vertex_tolerance(entry.n_v1)
+                2.0 * self
+                    .ds
+                    .vertex_tolerance(entry.n_v1)
                     .max(self.ds.vertex_tolerance(entry.n_v2))
             };
 
@@ -266,11 +275,17 @@ impl<'a> PaveFiller<'a> {
                     let proj_mid = closest_point_on_curve(&curve2, mid_p1, 64);
                     let p2_at_mid = curve2.point_at(proj_mid.param);
                     let d_at_mid = mid_p1.distance(p2_at_mid);
-                    if d_at_mid > fuzzy { continue; }
+                    if d_at_mid > fuzzy {
+                        continue;
+                    }
                     let v_tgt1 = curve1.tangent_at(mid_t1);
-                    if v_tgt1.length_squared() < 1e-60 { continue; }
+                    if v_tgt1.length_squared() < 1e-60 {
+                        continue;
+                    }
                     let v_tgt2 = curve2.tangent_at(proj_mid.param);
-                    if v_tgt2.length_squared() < 1e-60 { continue; }
+                    if v_tgt2.length_squared() < 1e-60 {
+                        continue;
+                    }
                     let a_cos = v_tgt1.normalize().dot(v_tgt2.normalize());
                     a_cos.abs() >= 0.9063
                 }
@@ -295,16 +310,19 @@ impl<'a> PaveFiller<'a> {
                         continue;
                     };
                     let avg_pt = (curve1.point_at(mid_t1) + curve2.point_at(mid_t2)) * 0.5;
-                    Some((InterferenceEE {
-                        e1: entry.n_e1,
-                        e2: entry.n_e2,
-                        point: avg_pt,
-                        param1: mid_t1,
-                        param2: mid_t2,
-                        new_vertex: entry.n_v1,
-                        range1: cp.range1,
-                        range2: cp.ranges2.first().copied().unwrap_or([mid_t2, mid_t2]),
-                    }, true))
+                    Some((
+                        InterferenceEE {
+                            e1: entry.n_e1,
+                            e2: entry.n_e2,
+                            point: avg_pt,
+                            param1: mid_t1,
+                            param2: mid_t2,
+                            new_vertex: entry.n_v1,
+                            range1: cp.range1,
+                            range2: cp.ranges2.first().copied().unwrap_or([mid_t2, mid_t2]),
+                        },
+                        true,
+                    ))
                 } else {
                     None
                 }
@@ -335,16 +353,17 @@ impl<'a> PaveFiller<'a> {
             // L1297-1305: self-interference warning
             // OCCT: if both edges are from the same rank, add self-interference warning
             if self.ds.rank(entry.n_e1) == self.ds.rank(entry.n_e2) {
-                self.my_report.add_alert(crate::bopalgo::Alert::AcquiredSelfIntersection(
-                    vec![entry.n_e1, entry.n_e2],
-                ));
+                self.my_report
+                    .add_alert(crate::bopalgo::Alert::AcquiredSelfIntersection(vec![
+                        entry.n_e1, entry.n_e2,
+                    ]));
             }
 
             // L1307-1310: create InterfEE entry
             self.ds.interf_ee.push(ee.clone());
-            self.ds.interf_tb.insert(
-                (entry.n_e1.min(entry.n_e2), entry.n_e1.max(entry.n_e2)),
-            );
+            self.ds
+                .interf_tb
+                .insert((entry.n_e1.min(entry.n_e2), entry.n_e1.max(entry.n_e2)));
 
             // L1312-1329: Fill map for common blocks creation
             // Use (ei, local_i) tuple keys directly (no collision risk vs encoded scalar).
@@ -391,7 +410,10 @@ impl<'a> PaveFiller<'a> {
                 let mut a_lfaces: Vec<usize> = Vec::new();
                 for &(ei, local_i) in block {
                     let face_indices: Vec<usize> = self.ds.edges[ei]
-                        .face_reps.iter().map(|r| r.face_idx).collect();
+                        .face_reps
+                        .iter()
+                        .map(|r| r.face_idx)
+                        .collect();
                     for &fi in &face_indices {
                         if !a_lfaces.contains(&fi) {
                             a_lfaces.push(fi);
@@ -506,11 +528,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     // OCCT BOPAlgo_PaveFiller_5.cxx L831-1199
-    fn force_interf_ef_with(
-        &mut self,
-        the_mpb: &[(usize, usize)],
-        the_add_interf: bool,
-    ) {
+    fn force_interf_ef_with(&mut self, the_mpb: &[(usize, usize)], the_add_interf: bool) {
         // L838-840
         if the_mpb.is_empty() {
             return;
@@ -527,8 +545,7 @@ impl<'a> PaveFiller<'a> {
             // OCCT: if (!aPB->HasShrunkData() || !myDS->IsValidShrunkData(aPB))
             {
                 let r = self.ds.edges[ne].pave_blocks[local_i].0.read().unwrap();
-                let need_fill = !r.has_shrunk_data()
-                    || !self.ds.is_valid_shrunk_data(&r);
+                let need_fill = !r.has_shrunk_data() || !self.ds.is_valid_shrunk_data(&r);
                 drop(r);
                 if need_fill {
                     // OCCT L854: FillShrunkData(aPB)
@@ -536,7 +553,9 @@ impl<'a> PaveFiller<'a> {
                     self.analyze_shrunk_data(ne, local_i);
                     // OCCT L855-858: if still no shrunk data after FillShrunkData
                     if !self.ds.edges[ne].pave_blocks[local_i]
-                        .0.read().unwrap()
+                        .0
+                        .read()
+                        .unwrap()
                         .has_shrunk_data()
                     {
                         continue;
@@ -545,10 +564,11 @@ impl<'a> PaveFiller<'a> {
             }
             // L866-868: ShrunkData(f, l, aPBBox, isSplit)
             // rcad: shrunk_data() returns (f, l, isSplit), bounding box computed below
-            let (f, l, _is_split) =
-                self.ds.edges[ne].pave_blocks[local_i]
-                    .0.read().unwrap()
-                    .shrunk_data();
+            let (f, l, _is_split) = self.ds.edges[ne].pave_blocks[local_i]
+                .0
+                .read()
+                .unwrap()
+                .shrunk_data();
             // L866-870: build AABB from shrunk range endpoint positions
             // OCCT: aBBTree.Add(aPBMap.Add(aPB), Bnd_Tools::Bnd2BVH(aPBBox));
             let a_p1 = self.ds.edges[ne].curve.point_at(f);
@@ -574,8 +594,8 @@ impl<'a> PaveFiller<'a> {
         // rcad: pair data stored in a local struct
         struct _EFPair {
             n_e: usize,
-            n_f_src: usize,   // source shape index for fpbdone check
-            fi: usize,         // flat face index for face operations
+            n_f_src: usize, // source shape index for fpbdone check
+            fi: usize,      // flat face index for face operations
             pb: SharedPB,
             a_tol_add: f64,
             a_ts: [f64; 2],
@@ -624,8 +644,7 @@ impl<'a> PaveFiller<'a> {
 
             // L914-924: build aMVF from all face vertex sets
             // OCCT: NCollection_Map<int> aMVF from FaceInfo VerticesOn/In/Sc
-            let mut a_mvf: std::collections::HashSet<usize> =
-                std::collections::HashSet::new();
+            let mut a_mvf: std::collections::HashSet<usize> = std::collections::HashSet::new();
             for &v in &a_fi.vertices_on {
                 a_mvf.insert(v);
             }
@@ -668,14 +687,19 @@ impl<'a> PaveFiller<'a> {
                     let r = a_pb.0.read().unwrap();
                     let a_pb_ne = r.original_edge;
                     // Check if any global pool PB with same original_edge is already in face's sets
-                    let skip = a_fi.pave_blocks_on.iter()
+                    let skip = a_fi
+                        .pave_blocks_on
+                        .iter()
                         .chain(a_fi.pave_blocks_in.iter())
                         .chain(a_fi.pave_blocks_sc.iter())
                         .any(|&pb_gi| {
                             pb_gi < self.ds.pave_blocks.len()
-                                && self.ds.pave_blocks[pb_gi].0.read().unwrap().original_edge == a_pb_ne
+                                && self.ds.pave_blocks[pb_gi].0.read().unwrap().original_edge
+                                    == a_pb_ne
                         });
-                    if skip { continue; }
+                    if skip {
+                        continue;
+                    }
                     (r.pave1.vertex_idx, r.pave2.vertex_idx)
                 };
                 if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) {
@@ -755,11 +779,10 @@ impl<'a> PaveFiller<'a> {
                     // Check angle: cos >= 0.9063 (25°) → edges parallel → bUseAddTol = true
                     // L1040-1041: projection point (closest on surface)
                     // rcad: re-project to get the nearest surface point
-                    let (_, a_p_on_s_re, _) =
-                        match self.context.proj_ps(&self.ds, fi, a_p_on_e) {
-                            Some(data) => data,
-                            None => continue,
-                        };
+                    let (_, a_p_on_s_re, _) = match self.context.proj_ps(&self.ds, fi, a_p_on_e) {
+                        Some(data) => data,
+                        None => continue,
+                    };
                     let a_vf_norm = a_p_on_s_re - a_p_on_e;
                     if a_vf_norm.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
                         // L1044-1050: angle check with cos threshold 0.4226
@@ -777,9 +800,7 @@ impl<'a> PaveFiller<'a> {
                     // L1064-1076: project the two endpoints of shrunk range onto face
                     for &a_t in &[a_ts[0], a_ts[1]] {
                         let a_p = a_e_curve.point_at(a_t);
-                        if let Some((_, _, a_dist_ef)) =
-                            self.context.proj_ps(&self.ds, fi, a_p)
-                        {
+                        if let Some((_, _, a_dist_ef)) = self.context.proj_ps(&self.ds, fi, a_p) {
                             if a_dist_ef < a_tol_check && a_dist_ef > a_tol_add {
                                 a_tol_add = a_dist_ef;
                             }
@@ -787,8 +808,7 @@ impl<'a> PaveFiller<'a> {
                     }
                     // L1077-1084: subtract edge + face tolerances
                     if a_tol_add > 0.0 {
-                        a_tol_add -= (self.ds.edge_tolerance(ne)
-                            + self.ds.face_tolerance(fi));
+                        a_tol_add -= (self.ds.edge_tolerance(ne) + self.ds.face_tolerance(fi));
                         if a_tol_add < 0.0 {
                             a_tol_add = 0.0;
                         }
@@ -865,11 +885,20 @@ impl<'a> PaveFiller<'a> {
                 let pt = self.ds.edges[pair.n_e].curve.point_at(t);
                 let proj = self.context.proj_ps(&self.ds, pair.fi, pt);
                 match proj {
-                    Some((_, _, dist)) if dist <= pair.a_tol_add + self.ds.fuzzy_tol + self.ds.face_tolerance(pair.fi) => {}
-                    _ => { all_on_face = false; break; }
+                    Some((_, _, dist))
+                        if dist
+                            <= pair.a_tol_add
+                                + self.ds.fuzzy_tol
+                                + self.ds.face_tolerance(pair.fi) => {}
+                    _ => {
+                        all_on_face = false;
+                        break;
+                    }
                 }
             }
-            if !all_on_face { continue; }
+            if !all_on_face {
+                continue;
+            }
 
             // L1161-1171: exactly 1 CommonPart of type EDGE expected
             // rcad: the coordinate check above implies edge-on-face coincidence,
@@ -897,10 +926,13 @@ impl<'a> PaveFiller<'a> {
 
             // L1184-1186: update face info with new IN pave block
             // OCCT: myDS->ChangeFaceInfo(nF).ChangePaveBlocksIn().Add(aPB);
-            let g_pb_idx = self.ds.allocate_pave_block(
-                pair.pb.0.read().unwrap().clone()
-            );
-            self.ds.face_info_mut(pair.fi).pave_blocks_in.insert(g_pb_idx);
+            let g_pb_idx = self
+                .ds
+                .allocate_pave_block(pair.pb.0.read().unwrap().clone());
+            self.ds
+                .face_info_mut(pair.fi)
+                .pave_blocks_in
+                .insert(g_pb_idx);
 
             // L1187-1191: fill map for common blocks creation
             if the_add_interf {
@@ -917,23 +949,40 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-
     pub(crate) fn put_se_in_other_faces(&mut self) {
         let n_faces = self.ds.faces.len();
         let ics = self.ds.intersection_curves.clone();
         let mut ic_creators: Vec<Vec<usize>> = vec![Vec::new(); ics.len()];
         for inf in &self.ds.interf_ff {
-            for &ci in &inf.curves { if ci < ic_creators.len() { ic_creators[ci].push(inf.f1); ic_creators[ci].push(inf.f2); } }
+            for &ci in &inf.curves {
+                if ci < ic_creators.len() {
+                    ic_creators[ci].push(inf.f1);
+                    ic_creators[ci].push(inf.f2);
+                }
+            }
         }
         for (ci, ic) in ics.iter().enumerate() {
             let creators = &ic_creators[ci];
-            if creators.is_empty() { continue; }
+            if creators.is_empty() {
+                continue;
+            }
             let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
-            let params = if (ic.t_range[1] - ic.t_range[0]).abs() < TOLERANCE_ABS { vec![mid_t] }
-            else { vec![ic.t_range[0]*0.9+ic.t_range[1]*0.1, mid_t, ic.t_range[0]*0.1+ic.t_range[1]*0.9] };
+            let params = if (ic.t_range[1] - ic.t_range[0]).abs() < TOLERANCE_ABS {
+                vec![mid_t]
+            } else {
+                vec![
+                    ic.t_range[0] * 0.9 + ic.t_range[1] * 0.1,
+                    mid_t,
+                    ic.t_range[0] * 0.1 + ic.t_range[1] * 0.9,
+                ]
+            };
             for fi in 0..n_faces {
-                if creators.contains(&fi) { continue; }
-                if !self.ds.faces[fi].face_info.has_any_interference() { continue; }
+                if creators.contains(&fi) {
+                    continue;
+                }
+                if !self.ds.faces[fi].face_info.has_any_interference() {
+                    continue;
+                }
                 let on_face = params.iter().any(|&t| {
                     use rcad_kernel::geom::CurveEval;
                     let pt = ic.curve.point_at(t);
@@ -952,20 +1001,24 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn point_on_face(&self, pt: DVec3, fi: usize, tol: f64) -> bool {
-        use rcad_kernel::geom::{SurfaceEval, Surface3};
+        use rcad_kernel::geom::{Surface3, SurfaceEval};
         let face = &self.ds.faces[fi];
         match &face.surface {
             Surface3::Plane(p) => (pt - p.origin).dot(p.normal).abs() <= tol,
             Surface3::Sphere(s) => ((pt - s.center).length() - s.radius).abs() <= tol,
-            Surface3::Cylinder(c) => { let v = pt - c.origin; let radial = v - c.axis.normalize() * v.dot(c.axis.normalize()); (radial.length() - c.radius).abs() <= tol }
-            Surface3::Cone(c) => { 
-                let v = pt - c.apex; 
-                let a = c.axis_dir(); 
-                let along = v.dot(a); 
-                let r = (v - a * along).length(); 
-                let half_ang = c.half_angle_rad; 
-                let expected_r = c.radius + along * half_ang.tan(); 
-                (r - expected_r).abs() * half_ang.cos() <= tol 
+            Surface3::Cylinder(c) => {
+                let v = pt - c.origin;
+                let radial = v - c.axis.normalize() * v.dot(c.axis.normalize());
+                (radial.length() - c.radius).abs() <= tol
+            }
+            Surface3::Cone(c) => {
+                let v = pt - c.apex;
+                let a = c.axis_dir();
+                let along = v.dot(a);
+                let r = (v - a * along).length();
+                let half_ang = c.half_angle_rad;
+                let expected_r = c.radius + along * half_ang.tan();
+                (r - expected_r).abs() * half_ang.cos() <= tol
             }
             _ => false,
         }
@@ -976,7 +1029,9 @@ impl<'a> PaveFiller<'a> {
     /// Returns true if a new VF interference was created.
     /// Note: named with `_pair` suffix to distinguish from the zero-arg version above.
     pub(crate) fn force_interf_vf_pair(&mut self, n_v: usize, n_f: usize) -> bool {
-        if n_v >= self.ds.vertices.len() || n_f >= self.ds.faces.len() { return false; }
+        if n_v >= self.ds.vertices.len() || n_f >= self.ds.faces.len() {
+            return false;
+        }
         let v_pt = self.ds.vertex_point(n_v);
         let surf = self.ds.faces[n_f].surface.clone();
         // Project vertex onto face surface

@@ -20,10 +20,18 @@ use glam::DVec3;
 pub struct BVH_Vec3d(pub f64, pub f64, pub f64);
 
 impl BVH_Vec3d {
-    pub const fn new(x: f64, y: f64, z: f64) -> Self { Self(x, y, z) }
-    pub fn x(&self) -> f64 { self.0 }
-    pub fn y(&self) -> f64 { self.1 }
-    pub fn z(&self) -> f64 { self.2 }
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self(x, y, z)
+    }
+    pub fn x(&self) -> f64 {
+        self.0
+    }
+    pub fn y(&self) -> f64 {
+        self.1
+    }
+    pub fn z(&self) -> f64 {
+        self.2
+    }
 }
 
 // =============================================================================
@@ -63,11 +71,15 @@ impl BVH_Box {
     }
 
     /// OCCT: IsValid() — true if the box has been initialized.
-    pub fn is_valid(&self) -> bool { self.is_valid }
+    pub fn is_valid(&self) -> bool {
+        self.is_valid
+    }
 }
 
 impl Default for BVH_Box {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // =============================================================================
@@ -91,11 +103,18 @@ pub struct BVH_Tree {
 }
 
 impl BVH_Tree {
-    pub fn new() -> Self { Self { nodes: Vec::new(), prim_indices: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            prim_indices: Vec::new(),
+        }
+    }
 }
 
 impl Default for BVH_Tree {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // =============================================================================
@@ -120,14 +139,24 @@ pub struct BVHSet<T: BVHPrimitiveSet> {
 
 impl<T: BVHPrimitiveSet> BVHSet<T> {
     pub fn new(set: T) -> Self {
-        Self { set, tree: None, dirty: true }
+        Self {
+            set,
+            tree: None,
+            dirty: true,
+        }
     }
 
-    pub fn set_ref(&self) -> &T { &self.set }
-    pub fn set_mut(&mut self) -> &mut T { &mut self.set }
+    pub fn set_ref(&self) -> &T {
+        &self.set
+    }
+    pub fn set_mut(&mut self) -> &mut T {
+        &mut self.set
+    }
 
     /// Mark dirty to trigger BVH rebuild on next access.
-    pub fn mark_dirty(&mut self) { self.dirty = true; }
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
 
     /// Build or return cached BVH tree.
     pub fn bvh(&mut self) -> &BVH_Tree {
@@ -149,7 +178,10 @@ fn build_bvh<T: BVHPrimitiveSet>(set: &mut T) -> BVH_Tree {
     let mut nodes = Vec::new();
     let mut sorted_prims = Vec::with_capacity(n);
     build_rec(set, &mut order, &mut nodes, &mut sorted_prims, 0, n);
-    BVH_Tree { nodes, prim_indices: sorted_prims }
+    BVH_Tree {
+        nodes,
+        prim_indices: sorted_prims,
+    }
 }
 
 fn build_rec<T: BVHPrimitiveSet>(
@@ -193,7 +225,13 @@ fn build_rec<T: BVHPrimitiveSet>(
         let sx = aabb.corner_max.0 - aabb.corner_min.0;
         let sy = aabb.corner_max.1 - aabb.corner_min.1;
         let sz = aabb.corner_max.2 - aabb.corner_min.2;
-        if sx >= sy && sx >= sz { 0 } else if sy >= sz { 1 } else { 2 }
+        if sx >= sy && sx >= sz {
+            0
+        } else if sy >= sz {
+            1
+        } else {
+            2
+        }
     };
 
     // Sort by centroid along axis (median split)
@@ -233,7 +271,10 @@ pub struct PolyhedronBVH {
 
 impl PolyhedronBVH {
     pub fn new() -> Self {
-        Self { poly: None, index_map: Vec::new() }
+        Self {
+            poly: None,
+            index_map: Vec::new(),
+        }
     }
 
     pub fn from_poly(poly: &Polyhedron) -> Self {
@@ -266,16 +307,24 @@ impl PolyhedronBVH {
     }
 
     /// OCCT: IsInitialized()
-    pub fn is_initialized(&self) -> bool { self.poly.is_some() }
+    pub fn is_initialized(&self) -> bool {
+        self.poly.is_some()
+    }
 
     /// OCCT: Size()
-    pub fn size(&self) -> usize { self.index_map.len() }
+    pub fn size(&self) -> usize {
+        self.index_map.len()
+    }
 
     /// OCCT: Box(theIndex) — AABB of triangle at BVH-reordered index.
     pub fn box_at(&self, the_index: usize) -> BVH_Box {
         let mut a_box = BVH_Box::new();
-        let Some(ref poly) = self.poly else { return a_box };
-        if the_index >= self.size() { return a_box; }
+        let Some(ref poly) = self.poly else {
+            return a_box;
+        };
+        if the_index >= self.size() {
+            return a_box;
+        }
         let an_orig_idx = self.index_map[the_index];
         let (p1, p2, p3) = poly.triangle(an_orig_idx);
         let p1 = poly.point(p1);
@@ -289,8 +338,12 @@ impl PolyhedronBVH {
 
     /// OCCT: Center(theIndex, theAxis) — centroid coordinate.
     pub fn center(&self, the_index: usize, the_axis: usize) -> f64 {
-        let Some(ref poly) = self.poly else { return 0.0 };
-        if the_index >= self.size() { return 0.0; }
+        let Some(ref poly) = self.poly else {
+            return 0.0;
+        };
+        if the_index >= self.size() {
+            return 0.0;
+        }
         let an_orig_idx = self.index_map[the_index];
         let (p1, p2, p3) = poly.triangle(an_orig_idx);
         let c = match the_axis {
@@ -310,7 +363,9 @@ impl PolyhedronBVH {
 
     /// OCCT: OriginalIndex(theIndex) — 1-based original triangle index.
     pub fn original_index(&self, the_index: usize) -> i32 {
-        if the_index >= self.size() { return 0; }
+        if the_index >= self.size() {
+            return 0;
+        }
         self.index_map[the_index]
     }
 }
@@ -333,19 +388,33 @@ unsafe impl Sync for BVHTraversal {}
 
 impl BVHTraversal {
     pub fn new() -> Self {
-        Self { pairs: Vec::new(), set1: None, set2: None, self_interference: false }
+        Self {
+            pairs: Vec::new(),
+            set1: None,
+            set2: None,
+            self_interference: false,
+        }
     }
 
     /// OCCT: Perform(set1, set2, selfInterference).
     /// Returns number of overlapping triangle pairs found.
-    pub fn perform(&mut self, set1: &PolyhedronBVH, set2: &PolyhedronBVH, self_interference: bool) -> usize {
+    pub fn perform(
+        &mut self,
+        set1: &PolyhedronBVH,
+        set2: &PolyhedronBVH,
+        self_interference: bool,
+    ) -> usize {
         self.pairs.clear();
         self.set1 = Some(set1 as *const PolyhedronBVH);
         self.set2 = Some(set2 as *const PolyhedronBVH);
         self.self_interference = self_interference;
 
-        if !set1.is_initialized() || !set2.is_initialized() { return 0; }
-        if set1.size() == 0 || set2.size() == 0 { return 0; }
+        if !set1.is_initialized() || !set2.is_initialized() {
+            return 0;
+        }
+        if set1.size() == 0 || set2.size() == 0 {
+            return 0;
+        }
 
         // Dual-tree traversal (simplified: iterate all pairs with AABB check)
         // OCCT uses actual BVH tree traversal, but for test correctness we use
@@ -354,9 +423,13 @@ impl BVHTraversal {
             let box1 = set1.box_at(i);
             let orig1 = set1.original_index(i);
             for j in 0..set2.size() {
-                if self_interference && orig1 >= set2.original_index(j) { continue; }
+                if self_interference && orig1 >= set2.original_index(j) {
+                    continue;
+                }
                 let box2 = set2.box_at(j);
-                if !boxes_overlap(&box1, &box2) { continue; }
+                if !boxes_overlap(&box1, &box2) {
+                    continue;
+                }
                 let orig2 = set2.original_index(j);
                 self.pairs.push((orig1, orig2));
             }
@@ -365,21 +438,41 @@ impl BVHTraversal {
     }
 
     /// OCCT: Pairs() — returns the found pairs.
-    pub fn pairs(&self) -> &[(i32, i32)] { &self.pairs }
+    pub fn pairs(&self) -> &[(i32, i32)] {
+        &self.pairs
+    }
 
     /// OCCT: RejectNode(node1, node2) — AABB overlap test.
-    fn reject_node(cmin1: &BVH_Vec3d, cmax1: &BVH_Vec3d, cmin2: &BVH_Vec3d, cmax2: &BVH_Vec3d) -> bool {
-        if cmin1.x() > cmax2.x() || cmax1.x() < cmin2.x() { return true; }
-        if cmin1.y() > cmax2.y() || cmax1.y() < cmin2.y() { return true; }
-        if cmin1.z() > cmax2.z() || cmax1.z() < cmin2.z() { return true; }
+    fn reject_node(
+        cmin1: &BVH_Vec3d,
+        cmax1: &BVH_Vec3d,
+        cmin2: &BVH_Vec3d,
+        cmax2: &BVH_Vec3d,
+    ) -> bool {
+        if cmin1.x() > cmax2.x() || cmax1.x() < cmin2.x() {
+            return true;
+        }
+        if cmin1.y() > cmax2.y() || cmax1.y() < cmin2.y() {
+            return true;
+        }
+        if cmin1.z() > cmax2.z() || cmax1.z() < cmin2.z() {
+            return true;
+        }
         false
     }
 }
 
 fn boxes_overlap(b1: &BVH_Box, b2: &BVH_Box) -> bool {
-    !BVHTraversal::reject_node(&b1.corner_min, &b1.corner_max, &b2.corner_min, &b2.corner_max)
+    !BVHTraversal::reject_node(
+        &b1.corner_min,
+        &b1.corner_max,
+        &b2.corner_min,
+        &b2.corner_max,
+    )
 }
 
 impl Default for BVHTraversal {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
