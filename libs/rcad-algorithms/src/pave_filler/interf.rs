@@ -376,9 +376,77 @@ impl<'a> PaveFiller<'a> {
             crate::bopalgo::fill_map(&mut a_mpblpb, key1, key2);
         }
 
-        // L1332: Create new common blocks of coinciding pairs
+        // L1332: Create new common blocks of coinciding pairs.
+        // OCCT: BOPAlgo_Tools::PerformCommonBlocks(aMPBLPB, anAlloc, myDS);
+        // rcad: use make_blocks on a_mpblpb to group connected PBs, then create
+        // CommonBlocks from each group.  No global PB array rebuild (OCCT uses
+        // PB handles directly — no global array).
         if a_mpblpb.len() > 0 {
-            crate::bopds::tools::perform_common_blocks(self.ds);
+            let a_m_blocks: Vec<Vec<(usize, usize)>> = crate::bopalgo::make_blocks(&a_mpblpb);
+            for block in &a_m_blocks {
+                if block.len() < 2 {
+                    continue;
+                }
+                // Collect unique face indices for this block
+                let mut a_lfaces: Vec<usize> = Vec::new();
+                for &(ei, local_i) in block {
+                    let face_indices: Vec<usize> = self.ds.edges[ei]
+                        .face_reps.iter().map(|r| r.face_idx).collect();
+                    for &fi in &face_indices {
+                        if !a_lfaces.contains(&fi) {
+                            a_lfaces.push(fi);
+                        }
+                    }
+                }
+                if a_lfaces.len() < 2 {
+                    continue;
+                }
+                // Check if any PB in the block already has a CommonBlock
+                let mut a_cb: Option<crate::bopds::common_block::CommonBlock> = None;
+                let mut cb_idx: Option<usize> = None;
+                for &(ei, local_i) in block {
+                    let pb = &self.ds.edges[ei].pave_blocks[local_i];
+                    if self.ds.is_common_block(pb) {
+                        let existing = self.ds.common_block(pb).unwrap();
+                        // Collect faces from existing CB
+                        for &fi in existing.faces() {
+                            if !a_lfaces.contains(&fi) {
+                                a_lfaces.push(fi);
+                            }
+                        }
+                        if a_cb.is_none() {
+                            a_cb = Some(existing.clone());
+                            cb_idx = pb.0.read().unwrap().common_block_idx;
+                        }
+                    }
+                }
+                // Create or update CommonBlock
+                let mut cb = a_cb.unwrap_or_else(crate::bopds::common_block::CommonBlock::new);
+                cb.set_pave_blocks(block.clone());
+                cb.set_faces(a_lfaces);
+                let new_idx = match cb_idx {
+                    Some(idx) => {
+                        let tol = crate::bopds::tools::compute_tolerance_of_cb(&self.ds, idx);
+                        self.ds.common_blocks[idx] = cb.clone();
+                        self.ds.common_blocks[idx].set_tolerance(tol);
+                        idx
+                    }
+                    None => {
+                        let idx = self.ds.common_blocks.len();
+                        cb.set_tolerance(0.0);
+                        self.ds.common_blocks.push(cb);
+                        let tol = crate::bopds::tools::compute_tolerance_of_cb(&self.ds, idx);
+                        self.ds.common_blocks[idx].set_tolerance(tol);
+                        idx
+                    }
+                };
+                // Mark all PBs in block as belonging to this CommonBlock
+                for &(ei, local_i) in block {
+                    if let Some(local_pb) = self.ds.edges[ei].pave_blocks.get_mut(local_i) {
+                        local_pb.0.write().unwrap().common_block_idx = Some(new_idx);
+                    }
+                }
+            }
         }
     }
 
