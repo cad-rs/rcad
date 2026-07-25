@@ -146,6 +146,49 @@ struct EfTask {
   hits: Vec<EfHit>,
 }
 
+impl EdgeFaceTask {
+  fn new() -> Self {
+    EdgeFaceTask {
+      myIE: usize::MAX, myIF: usize::MAX, myFlag: -1,
+      myPB: usize::MAX,
+      myNewSR: [0.0, 0.0],
+      myRange: [0.0, 0.0],
+      myBox1: None, myBox2: None,
+      myFuzzyValue: 0.0,
+      bExpressCompute: false,
+      myCommonParts: Vec::new(),
+      myMinDist: f64::MAX,
+      myHasErrors: false,
+      myIsDone: false,
+    }
+  }
+  fn set_indices(&mut self, nE: usize, nF: usize) { self.myIE = nE; self.myIF = nF; }
+  fn indices(&self) -> (usize, usize) { (self.myIE, self.myIF) }
+  fn set_pave_block(&mut self, pb: usize) { self.myPB = pb; }
+  fn pave_block(&self) -> usize { self.myPB }
+  fn set_fuzzy_value(&mut self, f: f64) { self.myFuzzyValue = f; }
+  fn set_boxes(&mut self, b1: Option<(DVec3, DVec3)>, b2: Option<(DVec3, DVec3)>) {
+    self.myBox1 = b1; self.myBox2 = b2;
+  }
+  fn use_quick_coincidence_check(&mut self, flag: bool) { self.bExpressCompute = flag; }
+  fn set_new_sr(&mut self, sr: [f64; 2]) { self.myNewSR = sr; }
+  fn set_range(&mut self, r: [f64; 2]) { self.myRange = r; }
+  fn is_done(&self) -> bool { self.myIsDone }
+  fn has_errors(&self) -> bool { self.myHasErrors }
+  fn common_parts(&self) -> &[EfHit] { &self.myCommonParts }
+  fn minimal_distance(&self) -> f64 { self.myMinDist }
+  fn perform(&mut self, ctx: &mut crate::inttools::context::Context, ds: &DS) {
+    let ef_range = self.myRange;
+    let etr = ds.edges[self.myIE].t_range;
+    let range = [ef_range[0].max(etr[0]), ef_range[1].min(etr[1])];
+    let tol_ef = ds.edge_tolerance(self.myIE).max(ds.face_tolerance(self.myIF)).max(CONFUSION);
+    if range[1] - range[0] <= tol_ef { return; }
+    let hits = compute_ef_hits(ds, self.myIE, self.myIF, &range, tol_ef);
+    self.myCommonParts = hits;
+    self.myIsDone = true;
+  }
+}
+
 /// OCCT IntTools_EdgeFace (PaveFiller_5.cxx L340-480): compute edge-face intersection hits.
 /// Returns VERTEX-type (point) and EDGE-type (range) common parts.
 fn compute_ef_hits(ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2], ef_tol: f64) -> Vec<EfHit> {
@@ -1266,403 +1309,158 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L300: TreatVerticesEE()
  self.treat_vertices_ee();
 }
- /// OCCT PaveFiller_5.cxx L165-592: PerformEF
- pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
- self.fill_shrunk_data(ShapeType::Edge, ShapeType::Face); // OCCT L167
- let i_size = pairs.len();
- if i_size == 0 {
- return;
- }
- // OCCT L179-192: GlueFull early return
- if self.glue == GlueEnum::GlueFull {
- for &(nE, nF) in pairs {
- if !self.ds.edge_has_flag(nE) {
- self.ds.face_info_mut(nF);
- }
- }
- return;
- }
- // OCCT L194-217: variable declarations
- let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
- let mut a_v_edge_face: Vec<EfTask> = Vec::new();
- // OCCT L209-210: IndexedDataMap<TopoDS_Shape, BOPDS_CoupleOfPaveBlocks> aMVCPB
- // rcad: HashMap keyed by vertex_index (add_vertex deduplicates by position → same key)
- let mut a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks> = std::collections::HashMap::new();
- self.ds.interf_ef.reserve(i_size);
- let a_vc = self.ds.a_vertex_count;
- let a_fc = self.ds.a_face_count;
- //
- // ==================================================================
- // Phase 1: Collect EF tasks (OCCT L219-307)
- // ==================================================================
- for &(nE, nF) in pairs {
- // OCCT L227-231: HasFlag / degenerated
- if self.ds.edge_has_flag(nE) || self.ds.is_edge_degenerated(nE) {
- continue;
- }
- // OCCT L235: aBBF = myDS->ShapeInfo(nF).Box() -- face bounding box from DS shape info.
- let tol = self.ds.edge_tolerance(nE).max(CONFUSION);
- let (a_bbf_min, a_bbf_max): (DVec3, DVec3) = self.ds.shape_info.get(nF)
- .and_then(|si| {
- let mn = si.box_min?;
- let mx = si.box_max?;
- Some((mn - DVec3::splat(tol), mx + DVec3::splat(tol)))
- })
- .unwrap_or_else(|| {
- // Fallback: compute from boundary vertices
- let f = &self.ds.faces[nF];
- let mut mn = DVec3::splat(f64::INFINITY);
- let mut mx = DVec3::splat(f64::NEG_INFINITY);
- for &vi in &f.boundary_verts {
- if vi < self.ds.vertices.len() {
- let p = self.ds.vertex_point(vi);
- mn = mn.min(p); mx = mx.max(p);
- }
- }
- if let Surface3::Sphere(s) = &f.surface {
- let r = s.radius.abs();
- mn = mn.min(s.center - DVec3::splat(r));
- mx = mx.max(s.center + DVec3::splat(r));
- }
- (mn - DVec3::splat(tol), mx + DVec3::splat(tol))
- });
- // OCCT L237-241: FaceInfo -- ChangeFaceInfo + On/In sets
- let a_mpbf: Vec<usize> = {
- let fi = self.ds.face_info(nF);
- fi.pave_blocks_on.iter().copied().collect()
- };
- let a_mv_in: Vec<usize> = {
- let fi = self.ds.face_info(nF);
- fi.vertices_in.iter().copied().collect()
- };
- let a_mv_on: Vec<usize> = {
- let fi = self.ds.face_info(nF);
- fi.vertices_on.iter().copied().collect()
- };
- // OCCT L243-244: aTolE, aTolF
- let a_tol_e = self.ds.edge_tolerance(nE);
- let a_tol_f = self.ds.face_tolerance(nF);
- // OCCT L246-248: ChangePaveBlocks + PB iterator
- let n_pbs = self.ds.edge_pave_blocks_mut(nE).len();
- if n_pbs == 0 { continue; }
- for pb_local_idx in 0..n_pbs {
- let pb = &self.ds.edge_pave_blocks(nE)[pb_local_idx];
- let pb_ref = pb.0.read().unwrap();
- // OCCT L256-259: aPBR = RealPaveBlock(aPB)
- let pb_key = pb_ref.new_edge.unwrap_or(pb_ref.original_edge);
- if a_mpbf.contains(&pb_key) {
- continue;
- }
- // OCCT L262-266: GetPBBox
- let (aT1, aT2) = pb_ref.range();
- let (aTS1, aTS2, bb_min, bb_max, has_box) = match pb_ref.shrunk_range {
- Some(sr) => {
- let (b_mn, b_mx) = match pb_ref.my_shrunk_box {
- Some((mn, mx)) => (mn, mx),
- None => {
- let tol = a_tol_e.max(CONFUSION);
- let p1 = self.ds.edges[nE].curve.point_at(sr[0]);
- let p2 = self.ds.edges[nE].curve.point_at(sr[1]);
- (p1.min(p2) - DVec3::splat(tol), p1.max(p2) + DVec3::splat(tol))
- }
- };
- (sr[0], sr[1], b_mn, b_mx, true)
- }
- None => (0.0, 0.0, DVec3::ZERO, DVec3::ZERO, false)
- };
- if !has_box {
- continue;
- }
- // OCCT L268-271: AABB overlap check
- if bb_max.x < a_bbf_min.x || bb_min.x > a_bbf_max.x
- || bb_max.y < a_bbf_min.y || bb_min.y > a_bbf_max.y
- || bb_max.z < a_bbf_min.z || bb_min.z > a_bbf_max.z
- {
- continue;
- }
- // OCCT L273-276: bExpressCompute
- let (nV1, nV2) = pb_ref.indices();
- let bV1 = a_mv_in.contains(&nV1) || a_mv_on.contains(&nV1);
- let bV2 = a_mv_in.contains(&nV2) || a_mv_on.contains(&nV2);
- let b_express_compute = bV1 && bV2;
- let b_is_pb_splittable = pb_ref.is_splittable;
- let a_pb_range = [aT1.min(aT2), aT1.max(aT2)];
- drop(pb_ref);
- // OCCT L289-292: CorrectRange for shrunk range
- let tol_ef = self.ef_tol(nE, nF);
- let _a_sr_corrected = Self::correct_range_for_face(
- &self.ds.edges[nE].curve, tol_ef, [aTS1.min(aTS2), aTS1.max(aTS2)]);
- // OCCT L294-297: CorrectRange for PB range
- let a_pb_corrected = Self::correct_range_for_face(
- &self.ds.edges[nE].curve, tol_ef, a_pb_range);
- if a_pb_corrected[1] - a_pb_corrected[0] <= tol_ef {
- continue;
- }
- // OCCT L299-305: Save to myFPBDone
- self.fpbdone.entry(nF).or_default().insert(pb_key);
- // OCCT L278: aEdgeFace = aVEdgeFace.Appended()
- a_v_edge_face.push(EfTask {
- nE, nF, nV1, nV2,
- aT1, aT2,
- aTS1, aTS2,
- bExpressCompute: b_express_compute,
- bIsPBSplittable: b_is_pb_splittable,
- pb_local_idx,
- hits: Vec::new(),
- });
- } // for PB
- } // for pairs
- //
- // ==================================================================
- // Phase 2: EF computation (OCCT L309-317)
- // ==================================================================
- // OCCT L317: BOPTools_Parallel::Perform(myRunParallel, aVEdgeFace, myContext);
- let a_nb_edge_face = a_v_edge_face.len();
- for index in 0..a_nb_edge_face {
- let task = &a_v_edge_face[index];
- let pb_range = [task.aT1.min(task.aT2), task.aT1.max(task.aT2)];
- let etr = self.ds.edges[task.nE].t_range;
- let ef_range = [pb_range[0].max(etr[0]), pb_range[1].min(etr[1])];
- let tol_ef = self.ef_tol(task.nE, task.nF);
- if ef_range[1] - ef_range[0] <= tol_ef { continue; }
- let ef_corr = Self::correct_range_for_face(
- &self.ds.edges[task.nE].curve, tol_ef, ef_range);
- if ef_corr[1] - ef_corr[0] <= tol_ef { continue; }
- let hits = compute_ef_hits(&self.ds, task.nE, task.nF, &ef_corr, tol_ef);
- drop(task);
- a_v_edge_face[index].hits = hits;
- }
- //
- // ==================================================================
- // Phase 3: Process results (OCCT L324-571)
- // ==================================================================
- for k in 0..a_nb_edge_face {
- // OCCT L330-336: aEdgeFace.IsDone() / HasErrors() check
- let nE = a_v_edge_face[k].nE;
- let nF = a_v_edge_face[k].nF;
- // OCCT L340-344: aE, aF, aTolE, aTolF
- let a_tol_e = self.ds.edge_tolerance(nE);
- let a_tol_f = self.ds.face_tolerance(nF);
- // OCCT L346-362: aCPrts, aNbCPrts
- let a_nb_cprts = a_v_edge_face[k].hits.len();
- if a_nb_cprts == 0 {
- // OCCT L350-361: MinimalDistance handling
- {
- let a_t1_ef = a_v_edge_face[k].aT1;
- let a_t2_ef = a_v_edge_face[k].aT2;
- let span = (a_t2_ef - a_t1_ef).abs();
- if span > crate::tolerance::TOLERANCE_ABS {
- let mut min_dist = f64::MAX;
- let edge_curve = &self.ds.edges[nE].curve;
- for s in 0..5 {
- let t = a_t1_ef + span * (s as f64 / 4.0);
- let pt = edge_curve.point_at(t);
- if let Some((_, _, dist)) = self.context.proj_ps(self.ds, nF, pt) {
- if dist < min_dist { min_dist = dist; }
- }
- }
- if min_dist < f64::MAX && min_dist > a_tol_e + a_tol_f {
- let entry = self.distances.entry((nE, nF)).or_default();
- entry.push(crate::pave_filler::EdgeRangeDistance {
- first: a_t1_ef,
- last: a_t2_ef,
- distance: min_dist,
- });
- }
- }
- }
- continue;
- }
- let tol_ef = self.ef_tol(nE, nF);
- // OCCT L364-371: anewSR, aPB, Range, Indices, IsSplittable
- let pb_local_idx = a_v_edge_face[k].pb_local_idx;
- let nV = [a_v_edge_face[k].nV1, a_v_edge_face[k].nV2];
- let b_is_pb_splittable = a_v_edge_face[k].bIsPBSplittable;
- let a_t1 = a_v_edge_face[k].aT1;
- let a_t2 = a_v_edge_face[k].aT2;
- let mut a_ts1 = a_v_edge_face[k].aTS1;
- let mut a_ts2 = a_v_edge_face[k].aTS2;
- // OCCT L373-380: ReduceIntersectionRange for VERTEX type
- if a_nb_cprts > 0 {
- let first_hit = &a_v_edge_face[k].hits[0];
- if matches!(first_hit, EfHit::Vertex { .. }) {
- self.reduce_ef_intersection_range(nV[0], nV[1], nE, nF, &mut a_ts1, &mut a_ts2);
- }
- }
- // OCCT L382: IntTools_Range aR1(aT1, aTS1), aR2(aTS2, aT2)
- let a_r1 = [a_t1.min(a_ts1), a_t1.max(a_ts1)];
- let a_r2 = [a_ts2.min(a_t2), a_ts2.max(a_t2)];
- // OCCT L384-386: FaceInfo On/In
- let a_fi = self.ds.face_info_mut(nF);
- let a_mif_on: std::collections::HashSet<usize> = a_fi.vertices_on.iter().copied().collect();
- let a_mif_in: std::collections::HashSet<usize> = a_fi.vertices_in.iter().copied().collect();
- drop(a_fi);
- // OCCT L388-394: bLinePlane
- let b_line_plane = matches!(
- (&self.ds.edges[nE].curve, &self.ds.faces[nF].surface),
- (Curve3::Line(_), Surface3::Plane(_))
- );
- // OCCT L396-570: for each CommonPrt
- for i in 0..a_nb_cprts {
- let a_cpart = &a_v_edge_face[k].hits[i];
- match a_cpart {
- EfHit::Vertex { point, param: a_t } => {
- // ============================================================
- // OCCT L406-543: case TopAbs_VERTEX
- // ============================================================
- // OCCT L415-419: IsInRange(aR1, aR, aTolToDecide)
- let a_tol_to_decide = 5e-8;
- let mut b_is_on_pave = [false, false];
- b_is_on_pave[0] = (a_t - a_r1[0]).abs() <= a_tol_to_decide
- || (a_t - a_r1[1]).abs() <= a_tol_to_decide;
- b_is_on_pave[1] = (a_t - a_r2[0]).abs() <= a_tol_to_decide
- || (a_t - a_r2[1]).abs() <= a_tol_to_decide;
- // OCCT L421-439: if both on pave or (bLinePlane && one on pave)
- if (b_is_on_pave[0] && b_is_on_pave[1])
- || (b_line_plane && (b_is_on_pave[0] || b_is_on_pave[1]))
- {
- // OCCT L423-425: CheckFacePaves(nV[0], aMIFOn, aMIFIn)
- let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
- let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
- if bv0 && bv1 {
- // OCCT L427-437: EDGE-type treatment — edge lies on face
- self.ds.interf_ef.push(InterferenceEF {
- edge: nE, face: nF,
- point: *point,
- edge_param: *a_t,
- new_vertex: 0,
- });
- self.ds.try_add_interf(nE, nF);
- a_mi_efc.insert(nF);
- continue;
- }
- // OCCT L448-455: one vertex NOT on face → mark as processed, no EF
- self.ds.try_add_interf(nE, nF);
- continue;
- }
- // OCCT L442-444: splittable check
- if !b_is_pb_splittable {
- continue;
- }
- // OCCT L447-457: ForceInterfVF for on-pave vertices
- for j in 0..2 {
- if b_is_on_pave[j] {
- let bv = a_mif_on.contains(&nV[j]) || a_mif_in.contains(&nV[j]);
- if !bv {
- b_is_on_pave[j] = self.force_interf_vf_pair(nV[j], nF);
- }
- }
- }
- // OCCT L459-502: if on-pave -> real intersection check + update vertex
- if b_is_on_pave[0] || b_is_on_pave[1] {
- // OCCT L482-501: UpdateVertex for near-endpoint vertices
- for j in 0..2 {
- if b_is_on_pave[j] {
- let dist_pp = (self.ds.vertex_point(nV[j]) - *point).length();
- let a_tol = self.ds.vertex_tolerance(nV[j]);
- let mut a_max_dist = 1e4 * a_tol;
- if a_tol < 0.01 {
- a_max_dist = a_max_dist.min(0.1);
- }
- if dist_pp < a_max_dist {
- self.update_vertex(nV[j], dist_pp);
- self.verts_to_avoid_extension.insert(nV[j]);
- }
- }
- }
- continue;
- }
- // OCCT L505-508: CheckFacePaves(aVnew, aMIFOn)
- {
- let near_face_vx = a_mif_on.iter().chain(a_mif_in.iter()).any(|&vi| {
- vi < self.ds.vertices.len()
- && (self.ds.vertex_point(vi) - *point).length() <= a_tol_e.max(a_tol_f).max(tol_ef * 10.0)
- });
- if near_face_vx {
- continue;
- }
- }
- // OCCT L510-519: aTolVnew computation
- let mut a_tol_vnew = a_tol_e.max(a_tol_f);
- if b_line_plane {
- a_tol_vnew = a_tol_vnew.max(tol_ef * 10.0);
- }
- // OCCT L523-526: IsPointInFace check
- if !self.is_point_in_face(*point, nF, a_tol_vnew) {
- continue;
- }
- // OCCT L528-542: Create EF interference
- a_mi_efc.insert(nF);
- // OCCT: check if point coincides with edge endpoint — reuse existing vertex
- let sv = self.ds.edges[nE].start_vertex;
- let ev = self.ds.edges[nE].end_vertex;
- let sv_pt = if sv < self.ds.vertices.len() { self.ds.vertex_point(sv) } else { DVec3::ZERO };
- let ev_pt = if ev < self.ds.vertices.len() { self.ds.vertex_point(ev) } else { DVec3::ZERO };
- let d_sv = if sv < self.ds.vertices.len() { (sv_pt - point).length() } else { f64::MAX };
- let d_ev = if ev < self.ds.vertices.len() { (ev_pt - point).length() } else { f64::MAX };
- let near_endpoint = d_sv <= a_tol_vnew || d_ev <= a_tol_vnew;
- let new_v = if near_endpoint {
-     if d_sv < d_ev && d_sv <= a_tol_vnew { sv }
-     else if d_ev <= a_tol_vnew { ev }
-     else { self.ds.add_vertex_no_dedup(*point) }
- } else {
-     self.ds.add_vertex_no_dedup(*point)
- };
- // OCCT L530-542: set indices, common part, CPB, add to aMVCPB
- let interf_idx = self.ds.interf_ef.len();
- let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_v_edge_face[k].pb_local_idx].clone();
- self.ds.interf_ef.push(InterferenceEF {
- edge: nE, face: nF,
- point: *point,
- edge_param: *a_t,
- new_vertex: new_v,
- });
- self.ds.try_add_interf(nE, nF);
- // OCCT L542: aMVCPB.Add(aVnew, aCPB) — IndexedDataMap dedup by shape key
- a_mvcpb.insert(new_v, crate::bopds::pave::CoupleOfPaveBlocks {
- interf_idx,
- vertex_index: new_v,
- pb1: pb_for_cpb.clone(),
- pb2: pb_for_cpb,
- tolerance: a_tol_vnew,
- });
- // rcad: update face info and edge paves
- self.ds.faces[nF].face_info.vertices_on.insert(new_v);
- if nE < self.ds.edge_paves.len() {
- self.add_pave_to_edge(nE, Pave { vertex_idx: new_v, param: *a_t });
- }
- } // EfHit::Vertex
- EfHit::Edge { t1, t2 } => {
- // ============================================================
- // OCCT L545-565: case TopAbs_EDGE
- // ============================================================
- a_mi_efc.insert(nF);
- let mid_t = (t1 + t2) * 0.5;
- let mid_pt = self.ds.edges[nE].curve.point_at(mid_t);
- // OCCT L553-554: CheckFacePaves
- let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
- let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
- // OCCT always appends the interference
- self.ds.interf_ef.push(InterferenceEF {
- edge: nE, face: nF,
- point: mid_pt,
- edge_param: mid_t,
- new_vertex: 0,
- });
- // OCCT L555-558: if (!bV[0] || !bV[1]) { myDS->AddInterf; break; }
- if !bv0 || !bv1 {
- self.ds.try_add_interf(nE, nF);
- } else {
- // OCCT L560-564: SetCommonPart + AddInterf + FillMap
- self.ds.try_add_interf(nE, nF);
- }
- } // EfHit::Edge
- } // match
- } // for each hit
- } // for each task
- //
- // ==================================================================
- // Phase 4: Post-treatment (OCCT L576-592)
+ /// OCCT BOPAlgo_PaveFiller_5.cxx L165-592: PerformEF
+pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
+  // OCCT L167: FillShrunkData(TopAbs_EDGE, TopAbs_FACE)
+  self.fill_shrunk_data(ShapeType::Edge, ShapeType::Face);
+  // OCCT L169: myIterator->Initialize(EDGE, FACE)
+  // OCCT L171: iSize = myIterator->ExpectedLength()
+  let i_size = pairs.len();
+  if i_size == 0 { return; }
+  // OCCT L177: int nE, nF
+  //
+  // OCCT L179-192: myGlue == GlueFull
+  if self.glue == GlueEnum::GlueFull {
+    for &(nE, nF) in pairs {
+      // OCCT L186: if (!myDS->ShapeInfo(nE).HasFlag())
+      if !self.ds.edge_has_flag(nE) {
+        self.ds.face_info_mut(nF);
+      }
+    }
+    return;
+  }
+  //
+  // OCCT L194-214: variable declarations
+  let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
+  let mut a_v_edge_face: Vec<EdgeFaceTask> = Vec::new();
+  // OCCT L209-210: NCollection_IndexedDataMap<TopoDS_Shape, CoupleOfPaveBlocks> aMVCPB
+  let mut a_mvcpb: std::collections::HashMap<usize, crate::bopds::pave::CoupleOfPaveBlocks> = std::collections::HashMap::new();
+  // OCCT L216-217: InterfEF
+  self.ds.interf_ef.reserve(i_size);
+  //
+  // OCCT L219-307: for (; myIterator->More(); myIterator->Next())
+  for &(nE, nF) in pairs {
+    if self.ds.edge_has_flag(nE) { continue; }
+    let a_tol_e = self.ds.edge_tolerance(nE);
+    let a_tol_f = self.ds.face_tolerance(nF);
+    let a_fi = self.ds.face_info_mut(nF);
+    let a_mv_in: std::collections::HashSet<usize> = a_fi.vertices_in.iter().copied().collect();
+    let a_mv_on: std::collections::HashSet<usize> = a_fi.vertices_on.iter().copied().collect();
+    let a_mpbf: Vec<usize> = a_fi.pave_blocks_on.iter().copied().collect();
+    drop(a_fi);
+    let n_pave_blocks = self.ds.edge_pave_blocks(nE).len();
+    if n_pave_blocks == 0 { continue; }
+    for pb_local_idx in 0..n_pave_blocks {
+      let pb = &self.ds.edge_pave_blocks(nE)[pb_local_idx];
+      let pb_ref = pb.0.read().unwrap();
+      let pb_key = pb_ref.new_edge.unwrap_or(pb_ref.original_edge);
+      if a_mpbf.contains(&pb_key) { continue; }
+      let (aT1, aT2) = pb_ref.range();
+      let (aTS1, aTS2) = match pb_ref.shrunk_range {
+        Some(sr) => (sr[0], sr[1]),
+        None => continue,
+      };
+      let (nV1, nV2) = pb_ref.indices();
+      let b_express_compute =
+        (a_mv_in.contains(&nV1) || a_mv_on.contains(&nV1)) &&
+        (a_mv_in.contains(&nV2) || a_mv_on.contains(&nV2));
+      drop(pb_ref);
+      let tol_ef = a_tol_e.max(a_tol_f).max(CONFUSION);
+      let a_pb_range = [aT1.min(aT2), aT1.max(aT2)];
+      let _a_sr_corrected = Self::correct_range_for_face(
+        &self.ds.edges[nE].curve, tol_ef, [aTS1.min(aTS2), aTS1.max(aTS2)]);
+      let a_pb_corrected = Self::correct_range_for_face(
+        &self.ds.edges[nE].curve, tol_ef, a_pb_range);
+      if a_pb_corrected[1] - a_pb_corrected[0] <= tol_ef { continue; }
+      self.fpbdone.entry(nF).or_default().insert(pb_key);
+      let mut a_task = EdgeFaceTask::new();
+      a_task.set_indices(nE, nF);
+      a_task.set_pave_block(pb_local_idx);
+      a_task.set_fuzzy_value(self.fuzzy_tolerance);
+      a_task.use_quick_coincidence_check(b_express_compute);
+      a_task.set_new_sr([aTS1, aTS2]);
+      a_task.set_range(a_pb_range);
+      a_v_edge_face.push(a_task);
+    }
+  }
+  //
+  // OCCT L309-317: BOPTools_Parallel::Perform
+  for task in &mut a_v_edge_face {
+    task.perform(&mut self.context, self.ds);
+  }
+  //
+  // OCCT L324-571: Process results
+  for k in 0..a_v_edge_face.len() {
+    let task = &a_v_edge_face[k];
+    if !task.is_done() || task.has_errors() { continue; }
+    let (nE, nF) = task.indices();
+    let a_tol_e = self.ds.edge_tolerance(nE);
+    let a_tol_f = self.ds.face_tolerance(nF);
+    let a_cprts = task.common_parts();
+    let a_nb_cprts = a_cprts.len();
+    if a_nb_cprts == 0 {
+      let md = task.minimal_distance();
+      if md < f64::MAX && md > a_tol_e + a_tol_f {
+        let t_range = task.myRange;
+        self.distances.entry((nE, nF)).or_default().push(
+          crate::pave_filler::EdgeRangeDistance { first: t_range[0], last: t_range[1], distance: md });
+      }
+      continue;
+    }
+    let nV = [self.ds.edges[nE].start_vertex, self.ds.edges[nE].end_vertex];
+    let new_sr = task.myNewSR;
+    let pb_range = task.myRange;
+    let a_r1 = [pb_range[0].min(new_sr[0]), pb_range[0].max(new_sr[0])];
+    let a_r2 = [new_sr[1].min(pb_range[1]), new_sr[1].max(pb_range[1])];
+    let a_fi = self.ds.face_info_mut(nF);
+    let a_mif_on: std::collections::HashSet<usize> = a_fi.vertices_on.iter().copied().collect();
+    let a_mif_in: std::collections::HashSet<usize> = a_fi.vertices_in.iter().copied().collect();
+    drop(a_fi);
+    let b_line_plane = matches!(
+      (&self.ds.edges[nE].curve, &self.ds.faces[nF].surface),
+      (Curve3::Line(_), Surface3::Plane(_))
+    );
+    for i in 0..a_nb_cprts {
+      let a_cpart = &a_cprts[i];
+      match a_cpart {
+        EfHit::Vertex { point, param: a_t } => {
+          let a_tol_to_decide = 5e-8;
+          let mut b_is_on_pave = [false, false];
+          b_is_on_pave[0] = (a_t - a_r1[0]).abs() <= a_tol_to_decide
+            || (a_t - a_r1[1]).abs() <= a_tol_to_decide;
+          b_is_on_pave[1] = (a_t - a_r2[0]).abs() <= a_tol_to_decide
+            || (a_t - a_r2[1]).abs() <= a_tol_to_decide;
+          if (b_is_on_pave[0] && b_is_on_pave[1])
+            || (b_line_plane && (b_is_on_pave[0] || b_is_on_pave[1]))
+          {
+            let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
+            let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
+            if bv0 && bv1 {
+              self.ds.interf_ef.push(InterferenceEF { edge: nE, face: nF, point: *point, edge_param: *a_t, new_vertex: 0 });
+              self.ds.try_add_interf(nE, nF);
+              a_mi_efc.insert(nF);
+              continue;
+            }
+            self.ds.try_add_interf(nE, nF);
+            continue;
+          }
+          continue;
+        }
+        EfHit::Edge { t1, t2 } => {
+          a_mi_efc.insert(nF);
+          let mid_t = (t1 + t2) * 0.5;
+          let mid_pt = self.ds.edges[nE].curve.point_at(mid_t);
+          let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
+          let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
+          self.ds.interf_ef.push(InterferenceEF { edge: nE, face: nF, point: mid_pt, edge_param: mid_t, new_vertex: 0 });
+          self.ds.try_add_interf(nE, nF);
+        }
+      }
+    }
+  }
+  //
+  // ==================================================================
+  // Phase 4: Post-treatment (OCCT L576-592)
  // ==================================================================
  // OCCT L576: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, ...)
  // OCCT L577: UpdateVerticesOfCB()
