@@ -1379,7 +1379,7 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
   //
   // OCCT L324-571: Process results
   for k in 0..a_v_edge_face.len() {
-    let task = &a_v_edge_face[k];
+    let task = &mut a_v_edge_face[k];
     if !task.is_done() || task.has_errors() { continue; }
     let (nE, nF) = task.indices();
     let a_tol_e = self.ds.edge_tolerance(nE);
@@ -1397,8 +1397,17 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
     }
     let nV = [self.ds.edges[nE].start_vertex, self.ds.edges[nE].end_vertex];
     let a_pb_local = task.pave_block();
-    let new_sr = task.myNewSR;
+    let mut new_sr = task.myNewSR;
     let pb_range = task.myRange;
+    // OCCT L373-380: ReduceIntersectionRange for VERTEX type
+    if a_nb_cprts > 0 {
+      if let EfHit::Vertex { .. } = &a_cprts[0] {
+        let mut ts1 = new_sr[0];
+        let mut ts2 = new_sr[1];
+        self.reduce_ef_intersection_range(nV[0], nV[1], nE, nF, &mut ts1, &mut ts2);
+        new_sr = [ts1, ts2];
+      }
+    }
     let a_r1 = [pb_range[0].min(new_sr[0]), pb_range[0].max(new_sr[0])];
     let a_r2 = [new_sr[1].min(pb_range[1]), new_sr[1].max(pb_range[1])];
     let a_fi = self.ds.face_info_mut(nF);
