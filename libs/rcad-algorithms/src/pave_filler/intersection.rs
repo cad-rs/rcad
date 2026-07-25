@@ -1395,8 +1395,13 @@ pub(crate) fn perform_ef(&mut self, pairs: &[(usize, usize)]) {
       }
       continue;
     }
-    let nV = [self.ds.edges[nE].start_vertex, self.ds.edges[nE].end_vertex];
     let a_pb_local = task.pave_block();
+    let nV = {
+      let pb = &self.ds.edge_pave_blocks(nE)[a_pb_local];
+      let pb_ref = pb.0.read().unwrap();
+      let (a, b) = pb_ref.indices();
+      [a, b]
+    };
     let mut new_sr = task.myNewSR;
     let pb_range = task.myRange;
     // OCCT L373-380: ReduceIntersectionRange for VERTEX type
