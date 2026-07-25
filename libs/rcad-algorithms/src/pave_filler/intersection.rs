@@ -169,17 +169,44 @@ fn compute_ef_hits(ds: &DS, edge_idx: usize, face_idx: usize, ef_range: &[f64; 2
   hits
 }
 
-/// OCCT L37-132: BOPAlgo_VertexFace equivalent.
-/// BOPAlgo_VertexFace inherits from BOPAlgo_ParallelAlgo with a Perform()
-/// method that calls myContext->ComputeVF(). rcad: sequential struct.
+// OCCT L37-132: BOPAlgo_VertexFace
 struct VertexFaceTask {
   myIV: usize,
   myIF: usize,
-  myFlag: i32,        // -1 = not computed, 0 = success (vertex on face), 1+ = failed
+  myFlag: i32,
   myT1: f64,
   myT2: f64,
   myTolVNew: f64,
   myHasErrors: bool,
+}
+
+impl VertexFaceTask {
+  fn new() -> Self {
+    VertexFaceTask {
+      myIV: usize::MAX, myIF: usize::MAX, myFlag: -1,
+      myT1: -1.0, myT2: -1.0, myTolVNew: -1.0,
+      myHasErrors: false,
+    }
+  }
+  fn set_indices(&mut self, nV: usize, nF: usize) { self.myIV = nV; self.myIF = nF; }
+  fn indices(&self) -> (usize, usize) { (self.myIV, self.myIF) }
+  fn flag(&self) -> i32 { self.myFlag }
+  fn has_errors(&self) -> bool { self.myHasErrors }
+  fn parameters(&self) -> (f64, f64) { (self.myT1, self.myT2) }
+  fn vertex_new_tolerance(&self) -> f64 { self.myTolVNew }
+  fn perform(&mut self, ctx: &mut crate::inttools::context::Context, ds: &DS, fuzz: f64) {
+    match ctx.compute_vf(ds, self.myIV, self.myIF, fuzz) {
+      Ok(res) => {
+        self.myFlag = 0;
+        self.myT1 = res.u;
+        self.myT2 = res.v;
+        self.myTolVNew = res.tolerance;
+      }
+      Err(VfError::ProjectionFailed) => { self.myFlag = -1; }
+      Err(VfError::DistanceTooLarge) => { self.myFlag = -2; }
+      Err(VfError::PointOutsideFace) => { self.myFlag = -3; }
+    }
+  }
 }
 
 
@@ -1090,8 +1117,6 @@ pub(crate) fn force_interf_ve(
 // OCCT BOPAlgo_PaveFiller_4.cxx L139-301: PerformVF
 pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
  // OCCT L141: myIterator->Initialize(VERTEX, FACE)
- // (pairs pre-computed externally — architecture diff: rcad extracts
- //  all pair lists upfront due to Rust borrow limits)
  // OCCT L142: iSize = myIterator->ExpectedLength()
  let i_size = pairs.len();
  //
@@ -1163,68 +1188,30 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    a_vv_f.push(VertexFaceTask {
      myIV: nVx, myIF: nF,
      myFlag: -1,
-     myT1: 0.0, myT2: 0.0,
-     myTolVNew: f64::MAX,
+     myT1: -1.0, myT2: -1.0,
+     myTolVNew: -1.0,
      myHasErrors: false,
    });
  } // for (; myIterator->More(); myIterator->Next()) {
  //
- // ------------------------------------------------------------------
- // Phase 2: BOPAlgo_VertexFace computation (OCCT L234-243)
- // ------------------------------------------------------------------
- // OCCT L234-240: SetProgressRange (not ported)
- // OCCT L242: BOPTools_Parallel::Perform(myRunParallel, aVVF, myContext);
- //   (architecture diff: sequential execution)
+ // OCCT L234-240: SetProgressRange
+ // OCCT L242: BOPTools_Parallel::Perform
  for task in &mut a_vv_f {
-   // OCCT BOPAlgo_VertexFace::Perform → myContext->ComputeVF(myV, myF, myT1, myT2, myTolVNew, myFuzzyValue)
-   //   returns: 0=success, -1=projection failed, -2=distance too large, -3=point outside face
-   //   HasErrors()=true only on exception (catch(Standard_Failure)), not on non-zero return.
-   // rcad: pass self.fuzzy_tolerance (equivalent to myFuzzyValue)
-   match self.context.compute_vf(self.ds, task.myIV, task.myIF, self.fuzzy_tolerance) {
-     Ok(res) => {
-       task.myFlag = 0;
-       task.myT1 = res.u;
-       task.myT2 = res.v;
-       task.myTolVNew = res.tolerance;
-     }
-     Err(VfError::ProjectionFailed) => {
-       task.myFlag = -1;
-       // myHasErrors stays false — OCCT: myFlag=-1 is normal failure, not exception
-     }
-     Err(VfError::DistanceTooLarge) => {
-       task.myFlag = -2;
-     }
-     Err(VfError::PointOutsideFace) => {
-       task.myFlag = -3;
-     }
-   }
+   task.perform(&mut self.context, self.ds, self.fuzzy_tolerance);
  }
  // OCCT L244-247: UserBreak check (not ported)
  //
- // ------------------------------------------------------------------
- // Phase 3: Process results (OCCT L249-298)
- // ------------------------------------------------------------------
  // OCCT L249: for (k = 0; k < aNbVF; ++k)
  for task in &a_vv_f {
-   // OCCT L251-254: UserBreak check (not ported)
-   //
-   // OCCT L257-265: iFlag = aVertexFace.Flag();
-   if task.myFlag != 0 {
-     // OCCT L260-265: error handling
-     if task.myHasErrors {
-       // Warn about failed intersection (architecture diff: no TopoDS shapes to pass)
-     }
+   // OCCT L257: iFlag = aVertexFace.Flag();
+   if task.flag() != 0 {
      continue;
    }
    //
-   // OCCT L268: aVertexFace.Indices(nVx, nF)
-   let mut nVx = task.myIV;
-   let nF = task.myIF;
-   // OCCT L269: aVertexFace.Parameters(aT1, aT2)
-   let a_t1 = task.myT1;
-   let a_t2 = task.myT2;
-   // OCCT L270: double aTolVNew = aVertexFace.VertexNewTolerance()
-   let a_tol_vnew = task.myTolVNew;
+   // OCCT L268-270: Indices, Parameters, VertexNewTolerance
+   let (mut nVx, nF) = task.indices();
+   let (a_t1, a_t2) = task.parameters();
+   let a_tol_vnew = task.vertex_new_tolerance();
    //
    // OCCT L272-273: aMVFPairs.Find(aVFPair) - get all original vertices
    let key = (nVx, nF);
@@ -1234,29 +1221,28 @@ pub(crate) fn perform_vf(&mut self, pairs: &[(usize, usize)]) {
    };
    // OCCT L275: for (; itMV.More(); itMV.Next())
    for &nV in &orig_verts {
-     // 1: OCCT L279-281: BOPDS_InterfVF& aVF = aVFs.Appended();
-     //   aVF.SetIndices(nV, nF); aVF.SetUV(aT1, aT2);
-     let a_vf_idx = self.ds.interf_vf.len();
+      // OCCT L279-281: BOPDS_InterfVF
+      let a_vf_idx = self.ds.interf_vf.len();
      self.ds.interf_vf.push(InterferenceVF {
        vertex: nV, face: nF,
        u: a_t1, v: a_t2,
        index_new: None,
      });
-     // 2: OCCT L283: myDS->AddInterf(nV, nF);
-     self.ds.try_add_interf(nV, nF);
-     // 3: OCCT L286: nVx = UpdateVertex(nV, aTolVNew);  [shadows outer nVx]
-     nVx = self.update_vertex(nV, a_tol_vnew);
-     // 4: OCCT L289-292: if (myDS->IsNewShape(nVx)) { aVF.SetIndexNew(nVx); }
-     if self.ds.is_new_vertex(nVx) {
+      // OCCT L283: myDS->AddInterf(nV, nF);
+      self.ds.try_add_interf(nV, nF);
+      // OCCT L286: nVx = UpdateVertex(nV, aTolVNew);
+      nVx = self.update_vertex(nV, a_tol_vnew);
+      // OCCT L289-292: IsNewShape -> SetIndexNew
+      if self.ds.is_new_vertex(nVx) {
        if let Some(a_vf) = self.ds.interf_vf.get_mut(a_vf_idx) {
          a_vf.index_new = Some(nVx);
        }
      }
    }
-   // 5: OCCT L295-297: FaceInfo VerticesIn (nVx = last shadowed value from UpdateVertex)
+   // OCCT L295-297: FaceInfo VerticesIn
    let a_fi = self.ds.face_info_mut(nF);
    a_fi.vertices_in.insert(nVx);
- } // for (k=0; k < aNbVF; ++k) {
+ }
  //
  // OCCT L300: TreatVerticesEE()
  self.treat_vertices_ee();
