@@ -253,7 +253,10 @@ impl<'a> BOPDS_Iterator<'a> {
     pub fn initialize(&mut self, t1: ShapeType, t2: ShapeType) {
         let bucket = Self::type_to_bucket(t1, t2);
         if bucket >= 0 && (bucket as usize) < self.my_lists.len() {
-            self.current_list = self.my_lists[bucket as usize].clone();
+            // OCCT L203: std::stable_sort(aPairs.begin(), aPairs.end())
+            let mut pairs = self.my_lists[bucket as usize].clone();
+            pairs.sort();
+            self.current_list = pairs;
         } else {
             self.current_list.clear();
         }
