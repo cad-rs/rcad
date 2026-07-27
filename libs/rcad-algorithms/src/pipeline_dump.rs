@@ -121,7 +121,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         .enumerate()
         .map(|(ei, e)| {
             let ct = format!("{:?}", e.curve);
-            let my_img = ds.my_images.get(ei).cloned().unwrap_or_default();
+            let my_img: Vec<Vec<usize>> = Vec::new(); // Phase 4: removed from DS
             json!({"ei": ei, "sv": e.start_vertex, "ev": e.end_vertex,
                 "curve": ct, "tol": format!("{:.2e}", e.geom_tol),
                 "origin": format!("{:?}", e.origin),
@@ -239,21 +239,9 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         })
         .collect();
 
-    // my_images map: summarize how many images per original edge
-    let my_images_summary: Vec<serde_json::Value> = ds
-        .my_images
-        .iter()
-        .enumerate()
-        .filter(|(_, imgs)| !imgs.is_empty())
-        .map(|(ei, imgs)| json!({"orig_edge": ei, "n_images": imgs.len(), "images": imgs}))
-        .collect();
-
-    // Wire images: which wires have split edges
-    let wire_images_summary: Vec<serde_json::Value> = ds.wire_images.iter().enumerate()
-        .filter(|(_, wi)| wi.is_some())
-        .map(|(wi, wire_img)| {
-            json!({"wire_idx": wi, "n_edges": wire_img.as_ref().map(|v| v.len()).unwrap_or(0)})
-        }).collect();
+    // my_images/wire_images: Phase 4 — removed from DS
+    let my_images_summary: Vec<serde_json::Value> = Vec::new();
+    let wire_images_summary: Vec<serde_json::Value> = Vec::new();
 
     json!({"ds": {
         // OCCT-aligned: count ShapeInfo entries by type (matches OCCT's

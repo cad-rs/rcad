@@ -796,27 +796,6 @@ pub struct DS {
     /// (`ForceInterfEE`) and consumed by the Builder (`FillSameDomainFaces`).
     pub common_blocks: Vec<CommonBlock>,
 
-    /// Edge image mapping (OCCT: BOPAlgo_Builder::myImages).
-    /// Indexed by original edge index, each entry lists sub-edge indices
-    /// created by `build_edge_images()`.
-    pub my_images: Vec<Vec<usize>>,
-    /// Edge origin mapping (OCCT: BOPAlgo_Builder::myOrigins).
-    /// Indexed by sub-edge index, value is the original edge index.
-    pub my_origins: Vec<usize>,
-
-    /// OCCT FillImagesContainers(WIRE): pre-built edge lists for wires whose
-    /// edges were split by the PaveFiller.  Each entry corresponds to one
-    /// original wire (flat index across all solids/shells of the source BRep).
-    /// None = wire unchanged (no image needed).
-    pub wire_images: Vec<Option<Vec<(usize, bool)>>>,
-
-    /// OCCT FillImagesContainers(SHELL): placeholder for shell-level images.
-    /// Populated by checking if any wire in the shell has split edges.
-    pub shell_images: Vec<bool>,
-
-    /// OCCT FillImagesSolids: placeholder for solid-level images.
-    pub solid_images: Vec<bool>,
-
     /// TopLoc_Location storage. Index 0 = identity (implicit), 1+ stored here.
     /// Populated by load_brep when loading from topods::BRep with non-identity Location.
     pub locations: Vec<glam::DAffine3>,

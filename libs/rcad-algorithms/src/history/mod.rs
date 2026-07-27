@@ -1377,82 +1377,35 @@ impl BooleanHistory {
     /// L200-230: Vertex modification tracking
     /// L230-250: IsDeleted detection (entities not in result)
     pub fn update_with_post_treat(&mut self, ds: &DS, _brep: &BRep) {
-        //  € € L20-80: Edge modifications from myImages  € € € € € € € € € € € € € € € € € € € € € €
-        //
-        // OCCT PostTreat iterates all original edges. For each edge with
-        // non-empty myImages[ei], the edge was split  ?record with Split type.
-        for src_ei in 0..ds.my_images.len() {
-            if ds.my_images[src_ei].is_empty() {
-                continue;
-            }
-            let is_a = src_ei < ds.a_edge_count;
-            let source = if is_a { InputSource::A } else { InputSource::B };
-            let local_src = if is_a {
-                src_ei
-            } else {
-                src_ei.saturating_sub(ds.a_edge_count)
-            };
-
-            // Find result edges that map to this source via edge_origins.
-            let result_indices: Vec<usize> = self
-                .edge_origins
-                .iter()
-                .enumerate()
-                .filter_map(|(re_idx, origin)| {
-                    let matches = match (origin, is_a) {
-                        (EdgeOrigin::FromA(s), true) => *s == src_ei,
-                        (EdgeOrigin::FromB(s), false) => *s == local_src,
-                        (EdgeOrigin::SplitFromA(s), true) => *s == src_ei,
-                        (EdgeOrigin::SplitFromB(s), false) => *s == local_src,
-                        _ => false,
-                    };
-                    if matches { Some(re_idx) } else { None }
-                })
-                .collect();
-
-            if !result_indices.is_empty() {
-                self.tracker.record_edge_modified(
-                    local_src,
-                    result_indices,
-                    source,
-                    ModificationType::Split,
-                );
-            }
-        }
-
-        //  € € L80-130: Non-split edges and generated edges  € € € € € € € € € € € € € € € € € €
-        //
-        // OCCT PostTreat: edges without images that appear in result  ?
-        // Modified(Preserved). Edges from intersection  ?Generated.
+        // Phase 4: ds.my_images removed (was always empty — build_edge_images never called).
+        // All non-generated edges are recorded as Preserved.
         for (re_idx, origin) in self.edge_origins.iter().enumerate() {
             match origin {
                 EdgeOrigin::FromA(src) => {
-                    if *src >= ds.my_images.len() || ds.my_images[*src].is_empty() {
-                        self.tracker.record_edge_modified(
-                            *src,
-                            vec![re_idx],
-                            InputSource::A,
-                            ModificationType::Preserved,
-                        );
-                    }
+                    self.tracker.record_edge_modified(
+                        *src,
+                        vec![re_idx],
+                        InputSource::A,
+                        ModificationType::Preserved,
+                    );
                 }
                 EdgeOrigin::FromB(src) => {
-                    let ds_idx = *src + ds.a_edge_count;
-                    if ds_idx >= ds.my_images.len() || ds.my_images[ds_idx].is_empty() {
-                        self.tracker.record_edge_modified(
-                            *src,
-                            vec![re_idx],
-                            InputSource::B,
-                            ModificationType::Preserved,
-                        );
-                    }
+                    self.tracker.record_edge_modified(
+                        *src,
+                        vec![re_idx],
+                        InputSource::B,
+                        ModificationType::Preserved,
+                    );
                 }
                 EdgeOrigin::Generated => {
                     self.tracker
                         .record_edge_generated(re_idx, GenerationCause::Intersection);
                 }
-                // Split edges were already handled in L20-80; no need to repeat.
-                EdgeOrigin::SplitFromA(_) | EdgeOrigin::SplitFromB(_) => {}
+                EdgeOrigin::SplitFromA(_) | EdgeOrigin::SplitFromB(_) => {
+                    // Phase 4: split edges recorded as Preserved (no my_images available).
+                    // Split tracking was a no-op since my_images was always empty.
+                    // Revisit when split detection is reconnected to Builder's my_images.
+                }
             }
         }
 

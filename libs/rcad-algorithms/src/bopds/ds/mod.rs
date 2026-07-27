@@ -57,11 +57,6 @@ impl DS {
             shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
             same_domain_overlaps: Vec::new(),
             common_blocks: Vec::new(),
-            my_images: Vec::new(),
-            my_origins: Vec::new(),
-            wire_images: Vec::new(),
-            shell_images: Vec::new(),
-            solid_images: Vec::new(),
             locations: Vec::new(),
             pave_blocks: Vec::new(),
             pave_blocks_pool: Vec::new(),
@@ -2458,37 +2453,6 @@ impl DS {
             .collect()
     }
 
-    ///  ?Build edge images from pave blocks (BOPAlgo_Builder::FillImagesEdges).
-    ///
-    /// Reads `pb.new_edge` from each source edge's PaveBlocks to populate
-    /// `my_images` / `my_origins` mappings.  Sub-edges are already created by
-    /// `build_split_edges` (PaveFiller::MakeSplitEdges) =this function only
-    /// constructs the mapping table, it does NOT create new edges.
-    ///
-    /// This must be called after `build_split_edges()` (end of `make_blocks`).
-    pub fn build_edge_images(&mut self) {
-        let n_edges = self.edges.len();
-        self.my_images = vec![Vec::new(); n_edges];
-        self.my_origins = Vec::new();
-
-        for ei in 0..n_edges {
-            let edge = &self.edges[ei];
-            for spb in &edge.pave_blocks {
-                let pbb = spb.0.read().unwrap();
-                let sub_ei = pbb.new_edge.unwrap_or(ei);
-                if sub_ei < self.edges.len() {
-                    self.my_images[ei].push(sub_ei);
-                    self.my_origins.push(ei);
-                }
-            }
-        }
-    }
-
-    ///  ?FillImagesContainers (BOPAlgo_Builder_1.cxx L172-276).
-    /// For each original wire whose edges were split by the PaveFiller,
-    /// build a new edge list from the split sub-edges.
-    ///
-    /// Uses DS internal data only 閿?no external BRep needed.
     /// Flat shape indices of all source solids (OCCT ShapeInfo-based).
     pub fn solid_shape_indices(&self) -> Vec<usize> {
         self.shape_info.iter().enumerate()
@@ -2520,109 +2484,9 @@ impl DS {
         result
     }
 
-    /// OCCT-aligned: hierarchy through ShapeInfo.sub_shapes, not dedicated arrays.
+    /// Phase 4: removed — wire/shell/solid images no longer stored on DS.
     pub fn build_container_images(&mut self) {
-        let solid_idxs: Vec<usize> = self.shape_info.iter().enumerate()
-            .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Solid && !si.is_new)
-            .map(|(i, _)| i)
-            .collect();
-        let n_wires: usize = solid_idxs.iter()
-            .flat_map(|&si| &self.shape_info[si].sub_shapes)
-            .flat_map(|&shi| &self.shape_info[shi].sub_shapes)
-            .map(|&fi| 1 + self.faces[fi].inner_boundary_edges.len())
-            .sum();
-        self.wire_images = vec![None; n_wires];
-
-        let n_shells = self.shape_info.iter()
-            .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Shell && !si.is_new)
-            .count();
-        self.shell_images = vec![false; n_shells];
-        self.solid_images = vec![false; solid_idxs.len()];
-
-        let shell_flat_to_idx: std::collections::HashMap<usize, usize> =
-            self.shape_info.iter().enumerate()
-                .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Shell && !si.is_new)
-                .enumerate()
-                .map(|(idx, (flat, _))| (flat, idx))
-                .collect();
-
-        for (si_idx, &solid_si) in solid_idxs.iter().enumerate() {
-            for &shi in &self.shape_info[solid_si].sub_shapes {
-                let shell_has_split = self.shape_info[shi].sub_shapes.iter().any(|&fi| {
-                    let face = &self.faces[fi];
-                    Self::wire_has_split_edges_ds(&face.boundary_edges, &self.my_images)
-                        || face.inner_boundary_edges.iter().any(|iw| {
-                            let iw_edges: Vec<usize> = iw.iter().map(|&(ei, _)| ei).collect();
-                            Self::wire_has_split_edges_ds(&iw_edges, &self.my_images)
-                        })
-                });
-                if let Some(&shell_idx) = shell_flat_to_idx.get(&shi) {
-                    self.shell_images[shell_idx] = shell_has_split;
-                }
-                if shell_has_split {
-                    self.solid_images[si_idx] = true;
-                }
-            }
-        }
-
-        let mut wi = 0usize;
-        for &solid_si in &solid_idxs {
-            for &shi in &self.shape_info[solid_si].sub_shapes {
-                for &fi in &self.shape_info[shi].sub_shapes {
-                    let face = &self.faces[fi];
-                    let new_outer = Self::rebuild_wire_edges_ds(
-                        &face.boundary_edges,
-                        &face.boundary_edge_forwards,
-                        &self.my_images,
-                    );
-                    if new_outer.is_some() {
-                        self.wire_images[wi] = new_outer;
-                    }
-                    wi += 1;
-                    for iw in &face.inner_boundary_edges {
-                        let iw_edges: Vec<usize> = iw.iter().map(|&(ei, _)| ei).collect();
-                        let iw_fwd: Vec<bool> = iw.iter().map(|&(_, fwd)| fwd).collect();
-                        let new_inner =
-                            Self::rebuild_wire_edges_ds(&iw_edges, &iw_fwd, &self.my_images);
-                        if new_inner.is_some() {
-                            self.wire_images[wi] = new_inner;
-                        }
-                        wi += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Rebuild a wire's edge list, replacing split edges with their sub-edges.
-    /// Uses DS edge indices directly (no external BRep needed).
-    /// Returns None if no edge was split (wire unchanged).
-    fn rebuild_wire_edges_ds(
-        edges: &[usize],
-        forwards: &[bool],
-        my_images: &[Vec<usize>],
-    ) -> Option<Vec<(usize, bool)>> {
-        let mut new_edges = Vec::new();
-        let mut changed = false;
-        for (&ei, &fwd) in edges.iter().zip(forwards.iter()) {
-            if ei < my_images.len() && !my_images[ei].is_empty() {
-                changed = true;
-                for &sub_ei in &my_images[ei] {
-                    new_edges.push((sub_ei, fwd));
-                }
-            } else {
-                new_edges.push((ei, fwd));
-            }
-        }
-        if changed { Some(new_edges) } else { None }
-    }
-
-    /// Check if any edge in a wire has been split by the PaveFiller.
-    /// Uses DS edge indices directly.
-    fn wire_has_split_edges_ds(edges: &[usize], my_images: &[Vec<usize>]) -> bool {
-        edges
-            .iter()
-            .any(|&ei| ei < my_images.len() && !my_images[ei].is_empty())
+        // No-op: container images moved to BooleanBuilder.
     }
 
     /// Get the Plane surface for a face (panics if face is not a plane).
