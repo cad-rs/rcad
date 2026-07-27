@@ -9,6 +9,62 @@ use crate::topods::{
     Orientation, ShapeType, TShape,
 };
 
+// ---- Typed Shape wrappers (OCCT: TopoDS_Vertex, TopoDS_Edge, ...) ----
+
+#[derive(Debug, Clone)]
+pub struct Vertex(pub Shape);
+impl Vertex {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Vertex); Vertex(s) }
+}
+
+#[derive(Debug, Clone)]
+pub struct Edge(pub Shape);
+impl Edge {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Edge); Edge(s) }
+    pub fn tedge_data(&self) -> &TEdgeData {
+        if let TShape::Edge(ref ed) = *self.0.data { ed } else { panic!("not an Edge") }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Wire(pub Shape);
+impl Wire {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Wire); Wire(s) }
+}
+
+#[derive(Debug, Clone)]
+pub struct Face(pub Shape);
+impl Face {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Face); Face(s) }
+    pub fn tface_data(&self) -> &TFaceData {
+        if let TShape::Face(ref fd) = *self.0.data { fd } else { panic!("not a Face") }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Shell(pub Shape);
+impl Shell {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Shell); Shell(s) }
+}
+
+#[derive(Debug, Clone)]
+pub struct Solid(pub Shape);
+impl Solid {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Solid); Solid(s) }
+}
+
 #[derive(Debug, Clone)]
 pub struct Shape {
     /// Arc<TShape> handle (OCCT: Handle(TShape) / TShape*).

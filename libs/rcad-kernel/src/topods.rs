@@ -1,5 +1,6 @@
 ﻿use crate::geom::{Curve2d, Curve3, Surface3};
 use crate::tolerance::CONFUSION;
+use crate::topo_shape::Shape;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -66,153 +67,6 @@ pub enum ShapeType {
     Solid,
     CompSolid,
     Compound,
-}
-
-/// OCCT TopoDS_Shape: Arc<TShape> handle + Location + Orientation.
-///
-/// Unlike ShapeRef (which uses index-based TShape access),
-/// Shape holds Arc<TShape> directly -- matching OCCT's Handle(TShape).
-/// This eliminates the need for a separate TShape pool.
-#[derive(Debug, Clone)]
-pub struct Shape {
-    /// Direct TShape handle (OCCT: Handle(TShape) / TShape*).
-    pub tshape: Arc<TShape>,
-    /// TopLoc_Location index into BRep.locations[]; 0 = identity.
-    pub location: u32,
-    /// TopAbs_Orientation.
-    pub orientation: Orientation,
-}
-
-impl Shape {
-    /// Create a Shape from TShape + location + orientation.
-    pub fn new(tshape: Arc<TShape>, location: u32, orientation: Orientation) -> Self {
-        Shape { tshape, location, orientation }
-    }
-
-    /// OCCT: TShape() -- returns the TShape handle.
-    pub fn t_shape(&self) -> &Arc<TShape> { &self.tshape }
-
-    /// OCCT: ShapeType() -- shortcut for TShape()->ShapeType().
-    pub fn shape_type(&self) -> ShapeType { self.tshape.shape_type() }
-
-    /// OCCT: Location() -- returns the location index.
-    pub fn location(&self) -> u32 { self.location }
-
-    /// OCCT: Orientation() -- returns the orientation.
-    pub fn orientation(&self) -> Orientation { self.orientation }
-
-    /// ptr_id = Arc::as_ptr(&tshape) as u64, for Hash/Eq compatibility.
-    pub fn ptr_id(&self) -> u64 { Arc::as_ptr(&self.tshape) as u64 }
-
-}
-
-// Identity by Arc pointer (same as OCCT's TShape* identity).
-impl PartialEq for Shape {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::as_ptr(&self.tshape) == Arc::as_ptr(&other.tshape)
-            && self.location == other.location
-            && self.orientation as u8 == other.orientation as u8
-    }
-}
-impl Eq for Shape {}
-
-impl std::hash::Hash for Shape {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.tshape) as u64).hash(state);
-    }
-}
-
-// ---- Typed Shape wrappers (OCCT: TopoDS_Vertex, TopoDS_Edge, ...) ----
-
-/// TopoDS_Vertex: Shape guaranteed to hold a Vertex TShape.
-#[derive(Debug, Clone)]
-pub struct Vertex(pub Shape);
-impl Vertex {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Vertex); Vertex(s) }
-}
-
-/// TopoDS_Edge: Shape guaranteed to hold an Edge TShape.
-#[derive(Debug, Clone)]
-pub struct Edge(pub Shape);
-impl Edge {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Edge); Edge(s) }
-    pub fn tedge_data(&self) -> &TEdgeData { if let TShape::Edge(ref ed) = *self.0.tshape { ed } else { panic!("not an Edge") } }
-}
-
-/// TopoDS_Wire: Shape guaranteed to hold a Wire TShape.
-#[derive(Debug, Clone)]
-pub struct Wire(pub Shape);
-impl Wire {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Wire); Wire(s) }
-}
-
-/// TopoDS_Face: Shape guaranteed to hold a Face TShape.
-#[derive(Debug, Clone)]
-pub struct Face(pub Shape);
-impl Face {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Face); Face(s) }
-    pub fn tface_data(&self) -> &TFaceData { if let TShape::Face(ref fd) = *self.0.tshape { fd } else { panic!("not a Face") } }
-}
-
-/// TopoDS_Shell: Shape guaranteed to hold a Shell TShape.
-#[derive(Debug, Clone)]
-pub struct Shell(pub Shape);
-impl Shell {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Shell); Shell(s) }
-}
-
-/// TopoDS_Solid: Shape guaranteed to hold a Solid TShape.
-#[derive(Debug, Clone)]
-pub struct Solid(pub Shape);
-impl Solid {
-    pub fn shape(&self) -> &Shape { &self.0 }
-    pub fn into_shape(self) -> Shape { self.0 }
-    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Solid); Solid(s) }
-}
-
-// ---- Helper: TShape typed accessors (no assertion, checked) ----
-
-impl Shape {
-    /// OCCT TopoDS_Vertex::IsNull / TopoDS_Shape::IsNull �?false for valid shapes.
-    pub fn is_null(&self) -> bool { false }
-
-    /// True if this Shape holds a Vertex TShape.
-    pub fn is_vertex(&self) -> bool { self.shape_type() == ShapeType::Vertex }
-    pub fn is_edge(&self) -> bool { self.shape_type() == ShapeType::Edge }
-    pub fn is_wire(&self) -> bool { self.shape_type() == ShapeType::Wire }
-    pub fn is_face(&self) -> bool { self.shape_type() == ShapeType::Face }
-    pub fn is_shell(&self) -> bool { self.shape_type() == ShapeType::Shell }
-    pub fn is_solid(&self) -> bool { self.shape_type() == ShapeType::Solid }
-
-    /// OCCT: TopoDS::Vertex(s) �?access TShape as Vertex.
-    pub fn as_vertex(&self) -> Option<&TVertexData> {
-        if let TShape::Vertex(ref vd) = *self.tshape { Some(vd) } else { None }
-    }
-    pub fn as_edge(&self) -> Option<&TEdgeData> {
-        if let TShape::Edge(ref ed) = *self.tshape { Some(ed) } else { None }
-    }
-    pub fn as_wire(&self) -> Option<&TWireData> {
-        if let TShape::Wire(ref wd) = *self.tshape { Some(wd) } else { None }
-    }
-    pub fn as_face(&self) -> Option<&TFaceData> {
-        if let TShape::Face(ref fd) = *self.tshape { Some(fd) } else { None }
-    }
-    pub fn as_shell(&self) -> Option<&TShellData> {
-        if let TShape::Shell(ref sd) = *self.tshape { Some(sd) } else { None }
-    }
-    pub fn as_solid(&self) -> Option<&TSolidData> {
-        if let TShape::Solid(ref sd) = *self.tshape { Some(sd) } else { None }
-    }
 }
 
 /// Sentinel ptr_id value for ShapeRef::synthetic(usize) �?marks synthetic (non-Arc) identity.
@@ -3026,4 +2880,3 @@ mod tests {
         );
     }
 }
-
