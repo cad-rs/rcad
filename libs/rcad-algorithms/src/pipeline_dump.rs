@@ -281,9 +281,9 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         "interf_ff": interf_ff,
         "my_images": my_images_summary,
         "wire_images": wire_images_summary,
-        "n_shells": ds.shells.len(),
-        "n_solids": ds.solids.len(),
-        "n_comp_solids": ds.comp_solids.len(),
+        "n_shells": ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Shell && !si.is_new).count(),
+        "n_solids": ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Solid && !si.is_new).count(),
+        "n_comp_solids": ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::CompSolid && !si.is_new).count(),
     }})
 }
 

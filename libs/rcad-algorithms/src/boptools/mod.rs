@@ -1477,20 +1477,19 @@ pub fn wires_to_faces(
 
     // OCCT L685-697: find planes for wires
     for (wi, &w_idx) in wire_indices.iter().enumerate() {
-        if w_idx >= ds.wires.len() {
+        if w_idx >= ds.shape_info.len() || ds.shape_info[w_idx].sub_shapes.is_empty() {
             continue;
         }
-        let wire = &ds.wires[w_idx];
-        if wire.edges.is_empty() {
-            continue;
-        }
+        let wire_edges_flat = &ds.shape_info[w_idx].sub_shapes;
 
         // Find plane from edges of this wire
         let mut plane_normal: Option<glam::DVec3> = None;
         let mut plane_point: Option<glam::DVec3> = None;
         let mut max_tol: f64 = 0.0;
 
-        for &ei in &wire.edges {
+        for &sub in wire_edges_flat {
+            // Convert flat shape index to per-type edge index
+            let ei = ds.edge_shape_idx.iter().position(|&s| s == sub).unwrap_or(usize::MAX);
             if ei >= ds.edges.len() {
                 continue;
             }
@@ -1582,11 +1581,12 @@ pub fn wires_to_faces(
 
         // Collect all edges from this group
         let mut all_edges: Vec<(usize, bool)> = Vec::new();
-        for &w_idx in group {
-            if w_idx >= ds.wires.len() {
+        for &w_si in group {
+            if w_si >= ds.shape_info.len() {
                 continue;
             }
-            for &ei in &ds.wires[w_idx].edges {
+            for &sub in &ds.shape_info[w_si].sub_shapes {
+                let ei = ds.edge_shape_idx.iter().position(|&s| s == sub).unwrap_or(usize::MAX);
                 if ei >= ds.edges.len() {
                     continue;
                 }

@@ -42,7 +42,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // B. COMMON/CUT/CUT21: prepare building elements of arguments/tools
         let e_base = self.ds.vertices.len();
-        let f_base = e_base + self.ds.edges.len() + self.ds.wires.len();
+        let f_base = e_base + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
 
         // Map source shapes (V/E/F) per side
         let mut a_m_args: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -955,7 +955,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     ShapeOrigin::ShapeB
                 };
-                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                 let side_offset = if side == ShapeOrigin::ShapeA {
                     0usize
                 } else {
@@ -1020,7 +1020,7 @@ impl<'a> BooleanBuilder<'a> {
             } else if the_type == rcad_kernel::topods::ShapeType::Wire {
                 // Path B - all source DS wires (OCCT: TopExp_Explorer WIRE).
                 let w_base = self.ds.vertices.len() + self.ds.edges.len();
-                for wi in 0..self.ds.wires.len() {
+                for wi in 0..self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count() {
                     let src_sr = self.brep_sr(w_base + wi);
                     let has_images = self.my_images.borrow().contains_key(&src_sr);
                     if !has_images {
@@ -1118,7 +1118,7 @@ impl<'a> BooleanBuilder<'a> {
             rcad_kernel::topods::ShapeType::Wire => {
                 let e_base = self.ds.vertices.len();
                 let wi = a_s.index.saturating_sub(e_base + self.ds.edges.len());
-                if wi < self.ds.wires.len() {
+                if wi < self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count() {
                     let w_ref = self.brep_sr(e_base + self.ds.edges.len() + wi);
                     let mut wire_edges = Vec::new();
                     let e_map = self.my_edge_map.borrow();
@@ -1132,10 +1132,14 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     } else {
-                        for &ei in &self.ds.wires[wi].edges {
-                            if ei < e_map.len() && e_map[ei] != rcad_kernel::topods::ShapeRef::NULL
-                            {
-                                wire_edges.push(e_map[ei]);
+                        for &sub in &self.ds.shape_info[wi].sub_shapes {
+                            // Convert flat shape index to per-type edge index
+                            if sub >= self.ds.a_vertex_count {
+                                let ei = sub - self.ds.a_vertex_count;
+                                if ei < e_map.len() && e_map[ei] != rcad_kernel::topods::ShapeRef::NULL
+                                {
+                                    wire_edges.push(e_map[ei]);
+                                }
                             }
                         }
                     }
@@ -1226,7 +1230,7 @@ impl<'a> BooleanBuilder<'a> {
         ];
         // Collect source solid indices per side for myInParts lookup
         let mut src_solids: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
-        for (si, _sol) in self.ds.solids.iter().enumerate() {
+        for (si, _sol_si) in self.ds.solid_shape_indices().iter().enumerate() {
             // Determine side from any face belonging to this solid
             let mut side = 2usize; // unknown
             for (fi, df) in self.ds.faces.iter().enumerate() {
@@ -1418,7 +1422,7 @@ impl<'a> BooleanBuilder<'a> {
         a_bs.perform(&self.ds);
         // Validate each resulting solid has ≥1 face from objects/tools
         let mut a_res_solids: Vec<topods::ShapeRef> = Vec::new();
-        if !self.ds.solids.is_empty() || true {
+        if !self.ds.solid_shape_indices().is_empty() || true {
             let a_areas: &[Vec<usize>] = a_bs.areas();
             for area_faces in a_areas {
                 if area_faces.is_empty() {
@@ -1512,11 +1516,11 @@ impl<'a> BooleanBuilder<'a> {
 
     /// ✅ OCCT-aligned: CheckArgsForOpenSolid (BOPAlgo_BOP.cxx L1396-1470+).
     pub(super) fn check_args_for_open_solid(&self) -> bool {
-        for shell in &self.ds.shells {
+        for (_sh_si, _shell_faces) in &self.ds.collect_source_shells() {
             // Check if the shell is closed (each edge appears twice).
             let mut ecount: std::collections::HashMap<usize, usize> =
                 std::collections::HashMap::new();
-            for &fi in &shell.faces {
+            for &fi in _shell_faces {
                 if let Some(face) = self.ds.faces.get(fi) {
                     for &ei in &face.boundary_edges {
                         *ecount.entry(ei).or_default() += 1;

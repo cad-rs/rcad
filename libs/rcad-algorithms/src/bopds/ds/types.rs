@@ -330,44 +330,6 @@ impl DSEdge {
     }
 }
 
-/// A wire in the DS pool =first-class entity matching OCCT TopoDS_Wire.
-#[derive(Debug, Clone)]
-pub struct DSWire {
-    /// Flat shape index into DS.shapes[] and DS.shape_info[].
-    pub shape_idx: usize,
-    /// Edge indices in traversal order (into DS.edges).
-    pub edges: Vec<usize>,
-}
-
-/// A shell in the DS pool =first-class entity matching OCCT TopoDS_Shell.
-#[derive(Debug, Clone)]
-pub struct DSShell {
-    /// Flat shape index into DS.shapes[] and DS.shape_info[].
-    pub shape_idx: usize,
-    /// Face indices forming this shell (into DS.faces).
-    pub faces: Vec<usize>,
-}
-
-/// A solid in the DS pool  ?first-class entity matching OCCT TopoDS_Solid.
-///  ?BOPDS_ShapeInfo tracks TopAbs_SOLID hierarchy.
-#[derive(Debug, Clone)]
-pub struct DSSolid {
-    /// Flat shape index into DS.shapes[] and DS.shape_info[].
-    pub shape_idx: usize,
-    /// Shell indices forming this solid (into DS.shells).
-    pub shells: Vec<usize>,
-}
-
-/// A compsolid in the DS pool  ?first-class entity matching OCCT TopoDS_CompSolid.
-///  ?BOPDS_ShapeInfo tracks TopAbs_COMPSOLID hierarchy.
-#[derive(Debug, Clone)]
-pub struct DSCompSolid {
-    /// Flat shape index into DS.shapes[] and DS.shape_info[].
-    pub shape_idx: usize,
-    /// Solid indices forming this compsolid (into DS.solids).
-    pub solids: Vec<usize>,
-}
-
 /// A face in the DS pool with surface reference.
 #[derive(Debug, Clone)]
 pub struct DSFace {
@@ -384,9 +346,9 @@ pub struct DSFace {
     /// Inner wire edges (TopExp_Explorer iterates outer wire first, then inner wires).
     /// Each entry is one inner wire: Vec<(edge_idx, forward_in_wire)>.
     pub inner_boundary_edges: Vec<Vec<(usize, bool)>>,
-    /// Outer wire index into DS.wires (OCCT TopAbs_WIRE reference).
+    /// Outer wire flat shape index (OCCT ShapeInfo.sub_shapes reference).
     pub outer_wire_idx: Option<usize>,
-    /// Inner wire indices into DS.wires.
+    /// Inner wire flat shape indices.
     pub inner_wire_idxs: Vec<usize>,
     pub normal: DVec3,
     pub origin: ShapeOrigin,
@@ -760,12 +722,6 @@ pub struct DS {
     pub shapes: Vec<std::sync::Arc<topods::TShape>>,
     pub vertices: Vec<DSVertex>,
     pub edges: Vec<DSEdge>,
-    pub wires: Vec<DSWire>,
-    pub shells: Vec<DSShell>,
-    ///  ?solid containers (TopAbs_SOLID in ShapeInfo hierarchy).
-    pub solids: Vec<DSSolid>,
-    ///  ?compsolid containers (TopAbs_COMPSOLID in ShapeInfo hierarchy).
-    pub comp_solids: Vec<DSCompSolid>,
     pub faces: Vec<DSFace>,
 
     // ----- Shape index arrays (flat shapes[] ↔ per-type index mapping) -----
@@ -773,14 +729,7 @@ pub struct DS {
     pub vertex_shape_idx: Vec<usize>,
     /// Shape index in ds.shapes for each edge. Set by push_edge.
     pub edge_shape_idx: Vec<usize>,
-    /// Shape index in ds.shapes for each wire. Set by push_wire.
-    pub wire_shape_idx: Vec<usize>,
-    /// Shape index in ds.shapes for each shell. Set by push_shell.
-    pub shell_shape_idx: Vec<usize>,
-    /// Shape index in ds.shapes for each solid. Set by push_solid.
-    pub solid_shape_idx: Vec<usize>,
-    /// Shape index in ds.shapes for each compsolid. Set by push_compsolid.
-    pub compsolid_shape_idx: Vec<usize>,
+    // wires/shells/solids/compsolids use ShapeInfo.sub_shapes (OCCT-aligned).
     /// Shape index in ds.shapes for each face. Set by push_face.
     pub face_shape_idx: Vec<usize>,
     /// type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).

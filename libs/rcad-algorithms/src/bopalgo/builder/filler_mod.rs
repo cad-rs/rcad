@@ -192,7 +192,7 @@ impl<'a> BooleanBuilder<'a> {
         use topods::ShapeRef;
         let nV = self.ds.vertices.len();
         let nE = self.ds.edges.len();
-        let nW = self.ds.wires.len();
+        let nW = self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         let f_base = nV + nE + nW;
 
         // 1. Source vertex TShapes at flat indices 0..nV
@@ -208,15 +208,14 @@ impl<'a> BooleanBuilder<'a> {
             t.ensure_edge_at(nV + ei, Some(e.curve.clone()), sv, ev, e.t_range);
         }
 
-        // 3. Source wire TShapes at flat indices nV+nE..nV+nE+nW
-        for wi in 0..nW {
-            let w = &self.ds.wires[wi];
-            let edge_refs: Vec<ShapeRef> = w
-                .edges
-                .iter()
-                .map(|&ei| ShapeRef::synthetic(nV + ei))
+        // 3. Source wire TShapes at their flat shape indices (OCCT-aligned)
+        for (w_si, w_info) in self.ds.shape_info.iter().enumerate()
+            .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new)
+        {
+            let edge_refs: Vec<ShapeRef> = w_info.sub_shapes.iter()
+                .map(|&s| ShapeRef::synthetic(s))
                 .collect();
-            t.ensure_wire_at(nV + nE + wi, edge_refs);
+            t.ensure_wire_at(w_si, edge_refs);
         }
 
         // 4. Source face TShapes at flat indices f_base + side_offset + sf_idx
@@ -251,17 +250,19 @@ impl<'a> BooleanBuilder<'a> {
             // Inner wires
             let inner_wire_refs: Vec<ShapeRef> = self.ds.faces[fi].inner_wire_idxs
                     .iter()
-                    .map(|&wi| {
-                        if wi < nW {
-                            let iw = &self.ds.wires[wi];
-                            let iw_edge_refs: Vec<ShapeRef> = iw
-                                .edges
-                                .iter()
-                                .map(|&ei| ShapeRef::synthetic(nV + ei))
-                                .collect();
-                            t.ensure_wire_at(nV + nE + wi, iw_edge_refs)
+                    .map(|&w_si| {
+                        // w_si is the flat shape index of the wire (OCCT-aligned)
+                        let iw_edge_refs: Vec<ShapeRef> = if w_si < self.ds.shape_info.len() {
+                            self.ds.shape_info[w_si].sub_shapes.iter()
+                                .map(|&s| ShapeRef::synthetic(s))
+                                .collect()
                         } else {
-                            ShapeRef::synthetic(nV + nE + wi)
+                            Vec::new()
+                        };
+                        if !iw_edge_refs.is_empty() {
+                            t.ensure_wire_at(w_si, iw_edge_refs)
+                        } else {
+                            ShapeRef::synthetic(w_si)
                         }
                     })
                     .collect();
@@ -458,7 +459,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut face_refs_owned: Vec<topods::ShapeRef> = Vec::with_capacity(n_ds_faces);
         let t_brep: &topods::BRep = &*t;
         {
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
             for fi in 0..n_ds_faces {
                 let is_a = self
                     .ds
@@ -535,7 +536,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             let sf_idx = self.ds.source_face_idx(fi);
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
 
@@ -612,7 +613,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             let face_sr = {
-                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                 let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
                 let sf_idx = self.ds.source_face_idx(fi);
                 self.brep_sr(f_base + side_offset + sf_idx)
@@ -1541,7 +1542,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     // No splits → use original face
                     let dsfi = flat_fi.saturating_sub(
-                        self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len(),
+                        self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count(),
                     );
                     if dsfi < ds_face_to_ref.len() {
                         if let Some(sr) = ds_face_to_ref[dsfi] {
@@ -1642,8 +1643,8 @@ impl<'a> BooleanBuilder<'a> {
             // rcad: collect result solid ShapeRefs that belong to this compsolid
             let mut solid_refs: Vec<topods::ShapeRef> = Vec::new();
             let csi = si.source_idx;
-            for ds_shell in &self.ds.shells {
-                for &dsfi in &ds_shell.faces {
+            for (_shi, ds_shell) in self.ds.collect_source_shells().iter() {
+                for &dsfi in ds_shell {
                     if dsfi >= self.ds.faces.len() {
                         continue;
                     }
@@ -1735,7 +1736,7 @@ impl<'a> BooleanBuilder<'a> {
         };
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
         let mut the_lif: Vec<usize> = Vec::new();
-        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         let side_offset = if side == 0 {
             0usize
         } else {
@@ -1743,8 +1744,8 @@ impl<'a> BooleanBuilder<'a> {
         };
 
         // Iterate sub-shapes (shells) of the solid.
-        for ds_shell in &self.ds.shells {
-            let belongs = ds_shell.faces.iter().any(|&dsfi| {
+        for (_shi, ds_shell) in self.ds.collect_source_shells().iter() {
+            let belongs = ds_shell.iter().any(|&dsfi| {
                 self.ds
                     .faces
                     .get(dsfi)
@@ -1758,7 +1759,7 @@ impl<'a> BooleanBuilder<'a> {
             let mut i_flag = false;
 
             // Iterate sub-shapes (faces) of the shell.
-            for &dsfi in &ds_shell.faces {
+            for &dsfi in ds_shell {
                 let dsf = &self.ds.faces[dsfi];
                 if dsf.origin != origin_side {
                     continue;
@@ -1849,7 +1850,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT BOPAlgo_Builder_3.cxx L97-150: for each source FACE,
         // if myImages bound -> add each split image individually (each has own sample point).
         // rcad 1:1: split images get individual entries with their own sample point.
-        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         // FaceEntry: one per source face or per split image.
         struct FaceEntry {
             dsfi: usize,
@@ -1935,8 +1936,8 @@ impl<'a> BooleanBuilder<'a> {
             } else {
                 ShapeOrigin::ShapeB
             };
-            for (si, ds_shell) in self.ds.shells.iter().enumerate() {
-                if ds_shell.faces.iter().any(|&dfi| {
+            for (si, (_shi, ds_shell)) in self.ds.collect_source_shells().iter().enumerate() {
+                if ds_shell.iter().any(|&dfi| {
                     self.ds
                         .faces
                         .get(dfi)
@@ -2016,14 +2017,14 @@ impl<'a> BooleanBuilder<'a> {
 
             if n_in == 0 {
                 let mut has_image = false;
-                if let Some(ds_shell) = self.ds.shells.get(si) {
-                    let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+                if let Some((_shi, ds_shell)) = self.ds.collect_source_shells().get(si) {
+                    let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                     let origin_side = if side == 0 {
                         ShapeOrigin::ShapeA
                     } else {
                         ShapeOrigin::ShapeB
                     };
-                    for &dsfi in &ds_shell.faces {
+                    for &dsfi in ds_shell {
                         if let Some(df) = self.ds.faces.get(dsfi) {
                             if df.origin != origin_side {
                                 continue;
@@ -2130,9 +2131,9 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            if let Some(ds_shell) = self.ds.shells.get(si) {
+            if let Some((_shi, ds_shell)) = self.ds.collect_source_shells().get(si) {
                 let ds_set: std::collections::BTreeSet<usize> =
-                    ds_shell.faces.iter().copied().collect();
+                    ds_shell.iter().copied().collect();
                 if ds_set.is_empty() {
                     continue;
                 }
@@ -2141,7 +2142,7 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L451-461: non-interfered solid → build from source DS faces.
                 let mut sf: Vec<topods::ShapeRef> = Vec::new();
                 let e_base = self.ds.vertices.len();
-                for &dsfi in &ds_shell.faces {
+                for &dsfi in ds_shell {
                     if let Some(df) = self.ds.faces.get(dsfi) {
                         let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
                         for &ei in &df.boundary_edges {
@@ -2203,14 +2204,14 @@ impl<'a> BooleanBuilder<'a> {
                 ShapeOrigin::ShapeB
             };
             let in_side = in_split.get(&dsi);
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.wires.len();
+            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
             let e_base = self.ds.vertices.len();
 
             // Collect T BRep face refs: OUTSIDE split images + unsplit faces.
             let mut sf: Vec<topods::ShapeRef> = Vec::new();
             let mut outside_dsfi: Vec<usize> = Vec::new();
-            if let Some(ds_shell) = self.ds.shells.get(si) {
-                for &dsfi in &ds_shell.faces {
+            if let Some((_shi, ds_shell)) = self.ds.collect_source_shells().get(si) {
+                for &dsfi in ds_shell {
                     if !self
                         .ds
                         .faces

@@ -15,17 +15,10 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         shapes: Vec::new(),
         vertices: Vec::new(),
         edges: Vec::new(),
-        wires: Vec::new(),
-        shells: Vec::new(),
-        solids: Vec::new(),
-        comp_solids: Vec::new(),
         faces: Vec::new(),
         vertex_shape_idx: Vec::new(),
         edge_shape_idx: Vec::new(),
-        wire_shape_idx: Vec::new(),
-        shell_shape_idx: Vec::new(),
-        solid_shape_idx: Vec::new(),
-        compsolid_shape_idx: Vec::new(),
+
         face_shape_idx: Vec::new(),
         interf_vv: Vec::new(),
         interf_ve: Vec::new(),
@@ -261,35 +254,12 @@ fn init_shape_topo(
                 .iter()
                 .map(|esr| e_map.get(&esr.index).copied().unwrap_or(0))
                 .collect();
-            let wi = ds.push_wire(
-                DSWire { shape_idx: 0,
-                    edges: ds_edges.clone(),
-                },
-                Some(ts.clone()),
-            );
-            w_map.insert(ti, wi);
-
-            // ShapeInfo: sub_shapes = shapes[] indices of wire edges
             let sub: Vec<usize> = ds_edges
                 .iter()
                 .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
                 .collect();
-            // ShapeInfo must be 1:1 with shapes[].
-            // debug_assert_eq is avoided: inner-wire stub wires create a TShape
-            // (via push_wire) without a corresponding ShapeInfo entry.
-            ds.shape_info.push(ShapeInfo {
-                shape_type: rcad_kernel::topods::ShapeType::Wire,
-                sub_shapes: sub,
-                flag: -1,
-                reference: -1,
-                has_brep: false,
-                box_min: None,
-                box_max: None,
-                box_gap: 0.0,
-                is_new: false,
-                rank,
-                source_idx: wi,
-            });
+            let wi = ds.push_wire(sub, Some(ts.clone()));
+            w_map.insert(ti, wi);
         }
         topods::TShape::Face(fd) => {
             init_shape_topo(
@@ -347,22 +317,16 @@ fn init_shape_topo(
                     verts
                 }
             };
-            // Update outer wire's DSWire edges to traversal order and fix ShapeInfo sub_shapes
+            // Update outer wire's ShapeInfo sub_shapes to traversal order.
             let ow_idx = w_map
                 .get(&fd.outer_wire.index)
                 .copied()
                 .unwrap_or(usize::MAX);
-            if ow_idx < ds.wires.len() {
-                ds.wires[ow_idx].edges = boundary_edges.clone();
-                // Fix wire's ShapeInfo sub_shapes
-                if let Some(&wsi) = ds.wire_shape_idx.get(ow_idx) {
-                    if wsi < ds.shape_info.len() {
-                        ds.shape_info[wsi].sub_shapes = boundary_edges
-                            .iter()
-                            .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
-                            .collect();
-                    }
-                }
+            if ow_idx < ds.shape_info.len() {
+                ds.shape_info[ow_idx].sub_shapes = boundary_edges
+                    .iter()
+                    .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
+                    .collect();
             }
             // Process inner wires
             for iw_sr in &fd.inner_wires {
@@ -402,7 +366,7 @@ fn init_shape_topo(
                 })
                 .collect();
             let inner_wire_idxs: Vec<usize> = (0..fd.inner_wires.len())
-                .map(|_| ds.push_wire(DSWire { shape_idx: 0, edges: Vec::new() }, None))
+                .map(|_| ds.push_wire(Vec::new(), None))
                 .collect();
             for (ii, iw_sr) in fd.inner_wires.iter().enumerate() {
                 let iw_data = brep.wire(*iw_sr);
@@ -411,17 +375,11 @@ fn init_shape_topo(
                     .iter()
                     .map(|we_sr| e_map.get(&we_sr.index).copied().unwrap_or(0))
                     .collect();
-                ds.wires[inner_wire_idxs[ii]].edges = iw_edges.clone();
-                // Update wire's ShapeInfo sub_shapes
                 let wi = inner_wire_idxs[ii];
-                if let Some(&wsi) = ds.wire_shape_idx.get(wi) {
-                    if wsi < ds.shape_info.len() {
-                        ds.shape_info[wsi].sub_shapes = iw_edges
-                            .iter()
-                            .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
-                            .collect();
-                    }
-                }
+                ds.shape_info[wi].sub_shapes = iw_edges
+                    .iter()
+                    .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
+                    .collect();
             }
             let surface = fd
                 .surface
@@ -536,42 +494,20 @@ fn init_shape_topo(
             }
             let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();
             let shi = if shell_face_idxs.is_empty() {
-                ds.shells.len()
+                *shell_counter
             } else {
-                ds.push_shell(
-                    DSShell { shape_idx: 0,
-                        faces: shell_face_idxs.clone(),
-                    },
-                    Some(ts.clone()),
-                )
-            };
-            shell_map.insert(ti, shi);
-            *shell_counter += 1;
-
-            if !shell_face_idxs.is_empty() {
-                // ShapeInfo: sub_shapes = shapes[] indices of face in this shell
                 let sub: Vec<usize> = shell_face_idxs
                     .iter()
                     .filter_map(|&fi| ds.face_shape_idx.get(fi).copied())
                     .collect();
-                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
-                ds.shape_info.push(ShapeInfo {
-                    shape_type: rcad_kernel::topods::ShapeType::Shell,
-                    sub_shapes: sub,
-                    flag: -1,
-                    reference: -1,
-                    has_brep: false,
-                    box_min: None,
-                    box_max: None,
-                    box_gap: 0.0,
-                    is_new: false,
-                    rank,
-                    source_idx: shi,
-                });
-            }
+                ds.push_shell(sub, Some(ts.clone()))
+            };
+            shell_map.insert(ti, shi);
+            *shell_counter += 1;
+
         }
         topods::TShape::Solid(sd) => {
-            let shell_start = ds.shells.len();
+            let shell_start = *shell_counter;
             for shell_sr in &sd.shells {
                 init_shape_topo(
                     ds,
@@ -599,40 +535,17 @@ fn init_shape_topo(
                     ds.faces[fi].source_solid_idx = Some(*solid_counter);
                 }
             }
-            let solid_shells: Vec<usize> = (shell_start..ds.shells.len()).collect();
+            let solid_shells: Vec<usize> = sd.shells
+                .iter()
+                .filter_map(|sr| shell_map.get(&sr.index).copied())
+                .collect();
             let soi = if solid_shells.is_empty() {
-                ds.solids.len()
+                *solid_counter
             } else {
-                ds.push_solid(
-                    DSSolid { shape_idx: 0,
-                        shells: solid_shells.clone(),
-                    },
-                    Some(ts.clone()),
-                )
+                ds.push_solid(solid_shells, Some(ts.clone()))
             };
             solid_map.insert(ti, soi);
             *solid_counter += 1;
-
-            if !solid_shells.is_empty() {
-                let sub: Vec<usize> = solid_shells
-                    .iter()
-                    .filter_map(|&shi| ds.shell_shape_idx.get(shi).copied())
-                    .collect();
-                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
-                ds.shape_info.push(ShapeInfo {
-                    shape_type: rcad_kernel::topods::ShapeType::Solid,
-                    sub_shapes: sub,
-                    flag: -1,
-                    reference: -1,
-                    has_brep: true,
-                    box_min: None,
-                    box_max: None,
-                    box_gap: 0.0,
-                    is_new: false,
-                    rank,
-                    source_idx: soi,
-                });
-            }
         }
         topods::TShape::CompSolid(cs_solids) => {
             for sr in cs_solids {
@@ -659,14 +572,9 @@ fn init_shape_topo(
                 .filter_map(|sr| solid_map.get(&sr.index).copied())
                 .collect();
             let csi = if ds_solid_indices.is_empty() {
-                ds.comp_solids.len()
+                *solid_counter
             } else {
-                ds.push_compsolid(
-                    DSCompSolid { shape_idx: 0,
-                        solids: ds_solid_indices.clone(),
-                    },
-                    Some(ts.clone()),
-                )
+                ds.push_compsolid(ds_solid_indices.clone(), Some(ts.clone()))
             };
             compsolid_map.insert(ti, csi);
 
@@ -679,24 +587,6 @@ fn init_shape_topo(
                         }
                     }
                 }
-                let sub: Vec<usize> = ds_solid_indices
-                    .iter()
-                    .filter_map(|&si| ds.solid_shape_idx.get(si).copied())
-                    .collect();
-                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
-                ds.shape_info.push(ShapeInfo {
-                    shape_type: rcad_kernel::topods::ShapeType::CompSolid,
-                    sub_shapes: sub,
-                    flag: -1,
-                    reference: -1,
-                    has_brep: true,
-                    box_min: None,
-                    box_max: None,
-                    box_gap: 0.0,
-                    is_new: false,
-                    rank,
-                    source_idx: csi,
-                });
             }
         }
         topods::TShape::Compound(_) => {}

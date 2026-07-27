@@ -32,17 +32,9 @@ impl DS {
             shapes: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
-            wires: Vec::new(),
-            shells: Vec::new(),
-            solids: Vec::new(),
-            comp_solids: Vec::new(),
             faces: Vec::new(),
             vertex_shape_idx: Vec::new(),
             edge_shape_idx: Vec::new(),
-            wire_shape_idx: Vec::new(),
-            shell_shape_idx: Vec::new(),
-            solid_shape_idx: Vec::new(),
-            compsolid_shape_idx: Vec::new(),
             face_shape_idx: Vec::new(),
             interf_vv: Vec::new(),
             interf_ve: Vec::new(),
@@ -839,109 +831,138 @@ impl DS {
     /// Returns the wire index.
     pub fn push_wire(
         &mut self,
-        mut dw: DSWire,
+        sub_shapes: Vec<usize>,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
-        let wi = self.wires.len();
-        dw.shape_idx = self.shapes.len();
-        let edges = dw.edges.clone();
-        self.wires.push(dw);
+        let shape_idx = self.shapes.len();
         self.shapes.push(tshape.unwrap_or_else(|| {
+            let refs: Vec<topods::ShapeRef> = sub_shapes
+                .iter()
+                .map(|&s| topods::ShapeRef::synthetic(s))
+                .collect();
             std::sync::Arc::new(topods::TShape::Wire(topods::TWireData {
-                my_shapes: edges
-                    .iter()
-                    .map(|&ei| topods::ShapeRef::synthetic(ei))
-                    .collect(),
+                my_shapes: refs.clone(),
                 flags: topods::tshape_flags::DEFAULT,
-                edges: edges
-                    .iter()
-                    .map(|&ei| topods::ShapeRef::synthetic(ei))
-                    .collect(),
+                edges: refs,
             }))
         }));
-        self.wire_shape_idx.push(self.shapes.len() - 1);
-        wi
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Wire,
+            sub_shapes,
+            flag: -1,
+            reference: -1,
+            has_brep: false,
+            box_min: None,
+            box_max: None,
+            box_gap: 0.0,
+            is_new: false,
+            rank: 0,
+            source_idx: usize::MAX,
+        });
+        shape_idx
     }
 
     /// Phase 4: push a shell, populating DSShell and pushing TShape to shapes[].
     /// Returns the shell index.
     pub fn push_shell(
         &mut self,
-        mut dsh: DSShell,
+        sub_shapes: Vec<usize>,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
-        let shi = self.shells.len();
-        dsh.shape_idx = self.shapes.len();
-        let faces = dsh.faces.clone();
-        self.shells.push(dsh);
+        let shape_idx = self.shapes.len();
         self.shapes.push(tshape.unwrap_or_else(|| {
+            let refs: Vec<topods::ShapeRef> = sub_shapes
+                .iter()
+                .map(|&fi| topods::ShapeRef::synthetic(fi))
+                .collect();
             std::sync::Arc::new(topods::TShape::Shell(topods::TShellData {
-                my_shapes: faces
-                    .iter()
-                    .map(|&fi| topods::ShapeRef::synthetic(fi))
-                    .collect(),
+                my_shapes: refs.clone(),
                 flags: topods::tshape_flags::DEFAULT,
-                faces: faces
-                    .iter()
-                    .map(|&fi| topods::ShapeRef::synthetic(fi))
-                    .collect(),
+                faces: refs,
             }))
         }));
-        self.shell_shape_idx.push(self.shapes.len() - 1);
-        shi
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Shell,
+            sub_shapes,
+            flag: -1,
+            reference: -1,
+            has_brep: false,
+            box_min: None,
+            box_max: None,
+            box_gap: 0.0,
+            is_new: false,
+            rank: 0,
+            source_idx: usize::MAX,
+        });
+        shape_idx
     }
 
     /// Phase 4: push a solid, populating DSSolid and pushing TShape to shapes[].
     /// Returns the solid index.
     pub fn push_solid(
         &mut self,
-        mut dso: DSSolid,
+        sub_shapes: Vec<usize>,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
-        let soi = self.solids.len();
-        dso.shape_idx = self.shapes.len();
-        let shells = dso.shells.clone();
-        self.solids.push(dso);
+        let shape_idx = self.shapes.len();
+        let refs: Vec<topods::ShapeRef> = sub_shapes
+            .iter()
+            .map(|&shi| topods::ShapeRef::synthetic(shi))
+            .collect();
         self.shapes.push(tshape.unwrap_or_else(|| {
             std::sync::Arc::new(topods::TShape::Solid(topods::TSolidData {
-                my_shapes: shells
-                    .iter()
-                    .map(|&shi| topods::ShapeRef::synthetic(shi))
-                    .collect(),
+                my_shapes: refs.clone(),
                 flags: topods::tshape_flags::DEFAULT,
-                shells: shells
-                    .iter()
-                    .map(|&shi| topods::ShapeRef::synthetic(shi))
-                    .collect(),
+                shells: refs,
                 internal_vertices: Vec::new(),
                 internal_edges: Vec::new(),
             }))
         }));
-        self.solid_shape_idx.push(self.shapes.len() - 1);
-        soi
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::Solid,
+            sub_shapes,
+            flag: -1,
+            reference: -1,
+            has_brep: false,
+            box_min: None,
+            box_max: None,
+            box_gap: 0.0,
+            is_new: false,
+            rank: 0,
+            source_idx: usize::MAX,
+        });
+        shape_idx
     }
 
     /// Phase 4: push a compsolid, populating DSCompSolid and pushing TShape to shapes[].
     /// Returns the compsolid index.
     pub fn push_compsolid(
         &mut self,
-        mut dcs: DSCompSolid,
+        sub_shapes: Vec<usize>,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
-        let csi = self.comp_solids.len();
-        dcs.shape_idx = self.shapes.len();
-        let solids = dcs.solids.clone();
-        self.comp_solids.push(dcs);
+        let shape_idx = self.shapes.len();
+        let refs: Vec<topods::ShapeRef> = sub_shapes
+            .iter()
+            .map(|&si| topods::ShapeRef::synthetic(si))
+            .collect();
         self.shapes.push(tshape.unwrap_or_else(|| {
-            std::sync::Arc::new(topods::TShape::CompSolid(
-                solids
-                    .iter()
-                    .map(|&si| topods::ShapeRef::synthetic(si))
-                    .collect(),
-            ))
+            std::sync::Arc::new(topods::TShape::CompSolid(refs))
         }));
-        self.compsolid_shape_idx.push(self.shapes.len() - 1);
-        csi
+        self.shape_info.push(types::ShapeInfo {
+            shape_type: rcad_kernel::topods::ShapeType::CompSolid,
+            sub_shapes,
+            flag: -1,
+            reference: -1,
+            has_brep: false,
+            box_min: None,
+            box_max: None,
+            box_gap: 0.0,
+            is_new: false,
+            rank: 0,
+            source_idx: usize::MAX,
+        });
+        shape_idx
     }
 
     ///  ?BOPDS_ShapeInfo::HasFlag / Flag.
@@ -2420,26 +2441,66 @@ impl DS {
     /// build a new edge list from the split sub-edges.
     ///
     /// Uses DS internal data only 閿?no external BRep needed.
+    /// Flat shape indices of all source solids (OCCT ShapeInfo-based).
+    pub fn solid_shape_indices(&self) -> Vec<usize> {
+        self.shape_info.iter().enumerate()
+            .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Solid && !si.is_new)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Convert flat face shape index to per-type face index.
+    pub fn face_idx_from_flat(&self, flat: usize) -> Option<usize> {
+        self.face_shape_idx.iter().position(|&s| s == flat)
+    }
+
+    /// Collect source shell->face data from ShapeInfo (replacement for deleted shells[] array).
+    pub fn collect_source_shells(&self) -> Vec<(usize, Vec<usize>)> {
+        let solid_idxs: Vec<usize> = self.shape_info.iter().enumerate()
+            .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Solid && !si.is_new)
+            .map(|(i, _)| i)
+            .collect();
+        let mut result = Vec::new();
+        for &solid_si in &solid_idxs {
+            for &shi in &self.shape_info[solid_si].sub_shapes {
+                let faces: Vec<usize> = self.shape_info[shi].sub_shapes.iter()
+                    .filter_map(|&flat| self.face_shape_idx.iter().position(|&s| s == flat))
+                    .collect();
+                result.push((shi, faces));
+            }
+        }
+        result
+    }
+
+    /// OCCT-aligned: hierarchy through ShapeInfo.sub_shapes, not dedicated arrays.
     pub fn build_container_images(&mut self) {
-        // Count total wires across all solids/shells in the DS
-        let n_wires: usize = self
-            .solids
-            .iter()
-            .flat_map(|s| &s.shells)
-            .flat_map(|sh| &self.shells[*sh].faces)
+        let solid_idxs: Vec<usize> = self.shape_info.iter().enumerate()
+            .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Solid && !si.is_new)
+            .map(|(i, _)| i)
+            .collect();
+        let n_wires: usize = solid_idxs.iter()
+            .flat_map(|&si| &self.shape_info[si].sub_shapes)
+            .flat_map(|&shi| &self.shape_info[shi].sub_shapes)
             .map(|&fi| 1 + self.faces[fi].inner_boundary_edges.len())
             .sum();
         self.wire_images = vec![None; n_wires];
 
-        // Shell images: flag shells whose faces have any split edges
-        let n_shells: usize = self.shells.len();
+        let n_shells = self.shape_info.iter()
+            .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Shell && !si.is_new)
+            .count();
         self.shell_images = vec![false; n_shells];
-        self.solid_images = vec![false; self.solids.len()];
+        self.solid_images = vec![false; solid_idxs.len()];
 
-        for (si, solid) in self.solids.iter().enumerate() {
-            for &shi in &solid.shells {
-                let shell = &self.shells[shi];
-                let shell_has_split = shell.faces.iter().any(|&fi| {
+        let shell_flat_to_idx: std::collections::HashMap<usize, usize> =
+            self.shape_info.iter().enumerate()
+                .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Shell && !si.is_new)
+                .enumerate()
+                .map(|(idx, (flat, _))| (flat, idx))
+                .collect();
+
+        for (si_idx, &solid_si) in solid_idxs.iter().enumerate() {
+            for &shi in &self.shape_info[solid_si].sub_shapes {
+                let shell_has_split = self.shape_info[shi].sub_shapes.iter().any(|&fi| {
                     let face = &self.faces[fi];
                     Self::wire_has_split_edges_ds(&face.boundary_edges, &self.my_images)
                         || face.inner_boundary_edges.iter().any(|iw| {
@@ -2447,20 +2508,20 @@ impl DS {
                             Self::wire_has_split_edges_ds(&iw_edges, &self.my_images)
                         })
                 });
-                self.shell_images[shi] = shell_has_split;
+                if let Some(&shell_idx) = shell_flat_to_idx.get(&shi) {
+                    self.shell_images[shell_idx] = shell_has_split;
+                }
                 if shell_has_split {
-                    self.solid_images[si] = true;
+                    self.solid_images[si_idx] = true;
                 }
             }
         }
 
         let mut wi = 0usize;
-        for solid in &self.solids {
-            for &shi in &solid.shells {
-                let shell = &self.shells[shi];
-                for &fi in &shell.faces {
+        for &solid_si in &solid_idxs {
+            for &shi in &self.shape_info[solid_si].sub_shapes {
+                for &fi in &self.shape_info[shi].sub_shapes {
                     let face = &self.faces[fi];
-                    // Outer wire
                     let new_outer = Self::rebuild_wire_edges_ds(
                         &face.boundary_edges,
                         &face.boundary_edge_forwards,
@@ -2470,8 +2531,6 @@ impl DS {
                         self.wire_images[wi] = new_outer;
                     }
                     wi += 1;
-
-                    // Inner wires
                     for iw in &face.inner_boundary_edges {
                         let iw_edges: Vec<usize> = iw.iter().map(|&(ei, _)| ei).collect();
                         let iw_fwd: Vec<bool> = iw.iter().map(|&(_, fwd)| fwd).collect();
