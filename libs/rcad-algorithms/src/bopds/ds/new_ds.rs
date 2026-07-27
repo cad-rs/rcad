@@ -59,6 +59,8 @@ pub struct DS {
     pub interf_vz: Vec<InterferenceVZ>,pub interf_ez: Vec<InterferenceEZ>,
     pub interf_fz: Vec<InterferenceFZ>,pub interf_zz: Vec<InterferenceZZ>,
     pub interfered: HashSet<usize>,
+    // TShape pool for ShapeRef -> Shape conversion (populated from BRep during load).
+    pub tshapes: Vec<Arc<TShape>>,
 }
 
 impl DS {
@@ -72,6 +74,7 @@ impl DS {
         interf_ee:Vec::new(),interf_ef:Vec::new(),interf_ff:Vec::new(),
         interf_vz:Vec::new(),interf_ez:Vec::new(),interf_fz:Vec::new(),
         interf_zz:Vec::new(),interfered:HashSet::new(),
+        tshapes:Vec::new(),
     }}
     pub fn clear(&mut self){
         self.nb_source_shapes=0;self.arguments.clear();self.ranges.clear();
@@ -174,12 +177,9 @@ impl DS {
     // (populated during construction from BRep).
     fn make_child(&self,sr:topods::ShapeRef)->Shape{
         Shape::new(
-            if sr.ptr_id!=0&&sr.index<self.shapes.len(){self.shapes[sr.index].shape.data.clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))},
+            if sr.ptr_id!=0&&sr.index<self.tshapes.len(){self.tshapes[sr.index].clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))},
             sr.location,sr.orientation,
         )
-    }
-    fn tshape_of(&self,i:usize)->Arc<TShape>{
-        if i<self.shapes.len(){self.shapes[i].shape.data.clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))}
     }
 
     pub fn pave_blocks_pool(&self)->&[Vec<SharedPB>]{&self.pave_blocks_pool}
