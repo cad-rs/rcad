@@ -640,7 +640,7 @@ impl<'a> PaveFiller<'a> {
             // L912-913: FaceInfo
             // OCCT: const TopoDS_Face& aF = TopoDS::Face(aSI.Shape());
             //        const BOPDS_FaceInfo& aFI = myDS->FaceInfo(nF);
-            let a_fi = &self.ds.faces[fi].face_info;
+            let a_fi = self.ds.face_info(fi);
 
             // L914-924: build aMVF from all face vertex sets
             // OCCT: NCollection_Map<int> aMVF from FaceInfo VerticesOn/In/Sc
@@ -715,7 +715,7 @@ impl<'a> PaveFiller<'a> {
                     continue;
                 }
 
-                let a_e_curve = &self.ds.edges[ne].curve;
+                let a_e_curve = self.ds.edge_curve(ne).unwrap();
 
                 // L986-1006: check directions coincidence at middle point on edge
                 let mut b_use_add_tol = true;
@@ -1033,7 +1033,7 @@ impl<'a> PaveFiller<'a> {
             return false;
         }
         let v_pt = self.ds.vertex_point(n_v);
-        let surf = self.ds.faces[n_f].surface.clone();
+        let surf = self.ds.face_surface(n_f).cloned().unwrap();
         // Project vertex onto face surface
         // Compute UV from surface projection
         use rcad_kernel::geom::Surface3;

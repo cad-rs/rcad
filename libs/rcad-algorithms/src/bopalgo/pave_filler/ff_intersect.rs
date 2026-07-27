@@ -185,8 +185,8 @@ impl<'a> super::PaveFiller<'a> {
                                 let vertex_point = self.ds.vertex_point(vi);
 
                                 // OCCT L457-468: ProjectPointOnCurve on both edges
-                                let curve1 = &self.ds.edges[e1].curve;
-                                let curve2 = &self.ds.edges[e2].curve;
+                                let curve1 = self.ds.edge_curve(e1).unwrap();
+                                let curve2 = self.ds.edge_curve(e2).unwrap();
                                 let proj1 = closest_point_on_curve(curve1, vertex_point, 64);
                                 let proj2 = closest_point_on_curve(curve2, vertex_point, 64);
                                 let a_p1 = proj1.point;
@@ -196,7 +196,7 @@ impl<'a> super::PaveFiller<'a> {
                                 let shift_dist = a_p1.distance(a_p2);
 
                                 // OCCT L471: if (aShiftDist > BRep_Tool::Tolerance(aVertex))
-                                let vtx_tol = self.ds.vertices[vi].geom_tol;
+                                let vtx_tol = self.ds.vertex_tolerance(vi);
                                 if shift_dist > vtx_tol {
                                     // OCCT L474-479: shift one face
                                     // OCCT: gp_Vec(aP1, aP2) — rcad: a_p2 - a_p1
@@ -595,8 +595,8 @@ impl<'a> super::PaveFiller<'a> {
             eprintln!("[FF] intersect_face_face: f1={} f2={}", f1, f2);
         }
 
-        let s1_orig = self.ds.faces[f1].surface.clone();
-        let s2_orig = self.ds.faces[f2].surface.clone();
+        let s1_orig = self.ds.face_surface(f1).cloned().unwrap();
+        let s2_orig = self.ds.face_surface(f2).cloned().unwrap();
 
         // Apply seam edge shift to surface clones if needed
         let s1 = match shift_info {
@@ -641,8 +641,8 @@ impl<'a> super::PaveFiller<'a> {
                     | Surface3::Torus(_)
             )
         }
-        if !is_analytic_ff(&self.ds.faces[f1].surface)
-            || !is_analytic_ff(&self.ds.faces[f2].surface)
+        if !is_analytic_ff(self.ds.face_surface(f1).unwrap())
+            || !is_analytic_ff(self.ds.face_surface(f2).unwrap())
         {
             a_tol_ff = a_tol_ff.max(5e-6);
         }
@@ -851,8 +851,8 @@ impl<'a> super::PaveFiller<'a> {
                 &curve,
                 pca.as_ref(),
                 pcb.as_ref(),
-                &self.ds.faces[f1].surface,
-                &self.ds.faces[f2].surface,
+                self.ds.face_surface(f1).unwrap(),
+                self.ds.face_surface(f2).unwrap(),
                 tr,
                 t_a,
                 t_b,
@@ -977,11 +977,11 @@ impl<'a> super::PaveFiller<'a> {
     /// OCCT L2426-2560: PerformPlanes  -- plane-plane intersection fast path.
     fn perform_plane_plane(&mut self, f1: usize, f2: usize) {
         use rcad_kernel::geom::{Curve3, Surface3};
-        let pln1 = match &self.ds.faces[f1].surface {
+        let pln1 = match self.ds.face_surface(f1).unwrap() {
             Surface3::Plane(p) => p,
             _ => return,
         };
-        let pln2 = match &self.ds.faces[f2].surface {
+        let pln2 = match self.ds.face_surface(f2).unwrap() {
             Surface3::Plane(p) => p,
             _ => return,
         };
@@ -1375,8 +1375,8 @@ impl<'a> super::PaveFiller<'a> {
                 }
 
                 // OCCT L865-867: get surface types for the test-point branch
-                let surf1 = &self.ds.faces[f1].surface;
-                let surf2 = &self.ds.faces[f2].surface;
+                let surf1 = self.ds.face_surface(f1).unwrap();
+                let surf2 = self.ds.face_surface(f2).unwrap();
                 let is_extrusion_rev_offset = |s: &Surface3| -> bool {
                     matches!(
                         s,
@@ -1906,7 +1906,7 @@ impl<'a> super::PaveFiller<'a> {
         if fi >= self.ds.face_count() {
             return None;
         }
-        let surf = &self.ds.faces[fi].surface;
+        let surf = self.ds.face_surface(fi).unwrap();
         let pc = match (curve, surf) {
             (rcad_kernel::geom::Curve3::Line(l), rcad_kernel::geom::Surface3::Plane(p)) => {
                 crate::inttools::pcurve_derive::line_pcurve_on_plane(l, p)

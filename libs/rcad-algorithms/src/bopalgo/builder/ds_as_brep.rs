@@ -133,7 +133,7 @@ impl BRepTool for DSAsBRep<'_> {
     }
 
     fn face_surface(&self, _face: ShapeRef) -> Option<&Surface3> {
-        Some(&self.ds.faces[self.face_idx].surface)
+        Some(self.ds.face_surface(self.face_idx).unwrap())
     }
 
     fn vertex_orientation(&self, v: ShapeRef) -> Orientation {
@@ -151,7 +151,7 @@ impl BRepTool for DSAsBRep<'_> {
     }
 
     fn face_surface_world(&self, _face: ShapeRef) -> Option<Surface3> {
-        Some(self.ds.faces[self.face_idx].surface.clone())
+        Some(self.ds.face_surface(self.face_idx).cloned().unwrap())
     }
 
     fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
@@ -163,7 +163,7 @@ impl BRepTool for DSAsBRep<'_> {
 
     fn u_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
         // Fallback: use the face surface from DS
-        let surf = &self.ds.faces[self.face_idx].surface;
+        let surf = self.ds.face_surface(self.face_idx).unwrap();
         match surf {
             Surface3::Sphere(s) => tol3d / s.radius.max(TOLERANCE_CLAMP_MIN),
             Surface3::Cylinder(c) => tol3d / c.radius.max(TOLERANCE_CLAMP_MIN),
@@ -174,7 +174,7 @@ impl BRepTool for DSAsBRep<'_> {
     }
 
     fn v_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
-        let surf = &self.ds.faces[self.face_idx].surface;
+        let surf = self.ds.face_surface(self.face_idx).unwrap();
         match surf {
             Surface3::Sphere(s) => tol3d / s.radius.max(TOLERANCE_CLAMP_MIN),
             Surface3::Cylinder(_) => tol3d,

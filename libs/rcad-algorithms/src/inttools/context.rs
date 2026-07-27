@@ -164,7 +164,7 @@ impl Context {
         if face_idx >= self.num_faces {
             return None;
         }
-        let surf = &ds.faces[face_idx].surface;
+        let surf = ds.face_surface(face_idx).unwrap();
         let proj = closest_point_on_surface(surf, p, 16);
         if proj.distance.is_finite() {
             self.proj_ps_latest[face_idx] = Some(proj);
@@ -185,7 +185,7 @@ impl Context {
         if edge_idx >= ds.edge_count() {
             return None;
         }
-        let curve = &ds.edges[edge_idx].curve;
+        let curve = ds.edge_curve(edge_idx).unwrap();
         let [t0, t1] = ds.edge_range(edge_idx);
         // OCCT L281: pProjPC->Init(aC3D, f, l) - restrict projection to edge trim range
         let proj = closest_point_on_curve_range(curve, p, t0, t1, 16);
@@ -415,7 +415,7 @@ impl Context {
             self.num_faces
         );
         if self.surface_cache[face_idx].is_none() {
-            self.surface_cache[face_idx] = Some(ds.faces[face_idx].surface.clone());
+            self.surface_cache[face_idx] = Some(ds.face_surface(face_idx).cloned().unwrap());
         }
         self.surface_cache[face_idx].as_ref().unwrap()
     }

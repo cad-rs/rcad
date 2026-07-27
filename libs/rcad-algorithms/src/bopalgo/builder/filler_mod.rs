@@ -508,7 +508,7 @@ impl<'a> BooleanBuilder<'a> {
             // VerticesIn + VerticesSc minus PB endpoints of PaveBlocksIn + PaveBlocksSc.
             // OCCT does NOT include VerticesOn in alone-vertices count.
             let a_nb_av = {
-                let fi_info = &self.ds.faces[fi].face_info;
+                let fi_info = self.ds.face_info(fi);
                 let mut pb_endpoints: HashSet<usize> = HashSet::new();
                 for &pb_idx in fi_info
                     .pave_blocks_in
@@ -626,7 +626,7 @@ impl<'a> BooleanBuilder<'a> {
             let mut a_m_explorer_set: std::collections::HashSet<u64> =
                 std::collections::HashSet::new();
             // OCCT L387-393: surface closed state (computed once per face).
-            let (is_u_closed, is_v_closed) = match &self.ds.faces[fi].surface {
+            let (is_u_closed, is_v_closed) = match self.ds.face_surface(fi).unwrap() {
                 s if s.is_u_closed() && s.is_v_closed() => (true, true),
                 s if s.is_u_closed() => (true, false),
                 s if s.is_v_closed() => (false, true),
@@ -852,8 +852,8 @@ impl<'a> BooleanBuilder<'a> {
                         }
                         // Project 3D curve to 2D pcurve on the plane surface.
                         if let Some(pc) = crate::geom2d_api::project_curve_to_plane(
-                            &self.ds.edges[ei].curve,
-                            &self.ds.faces[fi].surface,
+                            self.ds.edge_curve(ei).unwrap(),
+                            self.ds.face_surface(fi).unwrap(),
                         ) {
                             // OCCT pattern: clone TEdgeData → insert → replace Arc.
                             if let topods::TShape::Edge(ed) = &*t.tshapes[e_sr.index].clone() {
@@ -1031,7 +1031,7 @@ impl<'a> BooleanBuilder<'a> {
                     let tol_f = self.ds.face_tolerance(cfi);
                     let class_tol = tol_v.max(tol_f) + self.ds.fuzzy_tol;
 
-                    let fs = &self.ds.faces[cfi].surface;
+                    let fs = self.ds.face_surface(cfi).unwrap();
                     if let Some(uv) = world_to_uv(fs, v_pt) {
                         let fclass =
                             crate::inttools::fclass2d::FClass2d::new(self.ds, cfi, class_tol);

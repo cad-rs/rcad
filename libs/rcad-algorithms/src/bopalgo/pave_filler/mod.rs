@@ -223,14 +223,14 @@ fn update_existing_pave_blocks(
             if fi >= ds.face_count() {
                 continue;
             }
-            let face_surface = ds.faces[fi].surface.clone();
+            let face_surface = ds.face_surface(fi).cloned().unwrap();
             for &new_pb_idx in &new_pb_list {
                 if new_pb_idx >= ds.pave_blocks.len() {
                     continue;
                 }
                 // Check if already registered in this face's ON/IN sets (OCCT L3498)
                 {
-                    let face_info = &ds.faces[fi].face_info;
+                    let face_info = ds.face_info(fi);
                     if face_info.pave_blocks_on.contains(&new_pb_idx)
                         || face_info.pave_blocks_in.contains(&new_pb_idx)
                     {
@@ -252,7 +252,7 @@ fn update_existing_pave_blocks(
                 // OCCT L3514: bCoincide = (aCPrts.Length() == 1 && aCPrts(1).Type() == TopAbs_EDGE)
                 let b_coincide = {
                     crate::inttools::edge_face::is_coincident_edge_face(
-                        &ds.edges[ei].curve,
+                        ds.edge_curve(ei).unwrap(),
                         [t1, t2],
                         &face_surface,
                         a_tol_f,
@@ -518,7 +518,7 @@ impl<'a> PaveFiller<'a> {
         // OCCT L909: BOPTools_Parallel::Perform (rcad: sequential loop)
         let mut pcurve_results: Vec<(usize, usize, rcad_kernel::geom::Curve2d, f64)> = Vec::new();
         for &(ei, fi) in &a_vbpc {
-            let surf = self.ds.faces[fi].surface.clone();
+            let surf = self.ds.face_surface(fi).cloned().unwrap();
             if let Some(edge) = self.ds.edges.get(ei) {
                 if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf, None) {
                     pcurve_results.push((ei, fi, pcurve, span));
@@ -1061,7 +1061,7 @@ impl<'a> PaveFiller<'a> {
             let fi_copy = fi; // avoid borrow conflict
             // Collect PB indices to remove
             let to_remove: std::collections::HashSet<usize> = {
-                let face_info = &self.ds.faces[fi_copy].face_info;
+                let face_info = self.ds.face_info(fi_copy);
                 face_info
                     .pave_blocks_on
                     .iter()
@@ -1403,10 +1403,10 @@ impl<'a> PaveFiller<'a> {
                 if ffp.vertex_index < self.ds.vertex_count() {
                     let n_v = ffp.vertex_index;
                     if !self.ds.faces[f1].face_info.vertices_in.contains(&n_v) {
-                        self.ds.faces[f1].face_info.vertices_in.insert(n_v);
+                        self.ds.face_info_mut(f1).vertices_in.insert(n_v);
                     }
                     if !self.ds.faces[f2].face_info.vertices_in.contains(&n_v) {
-                        self.ds.faces[f2].face_info.vertices_in.insert(n_v);
+                        self.ds.face_info_mut(f2).vertices_in.insert(n_v);
                     }
                 }
             }
@@ -1638,9 +1638,9 @@ impl<'a> PaveFiller<'a> {
                 }
                 let fi1 = ff.f1;
                 let fi2 = ff.f2;
-                let on1 = &self.ds.faces[fi1].face_info.vertices_on;
+                let on1 = &self.ds.face_info(fi1).vertices_on;
                 let in1 = &self.ds.face_info(fi1).vertices_in;
-                let on2 = &self.ds.faces[fi2].face_info.vertices_on;
+                let on2 = &self.ds.face_info(fi2).vertices_on;
                 let in2 = &self.ds.face_info(fi2).vertices_in;
 
                 let shared: Vec<usize> = on1
@@ -1675,9 +1675,9 @@ impl<'a> PaveFiller<'a> {
                 let f2 = *f2;
 
                 // Collect shared vertices for this face pair
-                let on1 = &self.ds.faces[f1].face_info.vertices_on;
+                let on1 = &self.ds.face_info(f1).vertices_on;
                 let in1 = &self.ds.face_info(f1).vertices_in;
-                let on2 = &self.ds.faces[f2].face_info.vertices_on;
+                let on2 = &self.ds.face_info(f2).vertices_on;
                 let in2 = &self.ds.face_info(f2).vertices_in;
 
                 let shared: Vec<usize> = on1

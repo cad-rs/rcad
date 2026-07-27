@@ -191,9 +191,8 @@ pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut Boolea
             } else if ds_s < a_vc && ds_e < a_vc {
                 // Both endpoints are A vertices =look for a DS edge in A range.
                 let found = (0..a_ec.min(total_ds_edges)).find(|&dei| {
-                    let de = &ds.edges[dei];
-                    (de.start_vertex == ds_s && de.end_vertex == ds_e)
-                        || (de.start_vertex == ds_e && de.end_vertex == ds_s)
+                    (ds.edge_start_vertex_ds(dei) == ds_s && ds.edge_end_vertex_ds(dei) == ds_e)
+                        || (ds.edge_start_vertex_ds(dei) == ds_e && ds.edge_end_vertex_ds(dei) == ds_s)
                 });
                 match found {
                     Some(dei) => EdgeOrigin::FromA(dei),
@@ -202,9 +201,8 @@ pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut Boolea
             } else if ds_s >= a_vc && ds_e >= a_vc {
                 // Both endpoints are B vertices =look for a DS edge in B range.
                 let found = (a_ec..total_ds_edges).find(|&dei| {
-                    let de = &ds.edges[dei];
-                    (de.start_vertex == ds_s && de.end_vertex == ds_e)
-                        || (de.start_vertex == ds_e && de.end_vertex == ds_s)
+                    (ds.edge_start_vertex_ds(dei) == ds_s && ds.edge_end_vertex_ds(dei) == ds_e)
+                        || (ds.edge_start_vertex_ds(dei) == ds_e && ds.edge_end_vertex_ds(dei) == ds_s)
                 });
                 match found {
                     Some(dei) => EdgeOrigin::FromB(dei - a_ec),
@@ -326,18 +324,16 @@ pub fn is_tangent_face(
     angle_tol: f64,
     dist_tol: f64,
 ) -> bool {
-    let face_a = &ds.faces[fi_a];
-    let face_b = &ds.faces[fi_b];
-    let n_dot = face_a.normal.dot(face_b.normal).abs();
+    let n_dot = ds.face_normal(fi_a).dot(ds.face_normal(fi_b)).abs();
     if n_dot < angle_tol.cos() {
         return false;
     }
-    let sample_a = if !face_a.boundary_verts.is_empty() {
-        ds.vertices[face_a.boundary_verts[0]].point
+    let sample_a = if !ds.face_boundary_verts(fi_a).is_empty() {
+        ds.vertex_point(ds.face_boundary_verts(fi_a)[0])
     } else {
         return false;
     };
-    let dist = match &face_b.surface {
+    let dist = match ds.face_surface(fi_b).unwrap() {
         rcad_kernel::geom::Surface3::Plane(p) => (sample_a - p.origin).dot(p.normal).abs(),
         rcad_kernel::geom::Surface3::Sphere(s) => ((sample_a - s.center).length() - s.radius).abs(),
         _ => return false,
@@ -351,8 +347,7 @@ pub(crate) fn build_edge_bounds(
 ) -> std::collections::BTreeSet<usize> {
     let mut bounds: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for &fi in face_indices {
-        let face = &ds.faces[fi];
-        for &ei in &face.boundary_edges {
+        for &ei in ds.face_boundary_edges(fi) {
             bounds.insert(ei);
         }
     }

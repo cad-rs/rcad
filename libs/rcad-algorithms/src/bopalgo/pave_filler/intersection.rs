@@ -235,8 +235,8 @@ fn compute_ef_hits(
     ef_range: &[f64; 2],
     ef_tol: f64,
 ) -> Vec<EfHit> {
-    let edge_curve = &ds.edges[edge_idx].curve;
-    let face_surface = &ds.faces[face_idx].surface;
+    let edge_curve = ds.edge_curve(edge_idx).unwrap();
+    let face_surface = ds.face_surface(face_idx).unwrap();
     let mut hits: Vec<EfHit> = match (edge_curve, face_surface) {
         (Curve3::Line(line), Surface3::Plane(plane)) => {
             crate::inttools::edge_face::intersect_line_plane_with_tol(
@@ -291,9 +291,9 @@ fn compute_ef_hits(
         use crate::inttools::bean_face_intersector::BeanFaceIntersector;
         let mut bfi = BeanFaceIntersector::new();
         bfi.init_curve_surface(
-            ds.edges[edge_idx].curve.clone(),
+            ds.edge_curve(edge_idx).cloned().unwrap(),
             ef_tol,
-            ds.faces[face_idx].surface.clone(),
+            ds.face_surface(face_idx).cloned().unwrap(),
             ef_tol,
         );
         bfi.set_bean_parameters(ef_range[0], ef_range[1]);
@@ -803,7 +803,7 @@ impl<'a> super::PaveFiller<'a> {
             *the_box = *cached;
         } else {
             // OCCT L928-933: BRepAdaptor_Curve + BndLib_Add3dCurve
-            let curve = &self.ds.edges[the_e].curve;
+            let curve = self.ds.edge_curve(the_e).unwrap();
             let a_tol = self.ds.edge_tolerance(the_e) + crate::tolerance::CONFUSION;
             let aabb = compute_curve_aabb(curve, *the_s_first, *the_s_last, a_tol);
             the_pb_box.insert(key, aabb);
@@ -1641,12 +1641,12 @@ impl<'a> super::PaveFiller<'a> {
                 let tol_ef = a_tol_e.max(a_tol_f).max(CONFUSION);
                 let a_pb_range = [aT1.min(aT2), aT1.max(aT2)];
                 let _a_sr_corrected = Self::correct_range_for_face(
-                    &self.ds.edges[nE].curve,
+                    self.ds.edge_curve(nE).unwrap(),
                     tol_ef,
                     [aTS1.min(aTS2), aTS1.max(aTS2)],
                 );
                 let a_pb_corrected =
-                    Self::correct_range_for_face(&self.ds.edges[nE].curve, tol_ef, a_pb_range);
+                    Self::correct_range_for_face(self.ds.edge_curve(nE).unwrap(), tol_ef, a_pb_range);
                 if a_pb_corrected[1] - a_pb_corrected[0] <= tol_ef {
                     continue;
                 }
@@ -1719,7 +1719,7 @@ impl<'a> super::PaveFiller<'a> {
                 a_fi.vertices_in.iter().copied().collect();
             drop(a_fi);
             let b_line_plane = matches!(
-                (&self.ds.edges[nE].curve, &self.ds.faces[nF].surface),
+                (self.ds.edge_curve(nE).unwrap(), self.ds.face_surface(nF).unwrap()),
                 (Curve3::Line(_), Surface3::Plane(_))
             );
             for i in 0..a_nb_cprts {
@@ -1836,7 +1836,7 @@ impl<'a> super::PaveFiller<'a> {
                                 tolerance: a_tol_vnew,
                             },
                         );
-                        self.ds.faces[nF].face_info.vertices_on.insert(new_v);
+                        self.ds.face_info_mut(nF).vertices_on.insert(new_v);
                         if nE < self.ds.edge_count() {
                             self.add_pave_to_edge(
                                 nE,
@@ -2885,7 +2885,7 @@ impl<'a> super::PaveFiller<'a> {
     }
     /// OCCT PaveFiller_5.cxx L340-480: IntersectEdgeFace
     pub(crate) fn intersect_ef(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
-        let edge_curve = self.ds.edges[edge_idx].curve.clone();
+        let edge_curve = self.ds.edge_curve(edge_idx).cloned().unwrap();
         let edge_t_range = self.ds.edge_range(edge_idx);
 
         // Use PaveBlock range to constrain intersection interval (OCCT L262: SetRange(aPBRange))
@@ -2901,7 +2901,7 @@ impl<'a> super::PaveFiller<'a> {
         if ef_range[1] - ef_range[0] <= etf {
             return;
         }
-        let face_surface = self.ds.faces[face_idx].surface.clone();
+        let face_surface = self.ds.face_surface(face_idx).cloned().unwrap();
 
         // Dispatch based on curve type  ?surface type
         let hits: Vec<(DVec3, f64)> = match (&edge_curve, &face_surface) {
@@ -3122,7 +3122,7 @@ impl<'a> super::PaveFiller<'a> {
             if (point - self.ds.vertex_point(sv)).length() <= tol
                 || (point - self.ds.vertex_point(ev)).length() <= tol
             {
-                self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
+                self.ds.face_info_mut(face_idx).vertices_on.insert(new_v);
             }
             //  Create EF interference for EVERY hit, even at edge endpoints.
             // OCCT IntTools_EdgeFace creates a new vertex for each hit (no dedup).
@@ -3140,7 +3140,7 @@ impl<'a> super::PaveFiller<'a> {
                 .vertices_on
                 .contains(&new_v)
             {
-                self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
+                self.ds.face_info_mut(face_idx).vertices_on.insert(new_v);
             }
             self.add_pave_to_edge(
                 edge_idx,

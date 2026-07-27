@@ -573,7 +573,7 @@ impl<'a> super::PaveFiller<'a> {
                     // OCCT: myContext->ComputePE projects aPMFirst onto edge aE
                     // rcad: closest_point_on_curve
                     if e_idx < self.ds.edge_count() {
-                        let curve = &self.ds.edges[e_idx].curve;
+                        let curve = self.ds.edge_curve(e_idx).unwrap();
                         use rcad_kernel::projection::closest_point_on_curve;
                         let proj = closest_point_on_curve(curve, a_pm_first, 64);
                         // OCCT L605: !iErr && (aTOut > p1 && aTOut < p2)
@@ -874,7 +874,7 @@ impl<'a> super::PaveFiller<'a> {
             let mut sv = [None, None];
             for (k, fi) in self.face_idxs_for_curve(ci).iter().enumerate() {
                 if *fi < self.ds.face_count() {
-                    sv[k] = Some(self.ds.faces[*fi].surface.clone());
+                    sv[k] = Some(self.ds.face_surface(*fi).cloned().unwrap());
                 }
             }
             sv
@@ -1670,8 +1670,8 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             // OCCT L770: compute pcurve from edge curve + face surface
-            let face_surface = self.ds.faces[fi].surface.clone();
-            let edge_curve = &self.ds.edges[ei].curve;
+            let face_surface = self.ds.face_surface(fi).cloned().unwrap();
+            let edge_curve = self.ds.edge_curve(ei).unwrap();
             if let Some((pcurve, _len)) = DS::compute_edge_pcurve(edge_curve, &face_surface, None) {
                 applied_pcurves.push((
                     ei,

@@ -1094,7 +1094,7 @@ mod tests {
     fn load_sphere_surface_type() {
         let brep = make_unit_sphere();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        match &ds.faces[0].surface {
+        match ds.face_surface(0).unwrap() {
             rcad_kernel::geom::Surface3::Sphere(_) => {}
             other => panic!("expected Sphere surface, got {:?}", other),
         }

@@ -140,7 +140,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         .map(|(fi, f)| {
             let st = format!("{:?}", f.surface);
             let fi_info = if fi < ds.face_count() {
-                &ds.faces[fi].face_info
+                ds.face_info(fi)
             } else {
                 &FaceInfo::default()
             };

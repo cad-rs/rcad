@@ -15,7 +15,7 @@ pub fn make_pcurve(
  let t_range = ds.edge_range(ei);
  let tol_e = ds.edges[ei].geom_tol;
  // Clone edge curve for projection fallback (avoids holding immutable borrow on ds.edges)
- let edge_curve = ds.edges[ei].curve.clone();
+ let edge_curve = ds.edge_curve(ei).cloned().unwrap();
 
  for i in 0..2usize {
  let b_pc = if i == 0 { b_pc1 } else { b_pc2 };
@@ -29,7 +29,7 @@ pub fn make_pcurve(
  let pc = src_pc.cloned();
  // OCCT L1692-1702: if pcurve is null, build via projection (BuildPCurveForEdgeOnFace)
  let pc = pc.or_else(|| {
-     let surf = ds.faces[fi].surface.clone();
+     let surf = ds.face_surface(fi).cloned().unwrap();
      DS::compute_edge_pcurve(&edge_curve, &surf, None)
          .map(|(pc2, _span)| pc2)
  });
@@ -121,8 +121,8 @@ pub fn attach_existing_pcurve(
 
  // OCCT L102-119: ComputeTolerance check via IntTools_Tools::ComputeTolerance(3D curve, pcurve, surface, range)
  let a_new_tol = ds.edge_tolerance(ei_new);
- let surface = &ds.faces[face_idx].surface;
- let tol_sp = estimate_pcurve_deviation(&a_c2d_t, &ds.edges[ei_new].curve, surface, t11, t12);
+ let surface = ds.face_surface(face_idx).unwrap();
+ let tol_sp = estimate_pcurve_deviation(&a_c2d_t, ds.edge_curve(ei_new).unwrap(), surface, t11, t12);
  if (tol_sp > 10.0 * a_new_tol) && tol_sp > 0.1 { return 4; }
 
  // OCCT L121-138: create temporary edge data, do SameParameter
@@ -435,7 +435,7 @@ pub fn correct_point_on_curve(
  let t_range = ds.edge_range(ei);
  let vp_sv = ds.edges[ei].vertex_params.get(&start_vi).copied();
  let vp_ev = ds.edges[ei].vertex_params.get(&end_vi).copied();
- let curve = ds.edges[ei].curve.clone();
+ let curve = ds.edge_curve(ei).cloned().unwrap();
 
  // OCCT L442-443: TopoDS_Iterator aItS(aE); for (; aItS.More(); aItS.Next())
  for &(vi, t_vi, is_forward) in &[
@@ -503,7 +503,7 @@ pub fn correct_curve_on_surface(
 ) {
  // OCCT L358-360: aExpF.Init(aS, TopAbs_FACE)
  for fi in 0..ds.face_count() {
- let face_surface = ds.faces[fi].surface.clone();
+ let face_surface = ds.face_surface(fi).cloned().unwrap();
  // OCCT L367-368: aExpE.Init(aF, TopAbs_EDGE)
  let face_edges: Vec<usize> = ds.face_boundary_edges(fi).to_vec();
  for &ei in &face_edges {

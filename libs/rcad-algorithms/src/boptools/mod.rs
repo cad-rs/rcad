@@ -1085,7 +1085,7 @@ pub fn compute_tolerance_of_cb(cb: &crate::bopds::common_block::CommonBlock, ds:
 
     // OCCT L271-278: sample reference curve
     let a_nb_pnt = 11usize;
-    let a_curve = &ds.edges[n_e].curve;
+    let a_curve = ds.edge_curve(n_e).unwrap();
     let (a_t1, a_t2) = (ds.edge_range(n_e)[0], ds.edge_range(n_e)[1]);
     let a_dt = (a_t2 - a_t1) / (a_nb_pnt + 1) as f64;
 
@@ -1096,7 +1096,7 @@ pub fn compute_tolerance_of_cb(cb: &crate::bopds::common_block::CommonBlock, ds:
         let a_pb = &ds.pave_blocks[a_pb_idx];
         let a_e_idx = a_pb.0.read().unwrap().original_edge;
         let a_tol_e = ds.edges.get(a_e_idx).map(|e| e.geom_tol).unwrap_or(0.0);
-        let a_curve_other = &ds.edges[a_e_idx].curve;
+        let a_curve_other = ds.edge_curve(a_e_idx).unwrap();
 
         let mut t = a_t1;
         for _ in 1..=a_nb_pnt {
@@ -1119,7 +1119,7 @@ pub fn compute_tolerance_of_cb(cb: &crate::bopds::common_block::CommonBlock, ds:
     // OCCT L327-353: iterate faces
     for &a_fi in cb.faces() {
         let a_tol_f = ds.faces.get(a_fi).map(|f| f.geom_tol).unwrap_or(0.0);
-        let surf = &ds.faces[a_fi].surface;
+        let surf = ds.face_surface(a_fi).unwrap();
         let mut t = a_t1;
         for _ in 1..=a_nb_pnt {
             t += a_dt;
