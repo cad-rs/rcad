@@ -121,7 +121,7 @@ impl<'a> PaveFiller<'a> {
         // ===== OCCT L1266-1308: Early return for single-entry case =====
         if a_nb_s == 1 && a_nb_me == 0 && a_nb_v_on_rpb == 0 && verts_unused.is_empty() {
             let (&key, &(cur_ind, j)) = a_mscpb.iter().next().unwrap();
-            if key < self.ds.edges.len() {
+            if key < self.ds.edge_count() {
                 // It's an edge
                 let pb_key = key;
                 let (nv1, nv2, a_t1, a_t2, has_edge) = if pb_key < self.ds.pave_blocks.len() {
@@ -134,7 +134,7 @@ impl<'a> PaveFiller<'a> {
                         r.pave2.param,
                         r.new_edge.is_some(),
                     )
-                } else if pb_key < self.ds.edges.len() {
+                } else if pb_key < self.ds.edge_count() {
                     let pb = self.ds.edges[pb_key]
                         .pave_blocks
                         .first()
@@ -180,7 +180,7 @@ impl<'a> PaveFiller<'a> {
         let mut an_added_sd: HashSet<usize> = HashSet::new();
 
         for (&key, &(cur_ind, _j)) in a_mscpb.iter() {
-            if key < self.ds.edges.len() {
+            if key < self.ds.edge_count() {
                 let ei = key;
                 // Check if PB has an edge (existing edge from source shapes)
                 if ei < self.ds.pave_blocks.len() {
@@ -199,7 +199,7 @@ impl<'a> PaveFiller<'a> {
             } else {
                 (key, usize::MAX)
             };
-            if nv1 < self.ds.vertices.len() {
+            if nv1 < self.ds.vertex_count() {
                 let vi = nv1;
                 if let Some(&sd_v) = a_dm_new_sd.get(&vi) {
                     if an_added_sd.insert(sd_v) {
@@ -207,7 +207,7 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
             }
-            if nv2 < self.ds.vertices.len() {
+            if nv2 < self.ds.vertex_count() {
                 let vi = nv2;
                 if let Some(&sd_v) = a_dm_new_sd.get(&vi) {
                     if an_added_sd.insert(sd_v) {
@@ -235,7 +235,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             // Increase tolerance to ensure fusion (OCCT: compare points, increase if needed)
-            if nv1 < self.ds.vertices.len() && nv2 < self.ds.vertices.len() {
+            if nv1 < self.ds.vertex_count() && nv2 < self.ds.vertex_count() {
                 let p1 = self.ds.vertex_point(nv1);
                 let p2 = self.ds.vertex_point(nv2);
                 let a_dist = p1.distance(p2);
@@ -280,11 +280,11 @@ impl<'a> PaveFiller<'a> {
         let mut a_pds = DS::new_empty();
         let mut a_map_nested_to_main: Vec<usize> = Vec::new();
         for &(shape_idx, st) in &a_ls {
-            if st == 0 && shape_idx < self.ds.vertices.len() {
+            if st == 0 && shape_idx < self.ds.vertex_count() {
                 let pt = self.ds.vertex_point(shape_idx);
                 let tol = self.ds.vertex_tolerance(shape_idx);
                 let nested_vi = a_pds.add_vertex(pt);
-                if nested_vi < a_pds.vertices.len() {
+                if nested_vi < a_pds.vertex_count() {
                     a_pds.vertex_data_mut(nested_vi).tolerance = tol;
                 }
                 a_map_nested_to_main.push(shape_idx);
@@ -314,7 +314,7 @@ impl<'a> PaveFiller<'a> {
         a_pf.is_primary = false;
         a_pf.non_destructive = self.non_destructive;
         a_pf.run_parallel = self.run_parallel;
-        a_pf.context.resize(a_pf.ds.faces.len());
+        a_pf.context.resize(a_pf.ds.face_count());
         a_pf.perform_body();
 
         // ===== OCCT L1398-1466: Process results from nested PaveFiller =====
@@ -388,7 +388,7 @@ impl<'a> PaveFiller<'a> {
                 }
             } else if st == 1 {
                 // ===== EDGE (OCCT L1468-1600) =====
-                if shape_idx >= self.ds.edges.len() {
+                if shape_idx >= self.ds.edge_count() {
                     continue;
                 }
                 // OCCT L1470-1474: get CPB from theMSCPB, iX, iC, aPB1
@@ -455,12 +455,12 @@ impl<'a> PaveFiller<'a> {
     /// Helper: compute VV tolerance between two vertices in a given DS (possibly nested).
     /// OCCT PerformVV: aTolSum = Tol(V1) + Tol(V2) + myFuzzyValue
     fn vv_pair_tol_ds(&self, ds: &DS, n1: usize, n2: usize) -> f64 {
-        let tol1 = if n1 < ds.vertices.len() {
+        let tol1 = if n1 < ds.vertex_count() {
             ds.vertex_tolerance(n1)
         } else {
             TOLERANCE_ABS
         };
-        let tol2 = if n2 < ds.vertices.len() {
+        let tol2 = if n2 < ds.vertex_count() {
             ds.vertex_tolerance(n2)
         } else {
             TOLERANCE_ABS
@@ -525,7 +525,7 @@ impl<'a> PaveFiller<'a> {
             if a_bnd_nv[j] != usize::MAX {
                 // OCCT L2326-2335: verify bound vertex is near the endpoint
                 let n_v = a_bnd_nv[j];
-                if n_v < self.ds.vertices.len() {
+                if n_v < self.ds.vertex_count() {
                     let v = &self.ds.vertices[n_v];
                     let i_flag =
                         crate::boptools::compute_vv_p(v, a_p[j], a_tol_r3d + TOLERANCE_ABS);
@@ -586,7 +586,7 @@ impl<'a> PaveFiller<'a> {
         a_mpb_add: &mut HashSet<usize>,
     ) {
         // L3087-3088: build Bnd_Box from theES (the new edge a_es)
-        if a_es >= self.ds.edges.len() {
+        if a_es >= self.ds.edge_count() {
             return;
         }
         // Build AABB from the edge's curve (equivalent of BRepBndLib::Add)
@@ -688,7 +688,7 @@ impl<'a> PaveFiller<'a> {
             // L3145-3163: if distance found and within tolerance
             if a_dist < f64::MAX {
                 // L3147-3148: aTolSum = aTolES + BRep_Tool::Tolerance(aEF)
-                let a_ef_tol = if pb_orig_edge < self.ds.edges.len() {
+                let a_ef_tol = if pb_orig_edge < self.ds.edge_count() {
                     self.ds.edge_tolerance(pb_orig_edge)
                 } else {
                     a_tol_es
@@ -736,7 +736,7 @@ impl<'a> PaveFiller<'a> {
             let mut shares = false;
             for refs in &se_refs {
                 for &sei in refs {
-                    if sei >= self.ds.edges.len() {
+                    if sei >= self.ds.edge_count() {
                         continue;
                     }
                     let e = &self.ds.edges[sei];

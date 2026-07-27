@@ -1,4 +1,4 @@
-﻿pub fn make_pcurve(
+pub fn make_pcurve(
  ds: &mut crate::bopds::ds::DS,
  ei: usize,
  fi_a: usize,
@@ -11,8 +11,8 @@
  pcurve_range_a: Option<[f64; 2]>,
  pcurve_range_b: Option<[f64; 2]>,
 ) {
- if ei >= ds.edges.len() { return; }
- let t_range = ds.edges[ei].t_range;
+ if ei >= ds.edge_count() { return; }
+ let t_range = ds.edge_range(ei);
  let tol_e = ds.edges[ei].geom_tol;
  // Clone edge curve for projection fallback (avoids holding immutable borrow on ds.edges)
  let edge_curve = ds.edges[ei].curve.clone();
@@ -158,10 +158,10 @@ pub fn attach_existing_pcurve(
  let a_new_tol_final = ds.edge_tolerance(ei_new);
  let sv = ds.edge_start_vertex_ds(ei_new);
  let ev = ds.edge_end_vertex_ds(ei_new);
- if sv < ds.vertices.len() {
+ if sv < ds.vertex_count() {
  ds.vertex_data_mut(sv).tolerance = ds.vertex_tolerance(sv).max(a_new_tol_final);
  }
- if ev < ds.vertices.len() {
+ if ev < ds.vertex_count() {
  ds.vertex_data_mut(ev).tolerance = ds.vertex_tolerance(ev).max(a_new_tol_final);
  }
  0
@@ -427,7 +427,7 @@ pub fn correct_point_on_curve(
 ) {
  // OCCT L331-339: iterate TopAbs_EDGE sub-shapes, for each create CPC and Perform
  // CPC::Perform calls CheckEdge(myEdge, myMaxTol, *mypMapToAvoid)
- for ei in 0..ds.edges.len() {
+ for ei in 0..ds.edge_count() {
  // OCCT L434-436: aE.Orientation(FORWARD); aTolE = BRep_Tool::Tolerance(aE)
  let a_tol_e = ds.edge_tolerance(ei);
  let start_vi = ds.edge_start_vertex_ds(ei);
@@ -442,7 +442,7 @@ pub fn correct_point_on_curve(
  (start_vi, vp_sv, true),
  (end_vi, vp_ev, false),
  ] {
- if vi >= ds.vertices.len() { continue; }
+ if vi >= ds.vertex_count() { continue; }
  // If vertex is in map_to_avoid, skip (OCCT UpdateShape checks aMapToAvoid)
  if map_to_avoid.contains(&vi) { continue; }
 
@@ -462,7 +462,7 @@ pub fn correct_point_on_curve(
  // OCCT L475-482: if aD2 > aTol, new = sqrt(d2)+dd, UpdateShape if < aMaxTol
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
- if new_tol < max_tol && vi < ds.vertices.len() {
+ if new_tol < max_tol && vi < ds.vertex_count() {
  ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
@@ -475,7 +475,7 @@ pub fn correct_point_on_curve(
  let d2 = (v_pt - p_end).length_squared();
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
- if new_tol < max_tol && vi < ds.vertices.len() {
+ if new_tol < max_tol && vi < ds.vertex_count() {
  ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
@@ -485,7 +485,7 @@ pub fn correct_point_on_curve(
  let d2 = (v_pt - p_end).length_squared();
  if d2 > a_tol {
  let new_tol = d2.sqrt() + dd;
- if new_tol < max_tol && vi < ds.vertices.len() {
+ if new_tol < max_tol && vi < ds.vertex_count() {
  ds.vertex_data_mut(vi).tolerance = ds.vertex_tolerance(vi).max(new_tol);
  }
  }
@@ -502,12 +502,12 @@ pub fn correct_curve_on_surface(
  max_tol: f64,
 ) {
  // OCCT L358-360: aExpF.Init(aS, TopAbs_FACE)
- for fi in 0..ds.faces.len() {
+ for fi in 0..ds.face_count() {
  let face_surface = ds.faces[fi].surface.clone();
  // OCCT L367-368: aExpE.Init(aF, TopAbs_EDGE)
  let face_edges: Vec<usize> = ds.face_boundary_edges(fi).to_vec();
  for &ei in &face_edges {
- if ei >= ds.edges.len() { continue; }
+ if ei >= ds.edge_count() { continue; }
  if map_to_avoid.contains(&ei) { continue; }
  let edge = &ds.edges[ei];
  let edge_clone = edge.clone();
@@ -552,21 +552,21 @@ pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> (i
  let mut d_min = 3i32;
  let mut d_max = 0i32;
  for &fi in solid_face_indices {
- if fi >= ds.faces.len() { continue; }
+ if fi >= ds.face_count() { continue; }
  // FACE has dimension 2
  d_min = d_min.min(2);
  d_max = d_max.max(2);
- for &ei in &ds.faces[fi].boundary_edges {
+ for &ei in ds.face_boundary_edges(fi) {
  // EDGE has dimension 1
  d_min = d_min.min(1);
  d_max = d_max.max(1);
- if ei < ds.edges.len() {
+ if ei < ds.edge_count() {
  let e = &ds.edges[ei];
- if e.start_vertex < ds.vertices.len() {
+ if e.start_vertex < ds.vertex_count() {
  d_min = d_min.min(0);
  d_max = d_max.max(0);
  }
- if e.end_vertex < ds.vertices.len() {
+ if e.end_vertex < ds.vertex_count() {
  d_min = d_min.min(0);
  }
  }
@@ -590,11 +590,11 @@ pub fn do_split_seam_on_face(
  face_idx: usize,
  ds: &crate::bopds::ds::DS,
 ) -> bool {
- if ei >= ds.edges.len() || face_idx >= ds.faces.len() { return false; }
+ if ei >= ds.edge_count() || face_idx >= ds.face_count() { return false; }
  let edge = &ds.edges[ei];
  let face = &ds.faces[face_idx];
- let uv_s = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertices[edge.start_vertex].point);
- let uv_e = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertices[edge.end_vertex].point);
+ let uv_s = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertex_point(edge.start_vertex));
+ let uv_e = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertex_point(edge.end_vertex));
  let (Some(uva), Some(uvb)) = (uv_s, uv_e) else { return false };
  let seam_tol = TOLERANCE_MESH_LEGACY;
  let on_seam = |u: f64| u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol;
@@ -730,7 +730,7 @@ pub fn is_internal_face_against_solid(
  // OCCT L851-861: single neighbor face  ?check if edge is INTERNAL in that face
  let a_f1 = a_lf[0];
  // Use GetEdgeOnFace to find edge orientation in that face
- let e_on_f1 = if a_f1 < ds.faces.len() {
+ let e_on_f1 = if a_f1 < ds.face_count() {
  crate::boptools::get_edge_off(ei, &ds.edges, &ds.faces[a_f1])
  } else { None };
  if let Some(ei_f1) = e_on_f1 {
@@ -779,7 +779,7 @@ pub fn is_internal_face_core(
  ds: &crate::bopds::ds::DS,
 ) -> i32 {
  // OCCT L945-966: get edge copies for both faces with proper orientation
- let a_e1_on_f1 = if the_face1 < ds.faces.len() {
+ let a_e1_on_f1 = if the_face1 < ds.face_count() {
  crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face1])
  } else { None };
  if a_e1_on_f1.is_none() { return 0; }
@@ -794,7 +794,7 @@ pub fn is_internal_face_core(
  let a_e2 = if the_face1 == the_face2 {
  // OCCT L958-962: same face  ?both orientations
  a_e1
- } else if the_face2 < ds.faces.len() {
+ } else if the_face2 < ds.face_count() {
  crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face2])
  .unwrap_or(a_e1)
  } else { a_e1 };
@@ -948,7 +948,7 @@ pub fn point_in_face(
  if face.boundary_verts.is_empty() { return None; }
  let mut sum = glam::DVec3::ZERO;
  for &vi in &face.boundary_verts {
- if vi < ds.vertices.len() {
+ if vi < ds.vertex_count() {
  sum += ds.vertex_point(vi);
  }
  }
@@ -977,7 +977,7 @@ pub fn compute_state_face_against_solid(
  let face = &ds.faces[fi];
  let solid_edge_set: std::collections::HashSet<usize> = solid_face_indices.iter()
  .flat_map(|&sfi| {
- if sfi < ds.faces.len() {
+ if sfi < ds.face_count() {
  ds.face_boundary_edges(sfi).to_vec()
  } else { Vec::new() }
  })

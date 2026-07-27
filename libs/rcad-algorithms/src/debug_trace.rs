@@ -107,9 +107,9 @@ pub fn dump_ds(ds: &crate::bopds::ds::DS, label: &str) {
     eprintln!(
         "[TRACE] {}: vertices={} edges={} faces={} intersect_curves={} interferences={}",
         label,
-        ds.vertices.len(),
-        ds.edges.len(),
-        ds.faces.len(),
+        ds.vertex_count(),
+        ds.edge_count(),
+        ds.face_count(),
         ds.intersection_curves.len(),
         n_interf
     );

@@ -157,7 +157,7 @@ impl<'a> BuilderFace<'a> {
 
         // Store results in myAreas (OCCT PerformAreas returns TopoDS_Face list;
         // rcad emits to T BRep and stores ShapeRefs)
-        let e_base = self.ds.vertices.len();
+        let e_base = self.ds.vertex_count();
         let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments
             .iter()
             .filter_map(|seg| match &seg.source {
@@ -173,9 +173,9 @@ impl<'a> BuilderFace<'a> {
             })
             .collect();
         let origin = if self.is_a {
-            FaceOrigin::FromA(self.ds.faces[self.face_idx].source_face_idx)
+            FaceOrigin::FromA(self.ds.source_face_idx(self.face_idx))
         } else {
-            FaceOrigin::FromB(self.ds.faces[self.face_idx].source_face_idx)
+            FaceOrigin::FromB(self.ds.source_face_idx(self.face_idx))
         };
         let ic_curves: HashMap<usize, Curve3> = self
             .ds
@@ -196,7 +196,7 @@ impl<'a> BuilderFace<'a> {
                 origin,
                 &HashMap::new(),
                 self.face_refs[self.face_idx],
-                self.ds.faces[self.face_idx].natural_restriction,
+                self.ds.face_natural_restriction(self.face_idx),
                 &ds_ei_to_sr,
                 &sr_index_to_ds_ei,
                 self.ds,
@@ -226,29 +226,29 @@ impl<'a> BuilderFace<'a> {
     /// segment-based wire walking (WireSegmentTopoDS). INTERNAL edges get forward+reverse
     /// copies matching OCCT L371-378.
     fn shapes_to_segments(&self, shapes: &[ShapeRef]) -> Vec<WireSegment> {
-        let e_base = self.ds.vertices.len();
+        let e_base = self.ds.vertex_count();
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
 
         for &sr in shapes {
             let ei = sr.index.saturating_sub(e_base);
-            if ei >= self.ds.edges.len() {
+            if ei >= self.ds.edge_count() {
                 continue;
             }
-            let edge = &self.ds.edges[ei];
+            let sv_ds = self.ds.edge_start_vertex_ds(ei);
+            let ev_ds = self.ds.edge_end_vertex_ds(ei);
 
             let (sv, ev) = match sr.orientation {
-                Orientation::Forward | Orientation::Internal => {
-                    (edge.start_vertex, edge.end_vertex)
-                }
-                Orientation::Reversed => (edge.end_vertex, edge.start_vertex),
-                _ => (edge.start_vertex, edge.end_vertex),
+                Orientation::Forward | Orientation::Internal => (sv_ds, ev_ds),
+                Orientation::Reversed => (ev_ds, sv_ds),
+                _ => (sv_ds, ev_ds),
             };
             if sv == ev {
                 continue;
             }
 
             let rep = self.ds.edge_on_face(ei, self.face_idx);
-            let is_closed = self.ds.edges[ei].start_vertex == self.ds.edge_end_vertex_ds(ei);
+            let edge_range = self.ds.edge_range(ei);
+            let is_closed = sv_ds == ev_ds;
 
             segments.push(WireSegment {
                 start_vertex: sv,
@@ -258,7 +258,7 @@ impl<'a> BuilderFace<'a> {
                 is_closed_on_face: is_closed,
                 second_pcurve: None,
                 first_pcurve: rep.map(|r| r.pcurve.clone()),
-                t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge_range),
             });
 
             // OCCT L371-378: INTERNAL edges also need REVERSED copy.
@@ -271,7 +271,7 @@ impl<'a> BuilderFace<'a> {
                     is_closed_on_face: is_closed,
                     second_pcurve: None,
                     first_pcurve: None,
-                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge_range),
                 });
             }
         }

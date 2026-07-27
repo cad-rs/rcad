@@ -57,7 +57,7 @@ impl<'a> BooleanBuilder<'a> {
     /// Also handles CommonBlocks via myShapesSD.
     pub(super) fn fill_images_edges(&self) {
         let a_nb_s = self.ds.nb_source_shapes();
-        let a_nv = self.ds.vertices.len();
+        let a_nv = self.ds.vertex_count();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info_at(i);
             if a_si.shape_type != rcad_kernel::topods::ShapeType::Edge {
@@ -106,8 +106,8 @@ impl<'a> BooleanBuilder<'a> {
 
     /// ✅ OCCT-aligned: FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_wire(&self, _result: &ResultBuilder) {
-        let e_base = self.ds.vertices.len();
-        let w_base = e_base + self.ds.edges.len();
+        let e_base = self.ds.vertex_count();
+        let w_base = e_base + self.ds.edge_count();
         let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
         let my_images = self.my_images.borrow();
         // OCCT FillImagesContainers(WIRE): iterate NbSourceShapes, filter WIRE
@@ -190,8 +190,8 @@ impl<'a> BooleanBuilder<'a> {
     /// Enables BuildSplitFaces to iterate face->wire->edge from the T BRep (1:1 with OCCT).
     fn populate_source_shapes_in_t_brep(&self, t: &mut topods::BRep) {
         use topods::ShapeRef;
-        let nV = self.ds.vertices.len();
-        let nE = self.ds.edges.len();
+        let nV = self.ds.vertex_count();
+        let nE = self.ds.edge_count();
         let nW = self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         let f_base = nV + nE + nW;
 
@@ -219,7 +219,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // 4. Source face TShapes at flat indices f_base + side_offset + sf_idx
-        for fi in 0..self.ds.faces.len() {
+        for fi in 0..self.ds.face_count() {
             let df = &self.ds.faces[fi];
             let is_a = self.ds.face_origin(fi) == ShapeOrigin::ShapeA;
             let sf_idx = self.ds.source_face_idx(fi);
@@ -243,12 +243,12 @@ impl<'a> BooleanBuilder<'a> {
                 })
                 .collect();
             // Use face outer_wire_idx (populated during DS loading), else fi as wire index
-            let wire_idx = self.ds.faces[fi].outer_wire_idx.unwrap_or(nW + fi);
+            let wire_idx = self.ds.face_outer_wire_idx(fi).unwrap_or(nW + fi);
             // Place the wire TShape at a unique index beyond existing wires
             let outer_wire_sr = t.ensure_wire_at(nV + nE + wire_idx, outer_edge_refs);
 
             // Inner wires
-            let inner_wire_refs: Vec<ShapeRef> = self.ds.faces[fi].inner_wire_idxs
+            let inner_wire_refs: Vec<ShapeRef> = self.ds.face_inner_wire_idxs(fi)
                     .iter()
                     .map(|&w_si| {
                         // w_si is the flat shape index of the wire (OCCT-aligned)
@@ -309,17 +309,17 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: adjust V/E tolerances from DS geometric tolerances, clamped to 0.05.
         {
             let t = self.my_shape.borrow();
-            let e_base = self.ds.vertices.len();
+            let e_base = self.ds.vertex_count();
             let mut updates: Vec<(usize, f64, rcad_kernel::topods::ShapeType)> = Vec::new();
             for (ti, ts) in t.tshapes.iter().enumerate() {
                 if let rcad_kernel::topods::TShape::Edge(_ed) = &**ts {
                     let ei = ti.saturating_sub(e_base);
-                    if ei < self.ds.edges.len() {
+                    if ei < self.ds.edge_count() {
                         let tol = self.ds.edge_tolerance(ei).max(0.05);
                         updates.push((ti, tol, rcad_kernel::topods::ShapeType::Edge));
                     }
                 } else if let rcad_kernel::topods::TShape::Vertex(_vd) = &**ts {
-                    if ti < self.ds.vertices.len() {
+                    if ti < self.ds.vertex_count() {
                         let tol = self.ds.vertex_tolerance(ti).max(0.05);
                         updates.push((ti, tol, rcad_kernel::topods::ShapeType::Vertex));
                     }
@@ -455,11 +455,11 @@ impl<'a> BooleanBuilder<'a> {
         let (_brep_owned_from_pf, _face_refs_from_pf, ic_edge_map_owned) = brep_snapshot;
         // PaveFiller BRep is empty (no tshapes). Use the T BRep (self.my_shape, borrowed as t).
         // face_refs_from_pf is always empty too. Build face_refs from the T BRep's face indices.
-        let n_ds_faces = self.ds.faces.len();
+        let n_ds_faces = self.ds.face_count();
         let mut face_refs_owned: Vec<topods::ShapeRef> = Vec::with_capacity(n_ds_faces);
         let t_brep: &topods::BRep = &*t;
         {
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+            let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
             for fi in 0..n_ds_faces {
                 let is_a = self
                     .ds
@@ -496,10 +496,10 @@ impl<'a> BooleanBuilder<'a> {
             }
             let fi = face_counter;
             face_counter += 1;
-            if fi >= self.ds.faces.len() {
+            if fi >= self.ds.face_count() {
                 continue;
             }
-            let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
+            let is_a = self.ds.face_origin(fi) == ShapeOrigin::ShapeA;
 
             let has_pb_in = !self.ds.face_info(fi).pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.face_info(fi).pave_blocks_sc.is_empty();
@@ -536,7 +536,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             let sf_idx = self.ds.source_face_idx(fi);
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+            let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
 
@@ -613,7 +613,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             let face_sr = {
-                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+                let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                 let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
                 let sf_idx = self.ds.source_face_idx(fi);
                 self.brep_sr(f_base + side_offset + sf_idx)
@@ -632,7 +632,7 @@ impl<'a> BooleanBuilder<'a> {
                 s if s.is_v_closed() => (false, true),
                 _ => (false, false),
             };
-            let e_base = self.ds.vertices.len();
+            let e_base = self.ds.vertex_count();
             {
                 // OCCT L362-363: aExp.Init(aFF, TopAbs_EDGE).
                 // rcad: iterate edges via T BRep Face TShape wire->edge (now populated
@@ -696,9 +696,9 @@ impl<'a> BooleanBuilder<'a> {
 
                                     let ei = e_sr.index.saturating_sub(e_base);
                                     let b_is_degenerated =
-                                        ei < self.ds.edges.len() && self.ds.is_edge_degenerated(ei);
+                                        ei < self.ds.edge_count() && self.ds.is_edge_degenerated(ei);
                                     let b_is_closed = {
-                                        if b_is_degenerated || ei >= self.ds.edges.len() {
+                                        if b_is_degenerated || ei >= self.ds.edge_count() {
                                             false
                                         } else if (is_u_closed || is_v_closed)
                                             && self
@@ -738,7 +738,7 @@ impl<'a> BooleanBuilder<'a> {
                                             if b_is_closed {
                                                 if a_m_fence_local.insert(a_sp.ptr_id) {
                                                     let sp_ei = a_sp.index.saturating_sub(e_base);
-                                                    if sp_ei < self.ds.edges.len() {
+                                                    if sp_ei < self.ds.edge_count() {
                                                         let sp_is_closed = self
                                                             .ds
                                                             .edge_on_face(sp_ei, fi)
@@ -762,8 +762,8 @@ impl<'a> BooleanBuilder<'a> {
 
                                             a_sp.orientation = an_ori_e;
                                             let sp_ei = a_sp.index.saturating_sub(e_base);
-                                            if ei < self.ds.edges.len()
-                                                && sp_ei < self.ds.edges.len()
+                                            if ei < self.ds.edge_count()
+                                                && sp_ei < self.ds.edge_count()
                                             {
                                                 let needs_rev = crate::bopalgo::builder::edge_builders::is_split_to_reverse(
                                                     self.ds, sp_ei, ei);
@@ -796,7 +796,7 @@ impl<'a> BooleanBuilder<'a> {
                         .unwrap()
                         .new_edge
                         .unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
-                    let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                    let e_sr = self.brep_sr(self.ds.vertex_count() + pb_ei);
                     a_le.push(e_sr);
                     a_le.push(topods::ShapeRef {
                         index: e_sr.index,
@@ -813,7 +813,7 @@ impl<'a> BooleanBuilder<'a> {
                         .unwrap()
                         .new_edge
                         .unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
-                    let e_sr = self.brep_sr(self.ds.vertices.len() + pb_ei);
+                    let e_sr = self.brep_sr(self.ds.vertex_count() + pb_ei);
                     // OCCT L469-494: section edges are added with FORWARD + REVERSED orientation.
                     a_le.push(topods::ShapeRef {
                         index: e_sr.index,
@@ -839,7 +839,7 @@ impl<'a> BooleanBuilder<'a> {
                             continue;
                         }
                         let ei = e_sr.index.saturating_sub(e_base);
-                        if ei >= self.ds.edges.len() {
+                        if ei >= self.ds.edge_count() {
                             continue;
                         }
                         // Skip edges that already have a pcurve for this face.
@@ -932,7 +932,7 @@ impl<'a> BooleanBuilder<'a> {
         // Add their T BRep ShapeRefs to my_face_refs at position [fi] so build_result
         // can find them (build_result reads my_face_refs[fi] at result_build_mod.rs L865).
         for (fi, f_sr) in face_refs_owned.iter().enumerate() {
-            if fi >= self.ds.faces.len() {
+            if fi >= self.ds.face_count() {
                 continue;
             }
             if !a_faces_im.contains_key(f_sr) {
@@ -995,7 +995,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L963-979: classify each alone vertex against each split face.
             for &vi in &alone {
-                if vi >= self.ds.vertices.len() {
+                if vi >= self.ds.vertex_count() {
                     continue;
                 }
                 let v_pt = self.ds.vertex_point(vi);
@@ -1018,7 +1018,7 @@ impl<'a> BooleanBuilder<'a> {
                     let Some(cfi) = ds_fi_for_classify else {
                         continue;
                     };
-                    if cfi >= self.ds.faces.len() {
+                    if cfi >= self.ds.face_count() {
                         continue;
                     }
 
@@ -1280,17 +1280,17 @@ impl<'a> BooleanBuilder<'a> {
         let face_tol_with_edges = |dsfi: usize| -> f64 {
             let mut a_tol = self.ds.face_tolerance(dsfi);
             let mut a_tol_e_max = -1.0_f64;
-            for &ei in &self.ds.faces[dsfi].boundary_edges {
-                if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
+            for &ei in self.ds.face_boundary_edges(dsfi) {
+                if ei < self.ds.edge_count() && !result.deg_edge_indices.contains(&ei) {
                     let e_tol = self.ds.edge_tolerance(ei);
                     if e_tol > a_tol_e_max {
                         a_tol_e_max = e_tol;
                     }
                 }
             }
-            for inner in &self.ds.faces[dsfi].inner_boundary_edges {
+            for inner in self.ds.face_inner_boundary(dsfi) {
                 for &(ei, _) in inner {
-                    if ei < self.ds.edges.len() && !result.deg_edge_indices.contains(&ei) {
+                    if ei < self.ds.edge_count() && !result.deg_edge_indices.contains(&ei) {
                         let e_tol = self.ds.edge_tolerance(ei);
                         if e_tol > a_tol_e_max {
                             a_tol_e_max = e_tol;
@@ -1481,7 +1481,7 @@ impl<'a> BooleanBuilder<'a> {
     ) {
         let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
         // Pre-build DS face → result face ShapeRef map for fast lookup
-        let mut ds_face_to_ref: Vec<Option<topods::ShapeRef>> = vec![None; self.ds.faces.len()];
+        let mut ds_face_to_ref: Vec<Option<topods::ShapeRef>> = vec![None; self.ds.face_count()];
         for (rfi, fo) in result.face_origins.iter().enumerate() {
             let (origin, sfi) = match fo {
                 FaceOrigin::FromA(s) => (ShapeOrigin::ShapeA, *s),
@@ -1542,7 +1542,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     // No splits → use original face
                     let dsfi = flat_fi.saturating_sub(
-                        self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count(),
+                        self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count(),
                     );
                     if dsfi < ds_face_to_ref.len() {
                         if let Some(sr) = ds_face_to_ref[dsfi] {
@@ -1645,7 +1645,7 @@ impl<'a> BooleanBuilder<'a> {
             let csi = si.source_idx;
             for (_shi, ds_shell) in self.ds.collect_source_shells().iter() {
                 for &dsfi in ds_shell {
-                    if dsfi >= self.ds.faces.len() {
+                    if dsfi >= self.ds.face_count() {
                         continue;
                     }
                     if self.ds.source_compsolid_idx(dsfi) != Some(csi) {
@@ -1736,7 +1736,7 @@ impl<'a> BooleanBuilder<'a> {
         };
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
         let mut the_lif: Vec<usize> = Vec::new();
-        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+        let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         let side_offset = if side == 0 {
             0usize
         } else {
@@ -1850,7 +1850,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT BOPAlgo_Builder_3.cxx L97-150: for each source FACE,
         // if myImages bound -> add each split image individually (each has own sample point).
         // rcad 1:1: split images get individual entries with their own sample point.
-        let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+        let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
         // FaceEntry: one per source face or per split image.
         struct FaceEntry {
             dsfi: usize,
@@ -1862,7 +1862,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_m_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
         let imgs = self.my_images.borrow();
-        for dsfi in 0..self.ds.faces.len() {
+        for dsfi in 0..self.ds.face_count() {
             let df = &self.ds.faces[dsfi];
             let src_flat = f_base
                 + (if df.origin == ShapeOrigin::ShapeA {
@@ -1955,9 +1955,9 @@ impl<'a> BooleanBuilder<'a> {
                 let mut aabb = Aabb::empty();
                 for sh in shells {
                     for &dfi in sh {
-                        if dfi < self.ds.faces.len() {
-                            for &vi in &self.ds.faces[dfi].boundary_verts {
-                                if vi < self.ds.vertices.len() {
+                        if dfi < self.ds.face_count() {
+                            for &vi in self.ds.face_boundary_verts(dfi) {
+                                if vi < self.ds.vertex_count() {
                                     aabb.expand_point(self.ds.vertex_point(vi));
                                 }
                             }
@@ -2018,7 +2018,7 @@ impl<'a> BooleanBuilder<'a> {
             if n_in == 0 {
                 let mut has_image = false;
                 if let Some((_shi, ds_shell)) = self.ds.collect_source_shells().get(si) {
-                    let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+                    let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                     let origin_side = if side == 0 {
                         ShapeOrigin::ShapeA
                     } else {
@@ -2057,8 +2057,8 @@ impl<'a> BooleanBuilder<'a> {
                 for &fi in &in_faces {
                     // OCCT: skip faces from the same solid (classifier returns IN for
                     // surface points due to numerical precision).
-                    if fi < self.ds.faces.len() {
-                        let fo = &self.ds.faces[fi].origin;
+                    if fi < self.ds.face_count() {
+                        let fo = &self.ds.face_origin(fi);
                         if (side == 0 && *fo == ShapeOrigin::ShapeA)
                             || (side == 1 && *fo == ShapeOrigin::ShapeB)
                         {
@@ -2141,17 +2141,17 @@ impl<'a> BooleanBuilder<'a> {
 
                 // OCCT L451-461: non-interfered solid → build from source DS faces.
                 let mut sf: Vec<topods::ShapeRef> = Vec::new();
-                let e_base = self.ds.vertices.len();
+                let e_base = self.ds.vertex_count();
                 for &dsfi in ds_shell {
                     if let Some(df) = self.ds.faces.get(dsfi) {
                         let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
                         for &ei in &df.boundary_edges {
-                            if ei >= self.ds.edges.len() {
+                            if ei >= self.ds.edge_count() {
                                 continue;
                             }
                             let e = &self.ds.edges[ei];
-                            let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
-                            let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
+                            let sv_sr = t.add_tvertex(self.ds.vertex_point(e.start_vertex));
+                            let ev_sr = t.add_tvertex(self.ds.vertex_point(e.end_vertex));
                             let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
                             outer_edges.push(e_sr);
                         }
@@ -2204,8 +2204,8 @@ impl<'a> BooleanBuilder<'a> {
                 ShapeOrigin::ShapeB
             };
             let in_side = in_split.get(&dsi);
-            let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
-            let e_base = self.ds.vertices.len();
+            let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+            let e_base = self.ds.vertex_count();
 
             // Collect T BRep face refs: OUTSIDE split images + unsplit faces.
             let mut sf: Vec<topods::ShapeRef> = Vec::new();
@@ -2242,12 +2242,12 @@ impl<'a> BooleanBuilder<'a> {
                         // No split images: create T BRep face from DS data.
                         let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
                         for &ei in &df.boundary_edges {
-                            if ei >= self.ds.edges.len() {
+                            if ei >= self.ds.edge_count() {
                                 continue;
                             }
                             let e = &self.ds.edges[ei];
-                            let sv_sr = t.add_tvertex(self.ds.vertices[e.start_vertex].point);
-                            let ev_sr = t.add_tvertex(self.ds.vertices[e.end_vertex].point);
+                            let sv_sr = t.add_tvertex(self.ds.vertex_point(e.start_vertex));
+                            let ev_sr = t.add_tvertex(self.ds.vertex_point(e.end_vertex));
                             let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
                             outer_edges.push(e_sr);
                         }

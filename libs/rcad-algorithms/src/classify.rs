@@ -476,7 +476,7 @@ impl ClassifyContext {
         // Filter out invalid face indices to prevent cascading panics downstream.
         let valid: Vec<usize> = solid_face_indices
             .iter()
-            .filter(|&&fi| fi < self.ds.faces.len())
+            .filter(|&&fi| fi < self.ds.face_count())
             .copied()
             .collect();
         if valid.is_empty() {
@@ -657,7 +657,7 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     // unexpected face splits; skip to avoid cascading panics downstream).
     let valid: Vec<usize> = solid_face_indices
         .iter()
-        .filter(|&&fi| fi < ds.faces.len())
+        .filter(|&&fi| fi < ds.face_count())
         .copied()
         .collect();
     if valid.is_empty() {
@@ -710,16 +710,16 @@ fn classify_point_internal(
     let mut edge_aabbs: Vec<(usize, Aabb)> = Vec::new();
     let mut seen_edges = std::collections::HashSet::new();
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() {
+        if fi >= ds.face_count() {
             continue;
         }
-        for &ei in &ds.faces[fi].boundary_edges {
+        for &ei in ds.face_boundary_edges(fi) {
             if !seen_edges.insert(ei) {
                 continue;
             }
             if let Some(edge) = ds.edges.get(ei) {
-                let sv = ds.vertices[edge.start_vertex].point;
-                let ev = ds.vertices[edge.end_vertex].point;
+                let sv = ds.vertex_point(edge.start_vertex);
+                let ev = ds.vertex_point(edge.end_vertex);
                 let aabb = Aabb::from_points(&[sv, ev]);
                 edge_aabbs.push((ei, aabb));
             }
@@ -737,8 +737,8 @@ fn classify_point_internal(
     };
     for &ei in &edge_tree.query_aabb(&query_aabb) {
         if let Some(edge) = ds.edges.get(ei) {
-            let sv = ds.vertices[edge.start_vertex].point;
-            let ev = ds.vertices[edge.end_vertex].point;
+            let sv = ds.vertex_point(edge.start_vertex);
+            let ev = ds.vertex_point(edge.end_vertex);
             let seg = ev - sv;
             let seg_len_sq = seg.length_squared();
             if seg_len_sq < TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN {
@@ -755,10 +755,10 @@ fn classify_point_internal(
         }
     }
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() {
+        if fi >= ds.face_count() {
             continue;
         }
-        for &vi in &ds.faces[fi].boundary_verts {
+        for &vi in ds.face_boundary_verts(fi) {
             if let Some(v) = ds.vertices.get(vi) {
                 if point.distance_squared(v.point) < edge_tol * edge_tol {
                     return Classification::On;
@@ -770,10 +770,10 @@ fn classify_point_internal(
     // OCCT L232-234: mapEF - edge->face adjacency
     let mut map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() {
+        if fi >= ds.face_count() {
             continue;
         }
-        for &ei in &ds.faces[fi].boundary_edges {
+        for &ei in ds.face_boundary_edges(fi) {
             map_ef.entry(ei).or_default().push(fi);
         }
     }
@@ -865,7 +865,7 @@ fn classify_point_internal(
         // OCCT L314-316: collect vertex hits
         let mut lv_ints: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &fi in solid_face_indices {
-            for &vi in &ds.faces[fi].boundary_verts {
+            for &vi in ds.face_boundary_verts(fi) {
                 if let Some(v) = ds.vertices.get(vi) {
                     let to_ray = (v.point - point).cross(rd.dir).length();
                     if to_ray < edge_tol * 50.0 {
@@ -881,8 +881,8 @@ fn classify_point_internal(
         // OCCT L328-360: edge hits -> GetTransi
         for &ei in &edge_tree.query_aabb(&line_aabb) {
             if let Some(edge) = ds.edges.get(ei) {
-                let sv = ds.vertices[edge.start_vertex].point;
-                let ev = ds.vertices[edge.end_vertex].point;
+                let sv = ds.vertex_point(edge.start_vertex);
+                let ev = ds.vertex_point(edge.end_vertex);
                 let to_ray = (sv - point).cross(rd.dir).length();
                 if to_ray > edge_tol * 10.0 {
                     continue;

@@ -154,14 +154,14 @@ impl<'a> super::PaveFiller<'a> {
                     // OCCT L419-425: for (TopoDS_Iterator aItW1(aF1); !anIsFound && aItW1.More(); aItW1.Next())
                     //               for (aItE1(aItW1.Value()); !anIsFound && aItE1.More(); aItE1.Next())
                     // rcad: iterate boundary_edges of face
-                    for &e1 in &self.ds.faces[n_f1].boundary_edges {
+                    for &e1 in self.ds.face_boundary_edges(n_f1) {
                         if an_is_found {
                             break;
                         }
                         let is_closed1 = self.is_seam_edge(e1, n_f1);
                         // OCCT L426-431: for (aItW2(aF2); !anIsFound && aItW2.More(); aItW2.Next())
                         //               for (aItE2(aItW2.Value()); !anIsFound && aItE2.More(); aItE2.Next())
-                        for &e2 in &self.ds.faces[n_f2].boundary_edges {
+                        for &e2 in self.ds.face_boundary_edges(n_f2) {
                             if an_is_found {
                                 break;
                             }
@@ -182,7 +182,7 @@ impl<'a> super::PaveFiller<'a> {
                                 if an_is_found {
                                     break;
                                 }
-                                let vertex_point = self.ds.vertices[vi].point;
+                                let vertex_point = self.ds.vertex_point(vi);
 
                                 // OCCT L457-468: ProjectPointOnCurve on both edges
                                 let curve1 = &self.ds.edges[e1].curve;
@@ -353,7 +353,7 @@ impl<'a> super::PaveFiller<'a> {
                 let a_max_vertex_tol = self.ds.faces[k_n_f1]
                     .boundary_verts
                     .iter()
-                    .chain(self.ds.faces[k_n_f2].boundary_verts.iter())
+                    .chain(self.ds.face_boundary_verts(k_n_f2).iter())
                     .map(|&vi| self.ds.vertex_tolerance(vi))
                     .fold(0.0, f64::max);
                 a_box_expand_value += a_max_vertex_tol;
@@ -453,7 +453,7 @@ impl<'a> super::PaveFiller<'a> {
         } else {
             let a_fcount = self.ds.a_face_count;
             let mut result = Vec::new();
-            let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+            let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
             while fit.more() {
                 let pk = fit.value();
                 result.push((pk.i1, pk.i2));
@@ -568,10 +568,10 @@ impl<'a> super::PaveFiller<'a> {
             // Translate vertex positions back
             let sv = ic.start_vertex;
             let ev = ic.end_vertex;
-            if sv < self.ds.vertices.len() {
+            if sv < self.ds.vertex_count() {
                 self.ds.vertex_data_mut(sv).point += inv_vec;
             }
-            if ev < self.ds.vertices.len() {
+            if ev < self.ds.vertex_count() {
                 self.ds.vertex_data_mut(ev).point += inv_vec;
             }
         }
@@ -907,7 +907,7 @@ impl<'a> super::PaveFiller<'a> {
                 let t1 = self.ds.intersection_curves[ci].t_range[1];
                 let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
                 let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
-                let v_start = self.ds.vertices.len();
+                let v_start = self.ds.vertex_count();
                 self.ds.push_vertex(
                     DSVertex { shape_idx: 0,
                         point: p_start,
@@ -918,7 +918,7 @@ impl<'a> super::PaveFiller<'a> {
                     },
                     None,
                 );
-                let v_end = self.ds.vertices.len();
+                let v_end = self.ds.vertex_count();
                 self.ds.push_vertex(
                     DSVertex { shape_idx: 0,
                         point: p_end,
@@ -949,11 +949,11 @@ impl<'a> super::PaveFiller<'a> {
                 let ic = &self.ds.intersection_curves[ci];
                 let sv = ic.start_vertex;
                 let ev = ic.end_vertex;
-                if sv < self.ds.vertices.len() {
+                if sv < self.ds.vertex_count() {
                     self.ds.face_info_mut(f1).vertices_in.insert(sv);
                     self.ds.face_info_mut(f2).vertices_in.insert(sv);
                 }
-                if ev < self.ds.vertices.len() {
+                if ev < self.ds.vertex_count() {
                     self.ds.face_info_mut(f1).vertices_in.insert(ev);
                     self.ds.face_info_mut(f2).vertices_in.insert(ev);
                 }
@@ -1903,7 +1903,7 @@ impl<'a> super::PaveFiller<'a> {
         curve: &rcad_kernel::geom::Curve3,
         fi: usize,
     ) -> Option<rcad_kernel::geom::Curve2d> {
-        if fi >= self.ds.faces.len() {
+        if fi >= self.ds.face_count() {
             return None;
         }
         let surf = &self.ds.faces[fi].surface;

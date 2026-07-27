@@ -400,8 +400,12 @@ impl EdgeEdgeIntersector {
         self.edge2 = ei2;
         self.edge_tol1 = ds.edge_tolerance(ei1);
         self.edge_tol2 = ds.edge_tolerance(ei2);
-        self.curve1 = ds.edges[ei1].curve.clone();
-        self.curve2 = ds.edges[ei2].curve.clone();
+        self.curve1 = ds.edge_curve(ei1).cloned().unwrap_or_else(|| {
+            panic!("edge_edge: edge {} has no curve", ei1)
+        });
+        self.curve2 = ds.edge_curve(ei2).cloned().unwrap_or_else(|| {
+            panic!("edge_edge: edge {} has no curve", ei2)
+        });
         self.range1 = range1;
         self.range2 = range2;
         self

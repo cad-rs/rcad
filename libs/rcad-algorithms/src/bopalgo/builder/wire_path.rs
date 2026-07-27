@@ -26,7 +26,9 @@ pub(crate) fn refine_angles(
     face_idx: usize,
 ) {
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
-    let face_surface = &ds.faces[face_idx].surface;
+    let face_surface = ds.face_surface(face_idx).unwrap_or_else(|| {
+    panic!("wire_path: face {} has no surface", face_idx)
+});
     for &v in &vertices {
         let Some(infos) = smart_map.get(&v).cloned() else {
             continue;
@@ -440,8 +442,8 @@ pub(crate) fn refine_angle_2d(
                 (pc.clone(), t_a, t_b)
             } else {
                 // Fallback: construct Line from vertex UVs
-                let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
-                let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+                let uv_s = world_to_uv(face_surface, ds.vertex_point(seg.start_vertex))?;
+                let uv_e = world_to_uv(face_surface, ds.vertex_point(seg.end_vertex))?;
                 let dir = uv_e - uv_s;
                 if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                     return None;
@@ -470,8 +472,8 @@ pub(crate) fn refine_angle_2d(
             if let Some(pc) = pc {
                 (pc.clone(), 0.0, 1.0)
             } else {
-                let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
-                let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+                let uv_s = world_to_uv(face_surface, ds.vertex_point(seg.start_vertex))?;
+                let uv_e = world_to_uv(face_surface, ds.vertex_point(seg.end_vertex))?;
                 let dir = uv_e - uv_s;
                 if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                     return None;
@@ -495,8 +497,8 @@ pub(crate) fn refine_angle_2d(
             if let Some(pc) = pc {
                 (pc.clone(), 0.0, 1.0)
             } else {
-                let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
-                let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+                let uv_s = world_to_uv(face_surface, ds.vertex_point(seg.start_vertex))?;
+                let uv_e = world_to_uv(face_surface, ds.vertex_point(seg.end_vertex))?;
                 let dir = uv_e - uv_s;
                 if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                     return None;
@@ -517,7 +519,7 @@ pub(crate) fn refine_angle_2d(
     //   For DSEdge/SeamEdge: use DSEdge.vertex_params directly.
     //   For IntersectionCurve: vertex param = curve endpoint (t_min or t_max).
     let t_v = match &seg.source {
-        WireEdgeSource::DsEdge(ei) => ds.edges[*ei].vertex_param(vertex_idx).unwrap_or_else(|| {
+        WireEdgeSource::DsEdge(ei) => ds.edge_vertex_params(*ei).get(&vertex_idx).copied().unwrap_or_else(|| {
             if vertex_idx == seg.start_vertex {
                 t_min
             } else {
@@ -657,7 +659,9 @@ pub(crate) fn walk_path_extract_wires(
         .values()
         .any(|v| v.iter().any(|ei| ei.seg_idx == start_si));
     if std::env::var("RCAD_DEBUG_IC").is_ok()
-        && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_))
+        && matches!(ds.face_surface(face_idx).unwrap_or_else(|| {
+            panic!("wire_path: face {} has no surface", face_idx)
+        }), Surface3::Sphere(_))
     {
         let seg_src = match &segments[start_si].source {
             WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
@@ -702,7 +706,9 @@ pub(crate) fn walk_path_extract_wires(
         return;
     }
 
-    let face_surface = &ds.faces[face_idx].surface;
+    let face_surface = ds.face_surface(face_idx).unwrap_or_else(|| {
+    panic!("wire_path: face {} has no surface", face_idx)
+});
     let two_pi = std::f64::consts::TAU;
 
     // OCCT: aLS (edge sequence), aVertVa (vertex sequence), aCoordVa (UV coordinates)
@@ -747,8 +753,7 @@ pub(crate) fn walk_path_extract_wires(
                 //   so vi == ic.start_vertex fails silently for remapped vertices.
                 //   Use geometric distance at remap_ic_v's tolerance.
                 let vi_at_pole = ds.vertex_point(vi);
-                let t = if ds.vertices[ic.start_vertex]
-                    .point
+                let t = if ds.vertex_point(ic.start_vertex)
                     .distance_squared(vi_at_pole)
                     <= TOLERANCE_ABS_SQ * 1_000_000.0
                 {
@@ -1069,11 +1074,15 @@ pub(crate) fn walk_path_extract_wires(
         // For closed vertices, filter multi-candidates by 2D UV distance
         let candidates: Vec<&EdgeInfo> = if b_is_closed {
             let is_periodic = matches!(
-                ds.faces[face_idx].surface,
+                ds.face_surface(face_idx).unwrap_or_else(|| {
+            panic!("wire_path: face {} has no surface", face_idx)
+        }),
                 Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_)
             );
             let pb_uv = if is_periodic {
-                world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
+                world_to_uv(&ds.face_surface(face_idx).unwrap_or_else(|| {
+            panic!("wire_path: face {} has no surface", face_idx)
+        }), ds.vertex_point(arrived_vertex))
                     .unwrap_or(DVec2::ZERO)
             } else {
                 a_pb
@@ -1082,7 +1091,9 @@ pub(crate) fn walk_path_extract_wires(
                 .into_iter()
                 .filter(|ei| {
                     let cand_uv = if is_periodic {
-                        world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
+                        world_to_uv(&ds.face_surface(face_idx).unwrap_or_else(|| {
+            panic!("wire_path: face {} has no surface", face_idx)
+        }), ds.vertex_point(arrived_vertex))
                             .unwrap_or(DVec2::ZERO)
                     } else {
                         vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)

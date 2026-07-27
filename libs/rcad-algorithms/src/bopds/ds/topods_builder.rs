@@ -47,6 +47,8 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         shell_images: Vec::new(),
         solid_images: Vec::new(),
         pave_blocks: Vec::new(),
+        pave_blocks_pool: Vec::new(),
+        face_info_pool: Vec::new(),
         locations: Vec::new(),
         increased_ss: std::collections::HashSet::new(),
         interf_tb: std::collections::HashSet::new(),
@@ -57,9 +59,9 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
 
     // per-operand loading A_V,A_E,A_F then B_V,B_E,B_F
     load_topods_brep(&mut ds, a, ShapeOrigin::ShapeA);
-    ds.a_vertex_count = ds.vertices.len();
-    ds.a_edge_count = ds.edges.len();
-    ds.a_face_count = ds.faces.len();
+    ds.a_vertex_count = ds.vertex_count();
+    ds.a_edge_count = ds.edge_count();
+    ds.a_face_count = ds.face_count();
     load_topods_brep(&mut ds, b, ShapeOrigin::ShapeB);
 
     ds.compute_uv_boundaries();
@@ -110,7 +112,7 @@ fn init_shape_topo(
         //   L344: Append(aSubShape) — always creates new shape info entry.
         //         rcad: ds.push_vertex + v_map.insert + shape_info.push.
         topods::TShape::Vertex(vd) => {
-            let vi = ds.vertices.len();
+            let vi = ds.vertex_count();
             ds.push_vertex(
                 DSVertex { shape_idx: 0,
                     point: vd.point,
@@ -203,7 +205,7 @@ fn init_shape_topo(
                         | Curve3::BSpline(_)
                         | Curve3::Bezier(_)
                 ));
-            let ds_ei = ds.edges.len();
+            let ds_ei = ds.edge_count();
             ds.push_edge(
                 DSEdge { shape_idx: 0,
                     start_vertex: start,
@@ -410,7 +412,7 @@ fn init_shape_topo(
                     }
                 }
             };
-            let ds_fi = ds.faces.len();
+            let ds_fi = ds.face_count();
             f_map.insert(ti, ds_fi);
             let bverts_copy = boundary_verts.clone();
             ds.push_face(
@@ -445,8 +447,8 @@ fn init_shape_topo(
             let mut mn = DVec3::splat(f64::INFINITY);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             for &vi in &bverts_copy {
-                if vi < ds.vertices.len() {
-                    let p = ds.vertices[vi].point;
+                if vi < ds.vertex_count() {
+                    let p = ds.vertex_point(vi);
                     mn = mn.min(p);
                     mx = mx.max(p);
                 }
@@ -466,10 +468,14 @@ fn init_shape_topo(
                 is_new: false,
                 rank,
                 source_idx: ds_fi,
+                is_internal: false,
+                source_shell_idx: None,
+                source_solid_idx: None,
+                source_compsolid_idx: None,
             });
         }
         topods::TShape::Shell(shd) => {
-            let prev_face_count = ds.faces.len();
+            let prev_face_count = ds.face_count();
             for face_sr in &shd.faces {
                 init_shape_topo(
                     ds,
@@ -489,10 +495,10 @@ fn init_shape_topo(
                     solid_counter,
                 );
             }
-            for fi in prev_face_count..ds.faces.len() {
+            for fi in prev_face_count..ds.face_count() {
                 ds.faces[fi].source_shell_idx = Some(*shell_counter);
             }
-            let shell_face_idxs: Vec<usize> = (prev_face_count..ds.faces.len()).collect();
+            let shell_face_idxs: Vec<usize> = (prev_face_count..ds.face_count()).collect();
             let shi = if shell_face_idxs.is_empty() {
                 *shell_counter
             } else {
@@ -527,7 +533,7 @@ fn init_shape_topo(
                     solid_counter,
                 );
             }
-            for fi in 0..ds.faces.len() {
+            for fi in 0..ds.face_count() {
                 if ds.faces[fi]
                     .source_shell_idx
                     .map_or(false, |s| s >= shell_start)
@@ -581,7 +587,7 @@ fn init_shape_topo(
             if !ds_solid_indices.is_empty() {
                 // Update source_compsolid_idx
                 for &si in &ds_solid_indices {
-                    for fi in 0..ds.faces.len() {
+                    for fi in 0..ds.face_count() {
                         if ds.faces[fi].source_solid_idx == Some(si) {
                             ds.faces[fi].source_compsolid_idx = Some(csi);
                         }
@@ -963,28 +969,28 @@ mod tests {
     fn load_box_vertex_count() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        assert_eq!(ds.vertices.len(), 8, "box has 8 vertices");
+        assert_eq!(ds.vertex_count(), 8, "box has 8 vertices");
     }
 
     #[test]
     fn load_box_edge_count() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        assert_eq!(ds.edges.len(), 12, "box has 12 edges");
+        assert_eq!(ds.edge_count(), 12, "box has 12 edges");
     }
 
     #[test]
     fn load_box_face_count() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        assert_eq!(ds.faces.len(), 6, "box has 6 faces");
+        assert_eq!(ds.face_count(), 6, "box has 6 faces");
     }
 
     #[test]
     fn load_box_shapes_sync() {
         let brep = make_unit_box();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let expected_min = ds.vertices.len() + ds.edges.len() + ds.faces.len();
+        let expected_min = ds.vertex_count() + ds.edge_count() + ds.face_count();
         assert!(
             ds.shapes.len() >= expected_min,
             "shapes len {} >= verts+edges+faces {}",
@@ -1013,7 +1019,7 @@ mod tests {
     fn push_vertex_maintains_sync() {
         let brep = make_unit_box();
         let mut ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let nv_before = ds.vertices.len();
+        let nv_before = ds.vertex_count();
         let ns_before = ds.shapes.len();
         let vi = ds.push_vertex(
             DSVertex {
@@ -1027,7 +1033,7 @@ mod tests {
             None,
         );
         assert_eq!(vi, nv_before, "push_vertex returns next vertex index");
-        assert_eq!(ds.vertices.len(), nv_before + 1, "vertices array grew");
+        assert_eq!(ds.vertex_count(), nv_before + 1, "vertices array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
         let new_sr_idx = ns_before;
         match &*ds.shapes[new_sr_idx] {
@@ -1042,7 +1048,7 @@ mod tests {
     fn push_edge_maintains_sync() {
         let brep = make_unit_box();
         let mut ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        let ne_before = ds.edges.len();
+        let ne_before = ds.edge_count();
         let ns_before = ds.shapes.len();
         let ei = ds.push_edge(
             DSEdge {
@@ -1068,7 +1074,7 @@ mod tests {
             None,
         );
         assert_eq!(ei, ne_before, "push_edge returns next edge index");
-        assert_eq!(ds.edges.len(), ne_before + 1, "edges array grew");
+        assert_eq!(ds.edge_count(), ne_before + 1, "edges array grew");
         assert_eq!(ds.shapes.len(), ns_before + 1, "shapes array grew");
     }
 
@@ -1081,7 +1087,7 @@ mod tests {
     fn load_sphere_faces() {
         let brep = make_unit_sphere();
         let ds = new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
-        assert_eq!(ds.faces.len(), 1, "sphere has 1 face");
+        assert_eq!(ds.face_count(), 1, "sphere has 1 face");
     }
 
     #[test]
@@ -1119,16 +1125,16 @@ mod tests {
         let box_brep = make_unit_box();
         let ds = new_from_topods(&sphere, &box_brep, TOLERANCE_ABS);
         assert!(
-            ds.vertices.len() >= 8,
+            ds.vertex_count() >= 8,
             "total vertices >= 8, got {}",
-            ds.vertices.len()
+            ds.vertex_count()
         );
         assert!(
-            ds.edges.len() >= 14,
+            ds.edge_count() >= 14,
             "total edges >= 14, got {}",
-            ds.edges.len()
+            ds.edge_count()
         );
-        assert_eq!(ds.faces.len(), 7, "total faces = 7 (6 box + 1 sphere)");
+        assert_eq!(ds.face_count(), 7, "total faces = 7 (6 box + 1 sphere)");
     }
 }
 

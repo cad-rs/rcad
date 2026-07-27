@@ -39,7 +39,7 @@ impl BuilderSolidContext {
     /// IntTools_Context::IsInfiniteFace.
     /// A face is "infinite" when it lacks natural bounds (e.g. unbounded plane).
     pub fn is_infinite_face(&self, fi: usize, ds: &DS) -> bool {
-        ds.faces.get(fi).map_or(false, |f| f.natural_restriction)
+        ds.face_natural_restriction(fi)
     }
 
     /// BRepClass3d_SolidClassifier::PerformInfinitePoint.
@@ -197,7 +197,7 @@ impl BuilderSolid {
                 if a_nb_f == 0 {
                     continue;
                 }
-                let a_or_e_internal = ds.edges.get(ei).map_or(false, |e| e.is_internal);
+                let a_or_e_internal = ds.edge_is_internal(ei);
                 let a_f1 = flist[0];
 
                 if a_nb_f == 1 {
@@ -607,22 +607,22 @@ fn compute_aabb(faces: &[usize], ds: &DS) -> AABB {
         if let Some(face) = ds.faces.get(fi) {
             for &ei in &face.boundary_edges {
                 if let Some(edge) = ds.edges.get(ei) {
-                    if edge.start_vertex < ds.vertices.len() {
-                        bb.expand_point(ds.vertices[edge.start_vertex].point);
+                    if edge.start_vertex < ds.vertex_count() {
+                        bb.expand_point(ds.vertex_point(edge.start_vertex));
                     }
-                    if edge.end_vertex < ds.vertices.len() {
-                        bb.expand_point(ds.vertices[edge.end_vertex].point);
+                    if edge.end_vertex < ds.vertex_count() {
+                        bb.expand_point(ds.vertex_point(edge.end_vertex));
                     }
                 }
             }
             for wire in &face.inner_boundary_edges {
                 for &(ei, _) in wire {
                     if let Some(edge) = ds.edges.get(ei) {
-                        if edge.start_vertex < ds.vertices.len() {
-                            bb.expand_point(ds.vertices[edge.start_vertex].point);
+                        if edge.start_vertex < ds.vertex_count() {
+                            bb.expand_point(ds.vertex_point(edge.start_vertex));
                         }
-                        if edge.end_vertex < ds.vertices.len() {
-                            bb.expand_point(ds.vertices[edge.end_vertex].point);
+                        if edge.end_vertex < ds.vertex_count() {
+                            bb.expand_point(ds.vertex_point(edge.end_vertex));
                         }
                     }
                 }
@@ -639,12 +639,12 @@ fn face_sample_point(fi: usize, ds: &DS) -> glam::DVec3 {
     if let Some(face) = ds.faces.get(fi) {
         for &ei in &face.boundary_edges {
             if let Some(edge) = ds.edges.get(ei) {
-                if edge.start_vertex < ds.vertices.len() {
-                    sum += ds.vertices[edge.start_vertex].point;
+                if edge.start_vertex < ds.vertex_count() {
+                    sum += ds.vertex_point(edge.start_vertex);
                     count += 1;
                 }
-                if edge.end_vertex < ds.vertices.len() {
-                    sum += ds.vertices[edge.end_vertex].point;
+                if edge.end_vertex < ds.vertex_count() {
+                    sum += ds.vertex_point(edge.end_vertex);
                     count += 1;
                 }
             }

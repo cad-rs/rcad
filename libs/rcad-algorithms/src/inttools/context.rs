@@ -182,11 +182,11 @@ impl Context {
     /// OCCT: ProjPC(theEdge) 鈥?projects a 3D point onto the edge's curve.
     /// Returns (param, 3d_point, distance) on success.
     pub fn proj_pc(&mut self, ds: &DS, edge_idx: usize, p: DVec3) -> Option<(f64, DVec3, f64)> {
-        if edge_idx >= ds.edges.len() {
+        if edge_idx >= ds.edge_count() {
             return None;
         }
         let curve = &ds.edges[edge_idx].curve;
-        let [t0, t1] = ds.edges[edge_idx].t_range;
+        let [t0, t1] = ds.edge_range(edge_idx);
         // OCCT L281: pProjPC->Init(aC3D, f, l) - restrict projection to edge trim range
         let proj = closest_point_on_curve_range(curve, p, t0, t1, 16);
         if proj.distance.is_finite() && proj.param.is_finite() {
@@ -323,7 +323,7 @@ impl Context {
         let mut best_dist = f64::MAX;
         let mut best_param = param;
         for &vi in &[sv, ev] {
-            if vi < ds.vertices.len() {
+            if vi < ds.vertex_count() {
                 let vp = ds.vertex_point(vi);
                 let d = p.distance(vp);
                 let v_tol = ds.vertex_tolerance(vi);
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn fclass2d_cache_reuses_classifier() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let ptr1 = ctx.fclass2d(&ds, 0) as *const _;
         let ptr2 = ctx.fclass2d(&ds, 0) as *const _;
         assert_eq!(ptr1, ptr2);
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn surface_adaptor_returns_surface() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let surf = ctx.surface_adaptor(&ds, 0);
         match surf {
             rcad_kernel::geom::Surface3::Plane(_) => {}
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn uv_bounds_positive() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let b = ctx.uv_bounds(&ds, 0);
         assert!(b[1] > b[0]);
         assert!(b[3] > b[2]);
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn state_point_face_center_is_not_out() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let state = ctx.state_point_face(&ds, 0, DVec2::new(0.5, 0.5));
         assert_ne!(state, State::Out, "center of face should be In or On");
     }
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn state_point_face_outside() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let state = ctx.state_point_face(&ds, 0, DVec2::new(-1.0, -1.0));
         // Accept either Out or In (In when FClass2d has no polygon)
         // The important thing is no panic
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn is_point_in_face_3d_on_surface() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         // Point (0.5, 0.5, 0.0) on the bottom face surface
         let result = ctx.is_point_in_face_3d(&ds, 0, DVec3::new(0.5, 0.5, 0.0), 1e-4);
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn is_valid_point_for_faces_on_both() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         ctx.surface_adaptor(&ds, 1);
         let on_face0 = ctx.is_valid_point_for_face(&ds, DVec3::new(0.5, 0.5, 0.0), 0, 1e-4);
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn is_infinite_face_plane() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         assert!(ctx.is_infinite_face(0));
     }
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn is_infinite_face_sphere() {
         let ds = sphere_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         ctx.surface_adaptor(&ds, 0);
         assert!(ctx.is_infinite_face(0));
     }
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn compute_ve_vertex_on_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         // Edge 0: from (0,0,0) to (1,0,0). Vertex 0 is at (0,0,0).
         let result = ctx.compute_ve(&ds, 0, 0, 0.0);
         assert!(
@@ -649,7 +649,7 @@ mod tests {
             glam::DAffine3::from_rotation_z(45.0_f64.to_radians()),
         );
         let ds = new_from_topods(&a, &b, TOLERANCE_ABS);
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let cap_edge = (0..ds.a_edge_count)
             .find(|&edge_idx| {
                 matches!(
@@ -658,7 +658,7 @@ mod tests {
                 )
             })
             .expect("cylinder cap circle");
-        let rotated_vertex = (ds.a_vertex_count..ds.vertices.len())
+        let rotated_vertex = (ds.a_vertex_count..ds.vertex_count())
             .find(|&vertex_idx| {
                 (ds.vertex_point(vertex_idx)
                     - DVec3::new(
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn compute_ve_vertex_off_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         // Edge 0 is at z=0, vertex at (100, 0, 100) 鈥?far away
         // We need a vertex that exists 鈥?vertex 5 is at (1,0,1)
         // and edge 3 is on bottom face at z=0 from (0,1,0) to (0,0,0)
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn compute_pe_point_on_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         // Edge 0: line from (0,0,0) to (1,0,0). Point (0.5, 0, 0) is on it.
         let result = ctx.compute_pe(&ds, DVec3::new(0.5, 0.0, 0.0), 1e-6, 0);
         assert!(result.is_ok(), "point on edge should succeed: {:?}", result);
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn compute_pe_point_off_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let _ = ctx.compute_pe(&ds, DVec3::new(100.0, 100.0, 100.0), 1e-6, 0);
         // Just verify no panic
     }
@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn compute_vf_vertex_on_face() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         // Vertex 0 is (0,0,0) which should be on/an edge of face 0
         // Use vertex 4 (1,0,0) on face 4 (one of the side faces)
         let result = ctx.compute_vf(&ds, 4, 0, 0.0);
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn project_point_on_edge_midpoint() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
         let param = ctx.project_point_on_edge(&ds, DVec3::new(0.5, 0.0, 0.0), 0);
         assert!(param.is_some(), "should project onto edge");
         if let Some(t) = param {

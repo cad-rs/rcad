@@ -22,7 +22,7 @@ use rcad_kernel::topods;
 /// Creates a section edge from an intersection curve.  Returns the
 /// start and end vertex indices.
 pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
-    let ei = ds.edges.len();
+    let ei = ds.edge_count();
     let ic = &ds.intersection_curves[ci];
     ds.push_edge(
         crate::bopds::ds::DSEdge { shape_idx: 0,
@@ -74,12 +74,12 @@ pub fn is_micro_edge(ei: usize, ds: &DS, check_splittable: bool) -> bool {
     let mut a_sr = crate::inttools::shrunk_range::ShrunkRange::new();
     let sv = edge.start_vertex;
     let ev = edge.end_vertex;
-    let v1_tol = if sv < ds.vertices.len() {
+    let v1_tol = if sv < ds.vertex_count() {
         ds.vertex_tolerance(sv)
     } else {
         0.0
     };
-    let v2_tol = if ev < ds.vertices.len() {
+    let v2_tol = if ev < ds.vertex_count() {
         ds.vertex_tolerance(ev)
     } else {
         0.0
@@ -259,7 +259,7 @@ pub fn make_ds_edge(
     curve: rcad_kernel::geom::Curve3,
     t_range: [f64; 2],
 ) -> usize {
-    let ei = ds.edges.len();
+    let ei = ds.edge_count();
     ds.push_edge(
         crate::bopds::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
@@ -288,7 +288,7 @@ pub fn make_ds_edge(
 }
 /// CorrectEdgeRange (BOPTools_AlgoTools).
 pub fn correct_edge_range(ds: &mut crate::bopds::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
-    if ei < ds.edges.len() {
+    if ei < ds.edge_count() {
         let ts = t1.max(ds.edge_range(ei)[0]);
         let te = t2.min(ds.edge_range(ei)[1]);
         [ts.min(te), te.max(ts)]
@@ -594,7 +594,7 @@ pub fn compute_state_by_one_point(
     let pt = match shape_type {
         0 => {
             // OCCT L634-636: VERTEX =use vertex point
-            if shape_idx < ds.vertices.len() {
+            if shape_idx < ds.vertex_count() {
                 ds.vertex_point(shape_idx)
             } else {
                 return crate::classify::Classification::Out;
@@ -602,15 +602,15 @@ pub fn compute_state_by_one_point(
         }
         1 => {
             // OCCT L637-639: EDGE =use edge midpoint
-            if shape_idx < ds.edges.len() {
+            if shape_idx < ds.edge_count() {
                 let e = &ds.edges[shape_idx];
-                let p1 = if e.start_vertex < ds.vertices.len() {
-                    ds.vertices[e.start_vertex].point
+                let p1 = if e.start_vertex < ds.vertex_count() {
+                    ds.vertex_point(e.start_vertex)
                 } else {
                     return crate::classify::Classification::Out;
                 };
-                let p2 = if e.end_vertex < ds.vertices.len() {
-                    ds.vertices[e.end_vertex].point
+                let p2 = if e.end_vertex < ds.vertex_count() {
+                    ds.vertex_point(e.end_vertex)
                 } else {
                     return crate::classify::Classification::Out;
                 };
@@ -621,14 +621,14 @@ pub fn compute_state_by_one_point(
         }
         2 => {
             // OCCT L640-644: FACE =use face centroid
-            if shape_idx < ds.faces.len() {
+            if shape_idx < ds.face_count() {
                 let f = &ds.faces[shape_idx];
                 if f.boundary_verts.is_empty() {
                     return crate::classify::Classification::Out;
                 }
                 let mut sum = glam::DVec3::ZERO;
                 for &vi in &f.boundary_verts {
-                    if vi < ds.vertices.len() {
+                    if vi < ds.vertex_count() {
                         sum += ds.vertex_point(vi);
                     }
                 }
@@ -707,11 +707,11 @@ pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
     let mut aabb_min = glam::DVec3::splat(f64::INFINITY);
     let mut aabb_max = glam::DVec3::splat(f64::NEG_INFINITY);
     for &fi in solid_faces {
-        if fi >= ds.faces.len() {
+        if fi >= ds.face_count() {
             continue;
         }
-        for &vi in &ds.faces[fi].boundary_verts {
-            if vi < ds.vertices.len() {
+        for &vi in ds.face_boundary_verts(fi) {
+            if vi < ds.vertex_count() {
                 let p = ds.vertex_point(vi);
                 aabb_min = aabb_min.min(p);
                 aabb_max = aabb_max.max(p);
@@ -1490,7 +1490,7 @@ pub fn wires_to_faces(
         for &sub in wire_edges_flat {
             // Convert flat shape index to per-type edge index
             let ei = ds.edge_shape_idx.iter().position(|&s| s == sub).unwrap_or(usize::MAX);
-            if ei >= ds.edges.len() {
+            if ei >= ds.edge_count() {
                 continue;
             }
             let edge = &ds.edges[ei];
@@ -1587,7 +1587,7 @@ pub fn wires_to_faces(
             }
             for &sub in &ds.shape_info[w_si].sub_shapes {
                 let ei = ds.edge_shape_idx.iter().position(|&s| s == sub).unwrap_or(usize::MAX);
-                if ei >= ds.edges.len() {
+                if ei >= ds.edge_count() {
                     continue;
                 }
                 all_edges.push((ei, true));
@@ -1616,17 +1616,17 @@ pub fn wires_to_faces(
         // Create ShapeRefs for vertices and edges (tshape API)
         let mut edge_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
         for &ei in &group_ei {
-            if ei >= ds.edges.len() {
+            if ei >= ds.edge_count() {
                 continue;
             }
             let de = &ds.edges[ei];
-            let p1 = if de.start_vertex < ds.vertices.len() {
-                ds.vertices[de.start_vertex].point
+            let p1 = if de.start_vertex < ds.vertex_count() {
+                ds.vertex_point(de.start_vertex)
             } else {
                 glam::DVec3::ZERO
             };
-            let p2 = if de.end_vertex < ds.vertices.len() {
-                ds.vertices[de.end_vertex].point
+            let p2 = if de.end_vertex < ds.vertex_count() {
+                ds.vertex_point(de.end_vertex)
             } else {
                 glam::DVec3::ZERO
             };
@@ -1689,7 +1689,7 @@ pub fn compute_vv(
 /// MakeNewVertex from point + tolerance (BOPTools_AlgoTools.cxx L96-98).
 /// Returns the new vertex DS index.
 pub fn make_new_vertex(ds: &mut crate::bopds::ds::DS, p: glam::DVec3, tol: f64) -> usize {
-    let vi = ds.vertices.len();
+    let vi = ds.vertex_count();
     ds.push_vertex(
         crate::bopds::ds::DSVertex { shape_idx: 0,
             point: p,
@@ -1713,7 +1713,7 @@ pub fn make_new_vertex_from_two(
     let mid = (v1.point + v2.point) * 0.5;
     let dist = (v1.point - v2.point).length();
     let tol = dist * 0.5 + v1.geom_tol.max(v2.geom_tol) + crate::tolerance::TOLERANCE_LEN_MIN;
-    let vi = ds.vertices.len();
+    let vi = ds.vertex_count();
     ds.push_vertex(
         crate::bopds::ds::DSVertex { shape_idx: 0,
             point: mid,
@@ -1863,7 +1863,7 @@ pub fn is_open_shell(shell_faces: &[usize], ds: &crate::bopds::ds::DS) -> bool {
     let mut edge_face_count: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
     for &fi in shell_faces {
-        if fi >= ds.faces.len() {
+        if fi >= ds.face_count() {
             continue;
         }
         let f = &ds.faces[fi];
@@ -2052,7 +2052,7 @@ pub fn make_edge(
     let need_tol = tol_r3d + crate::tolerance::TOLERANCE_LEN_MIN;
     // OCCT: ensure section edge vertices exist (should already be present
     // from curve endpoint creation, but create if missing in rcad)
-    let v1 = if v1 >= ds.vertices.len() {
+    let v1 = if v1 >= ds.vertex_count() {
         let pt = if ci < ds.intersection_curves.len() {
             ds.intersection_curves[ci].curve.point_at(t1)
         } else {
@@ -2062,7 +2062,7 @@ pub fn make_edge(
     } else {
         v1
     };
-    let v2 = if v2 >= ds.vertices.len() {
+    let v2 = if v2 >= ds.vertex_count() {
         let pt = if ci < ds.intersection_curves.len() {
             ds.intersection_curves[ci].curve.point_at(t2)
         } else {
@@ -2073,16 +2073,16 @@ pub fn make_edge(
         v2
     };
     // OCCT L1732-1733: UpdateVertex theV1/theV2 with aNeedTol
-    if v1 < ds.vertices.len() {
+    if v1 < ds.vertex_count() {
         ds.vertex_data_mut(v1).tolerance = ds.vertex_tolerance(v1).max(need_tol);
     }
-    if v2 < ds.vertices.len() {
+    if v2 < ds.vertex_count() {
         ds.vertex_data_mut(v2).tolerance = ds.vertex_tolerance(v2).max(need_tol);
     }
     // OCCT L1735: MakeSectEdge(aIC, aV1, aT1, aV2, aT2, aE)
     let ei = make_sect_edge(ds, ci, v1, v2);
     // OCCT L1737: UpdateEdge(aE, theTolR3D)
-    if ei < ds.edges.len() {
+    if ei < ds.edge_count() {
         ds.edge_data_mut(ei).tolerance = ds.edge_tolerance(ei).max(tol_r3d);
     }
     ei
@@ -2091,7 +2091,7 @@ pub fn make_edge(
 /// CopyEdge (BOPTools_AlgoTools.hxx L152).
 /// Creates a copy of a DS edge (deep copy with new index).
 pub fn copy_ds_edge(ds: &mut crate::bopds::ds::DS, ei: usize) -> usize {
-    let new_ei = ds.edges.len();
+    let new_ei = ds.edge_count();
     let src = &ds.edges[ei].clone();
     ds.push_edge(src.clone(), None);
     new_ei
@@ -2120,7 +2120,7 @@ pub fn make_split_edge(
             base.is_internal,
         )
     };
-    let new_ei = ds.edges.len();
+    let new_ei = ds.edge_count();
     let t_range = if p1 < p2 { [p1, p2] } else { [p2, p1] };
     ds.push_edge(
         crate::bopds::ds::DSEdge { shape_idx: 0,
@@ -2165,7 +2165,7 @@ pub fn make_vertex_from_list(ds: &mut crate::bopds::ds::DS, vertex_indices: &[us
     let mut sum = glam::DVec3::ZERO;
     let mut max_tol = 0.0f64;
     for &vi in vertex_indices {
-        if vi < ds.vertices.len() {
+        if vi < ds.vertex_count() {
             sum += ds.vertex_point(vi);
             max_tol = max_tol.max(ds.vertex_tolerance(vi));
         }
@@ -2179,7 +2179,7 @@ pub fn make_vertex_from_list(ds: &mut crate::bopds::ds::DS, vertex_indices: &[us
         .map(|v| (v.point - mid).length())
         .fold(0.0f64, f64::max);
     let tol = max_dist + max_tol + crate::tolerance::TOLERANCE_LEN_MIN;
-    let vi = ds.vertices.len();
+    let vi = ds.vertex_count();
     ds.push_vertex(
         crate::bopds::ds::DSVertex { shape_idx: 0,
             point: mid,

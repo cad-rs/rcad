@@ -106,9 +106,9 @@ impl<'a> BOPDS_Iterator<'a> {
         }
         self.my_use_ext = false;
 
-        let nv = self.ds.vertices.len();
-        let ne = self.ds.edges.len();
-        let nf = self.ds.faces.len();
+        let nv = self.ds.vertex_count();
+        let ne = self.ds.edge_count();
+        let nf = self.ds.face_count();
         if nv + ne + nf < 2 {
             return;
         }
@@ -161,7 +161,7 @@ impl<'a> BOPDS_Iterator<'a> {
             let si = if ei < self.ds.edge_shape_idx.len() {
                 self.ds.edge_shape_idx[ei]
             } else {
-                self.ds.vertices.len() + ei
+                self.ds.vertex_count() + ei
             };
             self.ds.shape_info.get(si).and_then(|info| {
                 info.box_min.zip(info.box_max).map(|(min, max)| Aabb {

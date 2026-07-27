@@ -211,7 +211,7 @@ impl EdgeFaceTask {
     }
     fn perform(&mut self, ctx: &mut crate::inttools::context::Context, ds: &DS) {
         let ef_range = self.myRange;
-        let etr = ds.edges[self.myIE].t_range;
+        let etr = ds.edge_range(self.myIE);
         let range = [ef_range[0].max(etr[0]), ef_range[1].min(etr[1])];
         let tol_ef = ds
             .edge_tolerance(self.myIE)
@@ -384,13 +384,13 @@ impl<'a> super::PaveFiller<'a> {
             if is_a {
                 (0, self.ds.a_edge_count)
             } else {
-                (self.ds.a_edge_count, self.ds.edges.len())
+                (self.ds.a_edge_count, self.ds.edge_count())
             }
         } else {
             if is_a {
                 (0, self.ds.a_vertex_count)
             } else {
-                (self.ds.a_vertex_count, self.ds.vertices.len())
+                (self.ds.a_vertex_count, self.ds.vertex_count())
             }
         };
         let n = end - ds_start;
@@ -403,8 +403,8 @@ impl<'a> super::PaveFiller<'a> {
             let aabb = if is_edge {
                 let e = &self.ds.edges[ds_i];
                 let pts = [
-                    self.ds.vertices[e.start_vertex].point,
-                    self.ds.vertices[e.end_vertex].point,
+                    self.ds.vertex_point(e.start_vertex),
+                    self.ds.vertex_point(e.end_vertex),
                 ];
                 let mut a = Aabb::empty();
                 for &p in &pts {
@@ -442,9 +442,9 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn build_box_tree_combined(&self, is_edge: bool) -> crate::boptools::bvh::BoxTree {
         use crate::boptools::bvh::{Aabb, BoxTree};
         let n = if is_edge {
-            self.ds.edges.len()
+            self.ds.edge_count()
         } else {
-            self.ds.vertices.len()
+            self.ds.vertex_count()
         };
         let mut indices = Vec::with_capacity(n);
         let mut aabbs = Vec::with_capacity(n);
@@ -1252,7 +1252,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L490-504: check each shared vertex
                 for k1 in 0..=j {
                     let n_vx = n_vs[k1 as usize];
-                    if n_vx < self.ds.vertices.len() {
+                    if n_vx < self.ds.vertex_count() {
                         let a_px = self.ds.vertex_point(n_vx);
                         let a_tol_vx = self.ds.vertex_tolerance(n_vx);
                         let a_d2: f64 = (a_pnew - a_px).length_squared();
@@ -1795,7 +1795,7 @@ impl<'a> super::PaveFiller<'a> {
                         // OCCT L505-508: CheckFacePaves(aVnew, aMIFOn)
                         {
                             let near_face_vx = a_mif_on.iter().chain(a_mif_in.iter()).any(|&vi| {
-                                vi < self.ds.vertices.len()
+                                vi < self.ds.vertex_count()
                                     && (self.ds.vertex_point(vi) - *point).length()
                                         <= a_tol_e.max(a_tol_f).max(CONFUSION * 10.0)
                             });
@@ -1837,7 +1837,7 @@ impl<'a> super::PaveFiller<'a> {
                             },
                         );
                         self.ds.faces[nF].face_info.vertices_on.insert(new_v);
-                        if nE < self.ds.edges.len() {
+                        if nE < self.ds.edge_count() {
                             self.add_pave_to_edge(
                                 nE,
                                 Pave {
@@ -1947,7 +1947,7 @@ impl<'a> super::PaveFiller<'a> {
         let (start, end) = if is_a {
             (0, self.ds.a_face_count)
         } else {
-            (self.ds.a_face_count, self.ds.faces.len())
+            (self.ds.a_face_count, self.ds.face_count())
         };
         let n = end - start;
         let mut indices = Vec::with_capacity(n);
@@ -1959,7 +1959,7 @@ impl<'a> super::PaveFiller<'a> {
             let mut aabb = Aabb::empty();
             // Boundary vertices
             for &vi in &f.boundary_verts {
-                if vi < self.ds.vertices.len() {
+                if vi < self.ds.vertex_count() {
                     aabb.expand_point(self.ds.vertex_point(vi));
                 }
             }
@@ -1983,7 +1983,7 @@ impl<'a> super::PaveFiller<'a> {
     ///  BOPDS_Iterator  ?combined face BVH (both operands).
     pub(crate) fn build_box_tree_face_all(&self) -> crate::boptools::bvh::BoxTree {
         use crate::boptools::bvh::{Aabb, BoxTree};
-        let n = self.ds.faces.len();
+        let n = self.ds.face_count();
         let mut indices = Vec::with_capacity(n);
         let mut aabbs = Vec::with_capacity(n);
         for fi in 0..n {
@@ -1991,7 +1991,7 @@ impl<'a> super::PaveFiller<'a> {
             let f = &self.ds.faces[fi];
             let mut aabb = Aabb::empty();
             for &vi in &f.boundary_verts {
-                if vi < self.ds.vertices.len() {
+                if vi < self.ds.vertex_count() {
                     aabb.expand_point(self.ds.vertex_point(vi));
                 }
             }
@@ -2069,7 +2069,7 @@ impl<'a> super::PaveFiller<'a> {
         // If all faces are fully glued, skip V-F pass
         !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
-                == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
+                == self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count)
     }
     /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ef_pass(&self) -> bool {
@@ -2080,7 +2080,7 @@ impl<'a> super::PaveFiller<'a> {
         // If all faces are fully glued, skip E-F pass
         !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
-                == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
+                == self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count)
     }
     /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ff_pass(&self) -> bool {
@@ -2089,7 +2089,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // If all faces are fully glued, skip F-F pass
-        let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
+        let total_face_pairs = self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count);
         self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
     }
     // OCCT BOPAlgo_PaveFiller_1.cxx L45-132: PerformVV
@@ -2214,7 +2214,7 @@ impl<'a> super::PaveFiller<'a> {
             n_v = n_sd_idx;
         } else {
             // L176-179: append new vertex to DS
-            n_v = self.ds.vertices.len();
+            n_v = self.ds.vertex_count();
             self.ds.push_vertex(
                 DSVertex { shape_idx: 0,
                     point: centroid,
@@ -2680,7 +2680,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 (inf.new_vertex, inf.edge)
             };
-            if n_v == usize::MAX || n_e >= self.ds.edges.len() {
+            if n_v == usize::MAX || n_e >= self.ds.edge_count() {
                 continue;
             }
 

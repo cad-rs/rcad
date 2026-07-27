@@ -41,8 +41,8 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // B. COMMON/CUT/CUT21: prepare building elements of arguments/tools
-        let e_base = self.ds.vertices.len();
-        let f_base = e_base + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+        let e_base = self.ds.vertex_count();
+        let f_base = e_base + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
 
         // Map source shapes (V/E/F) per side
         let mut a_m_args: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -53,17 +53,17 @@ impl<'a> BooleanBuilder<'a> {
             let v_range = if side_idx == 0 {
                 (0usize, self.ds.a_vertex_count)
             } else {
-                (self.ds.a_vertex_count, self.ds.vertices.len())
+                (self.ds.a_vertex_count, self.ds.vertex_count())
             };
             let e_range = if side_idx == 0 {
                 (0usize, self.ds.a_edge_count)
             } else {
-                (self.ds.a_edge_count, self.ds.edges.len())
+                (self.ds.a_edge_count, self.ds.edge_count())
             };
             let f_range = if side_idx == 0 {
                 (0usize, self.ds.a_face_count)
             } else {
-                (self.ds.a_face_count, self.ds.faces.len())
+                (self.ds.a_face_count, self.ds.face_count())
             };
             for vi in v_range.0..v_range.1 {
                 a_ms.insert(vi);
@@ -195,17 +195,17 @@ impl<'a> BooleanBuilder<'a> {
                 let is_face = flat_idx >= f_base;
                 if is_face {
                     let local_fi = flat_idx - f_base;
-                    if local_fi < self.ds.faces.len() {
-                        for &ei in &self.ds.faces[local_fi].boundary_edges {
+                    if local_fi < self.ds.face_count() {
+                        for &ei in self.ds.face_boundary_edges(local_fi) {
                             exp.insert(e_base + ei);
                         }
-                        for &vi in &self.ds.faces[local_fi].boundary_verts {
+                        for &vi in self.ds.face_boundary_verts(local_fi) {
                             exp.insert(vi);
                         }
                     }
                 } else if is_edge {
                     let local_ei = flat_idx - e_base;
-                    if local_ei < self.ds.edges.len() {
+                    if local_ei < self.ds.edge_count() {
                         exp.insert(self.ds.edge_start_vertex_ds(local_ei));
                         exp.insert(self.ds.edge_end_vertex_ds(local_ei));
                     }
@@ -225,17 +225,17 @@ impl<'a> BooleanBuilder<'a> {
                 let is_face = flat_idx >= f_base;
                 if is_face {
                     let local_fi = flat_idx - f_base;
-                    if local_fi < self.ds.faces.len() {
-                        for &ei in &self.ds.faces[local_fi].boundary_edges {
+                    if local_fi < self.ds.face_count() {
+                        for &ei in self.ds.face_boundary_edges(local_fi) {
                             exp.insert(e_base + ei);
                         }
-                        for &vi in &self.ds.faces[local_fi].boundary_verts {
+                        for &vi in self.ds.face_boundary_verts(local_fi) {
                             exp.insert(vi);
                         }
                     }
                 } else if is_edge {
                     let local_ei = flat_idx - e_base;
-                    if local_ei < self.ds.edges.len() {
+                    if local_ei < self.ds.edge_count() {
                         exp.insert(self.ds.edge_start_vertex_ds(local_ei));
                         exp.insert(self.ds.edge_end_vertex_ds(local_ei));
                     }
@@ -253,12 +253,12 @@ impl<'a> BooleanBuilder<'a> {
             if !b_contains && is_face {
                 let local_fi = flat_idx - f_base;
                 let mut a_st: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-                if local_fi < self.ds.faces.len() {
+                if local_fi < self.ds.face_count() {
                     a_st.insert(local_fi);
-                    for &vi in &self.ds.faces[local_fi].boundary_verts {
+                    for &vi in self.ds.face_boundary_verts(local_fi) {
                         a_st.insert(vi);
                     }
-                    for &ei in &self.ds.faces[local_fi].boundary_edges {
+                    for &ei in self.ds.face_boundary_edges(local_fi) {
                         a_st.insert(e_base + ei);
                     }
                 }
@@ -342,7 +342,7 @@ impl<'a> BooleanBuilder<'a> {
                 if sr.is_null() {
                     continue;
                 }
-                let dsfi = if sr.index >= f_base && sr.index < f_base + self.ds.faces.len() {
+                let dsfi = if sr.index >= f_base && sr.index < f_base + self.ds.face_count() {
                     Some(sr.index - f_base)
                 } else {
                     None
@@ -395,8 +395,8 @@ impl<'a> BooleanBuilder<'a> {
                             };
                             if let Some(dfi) = ds_fi {
                                 faces.push(dfi);
-                                for &vi in &self.ds.faces[dfi].boundary_verts {
-                                    if vi < self.ds.vertices.len() {
+                                for &vi in self.ds.face_boundary_verts(dfi) {
+                                    if vi < self.ds.vertex_count() {
                                         aabb.expand_point(self.ds.vertex_point(vi));
                                     }
                                 }
@@ -552,7 +552,7 @@ impl<'a> BooleanBuilder<'a> {
         // Collect internal edges
         for (ei, e) in self.ds.edges.iter().enumerate() {
             if e.is_internal {
-                let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
+                let e_ref = self.brep_sr(self.ds.vertex_count() + ei);
                 if self.my_images.borrow().contains_key(&e_ref) {
                     for img in &self.my_images.borrow()[&e_ref] {
                         a_msi.insert(img.index);
@@ -585,7 +585,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             for (&ei, face_list) in &edge_to_faces {
                 a_msx.entry(ei).or_default().extend(face_list);
-                if ei < self.ds.edges.len() {
+                if ei < self.ds.edge_count() {
                     a_msx
                         .entry(self.ds.edge_start_vertex_ds(ei))
                         .or_default()
@@ -648,13 +648,13 @@ impl<'a> BooleanBuilder<'a> {
             let mut i = 0usize;
             while i < a_lsi.len() {
                 let si_idx = a_lsi[i];
-                let pt = if si_idx < self.ds.vertices.len() {
+                let pt = if si_idx < self.ds.vertex_count() {
                     self.ds.vertex_point(si_idx)
                 } else {
                     let ei = si_idx;
-                    if ei < self.ds.edges.len() {
-                        (self.ds.vertices[self.ds.edge_start_vertex_ds(ei)].point
-                            + self.ds.vertices[self.ds.edge_end_vertex_ds(ei)].point)
+                    if ei < self.ds.edge_count() {
+                        (self.ds.vertex_point(self.ds.edge_start_vertex_ds(ei))
+                            + self.ds.vertex_point(self.ds.edge_end_vertex_ds(ei)))
                             * 0.5
                     } else {
                         i += 1;
@@ -673,7 +673,7 @@ impl<'a> BooleanBuilder<'a> {
                     if let Some(shell_faces) = result.tmp_shells.get(first_shi) {
                         if let Some(&first_rfi) = shell_faces.first() {
                             if first_rfi < result.face_internal_vtx.len() {
-                                if si_idx < self.ds.vertices.len() {
+                                if si_idx < self.ds.vertex_count() {
                                     if !result.face_internal_vtx[first_rfi].contains(&si_idx) {
                                         result.face_internal_vtx[first_rfi].push(si_idx);
                                     }
@@ -928,7 +928,7 @@ impl<'a> BooleanBuilder<'a> {
         if the_type == rcad_kernel::topods::ShapeType::Edge && self.my_edge_map.borrow().is_empty()
         {
             *self.my_edge_map.borrow_mut() =
-                vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
+                vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edge_count()];
         }
 
         let args = self.my_arguments.borrow();
@@ -955,7 +955,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     ShapeOrigin::ShapeB
                 };
-                let f_base = self.ds.vertices.len() + self.ds.edges.len() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
+                let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
                 let side_offset = if side == ShapeOrigin::ShapeA {
                     0usize
                 } else {
@@ -984,7 +984,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             } else if the_type == rcad_kernel::topods::ShapeType::Vertex {
                 // Path B - all source DS vertices (OCCT: TopExp_Explorer VERTEX).
-                for vi in 0..self.ds.vertices.len() {
+                for vi in 0..self.ds.vertex_count() {
                     let src_sr = self.brep_sr(vi);
                     let has_images = self.my_images.borrow().contains_key(&src_sr);
                     if !has_images {
@@ -1001,8 +1001,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
             } else if the_type == rcad_kernel::topods::ShapeType::Edge {
                 // Path B - all source DS edges (OCCT: TopExp_Explorer EDGE).
-                let e_base = self.ds.vertices.len();
-                for ei in 0..self.ds.edges.len() {
+                let e_base = self.ds.vertex_count();
+                for ei in 0..self.ds.edge_count() {
                     let src_sr = self.brep_sr(e_base + ei);
                     let has_images = self.my_images.borrow().contains_key(&src_sr);
                     if !has_images {
@@ -1019,7 +1019,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             } else if the_type == rcad_kernel::topods::ShapeType::Wire {
                 // Path B - all source DS wires (OCCT: TopExp_Explorer WIRE).
-                let w_base = self.ds.vertices.len() + self.ds.edges.len();
+                let w_base = self.ds.vertex_count() + self.ds.edge_count();
                 for wi in 0..self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count() {
                     let src_sr = self.brep_sr(w_base + wi);
                     let has_images = self.my_images.borrow().contains_key(&src_sr);
@@ -1086,24 +1086,24 @@ impl<'a> BooleanBuilder<'a> {
         match topods_type {
             rcad_kernel::topods::ShapeType::Vertex => {
                 let vi = a_s.index;
-                if vi < self.ds.vertices.len() {
+                if vi < self.ds.vertex_count() {
                     // Create vertex TShape at flat index vi
                     t.ensure_vertex_at(vi, self.ds.vertex_point(vi));
                     result.add_ds_vertex(vi, self.ds.vertex_point(vi));
                 }
             }
             rcad_kernel::topods::ShapeType::Edge => {
-                let e_base = self.ds.vertices.len();
+                let e_base = self.ds.vertex_count();
                 let ei = a_s.index.saturating_sub(e_base);
-                if ei < self.ds.edges.len() {
+                if ei < self.ds.edge_count() {
                     let edge = &self.ds.edges[ei];
                     // Ensure vertex TShapes exist at correct flat indices
                     let sv_sr = t.ensure_vertex_at(
                         edge.start_vertex,
-                        self.ds.vertices[edge.start_vertex].point,
+                        self.ds.vertex_point(edge.start_vertex),
                     );
                     let ev_sr = t
-                        .ensure_vertex_at(edge.end_vertex, self.ds.vertices[edge.end_vertex].point);
+                        .ensure_vertex_at(edge.end_vertex, self.ds.vertex_point(edge.end_vertex));
                     // Create edge TShape at flat index e_base + ei
                     let te = t.ensure_edge_at(
                         e_base + ei,
@@ -1116,10 +1116,10 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             rcad_kernel::topods::ShapeType::Wire => {
-                let e_base = self.ds.vertices.len();
-                let wi = a_s.index.saturating_sub(e_base + self.ds.edges.len());
+                let e_base = self.ds.vertex_count();
+                let wi = a_s.index.saturating_sub(e_base + self.ds.edge_count());
                 if wi < self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count() {
-                    let w_ref = self.brep_sr(e_base + self.ds.edges.len() + wi);
+                    let w_ref = self.brep_sr(e_base + self.ds.edge_count() + wi);
                     let mut wire_edges = Vec::new();
                     let e_map = self.my_edge_map.borrow();
                     if let Some(imgs) = self.my_images.borrow().get(&w_ref) {
@@ -1198,7 +1198,7 @@ impl<'a> BooleanBuilder<'a> {
         let my_in_parts = self.my_in_parts.borrow();
 
         let has_objects = self.ds.a_face_count > 0;
-        let has_tools = self.ds.faces.len() > self.ds.a_face_count;
+        let has_tools = self.ds.face_count() > self.ds.a_face_count;
         if !has_objects && !has_tools {
             self.my_report
                 .borrow_mut()
@@ -1218,7 +1218,7 @@ impl<'a> BooleanBuilder<'a> {
         );
         // Build face maps per source solid.
         // rcad: iterate DS faces per side (A=0, B=1), collect face images with orientation.
-        let f_base = self.ds.vertices.len() + self.ds.edges.len();
+        let f_base = self.ds.vertex_count() + self.ds.edge_count();
         let mut faces_with_ori: [Vec<topods::ShapeRef>; 2] = [Vec::new(), Vec::new()];
         let mut faces_fence: [std::collections::HashSet<u64>; 2] = [
             std::collections::HashSet::new(),

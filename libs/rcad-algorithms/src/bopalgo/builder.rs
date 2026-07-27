@@ -408,7 +408,7 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
-        let e_base = ds.vertices.len();
+        let e_base = ds.vertex_count();
 
         // OCCT L1073-1078: vertex counter / edge unification fence
         let mut edge_fence: HashSet<usize> = HashSet::new();
@@ -422,7 +422,7 @@ impl<'a> BooleanBuilder<'a> {
                                pcurve_from: Option<usize>,
                                segs: &mut Vec<WireSegment>,
                                vp: &mut HashMap<usize, DVec3>| {
-            if sp_ei >= ds.edges.len() {
+            if sp_ei >= ds.edge_count() {
                 return;
             }
             let sub = &ds.edges[sp_ei];
@@ -459,7 +459,7 @@ impl<'a> BooleanBuilder<'a> {
         let face_boundary_edge_forwards = ds.face_boundary_edge_forwards(face_idx);
         for i in 0..face_boundary_edges.len() {
             let ei = face_boundary_edges[i];
-            if ei >= ds.edges.len() {
+            if ei >= ds.edge_count() {
                 continue;
             }
             let forward = face_boundary_edge_forwards.get(i).copied().unwrap_or(true);
@@ -496,7 +496,7 @@ impl<'a> BooleanBuilder<'a> {
                     .unwrap_or_default();
                 for &sp_sr in &imgs {
                     let sp_ei = sp_sr.index.saturating_sub(e_base);
-                    if sp_ei >= ds.edges.len() {
+                    if sp_ei >= ds.edge_count() {
                         continue;
                     }
                     // OCCT L1143: HasMultiConnected
@@ -534,7 +534,7 @@ impl<'a> BooleanBuilder<'a> {
         let face_inner_boundary = ds.face_inner_boundary(face_idx);
         for inner_wire in face_inner_boundary {
             for &(ei, forward) in inner_wire {
-                if ei >= ds.edges.len() {
+                if ei >= ds.edge_count() {
                     continue;
                 }
                 if ds.edge_is_internal(ei) {
@@ -562,7 +562,7 @@ impl<'a> BooleanBuilder<'a> {
                         .unwrap_or_default();
                     for &sp_sr in &imgs {
                         let sp_ei = sp_sr.index.saturating_sub(e_base);
-                        if sp_ei >= ds.edges.len() {
+                        if sp_ei >= ds.edge_count() {
                             continue;
                         }
                         if !b_is_degenerated {
@@ -620,7 +620,7 @@ impl<'a> BooleanBuilder<'a> {
 impl<'a> BooleanBuilder<'a> {
     // OCCT BOPAlgo_Builder::BOPAlgo_Builder() (empty constructor)
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
-        let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
+        let context = RefCell::new(Context::new(ds.face_count(), TOLERANCE_ABS * 100.0));
         Self {
             ds,
             context,

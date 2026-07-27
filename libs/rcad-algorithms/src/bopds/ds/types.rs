@@ -662,6 +662,14 @@ pub struct ShapeInfo {
     pub rank: usize,
     /// Original source index within the type-specific array.
     pub source_idx: usize,
+    /// True when this shape has TopAbs_INTERNAL orientation in its parent.
+    pub is_internal: bool,
+    /// Source shell index within the source BRep (0-based, None for intersection shapes).
+    pub source_shell_idx: Option<usize>,
+    /// Source solid index within the source BRep.
+    pub source_solid_idx: Option<usize>,
+    /// Source compsolid index within the source BRep.
+    pub source_compsolid_idx: Option<usize>,
 }
 
 impl ShapeInfo {
@@ -678,6 +686,10 @@ impl ShapeInfo {
             is_new: true,
             rank: 0,
             source_idx: 0,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         }
     }
     pub fn has_flag(&self) -> bool {
@@ -812,6 +824,14 @@ pub struct DS {
     /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
     /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
     pub pave_blocks: Vec<crate::bopds::pave::SharedPB>,
+    /// OCCT BOPDS_DS::myPaveBlocksPool: per-edge PaveBlock lists.
+    /// Indexed by edge index, each entry is the list of PaveBlocks for that edge.
+    /// Will replace DSEdge.pave_blocks when parallel arrays are removed.
+    pub pave_blocks_pool: Vec<Vec<crate::bopds::pave::SharedPB>>,
+    /// OCCT BOPDS_DS::myFaceInfoPool: per-face FaceInfo pool.
+    /// Indexed by face index, each entry is the FaceInfo for that face.
+    /// Will replace DSFace.face_info when parallel arrays are removed.
+    pub face_info_pool: Vec<FaceInfo>,
     /// =myIncreasedSS =vertices whose tolerance was increased
     /// during intersection processing.  Read by RepeatIntersection to determine
     /// which vertices need VV/VE/VF re-checks.

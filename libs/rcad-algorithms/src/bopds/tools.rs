@@ -39,13 +39,19 @@ pub fn perform_common_blocks(ds: &mut DS) {
     // Reverse map: global_pb_idx  ?(edge_idx, local_pb_idx).
     let mut global_to_edge_local: HashMap<usize, (usize, usize)> = HashMap::new();
 
-    for (ei, edge) in ds.edges.iter().enumerate() {
-        for local_i in 0..edge.pave_blocks.len() {
-            let global_i = ds.pave_blocks.len();
-            ds.pave_blocks.push(edge.pave_blocks[local_i].clone());
-            edge_local_to_global.insert((ei, local_i), global_i);
-            global_to_edge_local.insert(global_i, (ei, local_i));
+    // Collect all PBs first to avoid borrow conflict with ds.pave_blocks push.
+    let mut all_pbs: Vec<(usize, usize, crate::bopds::pave::SharedPB)> = Vec::new();
+    for ei in 0..ds.edge_count() {
+        let pbs = ds.edge_pave_blocks(ei);
+        for local_i in 0..pbs.len() {
+            all_pbs.push((ei, local_i, pbs[local_i].clone()));
         }
+    }
+    for (ei, local_i, pb) in &all_pbs {
+        let global_i = ds.pave_blocks.len();
+        ds.pave_blocks.push(pb.clone());
+        edge_local_to_global.insert((*ei, *local_i), global_i);
+        global_to_edge_local.insert(global_i, (*ei, *local_i));
     }
 
     //  € € Phase 2: Group coincident PaveBlocks  € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -60,9 +66,10 @@ pub fn perform_common_blocks(ds: &mut DS) {
     // vertex pair, along with the face they belong to.
     let mut vertex_groups: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
 
-    for (ei, edge) in ds.edges.iter().enumerate() {
-        for local_i in 0..edge.pave_blocks.len() {
-            let pb = &edge.pave_blocks[local_i];
+    for ei in 0..ds.edge_count() {
+        let pbs = ds.edge_pave_blocks(ei);
+        for local_i in 0..pbs.len() {
+            let pb = &pbs[local_i];
             // OCCT: skip section edges (no original edge)
             if pb.0.read().unwrap().original_edge == NO_EDGE {
                 continue;
@@ -77,7 +84,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
             };
 
             // Derive face indices from edge's face_reps (OCCT records this at EF intersection).
-            let face_indices: Vec<usize> = edge.face_reps.iter().map(|r| r.face_idx).collect();
+            let face_indices: Vec<usize> = ds.edge_face_reps(ei).iter().map(|r| r.face_idx).collect();
 
             for &fi in &face_indices {
                 vertex_groups.entry(key).or_default().push((global_pb, fi));
@@ -162,8 +169,10 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
     // Reference PaveBlock (the first one).
     let (ref_pb_idx, _) = pb_entries[0];
     let ref_pb = &ds.pave_blocks[ref_pb_idx];
-    let ref_edge = &ds.edges[ref_pb.0.read().unwrap().original_edge];
-    let ref_curve = &ref_edge.curve;
+    let ref_ei = ref_pb.0.read().unwrap().original_edge;
+    let ref_curve = ds.edge_curve(ref_ei).unwrap_or_else(|| {
+        panic!("tools: edge {} has no curve", ref_ei)
+    });
     let t1 = ref_pb
         .0
         .read()
@@ -180,7 +189,7 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
         .max(ref_pb.0.read().unwrap().pave2.param);
 
     // Start tolerance from the reference edge's model tolerance (OCCT aTolMax = BRep_Tool::Tolerance(aEOr)).
-    let mut tol_max = ref_edge.geom_tol;
+    let mut tol_max = ds.edge_tolerance(ref_ei);
 
     // OCCT uses 11 interior sample points: aDt = (aT2 - aT1) / (aNbPnt + 1).
     let n_samples = 11usize;
@@ -193,8 +202,10 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
     if pb_entries.len() > 1 {
         for &(pb_idx, _face_idx) in &pb_entries[1..] {
             let pb = &ds.pave_blocks[pb_idx];
-            let other_edge = &ds.edges[pb.0.read().unwrap().original_edge];
-            let other_curve = &other_edge.curve;
+            let other_ei = pb.0.read().unwrap().original_edge;
+            let other_curve = ds.edge_curve(other_ei).unwrap_or_else(|| {
+                panic!("tools: edge {} has no curve", other_ei)
+            });
             let other_t_range = [
                 pb.0.read()
                     .unwrap()
@@ -207,7 +218,7 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
                     .param
                     .max(pb.0.read().unwrap().pave2.param),
             ];
-            let other_tol = other_edge.geom_tol;
+            let other_tol = ds.edge_tolerance(other_ei);
 
             let mut t = t1;
             for _ in 0..n_samples {
@@ -227,9 +238,10 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
         let faces_list = cb.faces();
         if !faces_list.is_empty() {
             for &fi in faces_list {
-                let face = &ds.faces[fi];
-                let surf = &face.surface;
-                let face_tol = face.geom_tol;
+                let surf = ds.face_surface(fi).unwrap_or_else(|| {
+                    panic!("tools: face {} has no surface", fi)
+                });
+                let face_tol = ds.face_tolerance(fi);
 
                 let mut t = t1;
                 for _ in 0..n_samples {

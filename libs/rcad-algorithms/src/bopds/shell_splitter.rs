@@ -363,7 +363,7 @@ fn refine_shell(shell_faces: &[usize], ds: &DS) -> Vec<Vec<usize>> {
         // OCCT L486-511: count faces; for each face where the edge is INTERNAL, count +1.
         // In rcad: edge is_internal flag means it counts twice.
         let mut nb_f = flist.len();
-        if ds.edges.get(ei).map_or(false, |e| e.is_internal) {
+        if ds.edge_is_internal(ei) {
             nb_f += flist.len();
         }
         if nb_f > 2 {
@@ -580,7 +580,7 @@ fn split_block(faces: &[usize], ds: &DS, loops: &mut Vec<Vec<usize>>) {
         let mut to_remove: Vec<usize> = Vec::new();
         for (&ei, flist) in &ef {
             if !ds.is_edge_degenerated(ei)
-                && ds.edges.get(ei).map_or(true, |e| !e.is_internal)
+                && !ds.edge_is_internal(ei)
                 && flist.len() == 1
             {
                 to_remove.push(flist[0]);
@@ -665,7 +665,7 @@ fn split_block(faces: &[usize], ds: &DS, loops: &mut Vec<Vec<usize>>) {
                 }
 
                 // Skip INTERNAL edges (OCCT L293-297)
-                if ds.edges.get(ei).map_or(false, |e| e.is_internal) {
+                if ds.edge_is_internal(ei) {
                     continue;
                 }
 

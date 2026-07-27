@@ -358,8 +358,8 @@ pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
 pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
-    for (fi, face) in ds.faces.iter().enumerate() {
-        if face.face_info.curves_sc.contains(&ci) {
+    for fi in 0..ds.face_count() {
+        if ds.face_info(fi).curves_sc.contains(&ci) {
             if idx < 2 {
                 result[idx] = fi;
                 idx += 1;
@@ -404,8 +404,7 @@ pub(crate) fn put_pave_on_curve_full(
         .collect();
 
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
-        let face = &ds.faces[fi];
-        for &vi in &face.face_info.vertices_on {
+        for &vi in &ds.face_info(fi).vertices_on {
             if !ef_vertices.contains(&vi) {
                 continue;
             } // OCCT GetStickVertices: skip non-pair EF
@@ -422,7 +421,7 @@ pub(crate) fn put_pave_on_curve_full(
                 }
             }
         }
-        for &vi in &face.face_info.vertices_in {
+        for &vi in &ds.face_info(fi).vertices_in {
             if vi == ic.start_vertex || vi == ic.end_vertex {
                 continue;
             }

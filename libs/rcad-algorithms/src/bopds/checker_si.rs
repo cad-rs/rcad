@@ -256,22 +256,21 @@ impl CheckerSI {
     /// Since PaveFiller iterates both A→B and B→A, `vertex` may be from the A
     /// copy and `edge` from the B copy, or vice versa.
     fn ve_filter(vertex: usize, edge: usize, ds: &DS, a_vc: usize) -> bool {
-        if edge >= ds.edges.len() {
+        if edge >= ds.edge_count() {
             return true;
         }
-        let e = &ds.edges[edge];
         // Determine which copy the vertex belongs to and check accordingly.
         // The edge's start/end vertices are from one copy; the vertex may be
         // from the *other* copy (with offset).
         if vertex < a_vc {
             // Vertex is from A copy. Edge may be from B copy (vertex offset = a_vc).
-            let b_start = e.start_vertex.wrapping_sub(a_vc);
-            let b_end = e.end_vertex.wrapping_sub(a_vc);
+            let b_start = ds.edge_start_vertex_ds(edge).wrapping_sub(a_vc);
+            let b_end = ds.edge_end_vertex_ds(edge).wrapping_sub(a_vc);
             vertex != b_start && vertex != b_end
         } else if vertex >= a_vc && vertex < 2 * a_vc {
             // Vertex is from B copy. Edge may be from A copy (vertex offset = a_vc added back).
-            let a_start = e.start_vertex.wrapping_add(a_vc);
-            let a_end = e.end_vertex.wrapping_add(a_vc);
+            let a_start = ds.edge_start_vertex_ds(edge).wrapping_add(a_vc);
+            let a_end = ds.edge_end_vertex_ds(edge).wrapping_add(a_vc);
             vertex != a_start && vertex != a_end
         } else {
             // Vertex is from intersection (index >= 2*a_vc). This is a true interference.
@@ -282,20 +281,20 @@ impl CheckerSI {
     /// Filter for VertexFace: returns `true` if the vertex is NOT a boundary
     /// vertex of the face (i.e., it is truly on the face interior).
     fn vf_filter(vertex: usize, face: usize, ds: &DS, a_vc: usize) -> bool {
-        if face >= ds.faces.len() {
+        if face >= ds.face_count() {
             return true;
         }
-        let f = &ds.faces[face];
+        let bverts = ds.face_boundary_verts(face);
         if vertex < a_vc {
             // Vertex is from A copy. Face boundary_verts are from B copy (offset = a_vc).
-            for &bv in &f.boundary_verts {
+            for &bv in bverts {
                 if bv >= a_vc && vertex + a_vc == bv {
                     return false;
                 }
             }
         } else if vertex >= a_vc && vertex < 2 * a_vc {
             // Vertex is from B copy. Face boundary_verts may be from A copy.
-            for &bv in &f.boundary_verts {
+            for &bv in bverts {
                 if bv < a_vc && vertex == bv + a_vc {
                     return false;
                 }
@@ -307,7 +306,7 @@ impl CheckerSI {
     /// Filter for EdgeFace: returns `true` if the edge is NOT a boundary edge
     /// of the face (i.e., it is a true edge-face self-interference).
     fn ef_filter(edge: usize, face: usize, ds: &DS, a_ec: usize) -> bool {
-        if face >= ds.faces.len() {
+        if face >= ds.face_count() {
             return true;
         }
         let f = &ds.faces[face];

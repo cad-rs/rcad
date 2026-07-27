@@ -125,7 +125,7 @@ fn update_existing_pave_blocks(
             let spb = &ds.pave_blocks[old_pb_idx];
             spb.0.read().unwrap().original_edge
         };
-        if orig_e < ds.edges.len() {
+        if orig_e < ds.edge_count() {
             ds.edges[orig_e].pave_blocks.retain(|spb| {
                 let ptr = Arc::as_ptr(&spb.0);
                 let old_ptr = Arc::as_ptr(&ds.pave_blocks[old_pb_idx].0);
@@ -179,7 +179,7 @@ fn update_existing_pave_blocks(
                 ds.pave_blocks.push(crate::bopds::pave::SharedPB::new(pb2n));
                 a_cb.add_pave_block(new_g_idx, old_face_idx);
                 // Append to edge's PB list
-                if orig_e < ds.edges.len() {
+                if orig_e < ds.edge_count() {
                     ds.edges[orig_e]
                         .pave_blocks
                         .push(ds.pave_blocks[new_g_idx].clone());
@@ -205,7 +205,7 @@ fn update_existing_pave_blocks(
             let spb = &ds.pave_blocks[a_pbf];
             spb.0.read().unwrap().original_edge
         };
-        if orig_e < ds.edges.len() {
+        if orig_e < ds.edge_count() {
             for &rp_idx in a_lpb {
                 ds.edges[orig_e]
                     .pave_blocks
@@ -220,7 +220,7 @@ fn update_existing_pave_blocks(
     if let Some(pb_faces) = the_pb_faces_map.get(&a_pbf) {
         let a_tol_f = crate::tolerance::CONFUSION;
         for &fi in pb_faces {
-            if fi >= ds.faces.len() {
+            if fi >= ds.face_count() {
                 continue;
             }
             let face_surface = ds.faces[fi].surface.clone();
@@ -245,7 +245,7 @@ fn update_existing_pave_blocks(
                     let (tt1, tt2) = pb.range();
                     (e_idx, tt1, tt2)
                 };
-                if ei >= ds.edges.len() {
+                if ei >= ds.edge_count() {
                     continue;
                 }
                 let a_tol_e = ds.edge_tolerance(ei).max(CONFUSION);
@@ -369,10 +369,10 @@ impl<'a> PaveFiller<'a> {
 pub(crate) fn build_face_shape_map(ds: &DS, fi: usize) -> std::collections::HashSet<usize> {
     let mut aMI = std::collections::HashSet::new();
     aMI.insert(fi);
-    if fi < ds.faces.len() {
-        for &ei in &ds.faces[fi].boundary_edges {
+    if fi < ds.face_count() {
+        for &ei in ds.face_boundary_edges(fi) {
             aMI.insert(ei);
-            if ei < ds.edges.len() {
+            if ei < ds.edge_count() {
                 let v_start = ds.edge_start_vertex_ds(ei);
                 let v_end = ds.edge_end_vertex_ds(ei);
                 aMI.insert(v_start);
@@ -405,7 +405,7 @@ fn propagate_ic_vertices_to_shared_faces(
 ) {
     let vtol = TOLERANCE_ABS * 1000.0; // 1e-4 geometric tolerance for on-edge check
     let vtol_sq = vtol * vtol;
-    for fi in 0..ds.faces.len() {
+    for fi in 0..ds.face_count() {
         if fi == skip_faces[0] || fi == skip_faces[1] {
             continue;
         }
@@ -414,12 +414,12 @@ fn propagate_ic_vertices_to_shared_faces(
                 continue;
             }
             let vp = ds.vertex_point(vi);
-            for &ei in &ds.faces[fi].boundary_edges {
+            for &ei in ds.face_boundary_edges(fi) {
                 let Some(edge) = ds.edges.get(ei) else {
                     continue;
                 };
-                let a = ds.vertices[edge.start_vertex].point;
-                let b = ds.vertices[edge.end_vertex].point;
+                let a = ds.vertex_point(edge.start_vertex);
+                let b = ds.vertex_point(edge.end_vertex);
                 let ab = b - a;
                 let ab_len2 = ab.length_squared();
                 if ab_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
@@ -470,7 +470,7 @@ impl<'a> PaveFiller<'a> {
             let pairs = it.pairs(a_type[i], ShapeType::Face);
             // OCCT L868-878: iterate pairs
             for &(_n1, n_f) in pairs.iter() {
-                if n_f < self.ds.faces.len()
+                if n_f < self.ds.face_count()
      // OCCT L873: IsBasedOnPlane(aF) — checks Geom_Plane with TrimmedSurface unwrap
      // rcad: Surface3 has no TrimmedSurface wrapper; locate_surface applies Location
      && matches!(self.ds.locate_surface(n_f), Surface3::Plane(_))
@@ -500,14 +500,14 @@ impl<'a> PaveFiller<'a> {
             // OCCT L893: aExp.Init(aF, aType[1]) — explore EDGE sub-shapes
             // rcad: boundary_edges + inner_boundary_edges (same semantics)
             for &ei in &f.boundary_edges {
-                if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
+                if ei < self.ds.edge_count() && self.ds.edge_on_face(ei, fi).is_none() {
                     // OCCT L898: aBPC.SetEdge(aE); aBPC.SetFace(aF)
                     a_vbpc.push((ei, fi));
                 }
             }
             for w in &f.inner_boundary_edges {
                 for &(ei, _) in w {
-                    if ei < self.ds.edges.len() && self.ds.edge_on_face(ei, fi).is_none() {
+                    if ei < self.ds.edge_count() && self.ds.edge_on_face(ei, fi).is_none() {
                         a_vbpc.push((ei, fi));
                     }
                 }
@@ -580,8 +580,8 @@ impl<'a> PaveFiller<'a> {
         self.ds.nb_source_shapes = self.ds.shape_info.len();
         self.ds.build_map_ve();
         // OCCT L204: myContext = new IntTools_Context — rcad: resize context
-        if self.ds.faces.len() != self.context.num_faces {
-            self.context.resize(self.ds.faces.len());
+        if self.ds.face_count() != self.context.num_faces {
+            self.context.resize(self.ds.face_count());
         }
         // OCCT L213: SetNonDestructive()
         self.set_non_destructive_auto();
@@ -604,9 +604,9 @@ impl<'a> PaveFiller<'a> {
         use crate::bopds::ds::topods_builder::load_vertices_from_brep;
         load_vertices_from_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
         // Capture A counts before loading B (original init() interleaving behavior)
-        self.ds.a_vertex_count = self.ds.vertices.len();
-        self.ds.a_edge_count = self.ds.edges.len();
-        self.ds.a_face_count = self.ds.faces.len();
+        self.ds.a_vertex_count = self.ds.vertex_count();
+        self.ds.a_edge_count = self.ds.edge_count();
+        self.ds.a_face_count = self.ds.face_count();
         load_vertices_from_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
     }
 
@@ -785,7 +785,7 @@ impl<'a> PaveFiller<'a> {
         self.update_blocks_with_shared_vertices();
 
         // OCCT L333: RefineFaceInfoIn before MakeSplitEdges
-        for fi in 0..self.ds.faces.len() {
+        for fi in 0..self.ds.face_count() {
             self.ds.refine_face_info_in(fi);
         }
 
@@ -824,7 +824,7 @@ impl<'a> PaveFiller<'a> {
 
         // OCCT L355: RefineFaceInfoOn =after ReleasePaveBlocks, remove
         // zero-length On pave blocks (BOPDS_DS::RefineFaceInfoOn).
-        for fi in 0..self.ds.faces.len() {
+        for fi in 0..self.ds.face_count() {
             self.ds.refine_face_info_on(fi);
         }
 
@@ -871,7 +871,7 @@ impl<'a> PaveFiller<'a> {
         let si = if n_e < self.ds.edge_shape_idx.len() {
             self.ds.edge_shape_idx[n_e]
         } else {
-            self.ds.vertices.len() + n_e
+            self.ds.vertex_count() + n_e
         };
         if si < self.ds.shape_info.len() {
             self.ds.shape_info[si].is_new
@@ -883,7 +883,7 @@ impl<'a> PaveFiller<'a> {
 
     // OCCT BOPAlgo_PaveFiller_10.cxx L63-101
     pub(crate) fn update_edge_tolerance(&mut self, n_e: usize, a_tol_new: f64) {
-        if n_e >= self.ds.edges.len() {
+        if n_e >= self.ds.edge_count() {
             return;
         }
         // OCCT L68-85: avoid modifying input shapes in safe (non-destructive) mode
@@ -915,7 +915,7 @@ impl<'a> PaveFiller<'a> {
 
     // OCCT BOPAlgo_PaveFiller_10.cxx L105-162
     pub(crate) fn update_vertex(&mut self, n_v: usize, a_tol_new: f64) -> usize {
-        if n_v >= self.ds.vertices.len() {
+        if n_v >= self.ds.vertex_count() {
             return n_v;
         }
         // OCCT L111: nVNew = nV
@@ -967,7 +967,7 @@ impl<'a> PaveFiller<'a> {
         }
         // Collect CB indices first to avoid borrow conflicts
         let mut cb_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for ei in 0..self.ds.edges.len() {
+        for ei in 0..self.ds.edge_count() {
             for spb in &self.ds.edges[ei].pave_blocks {
                 let pb = spb.0.read().unwrap();
                 if let Some(cb_idx) = pb.common_block_idx {
@@ -980,7 +980,7 @@ impl<'a> PaveFiller<'a> {
             // Find the first PB associated with this CB to get its vertices
             let vertices: Vec<usize> = {
                 let mut verts = Vec::new();
-                for ei in 0..self.ds.edges.len() {
+                for ei in 0..self.ds.edge_count() {
                     for spb in &self.ds.edges[ei].pave_blocks {
                         let pb = spb.0.read().unwrap();
                         if pb.common_block_idx == Some(cb_idx) {
@@ -1009,7 +1009,7 @@ impl<'a> PaveFiller<'a> {
         // Collect (vertex_idx, tolerance) pairs first to avoid borrow conflicts
         let mut updates: Vec<(usize, f64)> = Vec::new();
         let mut a_mpb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for ei in 0..self.ds.edges.len() {
+        for ei in 0..self.ds.edge_count() {
             for spb in &self.ds.edges[ei].pave_blocks {
                 let pb = spb.0.read().unwrap();
                 if let Some(cb_idx) = pb.common_block_idx {
@@ -1040,7 +1040,7 @@ impl<'a> PaveFiller<'a> {
         }
         // 1. From edge pave blocks
         for &ei in the_edges {
-            if ei < self.ds.edges.len() {
+            if ei < self.ds.edge_count() {
                 self.ds.edge_pave_blocks_mut(ei).clear();
             }
         }
@@ -1057,7 +1057,7 @@ impl<'a> PaveFiller<'a> {
             });
         }
         // 3. From FaceInfo
-        for fi in 0..self.ds.faces.len() {
+        for fi in 0..self.ds.face_count() {
             let fi_copy = fi; // avoid borrow conflict
             // Collect PB indices to remove
             let to_remove: std::collections::HashSet<usize> = {
@@ -1110,7 +1110,7 @@ impl<'a> PaveFiller<'a> {
             let Some(&cpb) = a_mscpb.get(&edge_or_vertex) else {
                 continue;
             };
-            if edge_or_vertex < self.ds.edges.len() {
+            if edge_or_vertex < self.ds.edge_count() {
                 // It's an edge — check if it's a micro edge
                 let ei = edge_or_vertex;
                 let is_micro = {
@@ -1118,7 +1118,7 @@ impl<'a> PaveFiller<'a> {
                         let e = &self.ds.edges[ei];
                         (e.start_vertex, e.end_vertex)
                     };
-                    if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+                    if sv < self.ds.vertex_count() && ev < self.ds.vertex_count() {
                         let v1 = self.ds.vertex_point(sv);
                         let v2 = self.ds.vertex_point(ev);
                         v1.distance(v2) < TOLERANCE_ABS * 10.0
@@ -1181,7 +1181,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // OCCT L3748-3760: pool PBs (all edge PBs)
-        for ei in 0..self.ds.edges.len() {
+        for ei in 0..self.ds.edge_count() {
             for spb in &self.ds.edges[ei].pave_blocks {
                 an_all_pbs.push(spb.clone());
             }
@@ -1201,7 +1201,7 @@ impl<'a> PaveFiller<'a> {
                     let pb1_local = cb.pave_block1();
                     let edge_idx = cb.edge();
                     if let (Some(pli), Some(ei)) = (pb1_local, edge_idx) {
-                        if ei < self.ds.edges.len() && pli < self.ds.edges[ei].pave_blocks.len() {
+                        if ei < self.ds.edge_count() && pli < self.ds.edges[ei].pave_blocks.len() {
                             self.ds.edges[ei].pave_blocks[pli].clone()
                         } else {
                             a_pb.clone()
@@ -1266,7 +1266,7 @@ impl<'a> PaveFiller<'a> {
                     pb_ref.original_edge
                 }
             };
-            if n_e >= self.ds.edges.len() {
+            if n_e >= self.ds.edge_count() {
                 continue;
             }
 
@@ -1400,7 +1400,7 @@ impl<'a> PaveFiller<'a> {
                 (ff.f1, ff.f2, ff.points.clone())
             };
             for ffp in &points {
-                if ffp.vertex_index < self.ds.vertices.len() {
+                if ffp.vertex_index < self.ds.vertex_count() {
                     let n_v = ffp.vertex_index;
                     if !self.ds.faces[f1].face_info.vertices_in.contains(&n_v) {
                         self.ds.faces[f1].face_info.vertices_in.insert(n_v);
@@ -1785,7 +1785,7 @@ impl<'a> PaveFiller<'a> {
     // For each edge with PBs: if any PB has zero-length range, no ShrunkData,
     // or shrunk range < edge tolerance, the edge's PBs are cleared.
     fn remove_micro_edges(&mut self) {
-        let a_nb_e = self.ds.edges.len();
+        let a_nb_e = self.ds.edge_count();
         for i in 0..a_nb_e {
             // OCCT L4343: skip removed/degenerated edges
             if self.ds.edge_has_flag(i) || self.ds.is_edge_degenerated(i) {
@@ -1861,7 +1861,7 @@ impl<'a> PaveFiller<'a> {
         // L391: UpdateCommonBlocksWithSDVertices
         self.ds.update_common_blocks_with_sd_vertices();
         //
-        let n_edges = self.ds.edges.len();
+        let n_edges = self.ds.edge_count();
         // L377-380: return if no edges (aNbPBP == 0 equivalent)
         if n_edges == 0 {
             return;
@@ -1963,7 +1963,7 @@ impl<'a> PaveFiller<'a> {
                                         .read()
                                         .unwrap()
                                         .original_edge;
-                                    if oe < self.ds.edges.len()
+                                    if oe < self.ds.edge_count()
                                         && self.ds.edges[oe].pave_blocks.len() == 1
                                     {
                                         a_found_it = true;
@@ -2150,7 +2150,7 @@ impl<'a> PaveFiller<'a> {
             let mut a_cb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
             // Process EDGES from this operand
-            for ei in 0..self.ds.edges.len() {
+            for ei in 0..self.ds.edge_count() {
                 let e_origin = self.ds.edge_origin(ei);
                 let e_rank = match e_origin {
                     ShapeOrigin::ShapeA => 0,
@@ -2230,7 +2230,7 @@ impl<'a> PaveFiller<'a> {
             }
 
             // Process FACES from this operand
-            for fi in 0..self.ds.faces.len() {
+            for fi in 0..self.ds.face_count() {
                 let f_origin = self.ds.face_origin(fi);
                 let f_rank = match f_origin {
                     ShapeOrigin::ShapeA => 0,

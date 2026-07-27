@@ -90,8 +90,8 @@ impl<'a> super::PaveFiller<'a> {
         let tol = self.glue_tolerance;
         let mut shared_edges = Vec::new();
 
-        let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.to_vec();
-        let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.to_vec();
+        let edges1: Vec<usize> = self.ds.face_boundary_edges(f1).to_vec();
+        let edges2: Vec<usize> = self.ds.face_boundary_edges(f2).to_vec();
 
         for &e1 in &edges1 {
             for &e2 in &edges2 {
@@ -184,7 +184,7 @@ impl<'a> super::PaveFiller<'a> {
 
         // Iterate over all face pairs from different shapes
         let a_fcount = self.ds.a_face_count;
-        let mut pit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        let mut pit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while pit.more() {
             let pk = pit.value();
             let f1_idx = pk.i1;
@@ -304,7 +304,7 @@ impl<'a> super::PaveFiller<'a> {
 
         // Iterate over all edge pairs from different shapes
         let a_ecount = self.ds.a_edge_count;
-        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
+        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edge_count());
         while eit.more() {
             let pk = eit.value();
             let e1_idx = pk.i1;
@@ -919,7 +919,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut containments = Vec::new();
 
         let a_ecount = self.ds.a_edge_count;
-        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
+        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edge_count());
         while eit.more() {
             let pk = eit.value();
             let e1_idx = pk.i1;
@@ -940,7 +940,7 @@ impl<'a> super::PaveFiller<'a> {
 
         // Iterate over all face pairs from different shapes
         let a_fcount = self.ds.a_face_count;
-        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while fit.more() {
             let pk = fit.value();
             let f1_idx = pk.i1;
@@ -1211,7 +1211,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut coincident_faces = Vec::new();
 
         let a_fcount = self.ds.a_face_count;
-        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while fit.more() {
             let pk = fit.value();
             let f1_idx = pk.i1;

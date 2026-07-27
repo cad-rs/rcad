@@ -92,7 +92,7 @@ fn round_pt(p: glam::DVec3) -> [f64; 3] {
 }
 
 fn serialize_ds(ds: &DS) -> serde_json::Value {
-    let nv = ds.vertices.len();
+    let nv = ds.vertex_count();
     let av = ds.a_vertex_count;
     let n_interf_total = ds.interf_vv.len()
         + ds.interf_ve.len()
@@ -139,7 +139,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         .enumerate()
         .map(|(fi, f)| {
             let st = format!("{:?}", f.surface);
-            let fi_info = if fi < ds.faces.len() {
+            let fi_info = if fi < ds.face_count() {
                 &ds.faces[fi].face_info
             } else {
                 &FaceInfo::default()
@@ -263,7 +263,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         "nF": ds.shape_info.iter().filter(|si| si.shape_type == ShapeType::Face).count(),
         "nPB": ds.pave_blocks.len(), "nCB": ds.common_blocks.len(),
         // rcad raw counts (total entities, all types)
-        "nV_raw": nv, "nE_raw": ds.edges.len(), "nF_raw": ds.faces.len(),
+        "nV_raw": nv, "nE_raw": ds.edge_count(), "nF_raw": ds.face_count(),
         "nIC": ds.intersection_curves.len(),
         // OCCT-aligned: source & total shape count
         "nSource": ds.nb_source_shapes(),

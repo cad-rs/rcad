@@ -278,17 +278,17 @@ pub(crate) fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
 /// 2. Regular block ( degree=2):
 /// 3. Irregular block ( degree>2 ): SmartMap + Path
 // Returns (wires, internal_wires, vertex_positions) where vertex_positions
-// maps canonical vertex indices (>= ds.vertices.len()) to their 3D position.
+// maps canonical vertex indices (>= ds.vertex_count()) to their 3D position.
 ///  build canonical vertex map so different DS vertex indices
 /// at the same 3D position map to one canonical index (OCCT BRep shares
-/// TopoDS_Vertex).  Skips degenerate virtual-end vertices (>= ds.vertices.len()).
+/// TopoDS_Vertex).  Skips degenerate virtual-end vertices (>= ds.vertex_count()).
 /// Extracted so the BuilderFace-level PerformShapesToAvoid and the WireSplitter
 /// (build_closed_wires) agree on pole canonicalization.
 pub(crate) fn build_vi_to_canon(segments: &[WireSegment], ds: &DS) -> Vec<usize> {
     let mut canon_vertices: Vec<DVec3> = Vec::new();
-    let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertices.len()];
+    let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertex_count()];
     for seg in segments.iter() {
-        if seg.end_vertex >= ds.vertices.len() {
+        if seg.end_vertex >= ds.vertex_count() {
             continue;
         } // skip deg (virtual end)
         for &vi in &[seg.start_vertex, seg.end_vertex] {
@@ -328,7 +328,7 @@ pub(crate) fn physical_edge_id(
     let canon = |v: usize| vi_to_canon.get(v).copied().unwrap_or(v);
     let a = canon(seg.start_vertex);
     // Degenerate virtual end keeps its own id; never collapses with others.
-    let b = if seg.end_vertex >= ds.vertices.len() {
+    let b = if seg.end_vertex >= ds.vertex_count() {
         usize::MAX
     } else {
         canon(seg.end_vertex)
@@ -369,7 +369,7 @@ pub(crate) fn build_closed_wires(
             .max()
             .map_or(0, |m| m + 1);
         let mut cv = vec![DVec3::ZERO; maxc];
-        for vi in 0..ds.vertices.len() {
+        for vi in 0..ds.vertex_count() {
             let c = vi_to_canon[vi];
             if c != usize::MAX {
                 cv[c] = ds.vertex_point(vi);
@@ -382,14 +382,14 @@ pub(crate) fn build_closed_wires(
     let seam_is_split = segments.iter().any(|s| {
         s.is_closed_on_face
             && matches!(&s.source, WireEdgeSource::DsEdge(ei)
- if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
+ if ds.edge_pave_blocks(*ei).len() > 1)
     });
     let mut deg_end_canon: HashMap<usize, usize> = HashMap::new();
     if !seam_is_split {
         for (si, seg) in segments.iter().enumerate() {
-            // detect deg edges by virtual end vertex (>= ds.vertices.len())
-            if seg.end_vertex >= ds.vertices.len() {
-                let pt = ds.vertices[seg.start_vertex].point;
+            // detect deg edges by virtual end vertex (>= ds.vertex_count())
+            if seg.end_vertex >= ds.vertex_count() {
+                let pt = ds.vertex_point(seg.start_vertex);
                 canon_vertices.push(pt);
                 deg_end_canon.insert(si, canon_vertices.len() - 1);
             }
@@ -561,7 +561,7 @@ pub(crate) fn build_closed_wires(
             let b_is_closed_check = seg.start_vertex == seg.end_vertex
                 || (seg.is_closed_on_face
                     && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
- if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
+ if ds.edge_pave_blocks(*ei).len() > 1));
             if !a_ms.insert(canon_key) && !b_is_closed_check {
                 a_ms.remove(&canon_key);
             }
@@ -606,7 +606,7 @@ pub(crate) fn build_closed_wires(
             let b_is_closed = seg.start_vertex == seg.end_vertex
                 || (seg.is_closed_on_face
                     && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
- if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
+ if ds.edge_pave_blocks(*ei).len() > 1));
 
             // ONE EdgeInfo per vertex
             let sv_in = false; // start_vertex  ?out
@@ -644,7 +644,7 @@ pub(crate) fn build_closed_wires(
                 let seg = &segments[ei.seg_idx];
                 let t_v = match &seg.source {
                     WireEdgeSource::DsEdge(ei) => {
-                        ds.edges[*ei].vertex_param(*v).unwrap_or_else(|| {
+                        ds.edge_vertex_params(*ei).get(v).copied().unwrap_or_else(|| {
                             if *v == seg.start_vertex {
                                 seg.t_range[0]
                             } else {
@@ -687,8 +687,10 @@ pub(crate) fn build_closed_wires(
                     t_v,
                     curve_domain,
                     ei.in_flag,
-                    &ds.faces[face_idx].surface,
-                    ds.vertices[*v].geom_tol,
+                    ds.face_surface(face_idx).unwrap_or_else(|| {
+                        panic!("wire_splitter: face {} has no surface", face_idx)
+                    }),
+                    ds.vertex_tolerance(*v),
                     None,
                 )
                 .unwrap_or(0.0);
@@ -933,7 +935,7 @@ pub(crate) fn build_pid_maps(
     let mut pid_endpoints: std::collections::HashMap<Pid, (usize, usize)> =
         std::collections::HashMap::new();
     let canon = |v: usize| -> usize {
-        if v >= ds.vertices.len() {
+        if v >= ds.vertex_count() {
             usize::MAX
         } else {
             vi_to_canon.get(v).copied().unwrap_or(v)
@@ -1004,7 +1006,7 @@ pub(crate) fn perform_shapes_to_avoid(
         for (&canon_vi, ids) in &anc {
             let a_nb_e = ids.len();
             // INTERNAL vertices skip (not on boundary)
-            if canon_vi < ds.vertices.len() && ds.vertex_is_internal(canon_vi) {
+            if canon_vi < ds.vertex_count() && ds.vertex_is_internal(canon_vi) {
                 continue;
             }
             if a_nb_e == 1 {

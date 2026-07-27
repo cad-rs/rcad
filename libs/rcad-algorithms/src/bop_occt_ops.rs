@@ -95,9 +95,9 @@ impl DSU {
 /// `brep_check`-clean.
 /// Invariants on the BOP DS after prepare ([`DS::new`]) and after paving ([`PaveFiller::perform]).
 fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
-    let nv = ds.vertices.len();
-    let ne = ds.edges.len();
-    let nf = ds.faces.len();
+    let nv = ds.vertex_count();
+    let ne = ds.edge_count();
+    let nf = ds.face_count();
     let nic = ds.intersection_curves.len();
 
     if !ds.fuzzy_tol.is_finite() || ds.fuzzy_tol < 0.0 {

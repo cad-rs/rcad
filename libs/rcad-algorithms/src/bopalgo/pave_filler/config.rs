@@ -2,7 +2,7 @@ use super::*;
 
 impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
-        let n_faces = ds.faces.len();
+        let n_faces = ds.face_count();
         let context = IntToolsContext::new(n_faces, TOLERANCE_ABS * 100.0);
         // SAFETY: BOPDS_Iterator borrows ds (lifetime 'a). Transmute to 'static
         // via raw pointer because Rust cannot hold two fields borrowing same data
@@ -48,7 +48,7 @@ impl<'a> PaveFiller<'a> {
 
     /// Create PaveFiller with BRep-based BVH (EE/EF/VF pair paths).
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
-        let total_faces = ds.faces.len();
+        let total_faces = ds.face_count();
         let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
         // SAFETY: see PaveFiller::new()
         let my_iterator = {

@@ -185,21 +185,23 @@ pub fn intersect_vertices(vertex_indices: &[usize], ds: &DS, fuzzy_value: f64) -
 
     for i in 0..a_nb_v {
         let vi = vertex_indices[i];
-        let Some(v) = ds.vertices.get(vi) else {
+        let p = ds.vertex_point(vi);
+        if !p.is_finite() {
             continue;
-        };
+        }
         let a_tol = ds.vertex_tolerance(vi).max(0.0);
         let total_tol = a_tol + a_tol_add;
 
         for j in (i + 1)..a_nb_v {
             let vj = vertex_indices[j];
-            let Some(v2) = ds.vertices.get(vj) else {
+            let p2 = ds.vertex_point(vj);
+            if !p2.is_finite() {
                 continue;
-            };
+            }
             let a_tol_j = ds.vertex_tolerance(vj).max(0.0);
             let total_tol_j = a_tol_j + a_tol_add;
             let total_tol_sum = total_tol + total_tol_j;
-            let dist2 = (v.point - v2.point).length_squared();
+            let dist2 = (p - p2).length_squared();
             if dist2 <= total_tol_sum * total_tol_sum {
                 fill_map(&mut map, i, j);
             }
@@ -249,9 +251,9 @@ pub fn edges_to_wires(
     let a_le: Vec<usize> = edge_indices
         .iter()
         .filter(|&&ei| {
-            ds.edges
-                .get(ei)
-                .map_or(false, |e| !ds.is_edge_degenerated(ei) && e.is_geometric)
+            ei < ds.edge_count()
+                && !ds.is_edge_degenerated(ei)
+                && ds.edge_is_geometric(ei)
         })
         .copied()
         .collect();
@@ -268,13 +270,14 @@ pub fn edges_to_wires(
     // Build vertex -> edge adjacency map
     let mut a_ve_map: BTreeMap<usize, Vec<(usize, bool)>> = BTreeMap::new();
     for &ei in &a_le {
-        let edge = &ds.edges[ei];
+        let sv = ds.edge_start_vertex_ds(ei);
+        let ev = ds.edge_end_vertex_ds(ei);
         a_ve_map
-            .entry(edge.start_vertex)
+            .entry(sv)
             .or_default()
             .push((ei, true));
         a_ve_map
-            .entry(edge.end_vertex)
+            .entry(ev)
             .or_default()
             .push((ei, false));
     }
@@ -293,9 +296,8 @@ pub fn edges_to_wires(
         if a_m_fence.contains(&ei) {
             continue;
         }
-        let edge = &ds.edges[ei];
-        let sv = edge.start_vertex;
-        let ev = edge.end_vertex;
+        let sv = ds.edge_start_vertex_ds(ei);
+        let ev = ds.edge_end_vertex_ds(ei);
         let sv_count = a_ve_map.get(&sv).map_or(0, |v| v.len());
         let ev_count = a_ve_map.get(&ev).map_or(0, |v| v.len());
         if sv_count == 1 || ev_count == 1 {
@@ -324,11 +326,12 @@ pub fn edges_to_wires(
         }
 
         let mut wire: Vec<(usize, bool)> = Vec::new();
-        let edge = &ds.edges[start_ei];
+        let sv = ds.edge_start_vertex_ds(start_ei);
+        let ev = ds.edge_end_vertex_ds(start_ei);
         let (mut a_v_cur, _a_v_other) = if start_fwd {
-            (edge.start_vertex, edge.end_vertex)
+            (sv, ev)
         } else {
-            (edge.end_vertex, edge.start_vertex)
+            (ev, sv)
         };
 
         wire.push((start_ei, start_fwd));
@@ -344,12 +347,13 @@ pub fn edges_to_wires(
                 if !a_m_fence.contains(&next_ei) {
                     continue;
                 }
-                let next_edge = &ds.edges[next_ei];
-                if next_edge.start_vertex == a_v_cur {
-                    a_v_cur = next_edge.end_vertex;
+                let nsv = ds.edge_start_vertex_ds(next_ei);
+                let nev = ds.edge_end_vertex_ds(next_ei);
+                if nsv == a_v_cur {
+                    a_v_cur = nev;
                     wire.push((next_ei, true));
-                } else if next_edge.end_vertex == a_v_cur {
-                    a_v_cur = next_edge.start_vertex;
+                } else if nev == a_v_cur {
+                    a_v_cur = nsv;
                     wire.push((next_ei, false));
                 } else {
                     continue;

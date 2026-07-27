@@ -54,19 +54,18 @@ impl<'a> PaveFiller<'a> {
         face_idx: usize,
         samples_per_edge: usize,
     ) -> Vec<DVec3> {
-        let Some(face) = self.ds.faces.get(face_idx) else {
-            return vec![];
-        };
         let mut pts = Vec::new();
-        for &ei in &face.boundary_edges {
-            if let Some(edge) = self.ds.edges.get(ei) {
-                let [t0, t1] = edge.t_range;
+        for &ei in self.ds.face_boundary_edges(face_idx) {
+            if ei < self.ds.edge_count() {
+                let [t0, t1] = self.ds.edge_range(ei);
                 let n = samples_per_edge.max(1);
-                for k in 0..=n {
-                    let t = t0 + (t1 - t0) * k as f64 / n as f64;
-                    let p = edge.curve.point_at(t);
-                    if p.is_finite() {
-                        pts.push(p);
+                if let Some(curve) = self.ds.edge_curve(ei) {
+                    for k in 0..=n {
+                        let t = t0 + (t1 - t0) * k as f64 / n as f64;
+                        let p = curve.point_at(t);
+                        if p.is_finite() {
+                            pts.push(p);
+                        }
                     }
                 }
             }

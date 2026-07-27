@@ -16,7 +16,7 @@ impl<'a> super::PaveFiller<'a> {
         // if available.  For cylinders this encodes the actual face height range,
         // ensuring the intersection polyline endpoints fall *inside* the UV
         // boundary rectangle and can be used to split it.
-        let dom1 = self.ds.faces[f1].uv_boundary.as_ref().and_then(|uv| {
+        let dom1 = self.ds.face_uv_boundary(f1).and_then(|uv| {
             if uv.len() >= 3 {
                 let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
                 let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
@@ -29,7 +29,7 @@ impl<'a> super::PaveFiller<'a> {
             }
             None
         });
-        let dom2 = self.ds.faces[f2].uv_boundary.as_ref().and_then(|uv| {
+        let dom2 = self.ds.face_uv_boundary(f2).and_then(|uv| {
             if uv.len() >= 3 {
                 let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
                 let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
@@ -133,8 +133,12 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
         use inttools::marching::{MarchingConfig, adaptive_sampling_density};
 
-        let s1 = self.ds.faces[f1].surface.clone();
-        let s2 = self.ds.faces[f2].surface.clone();
+        let s1 = self.ds.face_surface(f1).cloned().unwrap_or_else(|| {
+            panic!("marching: face {} has no surface", f1)
+        });
+        let s2 = self.ds.face_surface(f2).cloned().unwrap_or_else(|| {
+            panic!("marching: face {} has no surface", f2)
+        });
 
         // use sign-change grid marching (IntTools_FaceFace / IntPatch_ImpPrmIntersection).
         // No BSpline demotion �?BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
@@ -229,21 +233,23 @@ impl<'a> super::PaveFiller<'a> {
             let mut mn = DVec3::splat(f64::INFINITY);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             // Use boundary vertices (from wire edges)
-            for &vi in &self.ds.faces[face_idx].boundary_verts {
+            for &vi in self.ds.face_boundary_verts(face_idx) {
                 let p = self.ds.vertex_point(vi);
                 mn = mn.min(p);
                 mx = mx.max(p);
             }
             // Also sample boundary edges for curved edges (e.g. circles)
-            for &ei in &self.ds.faces[face_idx].boundary_edges {
-                if let Some(edge) = self.ds.edges.get(ei) {
-                    let [t0, t1] = edge.t_range;
-                    for k in 0..=8usize {
-                        let t = t0 + (t1 - t0) * k as f64 / 8.0;
-                        let p = edge.curve.point_at(t);
-                        if p.is_finite() {
-                            mn = mn.min(p);
-                            mx = mx.max(p);
+            for &ei in self.ds.face_boundary_edges(face_idx) {
+                if ei < self.ds.edge_count() {
+                    let [t0, t1] = self.ds.edge_range(ei);
+                    if let Some(curve) = self.ds.edge_curve(ei) {
+                        for k in 0..=8usize {
+                            let t = t0 + (t1 - t0) * k as f64 / 8.0;
+                            let p = curve.point_at(t);
+                            if p.is_finite() {
+                                mn = mn.min(p);
+                                mx = mx.max(p);
+                            }
                         }
                     }
                 }

@@ -29,7 +29,7 @@ impl<'a> super::PaveFiller<'a> {
         for ci in 0..self.ds.intersection_curves.len() {
             let refs = self.ds.section_edge_refs[ci].clone();
             for &sei in &refs {
-                if sei < self.ds.edges.len() {
+                if sei < self.ds.edge_count() {
                     let edge_tol = self.ds.edge_tolerance(sei);
                     let curve_tol = if ci < self.ds.intersection_curves.len() {
                         self.ds.intersection_curves[ci].geom_tol
@@ -129,7 +129,7 @@ impl<'a> super::PaveFiller<'a> {
         a_tol_new: f64,
         a_mv_tol: &mut HashMap<usize, f64>,
     ) {
-        if n_e >= self.ds.edges.len() {
+        if n_e >= self.ds.edge_count() {
             return;
         }
         // OCCT L630-645: iterate SubShapes() — all vertex sub-shapes of the edge
@@ -145,7 +145,7 @@ impl<'a> super::PaveFiller<'a> {
             v
         };
         for &n_v in &n_vs {
-            if n_v >= self.ds.vertices.len() {
+            if n_v >= self.ds.vertex_count() {
                 continue;
             }
             if let Some(&tol_saved) = a_mv_tol.get(&n_v) {
@@ -207,12 +207,12 @@ impl<'a> super::PaveFiller<'a> {
             return false;
         };
         let a_tol = {
-            let v1_tol = if n_v1 < self.ds.vertices.len() {
+            let v1_tol = if n_v1 < self.ds.vertex_count() {
                 self.ds.vertex_tolerance(n_v1)
             } else {
                 TOLERANCE_ABS
             };
-            let v2_tol = if n_v2 < self.ds.vertices.len() {
+            let v2_tol = if n_v2 < self.ds.vertex_count() {
                 self.ds.vertex_tolerance(n_v2)
             } else {
                 TOLERANCE_ABS
@@ -222,7 +222,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut found = false;
         let mut best_dist = f64::MAX;
         for &sei in a_lse {
-            if sei >= self.ds.edges.len() {
+            if sei >= self.ds.edge_count() {
                 continue;
             }
             let se = &self.ds.edges[sei];
@@ -264,12 +264,12 @@ impl<'a> super::PaveFiller<'a> {
         let a_p1 = self.ds.intersection_curves[ci].curve.point_at(a_t1);
         let a_p2 = self.ds.intersection_curves[ci].curve.point_at(a_t2);
 
-        let a_tol_v11 = if n_v1 < self.ds.vertices.len() {
+        let a_tol_v11 = if n_v1 < self.ds.vertex_count() {
             self.ds.vertex_tolerance(n_v1)
         } else {
             a_tol_r3d
         };
-        let a_tol_v12 = if n_v2 < self.ds.vertices.len() {
+        let a_tol_v12 = if n_v2 < self.ds.vertex_count() {
             self.ds.vertex_tolerance(n_v2)
         } else {
             a_tol_r3d
@@ -305,12 +305,12 @@ impl<'a> super::PaveFiller<'a> {
             }
             let existing_pb = &self.ds.pave_blocks[pb_idx];
             let (n_v21, n_v22) = existing_pb.0.read().unwrap().indices();
-            let a_tol_v21 = if n_v21 < self.ds.vertices.len() {
+            let a_tol_v21 = if n_v21 < self.ds.vertex_count() {
                 self.ds.vertex_tolerance(n_v21)
             } else {
                 a_tol_r3d
             };
-            let a_tol_v22 = if n_v22 < self.ds.vertices.len() {
+            let a_tol_v22 = if n_v22 < self.ds.vertex_count() {
                 self.ds.vertex_tolerance(n_v22)
             } else {
                 a_tol_r3d
@@ -330,16 +330,16 @@ impl<'a> super::PaveFiller<'a> {
             let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
             let i_flag2 = if n_v2 == n_v21 || n_v2 == n_v22 {
                 true
-            } else if edge_ei < self.ds.edges.len() {
+            } else if edge_ei < self.ds.edge_count() {
                 // AABB overlap: does the edge's tolerance box contain a_p2?
                 let sv = self.ds.edge_start_vertex_ds(edge_ei);
                 let ev = self.ds.edge_end_vertex_ds(edge_ei);
-                let e_min = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+                let e_min = if sv < self.ds.vertex_count() && ev < self.ds.vertex_count() {
                     self.ds.vertex_point(sv).min(self.ds.vertex_point(ev))
                 } else {
                     a_p2
                 };
-                let e_max = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+                let e_max = if sv < self.ds.vertex_count() && ev < self.ds.vertex_count() {
                     self.ds.vertex_point(sv).max(self.ds.vertex_point(ev))
                 } else {
                     a_p2
@@ -362,7 +362,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
 
-            if edge_ei >= self.ds.edges.len() {
+            if edge_ei >= self.ds.edge_count() {
                 continue;
             }
             let existing_edge = &self.ds.edges[edge_ei];
@@ -670,8 +670,8 @@ impl<'a> super::PaveFiller<'a> {
                 // L848-863: aIC.HasBounds() → PutBoundPaveOnCurve
                 let has_bounds = {
                     let ic = &self.ds.intersection_curves[ci];
-                    ic.start_vertex < self.ds.vertices.len()
-                        && ic.end_vertex < self.ds.vertices.len()
+                    ic.start_vertex < self.ds.vertex_count()
+                        && ic.end_vertex < self.ds.vertex_count()
                 };
                 if has_bounds {
                     a_lbv.clear();
@@ -724,14 +724,17 @@ impl<'a> super::PaveFiller<'a> {
 
                 // L908-912: aLPB.Clear(); aPB1->Update(aLPB, false);
                 a_lpb.clear();
+                let nv_ic = self.ds.vertex_count();
                 {
                     let ic = &mut self.ds.intersection_curves[ci];
                     if let Some(mut pb1) = ic.pave_blocks.first().map(|spb| spb.0.write().unwrap())
                     {
                         // Sync PB endpoints with IC endpoints
+                        let ic_sv = ic.start_vertex;
+                        let ic_ev = ic.end_vertex;
                         if pb1.original_edge == NO_EDGE
-                            && ic.start_vertex < self.ds.vertices.len()
-                            && ic.end_vertex < self.ds.vertices.len()
+                            && ic_sv < nv_ic
+                            && ic_ev < nv_ic
                         {
                             pb1.pave1 = Pave {
                                 vertex_idx: ic.start_vertex,
@@ -825,12 +828,12 @@ impl<'a> super::PaveFiller<'a> {
                     // has a valid range outside the vertex tolerance spheres.
                     let has_valid_range = {
                         let ic = &self.ds.intersection_curves[ci];
-                        let v1_pt = if n_v1 < self.ds.vertices.len() {
+                        let v1_pt = if n_v1 < self.ds.vertex_count() {
                             self.ds.vertex_point(n_v1)
                         } else {
                             continue;
                         };
-                        let v2_pt = if n_v2 < self.ds.vertices.len() {
+                        let v2_pt = if n_v2 < self.ds.vertex_count() {
                             self.ds.vertex_point(n_v2)
                         } else {
                             continue;
@@ -974,7 +977,7 @@ impl<'a> super::PaveFiller<'a> {
                         Some([a_t1, a_t2]),
                         Some([a_t1, a_t2]),
                     );
-                    if new_ei < self.ds.edges.len() {
+                    if new_ei < self.ds.edge_count() {
                         if let Some(epb) = self.ds.edge_pave_blocks_mut(new_ei).first_mut() {
                             epb.0.write().unwrap().new_edge = Some(new_ei);
                         }
@@ -1038,7 +1041,7 @@ impl<'a> super::PaveFiller<'a> {
             // OCCT L1107-1127: iterate aMVTol, restore original tolerances
             let saved_tols: Vec<(usize, f64)> = a_mv_tol.iter().map(|(&k, &v)| (k, v)).collect();
             for &(n_v, saved_tol) in &saved_tols {
-                if n_v < self.ds.vertices.len() {
+                if n_v < self.ds.vertex_count() {
                     self.ds.vertex_data_mut(n_v).tolerance = saved_tol;
                 }
             }
@@ -1123,7 +1126,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
             let ei = r.new_edge.unwrap_or(r.original_edge);
-            if ei >= ds.edges.len() {
+            if ei >= ds.edge_count() {
                 continue;
             }
             // L888-891: if (myDS->ShapeInfo(aPB->OriginalEdge()).HasFlag()) continue;
@@ -1148,12 +1151,12 @@ impl<'a> super::PaveFiller<'a> {
             // Also include start/end vertex points for safety
             let sv = ds.edge_start_vertex_ds(ei);
             let ev = ds.edge_end_vertex_ds(ei);
-            if sv < ds.vertices.len() {
+            if sv < ds.vertex_count() {
                 let vp = ds.vertex_point(sv);
                 mn = mn.min(vp);
                 mx = mx.max(vp);
             }
-            if ev < ds.vertices.len() {
+            if ev < ds.vertex_count() {
                 let vp = ds.vertex_point(ev);
                 mn = mn.min(vp);
                 mx = mx.max(vp);

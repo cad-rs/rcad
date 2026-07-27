@@ -44,10 +44,10 @@ impl<'a> super::PaveFiller<'a> {
                 if !a_lpb_out.is_empty() {
                     // OCCT: aLPBD = myDS->ChangePaveBlocks(anEdgeIndex)
                     // OCCT: aPBD = aLPBD.First()
-                    if an_edge_index < self.ds.edges.len() {
-                        let has_pbs = !self.ds.edges[an_edge_index].pave_blocks.is_empty();
+                    if an_edge_index < self.ds.edge_count() {
+                        let has_pbs = !self.ds.edge_pave_blocks_mut(an_edge_index).is_empty();
                         if has_pbs {
-                            let a_pbd = self.ds.edges[an_edge_index].pave_blocks[0].clone();
+                            let a_pbd = self.ds.edge_pave_blocks_mut(an_edge_index)[0].clone();
                             // OCCT: FillPaves(nV, anEdgeIndex, nF, aLPBOut, aPBD);
                             self.fill_paves(n_v, an_edge_index, n_f, &a_lpb_out, &a_pbd);
                             // OCCT L131: myDS->UpdatePaveBlock(aPBD);
@@ -60,7 +60,7 @@ impl<'a> super::PaveFiller<'a> {
                                 .map(|pb| SharedPB::new(pb))
                                 .collect();
                             if !sub_pbs.is_empty() {
-                                self.ds.edges[an_edge_index].pave_blocks = sub_pbs;
+                                *self.ds.edge_pave_blocks_mut(an_edge_index) = sub_pbs;
                             }
                         }
                     }
@@ -71,7 +71,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT: EDGE branch — create a new degenerated edge for the vertex
                 // Clone edge data to avoid borrow conflict with self.ds.push_edge
                 let (a_curve, a_t_range, a_origin, a_geom_tol, a_is_geometric, a_location) = {
-                    if an_edge_index < self.ds.edges.len() {
+                    if an_edge_index < self.ds.edge_count() {
                         let e = &self.ds.edges[an_edge_index];
                         (
                             e.curve.clone(),
@@ -85,7 +85,7 @@ impl<'a> super::PaveFiller<'a> {
                         continue;
                     }
                 };
-                if n_v >= self.ds.vertices.len() {
+                if n_v >= self.ds.vertex_count() {
                     continue;
                 }
                 // Create a new degenerated edge (start == end vertex)
@@ -108,7 +108,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT: nEn = myDS->Append(aSI);
                 let n_en = self.ds.push_edge(de, None);
                 // OCCT: aPBD->SetEdge(nEn)
-                if let Some(a_pbd) = self.ds.edges[an_edge_index].pave_blocks.first() {
+                if let Some(a_pbd) = self.ds.edge_pave_blocks_mut(an_edge_index).first() {
                     a_pbd.0.write().unwrap().new_edge = Some(n_en);
                 }
             }
@@ -176,7 +176,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
         let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
-        let vtols: Vec<f64> = (0..self.ds.vertices.len())
+        let vtols: Vec<f64> = (0..self.ds.vertex_count())
             .map(|vi| self.ds.vertex_tolerance(vi))
             .collect();
         let results: Vec<(usize, Option<[f64; 2]>, bool)> = all_pb
@@ -194,8 +194,8 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L133-137: store results + call AnalyzeShrunkData
         for ((ei, v1i, v2i, p1, p2), (_, range, splittable)) in all_pb.iter().zip(results.iter()) {
             // Find the matching PB (iterate all PBs, not just the first)
-            for pi in 0..self.ds.edges[*ei].pave_blocks.len() {
-                let pb = &self.ds.edges[*ei].pave_blocks[pi];
+            for pi in 0..self.ds.edge_pave_blocks_mut(*ei).len() {
+                let pb = &self.ds.edge_pave_blocks_mut(*ei)[pi];
                 let r = pb.0.read().unwrap();
                 if (r.pave1.param - *p1).abs() < 1e-12 && (r.pave2.param - *p2).abs() < 1e-12 {
                     drop(r);
@@ -211,10 +211,10 @@ impl<'a> super::PaveFiller<'a> {
 
     /// BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
     pub(crate) fn analyze_shrunk_data(&mut self, ei: usize, pb_idx: usize) {
-        if pb_idx >= self.ds.edges[ei].pave_blocks.len() {
+        if pb_idx >= self.ds.edge_pave_blocks_mut(ei).len() {
             return;
         }
-        let pb = &self.ds.edges[ei].pave_blocks[pb_idx];
+        let pb = &self.ds.edge_pave_blocks(ei)[pb_idx];
         let (has_shrunk, is_splittable, p1, p2, pe1, pe2, oei) = {
             let r = pb.0.read().unwrap();
             (
@@ -265,7 +265,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn existing_pave_block(&self, ei: usize, vi: usize) -> bool {
-        for pb in &self.ds.edges[ei].pave_blocks {
+        for pb in self.ds.edge_pave_blocks(ei) {
             if pb.0.read().unwrap().pave1.vertex_idx == vi
                 || pb.0.read().unwrap().pave2.vertex_idx == vi
             {
@@ -289,11 +289,11 @@ impl<'a> super::PaveFiller<'a> {
         // equivalent to edge_paves (parallel array). split_pave_blocks checks
         // edge_paves.len(), so both must be in sync.
         self.ds.edges[ei].paves.push(pave);
-        if ei < self.ds.edges.len() {
+        if ei < self.ds.edge_count() {
             self.ds.edges[ei].paves.push(pave);
         }
         // Find the correct sub-PB and add to its ext_paves
-        let pbs = &self.ds.edges[ei].pave_blocks.clone();
+        let pbs = &self.ds.edge_pave_blocks_mut(ei).clone();
         if pbs.len() == 1 {
             // Single PB — add directly (it will be split by update())
             pbs[0].0.write().unwrap().append_ext_pave(pave);
@@ -338,7 +338,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L432-434: Iterate the given edges
         for &n_e in edges {
             // OCCT L435-436: nE, aLPB = ChangePaveBlocks(nE)
-            if n_e >= self.ds.edges.len() {
+            if n_e >= self.ds.edge_count() {
                 continue;
             }
             // OCCT: aLPB.Extent() < 2 checks PB count after InitPaveBlock (which
@@ -349,7 +349,7 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             // Clone old PBs — allows self.ds access while processing sub-PBs
-            let old_pbs = self.ds.edges[n_e].pave_blocks.clone();
+            let old_pbs = self.ds.edge_pave_blocks_mut(n_e).clone();
             let mut new_pbs: Vec<crate::bopds::pave::SharedPB> = Vec::new();
 
             // OCCT L438-527: Process each old PaveBlock
@@ -474,7 +474,7 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             // Replace the edge's PaveBlocks with the new set
-            self.ds.edges[n_e].pave_blocks = new_pbs;
+            *self.ds.edge_pave_blocks_mut(n_e) = new_pbs;
         }
 
         // ===== OCCT L530-618: Make Common Blocks =====
@@ -547,7 +547,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L591: Midpoint parameter of the first PB
                 let a_tm_first = (ref_p1 + ref_p2) / 2.0;
                 // OCCT L592: BOPTools_AlgoTools::PointOnEdge(aEFirst, aTmFirst, aPMFirst)
-                let a_pm_first = if ref_e < self.ds.edges.len() {
+                let a_pm_first = if ref_e < self.ds.edge_count() {
                     self.ds.edges[ref_e].curve.point_at(a_tm_first)
                 } else {
                     continue;
@@ -572,7 +572,7 @@ impl<'a> super::PaveFiller<'a> {
                     let a_tol_sum = a_tol_e_first + a_tol_e + self.ds.fuzzy_tol;
                     // OCCT: myContext->ComputePE projects aPMFirst onto edge aE
                     // rcad: closest_point_on_curve
-                    if e_idx < self.ds.edges.len() {
+                    if e_idx < self.ds.edge_count() {
                         let curve = &self.ds.edges[e_idx].curve;
                         use rcad_kernel::projection::closest_point_on_curve;
                         let proj = closest_point_on_curve(curve, a_pm_first, 64);
@@ -628,7 +628,7 @@ impl<'a> super::PaveFiller<'a> {
             let oei = pb.0.read().unwrap().original_edge;
             // Find which face from the original CB faceset this edge belongs to
             for &fi in &faces {
-                if fi < self.ds.faces.len() {
+                if fi < self.ds.face_count() {
                     let f = &self.ds.faces[fi];
                     if f.boundary_edges.contains(&oei)
                         || f.inner_boundary_edges
@@ -733,7 +733,7 @@ impl<'a> super::PaveFiller<'a> {
                         let mut list = Vec::new();
                         list.push(nVUsed);
                         if !a_mv_tol.contains_key(&nVUsed) {
-                            let aVUsed_tol = if nVUsed < self.ds.vertices.len() {
+                            let aVUsed_tol = if nVUsed < self.ds.vertex_count() {
                                 self.ds.vertex_tolerance(nVUsed)
                             } else {
                                 aTolV
@@ -873,7 +873,7 @@ impl<'a> super::PaveFiller<'a> {
         let surf_both: [Option<Surface3>; 2] = {
             let mut sv = [None, None];
             for (k, fi) in self.face_idxs_for_curve(ci).iter().enumerate() {
-                if *fi < self.ds.faces.len() {
+                if *fi < self.ds.face_count() {
                     sv[k] = Some(self.ds.faces[*fi].surface.clone());
                 }
             }
@@ -883,8 +883,8 @@ impl<'a> super::PaveFiller<'a> {
         for &n_v in &a_mv {
             let v_pt = self.ds.vertex_point(n_v);
             for m in 0..2 {
-                if (m == 0 && start_vertex < self.ds.vertices.len())
-                    || (m == 1 && end_vertex < self.ds.vertices.len())
+                if (m == 0 && start_vertex < self.ds.vertex_count())
+                    || (m == 1 && end_vertex < self.ds.vertex_count())
                 {
                     continue;
                 }
@@ -961,7 +961,7 @@ impl<'a> super::PaveFiller<'a> {
             ic.geom_tol.max(ic.curve_extra.tangential_tol)
         };
         for &n_v in aMVEF {
-            if n_v >= self.ds.vertices.len() {
+            if n_v >= self.ds.vertex_count() {
                 continue;
             }
             if already_used.contains(&n_v) {
@@ -1348,7 +1348,7 @@ impl<'a> super::PaveFiller<'a> {
                 if !aMI.contains(&inf.e1) || !aMI.contains(&inf.e2) {
                     continue;
                 }
-                if inf.e1 < self.ds.edges.len() && inf.e2 < self.ds.edges.len() {
+                if inf.e1 < self.ds.edge_count() && inf.e2 < self.ds.edge_count() {
                     let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param1);
                     let p2 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param2);
                     let d = vp.distance(p1).max(vp.distance(p2));
@@ -1370,7 +1370,7 @@ impl<'a> super::PaveFiller<'a> {
                 if !aMI.contains(&inf.edge) || !aMI.contains(&inf.face) {
                     continue;
                 }
-                if inf.edge < self.ds.edges.len() {
+                if inf.edge < self.ds.edge_count() {
                     let p1 =
                         crate::boptools::point_on_edge(&self.ds.edges[inf.edge], inf.edge_param);
                     let d = vp.distance(p1);
@@ -1510,8 +1510,8 @@ impl<'a> super::PaveFiller<'a> {
         // Process PaveBlocksIn (boundary edges through face) and PaveBlocksOn
         // (edges lying on the face surface). If a CommonBlock peer has the pcurve,
         // SetData to copy it rather than recompute.
-        for fi in 0..self.ds.faces.len() {
-            let face_info = &self.ds.faces[fi].face_info;
+        for fi in 0..self.ds.face_count() {
+            let face_info = &*self.ds.face_info(fi);
             // OCCT L608-618: PaveBlocksIn
             for &pb_idx in &face_info.pave_blocks_in {
                 if pb_idx >= self.ds.pave_blocks.len() {
@@ -1519,7 +1519,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 let pb = &self.ds.pave_blocks[pb_idx];
                 let ei = pb.0.read().unwrap().original_edge;
-                if ei >= self.ds.edges.len() {
+                if ei >= self.ds.edge_count() {
                     continue;
                 }
                 a_vmpc.push(MPCEntry {
@@ -1536,7 +1536,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 let pb = &self.ds.pave_blocks[pb_idx];
                 let ei = pb.0.read().unwrap().original_edge;
-                if ei >= self.ds.edges.len() {
+                if ei >= self.ds.edge_count() {
                     continue;
                 }
                 // OCCT L625: if pcurve already exists on this face -> skip
@@ -1633,13 +1633,13 @@ impl<'a> super::PaveFiller<'a> {
         for mpc in &a_vmpc {
             let ei = mpc.edge_idx;
             let fi = mpc.face_idx;
-            if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() {
+            if ei >= self.ds.edge_count() || fi >= self.ds.face_count() {
                 continue;
             }
 
             // OCCT L762: copy from existing edge in same CommonBlock
             if let Some(src_ei) = mpc.existing_edge {
-                if src_ei < self.ds.edges.len() {
+                if src_ei < self.ds.edge_count() {
                     if let Some(rep) = self
                         .ds
                         .edge_face_reps(src_ei)
@@ -1717,7 +1717,7 @@ impl<'a> super::PaveFiller<'a> {
         // 2D pcurve deviation. For each vertex of the edge, compute
         // the 3D point from the pcurve and compare to the vertex position.
         for &(ei, fi) in &update_vertices_list {
-            if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() {
+            if ei >= self.ds.edge_count() || fi >= self.ds.face_count() {
                 continue;
             }
             let [a_t1, a_t2] = self.ds.edge_range(ei);
@@ -1745,7 +1745,7 @@ impl<'a> super::PaveFiller<'a> {
                 for (j, a_t) in [a_t1, a_t2].iter().enumerate() {
                     let a_p3d = a_c3d.point_at(*a_t);
                     let vi = if j == 0 { start_v } else { end_v };
-                    if vi < self.ds.vertices.len() {
+                    if vi < self.ds.vertex_count() {
                         let a_tol_v = self.ds.vertex_tolerance(vi);
                         let uv = pc.point_at(*a_t);
                         // OCCT: project 2D->3D using face surface
@@ -1794,8 +1794,8 @@ impl<'a> super::PaveFiller<'a> {
         }
         // Update pave_blocks_in/pave_blocks_on from edge pave blocks
         for &ei in &face.boundary_edges {
-            if ei < self.ds.edges.len() {
-                let pbs = self.ds.edges[ei].pave_blocks.clone();
+            if ei < self.ds.edge_count() {
+                let pbs = self.ds.edge_pave_blocks_mut(ei).clone();
                 for pb in &pbs {
                     let pb_idx = self.ds.pave_blocks.len();
                     self.ds.pave_blocks.push(pb.clone());
@@ -1869,8 +1869,9 @@ impl<'a> super::PaveFiller<'a> {
         for group in &groups {
             let sd_vi = group[0];
             for &vi in &group[1..] {
-                for ei in 0..self.ds.edges.len() {
-                    for spb in &mut self.ds.edges[ei].pave_blocks {
+                for ei in 0..self.ds.edge_count() {
+                    let pbs = self.ds.edge_pave_blocks_mut(ei);
+                    for spb in pbs.iter_mut() {
                         let mut pb = spb.0.write().unwrap();
                         if pb.pave1.vertex_idx == vi {
                             pb.pave1.vertex_idx = sd_vi;
@@ -1880,7 +1881,7 @@ impl<'a> super::PaveFiller<'a> {
                         }
                     }
                 }
-                for fi in 0..self.ds.faces.len() {
+                for fi in 0..self.ds.face_count() {
                     if self.ds.face_info(fi).vertices_in.contains(&vi) {
                         self.ds.face_info_mut(fi).vertices_in.remove(&vi);
                         self.ds.face_info_mut(fi).vertices_in.insert(sd_vi);
@@ -1915,7 +1916,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn vertex_on_face(&self, vi: usize, fi: usize) -> bool {
-        if vi >= self.ds.vertices.len() || fi >= self.ds.faces.len() {
+        if vi >= self.ds.vertex_count() || fi >= self.ds.face_count() {
             return false;
         }
         let face = &self.ds.faces[fi];
@@ -1938,7 +1939,7 @@ impl<'a> super::PaveFiller<'a> {
         the_mv_on_in: &std::collections::HashSet<usize>,
     ) -> bool {
         for &n_v in the_mv_on_in {
-            if n_v >= self.ds.vertices.len() {
+            if n_v >= self.ds.vertex_count() {
                 continue;
             }
             let a_pnt = self.ds.vertex_point(n_v);
@@ -1955,7 +1956,7 @@ impl<'a> super::PaveFiller<'a> {
         let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
         // (FaceFace curve check removed  ?was a no-op loop over interferences)
         // Check if any vertex already exists at this parameter
-        for fi in 0..self.ds.faces.len() {
+        for fi in 0..self.ds.face_count() {
             for &vi in &self.ds.face_info(fi).vertices_in {
                 if let Some(t) = self.project_vertex_on_curve(vi, ic) {
                     if (t - param).abs() < tol {
@@ -2006,7 +2007,7 @@ impl<'a> super::PaveFiller<'a> {
             };
             for pave in &aPB.0.read().unwrap().ext_paves {
                 let nV = pave.vertex_idx;
-                if nV >= self.ds.vertices.len() {
+                if nV >= self.ds.vertex_count() {
                     continue;
                 }
                 let aPV = self.ds.vertex_point(nV);
@@ -2063,7 +2064,7 @@ impl<'a> super::PaveFiller<'a> {
             if isRemoved && aMaxDistKept > 0.0 {
                 if let Some(&pTol) = a_mv_tol.get(&nV) {
                     let aRealTol = pTol.max(aMaxDistKept.sqrt() + CONFUSION);
-                    if nV < self.ds.vertices.len() {
+                    if nV < self.ds.vertex_count() {
                         self.ds.vertex_data_mut(nV).tolerance = aRealTol;
                     }
                 }
@@ -2099,7 +2100,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
         let Some(nV) = nV else { return };
-        if nV >= self.ds.vertices.len() {
+        if nV >= self.ds.vertex_count() {
             return;
         }
         let a_tol_v = self.ds.vertex_tolerance(nV);
@@ -2137,7 +2138,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT L3622-3631: Update vertex tolerance if needed
-        if a_new_tol_v > a_tol_v && nV < self.ds.vertices.len() {
+        if a_new_tol_v > a_tol_v && nV < self.ds.vertex_count() {
             self.ds.vertex_data_mut(nV).tolerance = a_new_tol_v;
         }
 
@@ -2155,7 +2156,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn extended_tolerance_occt(&self, vi: usize) -> f64 {
-        let base_tol = if vi < self.ds.vertices.len() {
+        let base_tol = if vi < self.ds.vertex_count() {
             self.ds.vertex_tolerance(vi)
         } else {
             TOLERANCE_ABS
@@ -2165,7 +2166,7 @@ impl<'a> super::PaveFiller<'a> {
         // For newly created vertices, check EE/EF interferences
         for inf in &self.ds.interf_ee {
             if inf.new_vertex == vi {
-                if inf.e1 < self.ds.edges.len() {
+                if inf.e1 < self.ds.edge_count() {
                     if let Some(pt) = {
                         use rcad_kernel::geom::CurveEval;
                         Some(self.ds.edges[inf.e1].curve.point_at(inf.param1))
@@ -2181,7 +2182,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         for inf in &self.ds.interf_ef {
             if inf.new_vertex == vi {
-                if inf.edge < self.ds.edges.len() {
+                if inf.edge < self.ds.edge_count() {
                     if let Some(pt) = {
                         use rcad_kernel::geom::CurveEval;
                         Some(self.ds.edges[inf.edge].curve.point_at(inf.edge_param))
@@ -2228,7 +2229,7 @@ impl<'a> super::PaveFiller<'a> {
         //   (OCCT: iterate NbSourceShapes() + check ShapeType() == TopAbs_FACE;
         //    rcad: iterate faces[] — equivalent at this stage)
         let mut a_lif: Vec<usize> = Vec::new();
-        for n_f in 0..self.ds.faces.len() {
+        for n_f in 0..self.ds.face_count() {
             a_lif.push(n_f);
         }
         if a_lif.is_empty() {
@@ -2328,7 +2329,7 @@ impl<'a> super::PaveFiller<'a> {
                 f2 = ff.f2;
             }
 
-            let new_ei = self.ds.edges.len();
+            let new_ei = self.ds.edge_count();
             let mut face_reps = Vec::new();
             if f1 != usize::MAX {
                 if let Some(ref pc) = pca {
@@ -2411,7 +2412,7 @@ impl<'a> super::PaveFiller<'a> {
         n_v2: usize,
         _a_t2: f64,
     ) -> usize {
-        if n_e >= self.ds.edges.len() {
+        if n_e >= self.ds.edge_count() {
             return n_e;
         }
         // Clone all needed data before mutating self.ds
@@ -2451,7 +2452,7 @@ impl<'a> super::PaveFiller<'a> {
     /// Find pave blocks that contain the given vertex on the given face.
     pub(crate) fn find_pave_blocks(&self, n_v: usize, n_f: usize) -> Vec<usize> {
         let mut result = Vec::new();
-        if n_f >= self.ds.faces.len() {
+        if n_f >= self.ds.face_count() {
             return result;
         }
         let fi = &self.ds.faces[n_f];
@@ -2479,7 +2480,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn make_split_edge(&mut self, n_v: usize, n_f: usize) {
         // In OCCT this creates a section edge for a vertex on a face.
         // For now, just ensure the vertex is registered in the face info.
-        if n_v < self.ds.vertices.len() && n_f < self.ds.faces.len() {
+        if n_v < self.ds.vertex_count() && n_f < self.ds.face_count() {
             self.ds.face_info_mut(n_f).vertices_in.insert(n_v);
         }
     }
@@ -2559,7 +2560,7 @@ impl<'a> super::PaveFiller<'a> {
                 let r = pb.0.read().unwrap();
                 r.new_edge.unwrap_or(r.original_edge)
             };
-            if n_e >= self.ds.edges.len() {
+            if n_e >= self.ds.edge_count() {
                 continue;
             }
             // OCCT L283-288: get 2D curve of passing edge on same face

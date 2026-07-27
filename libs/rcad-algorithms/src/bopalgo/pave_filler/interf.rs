@@ -44,7 +44,7 @@ impl<'a> PaveFiller<'a> {
             }
             // L1041-1044: edge must have PBs (HasReference equivalent)
             let ei = self.ds.shape_info_at(i).source_idx;
-            if ei >= self.ds.edges.len() || self.ds.edges[ei].pave_blocks.is_empty() {
+            if ei >= self.ds.edge_count() || self.ds.edges[ei].pave_blocks.is_empty() {
                 continue;
             }
             // L1047-1051: skip degenerated edges
@@ -614,7 +614,7 @@ impl<'a> PaveFiller<'a> {
             }
             // L892-896: HasReference — rcad: check if flat face index is valid
             let fi = self.ds.shape_info_at(n_f).reference as usize;
-            if fi >= self.ds.faces.len() {
+            if fi >= self.ds.face_count() {
                 continue;
             }
 
@@ -950,7 +950,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     pub(crate) fn put_se_in_other_faces(&mut self) {
-        let n_faces = self.ds.faces.len();
+        let n_faces = self.ds.face_count();
         let ics = self.ds.intersection_curves.clone();
         let mut ic_creators: Vec<Vec<usize>> = vec![Vec::new(); ics.len()];
         for inf in &self.ds.interf_ff {
@@ -1029,7 +1029,7 @@ impl<'a> PaveFiller<'a> {
     /// Returns true if a new VF interference was created.
     /// Note: named with `_pair` suffix to distinguish from the zero-arg version above.
     pub(crate) fn force_interf_vf_pair(&mut self, n_v: usize, n_f: usize) -> bool {
-        if n_v >= self.ds.vertices.len() || n_f >= self.ds.faces.len() {
+        if n_v >= self.ds.vertex_count() || n_f >= self.ds.face_count() {
             return false;
         }
         let v_pt = self.ds.vertex_point(n_v);

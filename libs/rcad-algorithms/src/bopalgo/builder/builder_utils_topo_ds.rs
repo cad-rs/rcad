@@ -18,7 +18,7 @@ pub(crate) fn segments_to_topo_ds(
     ic_edge_map: &[Option<ShapeRef>],
 ) -> Vec<WireSegmentTopoDS> {
     let face_ref = face_refs[face_idx];
-    let e_base = _ds.vertices.len();
+    let e_base = _ds.vertex_count();
     segments
         .iter()
         .map(|seg| {

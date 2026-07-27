@@ -393,21 +393,20 @@ impl FClass2d {
     }
 
     pub fn new(ds: &DS, face_idx: usize, tol_uv: f64) -> Self {
-        let face = &ds.faces[face_idx];
         let tol_u = tol_uv;
         let tol_v = tol_uv;
         let mut tab_class: Vec<CSLibClass2d> = Vec::new();
         let mut tab_orien: Vec<bool> = Vec::new();
 
         let outer_edges: Vec<(usize, bool)> =
-            face.boundary_edges.iter().map(|&e| (e, true)).collect();
+            ds.face_boundary_edges(face_idx).iter().map(|&e| (e, true)).collect();
         let mut outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
         // for periodic surfaces with natural restriction (sphere, cylinder, cone),
         //   the uv_boundary provides a proper closed polygon, while edge-based sampling may
         //   produce a degenerate polygon when degenerate edges lack pcurves (sphere poles).
-        if outer_pts.len() < 3 && face.natural_restriction {
-            if let Some(ref uv_bnd) = face.uv_boundary {
-                outer_pts = uv_bnd.clone();
+        if outer_pts.len() < 3 && ds.face_natural_restriction(face_idx) {
+            if let Some(uv_bnd) = ds.face_uv_boundary(face_idx) {
+                outer_pts = uv_bnd.to_vec();
             }
         }
         let mut fleche_u = tol_uv;
@@ -502,7 +501,7 @@ impl FClass2d {
         }
 
         // Inner wires (holes)
-        for iw in &face.inner_boundary_edges {
+        for iw in ds.face_inner_boundary(face_idx) {
             let iw_pts = collect_wire_uv(ds, face_idx, iw);
             if iw_pts.len() < 3 {
                 continue;
@@ -542,15 +541,16 @@ impl FClass2d {
         };
 
         // OCCT L655-678: detect periodic surfaces for RecadreOnPeriodic.
-        let (is_u_periodic, is_v_periodic, u_period, v_period) = match &face.surface {
-            Surface3::Sphere(_) => (true, true, std::f64::consts::TAU, std::f64::consts::PI),
-            Surface3::Cylinder(_) => (true, false, std::f64::consts::TAU, 0.0),
+        let surf = ds.face_surface(face_idx);
+        let (is_u_periodic, is_v_periodic, u_period, v_period) = match surf {
+            Some(Surface3::Sphere(_)) => (true, true, std::f64::consts::TAU, std::f64::consts::PI),
+            Some(Surface3::Cylinder(_)) => (true, false, std::f64::consts::TAU, 0.0),
             _ => (false, false, 0.0, 0.0),
         };
 
         // OCCT L586-619: periodic surface U1/U2 range expansion.
-        let (u1, u2, v1, v2) = match &face.surface {
-            Surface3::Sphere(_) => {
+        let (u1, u2, v1, v2) = match ds.face_surface(face_idx) {
+            Some(Surface3::Sphere(_)) => {
                 let du = std::f64::consts::TAU - (umax - umin);
                 let du = if du < 0.0 { 0.0 } else { du };
                 (
@@ -560,7 +560,7 @@ impl FClass2d {
                     vmax,
                 )
             }
-            Surface3::Cylinder(_) => {
+            Some(Surface3::Cylinder(_)) => {
                 let du = std::f64::consts::TAU - (umax - umin);
                 let du = if du < 0.0 { 0.0 } else { du };
                 (

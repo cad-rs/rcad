@@ -214,15 +214,15 @@ impl Section {
         let mut section_verts: std::collections::BTreeSet<usize> =
             std::collections::BTreeSet::new();
 
-        for fi in 0..ds.faces.len() {
-            let f_info = &ds.faces[fi].face_info;
+        for fi in 0..ds.face_count() {
+            let f_info = &*ds.face_info(fi);
             // OCCT L204-211: VerticesSc
             for &n_v in &f_info.vertices_sc {
                 section_verts.insert(n_v);
             }
             // OCCT L214-228: VerticesIn (if new or has interference)
             for &n_v in &f_info.vertices_in {
-                if n_v >= ds.vertices.len() {
+                if n_v >= ds.vertex_count() {
                     continue;
                 }
                 let is_new = n_v >= a_vc;
@@ -241,7 +241,7 @@ impl Section {
         }
 
         // OCCT L243-269: CommonBlocks between edge and face
-        for ei in 0..ds.edges.len() {
+        for ei in 0..ds.edge_count() {
             for pb_idx in 0..ds.edge_pave_blocks(ei).len() {
                 let pb = &ds.edge_pave_blocks(ei)[pb_idx];
                 let cb =
@@ -263,7 +263,7 @@ impl Section {
 
         // OCCT L283-356: count occurrences of edges/vertices across arguments
         // rcad: edges from A-range: 0..a_ec, B-range: a_ec..
-        let mut edge_count = vec![0u32; ds.edges.len()];
+        let mut edge_count = vec![0u32; ds.edge_count()];
         for &ei in &section_edges {
             if ei < a_ec {
                 edge_count[ei] += 1; // appears in A
@@ -271,7 +271,7 @@ impl Section {
                 edge_count[ei] += 1; // appears in B
             }
         }
-        let mut vert_count = vec![0u32; ds.vertices.len()];
+        let mut vert_count = vec![0u32; ds.vertex_count()];
         for &vi in &section_verts {
             if vi < a_vc {
                 vert_count[vi] += 1;
@@ -292,13 +292,12 @@ impl Section {
         // OCCT: only includes V/E that appear in >1 argument
         // rcad: all section edges come from intersection, include all
         for &ei in &section_edges {
-            if ei >= ds.edges.len() {
+            if ei >= ds.edge_count() {
                 continue;
             }
-            let e = &ds.edges[ei];
-            let sv = e.start_vertex;
-            let ev = e.end_vertex;
-            if sv >= ds.vertices.len() || ev >= ds.vertices.len() {
+            let sv = ds.edge_start_vertex_ds(ei);
+            let ev = ds.edge_end_vertex_ds(ei);
+            if sv >= ds.vertex_count() || ev >= ds.vertex_count() {
                 continue;
             }
             let vi_a = result.vertices().len();
@@ -323,7 +322,7 @@ impl Section {
         // Add isolated section vertices (OCCT L391-397)
         let mut added_verts: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &vi in &section_verts {
-            if vi >= ds.vertices.len() {
+            if vi >= ds.vertex_count() {
                 continue;
             }
             if !section_edges.iter().any(|&ei| {

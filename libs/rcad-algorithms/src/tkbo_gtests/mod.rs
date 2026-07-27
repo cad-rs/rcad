@@ -515,9 +515,9 @@ mod pave_filler_tests {
             filler.perform(&sphere, &box_b);
         }
 
-        let n_v = ds.vertices.len();
-        let n_e = ds.edges.len();
-        let n_f = ds.faces.len();
+        let n_v = ds.vertex_count();
+        let n_e = ds.edge_count();
+        let n_f = ds.face_count();
         let n_ic = ds.intersection_curves.len();
         let n_pb = ds.pave_blocks.len();
         let n_cb = ds.common_blocks.len();
@@ -537,17 +537,20 @@ mod pave_filler_tests {
             ds.interf_ff.len()
         );
 
-        let n_new_verts = ds.vertices.iter().filter(|v| v.origin.is_none()).count();
+        let n_new_verts = (0..ds.vertex_count())
+            .filter(|&vi| ds.vertex_origin(vi).is_none())
+            .count();
         println!("New V={}", n_new_verts);
 
         // Print edge counts per edge to see which got split
-        for (ei, e) in ds.edges.iter().enumerate() {
-            if e.pave_blocks.len() > 1 {
+        for ei in 0..ds.edge_count() {
+            let n_pbs = ds.edge_pave_blocks(ei).len();
+            if n_pbs > 1 {
                 println!(
                     "  Edge[{}]: {} PBs, origin={:?}",
                     ei,
-                    e.pave_blocks.len(),
-                    e.origin
+                    n_pbs,
+                    ds.edge_origin(ei)
                 );
             }
         }
@@ -1836,14 +1839,14 @@ mod stage_classification_tests {
         eprintln!("\n── DS state after pave_fill ──");
         eprintln!(
             "V={} E={} F={} IC={} PB={}",
-            ds.vertices.len(),
-            ds.edges.len(),
-            ds.faces.len(),
+            ds.vertex_count(),
+            ds.edge_count(),
+            ds.face_count(),
             ds.intersection_curves.len(),
             ds.pave_blocks.len()
         );
-        for (fi, f) in ds.faces.iter().enumerate() {
-            let surf = format!("{:?}", f.surface)
+        for fi in 0..ds.face_count() {
+            let surf = format!("{:?}", ds.face_surface(fi))
                 .chars()
                 .take(30)
                 .collect::<String>();
@@ -1851,11 +1854,11 @@ mod stage_classification_tests {
                 "  F[{}] {} bv={} be={} vi={} vo={} cs={}",
                 fi,
                 surf,
-                f.boundary_verts.len(),
-                f.boundary_edges.len(),
-                f.face_info.vertices_in.len(),
-                f.face_info.vertices_on.len(),
-                f.face_info.curves_sc.len()
+                ds.face_boundary_verts(fi).len(),
+                ds.face_boundary_edges(fi).len(),
+                ds.face_info(fi).vertices_in.len(),
+                ds.face_info(fi).vertices_on.len(),
+                ds.face_info(fi).curves_sc.len()
             );
         }
         for (ci, ic) in ds.intersection_curves.iter().enumerate() {
@@ -1871,13 +1874,13 @@ mod stage_classification_tests {
                 ic.pave_blocks.len()
             );
             for &v in &[ic.start_vertex, ic.end_vertex] {
-                if v < ds.vertices.len() && v < ds.shape_info.len() {
+                if v < ds.vertex_count() && v < ds.shape_info.len() {
                     eprintln!("    IC[{}] v{} is_new={}", ci, v, ds.shape_info[v].is_new);
                 }
             }
-            for (fi, f) in ds.faces.iter().enumerate() {
+            for fi in 0..ds.face_count() {
                 for &v in &[ic.start_vertex, ic.end_vertex] {
-                    if v < ds.vertices.len() && f.face_info.vertices_in.contains(&v) {
+                    if v < ds.vertex_count() && ds.face_info(fi).vertices_in.contains(&v) {
                         eprintln!("    IC[{}] v{} IN Face[{}].vertices_in", ci, v, fi);
                     }
                 }

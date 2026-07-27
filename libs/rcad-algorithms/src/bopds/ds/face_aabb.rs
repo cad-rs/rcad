@@ -41,18 +41,18 @@ pub fn build_face_bvh(ds: &DS, origin: ShapeOrigin) -> Option<crate::boptools::b
 /// `BRepBndLib::Add(aF, aBox)` — expands the box by adding
 /// face boundary vertices and analytical surface bounds for curved types.
 pub fn face_aabb(ds: &DS, fi: usize) -> Aabb {
-    let face = &ds.faces[fi];
     let mut aabb = Aabb::empty();
 
     // Seed AABB from boundary vertices.
-    for &vi in &face.boundary_verts {
-        if let Some(v) = ds.vertices.get(vi) {
-            aabb.expand_point(v.point);
-        }
+    for &vi in ds.face_boundary_verts(fi) {
+        aabb.expand_point(ds.vertex_point(vi));
     }
 
     // ✅ OCCT-aligned: delegate to bnd_lib::surface_bounds (BndLib_AddSurface per-type dispatch).
-    let surf_bbox = crate::bnd_lib::surface_bounds(&face.surface, TOLERANCE_LINEAR_ULTRA_STRICT);
+    let surf = ds.face_surface(fi).unwrap_or_else(|| {
+        panic!("face_aabb: face {} has no surface", fi)
+    });
+    let surf_bbox = crate::bnd_lib::surface_bounds(surf, TOLERANCE_LINEAR_ULTRA_STRICT);
     if surf_bbox.is_valid() {
         aabb.min = aabb.min.min(surf_bbox.min);
         aabb.max = aabb.max.max(surf_bbox.max);

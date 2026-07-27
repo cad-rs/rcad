@@ -15,9 +15,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::bopalgo::builder::angle_2d::angle_2d;
-use crate::bopalgo::builder::edge_builders::{
-    build_cylinder_seam_segments, build_sphere_seam_segments, is_split_to_reverse,
-};
+use crate::bopalgo::builder::edge_builders::is_split_to_reverse;
 use crate::bopalgo::builder::wire_splitter::{
     are_verts_coincident, edge_angle_2d, edge_uv_tangent, is_edge_isoline, world_to_uv,
 };
@@ -175,7 +173,7 @@ pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut Boolea
         .count();
     let mut edge_origins: Vec<EdgeOrigin> = Vec::with_capacity(n_result_edges);
     let a_ec = ds.a_edge_count;
-    let total_ds_edges = ds.edges.len();
+    let total_ds_edges = ds.edge_count();
 
     for ts in &brep.tshapes {
         if let topods::TShape::Edge(ed) = &**ts {
@@ -211,7 +209,7 @@ pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut Boolea
                 match found {
                     Some(dei) => EdgeOrigin::FromB(dei - a_ec),
                     None => {
-                        EdgeOrigin::SplitFromB(ds_s.min(ds.vertices.len().saturating_sub(1)) - a_vc)
+                        EdgeOrigin::SplitFromB(ds_s.min(ds.vertex_count().saturating_sub(1)) - a_vc)
                     }
                 }
             } else {
