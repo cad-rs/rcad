@@ -12,8 +12,9 @@ use rcad_kernel::topods::{self, BRep, Shape, ShapeType, TShape, tshape_flags};
 
 const TOL: f64 = 1e-7;
 
-fn shape_type_of(brep: &BRep, sr: ShapeRef) -> ShapeType {
-    match &*brep.tshapes[sr.index] {
+fn shape_type_of(brep: &BRep, sr: &Shape) -> ShapeType {
+    let idx = brep.shape_idx(sr);
+    match &*brep.tshapes[idx] {
         TShape::Vertex(_) => ShapeType::Vertex,
         TShape::Edge(_) => ShapeType::Edge,
         TShape::Wire(_) => ShapeType::Wire,
