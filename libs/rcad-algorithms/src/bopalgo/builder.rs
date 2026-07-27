@@ -196,8 +196,8 @@ impl<'a> BooleanBuilder<'a> {
         for ts in &t_brep.tshapes {
             match &**ts {
                 TShape::Vertex(vd) => {
-                    for (di, dv) in self.ds.vertices.iter().enumerate() {
-                        if (dv.point - vd.point).length_squared()
+                    for di in 0..self.ds.vertex_count() {
+                        if (self.ds.vertex_point(di) - vd.point).length_squared()
                             < crate::tolerance::TOLERANCE_ABS * 2.0
                         {
                             result_vtx.insert(di);
@@ -206,9 +206,11 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
                 TShape::Edge(ed) => {
-                    for (di, de) in self.ds.edges.iter().enumerate() {
-                        if (de.start_vertex == ed.first.index && de.end_vertex == ed.last.index)
-                            || (de.start_vertex == ed.last.index && de.end_vertex == ed.first.index)
+                    for di in 0..self.ds.edge_count() {
+                        let sv = self.ds.edge_start_vertex_ds(di);
+                        let ev = self.ds.edge_end_vertex_ds(di);
+                        if (sv == ed.first.index && ev == ed.last.index)
+                            || (sv == ed.last.index && ev == ed.first.index)
                         {
                             result_edge.insert(di);
                             break;
@@ -220,7 +222,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         let v_base = 0usize; // vertices start at 0 in t_brep
-        let e_base = self.ds.vertices.len();
+        let e_base = self.ds.vertex_count();
         let mut modified_indices: Vec<usize> = Vec::new();
         let mut entries = Vec::new();
 
@@ -228,7 +230,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L185-187: for (int i = 0; i < aNbS; ++i)
         //
         // =Vertices (OCCT L192: IsSupportedType filter =all vertex types are valid)
-        for (di, _dv) in self.ds.vertices.iter().enumerate() {
+        for di in 0..self.ds.vertex_count() {
             // OCCT L205: const List<TopoDS_Shape>* pLSp = LocModified(aS);
             let sref = self.brep_sr(v_base + di);
             let has_images = self.my_images.borrow().contains_key(&sref);
@@ -263,7 +265,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // =Edges (same form)
-        for (di, _de) in self.ds.edges.iter().enumerate() {
+        for di in 0..self.ds.edge_count() {
             let sref = self.brep_sr(e_base + di);
             let has_images = self.my_images.borrow().contains_key(&sref);
             let in_result = result_edge.contains(&di);
@@ -338,7 +340,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut entries = Vec::new();
 
         // OCCT L185-187: iterate all source shapes
-        for (di, _) in self.ds.vertices.iter().enumerate() {
+        for di in 0..self.ds.vertex_count() {
             let on_side = if side_is_a { di < a_vc } else { di >= a_vc };
             let status = if on_side {
                 HistoryStatus::Generated
@@ -352,7 +354,7 @@ impl<'a> BooleanBuilder<'a> {
                 result_indices: vec![],
             });
         }
-        for (di, _) in self.ds.edges.iter().enumerate() {
+        for di in 0..self.ds.edge_count() {
             let on_side = if side_is_a { di < a_ec } else { di >= a_ec };
             let status = if on_side {
                 HistoryStatus::Generated
@@ -373,7 +375,7 @@ impl<'a> BooleanBuilder<'a> {
     fn source_history_all_deleted(&self) -> Vec<crate::history::SourceShapeEntry> {
         use crate::history::{HistoryStatus, SourceShapeEntry};
         let mut entries = Vec::new();
-        for (di, _) in self.ds.vertices.iter().enumerate() {
+        for di in 0..self.ds.vertex_count() {
             entries.push(SourceShapeEntry {
                 ds_index: di,
                 shape_type: 0,
@@ -381,7 +383,7 @@ impl<'a> BooleanBuilder<'a> {
                 result_indices: vec![],
             });
         }
-        for (di, _) in self.ds.edges.iter().enumerate() {
+        for di in 0..self.ds.edge_count() {
             entries.push(SourceShapeEntry {
                 ds_index: di,
                 shape_type: 1,
@@ -406,7 +408,6 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
-        let face = &ds.faces[face_idx];
         let e_base = ds.vertices.len();
 
         // OCCT L1073-1078: vertex counter / edge unification fence
@@ -454,12 +455,14 @@ impl<'a> BooleanBuilder<'a> {
         };
 
         // OCCT L1080-1181: iterate original face wires (outer + inner)
-        for i in 0..face.boundary_edges.len() {
-            let ei = face.boundary_edges[i];
+        let face_boundary_edges = ds.face_boundary_edges(face_idx);
+        let face_boundary_edge_forwards = ds.face_boundary_edge_forwards(face_idx);
+        for i in 0..face_boundary_edges.len() {
+            let ei = face_boundary_edges[i];
             if ei >= ds.edges.len() {
                 continue;
             }
-            let forward = face.boundary_edge_forwards.get(i).copied().unwrap_or(true);
+            let forward = face_boundary_edge_forwards.get(i).copied().unwrap_or(true);
 
             // OCCT L1104-1110: INTERNAL edge -> return null
             if ds.edge_is_internal(ei) {
@@ -528,7 +531,8 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT: inner wires processed by same TopoDS_Iterator
-        for inner_wire in &face.inner_boundary_edges {
+        let face_inner_boundary = ds.face_inner_boundary(face_idx);
+        for inner_wire in face_inner_boundary {
             for &(ei, forward) in inner_wire {
                 if ei >= ds.edges.len() {
                     continue;
@@ -755,7 +759,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L146-149: if (!myPaveFiller) -> AlertNoFiller
         // rcad: DS must be populated by PaveFiller (vertices exist = filler ran).
         // OCCT L151: GetReport()->Merge(myPaveFiller->GetReport());
-        if self.ds.vertices.is_empty() {
+        if self.ds.vertex_count() == 0 {
             self.my_report
                 .borrow_mut()
                 .add_alert(crate::bopalgo::Alert::NoFiller);
@@ -868,9 +872,9 @@ impl<'a> BooleanBuilder<'a> {
         let a_n_verts = self.ds.a_vertex_count;
         let a_n_edges = self.ds.a_edge_count;
         let a_n_faces = self.ds.a_face_count;
-        let b_n_verts = self.ds.vertices.len() - a_n_verts;
-        let b_n_edges = self.ds.edges.len() - a_n_edges;
-        let b_n_faces = self.ds.faces.len() - a_n_faces;
+        let b_n_verts = self.ds.vertex_count() - a_n_verts;
+        let b_n_edges = self.ds.edge_count() - a_n_edges;
+        let b_n_faces = self.ds.face_count() - a_n_faces;
         let dim_a = if a_n_faces > 0 {
             3_i8
         } else if a_n_edges > 0 {
@@ -1121,9 +1125,9 @@ impl<'a> BooleanBuilder<'a> {
                 snapshots.push(StageSnapshot {
                     stage: $stage,
                     stage_name: $name,
-                    n_ds_vertices: self.ds.vertices.len(),
-                    n_ds_edges: self.ds.edges.len(),
-                    n_ds_faces: self.ds.faces.len(),
+                    n_ds_vertices: self.ds.vertex_count(),
+                    n_ds_edges: self.ds.edge_count(),
+                    n_ds_faces: self.ds.face_count(),
                     n_ds_pave_blocks: self.ds.pave_blocks.len(),
                     n_ds_intersection_curves: self.ds.intersection_curves.len(),
                     n_ds_interf_ff: self.ds.interf_ff.len(),
@@ -1159,9 +1163,9 @@ impl<'a> BooleanBuilder<'a> {
         let a_n_verts = self.ds.a_vertex_count;
         let a_n_edges = self.ds.a_edge_count;
         let a_n_faces = self.ds.a_face_count;
-        let b_n_verts = self.ds.vertices.len() - a_n_verts;
-        let b_n_edges = self.ds.edges.len() - a_n_edges;
-        let b_n_faces = self.ds.faces.len() - a_n_faces;
+        let b_n_verts = self.ds.vertex_count() - a_n_verts;
+        let b_n_edges = self.ds.edge_count() - a_n_edges;
+        let b_n_faces = self.ds.face_count() - a_n_faces;
         let dim_a = if a_n_faces > 0 {
             3_i8
         } else if a_n_edges > 0 {
@@ -1210,9 +1214,9 @@ impl<'a> BooleanBuilder<'a> {
                 snapshots.push(StageSnapshot {
                     stage: 1,
                     stage_name: "TreatEmptyShape_early_return",
-                    n_ds_vertices: self.ds.vertices.len(),
-                    n_ds_edges: self.ds.edges.len(),
-                    n_ds_faces: self.ds.faces.len(),
+                    n_ds_vertices: self.ds.vertex_count(),
+                    n_ds_edges: self.ds.edge_count(),
+                    n_ds_faces: self.ds.face_count(),
                     n_ds_pave_blocks: self.ds.pave_blocks.len(),
                     n_ds_intersection_curves: self.ds.intersection_curves.len(),
                     n_ds_interf_ff: self.ds.interf_ff.len(),
@@ -1486,22 +1490,23 @@ impl<'a> BooleanBuilder<'a> {
         let mut v_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
         let mut e_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
 
-        for (fi, f) in self.ds.faces.iter().enumerate() {
-            if f.origin != origin {
+        for fi in 0..self.ds.face_count() {
+            if self.ds.face_origin(fi) != origin {
                 continue;
             }
             let mut edge_refs: Vec<topods::ShapeRef> = Vec::new();
-            for &ei in &f.boundary_edges {
-                if ei >= self.ds.edges.len() {
+            for &ei in self.ds.face_boundary_edges(fi) {
+                if ei >= self.ds.edge_count() {
                     continue;
                 }
-                let e = &self.ds.edges[ei];
+                let sv_idx = self.ds.edge_start_vertex_ds(ei);
+                let ev_idx = self.ds.edge_end_vertex_ds(ei);
                 let sv = *v_map
-                    .entry(e.start_vertex)
-                    .or_insert_with(|| t.add_tvertex(self.ds.vertices[e.start_vertex].point));
+                    .entry(sv_idx)
+                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(sv_idx)));
                 let ev = *v_map
-                    .entry(e.end_vertex)
-                    .or_insert_with(|| t.add_tvertex(self.ds.vertices[e.end_vertex].point));
+                    .entry(ev_idx)
+                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(ev_idx)));
                 let edge_sr = *e_map
                     .entry(ei)
                     .or_insert_with(|| t.add_tedge(None, sv, ev, [0.0, 1.0]));
@@ -1511,9 +1516,11 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
             let ow = t.add_twire(edge_refs);
-            let surf = f.surface.clone();
+            let surf = self.ds.face_surface(fi).cloned().unwrap_or_else(|| {
+                Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))
+            });
             let face = t.add_tface(Some(surf), ow, vec![], None, None, vec![], false);
-            t.face_mut(face).tolerance = f.geom_tol;
+            t.face_mut(face).tolerance = self.ds.face_tolerance(fi);
         }
 
         // Collect face refs and wrap in Shell → Solid

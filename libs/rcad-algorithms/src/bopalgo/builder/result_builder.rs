@@ -54,7 +54,7 @@ pub(crate) struct ResultBuilder {
     /// natural_restriction for each face in self.faces.
     /// Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
     pub(crate) face_natural_restriction: Vec<bool>,
-    /// maps result face index --array of DSWire indices for all its wires
+    /// maps result face index --array of wire flat shape indices for all its wires
     /// (outer first, then inners).  Parallel to face_origins.  Used by
     /// build_topods_faces to reference pre-built TShape::Wire from wire_refs.
     pub(crate) face_all_wire_idxs: Vec<Vec<usize>>,
@@ -97,8 +97,7 @@ impl ResultBuilder {
         origin: FaceOrigin,
         vertex_positions: &HashMap<usize, DVec3>,
     ) {
-        let face = &ds.faces[face_idx];
-        let mut normal = if flip { -face.normal } else { face.normal };
+        let mut normal = if flip { -ds.face_normal(face_idx) } else { ds.face_normal(face_idx) };
         if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
             normal = Self::estimate_boundary_normal_from_segments(&wf.outer_wire, segments, ds);
         }
@@ -123,13 +122,13 @@ impl ResultBuilder {
                     .copied()
                     .unwrap_or(ds.vertex_point(vi))
             };
-            let v1 = if seg.start_vertex < ds.vertices.len() {
-                self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
+            let v1 = if seg.start_vertex < ds.vertex_count() {
+                self.add_ds_vertex(seg.start_vertex, ds.vertex_point(seg.start_vertex))
             } else {
                 self.add_vertex(vertex_positions[&seg.start_vertex])
             };
-            let v2 = if seg.end_vertex < ds.vertices.len() {
-                self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point)
+            let v2 = if seg.end_vertex < ds.vertex_count() {
+                self.add_ds_vertex(seg.end_vertex, ds.vertex_point(seg.end_vertex))
             } else {
                 self.add_vertex(vertex_positions[&seg.end_vertex])
             };
@@ -140,8 +139,8 @@ impl ResultBuilder {
                 let seam_deg = (get_pos(seg.start_vertex) - get_pos(seg.end_vertex))
                     .length_squared()
                     < TOLERANCE_ABS_SQ;
-                let sphere_surf = match &ds.faces[face_idx].surface {
-                    Surface3::Sphere(s) => s,
+                let sphere_surf = match ds.face_surface(face_idx) {
+                    Some(Surface3::Sphere(s)) => s,
                     _ => &SphericalSurface {
                         center: DVec3::ZERO,
                         axis: DVec3::Z,
@@ -149,9 +148,9 @@ impl ResultBuilder {
                         ref_dir: DVec3::X,
                     },
                 };
-                // --canonical deg edges (vertex >= ds.vertices.len())
+                // --canonical deg edges (vertex >= ds.vertex_count())
                 let is_canon_deg =
-                    seg.start_vertex >= ds.vertices.len() || seg.end_vertex >= ds.vertices.len();
+                    seg.start_vertex >= ds.vertex_count() || seg.end_vertex >= ds.vertex_count();
                 let ei = if seam_deg || is_canon_deg {
                     self.add_edge_seam_degenerate(v1, v2, sphere_surf)
                 } else {
@@ -188,20 +187,20 @@ impl ResultBuilder {
             for &si in iw {
                 let seg = &segments[si];
                 let getp = |vi: usize| -> DVec3 {
-                    if vi < ds.vertices.len() {
+                    if vi < ds.vertex_count() {
                         ds.vertex_point(vi)
                     } else {
                         *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO)
                     }
                 };
-                let v1 = if seg.start_vertex < ds.vertices.len() {
-                    self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
+                let v1 = if seg.start_vertex < ds.vertex_count() {
+                    self.add_ds_vertex(seg.start_vertex, ds.vertex_point(seg.start_vertex))
                 } else {
                     let p = getp(seg.start_vertex);
                     self.add_vertex(p)
                 };
-                let v2 = if seg.end_vertex < ds.vertices.len() {
-                    self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point)
+                let v2 = if seg.end_vertex < ds.vertex_count() {
+                    self.add_ds_vertex(seg.end_vertex, ds.vertex_point(seg.end_vertex))
                 } else {
                     let p = getp(seg.end_vertex);
                     self.add_vertex(p)
@@ -232,20 +231,20 @@ impl ResultBuilder {
             for &si in iw {
                 let seg = &segments[si];
                 let getp = |vi: usize| -> DVec3 {
-                    if vi < ds.vertices.len() {
+                    if vi < ds.vertex_count() {
                         ds.vertex_point(vi)
                     } else {
                         *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO)
                     }
                 };
-                let v1 = if seg.start_vertex < ds.vertices.len() {
-                    self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
+                let v1 = if seg.start_vertex < ds.vertex_count() {
+                    self.add_ds_vertex(seg.start_vertex, ds.vertex_point(seg.start_vertex))
                 } else {
                     let p = getp(seg.start_vertex);
                     self.add_vertex(p)
                 };
-                let v2 = if seg.end_vertex < ds.vertices.len() {
-                    self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point)
+                let v2 = if seg.end_vertex < ds.vertex_count() {
+                    self.add_ds_vertex(seg.end_vertex, ds.vertex_point(seg.end_vertex))
                 } else {
                     let p = getp(seg.end_vertex);
                     self.add_vertex(p)
@@ -262,8 +261,8 @@ impl ResultBuilder {
                     WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge
                         if seg.is_closed_on_face =>
                     {
-                        let s = match &ds.faces[face_idx].surface {
-                            Surface3::Sphere(sph) => sph,
+                        let s = match ds.face_surface(face_idx) {
+                            Some(Surface3::Sphere(sph)) => sph,
                             _ => &SphericalSurface {
                                 center: DVec3::ZERO,
                                 axis: DVec3::Z,
@@ -368,17 +367,18 @@ impl ResultBuilder {
         // degenerate vertices to the result face.
 
         // Compute UV domain for sphere faces
-        let sphere_uv = if matches!(face.surface, Surface3::Sphere(_)) {
+        let emit_face_surface = ds.face_surface(face_idx).cloned();
+        let sphere_uv = if matches!(emit_face_surface, Some(Surface3::Sphere(_))) {
             let uvs: Vec<DVec2> = if !wf.outer_wire.is_empty() {
                 wf.outer_wire
                     .iter()
                     .map(|&si| {
                         let seg = &segments[si];
-                        let sph = match &face.surface {
-                            Surface3::Sphere(s) => s,
+                        let sph = match &emit_face_surface {
+                            Some(Surface3::Sphere(s)) => s,
                             _ => unreachable!(),
                         };
-                        sph.world_to_uv(ds.vertices[seg.start_vertex].point)
+                        sph.world_to_uv(ds.vertex_point(seg.start_vertex))
                     })
                     .collect()
             } else {
@@ -407,16 +407,20 @@ impl ResultBuilder {
         let sample_pt = if !wf.outer_wire.is_empty() {
             let si = wf.outer_wire[0];
             let seg = &segments[si];
-            ds.vertices[seg.start_vertex].point
+            ds.vertex_point(seg.start_vertex)
         } else {
-            ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO)
+            Some(ds.vertex_point(0)).unwrap_or(DVec3::ZERO)
         };
+        let emit_surface = emit_face_surface.unwrap_or(Surface3::Plane(Plane::new(
+            DVec3::ZERO,
+            DVec3::Z,
+        )));
         self.faces.push((
             edge_indices,
             inner_wire_edges,
             tris,
             normal,
-            face.surface.clone(),
+            emit_surface,
             sphere_uv,
             centroid,
             area,
@@ -431,7 +435,7 @@ impl ResultBuilder {
             if let Some(owi) = ds.face_outer_wire_idx(face_idx) {
                 widxs.push(owi);
             }
-            widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
+            widxs.extend(ds.face_inner_wire_idxs(face_idx));
             self.face_all_wire_idxs.push(widxs);
         }
     }
@@ -458,7 +462,7 @@ impl ResultBuilder {
             // use DS vertex world coordinate (TopLoc_Location already baked
             // by from_topods_with_location / load_brep).  The BRepTool fallback is only
             // used when vi is NOT a DS vertex index.
-            if vi < ds.vertices.len() {
+            if vi < ds.vertex_count() {
                 ds.vertex_point(vi)
             } else {
                 vertex_positions.get(&vi).copied().unwrap_or_else(|| {
@@ -699,7 +703,7 @@ impl ResultBuilder {
             if let Some(owi) = ds.face_outer_wire_idx(face_idx) {
                 widxs.push(owi);
             }
-            widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
+            widxs.extend(ds.face_inner_wire_idxs(face_idx));
             self.face_all_wire_idxs.push(widxs);
         }
     }
@@ -739,7 +743,7 @@ impl ResultBuilder {
             .iter()
             .map(|&si| {
                 let seg = &segments[si];
-                ds.vertices[seg.start_vertex].point
+                ds.vertex_point(seg.start_vertex)
             })
             .collect();
         Self::estimate_boundary_normal(&pts)
@@ -850,27 +854,29 @@ impl ResultBuilder {
         t: &mut topods::BRep,
         face_refs: &mut Vec<topods::ShapeRef>,
     ) {
-        let face = &ds.faces[fi];
-
         // --- Outer wire from boundary_edges, creating TShape vertices/edges directly ---
-        let e_base = ds.vertices.len();
+        let e_base = ds.vertex_count();
         let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
         let mut prev_end: Option<usize> = None;
-        for &ei in &face.boundary_edges {
-            if ei >= ds.edges.len() {
+        for &ei in ds.face_boundary_edges(fi) {
+            if ei >= ds.edge_count() {
                 continue;
             }
-            let e = &ds.edges[ei];
+            let sv_orig = ds.edge_start_vertex_ds(ei);
+            let ev_orig = ds.edge_end_vertex_ds(ei);
+            let loc = ds.edge_location(ei);
             let (sv, ev) = match prev_end {
-                Some(pe) if e.start_vertex == pe => (e.start_vertex, e.end_vertex),
-                Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
-                _ => (e.start_vertex, e.end_vertex),
+                Some(pe) if sv_orig == pe => (sv_orig, ev_orig),
+                Some(pe) if ev_orig == pe => (ev_orig, sv_orig),
+                _ => (sv_orig, ev_orig),
             };
-            let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(e.location);
-            let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(e.location);
+            let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(loc);
+            let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(loc);
+            let edge_curve = ds.edge_curve(ei).cloned();
+            let edge_range = ds.edge_range(ei);
             let e_sr = t
-                .add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range)
-                .with_location(e.location);
+                .add_tedge(edge_curve, sv_sr, ev_sr, edge_range)
+                .with_location(loc);
             outer_edges.push(e_sr);
             prev_end = Some(ev);
         }
@@ -881,23 +887,25 @@ impl ResultBuilder {
 
         // --- Inner wires ---
         let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
-        for iw_edges in &face.inner_boundary_edges {
+        for iw_edges in ds.face_inner_boundary(fi) {
             let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
             for &(ei, forward_in_ds) in iw_edges {
-                if ei >= ds.edges.len() {
+                if ei >= ds.edge_count() {
                     continue;
                 }
-                let e = &ds.edges[ei];
+                let sv_orig = ds.edge_start_vertex_ds(ei);
+                let ev_orig = ds.edge_end_vertex_ds(ei);
+                let loc = ds.edge_location(ei);
                 let (sv, ev) = if forward_in_ds {
-                    (e.start_vertex, e.end_vertex)
+                    (sv_orig, ev_orig)
                 } else {
-                    (e.end_vertex, e.start_vertex)
+                    (ev_orig, sv_orig)
                 };
-                let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(e.location);
-                let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(e.location);
+                let sv_sr = t.add_tvertex(ds.vertex_point(sv)).with_location(loc);
+                let ev_sr = t.add_tvertex(ds.vertex_point(ev)).with_location(loc);
                 let e_sr = t
-                    .add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range)
-                    .with_location(e.location);
+                    .add_tedge(ds.edge_curve(ei).cloned(), sv_sr, ev_sr, ds.edge_range(ei))
+                    .with_location(loc);
                 wire_edges.push(e_sr);
             }
             if wire_edges.len() >= 2 {
@@ -905,10 +913,17 @@ impl ResultBuilder {
             }
         }
 
-        let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
+        let sample_pt = ds
+            .face_boundary_verts(fi)
+            .first()
+            .map(|&vi| ds.vertex_point(vi))
+            .unwrap_or(DVec3::ZERO);
+        let surf_clone = ds.face_surface(fi).cloned().unwrap_or_else(|| {
+            Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))
+        });
         let face_sr = t
             .add_tface(
-                Some(face.surface.clone()),
+                Some(surf_clone),
                 outer_wire,
                 inner_wires,
                 Some(sample_pt),
@@ -916,7 +931,7 @@ impl ResultBuilder {
                 vec![],
                 ds.face_natural_restriction(fi),
             )
-            .with_location(face.location);
+            .with_location(ds.face_location(fi));
         face_refs.push(face_sr);
         self.face_origins.push(origin);
 
@@ -930,7 +945,7 @@ impl ResultBuilder {
                 if let Some(owi) = ds.face_outer_wire_idx(fi) {
                     widxs.push(owi);
                 }
-                widxs.extend(&ds.faces[fi].inner_wire_idxs);
+                widxs.extend(ds.face_inner_wire_idxs(fi));
                 self.face_all_wire_idxs.push(widxs);
             }
         }

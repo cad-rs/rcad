@@ -5,7 +5,7 @@ pub mod iterator;
 pub use iterator::BOPDS_Iterator;
 pub mod topods_builder;
 
-/// Phase 4 transition: empty HashMap for fallback edge_vertex_params.
+/// Empty HashMap for fallback edge_vertex_params (ShapeInfo-based access).
 static EMPTY_VERTEX_PARAMS: LazyLock<HashMap<usize, f64>> = LazyLock::new(HashMap::new);
 
 #[cfg(test)]
@@ -64,6 +64,8 @@ impl DS {
             solid_images: Vec::new(),
             locations: Vec::new(),
             pave_blocks: Vec::new(),
+            pave_blocks_pool: Vec::new(),
+            face_info_pool: Vec::new(),
             increased_ss: std::collections::HashSet::new(),
             interf_tb: std::collections::HashSet::new(),
             map_ve: std::collections::HashMap::new(),
@@ -72,7 +74,20 @@ impl DS {
         }
     }
 
-    // ----- Phase 4: Helper methods accessing parallel arrays or ds.shape(n) -----
+    // ----- Helper methods accessing DS data through struct fields -----
+
+    /// Count of vertices (OCCT: iterate myLines checking ShapeType == Vertex).
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+    /// Count of edges.
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+    /// Count of faces.
+    pub fn face_count(&self) -> usize {
+        self.faces.len()
+    }
 
     /// Mutable access to TVertexData for a vertex (for write operations).
     pub fn vertex_data_mut(&mut self, vi: usize) -> &mut topods::TVertexData {
@@ -271,7 +286,7 @@ impl DS {
         match self.shape(si) {
             topods::TShape::Edge(d) => &d.vertex_params,
             _ => {
-                // Fallback to old DSEdge during Phase 4 transition
+                // Fallback to DSEdge.vertex_params when TShape is unavailable
                 self.edges
                     .get(ei)
                     .map_or(&*EMPTY_VERTEX_PARAMS, |e| &e.vertex_params)
@@ -353,6 +368,11 @@ impl DS {
     /// Face boundary edges from parallel array.
     pub fn face_boundary_edges(&self, fi: usize) -> &[usize] {
         self.faces.get(fi).map_or(&[], |f| &f.boundary_edges)
+    }
+
+    /// Face boundary edge orientation (FORWARD/REVERSED) from parallel array.
+    pub fn face_boundary_edge_forwards(&self, fi: usize) -> &[bool] {
+        self.faces.get(fi).map_or(&[], |f| &f.boundary_edge_forwards)
     }
 
     /// Face boundary verts from parallel array.
@@ -510,6 +530,10 @@ impl DS {
             is_new: true,
             rank: 0,
             source_idx: usize::MAX,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         vi
     }
@@ -717,6 +741,10 @@ impl DS {
             is_new: false,
             rank,
             source_idx: ei,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         self.shapes.push(tshape.unwrap_or_else(|| {
             let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
@@ -750,7 +778,7 @@ impl DS {
         ei
     }
 
-    /// Phase 4: push a face, populating both old DSFace and parallel arrays.
+    /// Push a face — struct fields only, no parallel arrays.
     /// When `tshape` is Some, uses that TShape for ds.shapes instead of creating a minimal one.
     /// Returns the face index.
     pub fn push_face(
@@ -823,11 +851,15 @@ impl DS {
             is_new: false,
             rank: if fi < self.a_face_count { 0 } else { 1 },
             source_idx: source_face_idx,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         fi
     }
 
-    /// Phase 4: push a wire, populating DSWire and pushing TShape to shapes[].
+    /// OCCT-aligned: push a Wire — no dedicated array, hierarchy via ShapeInfo.
     /// Returns the wire index.
     pub fn push_wire(
         &mut self,
@@ -858,11 +890,15 @@ impl DS {
             is_new: false,
             rank: 0,
             source_idx: usize::MAX,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         shape_idx
     }
 
-    /// Phase 4: push a shell, populating DSShell and pushing TShape to shapes[].
+    /// OCCT-aligned: push a Shell — no dedicated array, hierarchy via ShapeInfo.
     /// Returns the shell index.
     pub fn push_shell(
         &mut self,
@@ -893,11 +929,15 @@ impl DS {
             is_new: false,
             rank: 0,
             source_idx: usize::MAX,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         shape_idx
     }
 
-    /// Phase 4: push a solid, populating DSSolid and pushing TShape to shapes[].
+    /// OCCT-aligned: push a Solid — no dedicated array, hierarchy via ShapeInfo.
     /// Returns the solid index.
     pub fn push_solid(
         &mut self,
@@ -930,11 +970,15 @@ impl DS {
             is_new: false,
             rank: 0,
             source_idx: usize::MAX,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         shape_idx
     }
 
-    /// Phase 4: push a compsolid, populating DSCompSolid and pushing TShape to shapes[].
+    /// OCCT-aligned: push a CompSolid — no dedicated array, hierarchy via ShapeInfo.hapes[].
     /// Returns the compsolid index.
     pub fn push_compsolid(
         &mut self,
@@ -961,6 +1005,10 @@ impl DS {
             is_new: false,
             rank: 0,
             source_idx: usize::MAX,
+            is_internal: false,
+            source_shell_idx: None,
+            source_solid_idx: None,
+            source_compsolid_idx: None,
         });
         shape_idx
     }
