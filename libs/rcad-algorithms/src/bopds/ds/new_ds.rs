@@ -1,18 +1,16 @@
-// OCCT BOPDS_DS 1:1 翻译
-// TopoDS_Shape -> Shape (kind + index + location + orientation)
-// Handle(BOPDS_PaveBlock) -> SharedPB
+// OCCT BOPDS_DS 1:1 translation.
+// TopoDS_Shape -> Shape (Arc<TShape> + Location + Orientation).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use glam::DVec3;
-use rcad_kernel::topods::{self, ShapeRef, ShapeType, TShape};
-use rcad_kernel::topo_shape::{self, Shape, ShapeStore};
+use rcad_kernel::topods::{self, ShapeType, TShape};
+use rcad_kernel::topo_shape::Shape;
 use crate::bopds::face_info::FaceInfo;
 use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bopds::common_block::CommonBlock;
 use crate::bopds::ds::{InterferenceEE,InterferenceEF,InterferenceFF,InterferenceVE,InterferenceVF,InterferenceVV,InterferenceVZ,InterferenceEZ,InterferenceFZ,InterferenceZZ};
 
-// BOPDS_IndexRange
 #[derive(Debug,Clone,Copy)]
 pub struct IndexRange { pub first: usize, pub last: usize }
 impl IndexRange {
@@ -20,21 +18,16 @@ impl IndexRange {
     pub fn contains(&self,i:usize)->bool{i>=self.first&&i<=self.last}
 }
 
-// BOPDS_ShapeInfo
 #[derive(Debug,Clone)]
 pub struct ShapeInfo {
-    pub shape: Shape,               // TopoDS_Shape (kind + index + location + orientation)
+    pub shape: Shape,
     pub shape_type: ShapeType,
-    pub box_min: Option<DVec3>,    // Bnd_Box
-    pub box_max: Option<DVec3>,
-    pub box_gap: f64,
-    pub sub_shapes: Vec<usize>,    // List<int>
-    pub reference: i64,            // myReference, -1 = none
-    pub flag: i64,                 // myFlag, -1 = none
+    pub box_min: Option<DVec3>, pub box_max: Option<DVec3>, pub box_gap: f64,
+    pub sub_shapes: Vec<usize>, pub reference: i64, pub flag: i64,
 }
 impl ShapeInfo {
     pub fn shape_type(&self)->ShapeType{self.shape_type}
-    pub fn shape(&self)->Shape{self.shape}
+    pub fn shape(&self)->&Shape{&self.shape}
     pub fn has_brep(&self)->bool{matches!(self.shape_type,ShapeType::Vertex|ShapeType::Edge|ShapeType::Wire|ShapeType::Face|ShapeType::Shell)}
     pub fn is_interfering(&self)->bool{self.has_brep()||self.shape_type==ShapeType::Solid}
     pub fn has_reference(&self)->bool{self.reference>=0}
@@ -47,14 +40,13 @@ impl ShapeInfo {
     pub fn sub_shapes(&self)->&[usize]{&self.sub_shapes}
 }
 
-// BOPDS_DS
 #[derive(Debug)]
 pub struct DS {
-    pub arguments: Vec<Shape>,                          // NCollection_List<TopoDS_Shape>
+    pub arguments: Vec<Shape>,
     pub nb_source_shapes: usize,
-    pub ranges: Vec<IndexRange>,                        // NCollection_DynamicArray<BOPDS_IndexRange>
-    pub shapes: Vec<ShapeInfo>,                         // myLines
-    pub map_shape_index: HashMap<(u8,usize,u32),usize>, // (kind, index, location) -> flat index
+    pub ranges: Vec<IndexRange>,
+    pub shapes: Vec<ShapeInfo>,
+    pub map_shape_index: HashMap<(u64,u32),usize>, // (ptr_id, location) -> flat index
     pub pave_blocks_pool: Vec<Vec<SharedPB>>,
     pub map_pb_cb: HashMap<u64,usize>,
     pub face_info_pool: Vec<FaceInfo>,
@@ -67,10 +59,6 @@ pub struct DS {
     pub interf_vz: Vec<InterferenceVZ>,pub interf_ez: Vec<InterferenceEZ>,
     pub interf_fz: Vec<InterferenceFZ>,pub interf_zz: Vec<InterferenceZZ>,
     pub interfered: HashSet<usize>,
-    // rcad: per-type TShape storage (Shape.index -> store.xxx).
-    pub store: ShapeStore,
-    // rcad: TShape pool for ShapeRef -> Shape conversion in get_children.
-    pub tshapes: Vec<Arc<TShape>>,
 }
 
 impl DS {
@@ -84,10 +72,7 @@ impl DS {
         interf_ee:Vec::new(),interf_ef:Vec::new(),interf_ff:Vec::new(),
         interf_vz:Vec::new(),interf_ez:Vec::new(),interf_fz:Vec::new(),
         interf_zz:Vec::new(),interfered:HashSet::new(),
-        store:ShapeStore::new(),
-        tshapes:Vec::new(),
     }}
-
     pub fn clear(&mut self){
         self.nb_source_shapes=0;self.arguments.clear();self.ranges.clear();
         self.shapes.clear();self.map_shape_index.clear();
@@ -97,120 +82,106 @@ impl DS {
         self.interf_vf.clear();self.interf_ee.clear();self.interf_ef.clear();
         self.interf_ff.clear();self.interf_vz.clear();self.interf_ez.clear();
         self.interf_fz.clear();self.interf_zz.clear();self.interfered.clear();
-        self.store=ShapeStore::new();
     }
-
     pub fn set_arguments(&mut self,a:Vec<Shape>){self.arguments=a;}
     pub fn arguments(&self)->&[Shape]{&self.arguments}
     pub fn nb_shapes(&self)->usize{self.shapes.len()}
     pub fn nb_source_shapes(&self)->usize{self.nb_source_shapes}
     pub fn nb_ranges(&self)->usize{self.ranges.len()}
-
     pub fn range(&self,i:usize)->&IndexRange{&self.ranges[i]}
     pub fn rank(&self,i:usize)->isize{
         for ri in 0..self.nb_ranges(){if self.range(ri).contains(i){return ri as isize;}}
         -1
     }
     pub fn is_new_shape(&self,i:usize)->bool{i>=self.nb_source_shapes}
-
-    // Append(const BOPDS_ShapeInfo&) L235-241
     pub fn append(&mut self,si:ShapeInfo)->usize{
-        let k=(si.shape.kind as u8,si.shape.index,si.shape.location);
-        self.shapes.push(si);
-        let idx=self.shapes.len()-1;
-        self.map_shape_index.insert(k,idx);
-        idx
+        let pk=(si.shape.ptr_id(),si.shape.location);
+        self.shapes.push(si);let idx=self.shapes.len()-1;
+        self.map_shape_index.insert(pk,idx);idx
     }
-    // Append(const TopoDS_Shape&) L245-251
     pub fn append_shape(&mut self,s:Shape)->usize{
-        let k=(s.kind as u8,s.index,s.location);
-        self.shapes.push(ShapeInfo{
-            shape:s,shape_type:s.shape_type(),
+        let pk=(s.ptr_id(),s.location);
+        let st=s.shape_type();
+        self.shapes.push(ShapeInfo{shape:s,shape_type:st,
             box_min:None,box_max:None,box_gap:0.0,
             sub_shapes:Vec::new(),reference:-1,flag:-1,
-        });
-        let idx=self.shapes.len()-1;
-        self.map_shape_index.insert(k,idx);
-        idx
+        });let idx=self.shapes.len()-1;
+        self.map_shape_index.insert(pk,idx);idx
     }
-
     pub fn shape_info(&self,i:usize)->&ShapeInfo{&self.shapes[i]}
     pub fn change_shape_info(&mut self,i:usize)->&mut ShapeInfo{&mut self.shapes[i]}
-    pub fn shape(&self,i:usize)->Shape{self.shapes[i].shape}
-
-    // Index L276-281
-    pub fn index(&self,s:Shape)->isize{
-        let k=(s.kind as u8,s.index,s.location);
-        match self.map_shape_index.get(&k){Some(&i)=>i as isize,None=>-1}
+    pub fn shape(&self,i:usize)->&Shape{&self.shapes[i].shape}
+    pub fn index(&self,s:&Shape)->isize{
+        match self.map_shape_index.get(&(s.ptr_id(),s.location)){Some(&i)=>i as isize,None=>-1}
     }
 
     // Init L285-324
     pub fn init(&mut self,_fuzz:f64){
         if self.arguments.is_empty(){return;}
-        let args=self.arguments.clone();let mut i1=0usize;
-        for a in 0..self.arguments.len(){
-            let s=self.arguments[a];
-            let k=(s.kind as u8,s.index,s.location);
-            if self.map_shape_index.contains_key(&k){continue;}
-            let idx=self.append_shape(s);
-            self.init_shape(idx,s);
+        let args=self.arguments.clone();
+        let mut i1=0usize;
+        for s in &args{
+            if self.map_shape_index.contains_key(&(s.ptr_id(),s.location)){continue;}
+            let s_clone=s.clone();
+            let idx=self.append_shape(s_clone);
+            self.init_shape(idx,s.clone());
             let i2=self.nb_shapes()-1;
             self.ranges.push(IndexRange::new(i1,i2));
             i1=i2+1;
         }
         self.nb_source_shapes=self.nb_shapes();
         let tol=1e-7*0.5;
-        self.prepare_vertices(tol);
-        self.prepare_edges(tol);
-        self.prepare_faces(tol);
-        self.prepare_solids();
+        self.prepare_vertices(tol);self.prepare_edges(tol);
+        self.prepare_faces(tol);self.prepare_solids();
         self.build_vertex_edge_map();
     }
 
-    // InitShape L328-352
     fn init_shape(&mut self,idx:usize,s:Shape){
         self.shapes[idx].shape_type=s.shape_type();
         let mut exist:HashSet<usize>=self.shapes[idx].sub_shapes.iter().copied().collect();
-        let children=self.get_children(s);
+        let children=self.get_children(&s);
         for child in children{
-            let k=(child.kind as u8,child.index,child.location);
-            let ci=match self.map_shape_index.get(&k){
+            let pk=(child.ptr_id(),child.location);
+            let ci=match self.map_shape_index.get(&pk){
                 Some(&e)=>e,
-                None=>{let ci=self.append_shape(child);self.init_shape(ci,child);ci}
+                None=>{let ci=self.append_shape(child.clone());self.init_shape(ci,child);ci}
             };
             if exist.insert(ci){self.shapes[idx].sub_shapes.push(ci);}
         }
     }
 
-    // TopoDS_Iterator: direct sub-shapes from TShape.
-    // TEdgeData uses ShapeRef; convert to Shape via tshapes pool.
-    fn get_children(&self,s:Shape)->Vec<Shape>{
-        fn sr2shape(me:&DS,sr:ShapeRef)->Shape{
-            let kind=if sr.ptr_id!=0&&sr.index<me.tshapes.len(){me.tshapes[sr.index].shape_type()}else{ShapeType::Shape};
-            Shape{kind,index:sr.index,location:sr.location,orientation:sr.orientation}
-        }
-        if s.kind==ShapeType::Vertex{return vec![];}
-        let ts=&self.tshapes;
-        let idx=s.index;
-        if idx>=ts.len(){return vec![];}
-        let t=&*ts[idx];
-        match t{
+    // TopoDS_Iterator: direct sub-shapes from TShape
+    fn get_children(&self,s:&Shape)->Vec<Shape>{
+        match &*s.data{
             topods::TShape::Vertex(_)=>vec![],
-            topods::TShape::Edge(ed)=>vec![sr2shape(self,ed.first),sr2shape(self,ed.last)],
-            topods::TShape::Wire(wd)=>wd.edges.iter().map(|&e|sr2shape(self,e)).collect(),
+            topods::TShape::Edge(ed)=>{let d=self.make_child(ed.first);let d2=self.make_child(ed.last);vec![d,d2]}
+            topods::TShape::Wire(wd)=>wd.edges.iter().map(|&sr|self.make_child(sr)).collect(),
             topods::TShape::Face(fd)=>{
-                let mut v=vec![sr2shape(self,fd.outer_wire)];
-                v.extend(fd.inner_wires.iter().map(|&w|sr2shape(self,w)));
+                let mut v=vec![self.make_child(fd.outer_wire)];
+                v.extend(fd.inner_wires.iter().map(|&w|self.make_child(w)));
                 v
             }
-            topods::TShape::Shell(sd)=>sd.faces.iter().map(|&f|sr2shape(self,f)).collect(),
-            topods::TShape::Solid(sd)=>sd.shells.iter().map(|&sh|sr2shape(self,sh)).collect(),
-            topods::TShape::CompSolid(cd)=>cd.iter().map(|&c|sr2shape(self,c)).collect(),
-            topods::TShape::Compound(cd)=>cd.iter().map(|&c|sr2shape(self,c)).collect(),
+            topods::TShape::Shell(sd)=>sd.faces.iter().map(|&sr|self.make_child(sr)).collect(),
+            topods::TShape::Solid(sd)=>sd.shells.iter().map(|&sr|self.make_child(sr)).collect(),
+            topods::TShape::CompSolid(cd)=>cd.iter().map(|&sr|self.make_child(sr)).collect(),
+            topods::TShape::Compound(cd)=>cd.iter().map(|&sr|self.make_child(sr)).collect(),
         }
     }
 
-    // PaveBlocksPool
+    // Helpers: get_children calls make_child for each ShapeRef sub-shape.
+    // The TEdgeData/TWireData/etc. use ShapeRef for sub-shape references.
+    // We convert ShapeRef -> Shape by looking up the TShape in self.tshapes
+    // (populated during construction from BRep).
+    fn make_child(&self,sr:topods::ShapeRef)->Shape{
+        Shape::new(
+            if sr.ptr_id!=0&&sr.index<self.shapes.len(){self.shapes[sr.index].shape.data.clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))},
+            sr.location,sr.orientation,
+        )
+    }
+    fn tshape_of(&self,i:usize)->Arc<TShape>{
+        if i<self.shapes.len(){self.shapes[i].shape.data.clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))}
+    }
+
     pub fn pave_blocks_pool(&self)->&[Vec<SharedPB>]{&self.pave_blocks_pool}
     pub fn change_pave_blocks_pool(&mut self)->&mut Vec<Vec<SharedPB>>{&mut self.pave_blocks_pool}
     pub fn has_pave_blocks(&self,i:usize)->bool{self.shapes[i].has_reference()}
@@ -218,15 +189,8 @@ impl DS {
         if self.has_pave_blocks(i){&self.pave_blocks_pool[self.shapes[i].reference as usize]}else{&[]}
     }
     pub fn change_pave_blocks(&mut self,i:usize)->&mut Vec<SharedPB>{
-        if!self.has_pave_blocks(i){self.init_pave_blocks(i);}
+        if!self.has_pave_blocks(i){if self.shapes[i].sub_shapes.is_empty(){let p0=Pave{vertex_idx:0,param:0.0};let spb=SharedPB::new(PaveBlock::new(i,p0,p0));self.pave_blocks_pool.push(vec![spb]);self.shapes[i].reference=(self.pave_blocks_pool.len()-1)as i64;}}
         &mut self.pave_blocks_pool[self.shapes[i].reference as usize]
-    }
-    fn init_pave_blocks(&mut self,ei:usize){
-        if self.shapes[ei].sub_shapes.is_empty(){return;}
-        let p0=Pave{vertex_idx:0,param:0.0};
-        let spb=SharedPB::new(PaveBlock::new(ei,p0,p0));
-        self.pave_blocks_pool.push(vec![spb]);
-        self.shapes[ei].reference=(self.pave_blocks_pool.len()-1)as i64;
     }
 
     pub fn is_common_block(&self,pb:&SharedPB)->bool{let ptr=Arc::as_ptr(&pb.0)as u64;self.map_pb_cb.contains_key(&ptr)}
@@ -251,13 +215,11 @@ impl DS {
     pub fn add_shape_sd(&mut self,i:usize,sd:usize){if i!=sd{self.shapes_sd.insert(i,sd);}}
     pub fn has_shape_sd(&self,i:usize,sd:&mut usize)->bool{
         let mut p=self.shapes_sd.get(&i);let mut f=false;
-        while let Some(&n)=p{*sd=n;f=true;p=self.shapes_sd.get(&n);}
-        f
+        while let Some(&n)=p{*sd=n;f=true;p=self.shapes_sd.get(&n);}f
     }
     pub fn get_same_domain_index(&self,i:isize)->isize{
         let mut r=i;
-        loop{match self.shapes_sd.get(&(r as usize)){Some(&n)if(n as isize)<r=>r=n as isize,_=>break}}
-        r
+        loop{match self.shapes_sd.get(&(r as usize)){Some(&n)if(n as isize)<r=>r=n as isize,_=>break}}r
     }
 
     pub fn interf_vv(&mut self)->&mut Vec<InterferenceVV>{&mut self.interf_vv}
@@ -271,13 +233,11 @@ impl DS {
     pub fn interf_fz(&mut self)->&mut Vec<InterferenceFZ>{&mut self.interf_fz}
     pub fn interf_zz(&mut self)->&mut Vec<InterferenceZZ>{&mut self.interf_zz}
     pub fn nb_interf_types()->usize{10}
-
     pub fn add_interf(&mut self,i1:usize,i2:usize)->bool{let k=if i1<i2{(i1,i2)}else{(i2,i1)};self.interf_tb.insert(k)}
     pub fn has_interf_single(&self,i:usize)->bool{self.interfered.contains(&i)}
     pub fn has_interf(&self,i1:usize,i2:usize)->bool{let k=if i1<i2{(i1,i2)}else{(i2,i1)};self.interf_tb.contains(&k)}
     pub fn has_interf_shape_sub_shapes(&self,i1:usize,i2:usize,any:bool)->bool{
-        let s=&self.shapes[i2].sub_shapes;
-        if s.is_empty(){return false;}
+        let s=&self.shapes[i2].sub_shapes;if s.is_empty(){return false;}
         if any{s.iter().any(|&ss|self.has_interf(i1,ss))}else{s.iter().all(|&ss|self.has_interf(i1,ss))}
     }
     pub fn has_interf_sub_shapes(&self,i1:usize,i2:usize)->bool{
@@ -354,14 +314,13 @@ impl DS {
         let _=(ts1,ts2);true
     }
 
-    // ---- prepare* private ----
     fn prepare_vertices(&mut self,tol:f64){
         for i in 0..self.nb_source_shapes{
             if self.shapes[i].shape_type!=ShapeType::Vertex{continue;}
-            let shape=self.shapes[i].shape;
-            let vt=self.vertex_tolerance(shape);
+            let shape=self.shapes[i].shape.clone();
+            let vt=self.vertex_tolerance(&shape);
             self.shapes[i].box_gap=vt+tol;
-            if let Some(pt)=self.vertex_point(shape){
+            if let Some(pt)=self.vertex_point(&shape){
                 self.shapes[i].box_min=Some(pt-DVec3::splat(vt));
                 self.shapes[i].box_max=Some(pt+DVec3::splat(vt));
             }
@@ -371,9 +330,7 @@ impl DS {
         for i in 0..self.nb_source_shapes{
             if self.shapes[i].shape_type!=ShapeType::Edge{continue;}
             let mut mn=DVec3::splat(f64::INFINITY);let mut mx=DVec3::splat(f64::NEG_INFINITY);
-            for &vi in &self.shapes[i].sub_shapes{
-                if let(Some(bmin),Some(bmax))=(self.shapes[vi].box_min,self.shapes[vi].box_max){mn=mn.min(bmin);mx=mx.max(bmax);}
-            }
+            for &vi in &self.shapes[i].sub_shapes{if let(Some(bmin),Some(bmax))=(self.shapes[vi].box_min,self.shapes[vi].box_max){mn=mn.min(bmin);mx=mx.max(bmax);}}
             if mn.x.is_finite(){self.shapes[i].box_min=Some(mn);self.shapes[i].box_max=Some(mx);self.shapes[i].box_gap=tol;}
         }
     }
@@ -381,12 +338,9 @@ impl DS {
         for fi in 0..self.nb_source_shapes{
             if self.shapes[fi].shape_type!=ShapeType::Face{continue;}
             let mut ns:HashSet<usize>=HashSet::new();
-            for &wi in &self.shapes[fi].sub_shapes.clone(){
-                if wi>=self.nb_shapes(){continue;}
-                for &ei in &self.shapes[wi].sub_shapes.clone(){
-                    if ei>=self.nb_shapes(){continue;}
-                    if self.shapes[ei].shape_type==ShapeType::Edge{ns.insert(ei);for &vi in &self.shapes[ei].sub_shapes{if vi<self.nb_shapes(){ns.insert(vi);}}}
-                }
+            for &wi in &self.shapes[fi].sub_shapes.clone(){if wi>=self.nb_shapes(){continue;}
+                for &ei in &self.shapes[wi].sub_shapes.clone(){if ei>=self.nb_shapes(){continue;}
+                    if self.shapes[ei].shape_type==ShapeType::Edge{ns.insert(ei);for &vi in &self.shapes[ei].sub_shapes{if vi<self.nb_shapes(){ns.insert(vi);}}}}
             }
             self.shapes[fi].sub_shapes=ns.into_iter().collect();
             let mut mn=DVec3::splat(f64::INFINITY);let mut mx=DVec3::splat(f64::NEG_INFINITY);
@@ -412,8 +366,8 @@ impl DS {
         if let(Some(mn),Some(mx))=(self.shapes[i].box_min,self.shapes[i].box_max){return Some((mn,mx,self.shapes[i].box_gap));}
         match self.shapes[i].shape_type{
             ShapeType::Vertex=>{
-                let p=self.vertex_point(self.shapes[i].shape);
-                let t=self.vertex_tolerance(self.shapes[i].shape);
+                let shape=self.shapes[i].shape.clone();
+                let p=self.vertex_point(&shape);let t=self.vertex_tolerance(&shape);
                 if let Some(pt)=p{let tol=t.max(1e-10);let b=(pt-DVec3::splat(tol),pt+DVec3::splat(tol),tol);self.shapes[i].box_min=Some(b.0);self.shapes[i].box_max=Some(b.1);self.shapes[i].box_gap=b.2;Some(b)}else{None}
             }
             _=>{
@@ -423,10 +377,9 @@ impl DS {
             }
         }
     }
-    fn vertex_tolerance(&self,s:Shape)->f64{s.vertex(&self.store).map_or(0.0,|vd|vd.tolerance)}
-    fn vertex_point(&self,s:Shape)->Option<DVec3>{s.vertex(&self.store).map(|vd|vd.point)}
+    fn vertex_tolerance(&self,s:&Shape)->f64{s.as_vertex().map_or(0.0,|vd|vd.tolerance)}
+    fn vertex_point(&self,s:&Shape)->Option<DVec3>{s.as_vertex().map(|vd|vd.point)}
 
-    // per-type count helpers
     pub fn vertex_count(&self)->usize{self.shapes.iter().filter(|s|s.shape_type==ShapeType::Vertex).count()}
     pub fn edge_count(&self)->usize{self.shapes.iter().filter(|s|s.shape_type==ShapeType::Edge).count()}
     pub fn face_count(&self)->usize{self.shapes.iter().filter(|s|s.shape_type==ShapeType::Face).count()}

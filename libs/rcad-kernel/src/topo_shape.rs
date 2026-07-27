@@ -1,146 +1,73 @@
-//! OCCT Shape + TShape architecture: flat per-type storage.
-//!
-//! Shape = { kind, index, location, orientation }  -- 24 bytes, cache-friendly.
-//! ShapeStore = per-type Vecs for compact, cache-efficient iteration.
-//!
-//! Unlike TShape enum (each element = max variant size, wastes cache),
-//! per-type Vecs keep vertex data contiguous, edge data contiguous, etc.
-
-use glam::DVec3;
-use crate::geom::{Curve2d, Curve3, Surface3};
-use crate::topods::{
-    TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData,
-    Orientation, ShapeType, ShapeRef,
-};
+//! OCCT TopoDS_Shape: Arc<TShape> handle + Location + Orientation.
+//! Self-contained -- no external ShapeStore needed.
+//! Shape follows Arc<TShape> (like OCCT's TShape* handle).
 
 use std::sync::Arc;
+use glam::DVec3;
+use crate::topods::{
+    TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData,
+    Orientation, ShapeType, TShape,
+};
 
-// ======================================================================
-// Shape -- compact TopoDS_Shape equivalent (24 bytes)
-// ======================================================================
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Shape {
-    pub kind: ShapeType,
-    pub index: usize,
+    /// Arc<TShape> handle (OCCT: Handle(TShape) / TShape*).
+    pub data: Arc<TShape>,
+    /// TopLoc_Location index; 0 = identity.
     pub location: u32,
+    /// TopAbs_Orientation.
     pub orientation: Orientation,
 }
 
 impl Shape {
-    pub fn shape_type(&self) -> ShapeType { self.kind }
+    pub fn new(data: Arc<TShape>, location: u32, orientation: Orientation) -> Self {
+        Shape { data, location, orientation }
+    }
 
-    /// Access typed data through ShapeStore.
-    pub fn vertex<'a>(&self, s: &'a ShapeStore) -> Option<&'a TVertexData> {
-        if self.kind != ShapeType::Vertex { return None; }
-        s.vertices.get(self.index)
+    pub fn shape_type(&self) -> ShapeType { self.data.shape_type() }
+
+    // Type-safe accessors (like OCCT's TopoDS::Vertex(s)).
+    pub fn as_vertex(&self) -> Option<&TVertexData> {
+        if let TShape::Vertex(ref vd) = *self.data { Some(vd) } else { None }
     }
-    pub fn edge<'a>(&self, s: &'a ShapeStore) -> Option<&'a TEdgeData> {
-        if self.kind != ShapeType::Edge { return None; }
-        s.edges.get(self.index)
+    pub fn as_edge(&self) -> Option<&TEdgeData> {
+        if let TShape::Edge(ref ed) = *self.data { Some(ed) } else { None }
     }
-    pub fn wire<'a>(&self, s: &'a ShapeStore) -> Option<&'a TWireData> {
-        if self.kind != ShapeType::Wire { return None; }
-        s.wires.get(self.index)
+    pub fn as_wire(&self) -> Option<&TWireData> {
+        if let TShape::Wire(ref wd) = *self.data { Some(wd) } else { None }
     }
-    pub fn face<'a>(&self, s: &'a ShapeStore) -> Option<&'a TFaceData> {
-        if self.kind != ShapeType::Face { return None; }
-        s.faces.get(self.index)
+    pub fn as_face(&self) -> Option<&TFaceData> {
+        if let TShape::Face(ref fd) = *self.data { Some(fd) } else { None }
     }
-    pub fn shell<'a>(&self, s: &'a ShapeStore) -> Option<&'a TShellData> {
-        if self.kind != ShapeType::Shell { return None; }
-        s.shells.get(self.index)
+    pub fn as_shell(&self) -> Option<&TShellData> {
+        if let TShape::Shell(ref sd) = *self.data { Some(sd) } else { None }
     }
-    pub fn solid<'a>(&self, s: &'a ShapeStore) -> Option<&'a TSolidData> {
-        if self.kind != ShapeType::Solid { return None; }
-        s.solids.get(self.index)
+    pub fn as_solid(&self) -> Option<&TSolidData> {
+        if let TShape::Solid(ref sd) = *self.data { Some(sd) } else { None }
     }
+
+    /// ptr_id for Hash/Eq (Arc pointer identity, like OCCT's TShape*).
+    pub fn ptr_id(&self) -> u64 { Arc::as_ptr(&self.data) as u64 }
+
+    pub fn is_null(&self) -> bool { false }
+    pub fn is_vertex(&self) -> bool { self.shape_type() == ShapeType::Vertex }
+    pub fn is_edge(&self) -> bool { self.shape_type() == ShapeType::Edge }
+    pub fn is_wire(&self) -> bool { self.shape_type() == ShapeType::Wire }
+    pub fn is_face(&self) -> bool { self.shape_type() == ShapeType::Face }
+    pub fn is_shell(&self) -> bool { self.shape_type() == ShapeType::Shell }
+    pub fn is_solid(&self) -> bool { self.shape_type() == ShapeType::Solid }
 }
 
-// Identity by (ptr_id from Arc pointer, location, orientation).
 impl PartialEq for Shape {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.index == other.index
+        Arc::as_ptr(&self.data) == Arc::as_ptr(&other.data)
             && self.location == other.location
             && self.orientation as u8 == other.orientation as u8
     }
 }
 impl Eq for Shape {}
-
-// ======================================================================
-// ShapeStore -- per-type flat arrays
-// ======================================================================
-
-#[derive(Debug, Clone)]
-pub struct ShapeStore {
-    pub vertices: Vec<TVertexData>,
-    pub edges: Vec<TEdgeData>,
-    pub wires: Vec<TWireData>,
-    pub faces: Vec<TFaceData>,
-    pub shells: Vec<TShellData>,
-    pub solids: Vec<TSolidData>,
-    pub compsolids: Vec<Vec<ShapeRef>>,
-    pub compounds: Vec<Vec<ShapeRef>>,
-    pub locations: Vec<glam::DAffine3>,
-}
-
-impl ShapeStore {
-    pub fn new() -> Self {
-        ShapeStore {
-            vertices: Vec::new(), edges: Vec::new(), wires: Vec::new(),
-            faces: Vec::new(), shells: Vec::new(), solids: Vec::new(),
-            compsolids: Vec::new(), compounds: Vec::new(),
-            locations: Vec::new(),
-        }
-    }
-
-    pub fn add_vertex(&mut self, v: TVertexData) -> Shape {
-        let idx = self.vertices.len();
-        self.vertices.push(v);
-        Shape { kind: ShapeType::Vertex, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_edge(&mut self, e: TEdgeData) -> Shape {
-        let idx = self.edges.len();
-        self.edges.push(e);
-        Shape { kind: ShapeType::Edge, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_face(&mut self, f: TFaceData) -> Shape {
-        let idx = self.faces.len();
-        self.faces.push(f);
-        Shape { kind: ShapeType::Face, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_wire(&mut self, w: TWireData) -> Shape {
-        let idx = self.wires.len();
-        self.wires.push(w);
-        Shape { kind: ShapeType::Wire, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_shell(&mut self, s: TShellData) -> Shape {
-        let idx = self.shells.len();
-        self.shells.push(s);
-        Shape { kind: ShapeType::Shell, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_solid(&mut self, s: TSolidData) -> Shape {
-        let idx = self.solids.len();
-        self.solids.push(s);
-        Shape { kind: ShapeType::Solid, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_compsolid(&mut self, c: Vec<ShapeRef>) -> Shape {
-        let idx = self.compsolids.len();
-        self.compsolids.push(c);
-        Shape { kind: ShapeType::CompSolid, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-    pub fn add_compound(&mut self, c: Vec<ShapeRef>) -> Shape {
-        let idx = self.compounds.len();
-        self.compounds.push(c);
-        Shape { kind: ShapeType::Compound, index: idx, location: 0, orientation: Orientation::Forward }
-    }
-
-    pub fn total(&self) -> usize {
-        self.vertices.len() + self.edges.len() + self.wires.len()
-            + self.faces.len() + self.shells.len() + self.solids.len()
-            + self.compsolids.len() + self.compounds.len()
+impl std::hash::Hash for Shape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.data) as u64).hash(state);
     }
 }
-
-impl Default for ShapeStore { fn default() -> Self { Self::new() } }
