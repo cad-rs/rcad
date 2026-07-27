@@ -75,6 +75,7 @@ pub mod tolerance;
 ///
 /// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
 pub mod topods;
+pub mod topo_shape;
 
 /// Curve fitting: B-spline interpolation and approximation through point sets.
 ///

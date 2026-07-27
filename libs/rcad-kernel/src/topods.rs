@@ -1,4 +1,4 @@
-use crate::geom::{Curve2d, Curve3, Surface3};
+﻿use crate::geom::{Curve2d, Curve3, Surface3};
 use crate::tolerance::CONFUSION;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,7 @@ pub mod tshape_flags {
 /// OCCT TopAbs_ShapeEnum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShapeType {
-    /// TopAbs_SHAPE 鈥?generic shape (null/unknown).
+    /// TopAbs_SHAPE �?generic shape (null/unknown).
     Shape,
     Vertex,
     Edge,
@@ -68,19 +68,166 @@ pub enum ShapeType {
     Compound,
 }
 
-/// Sentinel ptr_id value for ShapeRef::synthetic(usize) 鈥?marks synthetic (non-Arc) identity.
+/// OCCT TopoDS_Shape: Arc<TShape> handle + Location + Orientation.
+///
+/// Unlike ShapeRef (which uses index-based TShape access),
+/// Shape holds Arc<TShape> directly -- matching OCCT's Handle(TShape).
+/// This eliminates the need for a separate TShape pool.
+#[derive(Debug, Clone)]
+pub struct Shape {
+    /// Direct TShape handle (OCCT: Handle(TShape) / TShape*).
+    pub tshape: Arc<TShape>,
+    /// TopLoc_Location index into BRep.locations[]; 0 = identity.
+    pub location: u32,
+    /// TopAbs_Orientation.
+    pub orientation: Orientation,
+}
+
+impl Shape {
+    /// Create a Shape from TShape + location + orientation.
+    pub fn new(tshape: Arc<TShape>, location: u32, orientation: Orientation) -> Self {
+        Shape { tshape, location, orientation }
+    }
+
+    /// OCCT: TShape() -- returns the TShape handle.
+    pub fn t_shape(&self) -> &Arc<TShape> { &self.tshape }
+
+    /// OCCT: ShapeType() -- shortcut for TShape()->ShapeType().
+    pub fn shape_type(&self) -> ShapeType { self.tshape.shape_type() }
+
+    /// OCCT: Location() -- returns the location index.
+    pub fn location(&self) -> u32 { self.location }
+
+    /// OCCT: Orientation() -- returns the orientation.
+    pub fn orientation(&self) -> Orientation { self.orientation }
+
+    /// ptr_id = Arc::as_ptr(&tshape) as u64, for Hash/Eq compatibility.
+    pub fn ptr_id(&self) -> u64 { Arc::as_ptr(&self.tshape) as u64 }
+
+}
+
+// Identity by Arc pointer (same as OCCT's TShape* identity).
+impl PartialEq for Shape {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::as_ptr(&self.tshape) == Arc::as_ptr(&other.tshape)
+            && self.location == other.location
+            && self.orientation as u8 == other.orientation as u8
+    }
+}
+impl Eq for Shape {}
+
+impl std::hash::Hash for Shape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.tshape) as u64).hash(state);
+    }
+}
+
+// ---- Typed Shape wrappers (OCCT: TopoDS_Vertex, TopoDS_Edge, ...) ----
+
+/// TopoDS_Vertex: Shape guaranteed to hold a Vertex TShape.
+#[derive(Debug, Clone)]
+pub struct Vertex(pub Shape);
+impl Vertex {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Vertex); Vertex(s) }
+}
+
+/// TopoDS_Edge: Shape guaranteed to hold an Edge TShape.
+#[derive(Debug, Clone)]
+pub struct Edge(pub Shape);
+impl Edge {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Edge); Edge(s) }
+    pub fn tedge_data(&self) -> &TEdgeData { if let TShape::Edge(ref ed) = *self.0.tshape { ed } else { panic!("not an Edge") } }
+}
+
+/// TopoDS_Wire: Shape guaranteed to hold a Wire TShape.
+#[derive(Debug, Clone)]
+pub struct Wire(pub Shape);
+impl Wire {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Wire); Wire(s) }
+}
+
+/// TopoDS_Face: Shape guaranteed to hold a Face TShape.
+#[derive(Debug, Clone)]
+pub struct Face(pub Shape);
+impl Face {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Face); Face(s) }
+    pub fn tface_data(&self) -> &TFaceData { if let TShape::Face(ref fd) = *self.0.tshape { fd } else { panic!("not a Face") } }
+}
+
+/// TopoDS_Shell: Shape guaranteed to hold a Shell TShape.
+#[derive(Debug, Clone)]
+pub struct Shell(pub Shape);
+impl Shell {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Shell); Shell(s) }
+}
+
+/// TopoDS_Solid: Shape guaranteed to hold a Solid TShape.
+#[derive(Debug, Clone)]
+pub struct Solid(pub Shape);
+impl Solid {
+    pub fn shape(&self) -> &Shape { &self.0 }
+    pub fn into_shape(self) -> Shape { self.0 }
+    pub fn new(s: Shape) -> Self { assert!(s.shape_type() == ShapeType::Solid); Solid(s) }
+}
+
+// ---- Helper: TShape typed accessors (no assertion, checked) ----
+
+impl Shape {
+    /// OCCT TopoDS_Vertex::IsNull / TopoDS_Shape::IsNull �?false for valid shapes.
+    pub fn is_null(&self) -> bool { false }
+
+    /// True if this Shape holds a Vertex TShape.
+    pub fn is_vertex(&self) -> bool { self.shape_type() == ShapeType::Vertex }
+    pub fn is_edge(&self) -> bool { self.shape_type() == ShapeType::Edge }
+    pub fn is_wire(&self) -> bool { self.shape_type() == ShapeType::Wire }
+    pub fn is_face(&self) -> bool { self.shape_type() == ShapeType::Face }
+    pub fn is_shell(&self) -> bool { self.shape_type() == ShapeType::Shell }
+    pub fn is_solid(&self) -> bool { self.shape_type() == ShapeType::Solid }
+
+    /// OCCT: TopoDS::Vertex(s) �?access TShape as Vertex.
+    pub fn as_vertex(&self) -> Option<&TVertexData> {
+        if let TShape::Vertex(ref vd) = *self.tshape { Some(vd) } else { None }
+    }
+    pub fn as_edge(&self) -> Option<&TEdgeData> {
+        if let TShape::Edge(ref ed) = *self.tshape { Some(ed) } else { None }
+    }
+    pub fn as_wire(&self) -> Option<&TWireData> {
+        if let TShape::Wire(ref wd) = *self.tshape { Some(wd) } else { None }
+    }
+    pub fn as_face(&self) -> Option<&TFaceData> {
+        if let TShape::Face(ref fd) = *self.tshape { Some(fd) } else { None }
+    }
+    pub fn as_shell(&self) -> Option<&TShellData> {
+        if let TShape::Shell(ref sd) = *self.tshape { Some(sd) } else { None }
+    }
+    pub fn as_solid(&self) -> Option<&TSolidData> {
+        if let TShape::Solid(ref sd) = *self.tshape { Some(sd) } else { None }
+    }
+}
+
+/// Sentinel ptr_id value for ShapeRef::synthetic(usize) �?marks synthetic (non-Arc) identity.
 /// High bit patterns avoid collision with real heap addresses.
 const SYNTH_PTR_ID: u64 = 0xFFFFFFFF_DEAD0000;
 
 /// TopoDS_Shape equivalent: Arc<TShape> pointer identity + Orientation.
-/// This is a value type (Clone, portable) 鈥?identity is by Arc pointer, not array position.
+/// This is a value type (Clone, portable) �?identity is by Arc pointer, not array position.
 /// `index` field is retained for O(1) access into BRep.tshapes[].
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeRef {
     /// Arc pointer identity (Arc::as_ptr() as u64). Hash/Eq/Ord based on this.
     /// 0 = NULL; 0xFFFFFFFF_DEAD0000 | idx = synthetic (from ShapeRef::new).
     pub ptr_id: u64,
-    /// Index into BRep.tshapes[] 鈥?fast accessor, NOT identity.
+    /// Index into BRep.tshapes[] �?fast accessor, NOT identity.
     pub index: usize,
     pub orientation: Orientation,
     /// TopLoc_Location index into BRep.locations[]; 0 = identity.
@@ -114,7 +261,7 @@ impl Ord for ShapeRef {
     }
 }
 
-/// Custom Serialize: only index/orientation/location 鈥?ptr_id is runtime-only.
+/// Custom Serialize: only index/orientation/location �?ptr_id is runtime-only.
 impl Serialize for ShapeRef {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -146,7 +293,7 @@ impl<'de> Deserialize<'de> for ShapeRef {
 }
 
 impl ShapeRef {
-    /// OCCT TopoDS_Shape::IsNull 鈥?null/uninitialized shape.
+    /// OCCT TopoDS_Shape::IsNull �?null/uninitialized shape.
     pub const NULL: ShapeRef = ShapeRef {
         ptr_id: 0,
         index: usize::MAX,
@@ -185,7 +332,7 @@ impl ShapeRef {
             location,
         }
     }
-    /// Construct a ShapeRef from an Arc<TShape> pointer 鈥?real identity.
+    /// Construct a ShapeRef from an Arc<TShape> pointer �?real identity.
     pub fn from_arc(tshape: &Arc<TShape>, orientation: Orientation, location: u32) -> Self {
         let index = 0; // caller must set index separately for BRep access
         let ptr_id = Arc::as_ptr(tshape) as u64;
@@ -200,25 +347,25 @@ impl ShapeRef {
     pub const fn with_location(self, location: u32) -> Self {
         Self { location, ..self }
     }
-    /// OCCT TopoDS_Shape::IsNull 鈥?true if this ShapeRef is null/uninitialized.
+    /// OCCT TopoDS_Shape::IsNull �?true if this ShapeRef is null/uninitialized.
     pub const fn is_null(&self) -> bool {
         self.index == usize::MAX
     }
-    /// OCCT TopoDS_Shape::IsSame 鈥?same TShape (ignores Location and Orientation).
+    /// OCCT TopoDS_Shape::IsSame �?same TShape (ignores Location and Orientation).
     pub const fn is_same(&self, other: &ShapeRef) -> bool {
         self.ptr_id == other.ptr_id
     }
-    /// OCCT TopoDS_Shape::IsPartner 鈥?same TShape AND same Location.
+    /// OCCT TopoDS_Shape::IsPartner �?same TShape AND same Location.
     pub const fn is_partner(&self, other: &ShapeRef) -> bool {
         self.ptr_id == other.ptr_id && self.location == other.location
     }
-    /// OCCT TopoDS_Shape::IsEqual 鈥?same TShape, Location, AND Orientation.
+    /// OCCT TopoDS_Shape::IsEqual �?same TShape, Location, AND Orientation.
     pub const fn is_equal(&self, other: &ShapeRef) -> bool {
         self.ptr_id == other.ptr_id
             && self.location == other.location
             && self.orientation as u8 == other.orientation as u8
     }
-    /// OCCT TopoDS_Shape::ShapeType 鈥?returns shape type from BRep.
+    /// OCCT TopoDS_Shape::ShapeType �?returns shape type from BRep.
     pub fn shape_type(&self, brep: &BRep) -> ShapeType {
         if self.is_null() {
             return ShapeType::Shape;
@@ -227,17 +374,17 @@ impl ShapeRef {
             .get(self.index)
             .map_or(ShapeType::Shape, |ts| ts.shape_type())
     }
-    /// OCCT TopoDS_Shape::NbChildren 鈥?direct sub-shape count.
+    /// OCCT TopoDS_Shape::NbChildren �?direct sub-shape count.
     pub fn nb_children(&self, brep: &BRep) -> usize {
         brep.nb_children(*self)
     }
-    /// OCCT TopoDS_Shape::EmptyCopy 鈥?create new TShape of same type, no sub-shapes.
+    /// OCCT TopoDS_Shape::EmptyCopy �?create new TShape of same type, no sub-shapes.
     pub fn empty_copy(&self, brep: &mut BRep) -> ShapeRef {
         brep.empty_copy(*self)
     }
 }
 
-/// TShape 鈥?shared geometric/topological data (analogous to TopoDS_TShape + subclasses).
+/// TShape �?shared geometric/topological data (analogous to TopoDS_TShape + subclasses).
 /// Stored in Arc<TShape> within BRep so multiple ShapeRefs share the same data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TShape {
@@ -251,19 +398,19 @@ pub enum TShape {
     Compound(Vec<ShapeRef>),
 }
 
-/// OCCT BRep_PointRepresentation 鈥?stores vertex parameter on a curve or surface.
+/// OCCT BRep_PointRepresentation �?stores vertex parameter on a curve or surface.
 /// Used for SameParameter tolerance propagation and history tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum PointRepresentation {
-    /// BRep_PointOnCurve 鈥?parameter on a 3D curve.
+    /// BRep_PointOnCurve �?parameter on a 3D curve.
     #[serde(rename = "c")]
     PointOnCurve {
         curve: usize,
         parameter: f64,
         tolerance: f64,
     },
-    /// BRep_PointOnSurface 鈥?UV parameters on a surface.
+    /// BRep_PointOnSurface �?UV parameters on a surface.
     #[serde(rename = "s")]
     PointOnSurface {
         face: usize,
@@ -284,18 +431,18 @@ pub struct TVertexData {
     pub points: Vec<PointRepresentation>,
 }
 
-/// OCCT BRep_CurveRepresentation 鈥?how an edge lies on a face or in 3D.
+/// OCCT BRep_CurveRepresentation �?how an edge lies on a face or in 3D.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CurveRepresentation {
-    /// BRep_GCurve 鈥?3D curve.
+    /// BRep_GCurve �?3D curve.
     Curve3D { curve: usize, location: u32 },
-    /// BRep_CurveOnSurface 鈥?pcurve on a face.
+    /// BRep_CurveOnSurface �?pcurve on a face.
     CurveOnSurface {
         face: usize,
         pcurve: Curve2d,
         range: [f64; 2],
     },
-    /// BRep_CurveOnClosedSurface 鈥?two pcurves for periodic surfaces.
+    /// BRep_CurveOnClosedSurface �?two pcurves for periodic surfaces.
     CurveOnClosedSurface {
         face: usize,
         pcurve1: Curve2d,
@@ -341,20 +488,20 @@ pub struct TFaceData {
     pub flags: u16,
     pub surface: Option<Surface3>,
     /// TopLoc_Location index for the face surface; 0 = identity.
-    /// OCCT BRep_TFace::Location 鈥?transforms surface to world coordinates.
+    /// OCCT BRep_TFace::Location �?transforms surface to world coordinates.
     #[serde(default)]
     pub surface_location: u32,
     pub outer_wire: ShapeRef,
     pub inner_wires: Vec<ShapeRef>,
     pub sample_point: Option<DVec3>,
-    /// UV domain [umin, umax, vmin, vmax] 鈥?used by surface area calculation.
+    /// UV domain [umin, umax, vmin, vmax] �?used by surface area calculation.
     pub uv_domain: Option<[f64; 4]>,
     /// INTERNAL vertices (OCCT: TopAbs_INTERNAL sub-shapes, BRep_Builder.Add(aF, aV)).
     pub internal_vertices: Vec<ShapeRef>,
     /// BRep_Tool::Tolerance(aF) equivalent.
     #[serde(default)]
     pub tolerance: f64,
-    /// BRep_Tool::NaturalRestriction equivalent 鈥?true when the face surface
+    /// BRep_Tool::NaturalRestriction equivalent �?true when the face surface
     /// has natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
     #[serde(default)]
     pub natural_restriction: bool,
@@ -376,7 +523,7 @@ pub struct TSolidData {
     pub internal_edges: Vec<ShapeRef>,
 }
 
-/// BRep top-level shape container 鈥?all TShapes in a single pool with shared Arc ownership.
+/// BRep top-level shape container �?all TShapes in a single pool with shared Arc ownership.
 /// Analogous to OCCT's Doc/assembly structure where all TShapes live in a shared scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BRep {
@@ -384,16 +531,16 @@ pub struct BRep {
     /// 3D transformations (TopLoc_Location equivalent). Index 0 = identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<glam::DAffine3>,
-    /// OCCT-aligned: vertex identity cache 鈥?quantized position 鈫?ShapeRef.
-    /// Same geometric point 鈫?same TShape::Vertex across all code paths.
+    /// OCCT-aligned: vertex identity cache �?quantized position �?ShapeRef.
+    /// Same geometric point �?same TShape::Vertex across all code paths.
     #[serde(skip)]
     pub vert_by_pos: HashMap<VertexKey, ShapeRef>,
-    /// OCCT-aligned: face identity cache 鈥?wire key 鈫?ShapeRef.
+    /// OCCT-aligned: face identity cache �?wire key �?ShapeRef.
     /// Two faces with the same wire structure share the same TShape::Face.
     /// Key: (outer_wire.ptr_id as usize, sorted inner_wire.ptr_ids as usize).
     #[serde(skip)]
     pub face_by_key: HashMap<(usize, Vec<usize>), ShapeRef>,
-    /// OCCT-aligned: edge identity cache 鈥?(first, last, degenerated) 鈫?ShapeRef.
+    /// OCCT-aligned: edge identity cache �?(first, last, degenerated) �?ShapeRef.
     #[serde(skip)]
     pub edge_by_key: HashMap<(u64, u64, bool), ShapeRef>,
 }
@@ -423,7 +570,7 @@ impl BRep {
         }
         let idx = self.locations.len();
         self.locations.push(loc);
-        // Index 0 is identity 鈥?shift by 1 so 0 = identity, 1 = first real location
+        // Index 0 is identity �?shift by 1 so 0 = identity, 1 = first real location
         (idx + 1) as u32
     }
 
@@ -440,7 +587,7 @@ impl BRep {
     }
 
     pub fn add_tvertex(&mut self, point: DVec3) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing 鈥?same position 鈫?same TShape::Vertex.
+        // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);
         if let Some(&sr) = self.vert_by_pos.get(&key) {
             return sr;
@@ -476,7 +623,7 @@ impl BRep {
         last: ShapeRef,
         range: [f64; 2],
     ) -> ShapeRef {
-        // OCCT-aligned: edge identity by (first, last) 鈥?curve carried on TShape directly.
+        // OCCT-aligned: edge identity by (first, last) �?curve carried on TShape directly.
         let ekey = (first.ptr_id, last.ptr_id, false);
         if let Some(&sr) = self.edge_by_key.get(&ekey) {
             return sr;
@@ -536,7 +683,7 @@ impl BRep {
         internal_vertices: Vec<ShapeRef>,
         natural_restriction: bool,
     ) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing 鈥?same wire structure 鈫?same TShape::Face.
+        // OCCT-aligned: identity-based sharing �?same wire structure �?same TShape::Face.
         let mut inners: Vec<usize> = inner_wires.iter().map(|w| w.ptr_id as usize).collect();
         inners.sort_unstable();
         let key = (outer_wire.ptr_id as usize, inners);
@@ -1027,7 +1174,7 @@ impl BRep {
         }
     }
 
-    /// OCCT TopoDS_TShape::EmptyCopy 鈥?create a new TShape of the same type
+    /// OCCT TopoDS_TShape::EmptyCopy �?create a new TShape of the same type
     /// with no sub-shapes. Preserves flags. Returns the new TShape index.
     pub fn empty_copy(&mut self, r: ShapeRef) -> ShapeRef {
         let ts = &self.tshapes[r.index];
@@ -1106,7 +1253,7 @@ impl BRep {
             .count()
     }
 
-    /// OCCT TopoDS_TShape::NbChildren 鈥?number of direct sub-shapes.
+    /// OCCT TopoDS_TShape::NbChildren �?number of direct sub-shapes.
     pub fn nb_children(&self, r: ShapeRef) -> usize {
         match &*self.tshapes[r.index] {
             TShape::Vertex(_) => 0,
@@ -1208,7 +1355,7 @@ impl BRep {
     }
 
     // -----------------------------------------------------------------------
-    // Mutable accessors (OCCT BRep_Builder pattern 鈥?mutate after creation)
+    // Mutable accessors (OCCT BRep_Builder pattern �?mutate after creation)
     // -----------------------------------------------------------------------
 
     /// Mutate a vertex's data (panics if vertex index is out of range or Arc is shared).
@@ -1347,7 +1494,7 @@ impl BRep {
 }
 
 // ---------------------------------------------------------------------------
-// BRepTool trait 鈥?OCCT BRep_Tool free-function equivalents
+// BRepTool trait �?OCCT BRep_Tool free-function equivalents
 // ---------------------------------------------------------------------------
 
 /// OCCT BRep_Tool equivalent: parameter/tolerance/pcurve queries on a BRep.
@@ -1356,9 +1503,9 @@ impl BRep {
 /// Here they are methods on a `BRepTool` trait so the boolean pipeline can
 /// be generic over the data source (real BRep or DS adaptor).
 pub trait BRepTool {
-    /// BRep_Tool::Pnt(aV) 鈥?3D position of a vertex.
+    /// BRep_Tool::Pnt(aV) �?3D position of a vertex.
     fn vertex_position(&self, v: ShapeRef) -> DVec3;
-    /// BRep_Tool::Tolerance(aV) 鈥?3D tolerance of a vertex.
+    /// BRep_Tool::Tolerance(aV) �?3D tolerance of a vertex.
     fn vertex_tolerance(&self, v: ShapeRef) -> f64;
     /// BRep_Tool::Degenerated(aE).
     fn is_edge_degenerated(&self, e: ShapeRef) -> bool;
@@ -1368,18 +1515,18 @@ pub trait BRepTool {
     fn first_vertex(&self, edge: ShapeRef) -> ShapeRef;
     /// Last vertex of an edge (FORWARD orientation, OCCT TopExp::LastVertex).
     fn last_vertex(&self, edge: ShapeRef) -> ShapeRef;
-    /// TopExp::FirstVertex on an oriented edge 鈥?canonical first for FORWARD,
+    /// TopExp::FirstVertex on an oriented edge �?canonical first for FORWARD,
     /// canonical last for REVERSED.  Matches OCCT's orientation-aware topology.
     fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef;
-    /// BRep_Tool::Parameter(aV, aE, aF) 鈥?vertex parameter on edge's pcurve.
+    /// BRep_Tool::Parameter(aV, aE, aF) �?vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
-    /// BRep_Tool::CurveOnSurface(aE, aF) 鈥?pcurve of edge on face.
+    /// BRep_Tool::CurveOnSurface(aE, aF) �?pcurve of edge on face.
     fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)>;
-    /// BRep_Tool::Surface(aF) 鈥?face surface (local coordinates, no Location applied).
+    /// BRep_Tool::Surface(aF) �?face surface (local coordinates, no Location applied).
     fn face_surface(&self, face: ShapeRef) -> Option<&Surface3>;
-    /// BRep_Tool::Surface(aF) with Location applied 鈥?returns world-coordinate surface.
+    /// BRep_Tool::Surface(aF) with Location applied �?returns world-coordinate surface.
     fn face_surface_world(&self, face: ShapeRef) -> Option<Surface3>;
-    /// BRep_Tool::Curve(aE) with Location applied 鈥?returns 3D curve and range in world coordinates.
+    /// BRep_Tool::Curve(aE) with Location applied �?returns 3D curve and range in world coordinates.
     fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])>;
     /// UResolution: parameter tolerance in U direction (OCCT: BRepAdaptor_Surface::UResolution).
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
@@ -1390,7 +1537,7 @@ pub trait BRepTool {
     fn vertex_orientation(&self, _v: ShapeRef) -> Orientation {
         Orientation::Forward
     }
-    /// BRep_Tool::IsClosed(aE, aF) 鈥?true when the edge appears twice on the face
+    /// BRep_Tool::IsClosed(aE, aF) �?true when the edge appears twice on the face
     /// (periodic surface seam).  Checks for CurveOnClosedSurface representation.
     fn is_edge_closed_on_face(&self, edge: ShapeRef, face: ShapeRef) -> bool {
         self.curve_on_surface(edge, face).is_some()
@@ -1409,26 +1556,26 @@ pub trait BRepTool {
 
     // 鈹€鈹€ OCCT BRep_Tool / TopoDS_Shape convenience queries 鈹€鈹€
 
-    /// OCCT TopoDS_Shape::Closed 鈥?checks CLOSED flag on the TShape.
+    /// OCCT TopoDS_Shape::Closed �?checks CLOSED flag on the TShape.
     /// For Shell, this is a simple flag check; use `is_shell_closed` for
     /// the full edge-count verification (BRepCheck_Shell).
     fn is_closed(&self, s: ShapeRef) -> bool {
         self.has_flag(s, tshape_flags::CLOSED)
     }
 
-    /// BRep_Tool::SameParameter(aE) 鈥?true when edge pcurves match 3D curve.
+    /// BRep_Tool::SameParameter(aE) �?true when edge pcurves match 3D curve.
     fn edge_same_parameter(&self, e: ShapeRef) -> bool {
         self.edge_data(e)
             .map(|ed| ed.same_parameter)
             .unwrap_or(true)
     }
 
-    /// BRep_Tool::SameRange(aE) 鈥?true when edge pcurve ranges match 3D range.
+    /// BRep_Tool::SameRange(aE) �?true when edge pcurve ranges match 3D range.
     fn edge_same_range(&self, e: ShapeRef) -> bool {
         self.edge_data(e).map(|ed| ed.same_range).unwrap_or(true)
     }
 
-    /// BRep_Tool::NaturalRestriction(aF) 鈥?true when face surface bounds are
+    /// BRep_Tool::NaturalRestriction(aF) �?true when face surface bounds are
     /// determined by the underlying surface's natural domain.
     fn face_natural_restriction(&self, f: ShapeRef) -> bool {
         self.face_data(f)
@@ -1436,23 +1583,23 @@ pub trait BRepTool {
             .unwrap_or(true)
     }
 
-    /// BRep_Tool::Curve(aE) 鈥?raw 3D curve reference (no Location applied).
+    /// BRep_Tool::Curve(aE) �?raw 3D curve reference (no Location applied).
     /// Returns the curve data directly (OCCT-aligned: geometry on TShape).
     fn edge_curve_data(&self, e: ShapeRef) -> Option<Curve3> {
         self.edge_data(e).and_then(|ed| ed.curve.clone())
     }
 
-    /// BRep_Tool::Range(aE) 鈥?3D curve parameter range.
+    /// BRep_Tool::Range(aE) �?3D curve parameter range.
     fn edge_range(&self, e: ShapeRef) -> [f64; 2] {
         self.edge_data(e).map(|ed| ed.range).unwrap_or([0.0, 0.0])
     }
 
-    /// BRep_Tool::Tolerance(s) 鈥?geometric tolerance for any shape type.
+    /// BRep_Tool::Tolerance(s) �?geometric tolerance for any shape type.
     fn tolerance(&self, s: ShapeRef) -> f64;
 
     // 鈹€鈹€ Extension helpers (not in OCCT's BRep_Tool) 鈹€鈹€
 
-    /// TopoDS_Shape::ShapeType 鈥?returns the shape type.
+    /// TopoDS_Shape::ShapeType �?returns the shape type.
     fn shape_type(&self, s: ShapeRef) -> ShapeType;
 
     /// Check CLOSED flag directly (bypasses trait default).
@@ -1623,7 +1770,7 @@ pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// BRepBuilder 鈥?OCCT BRep_Builder equivalent for incrementally constructing BRep
+// BRepBuilder �?OCCT BRep_Builder equivalent for incrementally constructing BRep
 // ---------------------------------------------------------------------------
 
 // 鈹€鈹€ Backward-compat flat-index access methods 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1858,7 +2005,7 @@ impl BRep {
         out
     }
 
-    /// Return old-style geom store (empty — geom now embedded in TShapes).
+    /// Return old-style geom store (empty �?geom now embedded in TShapes).
     pub fn geom(&self) -> crate::GeomStore {
         crate::GeomStore::new()
     }
@@ -1871,7 +2018,7 @@ impl BRep {
             Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval, any_perpendicular,
         };
         use glam::DVec2;
-        // Build edge → faces map
+        // Build edge �?faces map
         let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
         for (ti, ts) in self.tshapes.iter().enumerate() {
@@ -2081,7 +2228,7 @@ impl BRepBuilder {
     }
 
     // -----------------------------------------------------------------------
-    // Extended BRepBuilder API 鈥?OCCT BRep_Builder equivalent
+    // Extended BRepBuilder API �?OCCT BRep_Builder equivalent
     // -----------------------------------------------------------------------
 
     /// Add a vertex with tolerance.
@@ -2122,13 +2269,13 @@ impl BRepBuilder {
         brep.edge_mut(edge).pcurves.insert(face.index, (pc, t1, t2));
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, theTol) 鈥?update edge tolerance.
+    /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.
     pub fn update_edge_tolerance(&mut self, brep: &mut BRep, edge: ShapeRef, tol: f64) {
         let ed = brep.edge_mut(edge);
         ed.tolerance = ed.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) 鈥?set pcurve on face.
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) �?set pcurve on face.
     pub fn update_edge_pcurve(
         &mut self,
         brep: &mut BRep,
@@ -2149,7 +2296,7 @@ impl BRepBuilder {
         ed.tolerance = ed.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) 鈥?set 3D curve.
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) �?set 3D curve.
     pub fn update_edge_curve3d(
         &mut self,
         brep: &mut BRep,
@@ -2180,12 +2327,12 @@ impl BRepBuilder {
         brep.edge_mut(edge).degenerated = flag;
     }
 
-    /// OCCT BRep_Builder::Add(aW).Closed(aW) 鈥?mark wire as closed.
+    /// OCCT BRep_Builder::Add(aW).Closed(aW) �?mark wire as closed.
     pub fn close_wire(&mut self, brep: &mut BRep, wire: ShapeRef) {
         brep.wire_mut(wire).flags |= tshape_flags::CLOSED;
     }
 
-    /// OCCT BRep_Builder::Add(aShell).Closed(aShell) 鈥?mark shell as closed via Closed flag.
+    /// OCCT BRep_Builder::Add(aShell).Closed(aShell) �?mark shell as closed via Closed flag.
     pub fn close_shell(&mut self, brep: &mut BRep, shell: ShapeRef) {
         brep.shell_mut(shell).flags |= tshape_flags::CLOSED;
     }
@@ -2302,34 +2449,34 @@ impl BRepBuilder {
     // Additional BRep_Builder methods (completing coverage)
     // ======================================================================
 
-    /// OCCT BRep_Builder::Range(aE, First, Last) — set edge parametric range.
+    /// OCCT BRep_Builder::Range(aE, First, Last) �?set edge parametric range.
     /// Updates the edge-level range field.
     pub fn set_edge_range(&mut self, brep: &mut BRep, edge: ShapeRef, first: f64, last: f64) {
         brep.edge_mut(edge).range = [first, last];
     }
 
-    /// OCCT BRep_Builder::SameParameter(aE, theFlag) — set same-parameter flag.
+    /// OCCT BRep_Builder::SameParameter(aE, theFlag) �?set same-parameter flag.
     pub fn set_edge_same_parameter(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
         brep.edge_mut(edge).same_parameter = flag;
     }
 
-    /// OCCT BRep_Builder::SameRange(aE, theFlag) — set same-range flag.
+    /// OCCT BRep_Builder::SameRange(aE, theFlag) �?set same-range flag.
     pub fn set_edge_same_range(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
         brep.edge_mut(edge).same_range = flag;
     }
 
-    /// OCCT BRep_Builder::NaturalRestriction(aF, theFlag) — set natural-restriction flag.
+    /// OCCT BRep_Builder::NaturalRestriction(aF, theFlag) �?set natural-restriction flag.
     pub fn set_face_natural_restriction(&mut self, brep: &mut BRep, face: ShapeRef, flag: bool) {
         brep.face_mut(face).natural_restriction = flag;
     }
 
-    /// OCCT BRep_Builder::UpdateFace(aF, theTol) — update face tolerance.
+    /// OCCT BRep_Builder::UpdateFace(aF, theTol) �?update face tolerance.
     pub fn update_face_tolerance(&mut self, brep: &mut BRep, face: ShapeRef, tol: f64) {
         let fd = brep.face_mut(face);
         fd.tolerance = fd.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateVertex(aV, aP, theTol) — set vertex point and tolerance.
+    /// OCCT BRep_Builder::UpdateVertex(aV, aP, theTol) �?set vertex point and tolerance.
     pub fn update_vertex_point(&mut self, brep: &mut BRep, vertex: ShapeRef, pt: DVec3, tol: f64) {
         let vd = brep.vertex_mut(vertex);
         vd.point = pt;
@@ -2359,7 +2506,7 @@ impl BRepBuilder {
         sd.my_shapes.retain(|s| s.index != face.index);
     }
 
-    /// OCCT BRep_Builder::Transfert(aEin, aEout) — copy 3D curve from one edge to another.
+    /// OCCT BRep_Builder::Transfert(aEin, aEout) �?copy 3D curve from one edge to another.
     /// Copies the Curve3D representation (first one found) from edge_in to edge_out.
     pub fn transfert_edge_curve(&mut self, brep: &mut BRep, edge_in: ShapeRef, edge_out: ShapeRef) {
         let curve_clone = brep.edge(edge_in).curve.clone();
@@ -2372,7 +2519,7 @@ impl BRepBuilder {
         }
     }
 
-    /// OCCT BRep_Builder::Transfert(aEin, aEout, aVin, aVout) — copy vertex parameter
+    /// OCCT BRep_Builder::Transfert(aEin, aEout, aVin, aVout) �?copy vertex parameter
     /// from vertex_in on edge_in to vertex_out on edge_out.
     pub fn transfert_vertex_param(
         &mut self,
@@ -2394,7 +2541,7 @@ impl BRepBuilder {
         }
     }
 
-    /// OCCT BRep_Builder::Degenerated(aE, true) — set degenerated flag AND clear 3D curve.
+    /// OCCT BRep_Builder::Degenerated(aE, true) �?set degenerated flag AND clear 3D curve.
     /// OCCT removes the 3D curve when marking an edge as degenerated.
     pub fn set_edge_degenerated_with_clear(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
         let ed = brep.edge_mut(edge);
@@ -2405,7 +2552,7 @@ impl BRepBuilder {
     }
 }
 
-/// Get the parameter range for a Curve2d (Trimmed 鈫?stored range, Circle 鈫?[0, 2蟺]).
+/// Get the parameter range for a Curve2d (Trimmed �?stored range, Circle �?[0, 2蟺]).
 fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
     match curve {
         Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
@@ -2674,7 +2821,7 @@ mod tests {
         let mut brep = BRep::new();
         let v = brep.add_tvertex(DVec3::ZERO);
         let w = brep.add_twire(vec![]);
-        // default (no explicit nr) 鈫?true via add_tface with natural_restriction=true
+        // default (no explicit nr) �?true via add_tface with natural_restriction=true
         let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
         let fd = brep.face(f);
         assert!(fd.natural_restriction);
@@ -2762,7 +2909,7 @@ mod tests {
         assert!((brep.face(f).tolerance - 0.0).abs() < 1e-15);
         bld.update_face_tolerance(&mut brep, f, 1.5);
         assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
-        bld.update_face_tolerance(&mut brep, f, 0.5); // smaller → max keeps 1.5
+        bld.update_face_tolerance(&mut brep, f, 0.5); // smaller �?max keeps 1.5
         assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
     }
 
@@ -2850,7 +2997,7 @@ mod tests {
         bld.set_vertex_param(&mut brep, e, v0, 0.5);
         assert_eq!(brep.edge(e).vertex_params.get(&v0.index), Some(&0.5));
 
-        // Transfer from v0 on e → v_new on a new edge
+        // Transfer from v0 on e �?v_new on a new edge
         let v_new = brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
         let e_new = bld.add_edge(&mut brep, None, v_new, v1, [0.0, 1.0]);
         assert!(brep.edge(e_new).vertex_params.get(&v_new.index).is_none());
@@ -2879,3 +3026,4 @@ mod tests {
         );
     }
 }
+
