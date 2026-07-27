@@ -1,6 +1,8 @@
 pub mod face_aabb;
 pub mod types;
 pub use types::*;
+pub mod new_ds;
+pub use new_ds::DS as AlignedDS;
 pub mod iterator;
 pub use iterator::BOPDS_Iterator;
 pub mod topods_builder;
