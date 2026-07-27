@@ -425,9 +425,8 @@ impl<'a> BooleanBuilder<'a> {
             if sp_ei >= ds.edge_count() {
                 return;
             }
-            let sub = &ds.edges[sp_ei];
-            let sv = sub.start_vertex;
-            let ev = sub.end_vertex;
+            let sv = ds.edge_start_vertex_ds(sp_ei);
+            let ev = ds.edge_end_vertex_ds(sp_ei);
             if !vp.contains_key(&sv) {
                 if let Some(v) = ds.vertices.get(sv) {
                     vp.insert(sv, v.point);
@@ -450,7 +449,7 @@ impl<'a> BooleanBuilder<'a> {
                 is_closed_on_face: false,
                 second_pcurve: None,
                 first_pcurve: rep.map(|r| r.pcurve.clone()),
-                t_range: rep.map(|r| r.pcurve_range).unwrap_or(sub.t_range),
+                t_range: rep.map(|r| r.pcurve_range).unwrap_or(ds.edge_range(sp_ei)),
             });
         };
 

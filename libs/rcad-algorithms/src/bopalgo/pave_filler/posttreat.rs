@@ -591,15 +591,14 @@ impl<'a> PaveFiller<'a> {
         }
         // Build AABB from the edge's curve (equivalent of BRepBndLib::Add)
         let a_box_es = {
-            let e = &self.ds.edges[a_es];
-            let tol = e.geom_tol;
-            let [t0, t1] = e.t_range;
+            let tol = self.ds.edge_tolerance(a_es);
+            let [t0, t1] = self.ds.edge_range(a_es);
             let n_samples = 8.max(((t1 - t0).abs() / 0.1).ceil() as usize).min(32);
             let mut mn = DVec3::splat(f64::MAX);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             for k in 0..=n_samples {
                 let t = t0 + (t1 - t0) * (k as f64) / (n_samples as f64);
-                let pt = e.curve.point_at(t);
+                let pt = self.ds.edge_curve(a_es).unwrap().point_at(t);
                 mn = mn.min(pt);
                 mx = mx.max(pt);
             }
@@ -739,11 +738,10 @@ impl<'a> PaveFiller<'a> {
                     if sei >= self.ds.edge_count() {
                         continue;
                     }
-                    let e = &self.ds.edges[sei];
-                    if e.start_vertex == pbsv
-                        || e.start_vertex == pbev
-                        || e.end_vertex == pbsv
-                        || e.end_vertex == pbev
+                    if self.ds.edge_start_vertex_ds(sei) == pbsv
+                        || self.ds.edge_start_vertex_ds(sei) == pbev
+                        || self.ds.edge_end_vertex_ds(sei) == pbsv
+                        || self.ds.edge_end_vertex_ds(sei) == pbev
                     {
                         shares = true;
                         break;

@@ -309,17 +309,16 @@ impl CheckerSI {
         if face >= ds.face_count() {
             return true;
         }
-        let f = &ds.faces[face];
         if edge < a_ec {
             // Edge is from A copy. Face boundary_edges are from B copy (offset = a_ec).
-            for &be in &f.boundary_edges {
+            for &be in ds.face_boundary_edges(face) {
                 if be >= a_ec && edge + a_ec == be {
                     return false;
                 }
             }
         } else if edge >= a_ec && edge < 2 * a_ec {
             // Edge is from B copy. Face boundary_edges may be from A copy.
-            for &be in &f.boundary_edges {
+            for &be in ds.face_boundary_edges(face) {
                 if be < a_ec && edge == be + a_ec {
                     return false;
                 }

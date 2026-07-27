@@ -225,9 +225,13 @@ impl<'a> super::PaveFiller<'a> {
             if sei >= self.ds.edge_count() {
                 continue;
             }
-            let se = &self.ds.edges[sei];
-            let a_tol_check = se.geom_tol.max(a_tol) + self.ds.fuzzy_tol;
-            let (_t, a_proj) = crate::extrema::closest_point_on_curve(&se.curve, a_pm);
+            let se_tol = self.ds.edge_tolerance(sei);
+            let a_tol_check = se_tol.max(a_tol) + self.ds.fuzzy_tol;
+            let (_t, a_proj) = if let Some(curve) = self.ds.edge_curve(sei) {
+                crate::extrema::closest_point_on_curve(curve, a_pm)
+            } else {
+                (0.0, a_pm)
+            };
             let dist = (a_proj - a_pm).length();
             if dist <= a_tol_check && dist < best_dist {
                 found = true;
@@ -365,7 +369,6 @@ impl<'a> super::PaveFiller<'a> {
             if edge_ei >= self.ds.edge_count() {
                 continue;
             }
-            let existing_edge = &self.ds.edges[edge_ei];
             // OCCT L2132-2176: tolerance adjustment based on common-block / thin-face
             let mut a_real_tol = a_tol_check;
             // OCCT L2134: if (myDS->IsCommonBlock(aPB))
@@ -395,7 +398,7 @@ impl<'a> super::PaveFiller<'a> {
                         let a_vtgt1_n = a_vtgt1.normalize();
                         // OCCT L2147: if (aIC.Type() != GeomAbs_Line || aBAC2.GetType() != GeomAbs_Line)
                         let is_ic_line = matches!(a_ic.curve, Curve3::Line(_));
-                        let is_edge_line = matches!(existing_edge.curve, Curve3::Line(_));
+                        let is_edge_line = matches!(self.ds.edge_curve(edge_ei), Some(Curve3::Line(_)));
                         if !is_ic_line || !is_edge_line {
                             // OCCT L2096-2100, L2148-2150: aMaxTolAdd = 0.001
                             //   aMaxTolAdd = min(aMaxTolAdd, aCoeffTolAdd * aTolCheck)
@@ -404,10 +407,10 @@ impl<'a> super::PaveFiller<'a> {
                             let a_tol_add =
                                 2.0 * a_max_tol_add.min(a_real_tol.max(a_tol_v1.max(a_tol_v2)));
                             let (_a_t, a_dist_m1m2) =
-                                crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
+                                crate::extrema::closest_point_on_curve(self.ds.edge_curve(edge_ei).unwrap(), a_pm);
                             // OCCT L2157: if (aPEStatus == 0)
                             // Compute tangent on existing edge at projection point
-                            let a_vtgt2 = existing_edge.curve.derivative_at(_a_t);
+                            let a_vtgt2 = self.ds.edge_curve(edge_ei).unwrap().derivative_at(_a_t);
                             if a_vtgt2.length_squared() > f64::EPSILON {
                                 let a_vtgt2_n = a_vtgt2.normalize();
                                 // OCCT L2161: cos = aVTgt1.Dot(aVTgt2.Normalized())
@@ -421,7 +424,7 @@ impl<'a> super::PaveFiller<'a> {
                     }
                 }
             }
-            let (_t, proj) = crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
+            let (_t, proj) = crate::extrema::closest_point_on_curve(self.ds.edge_curve(edge_ei).unwrap(), a_pm);
             let dist_to_sp = (proj - a_pm).length();
             if dist_to_sp > a_real_tol {
                 continue;
@@ -430,13 +433,13 @@ impl<'a> super::PaveFiller<'a> {
             let mut dist_p1 = f64::MAX;
             if !i_flag1 {
                 let (_t1, p1_proj) =
-                    crate::extrema::closest_point_on_curve(&existing_edge.curve, a_p1);
+                    crate::extrema::closest_point_on_curve(self.ds.edge_curve(edge_ei).unwrap(), a_p1);
                 dist_p1 = (p1_proj - a_p1).length();
             }
             let mut dist_to_use = dist_to_sp;
             if n_v2 != n_v21 && n_v2 != n_v22 {
                 let (_t2, p2_proj) =
-                    crate::extrema::closest_point_on_curve(&existing_edge.curve, a_p2);
+                    crate::extrema::closest_point_on_curve(self.ds.edge_curve(edge_ei).unwrap(), a_p2);
                 let dist_p2 = (p2_proj - a_p2).length();
                 if dist_to_use < dist_p2 {
                     dist_to_use = dist_p2;
