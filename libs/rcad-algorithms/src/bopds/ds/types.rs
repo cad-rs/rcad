@@ -762,14 +762,6 @@ pub struct DS {
     pub interf_zz: Vec<InterferenceZZ>,
 
     pub intersection_curves: Vec<IntersectionCurve>,
-    /// BOPDS_Point array (Interf.hxx L398-443).
-    /// Stores 3D intersection points from FaceFace intersection that have no
-    /// associated curve (point contacts).  Referenced by InterferenceFF::points.
-    pub ff_points: Vec<glam::DVec3>,
-    /// Mapping: intersection curve index -> DSEdge indices created by section edge creation.
-    /// Populated during PaveFiller::make_blocks (PostTreatFF + CorrectToleranceOfSE).
-    /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
-    pub section_edge_refs: Vec<Vec<usize>>,
     /// Number of vertices loaded from shape A (first shape). Shape A DS vertex indices are 0..a_vertex_count().
     /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count().
     /// Number of faces loaded from shape A. Shape A DS face indices are 0..a_face_count().

@@ -323,6 +323,9 @@ pub struct PaveFiller<'a> {
     my_arguments: Vec<rcad_kernel::topods::BRep>,
     /// =mySectionAttribute (BOPAlgo_SectionAttribute.hxx)
     section_attribute: SectionAttribute,
+    /// Section edge references: intersection curve index -> DSEdge indices.
+    /// Phase 3: moved from DS to PaveFiller.
+    section_edge_refs: Vec<Vec<usize>>,
     /// =myIsPrimary (BOPAlgo_PaveFiller.cxx L62)
     is_primary: bool,
     /// =myAvoidBuildPCurve (BOPAlgo_PaveFiller.cxx L63)

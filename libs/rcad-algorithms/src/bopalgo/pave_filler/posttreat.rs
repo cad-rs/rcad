@@ -721,7 +721,7 @@ impl<'a> PaveFiller<'a> {
         a_mpb_add: &mut HashSet<usize>,
     ) {
         let se_refs: Vec<Vec<usize>> = (0..self.ds.intersection_curves.len())
-            .map(|ci| self.ds.section_edge_refs[ci].clone())
+            .map(|ci| self.section_edge_refs[ci].clone())
             .collect();
         for &pb_idx in a_mpb_on_in {
             if pb_idx >= self.ds.pave_blocks.len() || a_mpb_add.contains(&pb_idx) {

@@ -27,7 +27,7 @@ impl<'a> super::PaveFiller<'a> {
     // OCCT BOPAlgo_PaveFiller::CorrectToleranceOfSE (PaveFiller_6.cxx L4105-4306).
     pub(super) fn correct_tolerance_of_se(&mut self) {
         for ci in 0..self.ds.intersection_curves.len() {
-            let refs = self.ds.section_edge_refs[ci].clone();
+            let refs = self.section_edge_refs[ci].clone();
             for &sei in &refs {
                 if sei < self.ds.edge_count() {
                     let edge_tol = self.ds.edge_tolerance(sei);
@@ -505,7 +505,8 @@ impl<'a> super::PaveFiller<'a> {
         let mut a_dmv_lv: HashMap<usize, Vec<usize>> = HashMap::new();
 
         // Ensure section_edge_refs is populated
-        self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
+        let n_ic = self.ds.intersection_curves.len();
+        self.section_edge_refs = vec![Vec::new(); n_ic];
 
         // Pre-collect FF data: (f1, f2, curves, points) to avoid borrow conflicts
         let ff_data: Vec<(
@@ -976,7 +977,7 @@ impl<'a> super::PaveFiller<'a> {
                         }
                     }
                     // L1067: aLPBC.Append(aPB)
-                    self.ds.section_edge_refs[ci].push(new_ei);
+                    self.section_edge_refs[ci].push(new_ei);
 
                     // L1070-1077: Keep info for post treatment
                     let mut sub_pb = a_pb.clone();

@@ -47,8 +47,6 @@ impl DS {
             interf_fz: Vec::new(),
             interf_zz: Vec::new(),
             intersection_curves: Vec::new(),
-            ff_points: Vec::new(),
-            section_edge_refs: Vec::new(),
             shared_topology: Default::default(),
             shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
             same_domain_overlaps: Vec::new(),
