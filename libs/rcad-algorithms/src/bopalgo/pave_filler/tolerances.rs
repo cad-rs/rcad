@@ -3,7 +3,7 @@ use super::*;
 impl<'a> PaveFiller<'a> {
     #[inline]
     pub(crate) fn tol(&self) -> f64 {
-        self.ds.fuzzy_tol
+        self.fuzzy_tolerance
     }
 
     #[inline]

@@ -491,7 +491,7 @@ pub(crate) fn filter_paves_on_curves(
 ) -> Vec<(f64, usize)> {
     let ic = &ds.intersection_curves[curve_idx];
     // curve tolerance + fuzzy (SUM matching PutPaveOnCurve L2976 aTolR3D + myFuzzyValue)
-    let tol = ic.geom_tol + ds.fuzzy_tol;
+    let tol = ic.geom_tol + TOLERANCE_ABS;
     let tol_sq = tol * tol;
     paves
         .iter()

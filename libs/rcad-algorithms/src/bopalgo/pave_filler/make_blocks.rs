@@ -222,7 +222,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
             let se_tol = self.ds.edge_tolerance(sei);
-            let a_tol_check = se_tol.max(a_tol) + self.ds.fuzzy_tol;
+            let a_tol_check = se_tol.max(a_tol) + self.fuzzy_tolerance;
             let (_t, a_proj) = if let Some(curve) = self.ds.edge_curve(sei) {
                 crate::extrema::closest_point_on_curve(curve, a_pm)
             } else {
@@ -275,9 +275,9 @@ impl<'a> super::PaveFiller<'a> {
             a_tol_r3d
         };
         // OCCT L2093: std::max(aTolV11, aTolV12) + myFuzzyValue
-        let a_tol_v1 = a_tol_v11.max(a_tol_v12) + self.ds.fuzzy_tol;
+        let a_tol_v1 = a_tol_v11.max(a_tol_v12) + self.fuzzy_tolerance;
         // OCCT L2095: theTolR3D + myFuzzyValue
-        let a_tol_check = a_tol_r3d + self.ds.fuzzy_tol;
+        let a_tol_check = a_tol_r3d + self.fuzzy_tolerance;
 
         // Query BVH
         let candidates: Vec<usize> = if let Some(pb_tree) = a_pb_tree.as_ref() {
@@ -316,7 +316,7 @@ impl<'a> super::PaveFiller<'a> {
                 a_tol_r3d
             };
             // OCCT L2117: std::max(aTolV21, aTolV22) + myFuzzyValue
-            let a_tol_v2 = a_tol_v21.max(a_tol_v22) + self.ds.fuzzy_tol;
+            let a_tol_v2 = a_tol_v21.max(a_tol_v22) + self.fuzzy_tolerance;
             let edge_ei = existing_pb.0
                 .read()
                 .unwrap()

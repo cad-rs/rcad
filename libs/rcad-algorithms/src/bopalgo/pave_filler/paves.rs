@@ -120,7 +120,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L68: myIterator->Initialize(aType1, aType2)
         use crate::bopds::ds::BOPDS_Iterator;
         let ve_pairs: Vec<(usize, usize)> = {
-            let mut it = BOPDS_Iterator::new(self.ds);
+            let mut it = BOPDS_Iterator::new(self.ds, self.fuzzy_tolerance);
             it.prepare();
             it.pairs(a_type1, a_type2).to_vec()
         };
@@ -414,7 +414,7 @@ impl<'a> super::PaveFiller<'a> {
                                 .ds
                                 .vertex_tolerance(n_v1)
                                 .max(self.ds.vertex_tolerance(n_v2))
-                                .max(self.ds.fuzzy_tol);
+                                .max(self.fuzzy_tolerance);
                             let dist = self
                                 .ds
                                 .vertex_point(n_v1)
@@ -569,7 +569,7 @@ impl<'a> super::PaveFiller<'a> {
                     // OCCT L599-600: aE, aTolE
                     let a_tol_e = self.ds.edge_tolerance(e_idx);
                     // OCCT L602-604: ComputePE(aPMFirst, aTolSum, aE, aTOut, aDist)
-                    let a_tol_sum = a_tol_e_first + a_tol_e + self.ds.fuzzy_tol;
+                    let a_tol_sum = a_tol_e_first + a_tol_e + self.fuzzy_tolerance;
                     // OCCT: myContext->ComputePE projects aPMFirst onto edge aE
                     // rcad: closest_point_on_curve
                     if e_idx < self.ds.edge_count() {
@@ -1390,7 +1390,7 @@ impl<'a> super::PaveFiller<'a> {
         use rcad_kernel::geom::CurveEval;
         let v_tol = self.ds.vertex_tolerance(vi);
         let c_tol = ic.geom_tol;
-        let f_tol = self.ds.fuzzy_tol;
+        let f_tol = self.fuzzy_tolerance;
         // OCCT IsVertexOnLine L800: aTolSum = aTolV + aTolC
         // where aTolC = aTolR3D + myFuzzyValue (PutPaveOnCurve L2976)
         let raw_sum = v_tol + c_tol + f_tol;

@@ -33,7 +33,6 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         intersection_curves: Vec::new(),
         ff_points: Vec::new(),
         section_edge_refs: Vec::new(),
-        fuzzy_tol: tol,
         a_vertex_count: 0,
         a_edge_count: 0,
         a_face_count: 0,
@@ -131,7 +130,7 @@ fn init_shape_topo(
             ds.shape_info[last_si].is_new = false;
             ds.shape_info[last_si].rank = rank;
             ds.shape_info[last_si].source_idx = vi;
-            ds.shape_info[last_si].box_gap = vd.tolerance + ds.fuzzy_tol * 0.5;
+            ds.shape_info[last_si].box_gap = vd.tolerance + TOLERANCE_ABS;
         }
         topods::TShape::Edge(ed) => {
             init_shape_topo(
@@ -459,7 +458,7 @@ fn init_shape_topo(
                 has_brep: true,
                 box_min: if mn.is_finite() { Some(mn) } else { None },
                 box_max: if mx.is_finite() { Some(mx) } else { None },
-                box_gap: fd.tolerance + ds.fuzzy_tol * 0.5,
+                box_gap: fd.tolerance + TOLERANCE_ABS,
                 is_new: false,
                 rank,
                 source_idx: ds_fi,

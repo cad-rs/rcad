@@ -49,7 +49,6 @@ impl DS {
             intersection_curves: Vec::new(),
             ff_points: Vec::new(),
             section_edge_refs: Vec::new(),
-            fuzzy_tol: crate::tolerance::TOLERANCE_ABS,
             a_vertex_count: 0,
             a_edge_count: 0,
             a_face_count: 0,
@@ -532,7 +531,7 @@ impl DS {
             has_brep: true,
             box_min: Some(point),
             box_max: Some(point),
-            box_gap: geom_tol + self.fuzzy_tol * 0.5,
+            box_gap: geom_tol + TOLERANCE_ABS * 0.5,
             is_new: true,
             rank: 0,
             source_idx: usize::MAX,
@@ -720,14 +719,14 @@ impl DS {
         // include endpoint vertex boxes (with tolerance) in edge AABB.
         if let Some(sv_p) = self.vertices.get(start_vertex).map(|v| v.point) {
             let sv_tol = self.vertex_tolerance(start_vertex);
-            bb_min = bb_min.min(sv_p - DVec3::splat(sv_tol + self.fuzzy_tol));
-            bb_max = bb_max.max(sv_p + DVec3::splat(sv_tol + self.fuzzy_tol));
+            bb_min = bb_min.min(sv_p - DVec3::splat(sv_tol + TOLERANCE_ABS));
+            bb_max = bb_max.max(sv_p + DVec3::splat(sv_tol + TOLERANCE_ABS));
         }
         if end_vertex != start_vertex {
             if let Some(ev_p) = self.vertices.get(end_vertex).map(|v| v.point) {
                 let ev_tol = self.vertex_tolerance(end_vertex);
-                bb_min = bb_min.min(ev_p - DVec3::splat(ev_tol + self.fuzzy_tol));
-                bb_max = bb_max.max(ev_p + DVec3::splat(ev_tol + self.fuzzy_tol));
+                bb_min = bb_min.min(ev_p - DVec3::splat(ev_tol + TOLERANCE_ABS));
+                bb_max = bb_max.max(ev_p + DVec3::splat(ev_tol + TOLERANCE_ABS));
             }
         }
         let rank: usize = if origin == types::ShapeOrigin::ShapeB {
@@ -743,7 +742,7 @@ impl DS {
             has_brep: true,
             box_min: Some(bb_min - DVec3::splat(e_tol)),
             box_max: Some(bb_max + DVec3::splat(e_tol)),
-            box_gap: e_tol + self.fuzzy_tol * 0.5,
+            box_gap: e_tol + TOLERANCE_ABS * 0.5,
             is_new: false,
             rank,
             source_idx: ei,
@@ -853,7 +852,7 @@ impl DS {
             has_brep: true,
             box_min,
             box_max,
-            box_gap: geom_tol + self.fuzzy_tol * 0.5,
+            box_gap: geom_tol + TOLERANCE_ABS * 0.5,
             is_new: false,
             rank: if fi < self.a_face_count { 0 } else { 1 },
             source_idx: source_face_idx,
@@ -2118,7 +2117,7 @@ impl DS {
     /// Coincidence uses `max(fuzzy_tol, TOLERANCE_ABS, each vertex's geom_tol)` so
     /// imported vertex tolerances and pave fuzzy both widen merging.
     pub fn add_vertex(&mut self, point: DVec3) -> usize {
-        let new_base = self.fuzzy_tol.max(TOLERANCE_ABS);
+        let new_base = TOLERANCE_ABS.max(TOLERANCE_ABS);
         for (i, v) in self.vertices.iter().enumerate() {
             let merge_tol = new_base.max(v.geom_tol);
             if (v.point - point).length() <= merge_tol {
@@ -2137,7 +2136,7 @@ impl DS {
     /// needs a distinct vertex entity (e.g. EF intersection at a VV SD
     /// vertex position).
     pub fn add_vertex_no_dedup(&mut self, point: DVec3) -> usize {
-        let new_base = self.fuzzy_tol.max(TOLERANCE_ABS);
+        let new_base = TOLERANCE_ABS.max(TOLERANCE_ABS);
         let idx = self.vertices.len();
         self.vertices.push(DSVertex { shape_idx: 0,
             point,
@@ -2154,7 +2153,7 @@ impl DS {
         si.rank = 0;
         si.box_min = Some(point);
         si.box_max = Some(point);
-        si.box_gap = new_base + self.fuzzy_tol * 0.5;
+        si.box_gap = new_base + TOLERANCE_ABS * 0.5;
         self.shape_info.push(si);
         // Ensure shapes/vertex_shape_idx are consistent (like push_vertex)
         if idx >= self.vertex_shape_idx.len() {

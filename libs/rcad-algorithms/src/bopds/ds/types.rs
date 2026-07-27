@@ -770,12 +770,6 @@ pub struct DS {
     /// Populated during PaveFiller::make_blocks (PostTreatFF + CorrectToleranceOfSE).
     /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
     pub section_edge_refs: Vec<Vec<usize>>,
-    /// Fuzzy tolerance used during interference detection.
-    ///
-    /// Vertices/edges within this distance are considered coincident.
-    /// When set to a value larger than `TOLERANCE_ABS`, approximate
-    /// near-miss intersections (analogous to OCCT `BOPAlgo_Options::SetFuzzyValue`).
-    pub fuzzy_tol: f64,
     /// Number of vertices loaded from shape A (first shape). Shape A DS vertex indices are 0..a_vertex_count.
     pub a_vertex_count: usize,
     /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count.

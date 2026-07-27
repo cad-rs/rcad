@@ -116,7 +116,7 @@ impl<'a> PaveFiller<'a> {
             // L1109-1110: get TopoDS_Vertex shapes (rcad: tolerance only)
             // L1116-1118: compute aTolAdd
             let a_tol_add = if b_si_check_mode {
-                self.ds.fuzzy_tol
+                self.fuzzy_tolerance
             } else {
                 2.0 * self
                     .ds
@@ -246,7 +246,7 @@ impl<'a> PaveFiller<'a> {
             let tr2 = self.ds.edge_range(entry.n_e2);
 
             let a_tol_add = if b_si {
-                self.ds.fuzzy_tol
+                self.fuzzy_tolerance
             } else {
                 2.0 * self
                     .ds
@@ -255,9 +255,9 @@ impl<'a> PaveFiller<'a> {
             };
 
             let fuzzy = if entry.b_use_add_tol {
-                self.ds.fuzzy_tol + a_tol_add
+                self.fuzzy_tolerance + a_tol_add
             } else {
-                self.ds.fuzzy_tol
+                self.fuzzy_tolerance
             };
 
             // OCCT L1131-1133: midpoint of edge1's range
@@ -751,11 +751,11 @@ impl<'a> PaveFiller<'a> {
                 let a_tol_v1 = self.ds.vertex_tolerance(n_v1);
                 let a_tol_v2 = self.ds.vertex_tolerance(n_v2);
                 let a_tol_check = if b_si_check_mode {
-                    self.ds.fuzzy_tol
+                    self.fuzzy_tolerance
                 } else {
                     2.0 * a_tol_v1.max(a_tol_v2)
                 };
-                if a_lower_dist > a_tol_check + self.ds.fuzzy_tol {
+                if a_lower_dist > a_tol_check + self.fuzzy_tolerance {
                     continue;
                 }
 
@@ -888,7 +888,7 @@ impl<'a> PaveFiller<'a> {
                     Some((_, _, dist))
                         if dist
                             <= pair.a_tol_add
-                                + self.ds.fuzzy_tol
+                                + self.fuzzy_tolerance
                                 + self.ds.face_tolerance(pair.fi) => {}
                     _ => {
                         all_on_face = false;

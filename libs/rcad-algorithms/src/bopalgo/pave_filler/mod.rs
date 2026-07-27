@@ -463,7 +463,7 @@ impl<'a> PaveFiller<'a> {
         // OCCT L864: Message_ProgressScope aPSOuter (rcad: sequential, no progress)
         for i in 0..a_nb {
             // OCCT L867: myIterator->Initialize(aType[i], aType[2])
-            let mut it = BOPDS_Iterator::new(self.ds);
+            let mut it = BOPDS_Iterator::new(self.ds, self.fuzzy_tolerance);
             it.prepare();
             let pairs = it.pairs(a_type[i], ShapeType::Face);
             // OCCT L868-878: iterate pairs
@@ -566,7 +566,7 @@ impl<'a> PaveFiller<'a> {
         self.clear();
         // OCCT L199-201: myDS = new BOPDS_DS; myDS->SetArguments(myArguments); myDS->Init(myFuzzyValue)
         let tol = fuzzy_tol.max(TOLERANCE_ABS);
-        self.ds.fuzzy_tol = tol;
+        self.fuzzy_tolerance = tol;
         // OCCT BOPDS_DS::Init: prepareVertices → prepareEdges → prepareFaces → prepareSolids
         self.prepare_vertices(a, b);
         self.prepare_edges(a, b);
@@ -721,7 +721,7 @@ impl<'a> PaveFiller<'a> {
 
         // OCCT: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
         let ef_pairs = {
-            let mut ef_iterator = BOPDS_Iterator::new(self.ds);
+            let mut ef_iterator = BOPDS_Iterator::new(self.ds, self.fuzzy_tolerance);
             ef_iterator.prepare();
             ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
         };

@@ -1029,7 +1029,7 @@ impl<'a> BooleanBuilder<'a> {
                         .get(vi)
                         .map_or(crate::tolerance::TOLERANCE_ABS, |v| v.geom_tol);
                     let tol_f = self.ds.face_tolerance(cfi);
-                    let class_tol = tol_v.max(tol_f) + self.ds.fuzzy_tol;
+                    let class_tol = tol_v.max(tol_f) + self.my_fuzzy_value;
 
                     let fs = self.ds.face_surface(cfi).unwrap();
                     if let Some(uv) = world_to_uv(fs, v_pt) {
@@ -1334,7 +1334,7 @@ impl<'a> BooleanBuilder<'a> {
             };
             let a_tol = face_tol_with_edges(di)
                 + face_tol_with_edges(dj)
-                + self.ds.fuzzy_tol.max(TOLERANCE_ABS);
+                + self.my_fuzzy_value.max(TOLERANCE_ABS);
             let (uv_j, proj_j) = crate::extrema::closest_point_on_surface(surf_j, pt_i);
             let dist_j = proj_j.distance(pt_i);
             dist_j <= a_tol

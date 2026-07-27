@@ -13,7 +13,7 @@ impl<'a> PaveFiller<'a> {
                 std::mem::transmute::<
                     crate::bopds::ds::BOPDS_Iterator<'_>,
                     crate::bopds::ds::BOPDS_Iterator<'static>,
-                >(crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr }))
+                >(crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr }, TOLERANCE_ABS))
             }
         };
         Self {
@@ -57,7 +57,7 @@ impl<'a> PaveFiller<'a> {
                 std::mem::transmute::<
                     crate::bopds::ds::BOPDS_Iterator<'_>,
                     crate::bopds::ds::BOPDS_Iterator<'static>,
-                >(crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr }))
+                >(crate::bopds::ds::BOPDS_Iterator::new(unsafe { &*ds_ptr }, TOLERANCE_ABS))
             }
         };
         Self {

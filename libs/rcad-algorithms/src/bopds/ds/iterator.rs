@@ -13,6 +13,8 @@ use std::collections::HashSet;
 /// OCCT BOPDS_Iterator.hxx / .cxx
 pub struct BOPDS_Iterator<'a> {
     ds: &'a DS,
+    /// Fuzzy tolerance for interference detection (from BOPAlgo_Options).
+    fuzzy_tol: f64,
     // Per-type-combo pair buckets, indexed by TypeToInteger(t1, t2) result:
     //   0=VV, 1=VE, 2=EE, 3=VF, 4=EF, 5=FF, 6=VZ, 7=EZ, 8=FZ, 9=ZZ
     my_lists: Vec<Vec<(usize, usize)>>,
@@ -27,7 +29,7 @@ pub struct BOPDS_Iterator<'a> {
 }
 
 impl<'a> BOPDS_Iterator<'a> {
-    pub fn new(ds: &'a DS) -> Self {
+    pub fn new(ds: &'a DS, fuzzy_tol: f64) -> Self {
         let n = 10; // NbInterfTypes = 10 (VV..ZZ)
         let mut my_lists = Vec::with_capacity(n);
         for _ in 0..n {
@@ -35,6 +37,7 @@ impl<'a> BOPDS_Iterator<'a> {
         }
         BOPDS_Iterator {
             ds,
+            fuzzy_tol,
             my_ext_lists: my_lists.clone(),
             my_lists,
             my_use_ext: false,
@@ -167,7 +170,7 @@ impl<'a> BOPDS_Iterator<'a> {
                 info.box_min.zip(info.box_max).map(|(min, max)| Aabb {
                     min,
                     max,
-                    gap: info.box_gap + self.ds.fuzzy_tol,
+                    gap: info.box_gap + self.fuzzy_tol,
                 })
             })
         };
@@ -178,7 +181,7 @@ impl<'a> BOPDS_Iterator<'a> {
             Aabb {
                 min: p,
                 max: p,
-                gap: self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol,
+                gap: self.ds.vertex_tolerance(vi) + self.fuzzy_tol,
             }
         };
 
@@ -267,7 +270,7 @@ impl<'a> BOPDS_Iterator<'a> {
                             let f_abb = Aabb {
                                 min: f_min,
                                 max: f_max,
-                                gap: f_info.box_gap + self.ds.fuzzy_tol,
+                                gap: f_info.box_gap + self.fuzzy_tol,
                             };
                             if !e_abb.intersects(&f_abb) {
                                 continue;

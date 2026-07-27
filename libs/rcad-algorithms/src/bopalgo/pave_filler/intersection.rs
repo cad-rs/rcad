@@ -2534,7 +2534,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut new_verts: Vec<NewVertInfo> = Vec::with_capacity(a_nb_v);
         for (&vi, cpb) in a_mvcpb {
             let pos = self.ds.vertex_point(vi);
-            let tol = cpb.tolerance.max(self.ds.fuzzy_tol);
+            let tol = cpb.tolerance.max(self.fuzzy_tolerance);
             new_verts.push(NewVertInfo { idx: vi, pos, tol });
         }
         if new_verts.len() < 2 {
@@ -2544,7 +2544,7 @@ impl<'a> super::PaveFiller<'a> {
         // = =  Phase 2: IntersectVertices — group nearby vertices into chains = = =
         // OCCT L704-708: BOPAlgo_Tools::IntersectVertices(aVerts, myFuzzyValue, aChains)
         // rcad: BVH-based grouping (equivalent to IntersectVertices)
-        let gap = self.ds.fuzzy_tol / 2.0;
+        let gap = self.fuzzy_tolerance / 2.0;
         use crate::boptools::bvh::{Aabb, BoxTree};
         let nv = new_verts.len();
         let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
@@ -2565,7 +2565,7 @@ impl<'a> super::PaveFiller<'a> {
         for &(ia, ib) in &pairs {
             let tol_a = new_verts[ia].tol;
             let tol_b = new_verts[ib].tol;
-            let merge_tol = tol_a + tol_b + self.ds.fuzzy_tol;
+            let merge_tol = tol_a + tol_b + self.fuzzy_tolerance;
             if (new_verts[ia].pos - new_verts[ib].pos).length() <= merge_tol {
                 fill_map(&mut a_mili, ia, ib);
             }
@@ -2722,7 +2722,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 let mut a_ve = VertexEdgeSolver::new();
                 a_ve.set_data(n_v, n_e);
-                a_ve.perform(&mut self.context, &self.ds, self.ds.fuzzy_tol);
+                a_ve.perform(&mut self.context, &self.ds, self.fuzzy_tolerance);
                 if !a_ve.is_done() {
                     continue;
                 }
