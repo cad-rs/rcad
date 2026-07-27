@@ -789,7 +789,7 @@ impl<'a> super::PaveFiller<'a> {
     ) {
         let ic = &self.ds.intersection_curves[curve_idx];
         let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
-        let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
+        let c_box = crate::bopalgo::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
         for &nV in theMVEF {
             // OCCT L2386-2392: Put EF vertices first — no IsNewShape check
             self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2, a_mv_tol, a_dmv_lv);
@@ -2116,7 +2116,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L3604-3620: FindValidRange check before adding closing pave
         let a_new_tol_v = a_tol_v.max(a_dist_vp + TOLERANCE_ABS);
         let has_valid_range = {
-            use crate::pave_filler::helpers::find_valid_range;
+            use crate::bopalgo::pave_filler::helpers::find_valid_range;
             use rcad_kernel::geom::CurveEval;
             let v1_pt = self.ds.vertex_point(nV);
             let v2_pt = a_p_op;
@@ -2576,7 +2576,7 @@ impl<'a> super::PaveFiller<'a> {
             };
             // OCCT L290-301: Prepare Geom2dAdaptor_Curve for passing edge
             // OCCT L303: Geom2dInt_GInter intersection
-            use crate::builder::intres2d::IntRes2dDomain;
+            use crate::bopalgo::builder::intres2d::IntRes2dDomain;
             let mut a_domain_de = IntRes2dDomain::new();
             a_domain_de.set_values_bounded(
                 a_c2d_de.point_at(a_td1),
@@ -2595,7 +2595,7 @@ impl<'a> super::PaveFiller<'a> {
                 a_t2,
                 a_tol_int,
             );
-            let a_g_inter = crate::builder::intersection::intersect_curves_2d_ginter(
+            let a_g_inter = crate::bopalgo::builder::intersection::intersect_curves_2d_ginter(
                 &a_c2d_de,
                 &a_domain_de,
                 &a_c2d,

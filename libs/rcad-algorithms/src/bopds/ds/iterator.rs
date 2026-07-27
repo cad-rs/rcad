@@ -1,5 +1,5 @@
 use super::DS;
-use crate::bvh::Aabb;
+use crate::boptools::bvh::Aabb;
 use rcad_kernel::topods::ShapeType;
 use std::collections::HashSet;
 
@@ -359,7 +359,7 @@ impl<'a> BOPDS_Iterator<'a> {
         }
 
         // L404: aBoxTree.Build();
-        let tree = crate::box_tree::BoxTree::build(all_indices, all_aabbs);
+        let tree = crate::boptools::box_tree::BoxTree::build(all_indices, all_aabbs);
 
         // L406-407: BOPTools_Parallel::Perform(myRunParallel, aVTSR);
         // rcad: sequential (no parallel framework)
@@ -386,11 +386,11 @@ impl<'a> BOPDS_Iterator<'a> {
             let qgap = si_sd.box_gap;
 
             // rcad: single-node BoxTree = OCCT BOPDS_TSR with SetBVHSet + SetBox
-            let tsr_tree = crate::box_tree::BoxTree::build(
+            let tsr_tree = crate::boptools::box_tree::BoxTree::build(
                 vec![i],
                 vec![Aabb { min: qmin, max: qmax, gap: qgap }],
             );
-            let candidates = crate::box_tree::BoxTree::candidate_pairs(&tsr_tree, &tree);
+            let candidates = crate::boptools::box_tree::BoxTree::candidate_pairs(&tsr_tree, &tree);
 
             // L430-459: Treat selections
             for &(_, j) in &candidates {

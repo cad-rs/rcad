@@ -536,7 +536,7 @@ impl<'a> PaveFiller<'a> {
 
         // L842-874: Fill the tree with bounding boxes of the pave blocks
         // rcad: build BoxTree from PB AABBs (shrunk data or edge endpoint fallback).
-        let mut a_pb_aabbs: Vec<crate::bvh::Aabb> = Vec::with_capacity(the_mpb.len());
+        let mut a_pb_aabbs: Vec<crate::boptools::bvh::Aabb> = Vec::with_capacity(the_mpb.len());
         let mut a_pb_indices: Vec<usize> = Vec::with_capacity(the_mpb.len());
         // L848-870: for each PB, get ShrunkData and add to tree
         for (i_pb, &(ne, local_i)) in the_mpb.iter().enumerate() {
@@ -573,7 +573,7 @@ impl<'a> PaveFiller<'a> {
             // OCCT: aBBTree.Add(aPBMap.Add(aPB), Bnd_Tools::Bnd2BVH(aPBBox));
             let a_p1 = self.ds.edges[ne].curve.point_at(f);
             let a_p2 = self.ds.edges[ne].curve.point_at(l);
-            let a_pb_box = crate::bvh::Aabb {
+            let a_pb_box = crate::boptools::bvh::Aabb {
                 min: a_p1.min(a_p2),
                 max: a_p1.max(a_p2),
                 gap: 0.0,
@@ -622,9 +622,9 @@ impl<'a> PaveFiller<'a> {
             // OCCT: const Bnd_Box& aBoxF = aSI.Box();
             let a_box_f = {
                 let si = self.ds.shape_info_at(n_f);
-                let mut aabb = crate::bvh::Aabb::empty();
+                let mut aabb = crate::boptools::bvh::Aabb::empty();
                 if let (Some(mn), Some(mx)) = (si.box_min, si.box_max) {
-                    aabb = crate::bvh::Aabb {
+                    aabb = crate::boptools::bvh::Aabb {
                         min: mn,
                         max: mx,
                         gap: si.box_gap,

@@ -6,13 +6,13 @@ use rcad_kernel::topods;
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
-use crate::bvh::{Aabb, BoxTree};
+use crate::boptools::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};
-use crate::builder::types::*;
+use crate::bopalgo::builder::types::*;
 use super::ResultBuilder;
-use crate::builder::wire_splitter::{EdgeInfo, build_closed_wires};
+use crate::bopalgo::builder::wire_splitter::{EdgeInfo, build_closed_wires};
 use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
 use crate::inttools::context::Context;
 use crate::inttools::edge_face::plane_local_basis;
@@ -432,7 +432,7 @@ impl<'a> BooleanBuilder<'a> {
         // Build BVH of hole shells
         let hole_key: Vec<usize> = in_si.clone();
         let hole_aabbs: Vec<Aabb> = in_si.iter().map(|&i| aabbs[i]).collect();
-        let hole_bvh = crate::bvh::BoxTree::build(hole_key, hole_aabbs);
+        let hole_bvh = crate::boptools::bvh::BoxTree::build(hole_key, hole_aabbs);
 
         // Classify holes against growth solids
         let mut a_hole_solid_map: std::collections::HashMap<usize, usize> =

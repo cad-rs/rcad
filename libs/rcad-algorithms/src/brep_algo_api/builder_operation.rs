@@ -24,11 +24,11 @@
 //! ```
 
 
-use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
+use crate::bopalgo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bopds::ds::DS;
-use crate::bvh::Bvh;
+use crate::boptools::bvh::Bvh;
 use crate::history::BooleanHistory;
-use crate::pave_filler::PaveFiller;
+use crate::bopalgo::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;
 

@@ -10,7 +10,7 @@ use super::wire_splitter::{
     EdgeInfo, world_to_uv, mark_edge_passed, mark_edge_passed_both_dirs,
     find_angle_at, select_best_outgoing, are_verts_coincident,
 };
-use crate::builder::point_in_polygon_2d;
+use crate::bopalgo::builder::point_in_polygon_2d;
 // use crate::classify::{Classification, classify_point};
 use crate::inttools::context::Context;
 use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult, curve2d_nb_samples};
@@ -468,7 +468,7 @@ pub(crate) fn refine_angle_2d(
         let ray_line = Curve2d::Line(Line2d { origin: v_uv, direction: ray_dir });
         let mut domain_ray = IntRes2dDomain::new();  // infinite domain (no bounds)
         // OCCT uses Geom2dInt_GInter::Perform with two domains.
-        let hits = crate::builder::intersection::intersect_curves_2d_ginter(
+        let hits = crate::bopalgo::builder::intersection::intersect_curves_2d_ginter(
             &curve2d, &domain_curve, &ray_line, &domain_ray, a_tol_int, a_tol_int);
         // hits: (param_on_curve, param_on_ray)  ?swap to (t_on_curve, t_on_ray)
         let hits: Vec<(f64, f64)> = hits.into_iter().map(|(tc, tr)| (tr, tc)).collect();

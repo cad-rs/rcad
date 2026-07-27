@@ -1,7 +1,10 @@
+pub mod pave_filler;
+pub mod builder;
+
 use glam::DVec3;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use crate::bopds::ds::DS;
-use crate::bvh::Aabb;
+use crate::boptools::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
 
 /// BOPAlgo_GlueEnum — glue mode for coincident-face detection.
@@ -371,8 +374,8 @@ pub fn classify_faces(
 ///
 /// rcad: returns Option<DVec3> (the translation vector) instead of bool + gp_Trsf.
 pub fn trsf_to_point(
-    box1: &crate::bvh::Aabb,
-    box2: &crate::bvh::Aabb,
+    box1: &crate::boptools::bvh::Aabb,
+    box2: &crate::boptools::bvh::Aabb,
     point: glam::DVec3,
     criteria: f64,
 ) -> Option<glam::DVec3> {

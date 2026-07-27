@@ -4,9 +4,9 @@ use rcad_kernel::geom::*;
 use rcad_kernel::topods;
 use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
 use crate::bopds::ds::*; use crate::tolerance::*;
-use crate::builder::types::{WireFace, WireSegment, WireEdgeSource, WireSegmentTopoDS, WireEdgeSourceTopoDS, FaceEntry};
-use crate::builder::SourceSide;
-use crate::builder::{hash_point, curve_eq};
+use crate::bopalgo::builder::types::{WireFace, WireSegment, WireEdgeSource, WireSegmentTopoDS, WireEdgeSourceTopoDS, FaceEntry};
+use crate::bopalgo::builder::SourceSide;
+use crate::bopalgo::builder::{hash_point, curve_eq};
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 use rcad_kernel::topology::*;
 

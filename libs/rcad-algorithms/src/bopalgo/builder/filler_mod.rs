@@ -7,12 +7,12 @@ use rcad_kernel::topods;
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
-use crate::bvh::{Aabb, BoxTree};
+use crate::boptools::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};
-use crate::builder::types::*;
-use crate::builder::wire_splitter::{EdgeInfo, build_closed_wires, world_to_uv};
+use crate::bopalgo::builder::types::*;
+use crate::bopalgo::builder::wire_splitter::{EdgeInfo, build_closed_wires, world_to_uv};
 use super::ResultBuilder;
 use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
 use crate::inttools::context::Context;
@@ -143,7 +143,7 @@ impl<'a> BooleanBuilder<'a> {
     /// 3-step dispatcher: BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
     /// Populates T BRep with source shape TShapes first (OCCT: BuildResult adds them).
     pub(super) fn fill_images_faces(&self) {
-        let mut result = crate::builder::result_builder::ResultBuilder::new();
+        let mut result = crate::bopalgo::builder::result_builder::ResultBuilder::new();
         let mut t = self.my_shape.borrow_mut();
         // OCCT: BuildResult(FACE) would have added source Face TShapes to myShape before
         // BuildSplitFaces. In rcad, add source face/wire/edge TShapes now so the
@@ -416,7 +416,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
         let brep_owned = t_brep.clone();
-        let mut a_vbf: Vec<crate::builder::BuilderFace> = Vec::new();
+        let mut a_vbf: Vec<crate::bopalgo::builder::BuilderFace> = Vec::new();
         let mut a_vbf_face_srs: Vec<topods::ShapeRef> = Vec::new();
         // OCCT aFacesIm: draft face results keyed by source face ref.
         let mut a_faces_im_draft: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
@@ -609,7 +609,7 @@ impl<'a> BooleanBuilder<'a> {
                                         {
                                             let (is_ui, is_vi) =
                                                 self.ds.edge_on_face(ei, fi).map_or((false, false), |rep|
-                                                    crate::builder::wire_splitter::is_edge_isoline(
+                                                    crate::bopalgo::builder::wire_splitter::is_edge_isoline(
                                                         &rep.pcurve, rep.pcurve_range));
                                             (is_u_closed && is_ui) || (is_v_closed && is_vi)
                                         } else {
@@ -658,7 +658,7 @@ impl<'a> BooleanBuilder<'a> {
                                             a_sp.orientation = an_ori_e;
                                             let sp_ei = a_sp.index.saturating_sub(e_base);
                                             if ei < self.ds.edges.len() && sp_ei < self.ds.edges.len() {
-                                                let needs_rev = crate::builder::edge_builders::is_split_to_reverse(
+                                                let needs_rev = crate::bopalgo::builder::edge_builders::is_split_to_reverse(
                                                     self.ds, sp_ei, ei);
                                                 if needs_rev {
                                                     a_sp.orientation = match a_sp.orientation {
@@ -724,7 +724,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            let mut bf = crate::builder::BuilderFace::new(
+            let mut bf = crate::bopalgo::builder::BuilderFace::new(
                 self.ds,
                 &brep_owned,
                 &face_refs_owned,

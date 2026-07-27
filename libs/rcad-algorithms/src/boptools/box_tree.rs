@@ -11,7 +11,7 @@
 //! - BOPTools_BoxSelector       = query_aabb()
 
 use crate::bnd_box::Aabb;
-use crate::bvh_tree::BvhNode;
+use crate::boptools::bvh_tree::BvhNode;
 use glam::DVec3;
 
 // ── Morton code LUT (OCCT BVH_RadixSorter.hxx L34-63) ──

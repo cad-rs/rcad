@@ -21,7 +21,7 @@
 /// ```
 
 use crate::bopds::ds::{DS, Interference};
-use crate::pave_filler::PaveFiller;
+use crate::bopalgo::pave_filler::PaveFiller;
 use rcad_kernel::topods;
 
 /// CheckerSI validates a single shape for self-interference.

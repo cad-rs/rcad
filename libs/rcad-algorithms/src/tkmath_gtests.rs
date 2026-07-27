@@ -118,7 +118,7 @@ mod bnd_box2d_tests {
 #[cfg(test)]
 mod bvh_box_tests {
     use super::*;
-    use crate::bvh::Aabb;
+    use crate::boptools::bvh::Aabb;
 
     #[test]
     fn aabb_default_is_empty() {

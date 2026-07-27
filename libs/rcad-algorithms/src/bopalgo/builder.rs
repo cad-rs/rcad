@@ -9,7 +9,7 @@ use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
 use rcad_kernel::topology::Face;
 
-use crate::bvh::{Aabb, BoxTree};
+use crate::boptools::bvh::{Aabb, BoxTree};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::bopalgo::{GlueEnum, Alert, Report};
@@ -420,7 +420,7 @@ pub(crate) use wire_path::{
       continue;
      }
      // OCCT L1161-1166: closed on face -> DoSplitSEAMOnFace (simplified: skip for draft)
-     let needs_rev = crate::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
+     let needs_rev = crate::bopalgo::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
      add_segment(sp_ei, forward != needs_rev, Some(ei), &mut segments, &mut vertex_positions);
     }
    }
@@ -457,7 +457,7 @@ pub(crate) use wire_path::{
        continue;
       }
       // OCCT L1161-1166: closed on face -> DoSplitSEAMOnFace (simplified: skip for draft)
-      let needs_rev = crate::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
+      let needs_rev = crate::bopalgo::builder::edge_builders::is_split_to_reverse(ds, sp_ei, ei);
       add_segment(sp_ei, forward != needs_rev, Some(ei), &mut segments, &mut vertex_positions);
      }
     }

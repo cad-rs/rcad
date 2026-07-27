@@ -852,7 +852,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_default_constructor() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
         assert!(a_poly.nb_triangles() > 0, "nb_triangles should be > 0");
         assert!(a_poly.nb_points() > 0, "nb_points should be > 0");
     }
@@ -861,7 +861,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_zero_subdivision() {
         let surf = geom::Surface3::Plane(geom::Plane::new(DVec3::ZERO, DVec3::Z));
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 0, 0);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 0, 0);
         assert!(a_poly.nb_triangles() > 0, "clamped polyhedron should produce triangles");
         assert!(a_poly.nb_points() > 0, "clamped polyhedron should produce points");
     }
@@ -871,7 +871,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_small_subdivision() {
         let surf = geom::Surface3::Plane(geom::Plane::new(DVec3::ZERO, DVec3::Z));
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 2, 2);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 2, 2);
         assert_eq!(a_poly.nb_triangles(), 2 * 2 * 2, "2x2 grid should produce 8 triangles");
     }
 
@@ -880,7 +880,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_triconnex_pedge_zero() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 4, 4);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 4, 4);
         let (p1, _p2, _p3) = a_poly.triangle(1);
         // OCCT: aPoly.TriConnex(1, aP1, 0, aTriCon, anOtherP);
         let (a_result, _other_p) = a_poly.tri_connex(1, p1, 0);
@@ -891,7 +891,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_triconnex_all_vertices() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 3, 3);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 3, 3);
         let (p1, p2, p3) = a_poly.triangle(1);
         let (_tri1, _op1) = a_poly.tri_connex(1, p1, 0);
         let (_tri2, _op2) = a_poly.tri_connex(1, p1, p2);
@@ -904,13 +904,13 @@ mod intpatch_gtests {
     // IntPatch_PolyhedronBVH_Test.cxx (239 lines, 8 tests)
     // =========================================================================
 
-    use crate::pave_filler::polyhedron_bvh::{PolyhedronBVH, BVHTraversal};
+    use crate::bopalgo::pave_filler::polyhedron_bvh::{PolyhedronBVH, BVHTraversal};
 
     /// OCCT L53-64: Construction — PolyhedronBVH initialization
     #[test]
     fn intpatch_polyhedron_bvh_construction() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 10, 10);
         let a_bvh = PolyhedronBVH::from_poly(&a_poly);
         assert!(a_bvh.is_initialized(), "BVH should be initialized");
         assert!(a_bvh.size() > 0, "BVH size should be > 0");
@@ -922,7 +922,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_bvh_box() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
         let a_bvh = PolyhedronBVH::from_poly(&a_poly);
         for i in 0..a_bvh.size() {
             let a_box = a_bvh.box_at(i);
@@ -934,7 +934,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_bvh_center() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
         let a_bvh = PolyhedronBVH::from_poly(&a_poly);
         let a_bbox = {
             let (bmin, bmax) = a_poly.bbox();
@@ -957,7 +957,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_bvh_original_index() {
         let surf = make_sphere_surf();
-        let a_poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let a_poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
         let mut a_bvh = PolyhedronBVH::from_poly(&a_poly);
 
         let nb_tri = a_poly.nb_triangles() as usize;
@@ -988,8 +988,8 @@ mod intpatch_gtests {
         let sphere2 = geom::Surface3::Sphere(geom::SphericalSurface {
             center: DVec3::new(0.5, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
         });
-        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
-        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
+        let poly1 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
+        let poly2 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
         let set1 = PolyhedronBVH::from_poly(&poly1);
         let set2 = PolyhedronBVH::from_poly(&poly2);
 
@@ -1010,7 +1010,7 @@ mod intpatch_gtests {
     #[test]
     fn intpatch_polyhedron_bvh_self_interference() {
         let surf = make_sphere_surf();
-        let poly = crate::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
+        let poly = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&surf, 5, 5);
         let set = PolyhedronBVH::from_poly(&poly);
 
         let mut traversal = BVHTraversal::new();
@@ -1033,9 +1033,9 @@ mod intpatch_gtests {
         let sphere2 = geom::Surface3::Sphere(geom::SphericalSurface {
             center: DVec3::new(0.5, 0.0, 0.0), axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0,
         });
-        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
-        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
-        let an_interf = crate::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
+        let poly1 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&sphere1, 10, 10);
+        let poly2 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&sphere2, 10, 10);
+        let an_interf = crate::bopalgo::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
         let has_results = an_interf.nb_section_lines() > 0;
         assert!(has_results, "Expected some intersection results for overlapping spheres");
         for sp in an_interf.seed_points() {
@@ -1048,9 +1048,9 @@ mod intpatch_gtests {
     fn intpatch_polyhedron_no_overlap() {
         let sphere = make_sphere_surf();
         let far_plane = geom::Surface3::Plane(geom::Plane::new(DVec3::new(10.0, 10.0, 10.0), DVec3::X));
-        let poly1 = crate::pave_filler::polyhedron::Polyhedron::new(&sphere, 5, 5);
-        let poly2 = crate::pave_filler::polyhedron::Polyhedron::new(&far_plane, 5, 5);
-        let an_interf = crate::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
+        let poly1 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&sphere, 5, 5);
+        let poly2 = crate::bopalgo::pave_filler::polyhedron::Polyhedron::new(&far_plane, 5, 5);
+        let an_interf = crate::bopalgo::pave_filler::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
         assert_eq!(an_interf.nb_section_lines(), 0, "Expected no intersections for distant surfaces");
     }
 }

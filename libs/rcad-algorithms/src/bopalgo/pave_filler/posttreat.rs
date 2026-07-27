@@ -7,7 +7,7 @@
 use super::*;
 use crate::bopds::ds::BOPDS_Iterator;
 use crate::bopds::pave::*;
-use crate::bvh::{Aabb, BoxTree};
+use crate::boptools::bvh::{Aabb, BoxTree};
 use rcad_kernel::topods::ShapeType;
 use std::collections::{HashMap, HashSet};
 
@@ -35,8 +35,8 @@ impl<'a> PaveFiller<'a> {
             let (n_f1, n_f2) = (inf.f1, inf.f2);
             let mut a_mv: HashSet<usize> = HashSet::new();
             let mut a_mv_ef: HashSet<usize> = HashSet::new();
-            let mut a_mi = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
-            let a_mi_b = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
+            let mut a_mi = crate::bopalgo::pave_filler::build_face_shape_map(self.ds, n_f1);
+            let a_mi_b = crate::bopalgo::pave_filler::build_face_shape_map(self.ds, n_f2);
             for v in &a_mi_b {
                 a_mi.insert(*v);
             }

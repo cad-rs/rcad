@@ -2,9 +2,9 @@
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
 use crate::tolerance::*;
-use crate::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
+use crate::bopalgo::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
 use super::wire_splitter::{world_to_uv, edge_uv_tangent};
-use crate::builder::curve_eq;
+use crate::bopalgo::builder::curve_eq;
 
 ///  ?OCCT: DoSplitSEAMOnFace  ?build second pcurve shifted by surface period.
 pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usize, edge_tol: f64) -> Option<Curve2d> {

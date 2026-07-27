@@ -22,11 +22,11 @@ use rcad_kernel::{surface_area, volume};
 use rcad_kernel::geom;
 use rcad_kernel::topods;
 
-use crate::builder::BooleanOpType;
+use crate::bopalgo::builder::BooleanOpType;
 use crate::bopds::ds::DS;
 use crate::brep_tools::make_face_half_space;
-use crate::pave_filler::PaveFiller;
-use crate::bvh::Bvh;
+use crate::bopalgo::pave_filler::PaveFiller;
+use crate::boptools::bvh::Bvh;
 use crate::tolerance::TOLERANCE_ABS;
 
 const TOL: f64 = 1.0e-6;
@@ -223,7 +223,7 @@ mod bop_algo_two_step_tests {
             filler.set_run_parallel(false);
             filler.perform(a, b);
         }
-        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
+        let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
         let (result, _history) = builder.build_with_history_topods().expect("Two-step BOP failed");
         result
     }
@@ -435,7 +435,7 @@ mod pave_filler_tests {
         // Use the internal PaveFiller directly (same path as boolean_op_generic)
         let mut ds = crate::bopds::ds::DS::new_empty();
         {
-            let mut filler = crate::pave_filler::PaveFiller::new(&mut ds);
+            let mut filler = crate::bopalgo::pave_filler::PaveFiller::new(&mut ds);
             filler.configure_fuzzy(crate::tolerance::TOLERANCE_ABS);
             filler.perform(&sphere, &box_b);
         }
@@ -1303,7 +1303,7 @@ mod stage_classification_tests {
             filler.set_run_parallel(false);
             filler.perform(a, b);
         }
-        let mut builder = crate::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
+        let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(&ds, op, brep, Vec::new(), Vec::new());
 
         let (_result_brep, _history, snapshots) = builder.build_with_history_stage_by_stage()
             .expect("stage_by_stage pipeline failed");
@@ -1440,7 +1440,7 @@ mod stage_classification_tests {
 #[cfg(test)]
 mod pave_filler_internal_tests {
     use super::*;
-    use crate::pave_filler::build_face_shape_map;
+    use crate::bopalgo::pave_filler::build_face_shape_map;
     use crate::bopds::ds::{DSVertex, DSEdge, DSFace, ShapeOrigin};
     use rcad_kernel::geom::{Curve3, Surface3};
     use glam::DVec3;

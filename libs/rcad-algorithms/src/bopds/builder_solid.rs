@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use super::ds::DS;
 use super::shell_splitter::ShellSplitter;
 use crate::classify;
-use crate::bvh::Aabb as AABB;
+use crate::boptools::bvh::Aabb as AABB;
 
 // ============================================================================
 // IntTools_Context — OCCT L24-30: geometric context (cached classifier, proj)

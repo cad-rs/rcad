@@ -22,7 +22,7 @@ pub mod section;
 
 use rcad_kernel::topods;
 
-use crate::builder::{BooleanError, BooleanOpType};
+use crate::bopalgo::builder::{BooleanError, BooleanOpType};
 use crate::history::BooleanHistory;
 
 /// Options for boolean operations.

@@ -6,9 +6,9 @@
 //!
 //! 1. **Prepare arguments** -- build the interference descriptor from both operands
 //!    ([`bopds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
-//! 2. **Intersection and paving** -- [`crate::pave_filler::PaveFiller::perform`], analogous to
+//! 2. **Intersection and paving** -- [`crate::bopalgo::pave_filler::PaveFiller::perform`], analogous to
 //!    `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
-//! 3. **Build result** -- [`crate::builder::BooleanBuilder`] with the requested
+//! 3. **Build result** -- [`crate::bopalgo::builder::BooleanBuilder`] with the requested
 //!    [`BooleanOpType`], analogous to building the result solid from classified pieces.
 //! 4. **Post-process** (serial `fuse` only) -- [`crate::geom_populate::recompute_plane_surfaces`]
 //!    then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
@@ -42,18 +42,18 @@ use glam::{DVec2, DVec3};
 use crate::bopds;
 use crate::bopds::ds::{DS};
 use crate::bopds::pave::NO_EDGE;
-use crate::builder;
-use crate::bvh;
+use crate::bopalgo::builder;
+use crate::boptools::bvh;
 use crate::geom_populate;
 use crate::history::{BooleanHistory, FaceOrigin};
-use crate::pave_filler;
+use crate::bopalgo::pave_filler;
 use crate::tolerance::*;
 use crate::total_surface_area;
 use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::topods;
-use crate::bvh::{Bvh, Aabb};
+use crate::boptools::bvh::{Bvh, Aabb};
 
 /// DSU (Union-Find) for building connected SameDomain groups -- equivalent to OCCT FillMap + MakeBlocks.
 struct DSU {

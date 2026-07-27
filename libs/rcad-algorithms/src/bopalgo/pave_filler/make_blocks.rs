@@ -16,7 +16,7 @@ use crate::bopds::ds::{
     DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, ShapeOrigin, DS,
 };
 use crate::bopds::pave::*;
-use crate::bvh::{Aabb, BoxTree};
+use crate::boptools::bvh::{Aabb, BoxTree};
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -53,8 +53,8 @@ impl<'a> super::PaveFiller<'a> {
         a_mi: &mut HashSet<usize>,
     ) {
         a_mi.clear();
-        let a_mi_1 = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
-        let a_mi_2 = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
+        let a_mi_1 = crate::bopalgo::pave_filler::build_face_shape_map(self.ds, n_f1);
+        let a_mi_2 = crate::bopalgo::pave_filler::build_face_shape_map(self.ds, n_f2);
         for &v in &a_mi_1 {
             a_mi.insert(v);
         }
@@ -837,7 +837,7 @@ impl<'a> super::PaveFiller<'a> {
                         };
                         let a_tol_v1 = a_tol_r3d.max(self.ds.vertex_tolerance(n_v1));
                         let a_tol_v2 = a_tol_r3d.max(self.ds.vertex_tolerance(n_v2));
-                        crate::pave_filler::helpers::find_valid_range(
+                        crate::bopalgo::pave_filler::helpers::find_valid_range(
                             &ic.curve, a_t1, a_t2, a_tol_r3d, v1_pt, a_tol_v1, v2_pt, a_tol_v2,
                         )
                         .is_some()

@@ -6,7 +6,7 @@
 //! space as the DS (flat face index).
 
 use glam::DVec3;
-use crate::bvh::Aabb;
+use crate::boptools::bvh::Aabb;
 use crate::bopds::ds::{DS, ShapeOrigin};
 use crate::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 
@@ -16,7 +16,7 @@ use crate::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 /// `BOPDS_Iterator::Initialize` builds BVH over source shape
 /// bounding boxes using `BOPDS_ShapeInfo::Box()`. Here we use the same index
 /// space — the DS face index — so `candidate_pairs` returns DS-compatible indices.
-pub fn build_face_bvh(ds: &DS, origin: ShapeOrigin) -> Option<crate::bvh::BoxTree> {
+pub fn build_face_bvh(ds: &DS, origin: ShapeOrigin) -> Option<crate::boptools::bvh::BoxTree> {
     let faces: Vec<usize> = ds.faces.iter().enumerate()
         .filter(|(_, f)| f.origin == origin)
         .map(|(i, _)| i)
@@ -30,7 +30,7 @@ pub fn build_face_bvh(ds: &DS, origin: ShapeOrigin) -> Option<crate::bvh::BoxTre
         indices.push(fi);
         aabbs.push(face_aabb(ds, fi));
     }
-    Some(crate::bvh::BoxTree::build(indices, aabbs))
+    Some(crate::boptools::bvh::BoxTree::build(indices, aabbs))
 }
 
 /// Compute the AABB of a DS face from its boundary vertices and surface type.

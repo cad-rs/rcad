@@ -546,7 +546,7 @@ impl PrmPrmIntersection {
         increment: f64,
     ) -> Option<IntersectionLine> {
         let tol_tang = epsilon.max(1e-7);
-        let mut pw = crate::pave_filler::p_walking::PWalking::new(
+        let mut pw = crate::bopalgo::pave_filler::p_walking::PWalking::new(
             s1, s2, tol_tang, epsilon, deflection, increment,
         );
 

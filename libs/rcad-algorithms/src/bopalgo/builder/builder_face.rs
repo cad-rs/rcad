@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use rcad_kernel::topods::{self, ShapeRef, Orientation, BRepTool};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
-use crate::builder::types::*;
-use crate::builder::{WireEdgeSource, FaceOrigin};
-use crate::builder::ds_as_brep::DSAsBRep;
+use crate::bopalgo::builder::types::*;
+use crate::bopalgo::builder::{WireEdgeSource, FaceOrigin};
+use crate::bopalgo::builder::ds_as_brep::DSAsBRep;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
@@ -27,7 +27,7 @@ pub(crate) struct BuilderFace<'a> {
     /// myAreas — resulting split-face TShape refs.
     my_areas: Vec<ShapeRef>,
     /// Internal ResultBuilder for TShape creation during perform().
-    my_result: crate::builder::result_builder::ResultBuilder,
+    my_result: crate::bopalgo::builder::result_builder::ResultBuilder,
 }
 
 impl<'a> BuilderFace<'a> {
@@ -45,7 +45,7 @@ impl<'a> BuilderFace<'a> {
             ds, brep, ds_tool, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
             shapes: None,
             my_areas: Vec::new(),
-            my_result: crate::builder::result_builder::ResultBuilder::new(),
+            my_result: crate::bopalgo::builder::result_builder::ResultBuilder::new(),
         }
     }
 
@@ -76,17 +76,17 @@ impl<'a> BuilderFace<'a> {
         let segments = self.shapes_to_segments(shapes);
         if segments.is_empty() { return; }
 
-        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(
+        let segments_topo = crate::bopalgo::builder::builder_utils_topo_ds::segments_to_topo_ds(
             &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
         let tool: &dyn BRepTool = &self.ds_tool;
 
         // OCCT L152-235: PerformShapesToAvoid
-        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
+        let (avoided_pids, pid_segs) = crate::bopalgo::builder::wire_splitter::perform_shapes_to_avoid_topo(
             &segments_topo, tool);
-        let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
+        let mut avoided = crate::bopalgo::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
 
         // OCCT L239-385: PerformLoops (via BOPAlgo_WireSplitter)
-        let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
+        let wires = crate::bopalgo::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
 
         // OCCT L330-385: Post-treatment — build myLoopsInternal from myShapesToAvoid
@@ -94,12 +94,12 @@ impl<'a> BuilderFace<'a> {
         for si in 0..segments_topo.len() {
             if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
         }
-        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
+        let internal_wire_groups = crate::bopalgo::builder::wire_path_topo_ds::build_internal_wires(
             &segments_topo, &avoided);
 
         // OCCT L387-499: PerformAreas
         let wfs = if !wires.is_empty() {
-            crate::builder::wire_path_topo_ds::perform_areas(
+            crate::bopalgo::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
         } else {
             vec![]
@@ -110,7 +110,7 @@ impl<'a> BuilderFace<'a> {
 
         // OCCT L618-912: PerformInternalShapes
         let face_ref = self.face_refs[self.face_idx];
-        crate::builder::wire_path_topo_ds::perform_internal_shapes(
+        crate::bopalgo::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
 
         // Store results in myAreas (OCCT PerformAreas returns TopoDS_Face list;

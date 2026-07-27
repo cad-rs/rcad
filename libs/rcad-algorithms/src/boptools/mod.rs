@@ -3,6 +3,10 @@
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
 
+pub mod bvh;
+pub mod bvh_tree;
+pub mod box_tree;
+
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Circle2d, Surface3};

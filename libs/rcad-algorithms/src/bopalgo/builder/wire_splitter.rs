@@ -6,7 +6,7 @@ use crate::bopds::ds::*; use crate::tolerance::*;
 use crate::dbg_smartmap;
 use super::types::{WireSegment, WireEdgeSource, WireFace, WireOrientation};
 use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wires};
-use crate::builder::point_in_polygon_2d;
+use crate::bopalgo::builder::point_in_polygon_2d;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 
 ///  ?Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).

@@ -8,12 +8,12 @@ use crate::classify::{Classification, classify_point};
 use crate::history::{BooleanHistory, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin, EdgeOrigin, HistoryTracker};
 use crate::inttools::context::Context;
 use crate::tolerance::*;
-use crate::builder::types::{BooleanOpType, WireSegment, WireEdgeSource, WireOrientation};
-use crate::builder::SourceSide;
+use crate::bopalgo::builder::types::{BooleanOpType, WireSegment, WireEdgeSource, WireOrientation};
+use crate::bopalgo::builder::SourceSide;
 
-use crate::builder::angle_2d::angle_2d;
-use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, are_verts_coincident, is_edge_isoline};
-use crate::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
+use crate::bopalgo::builder::angle_2d::angle_2d;
+use crate::bopalgo::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, are_verts_coincident, is_edge_isoline};
+use crate::bopalgo::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
 
 ///  compare two Curve3 for identity (same TShape).
 pub(crate) fn curve_eq(a: &Curve3, b: &Curve3) -> bool {

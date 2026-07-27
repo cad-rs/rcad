@@ -593,8 +593,8 @@ pub fn do_split_seam_on_face(
  if ei >= ds.edges.len() || face_idx >= ds.faces.len() { return false; }
  let edge = &ds.edges[ei];
  let face = &ds.faces[face_idx];
- let uv_s = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.start_vertex].point);
- let uv_e = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.end_vertex].point);
+ let uv_s = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertices[edge.start_vertex].point);
+ let uv_e = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertices[edge.end_vertex].point);
  let (Some(uva), Some(uvb)) = (uv_s, uv_e) else { return false };
  let seam_tol = TOLERANCE_MESH_LEGACY;
  let on_seam = |u: f64| u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol;
@@ -953,7 +953,7 @@ pub fn point_in_face(
  }
  }
  let p3d = sum / face.boundary_verts.len() as f64;
- let uv = crate::builder::world_to_uv(&face.surface, p3d)?;
+ let uv = crate::bopalgo::builder::world_to_uv(&face.surface, p3d)?;
  Some((p3d, uv))
 }
 

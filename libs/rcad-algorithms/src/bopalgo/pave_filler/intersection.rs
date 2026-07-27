@@ -15,7 +15,7 @@ use crate::inttools;
 use crate::inttools::context::VfError;
 use crate::inttools::edge_edge::compute_curve_aabb;
 use crate::inttools::fclass2d::{FClass2d, State};
-use crate::pave_filler::helpers::*;
+use crate::bopalgo::pave_filler::helpers::*;
 use crate::tolerance::*;
 use rcad_kernel::topods::ShapeType;
 
@@ -374,8 +374,8 @@ impl VertexFaceTask {
 
 impl<'a> super::PaveFiller<'a> {
     /// OCCT PaveFiller L145: BOPDS_Iterator  ?BVH pair enumeration
-    pub(crate) fn build_box_tree(&self, is_a: bool, is_edge: bool) -> crate::bvh::BoxTree {
-        use crate::bvh::{Aabb, BoxTree};
+    pub(crate) fn build_box_tree(&self, is_a: bool, is_edge: bool) -> crate::boptools::bvh::BoxTree {
+        use crate::boptools::bvh::{Aabb, BoxTree};
         let (ds_start, end) = if is_edge {
             if is_a {
                 (0, self.ds.a_edge_count)
@@ -435,8 +435,8 @@ impl<'a> super::PaveFiller<'a> {
     ///  BOPDS_Iterator  ?build a single BVH for all elements
     /// of the given shape type (both operands A and B combined), used for
     /// single-pass cross-operand pair traversal.
-    pub(crate) fn build_box_tree_combined(&self, is_edge: bool) -> crate::bvh::BoxTree {
-        use crate::bvh::{Aabb, BoxTree};
+    pub(crate) fn build_box_tree_combined(&self, is_edge: bool) -> crate::boptools::bvh::BoxTree {
+        use crate::boptools::bvh::{Aabb, BoxTree};
         let n = if is_edge {
             self.ds.edges.len()
         } else {
@@ -1679,7 +1679,7 @@ impl<'a> super::PaveFiller<'a> {
                 if md < f64::MAX && md > a_tol_e + a_tol_f {
                     let t_range = task.myRange;
                     self.distances.entry((nE, nF)).or_default().push(
-                        crate::pave_filler::EdgeRangeDistance {
+                        crate::bopalgo::pave_filler::EdgeRangeDistance {
                             first: t_range[0],
                             last: t_range[1],
                             distance: md,
@@ -1938,8 +1938,8 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     /// OCCT BOPDS_Iterator: face BVH construction
-    pub(crate) fn build_box_tree_face(&self, is_a: bool) -> crate::bvh::BoxTree {
-        use crate::bvh::{Aabb, BoxTree};
+    pub(crate) fn build_box_tree_face(&self, is_a: bool) -> crate::boptools::bvh::BoxTree {
+        use crate::boptools::bvh::{Aabb, BoxTree};
         let (start, end) = if is_a {
             (0, self.ds.a_face_count)
         } else {
@@ -1977,8 +1977,8 @@ impl<'a> super::PaveFiller<'a> {
         BoxTree::build(indices, aabbs)
     }
     ///  BOPDS_Iterator  ?combined face BVH (both operands).
-    pub(crate) fn build_box_tree_face_all(&self) -> crate::bvh::BoxTree {
-        use crate::bvh::{Aabb, BoxTree};
+    pub(crate) fn build_box_tree_face_all(&self) -> crate::boptools::bvh::BoxTree {
+        use crate::boptools::bvh::{Aabb, BoxTree};
         let n = self.ds.faces.len();
         let mut indices = Vec::with_capacity(n);
         let mut aabbs = Vec::with_capacity(n);
@@ -2541,7 +2541,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L704-708: BOPAlgo_Tools::IntersectVertices(aVerts, myFuzzyValue, aChains)
         // rcad: BVH-based grouping (equivalent to IntersectVertices)
         let gap = self.ds.fuzzy_tol / 2.0;
-        use crate::bvh::{Aabb, BoxTree};
+        use crate::boptools::bvh::{Aabb, BoxTree};
         let nv = new_verts.len();
         let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
         let mut bvh_aabbs: Vec<Aabb> = Vec::with_capacity(nv);

@@ -15,8 +15,8 @@ use crate::bopds::ds::{
     InterferenceFF, InterferenceVE, InterferenceVF, InterferenceVV, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
-use crate::bvh::BoxTree;
-use crate::bvh::Bvh;
+use crate::boptools::bvh::BoxTree;
+use crate::boptools::bvh::Bvh;
 use crate::inttools;
 use crate::inttools::context::Context as IntToolsContext;
 use crate::inttools::fclass2d::{FClass2d, State};

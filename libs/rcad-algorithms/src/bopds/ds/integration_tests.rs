@@ -12,9 +12,9 @@
 
 use super::types::*;
 use super::DS;
-use crate::pave_filler::PaveFiller;
+use crate::bopalgo::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
-use crate::bvh::Bvh;
+use crate::boptools::bvh::Bvh;
 use rcad_kernel::topods::{self, TShape};
 use glam::DVec3;
 
@@ -75,7 +75,7 @@ fn fuse(a: &topods::BRep, b: &topods::BRep) -> topods::BRep {
         filler.set_run_parallel(false);
         filler.perform(a, b);
     }
-    let mut builder = crate::builder::BooleanBuilder::with_brep(
+    let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(
         &ds, crate::BooleanOpType::Union, brep, Vec::new(), Vec::new());
     builder.build_with_history().map(|(r, _)| r).expect("fuse failed")
 }
@@ -1337,14 +1337,14 @@ fn pavefiller_stage_ref_box_box_disjoint() {
     }
 }
 
-use crate::builder::{BooleanBuilder, BooleanOpType};
+use crate::bopalgo::builder::{BooleanBuilder, BooleanOpType};
 use crate::bopalgo::GlueEnum;
 use crate::inttools::context::Context;
 
 
 /// Run the full boolean pipeline stage by stage, returning Vec<StageSnapshot>.
 fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glue: bool)
-    -> Result<Vec<crate::builder::StageSnapshot>, crate::builder::BooleanError>
+    -> Result<Vec<crate::bopalgo::builder::StageSnapshot>, crate::bopalgo::builder::BooleanError>
 {
     // 1. PaveFiller
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
@@ -1371,7 +1371,7 @@ fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glu
 fn builder_diagnostic_bfuse_simple_a1() {
     let a = make_unit_sphere();
     let b = make_unit_box();
-    let snaps = builder_stages(&a, &b, crate::builder::BooleanOpType::Union, false)
+    let snaps = builder_stages(&a, &b, crate::bopalgo::builder::BooleanOpType::Union, false)
         .expect("builder stage-by-stage failed");
 
     println!("=== Builder Stage Diagnostic: bfuse_simple A1 (sphere+box) ===");

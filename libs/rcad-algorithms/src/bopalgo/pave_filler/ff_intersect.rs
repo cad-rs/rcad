@@ -440,7 +440,7 @@ impl<'a> super::PaveFiller<'a> {
                 aabbs.push(crate::bopds::ds::face_aabb::face_aabb(self.ds, fi));
             }
             if indices.len() >= 20 {
-                Some(crate::bvh::BoxTree::build(indices, aabbs))
+                Some(crate::boptools::bvh::BoxTree::build(indices, aabbs))
             } else {
                 None
             }
@@ -449,7 +449,7 @@ impl<'a> super::PaveFiller<'a> {
         // Get FF pair candidates from BVH or pair iterator.
         // OCCT equivalent: myIterator->Initialize(TopAbs_FACE, TopAbs_FACE) loop.
         if let Some(ref fbvh) = face_bvh {
-            let candidates = crate::bvh::BoxTree::candidate_pairs(fbvh, fbvh);
+            let candidates = crate::boptools::bvh::BoxTree::candidate_pairs(fbvh, fbvh);
             candidates
                 .into_iter()
                 .filter(|&(fa, fb)| self.ds.face_origin(fa) != self.ds.face_origin(fb))
@@ -1717,7 +1717,7 @@ impl<'a> super::PaveFiller<'a> {
         line: &mut crate::inttools::int_patch_line::IntPatchLine,
         ef_points: &[DVec3],
     ) {
-        use crate::pave_filler::helpers::project_vertex_to_curve;
+        use crate::bopalgo::pave_filler::helpers::project_vertex_to_curve;
         if line.is_wline() {
             return;
         }

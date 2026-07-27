@@ -15,7 +15,7 @@ pub fn vertex_on_line(point: DVec3, line: &Line3, t_range: [f64; 2]) -> Option<f
 }
 
 /// Same as [`vertex_on_line`], with a caller-supplied coincidence / param-margin tolerance
-/// (clamped to at least [`TOLERANCE_ABS`]). Used by [`crate::pave_filler::PaveFiller`] with
+/// (clamped to at least [`TOLERANCE_ABS`]). Used by [`crate::bopalgo::pave_filler::PaveFiller`] with
 /// [`bopds::ds::DS::fuzzy_tol`].
 pub fn vertex_on_line_with_tol(
     point: DVec3,

@@ -23,10 +23,10 @@
 //! }
 //! ```
 
-use crate::builder::BooleanError;
+use crate::bopalgo::builder::BooleanError;
 use crate::bopds::ds::DS;
-use crate::bvh::Bvh;
-use crate::pave_filler::PaveFiller;
+use crate::boptools::bvh::Bvh;
+use crate::bopalgo::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};

@@ -32,11 +32,8 @@ pub mod bspline_approx_interp;
 pub mod bspline_edit;
 pub mod boptools;
 pub mod bopalgo;
-pub mod builder;
 pub mod debug_trace;
 pub mod pipeline_dump;
-pub mod bvh;
-pub mod bvh_tree;
 pub mod bnd_box;
 pub mod classify;
 pub mod defeature;
@@ -108,7 +105,6 @@ pub mod law;
 pub mod lprop_cur_and_inf;
 pub mod maker_volume;
 pub mod offset;
-pub mod pave_filler;
 pub mod projection;
 pub mod section;
 pub mod splitter;
@@ -177,7 +173,7 @@ pub use brep_top_adaptor::{
 pub use bspline_edit::{
     move_bspline2_point, move_bspline2_tangent, move_bspline3_point, move_bspline3_tangent,
 };
-pub use bvh::{Aabb, Bvh, BvhStats};
+pub use crate::boptools::bvh::{Aabb, Bvh, BvhStats};
 pub use elc_lib::{
     bspline_derivative,
     // BSpline utilities
@@ -504,7 +500,7 @@ pub use brep_repair::{
     validate_internal_face_removal,
     validate_shell_topology,
 };
-pub use builder::{
+pub use crate::bopalgo::builder::{
     BooleanError,
     BooleanOpType,
 };
@@ -792,4 +788,5 @@ pub use triangulate::{
     mesh_brep, triangulate_surface,
 };
 
-pub mod box_tree;
+
+

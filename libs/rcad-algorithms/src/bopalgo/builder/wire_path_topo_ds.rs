@@ -1058,7 +1058,7 @@ pub(crate) fn perform_internal_shapes(
                 for &si in &wf.outer_wire {
                     let seg = &segments[si];
                     let pt = tool.vertex_position(seg.start_vertex);
-                    if let Some(uv) = crate::builder::wire_splitter::world_to_uv(face_surf, pt) {
+                    if let Some(uv) = crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, pt) {
                         uv_bnd.push(uv);
                     }
                 }
@@ -1111,7 +1111,7 @@ pub(crate) fn perform_internal_shapes(
                 // Second fallback: project internal wire vertex to UV via face surface
             if let Some(face_surf) = tool.face_surface(face_ref) {
                     let v_pt = tool.vertex_position(seg.start_vertex);
-                    pt = crate::builder::wire_splitter::world_to_uv(face_surf, v_pt)
+                    pt = crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, v_pt)
                         .unwrap_or(DVec2::ZERO);
                     found = true;
                 }
@@ -1123,7 +1123,7 @@ pub(crate) fn perform_internal_shapes(
         
         for (fi, wf) in wfs.iter_mut().enumerate() {
             if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
-                && crate::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
+                && crate::bopalgo::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
             {
                     wf.internal_wires.push(group.clone());
 
