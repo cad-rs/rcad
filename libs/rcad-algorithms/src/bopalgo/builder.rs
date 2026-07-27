@@ -238,8 +238,7 @@ impl<'a> BooleanBuilder<'a> {
 
             let (status, result_indices) = if has_images && in_result {
                 // OCCT L208-230: split images found in result =Modified
-                let images = self
-                    .my_images
+                let images = self.my_images
                     .borrow()
                     .get(&sref)
                     .cloned()
@@ -271,8 +270,7 @@ impl<'a> BooleanBuilder<'a> {
             let in_result = result_edge.contains(&di);
 
             let (status, result_indices) = if has_images && in_result {
-                let images = self
-                    .my_images
+                let images = self.my_images
                     .borrow()
                     .get(&sref)
                     .cloned()
@@ -438,8 +436,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             let (seg_sv, seg_ev) = if sp_fwd { (sv, ev) } else { (ev, sv) };
-            let rep = ds
-                .edge_on_face(sp_ei, face_idx)
+            let rep = ds.edge_on_face(sp_ei, face_idx)
                 .or_else(|| pcurve_from.and_then(|ei| ds.edge_on_face(ei, face_idx)));
             segs.push(WireSegment {
                 start_vertex: seg_sv,
@@ -487,8 +484,7 @@ impl<'a> BooleanBuilder<'a> {
                 add_segment(ei, forward, None, &mut segments, &mut vertex_positions);
             } else {
                 // OCCT L1137-1175: edge has split images
-                let imgs = self
-                    .my_images
+                let imgs = self.my_images
                     .borrow()
                     .get(&e_sr)
                     .cloned()
@@ -500,8 +496,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                     // OCCT L1143: HasMultiConnected
                     if !b_is_degenerated {
-                        *vert_count
-                            .entry(ds.edge_start_vertex_ds(sp_ei))
+                        *vert_count.entry(ds.edge_start_vertex_ds(sp_ei))
                             .or_default() += 1;
                         *vert_count.entry(ds.edge_end_vertex_ds(sp_ei)).or_default() += 1;
                     }
@@ -553,8 +548,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                     add_segment(ei, forward, None, &mut segments, &mut vertex_positions);
                 } else {
-                    let imgs = self
-                        .my_images
+                    let imgs = self.my_images
                         .borrow()
                         .get(&e_sr)
                         .cloned()
@@ -565,8 +559,7 @@ impl<'a> BooleanBuilder<'a> {
                             continue;
                         }
                         if !b_is_degenerated {
-                            *vert_count
-                                .entry(ds.edge_start_vertex_ds(sp_ei))
+                            *vert_count.entry(ds.edge_start_vertex_ds(sp_ei))
                                 .or_default() += 1;
                             *vert_count.entry(ds.edge_end_vertex_ds(sp_ei)).or_default() += 1;
                         }
@@ -732,16 +725,14 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L132-137: if (myArguments.Extent() < 2) -> AlertTooFewArguments
         let nb_args = self.my_arguments.borrow().len();
         if nb_args < 2 {
-            self.my_report
-                .borrow_mut()
+            self.my_report.borrow_mut()
                 .add_alert(crate::bopalgo::Alert::TooFewArguments);
         }
         // OCCT: BOPAlgo_BuilderShape::CheckData() — base class checks.
         // rcad: operation type validation (BOPAlgo_BOP::CheckData adds this).
         match self.my_operation {
             BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
-            _ => self
-                .my_report
+            _ => self.my_report
                 .borrow_mut()
                 .add_alert(crate::bopalgo::Alert::BOPNotSet),
         }
@@ -759,8 +750,7 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: DS must be populated by PaveFiller (vertices exist = filler ran).
         // OCCT L151: GetReport()->Merge(myPaveFiller->GetReport());
         if self.ds.vertex_count() == 0 {
-            self.my_report
-                .borrow_mut()
+            self.my_report.borrow_mut()
                 .add_alert(crate::bopalgo::Alert::NoFiller);
         }
     }
@@ -1219,28 +1209,23 @@ impl<'a> BooleanBuilder<'a> {
                     n_ds_pave_blocks: self.ds.pave_blocks.len(),
                     n_ds_intersection_curves: self.ds.intersection_curves.len(),
                     n_ds_interf_ff: self.ds.interf_ff.len(),
-                    n_brep_vertices: result_brep
-                        .tshapes
+                    n_brep_vertices: result_brep.tshapes
                         .iter()
                         .filter(|ts| matches!(&***ts, topods::TShape::Vertex(_)))
                         .count(),
-                    n_brep_edges: result_brep
-                        .tshapes
+                    n_brep_edges: result_brep.tshapes
                         .iter()
                         .filter(|ts| matches!(&***ts, topods::TShape::Edge(_)))
                         .count(),
-                    n_brep_faces: result_brep
-                        .tshapes
+                    n_brep_faces: result_brep.tshapes
                         .iter()
                         .filter(|ts| matches!(&***ts, topods::TShape::Face(_)))
                         .count(),
-                    n_brep_shells: result_brep
-                        .tshapes
+                    n_brep_shells: result_brep.tshapes
                         .iter()
                         .filter(|ts| matches!(&***ts, topods::TShape::Shell(_)))
                         .count(),
-                    n_brep_solids: result_brep
-                        .tshapes
+                    n_brep_solids: result_brep.tshapes
                         .iter()
                         .filter(|ts| matches!(&***ts, topods::TShape::Solid(_)))
                         .count(),
@@ -1471,10 +1456,8 @@ fn count_brep_entities(b: &topods::BRep) -> (usize, usize, usize, usize, usize) 
 /// - Large models (> 100 faces): Typically 2-4x faster on multi-core systems
 impl<'a> BooleanBuilder<'a> {
     fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
-        let mut v: Vec<usize> = self
-            .ds
-            .faces
-            .iter()
+        let mut v: Vec<usize> = self.ds
+            .faces.iter()
             .enumerate()
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
@@ -1500,14 +1483,11 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 let sv_idx = self.ds.edge_start_vertex_ds(ei);
                 let ev_idx = self.ds.edge_end_vertex_ds(ei);
-                let sv = *v_map
-                    .entry(sv_idx)
+                let sv = *v_map.entry(sv_idx)
                     .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(sv_idx)));
-                let ev = *v_map
-                    .entry(ev_idx)
+                let ev = *v_map.entry(ev_idx)
                     .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(ev_idx)));
-                let edge_sr = *e_map
-                    .entry(ei)
+                let edge_sr = *e_map.entry(ei)
                     .or_insert_with(|| t.add_tedge(None, sv, ev, [0.0, 1.0]));
                 edge_refs.push(edge_sr);
             }
@@ -1523,8 +1503,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // Collect face refs and wrap in Shell → Solid
-        let face_srs: Vec<topods::ShapeRef> = t
-            .tshapes
+        let face_srs: Vec<topods::ShapeRef> = t.tshapes
             .iter()
             .enumerate()
             .filter(|(_, ts)| matches!(&***ts, topods::TShape::Face(_)))

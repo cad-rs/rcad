@@ -82,8 +82,7 @@ impl<'a> super::PaveFiller<'a> {
             if !a_mi.contains(&inf.e1) || !a_mi.contains(&inf.e2) {
                 continue;
             }
-            let n_v_new = self
-                .ds
+            let n_v_new = self.ds
                 .has_shape_sd(inf.new_vertex)
                 .unwrap_or(inf.new_vertex);
             a_mv_stick.insert(n_v_new);
@@ -96,8 +95,7 @@ impl<'a> super::PaveFiller<'a> {
             if !a_mi.contains(&inf.v1) || !a_mi.contains(&inf.v2) {
                 continue;
             }
-            let n_v_new = self
-                .ds
+            let n_v_new = self.ds
                 .has_shape_sd(inf.merged_vertex)
                 .unwrap_or(inf.merged_vertex);
             a_mv_stick.insert(n_v_new);
@@ -110,8 +108,7 @@ impl<'a> super::PaveFiller<'a> {
             if !a_mi.contains(&inf.edge) || !a_mi.contains(&inf.face) {
                 continue;
             }
-            let n_v_new = self
-                .ds
+            let n_v_new = self.ds
                 .has_shape_sd(inf.new_vertex)
                 .unwrap_or(inf.new_vertex);
             a_mv_stick.insert(n_v_new);
@@ -171,8 +168,7 @@ impl<'a> super::PaveFiller<'a> {
         // aLPBC.Append(aPB)
         if ci < self.ds.intersection_curves.len() {
             self.ds.intersection_curves[ci]
-                .pave_blocks
-                .push(self.ds.pave_blocks[a_pb_idx].clone());
+                .pave_blocks.push(self.ds.pave_blocks[a_pb_idx].clone());
         }
         // aPB->Indices(nV1, nV2);
         let (n_v1, n_v2) = {
@@ -321,12 +317,10 @@ impl<'a> super::PaveFiller<'a> {
             };
             // OCCT L2117: std::max(aTolV21, aTolV22) + myFuzzyValue
             let a_tol_v2 = a_tol_v21.max(a_tol_v22) + self.ds.fuzzy_tol;
-            let edge_ei = existing_pb
-                .0
+            let edge_ei = existing_pb.0
                 .read()
                 .unwrap()
-                .new_edge
-                .unwrap_or(existing_pb.0.read().unwrap().original_edge);
+                .new_edge.unwrap_or(existing_pb.0.read().unwrap().original_edge);
             // OCCT L2123: iFlag1 = (nV11 == nV21 || nV11 == nV22) ? 2 : 1
             //             iFlag2 = (nV12 == nV21 || nV12 == nV22) ? 2 : (!aBoxSp.IsOut(aBoxP2) ? 1 : 0)
             // rcad: iFlag1 == 2 maps to true (vertex match), 1 maps to false (AABB check needed)
@@ -519,10 +513,8 @@ impl<'a> super::PaveFiller<'a> {
             usize,
             Vec<usize>,
             Vec<crate::bopds::ds::types::FFPoint>,
-        )> = self
-            .ds
-            .interf_ff
-            .iter()
+        )> = self.ds
+            .interf_ff.iter()
             .map(|ff| (ff.f1, ff.f2, ff.curves.clone(), ff.points.clone()))
             .collect();
 
@@ -616,8 +608,7 @@ impl<'a> super::PaveFiller<'a> {
                         param: self.ds.intersection_curves[ci].t_range[1],
                     };
                     self.ds.intersection_curves[ci]
-                        .pave_blocks
-                        .push(SharedPB::new(pb));
+                        .pave_blocks.push(SharedPB::new(pb));
                 }
                 // L818: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
                 self.put_paves_on_curve(
@@ -790,8 +781,7 @@ impl<'a> super::PaveFiller<'a> {
                             self.context.is_point_in_on_face(self.ds, fi, uv)
                         } else {
                             let mid_pt = ic.curve.point_at(mid_t);
-                            self.context
-                                .is_valid_point_for_face(self.ds, mid_pt, fi, a_tol_r3d)
+                            self.context.is_valid_point_for_face(self.ds, mid_pt, fi, a_tol_r3d)
                         };
                         if !ok {
                             b_valid_2d = false;
@@ -1139,15 +1129,15 @@ impl<'a> super::PaveFiller<'a> {
             // L893: aPBTree.Add(iPB, Bnd_Tools::Bnd2BVH(myDS->ShapeInfo(aPB->Edge()).Box()));
             // OCCT uses the precomputed ShapeInfo Box which covers the full 3D curve geometry.
             // rcad: compute AABB from edge's 3D curve by sampling points along it.
-            let edge = &ds.edges[ei];
+
             let tol = ds.edge_tolerance(ei);
-            let [t0, t1] = edge.t_range;
+            let [t0, t1] = ds.edge_range(ei);
             let n_samples = 8.max(((t1 - t0).abs() / 0.1).ceil() as usize).min(32);
             let mut mn = DVec3::splat(f64::MAX);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             for k in 0..=n_samples {
                 let t = t0 + (t1 - t0) * (k as f64) / (n_samples as f64);
-                let pt = edge.curve.point_at(t);
+                let pt = ds.edge_curve(ei).unwrap().point_at(t);
                 mn = mn.min(pt);
                 mx = mx.max(pt);
             }
