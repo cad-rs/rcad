@@ -301,7 +301,7 @@ fn compute_ef_hits(
         if bfi.is_done() && !bfi.result().is_empty() {
             for r in bfi.result() {
                 let t = (r.first() + r.last()) * 0.5;
-                let p = ds.edges[edge_idx].curve.point_at(t);
+                let p = ds.edge_curve(edge_idx).unwrap().point_at(t);
                 hits.push(EfHit::Vertex { point: p, param: t });
             }
         }
@@ -1127,7 +1127,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.interf_ee.push(InterferenceEE {
                         e1: nE1,
                         e2: nE2,
-                        point: self.ds.edges[nE1].curve.point_at(a_t1),
+                        point: self.ds.edge_curve(nE1).unwrap().point_at(a_t1),
                         param1: a_t1,
                         param2: a_t2,
                         new_vertex: usize::MAX,
@@ -1195,8 +1195,8 @@ impl<'a> super::PaveFiller<'a> {
                 // rcad: a_pnew is the intersection point from the hit
                 if is_v_exists {
                     // OCCT L422-436: check if this is a real intersection or just touching
-                    let e1_p = self.ds.edges[nE1].curve.point_at(a_t1);
-                    let e2_p = self.ds.edges[nE2].curve.point_at(a_t2);
+                    let e1_p = self.ds.edge_curve(nE1).unwrap().point_at(a_t1);
+                    let e2_p = self.ds.edge_curve(nE2).unwrap().point_at(a_t2);
                     if (e1_p - e2_p).length() > crate::tolerance::INTERSECTION {
                         continue;
                     }
@@ -1213,8 +1213,8 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L454: double aTolVnew = BRep_Tool::Tolerance(aVnew);
                 // OCCT BOPTools_AlgoTools::MakeNewVertex (AlgoTools_2.cxx L224-250):
                 //   aDist = aPnt1.Distance(aPnt2); aMaxTol = max(tol1, tol2) + 0.5 * aDist
-                let e1_pt = self.ds.edges[nE1].curve.point_at(a_t1);
-                let e2_pt = self.ds.edges[nE2].curve.point_at(a_t2);
+                let e1_pt = self.ds.edge_curve(nE1).unwrap().point_at(a_t1);
+                let e2_pt = self.ds.edge_curve(nE2).unwrap().point_at(a_t2);
                 let a_dist = (e1_pt - e2_pt).length();
                 let mut a_tol_vnew =
                     self.ds.edge_tolerance(nE1).max(self.ds.edge_tolerance(nE2)) + 0.5 * a_dist;
@@ -1817,7 +1817,7 @@ impl<'a> super::PaveFiller<'a> {
                         a_mi_efc.insert(nF);
                         let new_v = self.ds.add_vertex_no_dedup(*point);
                         let interf_idx = self.ds.interf_ef.len();
-                        let pb_for_cpb = self.ds.edges[nE].pave_blocks[a_pb_local].clone();
+                        let pb_for_cpb = self.ds.edge_pave_blocks(nE)[a_pb_local].clone();
                         self.ds.interf_ef.push(InterferenceEF {
                             edge: nE,
                             face: nF,
@@ -1850,7 +1850,7 @@ impl<'a> super::PaveFiller<'a> {
                     EfHit::Edge { t1, t2 } => {
                         a_mi_efc.insert(nF);
                         let mid_t = (t1 + t2) * 0.5;
-                        let mid_pt = self.ds.edges[nE].curve.point_at(mid_t);
+                        let mid_pt = self.ds.edge_curve(nE).unwrap().point_at(mid_t);
                         let bv0 = a_mif_on.contains(&nV[0]) || a_mif_in.contains(&nV[0]);
                         let bv1 = a_mif_on.contains(&nV[1]) || a_mif_in.contains(&nV[1]);
                         self.ds.interf_ef.push(InterferenceEF {
@@ -2717,7 +2717,7 @@ impl<'a> super::PaveFiller<'a> {
         if !ef_endpoint_cases.is_empty() {
             use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
             for (n_e, n_v) in ef_endpoint_cases {
-                if self.ds.edges[n_e].pave_blocks.len() != 1 {
+                if self.ds.edge_pave_blocks(n_e).len() != 1 {
                     continue;
                 }
                 let mut a_ve = VertexEdgeSolver::new();
@@ -2728,7 +2728,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 let a_t = a_ve.param;
                 let (pb_sv, pb_ev, pb_t1, pb_t2, orig_e) = {
-                    let pb = self.ds.edges[n_e].pave_blocks[0].0.read().unwrap();
+                    let pb = self.ds.edge_pave_blocks(n_e)[0].0.read().unwrap();
                     (
                         pb.pave1.vertex_idx,
                         pb.pave2.vertex_idx,
@@ -2754,9 +2754,9 @@ impl<'a> super::PaveFiller<'a> {
                 let mut pb2 = PaveBlock::new(orig_e, pv_new, pv2);
                 pb1.set_shrunk_data(pb_t1, a_t_split, true);
                 pb2.set_shrunk_data(a_t_split, pb_t2, true);
-                self.ds.edges[n_e].pave_blocks.clear();
-                self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb1));
-                self.ds.edges[n_e].pave_blocks.push(SharedPB::new(pb2));
+                self.ds.edge_pave_blocks_mut(n_e).clear();
+                self.ds.edge_pave_blocks_mut(n_e).push(SharedPB::new(pb1));
+                self.ds.edge_pave_blocks_mut(n_e).push(SharedPB::new(pb2));
             }
         }
     }

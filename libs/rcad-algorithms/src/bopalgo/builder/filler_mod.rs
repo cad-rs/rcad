@@ -655,12 +655,12 @@ impl<'a> BooleanBuilder<'a> {
                                     // boundary_edge_forwards to match OCCT face-wire semantics.
                                     if an_ori_e == topods::Orientation::Forward {
                                         let ds_ei = e_sr.index.saturating_sub(e_base);
-                                        if let Some(pos) = self.ds.faces[fi]
+                                        if let Some(pos) = self.ds.faces.get(fi).unwrap()
                                             .boundary_edges
                                             .iter()
                                             .position(|&be| be == ds_ei)
                                         {
-                                            if !self.ds.faces[fi]
+                                            if !self.ds.faces.get(fi).unwrap()
                                                 .boundary_edge_forwards
                                                 .get(pos)
                                                 .copied()
@@ -830,7 +830,7 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L496-500: BuildPCurveForEdgesOnPlane — speed up for planar faces.
             if !self.my_non_destructive {
                 if matches!(
-                    self.ds.faces[fi].surface,
+                    self.ds.faces.get(fi).unwrap().surface,
                     rcad_kernel::geom::Surface3::Plane(_)
                 ) {
                     for &e_sr in &a_le {

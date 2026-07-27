@@ -126,9 +126,9 @@ fn update_existing_pave_blocks(
             spb.0.read().unwrap().original_edge
         };
         if orig_e < ds.edge_count() {
-            ds.edges[orig_e].pave_blocks.retain(|spb| {
+            let old_ptr = Arc::as_ptr(&ds.pave_blocks[old_pb_idx].0);
+            ds.edge_pave_blocks_mut(orig_e).retain(|spb| {
                 let ptr = Arc::as_ptr(&spb.0);
-                let old_ptr = Arc::as_ptr(&ds.pave_blocks[old_pb_idx].0);
                 ptr != old_ptr
             });
         }
@@ -1201,8 +1201,8 @@ impl<'a> PaveFiller<'a> {
                     let pb1_local = cb.pave_block1();
                     let edge_idx = cb.edge();
                     if let (Some(pli), Some(ei)) = (pb1_local, edge_idx) {
-                        if ei < self.ds.edge_count() && pli < self.ds.edges[ei].pave_blocks.len() {
-                            self.ds.edges[ei].pave_blocks[pli].clone()
+                        if ei < self.ds.edge_count() && pli < self.ds.edge_pave_blocks(ei).len() {
+                            self.ds.edge_pave_blocks_mut(ei)[pli].clone()
                         } else {
                             a_pb.clone()
                         }
@@ -1402,10 +1402,10 @@ impl<'a> PaveFiller<'a> {
             for ffp in &points {
                 if ffp.vertex_index < self.ds.vertex_count() {
                     let n_v = ffp.vertex_index;
-                    if !self.ds.faces[f1].face_info.vertices_in.contains(&n_v) {
+                    if !self.ds.face_info(f1).vertices_in.contains(&n_v) {
                         self.ds.face_info_mut(f1).vertices_in.insert(n_v);
                     }
-                    if !self.ds.faces[f2].face_info.vertices_in.contains(&n_v) {
+                    if !self.ds.face_info(f2).vertices_in.contains(&n_v) {
                         self.ds.face_info_mut(f2).vertices_in.insert(n_v);
                     }
                 }
@@ -1904,11 +1904,11 @@ impl<'a> PaveFiller<'a> {
             }
             //
             // L402: aLPB = self.ds.edges[n_e].pave_blocks
-            let pb_count = self.ds.edges[n_e].pave_blocks.len();
+            let pb_count = self.ds.edge_pave_blocks(n_e).len();
             //
             // Clone PB references for iteration (avoids borrow during mutable Phase 1.5)
             let edge_pbs: Vec<crate::bopds::pave::SharedPB> =
-                self.ds.edges[n_e].pave_blocks.clone();
+                self.ds.edge_pave_blocks(n_e).to_vec();
             //
             for spb in &edge_pbs {
                 // L407-423: extract PB data with short-lived guard (avoids borrow conflicts)
@@ -1964,7 +1964,7 @@ impl<'a> PaveFiller<'a> {
                                         .unwrap()
                                         .original_edge;
                                     if oe < self.ds.edge_count()
-                                        && self.ds.edges[oe].pave_blocks.len() == 1
+                                        && self.ds.edge_pave_blocks(oe).len() == 1
                                     {
                                         a_found_it = true;
                                         a_found_n_e = oe;

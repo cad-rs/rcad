@@ -13,7 +13,7 @@ pub fn make_pcurve(
 ) {
  if ei >= ds.edge_count() { return; }
  let t_range = ds.edge_range(ei);
- let tol_e = ds.edges[ei].geom_tol;
+ let tol_e = ds.edge_tolerance(ei);
  // Clone edge curve for projection fallback (avoids holding immutable borrow on ds.edges)
  let edge_curve = ds.edge_curve(ei).cloned().unwrap();
 
@@ -514,7 +514,7 @@ pub fn correct_curve_on_surface(
  let a_new_tol = edge.geom_tol;
  drop(edge);
  // Compute pcurve deviation on this face surface
- if let Some((max_dist, _)) = compute_tolerance(&edge_clone, &ds.faces[fi], ds) {
+ if let Some((max_dist, _)) = compute_tolerance(&edge_clone, ds.faces.get(fi).unwrap(), ds) {
  let updated_tol = max_dist + 0.1 * max_dist;
  if updated_tol > a_new_tol && updated_tol < max_tol {
  ds.edge_data_mut(ei).tolerance = updated_tol;
@@ -731,7 +731,7 @@ pub fn is_internal_face_against_solid(
  let a_f1 = a_lf[0];
  // Use GetEdgeOnFace to find edge orientation in that face
  let e_on_f1 = if a_f1 < ds.face_count() {
- crate::boptools::get_edge_off(ei, &ds.edges, &ds.faces[a_f1])
+ crate::boptools::get_edge_off(ei, &ds.edges, ds.faces.get(a_f1).unwrap())
  } else { None };
  if let Some(ei_f1) = e_on_f1 {
  if ds.edge_is_internal(ei_f1) {
@@ -780,7 +780,7 @@ pub fn is_internal_face_core(
 ) -> i32 {
  // OCCT L945-966: get edge copies for both faces with proper orientation
  let a_e1_on_f1 = if the_face1 < ds.face_count() {
- crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face1])
+ crate::boptools::get_edge_off(the_edge, &ds.edges, ds.faces.get(the_face1).unwrap())
  } else { None };
  if a_e1_on_f1.is_none() { return 0; }
  let a_e1 = a_e1_on_f1.unwrap();
@@ -795,7 +795,7 @@ pub fn is_internal_face_core(
  // OCCT L958-962: same face  ?both orientations
  a_e1
  } else if the_face2 < ds.face_count() {
- crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face2])
+ crate::boptools::get_edge_off(the_edge, &ds.edges, ds.faces.get(the_face2).unwrap())
  .unwrap_or(a_e1)
  } else { a_e1 };
 

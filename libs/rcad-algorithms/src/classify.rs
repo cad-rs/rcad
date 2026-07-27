@@ -1105,7 +1105,7 @@ fn ray_cast_classify_point_on_face(
                     // UV-space containment (IntTools_FClass2d) instead
                     // of 3D AABB.  For periodic surfaces (sphere, cylinder), 3D
                     // boundary-vertex AABB may under-represent the face extent.
-                    let in_face = if let Some(ref uv_bnd) = ds.faces[fi].uv_boundary {
+                    let in_face = if let Some(ref uv_bnd) = ds.faces.get(fi).unwrap().uv_boundary {
                         let uv = s.world_to_uv(hit);
                         uv_bnd.len() >= 3 && point_in_uv_polygon(uv, uv_bnd)
                     } else if face_verts.len() < 3 {

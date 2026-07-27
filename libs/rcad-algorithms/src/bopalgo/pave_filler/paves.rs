@@ -344,7 +344,7 @@ impl<'a> super::PaveFiller<'a> {
             // OCCT: aLPB.Extent() < 2 checks PB count after InitPaveBlock (which
             // includes edge.paves).  rcad: PBs are NOT split during init (paves
             // are added after PB creation), so check the actual pave list instead.
-            if self.ds.edges[n_e].paves.is_empty() {
+            if self.ds.edge_paves(n_e).is_empty() {
                 continue;
             }
 
@@ -548,7 +548,7 @@ impl<'a> super::PaveFiller<'a> {
                 let a_tm_first = (ref_p1 + ref_p2) / 2.0;
                 // OCCT L592: BOPTools_AlgoTools::PointOnEdge(aEFirst, aTmFirst, aPMFirst)
                 let a_pm_first = if ref_e < self.ds.edge_count() {
-                    self.ds.edges[ref_e].curve.point_at(a_tm_first)
+                    self.ds.edge_curve(ref_e).unwrap().point_at(a_tm_first)
                 } else {
                     continue;
                 };
@@ -1349,8 +1349,8 @@ impl<'a> super::PaveFiller<'a> {
                     continue;
                 }
                 if inf.e1 < self.ds.edge_count() && inf.e2 < self.ds.edge_count() {
-                    let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param1);
-                    let p2 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param2);
+                    let p1 = crate::boptools::point_on_edge(self.ds.edges.get(inf.e1).unwrap(), inf.param1);
+                    let p2 = crate::boptools::point_on_edge(self.ds.edges.get(inf.e1).unwrap(), inf.param2);
                     let d = vp.distance(p1).max(vp.distance(p2));
                     if d > max_ext {
                         max_ext = d;
@@ -1372,7 +1372,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 if inf.edge < self.ds.edge_count() {
                     let p1 =
-                        crate::boptools::point_on_edge(&self.ds.edges[inf.edge], inf.edge_param);
+                        crate::boptools::point_on_edge(self.ds.edges.get(inf.edge).unwrap(), inf.edge_param);
                     let d = vp.distance(p1);
                     if d > max_ext {
                         max_ext = d;
@@ -2169,7 +2169,7 @@ impl<'a> super::PaveFiller<'a> {
                 if inf.e1 < self.ds.edge_count() {
                     if let Some(pt) = {
                         use rcad_kernel::geom::CurveEval;
-                        Some(self.ds.edges[inf.e1].curve.point_at(inf.param1))
+                        Some(self.ds.edge_curve(inf.e1).unwrap().point_at(inf.param1))
                     } {
                         let v_pt = self.ds.vertex_point(vi);
                         let d = (v_pt - pt).length();
@@ -2185,7 +2185,7 @@ impl<'a> super::PaveFiller<'a> {
                 if inf.edge < self.ds.edge_count() {
                     if let Some(pt) = {
                         use rcad_kernel::geom::CurveEval;
-                        Some(self.ds.edges[inf.edge].curve.point_at(inf.edge_param))
+                        Some(self.ds.edge_curve(inf.edge).unwrap().point_at(inf.edge_param))
                     } {
                         let v_pt = self.ds.vertex_point(vi);
                         let d = (v_pt - pt).length();

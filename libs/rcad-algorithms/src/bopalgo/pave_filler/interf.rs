@@ -44,7 +44,7 @@ impl<'a> PaveFiller<'a> {
             }
             // L1041-1044: edge must have PBs (HasReference equivalent)
             let ei = self.ds.shape_info_at(i).source_idx;
-            if ei >= self.ds.edge_count() || self.ds.edges[ei].pave_blocks.is_empty() {
+            if ei >= self.ds.edge_count() || self.ds.edge_pave_blocks(ei).is_empty() {
                 continue;
             }
             // L1047-1051: skip degenerated edges
@@ -464,7 +464,7 @@ impl<'a> PaveFiller<'a> {
                 };
                 // Mark all PBs in block as belonging to this CommonBlock
                 for &(ei, local_i) in block {
-                    if let Some(local_pb) = self.ds.edges[ei].pave_blocks.get_mut(local_i) {
+                    if let Some(local_pb) = self.ds.edge_pave_blocks_mut(ei).get_mut(local_i) {
                         local_pb.0.write().unwrap().common_block_idx = Some(new_idx);
                     }
                 }
@@ -544,7 +544,7 @@ impl<'a> PaveFiller<'a> {
             // L852-858: ensure shrunk data is available
             // OCCT: if (!aPB->HasShrunkData() || !myDS->IsValidShrunkData(aPB))
             {
-                let r = self.ds.edges[ne].pave_blocks[local_i].0.read().unwrap();
+                let r = self.ds.edge_pave_blocks(ne)[local_i].0.read().unwrap();
                 let need_fill = !r.has_shrunk_data() || !self.ds.is_valid_shrunk_data(&r);
                 drop(r);
                 if need_fill {
@@ -552,7 +552,7 @@ impl<'a> PaveFiller<'a> {
                     // rcad: analyze_shrunk_data as FillShrunkData equivalent
                     self.analyze_shrunk_data(ne, local_i);
                     // OCCT L855-858: if still no shrunk data after FillShrunkData
-                    if !self.ds.edges[ne].pave_blocks[local_i]
+                    if !self.ds.edge_pave_blocks(ne)[local_i]
                         .0
                         .read()
                         .unwrap()
@@ -564,15 +564,15 @@ impl<'a> PaveFiller<'a> {
             }
             // L866-868: ShrunkData(f, l, aPBBox, isSplit)
             // rcad: shrunk_data() returns (f, l, isSplit), bounding box computed below
-            let (f, l, _is_split) = self.ds.edges[ne].pave_blocks[local_i]
+            let (f, l, _is_split) = self.ds.edge_pave_blocks(ne)[local_i]
                 .0
                 .read()
                 .unwrap()
                 .shrunk_data();
             // L866-870: build AABB from shrunk range endpoint positions
             // OCCT: aBBTree.Add(aPBMap.Add(aPB), Bnd_Tools::Bnd2BVH(aPBBox));
-            let a_p1 = self.ds.edges[ne].curve.point_at(f);
-            let a_p2 = self.ds.edges[ne].curve.point_at(l);
+            let a_p1 = self.ds.edge_curve(ne).unwrap().point_at(f);
+            let a_p2 = self.ds.edge_curve(ne).unwrap().point_at(l);
             let a_pb_box = crate::boptools::bvh::Aabb {
                 min: a_p1.min(a_p2),
                 max: a_p1.max(a_p2),
@@ -882,7 +882,7 @@ impl<'a> PaveFiller<'a> {
             for k in 0..n_samples {
                 let frac = (k as f64 + 0.5) / n_samples as f64;
                 let t = pair.a_ts[0] + frac * (pair.a_ts[1] - pair.a_ts[0]);
-                let pt = self.ds.edges[pair.n_e].curve.point_at(t);
+                let pt = self.ds.edge_curve(pair.n_e).unwrap().point_at(t);
                 let proj = self.context.proj_ps(&self.ds, pair.fi, pt);
                 match proj {
                     Some((_, _, dist))
@@ -909,7 +909,7 @@ impl<'a> PaveFiller<'a> {
                 // L1178-1181: set indices and common part
                 // rcad: InterferenceEF stores edge, face, mid-point, param, new_vertex
                 let a_t_mid = crate::boptools::intermediate_point(pair.a_ts[0], pair.a_ts[1]);
-                let a_mid_pt = self.ds.edges[pair.n_e].curve.point_at(a_t_mid);
+                let a_mid_pt = self.ds.edge_curve(pair.n_e).unwrap().point_at(a_t_mid);
                 self.ds.interf_ef.push(InterferenceEF {
                     edge: pair.n_e,
                     face: pair.fi,
@@ -980,7 +980,7 @@ impl<'a> PaveFiller<'a> {
                 if creators.contains(&fi) {
                     continue;
                 }
-                if !self.ds.faces[fi].face_info.has_any_interference() {
+                if !self.ds.face_info(fi).has_any_interference() {
                     continue;
                 }
                 let on_face = params.iter().any(|&t| {

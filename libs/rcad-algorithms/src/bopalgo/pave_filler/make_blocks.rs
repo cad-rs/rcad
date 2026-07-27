@@ -136,7 +136,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.edge_start_vertex_ds(n_e),
                 self.ds.edge_end_vertex_ds(n_e),
             ];
-            for pave in &self.ds.edges[n_e].paves {
+            for pave in self.ds.edge_paves(n_e) {
                 v.push(pave.vertex_idx);
             }
             v
