@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use glam::DVec3;
-use rcad_kernel::topods::{self, ShapeType, TShape};
+use rcad_kernel::topods::{self, ShapeRef, ShapeType, TShape};
 use rcad_kernel::topo_shape::{self, Shape, ShapeStore};
 use crate::bopds::face_info::FaceInfo;
 use crate::bopds::pave::{Pave, PaveBlock, SharedPB};
@@ -69,6 +69,8 @@ pub struct DS {
     pub interfered: HashSet<usize>,
     // rcad: per-type TShape storage (Shape.index -> store.xxx).
     pub store: ShapeStore,
+    // rcad: TShape pool for ShapeRef -> Shape conversion in get_children.
+    pub tshapes: Vec<Arc<TShape>>,
 }
 
 impl DS {
@@ -83,6 +85,7 @@ impl DS {
         interf_vz:Vec::new(),interf_ez:Vec::new(),interf_fz:Vec::new(),
         interf_zz:Vec::new(),interfered:HashSet::new(),
         store:ShapeStore::new(),
+        tshapes:Vec::new(),
     }}
 
     pub fn clear(&mut self){
@@ -179,10 +182,33 @@ impl DS {
         }
     }
 
-    // TopoDS_Iterator: direct sub-shapes from ShapeStore.
-    // TEdgeData/TWireData/TFaceData still use ShapeRef -- needs migration to Shape.
-    // Currently returns empty; InitShape will be filled when TShapeData uses Shape.
-    fn get_children(&self,_s:Shape)->Vec<Shape>{vec![]}
+    // TopoDS_Iterator: direct sub-shapes from TShape.
+    // TEdgeData uses ShapeRef; convert to Shape via tshapes pool.
+    fn get_children(&self,s:Shape)->Vec<Shape>{
+        fn sr2shape(me:&DS,sr:ShapeRef)->Shape{
+            let kind=if sr.ptr_id!=0&&sr.index<me.tshapes.len(){me.tshapes[sr.index].shape_type()}else{ShapeType::Shape};
+            Shape{kind,index:sr.index,location:sr.location,orientation:sr.orientation}
+        }
+        if s.kind==ShapeType::Vertex{return vec![];}
+        let ts=&self.tshapes;
+        let idx=s.index;
+        if idx>=ts.len(){return vec![];}
+        let t=&*ts[idx];
+        match t{
+            topods::TShape::Vertex(_)=>vec![],
+            topods::TShape::Edge(ed)=>vec![sr2shape(self,ed.first),sr2shape(self,ed.last)],
+            topods::TShape::Wire(wd)=>wd.edges.iter().map(|&e|sr2shape(self,e)).collect(),
+            topods::TShape::Face(fd)=>{
+                let mut v=vec![sr2shape(self,fd.outer_wire)];
+                v.extend(fd.inner_wires.iter().map(|&w|sr2shape(self,w)));
+                v
+            }
+            topods::TShape::Shell(sd)=>sd.faces.iter().map(|&f|sr2shape(self,f)).collect(),
+            topods::TShape::Solid(sd)=>sd.shells.iter().map(|&sh|sr2shape(self,sh)).collect(),
+            topods::TShape::CompSolid(cd)=>cd.iter().map(|&c|sr2shape(self,c)).collect(),
+            topods::TShape::Compound(cd)=>cd.iter().map(|&c|sr2shape(self,c)).collect(),
+        }
+    }
 
     // PaveBlocksPool
     pub fn pave_blocks_pool(&self)->&[Vec<SharedPB>]{&self.pave_blocks_pool}
