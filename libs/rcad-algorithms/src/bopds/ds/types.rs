@@ -771,11 +771,11 @@ pub struct DS {
     pub shape_sd: ShapeSD,
     /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
     /// Phase 3: same_domain_overlaps removed (was declared but never read).
+    pub common_blocks: Vec<CommonBlock>,
 
     /// Common blocks grouping geometrically coincident PaveBlocks
     /// (OCCT: BOPDS_CommonBlock). Populated by the PaveFiller
     /// (`ForceInterfEE`) and consumed by the Builder (`FillSameDomainFaces`).
-    pub common_blocks: Vec<CommonBlock>,
 
     /// TopLoc_Location storage. Index 0 = identity (implicit), 1+ stored here.
     /// Populated by load_brep when loading from topods::BRep with non-identity Location.
