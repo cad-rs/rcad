@@ -961,7 +961,7 @@ fn classify_point_internal(
             if my_state == 2 {
                 break;
             }
-            let face = &ds.faces[fi];
+            let face = ds.faces.get(fi).unwrap();
             // OCCT L366-370: Shell/Face reject (rcad: flat face list, no rejection)
             // OCCT L375-397: Intersector3d.Perform(L, minW, maxW)
             let min_w = -rd.max_par.max(10.0 * ray_tol + 0.01 * rd.max_par);
@@ -1048,7 +1048,7 @@ fn ray_cast_classify_point_on_face(
     boundary_tol: f64,
     ray_tol: f64,
 ) -> RayFaceResult {
-    let face = &ds.faces[fi];
+    let face = ds.faces.get(fi).unwrap();
 
     match &face.surface {
         Surface3::Plane(plane) => {
@@ -1149,7 +1149,7 @@ pub fn classify_point_on_face(
     ds: &DS,
     tolerance: f64,
 ) -> FaceClassification {
-    let face = &ds.faces[face_idx];
+    let face = ds.faces.get(face_idx).unwrap();
     let surface = &face.surface;
 
     // Check distance to surface
@@ -1227,7 +1227,7 @@ pub fn classify_solid_in_solid(
     let mut b_on_boundary = false;
 
     for &fi in solid_b_faces {
-        let face = &ds.faces[fi];
+        let face = ds.faces.get(fi).unwrap();
         for &vi in &face.boundary_verts {
             let point = ds.vertex_point(vi);
             let class = classify_point(point, solid_a_faces, ds);
@@ -1255,7 +1255,7 @@ pub fn classify_solid_in_solid(
     let mut a_outside_b = false;
 
     for &fi in solid_a_faces {
-        let face = &ds.faces[fi];
+        let face = ds.faces.get(fi).unwrap();
         for &vi in &face.boundary_verts {
             let point = ds.vertex_point(vi);
             let class = classify_point(point, solid_b_faces, ds);
@@ -1316,7 +1316,7 @@ pub fn classify_solid_in_solid(
 fn compute_faces_aabb(face_indices: &[usize], ds: &DS) -> Aabb {
     let mut aabb = Aabb::empty();
     for &fi in face_indices {
-        let face = &ds.faces[fi];
+        let face = ds.faces.get(fi).unwrap();
         for &vi in &face.boundary_verts {
             aabb.expand_point(ds.vertex_point(vi));
         }
@@ -1328,7 +1328,7 @@ fn compute_faces_aabb(face_indices: &[usize], ds: &DS) -> Aabb {
 fn check_face_intersections(faces_a: &[usize], faces_b: &[usize], ds: &DS, tolerance: f64) -> bool {
     // Quick AABB check for face pairs
     for &fi_a in faces_a {
-        let face_a = &ds.faces[fi_a];
+        let face_a = ds.faces.get(fi_a).unwrap();
         let mut aabb_a = Aabb::empty();
         for &vi in &face_a.boundary_verts {
             aabb_a.expand_point(ds.vertex_point(vi));
@@ -1339,7 +1339,7 @@ fn check_face_intersections(faces_a: &[usize], faces_b: &[usize], ds: &DS, toler
                 continue;
             }
 
-            let face_b = &ds.faces[fi_b];
+            let face_b = ds.faces.get(fi_b).unwrap();
             let mut aabb_b = Aabb::empty();
             for &vi in &face_b.boundary_verts {
                 aabb_b.expand_point(ds.vertex_point(vi));
@@ -1375,7 +1375,7 @@ pub fn classify_point_on_edge(
     ds: &DS,
     tolerance: f64,
 ) -> EdgeClassification {
-    let edge = &ds.edges[edge_idx];
+    let edge = ds.edges.get(edge_idx).unwrap();
     let curve = &edge.curve;
 
     // Project point onto curve

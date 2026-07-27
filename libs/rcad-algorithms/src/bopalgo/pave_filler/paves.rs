@@ -72,7 +72,7 @@ impl<'a> super::PaveFiller<'a> {
                 // Clone edge data to avoid borrow conflict with self.ds.push_edge
                 let (a_curve, a_t_range, a_origin, a_geom_tol, a_is_geometric, a_location) = {
                     if an_edge_index < self.ds.edge_count() {
-                        let e = &self.ds.edges[an_edge_index];
+                        let e = self.ds.edges.get(an_edge_index).unwrap();
                         (
                             e.curve.clone(),
                             e.t_range,
@@ -629,7 +629,7 @@ impl<'a> super::PaveFiller<'a> {
             // Find which face from the original CB faceset this edge belongs to
             for &fi in &faces {
                 if fi < self.ds.face_count() {
-                    let f = &self.ds.faces[fi];
+                    let f = self.ds.faces.get(fi).unwrap();
                     if f.boundary_edges.contains(&oei)
                         || f.inner_boundary_edges
                             .iter()
@@ -1464,7 +1464,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn reduce_intersection_range(&self, ei: usize, param: f64, tol: f64) -> [f64; 2] {
-        let edge = &self.ds.edges[ei];
+        let edge = self.ds.edges.get(ei).unwrap();
         let mut t_range = edge.t_range;
         for pave in &edge.paves {
             let d = (pave.param - param).abs();
@@ -1780,7 +1780,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     pub(crate) fn update_face_info(&mut self, fi: usize) {
-        let face = &self.ds.faces[fi].clone();
+        let face = self.ds.faces.get(fi).unwrap().clone();
         let mut sc_curves: Vec<usize> = face.face_info.curves_sc.iter().copied().collect();
         // Recompute vertices_in from all IC endpoints on this face
         for &ci in &sc_curves {
@@ -1919,7 +1919,7 @@ impl<'a> super::PaveFiller<'a> {
         if vi >= self.ds.vertex_count() || fi >= self.ds.face_count() {
             return false;
         }
-        let face = &self.ds.faces[fi];
+        let face = self.ds.faces.get(fi).unwrap();
         let tol = face.geom_tol.max(TOLERANCE_ABS);
         for &bvi in &face.boundary_verts {
             if bvi == vi {
@@ -2417,7 +2417,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         // Clone all needed data before mutating self.ds
         let (curve, t_range, origin, geom_tol, is_geometric, location) = {
-            let e = &self.ds.edges[n_e];
+            let e = self.ds.edges.get(n_e).unwrap();
             (
                 e.curve.clone(),
                 e.t_range,
@@ -2455,7 +2455,7 @@ impl<'a> super::PaveFiller<'a> {
         if n_f >= self.ds.face_count() {
             return result;
         }
-        let fi = &self.ds.faces[n_f];
+        let fi = self.ds.faces.get(n_f).unwrap();
         for &pb_idx in fi
             .face_info
             .pave_blocks_on

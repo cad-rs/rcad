@@ -68,8 +68,8 @@ type VectorOfCbk = Vec<SplitBlockCbk>;
 /// in the face and return the same edge index.  Orientation matching
 /// is deferred to GetFaceOff; rcad returns the raw edge index.
 fn get_edge_off(ei: usize, fi: usize, ds: &DS) -> Option<usize> {
-    let face = &ds.faces[fi];
-    if face.boundary_edges.contains(&ei) {
+    let face = ds.faces.get(fi).unwrap();
+    if ds.face_boundary_edges(fi).contains(&ei) {
         return Some(ei);
     }
     for wire in &face.inner_boundary_edges {
@@ -88,7 +88,7 @@ fn build_ef_map(faces: &[usize], ds: &DS) -> BTreeMap<usize, Vec<usize>> {
     let mut ef_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for &fi in faces {
         if let Some(face) = ds.faces.get(fi) {
-            for &ei in &face.boundary_edges {
+            for &ei in ds.face_boundary_edges(fi) {
                 ef_map.entry(ei).or_default().push(fi);
             }
             for wire in &face.inner_boundary_edges {
@@ -310,8 +310,8 @@ fn refine_shell(shell_faces: &[usize], ds: &DS) -> Vec<Vec<usize>> {
             // In rcad, orientation in face is determined by whether the
             // edge is in boundary_edges (forward=true) vs inner wire (forward flag).
             let or1 = {
-                let face = &ds.faces[f1];
-                if face.boundary_edges.contains(&ei) {
+                let face = ds.faces.get(f1).unwrap();
+                if ds.face_boundary_edges(f1).contains(&ei) {
                     true // forward
                 } else {
                     // Look in inner wires
@@ -333,8 +333,8 @@ fn refine_shell(shell_faces: &[usize], ds: &DS) -> Vec<Vec<usize>> {
                 }
             };
             let or2 = {
-                let face = &ds.faces[f2];
-                if face.boundary_edges.contains(&ei) {
+                let face = ds.faces.get(f2).unwrap();
+                if ds.face_boundary_edges(f2).contains(&ei) {
                     true
                 } else {
                     let mut found = false;
@@ -644,8 +644,8 @@ fn split_block(faces: &[usize], ds: &DS, loops: &mut Vec<Vec<usize>>) {
 
             // Iterate edges of the face (OCCT L277: TopExp_Explorer)
             let all_edges: Vec<usize> = {
-                let face = &ds.faces[a_f];
-                face.boundary_edges
+                let face = ds.faces.get(a_f).unwrap();
+                ds.face_boundary_edges(a_f)
                     .iter()
                     .copied()
                     .chain(

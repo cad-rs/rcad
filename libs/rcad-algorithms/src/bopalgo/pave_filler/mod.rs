@@ -496,7 +496,7 @@ impl<'a> PaveFiller<'a> {
             // OCCT L891: const TopoDS_Face& aF = *(TopoDS_Face*)&aMF(i)
             // Architecture diff: HashSet iteration order is arbitrary (not IndexedMap order)
             let fi = *a_mf.iter().nth(i).unwrap();
-            let f = &self.ds.faces[fi];
+            let f = self.ds.faces.get(fi).unwrap();
             // OCCT L893: aExp.Init(aF, aType[1]) — explore EDGE sub-shapes
             // rcad: boundary_edges + inner_boundary_edges (same semantics)
             for &ei in &f.boundary_edges {
@@ -1115,7 +1115,7 @@ impl<'a> PaveFiller<'a> {
                 let ei = edge_or_vertex;
                 let is_micro = {
                     let (sv, ev) = {
-                        let e = &self.ds.edges[ei];
+                        let e = self.ds.edges.get(ei).unwrap();
                         (e.start_vertex, e.end_vertex)
                     };
                     if sv < self.ds.vertex_count() && ev < self.ds.vertex_count() {
@@ -2076,7 +2076,7 @@ impl<'a> PaveFiller<'a> {
         //
         for task in &tasks {
             // L521-523: get split edge and box from BOPAlgo_SplitEdge result
-            let orig = &self.ds.edges[task.edge_idx];
+            let orig = self.ds.edges.get(task.edge_idx).unwrap();
             //
             // Build vertex_params map
             let mut vertex_params = std::collections::HashMap::new();
@@ -2110,7 +2110,7 @@ impl<'a> PaveFiller<'a> {
                 // OCCT's BOPAlgo_SplitEdge computes tolerance from actual
                 // vertex-to-curve distance at the split parameters.
                 let (v1_p, v2_p, orig_curve, orig_tol) = {
-                    let o = &self.ds.edges[task.edge_idx];
+                    let o = self.ds.edges.get(task.edge_idx).unwrap();
                     (
                         self.ds.vertex_point(task.n_v1),
                         self.ds.vertex_point(task.n_v2),

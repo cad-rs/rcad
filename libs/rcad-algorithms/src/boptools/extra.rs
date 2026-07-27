@@ -56,10 +56,10 @@ pub fn make_pcurve(
 /// Checks if an edge appears twice in a face (closed seam edge on periodic surface).
 pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bopds::ds::DS) -> bool {
  // OCCT L293: BRep_Tool::IsClosed(aE, aF)  ?rcad: edge is closed when start==end
- let edge = &ds.edges[ei];
+ let edge = ds.edges.get(ei).unwrap();
  if edge.start_vertex != edge.end_vertex { return false; }
  // OCCT L299-307: count occurrences in the face's edges
- let face = &ds.faces[face_idx];
+ let face = ds.faces.get(face_idx).unwrap();
  let mut cnt = 0usize;
  for &be in &face.boundary_edges {
  if be == ei { cnt += 1; }
@@ -94,8 +94,8 @@ pub fn attach_existing_pcurve(
 
  // OCCT L75: IsSplitToReverse  ?check if new edge is reversed relative to old
  let b_is_to_reverse = {
- let old_edge = &ds.edges[ei_old];
- let new_edge = &ds.edges[ei_new];
+ let old_edge = ds.edges.get(ei_old).unwrap();
+ let new_edge = ds.edges.get(ei_new).unwrap();
  // OCCT: compares tangent vectors; rcad: compare start/end vertices
  new_edge.start_vertex == old_edge.end_vertex
  && new_edge.end_vertex == old_edge.start_vertex
@@ -179,14 +179,14 @@ pub fn update_closed_pcurve(
  let _a_tol = ds.edge_tolerance(ei_new);
  // OCCT L188: get pcurve of new edge on face
  let rep_new = {
- let edge = &ds.edges[ei_new];
+ let edge = ds.edges.get(ei_new).unwrap();
  edge.face_reps.iter().find(|r| r.face_idx == face_idx).cloned()
  };
  let Some(a_c2d_old_ct) = rep_new else { return 1; };
 
  // OCCT L191: get pcurve of old edge on face
  let rep_old = {
- let edge = &ds.edges[ei_old];
+ let edge = ds.edges.get(ei_old).unwrap();
  edge.face_reps.iter().find(|r| r.face_idx == face_idx).cloned()
  };
  let Some(a_c2d_old) = rep_old else { return 1; };
@@ -509,7 +509,7 @@ pub fn correct_curve_on_surface(
  for &ei in &face_edges {
  if ei >= ds.edge_count() { continue; }
  if map_to_avoid.contains(&ei) { continue; }
- let edge = &ds.edges[ei];
+ let edge = ds.edges.get(ei).unwrap();
  let edge_clone = edge.clone();
  let a_new_tol = edge.geom_tol;
  drop(edge);
@@ -561,7 +561,7 @@ pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> (i
  d_min = d_min.min(1);
  d_max = d_max.max(1);
  if ei < ds.edge_count() {
- let e = &ds.edges[ei];
+ let e = ds.edges.get(ei).unwrap();
  if e.start_vertex < ds.vertex_count() {
  d_min = d_min.min(0);
  d_max = d_max.max(0);
@@ -591,8 +591,8 @@ pub fn do_split_seam_on_face(
  ds: &crate::bopds::ds::DS,
 ) -> bool {
  if ei >= ds.edge_count() || face_idx >= ds.face_count() { return false; }
- let edge = &ds.edges[ei];
- let face = &ds.faces[face_idx];
+ let edge = ds.edges.get(ei).unwrap();
+ let face = ds.faces.get(face_idx).unwrap();
  let uv_s = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertex_point(edge.start_vertex));
  let uv_e = crate::bopalgo::builder::world_to_uv(&face.surface, ds.vertex_point(edge.end_vertex));
  let (Some(uva), Some(uvb)) = (uv_s, uv_e) else { return false };
@@ -713,7 +713,7 @@ pub fn is_internal_face_against_solid(
  flist.dedup();
  }
 
- let face = &ds.faces[fi];
+ let face = ds.faces.get(fi).unwrap();
 
  // OCCT L828-874: try to find edge from face in MEF
  let mut i_ret = 0i32; // 0=not IN, 1=IN, 2=unable
@@ -905,7 +905,7 @@ pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop
  let mut b_stop = true;
  for &a_en in a_le {
  if a_m_fence.contains(&a_en) { continue; }
- let a_en_edge = &ds.edges[a_en];
+ let a_en_edge = ds.edges.get(a_en).unwrap();
  let a_vn1 = a_en_edge.start_vertex;
  let a_vn2 = a_en_edge.end_vertex;
  if a_vn1 == a_vn2 { break; } // closed edge
@@ -974,7 +974,7 @@ pub fn compute_state_face_against_solid(
  ds: &crate::bopds::ds::DS,
 ) -> crate::classify::Classification {
  // OCCT L672-686: try to find an edge of the face not on the solid boundary
- let face = &ds.faces[fi];
+ let face = ds.faces.get(fi).unwrap();
  let solid_edge_set: std::collections::HashSet<usize> = solid_face_indices.iter()
  .flat_map(|&sfi| {
  if sfi < ds.face_count() {
@@ -986,7 +986,7 @@ pub fn compute_state_face_against_solid(
  if ds.is_edge_degenerated(ei) { continue; }
  if !solid_edge_set.contains(&ei) {
  // Classify edge midpoint
- let edge = &ds.edges[ei];
+ let edge = ds.edges.get(ei).unwrap();
  let mid = 0.5 * (edge.t_range[0] + edge.t_range[1]);
  let pt = edge.curve.point_at(mid);
  return crate::classify::classify_point(pt, solid_face_indices, ds);

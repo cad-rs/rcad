@@ -492,8 +492,8 @@ impl<'a> super::PaveFiller<'a> {
         if !the_is_plane {
             // L115-129: iterate over edge's curve representations
             // L124: IsCurveOnSurface(theSurface, aLocation) && IsCurveOnClosedSurface()
-            let edge = &self.ds.edges[edge_idx];
-            for rep in &edge.face_reps {
+            let edge = self.ds.edges.get(edge_idx).unwrap();
+            for rep in self.ds.edge_face_reps(edge_idx) {
                 if rep.face_idx == face_idx && rep.pcurve2.is_some() {
                     return true;
                 }

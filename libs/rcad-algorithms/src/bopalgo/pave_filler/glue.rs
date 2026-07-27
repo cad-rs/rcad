@@ -160,8 +160,8 @@ impl<'a> super::PaveFiller<'a> {
             return false;
         }
 
-        let face1 = &self.ds.faces[f1];
-        let face2 = &self.ds.faces[f2];
+        let face1 = self.ds.faces.get(f1).unwrap();
+        let face2 = self.ds.faces.get(f2).unwrap();
 
         // Faces must come from different original shapes
         if face1.origin == face2.origin {
@@ -207,8 +207,8 @@ impl<'a> super::PaveFiller<'a> {
         tol: f64,
     ) -> Option<PartialOverlapInfo> {
         // First check if surfaces are compatible for overlap
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
+        let face1 = self.ds.faces.get(f1_idx).unwrap();
+        let face2 = self.ds.faces.get(f2_idx).unwrap();
 
         // Skip if same origin
         if face1.origin == face2.origin {
@@ -962,8 +962,8 @@ impl<'a> super::PaveFiller<'a> {
         f2_idx: usize,
         tangent_threshold: f64,
     ) -> Option<NearTangentFaceInfo> {
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
+        let face1 = self.ds.faces.get(f1_idx).unwrap();
+        let face2 = self.ds.faces.get(f2_idx).unwrap();
 
         // Skip if same origin
         if face1.origin == face2.origin {
@@ -1235,8 +1235,8 @@ impl<'a> super::PaveFiller<'a> {
         f2_idx: usize,
         coincident_threshold: f64,
     ) -> Option<NearCoincidentFaceInfo> {
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
+        let face1 = self.ds.faces.get(f1_idx).unwrap();
+        let face2 = self.ds.faces.get(f2_idx).unwrap();
 
         // Skip if same origin
         if face1.origin == face2.origin {
@@ -1307,7 +1307,7 @@ impl<'a> super::PaveFiller<'a> {
         face_idx: usize,
         samples_per_dim: usize,
     ) -> Vec<DVec3> {
-        let _face = &self.ds.faces[face_idx];
+        let _face = self.ds.faces.get(face_idx).unwrap();
         let boundary = self.ds.face_boundary_points(face_idx);
 
         if boundary.len() < 3 {
@@ -1476,8 +1476,8 @@ impl<'a> super::PaveFiller<'a> {
         gap_threshold: f64,
         coincident_tol: f64,
     ) -> Option<MicroGapInfo> {
-        let _edge1 = &self.ds.edges[e1];
-        let _edge2 = &self.ds.edges[e2];
+        let _edge1 = self.ds.edges.get(e1).unwrap();
+        let _edge2 = self.ds.edges.get(e2).unwrap();
 
         // Sample points along both edges
         let pts1 = self.sample_edge_points(e1, 8);
@@ -1517,7 +1517,7 @@ impl<'a> super::PaveFiller<'a> {
 
     /// OCCT: sample points along edge
     pub(crate) fn sample_edge_points(&self, edge_idx: usize, n_samples: usize) -> Vec<DVec3> {
-        let edge = &self.ds.edges[edge_idx];
+        let edge = self.ds.edges.get(edge_idx).unwrap();
         let [t0, t1] = edge.t_range;
 
         (0..n_samples)
@@ -1536,8 +1536,8 @@ impl<'a> super::PaveFiller<'a> {
         e2: usize,
         angle_tol: f64,
     ) -> bool {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
+        let edge1 = self.ds.edges.get(e1).unwrap();
+        let edge2 = self.ds.edges.get(e2).unwrap();
 
         // Get edge directions
         let dir1 = match &edge1.curve {
@@ -1609,8 +1609,8 @@ impl<'a> super::PaveFiller<'a> {
         e2: usize,
         coincident_threshold: f64,
     ) -> Option<CoincidentEdgeInfo> {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
+        let edge1 = self.ds.edges.get(e1).unwrap();
+        let edge2 = self.ds.edges.get(e2).unwrap();
 
         // Skip if same origin
         if edge1.origin == edge2.origin {

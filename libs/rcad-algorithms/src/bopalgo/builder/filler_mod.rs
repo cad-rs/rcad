@@ -202,7 +202,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // 2. Source edge TShapes at flat indices nV..nV+nE
         for ei in 0..nE {
-            let e = &self.ds.edges[ei];
+            let e = self.ds.edges.get(ei).unwrap();
             let sv = t.ensure_vertex_at(e.start_vertex, self.ds.vertex_point(e.start_vertex));
             let ev = t.ensure_vertex_at(e.end_vertex, self.ds.vertex_point(e.end_vertex));
             t.ensure_edge_at(nV + ei, Some(e.curve.clone()), sv, ev, e.t_range);
@@ -220,7 +220,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // 4. Source face TShapes at flat indices f_base + side_offset + sf_idx
         for fi in 0..self.ds.face_count() {
-            let df = &self.ds.faces[fi];
+            let df = self.ds.faces.get(fi).unwrap();
             let is_a = self.ds.face_origin(fi) == ShapeOrigin::ShapeA;
             let sf_idx = self.ds.source_face_idx(fi);
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
@@ -1760,7 +1760,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // Iterate sub-shapes (faces) of the shell.
             for &dsfi in ds_shell {
-                let dsf = &self.ds.faces[dsfi];
+                let dsf = self.ds.faces.get(dsfi).unwrap();
                 if dsf.origin != origin_side {
                     continue;
                 }
@@ -1863,7 +1863,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let imgs = self.my_images.borrow();
         for dsfi in 0..self.ds.face_count() {
-            let df = &self.ds.faces[dsfi];
+            let df = self.ds.faces.get(dsfi).unwrap();
             let src_flat = f_base
                 + (if df.origin == ShapeOrigin::ShapeA {
                     0
@@ -2149,7 +2149,7 @@ impl<'a> BooleanBuilder<'a> {
                             if ei >= self.ds.edge_count() {
                                 continue;
                             }
-                            let e = &self.ds.edges[ei];
+                            let e = self.ds.edges.get(ei).unwrap();
                             let sv_sr = t.add_tvertex(self.ds.vertex_point(e.start_vertex));
                             let ev_sr = t.add_tvertex(self.ds.vertex_point(e.end_vertex));
                             let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
@@ -2220,7 +2220,7 @@ impl<'a> BooleanBuilder<'a> {
                     {
                         continue;
                     }
-                    let df = &self.ds.faces[dsfi];
+                    let df = self.ds.faces.get(dsfi).unwrap();
                     let side_offset = if side == 0 {
                         0usize
                     } else {
@@ -2245,7 +2245,7 @@ impl<'a> BooleanBuilder<'a> {
                             if ei >= self.ds.edge_count() {
                                 continue;
                             }
-                            let e = &self.ds.edges[ei];
+                            let e = self.ds.edges.get(ei).unwrap();
                             let sv_sr = t.add_tvertex(self.ds.vertex_point(e.start_vertex));
                             let ev_sr = t.add_tvertex(self.ds.vertex_point(e.end_vertex));
                             let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);

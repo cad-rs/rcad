@@ -479,7 +479,7 @@ pub fn fill_internals(
                     Some((p1.point + p2.point) * 0.5)
                 }),
                 2 => {
-                    let face = &ds.faces[part.idx];
+                    let face = ds.faces.get(part.idx).unwrap();
                     if !face.boundary_verts.is_empty() {
                         let mut sum = glam::DVec3::ZERO;
                         for &vi in &face.boundary_verts {
@@ -603,7 +603,7 @@ pub fn compute_state_by_one_point(
         1 => {
             // OCCT L637-639: EDGE =use edge midpoint
             if shape_idx < ds.edge_count() {
-                let e = &ds.edges[shape_idx];
+                let e = ds.edges.get(shape_idx).unwrap();
                 let p1 = if e.start_vertex < ds.vertex_count() {
                     ds.vertex_point(e.start_vertex)
                 } else {
@@ -622,7 +622,7 @@ pub fn compute_state_by_one_point(
         2 => {
             // OCCT L640-644: FACE =use face centroid
             if shape_idx < ds.face_count() {
-                let f = &ds.faces[shape_idx];
+                let f = ds.faces.get(shape_idx).unwrap();
                 if f.boundary_verts.is_empty() {
                     return crate::classify::Classification::Out;
                 }
@@ -844,7 +844,7 @@ pub fn get_face_off(ei: usize, fi: usize, candidates: &[(usize, usize)], ds: &DS
     }
 
     // OCCT L1012-1016: edge midpoint and tangent
-    let edge = &ds.edges[ei];
+    let edge = ds.edges.get(ei).unwrap();
     let t_mid = intermediate_point(edge.t_range[0], edge.t_range[1]);
     let _edge_mid = edge.curve.point_at(t_mid);
     let tangent = edge_tangent(&edge.curve, t_mid);
@@ -856,7 +856,7 @@ pub fn get_face_off(ei: usize, fi: usize, candidates: &[(usize, usize)], ds: &DS
 
     // OCCT L1018-1024: build plane perpendicular to tangent
     // (In rcad: project normals onto the plane perpendicular to tangent)
-    let reference_face = &ds.faces[fi];
+    let reference_face = ds.faces.get(fi).unwrap();
     let a_dn1 = reference_face.normal.normalize();
     let a_dbf1 = a_dn1.cross(a_dtgt).normalize();
     let a_dtf = a_dn1.cross(a_dbf1).normalize();
@@ -869,7 +869,7 @@ pub fn get_face_off(ei: usize, fi: usize, candidates: &[(usize, usize)], ds: &DS
         if cfi == fi {
             continue;
         }
-        let cand_face = &ds.faces[cfi];
+        let cand_face = ds.faces.get(cfi).unwrap();
         let a_dn2 = cand_face.normal.normalize();
         let a_dbf2 = a_dn2.cross(a_dtgt).normalize();
 
@@ -1178,8 +1178,8 @@ pub fn treat_compound(shape: &topods::ShapeRef, brep: &topods::BRep) -> Vec<topo
 /// IsValidPointForFace; rcad approximates with vertex-distance check
 /// which is sufficient for the coplanar-face dedup use case.
 pub fn are_faces_same_domain(fi_a: usize, fi_b: usize, ds: &DS) -> bool {
-    let fa = &ds.faces[fi_a];
-    let fb = &ds.faces[fi_b];
+    let fa = ds.faces.get(fi_a).unwrap();
+    let fb = ds.faces.get(fi_b).unwrap();
     if std::mem::discriminant(&fa.surface) != std::mem::discriminant(&fb.surface) {
         return false;
     }
@@ -1493,7 +1493,7 @@ pub fn wires_to_faces(
             if ei >= ds.edge_count() {
                 continue;
             }
-            let edge = &ds.edges[ei];
+            let edge = ds.edges.get(ei).unwrap();
             // Compute tangent (cached: OCCT aDMEdgeTgt)
             let tangent = a_dm_edge_tgt
                 .entry(ei)
@@ -1619,7 +1619,7 @@ pub fn wires_to_faces(
             if ei >= ds.edge_count() {
                 continue;
             }
-            let de = &ds.edges[ei];
+            let de = ds.edges.get(ei).unwrap();
             let p1 = if de.start_vertex < ds.vertex_count() {
                 ds.vertex_point(de.start_vertex)
             } else {
@@ -1798,7 +1798,7 @@ pub fn is_hole(
 ) -> bool {
     let mut area = 0.0;
     for &(ei, fwd) in wire_edges {
-        let edge = &ds.edges[ei];
+        let edge = ds.edges.get(ei).unwrap();
         let rep = edge.face_reps.iter().find(|r| r.face_idx == face_idx);
         let (Some(ref pc), Some(range)) = (rep.map(|r| &r.pcurve), rep.map(|r| r.pcurve_range))
         else {
@@ -1829,12 +1829,12 @@ pub fn is_hole(
 /// -1 if opposite, 0 if no shared non-closed edge found.
 pub fn sense(fi_a: usize, fi_b: usize, ds: &crate::bopds::ds::DS) -> i8 {
     // OCCT L1210-1238: find a non-degenerate, non-closed edge shared by both faces
-    let face_a = &ds.faces[fi_a];
-    let face_b = &ds.faces[fi_b];
+    let face_a = ds.faces.get(fi_a).unwrap();
+    let face_b = ds.faces.get(fi_b).unwrap();
     for &ei in &face_a.boundary_edges {
         if face_b.boundary_edges.contains(&ei) {
             // Found shared edge
-            let edge = &ds.edges[ei];
+            let edge = ds.edges.get(ei).unwrap();
             if edge.start_vertex == edge.end_vertex {
                 continue; // closed edge, skip
             }
@@ -1866,7 +1866,7 @@ pub fn is_open_shell(shell_faces: &[usize], ds: &crate::bopds::ds::DS) -> bool {
         if fi >= ds.face_count() {
             continue;
         }
-        let f = &ds.faces[fi];
+        let f = ds.faces.get(fi).unwrap();
         for &ei in &f.boundary_edges {
             if ds.is_edge_degenerated(ei) {
                 continue;
@@ -1911,7 +1911,7 @@ pub fn is_block_in_on_face(
     }
 
     // Get edge curve for point evaluation
-    let edge = &ds.edges[ei];
+    let edge = ds.edges.get(ei).unwrap();
 
     // OCCT L1988-2007: test near-start point
     let p11 = edge.curve.point_at(f1);
@@ -1930,7 +1930,7 @@ pub fn is_block_in_on_face(
     let p_mid = edge.curve.point_at(m1);
 
     // Project onto face surface
-    let face = &ds.faces[face_idx];
+    let face = ds.faces.get(face_idx).unwrap();
     let proj_dist = match &face.surface {
         rcad_kernel::geom::Surface3::Plane(pl) => (p_mid - pl.origin).dot(pl.normal).abs(),
         _ => {
@@ -1961,7 +1961,7 @@ pub(crate) fn is_point_in_on_face(
     face_idx: usize,
     ds: &crate::bopds::ds::DS,
 ) -> bool {
-    let face = &ds.faces[face_idx];
+    let face = ds.faces.get(face_idx).unwrap();
     match &face.surface {
         rcad_kernel::geom::Surface3::Plane(pl) => {
             let dist = (*pt - pl.origin).dot(pl.normal).abs();
@@ -2092,7 +2092,7 @@ pub fn make_edge(
 /// Creates a copy of a DS edge (deep copy with new index).
 pub fn copy_ds_edge(ds: &mut crate::bopds::ds::DS, ei: usize) -> usize {
     let new_ei = ds.edge_count();
-    let src = &ds.edges[ei].clone();
+    let src = ds.edges.get(ei).unwrap().clone();
     ds.push_edge(src.clone(), None);
     new_ei
 }
@@ -2110,7 +2110,7 @@ pub fn make_split_edge(
 ) -> usize {
     // Copy fields from base edge before mutable borrow
     let (curve, t_range_src, origin, geom_tol, face_reps, is_internal) = {
-        let base = &ds.edges[base_ei];
+        let base = ds.edges.get(base_ei).unwrap();
         (
             base.curve.clone(),
             base.t_range,

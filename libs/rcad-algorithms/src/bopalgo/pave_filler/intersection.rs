@@ -401,7 +401,7 @@ impl<'a> super::PaveFiller<'a> {
             let ds_i = ds_start + local_i;
             indices.push(ds_i);
             let aabb = if is_edge {
-                let e = &self.ds.edges[ds_i];
+                let e = self.ds.edges.get(ds_i).unwrap();
                 let pts = [
                     self.ds.vertex_point(e.start_vertex),
                     self.ds.vertex_point(e.end_vertex),
@@ -451,7 +451,7 @@ impl<'a> super::PaveFiller<'a> {
         for ds_i in 0..n {
             indices.push(ds_i);
             let aabb = if is_edge {
-                let e = &self.ds.edges[ds_i];
+                let e = self.ds.edges.get(ds_i).unwrap();
                 // OCCT BOPDS_ShapeInfo::Box() computes AABB from full curve geometry,
                 // not just endpoint vertices. For Line edges, endpoints suffice.
                 // For Circle/Ellipse edges, endpoints alone miss the full extent.
@@ -1020,8 +1020,8 @@ impl<'a> super::PaveFiller<'a> {
             let sr2 = [task.aT21.min(task.aT22), task.aT21.max(task.aT22)];
 
             // OCCT L294-301: if (!IsDone() || HasErrors()) continue;
-            let edge1 = &self.ds.edges[nE1];
-            let edge2 = &self.ds.edges[nE2];
+            let edge1 = self.ds.edges.get(nE1).unwrap();
+            let edge2 = self.ds.edges.get(nE2).unwrap();
             let tol = self.ee_tol(nE1, nE2);
             let e1_curve = edge1.curve.clone();
             let e2_curve = edge2.curve.clone();
@@ -1955,7 +1955,7 @@ impl<'a> super::PaveFiller<'a> {
         for local_i in 0..n {
             let fi = start + local_i;
             indices.push(fi);
-            let f = &self.ds.faces[fi];
+            let f = self.ds.faces.get(fi).unwrap();
             let mut aabb = Aabb::empty();
             // Boundary vertices
             for &vi in &f.boundary_verts {
@@ -1988,7 +1988,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut aabbs = Vec::with_capacity(n);
         for fi in 0..n {
             indices.push(fi);
-            let f = &self.ds.faces[fi];
+            let f = self.ds.faces.get(fi).unwrap();
             let mut aabb = Aabb::empty();
             for &vi in &f.boundary_verts {
                 if vi < self.ds.vertex_count() {
@@ -2288,8 +2288,8 @@ impl<'a> super::PaveFiller<'a> {
         range2: [f64; 2],
         modified: &mut std::collections::HashSet<usize>,
     ) {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
+        let edge1 = self.ds.edges.get(e1).unwrap();
+        let edge2 = self.ds.edges.get(e2).unwrap();
         let tol = self.ee_tol(e1, e2);
         // Capture all edge data before mutable borrow
         let e1_curve = edge1.curve.clone();
@@ -2446,8 +2446,8 @@ impl<'a> super::PaveFiller<'a> {
     }
     /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
     pub(crate) fn check_edge_edge(&mut self, e1: usize, e2: usize) {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
+        let edge1 = self.ds.edges.get(e1).unwrap();
+        let edge2 = self.ds.edges.get(e2).unwrap();
         let tol = self.ee_tol(e1, e2);
 
         let hits: Vec<(f64, f64, DVec3)> = match (&edge1.curve, &edge2.curve) {
@@ -2870,7 +2870,7 @@ impl<'a> super::PaveFiller<'a> {
     /// Uses fclass2d for all surface types to properly check
     /// against the face's trimming wires (not just parametric bounds).
     pub(crate) fn is_point_in_face(&mut self, point: DVec3, face_idx: usize, tol: f64) -> bool {
-        let face = &self.ds.faces[face_idx];
+        let face = self.ds.faces.get(face_idx).unwrap();
         match &face.surface {
             Surface3::Plane(plane) => {
                 let verts = self.ds.face_boundary_points(face_idx);

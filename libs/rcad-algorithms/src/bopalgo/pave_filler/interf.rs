@@ -53,7 +53,7 @@ impl<'a> PaveFiller<'a> {
             }
 
             // L1056-1079: iterate PBs of this edge
-            let a_lpb = &self.ds.edges[ei].pave_blocks;
+            let a_lpb = self.ds.edge_pave_blocks(ei);
             for local_i in 0..a_lpb.len() {
                 let a_pb = &a_lpb[local_i];
 
@@ -127,7 +127,7 @@ impl<'a> PaveFiller<'a> {
             // L1120-1225: iterate all PBs in this group as pairs (i < j)
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
-                let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
+                let pb1 = self.ds.edge_pave_blocks(ei1).get(pb1_local).unwrap();
                 let cb1 = self.ds.common_block(pb1);
                 let n_e1 = pb1.0.read().unwrap().original_edge;
                 let i_r1 = self.ds.rank(n_e1);
@@ -152,7 +152,7 @@ impl<'a> PaveFiller<'a> {
                 // L1141: nested iterator (i < j)
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
-                    let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
+                    let pb2 = self.ds.edge_pave_blocks(ei2).get(pb2_local).unwrap();
                     let cb2 = self.ds.common_block(pb2);
                     let n_e2 = pb2.0.read().unwrap().original_edge;
                     let i_r2 = self.ds.rank(n_e2);
@@ -370,8 +370,8 @@ impl<'a> PaveFiller<'a> {
             let key1 = (entry.ei1, entry.pb1_local);
             let key2 = (entry.ei2, entry.pb2_local);
 
-            let pb1 = &self.ds.edges[entry.ei1].pave_blocks[entry.pb1_local];
-            let pb2 = &self.ds.edges[entry.ei2].pave_blocks[entry.pb2_local];
+            let pb1 = self.ds.edge_pave_blocks(entry.ei1).get(entry.pb1_local).unwrap();
+            let pb2 = self.ds.edge_pave_blocks(entry.ei2).get(entry.pb2_local).unwrap();
 
             // For each of the two PBs, if it belongs to a CommonBlock,
             // connect all PBs in that CB as mutual siblings.
@@ -427,7 +427,7 @@ impl<'a> PaveFiller<'a> {
                 let mut a_cb: Option<crate::bopds::common_block::CommonBlock> = None;
                 let mut cb_idx: Option<usize> = None;
                 for &(ei, local_i) in block {
-                    let pb = &self.ds.edges[ei].pave_blocks[local_i];
+                    let pb = self.ds.edge_pave_blocks(ei).get(local_i).unwrap();
                     if self.ds.is_common_block(pb) {
                         let existing = self.ds.common_block(pb).unwrap();
                         // Collect faces from existing CB
@@ -677,7 +677,7 @@ impl<'a> PaveFiller<'a> {
             // L947-1107: iterate PBs overlapping this face from BVH
             for &a_pb_idx in &a_overlapping {
                 let &(ne, local_i) = &the_mpb[a_pb_idx];
-                let a_pb = &self.ds.edges[ne].pave_blocks[local_i];
+                let a_pb = self.ds.edge_pave_blocks(ne).get(local_i).unwrap();
 
                 // L952-955: skip if PB already in face's PB sets
                 // OCCT: if (pMPBF[0]->Contains(aPB) || ...)
@@ -767,7 +767,7 @@ impl<'a> PaveFiller<'a> {
 
                 // L1038-1052: non-plane/non-line → angle check for bUseAddTol
                 // OCCT: if (aSurfAdaptor.GetType() != GeomAbs_Plane || aBAC.GetType() != GeomAbs_Line)
-                let a_face = &self.ds.faces[fi];
+                let a_face = self.ds.faces.get(fi).unwrap();
                 let is_plane = matches!(a_face.surface, Surface3::Plane(_));
                 let is_line = matches!(*a_e_curve, Curve3::Line(_));
                 if !is_plane || !is_line {
@@ -1002,7 +1002,7 @@ impl<'a> PaveFiller<'a> {
 
     fn point_on_face(&self, pt: DVec3, fi: usize, tol: f64) -> bool {
         use rcad_kernel::geom::{Surface3, SurfaceEval};
-        let face = &self.ds.faces[fi];
+        let face = self.ds.faces.get(fi).unwrap();
         match &face.surface {
             Surface3::Plane(p) => (pt - p.origin).dot(p.normal).abs() <= tol,
             Surface3::Sphere(s) => ((pt - s.center).length() - s.radius).abs() <= tol,

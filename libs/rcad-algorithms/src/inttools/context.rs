@@ -317,9 +317,9 @@ impl Context {
         }
         // OCCT L469-493: projection found but too far 鈥?fallback: check endpoint vertices
         // (when the point is beyond the curve's range, nearest endpoint may be within tol)
-        let edge = &ds.edges[ei];
-        let sv = edge.start_vertex;
-        let ev = edge.end_vertex;
+        let edge = ds.edges.get(ei).unwrap();
+        let sv = ds.edge_start_vertex_ds(ei);
+        let ev = ds.edge_end_vertex_ds(ei);
         let mut best_dist = f64::MAX;
         let mut best_param = param;
         for &vi in &[sv, ev] {
