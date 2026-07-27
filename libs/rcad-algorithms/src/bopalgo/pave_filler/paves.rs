@@ -288,9 +288,9 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT: InitPaveBlock reads from the edge's internal pave list, which is
         // equivalent to edge_paves (parallel array). split_pave_blocks checks
         // edge_paves.len(), so both must be in sync.
-        self.ds.edges[ei].paves.push(pave);
+        self.ds.edge_paves_mut(ei).push(pave);
         if ei < self.ds.edge_count() {
-            self.ds.edges[ei].paves.push(pave);
+            self.ds.edge_paves_mut(ei).push(pave);
         }
         // Find the correct sub-PB and add to its ext_paves
         let pbs = &self.ds.edge_pave_blocks_mut(ei).clone();
@@ -1703,7 +1703,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L792-840: assign computed pcurves to edge face_reps
         use crate::bopds::ds::DSCurveRepOnFace;
         for (ei, fi, pcurve, t0, t1) in applied_pcurves {
-            self.ds.edges[ei].face_reps.push(DSCurveRepOnFace {
+            self.ds.edge_face_reps_mut(ei).push(DSCurveRepOnFace {
                 face_idx: fi,
                 pcurve,
                 pcurve2: None,

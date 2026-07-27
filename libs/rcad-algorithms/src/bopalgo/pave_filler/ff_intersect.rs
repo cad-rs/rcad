@@ -350,7 +350,7 @@ impl<'a> super::PaveFiller<'a> {
             if a_nb_curves > 0 {
                 // OCCT L585-586: BRep_Tool::MaxTolerance(Face1, TopAbs_VERTEX), Face2
                 // rcad: iterate boundary vertices to find max vertex tolerance
-                let a_max_vertex_tol = self.ds.faces[k_n_f1]
+                let a_max_vertex_tol = self.ds.faces.get(k_n_f1).unwrap()
                     .boundary_verts
                     .iter()
                     .chain(self.ds.face_boundary_verts(k_n_f2).iter())

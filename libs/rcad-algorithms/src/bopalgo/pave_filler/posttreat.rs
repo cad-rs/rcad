@@ -135,7 +135,7 @@ impl<'a> PaveFiller<'a> {
                         r.new_edge.is_some(),
                     )
                 } else if pb_key < self.ds.edge_count() {
-                    let pb = self.ds.edges[pb_key]
+                    let pb = self.ds.edges.get(pb_key).unwrap()
                         .pave_blocks
                         .first()
                         .map(|spb| spb.0.read().unwrap());

@@ -46,7 +46,7 @@ pub fn make_pcurve(
  start_param: pc_range[0],
  end_param: pc_range[1],
  };
- ds.edges[ei].face_reps.push(rep);
+ ds.edge_face_reps_mut(ei).push(rep);
  }
  // OCCT L1716: BRepLib::SameParameter(aE)  ?rcad: mark edge as needing param sync
  ds.edge_data_mut(ei).tolerance = tol_e;
@@ -433,8 +433,8 @@ pub fn correct_point_on_curve(
  let start_vi = ds.edge_start_vertex_ds(ei);
  let end_vi = ds.edge_end_vertex_ds(ei);
  let t_range = ds.edge_range(ei);
- let vp_sv = ds.edges[ei].vertex_params.get(&start_vi).copied();
- let vp_ev = ds.edges[ei].vertex_params.get(&end_vi).copied();
+ let vp_sv = ds.edge_vertex_params(ei).get(&start_vi).copied();
+ let vp_ev = ds.edge_vertex_params(ei).get(&end_vi).copied();
  let curve = ds.edge_curve(ei).cloned().unwrap();
 
  // OCCT L442-443: TopoDS_Iterator aItS(aE); for (; aItS.More(); aItS.Next())

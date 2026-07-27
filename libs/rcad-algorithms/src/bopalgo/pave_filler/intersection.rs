@@ -3135,7 +3135,7 @@ impl<'a> super::PaveFiller<'a> {
                 new_vertex: new_v,
             });
             // Only mark vertices_on if actually inserted (avoid duplicate insert msg)
-            if !self.ds.faces[face_idx]
+            if !self.ds.faces.get(face_idx).unwrap()
                 .face_info
                 .vertices_on
                 .contains(&new_v)

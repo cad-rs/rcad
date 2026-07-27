@@ -426,7 +426,7 @@ impl Context {
             if let Some(bounds) = self.uv_bounds_cache[face_idx] {
                 return bounds;
             }
-            let bounds = ds.faces[face_idx].surface.default_domain();
+            let bounds = ds.face_surface(face_idx).unwrap().default_domain();
             self.uv_bounds_cache[face_idx] = Some(bounds);
             return bounds;
         }
@@ -653,7 +653,7 @@ mod tests {
         let cap_edge = (0..ds.a_edge_count)
             .find(|&edge_idx| {
                 matches!(
-                    ds.edges[edge_idx].curve,
+                    ds.edge_curve(edge_idx).unwrap(),
                     Curve3::Circle(circle) if (circle.center.z - 1.0).abs() <= 1.0e-10
                 )
             })

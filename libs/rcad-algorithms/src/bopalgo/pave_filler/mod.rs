@@ -180,9 +180,8 @@ fn update_existing_pave_blocks(
                 a_cb.add_pave_block(new_g_idx, old_face_idx);
                 // Append to edge's PB list
                 if orig_e < ds.edge_count() {
-                    ds.edges[orig_e]
-                        .pave_blocks
-                        .push(ds.pave_blocks[new_g_idx].clone());
+                    let new_pb = ds.pave_blocks[new_g_idx].clone();
+                    ds.edge_pave_blocks_mut(orig_e).push(new_pb);
                 }
             }
             a_cb.set_faces(orig_faces.clone());
@@ -207,9 +206,8 @@ fn update_existing_pave_blocks(
         };
         if orig_e < ds.edge_count() {
             for &rp_idx in a_lpb {
-                ds.edges[orig_e]
-                    .pave_blocks
-                    .push(ds.pave_blocks[rp_idx].clone());
+                let new_pb = ds.pave_blocks[rp_idx].clone();
+                ds.edge_pave_blocks_mut(orig_e).push(new_pb);
                 new_pb_list.push(rp_idx);
             }
         }
@@ -968,7 +966,7 @@ impl<'a> PaveFiller<'a> {
         // Collect CB indices first to avoid borrow conflicts
         let mut cb_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for ei in 0..self.ds.edge_count() {
-            for spb in &self.ds.edges[ei].pave_blocks {
+            for spb in self.ds.edge_pave_blocks(ei) {
                 let pb = spb.0.read().unwrap();
                 if let Some(cb_idx) = pb.common_block_idx {
                     cb_indices.insert(cb_idx);
@@ -981,7 +979,7 @@ impl<'a> PaveFiller<'a> {
             let vertices: Vec<usize> = {
                 let mut verts = Vec::new();
                 for ei in 0..self.ds.edge_count() {
-                    for spb in &self.ds.edges[ei].pave_blocks {
+                    for spb in self.ds.edge_pave_blocks(ei) {
                         let pb = spb.0.read().unwrap();
                         if pb.common_block_idx == Some(cb_idx) {
                             let (nv1, nv2) = pb.indices();
@@ -1010,7 +1008,7 @@ impl<'a> PaveFiller<'a> {
         let mut updates: Vec<(usize, f64)> = Vec::new();
         let mut a_mpb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for ei in 0..self.ds.edge_count() {
-            for spb in &self.ds.edges[ei].pave_blocks {
+            for spb in self.ds.edge_pave_blocks(ei) {
                 let pb = spb.0.read().unwrap();
                 if let Some(cb_idx) = pb.common_block_idx {
                     if cb_idx < self.ds.common_blocks.len() {
@@ -1182,7 +1180,7 @@ impl<'a> PaveFiller<'a> {
 
         // OCCT L3748-3760: pool PBs (all edge PBs)
         for ei in 0..self.ds.edge_count() {
-            for spb in &self.ds.edges[ei].pave_blocks {
+            for spb in self.ds.edge_pave_blocks(ei) {
                 an_all_pbs.push(spb.clone());
             }
         }

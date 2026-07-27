@@ -409,7 +409,7 @@ impl<'a> PaveFiller<'a> {
                 // Collect unique face indices for this block
                 let mut a_lfaces: Vec<usize> = Vec::new();
                 for &(ei, local_i) in block {
-                    let face_indices: Vec<usize> = self.ds.edges[ei]
+                    let face_indices: Vec<usize> = self.ds.edges.get(ei).unwrap()
                         .face_reps
                         .iter()
                         .map(|r| r.face_idx)

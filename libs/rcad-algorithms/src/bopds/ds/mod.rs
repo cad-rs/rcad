@@ -225,8 +225,14 @@ impl DS {
     }
 
     /// Edge paves from parallel array.
+    #[allow(dead_code)]
     pub fn edge_paves(&self, ei: usize) -> &[crate::bopds::pave::Pave] {
         self.edges.get(ei).map_or(&[], |e| &e.paves)
+    }
+
+    /// Mutable Edge paves.
+    pub fn edge_paves_mut(&mut self, ei: usize) -> &mut Vec<crate::bopds::pave::Pave> {
+        &mut self.edges[ei].paves
     }
 
     /// Edge pave_blocks.
@@ -254,6 +260,11 @@ impl DS {
     /// Edge face_reps from parallel array.
     pub fn edge_face_reps(&self, ei: usize) -> &[DSCurveRepOnFace] {
         self.edges.get(ei).map_or(&[], |e| &e.face_reps)
+    }
+
+    /// Mutable edge face_reps for mutation.
+    pub fn edge_face_reps_mut(&mut self, ei: usize) -> &mut Vec<DSCurveRepOnFace> {
+        &mut self.edges[ei].face_reps
     }
 
     /// Edge is_internal from parallel array.
