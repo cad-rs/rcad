@@ -49,7 +49,6 @@ impl DS {
             intersection_curves: Vec::new(),
             shared_topology: Default::default(),
             shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
-            same_domain_overlaps: Vec::new(),
             common_blocks: Vec::new(),
             locations: Vec::new(),
             pave_blocks: Vec::new(),

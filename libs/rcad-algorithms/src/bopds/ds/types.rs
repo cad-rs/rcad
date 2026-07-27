@@ -770,9 +770,7 @@ pub struct DS {
     /// =BOPDS_ShapeSD =same-domain shape mapping (built from shared_topology).
     pub shape_sd: ShapeSD,
     /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
-    /// Each entry is (face_a_index, face_b_index, overlap_boundary_in_3d).
-    /// Populated during PaveFiller's coplanar analysis, consumed by Builder.
-    pub same_domain_overlaps: Vec<(usize, usize, Vec<DVec3>)>,
+    /// Phase 3: same_domain_overlaps removed (was declared but never read).
 
     /// Common blocks grouping geometrically coincident PaveBlocks
     /// (OCCT: BOPDS_CommonBlock). Populated by the PaveFiller

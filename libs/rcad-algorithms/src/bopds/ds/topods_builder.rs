@@ -33,7 +33,6 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         intersection_curves: Vec::new(),
         shared_topology: SharedTopologyInfo::default(),
         shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
-        same_domain_overlaps: Vec::new(),
         common_blocks: Vec::new(),
         pave_blocks: Vec::new(),
         pave_blocks_pool: Vec::new(),
