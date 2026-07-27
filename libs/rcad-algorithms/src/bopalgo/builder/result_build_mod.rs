@@ -1096,21 +1096,18 @@ impl<'a> BooleanBuilder<'a> {
                 let e_base = self.ds.vertex_count();
                 let ei = a_s.index.saturating_sub(e_base);
                 if ei < self.ds.edge_count() {
-                    let edge = &self.ds.edges[ei];
+                    let sv_ds = self.ds.edge_start_vertex_ds(ei);
+                    let ev_ds = self.ds.edge_end_vertex_ds(ei);
                     // Ensure vertex TShapes exist at correct flat indices
-                    let sv_sr = t.ensure_vertex_at(
-                        edge.start_vertex,
-                        self.ds.vertex_point(edge.start_vertex),
-                    );
-                    let ev_sr = t
-                        .ensure_vertex_at(edge.end_vertex, self.ds.vertex_point(edge.end_vertex));
+                    let sv_sr = t.ensure_vertex_at(sv_ds, self.ds.vertex_point(sv_ds));
+                    let ev_sr = t.ensure_vertex_at(ev_ds, self.ds.vertex_point(ev_ds));
                     // Create edge TShape at flat index e_base + ei
                     let te = t.ensure_edge_at(
                         e_base + ei,
-                        Some(edge.curve.clone()),
+                        self.ds.edge_curve(ei).cloned(),
                         sv_sr,
                         ev_sr,
-                        edge.t_range,
+                        self.ds.edge_range(ei),
                     );
                     self.my_edge_map.borrow_mut()[ei] = te;
                 }
