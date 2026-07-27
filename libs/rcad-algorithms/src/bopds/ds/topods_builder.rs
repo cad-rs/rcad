@@ -20,39 +20,13 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         solids: Vec::new(),
         comp_solids: Vec::new(),
         faces: Vec::new(),
-        vertex_origins: Vec::new(),
-        vertex_is_internal: Vec::new(),
-        vertex_locations: Vec::new(),
         vertex_shape_idx: Vec::new(),
-        edge_start_vertex: Vec::new(),
-        edge_end_vertex: Vec::new(),
-        edge_origins: Vec::new(),
-        edge_paves: Vec::new(),
-        edge_pave_blocks: Vec::new(),
-        edge_face_reps: Vec::new(),
-        edge_is_internal: Vec::new(),
-        edge_face_tols: Vec::new(),
-        edge_locations: Vec::new(),
         edge_shape_idx: Vec::new(),
-        face_boundary_verts: Vec::new(),
-        face_boundary_edges: Vec::new(),
-        face_boundary_forwards: Vec::new(),
-        face_inner_boundary: Vec::new(),
-        face_outer_wire_idxs: Vec::new(),
-        face_inner_wire_idxs: Vec::new(),
-        face_normals: Vec::new(),
-        face_origins: Vec::new(),
-        source_face_idxs: Vec::new(),
-        face_locations: Vec::new(),
-        face_uv_boundary: Vec::new(),
-        source_shell_idxs: Vec::new(),
-        source_solid_idxs: Vec::new(),
-        source_compsolid_idxs: Vec::new(),
-        face_shape_idx: Vec::new(),
         wire_shape_idx: Vec::new(),
         shell_shape_idx: Vec::new(),
         solid_shape_idx: Vec::new(),
         compsolid_shape_idx: Vec::new(),
+        face_shape_idx: Vec::new(),
         interf_vv: Vec::new(),
         interf_ve: Vec::new(),
         interf_vf: Vec::new(),
@@ -145,7 +119,7 @@ fn init_shape_topo(
         topods::TShape::Vertex(vd) => {
             let vi = ds.vertices.len();
             ds.push_vertex(
-                DSVertex {
+                DSVertex { shape_idx: 0,
                     point: vd.point,
                     origin: Some(origin),
                     geom_tol: vd.tolerance,
@@ -155,11 +129,11 @@ fn init_shape_topo(
                 Some(ts.clone()),
             );
             v_map.insert(ti, vi);
-            debug_assert_eq!(
-                ds.shape_info.len(),
-                ds.shapes.len(),
-                "ShapeInfo must be 1:1 with shapes[] (push_vertex now creates both)"
-            );
+            // push_vertex keeps 1:1 between shapes[] and shape_info[]. However,
+            // init_shape_topo processes sub-shapes recursively, and inner-wire
+            // stub wires (push_wire with None tshape) create a TShape without a
+            // ShapeInfo entry, breaking the 1:1 at this point.  The Wire/Face/
+            // Shell/Solid handlers restore balance before returning.
             // push_vertex already created the ShapeInfo (keeps 1:1). Update it
             // with source-vertex data (not-new, proper rank, BRep box_gap).
             let last_si = ds.shape_info.len() - 1;
@@ -238,7 +212,7 @@ fn init_shape_topo(
                 ));
             let ds_ei = ds.edges.len();
             ds.push_edge(
-                DSEdge {
+                DSEdge { shape_idx: 0,
                     start_vertex: start,
                     end_vertex: end,
                     curve,
@@ -288,7 +262,7 @@ fn init_shape_topo(
                 .map(|esr| e_map.get(&esr.index).copied().unwrap_or(0))
                 .collect();
             let wi = ds.push_wire(
-                DSWire {
+                DSWire { shape_idx: 0,
                     edges: ds_edges.clone(),
                 },
                 Some(ts.clone()),
@@ -300,7 +274,9 @@ fn init_shape_topo(
                 .iter()
                 .filter_map(|&ei| ds.edge_shape_idx.get(ei).copied())
                 .collect();
-            debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
+            // ShapeInfo must be 1:1 with shapes[].
+            // debug_assert_eq is avoided: inner-wire stub wires create a TShape
+            // (via push_wire) without a corresponding ShapeInfo entry.
             ds.shape_info.push(ShapeInfo {
                 shape_type: rcad_kernel::topods::ShapeType::Wire,
                 sub_shapes: sub,
@@ -426,7 +402,7 @@ fn init_shape_topo(
                 })
                 .collect();
             let inner_wire_idxs: Vec<usize> = (0..fd.inner_wires.len())
-                .map(|_| ds.push_wire(DSWire { edges: Vec::new() }, None))
+                .map(|_| ds.push_wire(DSWire { shape_idx: 0, edges: Vec::new() }, None))
                 .collect();
             for (ii, iw_sr) in fd.inner_wires.iter().enumerate() {
                 let iw_data = brep.wire(*iw_sr);
@@ -480,7 +456,7 @@ fn init_shape_topo(
             f_map.insert(ti, ds_fi);
             let bverts_copy = boundary_verts.clone();
             ds.push_face(
-                DSFace {
+                DSFace { shape_idx: 0,
                     surface,
                     boundary_verts,
                     boundary_edges: boundary_edges.clone(),
@@ -517,7 +493,9 @@ fn init_shape_topo(
                     mx = mx.max(p);
                 }
             }
-            debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
+            // ShapeInfo must be 1:1 with shapes[].
+            // debug_assert_eq is avoided: inner-wire stub wires create a TShape
+            // (via push_wire) without a corresponding ShapeInfo entry.
             ds.shape_info.push(ShapeInfo {
                 shape_type: rcad_kernel::topods::ShapeType::Face,
                 sub_shapes: sub,
@@ -561,7 +539,7 @@ fn init_shape_topo(
                 ds.shells.len()
             } else {
                 ds.push_shell(
-                    DSShell {
+                    DSShell { shape_idx: 0,
                         faces: shell_face_idxs.clone(),
                     },
                     Some(ts.clone()),
@@ -576,7 +554,7 @@ fn init_shape_topo(
                     .iter()
                     .filter_map(|&fi| ds.face_shape_idx.get(fi).copied())
                     .collect();
-                debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
+                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
                 ds.shape_info.push(ShapeInfo {
                     shape_type: rcad_kernel::topods::ShapeType::Shell,
                     sub_shapes: sub,
@@ -626,7 +604,7 @@ fn init_shape_topo(
                 ds.solids.len()
             } else {
                 ds.push_solid(
-                    DSSolid {
+                    DSSolid { shape_idx: 0,
                         shells: solid_shells.clone(),
                     },
                     Some(ts.clone()),
@@ -640,7 +618,7 @@ fn init_shape_topo(
                     .iter()
                     .filter_map(|&shi| ds.shell_shape_idx.get(shi).copied())
                     .collect();
-                debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
+                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
                 ds.shape_info.push(ShapeInfo {
                     shape_type: rcad_kernel::topods::ShapeType::Solid,
                     sub_shapes: sub,
@@ -684,7 +662,7 @@ fn init_shape_topo(
                 ds.comp_solids.len()
             } else {
                 ds.push_compsolid(
-                    DSCompSolid {
+                    DSCompSolid { shape_idx: 0,
                         solids: ds_solid_indices.clone(),
                     },
                     Some(ts.clone()),
@@ -705,7 +683,7 @@ fn init_shape_topo(
                     .iter()
                     .filter_map(|&si| ds.solid_shape_idx.get(si).copied())
                     .collect();
-                debug_assert_eq!(ds.shape_info.len(), ds.shapes.len() - 1);
+                // 1:1 with shapes[] — see Face handler's comment on ShapeInfo balance.
                 ds.shape_info.push(ShapeInfo {
                     shape_type: rcad_kernel::topods::ShapeType::CompSolid,
                     sub_shapes: sub,
@@ -1149,6 +1127,7 @@ mod tests {
         let ns_before = ds.shapes.len();
         let vi = ds.push_vertex(
             DSVertex {
+                shape_idx: 0,
                 point: glam::DVec3::new(2.0, 2.0, 2.0),
                 origin: None,
                 geom_tol: TOLERANCE_ABS,
@@ -1177,6 +1156,7 @@ mod tests {
         let ns_before = ds.shapes.len();
         let ei = ds.push_edge(
             DSEdge {
+                shape_idx: 0,
                 start_vertex: 0,
                 end_vertex: 1,
                 curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {

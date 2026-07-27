@@ -89,7 +89,7 @@ impl<'a> super::PaveFiller<'a> {
                     continue;
                 }
                 // Create a new degenerated edge (start == end vertex)
-                let de = DSEdge {
+                let de = DSEdge { shape_idx: 0,
                     start_vertex: n_v,
                     end_vertex: n_v,
                     curve: a_curve,
@@ -289,8 +289,8 @@ impl<'a> super::PaveFiller<'a> {
         // equivalent to edge_paves (parallel array). split_pave_blocks checks
         // edge_paves.len(), so both must be in sync.
         self.ds.edges[ei].paves.push(pave);
-        if ei < self.ds.edge_paves.len() {
-            self.ds.edge_paves[ei].push(pave);
+        if ei < self.ds.edges.len() {
+            self.ds.edges[ei].paves.push(pave);
         }
         // Find the correct sub-PB and add to its ext_paves
         let pbs = &self.ds.edges[ei].pave_blocks.clone();
@@ -2356,7 +2356,7 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             self.ds.push_edge(
-                DSEdge {
+                DSEdge { shape_idx: 0,
                     start_vertex: sv,
                     end_vertex: ev,
                     curve: curve.clone(),
@@ -2426,7 +2426,7 @@ impl<'a> super::PaveFiller<'a> {
                 e.location,
             )
         };
-        let de = DSEdge {
+        let de = DSEdge { shape_idx: 0,
             start_vertex: n_v1,
             end_vertex: n_v2,
             curve,

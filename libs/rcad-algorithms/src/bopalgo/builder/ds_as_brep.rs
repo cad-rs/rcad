@@ -137,20 +137,12 @@ impl BRepTool for DSAsBRep<'_> {
     }
 
     fn vertex_orientation(&self, v: ShapeRef) -> Orientation {
-        let is_internal = if v.index < self.ds.vertex_is_internal.len() {
-            self.ds.vertex_is_internal[v.index]
-        } else {
-            self.ds
-                .vertices
-                .get(v.index)
-                .map_or(false, |dv| dv.is_internal)
-        };
-        let is_new = v.index >= self.ds.vertex_is_internal.len()
-            && self
-                .ds
-                .vertices
-                .get(v.index)
-                .map_or(false, |dv| dv.origin.is_none());
+        let is_internal = self.ds.vertex_is_internal(v.index);
+        let is_new = self
+            .ds
+            .vertices
+            .get(v.index)
+            .map_or(false, |dv| dv.origin.is_none());
         if is_internal || is_new {
             Orientation::Internal
         } else {

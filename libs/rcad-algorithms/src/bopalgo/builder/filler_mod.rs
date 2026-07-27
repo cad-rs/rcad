@@ -243,18 +243,13 @@ impl<'a> BooleanBuilder<'a> {
                     sr
                 })
                 .collect();
-            // Use face_outer_wire_idxs if available, else use fi as wire index
-            let wire_idx = if fi < self.ds.face_outer_wire_idxs.len() {
-                self.ds.face_outer_wire_idxs[fi].unwrap_or(nW + fi)
-            } else {
-                nW + fi
-            };
+            // Use face outer_wire_idx (populated during DS loading), else fi as wire index
+            let wire_idx = self.ds.faces[fi].outer_wire_idx.unwrap_or(nW + fi);
             // Place the wire TShape at a unique index beyond existing wires
             let outer_wire_sr = t.ensure_wire_at(nV + nE + wire_idx, outer_edge_refs);
 
             // Inner wires
-            let inner_wire_refs: Vec<ShapeRef> = if fi < self.ds.face_inner_wire_idxs.len() {
-                self.ds.face_inner_wire_idxs[fi]
+            let inner_wire_refs: Vec<ShapeRef> = self.ds.faces[fi].inner_wire_idxs
                     .iter()
                     .map(|&wi| {
                         if wi < nW {
@@ -269,10 +264,7 @@ impl<'a> BooleanBuilder<'a> {
                             ShapeRef::synthetic(nV + nE + wi)
                         }
                     })
-                    .collect()
-            } else {
-                vec![]
-            };
+                    .collect();
 
             // Sample point for the face (first boundary vertex)
             let sample_point = df
@@ -470,9 +462,9 @@ impl<'a> BooleanBuilder<'a> {
             for fi in 0..n_ds_faces {
                 let is_a = self
                     .ds
-                    .face_origins
+                    .faces
                     .get(fi)
-                    .map_or(true, |&o| o == ShapeOrigin::ShapeA);
+                    .map_or(true, |f| f.origin == ShapeOrigin::ShapeA);
                 let sf_idx = self.ds.source_face_idx(fi);
                 let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
                 let flat_idx = f_base + side_offset + sf_idx;
@@ -506,7 +498,7 @@ impl<'a> BooleanBuilder<'a> {
             if fi >= self.ds.faces.len() {
                 continue;
             }
-            let is_a = self.ds.face_origins[fi] == ShapeOrigin::ShapeA;
+            let is_a = self.ds.faces[fi].origin == ShapeOrigin::ShapeA;
 
             let has_pb_in = !self.ds.face_info(fi).pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.face_info(fi).pave_blocks_sc.is_empty();

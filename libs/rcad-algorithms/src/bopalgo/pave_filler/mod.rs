@@ -2085,7 +2085,7 @@ impl<'a> PaveFiller<'a> {
             //
             // L529-537: create ShapeInfo for the new edge and Append to DS
             let n_sp = self.ds.push_edge(
-                DSEdge {
+                DSEdge { shape_idx: 0,
                     start_vertex: task.n_v1,
                     end_vertex: task.n_v2,
                     curve: orig.curve.clone(),

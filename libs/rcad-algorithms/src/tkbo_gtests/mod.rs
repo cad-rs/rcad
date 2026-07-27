@@ -1920,7 +1920,7 @@ mod pave_filler_internal_tests {
         let mut ds = DS::new_empty();
         ds.push_vertex(
             DSVertex {
-                point: DVec3::ZERO,
+                shape_idx: 0, point: DVec3::ZERO,
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -1930,7 +1930,7 @@ mod pave_filler_internal_tests {
         );
         ds.push_vertex(
             DSVertex {
-                point: DVec3::X,
+                shape_idx: 0, point: DVec3::X,
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -1940,7 +1940,7 @@ mod pave_filler_internal_tests {
         );
         ds.push_vertex(
             DSVertex {
-                point: DVec3::new(1.0, 1.0, 0.0),
+                shape_idx: 0, point: DVec3::new(1.0, 1.0, 0.0),
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -1956,7 +1956,7 @@ mod pave_filler_internal_tests {
         };
         ds.push_edge(
             DSEdge {
-                start_vertex: 0,
+                shape_idx: 0, start_vertex: 0,
                 end_vertex: 1,
                 curve: line_curve(DVec3::ZERO, DVec3::X),
                 t_range: [0.0, 1.0],
@@ -1975,7 +1975,7 @@ mod pave_filler_internal_tests {
         );
         ds.push_edge(
             DSEdge {
-                start_vertex: 1,
+                shape_idx: 0, start_vertex: 1,
                 end_vertex: 2,
                 curve: line_curve(DVec3::X, DVec3::new(1.0, 1.0, 0.0)),
                 t_range: [0.0, 1.0],
@@ -1994,7 +1994,7 @@ mod pave_filler_internal_tests {
         );
         ds.push_face(
             DSFace {
-                surface: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
+                shape_idx: 0, surface: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
                 boundary_verts: vec![0, 1, 2],
                 boundary_edges: vec![0, 1],
                 boundary_edge_forwards: vec![true, true],
@@ -2051,7 +2051,7 @@ mod pave_filler_internal_tests {
         // v0: far away
         ds.push_vertex(
             DSVertex {
-                point: DVec3::new(0.0, 0.0, 0.0),
+                shape_idx: 0, point: DVec3::new(0.0, 0.0, 0.0),
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -2062,7 +2062,7 @@ mod pave_filler_internal_tests {
         // v1: close to v0 (within tol)
         ds.push_vertex(
             DSVertex {
-                point: DVec3::new(1e-8, 0.0, 0.0),
+                shape_idx: 0, point: DVec3::new(1e-8, 0.0, 0.0),
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -2073,7 +2073,7 @@ mod pave_filler_internal_tests {
         // v2: far from both (outside tol of v0, v1)
         ds.push_vertex(
             DSVertex {
-                point: DVec3::new(100.0, 0.0, 0.0),
+                shape_idx: 0, point: DVec3::new(100.0, 0.0, 0.0),
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,
@@ -2084,7 +2084,7 @@ mod pave_filler_internal_tests {
         // v3: chain-close to v2 (close to v2 but not to v0/v1)
         ds.push_vertex(
             DSVertex {
-                point: DVec3::new(100.0 + 1e-8, 0.0, 0.0),
+                shape_idx: 0, point: DVec3::new(100.0 + 1e-8, 0.0, 0.0),
                 origin: None,
                 geom_tol: 1e-7,
                 is_internal: false,

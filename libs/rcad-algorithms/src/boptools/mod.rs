@@ -25,7 +25,7 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
     let ei = ds.edges.len();
     let ic = &ds.intersection_curves[ci];
     ds.push_edge(
-        crate::bopds::ds::DSEdge {
+        crate::bopds::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve: ic.curve.clone(),
@@ -261,7 +261,7 @@ pub fn make_ds_edge(
 ) -> usize {
     let ei = ds.edges.len();
     ds.push_edge(
-        crate::bopds::ds::DSEdge {
+        crate::bopds::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve,
@@ -1691,7 +1691,7 @@ pub fn compute_vv(
 pub fn make_new_vertex(ds: &mut crate::bopds::ds::DS, p: glam::DVec3, tol: f64) -> usize {
     let vi = ds.vertices.len();
     ds.push_vertex(
-        crate::bopds::ds::DSVertex {
+        crate::bopds::ds::DSVertex { shape_idx: 0,
             point: p,
             geom_tol: tol,
             origin: None,
@@ -1715,7 +1715,7 @@ pub fn make_new_vertex_from_two(
     let tol = dist * 0.5 + v1.geom_tol.max(v2.geom_tol) + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertices.len();
     ds.push_vertex(
-        crate::bopds::ds::DSVertex {
+        crate::bopds::ds::DSVertex { shape_idx: 0,
             point: mid,
             geom_tol: tol,
             origin: None,
@@ -2123,7 +2123,7 @@ pub fn make_split_edge(
     let new_ei = ds.edges.len();
     let t_range = if p1 < p2 { [p1, p2] } else { [p2, p1] };
     ds.push_edge(
-        crate::bopds::ds::DSEdge {
+        crate::bopds::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve,
@@ -2181,7 +2181,7 @@ pub fn make_vertex_from_list(ds: &mut crate::bopds::ds::DS, vertex_indices: &[us
     let tol = max_dist + max_tol + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertices.len();
     ds.push_vertex(
-        crate::bopds::ds::DSVertex {
+        crate::bopds::ds::DSVertex { shape_idx: 0,
             point: mid,
             geom_tol: tol,
             origin: None,

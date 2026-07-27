@@ -298,12 +298,12 @@ fn stage_ve_has_paves() {
     );
     // Consistency: edge arrays match
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_end_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "VE: start/end vertex arrays length match"
     );
     assert_eq!(
-        ds.edge_paves.len(),
+        ds.edges.len(),
         ds.edges.len(),
         "VE: edge_paves per-edge length matches edge count"
     );
@@ -500,18 +500,18 @@ fn stage_make_split_edges_creates_edges() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeSplitEdges");
     assert!(
-        ds.edge_start_vertex.len() >= 14,
+        ds.edges.len() >= 14,
         "MakeSplitEdges: >= 14 edges (post={})",
-        ds.edge_start_vertex.len()
+        ds.edges.len()
     );
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_end_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "MakeSplitEdges: start/end vertex arrays same length"
     );
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_origins.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "MakeSplitEdges: origins same length as edges"
     );
 }
@@ -520,7 +520,7 @@ fn stage_make_split_edges_creates_edges() {
 fn stage_make_split_edges_pbs_consistent() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeSplitEdges");
-    for ei in 0..ds.edge_start_vertex.len() {
+    for ei in 0..ds.edges.len() {
         for spb in ds.edge_pave_blocks(ei) {
             let pb = spb.0.read().unwrap();
             assert!(
@@ -544,7 +544,7 @@ fn stage_make_blocks_creates_pave_blocks() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeBlocks");
     // MakeBlocks runs without panic. PB registration is a known gap (V=6 bug).
-    let any_pbs = (0..ds.edge_start_vertex.len()).any(|ei| !ds.edge_pave_blocks(ei).is_empty());
+    let any_pbs = (0..ds.edges.len()).any(|ei| !ds.edge_pave_blocks(ei).is_empty());
     if !any_pbs {
         eprintln!("MakeBlocks: warning 鈥?no edges have PBs (known V=6 bug)");
     }
@@ -623,13 +623,13 @@ fn stage_make_pcurves_completes() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakePCurves");
     assert!(
-        ds.edge_start_vertex.len() >= 14,
+        ds.edges.len() >= 14,
         "MakePCurves: >= 14 edges, got {}",
-        ds.edge_start_vertex.len()
+        ds.edges.len()
     );
     assert_eq!(
-        ds.edge_origins.len(),
-        ds.edge_start_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "MakePCurves: origins/edges len match"
     );
 }
@@ -661,13 +661,13 @@ fn stage_process_de_consistent() {
     let ds = pave_fill_stage(&sphere, &bx, "after_ProcessDE");
     // ProcessDE handles degenerate edges 鈥?check arrays consistent
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_end_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "ProcessDE: start/end arrays same length"
     );
     assert_eq!(
-        ds.edge_origins.len(),
-        ds.edge_start_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "ProcessDE: origins same length as edges"
     );
     // No hanging references: all edge vertex indices valid
@@ -693,13 +693,13 @@ fn stage_full_pipeline_consistent() {
     let (ds, _brep) = pave_fill_two(&sphere, &bx);
     // Final state: all arrays consistent
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_end_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "Full: start/end arrays same length"
     );
     assert_eq!(
-        ds.edge_origins.len(),
-        ds.edge_start_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "Full: origins same length as edges"
     );
     // Face info indices valid
@@ -1166,14 +1166,14 @@ fn dbg_stage(ds: &DS, stage_name: &str) {
     );
     // Array consistency (always checked)
     assert_eq!(
-        ds.edge_start_vertex.len(),
-        ds.edge_end_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "{}: start/end arrays same length",
         stage_name
     );
     assert_eq!(
-        ds.edge_origins.len(),
-        ds.edge_start_vertex.len(),
+        ds.edges.len(),
+        ds.edges.len(),
         "{}: origins same length as edges",
         stage_name
     );
@@ -1252,8 +1252,8 @@ fn pavefiller_overlapping_boxes_consistent() {
     let (b1, b2) = overlapping_boxes();
     let ds = pave_fill_stage(&b1, &b2, "after_ProcessDE");
     // Array consistency checks (same as stage_full_pipeline_consistent)
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len());
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len());
+    assert_eq!(ds.edges.len(), ds.edges.len());
+    assert_eq!(ds.edges.len(), ds.edges.len());
     for fi in 0..ds.faces.len() {
         for &vi in ds
             .face_info(fi)

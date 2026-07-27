@@ -260,6 +260,8 @@ pub struct SharedTopologyInfo {
 /// A vertex in the DS pool.
 #[derive(Debug, Clone)]
 pub struct DSVertex {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     pub point: DVec3,
     /// None for vertices created at intersections.
     pub origin: Option<ShapeOrigin>,
@@ -287,6 +289,8 @@ pub struct DSCurveRepOnFace {
 /// An edge in the DS pool with curve reference.
 #[derive(Debug, Clone)]
 pub struct DSEdge {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     /// Index into DS.vertices.
     pub start_vertex: usize,
     pub end_vertex: usize,
@@ -329,6 +333,8 @@ impl DSEdge {
 /// A wire in the DS pool =first-class entity matching OCCT TopoDS_Wire.
 #[derive(Debug, Clone)]
 pub struct DSWire {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     /// Edge indices in traversal order (into DS.edges).
     pub edges: Vec<usize>,
 }
@@ -336,6 +342,8 @@ pub struct DSWire {
 /// A shell in the DS pool =first-class entity matching OCCT TopoDS_Shell.
 #[derive(Debug, Clone)]
 pub struct DSShell {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     /// Face indices forming this shell (into DS.faces).
     pub faces: Vec<usize>,
 }
@@ -344,6 +352,8 @@ pub struct DSShell {
 ///  ?BOPDS_ShapeInfo tracks TopAbs_SOLID hierarchy.
 #[derive(Debug, Clone)]
 pub struct DSSolid {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     /// Shell indices forming this solid (into DS.shells).
     pub shells: Vec<usize>,
 }
@@ -352,6 +362,8 @@ pub struct DSSolid {
 ///  ?BOPDS_ShapeInfo tracks TopAbs_COMPSOLID hierarchy.
 #[derive(Debug, Clone)]
 pub struct DSCompSolid {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     /// Solid indices forming this compsolid (into DS.solids).
     pub solids: Vec<usize>,
 }
@@ -359,6 +371,8 @@ pub struct DSCompSolid {
 /// A face in the DS pool with surface reference.
 #[derive(Debug, Clone)]
 pub struct DSFace {
+    /// Flat shape index into DS.shapes[] and DS.shape_info[].
+    pub shape_idx: usize,
     pub surface: Surface3,
     /// Boundary vertex indices (ordered, into DS.vertices) =outer wire.
     pub boundary_verts: Vec<usize>,
@@ -754,24 +768,9 @@ pub struct DS {
     pub comp_solids: Vec<DSCompSolid>,
     pub faces: Vec<DSFace>,
 
-    // ----- Phase 4: Parallel arrays replacing DSVertex/DSEdge/DSFace -----
-    /// Intersection-only data for vertices (shape data via ds.shape(vi)).
-    pub vertex_origins: Vec<Option<ShapeOrigin>>,
-    pub vertex_is_internal: Vec<bool>,
-    pub vertex_locations: Vec<u32>,
+    // ----- Shape index arrays (flat shapes[] ↔ per-type index mapping) -----
     /// Shape index in ds.shapes for each vertex. Set by push_vertex.
     pub vertex_shape_idx: Vec<usize>,
-    /// myRanges[0] =vertex range end (number of source shapes per type).
-    /// Intersection-only data for edges (shape data via ds.shape(ei)).
-    pub edge_start_vertex: Vec<usize>,
-    pub edge_end_vertex: Vec<usize>,
-    pub edge_origins: Vec<ShapeOrigin>,
-    pub edge_paves: Vec<Vec<Pave>>,
-    pub edge_pave_blocks: Vec<Vec<crate::bopds::pave::SharedPB>>,
-    pub edge_face_reps: Vec<Vec<DSCurveRepOnFace>>,
-    pub edge_is_internal: Vec<bool>,
-    pub edge_face_tols: Vec<Vec<(usize, f64)>>,
-    pub edge_locations: Vec<u32>,
     /// Shape index in ds.shapes for each edge. Set by push_edge.
     pub edge_shape_idx: Vec<usize>,
     /// Shape index in ds.shapes for each wire. Set by push_wire.
@@ -782,21 +781,6 @@ pub struct DS {
     pub solid_shape_idx: Vec<usize>,
     /// Shape index in ds.shapes for each compsolid. Set by push_compsolid.
     pub compsolid_shape_idx: Vec<usize>,
-    /// Intersection-only data for faces (shape data via ds.shape(fi)).
-    pub face_boundary_verts: Vec<Vec<usize>>,
-    pub face_boundary_edges: Vec<Vec<usize>>,
-    pub face_boundary_forwards: Vec<Vec<bool>>,
-    pub face_inner_boundary: Vec<Vec<Vec<(usize, bool)>>>,
-    pub face_outer_wire_idxs: Vec<Option<usize>>,
-    pub face_inner_wire_idxs: Vec<Vec<usize>>,
-    pub face_normals: Vec<DVec3>,
-    pub face_origins: Vec<ShapeOrigin>,
-    pub source_face_idxs: Vec<usize>,
-    pub face_locations: Vec<u32>,
-    pub face_uv_boundary: Vec<Option<Vec<DVec2>>>,
-    pub source_shell_idxs: Vec<Option<usize>>,
-    pub source_solid_idxs: Vec<Option<usize>>,
-    pub source_compsolid_idxs: Vec<Option<usize>>,
     /// Shape index in ds.shapes for each face. Set by push_face.
     pub face_shape_idx: Vec<usize>,
     /// type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).

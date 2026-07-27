@@ -37,39 +37,13 @@ impl DS {
             solids: Vec::new(),
             comp_solids: Vec::new(),
             faces: Vec::new(),
-            vertex_origins: Vec::new(),
-            vertex_is_internal: Vec::new(),
-            vertex_locations: Vec::new(),
             vertex_shape_idx: Vec::new(),
-            edge_start_vertex: Vec::new(),
-            edge_end_vertex: Vec::new(),
-            edge_origins: Vec::new(),
-            edge_paves: Vec::new(),
-            edge_pave_blocks: Vec::new(),
-            edge_face_reps: Vec::new(),
-            edge_is_internal: Vec::new(),
-            edge_face_tols: Vec::new(),
-            edge_locations: Vec::new(),
             edge_shape_idx: Vec::new(),
-            face_boundary_verts: Vec::new(),
-            face_boundary_edges: Vec::new(),
-            face_boundary_forwards: Vec::new(),
-            face_inner_boundary: Vec::new(),
-            face_outer_wire_idxs: Vec::new(),
-            face_inner_wire_idxs: Vec::new(),
-            face_normals: Vec::new(),
-            face_origins: Vec::new(),
-            source_face_idxs: Vec::new(),
-            face_locations: Vec::new(),
-            face_uv_boundary: Vec::new(),
-            source_shell_idxs: Vec::new(),
-            source_solid_idxs: Vec::new(),
-            source_compsolid_idxs: Vec::new(),
-            face_shape_idx: Vec::new(),
             wire_shape_idx: Vec::new(),
             shell_shape_idx: Vec::new(),
             solid_shape_idx: Vec::new(),
             compsolid_shape_idx: Vec::new(),
+            face_shape_idx: Vec::new(),
             interf_vv: Vec::new(),
             interf_ve: Vec::new(),
             interf_vf: Vec::new(),
@@ -181,29 +155,17 @@ impl DS {
 
     /// Vertex origin from parallel array (intersection-only data).
     pub fn vertex_origin(&self, vi: usize) -> Option<ShapeOrigin> {
-        if vi < self.vertex_origins.len() {
-            self.vertex_origins[vi]
-        } else {
-            self.vertices.get(vi).and_then(|v| v.origin)
-        }
+        self.vertices.get(vi).and_then(|v| v.origin)
     }
 
     /// Vertex is_internal from parallel array.
     pub fn vertex_is_internal(&self, vi: usize) -> bool {
-        if vi < self.vertex_is_internal.len() {
-            self.vertex_is_internal[vi]
-        } else {
-            self.vertices.get(vi).map_or(false, |v| v.is_internal)
-        }
+        self.vertices.get(vi).map_or(false, |v| v.is_internal)
     }
 
     /// Vertex location from parallel array.
     pub fn vertex_location(&self, vi: usize) -> u32 {
-        if vi < self.vertex_locations.len() {
-            self.vertex_locations[vi]
-        } else {
-            self.vertices.get(vi).map_or(0, |v| v.location)
-        }
+        self.vertices.get(vi).map_or(0, |v| v.location)
     }
 
     /// Edge curve from TShape.
@@ -247,53 +209,29 @@ impl DS {
 
     /// Edge start vertex DS index from parallel array.
     pub fn edge_start_vertex_ds(&self, ei: usize) -> usize {
-        if ei < self.edge_start_vertex.len() {
-            self.edge_start_vertex[ei]
-        } else {
-            self.edges.get(ei).map_or(0, |e| e.start_vertex)
-        }
+        self.edges.get(ei).map_or(0, |e| e.start_vertex)
     }
 
     /// Edge end vertex DS index from parallel array.
     pub fn edge_end_vertex_ds(&self, ei: usize) -> usize {
-        if ei < self.edge_end_vertex.len() {
-            self.edge_end_vertex[ei]
-        } else {
-            self.edges.get(ei).map_or(0, |e| e.end_vertex)
-        }
+        self.edges.get(ei).map_or(0, |e| e.end_vertex)
     }
 
     /// Edge origin from parallel array.
     pub fn edge_origin(&self, ei: usize) -> ShapeOrigin {
-        if ei < self.edge_origins.len() {
-            self.edge_origins[ei]
-        } else {
-            self.edges.get(ei).map_or(ShapeOrigin::ShapeA, |e| e.origin)
-        }
+        self.edges.get(ei).map_or(ShapeOrigin::ShapeA, |e| e.origin)
     }
 
     /// Edge paves from parallel array.
     pub fn edge_paves(&self, ei: usize) -> &[crate::bopds::pave::Pave] {
-        if ei < self.edge_paves.len() {
-            &self.edge_paves[ei]
-        } else if let Some(e) = self.edges.get(ei) {
-            &e.paves
-        } else {
-            &[]
-        }
+        self.edges.get(ei).map_or(&[], |e| &e.paves)
     }
 
     /// Edge pave_blocks.
     /// OCCT: myDS->ChangePaveBlocks(nE) — single path.
     /// rcad: prefer self.edges[ei].pave_blocks over parallel array.
     pub fn edge_pave_blocks(&self, ei: usize) -> &[crate::bopds::pave::SharedPB] {
-        if let Some(e) = self.edges.get(ei) {
-            &e.pave_blocks
-        } else if ei < self.edge_pave_blocks.len() {
-            &self.edge_pave_blocks[ei]
-        } else {
-            &[]
-        }
+        self.edges.get(ei).map_or(&[], |e| &e.pave_blocks)
     }
 
     /// OCCT: myDS->ChangePaveBlocks(nE) — lazy init via HasReference check.
@@ -306,8 +244,6 @@ impl DS {
                 self.init_pave_blocks_for_edge(ei);
             }
             &mut self.edges[ei].pave_blocks
-        } else if ei < self.edge_pave_blocks.len() {
-            &mut self.edge_pave_blocks[ei]
         } else {
             panic!("edge_pave_blocks_mut: index {} out of bounds", ei);
         }
@@ -315,42 +251,22 @@ impl DS {
 
     /// Edge face_reps from parallel array.
     pub fn edge_face_reps(&self, ei: usize) -> &[DSCurveRepOnFace] {
-        if ei < self.edge_face_reps.len() {
-            &self.edge_face_reps[ei]
-        } else if let Some(e) = self.edges.get(ei) {
-            &e.face_reps
-        } else {
-            &[]
-        }
+        self.edges.get(ei).map_or(&[], |e| &e.face_reps)
     }
 
     /// Edge is_internal from parallel array.
     pub fn edge_is_internal(&self, ei: usize) -> bool {
-        if ei < self.edge_is_internal.len() {
-            self.edge_is_internal[ei]
-        } else {
-            self.edges.get(ei).map_or(false, |e| e.is_internal)
-        }
+        self.edges.get(ei).map_or(false, |e| e.is_internal)
     }
 
     /// Edge per-face tolerances from parallel array.
     pub fn edge_face_tols(&self, ei: usize) -> &[(usize, f64)] {
-        if ei < self.edge_face_tols.len() {
-            &self.edge_face_tols[ei]
-        } else if let Some(e) = self.edges.get(ei) {
-            &e.face_tolerances
-        } else {
-            &[]
-        }
+        self.edges.get(ei).map_or(&[], |e| &e.face_tolerances)
     }
 
     /// Edge location from parallel array.
     pub fn edge_location(&self, ei: usize) -> u32 {
-        if ei < self.edge_locations.len() {
-            self.edge_locations[ei]
-        } else {
-            self.edges.get(ei).map_or(0, |e| e.location)
-        }
+        self.edges.get(ei).map_or(0, |e| e.location)
     }
 
     /// Edge vertex_params from TShape.
@@ -420,11 +336,7 @@ impl DS {
 
     /// Face origin from parallel array.
     pub fn face_origin(&self, fi: usize) -> ShapeOrigin {
-        if fi < self.face_origins.len() {
-            self.face_origins[fi]
-        } else {
-            self.faces.get(fi).map_or(ShapeOrigin::ShapeA, |f| f.origin)
-        }
+        self.faces.get(fi).map_or(ShapeOrigin::ShapeA, |f| f.origin)
     }
 
     /// FaceInfo from faces array (OCCT BOPDS_ShapeInfo equivalent).
@@ -448,51 +360,27 @@ impl DS {
 
     /// Face boundary edges from parallel array.
     pub fn face_boundary_edges(&self, fi: usize) -> &[usize] {
-        if fi < self.face_boundary_edges.len() {
-            &self.face_boundary_edges[fi]
-        } else if let Some(f) = self.faces.get(fi) {
-            &f.boundary_edges
-        } else {
-            &[]
-        }
+        self.faces.get(fi).map_or(&[], |f| &f.boundary_edges)
     }
 
     /// Face boundary verts from parallel array.
     pub fn face_boundary_verts(&self, fi: usize) -> &[usize] {
-        if fi < self.face_boundary_verts.len() {
-            &self.face_boundary_verts[fi]
-        } else if let Some(f) = self.faces.get(fi) {
-            &f.boundary_verts
-        } else {
-            &[]
-        }
+        self.faces.get(fi).map_or(&[], |f| &f.boundary_verts)
     }
 
     /// Face inner boundary edges from parallel array.
     pub fn face_inner_boundary(&self, fi: usize) -> &[Vec<(usize, bool)>] {
-        if fi < self.face_inner_boundary.len() {
-            &self.face_inner_boundary[fi]
-        } else if let Some(f) = self.faces.get(fi) {
-            &f.inner_boundary_edges
-        } else {
-            &[]
-        }
+        self.faces.get(fi).map_or(&[], |f| &f.inner_boundary_edges)
     }
 
-    /// Face outer wire index from parallel array.
+    /// Face outer wire index from struct field.
     pub fn face_outer_wire_idx(&self, fi: usize) -> Option<usize> {
-        if fi < self.face_outer_wire_idxs.len() {
-            self.face_outer_wire_idxs[fi]
-        } else {
-            self.faces.get(fi).and_then(|f| f.outer_wire_idx)
-        }
+        self.faces.get(fi).and_then(|f| f.outer_wire_idx)
     }
 
-    /// Face inner wire indices from parallel array.
+    /// Face inner wire indices from struct field.
     pub fn face_inner_wire_idxs(&self, fi: usize) -> &[usize] {
-        if fi < self.face_inner_wire_idxs.len() {
-            &self.face_inner_wire_idxs[fi]
-        } else if let Some(f) = self.faces.get(fi) {
+        if let Some(f) = self.faces.get(fi) {
             &f.inner_wire_idxs
         } else {
             &[]
@@ -501,32 +389,17 @@ impl DS {
 
     /// Face normal from parallel array.
     pub fn face_normal(&self, fi: usize) -> glam::DVec3 {
-        if fi < self.face_normals.len() {
-            self.face_normals[fi]
-        } else {
-            self.faces.get(fi).map_or(glam::DVec3::Z, |f| f.normal)
-        }
+        self.faces.get(fi).map_or(glam::DVec3::Z, |f| f.normal)
     }
 
     /// Face location from parallel array.
     pub fn face_location(&self, fi: usize) -> u32 {
-        if fi < self.face_locations.len() {
-            self.face_locations[fi]
-        } else {
-            self.faces.get(fi).map_or(0, |f| f.location)
-        }
+        self.faces.get(fi).map_or(0, |f| f.location)
     }
 
     /// Face uv_boundary from parallel array.
     pub fn face_uv_boundary(&self, fi: usize) -> Option<&[glam::DVec2]> {
-        if fi < self.face_uv_boundary.len() {
-            self.face_uv_boundary[fi].as_ref().map(|v| v.as_slice())
-        } else {
-            self.faces
-                .get(fi)
-                .and_then(|f| f.uv_boundary.as_ref())
-                .map(|v| v.as_slice())
-        }
+        self.faces.get(fi).and_then(|f| f.uv_boundary.as_ref()).map(|v| v.as_slice())
     }
 
     /// Return the surface of face `fi` with its Location baked in (world coordinates).
@@ -547,38 +420,22 @@ impl DS {
 
     /// Source face index from parallel array.
     pub fn source_face_idx(&self, fi: usize) -> usize {
-        if fi < self.source_face_idxs.len() {
-            self.source_face_idxs[fi]
-        } else {
-            self.faces.get(fi).map_or(0, |f| f.source_face_idx)
-        }
+        self.faces.get(fi).map_or(0, |f| f.source_face_idx)
     }
 
     /// Source shell index from parallel array.
     pub fn source_shell_idx(&self, fi: usize) -> Option<usize> {
-        if fi < self.source_shell_idxs.len() {
-            self.source_shell_idxs[fi]
-        } else {
-            self.faces.get(fi).and_then(|f| f.source_shell_idx)
-        }
+        self.faces.get(fi).and_then(|f| f.source_shell_idx)
     }
 
     /// Source solid index from parallel array.
     pub fn source_solid_idx(&self, fi: usize) -> Option<usize> {
-        if fi < self.source_solid_idxs.len() {
-            self.source_solid_idxs[fi]
-        } else {
-            self.faces.get(fi).and_then(|f| f.source_solid_idx)
-        }
+        self.faces.get(fi).and_then(|f| f.source_solid_idx)
     }
 
     /// Source compsolid index from parallel array.
     pub fn source_compsolid_idx(&self, fi: usize) -> Option<usize> {
-        if fi < self.source_compsolid_idxs.len() {
-            self.source_compsolid_idxs[fi]
-        } else {
-            self.faces.get(fi).and_then(|f| f.source_compsolid_idx)
-        }
+        self.faces.get(fi).and_then(|f| f.source_compsolid_idx)
     }
 
     /// myDS->Shape(n). Returns &TShape at the given flat index.
@@ -629,20 +486,14 @@ impl DS {
     /// Returns the vertex index.
     pub fn push_vertex(
         &mut self,
-        dv: DSVertex,
+        mut dv: DSVertex,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let vi = self.vertices.len();
-        let origin = dv.origin;
-        let is_internal = dv.is_internal;
-        let location = dv.location;
+        dv.shape_idx = self.shapes.len();
         let point = dv.point;
         let geom_tol = dv.geom_tol;
         self.vertices.push(dv);
-        // Phase 4: populate parallel arrays
-        self.vertex_origins.push(origin);
-        self.vertex_is_internal.push(is_internal);
-        self.vertex_locations.push(location);
         use topods::tshape_flags;
         self.shapes.push(tshape.unwrap_or_else(|| {
             std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
@@ -676,14 +527,13 @@ impl DS {
     /// Returns the edge index.
     pub fn push_edge(
         &mut self,
-        de: DSEdge,
+        mut de: DSEdge,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let ei = self.edges.len();
+        de.shape_idx = self.shapes.len();
         let origin = de.origin;
-        let is_internal = de.is_internal;
         let e_tol = de.geom_tol;
-        let location = de.location;
         let start_vertex = de.start_vertex;
         let end_vertex = de.end_vertex;
         let curve = de.curve.clone();
@@ -691,19 +541,7 @@ impl DS {
         let face_reps = de.face_reps.clone();
         let vertex_params = de.vertex_params.clone();
         let face_tols = de.face_tolerances.clone();
-        let paves = de.paves.clone();
-        let pave_blocks = de.pave_blocks.clone();
         self.edges.push(de);
-        // Phase 4: populate parallel arrays
-        self.edge_start_vertex.push(start_vertex);
-        self.edge_end_vertex.push(end_vertex);
-        self.edge_origins.push(origin);
-        self.edge_paves.push(paves);
-        self.edge_pave_blocks.push(pave_blocks);
-        self.edge_face_reps.push(face_reps);
-        self.edge_is_internal.push(is_internal);
-        self.edge_face_tols.push(face_tols);
-        self.edge_locations.push(location);
         // OCCT-aligned: register new edge in ShapeInfo array
         // (OCCT BOPDS_DS::Append creates ShapeInfo for each new shape).
         let sv_si = *self
@@ -891,7 +729,7 @@ impl DS {
         self.shapes.push(tshape.unwrap_or_else(|| {
             let mut pcurves: std::collections::HashMap<usize, (Curve2d, f64, f64)> =
                 std::collections::HashMap::new();
-            for rep in &self.edge_face_reps[ei] {
+            for rep in &self.edges[ei].face_reps {
                 pcurves.insert(
                     rep.face_idx,
                     (rep.pcurve.clone(), rep.start_param, rep.end_param),
@@ -925,10 +763,11 @@ impl DS {
     /// Returns the face index.
     pub fn push_face(
         &mut self,
-        df: DSFace,
+        mut df: DSFace,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let fi = self.faces.len();
+        df.shape_idx = self.shapes.len();
         let surface = df.surface.clone();
         let natural_restriction = df.natural_restriction;
         let geom_tol = df.geom_tol;
@@ -947,21 +786,6 @@ impl DS {
         let source_solid_idx = df.source_solid_idx;
         let source_compsolid_idx = df.source_compsolid_idx;
         self.faces.push(df);
-        // Phase 4: populate parallel arrays
-        self.face_boundary_verts.push(boundary_verts);
-        self.face_boundary_edges.push(boundary_edges);
-        self.face_boundary_forwards.push(boundary_forwards);
-        self.face_inner_boundary.push(inner_boundary);
-        self.face_outer_wire_idxs.push(outer_wire_idx);
-        self.face_inner_wire_idxs.push(inner_wire_idxs);
-        self.face_normals.push(normal);
-        self.face_origins.push(origin);
-        self.source_face_idxs.push(source_face_idx);
-        self.face_locations.push(location);
-        self.face_uv_boundary.push(uv_boundary);
-        self.source_shell_idxs.push(source_shell_idx);
-        self.source_solid_idxs.push(source_solid_idx);
-        self.source_compsolid_idxs.push(source_compsolid_idx);
         self.shapes.push(tshape.unwrap_or_else(|| {
             std::sync::Arc::new(topods::TShape::Face(topods::TFaceData {
                 my_shapes: Vec::new(),
@@ -982,7 +806,7 @@ impl DS {
         let (box_min, box_max) = {
             let mut mn = DVec3::splat(f64::INFINITY);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &vi in &self.face_boundary_verts[self.faces.len() - 1] {
+            for &vi in &self.faces[self.faces.len() - 1].boundary_verts {
                 if vi < self.vertices.len() {
                     let p = self.vertices[vi].point;
                     mn = mn.min(p);
@@ -1015,10 +839,11 @@ impl DS {
     /// Returns the wire index.
     pub fn push_wire(
         &mut self,
-        dw: DSWire,
+        mut dw: DSWire,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let wi = self.wires.len();
+        dw.shape_idx = self.shapes.len();
         let edges = dw.edges.clone();
         self.wires.push(dw);
         self.shapes.push(tshape.unwrap_or_else(|| {
@@ -1042,10 +867,11 @@ impl DS {
     /// Returns the shell index.
     pub fn push_shell(
         &mut self,
-        dsh: DSShell,
+        mut dsh: DSShell,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let shi = self.shells.len();
+        dsh.shape_idx = self.shapes.len();
         let faces = dsh.faces.clone();
         self.shells.push(dsh);
         self.shapes.push(tshape.unwrap_or_else(|| {
@@ -1069,10 +895,11 @@ impl DS {
     /// Returns the solid index.
     pub fn push_solid(
         &mut self,
-        dso: DSSolid,
+        mut dso: DSSolid,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let soi = self.solids.len();
+        dso.shape_idx = self.shapes.len();
         let shells = dso.shells.clone();
         self.solids.push(dso);
         self.shapes.push(tshape.unwrap_or_else(|| {
@@ -1098,10 +925,11 @@ impl DS {
     /// Returns the compsolid index.
     pub fn push_compsolid(
         &mut self,
-        dcs: DSCompSolid,
+        mut dcs: DSCompSolid,
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let csi = self.comp_solids.len();
+        dcs.shape_idx = self.shapes.len();
         let solids = dcs.solids.clone();
         self.comp_solids.push(dcs);
         self.shapes.push(tshape.unwrap_or_else(|| {
@@ -1295,10 +1123,6 @@ impl DS {
         // OCCT: initial edge PaveBlock stores start/end paves in edge's internal list.
         self.edges[edge_idx].paves.push(pv1);
         self.edges[edge_idx].paves.push(pv2);
-        if edge_idx < self.edge_paves.len() {
-            self.edge_paves[edge_idx].push(pv1);
-            self.edge_paves[edge_idx].push(pv2);
-        }
         // OCCT L469+: add ALL existing paves (from edge.paves) as ext_paves
         // excluding endpoint paves (they are pave1/pave2 already).
         let existing_paves: Vec<Pave> = self.edges[edge_idx].paves.clone();
@@ -2240,7 +2064,7 @@ impl DS {
     pub fn add_vertex_no_dedup(&mut self, point: DVec3) -> usize {
         let new_base = self.fuzzy_tol.max(TOLERANCE_ABS);
         let idx = self.vertices.len();
-        self.vertices.push(DSVertex {
+        self.vertices.push(DSVertex { shape_idx: 0,
             point,
             origin: None,
             geom_tol: new_base,

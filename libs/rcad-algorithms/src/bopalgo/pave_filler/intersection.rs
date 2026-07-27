@@ -1837,7 +1837,7 @@ impl<'a> super::PaveFiller<'a> {
                             },
                         );
                         self.ds.faces[nF].face_info.vertices_on.insert(new_v);
-                        if nE < self.ds.edge_paves.len() {
+                        if nE < self.ds.edges.len() {
                             self.add_pave_to_edge(
                                 nE,
                                 Pave {
@@ -2216,7 +2216,7 @@ impl<'a> super::PaveFiller<'a> {
             // L176-179: append new vertex to DS
             n_v = self.ds.vertices.len();
             self.ds.push_vertex(
-                DSVertex {
+                DSVertex { shape_idx: 0,
                     point: centroid,
                     origin: None,
                     geom_tol: bounding_tol,

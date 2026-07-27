@@ -909,7 +909,7 @@ impl<'a> super::PaveFiller<'a> {
                 let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
                 let v_start = self.ds.vertices.len();
                 self.ds.push_vertex(
-                    DSVertex {
+                    DSVertex { shape_idx: 0,
                         point: p_start,
                         geom_tol: TOLERANCE_ABS,
                         origin: None,
@@ -920,7 +920,7 @@ impl<'a> super::PaveFiller<'a> {
                 );
                 let v_end = self.ds.vertices.len();
                 self.ds.push_vertex(
-                    DSVertex {
+                    DSVertex { shape_idx: 0,
                         point: p_end,
                         geom_tol: TOLERANCE_ABS,
                         origin: None,
