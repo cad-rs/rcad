@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two cones.
+//! Analytic intersection of two cones.
 //!
 //! # Case classification
 //!
@@ -25,12 +25,12 @@
 //! We return `General` so the caller falls back to numeric marching.
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, ConicalSurface, any_perpendicular};
 use std::f64::consts::TAU;
 
-use crate::tolerance::*;
 use super::pcurve_derive::refine_polyline;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -139,10 +139,7 @@ pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Co
 /// ```
 ///
 /// For each u we solve the quadratic for v, giving two branches (± sqrt).
-fn intersect_skew_cone_cone(
-    cone1: &ConicalSurface,
-    cone2: &ConicalSurface,
-) -> Vec<Vec<DVec3>> {
+fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Vec<Vec<DVec3>> {
     let a1 = cone1.axis.normalize();
     let a2 = cone2.axis.normalize();
     let o1 = cone1.apex_point();
@@ -227,15 +224,29 @@ fn intersect_skew_cone_cone(
         let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cone1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cone1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
     let eval_minus = |u: f64| -> Option<DVec3> {
         let (cos_u, sin_u) = (u.cos(), u.sin());
@@ -246,22 +257,40 @@ fn intersect_skew_cone_cone(
         let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cone1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cone1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
 
     let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
         refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
         refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
     );
 
     // Dedup: remove trailing points that nearly duplicate the first point.
@@ -328,9 +357,7 @@ fn intersect_parallel_cones(
         // Axes coincide.  The apex of cone2 may be different from cone1's apex.
 
         // Check for identical geometry (same apex, same half-angle).
-        if (apex2 - apex1).length() < TOLERANCE_ABS
-            && (beta1 - beta2).abs() < TOLERANCE_ANG
-        {
+        if (apex2 - apex1).length() < TOLERANCE_ABS && (beta1 - beta2).abs() < TOLERANCE_ANG {
             return ConeConeResult::Coaxial;
         }
 
@@ -577,9 +604,7 @@ pub fn intersect_cone_cone_with_tolerance(
         // ── Coaxial (with fuzzy tolerance) ────────────────────────────────
         if d_perp < tol {
             // Check for identical geometry
-            if (cone2.apex - cone1.apex).length() < tol
-                && (beta1 - beta2).abs() < TOLERANCE_ANG
-            {
+            if (cone2.apex - cone1.apex).length() < tol && (beta1 - beta2).abs() < TOLERANCE_ANG {
                 return ConeConeResult::Coaxial;
             }
 
@@ -614,5 +639,3 @@ pub fn intersect_cone_cone_with_tolerance(
 
     ConeConeResult::General
 }
-
-

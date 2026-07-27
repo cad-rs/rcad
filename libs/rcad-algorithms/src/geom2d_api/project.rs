@@ -1,9 +1,9 @@
-﻿//! 3D curve → 2D curve projection onto a plane surface.
+//! 3D curve → 2D curve projection onto a plane surface.
 //! GeomAPI::To2d (geomapi.cxx L311-340).
 
-use rcad_kernel::geom::*;
-use glam::{DVec2, DVec3};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::*;
 
 /// Build a 2D coordinate frame from a plane surface.
 /// Returns (origin, u_axis, v_axis) using the plane's stored axes.
@@ -38,7 +38,10 @@ pub fn project_curve_to_plane(curve: &Curve3, surface: &Surface3) -> Option<Curv
             if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
                 return None;
             }
-            Some(Curve2d::Line(Line2d { origin: p_start, direction: dir }))
+            Some(Curve2d::Line(Line2d {
+                origin: p_start,
+                direction: dir,
+            }))
         }
         Curve3::Circle(c) => {
             let center_2d = project_point_to_plane_uv(c.center, plane);
@@ -67,12 +70,14 @@ pub fn project_curve_to_plane(curve: &Curve3, surface: &Surface3) -> Option<Curv
             }
             let uv_major_radius = (p_major - center_2d).length();
             // Project minor axis endpoint
-            let minor_dir_3d = if e.major_dir.cross(e.normal).length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
-                e.major_dir.cross(e.normal).normalize()
-            } else {
-                any_perpendicular(e.major_dir).normalize()
-            };
-            let p_minor = project_point_to_plane_uv(e.center + minor_dir_3d * e.minor_radius, plane);
+            let minor_dir_3d =
+                if e.major_dir.cross(e.normal).length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
+                    e.major_dir.cross(e.normal).normalize()
+                } else {
+                    any_perpendicular(e.major_dir).normalize()
+                };
+            let p_minor =
+                project_point_to_plane_uv(e.center + minor_dir_3d * e.minor_radius, plane);
             let dir_minor = (p_minor - center_2d).normalize_or_zero();
             let uv_minor_radius = (p_minor - center_2d).length();
 

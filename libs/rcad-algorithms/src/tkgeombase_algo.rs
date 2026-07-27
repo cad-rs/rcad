@@ -11,9 +11,8 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
-    BezierCurve3, BSplineCurve3, BSplineCurve2,
-    ConicalSurface, Circle3, Curve3, Curve2d,
-    CurveEval, Curve2dEval,
+    BSplineCurve2, BSplineCurve3, BezierCurve3, Circle3, ConicalSurface, Curve2d, Curve2dEval,
+    Curve3, CurveEval,
 };
 
 const TOL: f64 = 1e-7;
@@ -113,12 +112,16 @@ fn find_knot_span(knots: &[f64], degree: usize, num_poles: usize, t: f64) -> usi
 
 /// Reparametrize knot vector to [0, 1] range (OCCT BSplCLib::Reparametrize).
 fn reparametrize_knots(knots: &mut [f64], new_min: f64, new_max: f64) {
-    if knots.is_empty() { return; }
+    if knots.is_empty() {
+        return;
+    }
     let old_min = knots[0];
     let old_max = knots[knots.len() - 1];
     let old_range = old_max - old_min;
     let new_range = new_max - new_min;
-    if old_range.abs() < TOL { return; }
+    if old_range.abs() < TOL {
+        return;
+    }
     for k in knots.iter_mut() {
         *k = new_min + (*k - old_min) / old_range * new_range;
     }
@@ -161,12 +164,7 @@ fn hermite_coeff(curve: &BSplineCurve3) -> [f64; 4] {
     // TAB(2) = -D'(1)/D(1)², TAB(3) = 1/D(1)
     let d0_sq = denom0 * denom0;
     let d1_sq = denom1 * denom1;
-    [
-        1.0 / denom0,
-        -deriv0 / d0_sq,
-        -deriv1 / d1_sq,
-        1.0 / denom1,
-    ]
+    [1.0 / denom0, -deriv0 / d0_sq, -deriv1 / d1_sq, 1.0 / denom1]
 }
 
 /// Hermit::Solution equivalent — compute weight function as 2D BSpline.
@@ -227,7 +225,9 @@ pub fn hermit_solutionbis(curve: &BSplineCurve3) -> (f64, f64) {
 
 /// Raise BSpline3 degree (OCCT IncreaseDegree).
 fn increase_degree_bspline3(c: &BSplineCurve3, new_deg: usize) -> BSplineCurve3 {
-    if c.degree >= new_deg { return c.clone(); }
+    if c.degree >= new_deg {
+        return c.clone();
+    }
     let mut poles = c.control_points.clone();
     let mut weights = c.weights.clone();
     let old_deg = c.degree;
@@ -289,7 +289,9 @@ fn increase_degree_bspline3(c: &BSplineCurve3, new_deg: usize) -> BSplineCurve3 
 
 /// Raise BSpline2 degree.
 fn increase_degree_bspline2(c: &BSplineCurve2, new_deg: usize) -> BSplineCurve2 {
-    if c.degree >= new_deg { return c.clone(); }
+    if c.degree >= new_deg {
+        return c.clone();
+    }
     let n = c.control_points.len();
     let new_n = n + (new_deg - c.degree);
     let step = (n - 1) as f64 / (new_n - 1) as f64;
@@ -351,7 +353,11 @@ fn reverse_bspline2(c: &BSplineCurve2) -> BSplineCurve2 {
 /// 1. Harmonize degrees
 /// 2. Compute reparam ratio from first derivative magnitudes
 /// 3. Build merged knot/pole/weight arrays
-pub fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tolerance: f64) -> Option<BSplineCurve3> {
+pub fn concat_bsplines(
+    c1: &BSplineCurve3,
+    c2: &BSplineCurve3,
+    tolerance: f64,
+) -> Option<BSplineCurve3> {
     // Check G0 using actual endpoints (OCCT: StartPoint/EndPoint)
     let c1_start = c1.point_at(0.0);
     let c1_end = c1.point_at(1.0);
@@ -361,7 +367,9 @@ pub fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tolerance: f64) -
     let avant = c1_start.distance(c2_start) < tolerance || c1_start.distance(c2_end) < tolerance;
     let apres = c1_end.distance(c2_start) < tolerance || c1_end.distance(c2_end) < tolerance;
 
-    if !avant && !apres { return None; }
+    if !avant && !apres {
+        return None;
+    }
 
     // Resolve ambiguity: if both avant and apres are true, curve would be closed
     // (we don't handle closure in this simple case)
@@ -390,14 +398,26 @@ pub fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tolerance: f64) -
 
     // OCCT: Harmonize degrees
     let deg = c1_adj.degree.max(c2_adj.degree);
-    if c1_adj.degree < deg { c1_adj = increase_degree_bspline3(&c1_adj, deg); }
-    if c2_adj.degree < deg { c2_adj = increase_degree_bspline3(&c2_adj, deg); }
+    if c1_adj.degree < deg {
+        c1_adj = increase_degree_bspline3(&c1_adj, deg);
+    }
+    if c2_adj.degree < deg {
+        c2_adj = increase_degree_bspline3(&c2_adj, deg);
+    }
 
     // OCCT: Compute reparametrization ratio from first derivative magnitudes at seam
     // L1 = |C1'(LastParam)|, L2 = |C2'(FirstParam)|
     let eps = 1e-7;
-    let t1_last = if c1_adj.knots.len() > c1_adj.degree { c1_adj.knots[c1_adj.knots.len() - c1_adj.degree - 1] } else { 1.0 };
-    let t2_first = if c2_adj.knots.len() > c2_adj.degree { c2_adj.knots[c2_adj.degree] } else { 0.0 };
+    let t1_last = if c1_adj.knots.len() > c1_adj.degree {
+        c1_adj.knots[c1_adj.knots.len() - c1_adj.degree - 1]
+    } else {
+        1.0
+    };
+    let t2_first = if c2_adj.knots.len() > c2_adj.degree {
+        c2_adj.knots[c2_adj.degree]
+    } else {
+        0.0
+    };
 
     let d1_c1 = (c1_adj.point_at(t1_last) - c1_adj.point_at(t1_last - eps)) / eps;
     let d1_c2 = (c2_adj.point_at(t2_first + eps) - c2_adj.point_at(t2_first)) / eps;
@@ -446,11 +466,19 @@ pub fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tolerance: f64) -
                 *noeuds.last_mut().unwrap() = noeuds[ii - 1] + eps_k;
             }
         }
-        let mult = if ii == nbk1 - 1 { deg as i32 } else if ii < c1_adj.knots.len() - 1 { 1 } else { deg as i32 };
+        let mult = if ii == nbk1 - 1 {
+            deg as i32
+        } else if ii < c1_adj.knots.len() - 1 {
+            1
+        } else {
+            deg as i32
+        };
         mults.push(mult);
     }
     // Set seam multiplicity to degree
-    if let Some(m) = mults.last_mut() { *m = deg as i32; }
+    if let Some(m) = mults.last_mut() {
+        *m = deg as i32;
+    }
 
     // Copy second curve's knots with reparam (skip first knot, duplicate)
     for ii in 1..nbk2 {
@@ -490,16 +518,23 @@ pub fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tolerance: f64) -
 }
 
 /// Concatenate two 2D BSpline curves (OCCT Geom2dConvert_CompCurveToBSplineCurve).
-pub fn concat_bsplines_2d(c1: &BSplineCurve2, c2: &BSplineCurve2, tolerance: f64) -> Option<BSplineCurve2> {
+pub fn concat_bsplines_2d(
+    c1: &BSplineCurve2,
+    c2: &BSplineCurve2,
+    tolerance: f64,
+) -> Option<BSplineCurve2> {
     let c1_start = c1.point_at(0.0);
     let c1_end = c1.point_at(1.0);
     let c2_start = c2.point_at(0.0);
     let c2_end = c2.point_at(1.0);
 
-    let avant = (c1_start - c2_start).length() < tolerance || (c1_start - c2_end).length() < tolerance;
+    let avant =
+        (c1_start - c2_start).length() < tolerance || (c1_start - c2_end).length() < tolerance;
     let apres = (c1_end - c2_start).length() < tolerance || (c1_end - c2_end).length() < tolerance;
 
-    if !avant && !apres { return None; }
+    if !avant && !apres {
+        return None;
+    }
 
     let mut c1_adj = c1.clone();
     let mut c2_adj = c2.clone();
@@ -518,8 +553,12 @@ pub fn concat_bsplines_2d(c1: &BSplineCurve2, c2: &BSplineCurve2, tolerance: f64
     }
 
     let deg = c1_adj.degree.max(c2_adj.degree);
-    if c1_adj.degree < deg { c1_adj = increase_degree_bspline2(&c1_adj, deg); }
-    if c2_adj.degree < deg { c2_adj = increase_degree_bspline2(&c2_adj, deg); }
+    if c1_adj.degree < deg {
+        c1_adj = increase_degree_bspline2(&c1_adj, deg);
+    }
+    if c2_adj.degree < deg {
+        c2_adj = increase_degree_bspline2(&c2_adj, deg);
+    }
 
     let w_ratio = c1_adj.weights[c1_adj.control_points.len() - 1] / c2_adj.weights[0];
 
@@ -598,7 +637,11 @@ pub fn project_circle_onto_cone(circle: &Circle3, cone: &ConicalSurface) -> Opti
     } else {
         y.atan2(x)
     };
-    let u = if u < 0.0 { u + 2.0 * std::f64::consts::PI } else { u };
+    let u = if u < 0.0 {
+        u + 2.0 * std::f64::consts::PI
+    } else {
+        u
+    };
 
     // OCCT: V = z / cos(semi_angle)
     let v = z / cone.half_angle_rad.cos();
@@ -644,8 +687,12 @@ pub struct ExtremaResult {
 }
 
 impl ExtremaResult {
-    pub fn is_done(&self) -> bool { !self.params.is_empty() }
-    pub fn nb_ext(&self) -> usize { self.params.len() }
+    pub fn is_done(&self) -> bool {
+        !self.params.is_empty()
+    }
+    pub fn nb_ext(&self) -> usize {
+        self.params.len()
+    }
     pub fn min_square_distance(&self) -> f64 {
         self.sq_dists.iter().copied().fold(f64::MAX, f64::min)
     }
@@ -657,11 +704,20 @@ impl ExtremaResult {
 /// Find point-to-curve extrema with search mode control.
 ///
 /// ExtremaPC_Curve::Perform(point, tol, searchMode)
-pub fn find_extrema_curve(curve: &Curve3, point: DVec3, tol: f64, mode: SearchMode) -> ExtremaResult {
+pub fn find_extrema_curve(
+    curve: &Curve3,
+    point: DVec3,
+    tol: f64,
+    mode: SearchMode,
+) -> ExtremaResult {
     let domain = curve.default_domain();
     let t0 = domain[0];
     let t1 = domain[1];
-    let domain_len = if t1.is_finite() && t0.is_finite() { t1 - t0 } else { 100.0 };
+    let domain_len = if t1.is_finite() && t0.is_finite() {
+        t1 - t0
+    } else {
+        100.0
+    };
     let start = if t0.is_finite() { t0 } else { -50.0 };
     let n_samples = 200;
     let step = domain_len / n_samples as f64;
@@ -688,17 +744,29 @@ pub fn find_extrema_curve(curve: &Curve3, point: DVec3, tol: f64, mode: SearchMo
 
     candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-    let mut result = ExtremaResult { params: vec![], sq_dists: vec![], is_min: vec![] };
+    let mut result = ExtremaResult {
+        params: vec![],
+        sq_dists: vec![],
+        is_min: vec![],
+    };
 
     match mode {
         SearchMode::Min => {
-            let (t_min, sq_min) = candidates.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).copied().unwrap_or((0.0, f64::MAX));
+            let (t_min, sq_min) = candidates
+                .iter()
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .copied()
+                .unwrap_or((0.0, f64::MAX));
             result.params.push(t_min);
             result.sq_dists.push(sq_min);
             result.is_min.push(true);
         }
         SearchMode::Max => {
-            let (t_max, sq_max) = candidates.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).copied().unwrap_or((0.0, 0.0));
+            let (t_max, sq_max) = candidates
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .copied()
+                .unwrap_or((0.0, 0.0));
             result.params.push(t_max);
             result.sq_dists.push(sq_max);
             result.is_min.push(false);

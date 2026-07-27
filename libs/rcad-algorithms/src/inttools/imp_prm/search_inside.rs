@@ -6,9 +6,9 @@
 //! Uses random/structured sampling + Gauss-Newton refinement via SurfFunction.
 //! These interior points serve as starting points for closed intersection curves.
 
+use super::surf_function::SurfFunction;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::Surface3;
-use super::surf_function::SurfFunction;
 
 // ── OCCT IntSurf_InteriorPoint ───────────────────────────────────────
 #[derive(Clone, Debug)]
@@ -22,7 +22,13 @@ pub struct InteriorPoint {
 
 impl InteriorPoint {
     pub fn new(value: DVec3, u: f64, v: f64, dir: DVec3, dir2d: DVec2) -> Self {
-        Self { value, u, v, direction: dir, direction_2d: dir2d }
+        Self {
+            value,
+            u,
+            v,
+            direction: dir,
+            direction_2d: dir2d,
+        }
     }
 }
 
@@ -35,7 +41,10 @@ pub struct SearchInside {
 impl SearchInside {
     // OCCT L34: default constructor
     pub fn new() -> Self {
-        Self { done: false, list: Vec::new() }
+        Self {
+            done: false,
+            list: Vec::new(),
+        }
     }
 
     // OCCT L41-44: Perform(F, Surf, T, Epsilon)
@@ -44,8 +53,10 @@ impl SearchInside {
     pub fn perform(
         &mut self,
         func: &mut SurfFunction,
-        u_min: f64, u_max: f64,
-        v_min: f64, v_max: f64,
+        u_min: f64,
+        u_max: f64,
+        v_min: f64,
+        v_max: f64,
         epsilon: f64,
     ) {
         self.list.clear();
@@ -101,12 +112,7 @@ impl SearchInside {
     }
 
     // OCCT L46-49: Perform(F, Surf, UStart, VStart) — from a given start point
-    pub fn perform_from_point(
-        &mut self,
-        func: &mut SurfFunction,
-        u_start: f64,
-        v_start: f64,
-    ) {
+    pub fn perform_from_point(&mut self, func: &mut SurfFunction, u_start: f64, v_start: f64) {
         self.list.clear();
         self.done = false;
 
@@ -122,17 +128,26 @@ impl SearchInside {
             if !self.is_duplicate(un, vn, tol) {
                 let dir_3d = func.direction_3d();
                 let dir_2d = func.direction_2d();
-                self.list.push(InteriorPoint::new(*func.point(), un, vn, dir_3d, dir_2d));
+                self.list
+                    .push(InteriorPoint::new(*func.point(), un, vn, dir_3d, dir_2d));
             }
         }
     }
 
     fn is_duplicate(&self, u: f64, v: f64, tol: f64) -> bool {
-        self.list.iter().any(|p| (p.u - u).abs() < tol && (p.v - v).abs() < tol)
+        self.list
+            .iter()
+            .any(|p| (p.u - u).abs() < tol && (p.v - v).abs() < tol)
     }
 
     // ── Public API ───────────────────────────────────────────────────
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn nb_points(&self) -> usize { self.list.len() }
-    pub fn value(&self, index: usize) -> &InteriorPoint { &self.list[index] }
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    pub fn nb_points(&self) -> usize {
+        self.list.len()
+    }
+    pub fn value(&self, index: usize) -> &InteriorPoint {
+        &self.list[index]
+    }
 }

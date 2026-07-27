@@ -7,9 +7,9 @@
 //! from the 3D point on the parametric surface to the quadric.
 //! Used by IntStart_SearchOnBoundaries to find zero crossings on boundary curves.
 
+use super::super::super::inttools::int_surf_quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
-use super::super::super::inttools::int_surf_quadric::Quadric;
 
 /// IntPatch_ArcFunction = math_FunctionWithDerivative
 ///

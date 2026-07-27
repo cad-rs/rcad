@@ -30,9 +30,9 @@
 //! ```
 
 use glam::DVec3;
+use rcad_kernel::geom::{CurveEval, SurfaceEval};
 use rcad_kernel::topods::TShape;
 use rcad_kernel::{Curve3, Surface3};
-use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 // =============================================================================
 // Bounding Box Type
@@ -219,10 +219,7 @@ impl BoundingBox {
     ///
     /// Returns an empty box if there is no intersection.
     pub fn intersection(&self, other: &BoundingBox) -> BoundingBox {
-        BoundingBox::from_min_max(
-            self.min.max(other.min),
-            self.max.min(other.max),
-        )
+        BoundingBox::from_min_max(self.min.max(other.min), self.max.min(other.max))
     }
 
     /// Compute the union of two bounding boxes.
@@ -290,11 +287,7 @@ impl BoundingBox {
             return None;
         }
 
-        let inv_dir = DVec3::new(
-            1.0 / direction.x,
-            1.0 / direction.y,
-            1.0 / direction.z,
-        );
+        let inv_dir = DVec3::new(1.0 / direction.x, 1.0 / direction.y, 1.0 / direction.z);
 
         let t1 = (self.min - origin) * inv_dir;
         let t2 = (self.max - origin) * inv_dir;
@@ -393,7 +386,9 @@ pub fn add_face_to_bbox(brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut Bo
     }
 
     // Helper: add vertices from a wire ShapeRef
-    let add_wire_vertices = |wire_ref: &rcad_kernel::topods::ShapeRef, brep: &rcad_kernel::BRep, bbox: &mut BoundingBox| {
+    let add_wire_vertices = |wire_ref: &rcad_kernel::topods::ShapeRef,
+                             brep: &rcad_kernel::BRep,
+                             bbox: &mut BoundingBox| {
         if let TShape::Wire(twd) = &*brep.tshapes[wire_ref.index] {
             for &edge_ref in &twd.edges {
                 if let TShape::Edge(ed) = &*brep.tshapes[edge_ref.index] {
@@ -564,22 +559,28 @@ pub fn curve_bounds_default(curve: &Curve3) -> BoundingBox {
 
 /// Count the total number of faces in a BRep.
 fn count_brep_faces(brep: &rcad_kernel::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+        .count()
 }
 
 /// Get a TFaceData reference and its tshape index by flat face index.
-fn get_tshape_face_by_flat_index<'a>(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Option<(&'a rcad_kernel::topods::TFaceData, usize)> {
-    brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_))).nth(face_idx).map(|(idx, ts)| {
-        match &**ts {
+fn get_tshape_face_by_flat_index<'a>(
+    brep: &'a rcad_kernel::BRep,
+    face_idx: usize,
+) -> Option<(&'a rcad_kernel::topods::TFaceData, usize)> {
+    brep.tshapes
+        .iter()
+        .enumerate()
+        .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
+        .nth(face_idx)
+        .map(|(idx, ts)| match &**ts {
             TShape::Face(fd) => (fd, idx),
             _ => unreachable!(),
-        }
-    })
+        })
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
-
-
-

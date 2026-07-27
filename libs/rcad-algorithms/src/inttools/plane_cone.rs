@@ -78,16 +78,21 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
                 return PlaneConicalResult::Point(apex);
             }
             let perp_in_plane = cross.normalize();
-            let projected_axis =
-                (axis_n - plane_n * axis_n.dot(plane_n)).normalize_or_zero();
+            let projected_axis = (axis_n - plane_n * axis_n.dot(plane_n)).normalize_or_zero();
             if projected_axis.length_squared() < TOLERANCE_LEN_MIN {
                 return PlaneConicalResult::Point(apex);
             }
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
             let d2 = (projected_axis * half.cos() - perp_in_plane * half.sin()).normalize();
             return PlaneConicalResult::TwoLines(
-                Line3 { origin: apex, direction: d1 },
-                Line3 { origin: apex, direction: d2 },
+                Line3 {
+                    origin: apex,
+                    direction: d1,
+                },
+                Line3 {
+                    origin: apex,
+                    direction: d2,
+                },
             );
         }
 
@@ -107,7 +112,15 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
 
     // ── Hyperbola: σ < β ↔ cos(σ) > cos(β) ↔ sin_angle > cos_beta ──────────
     if sin_angle > cos_beta + TOLERANCE_ANG {
-        return build_hyperbola(plane, cone, apex_to_plane, axis_n, cos_beta, sin_beta, sin_angle);
+        return build_hyperbola(
+            plane,
+            cone,
+            apex_to_plane,
+            axis_n,
+            cos_beta,
+            sin_beta,
+            sin_angle,
+        );
     }
 
     // ── Parabola: σ ≈ β ↔ cos(σ) ≈ cos(β) ↔ sin_angle ≈ cos_beta ───────────
@@ -158,7 +171,6 @@ fn build_ellipse(
     if base_radius < TOLERANCE_ABS {
         return PlaneConicalResult::Point(center);
     }
-
 
     // Semi-minor axis = base_radius (perpendicular to tilt direction)
     let minor_radius = base_radius;
@@ -332,5 +344,3 @@ fn build_hyperbola(
         semi_minor: b,
     })
 }
-
-

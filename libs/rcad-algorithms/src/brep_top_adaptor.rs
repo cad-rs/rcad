@@ -29,11 +29,10 @@
 //! assert_eq!(face_count, 6);
 //! ```
 
-
+pub use crate::brep_tools::ShapeType;
 use crate::tolerance::*;
 use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::topology::Face;
-pub use crate::brep_tools::ShapeType;
 
 // =============================================================================
 // Face Adaptor
@@ -45,7 +44,7 @@ pub use crate::brep_tools::ShapeType;
 #[derive(Debug, Clone)]
 pub struct FaceAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    face_idx: usize,  // tshape index of TShape::Face
+    face_idx: usize, // tshape index of TShape::Face
 }
 
 impl<'a> FaceAdaptor<'a> {
@@ -84,25 +83,28 @@ impl<'a> FaceAdaptor<'a> {
 
     /// Returns the surface index for this face, if available (now returns tshape index itself).
     pub fn surface_index(&self) -> Option<usize> {
-        self.get_face_data().and_then(|fd| {
-            fd.surface.as_ref().map(|_| self.face_idx)
-        })
+        self.get_face_data()
+            .and_then(|fd| fd.surface.as_ref().map(|_| self.face_idx))
     }
 
     /// Returns the number of edges in the outer wire.
     pub fn edge_count(&self) -> usize {
-        self.get_face_data().and_then(|fd| {
-            let wts = self.brep.tshapes.get(fd.outer_wire.index)?;
-            match wts.as_ref() {
-                TShape::Wire(wd) => Some(wd.edges.len()),
-                _ => None,
-            }
-        }).unwrap_or(0)
+        self.get_face_data()
+            .and_then(|fd| {
+                let wts = self.brep.tshapes.get(fd.outer_wire.index)?;
+                match wts.as_ref() {
+                    TShape::Wire(wd) => Some(wd.edges.len()),
+                    _ => None,
+                }
+            })
+            .unwrap_or(0)
     }
 
     /// Returns the number of inner wires (holes).
     pub fn inner_wire_count(&self) -> usize {
-        self.get_face_data().map(|fd| fd.inner_wires.len()).unwrap_or(0)
+        self.get_face_data()
+            .map(|fd| fd.inner_wires.len())
+            .unwrap_or(0)
     }
 
     /// Returns the face tolerance.
@@ -121,7 +123,7 @@ impl<'a> FaceAdaptor<'a> {
 #[derive(Debug, Clone)]
 pub struct EdgeAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    edge_idx: usize,  // tshape index of TShape::Edge
+    edge_idx: usize, // tshape index of TShape::Edge
 }
 
 impl<'a> EdgeAdaptor<'a> {
@@ -162,7 +164,8 @@ impl<'a> EdgeAdaptor<'a> {
     pub fn curve_index(&self) -> Option<usize> {
         // In the new model, curves are stored directly on TEdgeData.
         // Return the edge index if a curve exists, None otherwise.
-        self.get_edge_data().and_then(|ed| ed.curve.as_ref().map(|_| self.edge_idx))
+        self.get_edge_data()
+            .and_then(|ed| ed.curve.as_ref().map(|_| self.edge_idx))
     }
 
     /// Returns the parameter range for this edge.
@@ -172,17 +175,24 @@ impl<'a> EdgeAdaptor<'a> {
 
     /// Returns true if this edge is degenerate.
     pub fn is_degenerate(&self) -> bool {
-        self.get_edge_data().map(|ed| ed.degenerated).unwrap_or(false)
+        self.get_edge_data()
+            .map(|ed| ed.degenerated)
+            .unwrap_or(false)
     }
 
     /// Returns true if this edge is closed (start == end vertex).
     pub fn is_closed(&self) -> bool {
-        self.get_edge_data().map(|ed| ed.first.index == ed.last.index).unwrap_or(false)
+        self.get_edge_data()
+            .map(|ed| ed.first.index == ed.last.index)
+            .unwrap_or(false)
     }
 
     /// Returns the edge tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.get_edge_data().map(|ed| ed.tolerance).filter(|&t| t > 0.0).unwrap_or(TOLERANCE_MESH_LEGACY)
+        self.get_edge_data()
+            .map(|ed| ed.tolerance)
+            .filter(|&t| t > 0.0)
+            .unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 
@@ -196,7 +206,7 @@ impl<'a> EdgeAdaptor<'a> {
 #[derive(Debug, Clone)]
 pub struct VertexAdaptor<'a> {
     brep: &'a rcad_kernel::BRep,
-    vertex_idx: usize,  // tshape index of TShape::Vertex
+    vertex_idx: usize, // tshape index of TShape::Vertex
 }
 
 impl<'a> VertexAdaptor<'a> {
@@ -217,9 +227,18 @@ impl<'a> VertexAdaptor<'a> {
 
     /// Returns the vertex tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.brep.tshapes.get(self.vertex_idx).and_then(|ts| {
-            if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.tolerance) } else { None }
-        }).filter(|&t| t > 0.0).unwrap_or(TOLERANCE_MESH_LEGACY)
+        self.brep
+            .tshapes
+            .get(self.vertex_idx)
+            .and_then(|ts| {
+                if let TShape::Vertex(vd) = ts.as_ref() {
+                    Some(vd.tolerance)
+                } else {
+                    None
+                }
+            })
+            .filter(|&t| t > 0.0)
+            .unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 
@@ -437,7 +456,7 @@ impl OrientedEdge {
 pub struct WireExplorer<'a> {
     brep: &'a rcad_kernel::BRep,
     face_idx: usize,
-    wire_idx: usize,  // 0 = outer wire, 1+ = inner wires
+    wire_idx: usize, // 0 = outer wire, 1+ = inner wires
     edge_idx: usize,
     current: Option<OrientedEdge>,
 }
@@ -458,18 +477,29 @@ impl<'a> WireExplorer<'a> {
 
     /// Get the edge refs for a given wire ShapeRef.
     fn get_wire_edges(&self, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
-        let Some(wts) = self.brep.tshapes.get(wire_ref.index) else { return Vec::new() };
-        let TShape::Wire(wd) = wts.as_ref() else { return Vec::new() };
-        wd.edges.iter().map(|er| {
-            let forward = er.orientation == topods::Orientation::Forward;
-            (er.index, forward)
-        }).collect()
+        let Some(wts) = self.brep.tshapes.get(wire_ref.index) else {
+            return Vec::new();
+        };
+        let TShape::Wire(wd) = wts.as_ref() else {
+            return Vec::new();
+        };
+        wd.edges
+            .iter()
+            .map(|er| {
+                let forward = er.orientation == topods::Orientation::Forward;
+                (er.index, forward)
+            })
+            .collect()
     }
 
     /// Get all wire edge groups for the face: first outer wire, then inner wires.
     fn get_face_wires(&self) -> Vec<Vec<(usize, bool)>> {
-        let Some(ts) = self.brep.tshapes.get(self.face_idx) else { return Vec::new() };
-        let TShape::Face(fd) = ts.as_ref() else { return Vec::new() };
+        let Some(ts) = self.brep.tshapes.get(self.face_idx) else {
+            return Vec::new();
+        };
+        let TShape::Face(fd) = ts.as_ref() else {
+            return Vec::new();
+        };
         let mut wires = Vec::new();
         wires.push(self.get_wire_edges(&fd.outer_wire));
         for inner in &fd.inner_wires {
@@ -609,7 +639,11 @@ impl<'a> Iterator for ShapeIterator<'a> {
         }
 
         // Fast path: iterate tshapes by shape type, returning tshape indices.
-        let candidates: Vec<usize> = self.brep.tshapes.iter().enumerate()
+        let candidates: Vec<usize> = self
+            .brep
+            .tshapes
+            .iter()
+            .enumerate()
             .filter(|(_, ts)| match self.shape_type {
                 ShapeType::Vertex => matches!(ts.as_ref(), TShape::Vertex(_)),
                 ShapeType::Edge => matches!(ts.as_ref(), TShape::Edge(_)),
@@ -700,7 +734,9 @@ fn collect_face_edge_indices(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<u
         Some(ts) => ts,
         None => return result,
     };
-    let TShape::Face(fd) = ts.as_ref() else { return result };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return result;
+    };
 
     // Collect from outer wire
     if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
@@ -765,7 +801,9 @@ pub fn edges_of_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<usize> {
 pub fn faces_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
     let mut result = Vec::new();
     for (fi, ts) in brep.tshapes.iter().enumerate() {
-        let TShape::Face(fd) = ts.as_ref() else { continue };
+        let TShape::Face(fd) = ts.as_ref() else {
+            continue;
+        };
         // Check outer wire edges
         if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
             if let TShape::Wire(wd) = wts.as_ref() {
@@ -833,14 +871,18 @@ pub fn vertices_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> (usize, us
 /// assert_eq!(edges.len(), 3);
 /// ```
 pub fn edges_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
-    brep.tshapes.iter().enumerate().filter_map(|(ei, ts)| {
-        if let TShape::Edge(ed) = ts.as_ref() {
-            if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
-                return Some(ei);
+    brep.tshapes
+        .iter()
+        .enumerate()
+        .filter_map(|(ei, ts)| {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
+                    return Some(ei);
+                }
             }
-        }
-        None
-    }).collect()
+            None
+        })
+        .collect()
 }
 
 /// Returns all faces that share the given vertex (through their edges).
@@ -879,21 +921,28 @@ pub fn faces_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize
 
 /// Returns the number of faces in a BRep.
 pub fn face_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+        .count()
 }
 
 /// Returns the number of shells in a BRep.
 pub fn shell_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Shell(_)))
+        .count()
 }
 
 /// Returns the number of wires in a BRep (including inner wires).
 pub fn wire_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Wire(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Wire(_)))
+        .count()
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
-
-

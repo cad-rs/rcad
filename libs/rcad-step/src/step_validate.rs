@@ -66,7 +66,9 @@ pub fn count_step_entities_from_str(content: &str) -> StepEntityCounts {
 }
 
 /// Count STEP entity types in a STEP file.
-pub fn count_step_entities(path: &std::path::Path) -> Result<StepEntityCounts, Box<dyn std::error::Error>> {
+pub fn count_step_entities(
+    path: &std::path::Path,
+) -> Result<StepEntityCounts, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(path)?;
     Ok(count_step_entities_from_str(&content))
 }

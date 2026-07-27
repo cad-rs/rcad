@@ -961,7 +961,7 @@ impl Annotation {
             return false;
         }
         match (self.view_index, view_index) {
-            (None, _) => true, // No view restriction
+            (None, _) => true,                // No view restriction
             (Some(av), Some(vv)) => av == vv, // Match specific view
             _ => false,
         }
@@ -1082,9 +1082,15 @@ impl AnnotationStore {
             .filter(|n| {
                 n.links.iter().any(|link| match link.target {
                     NoteTarget::Shape { shape_index: si } => si == shape_index,
-                    NoteTarget::Face { shape_index: si, .. } => si == shape_index,
-                    NoteTarget::Edge { shape_index: si, .. } => si == shape_index,
-                    NoteTarget::Vertex { shape_index: si, .. } => si == shape_index,
+                    NoteTarget::Face {
+                        shape_index: si, ..
+                    } => si == shape_index,
+                    NoteTarget::Edge {
+                        shape_index: si, ..
+                    } => si == shape_index,
+                    NoteTarget::Vertex {
+                        shape_index: si, ..
+                    } => si == shape_index,
                     _ => false,
                 })
             })
@@ -1100,18 +1106,41 @@ impl AnnotationStore {
     }
 
     /// Get all annotations for a specific target.
-    pub fn annotations_for_target(&self, shape_index: usize, face_index: Option<usize>) -> Vec<&Annotation> {
+    pub fn annotations_for_target(
+        &self,
+        shape_index: usize,
+        face_index: Option<usize>,
+    ) -> Vec<&Annotation> {
         self.annotations
             .iter()
             .filter(|a| {
                 a.targets.iter().any(|t| match (&t.target, face_index) {
                     (NoteTarget::Shape { shape_index: si }, _) => *si == shape_index,
-                    (NoteTarget::Face { shape_index: si, face_index: fi }, Some(fi2)) => {
-                        *si == shape_index && *fi == fi2
-                    }
-                    (NoteTarget::Face { shape_index: si, .. }, None) => *si == shape_index,
-                    (NoteTarget::Edge { shape_index: si, .. }, _) => *si == shape_index,
-                    (NoteTarget::Vertex { shape_index: si, .. }, _) => *si == shape_index,
+                    (
+                        NoteTarget::Face {
+                            shape_index: si,
+                            face_index: fi,
+                        },
+                        Some(fi2),
+                    ) => *si == shape_index && *fi == fi2,
+                    (
+                        NoteTarget::Face {
+                            shape_index: si, ..
+                        },
+                        None,
+                    ) => *si == shape_index,
+                    (
+                        NoteTarget::Edge {
+                            shape_index: si, ..
+                        },
+                        _,
+                    ) => *si == shape_index,
+                    (
+                        NoteTarget::Vertex {
+                            shape_index: si, ..
+                        },
+                        _,
+                    ) => *si == shape_index,
                     _ => false,
                 })
             })
@@ -1265,13 +1294,28 @@ mod tests {
     #[test]
     fn note_link_creation() {
         let link_shape = NoteLink::to_shape(0);
-        assert!(matches!(link_shape.target, NoteTarget::Shape { shape_index: 0 }));
+        assert!(matches!(
+            link_shape.target,
+            NoteTarget::Shape { shape_index: 0 }
+        ));
 
         let link_face = NoteLink::to_face(0, 5);
-        assert!(matches!(link_face.target, NoteTarget::Face { shape_index: 0, face_index: 5 }));
+        assert!(matches!(
+            link_face.target,
+            NoteTarget::Face {
+                shape_index: 0,
+                face_index: 5
+            }
+        ));
 
         let link_edge = NoteLink::to_edge(1, 3);
-        assert!(matches!(link_edge.target, NoteTarget::Edge { shape_index: 1, edge_index: 3 }));
+        assert!(matches!(
+            link_edge.target,
+            NoteTarget::Edge {
+                shape_index: 1,
+                edge_index: 3
+            }
+        ));
 
         let link_point = NoteLink::to_point(DVec3::new(1.0, 2.0, 3.0));
         assert!(matches!(link_point.target, NoteTarget::Point { .. }));
@@ -1481,7 +1525,9 @@ mod tests {
 
         let ann1 = Annotation::note(1, "Note1", "Unrestricted").with_visibility(true);
         let ann2 = Annotation::note(2, "Note2", "View2Only").with_view(2);
-        let ann3 = Annotation::note(3, "Note3", "View1Only").with_view(1).with_visibility(false);
+        let ann3 = Annotation::note(3, "Note3", "View1Only")
+            .with_view(1)
+            .with_visibility(false);
 
         store.add_annotation(ann1);
         store.add_annotation(ann2);
@@ -1507,7 +1553,12 @@ mod tests {
         store.add_xc_note(Note::new(1, "Note", "Test"));
         store.add_view(View::front(1));
         store.add_annotation(Annotation::note(1, "Ann", "Test"));
-        store.add_note(AnnotationNote::new(1, "Legacy", NoteType::Text, DVec3::ZERO));
+        store.add_note(AnnotationNote::new(
+            1,
+            "Legacy",
+            NoteType::Text,
+            DVec3::ZERO,
+        ));
 
         assert_eq!(store.xc_notes_count(), 1);
         assert_eq!(store.views_count(), 1);

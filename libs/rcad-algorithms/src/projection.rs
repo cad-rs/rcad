@@ -32,11 +32,11 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
-use rcad_kernel::topods;
-use rcad_kernel::topology::Wire;
-use rcad_kernel::topology::Face;
+use rcad_kernel::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
+use rcad_kernel::topods;
+use rcad_kernel::topology::Face;
+use rcad_kernel::topology::Wire;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Projection Options
@@ -337,7 +337,9 @@ pub fn project_point_on_brep(
 
     // Sort by distance
     projections.sort_by(|a, b| {
-        a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     projections
@@ -398,7 +400,11 @@ pub fn project_wire_on_surface(
 
         // Get the parameter range for this edge
         let range = ed.range;
-        let [t0, t1] = if range[0] == 0.0 && range[1] == 0.0 { curve.default_domain() } else { range };
+        let [t0, t1] = if range[0] == 0.0 && range[1] == 0.0 {
+            curve.default_domain()
+        } else {
+            range
+        };
 
         // Sample the curve and project each sample point
         let n_samples = 16;
@@ -424,7 +430,9 @@ pub fn project_wire_on_surface(
         }
     }
 
-    Wire { edges: projected_edges }
+    Wire {
+        edges: projected_edges,
+    }
 }
 
 /// Project a wire onto a face along a given direction.
@@ -655,25 +663,29 @@ pub fn project_surface_on_surface(
     options: &ProjectionOptions,
 ) -> Vec<Curve3> {
     // Use the existing surface intersection from inttools
-    use crate::inttools::{intersect_surfaces_with_tolerance, SurfaceCurve};
+    use crate::inttools::{SurfaceCurve, intersect_surfaces_with_tolerance};
 
     let result = intersect_surfaces_with_tolerance(surf1, surf2, options.tolerance);
 
-    result.curves.into_iter().filter_map(|sc| {
-        match sc.curve_3d {
-            SurfaceCurve::Circle(c) => Some(Curve3::Circle(c)),
-            SurfaceCurve::Ellipse(e) => Some(Curve3::Ellipse(e)),
-            SurfaceCurve::Line(l) => Some(Curve3::Line(l)),
-            SurfaceCurve::Parabola(p) => Some(Curve3::Parabola(p)),
-            SurfaceCurve::Hyperbola(h) => Some(Curve3::Hyperbola(h)),
-            // For polylines, fit a B-spline
-            SurfaceCurve::Polyline(pts) => fit_points_to_bspline(&pts),
-            // BSpline already fitted — pass through
-            SurfaceCurve::BSplineCurve(b) => Some(Curve3::BSpline(*b)),
-            // Skip point intersections
-            SurfaceCurve::Point(_) => None,
-        }
-    }).collect()
+    result
+        .curves
+        .into_iter()
+        .filter_map(|sc| {
+            match sc.curve_3d {
+                SurfaceCurve::Circle(c) => Some(Curve3::Circle(c)),
+                SurfaceCurve::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                SurfaceCurve::Line(l) => Some(Curve3::Line(l)),
+                SurfaceCurve::Parabola(p) => Some(Curve3::Parabola(p)),
+                SurfaceCurve::Hyperbola(h) => Some(Curve3::Hyperbola(h)),
+                // For polylines, fit a B-spline
+                SurfaceCurve::Polyline(pts) => fit_points_to_bspline(&pts),
+                // BSpline already fitted — pass through
+                SurfaceCurve::BSplineCurve(b) => Some(Curve3::BSpline(*b)),
+                // Skip point intersections
+                SurfaceCurve::Point(_) => None,
+            }
+        })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -744,7 +756,8 @@ pub fn compute_silhouette_curves(
                                 mesh_dirty: true,
                                 surface_idx: None,
                             };
-                            let face_curves = compute_surface_silhouette(surface, &dummy_face, dir, options);
+                            let face_curves =
+                                compute_surface_silhouette(surface, &dummy_face, dir, options);
                             curves.extend(face_curves);
                         }
                     }
@@ -831,7 +844,14 @@ fn compute_general_silhouette(
 
                 if dot_prev * dot < 0.0 {
                     // Sign change - refine with binary search
-                    let v_sil = refine_silhouette_v(surface, u, v_prev, v, view_dir, options.max_iterations);
+                    let v_sil = refine_silhouette_v(
+                        surface,
+                        u,
+                        v_prev,
+                        v,
+                        view_dir,
+                        options.max_iterations,
+                    );
                     let pt = surface.point_at(u, v_sil);
                     silhouette_points.push((u, v_sil, pt));
                 }
@@ -941,10 +961,12 @@ pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<u
     let mut contour_edges = Vec::new();
 
     // Build edge-to-face adjacency
-    let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
 
     // Build face normals lookup
-    let mut face_normals: std::collections::HashMap<usize, DVec3> = std::collections::HashMap::new();
+    let mut face_normals: std::collections::HashMap<usize, DVec3> =
+        std::collections::HashMap::new();
 
     // Iterate over all faces using tshape API
     for ts in &brep.tshapes {
@@ -953,9 +975,11 @@ pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<u
                 if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
                     for face_sr in &shd.faces {
                         if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
-                            let normal = fd.surface.as_ref().map(|s| {
-                                rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0)
-                            }).unwrap_or(DVec3::Z);
+                            let normal = fd
+                                .surface
+                                .as_ref()
+                                .map(|s| rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
+                                .unwrap_or(DVec3::Z);
                             face_normals.insert(face_sr.index, normal);
 
                             // Outer wire edges
@@ -978,8 +1002,14 @@ pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<u
         }
 
         // Get normals for both faces
-        let n1 = face_normals.get(&face_indices[0]).copied().unwrap_or(DVec3::Z);
-        let n2 = face_normals.get(&face_indices[1]).copied().unwrap_or(DVec3::Z);
+        let n1 = face_normals
+            .get(&face_indices[0])
+            .copied()
+            .unwrap_or(DVec3::Z);
+        let n2 = face_normals
+            .get(&face_indices[1])
+            .copied()
+            .unwrap_or(DVec3::Z);
 
         // Check if normals are on opposite sides of view direction
         let d1 = n1.dot(dir);
@@ -1122,11 +1152,7 @@ pub fn compute_all_curve_surface_projections(
         let dist = (proj.point - proj_point).length();
 
         if dist < options.tolerance * 10.0 {
-            projections.push((
-                DVec2::new(proj.params.0, proj.params.1),
-                t,
-                proj.point,
-            ));
+            projections.push((DVec2::new(proj.params.0, proj.params.1), t, proj.point));
         }
     }
 
@@ -1136,5 +1162,3 @@ pub fn compute_all_curve_surface_projections(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

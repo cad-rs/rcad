@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Settings for a single layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +67,9 @@ impl LayerConfig {
     }
 
     /// Create config from a JSON file.
-    pub fn from_json_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_json_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         Self::from_json(&content).map_err(|e| e.into())
     }
@@ -90,12 +92,13 @@ impl LayerConfig {
 
     /// Get settings for a layer, using defaults if not configured.
     pub fn get(&self, layer: i16) -> LayerSettings {
-        self.layers.get(&layer).cloned().unwrap_or_else(|| {
-            LayerSettings {
+        self.layers
+            .get(&layer)
+            .cloned()
+            .unwrap_or_else(|| LayerSettings {
                 thickness: self.default_thickness,
                 ..Default::default()
-            }
-        })
+            })
     }
 
     /// Get the thickness for a layer.
@@ -147,6 +150,9 @@ mod tests {
         assert_eq!(config.thickness(1), 0.5);
         assert_eq!(config.thickness(2), 1.0);
         assert_eq!(config.thickness(3), 0.2);
-        assert_eq!(config.layers.get(&2).unwrap().name, Some("metal".to_string()));
+        assert_eq!(
+            config.layers.get(&2).unwrap().name,
+            Some("metal".to_string())
+        );
     }
 }

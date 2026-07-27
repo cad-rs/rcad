@@ -13,14 +13,14 @@
 use super::helpers::*;
 use super::*;
 use crate::bopds::ds::{
-    DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, ShapeOrigin, DS,
+    DS, DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
 use crate::boptools::bvh::{Aabb, BoxTree};
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::geom::*;
 use rcad_kernel::PCurve;
+use rcad_kernel::geom::*;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> super::PaveFiller<'a> {
@@ -530,7 +530,7 @@ impl<'a> super::PaveFiller<'a> {
         while loop_i < a_nb_ff {
             let i = loop_i;
             loop_i += 1; // increment BEFORE loop body (OCCT: ++i in for header)
-                         // L729-732: UserBreak check — omitted (no progress range in rcad)
+            // L729-732: UserBreak check — omitted (no progress range in rcad)
 
             // L735: aCurInd = i < aNbFFPrev ? i : aFFToRecheck[i - aNbFFPrev];
             let a_cur_ind = if i < a_nb_ff_prev {

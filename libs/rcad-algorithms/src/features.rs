@@ -5,11 +5,11 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
+use rcad_kernel::topods;
 
-use crate::{BooleanError, BooleanOpType};
 use crate::bop_occt_ops::boolean_op_generic as boolean_op;
+use crate::{BooleanError, BooleanOpType};
 
 /// Errors returned by feature operations.
 #[derive(Debug)]
@@ -185,7 +185,9 @@ pub fn make_prism(
     op: BooleanOpType,
 ) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
-        return Err(FeatureError::NonPositiveInput("profile_verts needs >= 3 vertices"));
+        return Err(FeatureError::NonPositiveInput(
+            "profile_verts needs >= 3 vertices",
+        ));
     }
     let dir = normalize("direction", direction)?;
     let depth = validate_positive("depth", depth)?;
@@ -210,13 +212,17 @@ pub fn make_draft_prism(
     op: BooleanOpType,
 ) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
-        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+        return Err(FeatureError::InvalidInput(
+            "profile_verts needs >= 3 vertices",
+        ));
     }
     let dir = normalize("direction", direction)?;
     let depth = validate_positive("depth", depth)?;
     let angle = validate_finite("draft_angle_rad", draft_angle_rad)?;
     if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
-        return Err(FeatureError::InvalidInput("draft_angle_rad must be in (-pi/2, pi/2)"));
+        return Err(FeatureError::InvalidInput(
+            "draft_angle_rad must be in (-pi/2, pi/2)",
+        ));
     }
 
     let bot: Vec<DVec3> = profile_verts.to_vec();
@@ -257,7 +263,9 @@ pub fn make_revolution(
     op: BooleanOpType,
 ) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
-        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+        return Err(FeatureError::InvalidInput(
+            "profile_verts needs >= 3 vertices",
+        ));
     }
     if !axis_origin.is_finite() {
         return Err(FeatureError::NonFiniteInput("axis_origin"));
@@ -272,7 +280,9 @@ pub fn make_revolution(
 
 fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usize), FeatureError> {
     if profile_verts.len() < 3 {
-        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+        return Err(FeatureError::InvalidInput(
+            "profile_verts needs >= 3 vertices",
+        ));
     }
 
     let n = profile_verts.len();
@@ -290,7 +300,10 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
         let d = p1 - p0;
         let len = d.length();
         let curve = if len > EPS {
-            Some(Curve3::Line(Line3 { origin: p0, direction: d / len }))
+            Some(Curve3::Line(Line3 {
+                origin: p0,
+                direction: d / len,
+            }))
         } else {
             None
         };
@@ -312,13 +325,21 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
 }
 
 /// Build a solid BRep prism from a polygon profile (n vertices, coplanar) extruded
-fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Result<topods::BRep, FeatureError> {
+fn build_polygon_prism(
+    profile_verts: &[DVec3],
+    dir: DVec3,
+    depth: f64,
+) -> Result<topods::BRep, FeatureError> {
     let bot: Vec<DVec3> = profile_verts.to_vec();
     let top: Vec<DVec3> = bot.iter().map(|&p| p + dir * depth).collect();
     build_prism_from_sections(&bot, &top, dir)
 }
 
-fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<topods::BRep, FeatureError> {
+fn build_prism_from_sections(
+    bot: &[DVec3],
+    top: &[DVec3],
+    dir: DVec3,
+) -> Result<topods::BRep, FeatureError> {
     let n = bot.len();
     if n < 3 || top.len() != n {
         return Err(FeatureError::InvalidInput("section vertex count mismatch"));
@@ -331,38 +352,68 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     let top_sr: Vec<topods::ShapeRef> = top.iter().map(|&p| brep.add_tvertex(p)).collect();
 
     /// Add a line edge from start to end and return its ShapeRef.
-    fn add_line_edge(brep: &mut topods::BRep, p0: DVec3, p1: DVec3, start_sr: topods::ShapeRef, end_sr: topods::ShapeRef) -> topods::ShapeRef {
+    fn add_line_edge(
+        brep: &mut topods::BRep,
+        p0: DVec3,
+        p1: DVec3,
+        start_sr: topods::ShapeRef,
+        end_sr: topods::ShapeRef,
+    ) -> topods::ShapeRef {
         let d = p1 - p0;
         let len = d.length();
         let dir = if len > EPS { d / len } else { DVec3::X };
-        brep.add_tedge(Some(Curve3::Line(Line3 { origin: p0, direction: dir })), start_sr, end_sr, [0.0, len])
+        brep.add_tedge(
+            Some(Curve3::Line(Line3 {
+                origin: p0,
+                direction: dir,
+            })),
+            start_sr,
+            end_sr,
+            [0.0, len],
+        )
     }
 
     // Bottom-cap edges: bot[i] -> bot[(i+1)%n]
-    let bot_edges: Vec<topods::ShapeRef> = (0..n).map(|i| {
-        let j = (i + 1) % n;
-        add_line_edge(&mut brep, bot[i], bot[j], bot_sr[i], bot_sr[j])
-    }).collect();
+    let bot_edges: Vec<topods::ShapeRef> = (0..n)
+        .map(|i| {
+            let j = (i + 1) % n;
+            add_line_edge(&mut brep, bot[i], bot[j], bot_sr[i], bot_sr[j])
+        })
+        .collect();
     // Top-cap edges: top[i] -> top[(i+1)%n]
-    let top_edges: Vec<topods::ShapeRef> = (0..n).map(|i| {
-        let j = (i + 1) % n;
-        add_line_edge(&mut brep, top[i], top[j], top_sr[i], top_sr[j])
-    }).collect();
+    let top_edges: Vec<topods::ShapeRef> = (0..n)
+        .map(|i| {
+            let j = (i + 1) % n;
+            add_line_edge(&mut brep, top[i], top[j], top_sr[i], top_sr[j])
+        })
+        .collect();
     // Vertical edges: bot[i] -> top[i]
-    let vert_edges: Vec<topods::ShapeRef> = (0..n).map(|i| {
-        add_line_edge(&mut brep, bot[i], top[i], bot_sr[i], top_sr[i])
-    }).collect();
+    let vert_edges: Vec<topods::ShapeRef> = (0..n)
+        .map(|i| add_line_edge(&mut brep, bot[i], top[i], bot_sr[i], top_sr[i]))
+        .collect();
 
     // Bottom cap (outward normal = -dir): reverse traversal of bot edges
-    let bot_wire: Vec<topods::ShapeRef> = (0..n).map(|i| {
-        let ei = bot_edges[n - 1 - i];
-        // Reversed orientation
-        topods::ShapeRef { ptr_id: 0, index: ei.index, orientation: topods::Orientation::Reversed, location: 0 }
-    }).collect();
+    let bot_wire: Vec<topods::ShapeRef> = (0..n)
+        .map(|i| {
+            let ei = bot_edges[n - 1 - i];
+            // Reversed orientation
+            topods::ShapeRef {
+                ptr_id: 0,
+                index: ei.index,
+                orientation: topods::Orientation::Reversed,
+                location: 0,
+            }
+        })
+        .collect();
     let bot_wire_sr = brep.add_twire(bot_wire);
     brep.add_tface(
         Some(Surface3::Plane(rcad_kernel::geom::Plane::new(bot[0], -dir))),
-        bot_wire_sr, vec![], None, None, vec![], false,
+        bot_wire_sr,
+        vec![],
+        None,
+        None,
+        vec![],
+        false,
     );
 
     // Top cap (outward normal = +dir): forward traversal of top edges
@@ -370,7 +421,12 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     let top_wire_sr = brep.add_twire(top_wire_edges);
     brep.add_tface(
         Some(Surface3::Plane(rcad_kernel::geom::Plane::new(top[0], dir))),
-        top_wire_sr, vec![], None, None, vec![], false,
+        top_wire_sr,
+        vec![],
+        None,
+        None,
+        vec![],
+        false,
     );
 
     // Lateral quad faces
@@ -383,34 +439,62 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             let ab = b - a;
             let ac = c - a;
             let nv = ac.cross(ab);
-            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { dir.cross(ab).normalize() }
+            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN {
+                nv.normalize()
+            } else {
+                dir.cross(ab).normalize()
+            }
         };
         // wire: bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev), top[i]->bot[i] (rev)
         let wire_edges = vec![
             bot_edges[i],
             vert_edges[j],
-            topods::ShapeRef { ptr_id: 0, index: top_edges[i].index, orientation: topods::Orientation::Reversed, location: 0 },
-            topods::ShapeRef { ptr_id: 0, index: vert_edges[i].index, orientation: topods::Orientation::Reversed, location: 0 },
+            topods::ShapeRef {
+                ptr_id: 0,
+                index: top_edges[i].index,
+                orientation: topods::Orientation::Reversed,
+                location: 0,
+            },
+            topods::ShapeRef {
+                ptr_id: 0,
+                index: vert_edges[i].index,
+                orientation: topods::Orientation::Reversed,
+                location: 0,
+            },
         ];
         let wire_sr = brep.add_twire(wire_edges);
         brep.add_tface(
-            Some(Surface3::Plane(rcad_kernel::geom::Plane::new(a, face_normal))),
-            wire_sr, vec![], None, None, vec![], false,
+            Some(Surface3::Plane(rcad_kernel::geom::Plane::new(
+                a,
+                face_normal,
+            ))),
+            wire_sr,
+            vec![],
+            None,
+            None,
+            vec![],
+            false,
         );
     }
 
     // Build shell and solid
-    let face_refs: Vec<topods::ShapeRef> = brep.tshapes.iter().enumerate()
+    let face_refs: Vec<topods::ShapeRef> = brep
+        .tshapes
+        .iter()
+        .enumerate()
         .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
-        .map(|(i, _)| topods::ShapeRef { ptr_id: 0, index: i, orientation: topods::Orientation::Forward, location: 0 })
+        .map(|(i, _)| topods::ShapeRef {
+            ptr_id: 0,
+            index: i,
+            orientation: topods::Orientation::Forward,
+            location: 0,
+        })
         .collect();
     let shell = brep.add_tshell(face_refs);
     brep.add_tsolid(vec![shell]);
 
     Ok(brep)
 }
-
-
 
 // ─── SplitShape: split a face by a cutting wire ──────────────────────────────
 
@@ -461,23 +545,34 @@ pub fn split_face_by_wire(
     }
 
     // Collect all solid TShapes.
-    let solid_ts_indices: Vec<usize> = brep.tshapes.iter().enumerate()
+    let solid_ts_indices: Vec<usize> = brep
+        .tshapes
+        .iter()
+        .enumerate()
         .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))
         .map(|(i, _)| i)
         .collect();
-    let solid_tsi = *solid_ts_indices.get(solid_idx).ok_or(SplitShapeError::FaceNotFound)?;
+    let solid_tsi = *solid_ts_indices
+        .get(solid_idx)
+        .ok_or(SplitShapeError::FaceNotFound)?;
     let solid_sd = match &*brep.tshapes[solid_tsi] {
         topods::TShape::Solid(s) => s.clone(),
         _ => return Err(SplitShapeError::FaceNotFound),
     };
 
-    let shell_sr = solid_sd.shells.get(shell_idx).ok_or(SplitShapeError::FaceNotFound)?;
+    let shell_sr = solid_sd
+        .shells
+        .get(shell_idx)
+        .ok_or(SplitShapeError::FaceNotFound)?;
     let shell_sd = match &*brep.tshapes[shell_sr.index] {
         topods::TShape::Shell(s) => s.clone(),
         _ => return Err(SplitShapeError::FaceNotFound),
     };
 
-    let face_sr = shell_sd.faces.get(face_idx).ok_or(SplitShapeError::FaceNotFound)?;
+    let face_sr = shell_sd
+        .faces
+        .get(face_idx)
+        .ok_or(SplitShapeError::FaceNotFound)?;
     let face_sd = match &*brep.tshapes[face_sr.index] {
         topods::TShape::Face(f) => f.clone(),
         _ => return Err(SplitShapeError::FaceNotFound),
@@ -495,17 +590,29 @@ pub fn split_face_by_wire(
     let end_v = *cut_path.last().unwrap();
 
     // Build ordered vertex sequence of the outer wire.
-    let wire_verts: Vec<usize> = outer_edges.iter().map(|edge_sr| {
-        let ed = match &*brep.tshapes[edge_sr.index] {
-            topods::TShape::Edge(e) => e,
-            _ => unreachable!(),
-        };
-        if edge_sr.orientation.is_forward() { ed.first.index } else { ed.last.index }
-    }).collect();
+    let wire_verts: Vec<usize> = outer_edges
+        .iter()
+        .map(|edge_sr| {
+            let ed = match &*brep.tshapes[edge_sr.index] {
+                topods::TShape::Edge(e) => e,
+                _ => unreachable!(),
+            };
+            if edge_sr.orientation.is_forward() {
+                ed.first.index
+            } else {
+                ed.last.index
+            }
+        })
+        .collect();
 
-    let pos_start = wire_verts.iter().position(|&v| v == start_v)
-        .ok_or(SplitShapeError::CutVertexNotOnWire { vertex_idx: start_v })?;
-    let pos_end = wire_verts.iter().position(|&v| v == end_v)
+    let pos_start = wire_verts.iter().position(|&v| v == start_v).ok_or(
+        SplitShapeError::CutVertexNotOnWire {
+            vertex_idx: start_v,
+        },
+    )?;
+    let pos_end = wire_verts
+        .iter()
+        .position(|&v| v == end_v)
         .ok_or(SplitShapeError::CutVertexNotOnWire { vertex_idx: end_v })?;
     if pos_start == pos_end {
         return Err(SplitShapeError::CutPathClosedLoop);
@@ -525,18 +632,30 @@ pub fn split_face_by_wire(
     }
 
     // Add line edges for the cut path segments.
-    let cut_edge_refs: Vec<topods::ShapeRef> = cut_path.windows(2).map(|w| {
-        let (sv, ev) = (w[0], w[1]);
-        let p0 = brep.vertex_point(sv).unwrap();
-        let p1 = brep.vertex_point(ev).unwrap();
-        let d = p1 - p0;
-        let len = d.length();
-        let dir = if len > TOLERANCE_LEN_SQ_DIV_SAFE { d / len } else { DVec3::X };
-        brep.add_tedge(
-            Some(Curve3::Line(Line3 { origin: p0, direction: dir })),
-            vert_ref(brep, sv), vert_ref(brep, ev), [0.0, len],
-        )
-    }).collect();
+    let cut_edge_refs: Vec<topods::ShapeRef> = cut_path
+        .windows(2)
+        .map(|w| {
+            let (sv, ev) = (w[0], w[1]);
+            let p0 = brep.vertex_point(sv).unwrap();
+            let p1 = brep.vertex_point(ev).unwrap();
+            let d = p1 - p0;
+            let len = d.length();
+            let dir = if len > TOLERANCE_LEN_SQ_DIV_SAFE {
+                d / len
+            } else {
+                DVec3::X
+            };
+            brep.add_tedge(
+                Some(Curve3::Line(Line3 {
+                    origin: p0,
+                    direction: dir,
+                })),
+                vert_ref(brep, sv),
+                vert_ref(brep, ev),
+                [0.0, len],
+            )
+        })
+        .collect();
 
     // Half A: outer[pos_start..pos_end] + cut forward.
     let mut half_a: Vec<topods::ShapeRef> = (0..(pos_end - pos_start))
@@ -561,12 +680,30 @@ pub fn split_face_by_wire(
     }));
     let wire_b = brep.add_twire(half_b);
 
-    if brep.tshapes.get(wire_a.index).and_then(|ts| {
-        if let topods::TShape::Wire(w) = &**ts { Some(w.edges.len()) } else { None }
-    }).unwrap_or(0) < 3
-        || brep.tshapes.get(wire_b.index).and_then(|ts| {
-            if let topods::TShape::Wire(w) = &**ts { Some(w.edges.len()) } else { None }
-        }).unwrap_or(0) < 3
+    if brep
+        .tshapes
+        .get(wire_a.index)
+        .and_then(|ts| {
+            if let topods::TShape::Wire(w) = &**ts {
+                Some(w.edges.len())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+        < 3
+        || brep
+            .tshapes
+            .get(wire_b.index)
+            .and_then(|ts| {
+                if let topods::TShape::Wire(w) = &**ts {
+                    Some(w.edges.len())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+            < 3
     {
         return Err(SplitShapeError::DegenerateResult);
     }
@@ -575,8 +712,24 @@ pub fn split_face_by_wire(
     let orig_surface = face_sd.surface.clone();
     let orig_inner = face_sd.inner_wires.clone();
 
-    let face_a_ref = brep.add_tface(orig_surface.clone(), wire_a, orig_inner.clone(), face_sd.sample_point, face_sd.uv_domain, face_sd.internal_vertices.clone(), face_sd.natural_restriction);
-    let face_b_ref = brep.add_tface(orig_surface, wire_b, orig_inner, face_sd.sample_point, face_sd.uv_domain, face_sd.internal_vertices.clone(), face_sd.natural_restriction);
+    let face_a_ref = brep.add_tface(
+        orig_surface.clone(),
+        wire_a,
+        orig_inner.clone(),
+        face_sd.sample_point,
+        face_sd.uv_domain,
+        face_sd.internal_vertices.clone(),
+        face_sd.natural_restriction,
+    );
+    let face_b_ref = brep.add_tface(
+        orig_surface,
+        wire_b,
+        orig_inner,
+        face_sd.sample_point,
+        face_sd.uv_domain,
+        face_sd.internal_vertices.clone(),
+        face_sd.natural_restriction,
+    );
 
     // Add faces to the shell
     let sd = brep.shell_mut(*shell_sr);
@@ -615,5 +768,3 @@ pub fn make_revolution_rib(
 ) -> Result<topods::BRep, FeatureError> {
     make_revolution(target, profile_verts, axis_origin, axis_dir, angle_rad, op)
 }
-
-

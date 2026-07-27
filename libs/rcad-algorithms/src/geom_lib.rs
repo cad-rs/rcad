@@ -1,4 +1,4 @@
-﻿//! GeomLib-style geometry utilities.
+//! GeomLib-style geometry utilities.
 //!
 //! This module provides additional geometry utilities analogous to OpenCASCADE's GeomLib package.
 //!
@@ -33,9 +33,9 @@ use crate::tolerance::*;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::geom::{
-    any_perpendicular, BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3,
-    ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3, TrimmedSurface,
+    BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, ConicalSurface, Curve3,
+    CurveEval, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
+    ToroidalSurface, TrimmedCurve3, TrimmedSurface, any_perpendicular,
 };
 
 // =============================================================================
@@ -206,18 +206,17 @@ pub fn is_surface_v_closed(surface: &Surface3, tol: f64) -> bool {
 /// Currently only implemented for BSpline curves. Other curve types return `None`.
 pub fn remove_degenerate_curve_sections(curve: &Curve3, tol: f64) -> Option<Curve3> {
     match curve {
-        Curve3::BSpline(bspline) => remove_degenerate_bspline_sections(bspline, tol)
-            .map(Curve3::BSpline),
-        Curve3::Bezier(bezier) => remove_degenerate_bezier_sections(bezier, tol)
-            .map(Curve3::Bezier),
+        Curve3::BSpline(bspline) => {
+            remove_degenerate_bspline_sections(bspline, tol).map(Curve3::BSpline)
+        }
+        Curve3::Bezier(bezier) => {
+            remove_degenerate_bezier_sections(bezier, tol).map(Curve3::Bezier)
+        }
         _ => None, // Other curve types don't typically have degenerate sections
     }
 }
 
-fn remove_degenerate_bspline_sections(
-    curve: &BSplineCurve3,
-    tol: f64,
-) -> Option<BSplineCurve3> {
+fn remove_degenerate_bspline_sections(curve: &BSplineCurve3, tol: f64) -> Option<BSplineCurve3> {
     let n = curve.control_points.len();
     if n < 2 {
         return None;
@@ -230,8 +229,7 @@ fn remove_degenerate_bspline_sections(
 
     for i in 0..n {
         let is_degenerate = if i > 0 {
-            curve.control_points[i]
-                .distance(curve.control_points[i - 1]) < tol
+            curve.control_points[i].distance(curve.control_points[i - 1]) < tol
         } else {
             false
         };
@@ -272,10 +270,7 @@ fn remove_degenerate_bspline_sections(
     })
 }
 
-fn remove_degenerate_bezier_sections(
-    curve: &BezierCurve3,
-    tol: f64,
-) -> Option<BezierCurve3> {
+fn remove_degenerate_bezier_sections(curve: &BezierCurve3, tol: f64) -> Option<BezierCurve3> {
     let n = curve.control_points.len();
     if n < 2 {
         return None;
@@ -287,8 +282,7 @@ fn remove_degenerate_bezier_sections(
 
     for i in 0..n {
         let is_degenerate = if i > 0 {
-            curve.control_points[i]
-                .distance(curve.control_points[i - 1]) < tol
+            curve.control_points[i].distance(curve.control_points[i - 1]) < tol
         } else {
             false
         };
@@ -443,12 +437,8 @@ pub fn reverse_curve(curve: Curve3) -> Curve3 {
             ellipse.normal = -ellipse.normal;
             Curve3::Ellipse(ellipse)
         }
-        Curve3::BSpline(bspline) => {
-            Curve3::BSpline(reverse_bspline_curve(&bspline))
-        }
-        Curve3::Bezier(bezier) => {
-            Curve3::Bezier(reverse_bezier_curve(&bezier))
-        }
+        Curve3::BSpline(bspline) => Curve3::BSpline(reverse_bspline_curve(&bspline)),
+        Curve3::Bezier(bezier) => Curve3::Bezier(reverse_bezier_curve(&bezier)),
         Curve3::Offset(mut offset) => {
             offset.offset_distance = -offset.offset_distance;
             offset.basis = Box::new(reverse_curve(*offset.basis));
@@ -484,11 +474,7 @@ fn reverse_bspline_curve(curve: &BSplineCurve3) -> BSplineCurve3 {
     let k0 = knots[0];
     let k1 = knots[knots.len() - 1];
 
-    let new_knots: Vec<f64> = knots
-        .iter()
-        .rev()
-        .map(|&k| k0 + (k1 - k))
-        .collect();
+    let new_knots: Vec<f64> = knots.iter().rev().map(|&k| k0 + (k1 - k)).collect();
 
     BSplineCurve3 {
         degree,
@@ -546,9 +532,7 @@ pub fn trim_curve(curve: &Curve3, t1: f64, t2: f64) -> Curve3 {
             // A proper implementation would create a BSpline arc
             Curve3::Circle(*circle)
         }
-        Curve3::Ellipse(ellipse) => {
-            Curve3::Ellipse(*ellipse)
-        }
+        Curve3::Ellipse(ellipse) => Curve3::Ellipse(*ellipse),
         _ => curve.clone(), // Fallback: return unchanged
     }
 }
@@ -647,16 +631,15 @@ fn subdivide_bezier_at(curve: &BezierCurve3, t: f64) -> (BezierCurve3, BezierCur
 /// parameters. For BSpline curves, this transforms the control points.
 pub fn transform_curve(curve: &Curve3, transform: DAffine3) -> Curve3 {
     match curve {
-        Curve3::Line(line) => {
-            Curve3::Line(Line3 {
-                origin: transform.transform_point3(line.origin),
-                direction: transform.transform_vector3(line.direction).normalize(),
-            })
-        }
-        Curve3::Circle(circle) => {
-            Curve3::Circle(Circle3::new(transform.transform_point3(circle.center), transform.transform_vector3(circle.normal).normalize(), circle.radius * transform.matrix3.x_axis.length(),
-            ))
-        }
+        Curve3::Line(line) => Curve3::Line(Line3 {
+            origin: transform.transform_point3(line.origin),
+            direction: transform.transform_vector3(line.direction).normalize(),
+        }),
+        Curve3::Circle(circle) => Curve3::Circle(Circle3::new(
+            transform.transform_point3(circle.center),
+            transform.transform_vector3(circle.normal).normalize(),
+            circle.radius * transform.matrix3.x_axis.length(),
+        )),
         Curve3::Ellipse(ellipse) => {
             let scale = transform.matrix3.x_axis.length();
             Curve3::Ellipse(Ellipse3 {
@@ -667,16 +650,14 @@ pub fn transform_curve(curve: &Curve3, transform: DAffine3) -> Curve3 {
                 minor_radius: ellipse.minor_radius * scale,
             })
         }
-        Curve3::BSpline(bspline) => {
-            Curve3::BSpline(transform_bspline_curve(bspline, transform))
-        }
-        Curve3::Bezier(bezier) => {
-            Curve3::Bezier(transform_bezier_curve(bezier, transform))
-        }
+        Curve3::BSpline(bspline) => Curve3::BSpline(transform_bspline_curve(bspline, transform)),
+        Curve3::Bezier(bezier) => Curve3::Bezier(transform_bezier_curve(bezier, transform)),
         Curve3::Offset(offset) => {
             let mut new_offset = offset.clone();
             new_offset.basis = Box::new(transform_curve(&new_offset.basis, transform));
-            new_offset.offset_dir = transform.transform_vector3(new_offset.offset_dir).normalize();
+            new_offset.offset_dir = transform
+                .transform_vector3(new_offset.offset_dir)
+                .normalize();
             Curve3::Offset(new_offset)
         }
         Curve3::Hyperbola(h) => {
@@ -765,12 +746,8 @@ fn transform_bezier_curve(curve: &BezierCurve3, transform: DAffine3) -> BezierCu
 /// A new surface with reversed U direction
 pub fn reverse_surface_u(surface: Surface3) -> Surface3 {
     match surface {
-        Surface3::BSpline(bspline) => {
-            Surface3::BSpline(reverse_bspline_surface_u(&bspline))
-        }
-        Surface3::Bezier(bezier) => {
-            Surface3::Bezier(reverse_bezier_surface_u(&bezier))
-        }
+        Surface3::BSpline(bspline) => Surface3::BSpline(reverse_bspline_surface_u(&bspline)),
+        Surface3::Bezier(bezier) => Surface3::Bezier(reverse_bezier_surface_u(&bezier)),
         Surface3::Trimmed(mut trimmed) => {
             // Swap u bounds
             let [u1, u2, v1, v2] = trimmed.trim;
@@ -792,12 +769,8 @@ pub fn reverse_surface_u(surface: Surface3) -> Surface3 {
 /// A new surface with reversed V direction
 pub fn reverse_surface_v(surface: Surface3) -> Surface3 {
     match surface {
-        Surface3::BSpline(bspline) => {
-            Surface3::BSpline(reverse_bspline_surface_v(&bspline))
-        }
-        Surface3::Bezier(bezier) => {
-            Surface3::Bezier(reverse_bezier_surface_v(&bezier))
-        }
+        Surface3::BSpline(bspline) => Surface3::BSpline(reverse_bspline_surface_v(&bspline)),
+        Surface3::Bezier(bezier) => Surface3::Bezier(reverse_bezier_surface_v(&bezier)),
         Surface3::Trimmed(mut trimmed) => {
             // Swap v bounds
             let [u1, u2, v1, v2] = trimmed.trim;
@@ -818,11 +791,7 @@ fn reverse_bspline_surface_u(surface: &BSplineSurface) -> BSplineSurface {
     let k0 = knots_u[0];
     let k1 = knots_u[knots_u.len() - 1];
 
-    let new_knots_u: Vec<f64> = knots_u
-        .iter()
-        .rev()
-        .map(|&k| k0 + (k1 - k))
-        .collect();
+    let new_knots_u: Vec<f64> = knots_u.iter().rev().map(|&k| k0 + (k1 - k)).collect();
 
     BSplineSurface {
         degree_u: surface.degree_u,
@@ -852,11 +821,7 @@ fn reverse_bspline_surface_v(surface: &BSplineSurface) -> BSplineSurface {
     let k0 = knots_v[0];
     let k1 = knots_v[knots_v.len() - 1];
 
-    let new_knots_v: Vec<f64> = knots_v
-        .iter()
-        .rev()
-        .map(|&k| k0 + (k1 - k))
-        .collect();
+    let new_knots_v: Vec<f64> = knots_v.iter().rev().map(|&k| k0 + (k1 - k)).collect();
 
     BSplineSurface {
         degree_u: surface.degree_u,
@@ -920,9 +885,10 @@ pub fn trim_surface(surface: &Surface3, u1: f64, u2: f64, v1: f64, v2: f64) -> S
 /// A new surface with the transformation applied
 pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
     match surface {
-        Surface3::Plane(plane) => {
-            Surface3::Plane(Plane::new(transform.transform_point3(plane.origin), transform.transform_vector3(plane.normal).normalize()))
-        }
+        Surface3::Plane(plane) => Surface3::Plane(Plane::new(
+            transform.transform_point3(plane.origin),
+            transform.transform_vector3(plane.normal).normalize(),
+        )),
         Surface3::Cylinder(cyl) => {
             let scale = transform.matrix3.x_axis.length();
             Surface3::Cylinder(CylindricalSurface {
@@ -962,15 +928,11 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
         Surface3::BSpline(bspline) => {
             Surface3::BSpline(transform_bspline_surface(bspline, transform))
         }
-        Surface3::Bezier(bezier) => {
-            Surface3::Bezier(transform_bezier_surface(bezier, transform))
-        }
-        Surface3::Trimmed(trimmed) => {
-            Surface3::Trimmed(TrimmedSurface {
-                basis: Box::new(transform_surface(&trimmed.basis, transform)),
-                trim: trimmed.trim,
-            })
-        }
+        Surface3::Bezier(bezier) => Surface3::Bezier(transform_bezier_surface(bezier, transform)),
+        Surface3::Trimmed(trimmed) => Surface3::Trimmed(TrimmedSurface {
+            basis: Box::new(transform_surface(&trimmed.basis, transform)),
+            trim: trimmed.trim,
+        }),
         Surface3::Offset(offset) => {
             let mut new_offset = offset.clone();
             new_offset.basis = Box::new(transform_surface(&new_offset.basis, transform));
@@ -989,20 +951,16 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
                 axis_dir: transform.transform_vector3(revolution.axis_dir).normalize(),
             })
         }
-        Surface3::Ruled(ruled) => {
-            Surface3::Ruled(rcad_kernel::geom::RuledSurface {
-                start: Box::new(transform_curve(&ruled.start, transform)),
-                end: Box::new(transform_curve(&ruled.end, transform)),
-            })
-        }
-        Surface3::Coons(coons) => {
-            Surface3::Coons(rcad_kernel::geom::CoonsSurface {
-                south: Box::new(transform_curve(&coons.south, transform)),
-                north: Box::new(transform_curve(&coons.north, transform)),
-                west: Box::new(transform_curve(&coons.west, transform)),
-                east: Box::new(transform_curve(&coons.east, transform)),
-            })
-        }
+        Surface3::Ruled(ruled) => Surface3::Ruled(rcad_kernel::geom::RuledSurface {
+            start: Box::new(transform_curve(&ruled.start, transform)),
+            end: Box::new(transform_curve(&ruled.end, transform)),
+        }),
+        Surface3::Coons(coons) => Surface3::Coons(rcad_kernel::geom::CoonsSurface {
+            south: Box::new(transform_curve(&coons.south, transform)),
+            north: Box::new(transform_curve(&coons.north, transform)),
+            west: Box::new(transform_curve(&coons.west, transform)),
+            east: Box::new(transform_curve(&coons.east, transform)),
+        }),
         Surface3::Ellipsoid(ell) => {
             let scale = transform.matrix3.x_axis.length();
             Surface3::Ellipsoid(rcad_kernel::geom::EllipsoidalSurface {
@@ -1046,11 +1004,7 @@ fn transform_bspline_surface(surface: &BSplineSurface, transform: DAffine3) -> B
         control_points: surface
             .control_points
             .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|&p| transform.transform_point3(p))
-                    .collect()
-            })
+            .map(|row| row.iter().map(|&p| transform.transform_point3(p)).collect())
             .collect(),
         weights: surface.weights.clone(),
     }
@@ -1061,11 +1015,7 @@ fn transform_bezier_surface(surface: &BezierSurface, transform: DAffine3) -> Bez
         control_points: surface
             .control_points
             .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|&p| transform.transform_point3(p))
-                    .collect()
-            })
+            .map(|row| row.iter().map(|&p| transform.transform_point3(p)).collect())
             .collect(),
         weights: surface.weights.clone(),
     }
@@ -1079,11 +1029,7 @@ fn transform_tri_bezier_surface(
         control_points: surface
             .control_points
             .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|&p| transform.transform_point3(p))
-                    .collect()
-            })
+            .map(|row| row.iter().map(|&p| transform.transform_point3(p)).collect())
             .collect(),
         weights: surface.weights.clone(),
     }
@@ -1109,8 +1055,8 @@ fn transform_tri_bezier_surface(
 /// The continuity order (0, 1, 2, etc.)
 pub fn check_curve_continuity(curve: &Curve3, tol: f64) -> usize {
     match curve {
-        Curve3::Line(_) => usize::MAX, // Lines are infinitely smooth
-        Curve3::Circle(_) => usize::MAX, // Circles are infinitely smooth
+        Curve3::Line(_) => usize::MAX,    // Lines are infinitely smooth
+        Curve3::Circle(_) => usize::MAX,  // Circles are infinitely smooth
         Curve3::Ellipse(_) => usize::MAX, // Ellipses are infinitely smooth
         Curve3::Hyperbola(_) => usize::MAX,
         Curve3::Parabola(_) => usize::MAX,
@@ -1242,5 +1188,3 @@ fn check_knot_continuity(knots: &[f64], degree: usize, tol: f64) -> usize {
 // =============================================================================
 // Tests
 // =============================================================================
-
-

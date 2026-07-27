@@ -1,4 +1,4 @@
-﻿//! ApproxInt-style intersection curve approximation.
+//! ApproxInt-style intersection curve approximation.
 //!
 //! This module provides approximation of intersection curves between surfaces,
 //! analogous to OpenCASCADE's ApproxInt package.
@@ -36,8 +36,10 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::fit::{interpolate_points, interpolate_points_2d};
+use rcad_kernel::geom::{
+    BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Approximation Options
@@ -311,7 +313,11 @@ impl IntersectionApproximator {
         }
 
         // Normalize params
-        let params: Vec<f64> = self.samples.iter().map(|s| s.param / total_length).collect();
+        let params: Vec<f64> = self
+            .samples
+            .iter()
+            .map(|s| s.param / total_length)
+            .collect();
 
         // Extract 3D points
         let pts3d: Vec<DVec3> = self.samples.iter().map(|s| s.point).collect();
@@ -355,7 +361,10 @@ impl IntersectionApproximator {
             achieved_tolerance: achieved_tol,
             success: achieved_tol <= options.tolerance,
             error: if achieved_tol > options.tolerance {
-                Some(format!("Achieved tolerance {} exceeds requested {}", achieved_tol, options.tolerance))
+                Some(format!(
+                    "Achieved tolerance {} exceeds requested {}",
+                    achieved_tol, options.tolerance
+                ))
             } else {
                 None
             },
@@ -770,7 +779,12 @@ pub fn sample_with_adaptive_density(curve: &Curve3, tol: f64, max_points: usize)
 /// * `t_start` - Start parameter
 /// * `t_end` - End parameter
 /// * `n_points` - Number of points
-pub fn sample_curve_segment(curve: &Curve3, t_start: f64, t_end: f64, n_points: usize) -> Vec<DVec3> {
+pub fn sample_curve_segment(
+    curve: &Curve3,
+    t_start: f64,
+    t_end: f64,
+    n_points: usize,
+) -> Vec<DVec3> {
     if n_points == 0 {
         return Vec::new();
     }
@@ -877,5 +891,3 @@ pub fn approximate_intersection(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

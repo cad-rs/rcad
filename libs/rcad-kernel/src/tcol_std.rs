@@ -1,4 +1,4 @@
-﻿//! TColStd-style collection types.
+//! TColStd-style collection types.
 //!
 //! Provides standard collection types analogous to OCCT's TColStd package.
 //! These are 1-based indexed arrays, sequences, maps, and lists for compatibility
@@ -179,10 +179,16 @@ impl<T: Clone> Array2<T> {
         T: Default,
     {
         if upper_row < lower_row {
-            panic!("upper_row ({}) must be >= lower_row ({})", upper_row, lower_row);
+            panic!(
+                "upper_row ({}) must be >= lower_row ({})",
+                upper_row, lower_row
+            );
         }
         if upper_col < lower_col {
-            panic!("upper_col ({}) must be >= lower_col ({})", upper_col, lower_col);
+            panic!(
+                "upper_col ({}) must be >= lower_col ({})",
+                upper_col, lower_col
+            );
         }
         let rows = (upper_row - lower_row + 1) as usize;
         let cols = (upper_col - lower_col + 1) as usize;
@@ -825,5 +831,3 @@ pub type HArray1OfInteger = HArray1<i32>;
 // ============================================================================
 // Tests
 // ============================================================================
-
-

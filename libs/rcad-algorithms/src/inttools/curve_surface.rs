@@ -1,4 +1,4 @@
-﻿use glam::{DMat3, DVec2, DVec3};
+use glam::{DMat3, DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -366,9 +366,9 @@ fn circle_vs_implicit_surface(
         }
 
         // Deduplicate
-        let duplicate = hits.iter().any(|h: &CurveSurfaceHit| {
-            (h.curve_param - theta).abs() < eps * 5.0
-        });
+        let duplicate = hits
+            .iter()
+            .any(|h: &CurveSurfaceHit| (h.curve_param - theta).abs() < eps * 5.0);
         if !duplicate {
             hits.push(CurveSurfaceHit {
                 point,
@@ -456,8 +456,8 @@ pub fn newton_refine_curve_surface(
     max_iter: usize,
     tol: f64,
 ) -> Option<(f64, DVec2)> {
-    use rcad_kernel::geom::SurfaceEval;
     use rcad_kernel::CurveEval;
+    use rcad_kernel::geom::SurfaceEval;
 
     let eps = tol.max(TOLERANCE_ABS);
     // Finite difference step: large enough for stable numerical differentiation
@@ -539,5 +539,3 @@ pub fn newton_refine_curve_surface(
         None
     }
 }
-
-

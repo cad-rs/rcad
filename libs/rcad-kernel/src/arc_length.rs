@@ -173,7 +173,10 @@ mod tests {
         let lead = 1.5 / (2.0 * PI);
         let expected = (2.0_f64 * 2.0 + lead * lead).sqrt() * dt;
         let got = arc_length(&c, 0.0, dt);
-        assert!(approx_eq(got, expected, 1e-8), "helix length got {got} expected {expected}");
+        assert!(
+            approx_eq(got, expected, 1e-8),
+            "helix length got {got} expected {expected}"
+        );
     }
 
     #[test]

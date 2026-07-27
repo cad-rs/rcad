@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -48,5 +48,3 @@ pub fn vertex_on_plane_with_tol(point: DVec3, plane: &Plane, distance_tol: f64) 
     let d = (point - plane.origin).dot(plane.normal);
     d.abs() < tol
 }
-
-

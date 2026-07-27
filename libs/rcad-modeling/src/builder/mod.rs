@@ -14,22 +14,31 @@ pub mod wire_ops;
 
 pub use brep_builder::*;
 pub use curve::*;
-pub use fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_safe, corner_blend, fillet_edge, fillet_edge_safe, fillet_edges, fillet_edge_variable_radius};
-pub use fillet::{chamfer_edge_topods, chamfer_edge_angle_topods, fillet_edge_topods, fillet_edge_variable_radius_topods};
-pub use fillet::{chamfer_edge_with_history, chamfer_edge_angle_with_history, fillet_edge_with_history, fillet_edge_variable_radius_with_history, fillet_edges_with_history, corner_blend_with_history};
-pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory, SafeFilletResult};
+pub use fillet::{CornerBlendHistory, FilletHistory, MultiFilletHistory, SafeFilletResult};
+pub use fillet::{
+    chamfer_edge, chamfer_edge_angle, chamfer_edge_safe, corner_blend, fillet_edge,
+    fillet_edge_safe, fillet_edge_variable_radius, fillet_edges,
+};
+pub use fillet::{
+    chamfer_edge_angle_topods, chamfer_edge_topods, fillet_edge_topods,
+    fillet_edge_variable_radius_topods,
+};
+pub use fillet::{
+    chamfer_edge_angle_with_history, chamfer_edge_with_history, corner_blend_with_history,
+    fillet_edge_variable_radius_with_history, fillet_edge_with_history, fillet_edges_with_history,
+};
 pub use ops::*;
 pub use solid::*;
 pub use surface::*;
 pub use wire_ops::{chamfer_wire_2d, fillet_wire_2d, project_wire_onto_surface};
 
-use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::topods::{Orientation, ShapeRef, TShape};
 use rcad_kernel::geom::{Curve3, Surface3};
+use rcad_kernel::topods::{Orientation, ShapeRef, TShape};
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 const EPS: f64 = 1e-12;
 
@@ -169,9 +178,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
         let d = (p - plane_origin).dot(n);
         p - n * (2.0 * d)
     };
-    let mirror_vec = |v: DVec3| -> DVec3 {
-        v - n * (2.0 * v.dot(n))
-    };
+    let mirror_vec = |v: DVec3| -> DVec3 { v - n * (2.0 * v.dot(n)) };
 
     let mut out = BRep::new();
 
@@ -192,7 +199,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
             let first = old_to_new[e.first.index].unwrap_or(e.first);
             let last = old_to_new[e.last.index].unwrap_or(e.last);
             let curve = e.curve.as_ref().map(|c| {
-                use rcad_kernel::geom::{Line3, Circle3, Ellipse3, Hyperbola3};
+                use rcad_kernel::geom::{Circle3, Ellipse3, Hyperbola3, Line3};
                 match c {
                     Curve3::Line(l) => Curve3::Line(Line3 {
                         origin: mirror_point(l.origin),
@@ -264,10 +271,12 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
         if let TShape::Face(f) = &**ts {
             let surface = f.surface.as_ref().map(|s| {
                 use rcad_kernel::geom::{
-                    Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface,
+                    ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface,
                 };
                 match s {
-                    Surface3::Plane(p) => Surface3::Plane(Plane::new(mirror_point(p.origin), mirror_vec(p.normal))),
+                    Surface3::Plane(p) => {
+                        Surface3::Plane(Plane::new(mirror_point(p.origin), mirror_vec(p.normal)))
+                    }
                     Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
                         origin: mirror_point(c.origin),
                         axis: mirror_vec(c.axis),
@@ -454,7 +463,9 @@ mod tests {
     fn box_brep_builds_transformed_vertices() {
         let brep = box_brep(DVec3::new(1.0, 2.0, 3.0), DVec3::Y, DVec3::Z, 2.0, 3.0, 4.0).unwrap();
 
-        let pts: Vec<DVec3> = brep.tshapes.iter()
+        let pts: Vec<DVec3> = brep
+            .tshapes
+            .iter()
             .filter_map(|ts| match ts.as_ref() {
                 TShape::Vertex(v) => Some(v.point),
                 _ => None,
@@ -469,7 +480,9 @@ mod tests {
     fn sphere_brep_translates_bounds() {
         let brep = sphere_brep(DVec3::new(10.0, -2.0, 4.0), 2.0).unwrap();
 
-        let y_vals: Vec<f64> = brep.tshapes.iter()
+        let y_vals: Vec<f64> = brep
+            .tshapes
+            .iter()
             .filter_map(|ts| match ts.as_ref() {
                 TShape::Vertex(v) => Some(v.point.y),
                 _ => None,

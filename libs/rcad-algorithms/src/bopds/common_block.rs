@@ -112,10 +112,16 @@ impl CommonBlock {
     ///   the PaveBlock at index `pb_idx` has `original_edge == self.myEdge`.
     ///   Call this after all PaveBlocks have been added, before using `PaveBlock1()`.
     pub fn sort_by_edge(&mut self, is_real_edge: impl Fn(usize) -> bool) {
-        if self.myEdge.is_none() || self.myPaveBlocks.len() < 2 { return; }
+        if self.myEdge.is_none() || self.myPaveBlocks.len() < 2 {
+            return;
+        }
         let edge = self.myEdge.unwrap();
         // Find the first PaveBlock on the real edge and swap it to front
-        if let Some(pos) = self.myPaveBlocks.iter().position(|&(pb, _)| is_real_edge(pb)) {
+        if let Some(pos) = self
+            .myPaveBlocks
+            .iter()
+            .position(|&(pb, _)| is_real_edge(pb))
+        {
             if pos != 0 {
                 self.myPaveBlocks.swap(0, pos);
             }

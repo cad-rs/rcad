@@ -1,7 +1,7 @@
+use crate::bnd_lib;
+use crate::tolerance::{CONFUSION, TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
-use crate::bnd_lib;
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE, CONFUSION};
 
 ///  ?IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
 /// Describes a common part between two edges: either a VERTEX-type (point)
@@ -28,8 +28,13 @@ pub struct CommonPrt {
 
 impl CommonPrt {
     /// Create a VERTEX-type common part (point intersection).
-    pub fn new_vertex(t1: f64, t2: f64, p: DVec3,
-        range1: [f64; 2], ranges2: Vec<[f64; 2]>) -> Self {
+    pub fn new_vertex(
+        t1: f64,
+        t2: f64,
+        p: DVec3,
+        range1: [f64; 2],
+        ranges2: Vec<[f64; 2]>,
+    ) -> Self {
         Self {
             is_edge_type: false,
             range1,
@@ -91,7 +96,12 @@ pub fn point_box_distance(p: DVec3, box_min: DVec3, box_max: DVec3) -> f64 {
 
 ///  ?IntTools_EdgeEdge::SplitRangeOnSegments (cxx L1366-1406).
 /// Splits range [aT1, aT2] into segments based on resolution. Returns number of segments.
-pub fn split_range_on_segments(t1: f64, t2: f64, resolution: f64, nb_seg: i32) -> (i32, Vec<[f64; 2]>) {
+pub fn split_range_on_segments(
+    t1: f64,
+    t2: f64,
+    resolution: f64,
+    nb_seg: i32,
+) -> (i32, Vec<[f64; 2]>) {
     let diff = t2 - t1;
     // OCCT L1409-1412: theResolution * 1000, not raw resolution
     if diff < resolution || nb_seg == 1 {
@@ -122,7 +132,11 @@ pub fn curve_resolution_edge(curve: &Curve3, res_coeff: f64, r3d: f64) -> f64 {
         Curve3::Line(_) => r3d,
         Curve3::Circle(_) => {
             let dt = res_coeff * r3d;
-            if dt <= 1.0 { 2.0 * dt.asin() } else { std::f64::consts::TAU }
+            if dt <= 1.0 {
+                2.0 * dt.asin()
+            } else {
+                std::f64::consts::TAU
+            }
         }
         // OCCT: Ellipse falls through to default (theResCoeff * theR3D), NOT 2*asin
         Curve3::Ellipse(_) | Curve3::Hyperbola(_) | Curve3::Parabola(_) => res_coeff * r3d,
@@ -157,7 +171,9 @@ pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
                 let dist = (p1 - p2).length();
                 if dist > TOLERANCE_LEN_SQ_DIV_SAFE {
                     let k = dt / dist;
-                    if k < k_min { k_min = k; }
+                    if k < k_min {
+                        k_min = k;
+                    }
                 }
                 p1 = p2;
             }
@@ -194,7 +210,9 @@ pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
 /// 1:1 from IntTools_EdgeEdge::IsClosed (cxx L1642-1659).
 /// Checks if the curve segment between aT1 and aT2 is closed.
 pub fn is_curve_segment_closed(curve: &Curve3, t1: f64, t2: f64, tol: f64, res: f64) -> bool {
-    if (t1 - t2).abs() < res { return false; }
+    if (t1 - t2).abs() < res {
+        return false;
+    }
     let p1 = curve.point_at(t1);
     let p2 = curve.point_at(t2);
     (p1 - p2).length() < tol
@@ -203,8 +221,12 @@ pub fn is_curve_segment_closed(curve: &Curve3, t1: f64, t2: f64, tol: f64, res: 
 ///  ?ComputeLineLine common part detection (cxx L902-1056).
 /// Determines if two line segments intersect, returning parameters if they do.
 pub fn intersect_line_line_3d(
-    l1_origin: DVec3, l1_dir: DVec3, t1_range: [f64; 2],
-    l2_origin: DVec3, l2_dir: DVec3, t2_range: [f64; 2],
+    l1_origin: DVec3,
+    l1_dir: DVec3,
+    t1_range: [f64; 2],
+    l2_origin: DVec3,
+    l2_dir: DVec3,
+    t2_range: [f64; 2],
     tol: f64,
 ) -> Option<([f64; 2], [f64; 2], bool)> {
     let d1 = l1_dir.normalize();
@@ -216,13 +238,17 @@ pub fn intersect_line_line_3d(
     if is_coincide {
         // OCCT L916-919: check distance between lines
         let dist = (l2_origin - l1_origin).cross(d1).length();
-        if dist > tol { return None; }
+        if dist > tol {
+            return None;
+        }
         // Project both endpoints onto line1
         let t21 = (l2_origin - l1_origin).dot(d1);
         let t22 = t21 + (l2_origin + d2 - l1_origin).dot(d1);
         let (mut t21, mut t22) = if t21 < t22 { (t21, t22) } else { (t22, t21) };
         let [t11, t12] = t1_range;
-        if (t21 > t12 && t22 > t12) || (t21 < t11 && t22 < t11) { return None; }
+        if (t21 > t12 && t22 > t12) || (t21 < t11 && t22 < t11) {
+            return None;
+        }
         t21 = t21.max(t11);
         t22 = t22.min(t12);
         let range1 = [t11, t12];
@@ -233,27 +259,37 @@ pub fn intersect_line_line_3d(
     // Non-coincident lines: find intersection point
     let cross = d1.cross(d2);
     let cross_len2 = cross.length_squared();
-    if cross_len2 < TOLERANCE_LEN_SQ_DIV_SAFE { return None; }
+    if cross_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+        return None;
+    }
     let o1o2 = l2_origin - l1_origin;
     let dist_ll = o1o2.dot(cross / cross_len2.sqrt()).abs();
-    if dist_ll > tol { return None; }
+    if dist_ll > tol {
+        return None;
+    }
 
     // Find parameters of closest approach
     let a = d1.dot(d2);
     let b = d1.dot(o1o2);
     let c = d2.dot(o1o2);
     let denom = 1.0 - a * a;
-    if denom.abs() < TOLERANCE_CLAMP_MIN { return None; }
+    if denom.abs() < TOLERANCE_CLAMP_MIN {
+        return None;
+    }
     let t1 = (b - a * c) / denom;
     let t2 = (a * b - c) / denom;
 
     let [t11, t12] = t1_range;
     let [t21, t22] = t2_range;
-    if t1 < t11 || t1 > t12 || t2 < t21 || t2 > t22 { return None; }
+    if t1 < t11 || t1 > t12 || t2 < t21 || t2 > t22 {
+        return None;
+    }
 
     let p1 = l1_origin + d1 * t1;
     let p2 = l2_origin + d2 * t2;
-    if (p1 - p2).length_squared() > tol * tol { return None; }
+    if (p1 - p2).length_squared() > tol * tol {
+        return None;
+    }
 
     // OCCT L1047-1055: compute intersection range with ComputeIntRange
     let a_tol_1 = tol;
@@ -322,16 +358,28 @@ impl EdgeEdgeIntersector {
         Self {
             edge1: usize::MAX,
             edge2: usize::MAX,
-            curve1: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
-            curve2: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
-            tol1: 0.0, tol2: 0.0, tol: 0.0,
+            curve1: Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            }),
+            curve2: Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            }),
+            tol1: 0.0,
+            tol2: 0.0,
+            tol: 0.0,
             edge_tol1: 0.0,
             edge_tol2: 0.0,
             fuzzy_value: 0.0,
-            res1: 0.0, res2: 0.0,
-            res_coeff1: 0.0, res_coeff2: 0.0,
-            p_tol1: 0.0, p_tol2: 0.0,
-            range1: [0.0, 0.0], range2: [0.0, 0.0],
+            res1: 0.0,
+            res2: 0.0,
+            res_coeff1: 0.0,
+            res_coeff2: 0.0,
+            p_tol1: 0.0,
+            p_tol2: 0.0,
+            range1: [0.0, 0.0],
+            range2: [0.0, 0.0],
             swapped: false,
             error_status: 0,
             common_parts: Vec::new(),
@@ -360,16 +408,24 @@ impl EdgeEdgeIntersector {
     }
 
     /// Set fuzzy value.
-    pub fn set_fuzzy_value(&mut self, fuzz: f64) { self.fuzzy_value = fuzz; }
+    pub fn set_fuzzy_value(&mut self, fuzz: f64) {
+        self.fuzzy_value = fuzz;
+    }
 
     /// Enable/disable quick coincidence check.
-    pub fn use_quick_coincidence_check(&mut self, b: bool) { self.quick_coincidence_check = b; }
+    pub fn use_quick_coincidence_check(&mut self, b: bool) {
+        self.quick_coincidence_check = b;
+    }
 
     /// Returns true if common parts found.
-    pub fn is_done(&self) -> bool { !self.common_parts.is_empty() }
+    pub fn is_done(&self) -> bool {
+        !self.common_parts.is_empty()
+    }
 
     /// Returns common parts.
-    pub fn common_parts(&self) -> &[CommonPrt] { &self.common_parts }
+    pub fn common_parts(&self) -> &[CommonPrt] {
+        &self.common_parts
+    }
 
     // ========================================================================
     // Perform — OCCT L185-243
@@ -378,7 +434,9 @@ impl EdgeEdgeIntersector {
     pub fn perform(&mut self) {
         // 1. Check data
         self.check_data();
-        if self.error_status != 0 { return; }
+        if self.error_status != 0 {
+            return;
+        }
 
         // 2. Prepare data
         self.prepare();
@@ -406,7 +464,9 @@ impl EdgeEdgeIntersector {
             && (matches!(self.curve1, Curve3::Line(_)) || matches!(self.curve2, Curve3::Line(_)))
         {
             // OCCT uses BRepExtrema_DistShapeShape — approximate with closest-point
-            let p1_mid = self.curve1.point_at(0.5 * (self.range1[0] + self.range1[1]));
+            let p1_mid = self
+                .curve1
+                .point_at(0.5 * (self.range1[0] + self.range1[1]));
             let proj = rcad_kernel::projection::closest_point_on_curve(&self.curve2, p1_mid, 16);
             if proj.distance > 1.1 * self.tol {
                 return;
@@ -531,8 +591,12 @@ impl EdgeEdgeIntersector {
     // ComputeLineLine — OCCT L902-1056
     // ========================================================================
     fn compute_line_line(&mut self) {
-        let Curve3::Line(l1) = &self.curve1 else { return; };
-        let Curve3::Line(l2) = &self.curve2 else { return; };
+        let Curve3::Line(l1) = &self.curve1 else {
+            return;
+        };
+        let Curve3::Line(l2) = &self.curve2 else {
+            return;
+        };
 
         let d1 = l1.direction.normalize();
         let d2 = l2.direction.normalize();
@@ -622,7 +686,8 @@ impl EdgeEdgeIntersector {
         let [a_t21, a_t22] = self.range2;
 
         // OCCT L302: bIsClosed2 = IsClosed(myGeom2, ...)
-        let mut b_is_closed2 = is_curve_segment_closed(&self.curve2, a_t21, a_t22, self.tol2, self.res2);
+        let mut b_is_closed2 =
+            is_curve_segment_closed(&self.curve2, a_t21, a_t22, self.tol2, self.res2);
 
         // OCCT L304-310: if closed, check if curve2 start is inside curve1's box
         if b_is_closed2 {
@@ -636,7 +701,14 @@ impl EdgeEdgeIntersector {
         if !b_is_closed2 {
             let a_b1 = compute_curve_aabb(&self.curve1, a_t11, a_t12, self.tol1);
             let a_b2 = compute_curve_aabb(&self.curve2, a_t21, a_t22, self.tol2);
-            self.find_solutions_impl(self.range1, a_b1, self.range2, a_b2, the_ranges1, the_ranges2);
+            self.find_solutions_impl(
+                self.range1,
+                a_b1,
+                self.range2,
+                a_b2,
+                the_ranges1,
+                the_ranges2,
+            );
             return;
         }
 
@@ -650,8 +722,16 @@ impl EdgeEdgeIntersector {
         }
 
         // OCCT L327-348: split ranges and recurse for each segment
-        let (a_nb1, a_segments1) = split_range_on_segments(a_t11, a_t12, self.res1,
-            if is_curve_segment_closed(&self.curve1, a_t11, a_t12, self.tol1, self.res1) { 2 } else { 1 });
+        let (a_nb1, a_segments1) = split_range_on_segments(
+            a_t11,
+            a_t12,
+            self.res1,
+            if is_curve_segment_closed(&self.curve1, a_t11, a_t12, self.tol1, self.res1) {
+                2
+            } else {
+                1
+            },
+        );
         let (a_nb2, a_segments2) = split_range_on_segments(a_t21, a_t22, self.res2, 2);
         *b_split2 = a_nb2 > 1;
 
@@ -703,13 +783,22 @@ impl EdgeEdgeIntersector {
 
             // 2. Check thin status (OCCT L391-392)
             b_thin = (a_t12 - a_t11) < self.res1
-                || (box_is_x_thin(a_b1, self.tol) && box_is_y_thin(a_b1, self.tol) && box_is_z_thin(a_b1, self.tol));
+                || (box_is_x_thin(a_b1, self.tol)
+                    && box_is_y_thin(a_b1, self.tol)
+                    && box_is_z_thin(a_b1, self.tol));
 
             // 3. Find parameters of curve2 within box1 (OCCT L394-406)
             let found2 = self.find_parameters(
-                &self.curve2, a_tb21, a_tb22,
-                self.tol2, self.res2, self.p_tol2, self.res_coeff2,
-                a_b1, &mut a_t21, &mut a_t22,
+                &self.curve2,
+                a_tb21,
+                a_tb22,
+                self.tol2,
+                self.res2,
+                self.p_tol2,
+                self.res_coeff2,
+                a_b1,
+                &mut a_t21,
+                &mut a_t22,
             );
             if !found2 || b_thin {
                 b_out = !found2;
@@ -725,13 +814,22 @@ impl EdgeEdgeIntersector {
 
             // 5. Check thin for curve2 (OCCT L418-419)
             b_thin = (a_t22 - a_t21) < self.res2
-                || (box_is_x_thin(a_b2, self.tol) && box_is_y_thin(a_b2, self.tol) && box_is_z_thin(a_b2, self.tol));
+                || (box_is_x_thin(a_b2, self.tol)
+                    && box_is_y_thin(a_b2, self.tol)
+                    && box_is_z_thin(a_b2, self.tol));
 
             // 6. Find parameters of curve1 within box2 (OCCT L420-428)
             let found1 = self.find_parameters(
-                &self.curve1, a_tb11, a_tb12,
-                self.tol1, self.res1, self.p_tol1, self.res_coeff1,
-                a_b2, &mut a_t11, &mut a_t12,
+                &self.curve1,
+                a_tb11,
+                a_tb12,
+                self.tol1,
+                self.res1,
+                self.p_tol1,
+                self.res_coeff1,
+                a_b2,
+                &mut a_t11,
+                &mut a_t12,
             );
             if !found1 || b_thin {
                 b_out = !found1;
@@ -777,7 +875,8 @@ impl EdgeEdgeIntersector {
                 // OCCT L493-517: check intermediate point
                 let a_t = (a_t11 + a_t12) * 0.5;
                 let a_p1 = self.curve1.point_at(a_t);
-                let a_proj = rcad_kernel::projection::closest_point_on_curve(&self.curve2, a_p1, 16);
+                let a_proj =
+                    rcad_kernel::projection::closest_point_on_curve(&self.curve2, a_p1, 16);
                 if a_proj.distance > self.tol {
                     return;
                 }
@@ -803,8 +902,14 @@ impl EdgeEdgeIntersector {
                 && (a_nb1 == 1 || aabb_sq_extent(a_b1_seg) < a_b1_sq_extent)
                 && a_nb1 > 1
             {
-                self.find_solutions_impl(a_r, a_b1_seg, [a_t21, a_t22], a_b2,
-                    the_ranges1, the_ranges2);
+                self.find_solutions_impl(
+                    a_r,
+                    a_b1_seg,
+                    [a_t21, a_t22],
+                    a_b2,
+                    the_ranges1,
+                    the_ranges2,
+                );
             }
         }
     }
@@ -815,15 +920,23 @@ impl EdgeEdgeIntersector {
     fn find_parameters(
         &self,
         curve: &Curve3,
-        t1: f64, t2: f64,
-        tol_val: f64, res: f64, p_tol: f64, res_coeff: f64,
+        t1: f64,
+        t2: f64,
+        tol_val: f64,
+        res: f64,
+        p_tol: f64,
+        res_coeff: f64,
         cbox: (DVec3, DVec3),
-        tb1: &mut f64, tb2: &mut f64,
+        tb1: &mut f64,
+        tb2: &mut f64,
     ) -> bool {
         const CF: f64 = 0.6180339887498948482045868343656;
         let a_tol_box = tol_val;
         // OCCT L574: aCBx.SetGap(aCBx.GetGap() + theTol);
-        let a_cbox_with_gap = (cbox.0 - DVec3::splat(tol_val), cbox.1 + DVec3::splat(tol_val));
+        let a_cbox_with_gap = (
+            cbox.0 - DVec3::splat(tol_val),
+            cbox.1 + DVec3::splat(tol_val),
+        );
         let max_dt = (t2 - t1) * 0.01;
 
         for side in 0..2i32 {
@@ -996,7 +1109,8 @@ impl EdgeEdgeIntersector {
             CommonPrt::new_edge(
                 if self.swapped { [t21, t22] } else { [t11, t12] },
                 vec![if self.swapped { [t11, t12] } else { [t21, t22] }],
-                p1, p2,
+                p1,
+                p2,
             )
         } else {
             let t1 = if self.swapped { t21 } else { t11 };
@@ -1038,16 +1152,24 @@ impl EdgeEdgeIntersector {
     // OCCT signature: int CheckCoincidence(aT11, aT12, aT21, aT22, theCriteria, theCurveRes1)
     // Returns: 0 = coincident (distance <= criteria), 1 = not coincident, 2 = far apart
     // ========================================================================
-    fn check_coincidence(&self, t11: f64, t12: f64, t21: f64, t22: f64,
-        criteria: f64, curve_res1: f64) -> i32
-    {
+    fn check_coincidence(
+        &self,
+        t11: f64,
+        t12: f64,
+        t21: f64,
+        t22: f64,
+        criteria: f64,
+        curve_res1: f64,
+    ) -> i32 {
         // OCCT L1068-1099: Step 1 — sample 10 points, quick rejection
         let a_nb = 10usize;
         let dt1 = (t12 - t11) / a_nb as f64;
         let mut t = t11;
         for _ in 0..a_nb {
             t += dt1;
-            if t > t12 { break; }
+            if t > t12 {
+                break;
+            }
             let p = self.curve1.point_at(t);
             let proj = rcad_kernel::projection::closest_point_on_curve(&self.curve2, p, 16);
             if proj.distance > criteria * 100.0 {
@@ -1112,7 +1234,7 @@ impl EdgeEdgeIntersector {
         let p21 = self.curve2.point_at(t21);
         let p22 = self.curve2.point_at(t22);
 
-                let mut a_coef = 1e5;
+        let mut a_coef = 1e5;
         if (t12 - t11) > a_coef * self.res1 && (t22 - t21) > a_coef * self.res2 {
             a_coef = 5000.0;
         } else {
@@ -1147,8 +1269,10 @@ impl EdgeEdgeIntersector {
             let len_v21 = v21.length_squared();
             let len_v22 = v22.length_squared();
 
-            if len_v11 > TOLERANCE_CLAMP_MIN && len_v12 > TOLERANCE_CLAMP_MIN
-                && len_v21 > TOLERANCE_CLAMP_MIN && len_v22 > TOLERANCE_CLAMP_MIN
+            if len_v11 > TOLERANCE_CLAMP_MIN
+                && len_v12 > TOLERANCE_CLAMP_MIN
+                && len_v21 > TOLERANCE_CLAMP_MIN
+                && len_v22 > TOLERANCE_CLAMP_MIN
             {
                 let a1 = if b11_21 && b12_22 {
                     (v11.normalize().dot(v21.normalize())).acos()
@@ -1162,12 +1286,15 @@ impl EdgeEdgeIntersector {
                 };
                 let ang_criteria = 5e-3;
                 // OCCT L1090-1092: check if parallel
-                if a1 < ang_criteria || (std::f64::consts::PI - a1).abs() < ang_criteria
-                    || a2 < ang_criteria || (std::f64::consts::PI - a2).abs() < ang_criteria
+                if a1 < ang_criteria
+                    || (std::f64::consts::PI - a1).abs() < ang_criteria
+                    || a2 < ang_criteria
+                    || (std::f64::consts::PI - a2).abs() < ang_criteria
                 {
                     let tm = (t11 + t12) * 0.5;
                     let pm = self.curve1.point_at(tm);
-                    let proj = rcad_kernel::projection::closest_point_on_curve(&self.curve2, pm, 16);
+                    let proj =
+                        rcad_kernel::projection::closest_point_on_curve(&self.curve2, pm, 16);
                     return proj.distance <= self.tol;
                 }
             }
@@ -1178,7 +1305,9 @@ impl EdgeEdgeIntersector {
 }
 
 impl Default for EdgeEdgeIntersector {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ============================================================================
@@ -1194,16 +1323,22 @@ pub(crate) fn compute_curve_aabb(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> 
 
 /// Point-in-axis-aligned-bounding-box check.
 fn point_in_aabb(p: DVec3, box_min: DVec3, box_max: DVec3) -> bool {
-    p.x >= box_min.x && p.x <= box_max.x
-        && p.y >= box_min.y && p.y <= box_max.y
-        && p.z >= box_min.z && p.z <= box_max.z
+    p.x >= box_min.x
+        && p.x <= box_max.x
+        && p.y >= box_min.y
+        && p.y <= box_max.y
+        && p.z >= box_min.z
+        && p.z <= box_max.z
 }
 
 /// Check if two AABBs overlap.
 fn aabb_overlap(a: (DVec3, DVec3), b: (DVec3, DVec3)) -> bool {
-    a.0.x <= b.1.x && a.1.x >= b.0.x
-        && a.0.y <= b.1.y && a.1.y >= b.0.y
-        && a.0.z <= b.1.z && a.1.z >= b.0.z
+    a.0.x <= b.1.x
+        && a.1.x >= b.0.x
+        && a.0.y <= b.1.y
+        && a.1.y >= b.0.y
+        && a.0.z <= b.1.z
+        && a.1.z >= b.0.z
 }
 
 /// Square extent of an AABB (max side length squared).
@@ -1316,20 +1451,36 @@ pub fn find_dist_pc(
     let mut a_t2l = 0.0;
 
     // check bounds
-    let mut i_err = dist_pc_with_tracking(a, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
-    if i_err == 2 { return i_err; }
+    let mut i_err = dist_pc_with_tracking(
+        a, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic,
+    );
+    if i_err == 2 {
+        return i_err;
+    }
 
-    i_err = dist_pc_with_tracking(b, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
-    if i_err == 2 { return i_err; }
+    i_err = dist_pc_with_tracking(
+        b, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic,
+    );
+    if i_err == 2 {
+        return i_err;
+    }
 
     let mut xp = a + (b - a) * gs;
     let mut xl = b - (b - a) * gs;
 
-    i_err = dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
-    if i_err != 0 { return i_err; }
+    i_err = dist_pc_with_tracking(
+        xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic,
+    );
+    if i_err != 0 {
+        return i_err;
+    }
 
-    i_err = dist_pc_with_tracking(xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
-    if i_err != 0 { return i_err; }
+    i_err = dist_pc_with_tracking(
+        xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic,
+    );
+    if i_err != 0 {
+        return i_err;
+    }
 
     let an_eps = eps.max(f64::EPSILON * a.abs().max(b.abs()) * 10.0);
 
@@ -1339,19 +1490,25 @@ pub fn find_dist_pc(
             xl = xp;
             a_yl = a_yp;
             xp = a + (b - a) * gs;
-            i_err = dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+            i_err = dist_pc_with_tracking(
+                xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic,
+            );
         } else {
             b = xp;
             xp = xl;
             a_yp = a_yl;
             xl = b - (b - a) * gs;
-            i_err = dist_pc_with_tracking(xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic);
+            i_err = dist_pc_with_tracking(
+                xl, curve1, curve2, criteria, &mut a_yl, &mut a_t2l, d_max, t1_max, t2_max, ic,
+            );
         }
 
         if i_err != 0 {
             if i_err == 2 && !b_max_dist {
                 let xp = (a + b) * 0.5;
-                dist_pc_with_tracking(xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic);
+                dist_pc_with_tracking(
+                    xp, curve1, curve2, criteria, &mut a_yp, &mut a_t2p, d_max, t1_max, t2_max, ic,
+                );
             }
             return i_err;
         }

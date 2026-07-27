@@ -1,11 +1,14 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use glam::DVec3;
 use rcad_modeling::make_box_brep;
-use rcad_step::writer::ExportSelection;
 use rcad_step::StepWriter;
+use rcad_step::writer::ExportSelection;
 
 fn all_selection() -> ExportSelection<'static> {
-    ExportSelection { selected_faces: &[], selected_edges: &[] }
+    ExportSelection {
+        selected_faces: &[],
+        selected_edges: &[],
+    }
 }
 
 fn step_roundtrip_box(c: &mut Criterion) {

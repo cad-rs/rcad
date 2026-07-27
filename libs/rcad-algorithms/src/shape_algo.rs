@@ -16,7 +16,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
-use rcad_kernel::topods::{TShape, BRep, ShapeRef};
+use rcad_kernel::topods::{BRep, ShapeRef, TShape};
 use std::collections::HashMap;
 
 // =============================================================================
@@ -231,7 +231,11 @@ pub fn get_box_geometry(brep: &rcad_kernel::BRep) -> Option<BoxGeometry> {
         return None;
     }
     // Must have exactly one shell
-    let shell_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count();
+    let shell_count = brep
+        .tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Shell(_)))
+        .count();
     if shell_count != 1 {
         return None;
     }
@@ -333,7 +337,11 @@ pub fn get_cylinder_geometry(brep: &rcad_kernel::BRep) -> Option<CylinderGeometr
         return None;
     }
     // Must have exactly one shell
-    let shell_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count();
+    let shell_count = brep
+        .tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Shell(_)))
+        .count();
     if shell_count != 1 {
         return None;
     }

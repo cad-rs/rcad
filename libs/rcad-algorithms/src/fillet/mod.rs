@@ -34,14 +34,17 @@
 //! - OCCT `ChFi3d_FilBuilder`
 //! - OCCT `ChFi3d_ChBuilder`
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::{
     CurveEval,
-    geom::{Curve3, Surface3, Line3, Circle3, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, any_perpendicular},
-    topods::{BRep, ShapeRef, TShape, Orientation},
+    geom::{
+        Circle3, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3,
+        ToroidalSurface, any_perpendicular,
+    },
+    topods::{BRep, Orientation, ShapeRef, TShape},
 };
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::tolerance::*;
 
@@ -70,13 +73,21 @@ pub enum FilletError {
     /// Fillet would create degenerate geometry.
     DegenerateGeometry { edge_index: usize, reason: String },
     /// Radius too large for the edge.
-    RadiusTooLarge { edge_index: usize, radius: f64, max_radius: f64 },
+    RadiusTooLarge {
+        edge_index: usize,
+        radius: f64,
+        max_radius: f64,
+    },
     /// Failed to compute fillet surface.
     SurfaceComputationFailed { edge_index: usize, reason: String },
     /// Failed to compute fillet curves.
     CurveComputationFailed { edge_index: usize, reason: String },
     /// Unsupported geometry combination.
-    UnsupportedGeometry { edge_index: usize, surface1_type: String, surface2_type: String },
+    UnsupportedGeometry {
+        edge_index: usize,
+        surface1_type: String,
+        surface2_type: String,
+    },
     /// Variable radius specification is invalid.
     InvalidVariableRadius { parameter: f64, radius: f64 },
     /// Failed to blend adjacent faces.
@@ -92,17 +103,55 @@ pub enum FilletError {
 impl std::fmt::Display for FilletError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidRadius { radius } => write!(f, "invalid fillet radius: {} (must be > 0)", radius),
+            Self::InvalidRadius { radius } => {
+                write!(f, "invalid fillet radius: {} (must be > 0)", radius)
+            }
             Self::EdgeNotFound { edge_index } => write!(f, "edge {} not found", edge_index),
             Self::FaceNotFound { face_index } => write!(f, "face {} not found", face_index),
-            Self::EdgeNoAdjacentFaces { edge_index } => write!(f, "edge {} has no adjacent faces", edge_index),
-            Self::DegenerateGeometry { edge_index, reason } => write!(f, "degenerate geometry at edge {}: {}", edge_index, reason),
-            Self::RadiusTooLarge { edge_index, radius, max_radius } => write!(f, "radius {} too large for edge {} (max {})", radius, edge_index, max_radius),
-            Self::SurfaceComputationFailed { edge_index, reason } => write!(f, "failed to compute fillet surface at edge {}: {}", edge_index, reason),
-            Self::CurveComputationFailed { edge_index, reason } => write!(f, "failed to compute fillet curves at edge {}: {}", edge_index, reason),
-            Self::UnsupportedGeometry { edge_index, surface1_type, surface2_type } => write!(f, "unsupported geometry at edge {}: {} + {}", edge_index, surface1_type, surface2_type),
-            Self::InvalidVariableRadius { parameter, radius } => write!(f, "invalid variable radius {} at parameter {}", radius, parameter),
-            Self::BlendFailed { edge_index, reason } => write!(f, "failed to blend adjacent faces at edge {}: {}", edge_index, reason),
+            Self::EdgeNoAdjacentFaces { edge_index } => {
+                write!(f, "edge {} has no adjacent faces", edge_index)
+            }
+            Self::DegenerateGeometry { edge_index, reason } => {
+                write!(f, "degenerate geometry at edge {}: {}", edge_index, reason)
+            }
+            Self::RadiusTooLarge {
+                edge_index,
+                radius,
+                max_radius,
+            } => write!(
+                f,
+                "radius {} too large for edge {} (max {})",
+                radius, edge_index, max_radius
+            ),
+            Self::SurfaceComputationFailed { edge_index, reason } => write!(
+                f,
+                "failed to compute fillet surface at edge {}: {}",
+                edge_index, reason
+            ),
+            Self::CurveComputationFailed { edge_index, reason } => write!(
+                f,
+                "failed to compute fillet curves at edge {}: {}",
+                edge_index, reason
+            ),
+            Self::UnsupportedGeometry {
+                edge_index,
+                surface1_type,
+                surface2_type,
+            } => write!(
+                f,
+                "unsupported geometry at edge {}: {} + {}",
+                edge_index, surface1_type, surface2_type
+            ),
+            Self::InvalidVariableRadius { parameter, radius } => write!(
+                f,
+                "invalid variable radius {} at parameter {}",
+                radius, parameter
+            ),
+            Self::BlendFailed { edge_index, reason } => write!(
+                f,
+                "failed to blend adjacent faces at edge {}: {}",
+                edge_index, reason
+            ),
             Self::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
             Self::NumericalFailure(msg) => write!(f, "numerical failure: {}", msg),
             Self::EmptyResult => write!(f, "fillet operation produced empty result"),
@@ -173,7 +222,10 @@ impl Default for FilletParams {
 impl FilletParams {
     /// Create new fillet parameters with the specified radius.
     pub fn new(radius: f64) -> Self {
-        Self { radius, ..Default::default() }
+        Self {
+            radius,
+            ..Default::default()
+        }
     }
 
     /// Set the continuity.
@@ -309,7 +361,9 @@ pub fn make_fillet_edge_with_params(
     }
 
     if params.radius <= 0.0 {
-        return Err(FilletError::InvalidRadius { radius: params.radius });
+        return Err(FilletError::InvalidRadius {
+            radius: params.radius,
+        });
     }
 
     // Validate edge indices
@@ -368,15 +422,23 @@ pub fn make_variable_fillet(
     radii: &[VariableRadiusPoint],
 ) -> Result<FilletResult, FilletError> {
     if radii.len() < 2 {
-        return Err(FilletError::InvalidInput("variable fillet requires at least 2 radius points"));
+        return Err(FilletError::InvalidInput(
+            "variable fillet requires at least 2 radius points",
+        ));
     }
 
     for rp in radii {
         if rp.parameter < 0.0 || rp.parameter > 1.0 {
-            return Err(FilletError::InvalidVariableRadius { parameter: rp.parameter, radius: rp.radius });
+            return Err(FilletError::InvalidVariableRadius {
+                parameter: rp.parameter,
+                radius: rp.radius,
+            });
         }
         if rp.radius <= 0.0 {
-            return Err(FilletError::InvalidVariableRadius { parameter: rp.parameter, radius: rp.radius });
+            return Err(FilletError::InvalidVariableRadius {
+                parameter: rp.parameter,
+                radius: rp.radius,
+            });
         }
     }
 
@@ -449,10 +511,19 @@ fn collect_edge_infos(
     let edge_faces = build_edge_face_adjacency(brep);
 
     for &edge_idx in edge_indices {
-        let ts = brep.tshapes.get(edge_idx).ok_or(FilletError::EdgeNotFound { edge_index: edge_idx })?;
+        let ts = brep
+            .tshapes
+            .get(edge_idx)
+            .ok_or(FilletError::EdgeNotFound {
+                edge_index: edge_idx,
+            })?;
         let ed = match &**ts {
             TShape::Edge(e) => e,
-            _ => return Err(FilletError::EdgeNotFound { edge_index: edge_idx }),
+            _ => {
+                return Err(FilletError::EdgeNotFound {
+                    edge_index: edge_idx,
+                });
+            }
         };
 
         // Get adjacent faces
@@ -469,7 +540,8 @@ fn collect_edge_infos(
         let length = compute_edge_length(brep, edge_idx);
 
         // Compute tangents
-        let (tangent_start, tangent_end) = compute_edge_tangents(brep, edge_idx, &curve, &curve_range);
+        let (tangent_start, tangent_end) =
+            compute_edge_tangents(brep, edge_idx, &curve, &curve_range);
 
         // Vertex positions
         let start_point = brep.vertex_point(ed.first.index).unwrap_or_default();
@@ -585,7 +657,9 @@ pub fn compute_rollball_surface(
 ) -> Result<Surface3, FilletError> {
     let faces = &edge_info.adjacent_faces;
     if faces.len() < 2 {
-        return Err(FilletError::EdgeNoAdjacentFaces { edge_index: edge_info.index });
+        return Err(FilletError::EdgeNoAdjacentFaces {
+            edge_index: edge_info.index,
+        });
     }
 
     let surf1 = get_face_surface(brep, faces[0]);
@@ -595,16 +669,16 @@ pub fn compute_rollball_surface(
         (Some(s1), Some(s2)) => {
             compute_rollball_surface_for_surfaces(edge_info, s1, s2, faces[0], faces[1], radius)
         }
-        _ => {
-            compute_toroidal_fillet_surface(brep, edge_info, radius)
-        }
+        _ => compute_toroidal_fillet_surface(brep, edge_info, radius),
     }
 }
 
 /// Get the surface for a face (by tshape index).
 fn get_face_surface(brep: &rcad_kernel::BRep, flat_face_idx: usize) -> Option<Surface3> {
     let ts = brep.tshapes.get(flat_face_idx)?;
-    let TShape::Face(fd) = ts.as_ref() else { return None };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return None;
+    };
     fd.surface.clone()
 }
 
@@ -625,13 +699,10 @@ fn compute_rollball_surface_for_surfaces(
         | (Surface3::Plane(p), Surface3::Cylinder(c)) => {
             compute_cylinder_plane_fillet(edge_info, c, p, radius)
         }
-        (Surface3::Sphere(s), Surface3::Plane(p))
-        | (Surface3::Plane(p), Surface3::Sphere(s)) => {
+        (Surface3::Sphere(s), Surface3::Plane(p)) | (Surface3::Plane(p), Surface3::Sphere(s)) => {
             compute_sphere_plane_fillet(edge_info, s, p, radius)
         }
-        _ => {
-            compute_general_fillet_surface(edge_info, surf1, surf2, radius)
-        }
+        _ => compute_general_fillet_surface(edge_info, surf1, surf2, radius),
     }
 }
 
@@ -705,7 +776,12 @@ fn compute_cylinder_plane_fillet(
         let major_radius = cylinder.radius + radius;
         let minor_radius = radius;
 
-        Ok(Surface3::Torus(ToroidalSurface { center, axis: cylinder_axis, major_radius, minor_radius }))
+        Ok(Surface3::Torus(ToroidalSurface {
+            center,
+            axis: cylinder_axis,
+            major_radius,
+            minor_radius,
+        }))
     }
 }
 
@@ -721,7 +797,11 @@ fn compute_sphere_plane_fillet(
     let fillet_sphere_radius = sphere.radius + radius;
     let _dist_to_plane = (sphere.center - plane.origin).dot(_plane_normal);
 
-    Ok(Surface3::Sphere(SphericalSurface::new(sphere.center, sphere.axis, fillet_sphere_radius)))
+    Ok(Surface3::Sphere(SphericalSurface::new(
+        sphere.center,
+        sphere.axis,
+        fillet_sphere_radius,
+    )))
 }
 
 /// Compute general fillet surface for arbitrary surface types.
@@ -736,7 +816,12 @@ fn compute_general_fillet_surface(
     let major_radius = radius * 2.0;
     let minor_radius = radius;
 
-    Ok(Surface3::Torus(ToroidalSurface { center, axis, major_radius, minor_radius }))
+    Ok(Surface3::Torus(ToroidalSurface {
+        center,
+        axis,
+        major_radius,
+        minor_radius,
+    }))
 }
 
 /// Compute a toroidal approximation for the fillet surface.
@@ -745,7 +830,9 @@ fn compute_toroidal_fillet_surface(
     edge_info: &EdgeInfo,
     radius: f64,
 ) -> Result<Surface3, FilletError> {
-    let p0 = brep.vertex_point(edge_info.start_vertex).unwrap_or_default();
+    let p0 = brep
+        .vertex_point(edge_info.start_vertex)
+        .unwrap_or_default();
     let p1 = brep.vertex_point(edge_info.end_vertex).unwrap_or_default();
 
     let center = (p0 + p1) * 0.5;
@@ -753,7 +840,12 @@ fn compute_toroidal_fillet_surface(
     let major_radius = radius * 2.0;
     let minor_radius = radius;
 
-    Ok(Surface3::Torus(ToroidalSurface { center, axis, major_radius, minor_radius }))
+    Ok(Surface3::Torus(ToroidalSurface {
+        center,
+        axis,
+        major_radius,
+        minor_radius,
+    }))
 }
 
 /// Compute the boundary curves of a fillet.
@@ -763,7 +855,9 @@ pub fn compute_fillet_curves(
     radius: f64,
     surface: &Surface3,
 ) -> Result<Vec<FilletCurve>, FilletError> {
-    let p0 = brep.vertex_point(edge_info.start_vertex).unwrap_or_default();
+    let p0 = brep
+        .vertex_point(edge_info.start_vertex)
+        .unwrap_or_default();
     let p1 = brep.vertex_point(edge_info.end_vertex).unwrap_or_default();
 
     let mut curves = Vec::new();
@@ -804,7 +898,9 @@ pub fn compute_fillet_curves(
             let axis = sphere.axis.normalize();
             let _ref_dir = any_perpendicular(axis);
             let start_curve = Curve3::Circle(Circle3::new(
-                p0 - axis * (p0 - sphere.center).dot(axis) * 0.5, axis, sphere.radius * 0.5,
+                p0 - axis * (p0 - sphere.center).dot(axis) * 0.5,
+                axis,
+                sphere.radius * 0.5,
             ));
             curves.push(FilletCurve {
                 curve: start_curve,
@@ -815,7 +911,10 @@ pub fn compute_fillet_curves(
         _ => {
             let edge_dir = (p1 - p0).normalize_or(DVec3::Z);
             curves.push(FilletCurve {
-                curve: Curve3::Line(Line3 { origin: p0, direction: any_perpendicular(edge_dir) }),
+                curve: Curve3::Line(Line3 {
+                    origin: p0,
+                    direction: any_perpendicular(edge_dir),
+                }),
                 parameter_range: [0.0, radius],
                 is_start: true,
             });
@@ -865,7 +964,12 @@ fn compute_fillet_for_edge(
     let boundary_curves = compute_fillet_curves(brep, edge_info, params.radius, &surface)?;
     let uv_domain = compute_fillet_uv_domain(&surface, edge_info);
 
-    Ok(FilletSurface { surface, uv_domain, boundary_curves, edge_index: edge_info.index })
+    Ok(FilletSurface {
+        surface,
+        uv_domain,
+        boundary_curves,
+        edge_index: edge_info.index,
+    })
 }
 
 /// Compute variable radius fillet surface for a single edge.
@@ -883,7 +987,12 @@ fn compute_variable_fillet_for_edge(
     let boundary_curves = compute_variable_fillet_curves(brep, edge_info, &sorted_radii, &surface)?;
     let uv_domain = compute_fillet_uv_domain(&surface, edge_info);
 
-    Ok(FilletSurface { surface, uv_domain, boundary_curves, edge_index: edge_info.index })
+    Ok(FilletSurface {
+        surface,
+        uv_domain,
+        boundary_curves,
+        edge_index: edge_info.index,
+    })
 }
 
 /// Compute boundary curves for variable radius fillet.
@@ -893,7 +1002,9 @@ fn compute_variable_fillet_curves(
     radii: &[VariableRadiusPoint],
     surface: &Surface3,
 ) -> Result<Vec<FilletCurve>, FilletError> {
-    let p0 = brep.vertex_point(edge_info.start_vertex).unwrap_or_default();
+    let p0 = brep
+        .vertex_point(edge_info.start_vertex)
+        .unwrap_or_default();
     let p1 = brep.vertex_point(edge_info.end_vertex).unwrap_or_default();
 
     let mut curves = Vec::new();
@@ -914,7 +1025,10 @@ fn compute_variable_fillet_curves(
             }
             _ => {
                 curves.push(FilletCurve {
-                    curve: Curve3::Line(Line3 { origin: pt, direction: edge_info.tangent_start }),
+                    curve: Curve3::Line(Line3 {
+                        origin: pt,
+                        direction: edge_info.tangent_start,
+                    }),
                     parameter_range: [0.0, rp.radius],
                     is_start: t < 0.5,
                 });
@@ -956,7 +1070,11 @@ fn find_first_shell_index(brep: &rcad_kernel::BRep) -> Option<usize> {
 }
 
 /// Build a ShapeRef for an edge by its tshape index, with given orientation.
-fn edge_shape_ref(brep: &rcad_kernel::BRep, edge_index: usize, orientation: Orientation) -> ShapeRef {
+fn edge_shape_ref(
+    brep: &rcad_kernel::BRep,
+    edge_index: usize,
+    orientation: Orientation,
+) -> ShapeRef {
     let ts = &brep.tshapes[edge_index];
     ShapeRef {
         ptr_id: Arc::as_ptr(ts) as u64,
@@ -1014,28 +1132,38 @@ fn build_fillet_brep(
 /// Wire-direction start/end vertex tshape indices of an edge.
 fn wire_edge_vertices(brep: &rcad_kernel::BRep, edge_idx: usize) -> (usize, usize) {
     let ts = &brep.tshapes[edge_idx];
-    let TShape::Edge(ed) = ts.as_ref() else { return (usize::MAX, usize::MAX) };
+    let TShape::Edge(ed) = ts.as_ref() else {
+        return (usize::MAX, usize::MAX);
+    };
     (ed.first.index, ed.last.index)
 }
 
 /// Find the position of an edge index within a face's outer wire.
 fn find_wire_pos(brep: &rcad_kernel::BRep, face_idx: usize, edge_idx: usize) -> Option<usize> {
     let ts = &brep.tshapes[face_idx];
-    let TShape::Face(fd) = ts.as_ref() else { return None };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return None;
+    };
     let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
-    let TShape::Wire(wd) = wire_ts.as_ref() else { return None };
+    let TShape::Wire(wd) = wire_ts.as_ref() else {
+        return None;
+    };
     wd.edges.iter().position(|esr| esr.index == edge_idx)
 }
 
 /// Compute the centroid of a planar face from its outer-wire vertices.
 fn face_vertex_centroid(brep: &rcad_kernel::BRep, face_idx: usize) -> DVec3 {
     let ts = &brep.tshapes[face_idx];
-    let TShape::Face(fd) = ts.as_ref() else { return DVec3::ZERO };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return DVec3::ZERO;
+    };
     let wire_ts = match brep.tshapes.get(fd.outer_wire.index) {
         Some(t) => t,
         None => return DVec3::ZERO,
     };
-    let TShape::Wire(wd) = wire_ts.as_ref() else { return DVec3::ZERO };
+    let TShape::Wire(wd) = wire_ts.as_ref() else {
+        return DVec3::ZERO;
+    };
     let mut sum = DVec3::ZERO;
     let mut n = 0u32;
     for esr in &wd.edges {
@@ -1048,19 +1176,33 @@ fn face_vertex_centroid(brep: &rcad_kernel::BRep, face_idx: usize) -> DVec3 {
 }
 
 /// Push a straight-line edge using the topods flat-index API.
-fn push_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize, p0: DVec3, p1: DVec3) -> usize {
+fn push_line_edge(
+    brep: &mut rcad_kernel::BRep,
+    start: usize,
+    end: usize,
+    p0: DVec3,
+    p1: DVec3,
+) -> usize {
     let delta = p1 - p0;
     let len = delta.length();
     let dir = if len > EPS { delta / len } else { DVec3::X };
-    let curve = Some(Curve3::Line(Line3 { origin: p0, direction: dir }));
+    let curve = Some(Curve3::Line(Line3 {
+        origin: p0,
+        direction: dir,
+    }));
     brep.add_edge_flat(start, end, curve, [0.0, len])
 }
 
 /// Push a circular-arc edge using the topods flat-index API.
 fn push_arc_edge(
-    brep: &mut rcad_kernel::BRep, start: usize, end: usize,
-    center: DVec3, normal: DVec3, radius: f64,
-    t_start: f64, t_end: f64,
+    brep: &mut rcad_kernel::BRep,
+    start: usize,
+    end: usize,
+    center: DVec3,
+    normal: DVec3,
+    radius: f64,
+    t_start: f64,
+    t_end: f64,
 ) -> usize {
     let curve = Some(Curve3::Circle(Circle3::new(center, normal, radius)));
     brep.add_edge_flat(start, end, curve, [t_start, t_end])
@@ -1081,18 +1223,24 @@ fn face_has_vertex(brep: &rcad_kernel::BRep, face_idx: usize, vertex_idx: usize)
         Some(t) => t,
         None => return false,
     };
-    let TShape::Face(fd) = ts.as_ref() else { return false };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return false;
+    };
     let wire_ts = match brep.tshapes.get(fd.outer_wire.index) {
         Some(t) => t,
         None => return false,
     };
-    let TShape::Wire(wd) = wire_ts.as_ref() else { return false };
+    let TShape::Wire(wd) = wire_ts.as_ref() else {
+        return false;
+    };
     wd.edges.iter().any(|esr| {
         let ets = match brep.tshapes.get(esr.index) {
             Some(t) => t,
             None => return false,
         };
-        let TShape::Edge(ed) = ets.as_ref() else { return false };
+        let TShape::Edge(ed) = ets.as_ref() else {
+            return false;
+        };
         ed.first.index == vertex_idx || ed.last.index == vertex_idx
     })
 }
@@ -1108,7 +1256,9 @@ fn apply_cylinder_fillet(
     let edge_idx = edge_info.index;
 
     // Edge geometry
-    let v1_pt = brep.vertex_point(edge_info.start_vertex).unwrap_or_default();
+    let v1_pt = brep
+        .vertex_point(edge_info.start_vertex)
+        .unwrap_or_default();
     let v2_pt = brep.vertex_point(edge_info.end_vertex).unwrap_or_default();
     let edge_dir = (v2_pt - v1_pt).normalize_or(DVec3::X);
     let edge_len = (v2_pt - v1_pt).length();
@@ -1117,30 +1267,35 @@ fn apply_cylinder_fillet(
     // Adjacent face surfaces and normals
     let adj = &edge_info.adjacent_faces;
     if adj.len() < 2 {
-        return Err(FilletError::EdgeNoAdjacentFaces { edge_index: edge_idx });
+        return Err(FilletError::EdgeNoAdjacentFaces {
+            edge_index: edge_idx,
+        });
     }
     let f1_idx = adj[0];
     let f2_idx = adj[1];
 
     let get_plane_normal = |brep: &rcad_kernel::BRep, flat_idx: usize| -> Option<DVec3> {
         let ts = brep.tshapes.get(flat_idx)?;
-        let TShape::Face(fd) = ts.as_ref() else { return None };
+        let TShape::Face(fd) = ts.as_ref() else {
+            return None;
+        };
         let surf = fd.surface.as_ref()?;
-        match surf { Surface3::Plane(p) => Some(p.normal.normalize()), _ => None }
+        match surf {
+            Surface3::Plane(p) => Some(p.normal.normalize()),
+            _ => None,
+        }
     };
 
-    let n1 = get_plane_normal(brep, f1_idx).ok_or_else(||
-        FilletError::SurfaceComputationFailed {
+    let n1 =
+        get_plane_normal(brep, f1_idx).ok_or_else(|| FilletError::SurfaceComputationFailed {
             edge_index: edge_idx,
             reason: "face 1 is not a plane".to_string(),
-        },
-    )?;
-    let n2 = get_plane_normal(brep, f2_idx).ok_or_else(||
-        FilletError::SurfaceComputationFailed {
+        })?;
+    let n2 =
+        get_plane_normal(brep, f2_idx).ok_or_else(|| FilletError::SurfaceComputationFailed {
             edge_index: edge_idx,
             reason: "face 2 is not a plane".to_string(),
-        },
-    )?;
+        })?;
 
     // Face angle and offset
     let angle = n1.dot(n2).acos();
@@ -1164,8 +1319,16 @@ fn apply_cylinder_fillet(
     let c1 = face_vertex_centroid(brep, f1_idx);
     let c2 = face_vertex_centroid(brep, f2_idx);
 
-    let into_1 = if raw1.dot(c1 - mid_pt) > 0.0 { raw1 } else { -raw1 };
-    let into_2 = if raw2.dot(c2 - mid_pt) > 0.0 { raw2 } else { -raw2 };
+    let into_1 = if raw1.dot(c1 - mid_pt) > 0.0 {
+        raw1
+    } else {
+        -raw1
+    };
+    let into_2 = if raw2.dot(c2 - mid_pt) > 0.0 {
+        raw2
+    } else {
+        -raw2
+    };
 
     // New vertex positions
     let v1_f1_pt = v1_pt + into_1 * offset_dist;
@@ -1195,8 +1358,12 @@ fn apply_cylinder_fillet(
     let mut t_start = t1;
     let mut t_end = t2;
     let mut dt = t_end - t_start;
-    if dt > PI { t_end -= 2.0 * PI; }
-    if dt < -PI { t_start -= 2.0 * PI; }
+    if dt > PI {
+        t_end -= 2.0 * PI;
+    }
+    if dt < -PI {
+        t_start -= 2.0 * PI;
+    }
     dt = t_end - t_start;
     if dt < 0.0 {
         std::mem::swap(&mut t_start, &mut t_end);
@@ -1206,8 +1373,12 @@ fn apply_cylinder_fillet(
     let arc_v2 = push_arc_edge(brep, v2_f1, v2_f2, arc_c_v2, edge_dir, r, t_start, t_end);
 
     // Build trimmed adjacent faces
-    let trimmed_f1 = build_trimmed_face(brep, f1_idx, edge_idx, v1_f1, v2_f1, contact_f1, v1_pt, v2_pt);
-    let trimmed_f2 = build_trimmed_face(brep, f2_idx, edge_idx, v1_f2, v2_f2, contact_f2, v1_pt, v2_pt);
+    let trimmed_f1 = build_trimmed_face(
+        brep, f1_idx, edge_idx, v1_f1, v2_f1, contact_f1, v1_pt, v2_pt,
+    );
+    let trimmed_f2 = build_trimmed_face(
+        brep, f2_idx, edge_idx, v1_f2, v2_f2, contact_f2, v1_pt, v2_pt,
+    );
 
     match (trimmed_f1, trimmed_f2) {
         (Some(_), Some(_)) => {}
@@ -1230,8 +1401,12 @@ fn apply_cylinder_fillet(
 
     for face_sr in &face_refs {
         let fi = face_sr.index;
-        if fi == f1_idx || fi == f2_idx { continue; }
-        if face_has_vertex(brep, fi, edge_v1) && face_has_vertex(brep, fi, edge_v2) { continue; }
+        if fi == f1_idx || fi == f2_idx {
+            continue;
+        }
+        if face_has_vertex(brep, fi, edge_v1) && face_has_vertex(brep, fi, edge_v2) {
+            continue;
+        }
         if face_has_vertex(brep, fi, edge_v1) {
             trim_face_at_vertex(brep, fi, edge_v1, v1_f1, v1_f1_pt);
         }
@@ -1286,12 +1461,16 @@ fn trim_face_at_vertex(
 ) {
     let (old_wire_edges, _old_normal) = {
         let ts = &brep.tshapes[face_flat_idx];
-        let TShape::Face(fd) = ts.as_ref() else { return };
+        let TShape::Face(fd) = ts.as_ref() else {
+            return;
+        };
         let wire_ts = match brep.tshapes.get(fd.outer_wire.index) {
             Some(t) => t,
             None => return,
         };
-        let TShape::Wire(wd) = wire_ts.as_ref() else { return };
+        let TShape::Wire(wd) = wire_ts.as_ref() else {
+            return;
+        };
         (wd.edges.clone(), DVec3::ZERO)
     };
 
@@ -1340,48 +1519,62 @@ fn build_trimmed_face(
 ) -> Option<()> {
     let old_edges = {
         let ts = brep.tshapes.get(face_flat_idx)?;
-        let TShape::Face(fd) = ts.as_ref() else { return None };
+        let TShape::Face(fd) = ts.as_ref() else {
+            return None;
+        };
         let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
-        let TShape::Wire(wd) = wire_ts.as_ref() else { return None };
+        let TShape::Wire(wd) = wire_ts.as_ref() else {
+            return None;
+        };
         wd.edges.clone()
     };
 
     let n = old_edges.len();
-    let pos = old_edges.iter().position(|esr| esr.index == fillet_edge_idx)?;
+    let pos = old_edges
+        .iter()
+        .position(|esr| esr.index == fillet_edge_idx)?;
 
     let fillet_we = &old_edges[pos];
     let (fillet_ws_raw, fillet_wv_raw) = wire_edge_vertices(brep, fillet_we.index);
     let fillet_forward = fillet_we.orientation == Orientation::Forward;
-    let (fillet_ws, fillet_wv) = if fillet_forward { (fillet_ws_raw, fillet_wv_raw) } else { (fillet_wv_raw, fillet_ws_raw) };
+    let (fillet_ws, fillet_wv) = if fillet_forward {
+        (fillet_ws_raw, fillet_wv_raw)
+    } else {
+        (fillet_wv_raw, fillet_ws_raw)
+    };
 
     let we_before = &old_edges[(pos + n - 1) % n];
     let we_after = &old_edges[(pos + 1) % n];
 
     let ws_pt = brep.vertex_point(fillet_ws).unwrap_or_default();
-    let (new_before_e_start, new_before_e_end) = if (ws_pt - v1_orig).length_squared()
-        < (ws_pt - v2_orig).length_squared()
-    {
-        let (bws, _bwe) = wire_edge_vertices(brep, we_before.index);
-        (bws, v1_new)
-    } else {
-        let (bws, _bwe) = wire_edge_vertices(brep, we_before.index);
-        (bws, v2_new)
-    };
+    let (new_before_e_start, new_before_e_end) =
+        if (ws_pt - v1_orig).length_squared() < (ws_pt - v2_orig).length_squared() {
+            let (bws, _bwe) = wire_edge_vertices(brep, we_before.index);
+            (bws, v1_new)
+        } else {
+            let (bws, _bwe) = wire_edge_vertices(brep, we_before.index);
+            (bws, v2_new)
+        };
 
     let wv_pt = brep.vertex_point(fillet_wv).unwrap_or_default();
-    let (new_after_e_start, new_after_e_end) = if (wv_pt - v2_orig).length_squared()
-        < (wv_pt - v1_orig).length_squared()
-    {
-        let (_aws, awe) = wire_edge_vertices(brep, we_after.index);
-        (v2_new, awe)
-    } else {
-        let (_aws, awe) = wire_edge_vertices(brep, we_after.index);
-        (v1_new, awe)
-    };
+    let (new_after_e_start, new_after_e_end) =
+        if (wv_pt - v2_orig).length_squared() < (wv_pt - v1_orig).length_squared() {
+            let (_aws, awe) = wire_edge_vertices(brep, we_after.index);
+            (v2_new, awe)
+        } else {
+            let (_aws, awe) = wire_edge_vertices(brep, we_after.index);
+            (v1_new, awe)
+        };
 
     let before_pt = brep.vertex_point(new_before_e_start).unwrap_or_default();
     let before_ep = brep.vertex_point(new_before_e_end).unwrap_or_default();
-    let short_before = push_line_edge(brep, new_before_e_start, new_before_e_end, before_pt, before_ep);
+    let short_before = push_line_edge(
+        brep,
+        new_before_e_start,
+        new_before_e_end,
+        before_pt,
+        before_ep,
+    );
 
     let after_pt = brep.vertex_point(new_after_e_start).unwrap_or_default();
     let after_ep = brep.vertex_point(new_after_e_end).unwrap_or_default();
@@ -1397,7 +1590,11 @@ fn build_trimmed_face(
         }
     }
 
-    let contact_orient = if fillet_forward { Orientation::Forward } else { Orientation::Reversed };
+    let contact_orient = if fillet_forward {
+        Orientation::Forward
+    } else {
+        Orientation::Reversed
+    };
     new_edge_refs.push(edge_shape_ref(brep, contact_edge_idx, contact_orient));
 
     for k in (pos + 1)..n {
@@ -1441,4 +1638,3 @@ fn interpolate_radius(r1: f64, r2: f64, t: f64, tension: f64) -> f64 {
     let h2_tension = h2 + smooth * (-t3 + t2);
     r1 * h1_tension + r2 * h2_tension
 }
-

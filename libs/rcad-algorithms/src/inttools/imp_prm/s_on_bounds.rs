@@ -1,4 +1,4 @@
-﻿//! IntPatch_TheSOnBounds — boundary scanning for F(t)=0 on domain edges.
+//! IntPatch_TheSOnBounds — boundary scanning for F(t)=0 on domain edges.
 //!
 //! OCCT IntStart_SearchOnBoundaries.gxx (1232 lines) — generic template instantiated
 //! as IntPatch_TheSOnBounds (TheArc=Handle(Adaptor2d_Curve2d), TheFunction=ArcFunction).
@@ -10,28 +10,44 @@
 //!   3. Collect isolated points (NbPoints) and continuous segments (NbSegments)
 //!   4. Special treatment for linear curves against quadric surfaces (TreatLC)
 
+use super::super::geom_abs_surface_type::GeomAbsSurfaceType;
+use super::super::int_surf_quadric::Quadric;
+use super::arc_function::ArcFunction;
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
-use crate::tolerance::TOLERANCE_CLAMP_MIN;
-use super::arc_function::ArcFunction;
-use super::super::int_surf_quadric::Quadric;
-use super::super::geom_abs_surface_type::GeomAbsSurfaceType;
 
 // ── OCCT IntPatch_ThePathPointOfTheSOnBounds ──────────────────────────
 #[derive(Clone, Debug)]
 pub struct PathPoint {
     pub value: glam::DVec3,
     pub tolerance: f64,
-    pub parameter: f64,      // curve parameter on boundary arc
-    pub u: f64,              // U coordinate on the parametric surface at this point
-    pub v: f64,              // V coordinate on the parametric surface at this point
+    pub parameter: f64, // curve parameter on boundary arc
+    pub u: f64,         // U coordinate on the parametric surface at this point
+    pub v: f64,         // V coordinate on the parametric surface at this point
     pub arc_index: usize,
     pub is_new: bool,
 }
 
 impl PathPoint {
-    pub fn new(value: glam::DVec3, tol: f64, param: f64, u: f64, v: f64, arc_i: usize, is_new: bool) -> Self {
-        Self { value, tolerance: tol, parameter: param, u, v, arc_index: arc_i, is_new }
+    pub fn new(
+        value: glam::DVec3,
+        tol: f64,
+        param: f64,
+        u: f64,
+        v: f64,
+        arc_i: usize,
+        is_new: bool,
+    ) -> Self {
+        Self {
+            value,
+            tolerance: tol,
+            parameter: param,
+            u,
+            v,
+            arc_index: arc_i,
+            is_new,
+        }
     }
 }
 
@@ -45,10 +61,18 @@ pub struct Segment {
 
 impl Segment {
     pub fn new(curve: Curve2d) -> Self {
-        Self { curve, first_point_index: 0, last_point_index: 0 }
+        Self {
+            curve,
+            first_point_index: 0,
+            last_point_index: 0,
+        }
     }
-    pub fn has_first_point(&self) -> bool { self.first_point_index > 0 }
-    pub fn has_last_point(&self) -> bool { self.last_point_index > 0 }
+    pub fn has_first_point(&self) -> bool {
+        self.first_point_index > 0
+    }
+    pub fn has_last_point(&self) -> bool {
+        self.last_point_index > 0
+    }
 }
 
 // ── OCCT IntPatch_TheSOnBounds ───────────────────────────────────────
@@ -62,7 +86,12 @@ pub struct SOnBounds {
 impl SOnBounds {
     // OCCT L44-46: constructor
     pub fn new() -> Self {
-        Self { done: false, all: false, points: Vec::new(), segments: Vec::new() }
+        Self {
+            done: false,
+            all: false,
+            points: Vec::new(),
+            segments: Vec::new(),
+        }
     }
 
     // OCCT L52-56: Perform(ArcFunction, Domain, TolBoundary, TolTangency, RecheckOnRegularity)
@@ -70,8 +99,10 @@ impl SOnBounds {
     pub fn perform(
         &mut self,
         func: &mut ArcFunction,
-        u_min: f64, u_max: f64,
-        v_min: f64, v_max: f64,
+        u_min: f64,
+        u_max: f64,
+        v_min: f64,
+        v_max: f64,
         tol_boundary: f64,
         tol_tangency: f64,
     ) {
@@ -86,18 +117,54 @@ impl SOnBounds {
         // Arc 2: U=const at Umin (V varies)
         // Arc 3: U=const at Umax (V varies)
         let arcs = [
-            (Curve2d::Line(rcad_kernel::geom::Line2d { origin: DVec2::new(u_min, v_min), direction: DVec2::new(u_max - u_min, 0.0) }),
-             u_min, u_max, 0usize),
-            (Curve2d::Line(rcad_kernel::geom::Line2d { origin: DVec2::new(u_min, v_max), direction: DVec2::new(u_max - u_min, 0.0) }),
-             u_min, u_max, 1usize),
-            (Curve2d::Line(rcad_kernel::geom::Line2d { origin: DVec2::new(u_min, v_min), direction: DVec2::new(0.0, v_max - v_min) }),
-             v_min, v_max, 2usize),
-            (Curve2d::Line(rcad_kernel::geom::Line2d { origin: DVec2::new(u_max, v_min), direction: DVec2::new(0.0, v_max - v_min) }),
-             v_min, v_max, 3usize),
+            (
+                Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: DVec2::new(u_min, v_min),
+                    direction: DVec2::new(u_max - u_min, 0.0),
+                }),
+                u_min,
+                u_max,
+                0usize,
+            ),
+            (
+                Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: DVec2::new(u_min, v_max),
+                    direction: DVec2::new(u_max - u_min, 0.0),
+                }),
+                u_min,
+                u_max,
+                1usize,
+            ),
+            (
+                Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: DVec2::new(u_min, v_min),
+                    direction: DVec2::new(0.0, v_max - v_min),
+                }),
+                v_min,
+                v_max,
+                2usize,
+            ),
+            (
+                Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: DVec2::new(u_max, v_min),
+                    direction: DVec2::new(0.0, v_max - v_min),
+                }),
+                v_min,
+                v_max,
+                3usize,
+            ),
         ];
 
         for (arc, p_deb, p_fin, arc_idx) in arcs {
-            self.bounded_arc(func, &arc, p_deb, p_fin, arc_idx, tol_boundary, tol_tangency);
+            self.bounded_arc(
+                func,
+                &arc,
+                p_deb,
+                p_fin,
+                arc_idx,
+                tol_boundary,
+                tol_tangency,
+            );
         }
 
         self.done = true;
@@ -155,7 +222,11 @@ impl SOnBounds {
                     self.points.push(PathPoint::new(
                         *func.last_computed_point(),
                         n_tol_tang.max(tol_boundary),
-                        param, uv.x, uv.y, arc_idx, true,
+                        param,
+                        uv.x,
+                        uv.y,
+                        arc_idx,
+                        true,
                     ));
                 }
             }
@@ -163,7 +234,13 @@ impl SOnBounds {
     }
 
     // ── OCCT Rejection test (L292-333) ──────────────────────────────
-    fn rejection_test(&self, func: &mut ArcFunction, p_deb: f64, p_fin: f64, n_echant: usize) -> bool {
+    fn rejection_test(
+        &self,
+        func: &mut ArcFunction,
+        p_deb: f64,
+        p_fin: f64,
+        n_echant: usize,
+    ) -> bool {
         let dur = (p_fin - p_deb) / 6.0f64.max(1.0);
         let mut minr = f64::MAX;
         let mut maxr = f64::MIN;
@@ -174,12 +251,20 @@ impl SOnBounds {
             if let Some((f, d)) = func.values(ur) {
                 let d = d.abs();
                 let dd = d * (dur * 2.0);
-                if dd > maxdr { maxdr = dd; }
+                if dd > maxdr {
+                    maxdr = dd;
+                }
                 let lminr = f - dd;
                 let lmaxr = f + dd;
-                if lminr < minr { minr = lminr; }
-                if lmaxr > maxr { maxr = lmaxr; }
-                if minr < 0.0 && maxr > 0.0 { return false; }
+                if lminr < minr {
+                    minr = lminr;
+                }
+                if lmaxr > maxr {
+                    maxr = lmaxr;
+                }
+                if minr < 0.0 && maxr > 0.0 {
+                    return false;
+                }
             }
         }
 
@@ -209,14 +294,19 @@ impl SOnBounds {
         params: &mut Vec<f64>,
     ) {
         let range = p_fin - p_deb;
-        if range.abs() < TOLERANCE_CLAMP_MIN { return; }
+        if range.abs() < TOLERANCE_CLAMP_MIN {
+            return;
+        }
 
         // OCCT: math_FunctionSample(Pdeb, Pfin, NbEchant)
         let dt = range / n_echant as f64;
         let mut prev_f: Option<f64> = None;
 
         // Collect sample values
-        struct Sample { t: f64, f: f64 }
+        struct Sample {
+            t: f64,
+            f: f64,
+        }
         let mut samples: Vec<Sample> = Vec::with_capacity(n_echant + 1);
 
         for i in 0..=n_echant {
@@ -226,7 +316,9 @@ impl SOnBounds {
             }
         }
 
-        if samples.is_empty() { return; }
+        if samples.is_empty() {
+            return;
+        }
 
         // OCCT L568-600: detect intervals and build points/segments
         let mut in_segment = false;
@@ -269,9 +361,11 @@ impl SOnBounds {
 
                 if sign_change || near0 || near1 {
                     // OCCT: root isolation via linear interpolation
-                    let t_root = if near0 { s0.t }
-                    else if near1 { s1.t }
-                    else {
+                    let t_root = if near0 {
+                        s0.t
+                    } else if near1 {
+                        s1.t
+                    } else {
                         let alpha = s0.f.abs() / (s0.f.abs() + s1.f.abs());
                         s0.t + alpha * (s1.t - s0.t)
                     };
@@ -297,10 +391,22 @@ impl SOnBounds {
     }
 
     // ── Public API ───────────────────────────────────────────────────
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn all_arc_solution(&self) -> bool { self.all }
-    pub fn nb_points(&self) -> usize { self.points.len() }
-    pub fn point(&self, index: usize) -> &PathPoint { &self.points[index] }
-    pub fn nb_segments(&self) -> usize { self.segments.len() }
-    pub fn segment(&self, index: usize) -> &Segment { &self.segments[index] }
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    pub fn all_arc_solution(&self) -> bool {
+        self.all
+    }
+    pub fn nb_points(&self) -> usize {
+        self.points.len()
+    }
+    pub fn point(&self, index: usize) -> &PathPoint {
+        &self.points[index]
+    }
+    pub fn nb_segments(&self) -> usize {
+        self.segments.len()
+    }
+    pub fn segment(&self, index: usize) -> &Segment {
+        &self.segments[index]
+    }
 }

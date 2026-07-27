@@ -1,7 +1,7 @@
-﻿use glam::DVec3;
-use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
 use crate::tolerance::*;
+use glam::DVec3;
+use rcad_kernel::geom::*;
 
 pub struct EdgeFaceHit {
     pub point: DVec3,
@@ -147,11 +147,7 @@ pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
             let proj = v.dot(c.axis);
             let radial = v - c.axis * proj;
             let dist = radial.length();
-            if dist < tol {
-                Some(c.radius)
-            } else {
-                None
-            }
+            if dist < tol { Some(c.radius) } else { None }
         }
         Surface3::Cone(cn) => {
             let axis = cn.axis_dir();
@@ -169,11 +165,7 @@ pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
         Surface3::Torus(t) => {
             let d_center = (p - t.center).length();
             let dc = (d_center - t.major_radius).abs();
-            if dc < tol {
-                Some(t.minor_radius)
-            } else {
-                None
-            }
+            if dc < tol { Some(t.minor_radius) } else { None }
         }
         _ => None,
     }
@@ -217,20 +209,30 @@ pub fn is_coincident_edge_face(
         let t = t1 + i as f64 * dt;
         let p = curve.point_at(t);
         let proj = context.proj_ps(ds, face_idx, p);
-        let Some((uv, _pt3d, dist)) = proj else { continue; };
+        let Some((uv, _pt3d, dist)) = proj else {
+            continue;
+        };
         if dist > criteria {
-            if dist > 100.0 * criteria { return false; }
+            if dist > 100.0 * criteria {
+                return false;
+            }
             continue;
         }
         i_cnt += 1;
         if ((0 < i) && (i < a_tresh_idx_f)) || ((a_tresh_idx_l < i) && (i < a_nb_seg)) {
             continue;
         }
-        if is_classified && (i != a_nb_seg) { continue; }
+        if is_classified && (i != a_nb_seg) {
+            continue;
+        }
         let state = context.fclass2d(ds, face_idx).perform(uv, true);
         use crate::inttools::fclass2d::State;
-        if state == State::Out { return false; }
-        if i != 0 { is_classified = true; }
+        if state == State::Out {
+            return false;
+        }
+        if i != 0 {
+            is_classified = true;
+        }
     }
 
     let coeff = i_cnt as f64 / (a_nb_seg + 1) as f64;
@@ -240,7 +242,9 @@ pub fn is_coincident_edge_face(
 ///  ?IsCoplanar (IntTools_EdgeFace.cxx L788-813).
 /// Checks if a curve lies in the plane of a planar surface.
 pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
-    let Surface3::Plane(pl) = surface else { return false; };
+    let Surface3::Plane(pl) = surface else {
+        return false;
+    };
     match curve {
         Curve3::Line(l) => l.direction.dot(pl.normal).abs() < 1e-12,
         Curve3::Circle(c) => c.normal.dot(pl.normal).abs() > 1.0 - 1e-12,
@@ -469,8 +473,3 @@ pub fn clip_line_to_polygon_with_tol(
 
     result
 }
-
-
-
-
-

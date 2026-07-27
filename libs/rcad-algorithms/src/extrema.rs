@@ -1,10 +1,9 @@
 //! BRepExtrema-style distance/extrema calculations.
 //!
-//! 
+//!
 //! - `DistShapeShape` (class): distance between two shapes, with
 //!   `perform()` / `is_done()` / `distance()` / `support_on_shape1()` / `support_on_shape2()`
 //! - Utility free functions: distance_point_curve, closest_point_on_curve, etc.
-
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
@@ -46,10 +45,13 @@ impl DistShapeShape {
     /// default constructor.
     pub fn new() -> Self {
         Self {
-            shape1: None, shape2: None,
+            shape1: None,
+            shape2: None,
             distance: f64::INFINITY,
-            support1: Vec::new(), support2: Vec::new(),
-            pt1: DVec3::ZERO, pt2: DVec3::ZERO,
+            support1: Vec::new(),
+            support2: Vec::new(),
+            pt1: DVec3::ZERO,
+            pt2: DVec3::ZERO,
             performed: false,
         }
     }
@@ -63,10 +65,14 @@ impl DistShapeShape {
     }
 
     /// LoadS1.
-    pub fn load_s1(&mut self, s1: &topods::BRep) { self.shape1 = Some(s1.clone()); }
+    pub fn load_s1(&mut self, s1: &topods::BRep) {
+        self.shape1 = Some(s1.clone());
+    }
 
     /// LoadS2.
-    pub fn load_s2(&mut self, s2: &topods::BRep) { self.shape2 = Some(s2.clone()); }
+    pub fn load_s2(&mut self, s2: &topods::BRep) {
+        self.shape2 = Some(s2.clone());
+    }
 
     /// Perform 閳?compute the minimum distance.
     pub fn perform(&mut self) {
@@ -82,22 +88,34 @@ impl DistShapeShape {
     }
 
     /// IsDone.
-    pub fn is_done(&self) -> bool { self.performed }
+    pub fn is_done(&self) -> bool {
+        self.performed
+    }
 
     /// Distance.
-    pub fn distance(&self) -> f64 { self.distance }
+    pub fn distance(&self) -> f64 {
+        self.distance
+    }
 
     /// SupportOnShape1 閳?the support elements on shape 1.
-    pub fn support_on_shape1(&self) -> &[topods::ShapeRef] { &self.support1 }
+    pub fn support_on_shape1(&self) -> &[topods::ShapeRef] {
+        &self.support1
+    }
 
     /// SupportOnShape2 閳?the support elements on shape 2.
-    pub fn support_on_shape2(&self) -> &[topods::ShapeRef] { &self.support2 }
+    pub fn support_on_shape2(&self) -> &[topods::ShapeRef] {
+        &self.support2
+    }
 
     /// Convenience: closest point on shape 1.
-    pub fn point_on_shape1(&self) -> DVec3 { self.pt1 }
+    pub fn point_on_shape1(&self) -> DVec3 {
+        self.pt1
+    }
 
     /// Convenience: closest point on shape 2.
-    pub fn point_on_shape2(&self) -> DVec3 { self.pt2 }
+    pub fn point_on_shape2(&self) -> DVec3 {
+        self.pt2
+    }
 }
 
 // =============================================================================
@@ -161,7 +179,8 @@ pub fn distance_curve_curve(curve1: &Curve3, curve2: &Curve3) -> (f64, f64, f64)
     }
 
     // Newton refinement
-    let (refined_t1, refined_t2) = refine_curve_curve_distance(curve1, curve2, domain1, domain2, best_t1, best_t2);
+    let (refined_t1, refined_t2) =
+        refine_curve_curve_distance(curve1, curve2, domain1, domain2, best_t1, best_t2);
     let p1 = curve1.point_at(refined_t1);
     let p2 = curve2.point_at(refined_t2);
     let final_dist = (p2 - p1).length();
@@ -192,7 +211,8 @@ pub fn distance_curve_surface(curve: &Curve3, surface: &Surface3) -> (f64, f64, 
         for j in 0..=n_surf {
             let u = surf_domain[0] + (surf_domain[1] - surf_domain[0]) * j as f64 / n_surf as f64;
             for k in 0..=n_surf {
-                let v = surf_domain[2] + (surf_domain[3] - surf_domain[2]) * k as f64 / n_surf as f64;
+                let v =
+                    surf_domain[2] + (surf_domain[3] - surf_domain[2]) * k as f64 / n_surf as f64;
                 let p_surf = surface.point_at(u, v);
                 let dist = (p_surf - p_curve).length();
 
@@ -208,7 +228,13 @@ pub fn distance_curve_surface(curve: &Curve3, surface: &Surface3) -> (f64, f64, 
 
     // Newton refinement
     let (refined_t, refined_u, refined_v) = refine_curve_surface_distance(
-        curve, surface, curve_domain, surf_domain, best_t, best_u, best_v,
+        curve,
+        surface,
+        curve_domain,
+        surf_domain,
+        best_t,
+        best_u,
+        best_v,
     );
     let p_curve = curve.point_at(refined_t);
     let p_surf = surface.point_at(refined_u, refined_v);
@@ -274,7 +300,10 @@ pub fn distance_surface_surface(surf1: &Surface3, surf2: &Surface3) -> (f64, f64
 ///
 /// Returns the distance and the two closest points.
 /// Uses BVH acceleration for efficiency.
-pub fn distance_brep_brep(brep1: &rcad_kernel::BRep, brep2: &rcad_kernel::BRep) -> (f64, DVec3, DVec3) {
+pub fn distance_brep_brep(
+    brep1: &rcad_kernel::BRep,
+    brep2: &rcad_kernel::BRep,
+) -> (f64, DVec3, DVec3) {
     let bvh1 = Bvh::build(brep1);
     let bvh2 = Bvh::build(brep2);
 
@@ -487,7 +516,8 @@ pub fn closest_point_on_surface(surface: &Surface3, point: DVec3) -> (DVec2, DVe
     }
 
     // Newton refinement
-    let (refined_u, refined_v) = refine_point_surface_distance(surface, domain, point, best_u, best_v);
+    let (refined_u, refined_v) =
+        refine_point_surface_distance(surface, domain, point, best_u, best_v);
     let closest = surface.point_at(refined_u, refined_v);
 
     (DVec2::new(refined_u, refined_v), closest)
@@ -513,12 +543,15 @@ pub fn find_supporting_face(brep: &rcad_kernel::BRep, point: DVec3) -> Option<us
 
             // Check if point is within the face boundary (UV domain)
             let domain = surface_domain(&surf);
-            if uv.x >= domain[0] - tolerance && uv.x <= domain[1] + tolerance
-                && uv.y >= domain[2] - tolerance && uv.y <= domain[3] + tolerance
-                && dist < best_dist {
-                    best_dist = dist;
-                    best_face = Some(face_idx);
-                }
+            if uv.x >= domain[0] - tolerance
+                && uv.x <= domain[1] + tolerance
+                && uv.y >= domain[2] - tolerance
+                && uv.y <= domain[3] + tolerance
+                && dist < best_dist
+            {
+                best_dist = dist;
+                best_face = Some(face_idx);
+            }
         }
     }
 
@@ -555,11 +588,11 @@ pub fn find_supporting_edge(brep: &rcad_kernel::BRep, point: DVec3) -> Option<us
             // Check if parameter is within edge range
             let edge_range = ed.range;
 
-            if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance
-                && dist < best_dist {
-                    best_dist = dist;
-                    best_edge = Some(edge_idx);
-                }
+            if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance && dist < best_dist
+            {
+                best_dist = dist;
+                best_edge = Some(edge_idx);
+            }
         }
     }
 
@@ -581,10 +614,26 @@ fn curve_domain(curve: &Curve3) -> [f64; 2] {
 /// Get the domain for a surface, handling infinite domains (planes) specially.
 fn surface_domain(surface: &Surface3) -> [f64; 4] {
     let domain = surface.default_domain();
-    let u0 = if domain[0].is_infinite() { -10.0 } else { domain[0] };
-    let u1 = if domain[1].is_infinite() { 10.0 } else { domain[1] };
-    let v0 = if domain[2].is_infinite() { -10.0 } else { domain[2] };
-    let v1 = if domain[3].is_infinite() { 10.0 } else { domain[3] };
+    let u0 = if domain[0].is_infinite() {
+        -10.0
+    } else {
+        domain[0]
+    };
+    let u1 = if domain[1].is_infinite() {
+        10.0
+    } else {
+        domain[1]
+    };
+    let v0 = if domain[2].is_infinite() {
+        -10.0
+    } else {
+        domain[2]
+    };
+    let v1 = if domain[3].is_infinite() {
+        10.0
+    } else {
+        domain[3]
+    };
     [u0, u1, v0, v1]
 }
 
@@ -612,7 +661,9 @@ fn get_brep_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface
 
 /// Get all face tshape indices from a BRep.
 fn get_all_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
-    brep.tshapes.iter().enumerate()
+    brep.tshapes
+        .iter()
+        .enumerate()
         .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
         .map(|(i, _)| i)
         .collect()
@@ -649,7 +700,12 @@ fn surface_derivatives(surface: &Surface3, u: f64, v: f64) -> (DVec3, DVec3) {
 }
 
 /// Newton refinement for point-to-curve distance.
-fn refine_point_curve_distance(curve: &Curve3, domain: [f64; 2], point: DVec3, initial_t: f64) -> f64 {
+fn refine_point_curve_distance(
+    curve: &Curve3,
+    domain: [f64; 2],
+    point: DVec3,
+    initial_t: f64,
+) -> f64 {
     let mut t = initial_t;
 
     const MAX_ITER: usize = 20;
@@ -684,7 +740,13 @@ fn refine_point_curve_distance(curve: &Curve3, domain: [f64; 2], point: DVec3, i
 }
 
 /// Newton refinement for point-to-surface distance.
-fn refine_point_surface_distance(surface: &Surface3, domain: [f64; 4], point: DVec3, initial_u: f64, initial_v: f64) -> (f64, f64) {
+fn refine_point_surface_distance(
+    surface: &Surface3,
+    domain: [f64; 4],
+    point: DVec3,
+    initial_u: f64,
+    initial_v: f64,
+) -> (f64, f64) {
     let mut u = initial_u;
     let mut v = initial_v;
 
@@ -739,9 +801,12 @@ fn refine_point_surface_distance(surface: &Surface3, domain: [f64; 4], point: DV
 
 /// Newton refinement for curve-to-curve distance.
 fn refine_curve_curve_distance(
-    curve1: &Curve3, curve2: &Curve3,
-    domain1: [f64; 2], domain2: [f64; 2],
-    t1: f64, t2: f64,
+    curve1: &Curve3,
+    curve2: &Curve3,
+    domain1: [f64; 2],
+    domain2: [f64; 2],
+    t1: f64,
+    t2: f64,
 ) -> (f64, f64) {
     let mut t1 = t1;
     let mut t2 = t2;
@@ -794,9 +859,13 @@ fn refine_curve_curve_distance(
 
 /// Newton refinement for curve-to-surface distance.
 fn refine_curve_surface_distance(
-    curve: &Curve3, surface: &Surface3,
-    curve_domain: [f64; 2], surf_domain: [f64; 4],
-    t: f64, u: f64, v: f64,
+    curve: &Curve3,
+    surface: &Surface3,
+    curve_domain: [f64; 2],
+    surf_domain: [f64; 4],
+    t: f64,
+    u: f64,
+    v: f64,
 ) -> (f64, f64, f64) {
     let mut t = t;
     let mut u = u;
@@ -843,9 +912,14 @@ fn refine_curve_surface_distance(
 
 /// Newton refinement for surface-to-surface distance.
 fn refine_surface_surface_distance(
-    surf1: &Surface3, surf2: &Surface3,
-    domain1: [f64; 4], domain2: [f64; 4],
-    u1: f64, v1: f64, u2: f64, v2: f64,
+    surf1: &Surface3,
+    surf2: &Surface3,
+    domain1: [f64; 4],
+    domain2: [f64; 4],
+    u1: f64,
+    v1: f64,
+    u2: f64,
+    v2: f64,
 ) -> (f64, f64, f64, f64) {
     let mut u1 = u1;
     let mut v1 = v1;
@@ -893,6 +967,3 @@ fn refine_surface_surface_distance(
 // =============================================================================
 // Tests
 // =============================================================================
-
-
-

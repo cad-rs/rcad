@@ -49,18 +49,34 @@ pub struct BooleanOptions {
 impl Default for BooleanOptions {
     fn default() -> Self {
         Self {
-            fuzzy_value: 0.0, parallel: false, use_bvh: false,
-            glue_enabled: false, glue_tolerance: 1e-7,
-            track_history: true, heal_result: false,
+            fuzzy_value: 0.0,
+            parallel: false,
+            use_bvh: false,
+            glue_enabled: false,
+            glue_tolerance: 1e-7,
+            track_history: true,
+            heal_result: false,
         }
     }
 }
 
 impl BooleanOptions {
-    pub fn with_fuzzy_value(mut self, value: f64) -> Self { self.fuzzy_value = value; self }
-    pub fn with_parallel(mut self, parallel: bool) -> Self { self.parallel = parallel; self }
-    pub fn with_bvh(mut self, use_bvh: bool) -> Self { self.use_bvh = use_bvh; self }
-    pub fn with_history(mut self, track: bool) -> Self { self.track_history = track; self }
+    pub fn with_fuzzy_value(mut self, value: f64) -> Self {
+        self.fuzzy_value = value;
+        self
+    }
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+    pub fn with_bvh(mut self, use_bvh: bool) -> Self {
+        self.use_bvh = use_bvh;
+        self
+    }
+    pub fn with_history(mut self, track: bool) -> Self {
+        self.track_history = track;
+        self
+    }
 }
 
 /// A boolean operation between two shapes.
@@ -85,27 +101,44 @@ impl<'a> BooleanOp<'a> {
     /// constructor matching `BRepAlgoAPI_Fuse(a, b)` / `Common` / `Cut`,
     /// with `BooleanOpType` selecting the operation type.
     pub fn new(op: BooleanOpType, shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
-        Self { shape1, shape2, op_type: op, options: BooleanOptions::default(), result: None, history: None, err: None }
+        Self {
+            shape1,
+            shape2,
+            op_type: op,
+            options: BooleanOptions::default(),
+            result: None,
+            history: None,
+            err: None,
+        }
     }
 
     /// `BOPAlgo_Options::SetFuzzyValue` etc.
-    pub fn set_options(&mut self, options: BooleanOptions) { self.options = options; }
+    pub fn set_options(&mut self, options: BooleanOptions) {
+        self.options = options;
+    }
 
     /// `BRepAlgoAPI_BuilderShape::Build()`.
     /// Pipeline: DS → PaveFiller → BooleanBuilder → result.
     /// Delegates to [`crate::bop_occt_ops::boolean_op_with_history_generic`] which mirrors
     /// OCCT `BOPAlgo_BOP::Perform` → `BOPAlgo_Builder::PerformInternal1` flow.
     pub fn build(&mut self) -> bool {
-        self.result = None; self.err = None; self.history = None;
+        self.result = None;
+        self.err = None;
+        self.history = None;
         match crate::bop_occt_ops::boolean_op_with_history_generic(
-            self.op_type, self.shape1, self.shape2,
+            self.op_type,
+            self.shape1,
+            self.shape2,
         ) {
             Ok((t, h)) => {
                 self.result = Some(t);
                 self.history = Some(h);
                 true
             }
-            Err(e) => { self.err = Some(e); false }
+            Err(e) => {
+                self.err = Some(e);
+                false
+            }
         }
     }
 
@@ -121,10 +154,14 @@ impl<'a> BooleanOp<'a> {
     }
 
     /// `BRepAlgoAPI_Algo::IsDone()`.
-    pub fn is_done(&self) -> bool { self.result.is_some() }
+    pub fn is_done(&self) -> bool {
+        self.result.is_some()
+    }
 
     /// `BRepAlgoAPI_Algo::Error()`.
-    pub fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
+    pub fn error(&self) -> Option<&BooleanError> {
+        self.err.as_ref()
+    }
 }
 
 /// Section operation — computes intersection curves between two shapes.
@@ -141,13 +178,19 @@ pub struct SectionOp<'a> {
 impl<'a> SectionOp<'a> {
     /// `BRepAlgoAPI_Section(a, b)` constructor.
     pub fn new(shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
-        Self { shape1, shape2, result: None, err: None }
+        Self {
+            shape1,
+            shape2,
+            result: None,
+            err: None,
+        }
     }
 
     /// `BRepAlgoAPI_Section::Build()`.
     /// Stub: does not compute actual section curves.
     pub fn build(&mut self) -> bool {
-        self.result = None; self.err = None;
+        self.result = None;
+        self.err = None;
         self.result = Some(self.shape1.clone());
         true
     }
@@ -158,7 +201,9 @@ impl<'a> SectionOp<'a> {
     }
 
     /// `BRepAlgoAPI_Algo::IsDone()`.
-    pub fn is_done(&self) -> bool { self.result.is_some() }
+    pub fn is_done(&self) -> bool {
+        self.result.is_some()
+    }
 }
 
 // ── Convenience functions ──────────────────────────────────────────────
@@ -169,7 +214,11 @@ impl<'a> SectionOp<'a> {
 /// OCCT-equivalent: `BRepAlgoAPI_Fuse(a, b).Shape()`
 pub fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Union, a, b);
-    if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
+    if op.build() {
+        Ok(op.shape().clone())
+    } else {
+        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
+    }
 }
 
 /// Common (Intersection): the shared volume of two shapes.
@@ -177,7 +226,11 @@ pub fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanE
 /// OCCT-equivalent: `BRepAlgoAPI_Common(a, b).Shape()`
 pub fn common(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Intersection, a, b);
-    if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
+    if op.build() {
+        Ok(op.shape().clone())
+    } else {
+        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
+    }
 }
 
 /// Cut (Difference): subtract shape b from shape a.
@@ -185,5 +238,9 @@ pub fn common(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, Boolea
 /// OCCT-equivalent: `BRepAlgoAPI_Cut(a, b).Shape()`
 pub fn cut(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Difference, a, b);
-    if op.build() { Ok(op.shape().clone()) } else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
+    if op.build() {
+        Ok(op.shape().clone())
+    } else {
+        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
+    }
 }

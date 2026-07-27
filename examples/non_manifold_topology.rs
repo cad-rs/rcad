@@ -1,4 +1,4 @@
-﻿//! Example: Non-manifold topology analysis with BRepGraph.
+//! Example: Non-manifold topology analysis with BRepGraph.
 //!
 //! Demonstrates:
 //!   1. Building a BRepGraph from a manifold BRep
@@ -14,15 +14,18 @@
 
 use glam::DVec3;
 use rcad_kernel::{
-    BRep, BRepGraph, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge,
-    PrimitiveSolid,
+    BRep, BRepGraph, Edge, Face, PrimitiveSolid, Shell, Solid, Vertex, Wire, WireEdge,
     brep_graph::RepairHint,
 };
 
 fn separator(title: &str) {
-    println!("\n鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€");
+    println!(
+        "\n鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€"
+    );
     println!("  {title}");
-    println!("鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€");
+    println!(
+        "鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€"
+    );
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -119,7 +122,10 @@ fn demo_manifold_detection() {
         let graph = BRepGraph::from_brep(&brep);
 
         assert!(graph.is_manifold(), "closed box should be manifold");
-        assert!(graph.is_closed(), "closed box should have no boundary edges");
+        assert!(
+            graph.is_closed(),
+            "closed box should have no boundary edges"
+        );
 
         let nm_edges = graph.non_manifold_edges();
         let boundary = graph.boundary_edges();
@@ -142,9 +148,10 @@ fn demo_manifold_detection() {
         });
         // Remove one face
         if let Some(s) = brep.solids.first_mut()
-            && let Some(sh) = s.shells.first_mut() {
-                sh.faces.pop();
-            }
+            && let Some(sh) = s.shells.first_mut()
+        {
+            sh.faces.pop();
+        }
 
         let graph = BRepGraph::from_brep(&brep);
 
@@ -154,7 +161,10 @@ fn demo_manifold_detection() {
 
         let boundary = graph.boundary_edges();
         println!("    Boundary edges: {:?}", boundary);
-        assert!(!boundary.is_empty(), "open shell should have boundary edges");
+        assert!(
+            !boundary.is_empty(),
+            "open shell should have boundary edges"
+        );
     }
 
     println!("  PASS");
@@ -167,11 +177,21 @@ fn demo_manifold_detection() {
 /// Build a minimal non-manifold BRep where edge 0 is shared by 3 faces.
 fn build_tripod() -> BRep {
     let vertices = vec![
-        Vertex { point: DVec3::new(0.0, 0.0, 0.0) }, // 0
-        Vertex { point: DVec3::new(1.0, 0.0, 0.0) }, // 1
-        Vertex { point: DVec3::new(0.0, 1.0, 0.0) }, // 2
-        Vertex { point: DVec3::new(0.0, 0.0, 1.0) }, // 3
-        Vertex { point: DVec3::new(0.0, -1.0, 0.0) }, // 4
+        Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }, // 0
+        Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }, // 1
+        Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }, // 2
+        Vertex {
+            point: DVec3::new(0.0, 0.0, 1.0),
+        }, // 3
+        Vertex {
+            point: DVec3::new(0.0, -1.0, 0.0),
+        }, // 4
     ];
 
     let edges = vec![
@@ -285,19 +305,40 @@ fn demo_repair_hints() {
     println!("  Repair hints for tripod:");
     for hint in &hints.hints {
         match hint {
-            RepairHint::MultiManifoldEdge { edge_idx, face_count } => {
-                println!("    MultiManifoldEdge: edge {} shared by {} faces", edge_idx, face_count);
+            RepairHint::MultiManifoldEdge {
+                edge_idx,
+                face_count,
+            } => {
+                println!(
+                    "    MultiManifoldEdge: edge {} shared by {} faces",
+                    edge_idx, face_count
+                );
             }
-            RepairHint::NonManifoldVertex { vertex_idx, connected_multi_edges } => {
-                println!("    NonManifoldVertex: vertex {} connected to multi-edges {:?}",
-                    vertex_idx, connected_multi_edges);
+            RepairHint::NonManifoldVertex {
+                vertex_idx,
+                connected_multi_edges,
+            } => {
+                println!(
+                    "    NonManifoldVertex: vertex {} connected to multi-edges {:?}",
+                    vertex_idx, connected_multi_edges
+                );
             }
             RepairHint::UnmatchedBoundaryEdge { edge_idx, face_idx } => {
-                println!("    UnmatchedBoundaryEdge: edge {} on face {}", edge_idx, face_idx);
+                println!(
+                    "    UnmatchedBoundaryEdge: edge {} on face {}",
+                    edge_idx, face_idx
+                );
             }
-            RepairHint::StitchablePair { edge_a, edge_b, face_a, face_b } => {
-                println!("    StitchablePair: edges {} and {} (faces {} and {})",
-                    edge_a, edge_b, face_a, face_b);
+            RepairHint::StitchablePair {
+                edge_a,
+                edge_b,
+                face_a,
+                face_b,
+            } => {
+                println!(
+                    "    StitchablePair: edges {} and {} (faces {} and {})",
+                    edge_a, edge_b, face_a, face_b
+                );
             }
             RepairHint::OrphanEdge { edge_idx } => {
                 println!("    OrphanEdge: edge {}", edge_idx);
@@ -306,9 +347,10 @@ fn demo_repair_hints() {
     }
 
     // Check for expected hints
-    let has_multi = hints.hints.iter().any(|h| {
-        matches!(h, RepairHint::MultiManifoldEdge { edge_idx: 0, .. })
-    });
+    let has_multi = hints
+        .hints
+        .iter()
+        .any(|h| matches!(h, RepairHint::MultiManifoldEdge { edge_idx: 0, .. }));
     assert!(has_multi, "should have MultiManifoldEdge hint for edge 0");
 
     println!("  PASS");

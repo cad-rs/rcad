@@ -5,8 +5,8 @@ use rcad_algorithms::{total_surface_area_topods, total_volume_topods};
 use rcad_kernel::topods;
 use rcad_kernel::topods::TShape;
 use rcad_modeling::{
-    extrude, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
-    make_cylinder_brep, make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
+    extrude, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep, make_cylinder_brep,
+    make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,7 +21,9 @@ fn face_count(brep: &topods::BRep) -> usize {
 }
 
 fn has_solid(brep: &topods::BRep) -> bool {
-    brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_)))
+    brep.tshapes
+        .iter()
+        .any(|ts| matches!(ts.as_ref(), TShape::Solid(_)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,7 +72,11 @@ fn conical_frustum_builds_solid() {
     )
     .unwrap();
     assert!(has_solid(&brep), "frustum must have a solid");
-    assert_eq!(face_count(&brep), 3, "analytic frustum: bottom cap + top cap + lateral = 3 faces");
+    assert_eq!(
+        face_count(&brep),
+        3,
+        "analytic frustum: bottom cap + top cap + lateral = 3 faces"
+    );
 
     // SA and volume should match analytic formulas within tessellation tolerance.
     let slant = ((rb - rt).powi(2) + h.powi(2)).sqrt();
@@ -118,9 +124,22 @@ fn extrude_box_face_returns_brep() {
 #[test]
 fn revolve_box_face_returns_brep() {
     // Revolve a thin box face 90° around the Z axis.
-    let sheet = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 0.5, 0.01, 1.0)
-        .unwrap();
-    let result = revolve(&sheet, 0, DVec3::ZERO, DVec3::Z, std::f64::consts::FRAC_PI_2);
+    let sheet = make_box_brep(
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::X,
+        DVec3::Y,
+        0.5,
+        0.01,
+        1.0,
+    )
+    .unwrap();
+    let result = revolve(
+        &sheet,
+        0,
+        DVec3::ZERO,
+        DVec3::Z,
+        std::f64::consts::FRAC_PI_2,
+    );
     assert!(result.is_ok(), "revolve should succeed: {:?}", result.err());
     let brep = result.unwrap();
     assert!(has_solid(&brep), "revolved brep must have solids");
@@ -200,23 +219,39 @@ fn chamfer_box_edge_returns_brep() {
 #[test]
 fn invalid_radius_returns_error() {
     let result = make_sphere_brep(DVec3::ZERO, -1.0);
-    assert!(result.is_err(), "negative radius should fail: {:?}", result.ok());
+    assert!(
+        result.is_err(),
+        "negative radius should fail: {:?}",
+        result.ok()
+    );
 }
 
 #[test]
 fn zero_radius_sphere_returns_error() {
     let result = make_sphere_brep(DVec3::ZERO, 0.0);
-    assert!(result.is_err(), "zero radius should fail: {:?}", result.ok());
+    assert!(
+        result.is_err(),
+        "zero radius should fail: {:?}",
+        result.ok()
+    );
 }
 
 #[test]
 fn non_finite_dimension_returns_error() {
     let result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, f64::NAN, 1.0, 1.0);
-    assert!(result.is_err(), "NaN dimension should fail: {:?}", result.ok());
+    assert!(
+        result.is_err(),
+        "NaN dimension should fail: {:?}",
+        result.ok()
+    );
 }
 
 #[test]
 fn zero_height_cylinder_returns_error() {
     let result = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 0.0);
-    assert!(result.is_err(), "zero height should fail: {:?}", result.ok());
+    assert!(
+        result.is_err(),
+        "zero height should fail: {:?}",
+        result.ok()
+    );
 }

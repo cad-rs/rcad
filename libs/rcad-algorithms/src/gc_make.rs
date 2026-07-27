@@ -16,8 +16,8 @@ use rcad_kernel::geom::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MakeError {
     Ok,
-    ConfusedPoints,   // points too close
-    BadAngle,         // invalid angle
+    ConfusedPoints, // points too close
+    BadAngle,       // invalid angle
     NullAxis,
     NullRadius,
     Other,
@@ -34,7 +34,10 @@ pub fn make_segment2d(p1: DVec2, p2: DVec2) -> Result<Line2d, MakeError> {
     if len < 1e-15 {
         return Err(MakeError::ConfusedPoints);
     }
-    Ok(Line2d { origin: p1, direction: dir / len })
+    Ok(Line2d {
+        origin: p1,
+        direction: dir / len,
+    })
 }
 
 // =============================================================================
@@ -87,7 +90,11 @@ pub fn make_circle2d_concentric(base: &Circle2d, point: DVec2) -> Result<Circle2
 /// Create a 2D parabola from an axis placement and focus length.
 /// focal = distance from vertex to focus.
 pub fn make_parabola2d(origin: DVec2, axis_dir: DVec2, focal: f64) -> Parabola2d {
-    Parabola2d { origin, axis_dir: axis_dir.normalize(), focal_param: 2.0 * focal }
+    Parabola2d {
+        origin,
+        axis_dir: axis_dir.normalize(),
+        focal_param: 2.0 * focal,
+    }
 }
 
 // =============================================================================
@@ -96,13 +103,21 @@ pub fn make_parabola2d(origin: DVec2, axis_dir: DVec2, focal: f64) -> Parabola2d
 
 /// Create a conical surface from an axis and angle.
 /// Returns BadAngle if angle is below resolution.
-pub fn make_conical_surface(apex: DVec3, axis: DVec3, radius: f64, half_angle_rad: f64)
-    -> Result<ConicalSurface, MakeError>
-{
+pub fn make_conical_surface(
+    apex: DVec3,
+    axis: DVec3,
+    radius: f64,
+    half_angle_rad: f64,
+) -> Result<ConicalSurface, MakeError> {
     if half_angle_rad.abs() < 1e-15 {
         return Err(MakeError::BadAngle);
     }
-    Ok(ConicalSurface { apex, axis, radius, half_angle_rad })
+    Ok(ConicalSurface {
+        apex,
+        axis,
+        radius,
+        half_angle_rad,
+    })
 }
 
 // =============================================================================
@@ -111,7 +126,11 @@ pub fn make_conical_surface(apex: DVec3, axis: DVec3, radius: f64, half_angle_ra
 
 /// Create a circular arc from first point `p1`, tangent direction at p1, and end point p2.
 /// Returns the path center and radius.
-pub fn make_arc_of_circle(p1: DVec3, tangent_at_p1: DVec3, p2: DVec3) -> Result<(DVec3, f64, DVec3), MakeError> {
+pub fn make_arc_of_circle(
+    p1: DVec3,
+    tangent_at_p1: DVec3,
+    p2: DVec3,
+) -> Result<(DVec3, f64, DVec3), MakeError> {
     // Find center by intersecting perpendicular bisectors
     let mid = (p1 + p2) * 0.5;
     let chord = p2 - p1;
@@ -132,7 +151,11 @@ pub fn make_arc_of_circle(p1: DVec3, tangent_at_p1: DVec3, p2: DVec3) -> Result<
 // =============================================================================
 
 /// Create an ellipse from three points: two foci and a point on the ellipse.
-pub fn make_ellipse_from_foci(focus1: DVec3, focus2: DVec3, point_on: DVec3) -> Result<Ellipse3, MakeError> {
+pub fn make_ellipse_from_foci(
+    focus1: DVec3,
+    focus2: DVec3,
+    point_on: DVec3,
+) -> Result<Ellipse3, MakeError> {
     let center = (focus1 + focus2) * 0.5;
     let major_dir = (focus2 - focus1).normalize_or_zero();
     if major_dir.length_squared() < 1e-30 {
@@ -144,8 +167,16 @@ pub fn make_ellipse_from_foci(focus1: DVec3, focus2: DVec3, point_on: DVec3) -> 
         return Err(MakeError::Other);
     }
     let b = (a * a - c * c).sqrt(); // semi-minor
-    let normal = (focus2 - focus1).cross(point_on - focus1).normalize_or_zero();
-    Ok(Ellipse3 { center, normal, major_dir, major_radius: a, minor_radius: b })
+    let normal = (focus2 - focus1)
+        .cross(point_on - focus1)
+        .normalize_or_zero();
+    Ok(Ellipse3 {
+        center,
+        normal,
+        major_dir,
+        major_radius: a,
+        minor_radius: b,
+    })
 }
 
 // =============================================================================
@@ -153,13 +184,35 @@ pub fn make_ellipse_from_foci(focus1: DVec3, focus2: DVec3, point_on: DVec3) -> 
 // =============================================================================
 
 /// Create a hyperbola from axis and radii.
-pub fn make_hyperbola(center: DVec3, normal: DVec3, major_dir: DVec3, major_radius: f64, minor_radius: f64) -> Hyperbola3 {
-    Hyperbola3 { center, normal, major_dir, semi_major: major_radius, semi_minor: minor_radius }
+pub fn make_hyperbola(
+    center: DVec3,
+    normal: DVec3,
+    major_dir: DVec3,
+    major_radius: f64,
+    minor_radius: f64,
+) -> Hyperbola3 {
+    Hyperbola3 {
+        center,
+        normal,
+        major_dir,
+        semi_major: major_radius,
+        semi_minor: minor_radius,
+    }
 }
 
 /// Create a 2D hyperbola.
-pub fn make_hyperbola2d(center: DVec2, major_dir: DVec2, major_radius: f64, minor_radius: f64) -> Hyperbola2d {
-    Hyperbola2d { center, major_dir, semi_major: major_radius, semi_minor: minor_radius }
+pub fn make_hyperbola2d(
+    center: DVec2,
+    major_dir: DVec2,
+    major_radius: f64,
+    minor_radius: f64,
+) -> Hyperbola2d {
+    Hyperbola2d {
+        center,
+        major_dir,
+        semi_major: major_radius,
+        semi_minor: minor_radius,
+    }
 }
 
 // =============================================================================
@@ -169,7 +222,12 @@ pub fn make_hyperbola2d(center: DVec2, major_dir: DVec2, major_radius: f64, mino
 /// Create a cylindrical surface from an axis and radius.
 pub fn make_cylinder(origin: DVec3, axis: DVec3, radius: f64) -> CylindricalSurface {
     let ax = axis.normalize_or_zero();
-    CylindricalSurface { origin, axis: ax, radius, ref_dir: any_perpendicular(ax) }
+    CylindricalSurface {
+        origin,
+        axis: ax,
+        radius,
+        ref_dir: any_perpendicular(ax),
+    }
 }
 
 // =============================================================================
@@ -183,11 +241,14 @@ pub fn make_cone_offset(cone: &ConicalSurface, distance: f64) -> ConicalSurface 
     let shift = distance / cone.half_angle_rad.sin();
     let new_apex = cone.apex + shift * axis;
     let new_radius = cone.radius + distance * cone.half_angle_rad.cos();
-    ConicalSurface { apex: new_apex, axis, radius: new_radius, half_angle_rad: cone.half_angle_rad }
+    ConicalSurface {
+        apex: new_apex,
+        axis,
+        radius: new_radius,
+        half_angle_rad: cone.half_angle_rad,
+    }
 }
 
 // =============================================================================
 // Tests — translated from OCCT GTests
 // =============================================================================
-
-

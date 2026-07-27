@@ -24,23 +24,21 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use std::sync::Arc;
 use rcad_kernel::{
-    Curve3, Surface3,
+    Curve3, Edge, Face, Surface3,
     geom::{
-        any_perpendicular, BSplineCurve3, BSplineSurface, CurveEval, SurfaceEval,
-        Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, TrimmedCurve3,
+        BSplineCurve3, BSplineSurface, ConicalSurface, CurveEval, CylindricalSurface, Plane,
+        SphericalSurface, SurfaceEval, ToroidalSurface, TrimmedCurve3, any_perpendicular,
     },
     nurbs_convert::{
-        curve_to_bspline, surface_to_bspline,
-        bezier_curve_to_bspline, bezier_surface_to_bspline,
-        line_to_bspline, circle_to_bspline, ellipse_to_bspline,
-        plane_to_bspline, cylinder_to_bspline, sphere_to_bspline,
+        bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
+        cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, plane_to_bspline,
+        sphere_to_bspline, surface_to_bspline,
     },
-    topods::{TShape},
-    Face, Edge,
+    topods::TShape,
 };
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 // =============================================================================
 // BSpline Simplification Options
@@ -235,10 +233,14 @@ fn remove_redundant_control_points(
     let mut i = degree;
     while i < knots.len() - degree - 1 {
         let k = knots[i];
-        if k > knots[degree] && k < knots[knots.len() - degree - 1]
-            && interior_knots.last().is_none_or(|&last| (k - last).abs() > TOLERANCE_LINEAR_ULTRA_STRICT) {
-                interior_knots.push(k);
-            }
+        if k > knots[degree]
+            && k < knots[knots.len() - degree - 1]
+            && interior_knots
+                .last()
+                .is_none_or(|&last| (k - last).abs() > TOLERANCE_LINEAR_ULTRA_STRICT)
+        {
+            interior_knots.push(k);
+        }
         i += 1;
     }
 
@@ -286,7 +288,10 @@ fn try_remove_knot(
     tolerance: f64,
 ) -> Option<(BSplineCurve3, f64)> {
     // Find knot index
-    let knot_idx = curve.knots.iter().position(|&k| (k - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT)?;
+    let knot_idx = curve
+        .knots
+        .iter()
+        .position(|&k| (k - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT)?;
 
     // Build new knot vector without this knot
     let mut new_knots = curve.knots.clone();
@@ -444,7 +449,8 @@ pub fn simplify_bspline_surface(
 ) -> SimplificationResult<BSplineSurface> {
     let original_degree_u = surface.degree_u;
     let original_degree_v = surface.degree_v;
-    let original_ctrl_pts = surface.control_points.len() * surface.control_points.first().map_or(0, |r| r.len());
+    let original_ctrl_pts =
+        surface.control_points.len() * surface.control_points.first().map_or(0, |r| r.len());
 
     // If already within constraints, return as-is
     if surface.degree_u <= opts.max_degree
@@ -459,7 +465,8 @@ pub fn simplify_bspline_surface(
             original_degree: original_degree_u.max(original_degree_v),
             final_degree: surface.degree_u.max(surface.degree_v),
             original_ctrl_pts,
-            final_ctrl_pts: surface.control_points.len() * surface.control_points.first().map_or(0, |r| r.len()),
+            final_ctrl_pts: surface.control_points.len()
+                * surface.control_points.first().map_or(0, |r| r.len()),
         };
     }
 
@@ -469,23 +476,28 @@ pub fn simplify_bspline_surface(
 
     // Reduce U degree
     if current.degree_u > opts.max_degree
-        && let Some((new_surf, dev)) = reduce_surface_degree_u(&current, opts.max_degree, opts.tolerance) {
-            total_deviation = total_deviation.max(dev);
-            current = new_surf;
-            was_simplified = true;
-        }
+        && let Some((new_surf, dev)) =
+            reduce_surface_degree_u(&current, opts.max_degree, opts.tolerance)
+    {
+        total_deviation = total_deviation.max(dev);
+        current = new_surf;
+        was_simplified = true;
+    }
 
     // Reduce V degree
     if current.degree_v > opts.max_degree
-        && let Some((new_surf, dev)) = reduce_surface_degree_v(&current, opts.max_degree, opts.tolerance) {
-            total_deviation = total_deviation.max(dev);
-            current = new_surf;
-            was_simplified = true;
-        }
+        && let Some((new_surf, dev)) =
+            reduce_surface_degree_v(&current, opts.max_degree, opts.tolerance)
+    {
+        total_deviation = total_deviation.max(dev);
+        current = new_surf;
+        was_simplified = true;
+    }
 
     // Compute final values before moving current
     let final_degree = current.degree_u.max(current.degree_v);
-    let final_ctrl_pts = current.control_points.len() * current.control_points.first().map_or(0, |r| r.len());
+    let final_ctrl_pts =
+        current.control_points.len() * current.control_points.first().map_or(0, |r| r.len());
 
     SimplificationResult {
         geometry: current,
@@ -588,9 +600,7 @@ fn fit_surface_to_grid(
 
     // Use points directly as control points (simple approximation)
     let control_points = points.to_vec();
-    let weights: Vec<Vec<f64>> = points.iter()
-        .map(|row| vec![1.0; row.len()])
-        .collect();
+    let weights: Vec<Vec<f64>> = points.iter().map(|row| vec![1.0; row.len()]).collect();
 
     Some(BSplineSurface {
         degree_u,
@@ -701,7 +711,10 @@ pub struct ConversionReport {
 /// use rcad_algorithms::shape_custom::convert_to_bspline;
 /// let bspline_brep = convert_to_bspline(&brep, TOLERANCE_MESH_LEGACY);
 /// ```
-pub fn convert_to_bspline(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, ConversionReport) {
+pub fn convert_to_bspline(
+    brep: &rcad_kernel::BRep,
+    tolerance: f64,
+) -> (rcad_kernel::BRep, ConversionReport) {
     let mut restrictions = GeometryRestrictions::default();
     restrictions.tolerance = tolerance;
     restrict_geometry(brep, &restrictions)
@@ -728,7 +741,9 @@ pub fn restrict_geometry(
                     let is_offset = matches!(curve, Curve3::Offset(_));
                     let is_bezier = matches!(curve, Curve3::Bezier(_));
 
-                    if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_curves) {
+                    if needs_conversion
+                        && (is_bezier || !is_offset || restrictions.convert_offset_curves)
+                    {
                         let bspline = curve_to_bspline(curve, n_samples);
                         *curve = Curve3::BSpline(bspline);
                         report.curves_converted += 1;
@@ -748,7 +763,9 @@ pub fn restrict_geometry(
                     let is_offset = matches!(surface, Surface3::Offset(_));
                     let is_bezier = matches!(surface, Surface3::Bezier(_));
 
-                    if needs_conversion && (is_bezier || !is_offset || restrictions.convert_offset_surfaces) {
+                    if needs_conversion
+                        && (is_bezier || !is_offset || restrictions.convert_offset_surfaces)
+                    {
                         let bspline = surface_to_bspline(surface, n_u, n_v);
                         *surface = Surface3::BSpline(bspline);
                         report.surfaces_converted += 1;
@@ -831,7 +848,10 @@ pub fn surface_degrees(surface: &Surface3) -> (usize, usize) {
         Surface3::BSpline(b) => (b.degree_u, b.degree_v),
         Surface3::Bezier(b) => {
             let du = b.control_points.len().saturating_sub(1);
-            let dv = b.control_points.first().map_or(0, |r| r.len().saturating_sub(1));
+            let dv = b
+                .control_points
+                .first()
+                .map_or(0, |r| r.len().saturating_sub(1));
             (du, dv)
         }
         Surface3::Plane(_) => (1, 1),
@@ -856,7 +876,11 @@ pub fn ensure_bspline_curve(curve: &Curve3, samples: usize) -> BSplineCurve3 {
 }
 
 /// Convert a single surface to BSpline if needed.
-pub fn ensure_bspline_surface(surface: &Surface3, samples_u: usize, samples_v: usize) -> BSplineSurface {
+pub fn ensure_bspline_surface(
+    surface: &Surface3,
+    samples_u: usize,
+    samples_v: usize,
+) -> BSplineSurface {
     match surface {
         Surface3::BSpline(b) => b.clone(),
         Surface3::Bezier(b) => bezier_surface_to_bspline(b),
@@ -896,7 +920,10 @@ pub fn surface_to_bspline_from_face(
 ) -> BSplineSurface {
     // Access the face TShape directly — surface lives on TFaceData.
     let fd = match brep.tshapes.get(face_idx) {
-        Some(ts) => match &**ts { TShape::Face(fd) => fd, _ => return fallback_bspline_surface() },
+        Some(ts) => match &**ts {
+            TShape::Face(fd) => fd,
+            _ => return fallback_bspline_surface(),
+        },
         None => return fallback_bspline_surface(),
     };
     let surface = match fd.surface.as_ref() {
@@ -908,60 +935,61 @@ pub fn surface_to_bspline_from_face(
     let trim = fd.uv_domain;
 
     match surface {
-                Surface3::BSpline(b) => {
-                    if let Some([u0, u1, v0, v1]) = trim {
-                        let n_u = 16;
-                        let n_v = 16;
-                        let mut ctrl: Vec<Vec<DVec3>> = Vec::new();
-                        let mut w: Vec<Vec<f64>> = Vec::new();
-                        for i in 0..n_u {
-                            let u = u0 + (u1 - u0) * i as f64 / (n_u - 1).max(1) as f64;
-                            let mut row = Vec::new();
-                            let mut wrow = Vec::new();
-                            for j in 0..n_v {
-                                let v = v0 + (v1 - v0) * j as f64 / (n_v - 1).max(1) as f64;
-                                row.push(b.point_at(u, v));
-                                wrow.push(1.0);
-                            }
-                            ctrl.push(row);
-                            w.push(wrow);
-                        }
-                        BSplineSurface {
-                            degree_u: b.degree_u.min(3),
-                            degree_v: b.degree_v.min(3),
-                            knots_u: build_clamped_knots(n_u, b.degree_u.min(3)),
-                            knots_v: build_clamped_knots(n_v, b.degree_v.min(3)),
-                            control_points: ctrl,
-                            weights: w,
-                        }
-                    } else {
-                        b.clone()
+        Surface3::BSpline(b) => {
+            if let Some([u0, u1, v0, v1]) = trim {
+                let n_u = 16;
+                let n_v = 16;
+                let mut ctrl: Vec<Vec<DVec3>> = Vec::new();
+                let mut w: Vec<Vec<f64>> = Vec::new();
+                for i in 0..n_u {
+                    let u = u0 + (u1 - u0) * i as f64 / (n_u - 1).max(1) as f64;
+                    let mut row = Vec::new();
+                    let mut wrow = Vec::new();
+                    for j in 0..n_v {
+                        let v = v0 + (v1 - v0) * j as f64 / (n_v - 1).max(1) as f64;
+                        row.push(b.point_at(u, v));
+                        wrow.push(1.0);
                     }
+                    ctrl.push(row);
+                    w.push(wrow);
                 }
-                Surface3::Plane(p) => {
-                    if let Some([u0, u1, v0, v1]) = trim {
-                        let pts = [
-                            p.point_at(u0, v0), p.point_at(u0, v1),
-                            p.point_at(u1, v0), p.point_at(u1, v1),
-                        ];
-                        BSplineSurface {
-                            degree_u: 1,
-                            degree_v: 1,
-                            knots_u: vec![0.0, 0.0, 1.0, 1.0],
-                            knots_v: vec![0.0, 0.0, 1.0, 1.0],
-                            control_points: vec![vec![pts[0], pts[1]], vec![pts[2], pts[3]]],
-                            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
-                        }
-                    } else {
-                        plane_to_bspline(p)
-                    }
+                BSplineSurface {
+                    degree_u: b.degree_u.min(3),
+                    degree_v: b.degree_v.min(3),
+                    knots_u: build_clamped_knots(n_u, b.degree_u.min(3)),
+                    knots_v: build_clamped_knots(n_v, b.degree_v.min(3)),
+                    control_points: ctrl,
+                    weights: w,
                 }
-                Surface3::Cylinder(c) => cylinder_to_bspline(c),
-                Surface3::Sphere(s) => sphere_to_bspline(s),
-                _ => surface_to_bspline(surface, 16, 16),
+            } else {
+                b.clone()
             }
+        }
+        Surface3::Plane(p) => {
+            if let Some([u0, u1, v0, v1]) = trim {
+                let pts = [
+                    p.point_at(u0, v0),
+                    p.point_at(u0, v1),
+                    p.point_at(u1, v0),
+                    p.point_at(u1, v1),
+                ];
+                BSplineSurface {
+                    degree_u: 1,
+                    degree_v: 1,
+                    knots_u: vec![0.0, 0.0, 1.0, 1.0],
+                    knots_v: vec![0.0, 0.0, 1.0, 1.0],
+                    control_points: vec![vec![pts[0], pts[1]], vec![pts[2], pts[3]]],
+                    weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+                }
+            } else {
+                plane_to_bspline(p)
+            }
+        }
+        Surface3::Cylinder(c) => cylinder_to_bspline(c),
+        Surface3::Sphere(s) => sphere_to_bspline(s),
+        _ => surface_to_bspline(surface, 16, 16),
+    }
 }
-
 
 /// Fallback BSpline surface used when no valid face surface is found.
 fn fallback_bspline_surface() -> BSplineSurface {
@@ -1002,7 +1030,10 @@ pub fn curve_to_bspline_from_edge(
 ) -> BSplineCurve3 {
     // Access the edge TShape directly — curve lives on TEdgeData.
     let ed = match brep.tshapes.get(edge_idx) {
-        Some(ts) => match &**ts { TShape::Edge(ed) => ed, _ => return fallback_bspline_curve(brep, edge_idx) },
+        Some(ts) => match &**ts {
+            TShape::Edge(ed) => ed,
+            _ => return fallback_bspline_curve(brep, edge_idx),
+        },
         None => return fallback_bspline_curve(brep, edge_idx),
     };
 
@@ -1033,16 +1064,28 @@ pub fn curve_to_bspline_from_edge(
 
 /// Fallback BSpline curve created from edge's vertex positions.
 fn fallback_bspline_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> BSplineCurve3 {
-    let p0 = brep.tshapes.get(edge_idx).and_then(|ts| {
-        if let TShape::Edge(ed) = &**ts {
-            brep.vertex_point(ed.first.index)
-        } else { None }
-    }).unwrap_or(DVec3::ZERO);
-    let p1 = brep.tshapes.get(edge_idx).and_then(|ts| {
-        if let TShape::Edge(ed) = &**ts {
-            brep.vertex_point(ed.last.index)
-        } else { None }
-    }).unwrap_or(DVec3::X);
+    let p0 = brep
+        .tshapes
+        .get(edge_idx)
+        .and_then(|ts| {
+            if let TShape::Edge(ed) = &**ts {
+                brep.vertex_point(ed.first.index)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(DVec3::ZERO);
+    let p1 = brep
+        .tshapes
+        .get(edge_idx)
+        .and_then(|ts| {
+            if let TShape::Edge(ed) = &**ts {
+                brep.vertex_point(ed.last.index)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(DVec3::X);
     BSplineCurve3 {
         degree: 1,
         knots: vec![0.0, 0.0, 1.0, 1.0],
@@ -1187,7 +1230,8 @@ pub fn identify_canonical_form(surface: &Surface3, tolerance: f64) -> CanonicalF
         Surface3::Torus(t) => {
             let axis = t.axis.normalize();
             let centered = t.center.length() < tolerance;
-            let aligned = (axis - DVec3::Z).length() < tolerance || (axis + DVec3::Z).length() < tolerance;
+            let aligned =
+                (axis - DVec3::Z).length() < tolerance || (axis + DVec3::Z).length() < tolerance;
             if centered && aligned {
                 CanonicalForm::TorusOriginZ
             } else {
@@ -1308,10 +1352,7 @@ pub enum AnalyticType {
 ///     println!("Converted to analytic: {:?}", analytic);
 /// }
 /// ```
-pub fn try_convert_to_analytic(
-    surface: &BSplineSurface,
-    tolerance: f64,
-) -> Option<Surface3> {
+pub fn try_convert_to_analytic(surface: &BSplineSurface, tolerance: f64) -> Option<Surface3> {
     // Try each analytic type in order of simplicity
 
     // 1. Try plane detection
@@ -1462,9 +1503,8 @@ fn try_detect_cylinder(surface: &BSplineSurface, tolerance: f64) -> Option<Cylin
 
     // Check if all radii are approximately equal
     let avg_radius = radii.iter().sum::<f64>() / radii.len() as f64;
-    let radius_variance: f64 = radii.iter()
-        .map(|r| (r - avg_radius).powi(2))
-        .sum::<f64>() / radii.len() as f64;
+    let radius_variance: f64 =
+        radii.iter().map(|r| (r - avg_radius).powi(2)).sum::<f64>() / radii.len() as f64;
 
     // Use a relative tolerance based on the radius
     let rel_tolerance = tolerance.max(avg_radius * 0.1);
@@ -1523,7 +1563,7 @@ fn try_detect_sphere(surface: &BSplineSurface, tolerance: f64) -> Option<Spheric
     // Estimate radius using multiple point pairs
     let mut radii_estimates: Vec<f64> = Vec::new();
     for i in 0..points.len().min(20) {
-        for j in (i+1)..points.len().min(20) {
+        for j in (i + 1)..points.len().min(20) {
             let n_diff = (normals[i] - normals[j]).length();
             if n_diff > 0.1 {
                 let p_diff = (points[i] - points[j]).length();
@@ -1542,9 +1582,11 @@ fn try_detect_sphere(surface: &BSplineSurface, tolerance: f64) -> Option<Spheric
     let rel_tolerance = tolerance.max(avg_radius * 0.1);
 
     // Check variance in radius estimates
-    let radius_variance: f64 = radii_estimates.iter()
+    let radius_variance: f64 = radii_estimates
+        .iter()
         .map(|r| (r - avg_radius).powi(2))
-        .sum::<f64>() / radii_estimates.len() as f64;
+        .sum::<f64>()
+        / radii_estimates.len() as f64;
 
     if radius_variance.sqrt() > rel_tolerance * avg_radius {
         return None;
@@ -1565,9 +1607,11 @@ fn try_detect_sphere(surface: &BSplineSurface, tolerance: f64) -> Option<Spheric
     }
 
     let avg_dist = distances.iter().sum::<f64>() / distances.len() as f64;
-    let dist_variance: f64 = distances.iter()
+    let dist_variance: f64 = distances
+        .iter()
         .map(|d| (d - avg_dist).powi(2))
-        .sum::<f64>() / distances.len() as f64;
+        .sum::<f64>()
+        / distances.len() as f64;
 
     if dist_variance.sqrt() > rel_tolerance * avg_radius {
         return None;
@@ -1724,9 +1768,11 @@ fn try_detect_torus(surface: &BSplineSurface, tolerance: f64) -> Option<Toroidal
     // For a torus, distances should cluster around two values (R+r and R-r)
     // Use a simple estimate: major_radius ~ mean distance, minor_radius ~ variance
     let avg_dist = distances.iter().sum::<f64>() / distances.len() as f64;
-    let variance = distances.iter()
+    let variance = distances
+        .iter()
         .map(|d| (d - avg_dist).powi(2))
-        .sum::<f64>() / distances.len() as f64;
+        .sum::<f64>()
+        / distances.len() as f64;
 
     // Check if the torus fit is reasonable
     let minor_radius = variance.sqrt();
@@ -1781,9 +1827,10 @@ pub fn simplify_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> rcad_kerne
                 None => continue,
             };
             if let Surface3::BSpline(bspline) = surface
-                && let Some(analytic) = try_convert_to_analytic(bspline, tolerance) {
-                    *surface = analytic;
-                }
+                && let Some(analytic) = try_convert_to_analytic(bspline, tolerance)
+            {
+                *surface = analytic;
+            }
         }
     }
 
@@ -1831,7 +1878,7 @@ fn resolve_to_direct_surface(surface: &Surface3) -> Surface3 {
     match surface {
         Surface3::Trimmed(t) => {
             // Resolve the underlying surface
-            
+
             // For now, return the resolved basis (losing trim info)
             // A more complete implementation would rebuild with proper UV bounds
             resolve_to_direct_surface(&t.basis)
@@ -1890,7 +1937,11 @@ fn resolve_to_direct_curve(curve: &Curve3) -> Curve3 {
         | c @ Curve3::Parabola(_)
         | c @ Curve3::CircularHelix(_)
         | c @ Curve3::SineWave(_) => c.clone(),
-        Curve3::Trimmed(tc) => Curve3::Trimmed(Box::new(TrimmedCurve3::new(resolve_to_direct_curve(tc.basis_curve()), tc.first, tc.last))),
+        Curve3::Trimmed(tc) => Curve3::Trimmed(Box::new(TrimmedCurve3::new(
+            resolve_to_direct_curve(tc.basis_curve()),
+            tc.first,
+            tc.last,
+        ))),
     }
 }
 
@@ -1931,7 +1982,10 @@ pub struct ShapeCustomReport {
 ///
 /// # Returns
 /// A tuple of (processed rcad_kernel::BRep, report).
-pub fn customize_shape(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, ShapeCustomReport) {
+pub fn customize_shape(
+    brep: &rcad_kernel::BRep,
+    tolerance: f64,
+) -> (rcad_kernel::BRep, ShapeCustomReport) {
     let mut report = ShapeCustomReport::default();
 
     // Step 1: Convert to canonical forms
@@ -1957,12 +2011,28 @@ pub fn customize_shape(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel
 
 /// Count how many surfaces were converted to canonical form.
 fn count_canonical_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
-    let surfaces_before: Vec<&Surface3> = before.tshapes.iter().filter_map(|ts| {
-        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
-    }).collect();
-    let surfaces_after: Vec<&Surface3> = after.tshapes.iter().filter_map(|ts| {
-        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
-    }).collect();
+    let surfaces_before: Vec<&Surface3> = before
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Face(fd) = &**ts {
+                fd.surface.as_ref()
+            } else {
+                None
+            }
+        })
+        .collect();
+    let surfaces_after: Vec<&Surface3> = after
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Face(fd) = &**ts {
+                fd.surface.as_ref()
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut count = 0;
     for (s_before, s_after) in surfaces_before.iter().zip(surfaces_after.iter()) {
         let form_before = identify_canonical_form(s_before, TOLERANCE_MESH_LEGACY);
@@ -1976,12 +2046,28 @@ fn count_canonical_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::
 
 /// Count how many BSpline surfaces were converted to analytic.
 fn count_analytic_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
-    let surfaces_before: Vec<&Surface3> = before.tshapes.iter().filter_map(|ts| {
-        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
-    }).collect();
-    let surfaces_after: Vec<&Surface3> = after.tshapes.iter().filter_map(|ts| {
-        if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
-    }).collect();
+    let surfaces_before: Vec<&Surface3> = before
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Face(fd) = &**ts {
+                fd.surface.as_ref()
+            } else {
+                None
+            }
+        })
+        .collect();
+    let surfaces_after: Vec<&Surface3> = after
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Face(fd) = &**ts {
+                fd.surface.as_ref()
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut count = 0;
     for (s_before, s_after) in surfaces_before.iter().zip(surfaces_after.iter()) {
         if matches!(s_before, Surface3::BSpline(_)) && !matches!(s_after, Surface3::BSpline(_)) {
@@ -1993,9 +2079,14 @@ fn count_analytic_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::B
 
 /// Count indirect faces (faces with Offset/Trimmed surfaces).
 fn count_indirect_faces(brep: &rcad_kernel::BRep) -> usize {
-    brep.tshapes.iter()
+    brep.tshapes
+        .iter()
         .filter_map(|ts| {
-            if let TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+            if let TShape::Face(fd) = &**ts {
+                fd.surface.as_ref()
+            } else {
+                None
+            }
         })
         .filter(|s| matches!(s, Surface3::Offset(_) | Surface3::Trimmed(_)))
         .count()
@@ -2004,6 +2095,3 @@ fn count_indirect_faces(brep: &rcad_kernel::BRep) -> usize {
 // =============================================================================
 // Tests
 // =============================================================================
-
-
-

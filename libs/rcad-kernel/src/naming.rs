@@ -124,7 +124,9 @@ impl PersistentNamingHooks {
         let mut issues = Vec::new();
         for (name, target) in &self.name_to_ref {
             if !is_valid_ref_for_brep(brep, *target) {
-                issues.push(format!("name '{name}' points to out-of-range entity {target:?}"));
+                issues.push(format!(
+                    "name '{name}' points to out-of-range entity {target:?}"
+                ));
             }
         }
         issues
@@ -222,7 +224,10 @@ impl PersistentNamingHooks {
                     if vertex_map.is_empty() {
                         Some(old_ref)
                     } else {
-                        vertex_map.get(i).and_then(|r| *r).map(TopoEntityRef::Vertex)
+                        vertex_map
+                            .get(i)
+                            .and_then(|r| *r)
+                            .map(TopoEntityRef::Vertex)
                     }
                 }
                 TopoEntityRef::Solid(_) => Some(old_ref), // solids not remapped
@@ -280,18 +285,22 @@ fn flat_face_count(brep: &topods::BRep) -> usize {
 
 fn is_valid_ref_for_brep(brep: &topods::BRep, target: TopoEntityRef) -> bool {
     match target {
-        TopoEntityRef::Vertex(i) => {
-            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, &topods::TShape::Vertex(_)))
-        }
-        TopoEntityRef::Edge(i) => {
-            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Edge(_)))
-        }
-        TopoEntityRef::Face(i) => {
-            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Face(_)))
-        }
-        TopoEntityRef::Solid(i) => {
-            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Solid(_)))
-        }
+        TopoEntityRef::Vertex(i) => brep
+            .tshapes
+            .get(i)
+            .is_some_and(|ts| matches!(&**ts, &topods::TShape::Vertex(_))),
+        TopoEntityRef::Edge(i) => brep
+            .tshapes
+            .get(i)
+            .is_some_and(|ts| matches!(&**ts, topods::TShape::Edge(_))),
+        TopoEntityRef::Face(i) => brep
+            .tshapes
+            .get(i)
+            .is_some_and(|ts| matches!(&**ts, topods::TShape::Face(_))),
+        TopoEntityRef::Solid(i) => brep
+            .tshapes
+            .get(i)
+            .is_some_and(|ts| matches!(&**ts, topods::TShape::Solid(_))),
     }
 }
 
@@ -322,13 +331,19 @@ mod tests {
         hooks
             .bind_for_brep(&brep, "test", TopoEntityRef::Edge(edge_ts_idx))
             .expect("bind should succeed");
-        assert_eq!(hooks.resolve("test"), Some(TopoEntityRef::Edge(edge_ts_idx)));
+        assert_eq!(
+            hooks.resolve("test"),
+            Some(TopoEntityRef::Edge(edge_ts_idx))
+        );
 
         hooks
             .rename("test", "renamed")
             .expect("rename should succeed");
         assert_eq!(hooks.resolve("test"), None);
-        assert_eq!(hooks.resolve("renamed"), Some(TopoEntityRef::Edge(edge_ts_idx)));
+        assert_eq!(
+            hooks.resolve("renamed"),
+            Some(TopoEntityRef::Edge(edge_ts_idx))
+        );
     }
 
     #[test]
@@ -336,7 +351,11 @@ mod tests {
         let brep = topods::BRep::new();
         let mut hooks = PersistentNamingHooks::new();
         // Edge(0) is invalid because BRep has no edges
-        assert!(hooks.bind_for_brep(&brep, "bad_edge", TopoEntityRef::Edge(0)).is_err());
+        assert!(
+            hooks
+                .bind_for_brep(&brep, "bad_edge", TopoEntityRef::Edge(0))
+                .is_err()
+        );
     }
 
     #[test]
@@ -347,6 +366,3 @@ mod tests {
         assert!(hooks.resolve("e0").is_none());
     }
 }
-
-
-

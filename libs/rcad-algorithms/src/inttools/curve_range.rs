@@ -1,6 +1,6 @@
-use rcad_kernel::geom::{Curve3, CurveEval};
-use rcad_kernel::tolerance::{CONFUSION, PCONFUSION, parametric_epsilon, is_infinite_value};
 use glam::DVec3;
+use rcad_kernel::geom::{Curve3, CurveEval};
+use rcad_kernel::tolerance::{CONFUSION, PCONFUSION, is_infinite_value, parametric_epsilon};
 
 /// Curve parameter step: parameter increment needed to move `tol` distance along curve.
 ///
@@ -13,11 +13,7 @@ use glam::DVec3;
 /// When the tangent speed is nearly zero (singularity), the resolution is clamped to `tol`.
 pub fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
     let speed = curve.tangent_at(t).length();
-    if speed < 1e-15 {
-        tol
-    } else {
-        tol / speed
-    }
+    if speed < 1e-15 { tol } else { tol / speed }
 }
 
 /// Global curve resolution: parametric step needed to move `tol` distance.
@@ -49,7 +45,11 @@ pub fn curve_resolution_global(curve: &Curve3, t_start: f64, t_end: f64, tol: f6
             max_speed = speed;
         }
     }
-    if max_speed < 1e-15 { tol } else { tol / max_speed }
+    if max_speed < 1e-15 {
+        tol
+    } else {
+        tol / max_speed
+    }
 }
 
 /// OCCT BRepLib_1.cxx L25-169: findNearestValidPoint.
@@ -239,11 +239,17 @@ fn is_bspline_or_bezier(curve: &Curve3) -> bool {
 /// * `Some([t_start, t_end])` - Valid shrunk range where t_start < t_end
 /// * `None` - Micro-edge; the entire range is covered by tolerance spheres
 pub fn shrunk_range(
-    curve: &Curve3, t_range: [f64; 2], v1_tol: f64, v2_tol: f64, edge_tol: f64,
+    curve: &Curve3,
+    t_range: [f64; 2],
+    v1_tol: f64,
+    v2_tol: f64,
+    edge_tol: f64,
 ) -> Option<[f64; 2]> {
     let [t1, t2] = t_range;
     // OCCT IntTools_ShrunkRange.cxx L117-120: if range < PConfusion -> micro-edge
-    if (t2 - t1).abs() < PCONFUSION { return None; }
+    if (t2 - t1).abs() < PCONFUSION {
+        return None;
+    }
     // OCCT BRepLib::FindValidRange handles Circle curves natively using
     // GeomAPI_ProjectPointOnCurve. rcad's find_nearest_valid_point may not
     // handle periodic curves reliably. Return full range for Circle curves
@@ -265,8 +271,12 @@ pub fn shrunk_range(
     let is_inf_par_v2 = is_infinite_value(t2);
     let a_max_par = {
         let mut m = 0.0;
-        if !is_inf_par_v1 { m = t1.abs(); }
-        if !is_inf_par_v2 { m = m.max(t2.abs()); }
+        if !is_inf_par_v1 {
+            m = t1.abs();
+        }
+        if !is_inf_par_v2 {
+            m = m.max(t2.abs());
+        }
         m
     };
     // OCCT L201-202: anEps = max(curve.Resolution(theTolE) * 0.1, Epsilon(aMaxPar), PConfusion())
@@ -283,7 +293,9 @@ pub fn shrunk_range(
         match find_nearest_valid_point(curve, t1, t2, true, p1, a_tol_v1, an_eps) {
             Some(val) => {
                 // OCCT L221-224: if (theParV2 - theFirst < anEps) return false;
-                if t2 - val < an_eps { return None; }
+                if t2 - val < an_eps {
+                    return None;
+                }
                 val
             }
             None => {
@@ -294,7 +306,7 @@ pub fn shrunk_range(
                 match curve {
                     _ => return None,
                 }
-            },
+            }
         }
     };
 
@@ -305,14 +317,14 @@ pub fn shrunk_range(
         match find_nearest_valid_point(curve, t1, t2, false, p2, a_tol_v2, an_eps) {
             Some(val) => {
                 // OCCT L244-247: if (theLast - theParV1 < anEps) return false;
-                if val - t1 < an_eps { return None; }
+                if val - t1 < an_eps {
+                    return None;
+                }
                 val
             }
-            None => {
-                match curve {
-                    rcad_kernel::geom::Curve3::Circle(_) => t2,
-                    _ => return None,
-                }
+            None => match curve {
+                rcad_kernel::geom::Curve3::Circle(_) => t2,
+                _ => return None,
             },
         }
     };
@@ -323,7 +335,9 @@ pub fn shrunk_range(
     }
 
     // OCCT L152-156: if shrunk range < PConfusion → micro-edge
-    if (ts2 - ts1) < PCONFUSION { return None; }
+    if (ts2 - ts1) < PCONFUSION {
+        return None;
+    }
 
     // OCCT L158-175: length computation and check — done by caller (ShrunkRange wrapper)
     Some([ts1, ts2])
@@ -393,7 +407,9 @@ pub fn find_valid_range(
     let the_first = if is_inf_par_v1 {
         the_par_v1
     } else {
-        match find_nearest_valid_point(curve, the_par_v1, the_par_v2, true, the_pnt_v1, the_tol_v1, an_eps) {
+        match find_nearest_valid_point(
+            curve, the_par_v1, the_par_v2, true, the_pnt_v1, the_tol_v1, an_eps,
+        ) {
             Some(val) => {
                 // OCCT L221-224: if (theParV2 - theFirst < anEps) → too close to other end
                 if the_par_v2 - val < an_eps {
@@ -409,7 +425,9 @@ pub fn find_valid_range(
     let the_last = if is_inf_par_v2 {
         the_par_v2
     } else {
-        match find_nearest_valid_point(curve, the_par_v1, the_par_v2, false, the_pnt_v2, the_tol_v2, an_eps) {
+        match find_nearest_valid_point(
+            curve, the_par_v1, the_par_v2, false, the_pnt_v2, the_tol_v2, an_eps,
+        ) {
             Some(val) => {
                 // OCCT L244-247: if (theLast - theParV1 < anEps) → too close to other end
                 if val - the_par_v1 < an_eps {
@@ -428,4 +446,3 @@ pub fn find_valid_range(
 
     Some([the_first, the_last])
 }
-

@@ -1,14 +1,13 @@
 //! Integration tests for rcad-step assembly read/write.
 
 use glam::{DAffine3, DVec3};
-use rcad_modeling::make_box_brep;
 use rcad_algorithms::{HealingMode, HealingOptions};
 use rcad_kernel::topods;
+use rcad_modeling::make_box_brep;
 use rcad_step::{
     AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree,
-    read_assembly_with_healing_report_json,
-    read_assembly_tree_with_healing, read_assembly_with_healing, write_assembly,
-    write_assembly_tree,
+    read_assembly_tree_with_healing, read_assembly_with_healing,
+    read_assembly_with_healing_report_json, write_assembly, write_assembly_tree,
 };
 
 fn make_box(origin: DVec3) -> rcad_kernel::topods::BRep {
@@ -68,8 +67,8 @@ fn assembly_with_translation_baked_into_geometry() {
     let base_box = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     let translation = DVec3::new(10.0, 0.0, 0.0);
 
-    let comp = AssemblyComponent::new("shifted_box", base_box.to_topods())
-        .with_translation(translation);
+    let comp =
+        AssemblyComponent::new("shifted_box", base_box.to_topods()).with_translation(translation);
 
     let step = write_assembly("shift_test", &[comp]);
 
@@ -149,7 +148,11 @@ fn read_assembly_with_healing_reports_per_component() {
 
     assert_eq!(components.len(), 2);
     assert_eq!(reports.len(), 2);
-    assert!(reports.iter().all(|r| r.initial.is_valid() && r.final_result.is_valid()));
+    assert!(
+        reports
+            .iter()
+            .all(|r| r.initial.is_valid() && r.final_result.is_valid())
+    );
 }
 
 #[test]
@@ -196,7 +199,11 @@ fn nested_assembly_tree_write_has_nauo() {
         .lines()
         .filter(|l| l.contains("NEXT_ASSEMBLY_USAGE_OCCURRENCE"))
         .count();
-    assert!(nauo_count >= 3, "expected at least 3 NAUO entries, got {}", nauo_count);
+    assert!(
+        nauo_count >= 3,
+        "expected at least 3 NAUO entries, got {}",
+        nauo_count
+    );
     assert!(step.contains("part_a"), "should contain part_a");
     assert!(step.contains("part_b"), "should contain part_b");
     assert!(step.contains("part_c"), "should contain part_c");

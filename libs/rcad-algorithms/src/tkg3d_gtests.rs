@@ -27,8 +27,8 @@ mod bezier_surface_tests {
         // u in [0,1], v in [0,1]. Poles at corners of 1x1 square in XY.
         Surface3::Bezier(BezierSurface {
             control_points: vec![
-                vec![DVec3::ZERO,         DVec3::new(1.0, 0.0, 0.0)],
-                vec![DVec3::new(0.0,1.0,0.0), DVec3::new(1.0, 1.0, 0.0)],
+                vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
             ],
             weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
         })
@@ -83,7 +83,10 @@ mod offset_curve_tests {
     use super::*;
 
     fn make_offset_line() -> Curve3 {
-        let base = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let base = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         Curve3::Offset(OffsetCurve3 {
             basis: Box::new(base),
             offset_distance: 1.0,
@@ -284,26 +287,43 @@ mod helicoid_surface_tests {
 
 #[cfg(test)]
 mod api_extrema_tests {
-    use rcad_kernel::extrema_curve_curve;
     use super::*;
+    use rcad_kernel::extrema_curve_curve;
 
     #[test]
     fn parallel_lines_distance() {
-        let l1 = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let l1 = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let l2 = Curve3::Line(Line3 {
             origin: DVec3::new(0.0, 10.0, 0.0),
             direction: DVec3::X,
         });
         let ext = extrema_curve_curve(&l1, &l2, 32);
-        assert!(ext.min_distance() - 10.0 < TOL, "distance={}", ext.min_distance());
+        assert!(
+            ext.min_distance() - 10.0 < TOL,
+            "distance={}",
+            ext.min_distance()
+        );
     }
 
     #[test]
     fn intersecting_lines() {
-        let l1 = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let l2 = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y });
+        let l1 = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
+        let l2 = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::Y,
+        });
         let ext = extrema_curve_curve(&l1, &l2, 32);
-        assert!(ext.min_distance() < TOL, "skew distance={}", ext.min_distance());
+        assert!(
+            ext.min_distance() < TOL,
+            "skew distance={}",
+            ext.min_distance()
+        );
     }
 }
 
@@ -333,7 +353,6 @@ mod api_interpolate_tests {
     }
 }
 
-
 // =============================================================================
 // TKG3d/GTests 锟?remaining untranslated files
 // =============================================================================
@@ -347,21 +366,30 @@ mod tkg3d_geom_line_tests {
 
     #[test]
     fn line_construct_and_d0() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let p = line.point_at(5.0);
         assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL);
     }
 
     #[test]
     fn line_d1_constant() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::Y,
+        });
         let d = line.derivative_at(3.0);
         assert!((d - DVec3::Y).length() < TOL);
     }
 
     #[test]
     fn line_d2_zero() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let d1 = line.derivative_at(1.0);
         let d2 = line.derivative_at(2.0);
         assert!((d1 - d2).length() < TOL);
@@ -369,7 +397,10 @@ mod tkg3d_geom_line_tests {
 
     #[test]
     fn line_reversed_parameter() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let p0 = line.point_at(5.0);
         let p1 = line.point_at(-5.0);
         assert!((p0 - DVec3::new(5.0, 0.0, 0.0)).length() < TOL);
@@ -378,7 +409,10 @@ mod tkg3d_geom_line_tests {
 
     #[test]
     fn line_transform_translation() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 5.0));
         let tline = transform_curve(&line, &xform);
         let p = tline.point_at(0.0);
@@ -395,7 +429,11 @@ mod tkg3d_geom_circle_tests {
 
     fn unit_circle() -> Curve3 {
         Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         })
     }
 
@@ -437,7 +475,11 @@ mod tkg3d_geom_circle_tests {
     #[test]
     fn circle_d1_perpendicular_to_radial() {
         let c = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 3.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 3.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         });
         let u = PI / 6.0;
         let p = c.point_at(u);
@@ -445,8 +487,6 @@ mod tkg3d_geom_circle_tests {
         let dot = p.dot(d1);
         assert!(dot.abs() < TOL);
     }
-
-    
 
     #[test]
     fn circle_transform_scale() {
@@ -530,7 +570,13 @@ mod tkg3d_geom_bezier_curve_tests {
     }
 
     #[test]
-    fn bezier_transform() { let c = make_bezier(); let xform = glam::DAffine3::from_translation(DVec3::new(10.0, 20.0, 30.0)); let tc = transform_curve(&c, &xform); let p = tc.point_at(0.5); assert!(p.is_finite()); }
+    fn bezier_transform() {
+        let c = make_bezier();
+        let xform = glam::DAffine3::from_translation(DVec3::new(10.0, 20.0, 30.0));
+        let tc = transform_curve(&c, &xform);
+        let p = tc.point_at(0.5);
+        assert!(p.is_finite());
+    }
 }
 
 // =============================================================================
@@ -549,8 +595,8 @@ mod tkg3d_geom_bspline_curve_tests {
                 DVec3::new(3.0, 0.0, 0.0),
             ],
             weights: vec![1.0, 1.0, 1.0, 1.0],
-            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], degree: 3,
-
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            degree: 3,
         })
     }
 
@@ -596,10 +642,14 @@ mod tkg3d_geom_bspline_curve_tests {
     #[test]
     fn bspline_rational() {
         let c = Curve3::BSpline(BSplineCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0), DVec3::new(3.0, 0.0, 0.0)],
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(1.0, 1.0, 0.0),
+                DVec3::new(3.0, 0.0, 0.0),
+            ],
             weights: vec![1.0, 2.0, 1.0],
-            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], degree: 2,
-
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            degree: 2,
         });
         let m = c.point_at(0.5);
         assert!(m.is_finite());
@@ -633,14 +683,21 @@ mod tkg3d_geom_bspline_surface_tests {
         Surface3::BSpline(BSplineSurface {
             control_points: poles,
             weights: vec![vec![1.0; 3]; 3],
-            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
         })
     }
 
     #[test]
-    fn bspline_surface_corners() { let s = make_bsp_surface(); let p00 = s.point_at(0.0, 0.0); assert!(p00.is_finite()); let p11 = s.point_at(1.0, 1.0); assert!(p11.is_finite()); }
+    fn bspline_surface_corners() {
+        let s = make_bsp_surface();
+        let p00 = s.point_at(0.0, 0.0);
+        assert!(p00.is_finite());
+        let p11 = s.point_at(1.0, 1.0);
+        assert!(p11.is_finite());
+    }
 
     #[test]
     fn bspline_surface_default_domain() {
@@ -653,10 +710,17 @@ mod tkg3d_geom_bspline_surface_tests {
     }
 
     #[test]
-    fn bspline_surface_normal_nonzero() { /* SurfaceEval is not delegated by Surface3 */ }
+    fn bspline_surface_normal_nonzero() { /* SurfaceEval is not delegated by Surface3 */
+    }
 
     #[test]
-    fn bspline_surface_transform() { let s = make_bsp_surface(); let xform = glam::DAffine3::from_translation(DVec3::new(10.0, 20.0, 30.0)); let ts = transform_surface(&s, &xform); /* BSplineSurface transform may not fully delegate */ let p = ts.point_at(0.5, 0.5); assert!(p.is_finite()); }
+    fn bspline_surface_transform() {
+        let s = make_bsp_surface();
+        let xform = glam::DAffine3::from_translation(DVec3::new(10.0, 20.0, 30.0));
+        let ts = transform_surface(&s, &xform); /* BSplineSurface transform may not fully delegate */
+        let p = ts.point_at(0.5, 0.5);
+        assert!(p.is_finite());
+    }
 
     #[test]
     fn bspline_surface_not_periodic() {
@@ -665,7 +729,14 @@ mod tkg3d_geom_bspline_surface_tests {
 
     #[test]
     fn bspline_surface_degree_properties() {
-        let bsp = BSplineSurface { control_points: vec![vec![DVec3::ZERO; 3]; 3], weights: vec![vec![1.0; 3]; 3], knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], degree_u: 2, degree_v: 2 };
+        let bsp = BSplineSurface {
+            control_points: vec![vec![DVec3::ZERO; 3]; 3],
+            weights: vec![vec![1.0; 3]; 3],
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            degree_u: 2,
+            degree_v: 2,
+        };
         assert_eq!(bsp.degree_u, 2);
         assert_eq!(bsp.degree_v, 2);
         assert_eq!(bsp.knots_u.len(), 6);
@@ -680,11 +751,16 @@ mod tkg3d_geom_bspline_surface_tests {
                 poles[i][j] = DVec3::new(i as f64, j as f64, 0.0);
             }
         }
-        let w = vec![vec![1.0, 1.0, 1.0], vec![1.0, 3.0, 1.0], vec![1.0, 1.0, 1.0]];
+        let w = vec![
+            vec![1.0, 1.0, 1.0],
+            vec![1.0, 3.0, 1.0],
+            vec![1.0, 1.0, 1.0],
+        ];
         let s = Surface3::BSpline(BSplineSurface {
             control_points: poles,
             weights: w,
-            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
         });
@@ -744,7 +820,10 @@ mod tkg3d_geom_offset_surface_tests {
     #[test]
     fn offset_surface_from_plane() {
         let base = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
-        let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 3.0 });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 3.0,
+        });
         let pt = off.point_at(1.0, 2.0);
         assert!((pt - DVec3::new(1.0, 2.0, 3.0)).length() < TOL);
     }
@@ -752,9 +831,15 @@ mod tkg3d_geom_offset_surface_tests {
     #[test]
     fn offset_surface_from_cylinder() {
         let base = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
-        let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 3.0 });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 3.0,
+        });
         let pt = off.point_at(0.0, 0.0);
         assert!((pt - DVec3::new(13.0, 0.0, 0.0)).length() < TOL);
     }
@@ -762,9 +847,15 @@ mod tkg3d_geom_offset_surface_tests {
     #[test]
     fn offset_surface_negative_offset() {
         let base = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
-        let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: -3.0 });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: -3.0,
+        });
         let pt = off.point_at(0.0, 0.0);
         assert!((pt - DVec3::new(7.0, 0.0, 0.0)).length() < TOL);
     }
@@ -772,9 +863,15 @@ mod tkg3d_geom_offset_surface_tests {
     #[test]
     fn offset_surface_from_sphere() {
         let base = Surface3::Sphere(SphericalSurface {
-            center: DVec3::new(1.0, 2.0, 3.0), axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            center: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
-        let off = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 5.0 });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 5.0,
+        });
         let pt = off.point_at(0.0, 0.0);
         assert!(pt.is_finite());
     }
@@ -789,7 +886,10 @@ mod tkg3d_curve_eval_tests {
 
     #[test]
     fn curve_eval_line_d0_from_origin() {
-        let c = Curve3::Line(Line3 { origin: DVec3::new(1.0, 2.0, 3.0), direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            direction: DVec3::X,
+        });
         let p = c.point_at(5.0);
         assert!((p - DVec3::new(6.0, 2.0, 3.0)).length() < TOL);
     }
@@ -797,7 +897,11 @@ mod tkg3d_curve_eval_tests {
     #[test]
     fn curve_eval_circle_on_sphere() {
         let c = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         });
         let p = c.point_at(PI / 4.0);
         assert!((p.length() - 5.0).abs() < TOL);
@@ -807,12 +911,15 @@ mod tkg3d_curve_eval_tests {
     fn curve_eval_bspline_consistent() {
         let c = Curve3::BSpline(BSplineCurve3 {
             control_points: vec![
-                DVec3::ZERO, DVec3::new(1.0, 2.0, 0.0), DVec3::new(3.0, 1.0, 0.0),
-                DVec3::new(5.0, 3.0, 0.0), DVec3::new(7.0, 0.0, 0.0),
+                DVec3::ZERO,
+                DVec3::new(1.0, 2.0, 0.0),
+                DVec3::new(3.0, 1.0, 0.0),
+                DVec3::new(5.0, 3.0, 0.0),
+                DVec3::new(7.0, 0.0, 0.0),
             ],
             weights: vec![1.0; 5],
-            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], degree: 3,
-
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            degree: 3,
         });
         let [u0, u1] = c.default_domain();
         let mid = (u0 + u1) / 2.0;
@@ -824,7 +931,10 @@ mod tkg3d_curve_eval_tests {
 
     #[test]
     fn curve_eval_line_constant_derivative() {
-        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let d1 = c.derivative_at(5.0);
         assert!((d1 - DVec3::X).length() < TOL);
     }
@@ -847,7 +957,10 @@ mod tkg3d_surface_eval_tests {
     #[test]
     fn surface_eval_sphere_on_radius() {
         let s = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let p = s.point_at(PI / 4.0, PI / 6.0);
         assert!((p.length() - 5.0).abs() < TOL);
@@ -856,7 +969,10 @@ mod tkg3d_surface_eval_tests {
     #[test]
     fn surface_eval_cylinder_radius_and_height() {
         let s = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 4.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 4.0,
+            ref_dir: DVec3::X,
         });
         let p = s.point_at(PI / 4.0, 3.0);
         let xy = (p.x * p.x + p.y * p.y).sqrt();
@@ -867,7 +983,10 @@ mod tkg3d_surface_eval_tests {
     #[test]
     fn surface_eval_cone() {
         let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 6.0, radius: 5.0,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            half_angle_rad: PI / 6.0,
+            radius: 5.0,
         });
         let p = s.point_at(PI / 4.0, 2.0);
         assert!(p.is_finite());
@@ -875,7 +994,11 @@ mod tkg3d_surface_eval_tests {
 
     #[test]
     fn surface_eval_torus() {
-        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0,
+        let s = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 10.0,
+            minor_radius: 3.0,
         });
         let p = s.point_at(PI / 4.0, PI / 3.0);
         assert!(p.is_finite());
@@ -884,10 +1007,15 @@ mod tkg3d_surface_eval_tests {
     #[test]
     fn surface_eval_extrusion() {
         let base = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 3.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 3.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         });
         let s = Surface3::LinearExtrusion(LinearExtrusionSurface {
-            profile: Box::new(base), direction: DVec3::Z,
+            profile: Box::new(base),
+            direction: DVec3::Z,
         });
         let p = s.point_at(PI / 3.0, 5.0);
         let xy = (p.x * p.x + p.y * p.y).sqrt();
@@ -897,9 +1025,14 @@ mod tkg3d_surface_eval_tests {
 
     #[test]
     fn surface_eval_revolution() {
-        let g = Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 0.0), direction: DVec3::Z });
+        let g = Curve3::Line(Line3 {
+            origin: DVec3::new(1.0, 0.0, 0.0),
+            direction: DVec3::Z,
+        });
         let s = Surface3::Revolution(RevolutionSurface {
-            profile: Box::new(g), axis_origin: DVec3::ZERO, axis_dir: DVec3::Z,
+            profile: Box::new(g),
+            axis_origin: DVec3::ZERO,
+            axis_dir: DVec3::Z,
         });
         let p = s.point_at(PI / 4.0, 2.0);
         let xy = (p.x * p.x + p.y * p.y).sqrt();
@@ -917,7 +1050,10 @@ mod tkg3d_adaptor_tests {
 
     #[test]
     fn adaptor_curve_transform_line() {
-        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 5.0));
         let tc = transform_curve(&c, &xform);
         let p = tc.point_at(2.0);
@@ -927,7 +1063,11 @@ mod tkg3d_adaptor_tests {
     #[test]
     fn adaptor_curve_transform_circle_scale() {
         let c = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         });
         let xform = glam::DAffine3::from_scale(DVec3::splat(2.0));
         let tc = transform_curve(&c, &xform);
@@ -937,7 +1077,10 @@ mod tkg3d_adaptor_tests {
 
     #[test]
     fn adaptor_curve_transform_bezier() {
-        let c = Curve3::Bezier(BezierCurve3 { control_points: vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)], weights: vec![1.0, 1.0] });
+        let c = Curve3::Bezier(BezierCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        });
         let tc = transform_curve(&c, &glam::DAffine3::IDENTITY);
         let p = tc.point_at(0.5);
         assert!((p - DVec3::new(0.5, 0.0, 0.0)).length() < TOL);
@@ -955,7 +1098,10 @@ mod tkg3d_adaptor_tests {
     #[test]
     fn adaptor_surface_transform_cylinder() {
         let s = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 3.0));
         let ts = transform_surface(&s, &xform);
@@ -973,7 +1119,10 @@ mod tkg3d_curve_properties_tests {
 
     #[test]
     fn line_properties() {
-        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         assert!(!c.is_closed());
         assert!(!c.is_periodic());
     }
@@ -989,7 +1138,10 @@ mod tkg3d_surface_properties_tests {
     #[test]
     fn cylinder_default_domain() {
         let s = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
@@ -1000,17 +1152,26 @@ mod tkg3d_surface_properties_tests {
 
     #[test]
     fn sphere_default_domain() {
-        let s = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X };
+        let s = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
+        };
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
         assert!((u1 - TAU).abs() < TOL);
-        assert!((v0 - 0.0).abs() < TOL); assert!((v1 - PI).abs() < TOL);
+        assert!((v0 - 0.0).abs() < TOL);
+        assert!((v1 - PI).abs() < TOL);
     }
 
     #[test]
     fn cone_default_domain() {
         let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 6.0, radius: 5.0,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            half_angle_rad: PI / 6.0,
+            radius: 5.0,
         });
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
@@ -1019,7 +1180,11 @@ mod tkg3d_surface_properties_tests {
 
     #[test]
     fn torus_default_domain() {
-        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0,
+        let s = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 10.0,
+            minor_radius: 3.0,
         });
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
@@ -1048,7 +1213,10 @@ mod tkg3d_grid_eval_curve_tests {
 
     #[test]
     fn grid_eval_line() {
-        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let n = 5;
         for i in 0..=n {
             let t = i as f64;
@@ -1059,7 +1227,13 @@ mod tkg3d_grid_eval_curve_tests {
 
     #[test]
     fn grid_eval_circle() {
-        let c = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 3.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        let c = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 3.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         let n = 8;
         for i in 0..n {
             let t = i as f64 * TAU / n as f64;
@@ -1071,7 +1245,11 @@ mod tkg3d_grid_eval_curve_tests {
     #[test]
     fn grid_eval_bezier() {
         let c = Curve3::Bezier(BezierCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(1.0, 2.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(1.0, 2.0, 0.0),
+                DVec3::new(2.0, 0.0, 0.0),
+            ],
             weights: vec![1.0, 1.0, 1.0],
         });
         for i in 0..=5 {
@@ -1084,7 +1262,11 @@ mod tkg3d_grid_eval_curve_tests {
     #[test]
     fn grid_eval_ellipse() {
         let c = Curve3::Ellipse(Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_radius: 5.0, minor_radius: 3.0, major_dir: DVec3::X,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 3.0,
+            major_dir: DVec3::X,
         });
         for i in 0..8 {
             let t = i as f64 * PI / 4.0;
@@ -1096,7 +1278,10 @@ mod tkg3d_grid_eval_curve_tests {
     #[test]
     fn grid_eval_parabola() {
         let c = Curve3::Parabola(Parabola3 {
-            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X, focal_param: 2.0,
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
+            focal_param: 2.0,
         });
         for i in 0..=5 {
             let t = i as f64;
@@ -1108,7 +1293,11 @@ mod tkg3d_grid_eval_curve_tests {
     #[test]
     fn grid_eval_hyperbola() {
         let c = Curve3::Hyperbola(Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, semi_major: 5.0, semi_minor: 3.0, major_dir: DVec3::X,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            semi_major: 5.0,
+            semi_minor: 3.0,
+            major_dir: DVec3::X,
         });
         for t in [-5.0, -2.0, 0.0, 2.0, 5.0] {
             let p = c.point_at(t);
@@ -1133,7 +1322,14 @@ mod tkg3d_grid_eval_surface_tests {
                 let v = j as f64;
                 let p = s.point_at(u, v);
                 let expected = DVec3::new(u, v, 0.0);
-                assert!((p - expected).length() < TOL, "plane eval mismatch at u={} v={}: got {:?} expected {:?}", u, v, p, expected);
+                assert!(
+                    (p - expected).length() < TOL,
+                    "plane eval mismatch at u={} v={}: got {:?} expected {:?}",
+                    u,
+                    v,
+                    p,
+                    expected
+                );
             }
         }
     }
@@ -1141,7 +1337,10 @@ mod tkg3d_grid_eval_surface_tests {
     #[test]
     fn grid_eval_cylinder() {
         let s = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let nu = 4;
         let nv = 3;
@@ -1159,7 +1358,10 @@ mod tkg3d_grid_eval_surface_tests {
     #[test]
     fn grid_eval_sphere() {
         let s = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
@@ -1174,7 +1376,10 @@ mod tkg3d_grid_eval_surface_tests {
     #[test]
     fn grid_eval_cone() {
         let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 6.0, radius: 5.0,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            half_angle_rad: PI / 6.0,
+            radius: 5.0,
         });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
@@ -1188,7 +1393,11 @@ mod tkg3d_grid_eval_surface_tests {
 
     #[test]
     fn grid_eval_torus() {
-        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0,
+        let s = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 10.0,
+            minor_radius: 3.0,
         });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
@@ -1222,9 +1431,15 @@ mod tkg3d_grid_eval_surface_tests {
     #[test]
     fn grid_eval_offset_surface() {
         let base = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
-        let s = Surface3::Offset(OffsetSurface { basis: Box::new(base), offset_distance: 2.0 });
+        let s = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 2.0,
+        });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
             for j in 0..3 {
@@ -1238,10 +1453,15 @@ mod tkg3d_grid_eval_surface_tests {
     #[test]
     fn grid_eval_surf_extrusion() {
         let base = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, radius: 3.0, x_dir: DVec3::X, y_dir: DVec3::Y,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 3.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
         });
         let s = Surface3::LinearExtrusion(LinearExtrusionSurface {
-            profile: Box::new(base), direction: DVec3::Z,
+            profile: Box::new(base),
+            direction: DVec3::Z,
         });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
@@ -1256,9 +1476,14 @@ mod tkg3d_grid_eval_surface_tests {
 
     #[test]
     fn grid_eval_surf_revolution() {
-        let g = Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 0.0), direction: DVec3::Z });
+        let g = Curve3::Line(Line3 {
+            origin: DVec3::new(1.0, 0.0, 0.0),
+            direction: DVec3::Z,
+        });
         let s = Surface3::Revolution(RevolutionSurface {
-            profile: Box::new(g), axis_origin: DVec3::ZERO, axis_dir: DVec3::Z,
+            profile: Box::new(g),
+            axis_origin: DVec3::ZERO,
+            axis_dir: DVec3::Z,
         });
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
@@ -1280,9 +1505,12 @@ mod tkg3d_grid_eval_surface_tests {
             }
         }
         let s = Surface3::BSpline(BSplineSurface {
-            control_points: poles, weights: vec![vec![1.0; 3]; 3],
-            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-            degree_u: 2, degree_v: 2,
+            control_points: poles,
+            weights: vec![vec![1.0; 3]; 3],
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            degree_u: 2,
+            degree_v: 2,
         });
         for i in 0..=3 {
             let u = i as f64 / 3.0;
@@ -1336,9 +1564,14 @@ mod tkg3d_eval_surface_types_tests {
     #[test]
     fn eval_paraboloid_point_at() {
         // Test a revolution surface (profile rotated around axis).
-        let g = Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 0.0), direction: DVec3::Z });
+        let g = Curve3::Line(Line3 {
+            origin: DVec3::new(1.0, 0.0, 0.0),
+            direction: DVec3::Z,
+        });
         let s = Surface3::Revolution(RevolutionSurface {
-            profile: Box::new(g), axis_origin: DVec3::ZERO, axis_dir: DVec3::Z,
+            profile: Box::new(g),
+            axis_origin: DVec3::ZERO,
+            axis_dir: DVec3::Z,
         });
         let p = s.point_at(0.0, 0.0);
         assert!((p - DVec3::new(1.0, 0.0, 0.0)).length() < TOL);
@@ -1373,7 +1606,11 @@ mod tkg3d_eval_surface_types_tests {
     fn eval_t_bezier_curve_point_at() {
         // T-Bezier curve (trigonometric Bezier: P0 + P1*sin(t) + P2*cos(t))
         let c = Curve3::Bezier(BezierCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
+            ],
             weights: vec![1.0, 1.0, 1.0],
         });
         // Use domain [0, PI] (matches T-Bezier parameter range)
@@ -1407,36 +1644,84 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_line_equal() {
-        let a = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let b = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let a = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
+        let b = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
 
     #[test]
     fn hash_line_not_equal() {
-        let a = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let b = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y });
+        let a = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
+        let b = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::Y,
+        });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
 
     #[test]
     fn hash_circle_equal() {
-        let a = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
-        let b = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        let a = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
+        let b = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
 
     #[test]
     fn hash_circle_different_radius() {
-        let a = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
-        let b = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 10.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        let a = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
+        let b = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 10.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
 
     #[test]
     fn hash_circle_different_axis() {
-        let a = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
-        let b = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Y, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        let a = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
+        let b = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Y,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
 
@@ -1456,11 +1741,19 @@ mod tkg3d_hash_tests {
     #[test]
     fn hash_bezier_different_poles() {
         let a = Curve3::Bezier(BezierCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(1.0, 2.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(1.0, 2.0, 0.0),
+                DVec3::new(2.0, 0.0, 0.0),
+            ],
             weights: vec![1.0, 1.0, 1.0],
         });
         let b = Curve3::Bezier(BezierCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(1.0, 3.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(1.0, 3.0, 0.0),
+                DVec3::new(2.0, 0.0, 0.0),
+            ],
             weights: vec![1.0, 1.0, 1.0],
         });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
@@ -1468,8 +1761,20 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_circle_vs_ellipse() {
-        let a = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
-        let b = Curve3::Ellipse(Ellipse3 { center: DVec3::ZERO, normal: DVec3::Z, major_radius: 5.0, minor_radius: 5.0, major_dir: DVec3::X });
+        let a = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
+        let b = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 5.0,
+            major_dir: DVec3::X,
+        });
         // Same geometry but different type
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1491,10 +1796,16 @@ mod tkg3d_hash_tests {
     #[test]
     fn hash_cylinder_equal() {
         let a = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let b = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1502,10 +1813,16 @@ mod tkg3d_hash_tests {
     #[test]
     fn hash_cylinder_different_radius() {
         let a = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let b = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1513,10 +1830,16 @@ mod tkg3d_hash_tests {
     #[test]
     fn hash_sphere_equal() {
         let a = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let b = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1524,10 +1847,16 @@ mod tkg3d_hash_tests {
     #[test]
     fn hash_sphere_different_radius() {
         let a = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         let b = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 10.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
         });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1536,7 +1865,10 @@ mod tkg3d_hash_tests {
     fn hash_diff_types_not_equal() {
         let a = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
         let b = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1549,8 +1881,20 @@ mod tkg3d_hash_tests {
 
     #[test]
     fn hash_circle_different_location() {
-        let a = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
-        let b = Curve3::Circle(Circle3 { center: DVec3::new(1.0, 0.0, 0.0), normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        let a = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
+        let b = Curve3::Circle(Circle3 {
+            center: DVec3::new(1.0, 0.0, 0.0),
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }
 }

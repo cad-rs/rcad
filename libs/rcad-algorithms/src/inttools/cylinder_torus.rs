@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a cylinder with a torus.
+//! Analytic intersection of a cylinder with a torus.
 //!
 //! # Cases
 //!
@@ -10,8 +10,8 @@
 use std::f64::consts::TAU;
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, ToroidalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, CylindricalSurface, ToroidalSurface, any_perpendicular};
 
 use crate::tolerance::*;
 
@@ -110,7 +110,9 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 
     // Resolvent cubic: m³ + 2p·m² + (p² - 4r)·m - q² = 0
     let m_roots = solve_cubic_real(1.0, 2.0 * p, p * p - 4.0 * r, -q * q);
-    let m = m_roots.into_iter().find(|&m| m >= 0.0 && m.is_finite())
+    let m = m_roots
+        .into_iter()
+        .find(|&m| m >= 0.0 && m.is_finite())
         .unwrap_or_else(|| {
             // Try Newton to find a non-negative root
             newton_root(1.0, 2.0 * p, p * p - 4.0 * r, -q * q)
@@ -129,7 +131,10 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     // where A = sqrt_m, B + C = p + m, C - B = q / sqrt_m
     let (b_val, c_val) = if sqrt_m > TOLERANCE_CLAMP_MIN {
         let half_q_over_sqrt_m = 0.5 * q / sqrt_m;
-        (0.5 * (p + m) - half_q_over_sqrt_m, 0.5 * (p + m) + half_q_over_sqrt_m)
+        (
+            0.5 * (p + m) - half_q_over_sqrt_m,
+            0.5 * (p + m) + half_q_over_sqrt_m,
+        )
     } else {
         (0.5 * (p + m), 0.5 * (p + m))
     };
@@ -435,7 +440,8 @@ fn intersect_skew_cylinder_torus(
                 let a3 = 4.0 * c1;
                 let a2 = 4.0 * c1 * c1 + 2.0 * c0 - 2.0 * r_sum_sq + 4.0 * r_major_sq * d1_sq;
                 let a1 = 4.0 * c1 * c0 - 4.0 * r_sum_sq * c1 + 8.0 * r_major_sq * d1 * d0;
-                let a0 = c0 * c0 - 2.0 * r_sum_sq * c0 + r_diff_sq * r_diff_sq
+                let a0 = c0 * c0 - 2.0 * r_sum_sq * c0
+                    + r_diff_sq * r_diff_sq
                     + 4.0 * r_major_sq * d0 * d0;
 
                 let v_roots = solve_quartic_real(1.0, a3, a2, a1, a0);
@@ -455,7 +461,10 @@ fn intersect_skew_cylinder_torus(
             };
 
             let refined = crate::inttools::pcurve_derive::refine_polyline(
-                &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
+                &branch,
+                eval_fn,
+                CHORD_TOL,
+                REFINE_DEPTH,
             );
             refined.into_iter().map(|(_, p)| p).collect()
         })
@@ -516,9 +525,7 @@ fn intersect_cylinder_torus_coaxial(
     let center2 = torus.center - torus.axis * z_offset;
 
     CylinderTorusResult::TwoCircles(
-        Circle3::new(center1, torus.axis, r_cyl ),
-        Circle3::new(center2, torus.axis, r_cyl ),
+        Circle3::new(center1, torus.axis, r_cyl),
+        Circle3::new(center2, torus.axis, r_cyl),
     )
 }
-
-

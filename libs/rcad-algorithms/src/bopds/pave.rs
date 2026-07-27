@@ -91,8 +91,14 @@ impl PaveBlock {
     pub fn new_curve_block() -> Self {
         Self {
             original_edge: NO_EDGE,
-            pave1: Pave { vertex_idx: NO_EDGE, param: 0.0 },
-            pave2: Pave { vertex_idx: NO_EDGE, param: 0.0 },
+            pave1: Pave {
+                vertex_idx: NO_EDGE,
+                param: 0.0,
+            },
+            pave2: Pave {
+                vertex_idx: NO_EDGE,
+                param: 0.0,
+            },
             new_edge: None,
             ext_paves: Vec::new(),
             ext_paves_fence: HashSet::new(),
@@ -174,7 +180,12 @@ impl PaveBlock {
             a_nb += 2;
         }
         if std::env::var("RCAD_DEBUG_MB").is_ok() {
-            eprintln!("[MB_update] a_nb={} the_flag={} ext={}", a_nb, the_flag, self.ext_paves.len());
+            eprintln!(
+                "[MB_update] a_nb={} the_flag={} ext={}",
+                a_nb,
+                the_flag,
+                self.ext_paves.len()
+            );
         }
 
         // OCCT L288: aNb <= 1 → return (no split possible).
@@ -192,7 +203,11 @@ impl PaveBlock {
         p_paves.extend(self.ext_paves.drain(..));
         self.ext_paves_fence.clear();
 
-        p_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
+        p_paves.sort_by(|a, b| {
+            a.param
+                .partial_cmp(&b.param)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut result = Vec::with_capacity(p_paves.len() - 1);
         let mut a_pave1 = p_paves[0];
@@ -227,8 +242,14 @@ impl PaveBlock {
     }
 
     /// OCCT: BOPDS_PaveBlock::SetShrunkData with bounding box (full sig).
-    pub fn set_shrunk_data_with_box(&mut self, ts1: f64, ts2: f64,
-        box_min: glam::DVec3, box_max: glam::DVec3, the_is_splittable: bool) {
+    pub fn set_shrunk_data_with_box(
+        &mut self,
+        ts1: f64,
+        ts2: f64,
+        box_min: glam::DVec3,
+        box_max: glam::DVec3,
+        the_is_splittable: bool,
+    ) {
         self.shrunk_range = Some([ts1, ts2]);
         self.my_shrunk_box = Some((box_min, box_max));
         self.is_splittable = the_is_splittable;
@@ -243,14 +264,14 @@ impl PaveBlock {
     }
 }
 
-
-
 /// shared PaveBlock via `Arc<RwLock<PaveBlock>>`.
 #[derive(Debug, Clone)]
 pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
 
 impl SharedPB {
-    pub fn new(pb: PaveBlock) -> Self { SharedPB(Arc::new(RwLock::new(pb))) }
+    pub fn new(pb: PaveBlock) -> Self {
+        SharedPB(Arc::new(RwLock::new(pb)))
+    }
 }
 
 /// BOPDS_CoupleOfPaveBlocks (hxx:28-108).
@@ -278,8 +299,14 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_new() {
-        let pv1 = Pave { vertex_idx: 0, param: 0.0 };
-        let pv2 = Pave { vertex_idx: 1, param: 1.0 };
+        let pv1 = Pave {
+            vertex_idx: 0,
+            param: 0.0,
+        };
+        let pv2 = Pave {
+            vertex_idx: 1,
+            param: 1.0,
+        };
         let pb = PaveBlock::new(5, pv1, pv2);
 
         assert_eq!(pb.original_edge, 5);
@@ -294,9 +321,17 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_range_and_indices() {
-        let pb = PaveBlock::new(3,
-            Pave { vertex_idx: 2, param: 0.5 },
-            Pave { vertex_idx: 5, param: 2.5 });
+        let pb = PaveBlock::new(
+            3,
+            Pave {
+                vertex_idx: 2,
+                param: 0.5,
+            },
+            Pave {
+                vertex_idx: 5,
+                param: 2.5,
+            },
+        );
         let (t1, t2) = pb.range();
         assert!((t1 - 0.5).abs() < 1e-15);
         assert!((t2 - 2.5).abs() < 1e-15);
@@ -307,18 +342,50 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_has_same_bounds() {
-        let a = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
-        let b = PaveBlock::new(2,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
-        let c = PaveBlock::new(3,
-            Pave { vertex_idx: 1, param: 0.0 },
-            Pave { vertex_idx: 0, param: 1.0 });
-        let d = PaveBlock::new(4,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 2, param: 1.0 });
+        let a = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
+        let b = PaveBlock::new(
+            2,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
+        let c = PaveBlock::new(
+            3,
+            Pave {
+                vertex_idx: 1,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 0,
+                param: 1.0,
+            },
+        );
+        let d = PaveBlock::new(
+            4,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 2,
+                param: 1.0,
+            },
+        );
 
         assert!(a.has_same_bounds(&b), "Same bounds (forward)");
         assert!(a.has_same_bounds(&c), "Same bounds (reversed vertex order)");
@@ -327,11 +394,25 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_remove_ext_pave() {
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.3 });
-        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.7 });
+        let mut pb = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
+        pb.append_ext_pave(Pave {
+            vertex_idx: 2,
+            param: 0.3,
+        });
+        pb.append_ext_pave(Pave {
+            vertex_idx: 3,
+            param: 0.7,
+        });
         assert_eq!(pb.ext_paves.len(), 2);
 
         pb.remove_ext_pave(2);
@@ -345,21 +426,43 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_is_to_update() {
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
+        let mut pb = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
         assert!(!pb.is_to_update(), "No ext_paves → not to update");
 
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.5 });
+        pb.append_ext_pave(Pave {
+            vertex_idx: 2,
+            param: 0.5,
+        });
         assert!(pb.is_to_update(), "Has ext_paves → to update");
     }
 
     #[test]
     fn pave_block_contains_parameter() {
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 0.5 });
+        let mut pb = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
+        pb.append_ext_pave(Pave {
+            vertex_idx: 2,
+            param: 0.5,
+        });
 
         let mut idx = 0usize;
         assert!(pb.contains_parameter(0.5, 1e-10, &mut idx));
@@ -371,14 +474,32 @@ mod pave_block_tests {
     #[test]
     fn pave_block_update_splits() {
         // BOPDS_PaveBlock::Update splits the block at ext_pave params
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 3, param: 3.0 });
-        pb.append_ext_pave(Pave { vertex_idx: 1, param: 1.0 });
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 2.0 });
+        let mut pb = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 3,
+                param: 3.0,
+            },
+        );
+        pb.append_ext_pave(Pave {
+            vertex_idx: 1,
+            param: 1.0,
+        });
+        pb.append_ext_pave(Pave {
+            vertex_idx: 2,
+            param: 2.0,
+        });
 
         let result = pb.update(true); // the_flag=true includes endpoint paves
-        assert_eq!(result.len(), 3, "Three sub-blocks from two ext_paves + endpoints");
+        assert_eq!(
+            result.len(),
+            3,
+            "Three sub-blocks from two ext_paves + endpoints"
+        );
         // Sorted endpoints + ext_paves: [0.0, 1.0, 2.0, 3.0] → blocks [0,1], [1,2], [2,3]
         assert!((result[0].pave1.param - 0.0).abs() < 1e-15);
         assert!((result[0].pave2.param - 1.0).abs() < 1e-15);
@@ -391,10 +512,21 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_update_includes_endpoints() {
-        let mut pb = PaveBlock::new(1,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 3, param: 3.0 });
-        pb.append_ext_pave(Pave { vertex_idx: 2, param: 2.0 }); // One interior split
+        let mut pb = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 3,
+                param: 3.0,
+            },
+        );
+        pb.append_ext_pave(Pave {
+            vertex_idx: 2,
+            param: 2.0,
+        }); // One interior split
 
         let result = pb.update(true); // the_flag=true (include endpoint paves)
         // Endpoints (0.0, 3.0) + ext (2.0) = sorted [0.0, 2.0, 3.0] → 2 blocks
@@ -411,14 +543,33 @@ mod pave_block_tests {
 
     #[test]
     fn pave_block_has_same_bounds_reversed() {
-        let a = PaveBlock::new(1,
-            Pave { vertex_idx: 5, param: 0.0 },
-            Pave { vertex_idx: 9, param: 1.0 });
-        let b = PaveBlock::new(2,
-            Pave { vertex_idx: 9, param: 1.0 },
-            Pave { vertex_idx: 5, param: 0.0 });
+        let a = PaveBlock::new(
+            1,
+            Pave {
+                vertex_idx: 5,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 9,
+                param: 1.0,
+            },
+        );
+        let b = PaveBlock::new(
+            2,
+            Pave {
+                vertex_idx: 9,
+                param: 1.0,
+            },
+            Pave {
+                vertex_idx: 5,
+                param: 0.0,
+            },
+        );
 
-        assert!(a.has_same_bounds(&b), "Reversed endpoints should be considered same bounds");
+        assert!(
+            a.has_same_bounds(&b),
+            "Reversed endpoints should be considered same bounds"
+        );
         assert!(b.has_same_bounds(&a), "Symmetric check");
     }
 
@@ -456,7 +607,10 @@ mod pave_block_tests {
         cb.set_pave_blocks(vec![(0, 1), (1, 2), (2, 3)]);
         assert_eq!(cb.pave_blocks().len(), 3);
         cb.set_pave_blocks(vec![]);
-        assert!(cb.pave_blocks().is_empty(), "set_pave_blocks should replace all");
+        assert!(
+            cb.pave_blocks().is_empty(),
+            "set_pave_blocks should replace all"
+        );
     }
 
     #[test]
@@ -489,7 +643,11 @@ mod pave_block_tests {
         let mut cb = CommonBlock::new();
         cb.add_face(1);
         cb.append_faces(&[2, 3, 1]); // 1 is duplicate
-        assert_eq!(cb.faces().len(), 3, "append_faces with duplicate should not add dups");
+        assert_eq!(
+            cb.faces().len(),
+            3,
+            "append_faces with duplicate should not add dups"
+        );
         assert_eq!(cb.faces()[0], 1);
         assert_eq!(cb.faces()[1], 2);
         assert_eq!(cb.faces()[2], 3);
@@ -497,9 +655,17 @@ mod pave_block_tests {
 
     #[test]
     fn shared_pb_wraps_pave_block() {
-        let pb = PaveBlock::new(7,
-            Pave { vertex_idx: 0, param: 0.0 },
-            Pave { vertex_idx: 1, param: 1.0 });
+        let pb = PaveBlock::new(
+            7,
+            Pave {
+                vertex_idx: 0,
+                param: 0.0,
+            },
+            Pave {
+                vertex_idx: 1,
+                param: 1.0,
+            },
+        );
         let spb = SharedPB::new(pb);
         let read = spb.0.read().unwrap();
         assert_eq!(read.original_edge, 7);

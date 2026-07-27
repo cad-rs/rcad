@@ -1,22 +1,22 @@
-﻿//! BRepIntCurveSurface-style curve-surface intersection operations.
+//! BRepIntCurveSurface-style curve-surface intersection operations.
 //!
-//! 
+//!
 //! - `CurveSurfaceInter` (class): iterate intersection points with
 //!   `init()` / `more()` / `next()` / `point()` / `face()` pattern.
 //! - Utility free functions: intersect_line_with_brep, ray_cast, etc.
 
-use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
-use rcad_kernel::topods::{self, TShape};
 use crate::boptools::bvh::{Aabb, Bvh};
-use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
 use crate::inttools::curve_surface::{
+    intersect_line_cone as intersect_line_cone_range,
     intersect_line_cylinder as intersect_line_cylinder_range,
     intersect_line_sphere as intersect_line_sphere_range,
-    intersect_line_cone as intersect_line_cone_range,
 };
+use crate::tolerance::*;
+use glam::{DVec2, DVec3};
 use rayon::prelude::*;
+use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
+use rcad_kernel::topods::{self, TShape};
 
 // =============================================================================
 // BRepIntCurveSurface_Inter  ?curve-surface intersection (class)
@@ -261,7 +261,9 @@ pub fn intersect_curve_with_brep(
     // Flatten and sort by parameter
     let mut results: Vec<CurveBRepIntersection> = all_intersections.into_iter().flatten().collect();
     results.sort_by(|a, b| {
-        a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal)
+        a.param
+            .partial_cmp(&b.param)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Remove duplicates (within tolerance)
@@ -330,7 +332,9 @@ pub fn intersect_line_with_brep(
 
     // Sort by parameter
     results.sort_by(|a, b| {
-        a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal)
+        a.param
+            .partial_cmp(&b.param)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Remove duplicates
@@ -394,9 +398,14 @@ pub fn intersect_curve_with_face(
         // Check for sign change (intersection)
         if prev_dist < tol || dist < tol {
             // Already close to surface
-            if prev_dist < tol && (i == 1 || intersections.last().is_none_or(|last: &CurveFaceIntersection| {
-                (last.param - (t - (t1 - t0) / n_samples as f64)).abs() > tol
-            })) {
+            if prev_dist < tol
+                && (i == 1
+                    || intersections
+                        .last()
+                        .is_none_or(|last: &CurveFaceIntersection| {
+                            (last.param - (t - (t1 - t0) / n_samples as f64)).abs() > tol
+                        }))
+            {
                 intersections.push(CurveFaceIntersection {
                     point: prev_proj.point,
                     param: t - (t1 - t0) / n_samples as f64,
@@ -404,7 +413,11 @@ pub fn intersect_curve_with_face(
                 });
             }
         } else if let Some(cfi) = refine_curve_surface_intersection(
-            curve, &surface, t - (t1 - t0) / n_samples as f64, t, tol
+            curve,
+            &surface,
+            t - (t1 - t0) / n_samples as f64,
+            t,
+            tol,
         ) {
             intersections.push(cfi);
         }
@@ -498,11 +511,7 @@ pub fn intersect_line_with_face(
 /// let hits = ray_cast(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep);
 /// assert!(!hits.is_empty());
 /// ```
-pub fn ray_cast(
-    origin: DVec3,
-    direction: DVec3,
-    brep: &rcad_kernel::BRep,
-) -> Vec<RayHit> {
+pub fn ray_cast(origin: DVec3, direction: DVec3, brep: &rcad_kernel::BRep) -> Vec<RayHit> {
     let dir = direction.normalize_or_zero();
 
     // Get all line intersections
@@ -526,7 +535,9 @@ pub fn ray_cast(
 
     // Sort by distance
     hits.sort_by(|a, b| {
-        a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Deduplicate
@@ -637,7 +648,9 @@ pub fn is_point_inside_by_ray(point: DVec3, brep: &rcad_kernel::BRep) -> bool {
 
 /// Collect all face indices from a BRep (tshape indices of TShape::Face entries).
 fn collect_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
-    brep.tshapes.iter().enumerate()
+    brep.tshapes
+        .iter()
+        .enumerate()
         .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
         .map(|(fi, _)| fi)
         .collect()
@@ -650,28 +663,45 @@ fn get_face_normal(brep: &rcad_kernel::BRep, face_idx: usize) -> DVec3 {
         Some(ts) => ts,
         None => return DVec3::Z,
     };
-    let TShape::Face(fd) = ts.as_ref() else { return DVec3::Z };
-    let Some(surf) = &fd.surface else { return DVec3::Z };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return DVec3::Z;
+    };
+    let Some(surf) = &fd.surface else {
+        return DVec3::Z;
+    };
     let dom = surf.default_domain();
     let u = (dom[0] + dom[1]) * 0.5;
     let v = (dom[2] + dom[3]) * 0.5;
-    if u.is_finite() && v.is_finite() { surf.normal_at(u, v) } else { DVec3::Z }
+    if u.is_finite() && v.is_finite() {
+        surf.normal_at(u, v)
+    } else {
+        DVec3::Z
+    }
 }
 
 /// Collect wire edge refs (tshape index, forward) from a ShapeRef pointing to a TShape::Wire.
 fn get_wire_edge_refs(brep: &rcad_kernel::BRep, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
-    let Some(wts) = brep.tshapes.get(wire_ref.index) else { return Vec::new() };
-    let TShape::Wire(wd) = wts.as_ref() else { return Vec::new() };
-    wd.edges.iter().map(|er| {
-        let forward = er.orientation == topods::Orientation::Forward;
-        (er.index, forward)
-    }).collect()
+    let Some(wts) = brep.tshapes.get(wire_ref.index) else {
+        return Vec::new();
+    };
+    let TShape::Wire(wd) = wts.as_ref() else {
+        return Vec::new();
+    };
+    wd.edges
+        .iter()
+        .map(|er| {
+            let forward = er.orientation == topods::Orientation::Forward;
+            (er.index, forward)
+        })
+        .collect()
 }
 
 /// Get the surface for a face by its tshape index.
 fn get_face_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface3> {
     let ts = brep.tshapes.get(face_idx)?;
-    let TShape::Face(fd) = ts.as_ref() else { return None };
+    let TShape::Face(fd) = ts.as_ref() else {
+        return None;
+    };
     fd.surface.clone()
 }
 
@@ -700,37 +730,48 @@ struct ProjectedPoint {
 }
 
 /// Intersect a line with a surface.
-fn intersect_line_with_surface(origin: DVec3, dir: DVec3, surface: &Surface3) -> Vec<LineSurfaceHit> {
-    let line = Line3 { origin, direction: dir };
+fn intersect_line_with_surface(
+    origin: DVec3,
+    dir: DVec3,
+    surface: &Surface3,
+) -> Vec<LineSurfaceHit> {
+    let line = Line3 {
+        origin,
+        direction: dir,
+    };
     let infinite_range = [-1e10, 1e10];
 
     match surface {
-        Surface3::Plane(plane) => {
-            intersect_line_plane(&line, plane)
-                .map(|r| vec![LineSurfaceHit { point: r.point, param: r.param }])
-                .unwrap_or_default()
-        }
-        Surface3::Cylinder(cyl) => {
-            intersect_line_cylinder_range(&line, infinite_range, cyl)
-                .into_iter()
-                .map(|h| LineSurfaceHit { point: h.point, param: h.curve_param })
-                .collect()
-        }
-        Surface3::Sphere(sph) => {
-            intersect_line_sphere_range(&line, infinite_range, sph)
-                .into_iter()
-                .map(|h| LineSurfaceHit { point: h.point, param: h.curve_param })
-                .collect()
-        }
-        Surface3::Cone(cone) => {
-            intersect_line_cone_range(&line, infinite_range, cone)
-                .into_iter()
-                .map(|h| LineSurfaceHit { point: h.point, param: h.curve_param })
-                .collect()
-        }
-        Surface3::Torus(torus) => {
-            intersect_line_with_torus(&line, torus)
-        }
+        Surface3::Plane(plane) => intersect_line_plane(&line, plane)
+            .map(|r| {
+                vec![LineSurfaceHit {
+                    point: r.point,
+                    param: r.param,
+                }]
+            })
+            .unwrap_or_default(),
+        Surface3::Cylinder(cyl) => intersect_line_cylinder_range(&line, infinite_range, cyl)
+            .into_iter()
+            .map(|h| LineSurfaceHit {
+                point: h.point,
+                param: h.curve_param,
+            })
+            .collect(),
+        Surface3::Sphere(sph) => intersect_line_sphere_range(&line, infinite_range, sph)
+            .into_iter()
+            .map(|h| LineSurfaceHit {
+                point: h.point,
+                param: h.curve_param,
+            })
+            .collect(),
+        Surface3::Cone(cone) => intersect_line_cone_range(&line, infinite_range, cone)
+            .into_iter()
+            .map(|h| LineSurfaceHit {
+                point: h.point,
+                param: h.curve_param,
+            })
+            .collect(),
+        Surface3::Torus(torus) => intersect_line_with_torus(&line, torus),
         Surface3::BSpline(bspline) => {
             // For B-spline surfaces, use iterative intersection
             intersect_line_with_bspline_surface(&line, &Surface3::BSpline(bspline.clone()))
@@ -757,9 +798,15 @@ impl Default for LineSurfaceHit {
 }
 
 /// Intersect a line with a torus surface.
-fn intersect_line_with_torus(line: &Line3, torus: &rcad_kernel::geom::ToroidalSurface) -> Vec<LineSurfaceHit> {
+fn intersect_line_with_torus(
+    line: &Line3,
+    torus: &rcad_kernel::geom::ToroidalSurface,
+) -> Vec<LineSurfaceHit> {
     let results = intersect_line_torus(line, torus);
-    results.into_iter().map(|(point, param)| LineSurfaceHit { point, param }).collect()
+    results
+        .into_iter()
+        .map(|(point, param)| LineSurfaceHit { point, param })
+        .collect()
 }
 
 /// Intersect a line with a B-spline surface using iterative methods.
@@ -787,7 +834,8 @@ fn intersect_line_with_general_surface(line: &Line3, surface: &Surface3) -> Vec<
             let to_surface = surf_point - line.origin;
             let t = to_surface.dot(line.direction);
 
-            if t.abs() < 1e10 { // Within reasonable range
+            if t.abs() < 1e10 {
+                // Within reasonable range
                 let line_point = line.origin + t * line.direction;
                 let dist = (line_point - surf_point).length();
 
@@ -802,7 +850,11 @@ fn intersect_line_with_general_surface(line: &Line3, surface: &Surface3) -> Vec<
     }
 
     // Sort and deduplicate
-    hits.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        a.param
+            .partial_cmp(&b.param)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     deduplicate_line_surface_hits(&mut hits);
 
     hits
@@ -829,7 +881,10 @@ fn refine_line_surface_intersection(
 
         let error = (surf_point - line_point).length();
         if error < TOLERANCE_ABS {
-            return Some(LineSurfaceHit { point: surf_point, param: t });
+            return Some(LineSurfaceHit {
+                point: surf_point,
+                param: t,
+            });
         }
 
         // Compute Jacobian using finite differences
@@ -865,7 +920,10 @@ fn refine_line_surface_intersection(
     let error = (surf_point - line_point).length();
 
     if error < TOLERANCE_ABS * 100.0 {
-        Some(LineSurfaceHit { point: surf_point, param: t })
+        Some(LineSurfaceHit {
+            point: surf_point,
+            param: t,
+        })
     } else {
         None
     }
@@ -926,9 +984,19 @@ fn compute_uv_for_point(surface: &Surface3, point: DVec3) -> DVec2 {
 /// Check if a point lies within a face's boundaries.
 ///
 /// Uses point-in-polygon test with the face's outer wire vertices.
-fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, face_idx: usize, tol: f64) -> bool {
+fn is_point_in_face_bounds(
+    brep: &rcad_kernel::BRep,
+    point: DVec3,
+    _uv: DVec2,
+    face_idx: usize,
+    tol: f64,
+) -> bool {
     let fd = match brep.tshapes.get(face_idx).and_then(|ts| {
-        if let TShape::Face(f) = ts.as_ref() { Some(f) } else { None }
+        if let TShape::Face(f) = ts.as_ref() {
+            Some(f)
+        } else {
+            None
+        }
     }) {
         Some(f) => f,
         None => return true,
@@ -961,9 +1029,10 @@ fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, f
             let inner_edges = get_wire_edge_refs(brep, inner_wire_ref);
             let inner_vertices = collect_wire_vertices_from_edges(brep, &inner_edges);
             if inner_vertices.len() >= 3
-                && point_in_polygon_on_surface(&surface, point, &inner_vertices, tol) {
-                    return false;
-                }
+                && point_in_polygon_on_surface(&surface, point, &inner_vertices, tol)
+            {
+                return false;
+            }
         }
 
         // For cylinder and cone surfaces, verify the axial (V) bounds using the
@@ -1009,15 +1078,24 @@ fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, f
 }
 
 /// Collect 3D vertex positions from wire edge refs in traversal order.
-fn collect_wire_vertices_from_edges(brep: &rcad_kernel::BRep, edge_refs: &[(usize, bool)]) -> Vec<DVec3> {
+fn collect_wire_vertices_from_edges(
+    brep: &rcad_kernel::BRep,
+    edge_refs: &[(usize, bool)],
+) -> Vec<DVec3> {
     let mut vertices = Vec::new();
     for &(ei, forward) in edge_refs {
         let ts = match brep.tshapes.get(ei) {
             Some(ts) => ts,
             None => continue,
         };
-        let TShape::Edge(ed) = ts.as_ref() else { continue };
-        let vertex_idx = if forward { ed.first.index } else { ed.last.index };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            continue;
+        };
+        let vertex_idx = if forward {
+            ed.first.index
+        } else {
+            ed.last.index
+        };
         if let Some(p) = brep.vertex_point(vertex_idx) {
             vertices.push(p);
         }
@@ -1028,7 +1106,12 @@ fn collect_wire_vertices_from_edges(brep: &rcad_kernel::BRep, edge_refs: &[(usiz
 /// Check if a point is inside a polygon projected onto a surface.
 ///
 /// Uses the ray casting algorithm (even-odd rule) in the surface's natural 2D coordinate system.
-fn point_in_polygon_on_surface(surface: &Surface3, point: DVec3, polygon: &[DVec3], tol: f64) -> bool {
+fn point_in_polygon_on_surface(
+    surface: &Surface3,
+    point: DVec3,
+    polygon: &[DVec3],
+    tol: f64,
+) -> bool {
     // Check if we have enough unique vertices for a proper polygon
     let unique_vertices: Vec<DVec3> = {
         let mut unique: Vec<DVec3> = Vec::new();
@@ -1101,7 +1184,9 @@ fn point_on_closed_surface(surface: &Surface3, point: DVec3, tol: f64) -> bool {
             let radial_vec = rel - axial_dist * axis;
             let radial_dist = radial_vec.length();
             // Distance to torus surface: sqrt((radial_dist - major_r)^2 + axial_dist^2) - minor_r
-            let dist_to_surface = ((radial_dist - torus.major_radius).powi(2) + axial_dist.powi(2)).sqrt() - torus.minor_radius;
+            let dist_to_surface = ((radial_dist - torus.major_radius).powi(2) + axial_dist.powi(2))
+                .sqrt()
+                - torus.minor_radius;
             dist_to_surface.abs() < tol * 10.0
         }
         Surface3::Cylinder(cyl) => {
@@ -1360,5 +1445,3 @@ fn deduplicate_ray_hits(hits: &mut Vec<RayHit>) {
 // =============================================================================
 // Tests
 // =============================================================================
-
-

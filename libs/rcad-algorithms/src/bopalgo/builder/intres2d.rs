@@ -25,29 +25,26 @@ impl IntRes2dDomain {
     pub fn new() -> Self {
         IntRes2dDomain {
             status: 0,
-            first_param: 0.0, last_param: 0.0,
-            first_tol: 0.0, last_tol: 0.0,
-            first_point: DVec2::ZERO, last_point: DVec2::ZERO,
-            period_first: 0.0, period_last: 0.0,
+            first_param: 0.0,
+            last_param: 0.0,
+            first_tol: 0.0,
+            last_tol: 0.0,
+            first_point: DVec2::ZERO,
+            last_point: DVec2::ZERO,
+            period_first: 0.0,
+            period_last: 0.0,
         }
     }
 
     /// Creates a bounded Domain.
-    pub fn new_bounded(
-        p1: DVec2, par1: f64, tol1: f64,
-        p2: DVec2, par2: f64, tol2: f64,
-    ) -> Self {
+    pub fn new_bounded(p1: DVec2, par1: f64, tol1: f64, p2: DVec2, par2: f64, tol2: f64) -> Self {
         let mut d = Self::new();
         d.set_values(p1, par1, tol1, p2, par2, tol2);
         d
     }
 
     /// OCCT SetValues for a bounded domain.
-    pub fn set_values(
-        &mut self,
-        p1: DVec2, par1: f64, tol1: f64,
-        p2: DVec2, par2: f64, tol2: f64,
-    ) {
+    pub fn set_values(&mut self, p1: DVec2, par1: f64, tol1: f64, p2: DVec2, par2: f64, tol2: f64) {
         self.status = 3;
         self.period_first = 0.0;
         self.period_last = 0.0;
@@ -62,8 +59,12 @@ impl IntRes2dDomain {
     /// Alias for set_values — matches the old rcad name.
     pub fn set_values_bounded(
         &mut self,
-        p1: DVec2, par1: f64, tol1: f64,
-        p2: DVec2, par2: f64, tol2: f64,
+        p1: DVec2,
+        par1: f64,
+        tol1: f64,
+        p2: DVec2,
+        par2: f64,
+        tol2: f64,
     ) {
         self.set_values(p1, par1, tol1, p2, par2, tol2);
     }
@@ -99,7 +100,9 @@ impl IntRes2dDomain {
         self.period_last = period;
     }
 
-    pub fn has_first_point(&self) -> bool { (self.status & 1) != 0 }
+    pub fn has_first_point(&self) -> bool {
+        (self.status & 1) != 0
+    }
 
     pub fn first_parameter(&self) -> f64 {
         assert!(self.has_first_point(), "IntRes2dDomain: no first point");
@@ -116,7 +119,9 @@ impl IntRes2dDomain {
         self.first_tol
     }
 
-    pub fn has_last_point(&self) -> bool { (self.status & 2) != 0 }
+    pub fn has_last_point(&self) -> bool {
+        (self.status & 2) != 0
+    }
 
     pub fn last_parameter(&self) -> f64 {
         assert!(self.has_last_point(), "IntRes2dDomain: no last point");
@@ -133,7 +138,9 @@ impl IntRes2dDomain {
         self.last_tol
     }
 
-    pub fn is_closed(&self) -> bool { (self.status & 4) != 0 }
+    pub fn is_closed(&self) -> bool {
+        (self.status & 4) != 0
+    }
 
     pub fn equivalent_parameters(&self) -> (f64, f64) {
         (self.period_first, self.period_last)
@@ -146,13 +153,26 @@ impl IntRes2dDomain {
 // ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntRes2dPosition { Head, Middle, End }
+pub enum IntRes2dPosition {
+    Head,
+    Middle,
+    End,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntRes2dTypeTrans { In, Out, Touch, Undecided }
+pub enum IntRes2dTypeTrans {
+    In,
+    Out,
+    Touch,
+    Undecided,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntRes2dSituation { Inside, Outside, Unknown }
+pub enum IntRes2dSituation {
+    Inside,
+    Outside,
+    Unknown,
+}
 
 // ============================================================================
 // IntRes2d_Transition (IntRes2d_Transition.hxx/lxx)
@@ -172,36 +192,61 @@ impl IntRes2dTransition {
     /// Creates an IN or OUT transition.
     pub fn new_in_out(tangent: bool, pos: IntRes2dPosition, typ: IntRes2dTypeTrans) -> Self {
         IntRes2dTransition {
-            tangent, posit: pos, typetra: typ,
-            situat: IntRes2dSituation::Unknown, oppos: false,
+            tangent,
+            posit: pos,
+            typetra: typ,
+            situat: IntRes2dSituation::Unknown,
+            oppos: false,
         }
     }
 
     /// Creates a TOUCH transition.
-    pub fn new_touch(tangent: bool, pos: IntRes2dPosition, situ: IntRes2dSituation, oppos: bool) -> Self {
+    pub fn new_touch(
+        tangent: bool,
+        pos: IntRes2dPosition,
+        situ: IntRes2dSituation,
+        oppos: bool,
+    ) -> Self {
         IntRes2dTransition {
-            tangent, posit: pos, typetra: IntRes2dTypeTrans::Touch,
-            situat: situ, oppos,
+            tangent,
+            posit: pos,
+            typetra: IntRes2dTypeTrans::Touch,
+            situat: situ,
+            oppos,
         }
     }
 
     /// Creates an UNDECIDED transition.
     pub fn new_undecided(pos: IntRes2dPosition) -> Self {
         IntRes2dTransition {
-            tangent: true, posit: pos, typetra: IntRes2dTypeTrans::Undecided,
-            situat: IntRes2dSituation::Unknown, oppos: false,
+            tangent: true,
+            posit: pos,
+            typetra: IntRes2dTypeTrans::Undecided,
+            situat: IntRes2dSituation::Unknown,
+            oppos: false,
         }
     }
 
     /// OCCT SetValue for IN or OUT.
-    pub fn set_value_in_out(&mut self, tangent: bool, pos: IntRes2dPosition, typ: IntRes2dTypeTrans) {
+    pub fn set_value_in_out(
+        &mut self,
+        tangent: bool,
+        pos: IntRes2dPosition,
+        typ: IntRes2dTypeTrans,
+    ) {
         self.tangent = tangent;
         self.posit = pos;
         self.typetra = typ;
     }
 
     /// OCCT SetValue for TOUCH.
-    pub fn set_value_touch(&mut self, tangent: bool, pos: IntRes2dPosition, situ: IntRes2dSituation, oppos: bool) {
+    pub fn set_value_touch(
+        &mut self,
+        tangent: bool,
+        pos: IntRes2dPosition,
+        situ: IntRes2dSituation,
+        oppos: bool,
+    ) {
         self.tangent = tangent;
         self.posit = pos;
         self.typetra = IntRes2dTypeTrans::Touch;
@@ -232,19 +277,28 @@ impl IntRes2dTransition {
 
     /// OCCT IsTangent — throws when Undecided.
     pub fn is_tangent(&self) -> bool {
-        assert!(self.typetra != IntRes2dTypeTrans::Undecided, "IntRes2dTransition: IsTangent on Undecided");
+        assert!(
+            self.typetra != IntRes2dTypeTrans::Undecided,
+            "IntRes2dTransition: IsTangent on Undecided"
+        );
         self.tangent
     }
 
     /// OCCT Situation — throws when not TOUCH.
     pub fn situation(&self) -> IntRes2dSituation {
-        assert!(self.typetra == IntRes2dTypeTrans::Touch, "IntRes2dTransition: Situation on non-Touch");
+        assert!(
+            self.typetra == IntRes2dTypeTrans::Touch,
+            "IntRes2dTransition: Situation on non-Touch"
+        );
         self.situat
     }
 
     /// OCCT IsOpposite — throws when not TOUCH.
     pub fn is_opposite(&self) -> bool {
-        assert!(self.typetra == IntRes2dTypeTrans::Touch, "IntRes2dTransition: IsOpposite on non-Touch");
+        assert!(
+            self.typetra == IntRes2dTypeTrans::Touch,
+            "IntRes2dTransition: IsOpposite on non-Touch"
+        );
         self.oppos
     }
 }
@@ -268,42 +322,76 @@ impl IntRes2dIntersectionPoint {
     /// If reversed is true, (Uc1, Trans1) refer to the second curve and
     /// (Uc2, Trans2) refer to the first curve.
     pub fn new(
-        p: DVec2, u1: f64, u2: f64,
-        t1: IntRes2dTransition, t2: IntRes2dTransition,
+        p: DVec2,
+        u1: f64,
+        u2: f64,
+        t1: IntRes2dTransition,
+        t2: IntRes2dTransition,
         reversed: bool,
     ) -> Self {
         if reversed {
-            IntRes2dIntersectionPoint { pt: p, p1: u2, p2: u1, trans1: t2, trans2: t1 }
+            IntRes2dIntersectionPoint {
+                pt: p,
+                p1: u2,
+                p2: u1,
+                trans1: t2,
+                trans2: t1,
+            }
         } else {
-            IntRes2dIntersectionPoint { pt: p, p1: u1, p2: u2, trans1: t1, trans2: t2 }
+            IntRes2dIntersectionPoint {
+                pt: p,
+                p1: u1,
+                p2: u2,
+                trans1: t1,
+                trans2: t2,
+            }
         }
     }
 
     /// OCCT SetValues.
     pub fn set_values(
         &mut self,
-        p: DVec2, u1: f64, u2: f64,
-        t1: IntRes2dTransition, t2: IntRes2dTransition,
+        p: DVec2,
+        u1: f64,
+        u2: f64,
+        t1: IntRes2dTransition,
+        t2: IntRes2dTransition,
         reversed: bool,
     ) {
         if reversed {
-            self.pt = p; self.p1 = u2; self.p2 = u1;
-            self.trans1 = t2; self.trans2 = t1;
+            self.pt = p;
+            self.p1 = u2;
+            self.p2 = u1;
+            self.trans1 = t2;
+            self.trans2 = t1;
         } else {
-            self.pt = p; self.p1 = u1; self.p2 = u2;
-            self.trans1 = t1; self.trans2 = t2;
+            self.pt = p;
+            self.p1 = u1;
+            self.p2 = u2;
+            self.trans1 = t1;
+            self.trans2 = t2;
         }
     }
 
-    pub fn value(&self) -> DVec2 { self.pt }
-    pub fn param_on_first(&self) -> f64 { self.p1 }
-    pub fn param_on_second(&self) -> f64 { self.p2 }
+    pub fn value(&self) -> DVec2 {
+        self.pt
+    }
+    pub fn param_on_first(&self) -> f64 {
+        self.p1
+    }
+    pub fn param_on_second(&self) -> f64 {
+        self.p2
+    }
 
     /// OCCT TransitionOfFirst.
-    pub fn transition_of_first(&self) -> &IntRes2dTransition { &self.trans1 }
+    pub fn transition_of_first(&self) -> &IntRes2dTransition {
+        &self.trans1
+    }
 
     /// OCCT TransitionOfSecond.
-    pub fn transition_of_second(&self) -> &IntRes2dTransition { &self.trans2 }
+    pub fn transition_of_second(&self) -> &IntRes2dTransition {
+        &self.trans2
+    }
 }
 
 // ============================================================================
@@ -325,13 +413,18 @@ impl IntRes2dIntersectionSegment {
     /// Creates an infinite segment (no endpoints).
     pub fn new_infinite(oppos: bool) -> Self {
         let zero_pt = IntRes2dIntersectionPoint {
-            pt: DVec2::ZERO, p1: 0.0, p2: 0.0,
+            pt: DVec2::ZERO,
+            p1: 0.0,
+            p2: 0.0,
             trans1: IntRes2dTransition::new_undecided(IntRes2dPosition::Middle),
             trans2: IntRes2dTransition::new_undecided(IntRes2dPosition::Middle),
         };
         IntRes2dIntersectionSegment {
-            oppos, first: false, last: false,
-            ptfirst: zero_pt.clone(), ptlast: zero_pt,
+            oppos,
+            first: false,
+            last: false,
+            ptfirst: zero_pt.clone(),
+            ptlast: zero_pt,
         }
     }
 
@@ -339,21 +432,29 @@ impl IntRes2dIntersectionSegment {
     pub fn new_from_points(
         p1: IntRes2dIntersectionPoint,
         p2: IntRes2dIntersectionPoint,
-        oppos: bool, _reverse_flag: bool,
+        oppos: bool,
+        _reverse_flag: bool,
     ) -> Self {
         IntRes2dIntersectionSegment {
-            oppos, first: true, last: true,
-            ptfirst: p1, ptlast: p2,
+            oppos,
+            first: true,
+            last: true,
+            ptfirst: p1,
+            ptlast: p2,
         }
     }
 
     /// Creates a segment from a single endpoint (semi-infinite).
     pub fn new_from_point(
         p: IntRes2dIntersectionPoint,
-        is_first: bool, oppos: bool, _reverse_flag: bool,
+        is_first: bool,
+        oppos: bool,
+        _reverse_flag: bool,
     ) -> Self {
         let zero_pt = IntRes2dIntersectionPoint {
-            pt: DVec2::ZERO, p1: 0.0, p2: 0.0,
+            pt: DVec2::ZERO,
+            p1: 0.0,
+            p2: 0.0,
             trans1: IntRes2dTransition::new_undecided(IntRes2dPosition::Middle),
             trans2: IntRes2dTransition::new_undecided(IntRes2dPosition::Middle),
         };
@@ -361,21 +462,34 @@ impl IntRes2dIntersectionSegment {
             oppos,
             first: is_first,
             last: !is_first,
-            ptfirst: p, ptlast: zero_pt,
+            ptfirst: p,
+            ptlast: zero_pt,
         }
     }
 
-    pub fn is_opposite(&self) -> bool { self.oppos }
-    pub fn has_first_point(&self) -> bool { self.first }
-    pub fn has_last_point(&self) -> bool { self.last }
+    pub fn is_opposite(&self) -> bool {
+        self.oppos
+    }
+    pub fn has_first_point(&self) -> bool {
+        self.first
+    }
+    pub fn has_last_point(&self) -> bool {
+        self.last
+    }
 
     pub fn first_point(&self) -> &IntRes2dIntersectionPoint {
-        assert!(self.has_first_point(), "IntRes2dIntersectionSegment: no first point");
+        assert!(
+            self.has_first_point(),
+            "IntRes2dIntersectionSegment: no first point"
+        );
         &self.ptfirst
     }
 
     pub fn last_point(&self) -> &IntRes2dIntersectionPoint {
-        assert!(self.has_last_point(), "IntRes2dIntersectionSegment: no last point");
+        assert!(
+            self.has_last_point(),
+            "IntRes2dIntersectionSegment: no last point"
+        );
         &self.ptlast
     }
 }

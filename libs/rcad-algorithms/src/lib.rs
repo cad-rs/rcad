@@ -14,10 +14,13 @@ pub use brep_graph::{
     BRepGraphHistory, NamedGraph, NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent,
     TopoGraphValidationIssue, TopoNode,
 };
-pub mod boolean;
+pub mod bnd_box;
 pub mod bnd_lib;
 pub mod bnd_lib_2d;
+pub mod boolean;
+pub mod bopalgo;
 pub mod bopds;
+pub mod boptools;
 pub mod brep_algo;
 pub mod brep_algo_api;
 pub mod brep_bnd;
@@ -30,14 +33,11 @@ pub mod brep_tools;
 pub mod brep_top_adaptor;
 pub mod bspline_approx_interp;
 pub mod bspline_edit;
-pub mod boptools;
-pub mod bopalgo;
-pub mod debug_trace;
-pub mod pipeline_dump;
-pub mod bnd_box;
 pub mod classify;
+pub mod debug_trace;
 pub mod defeature;
 pub mod draft;
+pub mod pipeline_dump;
 // pub mod ds_to_brep; // disabled during OCCT-alignment migration
 pub mod features;
 pub mod geom_convert;
@@ -55,9 +55,9 @@ pub mod shape_custom;
 pub mod shape_extend;
 pub use brep_feat::{
     BRepFeatError, DraftFeatureParams, FeatureParams, FuseMode, GrooveParams, RibParams,
-    apply_depouille, apply_draft_feature, make_drafted_prism, make_groove, make_linear_rib as make_linear_rib_feat,
-    make_loft_feature, make_pipe_feature, make_prism_feature, make_revol_feature, make_rib,
-    make_through_groove,
+    apply_depouille, apply_draft_feature, make_drafted_prism, make_groove,
+    make_linear_rib as make_linear_rib_feat, make_loft_feature, make_pipe_feature,
+    make_prism_feature, make_revol_feature, make_rib, make_through_groove,
 };
 pub use defeature::{
     BlendFeature, ConicalFeature, CylindricalFeature, DefeaturingError, DefeaturingOptions,
@@ -80,9 +80,9 @@ pub use geom2d_api::{
     circles_tangent_to_two_circles_through_point, circles_tangent_to_two_lines_through_point,
 };
 // pub mod adaptor3d; -- removed (triggers rustc ICE on 1.94.1)
-pub mod approx_int;
 pub mod adv_app2_var;
 pub mod app_cont;
+pub mod approx_int;
 pub mod blend;
 pub mod bop_occt_ops;
 pub mod brep_adaptor;
@@ -96,8 +96,8 @@ pub mod elc_lib;
 pub mod els_lib;
 pub mod extrema;
 pub mod fillet;
-pub mod gcpnts;
 pub mod gc_make;
+pub mod gcpnts;
 pub mod geom2d_api;
 pub mod int_ana;
 pub mod inttools;
@@ -126,14 +126,15 @@ pub mod tkgeombase_props;
 #[cfg(test)]
 pub mod tkremaining_gtests;
 pub mod tolerance;
-pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;
+pub use tolerance::TOLERANCE_MESH_LEGACY;
 
 pub mod top_loc;
 pub mod triangulate;
 
 use serde::Serialize;
 
+pub use crate::boptools::bvh::{Aabb, Bvh, BvhStats};
 pub use approx_int::{
     ApproxOptions, ApproxResult, IntersectionApproximator, IntersectionSample,
     adjust_same_parameter, approximate_2d_curve, approximate_2d_curve_with_ctrl,
@@ -141,9 +142,7 @@ pub use approx_int::{
     compute_same_parameter_bspline, sample_curve_segment, sample_intersection_points,
     sample_with_adaptive_density,
 };
-pub use brep_algo::{
-    BRepAlgoError, FaceSection, NormalProject,
-};
+pub use brep_algo::{BRepAlgoError, FaceSection, NormalProject};
 pub use brep_bnd::{
     BoundingBox, add_brep_to_bbox, add_edge_to_bbox, add_face_to_bbox, add_vertex_to_bbox,
     curve_bounds, curve_bounds_default, curve_bounds_with_range, surface_bounds,
@@ -154,16 +153,16 @@ pub use brep_lib::{
     add_face_with_surface, compute_edge_bounds, compute_face_bounds, faces_share_surface,
     find_surface_through_edges, find_surface_through_points, make_edge_from_curve,
     make_face_from_surface, make_wire_from_edges, sort_faces_by_area, sort_faces_by_bounding_box,
-    sort_faces_by_distance,
-    total_surface_area, total_surface_area_topods, total_volume, total_volume_topods,
+    sort_faces_by_distance, total_surface_area, total_surface_area_topods, total_volume,
+    total_volume_topods,
 };
 pub use brep_tools::{
     BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
     count_vertices, count_wires, extract_shells, extract_solids, get_curve, get_edge_range,
     get_edge_tolerance, get_face_tolerance, get_inner_wires, get_outer_wire, get_pcurve,
-    get_shape_type, get_surface, get_vertex_tolerance, is_closed, is_edge_degenerate,
-    mirror_shape, n_ary_partition, read_brep_from_file, read_brep_from_string, rotate_shape,
-    scale_shape, transform_shape, write_brep_to_file, write_brep_to_string,
+    get_shape_type, get_surface, get_vertex_tolerance, is_closed, is_edge_degenerate, mirror_shape,
+    n_ary_partition, read_brep_from_file, read_brep_from_string, rotate_shape, scale_shape,
+    transform_shape, write_brep_to_file, write_brep_to_string,
 };
 pub use brep_top_adaptor::{
     EdgeAdaptor, EdgeExplorer, FaceAdaptor, FaceExplorer, OrientedEdge, ShapeIterator,
@@ -173,7 +172,6 @@ pub use brep_top_adaptor::{
 pub use bspline_edit::{
     move_bspline2_point, move_bspline2_tangent, move_bspline3_point, move_bspline3_tangent,
 };
-pub use crate::boptools::bvh::{Aabb, Bvh, BvhStats};
 pub use elc_lib::{
     bspline_derivative,
     // BSpline utilities
@@ -236,9 +234,9 @@ pub use els_lib::{
     torus_tangent_v,
 };
 pub use extrema::{
-    closest_point_on_curve, closest_point_on_surface, distance_brep_brep, distance_curve_curve,
-    distance_curve_surface, distance_point_curve, distance_point_point, distance_point_surface,
-    distance_surface_surface, DistShapeShape, find_closest_points, find_furthest_points,
+    DistShapeShape, closest_point_on_curve, closest_point_on_surface, distance_brep_brep,
+    distance_curve_curve, distance_curve_surface, distance_point_curve, distance_point_point,
+    distance_point_surface, distance_surface_surface, find_closest_points, find_furthest_points,
     find_supporting_edge, find_supporting_face,
 };
 pub use gcpnts::{
@@ -299,11 +297,10 @@ pub use top_loc::{
     Datum, Location, LocationManager, apply_location_to_shape, apply_location_to_shape_owned,
 };
 
-
-
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
+pub use crate::bopalgo::builder::{BooleanError, BooleanOpType};
 pub use blend::{
     BlendBoundary, BlendContinuity, BlendError, BlendMode, BlendParams, BlendQuality, BlendResult,
     RadiusLaw, SurfaceCurvePair, apply_blend_to_edge, blend_edge_to_face, blend_two_surfaces,
@@ -314,9 +311,7 @@ pub use boolean::{
     BooleanAttemptDiagnostic, BooleanDiagnosticReport, BooleanFailureClass, FailureAnalyzer,
     FinalSuccessfulConfig, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
 };
-pub use brep_algo_api::{
-    BooleanOp, BooleanOptions, SectionOp,
-};
+pub use brep_algo_api::{BooleanOp, BooleanOptions, SectionOp};
 pub use brep_algo_api::{common, cut, fuse};
 pub use brep_check::{
     CheckIssue,
@@ -500,10 +495,6 @@ pub use brep_repair::{
     validate_internal_face_removal,
     validate_shell_topology,
 };
-pub use crate::bopalgo::builder::{
-    BooleanError,
-    BooleanOpType,
-};
 pub use chamfer::{
     ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,
     compute_chamfer_curves, compute_chamfer_surface, make_chamfer_all_edges, make_chamfer_angle,
@@ -635,11 +626,6 @@ pub use maker_volume::{
     MakerVolume, MakerVolumeError, MakerVolumeSelection, make_solid_from_cell_indices,
     make_solid_from_region, make_solid_from_region_with_history,
 };
-pub use rcad_kernel::math_utils::{
-    bisection, determinant_3x3, eigenvalues_2x2, eigenvalues_3x3, gaussian_quadrature,
-    golden_section_max, golden_section_min, inverse_3x3, newton_2d, newton_3d, newton_raphson,
-    secant, simpson_integrate, solve_cubic, solve_linear, solve_quadratic, solve_quartic,
-};
 pub use offset::{
     JoinType, OffsetError, OffsetOptions, OffsetQuality, OffsetResult, VariableThickness,
     detect_self_intersection, hollow_solid, hollow_solid_with_options, offset_shape, offset_shell,
@@ -653,6 +639,11 @@ pub use projection::{
     project_point_on_curve, project_point_on_curve_with_options, project_point_on_surface,
     project_point_on_surface_with_options, project_surface_on_surface, project_wire_on_face,
     project_wire_on_surface,
+};
+pub use rcad_kernel::math_utils::{
+    bisection, determinant_3x3, eigenvalues_2x2, eigenvalues_3x3, gaussian_quadrature,
+    golden_section_max, golden_section_min, inverse_3x3, newton_2d, newton_3d, newton_raphson,
+    secant, simpson_integrate, solve_cubic, solve_linear, solve_quadratic, solve_quartic,
 };
 pub use section::{
     SectionCurve, brep_section, brep_triangle_soup, intersect_triangle_soups,
@@ -787,6 +778,3 @@ pub use triangulate::{
     MeshQualityMetrics, MeshSimplifier, SurfaceMesh, TessellationParams, compute_mesh_quality,
     mesh_brep, triangulate_surface,
 };
-
-
-

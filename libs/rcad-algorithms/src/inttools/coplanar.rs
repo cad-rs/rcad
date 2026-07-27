@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::inttools::edge_face::plane_local_basis;
@@ -30,7 +30,10 @@ pub fn analyze_coplanar_faces(poly1: &[DVec3], poly2: &[DVec3], plane: &Plane) -
 
     // Sutherland-Hodgman requires the clip polygon to be counter-clockwise.
     // If signed area is negative (clockwise), reverse the vertex order.
-    let signed_area2: f64 = p2_2d.windows(2).map(|w| w[0][0] * w[1][1] - w[1][0] * w[0][1]).sum();
+    let signed_area2: f64 = p2_2d
+        .windows(2)
+        .map(|w| w[0][0] * w[1][1] - w[1][0] * w[0][1])
+        .sum();
     if signed_area2 < 0.0 {
         p2_2d.reverse();
     }
@@ -131,6 +134,3 @@ fn line_intersect_2d(p1: [f64; 2], p2: [f64; 2], p3: [f64; 2], p4: [f64; 2]) -> 
 
     Some([p1[0] + t * d1x, p1[1] + t * d1y])
 }
-
-
-

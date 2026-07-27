@@ -1,4 +1,4 @@
-﻿//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
+//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
 //! OCCT dispatches Parabola × {Cylinder, Cone, Sphere} through generic
 //! numeric EF intersection (IntTools_EdgeFace), same as rcad.
 //!
@@ -105,7 +105,10 @@ pub fn intersect_parabola_plane_with_tol(
         }
     } else {
         let sqrt_d = disc.sqrt();
-        for t in [(-b_coeff - sqrt_d) / (2.0 * a_coeff), (-b_coeff + sqrt_d) / (2.0 * a_coeff)] {
+        for t in [
+            (-b_coeff - sqrt_d) / (2.0 * a_coeff),
+            (-b_coeff + sqrt_d) / (2.0 * a_coeff),
+        ] {
             if t >= t_range[0] - eps && t <= t_range[1] + eps {
                 let point = parabola.vertex + (t * t / (2.0 * p)) * axis_dir + t * perp_dir;
                 hits.push(ParabolaSurfaceHit {
@@ -229,9 +232,7 @@ fn parabola_vs_implicit_surface(
         return vec![];
     }
 
-    let pt = |t: f64| -> DVec3 {
-        parabola.vertex + (t * t / (2.0 * p)) * axis_dir + t * perp_dir
-    };
+    let pt = |t: f64| -> DVec3 { parabola.vertex + (t * t / (2.0 * p)) * axis_dir + t * perp_dir };
 
     const N_SEEDS: usize = 64;
     let [t0, t1] = t_range;
@@ -280,9 +281,9 @@ fn parabola_vs_implicit_surface(
             continue;
         }
 
-        let duplicate = hits.iter().any(|h: &ParabolaSurfaceHit| {
-            (h.parabola_param - t).abs() < eps * 5.0
-        });
+        let duplicate = hits
+            .iter()
+            .any(|h: &ParabolaSurfaceHit| (h.parabola_param - t).abs() < eps * 5.0);
         if !duplicate {
             hits.push(ParabolaSurfaceHit {
                 point,
@@ -292,5 +293,3 @@ fn parabola_vs_implicit_surface(
     }
     hits
 }
-
-

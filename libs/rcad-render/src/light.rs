@@ -61,7 +61,10 @@ impl Light {
         Self {
             id,
             name: name.to_string(),
-            light_type: LightType::Point { position, radius: 0.1 },
+            light_type: LightType::Point {
+                position,
+                radius: 0.1,
+            },
             color: Vec3::new(1.0, 1.0, 1.0),
             intensity: 1.0,
             enabled: true,

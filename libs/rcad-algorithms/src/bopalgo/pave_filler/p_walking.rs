@@ -199,11 +199,7 @@ impl PWalking {
         self.close
     }
     pub fn max_step(&self, index: usize) -> f64 {
-        if index < 4 {
-            self.pas_init[index]
-        } else {
-            0.0
-        }
+        if index < 4 { self.pas_init[index] } else { 0.0 }
     }
 
     // ── PerformFirstPoint (OCCT hxx:105-106) ─────────────────────
@@ -825,13 +821,7 @@ impl PWalking {
                     _ => 10.0,
                 }
             });
-            let sg = |diff: f64| -> f64 {
-                if diff >= 0.0 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            };
+            let sg = |diff: f64| -> f64 { if diff >= 0.0 { 1.0 } else { -1.0 } };
             param[0] += self.pasuv[0] * sg(param[0] - prev.u1) / f;
             param[1] += self.pasuv[1] * sg(param[1] - prev.v1) / f;
             param[2] += self.pasuv[2] * sg(param[2] - prev.u2) / f;

@@ -9,14 +9,14 @@
 // IntPatch_Intersection.hxx / .cxx, adapted for rcad's data model.
 // See the OCCT source for original algorithmic documentation.
 
-use rcad_kernel::geom::Surface3;
-use crate::bopds::ds::IntersectionCurve;
-use glam::DVec3;
-use super::int_patch_type::IntPatchIType;
-use super::int_patch_point::IntPatchPoint;
-use super::int_patch_line::IntPatchLine;
 use super::geom_abs_surface_type::{GeomAbsSurfaceType, classify_surface_type};
 use super::int_patch_imp_imp_intersection::ImpImpIntersection;
+use super::int_patch_line::IntPatchLine;
+use super::int_patch_point::IntPatchPoint;
+use super::int_patch_type::IntPatchIType;
+use crate::bopds::ds::IntersectionCurve;
+use glam::DVec3;
+use rcad_kernel::geom::Surface3;
 
 // ============================================================================
 // IntPatch_Intersection (IntPatch_Intersection.hxx)
@@ -86,16 +86,30 @@ impl IntPatchIntersection {
         self.my_uv_max_step = uv_max_step;
         self.my_fleche = fleche;
         // OCCT L143-146
-        if self.my_tol_arc < 1e-8 { self.my_tol_arc = 1e-8; }
-        if self.my_tol_tang < 1e-8 { self.my_tol_tang = 1e-8; }
+        if self.my_tol_arc < 1e-8 {
+            self.my_tol_arc = 1e-8;
+        }
+        if self.my_tol_tang < 1e-8 {
+            self.my_tol_tang = 1e-8;
+        }
         // OCCT L147-151
-        if self.my_tol_arc > 0.5 { self.my_tol_arc = 0.5; }
-        if self.my_tol_tang > 0.5 { self.my_tol_tang = 0.5; }
+        if self.my_tol_arc > 0.5 {
+            self.my_tol_arc = 0.5;
+        }
+        if self.my_tol_tang > 0.5 {
+            self.my_tol_tang = 0.5;
+        }
         // OCCT L159-162
-        if self.my_fleche < 1.0e-3 { self.my_fleche = 1e-3; }
-        if self.my_fleche > 10.0 { self.my_fleche = 10.0; }
+        if self.my_fleche < 1.0e-3 {
+            self.my_fleche = 1e-3;
+        }
+        if self.my_fleche > 10.0 {
+            self.my_fleche = 10.0;
+        }
         // OCCT L169-171
-        if self.my_uv_max_step > 0.5 { self.my_uv_max_step = 0.5; }
+        if self.my_uv_max_step > 0.5 {
+            self.my_uv_max_step = 0.5;
+        }
     }
 
     // =========================================================================
@@ -111,13 +125,7 @@ impl IntPatchIntersection {
     ///   - Adaptor3d_Surface → &Surface3 (one parameter instead of surface+tool)
     ///   - Adaptor3d_TopolTool → omitted (face domain is implicit in rcad)
     ///   - isGeomInt, theIsReqToKeepRLine, theIsReqToPostWLProc → default params
-    pub fn perform(
-        &mut self,
-        s1: &Surface3,
-        s2: &Surface3,
-        tol_arc: f64,
-        tol_tang: f64,
-    ) {
+    pub fn perform(&mut self, s1: &Surface3, s2: &Surface3, tol_arc: f64, tol_tang: f64) {
         // ===== OCCT L1076-1085: set tolerances
         self.my_tol_arc = tol_arc;
         self.my_tol_tang = tol_tang;
@@ -151,13 +159,12 @@ impl IntPatchIntersection {
 
         if has_cone_or_torus {
             // OCCT L1104-1148: Cone special treatment
-            let (ct_surf, geom_surf, ct_type) = if typs1 == GeomAbsSurfaceType::Cone
-                || typs1 == GeomAbsSurfaceType::Torus
-            {
-                (s1, s2, typs1)
-            } else {
-                (s2, s1, typs2)
-            };
+            let (ct_surf, geom_surf, ct_type) =
+                if typs1 == GeomAbsSurfaceType::Cone || typs1 == GeomAbsSurfaceType::Torus {
+                    (s1, s2, typs1)
+                } else {
+                    (s2, s1, typs2)
+                };
 
             let mut b_to_check = false;
             let mut ct_axis_loc = DVec3::ZERO;
@@ -191,8 +198,11 @@ impl IntPatchIntersection {
                                 let apex1 = c1.apex_point();
                                 let apex2 = c2.apex_point();
                                 let dir1 = c1.axis_dir();
-                                let dist = (apex1 - apex2).dot(dir1.cross(apex1 - apex2)) / (dir1.length() * dir1.length());
-                                if dir1.dot(c2.axis_dir()).abs() > (1.0 - 1e-12) && dist.abs() < 1e-7 {
+                                let dist = (apex1 - apex2).dot(dir1.cross(apex1 - apex2))
+                                    / (dir1.length() * dir1.length());
+                                if dir1.dot(c2.axis_dir()).abs() > (1.0 - 1e-12)
+                                    && dist.abs() < 1e-7
+                                {
                                     b_to_check = false;
                                 }
                             }
@@ -264,7 +274,9 @@ impl IntPatchIntersection {
                             // Check if the cone semi-angle is very small
                             if let Surface3::Cone(c) = ct_surf {
                                 if c.half_angle_rad.abs() < 0.02 {
-                                    if par < 0.015 { bg = 0; }
+                                    if par < 0.015 {
+                                        bg = 0;
+                                    }
                                 }
                             }
                         } else {
@@ -275,7 +287,8 @@ impl IntPatchIntersection {
                             let surf_center = p.origin;
                             let dist_to_plane = (ct_axis_loc - surf_center).dot(normal).abs();
                             if perp < 1e-10  // parallel
-                                || (perp > (1.0 - 1e-10) && dist_to_plane < 1e-7) // normal + axis thru plane
+                                || (perp > (1.0 - 1e-10) && dist_to_plane < 1e-7)
+                            // normal + axis thru plane
                             {
                                 bg = 1;
                             }
@@ -289,17 +302,23 @@ impl IntPatchIntersection {
                             b_geom_geom = 1;
                         }
                         b_to_check = false;
-                        (GeomAbsSurfaceType::Sphere, s.axis.normalize_or_zero(), s.center)
+                        (
+                            GeomAbsSurfaceType::Sphere,
+                            s.axis.normalize_or_zero(),
+                            s.center,
+                        )
                     }
-                    Surface3::Cylinder(c) => {
-                        (GeomAbsSurfaceType::Cylinder, c.axis.normalize_or_zero(), c.origin)
-                    }
-                    Surface3::Cone(c) => {
-                        (GeomAbsSurfaceType::Cone, c.axis_dir(), c.apex)
-                    }
-                    Surface3::Torus(t) => {
-                        (GeomAbsSurfaceType::Torus, t.axis.normalize_or_zero(), t.center)
-                    }
+                    Surface3::Cylinder(c) => (
+                        GeomAbsSurfaceType::Cylinder,
+                        c.axis.normalize_or_zero(),
+                        c.origin,
+                    ),
+                    Surface3::Cone(c) => (GeomAbsSurfaceType::Cone, c.axis_dir(), c.apex),
+                    Surface3::Torus(t) => (
+                        GeomAbsSurfaceType::Torus,
+                        t.axis.normalize_or_zero(),
+                        t.center,
+                    ),
                     _ => {
                         b_to_check = false;
                         (GeomAbsSurfaceType::OtherSurface, DVec3::Z, DVec3::ZERO)
@@ -337,14 +356,18 @@ impl IntPatchIntersection {
         //   Torus → ts = bGeomGeom (0 normally, 1 if coaxial with compatible analytic surface)
         //   BSpline/Bezier/etc → ts=0
         let ts1 = match typs1 {
-            GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
-            | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => 1,
+            GeomAbsSurfaceType::Plane
+            | GeomAbsSurfaceType::Cylinder
+            | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Cone => 1,
             GeomAbsSurfaceType::Torus => b_geom_geom,
             _ => 0,
         };
         let ts2 = match typs2 {
-            GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
-            | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => 1,
+            GeomAbsSurfaceType::Plane
+            | GeomAbsSurfaceType::Cylinder
+            | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Cone => 1,
             GeomAbsSurfaceType::Torus => b_geom_geom,
             _ => 0,
         };
@@ -373,47 +396,72 @@ impl IntPatchIntersection {
     // =========================================================================
 
     /// OCCT L139: IsDone
-    pub fn is_done(&self) -> bool { self.done }
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
     /// OCCT L142: IsEmpty
-    pub fn is_empty(&self) -> bool { self.empt }
+    pub fn is_empty(&self) -> bool {
+        self.empt
+    }
     /// OCCT L147: TangentFaces
-    pub fn tangent_faces(&self) -> bool { self.tgte }
+    pub fn tangent_faces(&self) -> bool {
+        self.tgte
+    }
     /// OCCT L154: OppositeFaces
-    pub fn opposite_faces(&self) -> bool { self.oppo }
+    pub fn opposite_faces(&self) -> bool {
+        self.oppo
+    }
     /// OCCT L157: NbPnts
-    pub fn nb_points(&self) -> usize { self.spnt.len() }
+    pub fn nb_points(&self) -> usize {
+        self.spnt.len()
+    }
     /// OCCT L161: Point(Index)
-    pub fn point(&self, index: usize) -> &IntPatchPoint { &self.spnt[index] }
+    pub fn point(&self, index: usize) -> &IntPatchPoint {
+        &self.spnt[index]
+    }
     /// OCCT L164: NbLines
-    pub fn nb_lines(&self) -> usize { self.slin.len() }
+    pub fn nb_lines(&self) -> usize {
+        self.slin.len()
+    }
     /// OCCT L168: Line(Index)
-    pub fn line(&self, index: usize) -> &IntPatchLine { &self.slin[index] }
+    pub fn line(&self, index: usize) -> &IntPatchLine {
+        &self.slin[index]
+    }
     /// OCCT L168: ChangeLine(Index) — mutable access for PutPointsOnLine.
-    pub fn line_mut(&mut self, index: usize) -> &mut IntPatchLine { &mut self.slin[index] }
+    pub fn line_mut(&mut self, index: usize) -> &mut IntPatchLine {
+        &mut self.slin[index]
+    }
     /// OCCT L170: SequenceOfLine
-    pub fn sequence_of_line(&self) -> &[IntPatchLine] { &self.slin }
-    pub fn slin_mut(&mut self) -> &mut Vec<IntPatchLine> { &mut self.slin }
+    pub fn sequence_of_line(&self) -> &[IntPatchLine] {
+        &self.slin
+    }
+    pub fn slin_mut(&mut self) -> &mut Vec<IntPatchLine> {
+        &mut self.slin
+    }
 
     // =========================================================================
     // rcad helper: convert to IntersectionCurve for DS storage
     // =========================================================================
     pub fn to_intersection_curves(&self) -> Vec<IntersectionCurve> {
-        self.slin.iter().map(|l| {
-            let mut curve_extra = crate::bopds::ds::CurveExtra::default();
-            curve_extra.tangential_tol = l.tang_tolerance;
-            IntersectionCurve {
-                curve: l.curve.clone(),
-                polyline: Vec::new(),
-                start_vertex: usize::MAX,
-                end_vertex: usize::MAX,
-                t_range: l.t_range,
-                pcurve_on_a: l.pcurve1.clone(),
-                pcurve_on_b: l.pcurve2.clone(),
-                geom_tol: l.tolerance,
-                pave_blocks: Vec::new(),
-                curve_extra,
-            }
-        }).collect()
+        self.slin
+            .iter()
+            .map(|l| {
+                let mut curve_extra = crate::bopds::ds::CurveExtra::default();
+                curve_extra.tangential_tol = l.tang_tolerance;
+                IntersectionCurve {
+                    curve: l.curve.clone(),
+                    polyline: Vec::new(),
+                    start_vertex: usize::MAX,
+                    end_vertex: usize::MAX,
+                    t_range: l.t_range,
+                    pcurve_on_a: l.pcurve1.clone(),
+                    pcurve_on_b: l.pcurve2.clone(),
+                    geom_tol: l.tolerance,
+                    pave_blocks: Vec::new(),
+                    curve_extra,
+                }
+            })
+            .collect()
     }
 
     // =========================================================================
@@ -430,18 +478,36 @@ impl IntPatchIntersection {
     ) {
         // OCCT L204-213: IntPatch_PrmPrmIntersection interpp;
         // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);
-        let mut prm_prm = crate::bopalgo::pave_filler::prm_prm_intersection::PrmPrmIntersection::new();
-        prm_prm.perform_main(s1, s2, _tol_tang, _tol_tang, self.my_fleche, self.my_uv_max_step, true);
+        let mut prm_prm =
+            crate::bopalgo::pave_filler::prm_prm_intersection::PrmPrmIntersection::new();
+        prm_prm.perform_main(
+            s1,
+            s2,
+            _tol_tang,
+            _tol_tang,
+            self.my_fleche,
+            self.my_uv_max_step,
+            true,
+        );
         if prm_prm.is_done() {
             for line in &prm_prm.slin {
-                let wline_pnts: Vec<crate::inttools::int_patch_line::WLinePnt> = line.points.iter().map(|p| {
-                    crate::inttools::int_patch_line::WLinePnt {
-                        p3d: p.p3d, u1: p.u1, v1: p.v1, u2: p.u2, v2: p.v2,
-                    }
-                }).collect();
+                let wline_pnts: Vec<crate::inttools::int_patch_line::WLinePnt> = line
+                    .points
+                    .iter()
+                    .map(|p| crate::inttools::int_patch_line::WLinePnt {
+                        p3d: p.p3d,
+                        u1: p.u1,
+                        v1: p.v1,
+                        u2: p.u2,
+                        v2: p.v2,
+                    })
+                    .collect();
                 self.slin.push(IntPatchLine {
                     line_type: IntPatchIType::Walking,
-                    curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::X }),
+                    curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
+                        origin: glam::DVec3::ZERO,
+                        direction: glam::DVec3::X,
+                    }),
                     t_range: [0.0, 1.0],
                     pcurve1: None,
                     pcurve2: None,
@@ -449,7 +515,8 @@ impl IntPatchIntersection {
                     tang_tolerance: _tol_tang,
                     wline_pnts,
                     is_purging_allowed: true,
-                    wl_type: crate::inttools::int_patch_line::WLineType::PrmPrm, vertices: Vec::new(),
+                    wl_type: crate::inttools::int_patch_line::WLineType::PrmPrm,
+                    vertices: Vec::new(),
                 });
             }
             self.empt = self.slin.is_empty();
@@ -493,7 +560,14 @@ impl IntPatchIntersection {
         // OCCT L232-238: IntPatch_ImpPrmIntersection inter;
         // inter.Perform(S1, D1, S2, D2, TolArc, TolTang, myFleche, myUVMaxStep);
         let mut imp_prm = crate::inttools::imp_prm::ImpPrmIntersection::new();
-        imp_prm.perform(s1, s2, self.my_tol_arc, self.my_tol_tang, self.my_fleche, self.my_uv_max_step);
+        imp_prm.perform(
+            s1,
+            s2,
+            self.my_tol_arc,
+            self.my_tol_tang,
+            self.my_fleche,
+            self.my_uv_max_step,
+        );
         if imp_prm.is_done() {
             // Transfer intersection lines
             let nbl = imp_prm.nb_lines();

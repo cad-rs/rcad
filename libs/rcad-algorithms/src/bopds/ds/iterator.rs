@@ -21,7 +21,7 @@ pub struct BOPDS_Iterator<'a> {
     // Flag indicating IntersectExt has been called (OCCT BOPDS_Iterator::myUseExt)
     my_use_ext: bool,
     // Current iteration state
-    current_list: Vec<(usize, usize)>,  // pairs being iterated (cloned from bucket)
+    current_list: Vec<(usize, usize)>, // pairs being iterated (cloned from bucket)
     current_pos: usize,                // index into current_list
     my_run_parallel: bool,
 }
@@ -73,16 +73,16 @@ impl<'a> BOPDS_Iterator<'a> {
         let i2 = Self::type_to_int(t2);
         let ix = i2 * 10 + i1;
         match ix {
-            77 => 0,  // VV
-            76 | 67 => 1,  // VE
-            66 => 2,  // EE
-            74 | 47 => 3,  // VF
-            64 | 46 => 4,  // EF
-            44 => 5,  // FF
-            72 | 27 => 6,  // VZ
-            62 | 26 => 7,  // EZ
-            42 | 24 => 8,  // FZ
-            22 => 9,  // ZZ
+            77 => 0,      // VV
+            76 | 67 => 1, // VE
+            66 => 2,      // EE
+            74 | 47 => 3, // VF
+            64 | 46 => 4, // EF
+            44 => 5,      // FF
+            72 | 27 => 6, // VZ
+            62 | 26 => 7, // EZ
+            42 | 24 => 8, // FZ
+            22 => 9,      // ZZ
             _ => -1,
         }
     }
@@ -133,14 +133,20 @@ impl<'a> BOPDS_Iterator<'a> {
                 (ShapeType::Face, ShapeType::Face) => (s1 < a_fc, s2 < a_fc),
                 _ => return, // skip unsupported type combos
             };
-            if op1 == op2 { return; } // cross-operand only
+            if op1 == op2 {
+                return;
+            } // cross-operand only
 
             // OCCT L335-340: avoid interfering shape with its sub-shapes
             if t1 == ShapeType::Vertex && t2 == ShapeType::Edge {
-                if self.ds.edge_has_vertex(s1, s2) { return; }
+                if self.ds.edge_has_vertex(s1, s2) {
+                    return;
+                }
             }
             if t1 == ShapeType::Edge && t2 == ShapeType::Vertex {
-                if self.ds.edge_has_vertex(s2, s1) { return; }
+                if self.ds.edge_has_vertex(s2, s1) {
+                    return;
+                }
             }
 
             let bucket = Self::type_to_bucket(t1, t2);
@@ -152,10 +158,16 @@ impl<'a> BOPDS_Iterator<'a> {
 
         // Helper: edge AABB = (box_min, box_max) with gap = box_gap + fuzzy_tol
         let edge_aabb = |ei: usize| -> Option<Aabb> {
-            let si = if ei < self.ds.edge_shape_idx.len() { self.ds.edge_shape_idx[ei] } else { self.ds.vertices.len() + ei };
+            let si = if ei < self.ds.edge_shape_idx.len() {
+                self.ds.edge_shape_idx[ei]
+            } else {
+                self.ds.vertices.len() + ei
+            };
             self.ds.shape_info.get(si).and_then(|info| {
-                info.box_min.zip(info.box_max).map(|(min, max)| {
-                    Aabb { min, max, gap: info.box_gap + self.ds.fuzzy_tol }
+                info.box_min.zip(info.box_max).map(|(min, max)| Aabb {
+                    min,
+                    max,
+                    gap: info.box_gap + self.ds.fuzzy_tol,
                 })
             })
         };
@@ -163,15 +175,23 @@ impl<'a> BOPDS_Iterator<'a> {
         // Helper: vertex AABB = point, gap = vertex_tolerance + fuzzy_tol
         let vertex_aabb = |vi: usize| -> Aabb {
             let p = self.ds.vertex_point(vi);
-            Aabb { min: p, max: p, gap: self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol }
+            Aabb {
+                min: p,
+                max: p,
+                gap: self.ds.vertex_tolerance(vi) + self.ds.fuzzy_tol,
+            }
         };
 
         // AABB overlap test
-        let aabb_overlap = |a_min: [f64; 3], a_max: [f64; 3], b_min: [f64; 3], b_max: [f64; 3]| -> bool {
-            !(a_max[0] < b_min[0] || a_min[0] > b_max[0]
-                || a_max[1] < b_min[1] || a_min[1] > b_max[1]
-                || a_max[2] < b_min[2] || a_min[2] > b_max[2])
-        };
+        let aabb_overlap =
+            |a_min: [f64; 3], a_max: [f64; 3], b_min: [f64; 3], b_max: [f64; 3]| -> bool {
+                !(a_max[0] < b_min[0]
+                    || a_min[0] > b_max[0]
+                    || a_max[1] < b_min[1]
+                    || a_min[1] > b_max[1]
+                    || a_max[2] < b_min[2]
+                    || a_min[2] > b_max[2])
+            };
 
         // VV pairs: cross-operand vertices
         for va in 0..a_vc {
@@ -189,7 +209,9 @@ impl<'a> BOPDS_Iterator<'a> {
             let is_a = vi < a_vc;
             for ei in 0..ne {
                 let is_e_a = ei < a_ec;
-                if is_a == is_e_a { continue; }
+                if is_a == is_e_a {
+                    continue;
+                }
                 let v_abb = vertex_aabb(vi);
                 if let Some(e_abb) = edge_aabb(ei) {
                     if !v_abb.intersects(&e_abb) {
@@ -219,7 +241,9 @@ impl<'a> BOPDS_Iterator<'a> {
             let is_a = vi < a_vc;
             for fi in 0..nf {
                 let is_f_a = fi < a_fc;
-                if is_a == is_f_a { continue; }
+                if is_a == is_f_a {
+                    continue;
+                }
                 add_pair(vi, fi, ShapeType::Vertex, ShapeType::Face);
             }
         }
@@ -229,12 +253,22 @@ impl<'a> BOPDS_Iterator<'a> {
             let is_a = ei < a_ec;
             for fi in 0..nf {
                 let is_f_a = fi < a_fc;
-                if is_a == is_f_a { continue; }
-                let si_f = if fi < self.ds.face_shape_idx.len() { self.ds.face_shape_idx[fi] } else { fi };
+                if is_a == is_f_a {
+                    continue;
+                }
+                let si_f = if fi < self.ds.face_shape_idx.len() {
+                    self.ds.face_shape_idx[fi]
+                } else {
+                    fi
+                };
                 if let Some(e_abb) = edge_aabb(ei) {
                     if let Some(f_info) = self.ds.shape_info.get(si_f) {
                         if let (Some(f_min), Some(f_max)) = (f_info.box_min, f_info.box_max) {
-                            let f_abb = Aabb { min: f_min, max: f_max, gap: f_info.box_gap + self.ds.fuzzy_tol };
+                            let f_abb = Aabb {
+                                min: f_min,
+                                max: f_max,
+                                gap: f_info.box_gap + self.ds.fuzzy_tol,
+                            };
                             if !e_abb.intersects(&f_abb) {
                                 continue;
                             }
@@ -335,7 +369,7 @@ impl<'a> BOPDS_Iterator<'a> {
             // L378-382: if (!aSI.IsInterfering() || (aSI.ShapeType() == TopAbs_SOLID)) continue;
             // rcad: IsInterfering = Vertex | Edge | Face only
             match si.shape_type {
-                ShapeType::Vertex | ShapeType::Edge | ShapeType::Face => {},
+                ShapeType::Vertex | ShapeType::Edge | ShapeType::Face => {}
                 _ => continue,
             }
             all_indices.push(i);
@@ -347,13 +381,21 @@ impl<'a> BOPDS_Iterator<'a> {
                 let si_sd = self.ds.shape_info_at(n_vsd);
                 // L389: const Bnd_Box& aBox = aSISD.Box();
                 if let (Some(min), Some(max)) = (si_sd.box_min, si_sd.box_max) {
-                    all_aabbs.push(Aabb { min, max, gap: si_sd.box_gap });
+                    all_aabbs.push(Aabb {
+                        min,
+                        max,
+                        gap: si_sd.box_gap,
+                    });
                     extra_vert_indices.push(i);
                 }
             } else {
                 // L400: aBoxTree.Add(i, Bnd_Tools::Bnd2BVH(aSI.Box()));
                 if let (Some(min), Some(max)) = (si.box_min, si.box_max) {
-                    all_aabbs.push(Aabb { min, max, gap: si.box_gap });
+                    all_aabbs.push(Aabb {
+                        min,
+                        max,
+                        gap: si.box_gap,
+                    });
                 }
             }
         }
@@ -388,17 +430,25 @@ impl<'a> BOPDS_Iterator<'a> {
             // rcad: single-node BoxTree = OCCT BOPDS_TSR with SetBVHSet + SetBox
             let tsr_tree = crate::boptools::box_tree::BoxTree::build(
                 vec![i],
-                vec![Aabb { min: qmin, max: qmax, gap: qgap }],
+                vec![Aabb {
+                    min: qmin,
+                    max: qmax,
+                    gap: qgap,
+                }],
             );
             let candidates = crate::boptools::box_tree::BoxTree::candidate_pairs(&tsr_tree, &tree);
 
             // L430-459: Treat selections
             for &(_, j) in &candidates {
-                if i == j { continue; }
+                if i == j {
+                    continue;
+                }
 
                 let sj = self.ds.shape_info_at(j);
                 // L435-437: if (iRankI == iRankJ) continue;
-                if i_rank == sj.rank { continue; }
+                if i_rank == sj.rank {
+                    continue;
+                }
 
                 // L440-442: get j's type
                 let tj = sj.shape_type;
@@ -413,7 +463,9 @@ impl<'a> BOPDS_Iterator<'a> {
 
                 // L450-458: dedup via fence map + bucket to myExtLists
                 let key = if i < j { (i, j) } else { (j, i) };
-                if !fence.insert(key) { continue; }
+                if !fence.insert(key) {
+                    continue;
+                }
 
                 let bucket = Self::type_to_bucket(ti, tj);
                 if bucket >= 0 && (bucket as usize) < self.my_ext_lists.len() {

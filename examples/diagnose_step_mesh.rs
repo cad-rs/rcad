@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use rcad_kernel::{BRep, Curve2dEval, Surface3, Wire};
 use rcad_render::Tessellator;
@@ -56,11 +56,7 @@ fn curve2d_default_range(curve: &rcad_kernel::Curve2d) -> [f64; 2] {
     }
 }
 
-fn sample_wire_uv_points(
-    brep: &BRep,
-    wire: &Wire,
-    surface_idx: usize,
-) -> Vec<DVec2> {
+fn sample_wire_uv_points(brep: &BRep, wire: &Wire, surface_idx: usize) -> Vec<DVec2> {
     let mut points = Vec::new();
 
     for we in &wire.edges {
@@ -82,7 +78,12 @@ fn sample_wire_uv_points(
             .curve2d_range
             .get(pcurve.curve2d_idx)
             .and_then(|value| *value)
-            .or_else(|| brep.geom.edge_curve_range.get(we.idx).and_then(|value| *value))
+            .or_else(|| {
+                brep.geom
+                    .edge_curve_range
+                    .get(we.idx)
+                    .and_then(|value| *value)
+            })
             .unwrap_or_else(|| curve2d_default_range(curve2d));
         if !we.forward {
             range.swap(0, 1);
@@ -135,8 +136,7 @@ fn point_in_polygon_2d(point: DVec2, polygon: &[DVec2]) -> bool {
         let a = polygon[current];
         let b = polygon[prev];
         let intersects = ((a.y > point.y) != (b.y > point.y))
-            && (point.x
-                < (b.x - a.x) * (point.y - a.y) / (b.y - a.y).abs().max(1e-20) + a.x);
+            && (point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y).abs().max(1e-20) + a.x);
         if intersects {
             inside = !inside;
         }
@@ -145,11 +145,7 @@ fn point_in_polygon_2d(point: DVec2, polygon: &[DVec2]) -> bool {
     inside
 }
 
-fn point_is_inside_face_uv(
-    point: DVec2,
-    outer: &[DVec2],
-    holes: &[Vec<DVec2>],
-) -> bool {
+fn point_is_inside_face_uv(point: DVec2, outer: &[DVec2], holes: &[Vec<DVec2>]) -> bool {
     point_in_polygon_2d(point, outer) && !holes.iter().any(|hole| point_in_polygon_2d(point, hole))
 }
 
@@ -166,14 +162,20 @@ fn project_to_uv(surface: &Surface3, point: DVec3) -> Option<DVec2> {
             let x_axis = rcad_kernel::any_perpendicular(axis);
             let y_axis = axis.cross(x_axis).normalize_or_zero();
             let radial = point - cylinder.origin - axis * (point - cylinder.origin).dot(axis);
-            Some(DVec2::new(radial.dot(y_axis).atan2(radial.dot(x_axis)), (point - cylinder.origin).dot(axis)))
+            Some(DVec2::new(
+                radial.dot(y_axis).atan2(radial.dot(x_axis)),
+                (point - cylinder.origin).dot(axis),
+            ))
         }
         Surface3::Cone(cone) => {
             let axis = cone.axis.normalize_or_zero();
             let x_axis = rcad_kernel::any_perpendicular(axis);
             let y_axis = axis.cross(x_axis).normalize_or_zero();
             let radial = point - cone.apex - axis * (point - cone.apex).dot(axis);
-            Some(DVec2::new(radial.dot(y_axis).atan2(radial.dot(x_axis)), (point - cone.apex).dot(axis)))
+            Some(DVec2::new(
+                radial.dot(y_axis).atan2(radial.dot(x_axis)),
+                (point - cone.apex).dot(axis),
+            ))
         }
         _ => None,
     }
@@ -194,8 +196,10 @@ fn parse_step_arg(args: &[String]) -> Result<String, String> {
             value => path = Some(value),
         }
     }
-    path.map(ToOwned::to_owned)
-        .ok_or_else(|| "usage: cargo run -p rcad-examples --example diagnose_step_mesh -- --step <file.step>".to_string())
+    path.map(ToOwned::to_owned).ok_or_else(|| {
+        "usage: cargo run -p rcad-examples --example diagnose_step_mesh -- --step <file.step>"
+            .to_string()
+    })
 }
 
 fn main() {
@@ -216,7 +220,10 @@ fn main() {
     let mut coincident_vertices: BTreeMap<[i64; 3], Vec<usize>> = BTreeMap::new();
     for (index, vertex) in brep.vertices.iter().enumerate() {
         coincident_vertices
-            .entry(round_key3([vertex.point.x, vertex.point.y, vertex.point.z], vertex_scale))
+            .entry(round_key3(
+                [vertex.point.x, vertex.point.y, vertex.point.z],
+                vertex_scale,
+            ))
             .or_default()
             .push(index);
     }
@@ -244,7 +251,12 @@ fn main() {
                     .get(face_index)
                     .and_then(|value| *value)
                     .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx).cloned())
-                    .zip(brep.geom.face_surface.get(face_index).and_then(|value| *value));
+                    .zip(
+                        brep.geom
+                            .face_surface
+                            .get(face_index)
+                            .and_then(|value| *value),
+                    );
 
                 let trim_data = face_surface.and_then(|(surface, surface_idx)| {
                     let outer = sample_wire_uv_points(&brep, &face.outer_wire, surface_idx);
@@ -306,10 +318,11 @@ fn main() {
                     if let Some((surface, outer, holes)) = &trim_data {
                         let centroid = (a + b + c) / 3.0;
                         if let Some(uv) = project_to_uv(surface, centroid)
-                            && !point_is_inside_face_uv(uv, outer, holes) {
-                                outside_trim_triangles += 1;
-                                face_outside += 1;
-                            }
+                            && !point_is_inside_face_uv(uv, outer, holes)
+                        {
+                            outside_trim_triangles += 1;
+                            face_outside += 1;
+                        }
                     }
                 }
                 if face_outside > 0 {
@@ -334,7 +347,12 @@ fn main() {
         .collect();
 
     println!("STEP: {path}");
-    println!("vertices={} edges={} solids={}", brep.vertices.len(), brep.edges.len(), brep.solids.len());
+    println!(
+        "vertices={} edges={} solids={}",
+        brep.vertices.len(),
+        brep.edges.len(),
+        brep.solids.len()
+    );
     println!("triangles={triangle_count} degenerate_triangles={degenerate_triangles}");
     println!("coincident_vertex_groups={}", repeated_vertex_groups.len());
     for (key, indices) in repeated_vertex_groups.iter().take(10) {
@@ -344,7 +362,10 @@ fn main() {
     for (tri, count) in duplicate_triangles.iter().take(10) {
         println!("  duplicate triangle x{count}: {:?}", tri);
     }
-    println!("segments_shared_by_more_than_two_triangles={}", suspicious_segments.len());
+    println!(
+        "segments_shared_by_more_than_two_triangles={}",
+        suspicious_segments.len()
+    );
     for (seg, count) in suspicious_segments.iter().take(20) {
         println!("  segment x{count}: {:?}", seg);
     }
@@ -356,11 +377,21 @@ fn main() {
         .iter()
         .filter(|(_, normals)| normals.len() > 2)
         .collect();
-    println!("coincident_vertices_with_multiple_triangle_normals={}", split_normal_vertices.len());
+    println!(
+        "coincident_vertices_with_multiple_triangle_normals={}",
+        split_normal_vertices.len()
+    );
     for (key, normals) in split_normal_vertices.iter().take(20) {
-        println!("  vertex {:?}: distinct_triangle_normals={}", key, normals.len());
+        println!(
+            "  vertex {:?}: distinct_triangle_normals={}",
+            key,
+            normals.len()
+        );
     }
-    println!("faces_with_extra_hanging_edges={}", hanging_edges_by_face.len());
+    println!(
+        "faces_with_extra_hanging_edges={}",
+        hanging_edges_by_face.len()
+    );
     for (face_idx, hanging_edges, total) in hanging_edges_by_face.iter().take(20) {
         println!("  face {face_idx}: hanging_edges={hanging_edges}, triangles={total}");
     }
@@ -388,22 +419,32 @@ fn main() {
         .iter()
         .map(|edge| {
             let mut seg = [
-                round_key3([
-                    brep.vertices[edge.start].point.x,
-                    brep.vertices[edge.start].point.y,
-                    brep.vertices[edge.start].point.z,
-                ], vertex_scale),
-                round_key3([
-                    brep.vertices[edge.end].point.x,
-                    brep.vertices[edge.end].point.y,
-                    brep.vertices[edge.end].point.z,
-                ], vertex_scale),
+                round_key3(
+                    [
+                        brep.vertices[edge.start].point.x,
+                        brep.vertices[edge.start].point.y,
+                        brep.vertices[edge.start].point.z,
+                    ],
+                    vertex_scale,
+                ),
+                round_key3(
+                    [
+                        brep.vertices[edge.end].point.x,
+                        brep.vertices[edge.end].point.y,
+                        brep.vertices[edge.end].point.z,
+                    ],
+                    vertex_scale,
+                ),
             ];
             seg.sort();
             seg
         })
         .collect();
-    println!("topology_edges={} unique_topology_segments={}", brep.edges.len(), unique_edge_keys.len());
+    println!(
+        "topology_edges={} unique_topology_segments={}",
+        brep.edges.len(),
+        unique_edge_keys.len()
+    );
 
     let render_mesh = Tessellator::tessellate(&brep);
     let zero_normals = render_mesh
@@ -422,5 +463,3 @@ fn main() {
         zero_normals
     );
 }
-
-

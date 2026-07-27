@@ -41,7 +41,10 @@ fn offset_cursor() -> [f32; 2] {
 
 /// Count faces across all solids/shells.
 fn face_count(brep: &topods::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+        .count()
 }
 
 fn is_idle(ctrl: &CreationController) -> bool {
@@ -151,7 +154,10 @@ fn sphere_preview_and_confirm() {
     // At this point preview_brep should produce geometry (if the click succeeded).
     if !is_idle(&ctrl) {
         let preview = ctrl.preview_brep(cam.distance);
-        assert!(preview.is_some(), "preview_brep should produce geometry in SphereRadius state");
+        assert!(
+            preview.is_some(),
+            "preview_brep should produce geometry in SphereRadius state"
+        );
 
         // Confirm should produce a BRep and reset to Idle.
         let result = ctrl.confirm_active_command(&cam);
@@ -189,7 +195,8 @@ fn box_preview_and_confirm() {
     }
     assert!(
         matches!(ctrl.command_state(), CommandState::BoxHeight { .. }),
-        "expected BoxHeight, got {:?}", ctrl.command_state()
+        "expected BoxHeight, got {:?}",
+        ctrl.command_state()
     );
 
     // Move pointer higher on screen to set a non-trivial height.
@@ -222,7 +229,10 @@ fn undo_last_step_cylinder() {
     if is_idle(&ctrl) {
         return; // Ray missed; skip.
     }
-    assert!(matches!(ctrl.command_state(), CommandState::CylinderRadius { .. }));
+    assert!(matches!(
+        ctrl.command_state(),
+        CommandState::CylinderRadius { .. }
+    ));
 
     // Click 2 → CylinderHeight.
     click(&mut ctrl, &empty, &cam, &mut sel, offset_cursor());
@@ -231,7 +241,8 @@ fn undo_last_step_cylinder() {
     }
     assert!(
         matches!(ctrl.command_state(), CommandState::CylinderHeight { .. }),
-        "expected CylinderHeight, got {:?}", ctrl.command_state()
+        "expected CylinderHeight, got {:?}",
+        ctrl.command_state()
     );
 
     // Undo → back to CylinderRadius.
@@ -263,11 +274,15 @@ fn grow_selected_faces_basic() {
     // After growing, should have more faces.
     assert!(
         sel.selected_faces.len() > 1,
-        "grow should add adjacent faces: {:?}", sel.selected_faces
+        "grow should add adjacent faces: {:?}",
+        sel.selected_faces
     );
     let total_faces = face_count(&brep);
     for &fi in &sel.selected_faces {
-        assert!(fi < total_faces, "face index {fi} out of bounds ({total_faces})");
+        assert!(
+            fi < total_faces,
+            "face index {fi} out of bounds ({total_faces})"
+        );
     }
 }
 
@@ -287,11 +302,19 @@ fn grow_selected_edges_basic() {
 
     assert!(
         sel.selected_edges.len() > 1,
-        "grow should add adjacent edges: {:?}", sel.selected_edges
+        "grow should add adjacent edges: {:?}",
+        sel.selected_edges
     );
-    let total_edges = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Edge(_))).count();
+    let total_edges = brep
+        .tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Edge(_)))
+        .count();
     for &ei in &sel.selected_edges {
-        assert!(ei < total_edges, "edge index {ei} out of bounds ({total_edges})");
+        assert!(
+            ei < total_edges,
+            "edge index {ei} out of bounds ({total_edges})"
+        );
     }
 }
 

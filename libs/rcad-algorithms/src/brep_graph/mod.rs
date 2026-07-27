@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use rcad_kernel::topods;
 use rcad_kernel::persistent_naming::{
-    PersistentId, PersistentNamingEngine, NamingStabilityReport,
-    OperationType, OperationStats, CrossOperationStabilityReport,
+    CrossOperationStabilityReport, NamingStabilityReport, OperationStats, OperationType,
+    PersistentId, PersistentNamingEngine,
 };
+use rcad_kernel::topods;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -36,9 +36,17 @@ pub struct TopoGraphHistory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TopoGraphValidationIssue {
-    MissingAdjacency { node: TopoNode },
-    NonSymmetricAdjacency { a: TopoNode, b: TopoNode },
-    InvalidEdgeVertexRef { edge_index: usize, vertex_index: usize },
+    MissingAdjacency {
+        node: TopoNode,
+    },
+    NonSymmetricAdjacency {
+        a: TopoNode,
+        b: TopoNode,
+    },
+    InvalidEdgeVertexRef {
+        edge_index: usize,
+        vertex_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -461,7 +469,10 @@ impl BRepGraphHistory {
         // Create snapshot.
         let mut naming = HashMap::new();
         for node in &graph.nodes {
-            if let Some(pid) = self.naming_engine.resolve_persistent(node_to_entity_id(*node)) {
+            if let Some(pid) = self
+                .naming_engine
+                .resolve_persistent(node_to_entity_id(*node))
+            {
                 naming.insert(*node, pid);
             }
         }
@@ -477,12 +488,7 @@ impl BRepGraphHistory {
         // Propagate names for surviving entities.
         let entity_id_map: Vec<(u64, Option<u64>)> = entity_map
             .iter()
-            .map(|(old, new)| {
-                (
-                    node_to_entity_id(*old),
-                    new.map(node_to_entity_id),
-                )
-            })
+            .map(|(old, new)| (node_to_entity_id(*old), new.map(node_to_entity_id)))
             .collect();
 
         self.naming_engine.propagate_names(
@@ -493,12 +499,14 @@ impl BRepGraphHistory {
 
     /// Assign a persistent ID to a topology node.
     pub fn assign_persistent_id(&mut self, node: TopoNode) -> PersistentId {
-        self.naming_engine.assign_persistent_id(node_to_entity_id(node))
+        self.naming_engine
+            .assign_persistent_id(node_to_entity_id(node))
     }
 
     /// Resolve a topology node to its persistent ID.
     pub fn resolve_persistent(&self, node: TopoNode) -> Option<PersistentId> {
-        self.naming_engine.resolve_persistent(node_to_entity_id(node))
+        self.naming_engine
+            .resolve_persistent(node_to_entity_id(node))
     }
 
     /// Resolve a persistent ID back to a topology node.
@@ -523,7 +531,8 @@ impl BRepGraphHistory {
     ) -> NamingStabilityReport {
         let before_context = self.naming_engine.context().clone();
         let after_ids: Vec<u64> = after_nodes.iter().map(|n| node_to_entity_id(*n)).collect();
-        self.naming_engine.stability_report(&before_context, &after_ids)
+        self.naming_engine
+            .stability_report(&before_context, &after_ids)
     }
 
     /// Track an edge split event.
@@ -534,7 +543,10 @@ impl BRepGraphHistory {
     ) -> Vec<PersistentId> {
         self.naming_engine.propagate_split(
             old_edge_idx as u64,
-            &new_edge_indices.iter().map(|&i| i as u64).collect::<Vec<_>>(),
+            &new_edge_indices
+                .iter()
+                .map(|&i| i as u64)
+                .collect::<Vec<_>>(),
         )
     }
 
@@ -546,7 +558,10 @@ impl BRepGraphHistory {
     ) -> Vec<PersistentId> {
         self.naming_engine.propagate_split(
             old_face_idx as u64,
-            &new_face_indices.iter().map(|&i| i as u64).collect::<Vec<_>>(),
+            &new_face_indices
+                .iter()
+                .map(|&i| i as u64)
+                .collect::<Vec<_>>(),
         )
     }
 
@@ -557,7 +572,10 @@ impl BRepGraphHistory {
         new_vertex_idx: usize,
     ) -> PersistentId {
         self.naming_engine.propagate_merge(
-            &old_vertex_indices.iter().map(|&i| i as u64).collect::<Vec<_>>(),
+            &old_vertex_indices
+                .iter()
+                .map(|&i| i as u64)
+                .collect::<Vec<_>>(),
             new_vertex_idx as u64,
             rcad_kernel::persistent_naming::NamePropagationPolicy::Preserve,
         )
@@ -570,7 +588,10 @@ impl BRepGraphHistory {
         new_face_idx: usize,
     ) -> PersistentId {
         self.naming_engine.propagate_merge(
-            &old_face_indices.iter().map(|&i| i as u64).collect::<Vec<_>>(),
+            &old_face_indices
+                .iter()
+                .map(|&i| i as u64)
+                .collect::<Vec<_>>(),
             new_face_idx as u64,
             rcad_kernel::persistent_naming::NamePropagationPolicy::Preserve,
         )
@@ -593,7 +614,9 @@ impl BRepGraphHistory {
 
     /// Get the action name at the current snapshot.
     pub fn current_action(&self) -> Option<&str> {
-        self.snapshots.get(self.current_snapshot).map(|s| s.action.as_str())
+        self.snapshots
+            .get(self.current_snapshot)
+            .map(|s| s.action.as_str())
     }
 
     /// Export naming events as a serializable history.
@@ -677,7 +700,8 @@ impl NamedGraph {
     where
         F: FnOnce(&mut TopoGraph, &mut BRepGraphHistory),
     {
-        self.history.begin_operation(operation_type, Some(action.to_string()));
+        self.history
+            .begin_operation(operation_type, Some(action.to_string()));
 
         let before_nodes = self.graph.nodes.clone();
         mutator(&mut self.graph, &mut self.history);
@@ -698,7 +722,8 @@ impl NamedGraph {
                 })
                 .collect();
 
-            self.history.record_mutation(&self.graph, action, &entity_map);
+            self.history
+                .record_mutation(&self.graph, action, &entity_map);
 
             self.history.finalize_operation(OperationStats {
                 entity_count_before: before_nodes.len(),
@@ -890,15 +915,21 @@ impl CrossOperationNamingAnalysis {
 
     /// Get the most problematic operation (lowest stability score).
     pub fn most_problematic_operation(&self) -> Option<&OperationStabilityMetrics> {
-        self.per_operation_stability
-            .iter()
-            .min_by(|a, b| a.stability_score.partial_cmp(&b.stability_score).unwrap_or(std::cmp::Ordering::Equal))
+        self.per_operation_stability.iter().min_by(|a, b| {
+            a.stability_score
+                .partial_cmp(&b.stability_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// Get operations sorted by stability score (ascending).
     pub fn operations_by_stability(&self) -> Vec<&OperationStabilityMetrics> {
         let mut ops: Vec<_> = self.per_operation_stability.iter().collect();
-        ops.sort_by(|a, b| a.stability_score.partial_cmp(&b.stability_score).unwrap_or(std::cmp::Ordering::Equal));
+        ops.sort_by(|a, b| {
+            a.stability_score
+                .partial_cmp(&b.stability_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ops
     }
 
@@ -907,7 +938,11 @@ impl CrossOperationNamingAnalysis {
         if self.per_operation_stability.is_empty() {
             return 1.0;
         }
-        let sum: f64 = self.per_operation_stability.iter().map(|m| m.stability_score).sum();
+        let sum: f64 = self
+            .per_operation_stability
+            .iter()
+            .map(|m| m.stability_score)
+            .sum();
         sum / self.per_operation_stability.len() as f64
     }
 
@@ -924,7 +959,13 @@ impl CrossOperationNamingAnalysis {
             self.operations.len(),
             self.entity_genealogy.len(),
             self.overall_stability * 100.0,
-            if self.stability_trend > 0.0 { "Improving" } else if self.stability_trend < 0.0 { "Degrading" } else { "Stable" },
+            if self.stability_trend > 0.0 {
+                "Improving"
+            } else if self.stability_trend < 0.0 {
+                "Degrading"
+            } else {
+                "Stable"
+            },
             self.broken_chains.len(),
             self.average_operation_stability() * 100.0
         )
@@ -970,13 +1011,16 @@ pub fn analyze_naming_sequence(
         entity_to_pid.insert(entity_id, pid);
         pid_to_entity.insert(pid, entity_id);
 
-        entity_genealogy.insert(pid, EntityGenealogy {
-            persistent_id: pid,
-            created_in_operation: rcad_kernel::persistent_naming::OperationId::NULL,
-            evolution: vec![(rcad_kernel::persistent_naming::OperationId::NULL, entity_id)],
-            current_entity_id: Some(entity_id),
-            is_deleted: false,
-        });
+        entity_genealogy.insert(
+            pid,
+            EntityGenealogy {
+                persistent_id: pid,
+                created_in_operation: rcad_kernel::persistent_naming::OperationId::NULL,
+                evolution: vec![(rcad_kernel::persistent_naming::OperationId::NULL, entity_id)],
+                current_entity_id: Some(entity_id),
+                is_deleted: false,
+            },
+        );
     }
 
     let mut cumulative_stability = 1.0;
@@ -1014,7 +1058,11 @@ pub fn analyze_naming_sequence(
 
             // Detect broken chains.
             for event in &op.naming_events {
-                if let NamingEvent::Lost { entity_id, persistent_id } = event {
+                if let NamingEvent::Lost {
+                    entity_id,
+                    persistent_id,
+                } = event
+                {
                     // Find how many operations this entity survived.
                     let survived_operations = entity_genealogy
                         .get(persistent_id)
@@ -1040,7 +1088,10 @@ pub fn analyze_naming_sequence(
     }
 
     // Calculate overall stability.
-    let total_preserved: usize = per_operation_stability.iter().map(|m| m.names_retained).sum();
+    let total_preserved: usize = per_operation_stability
+        .iter()
+        .map(|m| m.names_retained)
+        .sum();
     let total_lost: usize = per_operation_stability.iter().map(|m| m.names_lost).sum();
     let total = total_preserved + total_lost;
     let overall_stability = if total > 0 {
@@ -1071,7 +1122,10 @@ pub fn detect_cross_operation_conflicts(
     analysis: &CrossOperationNamingAnalysis,
 ) -> Vec<NamingConflict> {
     let mut conflicts: Vec<NamingConflict> = Vec::new();
-    let mut pid_to_entities: HashMap<PersistentId, Vec<(u64, rcad_kernel::persistent_naming::OperationId)>> = HashMap::new();
+    let mut pid_to_entities: HashMap<
+        PersistentId,
+        Vec<(u64, rcad_kernel::persistent_naming::OperationId)>,
+    > = HashMap::new();
 
     // Build a map of persistent ID to all entities that have held it.
     for (pid, genealogy) in &analysis.entity_genealogy {
@@ -1125,16 +1179,18 @@ pub fn detect_cross_operation_conflicts(
     for chain in &analysis.broken_chains {
         // Check if any genealogy still references this broken chain.
         if let Some(genealogy) = analysis.entity_genealogy.get(&chain.persistent_id)
-            && !genealogy.is_deleted && genealogy.evolution.len() > chain.survived_operations {
-                conflicts.push(NamingConflict {
-                    persistent_id: chain.persistent_id,
-                    involved_operations: vec![chain.broken_at_operation],
-                    conflicting_entities: vec![chain.entity_id],
-                    conflict_type: ConflictType::ReferenceToDeleted,
-                    severity: rcad_kernel::persistent_naming::IssueSeverity::Critical,
-                    auto_resolved: false,
-                });
-            }
+            && !genealogy.is_deleted
+            && genealogy.evolution.len() > chain.survived_operations
+        {
+            conflicts.push(NamingConflict {
+                persistent_id: chain.persistent_id,
+                involved_operations: vec![chain.broken_at_operation],
+                conflicting_entities: vec![chain.entity_id],
+                conflict_type: ConflictType::ReferenceToDeleted,
+                severity: rcad_kernel::persistent_naming::IssueSeverity::Critical,
+                auto_resolved: false,
+            });
+        }
     }
 
     conflicts
@@ -1163,17 +1219,22 @@ pub fn generate_stability_recommendations(
         recommendations.push(StabilityRecommendation {
             priority: 80,
             category: RecommendationCategory::NamingRule,
-            description: "Moderate naming stability degradation. Review naming rule configuration.".to_string(),
+            description: "Moderate naming stability degradation. Review naming rule configuration."
+                .to_string(),
             affected_operations: vec![],
             estimated_impact: 0.15,
-            suggestion: Some("Consider switching to HistoryTracking naming rule for better traceability".to_string()),
+            suggestion: Some(
+                "Consider switching to HistoryTracking naming rule for better traceability"
+                    .to_string(),
+            ),
         });
     }
 
     // Check for problematic operations.
     if let Some(problematic) = analysis.most_problematic_operation()
-        && problematic.stability_score < 0.7 {
-            recommendations.push(StabilityRecommendation {
+        && problematic.stability_score < 0.7
+    {
+        recommendations.push(StabilityRecommendation {
                 priority: 90,
                 category: RecommendationCategory::OperationHandling,
                 description: format!(
@@ -1185,11 +1246,13 @@ pub fn generate_stability_recommendations(
                 estimated_impact: 0.2,
                 suggestion: Some("Ensure entity mapping is correctly tracked during this operation".to_string()),
             });
-        }
+    }
 
     // Check for broken chains.
     if !analysis.broken_chains.is_empty() {
-        let severe_breaks: Vec<_> = analysis.broken_chains.iter()
+        let severe_breaks: Vec<_> = analysis
+            .broken_chains
+            .iter()
             .filter(|c| c.survived_operations > 5)
             .collect();
 
@@ -1213,16 +1276,21 @@ pub fn generate_stability_recommendations(
         recommendations.push(StabilityRecommendation {
             priority: 75,
             category: RecommendationCategory::PropagationPolicy,
-            description: "Stability is degrading over time. Naming propagation may need adjustment.".to_string(),
+            description:
+                "Stability is degrading over time. Naming propagation may need adjustment."
+                    .to_string(),
             affected_operations: vec![],
             estimated_impact: 0.1,
-            suggestion: Some("Review NamePropagationPolicy settings for recent operations".to_string()),
+            suggestion: Some(
+                "Review NamePropagationPolicy settings for recent operations".to_string(),
+            ),
         });
     }
 
     // Check for conflicts.
     let conflicts = detect_cross_operation_conflicts(analysis);
-    let critical_conflicts: Vec<_> = conflicts.iter()
+    let critical_conflicts: Vec<_> = conflicts
+        .iter()
         .filter(|c| c.severity == rcad_kernel::persistent_naming::IssueSeverity::Critical)
         .collect();
 
@@ -1234,14 +1302,21 @@ pub fn generate_stability_recommendations(
                 "{} critical naming conflicts detected. Immediate resolution required.",
                 critical_conflicts.len()
             ),
-            affected_operations: critical_conflicts.iter().flat_map(|c| c.involved_operations.clone()).collect(),
+            affected_operations: critical_conflicts
+                .iter()
+                .flat_map(|c| c.involved_operations.clone())
+                .collect(),
             estimated_impact: 0.3,
-            suggestion: Some("Manually resolve conflicts or reset naming for affected entities".to_string()),
+            suggestion: Some(
+                "Manually resolve conflicts or reset naming for affected entities".to_string(),
+            ),
         });
     }
 
     // Check per-operation patterns.
-    let low_stability_ops: Vec<_> = analysis.per_operation_stability.iter()
+    let low_stability_ops: Vec<_> = analysis
+        .per_operation_stability
+        .iter()
         .filter(|m| m.stability_score < 0.8)
         .collect();
 
@@ -1249,10 +1324,15 @@ pub fn generate_stability_recommendations(
         recommendations.push(StabilityRecommendation {
             priority: 70,
             category: RecommendationCategory::Architecture,
-            description: "Multiple operations have low stability. Consider system-wide naming improvements.".to_string(),
+            description:
+                "Multiple operations have low stability. Consider system-wide naming improvements."
+                    .to_string(),
             affected_operations: low_stability_ops.iter().map(|m| m.operation_id).collect(),
             estimated_impact: 0.2,
-            suggestion: Some("Enable comprehensive entity tracking and increase name propagation fidelity".to_string()),
+            suggestion: Some(
+                "Enable comprehensive entity tracking and increase name propagation fidelity"
+                    .to_string(),
+            ),
         });
     }
 
@@ -1273,7 +1353,9 @@ fn calculate_stability_trend(metrics: &[OperationStabilityMetrics]) -> f64 {
     let n = metrics.len() as f64;
     let sum_x: f64 = (0..metrics.len()).map(|i| i as f64).sum();
     let sum_y: f64 = metrics.iter().map(|m| m.stability_score).sum();
-    let sum_xy: f64 = metrics.iter().enumerate()
+    let sum_xy: f64 = metrics
+        .iter()
+        .enumerate()
         .map(|(i, m)| i as f64 * m.stability_score)
         .sum();
     let sum_x2: f64 = (0..metrics.len()).map(|i| (i * i) as f64).sum();
@@ -1304,9 +1386,7 @@ fn infer_entity_type_from_id(entity_id: u64) -> Option<rcad_kernel::persistent_n
 }
 
 // Re-export types needed for analysis.
-pub use rcad_kernel::persistent_naming::{
-    OperationRecord, EntityGenealogy,
-};
+pub use rcad_kernel::persistent_naming::{EntityGenealogy, OperationRecord};
 
 impl BRepGraphHistory {
     /// Cancel the current operation.
@@ -1350,7 +1430,10 @@ pub struct ScopedId {
 impl ScopedId {
     /// Create a new scoped ID with the given persistent ID and scope.
     pub fn new(persistent_id: PersistentId, scope: NamingScope) -> Self {
-        Self { persistent_id, scope }
+        Self {
+            persistent_id,
+            scope,
+        }
     }
 
     /// Create a scoped ID with a null persistent ID and empty scope.
@@ -1613,9 +1696,9 @@ impl NamePropagationRule {
     /// Create a default propagation rule for an operation type.
     pub fn for_operation(operation_type: OperationType) -> Self {
         match operation_type {
-            OperationType::BooleanUnion |
-            OperationType::BooleanIntersection |
-            OperationType::BooleanDifference => Self {
+            OperationType::BooleanUnion
+            | OperationType::BooleanIntersection
+            | OperationType::BooleanDifference => Self {
                 operation_type,
                 face_policy: NamePropagationPolicy::Preserve,
                 edge_policy: NamePropagationPolicy::Preserve,
@@ -1631,8 +1714,7 @@ impl NamePropagationRule {
                 track_genealogy: true,
                 conflict_resolution: NameConflictResolution::KeepExisting,
             },
-            OperationType::EdgeSplit |
-            OperationType::FaceSplit => Self {
+            OperationType::EdgeSplit | OperationType::FaceSplit => Self {
                 operation_type,
                 face_policy: NamePropagationPolicy::Inherit,
                 edge_policy: NamePropagationPolicy::Inherit,
@@ -1664,8 +1746,7 @@ impl NamePropagationRule {
                 track_genealogy: true,
                 conflict_resolution: NameConflictResolution::KeepExisting,
             },
-            OperationType::Generic |
-            OperationType::Import => Self {
+            OperationType::Generic | OperationType::Import => Self {
                 operation_type,
                 face_policy: NamePropagationPolicy::Preserve,
                 edge_policy: NamePropagationPolicy::Preserve,
@@ -1687,8 +1768,7 @@ impl NamePropagationRule {
 }
 
 /// Propagation policies for name inheritance through operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NamePropagationPolicy {
     /// Keep the original entity's name unchanged.
     #[default]
@@ -1705,4 +1785,3 @@ pub enum NamePropagationPolicy {
     TopologyBased,
 }
 include!("e1.rs");
-

@@ -328,7 +328,10 @@ mod tests {
         let ex = extrema_curve_curve(&c1, &c2, 32);
         let distances: Vec<f64> = ex.pairs.iter().map(|p| p.distance).collect();
         for w in distances.windows(2) {
-            assert!(w[0] <= w[1] + 1e-10, "pairs should be sorted ascending by distance");
+            assert!(
+                w[0] <= w[1] + 1e-10,
+                "pairs should be sorted ascending by distance"
+            );
         }
     }
 }

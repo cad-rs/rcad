@@ -1,5 +1,5 @@
-use rcad_kernel::topods;
 use rcad_kernel::Surface3;
+use rcad_kernel::topods;
 use rcad_step::StepReader;
 use std::path::Path;
 
@@ -23,7 +23,10 @@ fn count_faces(t: &topods::BRep) -> (usize, usize, usize) {
 #[test]
 fn check_all_references() {
     for i in 1..=9 {
-        let path = format!("../../../tests/occt/step_output/occt_boolean_bfuse_simple_b{}.step", i);
+        let path = format!(
+            "../../../tests/occt/step_output/occt_boolean_bfuse_simple_b{}.step",
+            i
+        );
         let t = StepReader::read_file(Path::new(&path)).expect("load step");
         let (nf, np, nb) = count_faces(&t);
         println!("[OCCT REF B{}] {}f {}PLANE+{}BS", i, nf, np, nb);

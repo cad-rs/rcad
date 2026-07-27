@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -36,5 +36,3 @@ pub fn intersect_plane_sphere(plane: &Plane, sphere: &SphericalSurface) -> Plane
 
     PlaneSphereResult::Circle(Circle3::new(center, plane.normal, circle_radius))
 }
-
-

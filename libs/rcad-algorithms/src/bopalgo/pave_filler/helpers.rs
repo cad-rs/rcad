@@ -1,6 +1,6 @@
 use crate::bnd_lib;
 use crate::bopds::ds::{
-    DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, NearTangentType, ShapeOrigin, DS,
+    DS, DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, NearTangentType, ShapeOrigin,
 };
 use crate::bopds::pave::*;
 use crate::inttools;
@@ -280,8 +280,8 @@ pub(crate) fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surfac
         Surface3::LinearExtrusion(ref le) => {
             let mut le = le.clone();
             le.direction = le.direction; // direction unchanged
-                                         // The profile curve's origin is not directly accessible as a field;
-                                         // clone without position modification for now
+            // The profile curve's origin is not directly accessible as a field;
+            // clone without position modification for now
             Surface3::LinearExtrusion(le)
         }
         ref other => other.clone(),
@@ -653,8 +653,8 @@ pub(crate) fn sample_circle_arc(
     t_end: f64,
     n: usize,
 ) -> Vec<DVec3> {
-    use rcad_kernel::geom::Curve3;
     use rcad_kernel::CurveEval;
+    use rcad_kernel::geom::Curve3;
     let curve = Curve3::Circle(*circle);
     (0..n)
         .map(|i| {
@@ -898,9 +898,9 @@ pub(crate) fn intersect_edge_face_numeric(
     t_range: [f64; 2],
     geom_tol: f64,
 ) -> Vec<(DVec3, f64)> {
+    use rcad_kernel::CurveEval;
     use rcad_kernel::geom::SurfaceEval;
     use rcad_kernel::projection::closest_point_on_surface;
-    use rcad_kernel::CurveEval;
     const N_SAMPLES: usize = 64;
     const MAX_BISECT: usize = 30;
 

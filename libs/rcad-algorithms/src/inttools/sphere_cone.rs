@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a sphere and a cone.
+//! Analytic intersection of a sphere and a cone.
 //!
 //! # Case classification
 //!
@@ -51,10 +51,7 @@ pub enum SphereConeResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute the analytic intersection of `sphere` and `cone`.
-pub fn intersect_sphere_cone(
-    sphere: &SphericalSurface,
-    cone: &ConicalSurface,
-) -> SphereConeResult {
+pub fn intersect_sphere_cone(sphere: &SphericalSurface, cone: &ConicalSurface) -> SphereConeResult {
     intersect_sphere_cone_with_tolerance(sphere, cone, 0.0)
 }
 
@@ -383,7 +380,11 @@ fn intersect_sphere_cone_off_axis(
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
             };
-            let (s_lower, _s_upper) = if s_far <= s_near { (s_far, s_near) } else { (s_near, s_far) };
+            let (s_lower, _s_upper) = if s_far <= s_near {
+                (s_far, s_near)
+            } else {
+                (s_near, s_far)
+            };
             if s_lower < 0.0 {
                 return None;
             }
@@ -408,7 +409,11 @@ fn intersect_sphere_cone_off_axis(
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
             };
-            let (s_lower, s_upper) = if s_far <= s_near { (s_far, s_near) } else { (s_near, s_far) };
+            let (s_lower, s_upper) = if s_far <= s_near {
+                (s_far, s_near)
+            } else {
+                (s_near, s_far)
+            };
             if s_upper < 0.0 || (s_upper - s_lower).abs() <= TOLERANCE_ABS * 0.1 {
                 return None;
             }
@@ -422,7 +427,10 @@ fn intersect_sphere_cone_off_axis(
     for branch in &lower_param_branches {
         if branch.len() >= 4 {
             let refined = crate::inttools::pcurve_derive::refine_polyline(
-                branch, &lower_eval, CHORD_TOL, REFINE_DEPTH,
+                branch,
+                &lower_eval,
+                CHORD_TOL,
+                REFINE_DEPTH,
             );
             result.push(refined.into_iter().map(|(_, p)| p).collect());
         } else if branch.len() >= 2 {
@@ -433,7 +441,10 @@ fn intersect_sphere_cone_off_axis(
     for branch in &upper_param_branches {
         if branch.len() >= 4 {
             let refined = crate::inttools::pcurve_derive::refine_polyline(
-                branch, &upper_eval, CHORD_TOL, REFINE_DEPTH,
+                branch,
+                &upper_eval,
+                CHORD_TOL,
+                REFINE_DEPTH,
             );
             result.push(refined.into_iter().map(|(_, p)| p).collect());
         } else if branch.len() >= 2 {
@@ -464,5 +475,3 @@ fn intersect_sphere_cone_off_axis(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

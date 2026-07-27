@@ -1,4 +1,4 @@
-﻿//! TKGeomBase property/analysis equivalents.
+//! TKGeomBase property/analysis equivalents.
 //!
 //! 闁?implementations for:
 //!   - GeomLProp_CLProps2d     (curvature, D1, D2, centre of curvature, normal)
@@ -8,10 +8,10 @@
 //!
 //! OCCT source: src/ModelingData/TKGeomBase/
 
-use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval};
-use glam::DVec3;
 use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
+use glam::DVec2;
+use glam::DVec3;
+use rcad_kernel::geom::{Curve2d, Curve2dEval};
 
 /// Precision used for curvature computations.
 const TOL: f64 = 1e-7;
@@ -100,12 +100,23 @@ pub struct CurAndInf2d {
 
 impl CurAndInf2d {
     pub fn new() -> Self {
-        Self { params: Vec::new(), types: Vec::new() }
+        Self {
+            params: Vec::new(),
+            types: Vec::new(),
+        }
     }
-    pub fn is_done(&self) -> bool { true }
-    pub fn nb_points(&self) -> usize { self.params.len() }
-    pub fn parameter(&self, idx: usize) -> f64 { self.params[idx] }
-    pub fn ci_type(&self, idx: usize) -> CIType2d { self.types[idx] }
+    pub fn is_done(&self) -> bool {
+        true
+    }
+    pub fn nb_points(&self) -> usize {
+        self.params.len()
+    }
+    pub fn parameter(&self, idx: usize) -> f64 {
+        self.params[idx]
+    }
+    pub fn ci_type(&self, idx: usize) -> CIType2d {
+        self.types[idx]
+    }
 
     fn add(&mut self, param: f64, typ: CIType2d) {
         self.params.push(param);
@@ -128,7 +139,9 @@ pub fn curvature_extrema_2d(curve: &Curve2d) -> CurAndInf2d {
     let t0 = domain[0].max(-1000.0);
     let t1 = domain[1].min(1000.0);
     let span = t1 - t0;
-    if span <= 0.0 { return result; }
+    if span <= 0.0 {
+        return result;
+    }
 
     let n = 256usize;
     let mut prev_k = curvature_at(curve, t0);
@@ -140,7 +153,11 @@ pub fn curvature_extrema_2d(curve: &Curve2d) -> CurAndInf2d {
             let dk_prev = k - prev_k;
             if i > 1 && dk_prev.abs() > 1e-12 {
                 let t_mid = t0 + span * ((i as f64 - 0.5) / (n as f64));
-                let typ = if dk_prev < 0.0 { CIType2d::MaxCur } else { CIType2d::MinCur };
+                let typ = if dk_prev < 0.0 {
+                    CIType2d::MaxCur
+                } else {
+                    CIType2d::MinCur
+                };
                 result.add(t_mid, typ);
             }
             // Sign change in curvature 闁?inflection
@@ -188,11 +205,19 @@ pub struct PointSetProps {
 
 impl PointSetProps {
     pub fn new() -> Self {
-        Self { mass: 0.0, centre: DVec3::ZERO, inertia: [0.0; 6] }
+        Self {
+            mass: 0.0,
+            centre: DVec3::ZERO,
+            inertia: [0.0; 6],
+        }
     }
 
-    pub fn mass(&self) -> f64 { self.mass }
-    pub fn centre_of_mass(&self) -> DVec3 { self.centre }
+    pub fn mass(&self) -> f64 {
+        self.mass
+    }
+    pub fn centre_of_mass(&self) -> DVec3 {
+        self.centre
+    }
 
     pub fn matrix_of_inertia(&self) -> [f64; 9] {
         let [ixx, iyy, izz, ixy, ixz, iyz] = self.inertia;
@@ -209,7 +234,9 @@ impl PointSetProps {
             self.centre = (self.centre * self.mass + pt * weight) / new_mass;
         }
         self.mass = new_mass;
-        let x = pt.x; let y = pt.y; let z = pt.z;
+        let x = pt.x;
+        let y = pt.y;
+        let z = pt.z;
         self.inertia[0] += weight * (y * y + z * z);
         self.inertia[1] += weight * (x * x + z * z);
         self.inertia[2] += weight * (x * x + y * y);
@@ -220,8 +247,14 @@ impl PointSetProps {
 
     pub fn barycentre(points: &[DVec3]) -> DVec3 {
         let mut props = PointSetProps::new();
-        for &pt in points { props.add_point(pt); }
-        if props.mass > 0.0 { props.centre } else { DVec3::ZERO }
+        for &pt in points {
+            props.add_point(pt);
+        }
+        if props.mass > 0.0 {
+            props.centre
+        } else {
+            DVec3::ZERO
+        }
     }
 }
 
@@ -242,45 +275,90 @@ pub enum PointSetKind {
 /// Classify a set of 3D points by PCA.
 /// OCCT: GProp_PEquation
 pub fn analyze_point_set(points: &[DVec3], tolerance: f64) -> PointSetKind {
-    if points.is_empty() { return PointSetKind::Space; }
+    if points.is_empty() {
+        return PointSetKind::Space;
+    }
     let n = points.len() as f64;
     let mut centroid = DVec3::ZERO;
-    for &p in points { centroid += p; }
+    for &p in points {
+        centroid += p;
+    }
     centroid /= n;
 
-    let max_dist = points.iter().map(|p| (*p - centroid).length()).fold(0.0, f64::max);
-    if max_dist < tolerance { return PointSetKind::Point(centroid); }
-
-    let mut cxx = 0.0; let mut cxy = 0.0; let mut cxz = 0.0;
-    let mut cyy = 0.0; let mut cyz = 0.0; let mut czz = 0.0;
-    for &p in points {
-        let dx = p.x - centroid.x; let dy = p.y - centroid.y; let dz = p.z - centroid.z;
-        cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
-        cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
+    let max_dist = points
+        .iter()
+        .map(|p| (*p - centroid).length())
+        .fold(0.0, f64::max);
+    if max_dist < tolerance {
+        return PointSetKind::Point(centroid);
     }
-    cxx /= n; cxy /= n; cxz /= n; cyy /= n; cyz /= n; czz /= n;
+
+    let mut cxx = 0.0;
+    let mut cxy = 0.0;
+    let mut cxz = 0.0;
+    let mut cyy = 0.0;
+    let mut cyz = 0.0;
+    let mut czz = 0.0;
+    for &p in points {
+        let dx = p.x - centroid.x;
+        let dy = p.y - centroid.y;
+        let dz = p.z - centroid.z;
+        cxx += dx * dx;
+        cxy += dx * dy;
+        cxz += dx * dz;
+        cyy += dy * dy;
+        cyz += dy * dz;
+        czz += dz * dz;
+    }
+    cxx /= n;
+    cxy /= n;
+    cxz /= n;
+    cyy /= n;
+    cyz /= n;
+    czz /= n;
 
     // Power iteration for largest eigenvalue/eigenvector
     let (eval1, v1) = power_iteration(cxx, cxy, cxz, cyy, cyz, czz, DVec3::X);
-    if eval1 < tolerance * tolerance { return PointSetKind::Point(centroid); }
+    if eval1 < tolerance * tolerance {
+        return PointSetKind::Point(centroid);
+    }
 
     // Deflate
-    cxx -= eval1 * v1.x * v1.x; cxy -= eval1 * v1.x * v1.y;
-    cxz -= eval1 * v1.x * v1.z; cyy -= eval1 * v1.y * v1.y;
-    cyz -= eval1 * v1.y * v1.z; czz -= eval1 * v1.z * v1.z;
+    cxx -= eval1 * v1.x * v1.x;
+    cxy -= eval1 * v1.x * v1.y;
+    cxz -= eval1 * v1.x * v1.z;
+    cyy -= eval1 * v1.y * v1.y;
+    cyz -= eval1 * v1.y * v1.z;
+    czz -= eval1 * v1.z * v1.z;
 
-    let second_dir = if (v1 - DVec3::X).length() > 0.1 { DVec3::Y } else { DVec3::X };
+    let second_dir = if (v1 - DVec3::X).length() > 0.1 {
+        DVec3::Y
+    } else {
+        DVec3::X
+    };
     let (eval2, _v2) = power_iteration(cxx, cxy, cxz, cyy, cyz, czz, second_dir);
-    if eval2 < tolerance * tolerance { return PointSetKind::Line(centroid, v1); }
+    if eval2 < tolerance * tolerance {
+        return PointSetKind::Line(centroid, v1);
+    }
 
     let third_dir = v1.cross(_v2).normalize();
     let (eval3, _) = power_iteration(cxx, cxy, cxz, cyy, cyz, czz, third_dir);
-    if eval3 < tolerance * tolerance { return PointSetKind::Plane(centroid, v1.cross(_v2).normalize()); }
+    if eval3 < tolerance * tolerance {
+        return PointSetKind::Plane(centroid, v1.cross(_v2).normalize());
+    }
 
     PointSetKind::Space
 }
 
-fn power_iteration(cxx: f64, cxy: f64, cxz: f64, cyy: f64, cyz: f64, czz: f64, start: DVec3) -> (f64, DVec3) {
+fn power_iteration(
+    cxx: f64,
+    cxy: f64,
+    cxz: f64,
+    cyy: f64,
+    cyz: f64,
+    czz: f64,
+    start: DVec3,
+) -> (f64, DVec3) {
     let mut v = start;
     for _ in 0..30 {
         let v2 = DVec3::new(
@@ -289,14 +367,17 @@ fn power_iteration(cxx: f64, cxy: f64, cxz: f64, cyy: f64, cyz: f64, czz: f64, s
             cxz * v.x + cyz * v.y + czz * v.z,
         );
         let len = v2.length();
-        if len < TOLERANCE_LEN_SQ_DIV_SAFE { break; }
+        if len < TOLERANCE_LEN_SQ_DIV_SAFE {
+            break;
+        }
         v = v2 / len;
     }
     let eval = DVec3::new(
         cxx * v.x + cxy * v.y + cxz * v.z,
         cxy * v.x + cyy * v.y + cyz * v.z,
         cxz * v.x + cyz * v.y + czz * v.z,
-    ).dot(v);
+    )
+    .dot(v);
     (eval, v)
 }
 
@@ -308,7 +389,10 @@ mod tests {
     // 闁冲厜鍋撻柍鍏夊亾 GeomLProp_CLProps2d tests 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
 
     fn make_line() -> Curve2d {
-        Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X })
+        Curve2d::Line(Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::X,
+        })
     }
 
     fn make_circle() -> Curve2d {
@@ -317,14 +401,17 @@ mod tests {
 
     fn make_ellipse() -> Curve2d {
         Curve2d::Ellipse(Ellipse2d {
-            center: DVec2::ZERO, major_dir: DVec2::X,
-            major_radius: 10.0, minor_radius: 5.0,
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 10.0,
+            minor_radius: 5.0,
         })
     }
 
     #[test]
     fn clprops2d_line_curvature_is_zero() {
-        let l = make_line(); let k = curvature_at(&l, 5.0);
+        let l = make_line();
+        let k = curvature_at(&l, 5.0);
         assert!(k.abs() < TOL);
     }
 
@@ -349,7 +436,10 @@ mod tests {
         let c = make_circle();
         let tgt = c.tangent_at(0.0);
         let nml = normal_at(&c, 0.0).unwrap();
-        assert!(tgt.dot(nml).abs() < TOL, "tangent and normal should be perpendicular");
+        assert!(
+            tgt.dot(nml).abs() < TOL,
+            "tangent and normal should be perpendicular"
+        );
     }
 
     #[test]
@@ -403,16 +493,28 @@ mod tests {
         let e = make_ellipse();
         let r = curvature_extrema_2d(&e);
         assert!(r.is_done());
-        assert!(r.nb_points() >= 2, "expected at least 2 curvature extrema, got {}", r.nb_points());
-        let mut nb_min = 0; let mut nb_max = 0;
+        assert!(
+            r.nb_points() >= 2,
+            "expected at least 2 curvature extrema, got {}",
+            r.nb_points()
+        );
+        let mut nb_min = 0;
+        let mut nb_max = 0;
         for i in 0..r.nb_points() {
             match r.ci_type(i) {
-                CIType2d::MinCur => { nb_min += 1; }
-                CIType2d::MaxCur => { nb_max += 1; }
+                CIType2d::MinCur => {
+                    nb_min += 1;
+                }
+                CIType2d::MaxCur => {
+                    nb_max += 1;
+                }
                 _ => {}
             }
         }
-        assert!(nb_min >= 1 && nb_max >= 1, "expected at least 1 min and 1 max curvature");
+        assert!(
+            nb_min >= 1 && nb_max >= 1,
+            "expected at least 1 min and 1 max curvature"
+        );
     }
 
     #[test]
@@ -458,7 +560,9 @@ mod tests {
     fn pgprops_inertia_symmetric() {
         let pts = vec![DVec3::X, -DVec3::X, DVec3::Y, -DVec3::Y];
         let mut props = PointSetProps::new();
-        for &pt in &pts { props.add_point(pt); }
+        for &pt in &pts {
+            props.add_point(pt);
+        }
         let m = props.matrix_of_inertia();
         assert!((m[0] - 2.0).abs() < TOL, "Ixx={}", m[0]);
         assert!((m[4] - 2.0).abs() < TOL, "Iyy={}", m[4]);
@@ -480,7 +584,7 @@ mod tests {
     fn pequation_collinear_points() {
         let pts = vec![DVec3::ZERO, DVec3::X, DVec3::new(2.0, 0.0, 0.0)];
         match analyze_point_set(&pts, 1e-6) {
-            PointSetKind::Line(_, _) => {},
+            PointSetKind::Line(_, _) => {}
             other => panic!("expected Line, got {:?}", other),
         }
     }
@@ -489,7 +593,7 @@ mod tests {
     fn pequation_coplanar_points() {
         let pts = vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(5.0, 3.0, 0.0)];
         match analyze_point_set(&pts, 1e-6) {
-            PointSetKind::Plane(_, _) => {},
+            PointSetKind::Plane(_, _) => {}
             other => panic!("expected Plane, got {:?}", other),
         }
     }
@@ -498,11 +602,8 @@ mod tests {
     fn pequation_space_filling_points() {
         let pts = vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Z, DVec3::ONE];
         match analyze_point_set(&pts, 1e-6) {
-            PointSetKind::Space => {},
+            PointSetKind::Space => {}
             other => panic!("expected Space, got {:?}", other),
         }
     }
 }
-
-
-

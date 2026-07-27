@@ -1,9 +1,9 @@
 //! 2D curve intersection, tangent circles, BSpline fitting, and distance/angle queries.
 
+use crate::tolerance::*;
+use glam::DVec2;
 use rcad_kernel::geom::*;
 use std::f64::consts::PI;
-use glam::DVec2;
-use crate::tolerance::*;
 
 // Circle/curve tangent geometry (~850 lines)
 pub mod tangent;
@@ -22,4 +22,3 @@ mod project;
 pub use self::project::*;
 // Internal helpers (~355 lines)
 pub(crate) mod helpers;
-

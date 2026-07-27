@@ -25,7 +25,7 @@
 
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{topods, CONFUSION, Curve2d, Curve3, Surface3};
+use rcad_kernel::{CONFUSION, Curve2d, Curve3, Surface3, topods};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -95,10 +95,7 @@ pub enum BRepToolsError {
         max: usize,
     },
     /// Missing geometry.
-    MissingGeometry {
-        kind: &'static str,
-        index: usize,
-    },
+    MissingGeometry { kind: &'static str, index: usize },
     /// Invalid transformation.
     InvalidTransformation(String),
 }
@@ -108,14 +105,18 @@ impl std::fmt::Display for BRepToolsError {
         match self {
             BRepToolsError::IoError(msg) => write!(f, "I/O error: {}", msg),
             BRepToolsError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
-            BRepToolsError::DeserializationError(msg) => write!(f, "Deserialization error: {}", msg),
+            BRepToolsError::DeserializationError(msg) => {
+                write!(f, "Deserialization error: {}", msg)
+            }
             BRepToolsError::InvalidIndex { kind, index, max } => {
                 write!(f, "Invalid {} index {} (max {})", kind, index, max)
             }
             BRepToolsError::MissingGeometry { kind, index } => {
                 write!(f, "Missing {} geometry at index {}", kind, index)
             }
-            BRepToolsError::InvalidTransformation(msg) => write!(f, "Invalid transformation: {}", msg),
+            BRepToolsError::InvalidTransformation(msg) => {
+                write!(f, "Invalid transformation: {}", msg)
+            }
         }
     }
 }

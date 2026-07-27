@@ -46,8 +46,15 @@ fn main() {
         .expect("cylinder");
     append_brep(&mut all, cyl2);
 
-    let cone2 =
-        make_cone_brep(DVec3::new(12.0, 0.0, 0.0), DVec3::Y, DVec3::X, 2.0, 0.0, 5.0).expect("cone");
+    let cone2 = make_cone_brep(
+        DVec3::new(12.0, 0.0, 0.0),
+        DVec3::Y,
+        DVec3::X,
+        2.0,
+        0.0,
+        5.0,
+    )
+    .expect("cone");
     append_brep(&mut all, cone2);
 
     let torus2 =

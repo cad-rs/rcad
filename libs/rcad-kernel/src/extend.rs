@@ -21,7 +21,9 @@
 
 use glam::DVec3;
 
-use crate::geom::{BSplineCurve3, BSplineSurface, CurveEval, Surface3, SurfaceEval, TrimmedSurface};
+use crate::geom::{
+    BSplineCurve3, BSplineSurface, CurveEval, Surface3, SurfaceEval, TrimmedSurface,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve trimming
@@ -605,12 +607,18 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
     for si in 0..n_spans {
         let cp_start = si * d;
         let cp_end = cp_start + d + 1;
-        if cp_end > c.control_points.len() { break; }
+        if cp_end > c.control_points.len() {
+            break;
+        }
         let seg_ctrl = c.control_points[cp_start..cp_end].to_vec();
         let seg_weights = c.weights[cp_start..cp_end].to_vec();
         let mut seg_knots = Vec::new();
-        for _ in 0..=d { seg_knots.push(0.0); }
-        for _ in 0..=d { seg_knots.push(1.0); }
+        for _ in 0..=d {
+            seg_knots.push(0.0);
+        }
+        for _ in 0..=d {
+            seg_knots.push(1.0);
+        }
         segments.push(BSplineCurve3 {
             degree: d,
             knots: seg_knots,
@@ -623,15 +631,21 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
 
 /// ✅ OCCT-aligned: Convert BSplineCurve2 into Vec<BSplineCurve2> of Bezier
 /// segments — 2D counterpart of `bspline_to_bezier_curves`.
-pub fn bspline_to_bezier_curves_2d(curve: &crate::geom::BSplineCurve2) -> Vec<crate::geom::BSplineCurve2> {
+pub fn bspline_to_bezier_curves_2d(
+    curve: &crate::geom::BSplineCurve2,
+) -> Vec<crate::geom::BSplineCurve2> {
     use crate::geom::BSplineCurve2;
     let d = curve.degree;
     let mut c = curve.clone();
     let eps = 1e-14;
     let mut unique_knots: Vec<f64> = Vec::new();
     for &k in &c.knots {
-        if (k - c.knots[0]).abs() < eps || (k - c.knots[c.knots.len() - 1]).abs() < eps { continue; }
-        if unique_knots.iter().all(|u| (u - k).abs() >= eps) { unique_knots.push(k); }
+        if (k - c.knots[0]).abs() < eps || (k - c.knots[c.knots.len() - 1]).abs() < eps {
+            continue;
+        }
+        if unique_knots.iter().all(|u| (u - k).abs() >= eps) {
+            unique_knots.push(k);
+        }
     }
     for &k in &unique_knots {
         c = insert_knot_to_multiplicity_2d(&c, k, d + 1);
@@ -641,8 +655,12 @@ pub fn bspline_to_bezier_curves_2d(curve: &crate::geom::BSplineCurve2) -> Vec<cr
     while i < c.control_points.len() - 1 {
         let j = (i + d + 1).min(c.control_points.len() - 1);
         let mut seg_knots = Vec::new();
-        for _ in 0..=d { seg_knots.push(0.0); }
-        for _ in 0..=d { seg_knots.push(1.0); }
+        for _ in 0..=d {
+            seg_knots.push(0.0);
+        }
+        for _ in 0..=d {
+            seg_knots.push(1.0);
+        }
         segments.push(BSplineCurve2 {
             degree: d,
             knots: seg_knots,
@@ -661,7 +679,11 @@ fn insert_knot_to_multiplicity_2d(
     target_mult: usize,
 ) -> crate::geom::BSplineCurve2 {
     use crate::geom::BSplineCurve2;
-    let current_mult = curve.knots.iter().filter(|&&k| (k - t).abs() < 1e-14).count();
+    let current_mult = curve
+        .knots
+        .iter()
+        .filter(|&&k| (k - t).abs() < 1e-14)
+        .count();
     let mut result = curve.clone();
     for _ in current_mult..target_mult {
         let p = result.degree;
@@ -678,8 +700,8 @@ fn insert_knot_to_multiplicity_2d(
                 new_w.push(result.weights[i]);
             } else if i >= k - p + 1 && i <= k {
                 let alpha = (t - result.knots[i]) / (result.knots[i + p] - result.knots[i]);
-                let cp = result.control_points[i - 1] * (1.0 - alpha)
-                    + result.control_points[i] * alpha;
+                let cp =
+                    result.control_points[i - 1] * (1.0 - alpha) + result.control_points[i] * alpha;
                 let w = result.weights[i - 1] * (1.0 - alpha) + result.weights[i] * alpha;
                 new_ctrl.push(cp);
                 new_w.push(w);
@@ -713,9 +735,15 @@ pub fn bspline_elevate_degree(curve: &BSplineCurve3, target_degree: usize) -> BS
     let td = target_degree;
     let n = curve.control_points.len();
     // Number of new control points = original + (td - d) * number_of_knot_spans
-    let spans = curve.knots.iter().filter(|&&k| {
-        (k - curve.knots[0]).abs() > 1e-14 && (k - curve.knots[curve.knots.len() - 1]).abs() > 1e-14
-    }).count() + 1;
+    let spans = curve
+        .knots
+        .iter()
+        .filter(|&&k| {
+            (k - curve.knots[0]).abs() > 1e-14
+                && (k - curve.knots[curve.knots.len() - 1]).abs() > 1e-14
+        })
+        .count()
+        + 1;
     let new_n = n + (td - d) * spans;
     let _ = new_n; // computed for reference
 
@@ -729,9 +757,15 @@ pub fn bspline_elevate_degree(curve: &BSplineCurve3, target_degree: usize) -> BS
     let u_start = raised.knots[0];
     let u_end = raised.knots[raised.knots.len() - 1];
     for &k in curve.knots.iter() {
-        if (k - u_start).abs() < eps || (k - u_end).abs() < eps { continue; }
+        if (k - u_start).abs() < eps || (k - u_end).abs() < eps {
+            continue;
+        }
         // Check current multiplicity
-        let mult = raised.knots.iter().filter(|&&rk| (rk - k).abs() < eps).count();
+        let mult = raised
+            .knots
+            .iter()
+            .filter(|&&rk| (rk - k).abs() < eps)
+            .count();
         let need = td - mult.min(td);
         for _ in 0..need {
             raised = insert_knot_to_multiplicity(&raised, k, mult + 1);
@@ -760,10 +794,15 @@ pub fn bspline_split_at_knots(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
     let eps = 1e-14;
     let mut knots: Vec<f64> = Vec::new();
     for &k in &curve.knots {
-        if (k - curve.knots[0]).abs() < eps || (k - curve.knots[curve.knots.len() - 1]).abs() < eps {
+        if (k - curve.knots[0]).abs() < eps || (k - curve.knots[curve.knots.len() - 1]).abs() < eps
+        {
             continue;
         }
-        let mult = curve.knots.iter().filter(|&&rk| (rk - k).abs() < eps).count();
+        let mult = curve
+            .knots
+            .iter()
+            .filter(|&&rk| (rk - k).abs() < eps)
+            .count();
         if mult <= d {
             // This knot needs to be raised to full multiplicity
             if knots.iter().all(|u| (u - k).abs() >= eps) {
@@ -891,13 +930,7 @@ mod tests {
         let pl = Plane::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z);
         let s0 = plane_to_bspline_domain(&pl, 0.0, 1.0, 0.0, 1.0);
         let s1 = refine_bspline_surface_isoparametric_spans(&s0, 5, 5);
-        for (u, v) in [
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (0.0, 1.0),
-            (1.0, 1.0),
-            (0.31, 0.77),
-        ] {
+        for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.31, 0.77)] {
             let a = s0.point_at(u, v);
             let b = s1.point_at(u, v);
             assert!((a - b).length() < 1e-8, "u={u} v={v} a={a:?} b={b:?}");

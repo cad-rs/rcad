@@ -67,9 +67,10 @@ use tracing::debug;
 
 // re-export kernel Precision constants and tolerance helpers.
 pub use rcad_kernel::{
- ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, edge_tolerance as kernel_edge_tolerance,
- face_tolerance as kernel_face_tolerance, INFINITE_VALUE, INTERSECTION, model_tolerance,
- SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, topods, vertex_tolerance as kernel_vertex_tolerance,
+    ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, INTERSECTION,
+    SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, edge_tolerance as kernel_edge_tolerance,
+    face_tolerance as kernel_face_tolerance, model_tolerance, topods,
+    vertex_tolerance as kernel_vertex_tolerance,
 };
 
 /// Absolute tolerance for point coincidence.
@@ -200,30 +201,30 @@ pub const TOLERANCE_AXIS_CORNER_SLACK: f64 = 2e-2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToleranceLevel {
- /// Strict tolerance for high-precision operations (e.g., intersection points).
- /// Scale factor: 1.0
- Strict,
- /// Normal tolerance for general operations (e.g., point classification).
- /// Scale factor: 10.0
- Normal,
- /// Relaxed tolerance for approximate operations (e.g., bounding box checks).
- /// Scale factor: 100.0
- Relaxed,
- /// Very relaxed tolerance for coarse operations (e.g., AABB pre-filter).
- /// Scale factor: 1000.0
- Coarse,
+    /// Strict tolerance for high-precision operations (e.g., intersection points).
+    /// Scale factor: 1.0
+    Strict,
+    /// Normal tolerance for general operations (e.g., point classification).
+    /// Scale factor: 10.0
+    Normal,
+    /// Relaxed tolerance for approximate operations (e.g., bounding box checks).
+    /// Scale factor: 100.0
+    Relaxed,
+    /// Very relaxed tolerance for coarse operations (e.g., AABB pre-filter).
+    /// Scale factor: 1000.0
+    Coarse,
 }
 
 impl ToleranceLevel {
- /// Get the scale factor for this tolerance level.
- pub fn scale_factor(self) -> f64 {
- match self {
- ToleranceLevel::Strict => 1.0,
- ToleranceLevel::Normal => 10.0,
- ToleranceLevel::Relaxed => 100.0,
- ToleranceLevel::Coarse => 1000.0,
- }
- }
+    /// Get the scale factor for this tolerance level.
+    pub fn scale_factor(self) -> f64 {
+        match self {
+            ToleranceLevel::Strict => 1.0,
+            ToleranceLevel::Normal => 10.0,
+            ToleranceLevel::Relaxed => 100.0,
+            ToleranceLevel::Coarse => 1000.0,
+        }
+    }
 }
 
 /// Adaptive tolerance context based on model scale.
@@ -234,104 +235,104 @@ impl ToleranceLevel {
 /// appropriately.
 #[derive(Debug, Clone, Copy)]
 pub struct AdaptiveTolerance {
- /// Base tolerance (typically TOLERANCE_ABS for unit-scale models).
- pub base_tolerance: f64,
- /// Model scale factor (e.g., bounding box diagonal).
- pub model_scale: f64,
- /// Minimum tolerance to prevent excessive precision requirements.
- pub min_tolerance: f64,
- /// Maximum tolerance to prevent excessive looseness.
- pub max_tolerance: f64,
+    /// Base tolerance (typically TOLERANCE_ABS for unit-scale models).
+    pub base_tolerance: f64,
+    /// Model scale factor (e.g., bounding box diagonal).
+    pub model_scale: f64,
+    /// Minimum tolerance to prevent excessive precision requirements.
+    pub min_tolerance: f64,
+    /// Maximum tolerance to prevent excessive looseness.
+    pub max_tolerance: f64,
 }
 
 impl Default for AdaptiveTolerance {
- fn default() -> Self {
- Self {
- base_tolerance: TOLERANCE_ABS,
- model_scale: 1.0,
- min_tolerance: TOLERANCE_LEN_MIN,
- max_tolerance: TOLERANCE_ADAPTIVE_MAX,
- }
- }
+    fn default() -> Self {
+        Self {
+            base_tolerance: TOLERANCE_ABS,
+            model_scale: 1.0,
+            min_tolerance: TOLERANCE_LEN_MIN,
+            max_tolerance: TOLERANCE_ADAPTIVE_MAX,
+        }
+    }
 }
 
 impl AdaptiveTolerance {
- /// Create a new adaptive tolerance with default base tolerance.
- pub fn new() -> Self {
- Self::default()
- }
+    /// Create a new adaptive tolerance with default base tolerance.
+    pub fn new() -> Self {
+        Self::default()
+    }
 
- /// Create a new adaptive tolerance from a BRep's bounding box.
- pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
- let scale = compute_model_scale(brep);
- Self::from_scale(scale)
- }
+    /// Create a new adaptive tolerance from a BRep's bounding box.
+    pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
+        let scale = compute_model_scale(brep);
+        Self::from_scale(scale)
+    }
 
- /// Create a new adaptive tolerance from two BReps' combined bounding box.
- pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
- let scale_a = compute_model_scale(a);
- let scale_b = compute_model_scale(b);
- Self::from_scale(scale_a.max(scale_b))
- }
+    /// Create a new adaptive tolerance from two BReps' combined bounding box.
+    pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
+        let scale_a = compute_model_scale(a);
+        let scale_b = compute_model_scale(b);
+        Self::from_scale(scale_a.max(scale_b))
+    }
 
- /// Create a new adaptive tolerance from a known scale.
- pub fn from_scale(model_scale: f64) -> Self {
- let mut ctx = Self::default();
- ctx.model_scale = model_scale.max(TOLERANCE_MODEL_SCALE_MIN);
- ctx
- }
+    /// Create a new adaptive tolerance from a known scale.
+    pub fn from_scale(model_scale: f64) -> Self {
+        let mut ctx = Self::default();
+        ctx.model_scale = model_scale.max(TOLERANCE_MODEL_SCALE_MIN);
+        ctx
+    }
 
- /// Get the effective tolerance for a specific level.
- pub fn tolerance(self, level: ToleranceLevel) -> f64 {
- let raw = self.base_tolerance * level.scale_factor() * self.model_scale;
- raw.clamp(self.min_tolerance, self.max_tolerance)
- }
+    /// Get the effective tolerance for a specific level.
+    pub fn tolerance(self, level: ToleranceLevel) -> f64 {
+        let raw = self.base_tolerance * level.scale_factor() * self.model_scale;
+        raw.clamp(self.min_tolerance, self.max_tolerance)
+    }
 
- /// Get the squared tolerance for a specific level.
- pub fn tolerance_sq(self, level: ToleranceLevel) -> f64 {
- let t = self.tolerance(level);
- t * t
- }
+    /// Get the squared tolerance for a specific level.
+    pub fn tolerance_sq(self, level: ToleranceLevel) -> f64 {
+        let t = self.tolerance(level);
+        t * t
+    }
 
- /// Get the angular tolerance (not affected by model scale).
- pub fn angular_tolerance(self, level: ToleranceLevel) -> f64 {
- TOLERANCE_ANG * level.scale_factor()
- }
+    /// Get the angular tolerance (not affected by model scale).
+    pub fn angular_tolerance(self, level: ToleranceLevel) -> f64 {
+        TOLERANCE_ANG * level.scale_factor()
+    }
 
- /// Check if two points coincide at the given tolerance level.
- pub fn points_coincide_at(self, a: DVec3, b: DVec3, level: ToleranceLevel) -> bool {
- (a - b).length_squared() < self.tolerance_sq(level)
- }
+    /// Check if two points coincide at the given tolerance level.
+    pub fn points_coincide_at(self, a: DVec3, b: DVec3, level: ToleranceLevel) -> bool {
+        (a - b).length_squared() < self.tolerance_sq(level)
+    }
 
- /// Check if a vector is zero at the given tolerance level.
- pub fn is_zero_vec_at(self, v: DVec3, level: ToleranceLevel) -> bool {
- v.length_squared() < self.tolerance_sq(level)
- }
+    /// Check if a vector is zero at the given tolerance level.
+    pub fn is_zero_vec_at(self, v: DVec3, level: ToleranceLevel) -> bool {
+        v.length_squared() < self.tolerance_sq(level)
+    }
 
- /// Check if two parameters are equal at the given tolerance level.
- pub fn params_equal_at(self, a: f64, b: f64, level: ToleranceLevel) -> bool {
- (a - b).abs() < self.tolerance(level)
- }
+    /// Check if two parameters are equal at the given tolerance level.
+    pub fn params_equal_at(self, a: f64, b: f64, level: ToleranceLevel) -> bool {
+        (a - b).abs() < self.tolerance(level)
+    }
 
- /// Get tolerance for point coincidence (strict level).
- pub fn coincidence(self) -> f64 {
- self.tolerance(ToleranceLevel::Strict)
- }
+    /// Get tolerance for point coincidence (strict level).
+    pub fn coincidence(self) -> f64 {
+        self.tolerance(ToleranceLevel::Strict)
+    }
 
- /// Get tolerance for classification operations (normal level).
- pub fn classification(self) -> f64 {
- self.tolerance(ToleranceLevel::Normal)
- }
+    /// Get tolerance for classification operations (normal level).
+    pub fn classification(self) -> f64 {
+        self.tolerance(ToleranceLevel::Normal)
+    }
 
- /// Get tolerance for boundary checks (relaxed level).
- pub fn boundary(self) -> f64 {
- self.tolerance(ToleranceLevel::Relaxed)
- }
+    /// Get tolerance for boundary checks (relaxed level).
+    pub fn boundary(self) -> f64 {
+        self.tolerance(ToleranceLevel::Relaxed)
+    }
 
- /// Get tolerance for AABB pre-filtering (coarse level).
- pub fn coarse(self) -> f64 {
- self.tolerance(ToleranceLevel::Coarse)
- }
+    /// Get tolerance for AABB pre-filtering (coarse level).
+    pub fn coarse(self) -> f64 {
+        self.tolerance(ToleranceLevel::Coarse)
+    }
 }
 
 /// Scale-aware tolerances plus an optional workspace linear band (phase B).
@@ -340,78 +341,78 @@ impl AdaptiveTolerance {
 /// [`combined_linear_tol_models`] to form `max(workspace, adaptive, Tol(…))`.
 #[derive(Debug, Clone, Copy)]
 pub struct ToleranceContext {
- /// Characteristic-size–scaled tolerances.
- pub adaptive: AdaptiveTolerance,
- /// Extra linear band (e.g. user boolean fuzzy). Negative values are clamped in accessors.
- ///
- /// [`Self::workspace_linear`] returns `max(adaptive.tolerance(level), workspace_fuzzy)`.
- pub workspace_fuzzy: f64,
+    /// Characteristic-size–scaled tolerances.
+    pub adaptive: AdaptiveTolerance,
+    /// Extra linear band (e.g. user boolean fuzzy). Negative values are clamped in accessors.
+    ///
+    /// [`Self::workspace_linear`] returns `max(adaptive.tolerance(level), workspace_fuzzy)`.
+    pub workspace_fuzzy: f64,
 }
 
 impl Default for ToleranceContext {
- fn default() -> Self {
- Self {
- adaptive: AdaptiveTolerance::default(),
- workspace_fuzzy: 0.0,
- }
- }
+    fn default() -> Self {
+        Self {
+            adaptive: AdaptiveTolerance::default(),
+            workspace_fuzzy: 0.0,
+        }
+    }
 }
 
 impl ToleranceContext {
- pub fn new(adaptive: AdaptiveTolerance, workspace_fuzzy: f64) -> Self {
- Self {
- adaptive,
- workspace_fuzzy,
- }
- }
+    pub fn new(adaptive: AdaptiveTolerance, workspace_fuzzy: f64) -> Self {
+        Self {
+            adaptive,
+            workspace_fuzzy,
+        }
+    }
 
- pub fn from_adaptive(adaptive: AdaptiveTolerance) -> Self {
- Self::new(adaptive, 0.0)
- }
+    pub fn from_adaptive(adaptive: AdaptiveTolerance) -> Self {
+        Self::new(adaptive, 0.0)
+    }
 
- pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
- Self::from_adaptive(AdaptiveTolerance::from_brep(brep))
- }
+    pub fn from_brep(brep: &rcad_kernel::BRep) -> Self {
+        Self::from_adaptive(AdaptiveTolerance::from_brep(brep))
+    }
 
- pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
- Self::from_adaptive(AdaptiveTolerance::from_two_breps(a, b))
- }
+    pub fn from_two_breps(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
+        Self::from_adaptive(AdaptiveTolerance::from_two_breps(a, b))
+    }
 
- pub fn from_scale(model_scale: f64) -> Self {
- Self::from_adaptive(AdaptiveTolerance::from_scale(model_scale))
- }
+    pub fn from_scale(model_scale: f64) -> Self {
+        Self::from_adaptive(AdaptiveTolerance::from_scale(model_scale))
+    }
 
- #[inline]
- fn wf_nonnegative(&self) -> f64 {
- self.workspace_fuzzy.max(0.0)
- }
+    #[inline]
+    fn wf_nonnegative(&self) -> f64 {
+        self.workspace_fuzzy.max(0.0)
+    }
 
- /// Linear tolerance from [`AdaptiveTolerance`] only (ignores [`Self::workspace_fuzzy`]).
- #[inline]
- pub fn adaptive_linear(&self, level: ToleranceLevel) -> f64 {
- self.adaptive.tolerance(level)
- }
+    /// Linear tolerance from [`AdaptiveTolerance`] only (ignores [`Self::workspace_fuzzy`]).
+    #[inline]
+    pub fn adaptive_linear(&self, level: ToleranceLevel) -> f64 {
+        self.adaptive.tolerance(level)
+    }
 
- /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
- #[inline]
- pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
- let adaptive = self.adaptive.tolerance(level);
- let wf = self.wf_nonnegative();
- let result = adaptive.max(wf);
- if wf > adaptive {
- debug!(
- "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
- wf, adaptive, level, result,
- );
- }
- result
- }
+    /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
+    #[inline]
+    pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
+        let adaptive = self.adaptive.tolerance(level);
+        let wf = self.wf_nonnegative();
+        let result = adaptive.max(wf);
+        if wf > adaptive {
+            debug!(
+                "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
+                wf, adaptive, level, result,
+            );
+        }
+        result
+    }
 
- /// Angular tolerance at `level` (algorithms-layer [`TOLERANCE_ANG`] scaling).
- #[inline]
- pub fn angular(&self, level: ToleranceLevel) -> f64 {
- self.adaptive.angular_tolerance(level)
- }
+    /// Angular tolerance at `level` (algorithms-layer [`TOLERANCE_ANG`] scaling).
+    #[inline]
+    pub fn angular(&self, level: ToleranceLevel) -> f64 {
+        self.adaptive.angular_tolerance(level)
+    }
 }
 
 /// OCCT-style `max(base, Tol(face_a), Tol(face_b))` with optional operands.
@@ -420,55 +421,56 @@ impl ToleranceContext {
 /// [`ToleranceContext::adaptive_linear`]. A missing face uses [`CONFUSION`] for that side only.
 #[inline]
 pub fn combined_linear_tol_for_faces(
- ctx: &ToleranceContext,
- level: ToleranceLevel,
- use_workspace: bool,
- brep_a: &rcad_kernel::BRep,
- face_a: Option<usize>,
- brep_b: &rcad_kernel::BRep,
- face_b: Option<usize>,
+    ctx: &ToleranceContext,
+    level: ToleranceLevel,
+    use_workspace: bool,
+    brep_a: &rcad_kernel::BRep,
+    face_a: Option<usize>,
+    brep_b: &rcad_kernel::BRep,
+    face_b: Option<usize>,
 ) -> f64 {
- let base = if use_workspace {
- ctx.workspace_linear(level)
- } else {
- ctx.adaptive_linear(level)
- };
- let ta = face_a
- .map(|i| kernel_face_tolerance(brep_a, i))
- .unwrap_or(CONFUSION);
- let tb = face_b
- .map(|i| kernel_face_tolerance(brep_b, i))
- .unwrap_or(CONFUSION);
- base.max(ta).max(tb)
+    let base = if use_workspace {
+        ctx.workspace_linear(level)
+    } else {
+        ctx.adaptive_linear(level)
+    };
+    let ta = face_a
+        .map(|i| kernel_face_tolerance(brep_a, i))
+        .unwrap_or(CONFUSION);
+    let tb = face_b
+        .map(|i| kernel_face_tolerance(brep_b, i))
+        .unwrap_or(CONFUSION);
+    base.max(ta).max(tb)
 }
 
 /// `max(base, model_tolerance(a), model_tolerance(b))` where `base` is chosen like
 /// [`combined_linear_tol_for_faces`].
 #[inline]
 pub fn combined_linear_tol_models(
- ctx: &ToleranceContext,
- level: ToleranceLevel,
- use_workspace: bool,
- brep_a: &rcad_kernel::BRep,
- brep_b: &rcad_kernel::BRep,
+    ctx: &ToleranceContext,
+    level: ToleranceLevel,
+    use_workspace: bool,
+    brep_a: &rcad_kernel::BRep,
+    brep_b: &rcad_kernel::BRep,
 ) -> f64 {
- let base = if use_workspace {
- ctx.workspace_linear(level)
- } else {
- ctx.adaptive_linear(level)
- };
- base.max(model_tolerance(brep_a)).max(model_tolerance(brep_b))
+    let base = if use_workspace {
+        ctx.workspace_linear(level)
+    } else {
+        ctx.adaptive_linear(level)
+    };
+    base.max(model_tolerance(brep_a))
+        .max(model_tolerance(brep_b))
 }
 
 /// `max(base_linear, geom_tol)` for checks that consume **stored** geometric tolerance
 /// (e.g. [`crate::bopds::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
 #[inline]
 pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) -> f64 {
- if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
- base_linear.max(entity_geom_tol)
- } else {
- base_linear
- }
+    if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
+        base_linear.max(entity_geom_tol)
+    } else {
+        base_linear
+    }
 }
 
 /// Geometric tolerance **floor** for numerical surface–surface intersection (IntSS).
@@ -480,40 +482,47 @@ pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) ->
 /// See [`intersect_surfaces_with_density_tol`](crate::inttools::intss::intersect_surfaces_with_density_tol).
 #[inline]
 pub fn intss_geom_tol_floor(baseline_linear: f64, participant_tolerance_max: f64) -> f64 {
- let base = baseline_linear.max(TOLERANCE_ABS);
- effective_linear_with_geom_tol(base, participant_tolerance_max)
+    let base = baseline_linear.max(TOLERANCE_ABS);
+    effective_linear_with_geom_tol(base, participant_tolerance_max)
 }
 
 /// [`intss_geom_tol_floor`] with `participant_tolerance_max = max(model_tol(A), model_tol(B))`.
 #[inline]
 pub fn intss_geom_tol_floor_for_brep_bounds(
- baseline_linear: f64,
- brep_a: &rcad_kernel::BRep,
- brep_b: &rcad_kernel::BRep,
+    baseline_linear: f64,
+    brep_a: &rcad_kernel::BRep,
+    brep_b: &rcad_kernel::BRep,
 ) -> f64 {
- intss_geom_tol_floor(
- baseline_linear,
- model_tolerance(brep_a).max(model_tolerance(brep_b)),
- )
+    intss_geom_tol_floor(
+        baseline_linear,
+        model_tolerance(brep_a).max(model_tolerance(brep_b)),
+    )
 }
 
 /// Triangle-soup pair/merge epsilon derived from **[`AdaptiveTolerance::from_brep`]** at
 /// [`ToleranceLevel::Relaxed`], at least [`TOLERANCE_MESH_LEGACY`], folded with [`model_tolerance`].
 #[inline]
 pub fn tessellation_merge_linear_from_brep(brep: &rcad_kernel::BRep) -> f64 {
- let adaptive = AdaptiveTolerance::from_brep(brep);
- let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
- effective_linear_with_geom_tol(base, model_tolerance(brep))
+    let adaptive = AdaptiveTolerance::from_brep(brep);
+    let base = adaptive
+        .tolerance(ToleranceLevel::Relaxed)
+        .max(TOLERANCE_MESH_LEGACY);
+    effective_linear_with_geom_tol(base, model_tolerance(brep))
 }
 
 /// Like [`tessellation_merge_linear_from_brep`] using [`AdaptiveTolerance::from_two_breps`] and
 /// `max(model_tolerance(a), model_tolerance(b))` for the topological fold.
 #[inline]
-pub fn tessellation_merge_linear_from_two_breps(brep_a: &rcad_kernel::BRep, brep_b: &rcad_kernel::BRep) -> f64 {
- let adaptive = AdaptiveTolerance::from_two_breps(brep_a, brep_b);
- let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
- let geom = model_tolerance(brep_a).max(model_tolerance(brep_b));
- effective_linear_with_geom_tol(base, geom)
+pub fn tessellation_merge_linear_from_two_breps(
+    brep_a: &rcad_kernel::BRep,
+    brep_b: &rcad_kernel::BRep,
+) -> f64 {
+    let adaptive = AdaptiveTolerance::from_two_breps(brep_a, brep_b);
+    let base = adaptive
+        .tolerance(ToleranceLevel::Relaxed)
+        .max(TOLERANCE_MESH_LEGACY);
+    let geom = model_tolerance(brep_a).max(model_tolerance(brep_b));
+    effective_linear_with_geom_tol(base, geom)
 }
 
 /// Squared UV distance threshold for treating trim endpoints as coincident given face UV extents
@@ -522,81 +531,84 @@ pub fn tessellation_merge_linear_from_two_breps(brep_a: &rcad_kernel::BRep, brep
 /// Let **`ext = max(|u_extent|, |v_extent|)`**. Linear slack is **`min(√`**[`UV_POLYLINE_TRIM_LEGACY_SQ`]**, **`max([`TOLERANCE_ABS`]**, **`ext · [`UV_TRIM_CLOSED_REL_DOM`]`**))`** (then squared). That caps looseness at the historic mesh-tier analogue while tightening on modest UV domains (phase C).
 #[inline]
 pub fn uv_polyline_trim_closed_len_sq(u_extent: f64, v_extent: f64) -> f64 {
- let ext = u_extent.abs().max(v_extent.abs()).max(TOLERANCE_MODEL_SCALE_MIN);
- let rel_lin = ext * UV_TRIM_CLOSED_REL_DOM;
- let cap_lin = UV_POLYLINE_TRIM_LEGACY_SQ.sqrt();
- let lin = rel_lin.max(TOLERANCE_ABS).min(cap_lin);
- lin * lin
+    let ext = u_extent
+        .abs()
+        .max(v_extent.abs())
+        .max(TOLERANCE_MODEL_SCALE_MIN);
+    let rel_lin = ext * UV_TRIM_CLOSED_REL_DOM;
+    let cap_lin = UV_POLYLINE_TRIM_LEGACY_SQ.sqrt();
+    let lin = rel_lin.max(TOLERANCE_ABS).min(cap_lin);
+    lin * lin
 }
 
 /// [`uv_polyline_trim_closed_len_sq`] from the axis-aligned bbox of **`poly`** in UV; falls back to [`UV_POLYLINE_TRIM_LEGACY_SQ`]
 /// when **`poly`** is empty.
 #[inline]
 pub fn uv_polyline_trim_closed_len_sq_from_uv_poly(poly: &[DVec2]) -> f64 {
- if poly.is_empty() {
- return UV_POLYLINE_TRIM_LEGACY_SQ;
- }
- let mut u_min = f64::INFINITY;
- let mut u_max = f64::NEG_INFINITY;
- let mut v_min = f64::INFINITY;
- let mut v_max = f64::NEG_INFINITY;
- for p in poly {
- u_min = u_min.min(p.x);
- u_max = u_max.max(p.x);
- v_min = v_min.min(p.y);
- v_max = v_max.max(p.y);
- }
- uv_polyline_trim_closed_len_sq(u_max - u_min, v_max - v_min)
+    if poly.is_empty() {
+        return UV_POLYLINE_TRIM_LEGACY_SQ;
+    }
+    let mut u_min = f64::INFINITY;
+    let mut u_max = f64::NEG_INFINITY;
+    let mut v_min = f64::INFINITY;
+    let mut v_max = f64::NEG_INFINITY;
+    for p in poly {
+        u_min = u_min.min(p.x);
+        u_max = u_max.max(p.x);
+        v_min = v_min.min(p.y);
+        v_max = v_max.max(p.y);
+    }
+    uv_polyline_trim_closed_len_sq(u_max - u_min, v_max - v_min)
 }
 
 /// OCCT-style `max(base, Tol(edge_a), Tol(edge_b))` with flattened edge indices.
 #[inline]
 pub fn combined_linear_tol_for_edges(
- ctx: &ToleranceContext,
- level: ToleranceLevel,
- use_workspace: bool,
- brep_a: &rcad_kernel::BRep,
- edge_a: Option<usize>,
- brep_b: &rcad_kernel::BRep,
- edge_b: Option<usize>,
+    ctx: &ToleranceContext,
+    level: ToleranceLevel,
+    use_workspace: bool,
+    brep_a: &rcad_kernel::BRep,
+    edge_a: Option<usize>,
+    brep_b: &rcad_kernel::BRep,
+    edge_b: Option<usize>,
 ) -> f64 {
- let base = if use_workspace {
- ctx.workspace_linear(level)
- } else {
- ctx.adaptive_linear(level)
- };
- let ta = edge_a
- .map(|i| kernel_edge_tolerance(brep_a, i))
- .unwrap_or(CONFUSION);
- let tb = edge_b
- .map(|i| kernel_edge_tolerance(brep_b, i))
- .unwrap_or(CONFUSION);
- base.max(ta).max(tb)
+    let base = if use_workspace {
+        ctx.workspace_linear(level)
+    } else {
+        ctx.adaptive_linear(level)
+    };
+    let ta = edge_a
+        .map(|i| kernel_edge_tolerance(brep_a, i))
+        .unwrap_or(CONFUSION);
+    let tb = edge_b
+        .map(|i| kernel_edge_tolerance(brep_b, i))
+        .unwrap_or(CONFUSION);
+    base.max(ta).max(tb)
 }
 
 /// OCCT-style `max(base, Tol(vertex_a), Tol(vertex_b))`.
 #[inline]
 pub fn combined_linear_tol_for_vertices(
- ctx: &ToleranceContext,
- level: ToleranceLevel,
- use_workspace: bool,
- brep_a: &rcad_kernel::BRep,
- vertex_a: Option<usize>,
- brep_b: &rcad_kernel::BRep,
- vertex_b: Option<usize>,
+    ctx: &ToleranceContext,
+    level: ToleranceLevel,
+    use_workspace: bool,
+    brep_a: &rcad_kernel::BRep,
+    vertex_a: Option<usize>,
+    brep_b: &rcad_kernel::BRep,
+    vertex_b: Option<usize>,
 ) -> f64 {
- let base = if use_workspace {
- ctx.workspace_linear(level)
- } else {
- ctx.adaptive_linear(level)
- };
- let ta = vertex_a
- .map(|i| kernel_vertex_tolerance(brep_a, i))
- .unwrap_or(CONFUSION);
- let tb = vertex_b
- .map(|i| kernel_vertex_tolerance(brep_b, i))
- .unwrap_or(CONFUSION);
- base.max(ta).max(tb)
+    let base = if use_workspace {
+        ctx.workspace_linear(level)
+    } else {
+        ctx.adaptive_linear(level)
+    };
+    let ta = vertex_a
+        .map(|i| kernel_vertex_tolerance(brep_a, i))
+        .unwrap_or(CONFUSION);
+    let tb = vertex_b
+        .map(|i| kernel_vertex_tolerance(brep_b, i))
+        .unwrap_or(CONFUSION);
+    base.max(ta).max(tb)
 }
 
 /// Scale the default boolean fuzzy retry ladder (`10×`, `100×`, `1000×` [`TOLERANCE_ABS`]) by
@@ -604,76 +616,76 @@ pub fn combined_linear_tol_for_vertices(
 ///
 /// With `extra_coarse_base = Some(c)`, appends `10·c` and `100·c` (multiscale mechanical preset).
 pub fn boolean_fuzzy_ladder_scaled(initial_fuzzy: f64, extra_coarse_base: Option<f64>) -> Vec<f64> {
- let scale = (initial_fuzzy / TOLERANCE_ABS).max(1.0);
- let mut out = vec![
- TOLERANCE_ABS * 10.0 * scale,
- TOLERANCE_ABS * 100.0 * scale,
- TOLERANCE_ABS * 1000.0 * scale,
- ];
- if let Some(c) = extra_coarse_base {
- let c = c.max(0.0);
- if c > 0.0 {
- out.push(c * 10.0);
- out.push(c * 100.0);
- }
- }
- out
+    let scale = (initial_fuzzy / TOLERANCE_ABS).max(1.0);
+    let mut out = vec![
+        TOLERANCE_ABS * 10.0 * scale,
+        TOLERANCE_ABS * 100.0 * scale,
+        TOLERANCE_ABS * 1000.0 * scale,
+    ];
+    if let Some(c) = extra_coarse_base {
+        let c = c.max(0.0);
+        if c > 0.0 {
+            out.push(c * 10.0);
+            out.push(c * 100.0);
+        }
+    }
+    out
 }
 
 /// Compute the characteristic scale of a model from its bounding box.
 /// Returns the diagonal of the bounding box, or 1.0 if the model is empty.
 pub fn compute_model_scale(brep: &rcad_kernel::BRep) -> f64 {
- let mut min_pt = DVec3::splat(f64::INFINITY);
- let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
- let mut has_vertices = false;
+    let mut min_pt = DVec3::splat(f64::INFINITY);
+    let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+    let mut has_vertices = false;
 
- for ts in &brep.tshapes {
- if let topods::TShape::Vertex(vd) = ts.as_ref() {
- min_pt = min_pt.min(vd.point);
- max_pt = max_pt.max(vd.point);
- has_vertices = true;
- }
- }
+    for ts in &brep.tshapes {
+        if let topods::TShape::Vertex(vd) = ts.as_ref() {
+            min_pt = min_pt.min(vd.point);
+            max_pt = max_pt.max(vd.point);
+            has_vertices = true;
+        }
+    }
 
- if !has_vertices {
- return 1.0;
- }
+    if !has_vertices {
+        return 1.0;
+    }
 
- let diagonal = (max_pt - min_pt).length();
- diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
+    let diagonal = (max_pt - min_pt).length();
+    diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
 }
 
 /// Compute the characteristic scale from a collection of points.
 pub fn compute_scale_from_points(points: &[DVec3]) -> f64 {
- if points.is_empty() {
- return 1.0;
- }
+    if points.is_empty() {
+        return 1.0;
+    }
 
- let mut min_pt = DVec3::splat(f64::INFINITY);
- let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+    let mut min_pt = DVec3::splat(f64::INFINITY);
+    let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
 
- for &p in points {
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
+    for &p in points {
+        min_pt = min_pt.min(p);
+        max_pt = max_pt.max(p);
+    }
 
- let diagonal = (max_pt - min_pt).length();
- diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
+    let diagonal = (max_pt - min_pt).length();
+    diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
 }
 
 /// Face count in BRep traversal order (matches `geom.face_tolerance` / `face_surface` flat indices).
 pub fn flat_face_count(brep: &rcad_kernel::BRep) -> usize {
- let mut count = 0;
- for ts in &brep.tshapes {
- if let topods::TShape::Solid(sd) = ts.as_ref() {
- for sr in &sd.shells {
- if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
- count += shd.faces.len();
- }
- }
- }
- }
- count
+    let mut count = 0;
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = ts.as_ref() {
+            for sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                    count += shd.faces.len();
+                }
+            }
+        }
+    }
+    count
 }
 
 /// Maximum positive finite `geom.face_tolerance` entry for the first [`flat_face_count`] slots.
@@ -681,49 +693,49 @@ pub fn flat_face_count(brep: &rcad_kernel::BRep) -> usize {
 /// If the array is missing entries or has no valid values, returns [`TOLERANCE_ABS`].
 /// Use to derive mesh / triangle-soup intersection epsilons when geometry came from this BRep.
 pub fn max_face_tolerance_or_abs(brep: &rcad_kernel::BRep) -> f64 {
- let mut m = TOLERANCE_ABS;
- for ts in &brep.tshapes {
- if let topods::TShape::Face(fd) = ts.as_ref() {
- let t = fd.tolerance;
- if t.is_finite() && t > 0.0 {
- m = m.max(t);
- }
- }
- }
- m
+    let mut m = TOLERANCE_ABS;
+    for ts in &brep.tshapes {
+        if let topods::TShape::Face(fd) = ts.as_ref() {
+            let t = fd.tolerance;
+            if t.is_finite() && t > 0.0 {
+                m = m.max(t);
+            }
+        }
+    }
+    m
 }
 
 /// [`max_face_tolerance_or_abs`] applied to both inputs; suitable for mesh intersection of two sources.
 #[inline]
 pub fn max_face_tolerance_or_abs_pair(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> f64 {
- max_face_tolerance_or_abs(a).max(max_face_tolerance_or_abs(b))
+    max_face_tolerance_or_abs(a).max(max_face_tolerance_or_abs(b))
 }
 
 #[inline]
 pub fn points_coincide(a: DVec3, b: DVec3) -> bool {
- (a - b).length_squared() < TOLERANCE_ABS_SQ
+    (a - b).length_squared() < TOLERANCE_ABS_SQ
 }
 
 #[inline]
 pub fn is_zero_vec(v: DVec3) -> bool {
- v.length_squared() < TOLERANCE_ABS_SQ
+    v.length_squared() < TOLERANCE_ABS_SQ
 }
 
 /// Returns true if two unit vectors are parallel (or anti-parallel).
 #[inline]
 pub fn vectors_parallel(a: DVec3, b: DVec3) -> bool {
- a.cross(b).length_squared() < TOLERANCE_ANG * TOLERANCE_ANG
+    a.cross(b).length_squared() < TOLERANCE_ANG * TOLERANCE_ANG
 }
 
 #[inline]
 pub fn params_equal(a: f64, b: f64) -> bool {
- (a - b).abs() < TOLERANCE_ABS
+    (a - b).abs() < TOLERANCE_ABS
 }
 
 /// Check if two vectors are parallel using adaptive tolerance.
 pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> bool {
- let ang_tol = tol.angular_tolerance(ToleranceLevel::Normal);
- a.cross(b).length_squared() < ang_tol * ang_tol
+    let ang_tol = tol.angular_tolerance(ToleranceLevel::Normal);
+    a.cross(b).length_squared() < ang_tol * ang_tol
 }
 
 /// Precision::IsInfinite (Precision.hxx L350-353).
@@ -732,24 +744,22 @@ pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> 
 /// Delegates to rcad_kernel::is_infinite_value().
 #[inline]
 pub fn precision_is_infinite(r: f64) -> bool {
- rcad_kernel::tolerance::is_infinite_value(r)
+    rcad_kernel::tolerance::is_infinite_value(r)
 }
 
 /// Precision::IsPositiveInfinite (Precision.hxx L357-360).
 /// Returns true if R may be considered as a positive infinite number.
 #[inline]
 pub fn precision_is_positive_infinite(r: f64) -> bool {
- rcad_kernel::tolerance::is_positive_infinite_value(r)
+    rcad_kernel::tolerance::is_positive_infinite_value(r)
 }
 
 /// Precision::IsNegativeInfinite (Precision.hxx L364-367).
 /// Returns true if R may be considered as a negative infinite number.
 #[inline]
 pub fn precision_is_negative_infinite(r: f64) -> bool {
- rcad_kernel::tolerance::is_negative_infinite_value(r)
+    rcad_kernel::tolerance::is_negative_infinite_value(r)
 }
 
 // Re-export for test module convenience (any_perpendicular is in rcad-kernel).
 pub use rcad_kernel::geom::any_perpendicular;
-
-

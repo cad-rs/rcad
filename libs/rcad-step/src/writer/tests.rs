@@ -1,15 +1,15 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        ExportSelection, StepAp242Metadata, StepDatum, StepDatumReferenceFrame, StepDatumSystem,
-        StepDatumTarget, StepDimensionalLocation, StepDimensionalSize, StepDimensionalTolerance,
-        StepFormTolerance, StepGeneralProperty, StepGeometricTolerance,
-        StepGeometricToleranceWithDatumReference, StepKinematicPair, StepOrientationTolerance,
-        StepPositionTolerance, StepProfileTolerance, StepPropertyDefinitionRepr, StepProtocol,
-        StepReader, StepRunoutTolerance, StepToleranceValue, StepToleranceZoneDefinitionEnhanced,
-        StepWriter, StepWriteOptions, ToleranceZonePosition, ToleranceZoneShape,
-        DatumTargetType, FormToleranceType, OrientationToleranceType, ProfileToleranceType,
-        RunoutToleranceType,
+        DatumTargetType, ExportSelection, FormToleranceType, OrientationToleranceType,
+        ProfileToleranceType, RunoutToleranceType, StepAp242Metadata, StepDatum,
+        StepDatumReferenceFrame, StepDatumSystem, StepDatumTarget, StepDimensionalLocation,
+        StepDimensionalSize, StepDimensionalTolerance, StepFormTolerance, StepGeneralProperty,
+        StepGeometricTolerance, StepGeometricToleranceWithDatumReference, StepKinematicPair,
+        StepOrientationTolerance, StepPositionTolerance, StepProfileTolerance,
+        StepPropertyDefinitionRepr, StepProtocol, StepReader, StepRunoutTolerance,
+        StepToleranceValue, StepToleranceZoneDefinitionEnhanced, StepWriteOptions, StepWriter,
+        ToleranceZonePosition, ToleranceZoneShape,
     };
     use glam::DVec3;
     use rcad_kernel::geom::Surface3;
@@ -18,7 +18,6 @@ mod tests {
     use rcad_modeling::make_box_brep;
     use std::io::Cursor;
     const HFSS_STEP: &str = include_str!("../../../../assets/hfss.step");
-
 
     #[test]
     fn exports_full_box_and_reimports() {
@@ -347,8 +346,8 @@ mod tests {
             StepProtocol::Ap242,
         );
 
-        let (_parsed_brep, doc_meta) =
-            StepReader::parse_string_with_metadata(&step).expect("AP242 metadata STEP should parse");
+        let (_parsed_brep, doc_meta) = StepReader::parse_string_with_metadata(&step)
+            .expect("AP242 metadata STEP should parse");
         assert_eq!(doc_meta.property_definition_representations.len(), 1);
         assert_eq!(doc_meta.dimensional_locations.len(), 1);
         assert_eq!(doc_meta.dimensional_sizes.len(), 1);
@@ -384,7 +383,10 @@ mod tests {
 
         // Verify the STEP output is valid STEP without solids or faces
         assert!(step.contains("ISO-10303-21"), "should have STEP header");
-        assert!(!step.contains("MANIFOLD_SOLID_BREP"), "should not contain solid");
+        assert!(
+            !step.contains("MANIFOLD_SOLID_BREP"),
+            "should not contain solid"
+        );
         assert!(!step.contains("CLOSED_SHELL"), "should not contain shell");
         assert!(!step.contains("ADVANCED_FACE"), "should not contain faces");
     }
@@ -541,17 +543,18 @@ mod tests {
             }
         }
 
-        assert!(!curve_set_refs.is_empty(), "expected non-empty GEOMETRIC_CURVE_SET refs");
+        assert!(
+            !curve_set_refs.is_empty(),
+            "expected non-empty GEOMETRIC_CURVE_SET refs"
+        );
         for id in curve_set_refs {
             let kind = entity_by_id.get(&id).cloned().unwrap_or_default();
             assert_ne!(
-                kind,
-                "EDGE_CURVE",
+                kind, "EDGE_CURVE",
                 "GEOMETRIC_CURVE_SET should reference geometric curves, got EDGE_CURVE #{id}"
             );
             assert_ne!(
-                kind,
-                "SURFACE_CURVE",
+                kind, "SURFACE_CURVE",
                 "GEOMETRIC_CURVE_SET should avoid SURFACE_CURVE refs, got SURFACE_CURVE #{id}"
             );
         }
@@ -635,11 +638,11 @@ mod tests {
             !reparsed.solids().is_empty(),
             "re-exported model should contain solids"
         );
-            assert_eq!(
-                reparsed.solids().len(),
-                original_solid_count,
-                "solid count should remain stable for creator-style save"
-            );
+        assert_eq!(
+            reparsed.solids().len(),
+            original_solid_count,
+            "solid count should remain stable for creator-style save"
+        );
 
         let mut sphere_faces = 0usize;
         let mut cylinder_faces = 0usize;
@@ -654,7 +657,8 @@ mod tests {
             let mut solid_has_cone = false;
             for shell in &solid.shells {
                 for _face in &shell.faces {
-                    if let Some(Some(surface_idx)) = reparsed.geom().face_surface.get(face_flat_idx) {
+                    if let Some(Some(surface_idx)) = reparsed.geom().face_surface.get(face_flat_idx)
+                    {
                         match reparsed.geom().surfaces.get(*surface_idx) {
                             Some(Surface3::Sphere(_)) => solid_has_sphere = true,
                             Some(Surface3::Cylinder(_)) => solid_has_cylinder = true,
@@ -684,9 +688,15 @@ mod tests {
             }
         }
         assert!(sphere_faces > 0, "sphere should remain analytic after save");
-        assert!(cylinder_faces > 0, "cylinder should remain analytic after save");
+        assert!(
+            cylinder_faces > 0,
+            "cylinder should remain analytic after save"
+        );
         assert!(cone_faces > 0, "cone should remain analytic after save");
-        assert!(sphere_solids > 0, "sphere should belong to at least one solid");
+        assert!(
+            sphere_solids > 0,
+            "sphere should belong to at least one solid"
+        );
         assert!(
             cylinder_solids > 0,
             "cylinder should belong to at least one solid"

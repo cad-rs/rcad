@@ -148,7 +148,12 @@ impl NearTangentHandler {
     }
 
     /// Get normals from both surfaces at a point.
-    fn get_surface_normals_at_point(&self, s1: &Surface3, s2: &Surface3, point: DVec3) -> Option<(DVec3, DVec3)> {
+    fn get_surface_normals_at_point(
+        &self,
+        s1: &Surface3,
+        s2: &Surface3,
+        point: DVec3,
+    ) -> Option<(DVec3, DVec3)> {
         // Project point to surface to get UV parameters
         let (u1, v1) = self.project_point_to_surface(s1, point)?;
         let (u2, v2) = self.project_point_to_surface(s2, point)?;
@@ -199,7 +204,11 @@ impl NearTangentHandler {
     }
 
     /// Adjust tolerance based on near-tangent configurations.
-    pub fn adjust_tolerance_for_tangency(&self, base_fuzzy: f64, configs: &[NearTangentConfig]) -> f64 {
+    pub fn adjust_tolerance_for_tangency(
+        &self,
+        base_fuzzy: f64,
+        configs: &[NearTangentConfig],
+    ) -> f64 {
         if configs.is_empty() {
             return base_fuzzy;
         }
@@ -301,7 +310,10 @@ impl AspectRatioAdaptiveTolerance {
     }
 
     /// Detect high aspect ratio edges in a BRep.
-    pub fn detect_high_aspect_ratio_edges(&self, brep: &rcad_kernel::BRep) -> Vec<HighAspectRatioEdge> {
+    pub fn detect_high_aspect_ratio_edges(
+        &self,
+        brep: &rcad_kernel::BRep,
+    ) -> Vec<HighAspectRatioEdge> {
         use rcad_kernel::topods::TShape;
         let mut results = Vec::new();
 
@@ -318,15 +330,26 @@ impl AspectRatioAdaptiveTolerance {
     }
 
     /// Analyze aspect ratio of a single edge.
-    fn analyze_edge_aspect_ratio(&self, brep: &rcad_kernel::BRep, edge_idx: usize, ed: &rcad_kernel::topods::TEdgeData) -> HighAspectRatioEdge {
+    fn analyze_edge_aspect_ratio(
+        &self,
+        brep: &rcad_kernel::BRep,
+        edge_idx: usize,
+        ed: &rcad_kernel::topods::TEdgeData,
+    ) -> HighAspectRatioEdge {
         use rcad_kernel::topods::TShape;
         // Get endpoints from edge vertices (ShapeRef indices)
         let p_start = match brep.tshapes.get(ed.first.index) {
-            Some(ts) => match &**ts { TShape::Vertex(vd) => vd.point, _ => DVec3::ZERO },
+            Some(ts) => match &**ts {
+                TShape::Vertex(vd) => vd.point,
+                _ => DVec3::ZERO,
+            },
             None => DVec3::ZERO,
         };
         let p_end = match brep.tshapes.get(ed.last.index) {
-            Some(ts) => match &**ts { TShape::Vertex(vd) => vd.point, _ => DVec3::ZERO },
+            Some(ts) => match &**ts {
+                TShape::Vertex(vd) => vd.point,
+                _ => DVec3::ZERO,
+            },
             None => DVec3::ZERO,
         };
 
@@ -336,7 +359,11 @@ impl AspectRatioAdaptiveTolerance {
         let (arc_length, aspect_ratio) = if let Some(ref curve) = ed.curve {
             // Get curve range
             let range = ed.range;
-            let t_range = if range[0] == 0.0 && range[1] == 0.0 { curve.default_domain() } else { range };
+            let t_range = if range[0] == 0.0 && range[1] == 0.0 {
+                curve.default_domain()
+            } else {
+                range
+            };
             let t0 = t_range[0];
             let t1 = t_range[1];
 
@@ -405,7 +432,10 @@ impl AspectRatioAdaptiveTolerance {
 }
 
 /// Detect high aspect ratio edges in a BRep.
-pub fn detect_high_aspect_ratio_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> Vec<HighAspectRatioEdge> {
+pub fn detect_high_aspect_ratio_edges(
+    brep: &rcad_kernel::BRep,
+    tolerance: f64,
+) -> Vec<HighAspectRatioEdge> {
     let aat = AspectRatioAdaptiveTolerance {
         base_tolerance: tolerance,
         ..Default::default()
@@ -485,7 +515,10 @@ impl DegenerateGeometryHandler {
     }
 
     /// Detect all near-degenerate geometry in a BRep.
-    pub fn detect_near_degenerate_geometry(&self, brep: &rcad_kernel::BRep) -> Vec<NearDegenerateGeometry> {
+    pub fn detect_near_degenerate_geometry(
+        &self,
+        brep: &rcad_kernel::BRep,
+    ) -> Vec<NearDegenerateGeometry> {
         use rcad_kernel::topods::TShape;
         let mut results = Vec::new();
 
@@ -517,15 +550,26 @@ impl DegenerateGeometryHandler {
     }
 
     /// Check an edge for degeneracy.
-    fn check_edge_degeneracy(&self, brep: &rcad_kernel::BRep, idx: usize, ed: &rcad_kernel::topods::TEdgeData) -> Option<NearDegenerateGeometry> {
+    fn check_edge_degeneracy(
+        &self,
+        brep: &rcad_kernel::BRep,
+        idx: usize,
+        ed: &rcad_kernel::topods::TEdgeData,
+    ) -> Option<NearDegenerateGeometry> {
         use rcad_kernel::topods::TShape;
         // Get endpoints from edge vertex ShapeRef indices
         let p_start = match brep.tshapes.get(ed.first.index) {
-            Some(ts) => match &**ts { TShape::Vertex(vd) => vd.point, _ => return None },
+            Some(ts) => match &**ts {
+                TShape::Vertex(vd) => vd.point,
+                _ => return None,
+            },
             None => return None,
         };
         let p_end = match brep.tshapes.get(ed.last.index) {
-            Some(ts) => match &**ts { TShape::Vertex(vd) => vd.point, _ => return None },
+            Some(ts) => match &**ts {
+                TShape::Vertex(vd) => vd.point,
+                _ => return None,
+            },
             None => return None,
         };
 
@@ -568,7 +612,9 @@ impl DegenerateGeometryHandler {
                         Some(c) => {
                             let range = if ed.range[0] == 0.0 && ed.range[1] == 0.0 {
                                 c.default_domain()
-                            } else { ed.range };
+                            } else {
+                                ed.range
+                            };
                             (c, range[0], range[1])
                         }
                         None => return true, // No curve — assume line (zero curvature)
@@ -596,7 +642,11 @@ impl DegenerateGeometryHandler {
     }
 
     /// Check a face for degeneracy.
-    fn check_face_degeneracy(&self, _brep: &rcad_kernel::BRep, _face_index: usize) -> Option<NearDegenerateGeometry> {
+    fn check_face_degeneracy(
+        &self,
+        _brep: &rcad_kernel::BRep,
+        _face_index: usize,
+    ) -> Option<NearDegenerateGeometry> {
         // This would require more complex face analysis
         // For now, we return None as placeholder
         // Full implementation would compute face area, check for sliver faces, etc.
@@ -604,15 +654,16 @@ impl DegenerateGeometryHandler {
     }
 
     /// Generate repair recommendations for all detected issues.
-    pub fn generate_repair_recommendations(&self, issues: &[NearDegenerateGeometry]) -> Vec<String> {
+    pub fn generate_repair_recommendations(
+        &self,
+        issues: &[NearDegenerateGeometry],
+    ) -> Vec<String> {
         issues
             .iter()
             .map(|issue| {
                 format!(
                     "Element {}: {} - {}",
-                    issue.element_index,
-                    issue.description,
-                    issue.suggested_repair
+                    issue.element_index, issue.description, issue.suggested_repair
                 )
             })
             .collect()
@@ -620,7 +671,10 @@ impl DegenerateGeometryHandler {
 }
 
 /// Detect near-degenerate geometry in a BRep.
-pub fn detect_near_degenerate_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> Vec<NearDegenerateGeometry> {
+pub fn detect_near_degenerate_geometry(
+    brep: &rcad_kernel::BRep,
+    tolerance: f64,
+) -> Vec<NearDegenerateGeometry> {
     let handler = DegenerateGeometryHandler {
         zero_tolerance: tolerance,
         ..Default::default()
@@ -687,9 +741,11 @@ impl SizeDifferenceHandler {
     pub fn compute_characteristic_size(&self, brep: &rcad_kernel::BRep) -> f64 {
         use rcad_kernel::topods::TShape;
         // Count vertex TShapes
-        let vertex_count = brep.tshapes.iter().filter(|ts| {
-            matches!(ts.as_ref(), rcad_kernel::topods::TShape::Vertex(_))
-        }).count();
+        let vertex_count = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Vertex(_)))
+            .count();
         if vertex_count == 0 {
             return 1.0;
         }
@@ -704,11 +760,17 @@ impl SizeDifferenceHandler {
             }
         }
 
-        (max_pt - min_pt).length().max(TOLERANCE_LINEAR_ULTRA_STRICT)
+        (max_pt - min_pt)
+            .length()
+            .max(TOLERANCE_LINEAR_ULTRA_STRICT)
     }
 
     /// Analyze size difference between two BReps.
-    pub fn analyze_size_difference(&self, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> SizeDifferenceAnalysis {
+    pub fn analyze_size_difference(
+        &self,
+        a: &rcad_kernel::BRep,
+        b: &rcad_kernel::BRep,
+    ) -> SizeDifferenceAnalysis {
         let size_a = self.compute_characteristic_size(a);
         let size_b = self.compute_characteristic_size(b);
 
@@ -751,7 +813,11 @@ impl SizeDifferenceHandler {
 }
 
 /// Analyze size difference between two BReps.
-pub fn analyze_size_difference(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, tolerance: f64) -> SizeDifferenceAnalysis {
+pub fn analyze_size_difference(
+    a: &rcad_kernel::BRep,
+    b: &rcad_kernel::BRep,
+    tolerance: f64,
+) -> SizeDifferenceAnalysis {
     let handler = SizeDifferenceHandler {
         base_tolerance: tolerance,
         ..Default::default()
@@ -826,15 +892,16 @@ pub fn analyze_extreme_geometry(
 
     // Check for near-tangent configurations
     if options.check_near_tangent
-        && let Some((ref s1, ref s2)) = options.surfaces {
-            let handler = NearTangentHandler::new(options.tolerance, TOLERANCE_ANG.sqrt());
-            analysis.near_tangent_configs = handler
-                .detect_near_tangent_configurations(s1, s2, &options.contact_points);
+        && let Some((ref s1, ref s2)) = options.surfaces
+    {
+        let handler = NearTangentHandler::new(options.tolerance, TOLERANCE_ANG.sqrt());
+        analysis.near_tangent_configs =
+            handler.detect_near_tangent_configurations(s1, s2, &options.contact_points);
 
-            for config in &analysis.near_tangent_configs {
-                max_fuzzy = max_fuzzy.max(config.suggested_fuzzy_adjustment);
-            }
+        for config in &analysis.near_tangent_configs {
+            max_fuzzy = max_fuzzy.max(config.suggested_fuzzy_adjustment);
         }
+    }
 
     // Check for high aspect ratio edges
     if options.check_aspect_ratio {
@@ -858,22 +925,29 @@ pub fn analyze_extreme_geometry(
 
     // Check for size differences
     if options.check_size_difference
-        && let Some(b_rep) = b {
-            let handler = SizeDifferenceHandler::from_adaptive(AdaptiveTolerance::from_scale(
-                compute_brep_scale(a).max(compute_brep_scale(b_rep)),
-            ));
-            analysis.size_difference = Some(handler.analyze_size_difference(a, b_rep));
+        && let Some(b_rep) = b
+    {
+        let handler = SizeDifferenceHandler::from_adaptive(AdaptiveTolerance::from_scale(
+            compute_brep_scale(a).max(compute_brep_scale(b_rep)),
+        ));
+        analysis.size_difference = Some(handler.analyze_size_difference(a, b_rep));
 
-            if let Some(ref sd) = analysis.size_difference {
-                max_fuzzy = max_fuzzy.max(options.tolerance * sd.suggested_tolerance_multiplier);
-            }
+        if let Some(ref sd) = analysis.size_difference {
+            max_fuzzy = max_fuzzy.max(options.tolerance * sd.suggested_tolerance_multiplier);
         }
+    }
 
     // Determine if any extreme geometry was detected
     analysis.has_extreme_geometry = !analysis.near_tangent_configs.is_empty()
-        || analysis.high_aspect_ratio_edges.iter().any(|e| e.is_problematic)
+        || analysis
+            .high_aspect_ratio_edges
+            .iter()
+            .any(|e| e.is_problematic)
         || !analysis.degenerate_geometry.is_empty()
-        || analysis.size_difference.as_ref().is_some_and(|sd| sd.is_extreme);
+        || analysis
+            .size_difference
+            .as_ref()
+            .is_some_and(|sd| sd.is_extreme);
 
     // Build issues summary
     if !analysis.near_tangent_configs.is_empty() {
@@ -895,12 +969,12 @@ pub fn analyze_extreme_geometry(
         ));
     }
     if let Some(ref sd) = analysis.size_difference
-        && sd.is_extreme {
-            analysis.issues_summary.push(format!(
-                "Extreme size ratio: {:.1}",
-                sd.size_ratio
-            ));
-        }
+        && sd.is_extreme
+    {
+        analysis
+            .issues_summary
+            .push(format!("Extreme size ratio: {:.1}", sd.size_ratio));
+    }
 
     analysis.recommended_fuzzy_tolerance = max_fuzzy;
     analysis
@@ -909,9 +983,11 @@ pub fn analyze_extreme_geometry(
 /// Compute characteristic scale of a BRep.
 fn compute_brep_scale(brep: &rcad_kernel::BRep) -> f64 {
     use rcad_kernel::topods::TShape;
-    let vertex_count = brep.tshapes.iter().filter(|ts| {
-        matches!(ts.as_ref(), rcad_kernel::topods::TShape::Vertex(_))
-    }).count();
+    let vertex_count = brep
+        .tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Vertex(_)))
+        .count();
     if vertex_count == 0 {
         return 1.0;
     }
@@ -926,7 +1002,7 @@ fn compute_brep_scale(brep: &rcad_kernel::BRep) -> f64 {
         }
     }
 
-    (max_pt - min_pt).length().max(TOLERANCE_LINEAR_ULTRA_STRICT)
+    (max_pt - min_pt)
+        .length()
+        .max(TOLERANCE_LINEAR_ULTRA_STRICT)
 }
-
-

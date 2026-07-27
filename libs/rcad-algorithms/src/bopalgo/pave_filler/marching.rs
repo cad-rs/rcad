@@ -131,7 +131,7 @@ impl<'a> super::PaveFiller<'a> {
     /// OCCT: marching FF intersection
     /// OCCT: marching FF intersection
     pub(crate) fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
-        use inttools::marching::{adaptive_sampling_density, MarchingConfig};
+        use inttools::marching::{MarchingConfig, adaptive_sampling_density};
 
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();

@@ -12,7 +12,7 @@
 //!   checkprops result -s 13.3517
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{boolean_op, BooleanOpType, total_surface_area};
+use rcad_algorithms::{BooleanOpType, boolean_op, total_surface_area};
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use std::time::Instant;
 
@@ -31,8 +31,17 @@ fn diagnostic_rotated_sphere_a2() {
     eprintln!("Sphere rotated");
     // Quick sanity: check center (should still be at origin since box is at origin)
     let nv = s.vertices.len() as f64;
-    let center = s.vertices.iter().map(|v| v.point).reduce(|a, b| a + b).map(|s| s / nv);
-    eprintln!("Sphere vertex count: {}, approx center: {:?}", s.vertices.len(), center);
+    let center = s
+        .vertices
+        .iter()
+        .map(|v| v.point)
+        .reduce(|a, b| a + b)
+        .map(|s| s / nv);
+    eprintln!(
+        "Sphere vertex count: {}, approx center: {:?}",
+        s.vertices.len(),
+        center
+    );
     // Check surface geometry
     eprintln!("Sphere surfaces:");
     for (i, surf) in s.geom.surfaces.iter().enumerate() {
@@ -49,7 +58,10 @@ fn diagnostic_rotated_sphere_a2() {
     let result = match boolean_op(BooleanOpType::Difference, &s, &b) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Boolean failed after {:.1}s: {e}", start.elapsed().as_secs_f64());
+            eprintln!(
+                "Boolean failed after {:.1}s: {e}",
+                start.elapsed().as_secs_f64()
+            );
             panic!("boolean_op failed: {e}");
         }
     };
@@ -63,10 +75,12 @@ fn diagnostic_rotated_sphere_a2() {
         for (shi, shell) in solid.shells.iter().enumerate() {
             eprintln!("    shell {shi}: {} faces", shell.faces.len());
             for (fi, face) in shell.faces.iter().enumerate() {
-                eprintln!("      face {fi}: {} tris, {} outer_wire edges, {} inner_wires",
+                eprintln!(
+                    "      face {fi}: {} tris, {} outer_wire edges, {} inner_wires",
                     face.triangles.len(),
                     face.outer_wire.edges.len(),
-                    face.inner_wires.len());
+                    face.inner_wires.len()
+                );
             }
         }
     }
@@ -91,7 +105,10 @@ fn diagnostic_rotated_sphere_a2() {
     }
 
     for (fi, face) in face_flat_iter(&result) {
-        let surf_name = result.geom.face_surface.get(fi)
+        let surf_name = result
+            .geom
+            .face_surface
+            .get(fi)
             .and_then(|o| *o)
             .and_then(|sidx| result.geom.surfaces.get(sidx))
             .map(|s| match s {
@@ -104,17 +121,22 @@ fn diagnostic_rotated_sphere_a2() {
                 _ => "Other",
             })
             .unwrap_or("None");
-        eprintln!("  face {fi}: {surf_name}, {} outer edges, {} inner wires, {} tris",
+        eprintln!(
+            "  face {fi}: {surf_name}, {} outer edges, {} inner wires, {} tris",
             face.outer_wire.edges.len(),
             face.inner_wires.len(),
-            face.triangles.len());
+            face.triangles.len()
+        );
     }
 
     // Phase 7: total_surface_area
     eprintln!("Computing total_surface_area...");
     let sa_start = Instant::now();
     let sa = total_surface_area(&result);
-    eprintln!("total_surface_area took {:.1}s, result: {sa:.4}", sa_start.elapsed().as_secs_f64());
+    eprintln!(
+        "total_surface_area took {:.1}s, result: {sa:.4}",
+        sa_start.elapsed().as_secs_f64()
+    );
 
     // Per-face area breakdown
     eprintln!("\n--- Per-face surface area ---");
@@ -122,7 +144,10 @@ fn diagnostic_rotated_sphere_a2() {
     for (fi, face) in face_flat_iter(&result) {
         let a = rcad_kernel::properties::face_surface_area(&result, face, fi);
         per_face_areas.push(a);
-        let surf_name = result.geom.face_surface.get(fi)
+        let surf_name = result
+            .geom
+            .face_surface
+            .get(fi)
             .and_then(|o| *o)
             .and_then(|sidx| result.geom.surfaces.get(sidx))
             .map(|s| match s {
@@ -131,12 +156,21 @@ fn diagnostic_rotated_sphere_a2() {
                 _ => "Other",
             })
             .unwrap_or("None");
-        eprintln!("  face {fi} ({surf_name}): area = {a:.4}, edges = {}", face.outer_wire.edges.len());
+        eprintln!(
+            "  face {fi} ({surf_name}): area = {a:.4}, edges = {}",
+            face.outer_wire.edges.len()
+        );
     }
-    eprintln!("  Total from per-face: {:.4}", per_face_areas.iter().sum::<f64>());
+    eprintln!(
+        "  Total from per-face: {:.4}",
+        per_face_areas.iter().sum::<f64>()
+    );
 
     // The expected SA from OCCT is 13.3517
     let diff = (sa - 13.3517).abs();
     eprintln!("SA diff from expected: {diff:.4}");
-    assert!(diff < 2.0, "SA mismatch: {sa:.4} vs expected 13.3517 (diff={diff:.4})");
+    assert!(
+        diff < 2.0,
+        "SA mismatch: {sa:.4} vs expected 13.3517 (diff={diff:.4})"
+    );
 }

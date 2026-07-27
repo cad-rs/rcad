@@ -1,9 +1,9 @@
 /// Integration tests for STEP I/O: write a shape, parse it back, verify topology
 /// is preserved. These act as regression guards against serialization regressions.
 use glam::DVec3;
-use rcad_modeling::{make_box_brep, make_sphere_brep};
 use rcad_kernel::topods;
-use rcad_step::{StepReader, StepWriter, ExportSelection};
+use rcad_modeling::{make_box_brep, make_sphere_brep};
+use rcad_step::{ExportSelection, StepReader, StepWriter};
 
 fn all_faces_selection() -> ExportSelection<'static> {
     ExportSelection {
@@ -15,7 +15,9 @@ fn all_faces_selection() -> ExportSelection<'static> {
 fn face_count(t: &topods::BRep) -> usize {
     let mut c = 0;
     for ts in &t.tshapes {
-        if matches!(&**ts, topods::TShape::Face(_)) { c += 1; }
+        if matches!(&**ts, topods::TShape::Face(_)) {
+            c += 1;
+        }
     }
     c
 }
@@ -23,7 +25,9 @@ fn face_count(t: &topods::BRep) -> usize {
 fn vertex_count(t: &topods::BRep) -> usize {
     let mut c = 0;
     for ts in &t.tshapes {
-        if matches!(&**ts, topods::TShape::Vertex(_)) { c += 1; }
+        if matches!(&**ts, topods::TShape::Vertex(_)) {
+            c += 1;
+        }
     }
     c
 }
@@ -35,12 +39,14 @@ fn vertex_count(t: &topods::BRep) -> usize {
 /// as additional `BRep.vertices` entries during round-trip.
 #[test]
 fn box_round_trip_preserves_topology() {
-    let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
-        .expect("make box");
+    let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("make box");
     let original_faces = face_count(&brep.to_topods());
 
     let step_str = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
-    assert!(step_str.contains("ISO-10303-21"), "STEP string must contain header");
+    assert!(
+        step_str.contains("ISO-10303-21"),
+        "STEP string must contain header"
+    );
 
     let parsed = StepReader::parse_string(&step_str).expect("parse round-tripped STEP");
 

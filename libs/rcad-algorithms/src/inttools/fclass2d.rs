@@ -1,9 +1,9 @@
-﻿/// 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
-use glam::DVec2;
-use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
+/// 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
+use glam::DVec2;
 use rcad_kernel::geom::Surface3;
+use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval};
 
 /// Geom2dInt_Geom2dCurveTool::NbSamples.
 ///   Returns the number of sample points for a curve over the given range.
@@ -12,7 +12,9 @@ use rcad_kernel::geom::Surface3;
 ///   In IntTools_FClass2d Init, non-linear curves get nbs *= 4 oversampling.
 pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
     let range_len = (t1 - t0).abs();
-    if range_len < TOLERANCE_LEN_SQ_DIV_SAFE { return 2; }
+    if range_len < TOLERANCE_LEN_SQ_DIV_SAFE {
+        return 2;
+    }
     let nbs = match curve {
         Curve2d::Line(_) => 2,
         Curve2d::Circle(c) => {
@@ -27,7 +29,11 @@ pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
         Curve2d::BSpline(bsp) => {
             // OCCT L32-48: nbs = NbKnots * Degree, scaled by range ratio
             let full_range = bsp.knots.last().unwrap_or(&1.0) - bsp.knots.first().unwrap_or(&0.0);
-            let scale = if full_range.abs() > TOLERANCE_LEN_SQ_DIV_SAFE { range_len / full_range } else { 1.0 };
+            let scale = if full_range.abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+                range_len / full_range
+            } else {
+                1.0
+            };
             let n = (bsp.knots.len() * bsp.degree).max(4);
             let n_scaled = (n as f64 * scale).ceil() as usize;
             n_scaled.max(bsp.degree + 1).max(4)
@@ -52,15 +58,25 @@ pub(crate) fn collect_wire_uv(ds: &DS, face_idx: usize, edges: &[(usize, bool)])
     collect_wire_uv_with_mult(ds, face_idx, edges, 1.0)
 }
 
-fn collect_wire_uv_with_mult(ds: &DS, face_idx: usize, edges: &[(usize, bool)], sample_mult: f64) -> Vec<DVec2> {
+fn collect_wire_uv_with_mult(
+    ds: &DS,
+    face_idx: usize,
+    edges: &[(usize, bool)],
+    sample_mult: f64,
+) -> Vec<DVec2> {
     let mut pts: Vec<DVec2> = Vec::new();
     for &(ei, fwd) in edges {
         if let Some(rep) = ds.edge_on_face(ei, face_idx) {
             let t0 = if fwd { rep.start_param } else { rep.end_param };
             let t1 = if fwd { rep.end_param } else { rep.start_param };
-            let n = ((curve2d_nb_samples(&rep.pcurve, t0, t1) as f64) * sample_mult).ceil() as usize;
+            let n =
+                ((curve2d_nb_samples(&rep.pcurve, t0, t1) as f64) * sample_mult).ceil() as usize;
             let n = n.max(2);
-            let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+            let du = if n > 1 {
+                (t1 - t0) / (n - 1) as f64
+            } else {
+                0.0
+            };
             for i in 0..n {
                 let t = t0 + du * i as f64;
                 let uv = rep.pcurve.point_at(t);
@@ -87,22 +103,40 @@ fn collect_wire_uv_with_mult(ds: &DS, face_idx: usize, edges: &[(usize, bool)], 
 /// insert the midpoint and recurse on both halves.
 /// Equivalent to OCCT's QuasiFleche (GCPnts_QuasiUniformDeflection.cxx L55-185).
 fn quasi_uniform_deflection_2d(
-    curve: &Curve2d, t0: f64, t1: f64, max_deflection_sq: f64,
+    curve: &Curve2d,
+    t0: f64,
+    t1: f64,
+    max_deflection_sq: f64,
     params: &mut Vec<f64>,
 ) {
     let max_calls = 2000;
     let mut nb_calls = 0usize;
-    quasi_fleche_2d(curve, t0, t1, max_deflection_sq, params, &mut nb_calls, max_calls);
+    quasi_fleche_2d(
+        curve,
+        t0,
+        t1,
+        max_deflection_sq,
+        params,
+        &mut nb_calls,
+        max_calls,
+    );
 }
 
 /// Recursive QuasiFleche for Curve2d.
 /// OCCT GCPnts_QuasiUniformDeflection.cxx L55-185 (template QuasiFleche).
 fn quasi_fleche_2d(
-    curve: &Curve2d, u_deb: f64, u_fin: f64, defl_sq: f64,
-    params: &mut Vec<f64>, nb_calls: &mut usize, max_calls: usize,
+    curve: &Curve2d,
+    u_deb: f64,
+    u_fin: f64,
+    defl_sq: f64,
+    params: &mut Vec<f64>,
+    nb_calls: &mut usize,
+    max_calls: usize,
 ) {
     *nb_calls += 1;
-    if *nb_calls >= max_calls { return; }
+    if *nb_calls >= max_calls {
+        return;
+    }
 
     let p_deb = curve.point_at(u_deb);
     let p_fin = curve.point_at(u_fin);
@@ -122,10 +156,18 @@ fn quasi_fleche_2d(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum State { In, On, Out }
+pub enum State {
+    In,
+    On,
+    Out,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CSLibResult { Inside = 1, Outside = -1, Uncertain = 0 }
+pub enum CSLibResult {
+    Inside = 1,
+    Outside = -1,
+    Uncertain = 0,
+}
 
 /// OCCT CSLib_Class2d: ray-casting with [0,1] normalization.
 #[derive(Debug, Clone)]
@@ -142,27 +184,64 @@ pub struct CSLibClass2d {
 }
 
 impl CSLibClass2d {
-    pub fn new(points: &[DVec2], tol_u: f64, tol_v: f64,
-               umin: f64, vmin: f64, umax: f64, vmax: f64) -> Self {
-        let range_u = if (umax - umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { umax - umin } else { 1.0 };
-        let range_v = if (vmax - vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { vmax - vmin } else { 1.0 };
+    pub fn new(
+        points: &[DVec2],
+        tol_u: f64,
+        tol_v: f64,
+        umin: f64,
+        vmin: f64,
+        umax: f64,
+        vmax: f64,
+    ) -> Self {
+        let range_u = if (umax - umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            umax - umin
+        } else {
+            1.0
+        };
+        let range_v = if (vmax - vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            vmax - vmin
+        } else {
+            1.0
+        };
         let xs: Vec<f64> = points.iter().map(|p| (p.x - umin) / range_u).collect();
         let ys: Vec<f64> = points.iter().map(|p| (p.y - vmin) / range_v).collect();
         let n = xs.len();
-        CSLibClass2d { xs, ys, n, tol_u, tol_v, umin, vmin, umax, vmax }
+        CSLibClass2d {
+            xs,
+            ys,
+            n,
+            tol_u,
+            tol_v,
+            umin,
+            vmin,
+            umax,
+            vmax,
+        }
     }
 
     pub fn si_dans(&self, uv: DVec2) -> CSLibResult {
-        if self.n < 3 { return CSLibResult::Outside; }
-        let ru = if (self.umax - self.umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { self.umax - self.umin } else { 1.0 };
-        let rv = if (self.vmax - self.vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE { self.vmax - self.vmin } else { 1.0 };
+        if self.n < 3 {
+            return CSLibResult::Outside;
+        }
+        let ru = if (self.umax - self.umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            self.umax - self.umin
+        } else {
+            1.0
+        };
+        let rv = if (self.vmax - self.vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            self.vmax - self.vmin
+        } else {
+            1.0
+        };
 
         // OCCT L155-160: quick rejection outside tolerance-expanded bounding box
         // OCCT: aTolU = myTolU * (myUMax - myUMin); check uses UV-space tolerance
         let tol_u_uv = self.tol_u * ru;
         let tol_v_uv = self.tol_v * rv;
-        if uv.x < (self.umin - tol_u_uv) || uv.x > (self.umax + tol_u_uv)
-            || uv.y < (self.vmin - tol_v_uv) || uv.y > (self.vmax + tol_v_uv)
+        if uv.x < (self.umin - tol_u_uv)
+            || uv.x > (self.umax + tol_u_uv)
+            || uv.y < (self.vmin - tol_v_uv)
+            || uv.y > (self.vmax + tol_v_uv)
         {
             return CSLibResult::Outside;
         }
@@ -208,8 +287,10 @@ impl CSLibClass2d {
             let a_curr_dy = self.ys[a_next_idx % self.n] - py;
 
             // OCCT L296-299: vertex proximity check
-            if a_curr_dx < self.tol_u && a_curr_dx > -self.tol_u
-                && a_curr_dy < self.tol_v && a_curr_dy > -self.tol_v
+            if a_curr_dx < self.tol_u
+                && a_curr_dx > -self.tol_u
+                && a_curr_dy < self.tol_v
+                && a_curr_dy > -self.tol_v
             {
                 return CSLibResult::Uncertain;
             }
@@ -231,7 +312,8 @@ impl CSLibClass2d {
                 if a_prev_dx > 0.0 && a_curr_dx > 0.0 {
                     a_nb_crossings += 1;
                 } else if a_prev_dx > 0.0 || a_curr_dx > 0.0 {
-                    let a_x_intersect = a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
+                    let a_x_intersect =
+                        a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
                     if a_x_intersect > 0.0 {
                         a_nb_crossings += 1;
                     }
@@ -242,7 +324,11 @@ impl CSLibClass2d {
             a_prev_dy = a_curr_dy;
         }
 
-        if (a_nb_crossings & 1) != 0 { CSLibResult::Inside } else { CSLibResult::Outside }
+        if (a_nb_crossings & 1) != 0 {
+            CSLibResult::Inside
+        } else {
+            CSLibResult::Outside
+        }
     }
 
     /// OCCT CSLib_Class2d::internalSiDans (L234-275): pure ray-casting, no ON detection.
@@ -261,7 +347,8 @@ impl CSLibClass2d {
                 if a_prev_dx > 0.0 && a_curr_dx > 0.0 {
                     a_nb_crossings += 1;
                 } else if a_prev_dx > 0.0 || a_curr_dx > 0.0 {
-                    let a_x_intersect = a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
+                    let a_x_intersect =
+                        a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
                     if a_x_intersect > 0.0 {
                         a_nb_crossings += 1;
                     }
@@ -282,7 +369,10 @@ pub struct FClass2d {
     pub tab_class: Vec<CSLibClass2d>,
     tab_orien: Vec<bool>,
     tol_uv: f64,
-    pub u1: f64, pub v1: f64, pub u2: f64, pub v2: f64,
+    pub u1: f64,
+    pub v1: f64,
+    pub u2: f64,
+    pub v2: f64,
     is_hole: bool,
     /// periodic surface tracking for RecadreOnPeriodic
     ///   (IntTools_FClass2d.cxx L655-678, L758-802).
@@ -298,15 +388,19 @@ pub struct FClass2d {
 }
 
 impl FClass2d {
-    pub fn outer_wire() -> usize { 0 }
+    pub fn outer_wire() -> usize {
+        0
+    }
 
     pub fn new(ds: &DS, face_idx: usize, tol_uv: f64) -> Self {
         let face = &ds.faces[face_idx];
-        let tol_u = tol_uv; let tol_v = tol_uv;
+        let tol_u = tol_uv;
+        let tol_v = tol_uv;
         let mut tab_class: Vec<CSLibClass2d> = Vec::new();
         let mut tab_orien: Vec<bool> = Vec::new();
 
-        let outer_edges: Vec<(usize, bool)> = face.boundary_edges.iter().map(|&e| (e, true)).collect();
+        let outer_edges: Vec<(usize, bool)> =
+            face.boundary_edges.iter().map(|&e| (e, true)).collect();
         let mut outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
         // for periodic surfaces with natural restriction (sphere, cylinder, cone),
         //   the uv_boundary provides a proper closed polygon, while edge-based sampling may
@@ -333,15 +427,24 @@ impl FClass2d {
             while a_defl > an_exp_thick && a_discr_defl > 1e-7 {
                 // OCCT L465-495: GCPnts_QuasiUniformDeflection on each edge
                 let mut new_pts: Vec<DVec2> = Vec::new();
-                fu = 0.0; fv = 0.0;
+                fu = 0.0;
+                fv = 0.0;
                 for &(ei, fwd) in &outer_edges {
                     if let Some(rep) = ds.edge_on_face(ei, face_idx) {
-                        let (t0, t1) = if fwd { (rep.start_param, rep.end_param) }
-                                       else { (rep.end_param, rep.start_param) };
+                        let (t0, t1) = if fwd {
+                            (rep.start_param, rep.end_param)
+                        } else {
+                            (rep.end_param, rep.start_param)
+                        };
                         let mut edge_params = Vec::new();
                         edge_params.push(t0);
                         quasi_uniform_deflection_2d(
-                            &rep.pcurve, t0, t1, a_discr_defl * a_discr_defl, &mut edge_params);
+                            &rep.pcurve,
+                            t0,
+                            t1,
+                            a_discr_defl * a_discr_defl,
+                            &mut edge_params,
+                        );
                         edge_params.push(t1);
                         for i in 1..edge_params.len() {
                             let uv = rep.pcurve.point_at(edge_params[i]);
@@ -349,64 +452,94 @@ impl FClass2d {
                             // OCCT L493-495: chordal deflection update (lin2d projection)
                             let n = new_pts.len();
                             if n >= 3 {
-                                let a = new_pts[n - 3]; let b = new_pts[n - 2]; let c = new_pts[n - 1];
-                                let d_u = ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)).abs();
-                                if d_u > fu { fu = d_u; }
+                                let a = new_pts[n - 3];
+                                let b = new_pts[n - 2];
+                                let c = new_pts[n - 1];
+                                let d_u =
+                                    ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)).abs();
+                                if d_u > fu {
+                                    fu = d_u;
+                                }
                             }
                         }
                     }
                 }
-                if new_pts.len() <= outer_pts.len() { break; }
+                if new_pts.len() <= outer_pts.len() {
+                    break;
+                }
                 outer_pts = new_pts;
                 outer_area = polygon_signed_area(&outer_pts);
                 outer_perim = polygon_perimeter(&outer_pts);
                 an_exp_thick = (2.0 * outer_area.abs() / outer_perim).max(1e-7);
                 let (new_fu, new_fv) = chordal_deflection(&outer_pts, tol_uv);
-                fu = new_fu; fv = new_fv;
+                fu = new_fu;
+                fv = new_fv;
                 a_defl = fu.max(fv);
                 // OCCT L524-528: aDiscrDefl = min(aDiscrDefl * 0.1, anExpThick * 10.)
                 a_discr_defl = (a_discr_defl * 0.1).min(an_exp_thick * 10.0);
             }
-            fleche_u = fu; fleche_v = fv;
+            fleche_u = fu;
+            fleche_v = fv;
         }
-        let mut umin = f64::INFINITY; let mut umax = f64::NEG_INFINITY;
-        let mut vmin = f64::INFINITY; let mut vmax = f64::NEG_INFINITY;
+        let mut umin = f64::INFINITY;
+        let mut umax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut vmax = f64::NEG_INFINITY;
         for p in &outer_pts {
-            umin = umin.min(p.x); umax = umax.max(p.x);
-            vmin = vmin.min(p.y); vmax = vmax.max(p.y);
+            umin = umin.min(p.x);
+            umax = umax.max(p.x);
+            vmin = vmin.min(p.y);
+            vmax = vmax.max(p.y);
         }
 
         if outer_pts.len() >= 3 {
             // OCCT: TabOrien derived from polygon winding (CCW=FORWARD=true, CW=REVERSED=false).
             let outer_ccw = polygon_is_ccw(&outer_pts);
-            tab_class.push(CSLibClass2d::new(&outer_pts, fleche_u, fleche_v, umin, vmin, umax, vmax));
+            tab_class.push(CSLibClass2d::new(
+                &outer_pts, fleche_u, fleche_v, umin, vmin, umax, vmax,
+            ));
             tab_orien.push(outer_ccw);
         }
 
         // Inner wires (holes)
         for iw in &face.inner_boundary_edges {
             let iw_pts = collect_wire_uv(ds, face_idx, iw);
-            if iw_pts.len() < 3 { continue; }
-            let mut i_umin = f64::INFINITY; let mut i_umax = f64::NEG_INFINITY;
-            let mut i_vmin = f64::INFINITY; let mut i_vmax = f64::NEG_INFINITY;
+            if iw_pts.len() < 3 {
+                continue;
+            }
+            let mut i_umin = f64::INFINITY;
+            let mut i_umax = f64::NEG_INFINITY;
+            let mut i_vmin = f64::INFINITY;
+            let mut i_vmax = f64::NEG_INFINITY;
             for p in &iw_pts {
-                i_umin = i_umin.min(p.x); i_umax = i_umax.max(p.x);
-                i_vmin = i_vmin.min(p.y); i_vmax = i_vmax.max(p.y);
-                umin = umin.min(p.x); umax = umax.max(p.x);
-                vmin = vmin.min(p.y); vmax = vmax.max(p.y);
+                i_umin = i_umin.min(p.x);
+                i_umax = i_umax.max(p.x);
+                i_vmin = i_vmin.min(p.y);
+                i_vmax = i_vmax.max(p.y);
+                umin = umin.min(p.x);
+                umax = umax.max(p.x);
+                vmin = vmin.min(p.y);
+                vmax = vmax.max(p.y);
             }
             let (fleche_u, fleche_v) = chordal_deflection(&iw_pts, tol_uv);
             let iw_ccw = polygon_is_ccw(&iw_pts);
-            tab_class.push(CSLibClass2d::new(&iw_pts, fleche_u, fleche_v, i_umin, i_vmin, i_umax, i_vmax));
+            tab_class.push(CSLibClass2d::new(
+                &iw_pts, fleche_u, fleche_v, i_umin, i_vmin, i_umax, i_vmax,
+            ));
             tab_orien.push(iw_ccw);
         }
 
         let is_hole = if !tab_class.is_empty() {
             let outer = &tab_class[0];
-            let (ru, rv) = ((outer.umax - outer.umin).max(1.0), (outer.vmax - outer.vmin).max(1.0));
+            let (ru, rv) = (
+                (outer.umax - outer.umin).max(1.0),
+                (outer.vmax - outer.vmin).max(1.0),
+            );
             let uv_corner = DVec2::new(outer.umin - ru, outer.vmin - rv);
             tab_class[0].si_dans(uv_corner) != CSLibResult::Inside
-        } else { false };
+        } else {
+            false
+        };
 
         // OCCT L655-678: detect periodic surfaces for RecadreOnPeriodic.
         let (is_u_periodic, is_v_periodic, u_period, v_period) = match &face.surface {
@@ -420,12 +553,22 @@ impl FClass2d {
             Surface3::Sphere(_) => {
                 let du = std::f64::consts::TAU - (umax - umin);
                 let du = if du < 0.0 { 0.0 } else { du };
-                (umin - du * 0.5, umin - du * 0.5 + std::f64::consts::TAU, vmin, vmax)
+                (
+                    umin - du * 0.5,
+                    umin - du * 0.5 + std::f64::consts::TAU,
+                    vmin,
+                    vmax,
+                )
             }
             Surface3::Cylinder(_) => {
                 let du = std::f64::consts::TAU - (umax - umin);
                 let du = if du < 0.0 { 0.0 } else { du };
-                (umin - du * 0.5, umin - du * 0.5 + std::f64::consts::TAU, vmin, vmax)
+                (
+                    umin - du * 0.5,
+                    umin - du * 0.5 + std::f64::consts::TAU,
+                    vmin,
+                    vmax,
+                )
             }
             _ => (umin, umax, vmin, vmax),
         };
@@ -436,11 +579,20 @@ impl FClass2d {
         let v_res = tol_uv / char_len;
 
         FClass2d {
-            tab_class, tab_orien, tol_uv,
-            u1, v1, u2, v2,
+            tab_class,
+            tab_orien,
+            tol_uv,
+            u1,
+            v1,
+            u2,
+            v2,
             is_hole,
-            is_u_periodic, is_v_periodic, u_period, v_period,
-            u_res, v_res,
+            is_u_periodic,
+            is_v_periodic,
+            u_period,
+            v_period,
+            u_res,
+            v_res,
         }
     }
 
@@ -530,10 +682,14 @@ impl FClass2d {
         (new_par, offset)
     }
     /// 1-arg convenience for callers without periodic handling.
-    pub fn perform_point(&self, uv: DVec2) -> State { self.perform_impl(uv) }
+    pub fn perform_point(&self, uv: DVec2) -> State {
+        self.perform_impl(uv)
+    }
 
     fn perform_impl(&self, uv: DVec2) -> State {
-        if self.tab_class.is_empty() { return State::Out; }
+        if self.tab_class.is_empty() {
+            return State::Out;
+        }
 
         // OCCT L684-714: try per-wire classification with TabOrien.
         //   For each wire: if SiDans returns INSIDE and wire is FORWARD → IN.
@@ -547,9 +703,15 @@ impl FClass2d {
             let forw = self.tab_orien.get(i).copied().unwrap_or(true);
 
             if cur == CSLibResult::Inside {
-                if !forw { dedans = -1; break; }
+                if !forw {
+                    dedans = -1;
+                    break;
+                }
             } else if cur == CSLibResult::Outside {
-                if forw { dedans = -1; break; }
+                if forw {
+                    dedans = -1;
+                    break;
+                }
             } else {
                 need_classifier = true;
                 break;
@@ -569,9 +731,15 @@ impl FClass2d {
         State::On
     }
 
-    pub fn is_hole(&self) -> bool { self.is_hole }
-    pub fn num_wires(&self) -> usize { self.tab_class.len() }
-    pub fn wire_classifier(&self, i: usize) -> &CSLibClass2d { &self.tab_class[i] }
+    pub fn is_hole(&self) -> bool {
+        self.is_hole
+    }
+    pub fn num_wires(&self) -> usize {
+        self.tab_class.len()
+    }
+    pub fn wire_classifier(&self, i: usize) -> &CSLibClass2d {
+        &self.tab_class[i]
+    }
 
     /// Legacy compat: build from DS uv_boundary. Calls FClass2d::new internally.
     pub fn from_ds_face(ds: &DS, fi: usize) -> Self {
@@ -593,7 +761,9 @@ fn polygon_signed_area(poly: &[DVec2]) -> f64 {
 /// Perimeter of a 2D polygon (sum of edge lengths).
 fn polygon_perimeter(poly: &[DVec2]) -> f64 {
     let n = poly.len();
-    if n < 2 { return 0.0; }
+    if n < 2 {
+        return 0.0;
+    }
     let mut perim = 0.0;
     for i in 0..n {
         let j = (i + 1) % n;
@@ -605,16 +775,30 @@ fn polygon_perimeter(poly: &[DVec2]) -> f64 {
 /// Compute chordal deflection (FlecheU/FlecheV) for a UV polygon.
 ///   Maximum distance from each point to the chord connecting its neighbors.
 fn chordal_deflection(pts: &[DVec2], tol_uv: f64) -> (f64, f64) {
-    if pts.len() < 3 { return (tol_uv, tol_uv); }
-    let mut fu = 0.0; let mut fv = 0.0;
+    if pts.len() < 3 {
+        return (tol_uv, tol_uv);
+    }
+    let mut fu = 0.0;
+    let mut fv = 0.0;
     for i in 1..pts.len() - 1 {
-        let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
-        let ac = c - a; let len2 = ac.dot(ac);
-        if len2 < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
+        let a = pts[i - 1];
+        let b = pts[i];
+        let c = pts[i + 1];
+        let ac = c - a;
+        let len2 = ac.dot(ac);
+        if len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+            continue;
+        }
         let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
         let proj = a + ac * t;
-        let du = (b.x - proj.x).abs(); let dv = (b.y - proj.y).abs();
-        if du > fu { fu = du; } if dv > fv { fv = dv; }
+        let du = (b.x - proj.x).abs();
+        let dv = (b.y - proj.y).abs();
+        if du > fu {
+            fu = du;
+        }
+        if dv > fv {
+            fv = dv;
+        }
     }
     (fu.max(tol_uv), fv.max(tol_uv))
 }

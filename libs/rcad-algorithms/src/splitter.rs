@@ -13,7 +13,6 @@
 //! - `BOPAlgo_Splitter.cxx` L1-80: BOPAlgo_Splitter::Perform + BuildResult
 //! - `BRepAlgoAPI_Splitter.cxx` L1-50: API wrapper
 
-
 use crate::bopalgo::builder::BooleanOpType;
 use crate::history::FaceOrigin;
 use rcad_kernel::topods;
@@ -48,7 +47,10 @@ use rcad_kernel::topods;
 /// # OCCT Reference
 /// `BOPAlgo_Splitter.cxx` L58-L79 — BuildResult filtering loop
 /// `BOPAlgo_Builder.cxx` L178-L240 — BuildResult shape iteration
-pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin]) -> rcad_kernel::BRep {
+pub fn filter_object_only(
+    brep: &rcad_kernel::BRep,
+    face_origins: &[FaceOrigin],
+) -> rcad_kernel::BRep {
     // Build a keep mask: true if the origin is ShapeA or Generated.
     let keep_mask: Vec<bool> = face_origins
         .iter()
@@ -84,18 +86,30 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
     // then rebuild Solid/Shell/Face hierarchy from scratch.
 
     // First, collect all face tshape indices in flat order so we can remap.
-    let face_tsi_by_flat: Vec<usize> = brep.tshapes.iter().enumerate()
-        .filter_map(|(i, ts)| if matches!(ts.as_ref(), topods::TShape::Face(_)) { Some(i) } else { None })
+    let face_tsi_by_flat: Vec<usize> = brep
+        .tshapes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ts)| {
+            if matches!(ts.as_ref(), topods::TShape::Face(_)) {
+                Some(i)
+            } else {
+                None
+            }
+        })
         .collect();
 
     // For each face, determine if it should be kept.
-    let face_keep: Vec<bool> = face_tsi_by_flat.iter().enumerate()
+    let face_keep: Vec<bool> = face_tsi_by_flat
+        .iter()
+        .enumerate()
         .map(|(fi, _)| fi < keep_mask.len() && keep_mask[fi])
         .collect();
 
     // Walk all input TShapes, rebuilding hierarchy for kept faces.
     // We use a HashMap to map old tshape index to new ShapeRef.
-    let mut old_to_new: std::collections::HashMap<usize, topods::ShapeRef> = std::collections::HashMap::new();
+    let mut old_to_new: std::collections::HashMap<usize, topods::ShapeRef> =
+        std::collections::HashMap::new();
 
     // First, copy all Vertex TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
@@ -111,8 +125,12 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
     // Copy all Edge TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Edge(ed) = ts.as_ref() {
-            let first = *old_to_new.get(&ed.first.index).unwrap_or(&topods::ShapeRef::NULL);
-            let last = *old_to_new.get(&ed.last.index).unwrap_or(&topods::ShapeRef::NULL);
+            let first = *old_to_new
+                .get(&ed.first.index)
+                .unwrap_or(&topods::ShapeRef::NULL);
+            let last = *old_to_new
+                .get(&ed.last.index)
+                .unwrap_or(&topods::ShapeRef::NULL);
             let sr = out.add_tedge(ed.curve.clone(), first, last, ed.range);
             old_to_new.insert(old_i, sr);
         }
@@ -121,13 +139,21 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
     // Copy Wire TShapes, filtering out removed edges.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Wire(wd) = ts.as_ref() {
-            let new_edges: Vec<topods::ShapeRef> = wd.edges.iter()
+            let new_edges: Vec<topods::ShapeRef> = wd
+                .edges
+                .iter()
                 .filter_map(|e| old_to_new.get(&e.index).copied())
                 .collect();
             if !new_edges.is_empty() {
                 // Preserve orientation
-                let new_edges_oriented: Vec<topods::ShapeRef> = wd.edges.iter()
-                    .filter_map(|e| old_to_new.get(&e.index).map(|n| topods::ShapeRef::synthetic_with_orientation(n.index, e.orientation)))
+                let new_edges_oriented: Vec<topods::ShapeRef> = wd
+                    .edges
+                    .iter()
+                    .filter_map(|e| {
+                        old_to_new.get(&e.index).map(|n| {
+                            topods::ShapeRef::synthetic_with_orientation(n.index, e.orientation)
+                        })
+                    })
                     .collect();
                 let sr = out.add_twire(new_edges_oriented);
                 old_to_new.insert(old_i, sr);
@@ -144,11 +170,18 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
             if !keep {
                 continue;
             }
-            let new_outer = old_to_new.get(&fd.outer_wire.index).copied().unwrap_or(topods::ShapeRef::NULL);
-            let new_inner: Vec<topods::ShapeRef> = fd.inner_wires.iter()
+            let new_outer = old_to_new
+                .get(&fd.outer_wire.index)
+                .copied()
+                .unwrap_or(topods::ShapeRef::NULL);
+            let new_inner: Vec<topods::ShapeRef> = fd
+                .inner_wires
+                .iter()
                 .filter_map(|w| old_to_new.get(&w.index).copied())
                 .collect();
-            let new_internal: Vec<topods::ShapeRef> = fd.internal_vertices.iter()
+            let new_internal: Vec<topods::ShapeRef> = fd
+                .internal_vertices
+                .iter()
                 .filter_map(|v| old_to_new.get(&v.index).copied())
                 .collect();
             // Preserve surface, uv_domain, natural_restriction from original face
@@ -168,8 +201,14 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
     // Build filtered Shell TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Shell(shd) = ts.as_ref() {
-            let new_faces: Vec<topods::ShapeRef> = shd.faces.iter()
-                .filter_map(|f| old_to_new.get(&f.index).map(|n| topods::ShapeRef::synthetic_with_orientation(n.index, f.orientation)))
+            let new_faces: Vec<topods::ShapeRef> = shd
+                .faces
+                .iter()
+                .filter_map(|f| {
+                    old_to_new.get(&f.index).map(|n| {
+                        topods::ShapeRef::synthetic_with_orientation(n.index, f.orientation)
+                    })
+                })
                 .collect();
             if !new_faces.is_empty() {
                 let sr = out.add_tshell(new_faces);
@@ -181,8 +220,14 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
     // Build filtered Solid TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Solid(sd) = ts.as_ref() {
-            let new_shells: Vec<topods::ShapeRef> = sd.shells.iter()
-                .filter_map(|s| old_to_new.get(&s.index).map(|n| topods::ShapeRef::synthetic_with_orientation(n.index, s.orientation)))
+            let new_shells: Vec<topods::ShapeRef> = sd
+                .shells
+                .iter()
+                .filter_map(|s| {
+                    old_to_new.get(&s.index).map(|n| {
+                        topods::ShapeRef::synthetic_with_orientation(n.index, s.orientation)
+                    })
+                })
                 .collect();
             if !new_shells.is_empty() {
                 out.add_tsolid(new_shells);
@@ -218,7 +263,10 @@ pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin])
 ///     shapes.
 /// `BRepAlgoAPI_Splitter.cxx` L1-50:
 ///   - API wrapper that delegates to BOPAlgo_Splitter.
-pub fn split_shape_occt_aligned(shape: &rcad_kernel::BRep, tool: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, String> {
+pub fn split_shape_occt_aligned(
+    shape: &rcad_kernel::BRep,
+    tool: &rcad_kernel::BRep,
+) -> Result<rcad_kernel::BRep, String> {
     // Step 1: Run the PaveFiller + Builder pipeline (same as boolean ops).
     // OCCT: BOPAlgo_Splitter uses BOPAlgo_Builder (not BOPAlgo_BOP), which
     // splits all faces and classifies them per the boolean op type.
@@ -235,5 +283,3 @@ pub fn split_shape_occt_aligned(shape: &rcad_kernel::BRep, tool: &rcad_kernel::B
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
-
-

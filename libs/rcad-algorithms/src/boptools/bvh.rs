@@ -7,5 +7,5 @@
 //! | `BOPTools_BoxTree` | `box_tree::BoxTree` |
 
 pub use crate::bnd_box::Aabb;
-pub use crate::boptools::bvh_tree::{Bvh, BvhStats};
 pub use crate::boptools::box_tree::BoxTree;
+pub use crate::boptools::bvh_tree::{Bvh, BvhStats};

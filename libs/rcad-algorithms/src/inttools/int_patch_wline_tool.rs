@@ -1,4 +1,4 @@
-﻿//! IntPatch_WLineTool  ?walking line post-processing utilities.
+//! IntPatch_WLineTool  ?walking line post-processing utilities.
 //!
 //! OCCT IntPatch_WLineTool.hxx / .cxx (73K)
 //!
@@ -8,8 +8,8 @@
 //!   ExtendTwoWLines     ?extends WLine endpoints to meet at intersections
 
 use super::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
-use glam::DVec2;
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
+use glam::DVec2;
 
 /// Max angle to concatenate two WLines to avoid C0-continuity issues.
 /// OCCT WLineTool.cxx: myMaxConcatAngle = PI/6
@@ -29,7 +29,9 @@ impl IntPatchLine {
         }
         if self.wline_pnts.len() == 2 {
             let d = self.wline_pnts[0].p3d.distance(self.wline_pnts[1].p3d);
-            if d < TOLERANCE_CLAMP_MIN { return None; }
+            if d < TOLERANCE_CLAMP_MIN {
+                return None;
+            }
             return Some(self.clone());
         }
 
@@ -41,8 +43,14 @@ impl IntPatchLine {
                 let du = (last.u1 - p.u1).abs() + (last.v1 - p.v1).abs();
                 let dv = (last.u2 - p.u2).abs() + (last.v2 - p.v2).abs();
                 // Find max UV magnitude for relative comparison
-                let max_uv = last.u1.abs().max(last.v1.abs().max(last.u2.abs().max(last.v2.abs())));
-                if d3 < TOLERANCE_CLAMP_MIN || du < 1e-16 * max_uv.max(1.0) || dv < 1e-16 * max_uv.max(1.0) {
+                let max_uv = last
+                    .u1
+                    .abs()
+                    .max(last.v1.abs().max(last.u2.abs().max(last.v2.abs())));
+                if d3 < TOLERANCE_CLAMP_MIN
+                    || du < 1e-16 * max_uv.max(1.0)
+                    || dv < 1e-16 * max_uv.max(1.0)
+                {
                     continue; // skip duplicate
                 }
             }
@@ -52,7 +60,9 @@ impl IntPatchLine {
         if cleaned.len() < 3 {
             return if cleaned.len() == 2 {
                 Some(self.clone_with_pnts(cleaned))
-            } else { None };
+            } else {
+                None
+            };
         }
 
         // Step 2: Tube criteria  ?remove collinear points
@@ -81,8 +91,11 @@ impl IntPatchLine {
             // 2D chord distance on surface 1
             let uv1_seg = DVec2::new(next.u1 - prev.u1, next.v1 - prev.v1);
             let uv1_len = uv1_seg.length();
-            let d_uv1 = if uv1_len < resolution { 0.0 } else {
-                let t1 = ((curr.u1 - prev.u1) * uv1_seg.x + (curr.v1 - prev.v1) * uv1_seg.y) / (uv1_len * uv1_len);
+            let d_uv1 = if uv1_len < resolution {
+                0.0
+            } else {
+                let t1 = ((curr.u1 - prev.u1) * uv1_seg.x + (curr.v1 - prev.v1) * uv1_seg.y)
+                    / (uv1_len * uv1_len);
                 let proj_uv1 = DVec2::new(prev.u1, prev.v1) + t1 * uv1_seg;
                 DVec2::new(curr.u1 - proj_uv1.x, curr.v1 - proj_uv1.y).length()
             };
@@ -90,8 +103,11 @@ impl IntPatchLine {
             // 2D chord distance on surface 2
             let uv2_seg = DVec2::new(next.u2 - prev.u2, next.v2 - prev.v2);
             let uv2_len = uv2_seg.length();
-            let d_uv2 = if uv2_len < resolution { 0.0 } else {
-                let t2 = ((curr.u2 - prev.u2) * uv2_seg.x + (curr.v2 - prev.v2) * uv2_seg.y) / (uv2_len * uv2_len);
+            let d_uv2 = if uv2_len < resolution {
+                0.0
+            } else {
+                let t2 = ((curr.u2 - prev.u2) * uv2_seg.x + (curr.v2 - prev.v2) * uv2_seg.y)
+                    / (uv2_len * uv2_len);
                 let proj_uv2 = DVec2::new(prev.u2, prev.v2) + t2 * uv2_seg;
                 DVec2::new(curr.u2 - proj_uv2.x, curr.v2 - proj_uv2.y).length()
             };
@@ -104,8 +120,11 @@ impl IntPatchLine {
         }
         purged.push(cleaned[cleaned.len() - 1]); // always keep last
 
-        if purged.len() < 2 { None }
-        else { Some(self.clone_with_pnts(purged)) }
+        if purged.len() < 2 {
+            None
+        } else {
+            Some(self.clone_with_pnts(purged))
+        }
     }
 
     fn clone_with_pnts(&self, pnts: Vec<WLinePnt>) -> Self {
@@ -122,13 +141,27 @@ pub fn join_wlines(lines: &mut Vec<IntPatchLine>, tol_3d: f64) -> bool {
     let mut i = 0;
     while i < lines.len() {
         let is_wline_i = lines[i].is_wline();
-        let pnts_len_i = if is_wline_i { lines[i].wline_pnts.len() } else { 0 };
-        if pnts_len_i < 2 { i += 1; continue; }
+        let pnts_len_i = if is_wline_i {
+            lines[i].wline_pnts.len()
+        } else {
+            0
+        };
+        if pnts_len_i < 2 {
+            i += 1;
+            continue;
+        }
         let mut j = i + 1;
         while j < lines.len() {
             let is_wline_j = lines[j].is_wline();
-            let pnts_len_j = if is_wline_j { lines[j].wline_pnts.len() } else { 0 };
-            if pnts_len_j < 2 { j += 1; continue; }
+            let pnts_len_j = if is_wline_j {
+                lines[j].wline_pnts.len()
+            } else {
+                0
+            };
+            if pnts_len_j < 2 {
+                j += 1;
+                continue;
+            }
             let first_end = lines[i].wline_pnts.last().unwrap().p3d;
             let second_start = lines[j].wline_pnts[0].p3d;
             let d = first_end.distance(second_start);

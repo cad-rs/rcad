@@ -12,16 +12,16 @@
 //! being tracked separately. FEA-oriented primitive checks live in `fea_roundtrip.rs`.
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{boolean_op, BooleanOpType};
+use rcad_algorithms::{BooleanOpType, boolean_op};
+use rcad_kernel::appearance::Color;
+use rcad_kernel::topods;
 use rcad_modeling::{
     make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
 };
 use rcad_step::{
-    AssemblyComponent, read_assembly, write_assembly, StepProtocol, StepReader, StepWriteOptions,
-    StepWriter, ExportSelection,
+    AssemblyComponent, ExportSelection, StepProtocol, StepReader, StepWriteOptions, StepWriter,
+    read_assembly, write_assembly,
 };
-use rcad_kernel::appearance::Color;
-use rcad_kernel::topods;
 use std::time::Instant;
 
 fn all_faces_selection() -> ExportSelection<'static> {
@@ -92,8 +92,8 @@ fn make_box(origin: DVec3) -> rcad_kernel::BRep {
 #[test]
 fn boolean_union_result_roundtrip() {
     let box1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box1");
-    let box2 = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0)
-        .expect("box2");
+    let box2 =
+        make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box2");
 
     let union = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union");
 
@@ -105,7 +105,10 @@ fn boolean_union_result_roundtrip() {
     // Union of two overlapping boxes should produce 1 solid
     assert_eq!(solid_count(&parsed), 1, "union should have 1 solid");
     // Face count for union of overlapping boxes is typically 10-12 depending on overlap geometry
-    assert!(face_count(&parsed) >= 6, "union should have at least 6 faces");
+    assert!(
+        face_count(&parsed) >= 6,
+        "union should have at least 6 faces"
+    );
 }
 
 /// Test roundtrip of a boolean difference result (box with cylindrical hole).
@@ -134,11 +137,10 @@ fn boolean_difference_hole_roundtrip() {
 #[test]
 fn boolean_intersection_roundtrip() {
     let box1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 3.0, 3.0, 3.0).expect("box1");
-    let box2 = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0)
-        .expect("box2");
+    let box2 =
+        make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0).expect("box2");
 
-    let intersection =
-        boolean_op(BooleanOpType::Intersection, &box1, &box2).expect("intersection");
+    let intersection = boolean_op(BooleanOpType::Intersection, &box1, &box2).expect("intersection");
 
     let step_str = StepWriter::write_string(&intersection, all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse intersection result");
@@ -157,9 +159,15 @@ fn boolean_intersection_roundtrip() {
 #[test]
 fn boolean_cone_box_intersection_roundtrip() {
     let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 0.0, 4.0).expect("cone");
-    let box_shape =
-        make_box_brep(DVec3::new(-1.0, -1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0)
-            .expect("box");
+    let box_shape = make_box_brep(
+        DVec3::new(-1.0, -1.0, 1.0),
+        DVec3::X,
+        DVec3::Y,
+        2.0,
+        2.0,
+        2.0,
+    )
+    .expect("box");
 
     let intersection =
         boolean_op(BooleanOpType::Intersection, &cone, &box_shape).expect("intersection");
@@ -192,8 +200,8 @@ fn boolean_torus_sphere_difference_roundtrip() {
 #[test]
 fn boolean_box_difference_roundtrip() {
     let box1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).expect("box1");
-    let box2 = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0)
-        .expect("box2");
+    let box2 =
+        make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0).expect("box2");
 
     let result = boolean_op(BooleanOpType::Difference, &box1, &box2).expect("diff");
 
@@ -215,7 +223,8 @@ fn assembly_translation_baked() {
     let base_box = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     let translation = DVec3::new(10.0, 0.0, 0.0);
 
-    let comp = AssemblyComponent::new("shifted_box", base_box.to_topods()).with_translation(translation);
+    let comp =
+        AssemblyComponent::new("shifted_box", base_box.to_topods()).with_translation(translation);
 
     let step = write_assembly("shift_test", &[comp]);
 
@@ -256,7 +265,11 @@ fn single_part_step_roundtrip() {
     );
 
     let components = read_assembly(&step).expect("read_assembly on single-part STEP");
-    assert_eq!(components.len(), 1, "single-part STEP should give 1 component");
+    assert_eq!(
+        components.len(),
+        1,
+        "single-part STEP should give 1 component"
+    );
 }
 
 // ============================================================================
@@ -271,10 +284,16 @@ fn component_colors_written() {
     let box2 =
         make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box2");
 
-    let comp1 =
-        AssemblyComponent::new("red_box", box1.to_topods()).with_color(Color { r: 1.0, g: 0.0, b: 0.0 });
-    let comp2 =
-        AssemblyComponent::new("blue_box", box2.to_topods()).with_color(Color { r: 0.0, g: 0.0, b: 1.0 });
+    let comp1 = AssemblyComponent::new("red_box", box1.to_topods()).with_color(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+    });
+    let comp2 = AssemblyComponent::new("blue_box", box2.to_topods()).with_color(Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+    });
 
     let step = write_assembly("colored_asm", &[comp1, comp2]);
 
@@ -362,7 +381,11 @@ fn colored_solid_roundtrip() {
 
     let box_shape = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box");
 
-    let colors = StepColor::new().with_solid_color(Color { r: 0.8, g: 0.4, b: 0.2 });
+    let colors = StepColor::new().with_solid_color(Color {
+        r: 0.8,
+        g: 0.4,
+        b: 0.2,
+    });
 
     let step = StepWriter::write_string_colored(&box_shape.to_topods(), &colors);
 
@@ -383,9 +406,15 @@ fn step_header_fields() {
     let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
 
     // Verify standard STEP header sections
-    assert!(step.contains("ISO-10303-21"), "should have STEP magic number");
+    assert!(
+        step.contains("ISO-10303-21"),
+        "should have STEP magic number"
+    );
     assert!(step.contains("HEADER"), "should have HEADER section");
-    assert!(step.contains("FILE_DESCRIPTION"), "should have FILE_DESCRIPTION");
+    assert!(
+        step.contains("FILE_DESCRIPTION"),
+        "should have FILE_DESCRIPTION"
+    );
     assert!(step.contains("FILE_NAME"), "should have FILE_NAME");
     assert!(step.contains("FILE_SCHEMA"), "should have FILE_SCHEMA");
     assert!(step.contains("DATA"), "should have DATA section");
@@ -400,8 +429,7 @@ fn step_header_fields() {
 /// OCCT TKDESTEP coverage: cylindrical_surface_seam, periodic_surface_edge.
 #[test]
 fn cylinder_roundtrip() {
-    let cylinder =
-        make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 5.0).expect("cylinder");
+    let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 5.0).expect("cylinder");
 
     let step = StepWriter::write_string(&cylinder.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse cylinder");
@@ -414,8 +442,14 @@ fn cylinder_roundtrip() {
     let [min, max] = bbox;
 
     // Diameter should be 4.0 (radius * 2)
-    assert!((max.x - min.x - 4.0).abs() < 0.1, "x diameter should be ~4.0");
-    assert!((max.y - min.y - 4.0).abs() < 0.1, "y diameter should be ~4.0");
+    assert!(
+        (max.x - min.x - 4.0).abs() < 0.1,
+        "x diameter should be ~4.0"
+    );
+    assert!(
+        (max.y - min.y - 4.0).abs() < 0.1,
+        "y diameter should be ~4.0"
+    );
     assert!((max.z - min.z - 5.0).abs() < 0.1, "height should be ~5.0");
 }
 
@@ -432,7 +466,10 @@ fn torus_roundtrip() {
     let parsed = StepReader::parse_string(&step).expect("parse torus");
 
     // Torus should have 1 face (the toroidal surface)
-    assert!(face_count(&parsed) >= 1, "torus should have at least 1 face");
+    assert!(
+        face_count(&parsed) >= 1,
+        "torus should have at least 1 face"
+    );
 
     // Verify bounding box
     let bbox = bounding_box(&parsed).expect("should have bounds");
@@ -466,9 +503,15 @@ fn cone_roundtrip() {
     let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
-    assert!((max.z - min.z - 6.0).abs() < 0.01, "height should be preserved");
+    assert!(
+        (max.z - min.z - 6.0).abs() < 0.01,
+        "height should be preserved"
+    );
     // Base radius at z=0 should be ~3.0, giving diameter ~6.0
-    assert!((max.x - min.x - 6.0).abs() < 0.1, "base diameter should be preserved");
+    assert!(
+        (max.x - min.x - 6.0).abs() < 0.1,
+        "base diameter should be preserved"
+    );
 }
 
 /// Test cylinder roundtrip after boolean with box.
@@ -476,8 +519,15 @@ fn cone_roundtrip() {
 #[test]
 fn cylinder_boolean_roundtrip() {
     // Create a box and cut a cylinder from it
-    let box_shape =
-        make_box_brep(DVec3::new(-2.0, -2.0, 0.0), DVec3::X, DVec3::Y, 4.0, 4.0, 5.0).expect("box");
+    let box_shape = make_box_brep(
+        DVec3::new(-2.0, -2.0, 0.0),
+        DVec3::X,
+        DVec3::Y,
+        4.0,
+        4.0,
+        5.0,
+    )
+    .expect("box");
     let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 5.0).expect("cylinder");
 
     let result = boolean_op(BooleanOpType::Difference, &box_shape, &cylinder).expect("diff");
@@ -494,8 +544,7 @@ fn cylinder_boolean_roundtrip() {
 /// OCCT TKDESTEP coverage: box_primitive, elementary_surface.
 #[test]
 fn box_primitive_roundtrip() {
-    let box_shape =
-        make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
+    let box_shape = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
 
     let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse box");
@@ -565,7 +614,11 @@ fn step_file_size_reasonable() {
 
     // Complex geometry should be larger but not excessively so
     let ratio = complex_step.len() as f64 / simple_step.len() as f64;
-    assert!(ratio < 10.0, "complex geometry ratio {} seems excessive", ratio);
+    assert!(
+        ratio < 10.0,
+        "complex geometry ratio {} seems excessive",
+        ratio
+    );
 
     // Absolute size check
     assert!(
@@ -600,12 +653,12 @@ fn multiple_roundtrips_stable() {
 
     for iteration in 0..5 {
         let step = StepWriter::write_string(&current, all_faces_selection());
-        let rt = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
+        let rt =
+            StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
         let faces = face_count(&rt);
 
         assert_eq!(
-            faces,
-            original_faces,
+            faces, original_faces,
             "face count should be stable at iteration {}",
             iteration
         );
@@ -622,7 +675,10 @@ fn step_output_deterministic() {
     let step1 = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let step2 = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
 
-    assert_eq!(step1, step2, "identical inputs should produce identical STEP output");
+    assert_eq!(
+        step1, step2,
+        "identical inputs should produce identical STEP output"
+    );
 }
 
 /// Test very small geometry roundtrip.
@@ -716,8 +772,9 @@ fn multiple_boolean_roundtrip() {
 
     // Roundtrip each result
     for (i, brep) in results.iter().enumerate() {
-    let step = StepWriter::write_string(brep, all_faces_selection());
-        let parsed = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("parse result {}", i));
+        let step = StepWriter::write_string(brep, all_faces_selection());
+        let parsed =
+            StepReader::parse_string(&step).unwrap_or_else(|_| panic!("parse result {}", i));
         assert_eq!(solid_count(&parsed), 1, "result {} should have 1 solid", i);
     }
 }
@@ -727,8 +784,7 @@ fn multiple_boolean_roundtrip() {
 #[test]
 fn thin_geometry_roundtrip() {
     // Very thin box (sheet-like)
-    let brep =
-        make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 0.001).expect("thin box");
+    let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 0.001).expect("thin box");
 
     let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse should succeed");
@@ -819,11 +875,17 @@ fn binary_garbage_error() {
 /// OCCT TKDESTEP coverage: cylinder_boolean, curved_planar_intersection.
 #[test]
 fn cylinder_box_intersection_roundtrip() {
-    let cylinder =
-        make_cylinder_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 4.0)
-            .expect("cylinder");
-    let box_shape =
-        make_box_brep(DVec3::new(-1.0, -1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box");
+    let cylinder = make_cylinder_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 4.0)
+        .expect("cylinder");
+    let box_shape = make_box_brep(
+        DVec3::new(-1.0, -1.0, 1.0),
+        DVec3::X,
+        DVec3::Y,
+        2.0,
+        2.0,
+        2.0,
+    )
+    .expect("box");
 
     let result =
         boolean_op(BooleanOpType::Intersection, &cylinder, &box_shape).expect("intersection");
@@ -849,7 +911,10 @@ fn nested_cylinders_difference_roundtrip() {
 
     assert_eq!(solid_count(&parsed), 1, "tube should have 1 solid");
     // Tube has inner and outer surfaces, so more faces than simple cylinder
-    assert!(face_count(&parsed) >= 4, "tube should have at least 4 faces");
+    assert!(
+        face_count(&parsed) >= 4,
+        "tube should have at least 4 faces"
+    );
 }
 
 /// Test rotated primitive roundtrip.
@@ -867,7 +932,11 @@ fn rotated_cylinder_roundtrip() {
     let step = StepWriter::write_string(&cyl.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse rotated cylinder");
 
-    assert_eq!(face_count(&parsed), 3, "rotated cylinder should have 3 faces");
+    assert_eq!(
+        face_count(&parsed),
+        3,
+        "rotated cylinder should have 3 faces"
+    );
 }
 
 /// Test scaled geometry roundtrip.
@@ -938,17 +1007,29 @@ fn combined_transform_roundtrip() {
 #[test]
 fn boolean_chain_roundtrip() {
     // Start with a box
-    let mut result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("box").to_topods();
+    let mut result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0)
+        .expect("box")
+        .to_topods();
 
     // Cut first cylinder
-    let cyl1 = make_cylinder_brep(DVec3::new(3.0, 3.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0)
-        .expect("cyl1");
-    result = boolean_op(BooleanOpType::Difference, &rcad_kernel::BRep::from_topods(&result), &cyl1).expect("diff1");
+    let cyl1 =
+        make_cylinder_brep(DVec3::new(3.0, 3.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0).expect("cyl1");
+    result = boolean_op(
+        BooleanOpType::Difference,
+        &rcad_kernel::BRep::from_topods(&result),
+        &cyl1,
+    )
+    .expect("diff1");
 
     // Cut second cylinder
-    let cyl2 = make_cylinder_brep(DVec3::new(7.0, 7.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0)
-        .expect("cyl2");
-    result = boolean_op(BooleanOpType::Difference, &rcad_kernel::BRep::from_topods(&result), &cyl2).expect("diff2");
+    let cyl2 =
+        make_cylinder_brep(DVec3::new(7.0, 7.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0).expect("cyl2");
+    result = boolean_op(
+        BooleanOpType::Difference,
+        &rcad_kernel::BRep::from_topods(&result),
+        &cyl2,
+    )
+    .expect("diff2");
 
     let step = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
@@ -972,14 +1053,20 @@ fn multi_component_assembly_roundtrip() {
             2.0,
         )
         .expect("box");
-        components.push(AssemblyComponent::new(format!("part_{}", i), box_shape.to_topods()));
+        components.push(AssemblyComponent::new(
+            format!("part_{}", i),
+            box_shape.to_topods(),
+        ));
     }
 
     let step = write_assembly("multi_part", &components);
 
     // Verify STEP contains expected structure
     assert!(step.contains("ISO-10303-21"), "should have STEP header");
-    assert!(step.contains("part_0") || step.contains("part_1") || step.contains("part_2"), "should have part names");
+    assert!(
+        step.contains("part_0") || step.contains("part_1") || step.contains("part_2"),
+        "should have part names"
+    );
 
     let parsed = read_assembly(&step).expect("read assembly");
 
@@ -1001,7 +1088,10 @@ fn very_large_box_roundtrip() {
     let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
-    assert!((max.x - min.x - 1000.0).abs() < 1.0, "large x dimension preserved");
+    assert!(
+        (max.x - min.x - 1000.0).abs() < 1.0,
+        "large x dimension preserved"
+    );
 }
 
 /// Test union of three boxes roundtrip.
@@ -1015,7 +1105,12 @@ fn three_box_union_roundtrip() {
         make_box_brep(DVec3::new(0.0, 1.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box3");
 
     let union1 = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union1");
-    let final_union = boolean_op(BooleanOpType::Union, &rcad_kernel::BRep::from_topods(&union1), &box3).expect("union2");
+    let final_union = boolean_op(
+        BooleanOpType::Union,
+        &rcad_kernel::BRep::from_topods(&union1),
+        &box3,
+    )
+    .expect("union2");
 
     let step = StepWriter::write_string(&final_union, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse union");

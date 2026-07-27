@@ -15,9 +15,14 @@ impl OasWriter {
     }
 
     /// Write an OASIS library to file.
-    pub fn write_file<P: AsRef<Path>>(&self, library: &OasLibrary, path: P) -> Result<(), OasError> {
+    pub fn write_file<P: AsRef<Path>>(
+        &self,
+        library: &OasLibrary,
+        path: P,
+    ) -> Result<(), OasError> {
         let oasis = Self::convert_library(library)?;
-        oasis.write_to_file(path)
+        oasis
+            .write_to_file(path)
             .map_err(|e| OasError::Laykit(format!("{:?}", e)))?;
         Ok(())
     }
@@ -28,7 +33,8 @@ impl OasWriter {
         let mut buffer = Vec::new();
         {
             let mut cursor = Cursor::new(&mut buffer);
-            oasis.write_to_writer(&mut cursor)
+            oasis
+                .write_to_writer(&mut cursor)
                 .map_err(|e| OasError::Laykit(format!("{:?}", e)))?;
         }
         Ok(buffer)
@@ -58,30 +64,34 @@ impl OasWriter {
 
         // Convert polygons
         for polygon in &cell.polygons {
-            result.elements.push(laykit::OASISElement::Polygon(
-                Self::convert_polygon(polygon),
-            ));
+            result
+                .elements
+                .push(laykit::OASISElement::Polygon(Self::convert_polygon(
+                    polygon,
+                )));
         }
 
         // Convert paths
         for path in &cell.paths {
-            result.elements.push(laykit::OASISElement::Path(
-                Self::convert_path(path),
-            ));
+            result
+                .elements
+                .push(laykit::OASISElement::Path(Self::convert_path(path)));
         }
 
         // Convert texts
         for text in &cell.texts {
-            result.elements.push(laykit::OASISElement::Text(
-                Self::convert_text(text),
-            ));
+            result
+                .elements
+                .push(laykit::OASISElement::Text(Self::convert_text(text)));
         }
 
         // Convert placements
         for placement in &cell.placements {
-            result.elements.push(laykit::OASISElement::Placement(
-                Self::convert_placement(placement),
-            ));
+            result
+                .elements
+                .push(laykit::OASISElement::Placement(Self::convert_placement(
+                    placement,
+                )));
         }
 
         Ok(result)
@@ -90,19 +100,22 @@ impl OasWriter {
     /// Convert our OasPolygon to laykit Polygon.
     fn convert_polygon(polygon: &OasPolygon) -> laykit::Polygon {
         // Find bounding box to get origin
-        let min_x = polygon.points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let min_y = polygon.points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let min_x = polygon
+            .points
+            .iter()
+            .map(|p| p.x)
+            .fold(f64::INFINITY, f64::min);
+        let min_y = polygon
+            .points
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::INFINITY, f64::min);
 
         // Convert points to relative coordinates
         let points: Vec<(i64, i64)> = polygon
             .points
             .iter()
-            .map(|p| {
-                (
-                    (p.x - min_x).round() as i64,
-                    (p.y - min_y).round() as i64,
-                )
-            })
+            .map(|p| ((p.x - min_x).round() as i64, (p.y - min_y).round() as i64))
             .collect();
 
         laykit::Polygon {
@@ -119,33 +132,38 @@ impl OasWriter {
     /// Convert our OasPath to laykit OPath.
     fn convert_path(path: &OasPath) -> laykit::OPath {
         // Find bounding box to get origin
-        let min_x = path.points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let min_y = path.points.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let min_x = path
+            .points
+            .iter()
+            .map(|p| p.x)
+            .fold(f64::INFINITY, f64::min);
+        let min_y = path
+            .points
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::INFINITY, f64::min);
 
         // Convert points to relative coordinates
         let points: Vec<(i64, i64)> = path
             .points
             .iter()
-            .map(|p| {
-                (
-                    (p.x - min_x).round() as i64,
-                    (p.y - min_y).round() as i64,
-                )
-            })
+            .map(|p| ((p.x - min_x).round() as i64, (p.y - min_y).round() as i64))
             .collect();
 
         // Determine extension scheme
-        let extension_scheme = if path.start_extension.abs() < 1e-10 && path.end_extension.abs() < 1e-10 {
-            laykit::ExtensionScheme::Flush
-        } else if (path.start_extension - path.width / 2.0).abs() < 1e-10
-               && (path.end_extension - path.width / 2.0).abs() < 1e-10 {
-            laykit::ExtensionScheme::HalfWidth
-        } else {
-            laykit::ExtensionScheme::Custom {
-                start: path.start_extension.round() as i64,
-                end: path.end_extension.round() as i64,
-            }
-        };
+        let extension_scheme =
+            if path.start_extension.abs() < 1e-10 && path.end_extension.abs() < 1e-10 {
+                laykit::ExtensionScheme::Flush
+            } else if (path.start_extension - path.width / 2.0).abs() < 1e-10
+                && (path.end_extension - path.width / 2.0).abs() < 1e-10
+            {
+                laykit::ExtensionScheme::HalfWidth
+            } else {
+                laykit::ExtensionScheme::Custom {
+                    start: path.start_extension.round() as i64,
+                    end: path.end_extension.round() as i64,
+                }
+            };
 
         laykit::OPath {
             layer: path.layer as u32,
@@ -176,20 +194,21 @@ impl OasWriter {
     /// Convert our OasPlacement to laykit Placement.
     fn convert_placement(placement: &OasPlacement) -> laykit::Placement {
         // Handle array placements
-        let repetition = if let Some((cols, rows, col_dx, _col_dy, _row_dx, row_dy)) = placement.array {
-            if cols > 1 || rows > 1 {
-                Some(laykit::Repetition::Matrix {
-                    x_count: cols,
-                    y_count: rows,
-                    x_space: col_dx.round() as u64,
-                    y_space: row_dy.round() as u64,
-                })
+        let repetition =
+            if let Some((cols, rows, col_dx, _col_dy, _row_dx, row_dy)) = placement.array {
+                if cols > 1 || rows > 1 {
+                    Some(laykit::Repetition::Matrix {
+                        x_count: cols,
+                        y_count: rows,
+                        x_space: col_dx.round() as u64,
+                        y_space: row_dy.round() as u64,
+                    })
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         laykit::Placement {
             cell_name: placement.cell_name.clone(),
@@ -276,7 +295,10 @@ mod tests {
         assert!(bytes.len() > 50, "OASIS bytes should not be empty");
 
         // Check magic bytes
-        assert!(bytes.starts_with(b"%SEMI-OASIS"), "Should have OASIS magic bytes");
+        assert!(
+            bytes.starts_with(b"%SEMI-OASIS"),
+            "Should have OASIS magic bytes"
+        );
     }
 
     #[test]

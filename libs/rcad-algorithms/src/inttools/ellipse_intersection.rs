@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of an Ellipse3 with analytic surfaces.
+//! Analytic intersection of an Ellipse3 with analytic surfaces.
 //!
 //! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
 //! OCCT dispatches Ellipse × {Cylinder, Cone, Sphere} through the generic
@@ -86,7 +86,10 @@ pub fn intersect_ellipse_plane_with_tol(
 
         if theta >= t0 - eps && theta <= t1 + eps {
             // Deduplicate: tangent case produces theta = phi + alpha = phi - alpha
-            if hits.iter().any(|h: &EllipseSurfaceHit| (h.ellipse_param - theta).abs() < eps) {
+            if hits
+                .iter()
+                .any(|h: &EllipseSurfaceHit| (h.ellipse_param - theta).abs() < eps)
+            {
                 continue;
             }
             let point = ellipse.center
@@ -215,9 +218,7 @@ fn ellipse_vs_implicit_surface(
     let a = ellipse.major_radius;
     let b = ellipse.minor_radius;
 
-    let pt = |theta: f64| -> DVec3 {
-        ellipse.center + a * theta.cos() * cu + b * theta.sin() * cv
-    };
+    let pt = |theta: f64| -> DVec3 { ellipse.center + a * theta.cos() * cu + b * theta.sin() * cv };
 
     const N_SEEDS: usize = 64;
     let [t0, t1] = t_range;
@@ -262,9 +263,9 @@ fn ellipse_vs_implicit_surface(
             continue;
         }
 
-        let duplicate = hits.iter().any(|h: &EllipseSurfaceHit| {
-            (h.ellipse_param - theta).abs() < eps * 5.0
-        });
+        let duplicate = hits
+            .iter()
+            .any(|h: &EllipseSurfaceHit| (h.ellipse_param - theta).abs() < eps * 5.0);
         if !duplicate {
             hits.push(EllipseSurfaceHit {
                 point,
@@ -274,5 +275,3 @@ fn ellipse_vs_implicit_surface(
     }
     hits
 }
-
-

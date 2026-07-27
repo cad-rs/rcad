@@ -1,3 +1,4 @@
+use crate::bopalgo::pave_filler::PaveFiller;
 /// CheckerSI: validates a single shape for self-interference.
 ///
 /// OCCT reference: BOPAlgo_CheckerSI (BOPAlgo_CheckerSI.cxx L1-300).
@@ -19,9 +20,7 @@
 ///     }
 /// }
 /// ```
-
 use crate::bopds::ds::{DS, Interference};
-use crate::bopalgo::pave_filler::PaveFiller;
 use rcad_kernel::topods;
 
 /// CheckerSI validates a single shape for self-interference.
@@ -104,38 +103,86 @@ impl CheckerSI {
         let level = self.level_of_check;
         let mut filtered: Vec<Interference> = Vec::new();
         for inf in &ds.interf_vv {
-            let interf = Interference::VertexVertex { v1: inf.v1, v2: inf.v2, merged_vertex: inf.merged_vertex };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::VertexVertex {
+                v1: inf.v1,
+                v2: inf.v2,
+                merged_vertex: inf.merged_vertex,
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
         for inf in &ds.interf_ve {
-            let interf = Interference::VertexEdge { vertex: inf.vertex, edge: inf.edge, param: inf.param };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::VertexEdge {
+                vertex: inf.vertex,
+                edge: inf.edge,
+                param: inf.param,
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
         for inf in &ds.interf_vf {
-            let interf = Interference::VertexFace { vertex: inf.vertex, face: inf.face };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::VertexFace {
+                vertex: inf.vertex,
+                face: inf.face,
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
         for inf in &ds.interf_ee {
-            let interf = Interference::EdgeEdge { e1: inf.e1, e2: inf.e2, point: inf.point, param1: inf.param1, param2: inf.param2, new_vertex: inf.new_vertex, range1: inf.range1, range2: inf.range2 };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::EdgeEdge {
+                e1: inf.e1,
+                e2: inf.e2,
+                point: inf.point,
+                param1: inf.param1,
+                param2: inf.param2,
+                new_vertex: inf.new_vertex,
+                range1: inf.range1,
+                range2: inf.range2,
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
         for inf in &ds.interf_ef {
-            let interf = Interference::EdgeFace { edge: inf.edge, face: inf.face, point: inf.point, edge_param: inf.edge_param, new_vertex: inf.new_vertex };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::EdgeFace {
+                edge: inf.edge,
+                face: inf.face,
+                point: inf.point,
+                edge_param: inf.edge_param,
+                new_vertex: inf.new_vertex,
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
         for inf in &ds.interf_ff {
-            let interf = Interference::FaceFace { f1: inf.f1, f2: inf.f2, curves: inf.curves.clone(), points: inf.points.iter().map(|p| p.vertex_index).filter(|&i| i != usize::MAX).collect() };
-            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+            let interf = Interference::FaceFace {
+                f1: inf.f1,
+                f2: inf.f2,
+                curves: inf.curves.clone(),
+                points: inf
+                    .points
+                    .iter()
+                    .map(|p| p.vertex_index)
+                    .filter(|&i| i != usize::MAX)
+                    .collect(),
+            };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc)
+                && Self::is_allowed_by_level(&interf, level)
+            {
                 filtered.push(interf);
             }
         }
@@ -174,24 +221,14 @@ impl CheckerSI {
         a_fc: usize,
     ) -> bool {
         match interf {
-            Interference::VertexVertex { v1, v2, .. } => {
-                Self::same_type_filter(*v1, *v2, a_vc)
-            }
+            Interference::VertexVertex { v1, v2, .. } => Self::same_type_filter(*v1, *v2, a_vc),
             Interference::VertexEdge { vertex, edge, .. } => {
                 Self::ve_filter(*vertex, *edge, ds, a_vc)
             }
-            Interference::EdgeEdge { e1, e2, .. } => {
-                Self::same_type_filter(*e1, *e2, a_ec)
-            }
-            Interference::VertexFace { vertex, face } => {
-                Self::vf_filter(*vertex, *face, ds, a_vc)
-            }
-            Interference::EdgeFace { edge, face, .. } => {
-                Self::ef_filter(*edge, *face, ds, a_ec)
-            }
-            Interference::FaceFace { f1, f2, .. } => {
-                Self::same_type_filter(*f1, *f2, a_fc)
-            }
+            Interference::EdgeEdge { e1, e2, .. } => Self::same_type_filter(*e1, *e2, a_ec),
+            Interference::VertexFace { vertex, face } => Self::vf_filter(*vertex, *face, ds, a_vc),
+            Interference::EdgeFace { edge, face, .. } => Self::ef_filter(*edge, *face, ds, a_ec),
+            Interference::FaceFace { f1, f2, .. } => Self::same_type_filter(*f1, *f2, a_fc),
         }
     }
 
@@ -208,7 +245,8 @@ impl CheckerSI {
         };
         // Same entity: one is in range [0, count) and the other in [count, 2*count)
         // with matching offset.
-        let is_same = a_idx < count && b_idx >= count && b_idx < 2 * count && a_idx + count == b_idx;
+        let is_same =
+            a_idx < count && b_idx >= count && b_idx < 2 * count && a_idx + count == b_idx;
         !is_same
     }
 

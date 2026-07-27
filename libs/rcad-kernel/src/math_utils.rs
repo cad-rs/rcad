@@ -8,9 +8,9 @@
 //! - Numerical integration
 //! - Optimization (golden section search)
 
+use crate::geom::{BSplineSurface, Surface3};
 use glam::{DMat2, DMat3, DVec2, DVec3};
 use std::f64::consts::FRAC_1_SQRT_2;
-use crate::geom::{BSplineSurface, Surface3};
 
 // Tolerance constants (local copies — moved from rcad-algorithms tolerance)
 const TOLERANCE_FLOAT_DEDUP: f64 = 1e-15;
@@ -63,11 +63,7 @@ pub fn newton_raphson(
     }
 
     // Check final value
-    if f(x).abs() < tol {
-        Some(x)
-    } else {
-        None
-    }
+    if f(x).abs() < tol { Some(x) } else { None }
 }
 
 /// Bisection method for finding roots of a function.
@@ -217,11 +213,7 @@ pub fn newton_2d(
         x = x_new;
     }
 
-    if f(x).length() < tol {
-        Some(x)
-    } else {
-        None
-    }
+    if f(x).length() < tol { Some(x) } else { None }
 }
 
 /// Newton-Raphson method for 3D systems of equations.
@@ -273,11 +265,7 @@ pub fn newton_3d(
         }
     }
 
-    if f(x).length() < tol {
-        Some(x)
-    } else {
-        None
-    }
+    if f(x).length() < tol { Some(x) } else { None }
 }
 
 // =============================================================================
@@ -386,11 +374,7 @@ pub fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
 
 /// Real cube root
 fn cube_root(x: f64) -> f64 {
-    if x >= 0.0 {
-        x.cbrt()
-    } else {
-        -(-x).cbrt()
-    }
+    if x >= 0.0 { x.cbrt() } else { -(-x).cbrt() }
 }
 
 /// Solve quartic equation ax^4 + bx^3 + cx^2 + dx + e = 0
@@ -511,11 +495,7 @@ pub fn eigenvalues_2x2(m: DMat2) -> (f64, f64) {
         let sqrt_disc = disc.sqrt();
         let e1 = (trace + sqrt_disc) / 2.0;
         let e2 = (trace - sqrt_disc) / 2.0;
-        if e1 >= e2 {
-            (e1, e2)
-        } else {
-            (e2, e1)
-        }
+        if e1 >= e2 { (e1, e2) } else { (e2, e1) }
     }
 }
 
@@ -583,9 +563,21 @@ pub fn inverse_3x3(m: DMat3) -> Option<DMat3> {
     let inv_det = 1.0 / det;
 
     Some(DMat3::from_cols(
-        DVec3::new(cofactor00 * inv_det, cofactor10 * inv_det, cofactor20 * inv_det),
-        DVec3::new(cofactor01 * inv_det, cofactor11 * inv_det, cofactor21 * inv_det),
-        DVec3::new(cofactor02 * inv_det, cofactor12 * inv_det, cofactor22 * inv_det),
+        DVec3::new(
+            cofactor00 * inv_det,
+            cofactor10 * inv_det,
+            cofactor20 * inv_det,
+        ),
+        DVec3::new(
+            cofactor01 * inv_det,
+            cofactor11 * inv_det,
+            cofactor21 * inv_det,
+        ),
+        DVec3::new(
+            cofactor02 * inv_det,
+            cofactor12 * inv_det,
+            cofactor22 * inv_det,
+        ),
     ))
 }
 
@@ -620,10 +612,7 @@ pub fn simpson_integrate(f: fn(f64) -> f64, a: f64, b: f64, n: usize) -> f64 {
 fn gaussian_nodes_weights(n: usize) -> Vec<(f64, f64)> {
     match n {
         1 => vec![(0.0, 2.0)],
-        2 => vec![
-            (-FRAC_1_SQRT_2, 1.0),
-            (FRAC_1_SQRT_2, 1.0),
-        ],
+        2 => vec![(-FRAC_1_SQRT_2, 1.0), (FRAC_1_SQRT_2, 1.0)],
         3 => vec![
             (0.0, 8.0 / 9.0),
             (-0.7745966692414834, 5.0 / 9.0),
@@ -816,9 +805,27 @@ fn svd_jacobi_3x3(mut a: DMat3) -> Option<(DMat3, DVec3, DMat3)> {
         let new_ap = ap * c + aq * s;
         let new_aq = -ap * s + aq * c;
         a = DMat3::from_cols(
-            if p == 0 { new_ap } else if q == 0 { new_aq } else { a.col(0) },
-            if p == 1 { new_ap } else if q == 1 { new_aq } else { a.col(1) },
-            if p == 2 { new_ap } else if q == 2 { new_aq } else { a.col(2) },
+            if p == 0 {
+                new_ap
+            } else if q == 0 {
+                new_aq
+            } else {
+                a.col(0)
+            },
+            if p == 1 {
+                new_ap
+            } else if q == 1 {
+                new_aq
+            } else {
+                a.col(1)
+            },
+            if p == 2 {
+                new_ap
+            } else if q == 2 {
+                new_aq
+            } else {
+                a.col(2)
+            },
         );
 
         // Update V similarly
@@ -827,23 +834,59 @@ fn svd_jacobi_3x3(mut a: DMat3) -> Option<(DMat3, DVec3, DMat3)> {
         let new_vp = vp * c + vq * s;
         let new_vq = -vp * s + vq * c;
         v = DMat3::from_cols(
-            if p == 0 { new_vp } else if q == 0 { new_vq } else { v.col(0) },
-            if p == 1 { new_vp } else if q == 1 { new_vq } else { v.col(1) },
-            if p == 2 { new_vp } else if q == 2 { new_vq } else { v.col(2) },
+            if p == 0 {
+                new_vp
+            } else if q == 0 {
+                new_vq
+            } else {
+                v.col(0)
+            },
+            if p == 1 {
+                new_vp
+            } else if q == 1 {
+                new_vq
+            } else {
+                v.col(1)
+            },
+            if p == 2 {
+                new_vp
+            } else if q == 2 {
+                new_vq
+            } else {
+                v.col(2)
+            },
         );
     }
 
     // Singular values = column norms of A
     let mut s = DVec3::new(a.col(0).length(), a.col(1).length(), a.col(2).length());
     let tol_s = 1e-14;
-    if s.x < tol_s { s.x = 0.0; }
-    if s.y < tol_s { s.y = 0.0; }
-    if s.z < tol_s { s.z = 0.0; }
+    if s.x < tol_s {
+        s.x = 0.0;
+    }
+    if s.y < tol_s {
+        s.y = 0.0;
+    }
+    if s.z < tol_s {
+        s.z = 0.0;
+    }
 
     // Normalize columns of A to get U
-    let u0 = if s.x > tol_s { a.col(0) / s.x } else { DVec3::X };
-    let u1 = if s.y > tol_s { a.col(1) / s.y } else { DVec3::Y };
-    let u2 = if s.z > tol_s { a.col(2) / s.z } else { DVec3::Z };
+    let u0 = if s.x > tol_s {
+        a.col(0) / s.x
+    } else {
+        DVec3::X
+    };
+    let u1 = if s.y > tol_s {
+        a.col(1) / s.y
+    } else {
+        DVec3::Y
+    };
+    let u2 = if s.z > tol_s {
+        a.col(2) / s.z
+    } else {
+        DVec3::Z
+    };
     let u = DMat3::from_cols(u0, u1, u2);
 
     Some((u, s, v.transpose()))
@@ -858,7 +901,9 @@ fn svd_jacobi_3x3(mut a: DMat3) -> Option<(DMat3, DVec3, DMat3)> {
 /// Returns (intercept, slope) or None if insufficient data.
 pub fn least_squares_linear(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     let n = x.len().min(y.len());
-    if n < 2 { return None; }
+    if n < 2 {
+        return None;
+    }
 
     let mut sx = 0.0;
     let mut sy = 0.0;
@@ -873,7 +918,9 @@ pub fn least_squares_linear(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     }
 
     let denom = (n as f64) * sxx - sx * sx;
-    if denom.abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+    if denom.abs() < TOLERANCE_FLOAT_DEDUP {
+        return None;
+    }
 
     let b = ((n as f64) * sxy - sx * sy) / denom;
     let a = (sy - b * sx) / (n as f64);
@@ -950,7 +997,9 @@ pub fn bfgs_minimize(
         // H_{k+1} = (I - ρ*s*y^T) * H_k * (I - ρ*y*s^T) + ρ*s*s^T
         // where ρ = 1/(y^T * s)
         let sy = s.iter().zip(y.iter()).map(|(s, y)| s * y).sum::<f64>();
-        if sy.abs() < TOLERANCE_FLOAT_DEDUP { continue; }
+        if sy.abs() < TOLERANCE_FLOAT_DEDUP {
+            continue;
+        }
 
         let rho = 1.0 / sy;
 
@@ -1000,7 +1049,9 @@ fn line_search_backtracking(
             trial[i] = x[i] + alpha * p[i];
         }
         let f_trial = f_grad(&trial, &mut g);
-        if f_trial <= f_current + c * alpha * p.iter().zip(_grad.iter()).map(|(p, g)| p * g).sum::<f64>() {
+        if f_trial
+            <= f_current + c * alpha * p.iter().zip(_grad.iter()).map(|(p, g)| p * g).sum::<f64>()
+        {
             return alpha;
         }
         alpha *= rho;
@@ -1040,7 +1091,8 @@ pub fn newton_minimize(
         }
 
         // Solve H * p = -g for p using simple Gaussian elimination
-        if let Some(p) = solve_linear_system(&hess, &grad.iter().map(|g| -g).collect::<Vec<_>>(), n) {
+        if let Some(p) = solve_linear_system(&hess, &grad.iter().map(|g| -g).collect::<Vec<_>>(), n)
+        {
             // Line search: use simple bisection with gradient evaluation
             let mut alpha = 1.0;
             let mut trial = x.clone();
@@ -1139,19 +1191,37 @@ pub fn frpr_minimize(
     let mut prev_norm2 = grad.iter().map(|g| g * g).sum::<f64>();
 
     for _ in 0..max_iter {
-        if prev_norm2.sqrt() < tol { return Some(x); }
+        if prev_norm2.sqrt() < tol {
+            return Some(x);
+        }
         let alpha = line_search_backtracking(&x, &d, &grad, _f, &f_grad);
-        for i in 0..n { x[i] += alpha * d[i]; }
+        for i in 0..n {
+            x[i] += alpha * d[i];
+        }
         let mut new_grad = vec![0.0; n];
         let _f = f_grad(&x, &mut new_grad);
         let new_norm2 = new_grad.iter().map(|g| g * g).sum::<f64>();
-        let gg_diff: f64 = new_grad.iter().zip(grad.iter()).map(|(ng, g)| ng * (ng - g)).sum();
-        let beta = if prev_norm2 > TOLERANCE_FLOAT_DEDUP { (gg_diff / prev_norm2).max(0.0) } else { 0.0 };
-        for i in 0..n { d[i] = -new_grad[i] + beta * d[i]; }
+        let gg_diff: f64 = new_grad
+            .iter()
+            .zip(grad.iter())
+            .map(|(ng, g)| ng * (ng - g))
+            .sum();
+        let beta = if prev_norm2 > TOLERANCE_FLOAT_DEDUP {
+            (gg_diff / prev_norm2).max(0.0)
+        } else {
+            0.0
+        };
+        for i in 0..n {
+            d[i] = -new_grad[i] + beta * d[i];
+        }
         grad = new_grad;
         prev_norm2 = new_norm2;
     }
-    if prev_norm2.sqrt() < tol { Some(x) } else { None }
+    if prev_norm2.sqrt() < tol {
+        Some(x)
+    } else {
+        None
+    }
 }
 
 // =============================================================================
@@ -1159,10 +1229,21 @@ pub fn frpr_minimize(
 // =============================================================================
 
 /// Minimize using Powell's derivative-free conjugate direction method.
-pub fn powell_minimize(x0: &[f64], f: impl Fn(&[f64]) -> f64, tol: f64, max_iter: usize) -> Option<Vec<f64>> {
+pub fn powell_minimize(
+    x0: &[f64],
+    f: impl Fn(&[f64]) -> f64,
+    tol: f64,
+    max_iter: usize,
+) -> Option<Vec<f64>> {
     let n = x0.len();
     let mut x = x0.to_vec();
-    let mut dirs: Vec<Vec<f64>> = (0..n).map(|i| { let mut d = vec![0.0; n]; d[i] = 1.0; d }).collect();
+    let mut dirs: Vec<Vec<f64>> = (0..n)
+        .map(|i| {
+            let mut d = vec![0.0; n];
+            d[i] = 1.0;
+            d
+        })
+        .collect();
     let mut prev_f = f(&x);
     for _ in 0..max_iter {
         let x_start = x.clone();
@@ -1172,17 +1253,34 @@ pub fn powell_minimize(x0: &[f64], f: impl Fn(&[f64]) -> f64, tol: f64, max_iter
             // Minimize along direction i via golden section
             let (xn, fn_) = minimize_1d(&x, &dirs[i], &f);
             let dec = prev_f - fn_;
-            if dec > delta { delta = dec; best_dir = i; }
-            x = xn; prev_f = fn_;
+            if dec > delta {
+                delta = dec;
+                best_dir = i;
+            }
+            x = xn;
+            prev_f = fn_;
         }
-        if x.iter().zip(x_start.iter()).map(|(a, b)| (a - b).abs()).sum::<f64>() < tol { return Some(x); }
+        if x.iter()
+            .zip(x_start.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f64>()
+            < tol
+        {
+            return Some(x);
+        }
         // New conjugate direction
         let mut nd = Vec::with_capacity(n);
-        for i in 0..n { nd.push(x[i] - x_start[i]); }
+        for i in 0..n {
+            nd.push(x[i] - x_start[i]);
+        }
         let nn = nd.iter().map(|d| d * d).sum::<f64>().sqrt();
         if nn > TOLERANCE_FLOAT_DEDUP {
-            for i in 0..n { nd[i] /= nn; }
-            for i in best_dir..n - 1 { dirs.swap(i, i + 1); }
+            for i in 0..n {
+                nd[i] /= nn;
+            }
+            for i in best_dir..n - 1 {
+                dirs.swap(i, i + 1);
+            }
             *dirs.last_mut().unwrap() = nd;
         }
     }
@@ -1191,10 +1289,18 @@ pub fn powell_minimize(x0: &[f64], f: impl Fn(&[f64]) -> f64, tol: f64, max_iter
 
 fn minimize_1d(x: &[f64], dir: &[f64], f: impl Fn(&[f64]) -> f64) -> (Vec<f64>, f64) {
     let n = x.len();
-    let at = |alpha: f64| -> f64 { let mut t = x.to_vec(); for i in 0..n { t[i] += alpha * dir[i]; } f(&t) };
+    let at = |alpha: f64| -> f64 {
+        let mut t = x.to_vec();
+        for i in 0..n {
+            t[i] += alpha * dir[i];
+        }
+        f(&t)
+    };
     let alpha = golden_section_min(at, 0.0, 10.0, 1e-10);
     let mut xn = x.to_vec();
-    for i in 0..n { xn[i] += alpha * dir[i]; }
+    for i in 0..n {
+        xn[i] += alpha * dir[i];
+    }
     let fxn = f(&xn);
     (xn, fxn)
 }
@@ -1205,37 +1311,58 @@ fn minimize_1d(x: &[f64], dir: &[f64], f: impl Fn(&[f64]) -> f64) -> (Vec<f64>, 
 
 /// Solve A*x = b using Householder QR decomposition.
 pub fn householder_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
-    if n == 0 { return None; }
+    if n == 0 {
+        return None;
+    }
     let mut r = a.to_vec();
     let mut rhs = b.to_vec();
-    for k in 0..n - 1 { // Skip last column (no rows below to zero out)
+    for k in 0..n - 1 {
+        // Skip last column (no rows below to zero out)
         let mut nrm2 = 0.0;
-        for i in k..n { nrm2 += r[i * n + k] * r[i * n + k]; }
-        if nrm2 < TOLERANCE_FLOAT_DEDUP { continue; }
+        for i in k..n {
+            nrm2 += r[i * n + k] * r[i * n + k];
+        }
+        if nrm2 < TOLERANCE_FLOAT_DEDUP {
+            continue;
+        }
         let nrm = nrm2.sqrt();
         let sign = if r[k * n + k] >= 0.0 { -1.0 } else { 1.0 };
         let beta = -sign * nrm;
         let vk = r[k * n + k] - sign * nrm;
-        for i in (k + 1)..n { r[i * n + k] /= vk; }
+        for i in (k + 1)..n {
+            r[i * n + k] /= vk;
+        }
         r[k * n + k] = beta;
         for j in (k + 1)..n {
             let mut sp = r[k * n + k] * r[k * n + j];
-            for i in (k + 1)..n { sp += r[i * n + k] * r[i * n + j]; }
+            for i in (k + 1)..n {
+                sp += r[i * n + k] * r[i * n + j];
+            }
             let tau = sp / beta;
             r[k * n + j] -= tau * r[k * n + k];
-            for i in (k + 1)..n { r[i * n + j] -= tau * r[i * n + k]; }
+            for i in (k + 1)..n {
+                r[i * n + j] -= tau * r[i * n + k];
+            }
         }
         let mut sp = r[k * n + k] * rhs[k];
-        for i in (k + 1)..n { sp += r[i * n + k] * rhs[i]; }
+        for i in (k + 1)..n {
+            sp += r[i * n + k] * rhs[i];
+        }
         let tau = sp / beta;
         rhs[k] -= tau * r[k * n + k];
-        for i in (k + 1)..n { rhs[i] -= tau * r[i * n + k]; }
+        for i in (k + 1)..n {
+            rhs[i] -= tau * r[i * n + k];
+        }
     }
     let mut x = vec![0.0; n];
     for i in (0..n).rev() {
         let mut s = rhs[i];
-        for j in (i + 1)..n { s -= r[i * n + j] * x[j]; }
-        if r[i * n + i].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        for j in (i + 1)..n {
+            s -= r[i * n + j] * x[j];
+        }
+        if r[i * n + i].abs() < TOLERANCE_FLOAT_DEDUP {
+            return None;
+        }
         x[i] = s / r[i * n + i];
     }
     Some(x)
@@ -1247,28 +1374,50 @@ pub fn householder_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
 
 /// Solve A*x = b using Crout LU decomposition.
 pub fn crout_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
-    if n == 0 { return None; }
+    if n == 0 {
+        return None;
+    }
     let mut lu = a.to_vec();
     let mut p: Vec<usize> = (0..n).collect();
     for k in 0..n {
         let mut max_val = lu[p[k] * n + k].abs();
         let mut max_r = k;
-        for i in (k + 1)..n { let v = lu[p[i] * n + k].abs(); if v > max_val { max_val = v; max_r = i; } }
+        for i in (k + 1)..n {
+            let v = lu[p[i] * n + k].abs();
+            if v > max_val {
+                max_val = v;
+                max_r = i;
+            }
+        }
         p.swap(k, max_r);
-        if lu[p[k] * n + k].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        if lu[p[k] * n + k].abs() < TOLERANCE_FLOAT_DEDUP {
+            return None;
+        }
         for i in (k + 1)..n {
             let f = lu[p[i] * n + k] / lu[p[k] * n + k];
             lu[p[i] * n + k] = f;
-            for j in (k + 1)..n { lu[p[i] * n + j] -= f * lu[p[k] * n + j]; }
+            for j in (k + 1)..n {
+                lu[p[i] * n + j] -= f * lu[p[k] * n + j];
+            }
         }
     }
     let mut y = vec![0.0; n];
-    for i in 0..n { let mut s = b[p[i]]; for j in 0..i { s -= lu[p[i] * n + j] * y[j]; } y[i] = s; }
+    for i in 0..n {
+        let mut s = b[p[i]];
+        for j in 0..i {
+            s -= lu[p[i] * n + j] * y[j];
+        }
+        y[i] = s;
+    }
     let mut x = vec![0.0; n];
     for i in (0..n).rev() {
         let mut s = y[i];
-        for j in (i + 1)..n { s -= lu[p[i] * n + j] * x[j]; }
-        if lu[p[i] * n + i].abs() < TOLERANCE_FLOAT_DEDUP { return None; }
+        for j in (i + 1)..n {
+            s -= lu[p[i] * n + j] * x[j];
+        }
+        if lu[p[i] * n + i].abs() < TOLERANCE_FLOAT_DEDUP {
+            return None;
+        }
         x[i] = s / lu[p[i] * n + i];
     }
     Some(x)
@@ -1279,20 +1428,40 @@ pub fn crout_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
 // =============================================================================
 
 /// Find root using hybrid bisection-Newton method (safe + fast).
-pub fn biss_newton(f: impl Fn(f64) -> f64, df: impl Fn(f64) -> f64,
-    a: f64, b: f64, tol: f64) -> Option<f64> {
-    let mut lo = a.min(b); let mut hi = a.max(b);
+pub fn biss_newton(
+    f: impl Fn(f64) -> f64,
+    df: impl Fn(f64) -> f64,
+    a: f64,
+    b: f64,
+    tol: f64,
+) -> Option<f64> {
+    let mut lo = a.min(b);
+    let mut hi = a.max(b);
     let mut x = (lo + hi) / 2.0;
     for _ in 0..100 {
         let fx = f(x);
-        if fx.abs() < tol { return Some(x); }
+        if fx.abs() < tol {
+            return Some(x);
+        }
         let dfx = df(x);
         let xn = if dfx.abs() > TOLERANCE_FLOAT_DEDUP {
             let nv = x - fx / dfx;
-            if nv > lo && nv < hi { nv } else { (lo + hi) / 2.0 }
-        } else { (lo + hi) / 2.0 };
-        if (xn - x).abs() < tol { return Some(xn); }
-        if f(lo) * f(xn) <= 0.0 { hi = xn; } else { lo = xn; }
+            if nv > lo && nv < hi {
+                nv
+            } else {
+                (lo + hi) / 2.0
+            }
+        } else {
+            (lo + hi) / 2.0
+        };
+        if (xn - x).abs() < tol {
+            return Some(xn);
+        }
+        if f(lo) * f(xn) <= 0.0 {
+            hi = xn;
+        } else {
+            lo = xn;
+        }
         x = xn;
     }
     if f(x).abs() < tol { Some(x) } else { None }
@@ -1304,7 +1473,10 @@ pub fn biss_newton(f: impl Fn(f64) -> f64, df: impl Fn(f64) -> f64,
 // =============================================================================
 
 fn trig_f(a: f64, b: f64, c: f64, d: f64, e: f64) -> impl Fn(f64) -> f64 {
-    move |x: f64| { let (s, c_) = x.sin_cos(); a * c_ * c_ + 2.0 * b * c_ * s + c * c_ + d * s + e }
+    move |x: f64| {
+        let (s, c_) = x.sin_cos();
+        a * c_ * c_ + 2.0 * b * c_ * s + c * c_ + d * s + e
+    }
 }
 
 /// Find roots of trigonometric equation in [x_min, x_max].
@@ -1330,36 +1502,76 @@ pub fn trig_roots_cos_sin(c: f64, d: f64, e: f64, x_min: f64, x_max: f64) -> Vec
 /// Find all roots of polynomial a₀ + a₁x + ... + a_nx^n using Laguerre's method.
 pub fn laguerre_roots(coeffs: &[f64]) -> Vec<f64> {
     let mut a: Vec<f64> = coeffs.iter().copied().collect();
-    while a.len() > 1 && a.last().map_or(false, |&c| c.abs() < TOLERANCE_FLOAT_DEDUP) { a.pop(); }
+    while a.len() > 1 && a.last().map_or(false, |&c| c.abs() < TOLERANCE_FLOAT_DEDUP) {
+        a.pop();
+    }
     let n = a.len() - 1;
-    if n == 0 { return vec![]; }
-    if n <= 4 { return match n { 1 => vec![-a[0] / a[1]], 2 => solve_quadratic(a[2], a[1], a[0]), 3 => solve_cubic(a[3], a[2], a[1], a[0]), _ => solve_quartic(a[4], a[3], a[2], a[1], a[0]) }; }
+    if n == 0 {
+        return vec![];
+    }
+    if n <= 4 {
+        return match n {
+            1 => vec![-a[0] / a[1]],
+            2 => solve_quadratic(a[2], a[1], a[0]),
+            3 => solve_cubic(a[3], a[2], a[1], a[0]),
+            _ => solve_quartic(a[4], a[3], a[2], a[1], a[0]),
+        };
+    }
 
     let mut roots = Vec::new();
     let mut deg = n;
     while deg >= 2 {
         let mut x = 0.0;
         for _ in 0..200 {
-            let mut p = vec![0.0; deg + 1]; p[deg] = a[deg];
-            for i in (0..deg).rev() { p[i] = a[i] + x * p[i + 1]; }
+            let mut p = vec![0.0; deg + 1];
+            p[deg] = a[deg];
+            for i in (0..deg).rev() {
+                p[i] = a[i] + x * p[i + 1];
+            }
             let fv = p[0];
-            if fv.abs() < 1e-14 { break; }
-            let mut p1 = vec![0.0; deg]; for i in 0..deg { p1[i] = a[i + 1] * (i as f64 + 1.0); }
-            let mut fp = 0.0; for i in (0..deg - 1).rev() { fp = fp * x + p1[i]; }
-            let mut fp2 = 0.0; for i in (0..deg - 2).rev() { fp2 = fp2 * x + p1[i + 1] * (i as f64 + 1.0); }
-            let g = fp / fv; let h = g * g - fp2 / fv;
+            if fv.abs() < 1e-14 {
+                break;
+            }
+            let mut p1 = vec![0.0; deg];
+            for i in 0..deg {
+                p1[i] = a[i + 1] * (i as f64 + 1.0);
+            }
+            let mut fp = 0.0;
+            for i in (0..deg - 1).rev() {
+                fp = fp * x + p1[i];
+            }
+            let mut fp2 = 0.0;
+            for i in (0..deg - 2).rev() {
+                fp2 = fp2 * x + p1[i + 1] * (i as f64 + 1.0);
+            }
+            let g = fp / fv;
+            let h = g * g - fp2 / fv;
             let d_ = ((deg as f64 - 1.0) * (deg as f64 * h - g * g)).sqrt();
-            let s = if (g + d_).abs() > (g - d_).abs() { deg as f64 / (g + d_) } else { deg as f64 / (g - d_) };
-            if s.abs() < 1e-14 { break; }
+            let s = if (g + d_).abs() > (g - d_).abs() {
+                deg as f64 / (g + d_)
+            } else {
+                deg as f64 / (g - d_)
+            };
+            if s.abs() < 1e-14 {
+                break;
+            }
             x -= s;
-            if s.abs() < 1e-12 { break; }
+            if s.abs() < 1e-12 {
+                break;
+            }
         }
         roots.push(x);
-        let mut b = vec![0.0; deg]; b[deg - 1] = a[deg];
-        for i in (0..deg - 1).rev() { b[i] = a[i + 1] + x * b[i + 1]; }
-        a = b; deg = a.len() - 1;
+        let mut b = vec![0.0; deg];
+        b[deg - 1] = a[deg];
+        for i in (0..deg - 1).rev() {
+            b[i] = a[i + 1] + x * b[i + 1];
+        }
+        a = b;
+        deg = a.len() - 1;
     }
-    if deg == 1 { roots.push(-a[0] / a[1]); }
+    if deg == 1 {
+        roots.push(-a[0] / a[1]);
+    }
     roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
     roots
 }
@@ -1379,23 +1591,60 @@ pub fn brent_minimize(f: impl Fn(f64) -> f64, a: f64, b: f64, tol: f64) -> f64 {
         let mid = (lo + hi) / 2.0;
         let tol1 = tol * x.abs() + 1e-12;
         let tol2 = 2.0 * tol1;
-        if (x - mid).abs() <= tol2 - (hi - lo) / 2.0 { return x; }
+        if (x - mid).abs() <= tol2 - (hi - lo) / 2.0 {
+            return x;
+        }
         let mut use_para = false;
         let mut u = 0.0;
         if e.abs() > tol1 {
-            let r = (x - w) * (fx - fv); let qq = (x - v) * (fx - fw);
-            let p = (x - v) * qq - (x - w) * r; let q = 2.0 * (qq - r);
-            if q.abs() > tol1 { u = x - p / q; if u > lo + tol1 && u < hi - tol1 && (u - x).abs() < e { use_para = true; } }
+            let r = (x - w) * (fx - fv);
+            let qq = (x - v) * (fx - fw);
+            let p = (x - v) * qq - (x - w) * r;
+            let q = 2.0 * (qq - r);
+            if q.abs() > tol1 {
+                u = x - p / q;
+                if u > lo + tol1 && u < hi - tol1 && (u - x).abs() < e {
+                    use_para = true;
+                }
+            }
         }
-        if !use_para { u = if x >= mid { x - PHI * (x - lo) } else { x + PHI * (hi - x) }; e = d; d = u - x; }
+        if !use_para {
+            u = if x >= mid {
+                x - PHI * (x - lo)
+            } else {
+                x + PHI * (hi - x)
+            };
+            e = d;
+            d = u - x;
+        }
         let fu = f(u);
         if fu <= fx {
-            if u >= x { lo = x; } else { hi = x; }
-            v = w; fv = fw; w = x; fw = fx; x = u; fx = fu;
+            if u >= x {
+                lo = x;
+            } else {
+                hi = x;
+            }
+            v = w;
+            fv = fw;
+            w = x;
+            fw = fx;
+            x = u;
+            fx = fu;
         } else {
-            if u >= x { hi = u; } else { lo = u; }
-            if fu <= fw || w == x { v = w; fv = fw; w = u; fw = fu; }
-            else if fu <= fv || v == x || v == w { v = u; fv = fu; }
+            if u >= x {
+                hi = u;
+            } else {
+                lo = u;
+            }
+            if fu <= fw || w == x {
+                v = w;
+                fv = fw;
+                w = u;
+                fw = fu;
+            } else if fu <= fv || v == x || v == w {
+                v = u;
+                fv = fu;
+            }
         }
     }
     x
@@ -1410,23 +1659,42 @@ pub fn find_roots_in(f: impl Fn(f64) -> f64, a: f64, b: f64, n_intervals: usize)
     let step = (b - a) / n_intervals.max(1) as f64;
     let mut roots = Vec::new();
     for i in 0..n_intervals {
-        let x1 = a + i as f64 * step; let x2 = x1 + step;
-        let f1 = f(x1); let f2 = f(x2);
-        if f1 * f2 < 0.0 { if let Some(r) = bisection(&f, x1, x2, 1e-10) { roots.push(r); } }
-        else if f1.abs() < 1e-10 && !roots.iter().any(|r| (r - x1).abs() < 1e-8) { roots.push(x1); }
+        let x1 = a + i as f64 * step;
+        let x2 = x1 + step;
+        let f1 = f(x1);
+        let f2 = f(x2);
+        if f1 * f2 < 0.0 {
+            if let Some(r) = bisection(&f, x1, x2, 1e-10) {
+                roots.push(r);
+            }
+        } else if f1.abs() < 1e-10 && !roots.iter().any(|r| (r - x1).abs() < 1e-8) {
+            roots.push(x1);
+        }
     }
-    if f(b).abs() < 1e-10 && !roots.iter().any(|r| (r - b).abs() < 1e-8) { roots.push(b); }
+    if f(b).abs() < 1e-10 && !roots.iter().any(|r| (r - b).abs() < 1e-8) {
+        roots.push(b);
+    }
     roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
     roots
 }
 
 /// Find a bracket [a,b] where f(a) and f(b) have opposite signs.
-pub fn bracket_root(f: impl Fn(f64) -> f64, x0: f64, step: f64, max_steps: usize) -> Option<(f64, f64)> {
-    let mut a = x0; let mut fa = f(a);
+pub fn bracket_root(
+    f: impl Fn(f64) -> f64,
+    x0: f64,
+    step: f64,
+    max_steps: usize,
+) -> Option<(f64, f64)> {
+    let mut a = x0;
+    let mut fa = f(a);
     for _ in 0..max_steps {
-        let b = a + step; let fb = f(b);
-        if fa * fb <= 0.0 { return Some((a, b)); }
-        a = b; fa = fb;
+        let b = a + step;
+        let fb = f(b);
+        if fa * fb <= 0.0 {
+            return Some((a, b));
+        }
+        a = b;
+        fa = fb;
     }
     None
 }
@@ -1453,14 +1721,29 @@ pub fn glob_opt_min(
     n_local: usize,
 ) -> Vec<f64> {
     let n = lower.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
     let mut candidates: Vec<(f64, Vec<f64>)> = Vec::new();
     let mut current = vec![0.0; n];
-    fn grid_eval(f: &impl Fn(&[f64]) -> f64, lower: &[f64], upper: &[f64], nc: usize,
-        cand: &mut Vec<(f64, Vec<f64>)>, cur: &mut Vec<f64>, dim: usize) {
-        if dim == cur.len() { cand.push((f(cur), cur.clone())); return; }
+    fn grid_eval(
+        f: &impl Fn(&[f64]) -> f64,
+        lower: &[f64],
+        upper: &[f64],
+        nc: usize,
+        cand: &mut Vec<(f64, Vec<f64>)>,
+        cur: &mut Vec<f64>,
+        dim: usize,
+    ) {
+        if dim == cur.len() {
+            cand.push((f(cur), cur.clone()));
+            return;
+        }
         let step = (upper[dim] - lower[dim]) / nc as f64;
-        for i in 0..=nc { cur[dim] = lower[dim] + i as f64 * step; grid_eval(f, lower, upper, nc, cand, cur, dim + 1); }
+        for i in 0..=nc {
+            cur[dim] = lower[dim] + i as f64 * step;
+            grid_eval(f, lower, upper, nc, cand, cur, dim + 1);
+        }
     }
     grid_eval(&f, lower, upper, n_cells, &mut candidates, &mut current, 0);
     candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -1472,14 +1755,23 @@ pub fn glob_opt_min(
             for i in 0..n {
                 let step = (upper[i] - lower[i]) * 0.01;
                 let fx = f(&x);
-                let mut xt = x.clone(); xt[i] += step;
-                if xt[i] <= upper[i] && f(&xt) < fx { x[i] = xt[i]; continue; }
+                let mut xt = x.clone();
+                xt[i] += step;
+                if xt[i] <= upper[i] && f(&xt) < fx {
+                    x[i] = xt[i];
+                    continue;
+                }
                 xt[i] = x[i] - step;
-                if xt[i] >= lower[i] && f(&xt) < fx { x[i] = xt[i]; }
+                if xt[i] >= lower[i] && f(&xt) < fx {
+                    x[i] = xt[i];
+                }
             }
         }
         let fv = f(&x);
-        if fv < best_f { best_f = fv; best_x = x; }
+        if fv < best_f {
+            best_f = fv;
+            best_x = x;
+        }
     }
     best_x
 }
@@ -1505,29 +1797,47 @@ pub fn pso_minimize(
     let mut pbest_val: Vec<f64> = Vec::with_capacity(n_particles);
     for _ in 0..n_particles {
         let mut pos = Vec::with_capacity(n);
-        for i in 0..n { pos.push(lower[i] + rng.f64() * (upper[i] - lower[i])); }
+        for i in 0..n {
+            pos.push(lower[i] + rng.f64() * (upper[i] - lower[i]));
+        }
         let fv = f(&pos);
-        positions.push(pos.clone()); velocities.push(vec![0.0; n]);
-        pbest.push(pos); pbest_val.push(fv);
+        positions.push(pos.clone());
+        velocities.push(vec![0.0; n]);
+        pbest.push(pos);
+        pbest_val.push(fv);
     }
     let mut gbest = pbest[0].clone();
     let mut gbest_val = pbest_val[0];
-    for i in 1..n_particles { if pbest_val[i] < gbest_val { gbest = pbest[i].clone(); gbest_val = pbest_val[i]; } }
+    for i in 1..n_particles {
+        if pbest_val[i] < gbest_val {
+            gbest = pbest[i].clone();
+            gbest_val = pbest_val[i];
+        }
+    }
     for _ in 0..max_iter {
         let prev = gbest_val;
         for i in 0..n_particles {
             for j in 0..n {
-                velocities[i][j] = 0.72 * velocities[i][j] + 1.49 * rng.f64() * (pbest[i][j] - positions[i][j])
+                velocities[i][j] = 0.72 * velocities[i][j]
+                    + 1.49 * rng.f64() * (pbest[i][j] - positions[i][j])
                     + 1.49 * rng.f64() * (gbest[j] - positions[i][j]);
                 let vmax = (upper[j] - lower[j]) * 0.2;
                 velocities[i][j] = velocities[i][j].clamp(-vmax, vmax);
                 positions[i][j] = (positions[i][j] + velocities[i][j]).clamp(lower[j], upper[j]);
             }
             let fv = f(&positions[i]);
-            if fv < pbest_val[i] { pbest_val[i] = fv; pbest[i] = positions[i].clone(); }
-            if fv < gbest_val { gbest_val = fv; gbest = positions[i].clone(); }
+            if fv < pbest_val[i] {
+                pbest_val[i] = fv;
+                pbest[i] = positions[i].clone();
+            }
+            if fv < gbest_val {
+                gbest_val = fv;
+                gbest = positions[i].clone();
+            }
         }
-        if (prev - gbest_val).abs() < tol && gbest_val.abs() > 1e-15 { break; }
+        if (prev - gbest_val).abs() < tol && gbest_val.abs() > 1e-15 {
+            break;
+        }
     }
     gbest
 }
@@ -1549,7 +1859,9 @@ pub fn lm_solve(
     tol: f64,
 ) -> Option<Vec<f64>> {
     let n = x0.len();
-    if n == 0 || n_eq == 0 { return None; }
+    if n == 0 || n_eq == 0 {
+        return None;
+    }
     let mut x = x0.to_vec();
     let mut f = vec![0.0; n_eq];
     let mut jac = vec![0.0; n_eq * n];
@@ -1561,45 +1873,71 @@ pub fn lm_solve(
         for i in 0..n {
             for k in 0..n {
                 let mut s = 0.0;
-                for r in 0..n_eq { s += jac[r * n + i] * jac[r * n + k]; }
+                for r in 0..n_eq {
+                    s += jac[r * n + i] * jac[r * n + k];
+                }
                 jtj[i * n + k] = s;
             }
         }
         for i in 0..n {
             let mut s = 0.0;
-            for r in 0..n_eq { s += jac[r * n + i] * f[r]; }
+            for r in 0..n_eq {
+                s += jac[r * n + i] * f[r];
+            }
             jtf[i] = s;
         }
-        if jtf.iter().map(|v| v * v).sum::<f64>().sqrt() < tol { return Some(x); }
+        if jtf.iter().map(|v| v * v).sum::<f64>().sqrt() < tol {
+            return Some(x);
+        }
         let mut h = jtj.clone();
-        for i in 0..n { h[i * n + i] += lambda; }
+        for i in 0..n {
+            h[i * n + i] += lambda;
+        }
         let rhs: Vec<f64> = jtf.iter().map(|v| -v).collect();
         let delta = solve_linear_system(&h, &rhs, n);
         let (cost_new, gain_ratio) = match delta {
             Some(ref d) => {
                 let mut xn = vec![0.0; n];
-                for i in 0..n { xn[i] = x[i] + d[i]; }
+                for i in 0..n {
+                    xn[i] = x[i] + d[i];
+                }
                 let mut fn_ = vec![0.0; n_eq];
                 let mut jn = vec![0.0; n_eq * n];
                 let cn = func(&xn, &mut fn_, &mut jn);
                 let pred: f64 = 0.5 * d.iter().zip(rhs.iter()).map(|(d, r)| d * r).sum::<f64>();
-                let gr = if pred.abs() > 1e-15 { (cost - cn) / pred } else { 0.0 };
+                let gr = if pred.abs() > 1e-15 {
+                    (cost - cn) / pred
+                } else {
+                    0.0
+                };
                 (cn, gr)
             }
-            None => (cost, -1.0)
+            None => (cost, -1.0),
         };
         if gain_ratio > 0.0 {
             let d = delta.as_ref().unwrap();
-            for i in 0..n { x[i] += d[i]; }
+            for i in 0..n {
+                x[i] += d[i];
+            }
             let _ = func(&x, &mut f, &mut jac);
             cost = cost_new;
-            lambda *= if gain_ratio > 0.75 { 0.5 } else if gain_ratio < 0.25 { 2.0 } else { 1.0 };
+            lambda *= if gain_ratio > 0.75 {
+                0.5
+            } else if gain_ratio < 0.25 {
+                2.0
+            } else {
+                1.0
+            };
             lambda = lambda.max(1e-12).min(1e12);
             let dn: f64 = d.iter().map(|d| d * d).sum::<f64>().sqrt();
-            if dn < tol { return Some(x); }
+            if dn < tol {
+                return Some(x);
+            }
         } else {
             lambda *= 2.0;
-            if lambda > 1e12 { break; }
+            if lambda > 1e12 {
+                break;
+            }
         }
     }
     if cost < tol { Some(x) } else { None }
@@ -1622,7 +1960,9 @@ fn tps_rbf(r: f64) -> f64 {
 /// Returns (w, a) where w is N coefficient weights and a is [a₀, a₁, a₂].
 pub fn thin_plate_spline(points: &[DVec3]) -> Option<(Vec<f64>, Vec<f64>)> {
     let n = points.len();
-    if n < 3 { return None; }
+    if n < 3 {
+        return None;
+    }
 
     // Build the (N+3)×(N+3) system:
     // [ K   T ] [w]   [z]
@@ -1636,10 +1976,10 @@ pub fn thin_plate_spline(points: &[DVec3]) -> Option<(Vec<f64>, Vec<f64>)> {
             let r = (points[i].truncate() - points[j].truncate()).length();
             mat[i * m + j] = tps_rbf(r);
         }
-        mat[i * m + n + 0] = 1.0;      // T: [1, x, y]
+        mat[i * m + n + 0] = 1.0; // T: [1, x, y]
         mat[i * m + n + 1] = points[i].x;
         mat[i * m + n + 2] = points[i].y;
-        mat[n * m + i] = 1.0;           // T^T
+        mat[n * m + i] = 1.0; // T^T
         mat[(n + 1) * m + i] = points[i].x;
         mat[(n + 2) * m + i] = points[i].y;
         rhs[i] = points[i].z;
@@ -1676,21 +2016,33 @@ pub fn evaluate_tps(x: f64, y: f64, w: &[f64], a: &[f64], points: &[DVec3]) -> f
 /// * `n_v` — number of control points in v-direction
 /// * `tol` — TPS solver tolerance
 pub fn build_plate_surface(constraints: &[DVec3], n_u: usize, n_v: usize) -> Option<Surface3> {
-    if constraints.len() < 3 || n_u < 2 || n_v < 2 { return None; }
+    if constraints.len() < 3 || n_u < 2 || n_v < 2 {
+        return None;
+    }
 
     // Find bounding box of constraints
-    let mut x_min = f64::INFINITY; let mut x_max = f64::NEG_INFINITY;
-    let mut y_min = f64::INFINITY; let mut y_max = f64::NEG_INFINITY;
+    let mut x_min = f64::INFINITY;
+    let mut x_max = f64::NEG_INFINITY;
+    let mut y_min = f64::INFINITY;
+    let mut y_max = f64::NEG_INFINITY;
     for p in constraints {
-        x_min = x_min.min(p.x); x_max = x_max.max(p.x);
-        y_min = y_min.min(p.y); y_max = y_max.max(p.y);
+        x_min = x_min.min(p.x);
+        x_max = x_max.max(p.x);
+        y_min = y_min.min(p.y);
+        y_max = y_max.max(p.y);
     }
-    if (x_max - x_min).abs() < 1e-10 { x_max = x_min + 1.0; }
-    if (y_max - y_min).abs() < 1e-10 { y_max = y_min + 1.0; }
+    if (x_max - x_min).abs() < 1e-10 {
+        x_max = x_min + 1.0;
+    }
+    if (y_max - y_min).abs() < 1e-10 {
+        y_max = y_min + 1.0;
+    }
     let pad_x = (x_max - x_min) * 0.1;
     let pad_y = (y_max - y_min) * 0.1;
-    x_min -= pad_x; x_max += pad_x;
-    y_min -= pad_y; y_max += pad_y;
+    x_min -= pad_x;
+    x_max += pad_x;
+    y_min -= pad_y;
+    y_max += pad_y;
 
     // Solve TPS
     let (w, a) = thin_plate_spline(constraints)?;
@@ -1728,13 +2080,19 @@ fn build_bspline_knots(n_u: usize, n_v: usize, degree: usize) -> (Vec<f64>, Vec<
             return vec![0.0; nk];
         }
         let mut k = Vec::with_capacity(nk);
-        for _ in 0..=degree { k.push(0.0); }
+        for _ in 0..=degree {
+            k.push(0.0);
+        }
         let n_int = n - degree - 1;
         if n_int > 0 {
             let step = 1.0 / (n_int + 1) as f64;
-            for i in 1..=n_int { k.push(i as f64 * step); }
+            for i in 1..=n_int {
+                k.push(i as f64 * step);
+            }
         }
-        for _ in 0..=degree { k.push(1.0); }
+        for _ in 0..=degree {
+            k.push(1.0);
+        }
         k
     };
     (build(n_u), build(n_v))

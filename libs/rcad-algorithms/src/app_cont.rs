@@ -8,10 +8,14 @@
 
 /// Compute binomial coefficient C(n,k).
 fn binom(n: i32, k: i32) -> f64 {
-    if k < 0 || k > n { return 0.0; }
+    if k < 0 || k > n {
+        return 0.0;
+    }
     let k = if k > n - k { n - k } else { k };
     let mut r = 1.0;
-    for i in 0..k { r = r * (n - i) as f64 / (i + 1) as f64; }
+    for i in 0..k {
+        r = r * (n - i) as f64 / (i + 1) as f64;
+    }
     r
 }
 
@@ -64,7 +68,10 @@ mod app_cont_tests {
             }
         }
         for i in 0..classe {
-            assert!(mat[(i * classe + i) as usize] > 0.0, "M matrix diagonal at {i} should be positive");
+            assert!(
+                mat[(i * classe + i) as usize] > 0.0,
+                "M matrix diagonal at {i} should be positive"
+            );
         }
     }
 
@@ -88,9 +95,21 @@ mod app_cont_tests {
         let mut mat = vec![0.0; n];
         m_matrix(classe, &mut mat);
         // Degree 2: M(0,0)=1/5, M(1,1)=2/15=C(2,1)^2/(5*C(4,2))=4/(5*6), M(2,2)=1/5
-        assert!((mat[0] - 1.0 / 5.0).abs() < 1e-15, "M00={}, expected 1/5", mat[0]);
-        assert!((mat[4] - 2.0 / 15.0).abs() < 1e-15, "M11={}, expected 2/15", mat[4]);
-        assert!((mat[8] - 1.0 / 5.0).abs() < 1e-15, "M22={}, expected 1/5", mat[8]);
+        assert!(
+            (mat[0] - 1.0 / 5.0).abs() < 1e-15,
+            "M00={}, expected 1/5",
+            mat[0]
+        );
+        assert!(
+            (mat[4] - 2.0 / 15.0).abs() < 1e-15,
+            "M11={}, expected 2/15",
+            mat[4]
+        );
+        assert!(
+            (mat[8] - 1.0 / 5.0).abs() < 1e-15,
+            "M22={}, expected 1/5",
+            mat[8]
+        );
     }
 
     #[test]
@@ -106,7 +125,10 @@ mod app_cont_tests {
             for i in 0..classe {
                 col_sum += mat[(i * nb_pts + j) as usize];
             }
-            assert!((col_sum - 1.0).abs() < 1e-14, "VBernstein column {j} sum={col_sum}, expected 1");
+            assert!(
+                (col_sum - 1.0).abs() < 1e-14,
+                "VBernstein column {j} sum={col_sum}, expected 1"
+            );
         }
     }
 
@@ -123,9 +145,10 @@ mod app_cont_tests {
                 .filter(|&j| j != i)
                 .map(|j| mat[(i * classe + j) as usize].abs())
                 .sum();
-            assert!(diag > off_sum, "M matrix not diagonal-dominant at row {i}: diag={diag}, off={off_sum}");
+            assert!(
+                diag > off_sum,
+                "M matrix not diagonal-dominant at row {i}: diag={diag}, off={off_sum}"
+            );
         }
     }
 }
-
-

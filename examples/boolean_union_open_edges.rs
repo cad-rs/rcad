@@ -14,8 +14,8 @@
 
 use glam::DVec3;
 use rcad_algorithms::bopds::ds::DS;
-use rcad_algorithms::bvh::Bvh;
 use rcad_algorithms::builder::BooleanBuilder;
+use rcad_algorithms::bvh::Bvh;
 use rcad_algorithms::geom_populate::{populate_box_geom, recompute_plane_surfaces};
 use rcad_algorithms::pave_filler::PaveFiller;
 use rcad_algorithms::{BooleanOpType, boolean_op};
@@ -102,15 +102,20 @@ fn print_report(brep: &BRep, label: &str) {
     bad.sort_by_key(|x| x.0);
 
     println!("=== {label} ===");
-    println!("vertices: {}  edges: {}  faces: {}", brep.vertices.len(), brep.edges.len(), {
-        let mut n = 0usize;
-        for s in &brep.solids {
-            for sh in &s.shells {
-                n += sh.faces.len();
+    println!(
+        "vertices: {}  edges: {}  faces: {}",
+        brep.vertices.len(),
+        brep.edges.len(),
+        {
+            let mut n = 0usize;
+            for s in &brep.solids {
+                for sh in &s.shells {
+                    n += sh.faces.len();
+                }
             }
+            n
         }
-        n
-    });
+    );
     println!(
         "edges with ref_count != 2: {} (closed shell expects 0)",
         bad.len()
@@ -159,7 +164,10 @@ fn main() {
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
         let mut brep = builder.build().expect("builder.build");
         recompute_plane_surfaces(&mut brep);
-        print_report(&brep, "After build() + recompute_plane_surfaces (matches boolean_op output)");
+        print_report(
+            &brep,
+            "After build() + recompute_plane_surfaces (matches boolean_op output)",
+        );
     }
 
     // 3) Public API `boolean_op` (includes recompute_plane_surfaces).

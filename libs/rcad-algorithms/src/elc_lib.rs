@@ -1,4 +1,4 @@
-﻿//! ElCLib-style elementary curve utilities.
+//! ElCLib-style elementary curve utilities.
 //!
 //! Provides analytical evaluation and parameter computation for elementary curves.
 //! Analogous to OCCT `ElCLib` package.
@@ -14,7 +14,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{
-    any_perpendicular, BSplineCurve3, Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3,
+    BSplineCurve3, Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3, any_perpendicular,
 };
 use std::f64::consts::TAU;
 
@@ -107,11 +107,7 @@ pub fn circle_parameter(circle: &Circle3, point: DVec3) -> f64 {
     let angle = y.atan2(x);
 
     // Normalize to [0, 2*pi]
-    if angle < 0.0 {
-        angle + TAU
-    } else {
-        angle
-    }
+    if angle < 0.0 { angle + TAU } else { angle }
 }
 
 /// Compute the unit tangent vector on a circle at the given angle.
@@ -235,11 +231,7 @@ pub fn ellipse_parameter(ellipse: &Ellipse3, point: DVec3) -> f64 {
     // t = atan2(y/b, x/a) is already exact for the parametric form
 
     // Normalize to [0, 2*pi]
-    if t < 0.0 {
-        t + TAU
-    } else {
-        t
-    }
+    if t < 0.0 { t + TAU } else { t }
 }
 
 /// Compute the nth derivative of an ellipse at the given angle.
@@ -356,11 +348,7 @@ pub fn parabola_derivative(parab: &Parabola3, t: f64, order: usize) -> DVec3 {
     }
 
     match order {
-        0 => {
-            parab.vertex
-                + (t * t / (2.0 * p)) * parab.axis_dir
-                + t * dir_perp
-        }
+        0 => parab.vertex + (t * t / (2.0 * p)) * parab.axis_dir + t * dir_perp,
         1 => {
             // dP/dt = (t/p) * axis_dir + dir_perp
             (t / p) * parab.axis_dir + dir_perp
@@ -471,5 +459,3 @@ pub fn bspline_derivative(spline: &BSplineCurve3, t: f64, order: usize) -> DVec3
 // =============================================================================
 // Unit Tests
 // =============================================================================
-
-

@@ -52,7 +52,11 @@ pub(crate) fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
 pub(crate) fn curve2d_tangent(curve: &Curve2d, t: f64) -> DVec2 {
     let d = curve2d_derivative(curve, t);
     let len = d.length();
-    if len < TOLERANCE_FLOAT_DEDUP { DVec2::X } else { d / len }
+    if len < TOLERANCE_FLOAT_DEDUP {
+        DVec2::X
+    } else {
+        d / len
+    }
 }
 
 /// Newton refinement for curve-curve intersection.
@@ -354,8 +358,11 @@ fn gauss_solve_2d(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
             sum -= mat[i][j] * x[j];
         }
         let diag = mat[i][i];
-        x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE { sum / diag } else { 0.0 };
+        x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE {
+            sum / diag
+        } else {
+            0.0
+        };
     }
     x
 }
-

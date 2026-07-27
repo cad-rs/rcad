@@ -12,12 +12,12 @@
 
 use glam::DVec3;
 use rcad_algorithms::{
-    offset::{offset_shell, offset_solid, hollow_solid, offset_surface, OffsetOptions},
-    thicken::{thicken_shell, thick_solid_with_removed_faces},
     geom_populate,
+    offset::{OffsetOptions, hollow_solid, offset_shell, offset_solid, offset_surface},
+    thicken::{thick_solid_with_removed_faces, thicken_shell},
 };
+use rcad_kernel::geom::{CylindricalSurface, Plane, SphericalSurface, Surface3};
 use rcad_kernel::{BRep, PrimitiveSolid};
-use rcad_kernel::geom::{Surface3, Plane, SphericalSurface, CylindricalSurface};
 
 fn separator(title: &str) {
     println!("\n──────────────────────────────────────────");
@@ -87,7 +87,10 @@ fn demo_surface_offset() {
         });
         let offset = offset_surface(&cylinder, 0.3).unwrap();
         if let Surface3::Cylinder(c) = offset {
-            println!("  Cylinder offset by 0.3: radius = {:.4} (was 1.0)", c.radius);
+            println!(
+                "  Cylinder offset by 0.3: radius = {:.4} (was 1.0)",
+                c.radius
+            );
             assert!((c.radius - 1.3).abs() < 1e-9);
         }
     }
@@ -102,7 +105,10 @@ fn demo_surface_offset() {
         });
         let offset = offset_surface(&sphere, -0.5).unwrap();
         if let Surface3::Sphere(s) = offset {
-            println!("  Sphere offset by -0.5: radius = {:.4} (was 2.0)", s.radius);
+            println!(
+                "  Sphere offset by -0.5: radius = {:.4} (was 2.0)",
+                s.radius
+            );
             assert!((s.radius - 1.5).abs() < 1e-9);
         }
     }
@@ -116,8 +122,18 @@ fn demo_surface_offset() {
             ref_dir: any_perpendicular(DVec3::Z),
         });
         let offset = offset_surface(&sphere, -2.0);
-        println!("  Sphere radius 1.0 offset by -2.0: {:?}", if offset.is_none() { "None (degenerate)" } else { "Some" });
-        assert!(offset.is_none(), "offset larger than radius should return None");
+        println!(
+            "  Sphere radius 1.0 offset by -2.0: {:?}",
+            if offset.is_none() {
+                "None (degenerate)"
+            } else {
+                "Some"
+            }
+        );
+        assert!(
+            offset.is_none(),
+            "offset larger than radius should return None"
+        );
     }
 
     println!("  PASS");
@@ -140,17 +156,26 @@ fn demo_offset_shell() {
         assert!(result.is_ok(), "offset_shell should succeed");
         let offset_brep = result.unwrap();
         let offset_faces = face_count(&offset_brep);
-        println!("  Outward offset +0.1: {} faces (was {})", offset_faces, orig_faces);
+        println!(
+            "  Outward offset +0.1: {} faces (was {})",
+            offset_faces, orig_faces
+        );
         assert_eq!(offset_faces, orig_faces, "face count should be preserved");
     }
 
     // Inward offset
     {
         let result = offset_shell(shell, &brep, -0.1);
-        assert!(result.is_ok(), "offset_shell with negative distance should succeed");
+        assert!(
+            result.is_ok(),
+            "offset_shell with negative distance should succeed"
+        );
         let offset_brep = result.unwrap();
         let offset_faces = face_count(&offset_brep);
-        println!("  Inward offset -0.1: {} faces (was {})", offset_faces, orig_faces);
+        println!(
+            "  Inward offset -0.1: {} faces (was {})",
+            offset_faces, orig_faces
+        );
     }
 
     // With options
@@ -161,7 +186,10 @@ fn demo_offset_shell() {
 
         let result = offset_shell(shell, &brep, 0.2);
         assert!(result.is_ok());
-        println!("  Offset with options: {} faces", face_count(&result.unwrap()));
+        println!(
+            "  Offset with options: {} faces",
+            face_count(&result.unwrap())
+        );
     }
 
     println!("  PASS");
@@ -183,14 +211,21 @@ fn demo_offset_solid() {
         assert!(result.is_ok(), "offset_solid should succeed");
         let offset_brep = result.unwrap();
         println!("  Solid outward offset +0.2:");
-        println!("    Vertices: {} (was {})", offset_brep.vertices.len(), brep.vertices.len());
+        println!(
+            "    Vertices: {} (was {})",
+            offset_brep.vertices.len(),
+            brep.vertices.len()
+        );
         println!("    Faces: {}", face_count(&offset_brep));
     }
 
     // Inward offset (shrink)
     {
         let result = offset_solid(solid, &brep, -0.2);
-        assert!(result.is_ok(), "offset_solid with negative distance should succeed");
+        assert!(
+            result.is_ok(),
+            "offset_solid with negative distance should succeed"
+        );
         let offset_brep = result.unwrap();
         println!("  Solid inward offset -0.2:");
         println!("    Vertices: {}", offset_brep.vertices.len());
@@ -218,14 +253,23 @@ fn demo_hollow_solid() {
         let hollow_faces = face_count(&hollow);
         println!("  Hollow with top face removed:");
         println!("    Original faces: 6");
-        println!("    Hollow faces: {} (kept: 5 offset + lateral)", hollow_faces);
-        assert!(hollow_faces >= 5, "should have kept faces plus lateral faces");
+        println!(
+            "    Hollow faces: {} (kept: 5 offset + lateral)",
+            hollow_faces
+        );
+        assert!(
+            hollow_faces >= 5,
+            "should have kept faces plus lateral faces"
+        );
     }
 
     // Remove top and bottom faces
     {
         let result = hollow_solid(solid, &brep, 0.1, &[0, 5]);
-        assert!(result.is_ok(), "hollow_solid with multiple open faces should succeed");
+        assert!(
+            result.is_ok(),
+            "hollow_solid with multiple open faces should succeed"
+        );
         let hollow = result.unwrap();
         println!("  Hollow with top and bottom removed:");
         println!("    Faces: {}", face_count(&hollow));
@@ -245,11 +289,17 @@ fn demo_thicken_shell() {
     {
         let brep = make_box_with_geom();
         let result = thicken_shell(&brep, 0.1);
-        assert!(result.is_some(), "thicken_shell should succeed for closed shell");
+        assert!(
+            result.is_some(),
+            "thicken_shell should succeed for closed shell"
+        );
         let r = result.unwrap();
         println!("  Closed shell thickened:");
         println!("    Offset faces: {}", r.offset_faces);
-        println!("    Lateral faces: {} (none for closed shell)", r.lateral_faces);
+        println!(
+            "    Lateral faces: {} (none for closed shell)",
+            r.lateral_faces
+        );
     }
 
     // Open shell (with lateral faces)
@@ -258,17 +308,27 @@ fn demo_thicken_shell() {
         // Remove top face to create open shell
         if let Some(s) = brep.solids.first_mut()
             && let Some(sh) = s.shells.first_mut()
-                && sh.faces.len() > 1 {
-                    sh.faces.pop();
-                }
+            && sh.faces.len() > 1
+        {
+            sh.faces.pop();
+        }
 
         let result = thicken_shell(&brep, 0.1);
-        assert!(result.is_some(), "thicken_shell should succeed for open shell");
+        assert!(
+            result.is_some(),
+            "thicken_shell should succeed for open shell"
+        );
         let r = result.unwrap();
         println!("  Open shell thickened:");
         println!("    Offset faces: {}", r.offset_faces);
-        println!("    Lateral faces: {} (created at boundary)", r.lateral_faces);
-        assert!(r.lateral_faces > 0, "should create lateral faces for open shell");
+        println!(
+            "    Lateral faces: {} (created at boundary)",
+            r.lateral_faces
+        );
+        assert!(
+            r.lateral_faces > 0,
+            "should create lateral faces for open shell"
+        );
     }
 
     println!("  PASS");
@@ -297,7 +357,10 @@ fn demo_thick_solid_with_removed_faces() {
     // Remove multiple faces
     {
         let result = thick_solid_with_removed_faces(&brep, &[0, 5], 0.1);
-        assert!(result.is_some(), "should succeed with multiple faces removed");
+        assert!(
+            result.is_some(),
+            "should succeed with multiple faces removed"
+        );
         let r = result.unwrap();
         println!("  Remove top and bottom, thickness 0.1:");
         println!("    Offset faces: {}", r.offset_faces);
@@ -318,11 +381,17 @@ fn demo_thick_solid_with_removed_faces() {
 
         // Thickness > half the minimum dimension should detect self-intersection
         let result = thick_solid_with_removed_faces(&small_box, &[], 0.6);
-        assert!(result.is_some(), "should produce result even with self-intersection");
+        assert!(
+            result.is_some(),
+            "should produce result even with self-intersection"
+        );
         let r = result.unwrap();
         println!("  Small box (1x1x1), thickness 0.6 (> 0.5):");
         println!("    Self-intersection detected: {}", r.self_intersection);
-        assert!(r.self_intersection, "should detect self-intersection for large thickness");
+        assert!(
+            r.self_intersection,
+            "should detect self-intersection for large thickness"
+        );
     }
 
     println!("  PASS");

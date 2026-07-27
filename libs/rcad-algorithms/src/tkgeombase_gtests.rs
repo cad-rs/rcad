@@ -5,12 +5,12 @@
 //! Tests for: ExtremaPC, GeomConvert, IntAna,
 //! Hermit, CompCurveToBSplineCurve, ProjLib_Cone.
 
+use crate::extrema::*;
+use crate::geom_convert::*;
+use crate::int_ana::*;
+use crate::tkgeombase_algo::*;
 use glam::DVec3;
 use rcad_kernel::geom::*;
-use crate::extrema::*;
-use crate::int_ana::*;
-use crate::geom_convert::*;
-use crate::tkgeombase_algo::*;
 
 const TOL: f64 = 1e-7;
 
@@ -24,23 +24,35 @@ mod extremapc_line_tests {
 
     #[test]
     fn point_on_line_distance_zero() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let (d, _t) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &line);
         assert!(d < TOL, "point on line should have distance 0, got {d}");
     }
 
     #[test]
     fn point_off_line_by_3() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let (d, _t) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &line);
         assert!((d - 3.0).abs() < TOL, "distance should be 3, got {d}");
     }
 
     #[test]
     fn point_line_returns_projection_param() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let (_d, t) = distance_point_curve(DVec3::new(7.0, 0.0, 0.0), &line);
-        assert!((t - 7.0).abs() < TOL, "projection param should be 7, got {t}");
+        assert!(
+            (t - 7.0).abs() < TOL,
+            "projection param should be 7, got {t}"
+        );
     }
 }
 
@@ -56,14 +68,20 @@ mod extremapc_circle_tests {
     fn point_at_circle_center() {
         let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
         let (d, _t) = distance_point_curve(DVec3::ZERO, &circle);
-        assert!((d - 5.0).abs() < TOL, "center distance should be radius 5, got {d}");
+        assert!(
+            (d - 5.0).abs() < TOL,
+            "center distance should be radius 5, got {d}"
+        );
     }
 
     #[test]
     fn point_on_circle_edge() {
         let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
         let (d, _t) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &circle);
-        assert!(d < TOL, "point on circle edge should have distance 0, got {d}");
+        assert!(
+            d < TOL,
+            "point on circle edge should have distance 0, got {d}"
+        );
     }
 }
 
@@ -85,7 +103,10 @@ mod extremapc_ellipse_tests {
             minor_radius: 3.0,
         });
         let (d, _t) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &ell);
-        assert!(d < TOL, "point on ellipse edge should have distance 0, got {d}");
+        assert!(
+            d < TOL,
+            "point on ellipse edge should have distance 0, got {d}"
+        );
     }
 }
 
@@ -120,7 +141,10 @@ mod geom_convert_tests {
 
     #[test]
     fn line_to_bspline_roundtrip() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         let bs = line_to_bspline(&line, 1);
         let p0 = bs.point_at(0.0);
         let p5 = bs.point_at(5.0);
@@ -152,8 +176,11 @@ mod int_ana_plane_plane_tests {
         let p2 = Plane::new(DVec3::ZERO, DVec3::X);
         let result = intersect_plane_plane_intana(&p1, &p2);
         match result {
-            PlnPlnResult::Line(_) => {},
-            _ => panic!("perpendicular planes should intersect in a line, got {:?}", result),
+            PlnPlnResult::Line(_) => {}
+            _ => panic!(
+                "perpendicular planes should intersect in a line, got {:?}",
+                result
+            ),
         }
     }
 
@@ -265,7 +292,10 @@ mod extremapc_searchmode_tests {
     use super::*;
 
     fn make_line() -> Curve3 {
-        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X })
+        Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        })
     }
 
     fn make_circle() -> Curve3 {
@@ -285,7 +315,10 @@ mod extremapc_searchmode_tests {
     #[test]
     fn line_max_mode() {
         let pt = DVec3::new(0.0, 10.0, 0.0);
-        let bounded = Curve3::Line(Line3 { origin: DVec3::new(-50.0, 0.0, 0.0), direction: DVec3::X });
+        let bounded = Curve3::Line(Line3 {
+            origin: DVec3::new(-50.0, 0.0, 0.0),
+            direction: DVec3::X,
+        });
         let r = find_extrema_curve(&bounded, pt, 1e-6, SearchMode::Max);
         assert!(r.is_done());
         assert!(r.nb_ext() >= 1);
@@ -377,8 +410,11 @@ mod extremapc_extended_geo_tests {
     #[test]
     fn ellipse_translated() {
         let e = Curve3::Ellipse(Ellipse3 {
-            center: DVec3::new(50.0, 100.0, 25.0), normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 30.0, minor_radius: 15.0,
+            center: DVec3::new(50.0, 100.0, 25.0),
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 30.0,
+            minor_radius: 15.0,
         });
         let pt = DVec3::new(90.0, 100.0, 25.0);
         let (dist, _) = distance_point_curve(pt, &e);
@@ -388,8 +424,11 @@ mod extremapc_extended_geo_tests {
     #[test]
     fn ellipse_high_eccentricity() {
         let e = Curve3::Ellipse(Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 50.0, minor_radius: 2.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 50.0,
+            minor_radius: 2.0,
         });
         let pt = DVec3::new(40.0, 5.0, 0.0);
         let (dist, _) = distance_point_curve(pt, &e);
@@ -407,7 +446,10 @@ mod extremapc_comparison_tests {
 
     #[test]
     fn line_point_on_line() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let (d1, _) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &line);
         let (d2, _) = distance_point_curve(DVec3::new(5.0, 3.0, 4.0), &line);
         assert!(d1 < TOL);
@@ -433,8 +475,11 @@ mod extremapc_comparison_tests {
     #[test]
     fn ellipse_point_on_major_axis() {
         let e = Curve3::Ellipse(Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 20.0, minor_radius: 10.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 20.0,
+            minor_radius: 10.0,
         });
         let (dist, _) = distance_point_curve(DVec3::new(30.0, 0.0, 0.0), &e);
         assert!((dist - 10.0).abs() < TOL);
@@ -443,7 +488,9 @@ mod extremapc_comparison_tests {
     #[test]
     fn parabola_point_near_vertex() {
         let p = Curve3::Parabola(Parabola3 {
-            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
             focal_param: 4.0,
         });
         let (dist, _) = distance_point_curve(DVec3::new(1.0, 2.0, 0.0), &p);
@@ -462,7 +509,9 @@ mod extremapc_parabola_tests {
     #[test]
     fn parabola_point_at_vertex() {
         let p = Curve3::Parabola(Parabola3 {
-            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
             focal_param: 10.0,
         });
         let (dist, _) = distance_point_curve(DVec3::ZERO, &p);
@@ -472,7 +521,9 @@ mod extremapc_parabola_tests {
     #[test]
     fn parabola_point_above_plane() {
         let p = Curve3::Parabola(Parabola3 {
-            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
             focal_param: 10.0,
         });
         let (dist, _) = distance_point_curve(DVec3::new(0.0, 0.0, -5.0), &p);
@@ -491,8 +542,11 @@ mod extremapc_hyperbola_tests {
     #[test]
     fn hyperbola_point_at_vertex() {
         let h = Curve3::Hyperbola(Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 4.0, semi_minor: 3.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 4.0,
+            semi_minor: 3.0,
         });
         let (dist, _) = distance_point_curve(DVec3::new(4.0, 0.0, 0.0), &h);
         assert!(dist < TOL, "point at vertex, dist={}", dist);
@@ -501,8 +555,11 @@ mod extremapc_hyperbola_tests {
     #[test]
     fn hyperbola_point_on_axis() {
         let h = Curve3::Hyperbola(Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 4.0, semi_minor: 3.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 4.0,
+            semi_minor: 3.0,
         });
         let (dist, _) = distance_point_curve(DVec3::ZERO, &h);
         assert!(dist > 3.0, "distance from origin to hyperbola branches");
@@ -554,14 +611,22 @@ mod extremapc_bezier_tests {
     fn bezier_linear_projection() {
         let b = make_linear_bezier();
         let (dist, _) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &b);
-        assert!((dist - 3.0).abs() < TOL, "point projected onto linear Bezier, dist={}", dist);
+        assert!(
+            (dist - 3.0).abs() < TOL,
+            "point projected onto linear Bezier, dist={}",
+            dist
+        );
     }
 
     #[test]
     fn bezier_linear_before_start() {
         let b = make_linear_bezier();
         let (dist, _) = distance_point_curve(DVec3::new(-5.0, 0.0, 0.0), &b);
-        assert!((dist - 5.0).abs() < TOL, "point before start, dist={}", dist);
+        assert!(
+            (dist - 5.0).abs() < TOL,
+            "point before start, dist={}",
+            dist
+        );
     }
 }
 
@@ -582,6 +647,10 @@ mod extrema_extpc_tests {
             1725.9708621929999,
         ));
         let (dist, _param) = distance_point_curve(pt, &c);
-        assert!(dist < 1.0, "bug24945: projected distance should be small, got {}", dist);
+        assert!(
+            dist < 1.0,
+            "bug24945: projected distance should be small, got {}",
+            dist
+        );
     }
 }

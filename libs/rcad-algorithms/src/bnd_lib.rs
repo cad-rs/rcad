@@ -30,14 +30,13 @@
 //! | OffsetSurface | Base surface box + |offset|                       |
 //! | OtherSurface  | Grid sampling with deflection                     |
 
-use glam::DVec3;
-use rcad_kernel::{Curve3, Surface3};
-use rcad_kernel::geom::{CurveEval, SurfaceEval};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
+use glam::DVec3;
 use rcad_kernel::geom::{
-    BezierCurve3, BSplineCurve3, Circle3, Ellipse3, Hyperbola3,
-    Line3, Parabola3, OffsetCurve3,
+    BSplineCurve3, BezierCurve3, Circle3, Ellipse3, Hyperbola3, Line3, OffsetCurve3, Parabola3,
 };
+use rcad_kernel::geom::{CurveEval, SurfaceEval};
+use rcad_kernel::{Curve3, Surface3};
 
 use crate::brep_bnd::BoundingBox;
 
@@ -155,35 +154,35 @@ pub fn surface_bounds_optimal(
 
 fn curve_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     match curve {
-        Curve3::Line(c)   => line_box(c, t1, t2, tol),
+        Curve3::Line(c) => line_box(c, t1, t2, tol),
         Curve3::Circle(c) => circle_box(c, t1, t2, tol),
-        Curve3::Ellipse(c)=> ellipse_box(c, t1, t2, tol),
-        Curve3::Parabola(c)=> parabola_box(c, t1, t2, tol),
-        Curve3::Hyperbola(c)=> hyperbola_box(c, t1, t2, tol),
+        Curve3::Ellipse(c) => ellipse_box(c, t1, t2, tol),
+        Curve3::Parabola(c) => parabola_box(c, t1, t2, tol),
+        Curve3::Hyperbola(c) => hyperbola_box(c, t1, t2, tol),
         Curve3::BSpline(c) => bspline_curve_box(c, t1, t2, tol),
-        Curve3::Bezier(c)  => bezier_curve_box(c, t1, t2, tol),
-        Curve3::Offset(c)  => offset_curve_box(c, t1, t2, tol),
+        Curve3::Bezier(c) => bezier_curve_box(c, t1, t2, tol),
+        Curve3::Offset(c) => offset_curve_box(c, t1, t2, tol),
         Curve3::Trimmed(tc) => curve_box(tc.basis_curve(), t1, t2, tol),
         // CircularHelix and SineWave have no analytical evaluator in OCCT;
         // fall through to sampling-based OtherCurve handler.
-        _                  => other_curve_box(curve, t1, t2, tol),
+        _ => other_curve_box(curve, t1, t2, tol),
     }
 }
 
 fn curve_box_optimal(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     match curve {
         // For analytical curve types, BoxOptimal = Box.
-        Curve3::Line(c)   => line_box(c, t1, t2, tol),
+        Curve3::Line(c) => line_box(c, t1, t2, tol),
         Curve3::Circle(c) => circle_box(c, t1, t2, tol),
-        Curve3::Ellipse(c)=> ellipse_box(c, t1, t2, tol),
-        Curve3::Parabola(c)=> parabola_box(c, t1, t2, tol),
-        Curve3::Hyperbola(c)=> hyperbola_box(c, t1, t2, tol),
+        Curve3::Ellipse(c) => ellipse_box(c, t1, t2, tol),
+        Curve3::Parabola(c) => parabola_box(c, t1, t2, tol),
+        Curve3::Hyperbola(c) => hyperbola_box(c, t1, t2, tol),
         // BSpline and Bezier have sampling-based BoxOptimal.
         Curve3::BSpline(c) => bspline_curve_box_optimal(c, t1, t2, tol),
-        Curve3::Bezier(c)  => bezier_curve_box_optimal(c, t1, t2, tol),
-        Curve3::Offset(c)  => offset_curve_box_optimal(c, t1, t2, tol),
+        Curve3::Bezier(c) => bezier_curve_box_optimal(c, t1, t2, tol),
+        Curve3::Offset(c) => offset_curve_box_optimal(c, t1, t2, tol),
         Curve3::Trimmed(tc) => curve_box_optimal(tc.basis_curve(), t1, t2, tol),
-        _                  => other_curve_box_optimal(curve, t1, t2, tol),
+        _ => other_curve_box_optimal(curve, t1, t2, tol),
     }
 }
 
@@ -264,7 +263,11 @@ fn circle_box(circle: &Circle3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
             std::f64::consts::PI / 2.0
         };
         let t_extr2 = t_extr + std::f64::consts::PI;
-        let t_extr2 = if t_extr2 > period { t_extr2 - period } else { t_extr2 };
+        let t_extr2 = if t_extr2 > period {
+            t_extr2 - period
+        } else {
+            t_extr2
+        };
 
         for &te in &[t_extr, t_extr2] {
             // Check if extremal parameter lies within the arc
@@ -356,7 +359,14 @@ fn ellipse_box(ell: &Ellipse3, t1: f64, t2: f64, tol: f64) -> BoundingBox {
     bbox
 }
 
-fn full_ellipse_box(o: DVec3, xd: DVec3, yd: DVec3, a_maj: f64, a_min: f64, tol: f64) -> BoundingBox {
+fn full_ellipse_box(
+    o: DVec3,
+    xd: DVec3,
+    yd: DVec3,
+    a_maj: f64,
+    a_min: f64,
+    tol: f64,
+) -> BoundingBox {
     let mut bmin = [f64::INFINITY; 3];
     let mut bmax = [f64::NEG_INFINITY; 3];
     for k in 0..3 {
@@ -495,7 +505,9 @@ fn fill_bspline_curve_box(curve: &BSplineCurve3, t1: f64, t2: f64) -> (BoundingB
             let mid = curve.point_at(t - dt * 0.5);
             let chord_center = (prev + p) * 0.5;
             let deflection = (mid - chord_center).length();
-            if deflection > max_deflection { max_deflection = deflection; }
+            if deflection > max_deflection {
+                max_deflection = deflection;
+            }
             prev = p;
         }
         return (bbox, max_deflection);
@@ -504,12 +516,16 @@ fn fill_bspline_curve_box(curve: &BSplineCurve3, t1: f64, t2: f64) -> (BoundingB
     for i in 1..active.len() {
         let a = active[i - 1];
         let b = active[i];
-        if b - a < TOLERANCE_CLAMP_MIN { continue; }
+        if b - a < TOLERANCE_CLAMP_MIN {
+            continue;
+        }
         let (sub_box, defl) = fill_bspline_span(&|t| curve.point_at(t), a, b);
         if sub_box.is_valid() {
             bbox.add_bbox(&sub_box);
         }
-        if defl > max_deflection { max_deflection = defl; }
+        if defl > max_deflection {
+            max_deflection = defl;
+        }
     }
 
     (bbox, max_deflection)
@@ -530,7 +546,9 @@ fn fill_bspline_span<F: Fn(f64) -> DVec3>(eval: &F, a: f64, b: f64) -> (Bounding
         let mid = eval(t - dt * 0.5);
         let chord_center = (prev + p) * 0.5;
         let deflection = (mid - chord_center).length();
-        if deflection > max_deflection { max_deflection = deflection; }
+        if deflection > max_deflection {
+            max_deflection = deflection;
+        }
         prev = p;
     }
     (bbox, max_deflection)
@@ -669,7 +687,11 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         }
     }
 
-    let eps = if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS };
+    let eps = if tol > TOLERANCE_ABS {
+        tol
+    } else {
+        TOLERANCE_ABS
+    };
     for k in 0..3 {
         let d = defl_max[k];
         if d <= eps {
@@ -686,7 +708,11 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec3>(
         DVec3::new(coord_min[0], coord_min[1], coord_min[2]),
         DVec3::new(coord_max[0], coord_max[1], coord_max[2]),
     );
-    bbox.enlarge(if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS });
+    bbox.enlarge(if tol > TOLERANCE_ABS {
+        tol
+    } else {
+        TOLERANCE_ABS
+    });
     bbox
 }
 
@@ -710,7 +736,9 @@ fn sample_curve_box(curve: &Curve3, t1: f64, t2: f64, n: usize) -> (BoundingBox,
         bbox.add_point(p3);
         let chord_center = (p1 + p3) * 0.5;
         let dist = (p2 - chord_center).length();
-        if dist > max_tol { max_tol = dist; }
+        if dist > max_tol {
+            max_tol = dist;
+        }
         p1 = p3;
     }
     (bbox, max_tol)
@@ -722,39 +750,43 @@ fn sample_curve_box(curve: &Curve3, t1: f64, t2: f64, n: usize) -> (BoundingBox,
 
 fn surface_box(surface: &Surface3, u1: f64, u2: f64, v1: f64, v2: f64, tol: f64) -> BoundingBox {
     match surface {
-        Surface3::Plane(c)    => plane_box(c, u1, u2, v1, v2, tol),
+        Surface3::Plane(c) => plane_box(c, u1, u2, v1, v2, tol),
         Surface3::Cylinder(c) => cylinder_box(c, u1, u2, v1, v2, tol),
-        Surface3::Cone(c)     => cone_box(c, u1, u2, v1, v2, tol),
-        Surface3::Sphere(c)   => sphere_box(c, u1, u2, v1, v2, tol),
-        Surface3::Torus(c)    => torus_box(c, u1, u2, v1, v2, tol),
-        Surface3::BSpline(c)  => bspline_surface_box(c, u1, u2, v1, v2, tol),
-        Surface3::Bezier(c)   => bezier_surface_box(c, u1, u2, v1, v2, tol),
+        Surface3::Cone(c) => cone_box(c, u1, u2, v1, v2, tol),
+        Surface3::Sphere(c) => sphere_box(c, u1, u2, v1, v2, tol),
+        Surface3::Torus(c) => torus_box(c, u1, u2, v1, v2, tol),
+        Surface3::BSpline(c) => bspline_surface_box(c, u1, u2, v1, v2, tol),
+        Surface3::Bezier(c) => bezier_surface_box(c, u1, u2, v1, v2, tol),
         Surface3::Revolution(c) => revolution_surface_box(c, u1, u2, v1, v2, tol),
         Surface3::LinearExtrusion(c) => extrusion_surface_box(c, u1, u2, v1, v2, tol),
-        Surface3::Offset(c)   => offset_surface_box(c, u1, u2, v1, v2, tol),
-        _                     => other_surface_box_from(surface, u1, u2, v1, v2, tol),
+        Surface3::Offset(c) => offset_surface_box(c, u1, u2, v1, v2, tol),
+        _ => other_surface_box_from(surface, u1, u2, v1, v2, tol),
     }
 }
 
 fn surface_box_optimal(
     surface: &Surface3,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     match surface {
         // Analytical types: BoxOptimal = Box
-        Surface3::Plane(c)    => plane_box(c, u1, u2, v1, v2, tol),
+        Surface3::Plane(c) => plane_box(c, u1, u2, v1, v2, tol),
         Surface3::Cylinder(c) => cylinder_box(c, u1, u2, v1, v2, tol),
-        Surface3::Cone(c)     => cone_box(c, u1, u2, v1, v2, tol),
-        Surface3::Sphere(c)   => sphere_box(c, u1, u2, v1, v2, tol),
+        Surface3::Cone(c) => cone_box(c, u1, u2, v1, v2, tol),
+        Surface3::Sphere(c) => sphere_box(c, u1, u2, v1, v2, tol),
         // Torus uses numerical optimization for BoxOptimal
-        Surface3::Torus(c)    => torus_box_optimal(c, u1, u2, v1, v2, tol),
+        Surface3::Torus(c) => torus_box_optimal(c, u1, u2, v1, v2, tol),
         // Spline-based: sampling-based optimal available
-        Surface3::BSpline(c)  => bspline_surface_box_optimal(c, u1, u2, v1, v2, tol),
-        Surface3::Bezier(c)   => bezier_surface_box_optimal(c, u1, u2, v1, v2, tol),
+        Surface3::BSpline(c) => bspline_surface_box_optimal(c, u1, u2, v1, v2, tol),
+        Surface3::Bezier(c) => bezier_surface_box_optimal(c, u1, u2, v1, v2, tol),
         Surface3::Revolution(c) => revolution_surface_box_optimal(c, u1, u2, v1, v2, tol),
         Surface3::LinearExtrusion(c) => extrusion_surface_box_optimal(c, u1, u2, v1, v2, tol),
-        Surface3::Offset(c)   => offset_surface_box_optimal(c, u1, u2, v1, v2, tol),
-        _                     => other_surface_box_optimal_from(surface, u1, u2, v1, v2, tol),
+        Surface3::Offset(c) => offset_surface_box_optimal(c, u1, u2, v1, v2, tol),
+        _ => other_surface_box_optimal_from(surface, u1, u2, v1, v2, tol),
     }
 }
 
@@ -765,7 +797,14 @@ fn surface_box_optimal(
 // ── Plane ─────────────────────────────────────────────────────────────────
 // �?GeomBndLib_Plane
 
-fn plane_box(plane: &rcad_kernel::geom::Plane, u1: f64, u2: f64, v1: f64, v2: f64, tol: f64) -> BoundingBox {
+fn plane_box(
+    plane: &rcad_kernel::geom::Plane,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
+) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let mut bbox = BoundingBox::new();
 
@@ -774,14 +813,24 @@ fn plane_box(plane: &rcad_kernel::geom::Plane, u1: f64, u2: f64, v1: f64, v2: f6
         // rcad's BoundingBox can't represent infinite extent.
         // We return an empty box for fully infinite planes.
         // For semi-infinite, we add one point and note the limitation.
-        let u_mid = if u1.is_finite() && u2.is_finite() { (u1 + u2) * 0.5 }
-                    else if u1.is_finite() { u1 + 10.0 }
-                    else if u2.is_finite() { u2 - 10.0 }
-                    else { 0.0 };
-        let v_mid = if v1.is_finite() && v2.is_finite() { (v1 + v2) * 0.5 }
-                    else if v1.is_finite() { v1 + 10.0 }
-                    else if v2.is_finite() { v2 - 10.0 }
-                    else { 0.0 };
+        let u_mid = if u1.is_finite() && u2.is_finite() {
+            (u1 + u2) * 0.5
+        } else if u1.is_finite() {
+            u1 + 10.0
+        } else if u2.is_finite() {
+            u2 - 10.0
+        } else {
+            0.0
+        };
+        let v_mid = if v1.is_finite() && v2.is_finite() {
+            (v1 + v2) * 0.5
+        } else if v1.is_finite() {
+            v1 + 10.0
+        } else if v2.is_finite() {
+            v2 - 10.0
+        } else {
+            0.0
+        };
         let p = plane.point_at(u_mid, v_mid);
         bbox.add_point(p);
         bbox.enlarge(tol);
@@ -803,7 +852,11 @@ fn plane_box(plane: &rcad_kernel::geom::Plane, u1: f64, u2: f64, v1: f64, v2: f6
 
 fn cylinder_box(
     cyl: &rcad_kernel::geom::CylindricalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     // OCCT L60-61: construct gp_Circ at V bounds
     let axis = cyl.axis.normalize_or_zero();
@@ -853,7 +906,11 @@ fn cylinder_box(
 
 fn cone_box(
     cone: &rcad_kernel::geom::ConicalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     let axis = cone.axis.normalize_or_zero();
     let ref_dir = any_perpendicular(axis);
@@ -888,9 +945,7 @@ fn cone_box(
     } else if v2.is_finite() {
         add_cone_v_iso(&make_circle_at_v, &mut bbox, u1, u2, v2);
     }
-    if (!v1.is_finite() && !v2.is_finite())
-        || (v1.is_infinite() && v2.is_infinite())
-    {
+    if (!v1.is_finite() && !v2.is_finite()) || (v1.is_infinite() && v2.is_infinite()) {
         add_cone_v_iso(&make_circle_at_v, &mut bbox, u1, u2, 0.0);
     }
 
@@ -901,7 +956,9 @@ fn cone_box(
 fn add_cone_v_iso(
     make_circle: &dyn Fn(f64) -> Circle3,
     bbox: &mut BoundingBox,
-    u1: f64, u2: f64, v: f64,
+    u1: f64,
+    u2: f64,
+    v: f64,
 ) {
     let c = make_circle(v);
     if c.radius > TOLERANCE_CLAMP_MIN {
@@ -916,7 +973,11 @@ fn add_cone_v_iso(
 
 fn sphere_box(
     sphere: &rcad_kernel::geom::SphericalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     let center = sphere.center;
     let radius = sphere.radius;
@@ -930,10 +991,8 @@ fn sphere_box(
         && (v1 + std::f64::consts::PI / 2.0).abs() < 1e-12
         && (v2 - std::f64::consts::PI / 2.0).abs() < 1e-12
     {
-        let mut bbox = BoundingBox::from_corners(
-            center - DVec3::splat(radius),
-            center + DVec3::splat(radius),
-        );
+        let mut bbox =
+            BoundingBox::from_corners(center - DVec3::splat(radius), center + DVec3::splat(radius));
         bbox.enlarge(tol);
         return bbox;
     }
@@ -952,21 +1011,17 @@ fn sphere_box(
         let (sv, cv) = v.sin_cos();
         let local = DVec3::new(cv * cu, cv * su, sv);
         // Transform local to world
-        center
-            + radius * (local.x * ref_dir
-                       + local.y * y_dir
-                       + local.z * axis)
+        center + radius * (local.x * ref_dir + local.y * y_dir + local.z * axis)
     };
-
 
     // 6 extremal directions: ±X, ±Y, ±Z in the sphere's frame
     let extremal_dirs = [
         DVec3::new(-1.0, 0.0, 0.0),
-        DVec3::new( 1.0, 0.0, 0.0),
-        DVec3::new( 0.0,-1.0, 0.0),
-        DVec3::new( 0.0, 1.0, 0.0),
-        DVec3::new( 0.0, 0.0,-1.0),
-        DVec3::new( 0.0, 0.0, 1.0),
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, -1.0, 0.0),
+        DVec3::new(0.0, 1.0, 0.0),
+        DVec3::new(0.0, 0.0, -1.0),
+        DVec3::new(0.0, 0.0, 1.0),
     ];
 
     for dir in &extremal_dirs {
@@ -977,12 +1032,15 @@ fn sphere_box(
         let u = local.dot(y_dir).atan2(local.dot(ref_dir));
         let v = local.dot(axis).asin();
         // Check bounds
-        let u_adjusted = if u >= u1 { u } else { u + 2.0 * std::f64::consts::PI };
+        let u_adjusted = if u >= u1 {
+            u
+        } else {
+            u + 2.0 * std::f64::consts::PI
+        };
         if u_adjusted >= u1 && u_adjusted <= u2 && v >= v1 && v <= v2 {
             bbox.add_point(extremal_point);
         }
     }
-
 
     // Simplified: add the 4 corners
     bbox.add_point(eval_sphere(u1, v1));
@@ -999,7 +1057,11 @@ fn sphere_box(
 
 fn torus_box(
     torus: &rcad_kernel::geom::ToroidalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     let _major_r = torus.major_radius;
     let _minor_r = torus.minor_radius;
@@ -1044,7 +1106,11 @@ fn torus_box(
 
 fn torus_box_optimal(
     _torus: &rcad_kernel::geom::ToroidalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, _tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    _tol: f64,
 ) -> BoundingBox {
     // OCCT: delegates to GeomBndLib_OtherSurface::BoxOptimal
     sample_torus_patch(_torus, u1, u2, v1, v2)
@@ -1052,7 +1118,10 @@ fn torus_box_optimal(
 
 fn sample_torus_patch(
     torus: &rcad_kernel::geom::ToroidalSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
 ) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let surf = Surface3::Torus(torus.clone());
@@ -1077,7 +1146,11 @@ fn sample_torus_patch(
 
 fn bspline_surface_box(
     surf: &rcad_kernel::geom::BSplineSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let surface = Surface3::BSpline(surf.clone());
@@ -1087,7 +1160,9 @@ fn bspline_surface_box(
     let nu = (16usize).max(surf.control_points.len().min(32));
     let nv = (16usize).max(if !surf.control_points.is_empty() {
         surf.control_points[0].len().min(32)
-    } else { 16 });
+    } else {
+        16
+    });
 
     let mut bbox = BoundingBox::new();
     for i in 0..=nu {
@@ -1124,7 +1199,11 @@ fn bspline_surface_box(
 
 fn bspline_surface_box_optimal(
     surf: &rcad_kernel::geom::BSplineSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     // OCCT: uses numerical optimization (PSO + Powell)
     // We use denser sampling as approximation.
@@ -1153,7 +1232,11 @@ fn bspline_surface_pole_box(surf: &rcad_kernel::geom::BSplineSurface) -> Boundin
 
 fn bezier_surface_box(
     surf: &rcad_kernel::geom::BezierSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let surface = Surface3::Bezier(surf.clone());
@@ -1161,7 +1244,9 @@ fn bezier_surface_box(
     let nu = (12usize).max(surf.control_points.len().min(24));
     let nv = (12usize).max(if !surf.control_points.is_empty() {
         surf.control_points[0].len().min(24)
-    } else { 12 });
+    } else {
+        12
+    });
 
     let mut bbox = BoundingBox::new();
     for i in 0..=nu {
@@ -1198,7 +1283,11 @@ fn bezier_surface_box(
 
 fn bezier_surface_box_optimal(
     surf: &rcad_kernel::geom::BezierSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     bezier_surface_box(surf, u1, u2, v1, v2, tol)
 }
@@ -1224,7 +1313,11 @@ fn bezier_surface_pole_box(surf: &rcad_kernel::geom::BezierSurface) -> BoundingB
 
 fn revolution_surface_box(
     surf: &rcad_kernel::geom::RevolutionSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let surface = Surface3::Revolution(surf.clone());
@@ -1250,7 +1343,11 @@ fn revolution_surface_box(
 
 fn revolution_surface_box_optimal(
     surf: &rcad_kernel::geom::RevolutionSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     revolution_surface_box(surf, u1, u2, v1, v2, tol)
 }
@@ -1260,7 +1357,11 @@ fn revolution_surface_box_optimal(
 
 fn extrusion_surface_box(
     surf: &rcad_kernel::geom::LinearExtrusionSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     use rcad_kernel::geom::SurfaceEval;
     let surface = Surface3::LinearExtrusion(surf.clone());
@@ -1287,7 +1388,11 @@ fn extrusion_surface_box(
 
 fn extrusion_surface_box_optimal(
     surf: &rcad_kernel::geom::LinearExtrusionSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     extrusion_surface_box(surf, u1, u2, v1, v2, tol)
 }
@@ -1297,7 +1402,11 @@ fn extrusion_surface_box_optimal(
 
 fn offset_surface_box(
     surf: &rcad_kernel::geom::OffsetSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     let offset = surf.offset_distance.abs();
     let basis_box = surface_box(&surf.basis, u1, u2, v1, v2, 0.0);
@@ -1311,7 +1420,11 @@ fn offset_surface_box(
 
 fn offset_surface_box_optimal(
     surf: &rcad_kernel::geom::OffsetSurface,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     let offset = surf.offset_distance.abs();
     let basis_box = surface_box_optimal(&surf.basis, u1, u2, v1, v2, 0.0);
@@ -1328,7 +1441,11 @@ fn offset_surface_box_optimal(
 
 fn other_surface_box_from(
     surface: &Surface3,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     // OCCT: uses GeomBndLib_SamplingHelpers::ComputeNbUSamples / V
     // then evaluates a grid.
@@ -1339,7 +1456,11 @@ fn other_surface_box_from(
 
 fn other_surface_box_optimal_from(
     surface: &Surface3,
-    u1: f64, u2: f64, v1: f64, v2: f64, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    tol: f64,
 ) -> BoundingBox {
     // OCCT: finer grid + midpoint deflection + PSO/Powell refinement.
     // Simplified: finer grid only.
@@ -1351,11 +1472,18 @@ fn other_surface_box_optimal_from(
 /// Uniform grid sampling for a surface.
 fn sample_surface_grid(
     surface: &Surface3,
-    u1: f64, u2: f64, v1: f64, v2: f64,
-    nu: usize, nv: usize, tol: f64,
+    u1: f64,
+    u2: f64,
+    v1: f64,
+    v2: f64,
+    nu: usize,
+    nv: usize,
+    tol: f64,
 ) -> BoundingBox {
     let mut bbox = BoundingBox::new();
-    if nu == 0 || nv == 0 { return bbox; }
+    if nu == 0 || nv == 0 {
+        return bbox;
+    }
     for i in 0..=nu {
         for j in 0..=nv {
             let u = u1 + (u2 - u1) * (i as f64) / nu as f64;
@@ -1377,8 +1505,11 @@ fn sample_surface_grid(
 /// Compute an arbitrary unit vector perpendicular to `v`.
 fn any_perpendicular(v: DVec3) -> DVec3 {
     let ax = v.cross(DVec3::X);
-    if ax.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE { ax.normalize() }
-    else { DVec3::Y } // v is parallel to X
+    if ax.length_squared() > TOLERANCE_LEN_SQ_DIV_SAFE {
+        ax.normalize()
+    } else {
+        DVec3::Y
+    } // v is parallel to X
 }
 
 // =============================================================================
@@ -1403,5 +1534,3 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 //
 // Tests marked "(2D only)" are skipped �?our module only covers 3D.
 // Tests marked "(BRep only)" are skipped �?geometry-level module.
-
-

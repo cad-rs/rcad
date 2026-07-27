@@ -1,4 +1,4 @@
-﻿//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
+//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
 //! OCCT dispatches Hyperbola × {Cylinder, Cone, Sphere} through generic
 //! numeric EF intersection (IntTools_EdgeFace), same as rcad.
 //!
@@ -96,9 +96,7 @@ pub fn intersect_hyperbola_plane_with_tol(
     // Helper to add hit if t is within range
     let mut try_add_hit = |t: f64| {
         if t.is_finite() && t >= t_range[0] - eps && t <= t_range[1] + eps {
-            let point = hyperbola.center
-                + u * (a * t.cosh())
-                + v * (b * t.sinh());
+            let point = hyperbola.center + u * (a * t.cosh()) + v * (b * t.sinh());
             hits.push(HyperbolaSurfaceHit {
                 point,
                 hyperbola_param: t,
@@ -131,7 +129,10 @@ pub fn intersect_hyperbola_plane_with_tol(
         }
     } else {
         let sqrt_d = disc.sqrt();
-        for u_val in [(-q_quad - sqrt_d) / (2.0 * p_quad), (-q_quad + sqrt_d) / (2.0 * p_quad)] {
+        for u_val in [
+            (-q_quad - sqrt_d) / (2.0 * p_quad),
+            (-q_quad + sqrt_d) / (2.0 * p_quad),
+        ] {
             if u_val > eps {
                 try_add_hit(u_val.ln());
             }
@@ -249,9 +250,7 @@ fn hyperbola_vs_implicit_surface(
     let cn = hyperbola.normal.normalize();
     let cv = cn.cross(cu).normalize();
 
-    let pt = |t: f64| -> DVec3 {
-        hyperbola.center + a * t.cosh() * cu + b * t.sinh() * cv
-    };
+    let pt = |t: f64| -> DVec3 { hyperbola.center + a * t.cosh() * cu + b * t.sinh() * cv };
 
     const N_SEEDS: usize = 64;
     let [t0, t1] = t_range;
@@ -300,9 +299,9 @@ fn hyperbola_vs_implicit_surface(
             continue;
         }
 
-        let duplicate = hits.iter().any(|h: &HyperbolaSurfaceHit| {
-            (h.hyperbola_param - t).abs() < eps * 5.0
-        });
+        let duplicate = hits
+            .iter()
+            .any(|h: &HyperbolaSurfaceHit| (h.hyperbola_param - t).abs() < eps * 5.0);
         if !duplicate {
             hits.push(HyperbolaSurfaceHit {
                 point,
@@ -312,5 +311,3 @@ fn hyperbola_vs_implicit_surface(
     }
     hits
 }
-
-

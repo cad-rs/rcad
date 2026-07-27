@@ -1,6 +1,6 @@
+use crate::bopalgo::pave_filler::helpers::*;
 use crate::bopds::ds::NearTangentType;
 use crate::bopds::ds::{DSEdge, ShapeOrigin};
-use crate::bopalgo::pave_filler::helpers::*;
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::*;

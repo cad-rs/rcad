@@ -3,9 +3,9 @@
 // Do not edit manually.
 
 use glam::{DAffine3, DVec3};
+use rcad_algorithms::bopalgo::pave_filler::PaveFiller;
 use rcad_algorithms::bopds::ds::DS;
 use rcad_algorithms::brep_tools::transform_shape_topods;
-use rcad_algorithms::bopalgo::pave_filler::PaveFiller;
 use rcad_algorithms::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep};

@@ -1,13 +1,13 @@
-﻿//! BRepTools-style utilities for BRep I/O, transformation, and queries.
+//! BRepTools-style utilities for BRep I/O, transformation, and queries.
 //!
 //! Analogous to OCCT's `BRepTools` class.
 
 pub mod types;
 
+use crate::tolerance::TOLERANCE_MESH_LEGACY;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{topods, CONFUSION, Curve2d, Curve3, Surface3};
-use crate::tolerance::TOLERANCE_MESH_LEGACY;
+use rcad_kernel::{CONFUSION, Curve2d, Curve3, Surface3, topods};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -40,4 +40,3 @@ include!("bool_ops_topods_inc.rs");
 
 // Topods-native I/O + remaining variants (migration)
 include!("io_topods_inc.rs");
-

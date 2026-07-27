@@ -8,7 +8,7 @@
 //!   TopoDS_Iterator_Test.cxx    — TopoDS_Iterator over sub-shapes
 
 use glam::DVec3;
-use rcad_kernel::topods::{self, BRep, ShapeRef, TShape, ShapeType, tshape_flags};
+use rcad_kernel::topods::{self, BRep, ShapeRef, ShapeType, TShape, tshape_flags};
 
 const TOL: f64 = 1e-7;
 
@@ -124,9 +124,11 @@ mod topexp_tests {
         let mut b = BRep::new();
         let sv = b.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
         let ev = b.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
-        let circle = Some(Curve3::Circle(
-            rcad_kernel::geom::Circle3::new(DVec3::ZERO, DVec3::Z, 1.0)
-        ));
+        let circle = Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(
+            DVec3::ZERO,
+            DVec3::Z,
+            1.0,
+        )));
         let e = b.add_tedge(circle, sv, ev, [0.0, std::f64::consts::TAU]);
         if let TShape::Edge(ed) = &*b.tshapes[e.index] {
             assert!(ed.first.index == ed.last.index);
@@ -142,7 +144,8 @@ mod topexp_tests {
         let sv = b.add_tvertex(DVec3::ZERO);
         let ev = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
         let line = Some(Curve3::Line(rcad_kernel::geom::Line3 {
-            origin: DVec3::ZERO, direction: DVec3::X,
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
         }));
         let e = b.add_tedge(line, sv, ev, [0.0, 10.0]);
         if let TShape::Edge(ed) = &*b.tshapes[e.index] {

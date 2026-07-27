@@ -122,11 +122,7 @@ impl<'a> PaveFiller<'a> {
         let choose_better = |orig: DVec3, p1: DVec3, p2: DVec3| {
             let d1 = (p1 - orig).length_squared();
             let d2 = (p2 - orig).length_squared();
-            if d1 <= d2 {
-                p1
-            } else {
-                p2
-            }
+            if d1 <= d2 { p1 } else { p2 }
         };
 
         let start = choose_better(chain[0], snap_start_a, snap_start_b);

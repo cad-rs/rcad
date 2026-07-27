@@ -1,4 +1,4 @@
-﻿//! GCPnts-style point sampling algorithms.
+//! GCPnts-style point sampling algorithms.
 //!
 //! Analogous to OCCT `GCPnts` package, provides algorithms for sampling points
 //! on curves and surfaces:
@@ -306,13 +306,7 @@ pub fn adaptive_sample_curve(curve: &Curve3, tol: f64) -> Vec<f64> {
 }
 
 /// Recursive helper for adaptive sampling.
-fn adaptive_sample_recursive(
-    curve: &Curve3,
-    t0: f64,
-    t1: f64,
-    tol: f64,
-    params: &mut Vec<f64>,
-) {
+fn adaptive_sample_recursive(curve: &Curve3, t0: f64, t1: f64, tol: f64, params: &mut Vec<f64>) {
     let p0 = curve.point_at(t0);
     let p1 = curve.point_at(t1);
 
@@ -347,7 +341,14 @@ pub fn tangential_deflection(curve: &Curve3, angle_tol: f64, curvature_tol: f64)
     let domain = curve_domain(curve);
     let mut params = vec![domain[0]];
 
-    tangential_deflection_recursive(curve, domain[0], domain[1], angle_tol, curvature_tol, &mut params);
+    tangential_deflection_recursive(
+        curve,
+        domain[0],
+        domain[1],
+        angle_tol,
+        curvature_tol,
+        &mut params,
+    );
 
     params.push(domain[1]);
     params.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -515,8 +516,10 @@ pub fn sample_surface_grid(surface: &Surface3, u_step: f64, v_step: f64) -> Vec<
     let domain = surface.default_domain();
 
     // Handle infinite domains by returning empty (grid sampling doesn't make sense)
-    if domain[0].is_infinite() || domain[1].is_infinite()
-        || domain[2].is_infinite() || domain[3].is_infinite()
+    if domain[0].is_infinite()
+        || domain[1].is_infinite()
+        || domain[2].is_infinite()
+        || domain[3].is_infinite()
     {
         return vec![];
     }
@@ -726,5 +729,3 @@ pub fn sampled_points_bounds(points: &[DVec3]) -> (DVec3, DVec3) {
 // =============================================================================
 // Tests
 // =============================================================================
-
-

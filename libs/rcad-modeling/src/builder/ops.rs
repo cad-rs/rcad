@@ -6,10 +6,10 @@ use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
-use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topology::WireEdge;
+use rcad_kernel::topods;
 use rcad_kernel::topods::TShape;
+use rcad_kernel::topology::WireEdge;
 
 use crate::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use crate::builder::{BuildError, normalize_vector};
@@ -476,7 +476,11 @@ fn extrude_with_history_inner(
         .tshapes
         .get(face_idx)
         .and_then(|ts| {
-            if matches!(&**ts, TShape::Face(_)) { Some(()) } else { None }
+            if matches!(&**ts, TShape::Face(_)) {
+                Some(())
+            } else {
+                None
+            }
         })
         .ok_or(BuildError::InvalidIndex(face_idx))?;
 
@@ -494,8 +498,14 @@ fn extrude_with_history_inner(
     let mut result = BRep::new();
 
     // Add all vertices: bot[0..n], top[0..n]
-    let bot_vi: Vec<usize> = bot_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
-    let top_vi: Vec<usize> = top_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
+    let bot_vi: Vec<usize> = bot_pts
+        .iter()
+        .map(|&p| make_vertex(&mut result, p))
+        .collect();
+    let top_vi: Vec<usize> = top_pts
+        .iter()
+        .map(|&p| make_vertex(&mut result, p))
+        .collect();
 
     // Build bottom cap (inward normal = -dir)
     let bot_face = {
@@ -667,7 +677,8 @@ pub fn revolve(
     axis_dir: DVec3,
     angle: f64,
 ) -> Result<topods::BRep, BuildError> {
-    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep)
+    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle)
+        .map(|(brep, _)| brep)
 }
 
 /// Revolve a profile face around an axis and return history mapping face origins.
@@ -682,7 +693,8 @@ pub fn revolve_with_history(
     axis_dir: DVec3,
     angle: f64,
 ) -> Result<(topods::BRep, SweepHistory), BuildError> {
-    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, h)| (brep, h))
+    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle)
+        .map(|(brep, h)| (brep, h))
 }
 
 fn revolve_with_history_inner(
@@ -702,7 +714,11 @@ fn revolve_with_history_inner(
         .tshapes
         .get(face_idx)
         .and_then(|ts| {
-            if matches!(&**ts, TShape::Face(_)) { Some(()) } else { None }
+            if matches!(&**ts, TShape::Face(_)) {
+                Some(())
+            } else {
+                None
+            }
         })
         .ok_or(BuildError::InvalidIndex(face_idx))?;
 
@@ -732,10 +748,16 @@ fn revolve_with_history_inner(
         .collect();
 
     // Add start vertices (bottom/start cap positions)
-    let start_vi: Vec<usize> = profile_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
+    let start_vi: Vec<usize> = profile_pts
+        .iter()
+        .map(|&p| make_vertex(&mut result, p))
+        .collect();
 
     // End vertices for partial revolution (distinct from start)
-    let end_vi: Vec<usize> = rot_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
+    let end_vi: Vec<usize> = rot_pts
+        .iter()
+        .map(|&p| make_vertex(&mut result, p))
+        .collect();
 
     // Cap faces (bottom = original profile, top = rotated profile)
     let mut bottom_cap = Vec::new();
@@ -932,7 +954,9 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<topods::BRep, BuildError> {
 ///
 /// See [`loft`] for geometry details. The returned [`LoftHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
-pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftHistory), BuildError> {
+pub fn loft_with_history(
+    profiles: &[Vec<DVec3>],
+) -> Result<(topods::BRep, LoftHistory), BuildError> {
     if profiles.len() < 2 {
         return Err(BuildError::DegenerateGeometry(
             "loft requires at least 2 profiles",
@@ -1206,7 +1230,10 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<topods::BRep,
 /// and `profiles.len()` must equal `spine.len()` (鈮?2).
 ///
 /// Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
-pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<topods::BRep, BuildError> {
+pub fn sweep_pipe_variable(
+    profiles: &[Vec<DVec2>],
+    spine: &[DVec3],
+) -> Result<topods::BRep, BuildError> {
     if profiles.len() != spine.len() {
         return Err(BuildError::DegenerateGeometry(
             "sweep_pipe_variable: profiles.len() must equal spine.len()",
@@ -1271,8 +1298,8 @@ pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<t
 mod tests {
     use super::*;
     use crate::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
-    use rcad_kernel::topods::TShape;
     use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+    use rcad_kernel::topods::TShape;
     use rcad_kernel::topology::WireEdge;
 
     fn square_profile() -> rcad_kernel::BRep {
@@ -1316,7 +1343,11 @@ mod tests {
     fn extrude_square_produces_6_faces() {
         let profile = square_profile().to_topods();
         let result = extrude(&profile, 0, DVec3::Z, 1.0).unwrap();
-        let n_faces = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
+        let n_faces = result
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+            .count();
         assert_eq!(
             n_faces, 6,
             "extrude of square should yield 6 faces, got {n_faces}"
@@ -1377,8 +1408,19 @@ mod tests {
         let brep_t = brep.to_topods();
 
         // Revolve 90掳 around Y axis
-        let result = revolve(&brep_t, 0, DVec3::ZERO, DVec3::Y, std::f64::consts::FRAC_PI_2).unwrap();
-        let n_faces = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
+        let result = revolve(
+            &brep_t,
+            0,
+            DVec3::ZERO,
+            DVec3::Y,
+            std::f64::consts::FRAC_PI_2,
+        )
+        .unwrap();
+        let n_faces = result
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+            .count();
         // 2 caps + 3 lateral = 5
         assert!(
             n_faces >= 3,
@@ -1400,28 +1442,34 @@ mod tests {
         ];
 
         // Simple spine along Z axis
-        let spine: Vec<DVec3> = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(0.0, 0.0, 1.0),
-        ];
+        let spine: Vec<DVec3> = vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)];
 
         // Should succeed - profile is tiny but valid (3 vertices)
         let result = sweep_pipe(&tiny_profile, &spine);
-        assert!(result.is_ok(), "sweep_pipe should succeed with tiny but valid profile");
+        assert!(
+            result.is_ok(),
+            "sweep_pipe should succeed with tiny but valid profile"
+        );
 
         let brep = result.unwrap();
         assert!(
-            brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))),
+            brep.tshapes
+                .iter()
+                .any(|ts| matches!(ts.as_ref(), TShape::Solid(_))),
             "result should contain a solid"
         );
-        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
-        assert!(n_faces >= 2, "should have at least 2 faces (caps + lateral), got {n_faces}");
+        let n_faces = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+            .count();
+        assert!(
+            n_faces >= 2,
+            "should have at least 2 faces (caps + lateral), got {n_faces}"
+        );
 
         // Test with degenerate profile (only 2 vertices) - should fail
-        let degenerate_profile: Vec<DVec2> = vec![
-            DVec2::new(0.0, 0.0),
-            DVec2::new(1.0, 0.0),
-        ];
+        let degenerate_profile: Vec<DVec2> = vec![DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0)];
         let err = sweep_pipe(&degenerate_profile, &spine).unwrap_err();
         assert!(
             matches!(err, BuildError::DegenerateGeometry(_)),
@@ -1456,10 +1504,17 @@ mod tests {
         }
 
         let result = sweep_pipe(&profile, &spine);
-        assert!(result.is_ok(), "sweep_pipe should succeed along helical path");
+        assert!(
+            result.is_ok(),
+            "sweep_pipe should succeed along helical path"
+        );
 
         let brep = result.unwrap();
-        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
+        let n_faces = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+            .count();
         // 8 segments * 4 lateral faces per segment + 2 caps = 34 faces
         let expected_lateral = (spine.len() - 1) * profile.len();
         assert!(
@@ -1555,12 +1610,24 @@ mod tests {
 
         // Loft should succeed with non-planar profiles
         let result = loft(&[profile1, profile2, profile3]);
-        assert!(result.is_ok(), "loft should succeed with non-planar profiles");
+        assert!(
+            result.is_ok(),
+            "loft should succeed with non-planar profiles"
+        );
 
         let brep = result.unwrap();
-        assert!(brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))), "result should contain a solid");
+        assert!(
+            brep.tshapes
+                .iter()
+                .any(|ts| matches!(ts.as_ref(), TShape::Solid(_))),
+            "result should contain a solid"
+        );
 
-        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
+        let n_faces = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+            .count();
         // Should have 2 caps + lateral faces
         assert!(n_faces >= 2, "should have at least 2 faces, got {n_faces}");
 
@@ -1577,10 +1644,26 @@ mod tests {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
         let twisted2: Vec<DVec3> = vec![
-            DVec3::new(0.5 + 0.5 * cos_a - 0.5 * sin_a, 0.5 + 0.5 * sin_a + 0.5 * cos_a, 1.0),
-            DVec3::new(0.5 + 0.5 * cos_a + 0.5 * sin_a, 0.5 - 0.5 * sin_a + 0.5 * cos_a, 1.0),
-            DVec3::new(0.5 - 0.5 * cos_a + 0.5 * sin_a, 0.5 - 0.5 * sin_a - 0.5 * cos_a, 1.0),
-            DVec3::new(0.5 - 0.5 * cos_a - 0.5 * sin_a, 0.5 + 0.5 * sin_a - 0.5 * cos_a, 1.0),
+            DVec3::new(
+                0.5 + 0.5 * cos_a - 0.5 * sin_a,
+                0.5 + 0.5 * sin_a + 0.5 * cos_a,
+                1.0,
+            ),
+            DVec3::new(
+                0.5 + 0.5 * cos_a + 0.5 * sin_a,
+                0.5 - 0.5 * sin_a + 0.5 * cos_a,
+                1.0,
+            ),
+            DVec3::new(
+                0.5 - 0.5 * cos_a + 0.5 * sin_a,
+                0.5 - 0.5 * sin_a - 0.5 * cos_a,
+                1.0,
+            ),
+            DVec3::new(
+                0.5 - 0.5 * cos_a - 0.5 * sin_a,
+                0.5 + 0.5 * sin_a - 0.5 * cos_a,
+                1.0,
+            ),
         ];
 
         let twisted_result = loft(&[twisted1, twisted2]);
@@ -1604,16 +1687,25 @@ mod tests {
         }
 
         // Straight spine
-        let spine = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(0.0, 0.0, 5.0),
-        ];
+        let spine = vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 5.0)];
 
         let result = sweep_pipe(&profile, &spine);
-        assert!(result.is_ok(), "sweep_pipe with circular profile should succeed");
+        assert!(
+            result.is_ok(),
+            "sweep_pipe with circular profile should succeed"
+        );
 
         let brep = result.unwrap();
-        assert!(brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))) || brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Edge(_))), "should have geometry");
+        assert!(
+            brep.tshapes
+                .iter()
+                .any(|ts| matches!(ts.as_ref(), TShape::Solid(_)))
+                || brep
+                    .tshapes
+                    .iter()
+                    .any(|ts| matches!(ts.as_ref(), TShape::Edge(_))),
+            "should have geometry"
+        );
     }
 
     #[test]
@@ -1636,7 +1728,10 @@ mod tests {
         }
 
         let result = sweep_pipe(&profile, &spine);
-        assert!(result.is_ok(), "sweep_pipe with curved spine should succeed");
+        assert!(
+            result.is_ok(),
+            "sweep_pipe with curved spine should succeed"
+        );
     }
 
     #[test]
@@ -1644,21 +1739,22 @@ mod tests {
         use glam::DVec2;
 
         // Two profiles of different sizes
-        let profile1: Vec<DVec2> = (0..8).map(|i| {
-            let angle = i as f64 * std::f64::consts::TAU / 8.0;
-            DVec2::new(angle.cos() * 0.5, angle.sin() * 0.5)
-        }).collect();
+        let profile1: Vec<DVec2> = (0..8)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 8.0;
+                DVec2::new(angle.cos() * 0.5, angle.sin() * 0.5)
+            })
+            .collect();
 
-        let profile2: Vec<DVec2> = (0..8).map(|i| {
-            let angle = i as f64 * std::f64::consts::TAU / 8.0;
-            DVec2::new(angle.cos() * 1.0, angle.sin() * 1.0)
-        }).collect();
+        let profile2: Vec<DVec2> = (0..8)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 8.0;
+                DVec2::new(angle.cos() * 1.0, angle.sin() * 1.0)
+            })
+            .collect();
 
         let profiles = vec![profile1, profile2];
-        let spine = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(0.0, 0.0, 2.0),
-        ];
+        let spine = vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 2.0)];
 
         let result = sweep_pipe_variable(&profiles, &spine);
         assert!(result.is_ok(), "sweep_pipe_variable should succeed");
@@ -1668,15 +1764,19 @@ mod tests {
     fn loft_closed_profiles() {
         // Two closed circular profiles
         let n = 16;
-        let profile1: Vec<DVec3> = (0..n).map(|i| {
-            let angle = i as f64 * std::f64::consts::TAU / n as f64;
-            DVec3::new(angle.cos(), angle.sin(), 0.0)
-        }).collect();
+        let profile1: Vec<DVec3> = (0..n)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / n as f64;
+                DVec3::new(angle.cos(), angle.sin(), 0.0)
+            })
+            .collect();
 
-        let profile2: Vec<DVec3> = (0..n).map(|i| {
-            let angle = i as f64 * std::f64::consts::TAU / n as f64;
-            DVec3::new(angle.cos() * 2.0, angle.sin() * 2.0, 2.0)
-        }).collect();
+        let profile2: Vec<DVec3> = (0..n)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / n as f64;
+                DVec3::new(angle.cos() * 2.0, angle.sin() * 2.0, 2.0)
+            })
+            .collect();
 
         let result = loft(&[profile1, profile2]);
         assert!(result.is_ok(), "loft with closed profiles should succeed");
@@ -1694,7 +1794,13 @@ mod tests {
         assert!(result.is_ok(), "extrude should succeed");
 
         let swept = result.unwrap();
-        assert!(swept.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))), "should create solid");
+        assert!(
+            swept
+                .tshapes
+                .iter()
+                .any(|ts| matches!(ts.as_ref(), TShape::Solid(_))),
+            "should create solid"
+        );
     }
 
     #[test]
@@ -1702,7 +1808,10 @@ mod tests {
         let profile = square_profile().to_topods();
 
         let result = extrude(&profile, 0, DVec3::NEG_Z, 2.0);
-        assert!(result.is_ok(), "extrude with negative direction should succeed");
+        assert!(
+            result.is_ok(),
+            "extrude with negative direction should succeed"
+        );
     }
 
     #[test]
@@ -1719,7 +1828,13 @@ mod tests {
         let profile = square_profile().to_topods();
 
         // Partial rotation (90 degrees)
-        let result = revolve(&profile, 0, DVec3::ZERO, DVec3::Z, std::f64::consts::FRAC_PI_2);
+        let result = revolve(
+            &profile,
+            0,
+            DVec3::ZERO,
+            DVec3::Z,
+            std::f64::consts::FRAC_PI_2,
+        );
         assert!(result.is_ok(), "partial revolve should succeed");
     }
 
@@ -1761,7 +1876,10 @@ mod tests {
 
         let result = loft(&[profile]);
         // Single profile may return error or empty result
-        assert!(result.is_ok() || result.is_err(), "single profile loft handled");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "single profile loft handled"
+        );
     }
 
     #[test]
@@ -1793,15 +1911,15 @@ mod tests {
     fn sweep_pipe_single_point_spine() {
         use glam::DVec2;
 
-        let profile = vec![
-            DVec2::new(-0.5, -0.5),
-            DVec2::new(0.5, -0.5),
-        ];
+        let profile = vec![DVec2::new(-0.5, -0.5), DVec2::new(0.5, -0.5)];
         let spine = vec![DVec3::ZERO];
 
         let result = sweep_pipe(&profile, &spine);
         // Single point spine may fail or return degenerate result
-        assert!(result.is_ok() || result.is_err(), "single point spine handled");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "single point spine handled"
+        );
     }
 
     #[test]
@@ -1823,7 +1941,10 @@ mod tests {
 
         let result = loft(&[profile1, profile2]);
         // Different vertex counts may be handled with interpolation or fail
-        assert!(result.is_ok() || result.is_err(), "different vertex counts handled");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "different vertex counts handled"
+        );
     }
 
     #[test]
@@ -1842,11 +1963,7 @@ mod tests {
         for i in 0..=32 {
             let t = i as f64 / 32.0;
             let angle = t * std::f64::consts::TAU * 2.0;
-            spine.push(DVec3::new(
-                angle.cos() * 2.0,
-                angle.sin() * 2.0,
-                t * 3.0,
-            ));
+            spine.push(DVec3::new(angle.cos() * 2.0, angle.sin() * 2.0, t * 3.0));
         }
 
         let result = sweep_pipe(&profile, &spine);
@@ -1856,10 +1973,12 @@ mod tests {
     #[test]
     fn loft_circular_to_square() {
         let n_circle = 16;
-        let circle: Vec<DVec3> = (0..n_circle).map(|i| {
-            let angle = i as f64 * std::f64::consts::TAU / n_circle as f64;
-            DVec3::new(angle.cos(), angle.sin(), 0.0)
-        }).collect();
+        let circle: Vec<DVec3> = (0..n_circle)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / n_circle as f64;
+                DVec3::new(angle.cos(), angle.sin(), 0.0)
+            })
+            .collect();
 
         let square: Vec<DVec3> = vec![
             DVec3::new(-1.5, -1.5, 2.0),
@@ -1871,6 +1990,9 @@ mod tests {
         // This is a complex morphing operation
         let result = loft(&[circle, square]);
         // May succeed with interpolation or fail due to vertex count mismatch
-        assert!(result.is_ok() || result.is_err(), "circle to square loft handled");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "circle to square loft handled"
+        );
     }
 }

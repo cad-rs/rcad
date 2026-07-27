@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two tori.
+//! Analytic intersection of two tori.
 //!
 //! # Case classification
 //!
@@ -42,8 +42,8 @@
 use std::f64::consts::TAU;
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, ToroidalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, ToroidalSurface, any_perpendicular};
 
 use crate::tolerance::*;
 
@@ -76,10 +76,7 @@ pub enum TorusTorusResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute the analytic intersection of `t1` and `t2`.
-pub fn intersect_torus_torus(
-    t1: &ToroidalSurface,
-    t2: &ToroidalSurface,
-) -> TorusTorusResult {
+pub fn intersect_torus_torus(t1: &ToroidalSurface, t2: &ToroidalSurface) -> TorusTorusResult {
     intersect_torus_torus_with_tolerance(t1, t2, 0.0)
 }
 
@@ -172,8 +169,7 @@ fn intersect_torus_torus_coaxial(
             // Tubes touch at one circle at z = 0, rho = midpoint
             let rho = (R1 + R2) / 2.0;
             if rho > TOLERANCE_ABS {
-                return TorusTorusResult::TangentCircle(Circle3::new(t1.center, axis, rho,
-                ));
+                return TorusTorusResult::TangentCircle(Circle3::new(t1.center, axis, rho));
             }
         }
 
@@ -194,8 +190,7 @@ fn intersect_torus_torus_coaxial(
 
     // Linear relation: v = A*u + B
     let A = (R1 - R2) / dz_centers;
-    let B = (r1 * r1 - r2 * r2 + dz_centers * dz_centers - R1 * R1 + R2 * R2)
-        / (2.0 * dz_centers);
+    let B = (r1 * r1 - r2 * r2 + dz_centers * dz_centers - R1 * R1 + R2 * R2) / (2.0 * dz_centers);
 
     // Substitute into circle 1: (u - R1)² + (A*u + B)² = r1²
     // (1 + A²)*u² + (-2*R1 + 2*A*B)*u + (R1² + B² - r1²) = 0
@@ -267,10 +262,7 @@ fn intersect_torus_torus_coaxial(
 /// a₄·t⁴ + a₃·t³ + a₂·t² + a₁·t + a₀ = 0
 /// ```
 /// Solved via Ferrari's method (crate::solve_quartic).
-fn intersect_skew_torus_torus(
-    t1: &ToroidalSurface,
-    t2: &ToroidalSurface,
-) -> Vec<Vec<DVec3>> {
+fn intersect_skew_torus_torus(t1: &ToroidalSurface, t2: &ToroidalSurface) -> Vec<Vec<DVec3>> {
     let a1 = t1.axis.normalize();
     let a2 = t2.axis.normalize();
     let o1 = t1.center;
@@ -356,7 +348,8 @@ fn intersect_skew_torus_torus(
         let a_cos = 2.0 * m * n + 2.0 * term_r2_sq_minus_m2_sq * n + 8.0 * r_major2_sq * q * r_cos;
 
         // A_sin = 2M·sin_S + 2(r₂² - R₂²)·sin_S + 8R₂²·Q·sin_T
-        let a_sin = 2.0 * (m * sin_s + term_r2_sq_minus_m2_sq * sin_s) + 8.0 * r_major2_sq * q * sin_t;
+        let a_sin =
+            2.0 * (m * sin_s + term_r2_sq_minus_m2_sq * sin_s) + 8.0 * r_major2_sq * q * sin_t;
 
         // A_cos2 = N² + 4R₂²·R_cos²
         let a_cos2 = n_sq + four_r2_sq * r_cos_sq;
@@ -501,11 +494,11 @@ fn intersect_skew_torus_torus(
                 let q_sq = q_val * q_val;
                 let r_cos_sq = r_cos_val * r_cos_val;
 
-                let a_const = m_sq + 2.0 * term_r2_sq_minus_m2_sq * m_val + four_r2_sq * q_sq
-                    + c2_sq_sq;
-                let a_cos =
-                    2.0 * m_val * n_val + 2.0 * term_r2_sq_minus_m2_sq * n_val
-                        + 8.0 * r_major2_sq * q_val * r_cos_val;
+                let a_const =
+                    m_sq + 2.0 * term_r2_sq_minus_m2_sq * m_val + four_r2_sq * q_sq + c2_sq_sq;
+                let a_cos = 2.0 * m_val * n_val
+                    + 2.0 * term_r2_sq_minus_m2_sq * n_val
+                    + 8.0 * r_major2_sq * q_val * r_cos_val;
                 let a_sin = 2.0 * (m_val * sin_s + term_r2_sq_minus_m2_sq * sin_s)
                     + 8.0 * r_major2_sq * q_val * sin_t;
                 let a_cos2 = n_sq + four_r2_sq * r_cos_sq;
@@ -550,7 +543,10 @@ fn intersect_skew_torus_torus(
             };
 
             let refined = crate::inttools::pcurve_derive::refine_polyline(
-                &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
+                &branch,
+                eval_fn,
+                CHORD_TOL,
+                REFINE_DEPTH,
             );
             refined.into_iter().map(|(_, p)| p).collect()
         })
@@ -574,5 +570,3 @@ fn intersect_skew_torus_torus(
 
     result
 }
-
-

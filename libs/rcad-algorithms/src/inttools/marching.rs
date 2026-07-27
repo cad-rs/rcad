@@ -5,8 +5,7 @@ use rcad_kernel::projection::closest_point_on_surface;
 use crate::tolerance::*;
 
 /// A numerically sampled intersection curve.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SampledCurve {
     pub points: Vec<DVec3>,
     pub is_closed: bool,
@@ -15,7 +14,6 @@ pub struct SampledCurve {
     /// Diagnostic: whether step size was reduced during marching.
     pub step_reduced: bool,
 }
-
 
 /// Configuration for adaptive marching behavior.
 #[derive(Debug, Clone, Copy)]
@@ -523,15 +521,15 @@ pub fn adaptive_sampling_density_occt(
         f64::INFINITY
     };
 
-    let max_step = max_step_domain.min(curvature_adjusted_step).max(TOLERANCE_ABS);
+    let max_step = max_step_domain
+        .min(curvature_adjusted_step)
+        .max(TOLERANCE_ABS);
 
     // Grid density: ceil(domainRange / maxStep).
     let n_u = (du.abs() / max_step).ceil() as usize;
     let n_v = (dv.abs() / max_step).ceil() as usize;
 
-    let characteristic_length = (max_step * 5.0)
-        .min(domain_size * 0.1)
-        .max(TOLERANCE_ABS);
+    let characteristic_length = (max_step * 5.0).min(domain_size * 0.1).max(TOLERANCE_ABS);
 
     AdaptiveSampling {
         n_u: n_u.max(base_density / 4).min(base_density * 4),
@@ -929,7 +927,9 @@ pub fn find_seed_points_multiscale(
 
         for seed in seeds {
             // Deduplicate: skip if too close to an existing seed
-            let is_dup = all_seeds.iter().any(|s: &DVec3| (*s - seed).length_squared() < dedup_tol_sq);
+            let is_dup = all_seeds
+                .iter()
+                .any(|s: &DVec3| (*s - seed).length_squared() < dedup_tol_sq);
             if !is_dup {
                 all_seeds.push(seed);
             }
@@ -975,16 +975,30 @@ pub fn march_intersection(
 
     // Try forward direction
     let forward = march_one_direction_monitored_simple(
-        s1, s2, seed, config.step_size, config.max_steps,
-        &bounds_check, config.max_oscillations, config.min_step_size,
-        config.step_reduction_factor, config.deflection_tol,
+        s1,
+        s2,
+        seed,
+        config.step_size,
+        config.max_steps,
+        &bounds_check,
+        config.max_oscillations,
+        config.min_step_size,
+        config.step_reduction_factor,
+        config.deflection_tol,
     );
 
     // Try backward direction
     let backward = march_one_direction_monitored_simple(
-        s1, s2, seed, -config.step_size, config.max_steps,
-        &bounds_check, config.max_oscillations, config.min_step_size,
-        config.step_reduction_factor, config.deflection_tol,
+        s1,
+        s2,
+        seed,
+        -config.step_size,
+        config.max_steps,
+        &bounds_check,
+        config.max_oscillations,
+        config.min_step_size,
+        config.step_reduction_factor,
+        config.deflection_tol,
     );
 
     // Combine: reverse backward, then append forward (excluding duplicate seed)
@@ -1028,18 +1042,32 @@ pub fn march_intersection_with_config(
 
     // Try forward direction with convergence monitoring
     let forward = march_one_direction_monitored_simple(
-        s1, s2, seed, config.step_size, config.max_steps,
-        &bounds_check, config.max_oscillations, config.min_step_size,
-        config.step_reduction_factor, config.deflection_tol,
+        s1,
+        s2,
+        seed,
+        config.step_size,
+        config.max_steps,
+        &bounds_check,
+        config.max_oscillations,
+        config.min_step_size,
+        config.step_reduction_factor,
+        config.deflection_tol,
     );
     result.oscillation_count += forward.oscillation_count;
     result.step_reduced = result.step_reduced || forward.step_reduced;
 
     // Try backward direction
     let backward = march_one_direction_monitored_simple(
-        s1, s2, seed, -config.step_size, config.max_steps,
-        &bounds_check, config.max_oscillations, config.min_step_size,
-        config.step_reduction_factor, config.deflection_tol,
+        s1,
+        s2,
+        seed,
+        -config.step_size,
+        config.max_steps,
+        &bounds_check,
+        config.max_oscillations,
+        config.min_step_size,
+        config.step_reduction_factor,
+        config.deflection_tol,
     );
     result.oscillation_count += backward.oscillation_count;
     result.step_reduced = result.step_reduced || backward.step_reduced;
@@ -1218,10 +1246,14 @@ fn march_one_direction_monitored_simple(
         {
             let next_tg_unit = next_tangent / next_t_len;
             let (status, suggested_step) = test_deflection(
-                step_dist_sq, step_dist,
-                last_dir, next_tg_unit,
-                current_step.abs(), deflection_tol,
-                min_step_size, initial_step_abs,
+                step_dist_sq,
+                step_dist,
+                last_dir,
+                next_tg_unit,
+                current_step.abs(),
+                deflection_tol,
+                min_step_size,
+                initial_step_abs,
             );
 
             match status {
@@ -1361,5 +1393,3 @@ pub fn sample_torus(torus: &ToroidalSurface, n_u: usize, n_v: usize) -> Vec<DVec
     }
     points
 }
-
-

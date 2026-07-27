@@ -23,12 +23,11 @@
 //! }
 //! ```
 
-
 use crate::bopalgo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
+use crate::bopalgo::pave_filler::PaveFiller;
 use crate::bopds::ds::DS;
 use crate::boptools::bvh::Bvh;
 use crate::history::BooleanHistory;
-use crate::bopalgo::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;
 
@@ -193,7 +192,8 @@ impl BuilderOperation {
         ds.build_container_images();
 
         // Build result
-        let mut builder = BooleanBuilder::with_brep(&ds, self.op_type, brep_dst, face_refs, ic_edge_map);
+        let mut builder =
+            BooleanBuilder::with_brep(&ds, self.op_type, brep_dst, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);
@@ -293,8 +293,7 @@ impl BuilderOperation {
         // Collect modified vertices
         for (res_idx, origin) in h.vertex_origins.iter().enumerate() {
             match origin {
-                crate::history::VertexOrigin::FromA(_)
-                | crate::history::VertexOrigin::FromB(_) => {
+                crate::history::VertexOrigin::FromA(_) | crate::history::VertexOrigin::FromB(_) => {
                     result.push(ShapeRef::Vertex(res_idx));
                 }
                 _ => {}
@@ -361,15 +360,9 @@ impl BuilderOperation {
             return false;
         };
         match source {
-            ShapeRef::Face(idx) => {
-                h.deleted_from_a.contains(idx) || h.deleted_from_b.contains(idx)
-            }
-            ShapeRef::Edge(idx) => {
-                h.tracker.deleted_edges().any(|e| e.entity_index == *idx)
-            }
-            ShapeRef::Vertex(idx) => {
-                h.tracker.deleted_vertices().any(|v| v.entity_index == *idx)
-            }
+            ShapeRef::Face(idx) => h.deleted_from_a.contains(idx) || h.deleted_from_b.contains(idx),
+            ShapeRef::Edge(idx) => h.tracker.deleted_edges().any(|e| e.entity_index == *idx),
+            ShapeRef::Vertex(idx) => h.tracker.deleted_vertices().any(|v| v.entity_index == *idx),
         }
     }
 
@@ -403,5 +396,3 @@ impl BuilderOperation {
         }
     }
 }
-
-

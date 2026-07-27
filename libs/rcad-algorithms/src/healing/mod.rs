@@ -3,18 +3,17 @@
 //! This module provides an analyze -> repair -> recheck workflow similar in
 //! spirit to OCCT ShapeAnalysis/ShapeFix orchestration.
 
-
 use glam::DVec3;
-use rcad_kernel::topods;
 use rcad_kernel::PCurve;
+use rcad_kernel::topods;
 use rcad_kernel::{BSplineSurface, BezierSurface};
 
 use crate::brep_check::{
     CheckIssue, CheckResult, brep_check_analyze, diagnose_same_parameter, diagnose_same_range,
 };
 use crate::brep_repair::{
-    MakeConnectedReport, RepairReport, fix_same_parameter_with_scan,
-    fix_same_range_with_scan, make_connected_iterative_with_growth_cap, repair,
+    MakeConnectedReport, RepairReport, fix_same_parameter_with_scan, fix_same_range_with_scan,
+    make_connected_iterative_with_growth_cap, repair,
 };
 use crate::tolerance::{
     TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
@@ -190,20 +189,28 @@ impl ComprehensiveDiagnosis {
             parts.push(format!("topology: {} issues", self.topology.issues.len()));
         }
         if !self.surface_uv.is_clean() {
-            parts.push(format!("UV bounds: {} violations", self.surface_uv.total_issues));
+            parts.push(format!(
+                "UV bounds: {} violations",
+                self.surface_uv.total_issues
+            ));
         }
         if !self.wire_quality.is_clean() {
             parts.push(format!(
                 "wires: {} open, {} self-intersecting",
-                self.wire_quality.open_wires,
-                self.wire_quality.self_intersecting_wires
+                self.wire_quality.open_wires, self.wire_quality.self_intersecting_wires
             ));
         }
         if !self.same_parameter.is_clean() {
-            parts.push(format!("SameParameter: {} suspect", self.same_parameter.suspect_edges.len()));
+            parts.push(format!(
+                "SameParameter: {} suspect",
+                self.same_parameter.suspect_edges.len()
+            ));
         }
         if !self.same_range.is_clean() {
-            parts.push(format!("SameRange: {} suspect", self.same_range.suspect_edges.len()));
+            parts.push(format!(
+                "SameRange: {} suspect",
+                self.same_range.suspect_edges.len()
+            ));
         }
 
         parts.join("; ")
@@ -232,8 +239,8 @@ impl ComprehensiveDiagnosis {
 /// A `ComprehensiveDiagnosis` containing all analysis results.
 pub fn diagnose_all(brep: &rcad_kernel::BRep, tolerance: f64) -> ComprehensiveDiagnosis {
     use crate::brep_check::{
-        analyze_surface_uv_consistency, analyze_wire_quality,
-        diagnose_same_parameter, diagnose_same_range,
+        analyze_surface_uv_consistency, analyze_wire_quality, diagnose_same_parameter,
+        diagnose_same_range,
     };
 
     ComprehensiveDiagnosis {
@@ -1067,7 +1074,12 @@ pub struct BRepSnapshot {
 
 impl BRepSnapshot {
     /// Create a new snapshot.
-    pub fn new(brep: &rcad_kernel::BRep, operator_index: usize, label: impl Into<String>, elapsed_seconds: f64) -> Self {
+    pub fn new(
+        brep: &rcad_kernel::BRep,
+        operator_index: usize,
+        label: impl Into<String>,
+        elapsed_seconds: f64,
+    ) -> Self {
         Self {
             brep: brep.clone(),
             operator_index,
@@ -1168,7 +1180,7 @@ impl Clone for SimpleProgressCallback {
             current_operator: self.current_operator,
             total_operators: self.total_operators,
             cancelled: std::sync::atomic::AtomicBool::new(
-                self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+                self.cancelled.load(std::sync::atomic::Ordering::SeqCst),
             ),
             last_message: self.last_message.clone(),
         }
@@ -1186,7 +1198,8 @@ impl SimpleProgressCallback {
 
     /// Request cancellation.
     pub fn cancel(&self) {
-        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get progress as a fraction (0.0 to 1.0).
@@ -1247,7 +1260,9 @@ impl PipelineExecutionReport {
 
     /// Get a snapshot by index.
     pub fn get_snapshot(&self, operator_index: usize) -> Option<&BRepSnapshot> {
-        self.snapshots.iter().find(|s| s.operator_index == operator_index)
+        self.snapshots
+            .iter()
+            .find(|s| s.operator_index == operator_index)
     }
 
     /// Generate a summary.
@@ -1266,7 +1281,12 @@ impl PipelineExecutionReport {
             String::new()
         };
 
-        format!("{}: {}{}", status, self.aggregation.summary(), rollback_info)
+        format!(
+            "{}: {}{}",
+            status,
+            self.aggregation.summary(),
+            rollback_info
+        )
     }
 }
 
@@ -1314,20 +1334,29 @@ pub enum CheckIssuePredicate {
 
 impl OperatorCondition {
     /// Evaluate whether the condition is met.
-    pub fn evaluate(&self, _brep: &rcad_kernel::BRep, report: &HealingReport, previous_results: &[OperatorResult]) -> bool {
+    pub fn evaluate(
+        &self,
+        _brep: &rcad_kernel::BRep,
+        report: &HealingReport,
+        previous_results: &[OperatorResult],
+    ) -> bool {
         match self {
             OperatorCondition::Always => true,
             OperatorCondition::OnlyIfIssues => !report.final_result.is_valid(),
             OperatorCondition::OnlyIfClean => report.final_result.is_valid(),
-            OperatorCondition::OnlyIfIssueType(pred) => {
-                report.final_result.issues.iter().any(|issue| pred.matches(issue))
-            }
-            OperatorCondition::OnlyIfPreviousChanged(idx) => {
-                previous_results.get(*idx).map(|r| r.changed).unwrap_or(false)
-            }
-            OperatorCondition::OnlyIfPreviousUnchanged(idx) => {
-                previous_results.get(*idx).map(|r| !r.changed).unwrap_or(true)
-            }
+            OperatorCondition::OnlyIfIssueType(pred) => report
+                .final_result
+                .issues
+                .iter()
+                .any(|issue| pred.matches(issue)),
+            OperatorCondition::OnlyIfPreviousChanged(idx) => previous_results
+                .get(*idx)
+                .map(|r| r.changed)
+                .unwrap_or(false),
+            OperatorCondition::OnlyIfPreviousUnchanged(idx) => previous_results
+                .get(*idx)
+                .map(|r| !r.changed)
+                .unwrap_or(true),
             OperatorCondition::OnlyIfIssueCountAbove(threshold) => {
                 report.final_result.issues.len() > *threshold
             }
@@ -1343,10 +1372,18 @@ impl CheckIssuePredicate {
         match self {
             CheckIssuePredicate::OpenWire => matches!(issue, CheckIssue::OpenWire { .. }),
             CheckIssuePredicate::ZeroNormal => matches!(issue, CheckIssue::ZeroNormal { .. }),
-            CheckIssuePredicate::DegenerateFace => matches!(issue, CheckIssue::DegenerateFace { .. }),
-            CheckIssuePredicate::NonManifoldEdge => matches!(issue, CheckIssue::NonManifoldEdge { .. }),
-            CheckIssuePredicate::SelfIntersection => matches!(issue, CheckIssue::SelfIntersectingWire { .. }),
-            CheckIssuePredicate::GeometricSelfIntersection => matches!(issue, CheckIssue::GeometricSelfIntersection { .. }),
+            CheckIssuePredicate::DegenerateFace => {
+                matches!(issue, CheckIssue::DegenerateFace { .. })
+            }
+            CheckIssuePredicate::NonManifoldEdge => {
+                matches!(issue, CheckIssue::NonManifoldEdge { .. })
+            }
+            CheckIssuePredicate::SelfIntersection => {
+                matches!(issue, CheckIssue::SelfIntersectingWire { .. })
+            }
+            CheckIssuePredicate::GeometricSelfIntersection => {
+                matches!(issue, CheckIssue::GeometricSelfIntersection { .. })
+            }
         }
     }
 }
@@ -1492,15 +1529,19 @@ impl OperatorChainConfig {
     pub fn mesh_prep_preset() -> Self {
         Self {
             operators: vec![
-                HealingOperatorWithCondition::new(HealingOperator::SplitAngle(SplitAngleOperator {
-                    max_angle: std::f64::consts::PI / 4.0, // 45 degrees
-                    ..Default::default()
-                })),
-                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(ConvertToBSplineOperator {
-                    convert_elementary: true,
-                    convert_planes: false,
-                    ..Default::default()
-                })),
+                HealingOperatorWithCondition::new(HealingOperator::SplitAngle(
+                    SplitAngleOperator {
+                        max_angle: std::f64::consts::PI / 4.0, // 45 degrees
+                        ..Default::default()
+                    },
+                )),
+                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(
+                    ConvertToBSplineOperator {
+                        convert_elementary: true,
+                        convert_planes: false,
+                        ..Default::default()
+                    },
+                )),
                 HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
                 HealingOperatorWithCondition::new(HealingOperator::Repair),
             ],
@@ -1519,8 +1560,12 @@ impl OperatorChainConfig {
     pub fn export_prep_preset() -> Self {
         Self {
             operators: vec![
-                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(ConvertToBSplineOperator::default())),
-                HealingOperatorWithCondition::new(HealingOperator::SurfaceToBezier(SurfaceToBezierOperator::default())),
+                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(
+                    ConvertToBSplineOperator::default(),
+                )),
+                HealingOperatorWithCondition::new(HealingOperator::SurfaceToBezier(
+                    SurfaceToBezierOperator::default(),
+                )),
                 HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
                 HealingOperatorWithCondition::new(HealingOperator::Repair),
             ],
@@ -1539,7 +1584,9 @@ impl OperatorChainConfig {
     pub fn scale_preset(scale: f64) -> Self {
         Self {
             operators: vec![
-                HealingOperatorWithCondition::new(HealingOperator::ScaleShape(ScaleShapeOperator::uniform(scale))),
+                HealingOperatorWithCondition::new(HealingOperator::ScaleShape(
+                    ScaleShapeOperator::uniform(scale),
+                )),
                 HealingOperatorWithCondition::new(HealingOperator::PropagateTolerances),
                 HealingOperatorWithCondition::new(HealingOperator::Repair),
             ],
@@ -1599,7 +1646,8 @@ pub struct StageReport {
 
 impl StageReport {
     pub fn issues_fixed(&self) -> usize {
-        self.issue_count_before.saturating_sub(self.issue_count_after)
+        self.issue_count_before
+            .saturating_sub(self.issue_count_after)
     }
 
     pub fn is_improved(&self) -> bool {
@@ -1657,7 +1705,8 @@ impl ShapeProcessReport {
     }
 
     pub fn issues_fixed(&self) -> usize {
-        self.initial_issue_count().saturating_sub(self.final_issue_count())
+        self.initial_issue_count()
+            .saturating_sub(self.final_issue_count())
     }
 
     pub fn is_improved(&self) -> bool {
@@ -1734,4 +1783,3 @@ impl Default for ShapeProcessConfig {
 include!("e1.rs");
 include!("e2.rs");
 include!("heal_lib.rs");
-

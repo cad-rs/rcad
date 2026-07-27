@@ -169,7 +169,12 @@ mod lin_tests {
 
     #[test]
     fn distance_to_point_on_line_is_zero() {
-        assert!(Line3::new(DVec3::ZERO, DVec3::X).distance(DVec3::new(10.0, 0.0, 0.0)).abs() < TOL);
+        assert!(
+            Line3::new(DVec3::ZERO, DVec3::X)
+                .distance(DVec3::new(10.0, 0.0, 0.0))
+                .abs()
+                < TOL
+        );
     }
 
     #[test]
@@ -195,8 +200,8 @@ mod lin_tests {
 #[cfg(test)]
 mod circ_tests {
     use super::*;
-    use crate::geom::Circle3;
     use crate::CurveEval;
+    use crate::geom::Circle3;
 
     fn make_circ() -> Circle3 {
         Circle3::new(DVec3::ZERO, DVec3::Z, 5.0)
@@ -281,8 +286,8 @@ mod pln_tests {
 #[cfg(test)]
 mod elips_tests {
     use super::*;
-    use crate::geom::Ellipse3;
     use crate::CurveEval;
+    use crate::geom::Ellipse3;
 
     fn make_elips() -> Ellipse3 {
         Ellipse3 {
@@ -331,14 +336,17 @@ mod elips_tests {
 #[cfg(test)]
 mod hypr_tests {
     use super::*;
-    use crate::geom::Hyperbola3;
     use crate::CurveEval;
+    use crate::geom::Hyperbola3;
 
     #[test]
     fn constructor_with_semi_axes() {
         let h = Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 5.0, semi_minor: 3.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 5.0,
+            semi_minor: 3.0,
         };
         assert!((h.semi_major - 5.0).abs() < TOL);
         assert!((h.semi_minor - 3.0).abs() < TOL);
@@ -347,8 +355,11 @@ mod hypr_tests {
     #[test]
     fn point_at_zero_time() {
         let h = Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 5.0, semi_minor: 3.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 5.0,
+            semi_minor: 3.0,
         };
         // P(0) = center + a*cosh(0)*major_dir + b*sinh(0)*minor_dir = (5,0,0)
         assert!((h.point_at(0.0) - DVec3::new(5.0, 0.0, 0.0)).length() < TOL_EVAL);
@@ -357,8 +368,11 @@ mod hypr_tests {
     #[test]
     fn eccentricity_formula() {
         let h = Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 5.0, semi_minor: 3.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 5.0,
+            semi_minor: 3.0,
         };
         let e = (1.0 + (h.semi_minor * h.semi_minor) / (h.semi_major * h.semi_major)).sqrt();
         assert!((e - (34.0_f64).sqrt() / 5.0).abs() < TOL);
@@ -372,13 +386,15 @@ mod hypr_tests {
 #[cfg(test)]
 mod parab_tests {
     use super::*;
-    use crate::geom::Parabola3;
     use crate::CurveEval;
+    use crate::geom::Parabola3;
 
     #[test]
     fn constructor_with_focal_length() {
         let p = Parabola3 {
-            vertex: DVec3::ZERO, axis_dir: DVec3::X, normal: DVec3::Z,
+            vertex: DVec3::ZERO,
+            axis_dir: DVec3::X,
+            normal: DVec3::Z,
             focal_param: 2.0,
         };
         assert!((p.focal_param - 2.0).abs() < TOL);
@@ -387,7 +403,9 @@ mod parab_tests {
     #[test]
     fn point_at_vertex_is_origin() {
         let p = Parabola3 {
-            vertex: DVec3::ZERO, axis_dir: DVec3::X, normal: DVec3::Z,
+            vertex: DVec3::ZERO,
+            axis_dir: DVec3::X,
+            normal: DVec3::Z,
             focal_param: 2.0,
         };
         assert!((p.point_at(0.0) - DVec3::ZERO).length() < TOL_EVAL);
@@ -401,13 +419,15 @@ mod parab_tests {
 #[cfg(test)]
 mod torus_tests {
     use super::*;
-    use crate::geom::ToroidalSurface;
     use crate::SurfaceEval;
+    use crate::geom::ToroidalSurface;
 
     fn make_torus() -> ToroidalSurface {
         ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            major_radius: 10.0, minor_radius: 3.0,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 10.0,
+            minor_radius: 3.0,
         }
     }
 
@@ -434,8 +454,8 @@ mod torus_tests {
 #[cfg(test)]
 mod cylinder_tests {
     use super::*;
-    use crate::geom::CylindricalSurface;
     use crate::SurfaceEval;
+    use crate::geom::CylindricalSurface;
 
     #[test]
     fn constructor_with_radius() {
@@ -467,8 +487,8 @@ mod cylinder_tests {
 #[cfg(test)]
 mod sphere_tests {
     use super::*;
-    use crate::geom::SphericalSurface;
     use crate::SurfaceEval;
+    use crate::geom::SphericalSurface;
 
     fn make_sphere() -> SphericalSurface {
         // axis=Z: OCCT-aligned ref_dir = X
@@ -510,13 +530,15 @@ mod sphere_tests {
 #[cfg(test)]
 mod cone_tests {
     use super::*;
-    use crate::geom::ConicalSurface;
     use crate::SurfaceEval;
+    use crate::geom::ConicalSurface;
 
     #[test]
     fn constructor_with_half_angle() {
         let c = ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, radius: 0.0,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 0.0,
             half_angle_rad: std::f64::consts::FRAC_PI_4,
         };
         assert!((c.half_angle_rad - std::f64::consts::FRAC_PI_4).abs() < TOL);
@@ -525,7 +547,9 @@ mod cone_tests {
     #[test]
     fn point_at_v_zero_is_finite() {
         let c = ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, radius: 5.0,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
             half_angle_rad: 0.5,
         };
         assert!(c.point_at(0.0, 0.0).is_finite());
@@ -543,7 +567,10 @@ mod mat_tests {
 
     #[test]
     fn identity_multiply() {
-        assert!((DMat3::IDENTITY * DVec3::new(1.0, 2.0, 3.0) - DVec3::new(1.0, 2.0, 3.0)).length() < TOL);
+        assert!(
+            (DMat3::IDENTITY * DVec3::new(1.0, 2.0, 3.0) - DVec3::new(1.0, 2.0, 3.0)).length()
+                < TOL
+        );
     }
 
     #[test]
@@ -560,8 +587,14 @@ mod mat_tests {
 
     #[test]
     fn transpose() {
-        let m = DMat3::from_cols(DVec3::new(1.0, 2.0, 3.0), DVec3::new(4.0, 5.0, 6.0), DVec3::new(7.0, 8.0, 9.0));
-        assert!((m.transpose() * DVec3::new(1.0, 0.0, 0.0) - DVec3::new(1.0, 4.0, 7.0)).length() < TOL);
+        let m = DMat3::from_cols(
+            DVec3::new(1.0, 2.0, 3.0),
+            DVec3::new(4.0, 5.0, 6.0),
+            DVec3::new(7.0, 8.0, 9.0),
+        );
+        assert!(
+            (m.transpose() * DVec3::new(1.0, 0.0, 0.0) - DVec3::new(1.0, 4.0, 7.0)).length() < TOL
+        );
     }
 
     #[test]
@@ -586,24 +619,40 @@ mod trsf_tests {
 
     #[test]
     fn identity_transform() {
-        assert!((DAffine3::IDENTITY.transform_point3(DVec3::new(1.0, 2.0, 3.0)) - DVec3::new(1.0, 2.0, 3.0)).length() < TOL);
+        assert!(
+            (DAffine3::IDENTITY.transform_point3(DVec3::new(1.0, 2.0, 3.0))
+                - DVec3::new(1.0, 2.0, 3.0))
+            .length()
+                < TOL
+        );
     }
 
     #[test]
     fn translation() {
         let t = DAffine3::from_translation(DVec3::new(10.0, 20.0, 30.0));
-        assert!((t.transform_point3(DVec3::new(1.0, 2.0, 3.0)) - DVec3::new(11.0, 22.0, 33.0)).length() < TOL);
+        assert!(
+            (t.transform_point3(DVec3::new(1.0, 2.0, 3.0)) - DVec3::new(11.0, 22.0, 33.0)).length()
+                < TOL
+        );
     }
 
     #[test]
     fn rotation_around_z() {
-        assert!((DAffine3::from_rotation_z(std::f64::consts::FRAC_PI_2).transform_point3(DVec3::X) - DVec3::new(0.0, 1.0, 0.0)).length() < TOL);
+        assert!(
+            (DAffine3::from_rotation_z(std::f64::consts::FRAC_PI_2).transform_point3(DVec3::X)
+                - DVec3::new(0.0, 1.0, 0.0))
+            .length()
+                < TOL
+        );
     }
 
     #[test]
     fn scale() {
         let t = DAffine3::from_scale(DVec3::new(2.0, 3.0, 4.0));
-        assert!((t.transform_point3(DVec3::new(1.0, 2.0, 3.0)) - DVec3::new(2.0, 6.0, 12.0)).length() < TOL);
+        assert!(
+            (t.transform_point3(DVec3::new(1.0, 2.0, 3.0)) - DVec3::new(2.0, 6.0, 12.0)).length()
+                < TOL
+        );
     }
 }
 
@@ -629,7 +678,11 @@ mod quat_tests {
 
     #[test]
     fn rotation_180_around_z() {
-        assert!((DQuat::from_rotation_z(std::f64::consts::PI) * DVec3::X - DVec3::new(-1.0, 0.0, 0.0)).length() < TOL);
+        assert!(
+            (DQuat::from_rotation_z(std::f64::consts::PI) * DVec3::X - DVec3::new(-1.0, 0.0, 0.0))
+                .length()
+                < TOL
+        );
     }
 
     #[test]
@@ -672,8 +725,10 @@ mod convert_circle_tests {
             let t = i as f64 * std::f64::consts::FRAC_PI_2; // 0, π/2, π, 3π/2
             let p_circ = c.point_at(t);
             let p_bsp = eval_at_circle_t(t);
-            assert!((p_circ - p_bsp).length() < 1e-4,
-                "mismatch at t={t}: {p_circ:?} vs {p_bsp:?}");
+            assert!(
+                (p_circ - p_bsp).length() < 1e-4,
+                "mismatch at t={t}: {p_circ:?} vs {p_bsp:?}"
+            );
         }
     }
 }
@@ -694,8 +749,10 @@ mod convert_sphere_tests {
         let bspline = surface_to_bspline(&Surface3::Sphere(sphere), 10, 10);
         for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                assert!(bspline.point_at(u, v).is_finite(),
-                    "sphere BSpline point at ({u},{v}) should be finite");
+                assert!(
+                    bspline.point_at(u, v).is_finite(),
+                    "sphere BSpline point at ({u},{v}) should be finite"
+                );
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a plane with a torus.
+//! Analytic intersection of a plane with a torus.
 //!
 //! # Cases
 //!
@@ -90,12 +90,17 @@ fn intersect_plane_torus_perpendicular(
     // Tangent case: one circle
     if (abs_dist - torus.minor_radius).abs() < tol {
         let center = torus.center - torus.axis * signed_dist;
-        return PlaneTorusResult::TangentCircle(Circle3::new(center, torus.axis, torus.major_radius));
+        return PlaneTorusResult::TangentCircle(Circle3::new(
+            center,
+            torus.axis,
+            torus.major_radius,
+        ));
     }
 
     // Two circles at height signed_dist from torus center
     // Circle radius on the tube: sqrt(r^2 - d^2) where r = minor_radius, d = distance
-    let tube_circle_r = (torus.minor_radius * torus.minor_radius - signed_dist * signed_dist).sqrt();
+    let tube_circle_r =
+        (torus.minor_radius * torus.minor_radius - signed_dist * signed_dist).sqrt();
 
     // Two circles at major_radius +/- tube_circle_r from axis
     let r1 = torus.major_radius + tube_circle_r;
@@ -175,16 +180,13 @@ fn intersect_plane_torus_parallel(
 
         // Check for tangent case (circles merge into one)
         if (center1 - center2).length() < tol {
-            return PlaneTorusResult::TangentCircle(Circle3::new(center1, n, torus.minor_radius,
-            ));
+            return PlaneTorusResult::TangentCircle(Circle3::new(center1, n, torus.minor_radius));
         }
 
         // Two circles of radius r in the plane
         PlaneTorusResult::TwoCircles(
-            Circle3::new(center1, n, torus.minor_radius,
-            ),
-            Circle3::new(center2, n, torus.minor_radius,
-            ),
+            Circle3::new(center1, n, torus.minor_radius),
+            Circle3::new(center2, n, torus.minor_radius),
         )
     } else {
         // d > R: Plane is between the tube center circle and outer edge
@@ -215,10 +217,7 @@ fn intersect_plane_torus_parallel(
 /// ```
 ///
 /// Returns polylines for the ± branches, each clipped to contiguous θ-ranges.
-pub fn intersect_plane_torus_skew(
-    plane: &Plane,
-    torus: &ToroidalSurface,
-) -> Vec<Vec<DVec3>> {
+pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec<Vec<DVec3>> {
     use std::f64::consts::TAU;
     let n = plane.normal.normalize();
     let a = torus.axis.normalize();
@@ -338,8 +337,7 @@ pub fn intersect_plane_torus_skew(
             let tube_center_f = torus_center + r_major * radial_f;
             let p_plus = tube_center_f
                 + r_minor * ((v0_f + acos_f).cos() * radial_f + (v0_f + acos_f).sin() * a);
-            let use_plus = (p_first - p_plus).length_squared()
-                < TOLERANCE_VEC_SQ_MIN;
+            let use_plus = (p_first - p_plus).length_squared() < TOLERANCE_VEC_SQ_MIN;
 
             let _pts_for_eval = branch.clone();
             let eval_fn = move |u_mid: f64| -> Option<DVec3> {
@@ -352,18 +350,23 @@ pub fn intersect_plane_torus_skew(
                 }
                 let acos_val = (du / m).clamp(-1.0, 1.0).acos();
                 let v0 = nz.atan2(bu);
-                let v = if use_plus { v0 + acos_val } else { v0 - acos_val };
+                let v = if use_plus {
+                    v0 + acos_val
+                } else {
+                    v0 - acos_val
+                };
                 let radial = cu * x + su * y;
                 let tube_center = torus_center + r_major * radial;
-                let p = tube_center
-                    + r_minor * (v.cos() * radial + v.sin() * a);
+                let p = tube_center + r_minor * (v.cos() * radial + v.sin() * a);
                 if p.is_finite() { Some(p) } else { None }
             };
 
-            let refined =
-                crate::inttools::pcurve_derive::refine_polyline(
-                    &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
-                );
+            let refined = crate::inttools::pcurve_derive::refine_polyline(
+                &branch,
+                eval_fn,
+                CHORD_TOL,
+                REFINE_DEPTH,
+            );
             refined.into_iter().map(|(_, p)| p).collect()
         })
         .collect();
@@ -381,5 +384,3 @@ pub fn intersect_plane_torus_skew(
 
     result
 }
-
-

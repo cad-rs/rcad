@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a cylinder and a cone.
+//! Analytic intersection of a cylinder and a cone.
 //!
 //! # Case classification
 //!
@@ -33,12 +33,12 @@
 //! so the caller can fall back to numeric marching.
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, CylindricalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, ConicalSurface, CylindricalSurface, any_perpendicular};
 use std::f64::consts::TAU;
 
-use crate::tolerance::*;
 use super::pcurve_derive::refine_polyline;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -122,7 +122,11 @@ fn intersect_parallel_cylinder_cone(
     let apex = cone.apex_point();
     // Make sure a_cone points the same direction as a_cyl for height arithmetic.
     // (The cross product is ~0 so they are parallel; they may anti-parallel.)
-    let _a_cone = if a_cyl.dot(a_cone) >= 0.0 { a_cone } else { -a_cone };
+    let _a_cone = if a_cyl.dot(a_cone) >= 0.0 {
+        a_cone
+    } else {
+        -a_cone
+    };
 
     let r_cyl = cyl.radius;
     let tan_beta = cone.half_angle_rad.tan();
@@ -146,19 +150,17 @@ fn intersect_parallel_cylinder_cone(
         // radius equals the cylinder radius.  For a double-napped infinite cone
         // there are two solutions: one on each nappe.
         let h_offset = r_cyl / tan_beta;
-        let h_upper = h_apex + h_offset;  // circle on the upper nappe (h > h_apex)
-        let h_lower = h_apex - h_offset;  // circle on the lower nappe (h < h_apex)
+        let h_upper = h_apex + h_offset; // circle on the upper nappe (h > h_apex)
+        let h_lower = h_apex - h_offset; // circle on the lower nappe (h < h_apex)
 
         let mut first: Option<Circle3> = None;
         let mut second: Option<Circle3> = None;
 
         if h_upper > h_apex + TOLERANCE_ABS {
-            first = Some(Circle3::new(cyl.origin + a_cyl * h_upper, a_cyl, r_cyl,
-            ));
+            first = Some(Circle3::new(cyl.origin + a_cyl * h_upper, a_cyl, r_cyl));
         }
         if h_lower < h_apex - TOLERANCE_ABS {
-            second = Some(Circle3::new(cyl.origin + a_cyl * h_lower, a_cyl, r_cyl,
-            ));
+            second = Some(Circle3::new(cyl.origin + a_cyl * h_lower, a_cyl, r_cyl));
         }
 
         return match (first, second) {
@@ -235,7 +237,11 @@ fn intersect_parallel_offset_cylinder_cone(
         let h_min = h_apex + sign * abs_diff / tan_beta;
         let h_max = h_apex + sign * d_sum / tan_beta;
 
-        let (h_lo, h_hi) = if sign > 0.0 { (h_min, h_max) } else { (h_max, h_min) };
+        let (h_lo, h_hi) = if sign > 0.0 {
+            (h_min, h_max)
+        } else {
+            (h_max, h_min)
+        };
 
         if h_hi - h_lo <= TOLERANCE_ABS * 10.0 {
             continue; // degenerately narrow intersection band
@@ -441,15 +447,29 @@ fn intersect_skew_cylinder_cone(
         let c_v = d0_a * d0_a - cos2 * d0_sq;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
     let eval_minus = |u: f64| -> Option<DVec3> {
         let (cos_u, sin_u) = (u.cos(), u.sin());
@@ -461,22 +481,40 @@ fn intersect_skew_cylinder_cone(
         let c_v = d0_a * d0_a - cos2 * d0_sq;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
 
     let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
         refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
         refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
     );
 
     // Dedup: remove trailing points that nearly duplicate the first point
@@ -519,5 +557,3 @@ fn intersect_skew_cylinder_cone(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

@@ -2,15 +2,12 @@
 // OCCT IntTools_BeanFaceIntersector.hxx L1-L215
 // OCCT IntTools_BeanFaceIntersector.cxx L1-L2639
 
-use std::f64::consts::PI;
-use std::cmp::Ordering;
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, TOLERANCE_CLAMP_MIN, precision_is_infinite};
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::projection::{closest_point_on_surface, closest_point_on_curve};
-use crate::tolerance::{
-    TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_ANG,
-    precision_is_infinite,
-};
+use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
+use std::cmp::Ordering;
+use std::f64::consts::PI;
 
 // OCCT ElSLib helpers: plane coefficients and parameter computation
 fn plane_coefficients(p: &rcad_kernel::geom::Plane) -> (f64, f64, f64, f64) {
@@ -32,7 +29,10 @@ fn curve_is_periodic(curve: &Curve3) -> bool {
 }
 
 fn surface_is_u_periodic(surface: &Surface3) -> bool {
-    matches!(surface, Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_))
+    matches!(
+        surface,
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_)
+    )
 }
 
 fn surface_is_v_periodic(surface: &Surface3) -> bool {
@@ -115,10 +115,18 @@ impl SurfaceEvalExt for Surface3 {
 // ============================================================================
 // OCCT Precision constants
 // ============================================================================
-fn precision_confusion() -> f64 { TOLERANCE_ABS }          // Precision::Confusion() = 1e-7
-fn precision_pconfusion() -> f64 { 1e-12 }                  // Precision::PConfusion() = 1e-12
-fn precision_angular() -> f64 { TOLERANCE_ANG }             // Precision::Angular() = 1e-9
-fn real_last() -> f64 { f64::MAX }
+fn precision_confusion() -> f64 {
+    TOLERANCE_ABS
+} // Precision::Confusion() = 1e-7
+fn precision_pconfusion() -> f64 {
+    1e-12
+} // Precision::PConfusion() = 1e-12
+fn precision_angular() -> f64 {
+    TOLERANCE_ANG
+} // Precision::Angular() = 1e-9
+fn real_last() -> f64 {
+    f64::MAX
+}
 
 // ============================================================================
 // CurveGeomType / SurfaceGeomType (OCCT GeomAbs_CurveType / GeomAbs_SurfaceType)
@@ -187,11 +195,21 @@ pub struct IntRange {
 }
 
 impl IntRange {
-    pub fn new(first: f64, last: f64) -> Self { IntRange { first, last } }
-    pub fn first(&self) -> f64 { self.first }
-    pub fn last(&self) -> f64 { self.last }
-    pub fn set_first(&mut self, v: f64) { self.first = v; }
-    pub fn set_last(&mut self, v: f64) { self.last = v; }
+    pub fn new(first: f64, last: f64) -> Self {
+        IntRange { first, last }
+    }
+    pub fn first(&self) -> f64 {
+        self.first
+    }
+    pub fn last(&self) -> f64 {
+        self.last
+    }
+    pub fn set_first(&mut self, v: f64) {
+        self.first = v;
+    }
+    pub fn set_last(&mut self, v: f64) {
+        self.last = v;
+    }
 }
 
 // ============================================================================
@@ -217,7 +235,12 @@ impl MarkedRangeSet {
     }
 
     // OCCT L36-46: SetBoundaries
-    pub fn set_boundaries(&mut self, the_first_boundary: f64, the_last_boundary: f64, the_init_flag: i32) {
+    pub fn set_boundaries(
+        &mut self,
+        the_first_boundary: f64,
+        the_last_boundary: f64,
+        the_init_flag: i32,
+    ) {
         self.my_range_set_storer.clear();
         self.my_range_set_storer.push(the_first_boundary);
         self.my_range_set_storer.push(the_last_boundary);
@@ -226,7 +249,9 @@ impl MarkedRangeSet {
     }
 
     // OCCT: Length — number of ranges (myRangeNumber)
-    pub fn length(&self) -> usize { self.my_flags.len() }
+    pub fn length(&self) -> usize {
+        self.my_flags.len()
+    }
 
     // OCCT L196-199: Flag(theIndex)
     pub fn flag(&self, the_index: usize) -> i32 {
@@ -236,7 +261,10 @@ impl MarkedRangeSet {
     // OCCT L293-297: Range(theIndex) = (boundaries[theIndex], boundaries[theIndex+1])
     pub fn range(&self, the_index: usize) -> IntRange {
         let idx = the_index - 1;
-        IntRange::new(self.my_range_set_storer[idx], self.my_range_set_storer[idx + 1])
+        IntRange::new(
+            self.my_range_set_storer[idx],
+            self.my_range_set_storer[idx + 1],
+        )
     }
 
     // OCCT L191-194: SetFlag(theIndex, theFlag)
@@ -245,7 +273,12 @@ impl MarkedRangeSet {
     }
 
     // OCCT L66-129: InsertRange(theFirstBoundary, theLastBoundary, theFlag)
-    pub fn insert_range(&mut self, the_first_boundary: f64, the_last_boundary: f64, the_flag: i32) -> bool {
+    pub fn insert_range(
+        &mut self,
+        the_first_boundary: f64,
+        the_last_boundary: f64,
+        the_flag: i32,
+    ) -> bool {
         let an_index1 = self.get_index(the_first_boundary, true);
         if an_index1 == 0 {
             return false;
@@ -270,13 +303,15 @@ impl MarkedRangeSet {
 
         // InsertRangeAfter in OCCT: InsertAfter(index, value)
         // myRangeSetStorer.InsertAfter(anIndex1, theFirstBoundary);
-        self.my_range_set_storer.insert(an_index1, the_first_boundary);
+        self.my_range_set_storer
+            .insert(an_index1, the_first_boundary);
         an_index2 += 1;
         // myFlags.InsertAfter(anIndex1, theFlag);
         self.my_flags.insert(an_index1, the_flag);
 
         // myRangeSetStorer.InsertAfter(anIndex2, theLastBoundary);
-        self.my_range_set_storer.insert(an_index2, the_last_boundary);
+        self.my_range_set_storer
+            .insert(an_index2, the_last_boundary);
 
         if are_equal_indices {
             // myFlags.InsertAfter(anIndex2, aPrevFlag);
@@ -298,8 +333,13 @@ impl MarkedRangeSet {
     }
 
     // OCCT L136-182: InsertRange with index
-    pub fn insert_range_at(&mut self, the_first_boundary: f64, the_last_boundary: f64,
-                           the_flag: i32, the_index: usize) -> bool {
+    pub fn insert_range_at(
+        &mut self,
+        the_first_boundary: f64,
+        the_last_boundary: f64,
+        the_flag: i32,
+        the_index: usize,
+    ) -> bool {
         let a_tolerance = 1e-15;
 
         if (the_index == 0) || (the_index > self.my_flags.len()) {
@@ -318,7 +358,8 @@ impl MarkedRangeSet {
         if ((the_first_boundary - self.my_range_set_storer[the_index - 1]).abs() > a_tolerance)
             && ((the_first_boundary - self.my_range_set_storer[the_index]).abs() > a_tolerance)
         {
-            self.my_range_set_storer.insert(the_index, the_first_boundary);
+            self.my_range_set_storer
+                .insert(the_index, the_first_boundary);
             self.my_flags.insert(the_index, the_flag);
             // anIndex++ in OCCT affects subsequent checks; we track position
             // For simplicity, recompute indices after insertion
@@ -394,8 +435,12 @@ impl MarkedRangeSet {
 // ============================================================================
 #[derive(Debug, Clone)]
 pub struct BndBox {
-    xmin: f64, ymin: f64, zmin: f64,
-    xmax: f64, ymax: f64, zmax: f64,
+    xmin: f64,
+    ymin: f64,
+    zmin: f64,
+    xmax: f64,
+    ymax: f64,
+    zmax: f64,
     is_whole: bool,
     is_void: bool,
 }
@@ -403,8 +448,12 @@ pub struct BndBox {
 impl BndBox {
     pub fn new() -> Self {
         BndBox {
-            xmin: f64::INFINITY, ymin: f64::INFINITY, zmin: f64::INFINITY,
-            xmax: f64::NEG_INFINITY, ymax: f64::NEG_INFINITY, zmax: f64::NEG_INFINITY,
+            xmin: f64::INFINITY,
+            ymin: f64::INFINITY,
+            zmin: f64::INFINITY,
+            xmax: f64::NEG_INFINITY,
+            ymax: f64::NEG_INFINITY,
+            zmax: f64::NEG_INFINITY,
             is_whole: false,
             is_void: true,
         }
@@ -413,22 +462,41 @@ impl BndBox {
     pub fn add_point(&mut self, p: DVec3) {
         if self.is_void || self.is_whole {
             self.is_void = false;
-            self.xmin = p.x; self.xmax = p.x;
-            self.ymin = p.y; self.ymax = p.y;
-            self.zmin = p.z; self.zmax = p.z;
+            self.xmin = p.x;
+            self.xmax = p.x;
+            self.ymin = p.y;
+            self.ymax = p.y;
+            self.zmin = p.z;
+            self.zmax = p.z;
         } else {
-            if p.x < self.xmin { self.xmin = p.x; }
-            if p.x > self.xmax { self.xmax = p.x; }
-            if p.y < self.ymin { self.ymin = p.y; }
-            if p.y > self.ymax { self.ymax = p.y; }
-            if p.z < self.zmin { self.zmin = p.z; }
-            if p.z > self.zmax { self.zmax = p.z; }
+            if p.x < self.xmin {
+                self.xmin = p.x;
+            }
+            if p.x > self.xmax {
+                self.xmax = p.x;
+            }
+            if p.y < self.ymin {
+                self.ymin = p.y;
+            }
+            if p.y > self.ymax {
+                self.ymax = p.y;
+            }
+            if p.z < self.zmin {
+                self.zmin = p.z;
+            }
+            if p.z > self.zmax {
+                self.zmax = p.z;
+            }
         }
     }
 
     pub fn is_out(&self, other: &BndBox) -> bool {
-        if self.is_void || other.is_void { return true; }
-        if self.is_whole || other.is_whole { return false; }
+        if self.is_void || other.is_void {
+            return true;
+        }
+        if self.is_whole || other.is_whole {
+            return false;
+        }
         self.xmax < other.xmin - precision_pconfusion()
             || self.xmin > other.xmax + precision_pconfusion()
             || self.ymax < other.ymin - precision_pconfusion()
@@ -439,22 +507,33 @@ impl BndBox {
 
     pub fn enlarge(&mut self, tol: f64) {
         if !self.is_void && !self.is_whole {
-            self.xmin -= tol; self.xmax += tol;
-            self.ymin -= tol; self.ymax += tol;
-            self.zmin -= tol; self.zmax += tol;
+            self.xmin -= tol;
+            self.xmax += tol;
+            self.ymin -= tol;
+            self.ymax += tol;
+            self.zmin -= tol;
+            self.zmax += tol;
         }
     }
 
     pub fn get(&self) -> (f64, f64, f64, f64, f64, f64) {
-        (self.xmin, self.ymin, self.zmin, self.xmax, self.ymax, self.zmax)
+        (
+            self.xmin, self.ymin, self.zmin, self.xmax, self.ymax, self.zmax,
+        )
     }
 
-    pub fn is_whole(&self) -> bool { self.is_whole }
-    pub fn is_void(&self) -> bool { self.is_void }
+    pub fn is_whole(&self) -> bool {
+        self.is_whole
+    }
+    pub fn is_void(&self) -> bool {
+        self.is_void
+    }
 
     /// Square extent (diagonal length squared).
     pub fn square_extent(&self) -> f64 {
-        if self.is_void || self.is_whole { return f64::MAX; }
+        if self.is_void || self.is_whole {
+            return f64::MAX;
+        }
         let dx = self.xmax - self.xmin;
         let dy = self.ymax - self.ymin;
         let dz = self.zmax - self.zmin;
@@ -488,41 +567,72 @@ impl BRepAdaptorCurve {
         }
     }
 
-    pub fn curve(&self) -> &Curve3 { &self.curve }
+    pub fn curve(&self) -> &Curve3 {
+        &self.curve
+    }
 
-    pub fn get_type(&self) -> GeomAbsCurveType { curve_type(&self.curve) }
+    pub fn get_type(&self) -> GeomAbsCurveType {
+        curve_type(&self.curve)
+    }
 
-    pub fn value(&self, t: f64) -> DVec3 { self.curve.point_at(t) }
+    pub fn value(&self, t: f64) -> DVec3 {
+        self.curve.point_at(t)
+    }
 
     pub fn line(&self) -> &rcad_kernel::geom::Line3 {
-        match &self.curve { Curve3::Line(l) => l, _ => panic!("not a line") }
+        match &self.curve {
+            Curve3::Line(l) => l,
+            _ => panic!("not a line"),
+        }
     }
 
     pub fn circle(&self) -> &rcad_kernel::geom::Circle3 {
-        match &self.curve { Curve3::Circle(c) => c, _ => panic!("not a circle") }
+        match &self.curve {
+            Curve3::Circle(c) => c,
+            _ => panic!("not a circle"),
+        }
     }
 
     pub fn ellipse(&self) -> &rcad_kernel::geom::Ellipse3 {
-        match &self.curve { Curve3::Ellipse(e) => e, _ => panic!("not an ellipse") }
+        match &self.curve {
+            Curve3::Ellipse(e) => e,
+            _ => panic!("not an ellipse"),
+        }
     }
 
     pub fn hyperbola(&self) -> &rcad_kernel::geom::Hyperbola3 {
-        match &self.curve { Curve3::Hyperbola(h) => h, _ => panic!("not a hyperbola") }
+        match &self.curve {
+            Curve3::Hyperbola(h) => h,
+            _ => panic!("not a hyperbola"),
+        }
     }
 
     pub fn parabola(&self) -> &rcad_kernel::geom::Parabola3 {
-        match &self.curve { Curve3::Parabola(p) => p, _ => panic!("not a parabola") }
+        match &self.curve {
+            Curve3::Parabola(p) => p,
+            _ => panic!("not a parabola"),
+        }
     }
 
-    pub fn is_periodic(&self) -> bool { curve_is_periodic(&self.curve) }
+    pub fn is_periodic(&self) -> bool {
+        curve_is_periodic(&self.curve)
+    }
     pub fn period(&self) -> f64 {
         curve_period(&self.curve)
     }
-    pub fn first_parameter(&self) -> f64 { self.first_param }
-    pub fn last_parameter(&self) -> f64 { self.last_param }
+    pub fn first_parameter(&self) -> f64 {
+        self.first_param
+    }
+    pub fn last_parameter(&self) -> f64 {
+        self.last_param
+    }
 
     pub fn resolution(&self, tol: f64) -> f64 {
-        crate::inttools::curve_range::curve_resolution(&self.curve, 0.5 * (self.first_param + self.last_param), tol)
+        crate::inttools::curve_range::curve_resolution(
+            &self.curve,
+            0.5 * (self.first_param + self.last_param),
+            tol,
+        )
     }
 
     pub fn trim(&self, _first: f64, _last: f64) -> Curve3 {
@@ -555,40 +665,71 @@ impl BRepAdaptorSurface {
         }
     }
 
-    pub fn surface(&self) -> &Surface3 { &self.surface }
+    pub fn surface(&self) -> &Surface3 {
+        &self.surface
+    }
 
-    pub fn get_type(&self) -> GeomAbsSurfaceType { surface_type(&self.surface) }
+    pub fn get_type(&self) -> GeomAbsSurfaceType {
+        surface_type(&self.surface)
+    }
 
     pub fn value(&self, u: f64, v: f64) -> DVec3 {
         eval_surface_point(&self.surface, u, v)
     }
 
-    pub fn d0(&self, u: f64, v: f64) -> DVec3 { self.value(u, v) }
+    pub fn d0(&self, u: f64, v: f64) -> DVec3 {
+        self.value(u, v)
+    }
     pub fn d1(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         eval_surface_d1(&self.surface, u, v)
     }
 
     pub fn plane(&self) -> rcad_kernel::geom::Plane {
-        match &self.surface { Surface3::Plane(p) => *p, _ => panic!("not a plane") }
+        match &self.surface {
+            Surface3::Plane(p) => *p,
+            _ => panic!("not a plane"),
+        }
     }
 
     pub fn cylinder(&self) -> rcad_kernel::geom::CylindricalSurface {
-        match &self.surface { Surface3::Cylinder(c) => *c, _ => panic!("not a cylinder") }
+        match &self.surface {
+            Surface3::Cylinder(c) => *c,
+            _ => panic!("not a cylinder"),
+        }
     }
 
     pub fn sphere(&self) -> rcad_kernel::geom::SphericalSurface {
-        match &self.surface { Surface3::Sphere(s) => *s, _ => panic!("not a sphere") }
+        match &self.surface {
+            Surface3::Sphere(s) => *s,
+            _ => panic!("not a sphere"),
+        }
     }
 
-    pub fn is_u_periodic(&self) -> bool { surface_is_u_periodic(&self.surface) }
-    pub fn is_v_periodic(&self) -> bool { surface_is_v_periodic(&self.surface) }
-    pub fn u_period(&self) -> f64 { surface_u_period(&self.surface) }
-    pub fn v_period(&self) -> f64 { surface_v_period(&self.surface) }
+    pub fn is_u_periodic(&self) -> bool {
+        surface_is_u_periodic(&self.surface)
+    }
+    pub fn is_v_periodic(&self) -> bool {
+        surface_is_v_periodic(&self.surface)
+    }
+    pub fn u_period(&self) -> f64 {
+        surface_u_period(&self.surface)
+    }
+    pub fn v_period(&self) -> f64 {
+        surface_v_period(&self.surface)
+    }
 
-    pub fn first_u_parameter(&self) -> f64 { self.first_u }
-    pub fn last_u_parameter(&self) -> f64 { self.last_u }
-    pub fn first_v_parameter(&self) -> f64 { self.first_v }
-    pub fn last_v_parameter(&self) -> f64 { self.last_v }
+    pub fn first_u_parameter(&self) -> f64 {
+        self.first_u
+    }
+    pub fn last_u_parameter(&self) -> f64 {
+        self.last_u
+    }
+    pub fn first_v_parameter(&self) -> f64 {
+        self.first_v
+    }
+    pub fn last_v_parameter(&self) -> f64 {
+        self.last_v
+    }
 
     pub fn u_degree(&self) -> usize {
         match &self.surface {
@@ -602,7 +743,11 @@ impl BRepAdaptorSurface {
         match &self.surface {
             Surface3::BSpline(bs) => bs.degree_v,
             Surface3::Bezier(bz) => {
-                if bz.control_points.is_empty() { 1 } else { bz.control_points[0].len().saturating_sub(1).max(1) }
+                if bz.control_points.is_empty() {
+                    1
+                } else {
+                    bz.control_points[0].len().saturating_sub(1).max(1)
+                }
             }
             _ => 1,
         }
@@ -623,7 +768,9 @@ impl BRepAdaptorSurface {
     }
 
     /// OCCT: GeomSurfaceTransformed() — returns the surface with placement transform applied.
-    pub fn geom_surface_transformed(&self) -> Surface3 { self.surface.clone() }
+    pub fn geom_surface_transformed(&self) -> Surface3 {
+        self.surface.clone()
+    }
 }
 
 // ============================================================================
@@ -649,13 +796,24 @@ pub struct CurveRangeSample {
 
 impl CurveRangeSample {
     pub fn new(range_index: i32) -> Self {
-        CurveRangeSample { range_index, depth: 0 }
+        CurveRangeSample {
+            range_index,
+            depth: 0,
+        }
     }
 
-    pub fn depth(&self) -> i32 { self.depth }
-    pub fn set_depth(&mut self, d: i32) { self.depth = d; }
-    pub fn range_index(&self) -> i32 { self.range_index }
-    pub fn set_range_index(&mut self, idx: i32) { self.range_index = idx; }
+    pub fn depth(&self) -> i32 {
+        self.depth
+    }
+    pub fn set_depth(&mut self, d: i32) {
+        self.depth = d;
+    }
+    pub fn range_index(&self) -> i32 {
+        self.range_index
+    }
+    pub fn set_range_index(&mut self, idx: i32) {
+        self.range_index = idx;
+    }
 
     pub fn get_range_index_deeper(&self, nb_sample: i32) -> i32 {
         (self.range_index - 1) * nb_sample + 1
@@ -687,20 +845,45 @@ pub struct SurfaceRangeSample {
 
 impl SurfaceRangeSample {
     pub fn new(index_u: i32, index_v: i32, depth_u: i32, depth_v: i32) -> Self {
-        SurfaceRangeSample { index_u, index_v, depth_u, depth_v }
+        SurfaceRangeSample {
+            index_u,
+            index_v,
+            depth_u,
+            depth_v,
+        }
     }
 
-    pub fn depth_u(&self) -> i32 { self.depth_u }
-    pub fn depth_v(&self) -> i32 { self.depth_v }
-    pub fn set_depth_u(&mut self, d: i32) { self.depth_u = d; }
-    pub fn set_depth_v(&mut self, d: i32) { self.depth_v = d; }
-    pub fn index_u(&self) -> i32 { self.index_u }
-    pub fn index_v(&self) -> i32 { self.index_v }
-    pub fn set_index_u(&mut self, idx: i32) { self.index_u = idx; }
-    pub fn set_index_v(&mut self, idx: i32) { self.index_v = idx; }
+    pub fn depth_u(&self) -> i32 {
+        self.depth_u
+    }
+    pub fn depth_v(&self) -> i32 {
+        self.depth_v
+    }
+    pub fn set_depth_u(&mut self, d: i32) {
+        self.depth_u = d;
+    }
+    pub fn set_depth_v(&mut self, d: i32) {
+        self.depth_v = d;
+    }
+    pub fn index_u(&self) -> i32 {
+        self.index_u
+    }
+    pub fn index_v(&self) -> i32 {
+        self.index_v
+    }
+    pub fn set_index_u(&mut self, idx: i32) {
+        self.index_u = idx;
+    }
+    pub fn set_index_v(&mut self, idx: i32) {
+        self.index_v = idx;
+    }
 
-    pub fn get_index_u(&self) -> i32 { self.index_u }
-    pub fn get_index_v(&self) -> i32 { self.index_v }
+    pub fn get_index_u(&self) -> i32 {
+        self.index_u
+    }
+    pub fn get_index_v(&self) -> i32 {
+        self.index_v
+    }
 
     pub fn get_range_index_u_deeper(&self, nb_sample_u: i32) -> i32 {
         (self.index_u - 1) * nb_sample_u + 1
@@ -733,8 +916,10 @@ impl SurfaceRangeSample {
     }
 
     pub fn is_equal(&self, other: &SurfaceRangeSample) -> bool {
-        self.index_u == other.index_u && self.index_v == other.index_v
-            && self.depth_u == other.depth_u && self.depth_v == other.depth_v
+        self.index_u == other.index_u
+            && self.index_v == other.index_v
+            && self.depth_u == other.depth_u
+            && self.depth_v == other.depth_v
     }
 }
 
@@ -760,8 +945,12 @@ impl CurveRangeLocalizeData {
         }
     }
 
-    pub fn get_nb_sample(&self) -> i32 { self.nb_sample }
-    pub fn get_min_range(&self) -> f64 { self.min_range }
+    pub fn get_nb_sample(&self) -> i32 {
+        self.nb_sample
+    }
+    pub fn get_min_range(&self) -> f64 {
+        self.min_range
+    }
 
     pub fn is_range_out(&self, range: &CurveRangeSample) -> bool {
         self.out_ranges.contains(&range.range_index())
@@ -787,7 +976,9 @@ impl CurveRangeLocalizeData {
         }
     }
 
-    pub fn list_range_out(&self) -> Vec<i32> { self.out_ranges.clone() }
+    pub fn list_range_out(&self) -> Vec<i32> {
+        self.out_ranges.clone()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -817,8 +1008,10 @@ pub struct SurfaceRangeLocalizeData {
 impl SurfaceRangeLocalizeData {
     pub fn new(nb_sample_u: i32, nb_sample_v: i32, min_range_u: f64, min_range_v: f64) -> Self {
         SurfaceRangeLocalizeData {
-            nb_sample_u, nb_sample_v,
-            min_range_u, min_range_v,
+            nb_sample_u,
+            nb_sample_v,
+            min_range_u,
+            min_range_v,
             out_ranges_u: Vec::new(),
             out_ranges_v: Vec::new(),
             out_ranges_uv: Vec::new(),
@@ -827,26 +1020,39 @@ impl SurfaceRangeLocalizeData {
             v_params: Vec::new(),
             grid_points: Vec::new(),
             grid_deflection: 0.0,
-            frame_u_min: 0.0, frame_u_max: 0.0,
-            frame_v_min: 0.0, frame_v_max: 0.0,
+            frame_u_min: 0.0,
+            frame_u_max: 0.0,
+            frame_v_min: 0.0,
+            frame_v_max: 0.0,
             frame_u_params: Vec::new(),
             frame_v_params: Vec::new(),
         }
     }
 
-    pub fn get_nb_sample_u(&self) -> i32 { self.nb_sample_u }
-    pub fn get_nb_sample_v(&self) -> i32 { self.nb_sample_v }
-    pub fn get_min_range_u(&self) -> f64 { self.min_range_u }
-    pub fn get_min_range_v(&self) -> f64 { self.min_range_v }
+    pub fn get_nb_sample_u(&self) -> i32 {
+        self.nb_sample_u
+    }
+    pub fn get_nb_sample_v(&self) -> i32 {
+        self.nb_sample_v
+    }
+    pub fn get_min_range_u(&self) -> f64 {
+        self.min_range_u
+    }
+    pub fn get_min_range_v(&self) -> f64 {
+        self.min_range_v
+    }
 
     pub fn is_range_out(&self, range: &SurfaceRangeSample) -> bool {
-        self.out_ranges_uv.contains(&(range.index_u(), range.index_v()))
+        self.out_ranges_uv
+            .contains(&(range.index_u(), range.index_v()))
     }
 
     pub fn find_box(&self, range: &SurfaceRangeSample, box_out: &mut BndBox) -> bool {
         for (idx_u, idx_v, du, dv, b) in &self.boxes {
-            if *idx_u == range.index_u() && *idx_v == range.index_v()
-                && *du == range.depth_u() && *dv == range.depth_v()
+            if *idx_u == range.index_u()
+                && *idx_v == range.index_v()
+                && *du == range.depth_u()
+                && *dv == range.depth_v()
             {
                 *box_out = b.clone();
                 return true;
@@ -856,7 +1062,13 @@ impl SurfaceRangeLocalizeData {
     }
 
     pub fn add_box(&mut self, range: &SurfaceRangeSample, b: BndBox) {
-        self.boxes.push((range.index_u(), range.index_v(), range.depth_u(), range.depth_v(), b));
+        self.boxes.push((
+            range.index_u(),
+            range.index_v(),
+            range.depth_u(),
+            range.depth_v(),
+            b,
+        ));
     }
 
     pub fn add_out_range(&mut self, range: &SurfaceRangeSample) {
@@ -920,8 +1132,12 @@ impl SurfaceRangeLocalizeData {
         row[j_1based - 1] = p;
     }
 
-    pub fn get_grid_deflection(&self) -> f64 { self.grid_deflection }
-    pub fn set_grid_deflection(&mut self, d: f64) { self.grid_deflection = d; }
+    pub fn get_grid_deflection(&self) -> f64 {
+        self.grid_deflection
+    }
+    pub fn set_grid_deflection(&mut self, d: f64) {
+        self.grid_deflection = d;
+    }
 
     pub fn set_frame(&mut self, u_min: f64, u_max: f64, v_min: f64, v_max: f64) {
         self.frame_u_min = u_min;
@@ -933,15 +1149,21 @@ impl SurfaceRangeLocalizeData {
         self.frame_u_params = Vec::with_capacity(nu);
         self.frame_v_params = Vec::with_capacity(nv);
         for i in 0..nu {
-            self.frame_u_params.push(u_min + (u_max - u_min) * i as f64 / (nu - 1) as f64);
+            self.frame_u_params
+                .push(u_min + (u_max - u_min) * i as f64 / (nu - 1) as f64);
         }
         for i in 0..nv {
-            self.frame_v_params.push(v_min + (v_max - v_min) * i as f64 / (nv - 1) as f64);
+            self.frame_v_params
+                .push(v_min + (v_max - v_min) * i as f64 / (nv - 1) as f64);
         }
     }
 
-    pub fn get_nb_u_points_in_frame(&self) -> usize { self.frame_u_params.len() }
-    pub fn get_nb_v_points_in_frame(&self) -> usize { self.frame_v_params.len() }
+    pub fn get_nb_u_points_in_frame(&self) -> usize {
+        self.frame_u_params.len()
+    }
+    pub fn get_nb_v_points_in_frame(&self) -> usize {
+        self.frame_v_params.len()
+    }
 
     pub fn get_u_param_in_frame(&self, i_1based: usize) -> f64 {
         self.frame_u_params[i_1based - 1]
@@ -965,8 +1187,12 @@ pub struct ExtremaPOnCurve {
 }
 
 impl ExtremaPOnCurve {
-    pub fn new(parameter: f64) -> Self { ExtremaPOnCurve { parameter } }
-    pub fn parameter(&self) -> f64 { self.parameter }
+    pub fn new(parameter: f64) -> Self {
+        ExtremaPOnCurve { parameter }
+    }
+    pub fn parameter(&self) -> f64 {
+        self.parameter
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -976,8 +1202,12 @@ pub struct ExtremaPOnSurf {
 }
 
 impl ExtremaPOnSurf {
-    pub fn new(u: f64, v: f64) -> Self { ExtremaPOnSurf { u, v } }
-    pub fn parameter(&self) -> (f64, f64) { (self.u, self.v) }
+    pub fn new(u: f64, v: f64) -> Self {
+        ExtremaPOnSurf { u, v }
+    }
+    pub fn parameter(&self) -> (f64, f64) {
+        (self.u, self.v)
+    }
 }
 
 // ============================================================================
@@ -987,8 +1217,12 @@ impl ExtremaPOnSurf {
 // ============================================================================
 #[derive(Debug, Clone)]
 pub struct ExtremaExtCS {
-    u_min: f64, u_max: f64, v_min: f64, v_max: f64,
-    tol_c: f64, tol_s: f64,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
+    tol_c: f64,
+    tol_s: f64,
     surface: Option<Surface3>,
     is_done: bool,
     is_parallel: bool,
@@ -999,11 +1233,15 @@ pub struct ExtremaExtCS {
 impl ExtremaExtCS {
     pub fn new() -> Self {
         ExtremaExtCS {
-            u_min: f64::NEG_INFINITY, u_max: f64::INFINITY,
-            v_min: f64::NEG_INFINITY, v_max: f64::INFINITY,
-            tol_c: precision_pconfusion(), tol_s: precision_pconfusion(),
+            u_min: f64::NEG_INFINITY,
+            u_max: f64::INFINITY,
+            v_min: f64::NEG_INFINITY,
+            v_max: f64::INFINITY,
+            tol_c: precision_pconfusion(),
+            tol_s: precision_pconfusion(),
             surface: None,
-            is_done: false, is_parallel: false,
+            is_done: false,
+            is_parallel: false,
             extrema: Vec::new(),
             parallel_sq_dist: f64::MAX,
         }
@@ -1012,19 +1250,32 @@ impl ExtremaExtCS {
     // OCCT L1: Initialize(surface, tolC, tolS) — full UV range from surface adaptor
     pub fn initialize(&mut self, surface: &Surface3, tol_c: f64, tol_s: f64) {
         self.surface = Some(surface.clone());
-        self.u_min = f64::NEG_INFINITY; self.u_max = f64::INFINITY;
-        self.v_min = f64::NEG_INFINITY; self.v_max = f64::INFINITY;
-        self.tol_c = tol_c; self.tol_s = tol_s;
+        self.u_min = f64::NEG_INFINITY;
+        self.u_max = f64::INFINITY;
+        self.v_min = f64::NEG_INFINITY;
+        self.v_max = f64::INFINITY;
+        self.tol_c = tol_c;
+        self.tol_s = tol_s;
     }
 
     // OCCT L2: Initialize(surface, uMin, uMax, vMin, vMax, tolC, tolS)
-    pub fn initialize_with_bounds(&mut self, surface: &Surface3,
-                                   u_min: f64, u_max: f64, v_min: f64, v_max: f64,
-                                   tol_c: f64, tol_s: f64) {
+    pub fn initialize_with_bounds(
+        &mut self,
+        surface: &Surface3,
+        u_min: f64,
+        u_max: f64,
+        v_min: f64,
+        v_max: f64,
+        tol_c: f64,
+        tol_s: f64,
+    ) {
         self.surface = Some(surface.clone());
-        self.u_min = u_min; self.u_max = u_max;
-        self.v_min = v_min; self.v_max = v_max;
-        self.tol_c = tol_c; self.tol_s = tol_s;
+        self.u_min = u_min;
+        self.u_max = u_max;
+        self.v_min = v_min;
+        self.v_max = v_max;
+        self.tol_c = tol_c;
+        self.tol_s = tol_s;
     }
 
     // OCCT: curve-surface extrema. For known analytic pairs (Line/Plane, Line/Sphere,
@@ -1072,20 +1323,36 @@ impl ExtremaExtCS {
             candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
             let cluster_tol = dt * 3.0;
             let mut clusters: Vec<(f64, f64, f64)> = Vec::new();
-            let mut sum_t = 0.0; let mut sum_u = 0.0; let mut sum_v = 0.0;
+            let mut sum_t = 0.0;
+            let mut sum_u = 0.0;
+            let mut sum_v = 0.0;
             let mut count = 0usize;
             let mut prev_t = candidates[0].0;
 
             for &(t, u, v) in &candidates {
                 if t - prev_t > cluster_tol && count > 0 {
-                    clusters.push((sum_t / count as f64, sum_u / count as f64, sum_v / count as f64));
-                    sum_t = 0.0; sum_u = 0.0; sum_v = 0.0; count = 0;
+                    clusters.push((
+                        sum_t / count as f64,
+                        sum_u / count as f64,
+                        sum_v / count as f64,
+                    ));
+                    sum_t = 0.0;
+                    sum_u = 0.0;
+                    sum_v = 0.0;
+                    count = 0;
                 }
-                sum_t += t; sum_u += u; sum_v += v; count += 1;
+                sum_t += t;
+                sum_u += u;
+                sum_v += v;
+                count += 1;
                 prev_t = t;
             }
             if count > 0 {
-                clusters.push((sum_t / count as f64, sum_u / count as f64, sum_v / count as f64));
+                clusters.push((
+                    sum_t / count as f64,
+                    sum_u / count as f64,
+                    sum_v / count as f64,
+                ));
             }
 
             for &(ct, cu, cv) in &clusters {
@@ -1097,14 +1364,24 @@ impl ExtremaExtCS {
         self.is_done = !self.extrema.is_empty() || min_sq_dist < self.tol_c * self.tol_c * 0.01;
     }
 
-    pub fn is_done(&self) -> bool { self.is_done }
-    pub fn nb_ext(&self) -> usize { self.extrema.len() }
-    pub fn is_parallel(&self) -> bool { self.is_parallel }
+    pub fn is_done(&self) -> bool {
+        self.is_done
+    }
+    pub fn nb_ext(&self) -> usize {
+        self.extrema.len()
+    }
+    pub fn is_parallel(&self) -> bool {
+        self.is_parallel
+    }
 
     pub fn square_distance(&self, idx_1based: usize) -> f64 {
-        if self.is_parallel { return self.parallel_sq_dist; }
+        if self.is_parallel {
+            return self.parallel_sq_dist;
+        }
         let (t, p, _u, _v) = self.extrema[idx_1based - 1];
-        let Some(ref surf) = self.surface else { return f64::MAX };
+        let Some(ref surf) = self.surface else {
+            return f64::MAX;
+        };
         let proj = closest_point_on_surface(surf, p, 16);
         proj.distance * proj.distance
     }
@@ -1127,20 +1404,37 @@ pub struct ExtremaGenExtCS {
 
 impl ExtremaGenExtCS {
     pub fn new() -> Self {
-        ExtremaGenExtCS { is_done: false, surface: None, extrema: Vec::new() }
+        ExtremaGenExtCS {
+            is_done: false,
+            surface: None,
+            extrema: Vec::new(),
+        }
     }
 
-    pub fn initialize(&mut self, surface: &BRepAdaptorSurface,
-                      nb_u: i32, nb_v: i32,
-                      u_min: f64, u_max: f64, v_min: f64, v_max: f64,
-                      tol: f64) {
+    pub fn initialize(
+        &mut self,
+        surface: &BRepAdaptorSurface,
+        nb_u: i32,
+        nb_v: i32,
+        u_min: f64,
+        u_max: f64,
+        v_min: f64,
+        v_max: f64,
+        tol: f64,
+    ) {
         self.surface = Some(surface.surface().clone());
         self.is_done = false;
         self.extrema.clear();
     }
 
-    pub fn perform(&mut self, curve: &BRepAdaptorCurve, nb_sample: i32,
-                    first: f64, last: f64, tol: f64) {
+    pub fn perform(
+        &mut self,
+        curve: &BRepAdaptorCurve,
+        nb_sample: i32,
+        first: f64,
+        last: f64,
+        tol: f64,
+    ) {
         let Some(ref surf) = self.surface else { return };
         self.is_done = true;
         self.extrema.clear();
@@ -1154,15 +1448,21 @@ impl ExtremaGenExtCS {
             let sq_dist = proj.distance * proj.distance;
             if proj.distance < precision_confusion() * 100.0 {
                 // Store as extremum point
-                self.extrema.push((t, p, proj.params.0, proj.params.1, sq_dist));
+                self.extrema
+                    .push((t, p, proj.params.0, proj.params.1, sq_dist));
             }
         }
         // Deduplicate close extrema
-        self.extrema.dedup_by(|a, b| (a.0 - b.0).abs() < precision_pconfusion());
+        self.extrema
+            .dedup_by(|a, b| (a.0 - b.0).abs() < precision_pconfusion());
     }
 
-    pub fn is_done(&self) -> bool { self.is_done }
-    pub fn nb_ext(&self) -> usize { self.extrema.len() }
+    pub fn is_done(&self) -> bool {
+        self.is_done
+    }
+    pub fn nb_ext(&self) -> usize {
+        self.extrema.len()
+    }
     pub fn square_distance(&self, idx_1based: usize) -> f64 {
         self.extrema[idx_1based - 1].4
     }
@@ -1172,7 +1472,10 @@ impl ExtremaGenExtCS {
     }
 
     pub fn point_on_surface(&self, idx_1based: usize) -> ExtremaPOnSurf {
-        ExtremaPOnSurf::new(self.extrema[idx_1based - 1].2, self.extrema[idx_1based - 1].3)
+        ExtremaPOnSurf::new(
+            self.extrema[idx_1based - 1].2,
+            self.extrema[idx_1based - 1].3,
+        )
     }
 }
 
@@ -1191,13 +1494,26 @@ pub struct ExtremaGenLocateExtPS {
 
 impl ExtremaGenLocateExtPS {
     pub fn new(tol1: f64, tol2: f64) -> Self {
-        ExtremaGenLocateExtPS { tol1, tol2, is_done: false, sq_dist: f64::MAX, u: 0.0, v: 0.0 }
+        ExtremaGenLocateExtPS {
+            tol1,
+            tol2,
+            is_done: false,
+            sq_dist: f64::MAX,
+            u: 0.0,
+            v: 0.0,
+        }
     }
 
     // OCCT Perform: Normal projection criteria (isDistanceCriteria=false).
     //   Solves F(u,v) = (S-P)·Su = 0, G(u,v) = (S-P)·Sv = 0
     //   via Newton-Raphson with numerical Jacobian.
-    pub fn perform(&mut self, point: DVec3, u_guess: f64, v_guess: f64, surface: &BRepAdaptorSurface) {
+    pub fn perform(
+        &mut self,
+        point: DVec3,
+        u_guess: f64,
+        v_guess: f64,
+        surface: &BRepAdaptorSurface,
+    ) {
         self.is_done = false;
 
         let mut u = u_guess.clamp(surface.first_u_parameter(), surface.last_u_parameter());
@@ -1254,8 +1570,10 @@ impl ExtremaGenLocateExtPS {
             let mut best_sq = (surface.value(u_new, v_new) - point).length_squared();
 
             for _ in 0..8 {
-                let u_try = (u + alpha * du).clamp(surface.first_u_parameter(), surface.last_u_parameter());
-                let v_try = (v + alpha * dv).clamp(surface.first_v_parameter(), surface.last_v_parameter());
+                let u_try =
+                    (u + alpha * du).clamp(surface.first_u_parameter(), surface.last_u_parameter());
+                let v_try =
+                    (v + alpha * dv).clamp(surface.first_v_parameter(), surface.last_v_parameter());
                 let sq = (surface.value(u_try, v_try) - point).length_squared();
                 if sq < best_sq {
                     best_sq = sq;
@@ -1282,8 +1600,12 @@ impl ExtremaGenLocateExtPS {
         self.v = v;
     }
 
-    pub fn is_done(&self) -> bool { self.is_done }
-    pub fn square_distance(&self) -> f64 { self.sq_dist }
+    pub fn is_done(&self) -> bool {
+        self.is_done
+    }
+    pub fn square_distance(&self) -> f64 {
+        self.sq_dist
+    }
     pub fn point(&self) -> ExtremaPOnSurf {
         ExtremaPOnSurf::new(self.u, self.v)
     }
@@ -1303,18 +1625,24 @@ fn surface_d1(surface: &BRepAdaptorSurface, u: f64, v: f64) -> (DVec3, DVec3, DV
 // ============================================================================
 #[derive(Debug, Clone, Copy)]
 pub struct IntCurveSurfaceIntersectionPoint {
-    w: f64,    // curve parameter
-    u: f64,    // surface U parameter
-    v: f64,    // surface V parameter
+    w: f64, // curve parameter
+    u: f64, // surface U parameter
+    v: f64, // surface V parameter
 }
 
 impl IntCurveSurfaceIntersectionPoint {
     pub fn new(w: f64, u: f64, v: f64) -> Self {
         IntCurveSurfaceIntersectionPoint { w, u, v }
     }
-    pub fn w(&self) -> f64 { self.w }
-    pub fn u(&self) -> f64 { self.u }
-    pub fn v(&self) -> f64 { self.v }
+    pub fn w(&self) -> f64 {
+        self.w
+    }
+    pub fn u(&self) -> f64 {
+        self.u
+    }
+    pub fn v(&self) -> f64 {
+        self.v
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1325,9 +1653,17 @@ pub struct IntCurveSurfaceIntersectionSegment {
 
 impl IntCurveSurfaceIntersectionSegment {
     pub fn new(p1: IntCurveSurfaceIntersectionPoint, p2: IntCurveSurfaceIntersectionPoint) -> Self {
-        IntCurveSurfaceIntersectionSegment { point1: p1, point2: p2 }
+        IntCurveSurfaceIntersectionSegment {
+            point1: p1,
+            point2: p2,
+        }
     }
-    pub fn values(&self) -> (IntCurveSurfaceIntersectionPoint, IntCurveSurfaceIntersectionPoint) {
+    pub fn values(
+        &self,
+    ) -> (
+        IntCurveSurfaceIntersectionPoint,
+        IntCurveSurfaceIntersectionPoint,
+    ) {
         (self.point1, self.point2)
     }
 }
@@ -1346,7 +1682,11 @@ pub struct IntCurveSurfaceHInter {
 
 impl IntCurveSurfaceHInter {
     pub fn new() -> Self {
-        IntCurveSurfaceHInter { is_done: false, points: Vec::new(), segments: Vec::new() }
+        IntCurveSurfaceHInter {
+            is_done: false,
+            points: Vec::new(),
+            segments: Vec::new(),
+        }
     }
 
     // OCCT Perform: uses TheExactHInter (analytic for quadrics) + ThePolygonOfHInter (polygon approx)
@@ -1376,28 +1716,40 @@ impl IntCurveSurfaceHInter {
                 let line3 = curve.line();
                 let plane3 = surface.plane();
                 let hits = crate::inttools::edge_face::intersect_line_plane_with_tol(
-                    &line3, [first, last], &plane3, precision_confusion());
-                hits.into_iter().map(|h| {
-                    IntCurveSurfaceIntersectionPoint::new(h.edge_param, 0.0, 0.0)
-                }).collect::<Vec<_>>()
+                    &line3,
+                    [first, last],
+                    &plane3,
+                    precision_confusion(),
+                );
+                hits.into_iter()
+                    .map(|h| IntCurveSurfaceIntersectionPoint::new(h.edge_param, 0.0, 0.0))
+                    .collect::<Vec<_>>()
             }
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cylinder) => {
                 let line3 = curve.line();
                 let cyl3 = surface.cylinder();
                 let hits = crate::inttools::curve_surface::intersect_line_cylinder_with_tol(
-                    &line3, [first, last], &cyl3, precision_confusion());
-                hits.into_iter().map(|h| {
-                    IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
-                }).collect::<Vec<_>>()
+                    &line3,
+                    [first, last],
+                    &cyl3,
+                    precision_confusion(),
+                );
+                hits.into_iter()
+                    .map(|h| IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0))
+                    .collect::<Vec<_>>()
             }
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Sphere) => {
                 let line3 = curve.line();
                 let sph3 = surface.sphere();
                 let hits = crate::inttools::curve_surface::intersect_line_sphere_with_tol(
-                    &line3, [first, last], &sph3, precision_confusion());
-                hits.into_iter().map(|h| {
-                    IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
-                }).collect::<Vec<_>>()
+                    &line3,
+                    [first, last],
+                    &sph3,
+                    precision_confusion(),
+                );
+                hits.into_iter()
+                    .map(|h| IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0))
+                    .collect::<Vec<_>>()
             }
             _ => Vec::new(),
         };
@@ -1427,7 +1779,8 @@ impl IntCurveSurfaceHInter {
                 seg_start = t;
             } else if !inside && inside_prev {
                 // Transition: inside → outside, refine both boundaries
-                let refined_start = self.refine_crossing(curve, surf, seg_start - dt_coarse, seg_start, tol, true);
+                let refined_start =
+                    self.refine_crossing(curve, surf, seg_start - dt_coarse, seg_start, tol, true);
                 let refined_end = self.refine_crossing(curve, surf, seg_start, t, tol, false);
                 if refined_start < refined_end {
                     self.segments.push(IntCurveSurfaceIntersectionSegment::new(
@@ -1438,7 +1791,11 @@ impl IntCurveSurfaceHInter {
             }
 
             if proj.distance < precision_confusion() * 3.0 {
-                self.points.push(IntCurveSurfaceIntersectionPoint::new(t, proj.params.0, proj.params.1));
+                self.points.push(IntCurveSurfaceIntersectionPoint::new(
+                    t,
+                    proj.params.0,
+                    proj.params.1,
+                ));
             }
 
             inside_prev = inside;
@@ -1459,7 +1816,8 @@ impl IntCurveSurfaceHInter {
         }
 
         // Deduplicate
-        self.points.dedup_by(|a, b| (a.w() - b.w()).abs() < precision_pconfusion());
+        self.points
+            .dedup_by(|a, b| (a.w() - b.w()).abs() < precision_pconfusion());
 
         self.is_done = true;
     }
@@ -1467,8 +1825,15 @@ impl IntCurveSurfaceHInter {
     // Binary search for surface entry/exit.
     // is_entry=true → find param where distance drops below tol
     // is_entry=false → find param where distance rises above tol
-    fn refine_crossing(&self, curve: &BRepAdaptorCurve, surf: &Surface3,
-                       t1: f64, t2: f64, tol: f64, is_entry: bool) -> f64 {
+    fn refine_crossing(
+        &self,
+        curve: &BRepAdaptorCurve,
+        surf: &Surface3,
+        t1: f64,
+        t2: f64,
+        tol: f64,
+        is_entry: bool,
+    ) -> f64 {
         let mut lo = t1;
         let mut hi = t2;
         for _ in 0..25 {
@@ -1476,21 +1841,37 @@ impl IntCurveSurfaceHInter {
             let p = curve.value(mid);
             let proj = closest_point_on_surface(surf, p, 16);
             if is_entry {
-                if proj.distance < tol { hi = mid; } else { lo = mid; }
+                if proj.distance < tol {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
             } else {
-                if proj.distance < tol { lo = mid; } else { hi = mid; }
+                if proj.distance < tol {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
             }
-            if (hi - lo) < precision_pconfusion() { break; }
+            if (hi - lo) < precision_pconfusion() {
+                break;
+            }
         }
         (lo + hi) * 0.5
     }
 
-    pub fn is_done(&self) -> bool { self.is_done }
-    pub fn nb_points(&self) -> usize { self.points.len() }
+    pub fn is_done(&self) -> bool {
+        self.is_done
+    }
+    pub fn nb_points(&self) -> usize {
+        self.points.len()
+    }
     pub fn point(&self, idx_1based: usize) -> &IntCurveSurfaceIntersectionPoint {
         &self.points[idx_1based - 1]
     }
-    pub fn nb_segments(&self) -> usize { self.segments.len() }
+    pub fn nb_segments(&self) -> usize {
+        self.segments.len()
+    }
     pub fn segment(&self, idx_1based: usize) -> &IntCurveSurfaceIntersectionSegment {
         &self.segments[idx_1based - 1]
     }
@@ -1510,7 +1891,13 @@ pub struct ProjPointOnSurf {
 
 impl ProjPointOnSurf {
     pub fn new() -> Self {
-        ProjPointOnSurf { point: DVec3::ZERO, is_done: false, u: 0.0, v: 0.0, distance: f64::MAX }
+        ProjPointOnSurf {
+            point: DVec3::ZERO,
+            is_done: false,
+            u: 0.0,
+            v: 0.0,
+            distance: f64::MAX,
+        }
     }
 
     pub fn perform(&mut self, point: DVec3, surface: &Surface3) {
@@ -1522,10 +1909,18 @@ impl ProjPointOnSurf {
         self.distance = proj.distance;
     }
 
-    pub fn is_done(&self) -> bool { self.is_done }
-    pub fn nb_points(&self) -> usize { if self.is_done { 1 } else { 0 } }
-    pub fn lower_distance(&self) -> f64 { self.distance }
-    pub fn lower_distance_parameters(&self) -> (f64, f64) { (self.u, self.v) }
+    pub fn is_done(&self) -> bool {
+        self.is_done
+    }
+    pub fn nb_points(&self) -> usize {
+        if self.is_done { 1 } else { 0 }
+    }
+    pub fn lower_distance(&self) -> f64 {
+        self.distance
+    }
+    pub fn lower_distance_parameters(&self) -> (f64, f64) {
+        (self.u, self.v)
+    }
 }
 
 // ============================================================================
@@ -1541,7 +1936,11 @@ pub struct ProjPointOnCurve {
 impl ProjPointOnCurve {
     pub fn new(point: DVec3, curve: &Curve3, first: f64, last: f64) -> Self {
         let proj = closest_point_on_curve(curve, point, 16);
-        let mut p = ProjPointOnCurve { is_done: false, param: 0.0, distance: f64::MAX };
+        let mut p = ProjPointOnCurve {
+            is_done: false,
+            param: 0.0,
+            distance: f64::MAX,
+        };
         if proj.distance < f64::MAX && proj.param >= first && proj.param <= last {
             p.is_done = true;
             p.param = proj.param;
@@ -1550,9 +1949,15 @@ impl ProjPointOnCurve {
         p
     }
 
-    pub fn nb_points(&self) -> usize { if self.is_done { 1 } else { 0 } }
-    pub fn lower_distance(&self) -> f64 { self.distance }
-    pub fn lower_distance_parameter(&self) -> f64 { self.param }
+    pub fn nb_points(&self) -> usize {
+        if self.is_done { 1 } else { 0 }
+    }
+    pub fn lower_distance(&self) -> f64 {
+        self.distance
+    }
+    pub fn lower_distance_parameter(&self) -> f64 {
+        self.param
+    }
 }
 
 // ============================================================================
@@ -1616,12 +2021,24 @@ fn bnd_add_3d_curve_raw(curve: &Curve3, first: f64, last: f64, tol: f64) -> BndB
 // BndLib_AddSurface::Add — compute AABB for a surface UV range
 // OCCT GeomBndLib_Surface: per-type analytical dispatch. Uses bnd_lib::add_surface_to_box.
 // ============================================================================
-fn bnd_add_surface(surface: &BRepAdaptorSurface,
-                   first_u: f64, last_u: f64,
-                   first_v: f64, last_v: f64,
-                   tol: f64) -> BndBox {
+fn bnd_add_surface(
+    surface: &BRepAdaptorSurface,
+    first_u: f64,
+    last_u: f64,
+    first_v: f64,
+    last_v: f64,
+    tol: f64,
+) -> BndBox {
     let mut bbox = crate::brep_bnd::BoundingBox::new();
-    crate::bnd_lib::add_surface_to_box(surface.surface(), first_u, last_u, first_v, last_v, &mut bbox, tol);
+    crate::bnd_lib::add_surface_to_box(
+        surface.surface(),
+        first_u,
+        last_u,
+        first_v,
+        last_v,
+        &mut bbox,
+        tol,
+    );
     bbox_to_bndbox(&bbox)
 }
 
@@ -1639,13 +2056,25 @@ fn bbox_to_bndbox(bbox: &crate::brep_bnd::BoundingBox) -> BndBox {
 // ============================================================================
 // GetSurfaceBox — static helper (OCCT L2192-2206)
 // ============================================================================
-fn get_surface_box(surface: &BRepAdaptorSurface,
-                   first_u: f64, last_u: f64,
-                   first_v: f64, last_v: f64,
-                   tol: f64,
-                   surface_data: &mut SurfaceRangeLocalizeData) -> BndBox {
+fn get_surface_box(
+    surface: &BRepAdaptorSurface,
+    first_u: f64,
+    last_u: f64,
+    first_v: f64,
+    last_v: f64,
+    tol: f64,
+    surface_data: &mut SurfaceRangeLocalizeData,
+) -> BndBox {
     let mut a_total_box = BndBox::new();
-    build_box(surface, first_u, last_u, first_v, last_v, surface_data, &mut a_total_box);
+    build_box(
+        surface,
+        first_u,
+        last_u,
+        first_v,
+        last_v,
+        surface_data,
+        &mut a_total_box,
+    );
     a_total_box.enlarge(tol);
     a_total_box
 }
@@ -1653,11 +2082,15 @@ fn get_surface_box(surface: &BRepAdaptorSurface,
 // ============================================================================
 // BuildBox — static helper (OCCT L2485-2543)
 // ============================================================================
-fn build_box(surface: &BRepAdaptorSurface,
-             first_u: f64, last_u: f64,
-             first_v: f64, last_v: f64,
-             surface_data: &mut SurfaceRangeLocalizeData,
-             box_out: &mut BndBox) {
+fn build_box(
+    surface: &BRepAdaptorSurface,
+    first_u: f64,
+    last_u: f64,
+    first_v: f64,
+    last_v: f64,
+    surface_data: &mut SurfaceRangeLocalizeData,
+    box_out: &mut BndBox,
+) {
     surface_data.set_frame(first_u, last_u, first_v, last_v);
     let nb_u_pts = surface_data.get_nb_u_points_in_frame();
     let nb_v_pts = surface_data.get_nb_v_points_in_frame();
@@ -1691,32 +2124,48 @@ fn build_box(surface: &BRepAdaptorSurface,
 // ============================================================================
 // CheckSampling — static helper (OCCT L2596-2639)
 // ============================================================================
-fn check_sampling(curve_range: &CurveRangeSample,
-                  surface_range: &SurfaceRangeSample,
-                  curve_data: &CurveRangeLocalizeData,
-                  surface_data: &SurfaceRangeLocalizeData,
-                  diff_c: f64, diff_u: f64, diff_v: f64,
-                  b_allow_sampling_c: &mut bool,
-                  b_allow_sampling_u: &mut bool,
-                  b_allow_sampling_v: &mut bool) {
+fn check_sampling(
+    curve_range: &CurveRangeSample,
+    surface_range: &SurfaceRangeSample,
+    curve_data: &CurveRangeLocalizeData,
+    surface_data: &SurfaceRangeLocalizeData,
+    diff_c: f64,
+    diff_u: f64,
+    diff_v: f64,
+    b_allow_sampling_c: &mut bool,
+    b_allow_sampling_u: &mut bool,
+    b_allow_sampling_v: &mut bool,
+) {
     let d_limit = 1000.0;
     *b_allow_sampling_c = true;
     *b_allow_sampling_u = true;
     *b_allow_sampling_v = true;
 
-    let samples_nb = if curve_range.depth() == 0 { 1 } else { curve_data.get_nb_sample() };
+    let samples_nb = if curve_range.depth() == 0 {
+        1
+    } else {
+        curve_data.get_nb_sample()
+    };
     let pow_val = (curve_data.get_nb_sample() as f64).powi(curve_range.depth() + 1);
     if pow_val > d_limit || (diff_c / samples_nb as f64) < curve_data.get_min_range() {
         *b_allow_sampling_c = false;
     }
 
-    let samples_nb_u = if surface_range.depth_u() == 0 { 1 } else { surface_data.get_nb_sample_u() };
+    let samples_nb_u = if surface_range.depth_u() == 0 {
+        1
+    } else {
+        surface_data.get_nb_sample_u()
+    };
     let pow_val_u = (surface_data.get_nb_sample_u() as f64).powi(surface_range.depth_u() + 1);
     if pow_val_u > d_limit || (diff_u / samples_nb_u as f64) < surface_data.get_min_range_u() {
         *b_allow_sampling_u = false;
     }
 
-    let samples_nb_v = if surface_range.depth_v() == 0 { 1 } else { surface_data.get_nb_sample_v() };
+    let samples_nb_v = if surface_range.depth_v() == 0 {
+        1
+    } else {
+        surface_data.get_nb_sample_v()
+    };
     let pow_val_v = (surface_data.get_nb_sample_v() as f64).powi(surface_range.depth_v() + 1);
     if pow_val_v > d_limit || (diff_v / samples_nb_v as f64) < surface_data.get_min_range_v() {
         *b_allow_sampling_v = false;
@@ -1726,17 +2175,22 @@ fn check_sampling(curve_range: &CurveRangeSample,
 // ============================================================================
 // MergeSolutions — static helper (OCCT L2549-2592)
 // ============================================================================
-fn merge_solutions(list_curve_range: &mut Vec<CurveRangeSample>,
-                   list_surface_range: &mut Vec<SurfaceRangeSample>,
-                   list_curve_range_sort: &mut Vec<CurveRangeSample>,
-                   list_surface_range_sort: &mut Vec<SurfaceRangeSample>) {
+fn merge_solutions(
+    list_curve_range: &mut Vec<CurveRangeSample>,
+    list_surface_range: &mut Vec<SurfaceRangeSample>,
+    list_curve_range_sort: &mut Vec<CurveRangeSample>,
+    list_surface_range_sort: &mut Vec<SurfaceRangeSample>,
+) {
     use std::collections::HashMap;
 
     let mut a_map_to_avoid: Vec<SurfaceRangeSample> = Vec::new();
     let mut a_curve_id_map: HashMap<usize, Vec<usize>> = HashMap::new();
 
     for k in 0..list_curve_range.len() {
-        let surf_idx = if let Some(pos) = a_map_to_avoid.iter().position(|s| s.is_equal(&list_surface_range[k])) {
+        let surf_idx = if let Some(pos) = a_map_to_avoid
+            .iter()
+            .position(|s| s.is_equal(&list_surface_range[k]))
+        {
             pos
         } else {
             a_map_to_avoid.push(list_surface_range[k].clone());
@@ -1775,11 +2229,15 @@ fn set_empty_result_range(parameter: f64, marked_range: &mut MarkedRangeSet) -> 
 // ============================================================================
 // ComputeGridPoints — static helper (OCCT L2210-2481)
 // ============================================================================
-fn compute_grid_points(surface: &BRepAdaptorSurface,
-                       first_u: f64, last_u: f64,
-                       first_v: f64, last_v: f64,
-                       face_tolerance: f64,
-                       surface_data: &mut SurfaceRangeLocalizeData) {
+fn compute_grid_points(
+    surface: &BRepAdaptorSurface,
+    first_u: f64,
+    last_u: f64,
+    first_v: f64,
+    last_v: f64,
+    face_tolerance: f64,
+    surface_data: &mut SurfaceRangeLocalizeData,
+) {
     let a_nb_samples = [surface.u_degree() as i32, surface.v_degree() as i32];
     let a_nb_knots = [surface.nb_u_knots() as i32, surface.nb_v_knots() as i32];
 
@@ -1809,7 +2267,9 @@ fn compute_grid_points(surface: &BRepAdaptorSurface,
             let a_par_u = surface_data.get_u_param(i);
             let du = if is_calc_defl && i < a_nb_grid_pts[0] as usize {
                 0.5 * (surface_data.get_u_param(i + 1) - a_par_u)
-            } else { 0.0 };
+            } else {
+                0.0
+            };
 
             for j in 1..=a_nb_grid_pts[1] as usize {
                 let a_par_v = surface_data.get_v_param(j);
@@ -1837,14 +2297,36 @@ fn compute_grid_points(surface: &BRepAdaptorSurface,
             let (xmin1, ymin1, zmin1, xmax1, ymax1, zmax1) = an_ext_box.get();
             let mut a_def = 0.0f64;
             let mut an_ext_count = 0i32;
-            if xmin1 < xmin { a_def = a_def.max(xmin - xmin1); an_ext_count += 1; }
-            if ymin1 < ymin { a_def = a_def.max(ymin - ymin1); an_ext_count += 1; }
-            if zmin1 < zmin { a_def = a_def.max(zmin - zmin1); an_ext_count += 1; }
-            if xmax1 > xmax { a_def = a_def.max(xmax1 - xmax); an_ext_count += 1; }
-            if ymax1 > ymax { a_def = a_def.max(ymax1 - ymax); an_ext_count += 1; }
-            if zmax1 > zmax { a_def = a_def.max(zmax1 - zmax); an_ext_count += 1; }
-            if an_ext_count < 3 { a_def /= 2.0; }
-            if face_tolerance > a_def { a_def = 2.0 * face_tolerance; }
+            if xmin1 < xmin {
+                a_def = a_def.max(xmin - xmin1);
+                an_ext_count += 1;
+            }
+            if ymin1 < ymin {
+                a_def = a_def.max(ymin - ymin1);
+                an_ext_count += 1;
+            }
+            if zmin1 < zmin {
+                a_def = a_def.max(zmin - zmin1);
+                an_ext_count += 1;
+            }
+            if xmax1 > xmax {
+                a_def = a_def.max(xmax1 - xmax);
+                an_ext_count += 1;
+            }
+            if ymax1 > ymax {
+                a_def = a_def.max(ymax1 - ymax);
+                an_ext_count += 1;
+            }
+            if zmax1 > zmax {
+                a_def = a_def.max(zmax1 - zmax);
+                an_ext_count += 1;
+            }
+            if an_ext_count < 3 {
+                a_def /= 2.0;
+            }
+            if face_tolerance > a_def {
+                a_def = 2.0 * face_tolerance;
+            }
             surface_data.set_grid_deflection(a_def);
         }
         return;
@@ -1862,25 +2344,51 @@ fn compute_grid_points(surface: &BRepAdaptorSurface,
 
     for j in 0..2 {
         for i in 1..=a_nb_knots[j] {
-            if i_min[j] == -1 && (if j == 0 { a_fp_tol[0] < 0.0 } else { a_fp_tol[1] < 0.0 }) {
+            if i_min[j] == -1
+                && (if j == 0 {
+                    a_fp_tol[0] < 0.0
+                } else {
+                    a_fp_tol[1] < 0.0
+                })
+            {
                 // Simplified — OCCT uses actual knot values from BSpline
                 i_min[j] = i - 1;
             }
             let i_lm_i = a_nb_knots[j] - i + 1;
-            if i_max[j] == -1 && (if j == 0 { a_lm_tol[0] > 0.0 } else { a_lm_tol[1] > 0.0 }) {
+            if i_max[j] == -1
+                && (if j == 0 {
+                    a_lm_tol[0] > 0.0
+                } else {
+                    a_lm_tol[1] > 0.0
+                })
+            {
                 i_max[j] = i_lm_i + 1;
             }
         }
-        if i_min[j] == -1 { i_min[j] = 1; }
-        if i_max[j] == -1 { i_max[j] = a_nb_knots[j]; }
-        if i_min[j] == 0 { i_min[j] = 1; }
-        if i_max[j] > a_nb_knots[j] { i_max[j] = a_nb_knots[j]; }
-        if i_max[j] < i_min[j] { return; }
+        if i_min[j] == -1 {
+            i_min[j] = 1;
+        }
+        if i_max[j] == -1 {
+            i_max[j] = a_nb_knots[j];
+        }
+        if i_min[j] == 0 {
+            i_min[j] = 1;
+        }
+        if i_max[j] > a_nb_knots[j] {
+            i_max[j] = a_nb_knots[j];
+        }
+        if i_max[j] < i_min[j] {
+            return;
+        }
         if i_max[j] == i_min[j] {
             i_max[j] += 1;
             i_min[j] -= 1;
-            if i_min[j] == 0 { i_min[j] = 1; }
-            if i_max[j] > a_nb_knots[j] { i_max[j] = a_nb_knots[j]; }
+            if i_min[j] == 0 {
+                i_min[j] = 1;
+            }
+            if i_max[j] > a_nb_knots[j] {
+                i_max[j] = a_nb_knots[j];
+            }
         }
 
         let a_nb_grid_pts_j = (i_max[j] - i_min[j]) * a_nb_samples[j] + 1;
@@ -1894,10 +2402,14 @@ fn compute_grid_points(surface: &BRepAdaptorSurface,
         for i in i_min[j]..i_max[j] {
             let a_min_par = if i == i_min[j] {
                 if a_fm_tol[j] > 0.0 { a_f_par[j] } else { 0.0 }
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             let a_max_par = if i == i_max[j] - 1 {
                 if a_lp_tol[j] < 0.0 { a_l_par[j] } else { 0.0 }
-            } else { 0.0 };
+            } else {
+                0.0
+            };
 
             let a_delta = (a_max_par - a_min_par) / a_nb_samples[j] as f64;
             for _k in 0..a_nb_samples[j] {
@@ -1922,7 +2434,9 @@ fn compute_grid_points(surface: &BRepAdaptorSurface,
 pub struct BeanContext;
 
 impl BeanContext {
-    pub fn new() -> Self { BeanContext }
+    pub fn new() -> Self {
+        BeanContext
+    }
 }
 
 // ============================================================================
@@ -1966,8 +2480,14 @@ impl BeanFaceIntersector {
     // OCCT L100-114: default constructor
     pub fn new() -> Self {
         BeanFaceIntersector {
-            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X })),
-            my_surface: BRepAdaptorSurface::new(Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z))),
+            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            })),
+            my_surface: BRepAdaptorSurface::new(Surface3::Plane(rcad_kernel::geom::Plane::new(
+                DVec3::ZERO,
+                DVec3::Z,
+            ))),
             my_trsf_surface: None,
             my_context: None,
             my_first_parameter: 0.0,
@@ -1998,8 +2518,12 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L136-150: constructor(BRepAdaptor_Curve, BRepAdaptor_Surface, beanTol, faceTol)
-    pub fn with_adaptors(curve: BRepAdaptorCurve, surface: BRepAdaptorSurface,
-                         bean_tolerance: f64, face_tolerance: f64) -> Self {
+    pub fn with_adaptors(
+        curve: BRepAdaptorCurve,
+        surface: BRepAdaptorSurface,
+        bean_tolerance: f64,
+        face_tolerance: f64,
+    ) -> Self {
         let mut bfi = BeanFaceIntersector::new();
         bfi.my_curve = curve;
         bfi.my_surface = surface;
@@ -2012,11 +2536,18 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L154-182: constructor with full params
-    pub fn with_params(curve: BRepAdaptorCurve, surface: BRepAdaptorSurface,
-                       first_par_on_curve: f64, last_par_on_curve: f64,
-                       u_min_parameter: f64, u_max_parameter: f64,
-                       v_min_parameter: f64, v_max_parameter: f64,
-                       bean_tolerance: f64, face_tolerance: f64) -> Self {
+    pub fn with_params(
+        curve: BRepAdaptorCurve,
+        surface: BRepAdaptorSurface,
+        first_par_on_curve: f64,
+        last_par_on_curve: f64,
+        u_min_parameter: f64,
+        u_max_parameter: f64,
+        v_min_parameter: f64,
+        v_max_parameter: f64,
+        bean_tolerance: f64,
+        face_tolerance: f64,
+    ) -> Self {
         let mut bfi = BeanFaceIntersector::new();
         bfi.my_first_parameter = first_par_on_curve;
         bfi.my_last_parameter = last_par_on_curve;
@@ -2035,7 +2566,13 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L186-207: Init(TopoDS_Edge, TopoDS_Face) — geometry-only version
-    pub fn init_curve_surface(&mut self, curve: Curve3, bean_tol: f64, surface: Surface3, face_tol: f64) {
+    pub fn init_curve_surface(
+        &mut self,
+        curve: Curve3,
+        bean_tol: f64,
+        surface: Surface3,
+        face_tol: f64,
+    ) {
         self.my_curve = BRepAdaptorCurve::new(curve);
         self.my_surface = BRepAdaptorSurface::new(surface);
         self.my_trsf_surface = Some(self.my_surface.geom_surface_transformed());
@@ -2053,8 +2590,13 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L211-230: Init(BRepAdaptor_Curve, BRepAdaptor_Surface, beanTol, faceTol)
-    pub fn init(&mut self, curve: BRepAdaptorCurve, surface: BRepAdaptorSurface,
-                bean_tolerance: f64, face_tolerance: f64) {
+    pub fn init(
+        &mut self,
+        curve: BRepAdaptorCurve,
+        surface: BRepAdaptorSurface,
+        bean_tolerance: f64,
+        face_tolerance: f64,
+    ) {
         self.my_curve = curve;
         self.my_surface = surface;
         self.my_trsf_surface = Some(self.my_surface.geom_surface_transformed());
@@ -2072,14 +2614,27 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L234-248: Init with full params
-    pub fn init_with_params(&mut self, curve: BRepAdaptorCurve, surface: BRepAdaptorSurface,
-                            first_par_on_curve: f64, last_par_on_curve: f64,
-                            u_min_parameter: f64, u_max_parameter: f64,
-                            v_min_parameter: f64, v_max_parameter: f64,
-                            bean_tolerance: f64, face_tolerance: f64) {
+    pub fn init_with_params(
+        &mut self,
+        curve: BRepAdaptorCurve,
+        surface: BRepAdaptorSurface,
+        first_par_on_curve: f64,
+        last_par_on_curve: f64,
+        u_min_parameter: f64,
+        u_max_parameter: f64,
+        v_min_parameter: f64,
+        v_max_parameter: f64,
+        bean_tolerance: f64,
+        face_tolerance: f64,
+    ) {
         self.init(curve, surface, bean_tolerance, face_tolerance);
         self.set_bean_parameters(first_par_on_curve, last_par_on_curve);
-        self.set_surface_parameters(u_min_parameter, u_max_parameter, v_min_parameter, v_max_parameter);
+        self.set_surface_parameters(
+            u_min_parameter,
+            u_max_parameter,
+            v_min_parameter,
+            v_max_parameter,
+        );
     }
 
     // OCCT L252-262: SetContext / Context
@@ -2098,8 +2653,13 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L275-284: SetSurfaceParameters
-    pub fn set_surface_parameters(&mut self, u_min_parameter: f64, u_max_parameter: f64,
-                                   v_min_parameter: f64, v_max_parameter: f64) {
+    pub fn set_surface_parameters(
+        &mut self,
+        u_min_parameter: f64,
+        u_max_parameter: f64,
+        v_min_parameter: f64,
+        v_max_parameter: f64,
+    ) {
         self.my_u_min_parameter = u_min_parameter;
         self.my_u_max_parameter = u_max_parameter;
         self.my_v_min_parameter = v_min_parameter;
@@ -2107,13 +2667,19 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L137-141: IsDone
-    pub fn is_done(&self) -> bool { self.my_is_done }
+    pub fn is_done(&self) -> bool {
+        self.my_is_done
+    }
 
     // OCCT L140: Result
-    pub fn result(&self) -> &[IntRange] { &self.my_results }
+    pub fn result(&self) -> &[IntRange] {
+        &self.my_results
+    }
 
     // OCCT L145: MinimalSquareDistance
-    pub fn minimal_square_distance(&self) -> f64 { self.my_min_sq_distance }
+    pub fn minimal_square_distance(&self) -> f64 {
+        self.my_min_sq_distance
+    }
 
     // OCCT L288-379: Perform
     pub fn perform(&mut self) {
@@ -2140,12 +2706,16 @@ impl BeanFaceIntersector {
         }
 
         // OCCT L313-314: Initialize range manager
-        self.my_range_manager.set_boundaries(self.my_first_parameter, self.my_last_parameter, 0);
+        self.my_range_manager
+            .set_boundaries(self.my_first_parameter, self.my_last_parameter, 0);
 
         // OCCT L316-323: Check coincidence
         let is_coincide = self.test_compute_coinside();
         if is_coincide {
-            self.my_results.push(IntRange::new(self.my_first_parameter, self.my_last_parameter));
+            self.my_results.push(IntRange::new(
+                self.my_first_parameter,
+                self.my_last_parameter,
+            ));
             self.my_is_done = true;
             return;
         }
@@ -2156,14 +2726,15 @@ impl BeanFaceIntersector {
             && !precision_is_infinite(self.my_v_min_parameter)
             && !precision_is_infinite(self.my_v_max_parameter);
 
-        let b_localize = b_localize && match self.my_surface.get_type() {
-            GeomAbsSurfaceType::BezierSurface | GeomAbsSurfaceType::OtherSurface => true,
-            GeomAbsSurfaceType::BSplineSurface => {
-                (self.my_surface.u_degree() > 2 || self.my_surface.v_degree() > 2)
-                    && (self.my_surface.nb_u_knots() > 2 && self.my_surface.nb_v_knots() > 2)
-            }
-            _ => false,
-        };
+        let b_localize = b_localize
+            && match self.my_surface.get_type() {
+                GeomAbsSurfaceType::BezierSurface | GeomAbsSurfaceType::OtherSurface => true,
+                GeomAbsSurfaceType::BSplineSurface => {
+                    (self.my_surface.u_degree() > 2 || self.my_surface.v_degree() > 2)
+                        && (self.my_surface.nb_u_knots() > 2 && self.my_surface.nb_v_knots() > 2)
+                }
+                _ => false,
+            };
 
         let is_localized = b_localize && self.compute_localized();
 
@@ -2198,7 +2769,9 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L383-393: Result copy
-    pub fn result_copy(&self) -> Vec<IntRange> { self.my_results.clone() }
+    pub fn result_copy(&self) -> Vec<IntRange> {
+        self.my_results.clone()
+    }
 
     // OCCT L397-461: Distance(theArg) — compute shortest distance from curve point at theArg to surface
     fn distance_simple(&self, the_arg: f64) -> f64 {
@@ -2219,8 +2792,16 @@ impl BeanFaceIntersector {
                 3 => self.my_v_max_parameter,
                 _ => 0.0,
             };
-            let a_min_parameter = if i < 2 { self.my_v_min_parameter } else { self.my_u_min_parameter };
-            let a_max_parameter = if i < 2 { self.my_v_max_parameter } else { self.my_u_max_parameter };
+            let a_min_parameter = if i < 2 {
+                self.my_v_min_parameter
+            } else {
+                self.my_u_min_parameter
+            };
+            let a_max_parameter = if i < 2 {
+                self.my_v_max_parameter
+            } else {
+                self.my_u_max_parameter
+            };
             let a_mid_parameter = (a_min_parameter + a_max_parameter) * 0.5;
 
             let a_point_min = if i < 2 {
@@ -2239,7 +2820,8 @@ impl BeanFaceIntersector {
                 self.my_surface.value(a_mid_parameter, an_iso_parameter)
             };
 
-            let compute_isoline = !(a_point_min.distance_squared(a_point_max) < self.my_criteria * self.my_criteria
+            let compute_isoline = !(a_point_min.distance_squared(a_point_max)
+                < self.my_criteria * self.my_criteria
                 && a_point_min.distance_squared(a_point_mid) < self.my_criteria * self.my_criteria
                 && a_point_max.distance_squared(a_point_mid) < self.my_criteria * self.my_criteria);
 
@@ -2254,7 +2836,8 @@ impl BeanFaceIntersector {
                 };
 
                 if let Some(curve) = iso_curve {
-                    let proj_on_curve = ProjPointOnCurve::new(a_point, &curve, a_min_parameter, a_max_parameter);
+                    let proj_on_curve =
+                        ProjPointOnCurve::new(a_point, &curve, a_min_parameter, a_max_parameter);
                     if proj_on_curve.nb_points() > 0 {
                         use_min_max_points = false;
                         if a_distance > proj_on_curve.lower_distance() {
@@ -2266,16 +2849,25 @@ impl BeanFaceIntersector {
 
             if use_min_max_points {
                 let pp_distance = a_point.distance(a_point_min);
-                if pp_distance < a_distance { a_distance = pp_distance; }
+                if pp_distance < a_distance {
+                    a_distance = pp_distance;
+                }
                 let pp_distance = a_point.distance(a_point_max);
-                if pp_distance < a_distance { a_distance = pp_distance; }
+                if pp_distance < a_distance {
+                    a_distance = pp_distance;
+                }
             }
         }
         a_distance
     }
 
     // OCCT L465-560: Distance(theArg, theUParameter, theVParameter)
-    fn distance_with_uv(&self, the_arg: f64, the_u_parameter: &mut f64, the_v_parameter: &mut f64) -> f64 {
+    fn distance_with_uv(
+        &self,
+        the_arg: f64,
+        the_u_parameter: &mut f64,
+        the_v_parameter: &mut f64,
+    ) -> f64 {
         let a_point = self.my_curve.value(the_arg);
 
         *the_u_parameter = self.my_u_min_parameter;
@@ -2300,8 +2892,16 @@ impl BeanFaceIntersector {
                     3 => self.my_v_max_parameter,
                     _ => 0.0,
                 };
-                let a_min_parameter = if i < 2 { self.my_v_min_parameter } else { self.my_u_min_parameter };
-                let a_max_parameter = if i < 2 { self.my_v_max_parameter } else { self.my_u_max_parameter };
+                let a_min_parameter = if i < 2 {
+                    self.my_v_min_parameter
+                } else {
+                    self.my_u_min_parameter
+                };
+                let a_max_parameter = if i < 2 {
+                    self.my_v_max_parameter
+                } else {
+                    self.my_u_max_parameter
+                };
                 let a_mid_parameter = (a_min_parameter + a_max_parameter) * 0.5;
 
                 let a_point_min = if i < 2 {
@@ -2320,9 +2920,12 @@ impl BeanFaceIntersector {
                     self.my_surface.value(a_mid_parameter, an_iso_parameter)
                 };
 
-                let compute_isoline = !(a_point_min.distance_squared(a_point_max) < self.my_criteria * self.my_criteria
-                    && a_point_min.distance_squared(a_point_mid) < self.my_criteria * self.my_criteria
-                    && a_point_max.distance_squared(a_point_mid) < self.my_criteria * self.my_criteria);
+                let compute_isoline = !(a_point_min.distance_squared(a_point_max)
+                    < self.my_criteria * self.my_criteria
+                    && a_point_min.distance_squared(a_point_mid)
+                        < self.my_criteria * self.my_criteria
+                    && a_point_max.distance_squared(a_point_mid)
+                        < self.my_criteria * self.my_criteria);
 
                 let mut use_min_max_points = true;
                 if compute_isoline {
@@ -2333,7 +2936,12 @@ impl BeanFaceIntersector {
                     };
 
                     if let Some(curve) = iso_curve {
-                        let proj_on_curve = ProjPointOnCurve::new(a_point, &curve, a_min_parameter, a_max_parameter);
+                        let proj_on_curve = ProjPointOnCurve::new(
+                            a_point,
+                            &curve,
+                            a_min_parameter,
+                            a_max_parameter,
+                        );
                         if proj_on_curve.nb_points() > 0 {
                             use_min_max_points = false;
                             if a_distance > proj_on_curve.lower_distance() {
@@ -2378,8 +2986,12 @@ impl BeanFaceIntersector {
         }
 
         // Clamp to surface bounds
-        *the_u_parameter = self.my_u_min_parameter.max((*the_u_parameter).min(self.my_u_max_parameter));
-        *the_v_parameter = self.my_v_min_parameter.max((*the_v_parameter).min(self.my_v_max_parameter));
+        *the_u_parameter = self
+            .my_u_min_parameter
+            .max((*the_u_parameter).min(self.my_u_max_parameter));
+        *the_v_parameter = self
+            .my_v_min_parameter
+            .max((*the_v_parameter).min(self.my_v_max_parameter));
 
         a_distance
     }
@@ -2391,15 +3003,24 @@ impl BeanFaceIntersector {
                 // ISO line on plane at constant U
                 let origin = p.point_at(u, self.my_v_min_parameter);
                 let dir = p.u_dir;
-                Some(Curve3::Line(rcad_kernel::geom::Line3 { origin, direction: dir }))
+                Some(Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin,
+                    direction: dir,
+                }))
             }
             Surface3::Cylinder(c) => {
                 // ISO line on cylinder at constant U = angle around axis
                 let axis = c.axis;
                 let origin = c.origin + axis * self.my_v_min_parameter;
                 let point_on_cyl = c.point_at(u, self.my_v_min_parameter);
-                let dir = (point_on_cyl - c.origin).normalize().cross(axis).normalize();
-                Some(Curve3::Line(rcad_kernel::geom::Line3 { origin, direction: dir }))
+                let dir = (point_on_cyl - c.origin)
+                    .normalize()
+                    .cross(axis)
+                    .normalize();
+                Some(Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin,
+                    direction: dir,
+                }))
             }
             _ => None,
         }
@@ -2410,14 +3031,21 @@ impl BeanFaceIntersector {
             Surface3::Plane(p) => {
                 let origin = p.point_at(self.my_u_min_parameter, v);
                 let dir = p.v_dir;
-                Some(Curve3::Line(rcad_kernel::geom::Line3 { origin, direction: dir }))
+                Some(Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin,
+                    direction: dir,
+                }))
             }
             Surface3::Cylinder(c) => {
                 // ISO line on cylinder at constant V = depth along axis
                 let origin = c.origin + c.axis * v;
-                let point_on_cyl = c.point_at((self.my_u_min_parameter + self.my_u_max_parameter) * 0.5, v);
+                let point_on_cyl =
+                    c.point_at((self.my_u_min_parameter + self.my_u_max_parameter) * 0.5, v);
                 let dir = c.axis;
-                Some(Curve3::Line(rcad_kernel::geom::Line3 { origin, direction: dir }))
+                Some(Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin,
+                    direction: dir,
+                }))
             }
             _ => None,
         }
@@ -2449,16 +3077,23 @@ impl BeanFaceIntersector {
             let p1 = self.my_curve.value(self.my_first_parameter);
             let p2 = self.my_curve.value(self.my_last_parameter);
             let mut d1 = a * p1.x + b * p1.y + c * p1.z + d;
-            if d1 < 0.0 { d1 = -d1; }
+            if d1 < 0.0 {
+                d1 = -d1;
+            }
             let mut d2 = a * p2.x + b * p2.y + c * p2.z + d;
-            if d2 < 0.0 { d2 = -d2; }
+            if d2 < 0.0 {
+                d2 = -d2;
+            }
             if d1 <= self.my_criteria && d2 <= self.my_criteria {
                 inplane = true;
             }
         }
 
         if inplane {
-            self.my_results.push(IntRange::new(self.my_first_parameter, self.my_last_parameter));
+            self.my_results.push(IntRange::new(
+                self.my_first_parameter,
+                self.my_last_parameter,
+            ));
             return;
         }
 
@@ -2473,8 +3108,10 @@ impl BeanFaceIntersector {
 
         let pint = DVec3::new(orig.x + t * al, orig.y + t * bl, orig.z + t * cl);
         let (u, v) = plane_parameters(p, pint);
-        if self.my_u_min_parameter > u || u > self.my_u_max_parameter
-            || self.my_v_min_parameter > v || v > self.my_v_max_parameter
+        if self.my_u_min_parameter > u
+            || u > self.my_u_max_parameter
+            || self.my_v_min_parameter > v
+            || v > self.my_v_max_parameter
         {
             return;
         }
@@ -2493,9 +3130,13 @@ impl BeanFaceIntersector {
     // OCCT L692-816: FastComputeAnalytic
     fn fast_compute_analytic(&mut self) -> bool {
         let a_ct = self.my_curve.get_type();
-        if matches!(a_ct, GeomAbsCurveType::BezierCurve | GeomAbsCurveType::BSplineCurve
-                         | GeomAbsCurveType::OffsetCurve | GeomAbsCurveType::OtherCurve)
-        {
+        if matches!(
+            a_ct,
+            GeomAbsCurveType::BezierCurve
+                | GeomAbsCurveType::BSplineCurve
+                | GeomAbsCurveType::OffsetCurve
+                | GeomAbsCurveType::OtherCurve
+        ) {
             return false;
         }
 
@@ -2563,7 +3204,8 @@ impl BeanFaceIntersector {
                 is_coincide = a_dist < self.my_criteria;
 
                 if !is_coincide {
-                    has_intersection = (a_dist_loc - (a_circ.radius + a_cyl_radius)) < self.my_criteria
+                    has_intersection = (a_dist_loc - (a_circ.radius + a_cyl_radius))
+                        < self.my_criteria
                         && ((a_circ.radius - a_cyl_radius).abs() - a_dist_loc) < self.my_criteria;
                 }
             }
@@ -2574,14 +3216,18 @@ impl BeanFaceIntersector {
             let a_sph_loc = a_sph.center;
             if a_ct == GeomAbsCurveType::Line {
                 let a_lin = self.my_curve.line();
-                let a_dist = point_line_distance(a_sph_loc, a_lin.origin, a_lin.direction) - a_sph.radius;
+                let a_dist =
+                    point_line_distance(a_sph_loc, a_lin.origin, a_lin.direction) - a_sph.radius;
                 has_intersection = a_dist < self.my_criteria;
             }
         }
 
         // OCCT L810-815: Check intermediate point
         if is_coincide {
-            self.my_results.push(IntRange::new(self.my_first_parameter, self.my_last_parameter));
+            self.my_results.push(IntRange::new(
+                self.my_first_parameter,
+                self.my_last_parameter,
+            ));
         }
 
         is_coincide || !has_intersection
@@ -2602,8 +3248,10 @@ impl BeanFaceIntersector {
             for i in 1..=an_exact_intersector.nb_points() {
                 let a_point = an_exact_intersector.point(i);
                 if a_point.w() >= self.my_first_parameter && a_point.w() <= self.my_last_parameter {
-                    let u_is_not_valid = self.my_u_min_parameter > a_point.u() || a_point.u() > self.my_u_max_parameter;
-                    let v_is_not_valid = self.my_v_min_parameter > a_point.v() || a_point.v() > self.my_v_max_parameter;
+                    let u_is_not_valid = self.my_u_min_parameter > a_point.u()
+                        || a_point.u() > self.my_u_max_parameter;
+                    let v_is_not_valid = self.my_v_min_parameter > a_point.v()
+                        || a_point.v() > self.my_v_max_parameter;
                     let mut solution_is_valid = !u_is_not_valid && !v_is_not_valid;
                     let mut u = a_point.u();
                     let mut v = a_point.v();
@@ -2614,7 +3262,12 @@ impl BeanFaceIntersector {
                             b_u_corrected = false;
                             solution_is_valid = false;
                             if self.my_surface.is_u_periodic() {
-                                let (a_new_u, ok) = adjust_periodic(u, self.my_u_min_parameter, self.my_u_max_parameter, self.my_surface.u_period());
+                                let (a_new_u, ok) = adjust_periodic(
+                                    u,
+                                    self.my_u_min_parameter,
+                                    self.my_u_max_parameter,
+                                    self.my_surface.u_period(),
+                                );
                                 if ok {
                                     solution_is_valid = true;
                                     b_u_corrected = true;
@@ -2626,7 +3279,12 @@ impl BeanFaceIntersector {
                         if b_u_corrected && v_is_not_valid {
                             solution_is_valid = false;
                             if self.my_surface.is_v_periodic() {
-                                let (a_new_v, ok) = adjust_periodic(v, self.my_v_min_parameter, self.my_v_max_parameter, self.my_surface.v_period());
+                                let (a_new_v, ok) = adjust_periodic(
+                                    v,
+                                    self.my_v_min_parameter,
+                                    self.my_v_max_parameter,
+                                    self.my_surface.v_period(),
+                                );
                                 if ok {
                                     solution_is_valid = true;
                                     v = a_new_v;
@@ -2655,12 +3313,26 @@ impl BeanFaceIntersector {
                 let a_segment = an_exact_intersector.segment(i);
                 let (a_point1, a_point2) = a_segment.values();
 
-                let a_first_parameter = if a_point1.w() < self.my_first_parameter { self.my_first_parameter } else { a_point1.w() };
-                let a_last_parameter = if self.my_last_parameter < a_point2.w() { self.my_last_parameter } else { a_point2.w() };
+                let a_first_parameter = if a_point1.w() < self.my_first_parameter {
+                    self.my_first_parameter
+                } else {
+                    a_point1.w()
+                };
+                let a_last_parameter = if self.my_last_parameter < a_point2.w() {
+                    self.my_last_parameter
+                } else {
+                    a_point2.w()
+                };
 
-                self.my_range_manager.insert_range(a_first_parameter, a_last_parameter, 2);
+                self.my_range_manager
+                    .insert_range(a_first_parameter, a_last_parameter, 2);
 
-                self.compute_range_from_start_point(false, a_point1.w(), a_point1.u(), a_point1.v());
+                self.compute_range_from_start_point(
+                    false,
+                    a_point1.w(),
+                    a_point1.u(),
+                    a_point1.v(),
+                );
                 self.compute_range_from_start_point(true, a_point2.w(), a_point2.u(), a_point2.v());
                 self.my_min_sq_distance = 0.0;
             }
@@ -2668,25 +3340,37 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L1150-1167: ComputeRangeFromStartPoint (2-argument version)
-    fn compute_range_from_start_point(&mut self, to_increase_parameter: bool,
-                                       the_parameter: f64,
-                                       the_u_parameter: f64,
-                                       the_v_parameter: f64) {
-        let a_found_index = self.my_range_manager.get_index(the_parameter, to_increase_parameter);
+    fn compute_range_from_start_point(
+        &mut self,
+        to_increase_parameter: bool,
+        the_parameter: f64,
+        the_u_parameter: f64,
+        the_v_parameter: f64,
+    ) {
+        let a_found_index = self
+            .my_range_manager
+            .get_index(the_parameter, to_increase_parameter);
         if a_found_index == 0 {
             return;
         }
-        self.compute_range_from_start_point_index(to_increase_parameter, the_parameter,
-                                                   the_u_parameter, the_v_parameter,
-                                                   a_found_index);
+        self.compute_range_from_start_point_index(
+            to_increase_parameter,
+            the_parameter,
+            the_u_parameter,
+            the_v_parameter,
+            a_found_index,
+        );
     }
 
     // OCCT L1176-1340: ComputeRangeFromStartPoint (with index)
-    fn compute_range_from_start_point_index(&mut self, to_increase_parameter: bool,
-                                             the_parameter: f64,
-                                             the_u_parameter: f64,
-                                             the_v_parameter: f64,
-                                             the_index: usize) {
+    fn compute_range_from_start_point_index(
+        &mut self,
+        to_increase_parameter: bool,
+        the_parameter: f64,
+        the_u_parameter: f64,
+        the_v_parameter: f64,
+        the_index: usize,
+    ) {
         if self.my_range_manager.flag(the_index) > 0 {
             return;
         }
@@ -2703,7 +3387,11 @@ impl BeanFaceIntersector {
         let ten_of_min_delta = a_min_delta * 10.0;
         let mut a_delta = self.my_curve_resolution;
 
-        let mut a_cur_par = if to_increase_parameter { the_parameter + a_delta } else { the_parameter - a_delta };
+        let mut a_cur_par = if to_increase_parameter {
+            the_parameter + a_delta
+        } else {
+            the_parameter - a_delta
+        };
         let mut a_prev_par = the_parameter;
         let mut a_current_range = self.my_range_manager.range(a_valid_index);
 
@@ -2714,7 +3402,11 @@ impl BeanFaceIntersector {
         };
 
         if boundary_condition {
-            a_cur_par = if to_increase_parameter { a_current_range.last() } else { a_current_range.first() };
+            a_cur_par = if to_increase_parameter {
+                a_current_range.last()
+            } else {
+                a_current_range.first()
+            };
             boundary_condition = false;
         }
 
@@ -2754,10 +3446,22 @@ impl BeanFaceIntersector {
                 a_delta_restrictor = a_delta;
             }
 
-            a_delta = if pointfound { a_delta * 2.0 } else { a_delta * 0.5 };
-            a_delta = if a_delta < a_delta_restrictor { a_delta } else { a_delta_restrictor };
+            a_delta = if pointfound {
+                a_delta * 2.0
+            } else {
+                a_delta * 0.5
+            };
+            a_delta = if a_delta < a_delta_restrictor {
+                a_delta
+            } else {
+                a_delta_restrictor
+            };
 
-            a_cur_par = if to_increase_parameter { a_prev_par + a_delta } else { a_prev_par - a_delta };
+            a_cur_par = if to_increase_parameter {
+                a_prev_par + a_delta
+            } else {
+                a_prev_par - a_delta
+            };
 
             if a_cur_par == a_prev_par {
                 break;
@@ -2785,22 +3489,35 @@ impl BeanFaceIntersector {
                         };
 
                         if a_flag == 0 {
-                            a_valid_index = if to_increase_parameter { a_valid_index + 1 } else { a_valid_index - 1 };
+                            a_valid_index = if to_increase_parameter {
+                                a_valid_index + 1
+                            } else {
+                                a_valid_index - 1
+                            };
                             a_current_range = self.my_range_manager.range(a_valid_index);
 
                             if (to_increase_parameter && a_cur_par > a_current_range.last())
                                 || (!to_increase_parameter && a_cur_par < a_current_range.first())
                             {
-                                a_cur_par = (a_current_range.first() + a_current_range.last()) * 0.5;
+                                a_cur_par =
+                                    (a_current_range.first() + a_current_range.last()) * 0.5;
                                 a_delta *= 0.5;
                             }
                         } else {
                             is_valid_index = false;
-                            a_cur_par = if to_increase_parameter { a_current_range.last() } else { a_current_range.first() };
+                            a_cur_par = if to_increase_parameter {
+                                a_current_range.last()
+                            } else {
+                                a_current_range.first()
+                            };
                         }
                     }
                 } else {
-                    a_cur_par = if to_increase_parameter { a_current_range.last() } else { a_current_range.first() };
+                    a_cur_par = if to_increase_parameter {
+                        a_current_range.last()
+                    } else {
+                        a_current_range.first()
+                    };
                 }
 
                 if a_delta < ten_of_min_delta {
@@ -2813,9 +3530,11 @@ impl BeanFaceIntersector {
 
         if another_solution_found {
             if to_increase_parameter {
-                self.my_range_manager.insert_range(the_parameter, a_prev_par, 2);
+                self.my_range_manager
+                    .insert_range(the_parameter, a_prev_par, 2);
             } else {
-                self.my_range_manager.insert_range(a_prev_par, the_parameter, 2);
+                self.my_range_manager
+                    .insert_range(a_prev_par, the_parameter, 2);
             }
         }
     }
@@ -2833,7 +3552,8 @@ impl BeanFaceIntersector {
 
             if anarg2 - anarg1 < precision_pconfusion() {
                 if ((i > 1) && (self.my_range_manager.flag(i - 1) == 2))
-                    || ((i < self.my_range_manager.length()) && (self.my_range_manager.flag(i + 1) == 2))
+                    || ((i < self.my_range_manager.length())
+                        && (self.my_range_manager.flag(i + 1) == 2))
                 {
                     self.my_range_manager.set_flag(i, 1);
                     continue;
@@ -2844,15 +3564,24 @@ impl BeanFaceIntersector {
             let _a_ga_curve = BRepAdaptorCurve::new(curve.clone());
 
             let mut an_ext_cs = ExtremaExtCS::new();
-            an_ext_cs.initialize_with_bounds(self.my_surface.surface(),
-                                             self.my_u_min_parameter, self.my_u_max_parameter,
-                                             self.my_v_min_parameter, self.my_v_max_parameter,
-                                             precision_pconfusion(), precision_pconfusion());
+            an_ext_cs.initialize_with_bounds(
+                self.my_surface.surface(),
+                self.my_u_min_parameter,
+                self.my_u_max_parameter,
+                self.my_v_min_parameter,
+                self.my_v_max_parameter,
+                precision_pconfusion(),
+                precision_pconfusion(),
+            );
 
-            let (first, last) = (self.my_curve.first_parameter(), self.my_curve.last_parameter());
+            let (first, last) = (
+                self.my_curve.first_parameter(),
+                self.my_curve.last_parameter(),
+            );
             let curve_is_periodic = self.my_curve.is_periodic();
             if curve_is_periodic
-                || (anarg1 >= first - precision_pconfusion() && anarg2 <= last + precision_pconfusion())
+                || (anarg1 >= first - precision_pconfusion()
+                    && anarg2 <= last + precision_pconfusion())
             {
                 an_ext_cs.perform(&self.my_curve, anarg1, anarg2);
             }
@@ -2895,7 +3624,8 @@ impl BeanFaceIntersector {
                                     _asolution = (a + b) * 0.5;
                                     let mut u_sol = self.my_u_min_parameter;
                                     let mut v_sol = self.my_v_min_parameter;
-                                    let adist = self.distance_with_uv(_asolution, &mut u_sol, &mut v_sol);
+                                    let adist =
+                                        self.distance_with_uv(_asolution, &mut u_sol, &mut v_sol);
 
                                     if adist < self.my_criteria {
                                         found = true;
@@ -2914,8 +3644,12 @@ impl BeanFaceIntersector {
                                     let mut u_sol = self.my_u_min_parameter;
                                     let mut v_sol = self.my_v_min_parameter;
                                     self.distance_with_uv(_asolution, &mut u_sol, &mut v_sol);
-                                    self.compute_range_from_start_point(false, _asolution, u_sol, v_sol);
-                                    self.compute_range_from_start_point(true, _asolution, u_sol, v_sol);
+                                    self.compute_range_from_start_point(
+                                        false, _asolution, u_sol, v_sol,
+                                    );
+                                    self.compute_range_from_start_point(
+                                        true, _asolution, u_sol, v_sol,
+                                    );
                                 } else {
                                     self.my_range_manager.set_flag(i, 1);
                                 }
@@ -2942,7 +3676,8 @@ impl BeanFaceIntersector {
                             }
                         }
 
-                        self.my_min_sq_distance = self.my_min_sq_distance.min(an_ext_cs.square_distance(j));
+                        self.my_min_sq_distance =
+                            self.my_min_sq_distance.min(an_ext_cs.square_distance(j));
                     }
 
                     if !solution_found {
@@ -2982,10 +3717,21 @@ impl BeanFaceIntersector {
                 let a_nb_ranges = self.my_range_manager.length();
 
                 if i > 1 {
-                    self.compute_range_from_start_point_index(false, a_param_range.first(), u, v, i - 1);
+                    self.compute_range_from_start_point_index(
+                        false,
+                        a_param_range.first(),
+                        u,
+                        v,
+                        i - 1,
+                    );
                 }
-                self.compute_range_from_start_point_index(true, a_param_range.first(), u, v,
-                                                           i + (self.my_range_manager.length() - a_nb_ranges));
+                self.compute_range_from_start_point_index(
+                    true,
+                    a_param_range.first(),
+                    u,
+                    v,
+                    i + (self.my_range_manager.length() - a_nb_ranges),
+                );
 
                 if a_nb_ranges == self.my_range_manager.length() {
                     set_empty_result_range(a_param_range.first(), &mut self.my_range_manager);
@@ -3000,8 +3746,13 @@ impl BeanFaceIntersector {
 
             if self.distance_with_uv(a_param_range.last(), &mut u, &mut v) < self.my_criteria {
                 let a_nb_ranges = self.my_range_manager.length();
-                self.compute_range_from_start_point_index(false, a_param_range.last(), u, v,
-                                                           self.my_range_manager.length());
+                self.compute_range_from_start_point_index(
+                    false,
+                    a_param_range.last(),
+                    u,
+                    v,
+                    self.my_range_manager.length(),
+                );
                 if a_nb_ranges == self.my_range_manager.length() {
                     set_empty_result_range(a_param_range.last(), &mut self.my_range_manager);
                 }
@@ -3069,32 +3820,47 @@ impl BeanFaceIntersector {
         let b_f_box_found = a_surface_data.find_box(&a_surface_range, &mut f_box);
 
         if self.my_surface.get_type() == GeomAbsSurfaceType::BSplineSurface {
-            compute_grid_points(&self.my_surface,
-                                self.my_u_min_parameter, self.my_u_max_parameter,
-                                self.my_v_min_parameter, self.my_v_max_parameter,
-                                self.my_face_tolerance,
-                                &mut a_surface_data);
+            compute_grid_points(
+                &self.my_surface,
+                self.my_u_min_parameter,
+                self.my_u_max_parameter,
+                self.my_v_min_parameter,
+                self.my_v_max_parameter,
+                self.my_face_tolerance,
+                &mut a_surface_data,
+            );
 
             if !b_f_box_found {
-                f_box = get_surface_box(&self.my_surface,
-                                        self.my_u_min_parameter, self.my_u_max_parameter,
-                                        self.my_v_min_parameter, self.my_v_max_parameter,
-                                        self.my_criteria,
-                                        &mut a_surface_data);
+                f_box = get_surface_box(
+                    &self.my_surface,
+                    self.my_u_min_parameter,
+                    self.my_u_max_parameter,
+                    self.my_v_min_parameter,
+                    self.my_v_max_parameter,
+                    self.my_criteria,
+                    &mut a_surface_data,
+                );
                 a_surface_data.add_box(&a_surface_range, f_box.clone());
             }
         } else if !b_f_box_found {
-            f_box = bnd_add_surface(&self.my_surface,
-                                    self.my_u_min_parameter, self.my_u_max_parameter,
-                                    self.my_v_min_parameter, self.my_v_max_parameter,
-                                    self.my_face_tolerance);
+            f_box = bnd_add_surface(
+                &self.my_surface,
+                self.my_u_min_parameter,
+                self.my_u_max_parameter,
+                self.my_v_min_parameter,
+                self.my_v_max_parameter,
+                self.my_face_tolerance,
+            );
             a_surface_data.add_box(&a_surface_range, f_box.clone());
         }
 
         let mut e_box = BndBox::new();
-        e_box = bnd_add_3d_curve(&self.my_curve,
-                                  self.my_first_parameter, self.my_last_parameter,
-                                  self.my_bean_tolerance);
+        e_box = bnd_add_3d_curve(
+            &self.my_curve,
+            self.my_first_parameter,
+            self.my_last_parameter,
+            self.my_bean_tolerance,
+        );
 
         if e_box.is_out(&f_box) {
             for i in 1..=self.my_range_manager.length() {
@@ -3118,26 +3884,36 @@ impl BeanFaceIntersector {
         let mut b_allow_sampling_v = true;
 
         let a_curve_data_tmp = CurveRangeLocalizeData::new(3, d_min_c);
-        let a_surface_data_tmp = SurfaceRangeLocalizeData::new(nb_sample_u, nb_sample_v, d_min_u, d_min_v);
+        let a_surface_data_tmp =
+            SurfaceRangeLocalizeData::new(nb_sample_u, nb_sample_v, d_min_u, d_min_v);
 
-        check_sampling(&a_curve_range, &a_surface_range,
-                       &a_curve_data_tmp, &a_surface_data_tmp,
-                       self.my_last_parameter - self.my_first_parameter,
-                       self.my_u_max_parameter - self.my_u_min_parameter,
-                       self.my_v_max_parameter - self.my_v_min_parameter,
-                       &mut b_allow_sampling_c,
-                       &mut b_allow_sampling_u,
-                       &mut b_allow_sampling_v);
+        check_sampling(
+            &a_curve_range,
+            &a_surface_range,
+            &a_curve_data_tmp,
+            &a_surface_data_tmp,
+            self.my_last_parameter - self.my_first_parameter,
+            self.my_u_max_parameter - self.my_u_min_parameter,
+            self.my_v_max_parameter - self.my_v_min_parameter,
+            &mut b_allow_sampling_c,
+            &mut b_allow_sampling_u,
+            &mut b_allow_sampling_v,
+        );
 
         {
             let mut a_curve_data = CurveRangeLocalizeData::new(3, d_min_c);
             a_curve_data.add_box(&a_curve_range, e_box.clone());
 
-            if !self.localize_solutions(a_curve_range, e_box.clone(),
-                                        a_surface_range, f_box.clone(),
-                                        &mut a_curve_data, &mut a_surface_data,
-                                        &mut a_list_curve_range, &mut a_list_surface_range)
-            {
+            if !self.localize_solutions(
+                a_curve_range,
+                e_box.clone(),
+                a_surface_range,
+                f_box.clone(),
+                &mut a_curve_data,
+                &mut a_surface_data,
+                &mut a_list_curve_range,
+                &mut a_list_surface_range,
+            ) {
                 a_surface_data.clear_grid();
                 return false;
             }
@@ -3145,13 +3921,20 @@ impl BeanFaceIntersector {
             let mut a_list_curve_range_sort: Vec<CurveRangeSample> = Vec::new();
             let mut a_list_surface_range_sort: Vec<SurfaceRangeSample> = Vec::new();
 
-            merge_solutions(&mut a_list_curve_range, &mut a_list_surface_range,
-                            &mut a_list_curve_range_sort, &mut a_list_surface_range_sort);
+            merge_solutions(
+                &mut a_list_curve_range,
+                &mut a_list_surface_range,
+                &mut a_list_curve_range_sort,
+                &mut a_list_surface_range_sort,
+            );
 
             let mut a_range_s_prev: Option<SurfaceRangeSample> = None;
             let mut an_extrema_gen = ExtremaGenExtCS::new();
 
-            for k in 0..a_list_curve_range_sort.len().min(a_list_surface_range_sort.len()) {
+            for k in 0..a_list_curve_range_sort
+                .len()
+                .min(a_list_surface_range_sort.len())
+            {
                 let a_range_c = if b_allow_sampling_c {
                     let cr = &a_list_curve_range_sort[k];
                     cr.get_range(self.my_first_parameter, self.my_last_parameter, 3)
@@ -3161,14 +3944,22 @@ impl BeanFaceIntersector {
 
                 let a_range_u = if b_allow_sampling_u {
                     let sr = &a_list_surface_range_sort[k];
-                    sr.get_range_u(self.my_u_min_parameter, self.my_u_max_parameter, nb_sample_u)
+                    sr.get_range_u(
+                        self.my_u_min_parameter,
+                        self.my_u_max_parameter,
+                        nb_sample_u,
+                    )
                 } else {
                     IntRange::new(self.my_u_min_parameter, self.my_u_max_parameter)
                 };
 
                 let a_range_v = if b_allow_sampling_v {
                     let sr = &a_list_surface_range_sort[k];
-                    sr.get_range_v(self.my_v_min_parameter, self.my_v_max_parameter, nb_sample_v)
+                    sr.get_range_v(
+                        self.my_v_min_parameter,
+                        self.my_v_max_parameter,
+                        nb_sample_v,
+                    )
                 } else {
                     IntRange::new(self.my_v_min_parameter, self.my_v_max_parameter)
                 };
@@ -3181,44 +3972,69 @@ impl BeanFaceIntersector {
                 let n_max_index;
 
                 let an_inds1 = self.my_range_manager.get_indices(anarg1);
-                n_min_index = an_inds1.iter().min().copied().unwrap_or(self.my_range_manager.length());
+                n_min_index = an_inds1
+                    .iter()
+                    .min()
+                    .copied()
+                    .unwrap_or(self.my_range_manager.length());
                 n_max_index = an_inds1.iter().max().copied().unwrap_or(0);
 
                 for idx in n_min_index..=n_max_index {
-                    if idx <= self.my_range_manager.length() && self.my_range_manager.flag(idx) == 2 {
+                    if idx <= self.my_range_manager.length() && self.my_range_manager.flag(idx) == 2
+                    {
                         b_found = true;
                         break;
                     }
                 }
 
-                if b_found { continue; }
+                if b_found {
+                    continue;
+                }
 
                 let an_inds2 = self.my_range_manager.get_indices(anarg2);
-                let n_min_idx2 = an_inds2.iter().min().copied().unwrap_or(self.my_range_manager.length());
+                let n_min_idx2 = an_inds2
+                    .iter()
+                    .min()
+                    .copied()
+                    .unwrap_or(self.my_range_manager.length());
                 let n_max_idx2 = an_inds2.iter().max().copied().unwrap_or(0);
                 let n_min = n_min_index.min(n_min_idx2);
                 let n_max = n_max_index.max(n_max_idx2);
 
                 for idx in n_min..=n_max {
-                    if idx <= self.my_range_manager.length() && self.my_range_manager.flag(idx) == 2 {
+                    if idx <= self.my_range_manager.length() && self.my_range_manager.flag(idx) == 2
+                    {
                         b_found = true;
                         break;
                     }
                 }
 
-                if b_found { continue; }
+                if b_found {
+                    continue;
+                }
 
                 let par_uf = a_range_u.first();
                 let par_ul = a_range_u.last();
                 let par_vf = a_range_v.first();
                 let par_vl = a_range_v.last();
 
-                let is_same_surface = a_range_s_prev.as_ref().map_or(false, |prev| prev.is_equal(&a_list_surface_range_sort[k]));
+                let is_same_surface = a_range_s_prev
+                    .as_ref()
+                    .map_or(false, |prev| prev.is_equal(&a_list_surface_range_sort[k]));
 
                 if is_same_surface {
                     an_extrema_gen.perform(&self.my_curve, 10, anarg1, anarg2, tol);
                 } else {
-                    an_extrema_gen.initialize(&self.my_surface, 10, 10, par_uf, par_ul, par_vf, par_vl, tol);
+                    an_extrema_gen.initialize(
+                        &self.my_surface,
+                        10,
+                        10,
+                        par_uf,
+                        par_ul,
+                        par_vf,
+                        par_vl,
+                        tol,
+                    );
                     an_extrema_gen.perform(&self.my_curve, 10, anarg1, anarg2, tol);
                 }
 
@@ -3241,10 +4057,18 @@ impl BeanFaceIntersector {
                             }
 
                             // Clamp to boundaries
-                            if u < self.my_u_min_parameter { u = self.my_u_min_parameter; }
-                            if u > self.my_u_max_parameter { u = self.my_u_max_parameter; }
-                            if v < self.my_v_min_parameter { v = self.my_v_min_parameter; }
-                            if v > self.my_v_max_parameter { v = self.my_v_max_parameter; }
+                            if u < self.my_u_min_parameter {
+                                u = self.my_u_min_parameter;
+                            }
+                            if u > self.my_u_max_parameter {
+                                u = self.my_u_max_parameter;
+                            }
+                            if v < self.my_v_min_parameter {
+                                v = self.my_v_min_parameter;
+                            }
+                            if v > self.my_v_max_parameter {
+                                v = self.my_v_max_parameter;
+                            }
 
                             let a_nb_ranges = self.my_range_manager.length();
                             self.compute_range_from_start_point(false, t, u, v);
@@ -3267,8 +4091,10 @@ impl BeanFaceIntersector {
                 for &out_idx in &a_list_out {
                     let mut cr = CurveRangeSample::new(out_idx);
                     cr.set_depth(1);
-                    let a_range_c = cr.get_range(self.my_first_parameter, self.my_last_parameter, 3);
-                    self.my_range_manager.insert_range(a_range_c.first(), a_range_c.last(), 1);
+                    let a_range_c =
+                        cr.get_range(self.my_first_parameter, self.my_last_parameter, 3);
+                    self.my_range_manager
+                        .insert_range(a_range_c.first(), a_range_c.last(), 1);
                 }
             }
         }
@@ -3279,15 +4105,17 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L1369-1815: LocalizeSolutions
-    fn localize_solutions(&mut self,
-                          the_curve_range: CurveRangeSample,
-                          the_box_curve: BndBox,
-                          the_surface_range: SurfaceRangeSample,
-                          the_box_surface: BndBox,
-                          the_curve_data: &mut CurveRangeLocalizeData,
-                          the_surface_data: &mut SurfaceRangeLocalizeData,
-                          the_list_curve_range: &mut Vec<CurveRangeSample>,
-                          the_list_surface_range: &mut Vec<SurfaceRangeSample>) -> bool {
+    fn localize_solutions(
+        &mut self,
+        the_curve_range: CurveRangeSample,
+        the_box_curve: BndBox,
+        the_surface_range: SurfaceRangeSample,
+        the_box_surface: BndBox,
+        the_curve_data: &mut CurveRangeLocalizeData,
+        the_surface_data: &mut SurfaceRangeLocalizeData,
+        the_list_curve_range: &mut Vec<CurveRangeSample>,
+        the_list_surface_range: &mut Vec<SurfaceRangeSample>,
+    ) -> bool {
         let a_root_range_c = CurveRangeSample::new(0);
         let a_root_range_s = SurfaceRangeSample::new(0, 0, 0, 0);
 
@@ -3299,35 +4127,59 @@ impl BeanFaceIntersector {
         let mut a_list_curve_range_found: Vec<CurveRangeSample> = Vec::new();
         let mut a_list_surface_range_found: Vec<SurfaceRangeSample> = Vec::new();
 
-        let a_range_c = the_curve_range.get_range(self.my_first_parameter, self.my_last_parameter, the_curve_data.get_nb_sample());
-        let localdiff_c = (a_range_c.last() - a_range_c.first()) / the_curve_data.get_nb_sample() as f64;
+        let a_range_c = the_curve_range.get_range(
+            self.my_first_parameter,
+            self.my_last_parameter,
+            the_curve_data.get_nb_sample(),
+        );
+        let localdiff_c =
+            (a_range_c.last() - a_range_c.first()) / the_curve_data.get_nb_sample() as f64;
 
         let mut a_cur_par = a_range_c.first();
-        let a_cur_index_init = the_curve_range.get_range_index_deeper(the_curve_data.get_nb_sample());
+        let a_cur_index_init =
+            the_curve_range.get_range_index_deeper(the_curve_data.get_nb_sample());
 
         let mut a_list_c_to_avoid: Vec<i32> = Vec::new();
         let mut b_global_check_done = false;
 
-        let a_cur_index_u = the_surface_range.get_range_index_u_deeper(the_surface_data.get_nb_sample_u());
-        let a_cur_index_v_init = the_surface_range.get_range_index_v_deeper(the_surface_data.get_nb_sample_v());
+        let a_cur_index_u =
+            the_surface_range.get_range_index_u_deeper(the_surface_data.get_nb_sample_u());
+        let a_cur_index_v_init =
+            the_surface_range.get_range_index_v_deeper(the_surface_data.get_nb_sample_v());
 
-        let a_range_v = the_surface_range.get_range_v(self.my_v_min_parameter, self.my_v_max_parameter, the_surface_data.get_nb_sample_v());
-        let a_range_u = the_surface_range.get_range_u(self.my_u_min_parameter, self.my_u_max_parameter, the_surface_data.get_nb_sample_u());
+        let a_range_v = the_surface_range.get_range_v(
+            self.my_v_min_parameter,
+            self.my_v_max_parameter,
+            the_surface_data.get_nb_sample_v(),
+        );
+        let a_range_u = the_surface_range.get_range_u(
+            self.my_u_min_parameter,
+            self.my_u_max_parameter,
+            the_surface_data.get_nb_sample_u(),
+        );
 
         let mut a_cur_par_u = a_range_u.first();
-        let a_local_diff_u = (a_range_u.last() - a_range_u.first()) / the_surface_data.get_nb_sample_u() as f64;
-        let a_local_diff_v = (a_range_v.last() - a_range_v.first()) / the_surface_data.get_nb_sample_v() as f64;
+        let a_local_diff_u =
+            (a_range_u.last() - a_range_u.first()) / the_surface_data.get_nb_sample_u() as f64;
+        let a_local_diff_v =
+            (a_range_v.last() - a_range_v.first()) / the_surface_data.get_nb_sample_v() as f64;
 
         let mut b_allow_sampling_c = true;
         let mut b_allow_sampling_u = true;
         let mut b_allow_sampling_v = true;
 
-        check_sampling(&the_curve_range, &the_surface_range,
-                       the_curve_data, the_surface_data,
-                       localdiff_c, a_local_diff_u, a_local_diff_v,
-                       &mut b_allow_sampling_c,
-                       &mut b_allow_sampling_u,
-                       &mut b_allow_sampling_v);
+        check_sampling(
+            &the_curve_range,
+            &the_surface_range,
+            the_curve_data,
+            the_surface_data,
+            localdiff_c,
+            a_local_diff_u,
+            a_local_diff_v,
+            &mut b_allow_sampling_c,
+            &mut b_allow_sampling_u,
+            &mut b_allow_sampling_v,
+        );
 
         if !b_allow_sampling_c && !b_allow_sampling_u && !b_allow_sampling_v {
             the_list_curve_range.push(the_curve_range);
@@ -3352,9 +4204,21 @@ impl BeanFaceIntersector {
         }
 
         let mut b_has_out = false;
-        let nb_u = if b_allow_sampling_u { the_surface_data.get_nb_sample_u() } else { 1 };
-        let nb_v = if b_allow_sampling_v { the_surface_data.get_nb_sample_v() } else { 1 };
-        let nb_c = if b_allow_sampling_c { the_curve_data.get_nb_sample() } else { 1 };
+        let nb_u = if b_allow_sampling_u {
+            the_surface_data.get_nb_sample_u()
+        } else {
+            1
+        };
+        let nb_v = if b_allow_sampling_v {
+            the_surface_data.get_nb_sample_v()
+        } else {
+            1
+        };
+        let nb_c = if b_allow_sampling_c {
+            the_curve_data.get_nb_sample()
+        } else {
+            1
+        };
 
         let mut a_cur_index_u_iter = a_cur_index_u;
         let mut a_prev_par_u = a_cur_par_u;
@@ -3387,19 +4251,29 @@ impl BeanFaceIntersector {
                 let mut a_box_s = BndBox::new();
                 if !the_surface_data.find_box(&a_new_range_s, &mut a_box_s) {
                     if self.my_surface.get_type() == GeomAbsSurfaceType::BSplineSurface {
-                        a_box_s = get_surface_box(&self.my_surface,
-                                                   a_prev_par_u, a_cur_par_u,
-                                                   a_prev_par_v, a_cur_par_v,
-                                                   self.my_criteria,
-                                                   the_surface_data);
+                        a_box_s = get_surface_box(
+                            &self.my_surface,
+                            a_prev_par_u,
+                            a_cur_par_u,
+                            a_prev_par_v,
+                            a_cur_par_v,
+                            self.my_criteria,
+                            the_surface_data,
+                        );
                     } else {
-                        a_box_s = bnd_add_surface(&self.my_surface,
-                                                   a_prev_par_u, a_cur_par_u,
-                                                   a_prev_par_v, a_cur_par_v,
-                                                   self.my_criteria);
+                        a_box_s = bnd_add_surface(
+                            &self.my_surface,
+                            a_prev_par_u,
+                            a_cur_par_u,
+                            a_prev_par_v,
+                            a_cur_par_v,
+                            self.my_criteria,
+                        );
                     }
 
-                    if !b_main_box_found_c && the_curve_data.find_box(&a_root_range_c, &mut a_main_box_c) {
+                    if !b_main_box_found_c
+                        && the_curve_data.find_box(&a_root_range_c, &mut a_main_box_c)
+                    {
                         b_main_box_found_c = true;
                     }
                     if a_box_s.is_out(&a_main_box_c) {
@@ -3432,7 +4306,8 @@ impl BeanFaceIntersector {
 
                     let mut b_found = false;
                     for &avoid in &a_list_c_to_avoid {
-                        if (t_it as i32 + 1) == avoid { // 1-based tIt
+                        if (t_it as i32 + 1) == avoid {
+                            // 1-based tIt
                             b_found = true;
                             break;
                         }
@@ -3455,21 +4330,39 @@ impl BeanFaceIntersector {
 
                     let mut a_box_c = BndBox::new();
                     if !the_curve_data.find_box(
-                        &{ let mut cr = CurveRangeSample::new(a_cur_index);
-                           cr.set_depth(if b_allow_sampling_c { the_curve_range.depth() + 1 } else { the_curve_range.depth() });
-                           cr },
-                        &mut a_box_c)
-                    {
-                        a_box_c = bnd_add_3d_curve(&self.my_curve, a_prev_par, a_cur_par, self.my_criteria);
+                        &{
+                            let mut cr = CurveRangeSample::new(a_cur_index);
+                            cr.set_depth(if b_allow_sampling_c {
+                                the_curve_range.depth() + 1
+                            } else {
+                                the_curve_range.depth()
+                            });
+                            cr
+                        },
+                        &mut a_box_c,
+                    ) {
+                        a_box_c = bnd_add_3d_curve(
+                            &self.my_curve,
+                            a_prev_par,
+                            a_cur_par,
+                            self.my_criteria,
+                        );
 
-                        if !b_main_box_found_s && the_surface_data.find_box(&a_root_range_s, &mut a_main_box_s) {
+                        if !b_main_box_found_s
+                            && the_surface_data.find_box(&a_root_range_s, &mut a_main_box_s)
+                        {
                             b_main_box_found_s = true;
                         }
                         if a_box_c.is_out(&a_main_box_s) {
-                            the_curve_data.add_out_range(
-                                &{ let mut cr = CurveRangeSample::new(a_cur_index);
-                                   cr.set_depth(if b_allow_sampling_c { the_curve_range.depth() + 1 } else { the_curve_range.depth() });
-                                   cr });
+                            the_curve_data.add_out_range(&{
+                                let mut cr = CurveRangeSample::new(a_cur_index);
+                                cr.set_depth(if b_allow_sampling_c {
+                                    the_curve_range.depth() + 1
+                                } else {
+                                    the_curve_range.depth()
+                                });
+                                cr
+                            });
                             b_has_out_c = true;
                             a_cur_index += 1;
                             a_prev_par = a_cur_par;
@@ -3512,7 +4405,8 @@ impl BeanFaceIntersector {
 
                 for idx_box in 0..a_list_of_index.len().min(a_list_of_box.len()) {
                     let a_new_range_c = if b_allow_sampling_c {
-                        let mut cr = CurveRangeSample::new(a_cur_index_init + a_list_of_index[idx_box] - 1);
+                        let mut cr =
+                            CurveRangeSample::new(a_cur_index_init + a_list_of_index[idx_box] - 1);
                         cr.set_depth(the_curve_range.depth() + 1);
                         cr
                     } else {
@@ -3523,13 +4417,15 @@ impl BeanFaceIntersector {
                     let mut b_has_out_c_local = b_has_out_c;
 
                     if b_check_size {
-                        if (the_curve_range.depth() == 0) || (the_surface_range.depth_u() == 0)
+                        if (the_curve_range.depth() == 0)
+                            || (the_surface_range.depth_u() == 0)
                             || (the_surface_range.depth_v() == 0)
                         {
                             b_has_out_c_local = true;
                             b_has_out_v = true;
-                        } else if (the_curve_range.depth() < 4) && (the_surface_range.depth_u() < 4)
-                                   && (the_surface_range.depth_v() < 4)
+                        } else if (the_curve_range.depth() < 4)
+                            && (the_surface_range.depth_u() < 4)
+                            && (the_surface_range.depth_v() < 4)
                         {
                             let box_c = &a_list_of_box[idx_box];
                             if !box_c.is_whole() && !a_box_s.is_whole() {
@@ -3564,23 +4460,41 @@ impl BeanFaceIntersector {
                         if !self.localize_solutions(
                             a_new_range_c,
                             a_list_of_box[idx_box].clone(),
-                            if b_use_old_s { the_surface_range } else { a_new_range_s },
-                            if b_use_old_s { the_box_surface.clone() } else { a_box_s.clone() },
-                            the_curve_data, the_surface_data,
-                            the_list_curve_range, the_list_surface_range)
-                        {
+                            if b_use_old_s {
+                                the_surface_range
+                            } else {
+                                a_new_range_s
+                            },
+                            if b_use_old_s {
+                                the_box_surface.clone()
+                            } else {
+                                a_box_s.clone()
+                            },
+                            the_curve_data,
+                            the_surface_data,
+                            the_list_curve_range,
+                            the_list_surface_range,
+                        ) {
                             return false;
                         }
                     }
                 }
 
                 if b_has_out_v {
-                    if b_use_old_c && b_allow_sampling_c && (b_allow_sampling_u || b_allow_sampling_v) {
-                        if !self.localize_solutions(the_curve_range, the_box_curve.clone(),
-                                                    a_new_range_s, a_box_s.clone(),
-                                                    the_curve_data, the_surface_data,
-                                                    the_list_curve_range, the_list_surface_range)
-                        {
+                    if b_use_old_c
+                        && b_allow_sampling_c
+                        && (b_allow_sampling_u || b_allow_sampling_v)
+                    {
+                        if !self.localize_solutions(
+                            the_curve_range,
+                            the_box_curve.clone(),
+                            a_new_range_s,
+                            a_box_s.clone(),
+                            the_curve_data,
+                            the_surface_data,
+                            the_list_curve_range,
+                            the_list_surface_range,
+                        ) {
                             return false;
                         }
                     }
@@ -3618,8 +4532,8 @@ impl BeanFaceIntersector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::*;
     use glam::DVec3;
+    use rcad_kernel::geom::*;
 
     // ── MarkedRangeSet ──────────────────────────────────────────────────────
     #[test]
@@ -3651,7 +4565,10 @@ mod tests {
         // InsertRange(5.0, 10.0, 2): 5.0 is exactly at boundary,
         // GetIndex with UseLower=true uses strict < so 5.0 < 5.0 is false → returns 0 → InsertRange fails
         let ok = mrs.insert_range(5.0, 10.0, 2);
-        assert!(!ok, "Insert at exact boundary should fail in OCCT semantics");
+        assert!(
+            !ok,
+            "Insert at exact boundary should fail in OCCT semantics"
+        );
     }
 
     // ── BndBox ──────────────────────────────────────────────────────────────
@@ -3699,7 +4616,10 @@ mod tests {
         bfi.perform();
 
         assert!(bfi.is_done());
-        assert!(!bfi.result().is_empty(), "Line/Plane should produce a result");
+        assert!(
+            !bfi.result().is_empty(),
+            "Line/Plane should produce a result"
+        );
     }
 
     #[test]
@@ -3720,7 +4640,10 @@ mod tests {
         bfi.perform();
 
         assert!(bfi.is_done());
-        assert!(bfi.result().is_empty(), "Parallel line/plane should produce no result");
+        assert!(
+            bfi.result().is_empty(),
+            "Parallel line/plane should produce no result"
+        );
     }
 
     // ── BeanFaceIntersector: Circle / Plane ─────────────────────────────────
@@ -3751,7 +4674,10 @@ mod tests {
 
         assert!(bfi.is_done());
         // Tilted circle crossing z=0 plane → 2 intersection points
-        assert!(!bfi.result().is_empty(), "Circle/Plane should produce a result");
+        assert!(
+            !bfi.result().is_empty(),
+            "Circle/Plane should produce a result"
+        );
     }
 
     // ── BeanFaceIntersector: Line / Cylinder ─────────────────────────────────
@@ -3780,7 +4706,10 @@ mod tests {
 
         assert!(bfi.is_done());
         // Line at z=4, cylinder r=5 → 2 intersection points at x=±3
-        assert!(!bfi.result().is_empty(), "Line/Cylinder should produce a result");
+        assert!(
+            !bfi.result().is_empty(),
+            "Line/Cylinder should produce a result"
+        );
     }
 
     // ── BeanFaceIntersector: Line / Sphere ───────────────────────────────────
@@ -3803,7 +4732,10 @@ mod tests {
         bfi.perform();
 
         assert!(bfi.is_done());
-        assert!(!bfi.result().is_empty(), "Line/Sphere should produce a result");
+        assert!(
+            !bfi.result().is_empty(),
+            "Line/Sphere should produce a result"
+        );
     }
 
     // ── BeanFaceIntersector: Coincident (edge lies on surface) ───────────────
@@ -3825,7 +4757,10 @@ mod tests {
         bfi.perform();
 
         assert!(bfi.is_done());
-        assert!(!bfi.result().is_empty(), "Coincident edge should produce a result");
+        assert!(
+            !bfi.result().is_empty(),
+            "Coincident edge should produce a result"
+        );
     }
 
     // ── BeanFaceIntersector: No intersection ────────────────────────────────
@@ -3847,7 +4782,10 @@ mod tests {
         bfi.perform();
 
         assert!(bfi.is_done());
-        assert!(bfi.result().is_empty(), "Edge far from surface should have no intersection");
+        assert!(
+            bfi.result().is_empty(),
+            "Edge far from surface should have no intersection"
+        );
     }
 
     // ── Dependency types ─────────────────────────────────────────────────────
@@ -3915,7 +4853,10 @@ mod tests {
             origin: DVec3::new(-5.0, 0.0, 0.0),
             direction: DVec3::X,
         }));
-        let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z)));
+        let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::Z,
+        )));
 
         let mut hinter = IntCurveSurfaceHInter::new();
         hinter.perform(&curve, &surface);
@@ -3957,12 +4898,20 @@ mod tests {
         // get_index(7.0, false): UseLower=false → check 7.0 <= boundaries[i]
         // i=1: 7.0 <= 3.0? no, i=2: 7.0 <= 7.0? yes → return 2
         let idx = mrs.get_index(7.0, false);
-        assert_eq!(idx, 2, "7.0 (useLower=false) should be in range 2, got {}", idx);
+        assert_eq!(
+            idx, 2,
+            "7.0 (useLower=false) should be in range 2, got {}",
+            idx
+        );
 
         // get_index(7.0, true): UseLower=true → 7.0 < boundaries[i]
         // i=1: 7.0 < 3.0? no, i=2: 7.0 < 7.0? no, i=3: 7.0 < 10.0? yes → return 3
         let idx = mrs.get_index(7.0, true);
-        assert_eq!(idx, 3, "7.0 (useLower=true) should be in range 3, got {}", idx);
+        assert_eq!(
+            idx, 3,
+            "7.0 (useLower=true) should be in range 3, got {}",
+            idx
+        );
 
         // get_indices: at boundaries returns multiple indices
         let indices = mrs.get_indices(3.0);
@@ -3988,7 +4937,7 @@ mod tests {
         let mut srs = SurfaceRangeSample::new(2, 3, 1, 1);
         let ru = srs.get_range_u(-1.0, 1.0, 3);
         // With depth_u=1, nbSampleU=3 → range 2: [-1 + (2-1)*2/3, -1 + 2*2/3] = [-0.333, 0.333]
-        assert!((ru.first() - (-1.0 + 2.0/3.0)).abs() < 1e-9);
+        assert!((ru.first() - (-1.0 + 2.0 / 3.0)).abs() < 1e-9);
         let rv = srs.get_range_v(-1.0, 1.0, 3);
         // With depth_v=1, nbSampleV=3 → range 3: [-1 + (3-1)*2/3, -1 + 3*2/3] = [0.333, 1.0]
         assert!((rv.last() - 1.0).abs() < 1e-9);
@@ -4015,7 +4964,10 @@ mod tests {
             origin: DVec3::new(0.0, 0.0, -5.0),
             direction: DVec3::Z,
         }));
-        let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z)));
+        let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::Z,
+        )));
         let mut ext = ExtremaGenExtCS::new();
         ext.initialize(&surface, 3, 3, -10.0, 10.0, -10.0, 10.0, 1e-7);
         ext.perform(&curve, 3, -10.0, 10.0, 1e-7);
@@ -4096,11 +5048,18 @@ mod tests {
         let x_dir = DVec3::X;
         let y_dir = DVec3::Z;
         let curve = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal, x_dir, y_dir, radius: 5.0,
+            center: DVec3::ZERO,
+            normal,
+            x_dir,
+            y_dir,
+            radius: 5.0,
         });
         // Cylinder along Z, radius=10
         let surface = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 10.0,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 10.0,
         });
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
         bfi.set_bean_parameters(0.0, std::f64::consts::TAU);
@@ -4185,7 +5144,11 @@ mod tests {
     #[test]
     fn test_brep_adaptor_curve_period() {
         let curve = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z, x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 5.0,
         });
         let bac = BRepAdaptorCurve::new(curve);
         assert!(bac.is_periodic());
@@ -4196,7 +5159,10 @@ mod tests {
     #[test]
     fn test_brep_adaptor_surface_periodic() {
         let surface = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 5.0,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 5.0,
         });
         let bas = BRepAdaptorSurface::new(surface);
         assert!(bas.is_u_periodic());

@@ -102,7 +102,12 @@ pub struct DimensionalTolerance {
 
 impl DimensionalTolerance {
     /// Create a new dimensional tolerance.
-    pub fn new(id: u64, name: impl Into<String>, tolerance_type: DimensionType, nominal_value: f64) -> Self {
+    pub fn new(
+        id: u64,
+        name: impl Into<String>,
+        tolerance_type: DimensionType,
+        nominal_value: f64,
+    ) -> Self {
         Self {
             id,
             name: name.into(),
@@ -310,7 +315,8 @@ mod tests {
 
     #[test]
     fn geometric_tolerance_creation() {
-        let tol = GeometricToleranceObject::new(1, "Flatness", GeometricToleranceType::Flatness, 0.05);
+        let tol =
+            GeometricToleranceObject::new(1, "Flatness", GeometricToleranceType::Flatness, 0.05);
         assert_eq!(tol.id, 1);
         assert_eq!(tol.tolerance_type, GeometricToleranceType::Flatness);
         assert_eq!(tol.tolerance_value, 0.05);
@@ -336,7 +342,8 @@ mod tests {
         let dim_tol = DimensionalTolerance::new(1, "Diameter", DimensionType::Diameter, 50.0);
         store.add_dimensional_tolerance(dim_tol);
 
-        let geo_tol = GeometricToleranceObject::new(1, "Position", GeometricToleranceType::Position, 0.1);
+        let geo_tol =
+            GeometricToleranceObject::new(1, "Position", GeometricToleranceType::Position, 0.1);
         store.add_geometric_tolerance(geo_tol);
 
         let mut datum_system = DatumSystem::new(1, "A");

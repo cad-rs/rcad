@@ -24,10 +24,7 @@ fn cleans_backslashes() {
 
 #[test]
 fn cleans_newlines() {
-    assert_eq!(
-        clean_text_for_send("line1\nline2"),
-        "line1\\N\\line2"
-    );
+    assert_eq!(clean_text_for_send("line1\nline2"), "line1\\N\\line2");
 }
 
 #[test]
@@ -84,10 +81,7 @@ fn preserves_p_directive() {
 
 #[test]
 fn preserves_existing_n_directive() {
-    assert_eq!(
-        clean_text_for_send("line1\\N\\line2"),
-        "line1\\N\\line2"
-    );
+    assert_eq!(clean_text_for_send("line1\\N\\line2"), "line1\\N\\line2");
 }
 
 #[test]
@@ -143,10 +137,7 @@ fn only_control_directive() {
 
 #[test]
 fn consecutive_directives() {
-    assert_eq!(
-        clean_text_for_send("\\XA7\\\\XB6\\"),
-        "\\XA7\\\\XB6\\"
-    );
+    assert_eq!(clean_text_for_send("\\XA7\\\\XB6\\"), "\\XA7\\\\XB6\\");
 }
 
 // ── Malformed but safe input ──

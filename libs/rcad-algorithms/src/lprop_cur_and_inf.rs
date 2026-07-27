@@ -1,4 +1,4 @@
-﻿//! LProp-style curve curvature extremum and inflection point storage.
+//! LProp-style curve curvature extremum and inflection point storage.
 //!
 //! LProp_CurAndInf — stores curvature extrema (min/max)
 //!                  and inflection points of a curve, sorted by parameter.
@@ -21,10 +21,19 @@ pub struct CurAndInf {
 }
 
 impl CurAndInf {
-    pub fn new() -> Self { Self { params: Vec::new(), types: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            params: Vec::new(),
+            types: Vec::new(),
+        }
+    }
 
-    pub fn is_empty(&self) -> bool { self.params.is_empty() }
-    pub fn nb_points(&self) -> usize { self.params.len() }
+    pub fn is_empty(&self) -> bool {
+        self.params.is_empty()
+    }
+    pub fn nb_points(&self) -> usize {
+        self.params.len()
+    }
 
     pub fn add_inflection(&mut self, param: f64) {
         self.params.push(param);
@@ -34,11 +43,18 @@ impl CurAndInf {
 
     pub fn add_ext_cur(&mut self, param: f64, is_min: bool) {
         self.params.push(param);
-        self.types.push(if is_min { CIType::MinCur } else { CIType::MaxCur });
+        self.types.push(if is_min {
+            CIType::MinCur
+        } else {
+            CIType::MaxCur
+        });
         self.sort();
     }
 
-    pub fn clear(&mut self) { self.params.clear(); self.types.clear(); }
+    pub fn clear(&mut self) {
+        self.params.clear();
+        self.types.clear();
+    }
 
     pub fn parameter(&self, idx: usize) -> f64 {
         self.params[idx]
@@ -59,5 +75,3 @@ impl CurAndInf {
 // =============================================================================
 // Tests — translated from LProp_CurAndInf_Test.cxx
 // =============================================================================
-
-

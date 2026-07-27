@@ -36,7 +36,9 @@ pub struct Wire {
 }
 
 impl Wire {
-    pub fn new() -> Self { Self { edges: Vec::new() } }
+    pub fn new() -> Self {
+        Self { edges: Vec::new() }
+    }
 }
 
 /// A face: boundary wires, surface index, triangulation, sample point.
@@ -87,7 +89,13 @@ pub struct Compound {
 }
 
 impl Compound {
-    pub fn new() -> Self { Self { solids: Vec::new(), comp_solids: Vec::new(), compounds: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            solids: Vec::new(),
+            comp_solids: Vec::new(),
+            compounds: Vec::new(),
+        }
+    }
     pub fn add_solid(&mut self, tag: Option<String>, solid: Solid) {
         self.solids.push((tag, solid));
     }
@@ -148,8 +156,8 @@ impl FlatBRep {
         // Pass 1: collect vertices and edges
         let mut vertices = Vec::new();
         let mut edges = Vec::new();
-        let mut v_map = HashMap::new();  // topods tshape index → flat vertex index
-        let mut e_map = HashMap::new();  // topods tshape index → flat edge index
+        let mut v_map = HashMap::new(); // topods tshape index → flat vertex index
+        let mut e_map = HashMap::new(); // topods tshape index → flat edge index
 
         for (ti, ts) in brep.tshapes.iter().enumerate() {
             match &**ts {
@@ -196,7 +204,9 @@ impl FlatBRep {
                     geom.surfaces.push(s.clone());
                     idx
                 });
-                while geom.face_surface.len() <= flat_fi { geom.face_surface.push(None); }
+                while geom.face_surface.len() <= flat_fi {
+                    geom.face_surface.push(None);
+                }
                 geom.face_surface[flat_fi] = surf_idx;
                 flat_fi += 1;
             }
@@ -206,8 +216,11 @@ impl FlatBRep {
             if let topods::TShape::Edge(ed) = &**ts {
                 for rep in &ed.representations {
                     match rep {
-                        topods::CurveRepresentation::CurveOnSurface { pcurve, .. } |
-                        topods::CurveRepresentation::CurveOnClosedSurface { pcurve1: pcurve, .. } => {
+                        topods::CurveRepresentation::CurveOnSurface { pcurve, .. }
+                        | topods::CurveRepresentation::CurveOnClosedSurface {
+                            pcurve1: pcurve,
+                            ..
+                        } => {
                             geom.curve2ds.push(pcurve.clone());
                         }
                         _ => {}
@@ -230,8 +243,11 @@ impl FlatBRep {
                         let mut faces = Vec::new();
                         for face_sr in &shd.faces {
                             if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
-                                let outer_wire = Self::wire_from_topods(brep, &e_map, &fd.outer_wire);
-                                let inner_wires: Vec<Wire> = fd.inner_wires.iter()
+                                let outer_wire =
+                                    Self::wire_from_topods(brep, &e_map, &fd.outer_wire);
+                                let inner_wires: Vec<Wire> = fd
+                                    .inner_wires
+                                    .iter()
                                     .map(|sr| Self::wire_from_topods(brep, &e_map, sr))
                                     .collect();
                                 let sid = geom.face_surface.get(flat_fi).copied().flatten();
@@ -270,13 +286,17 @@ impl FlatBRep {
         wire_sr: &topods::ShapeRef,
     ) -> Wire {
         if let topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
-            let edges: Vec<WireEdge> = wd.edges.iter().map(|sr| {
-                let flat_ei = e_map.get(&sr.index).copied().unwrap_or(0);
-                WireEdge {
-                    idx: flat_ei,
-                    forward: sr.orientation.is_forward(),
-                }
-            }).collect();
+            let edges: Vec<WireEdge> = wd
+                .edges
+                .iter()
+                .map(|sr| {
+                    let flat_ei = e_map.get(&sr.index).copied().unwrap_or(0);
+                    WireEdge {
+                        idx: flat_ei,
+                        forward: sr.orientation.is_forward(),
+                    }
+                })
+                .collect();
             Wire { edges }
         } else {
             Wire::new()
@@ -303,11 +323,17 @@ impl FlatBRep {
 /// STEP export uncertainty for FlatBRep (analogous to `rcad_kernel::tolerance::step_export_uncertainty`).
 pub fn step_export_uncertainty(brep: &FlatBRep) -> f64 {
     // Use max of vertex/edge tolerances if populated, else default 1e-6.
-    let max_vert = brep.vertices.iter().enumerate()
+    let max_vert = brep
+        .vertices
+        .iter()
+        .enumerate()
         .filter_map(|(i, _)| brep.geom.vertex_tolerance.get(i))
         .copied()
         .fold(0.0_f64, f64::max);
-    let max_edge = brep.edges.iter().enumerate()
+    let max_edge = brep
+        .edges
+        .iter()
+        .enumerate()
         .filter_map(|(i, _)| brep.geom.edge_tolerance.get(i))
         .copied()
         .fold(0.0_f64, f64::max);

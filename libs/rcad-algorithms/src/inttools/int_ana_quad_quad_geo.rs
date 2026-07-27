@@ -1,4 +1,4 @@
-﻿//! IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
+//! IntAna_QuadQuadGeo — geometric intersections between two quadric surfaces.
 //!
 //! OCCT IntAna_QuadQuadGeo.hxx / .cxx
 //!
@@ -8,10 +8,10 @@
 //! Results are classified as: Point, Line, Circle, Ellipse, Parabola, Hyperbola,
 //! Empty, Same, NoGeometricSolution.
 
-use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Line3, Circle3, Ellipse3, Hyperbola3, Parabola3};
-use crate::tolerance::{TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 use super::int_surf_quadric::Quadric;
+use crate::tolerance::{TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
+use glam::DVec3;
+use rcad_kernel::geom::{Circle3, Curve3, Ellipse3, Hyperbola3, Line3, Parabola3};
 
 /// OCCT IntAna_ResultType.hxx
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,11 +42,21 @@ pub struct QuadQuadGeo {
     nbint: i32,
     typeres: AnaResultType,
     // OCCT L259-266: result geometry (up to 4 points/directions)
-    pt1: DVec3, pt2: DVec3, pt3: DVec3, pt4: DVec3,
-    dir1: DVec3, dir2: DVec3, dir3: DVec3, dir4: DVec3,
+    pt1: DVec3,
+    pt2: DVec3,
+    pt3: DVec3,
+    pt4: DVec3,
+    dir1: DVec3,
+    dir2: DVec3,
+    dir3: DVec3,
+    dir4: DVec3,
     // OCCT L267-272: curve parameters
-    param1: f64, param2: f64, param3: f64, param4: f64,
-    param1bis: f64, param2bis: f64,
+    param1: f64,
+    param2: f64,
+    param3: f64,
+    param4: f64,
+    param1bis: f64,
+    param2bis: f64,
     // OCCT L273-278: internal tolerances
     my_epsilon_distance: f64,
     my_epsilon_angle_cone: f64,
@@ -62,12 +72,23 @@ pub struct QuadQuadGeo {
 impl QuadQuadGeo {
     pub fn new() -> Self {
         Self {
-            done: false, nbint: 0,
+            done: false,
+            nbint: 0,
             typeres: AnaResultType::Empty,
-            pt1: DVec3::ZERO, pt2: DVec3::ZERO, pt3: DVec3::ZERO, pt4: DVec3::ZERO,
-            dir1: DVec3::Z, dir2: DVec3::Z, dir3: DVec3::Z, dir4: DVec3::Z,
-            param1: 0.0, param2: 0.0, param3: 0.0, param4: 0.0,
-            param1bis: 0.0, param2bis: 0.0,
+            pt1: DVec3::ZERO,
+            pt2: DVec3::ZERO,
+            pt3: DVec3::ZERO,
+            pt4: DVec3::ZERO,
+            dir1: DVec3::Z,
+            dir2: DVec3::Z,
+            dir3: DVec3::Z,
+            dir4: DVec3::Z,
+            param1: 0.0,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            param1bis: 0.0,
+            param2bis: 0.0,
             my_epsilon_distance: 0.0,
             my_epsilon_angle_cone: 0.0,
             my_epsilon_mini_circle_radius: 0.0,
@@ -91,43 +112,93 @@ impl QuadQuadGeo {
 
     // ---- Accessors (OCCT L214-250) ----
 
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn type_inter(&self) -> AnaResultType { self.typeres }
-    pub fn nb_solutions(&self) -> i32 { self.nbint }
-    pub fn has_common_gen(&self) -> bool { self.my_common_gen }
-    pub fn p_char(&self) -> DVec3 { self.my_p_char }
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    pub fn type_inter(&self) -> AnaResultType {
+        self.typeres
+    }
+    pub fn nb_solutions(&self) -> i32 {
+        self.nbint
+    }
+    pub fn has_common_gen(&self) -> bool {
+        self.my_common_gen
+    }
+    pub fn p_char(&self) -> DVec3 {
+        self.my_p_char
+    }
 
     pub fn point(&self, num: i32) -> DVec3 {
-        match num { 1 => self.pt1, 2 => self.pt2, 3 => self.pt3, _ => self.pt4 }
+        match num {
+            1 => self.pt1,
+            2 => self.pt2,
+            3 => self.pt3,
+            _ => self.pt4,
+        }
     }
 
     pub fn line(&self, num: i32) -> Line3 {
         match num {
-            1 => Line3 { origin: self.pt1, direction: self.dir1 },
-            2 => Line3 { origin: self.pt2, direction: self.dir2 },
-            _ => Line3 { origin: self.pt3, direction: self.dir3 },
+            1 => Line3 {
+                origin: self.pt1,
+                direction: self.dir1,
+            },
+            2 => Line3 {
+                origin: self.pt2,
+                direction: self.dir2,
+            },
+            _ => Line3 {
+                origin: self.pt3,
+                direction: self.dir3,
+            },
         }
     }
 
     pub fn circle(&self) -> Circle3 {
-        Circle3 { center: self.pt1, normal: self.dir3, x_dir: self.dir1, y_dir: self.dir2, radius: self.param1 }
+        Circle3 {
+            center: self.pt1,
+            normal: self.dir3,
+            x_dir: self.dir1,
+            y_dir: self.dir2,
+            radius: self.param1,
+        }
     }
 
     pub fn ellipse(&self) -> Ellipse3 {
-        Ellipse3 { center: self.pt1, normal: self.dir3, major_dir: self.dir1, major_radius: self.param1, minor_radius: self.param2 }
+        Ellipse3 {
+            center: self.pt1,
+            normal: self.dir3,
+            major_dir: self.dir1,
+            major_radius: self.param1,
+            minor_radius: self.param2,
+        }
     }
 
     pub fn parabola(&self) -> Parabola3 {
-        Parabola3 { vertex: self.pt1, normal: self.dir3, axis_dir: self.dir1, focal_param: self.param1 }
+        Parabola3 {
+            vertex: self.pt1,
+            normal: self.dir3,
+            axis_dir: self.dir1,
+            focal_param: self.param1,
+        }
     }
 
     pub fn hyperbola(&self) -> Hyperbola3 {
-        Hyperbola3 { center: self.pt1, normal: self.dir3, major_dir: self.dir1, semi_major: self.param1, semi_minor: self.param2 }
+        Hyperbola3 {
+            center: self.pt1,
+            normal: self.dir3,
+            major_dir: self.dir1,
+            semi_major: self.param1,
+            semi_minor: self.param2,
+        }
     }
 
     // ---- Convert result to Curve3 for rcad integration ----
     pub fn to_curves(&self) -> Vec<Curve3> {
-        if !self.done || self.typeres == AnaResultType::Empty || self.typeres == AnaResultType::NoGeometricSolution {
+        if !self.done
+            || self.typeres == AnaResultType::Empty
+            || self.typeres == AnaResultType::NoGeometricSolution
+        {
             return vec![];
         }
         let mut curves = Vec::new();
@@ -201,7 +272,9 @@ impl QuadQuadGeo {
         let denom = a1 * a2 + b1 * b2 + c1 * c2;
         let denom2 = denom * denom;
         let mut ddenom = 1.0 - denom2;
-        if ddenom.abs() <= a_eps { ddenom = a_eps; }
+        if ddenom.abs() <= a_eps {
+            ddenom = a_eps;
+        }
 
         let par1 = dist1 / ddenom;
         let par2 = -dist2 / ddenom;
@@ -258,7 +331,14 @@ impl QuadQuadGeo {
     /// 1. Angle-dependent tolerance adjustment (H for short cylinders).
     /// 2. If axis parallel to plane: 0/1/2 lines (generatrices).
     /// 3. If not parallel: Circle or Ellipse at the piercing point.
-    pub fn perform_plane_cylinder(&mut self, p: &Quadric, c: &Quadric, tol_ang: f64, tol: f64, h: f64) {
+    pub fn perform_plane_cylinder(
+        &mut self,
+        p: &Quadric,
+        c: &Quadric,
+        tol_ang: f64,
+        tol: f64,
+        h: f64,
+    ) {
         self.init_tolerances();
         self.done = true;
         self.typeres = AnaResultType::Empty;
@@ -313,7 +393,8 @@ impl QuadQuadGeo {
                 self.pt1 = omega;
                 self.dir1 = if newparams {
                     let omega_xyz_trnsl = axis_loc + 100.0 * axis_dir;
-                    let distt = a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
+                    let distt =
+                        a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
                     let omega1 = DVec3::new(
                         omega_xyz_trnsl.x - distt * a,
                         omega_xyz_trnsl.y - distt * b,
@@ -333,9 +414,14 @@ impl QuadQuadGeo {
 
                 if newparams {
                     let omega_xyz_trnsl = axis_loc + 100.0 * axis_dir;
-                    let distt = a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
+                    let distt =
+                        a * omega_xyz_trnsl.x + b * omega_xyz_trnsl.y + cc * omega_xyz_trnsl.z + d;
                     let an_sqrt_arg = radius * radius - distt * distt;
-                    let ht = if an_sqrt_arg > 0.0 { an_sqrt_arg.sqrt() } else { 0.0 };
+                    let ht = if an_sqrt_arg > 0.0 {
+                        an_sqrt_arg.sqrt()
+                    } else {
+                        0.0
+                    };
                     let omega1 = DVec3::new(
                         omega_xyz_trnsl.x - distt * a,
                         omega_xyz_trnsl.y - distt * b,
@@ -377,8 +463,8 @@ impl QuadQuadGeo {
                 };
                 let x_dir = axis_dir.cross(up).cross(axis_dir).normalize_or_zero();
                 self.dir1 = axis_dir.normalize_or_zero(); // circle X = cylinder axis
-                self.dir2 = x_dir;                         // circle Y
-                self.dir3 = normp.normalize_or_zero();     // circle normal = plane normal
+                self.dir2 = x_dir; // circle Y
+                self.dir3 = normp.normalize_or_zero(); // circle normal = plane normal
                 self.param1 = radius;
             } else {
                 // OCCT L706-718: Ellipse
@@ -422,7 +508,9 @@ impl QuadQuadGeo {
             self.typeres = AnaResultType::Circle;
             self.pt1 = DVec3::new(x - dist * a, y - dist * b, z - dist * c_n);
             self.dir1 = p.axis_dir();
-            if !p.ax3_direct() { self.dir1 = -self.dir1; }
+            if !p.ax3_direct() {
+                self.dir1 = -self.dir1;
+            }
             self.dir2 = p.x_dir();
             self.param1 = (radius * radius - dist * dist).sqrt();
         }
@@ -436,83 +524,131 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L752-922: Plane/Cone
     pub fn perform_plane_cone(&mut self, p: &Quadric, co: &Quadric, tol_ang: f64, tol: f64) {
-        self.init_tolerances(); self.done = false; self.nbint = 0;
+        self.init_tolerances();
+        self.done = false;
+        self.nbint = 0;
         self.typeres = AnaResultType::Empty;
         let (a, b, c_n, d) = p.plane_coeffs();
         let normp = DVec3::new(a, b, c_n).normalize_or_zero();
-        let apex = co.axis_loc(); let axis_dir = co.axis_dir();
+        let apex = co.axis_loc();
+        let axis_dir = co.axis_dir();
         let dist = a * apex.x + b * apex.y + c_n * apex.z + d;
         let semi_angle = co.semi_angle();
-        let cosa = semi_angle.cos(); let sina = semi_angle.sin().abs();
-        let axey = normp.cross(axis_dir); let sint = axey.length();
+        let cosa = semi_angle.cos();
+        let sina = semi_angle.sin().abs();
+        let axey = normp.cross(axis_dir);
+        let sint = axey.length();
         let cost = axis_dir.dot(normp).abs();
         let costa = cost * cosa - sint * sina;
         if dist.abs() < tol {
             if costa.abs() < tol_ang {
-                self.typeres = AnaResultType::Line; self.nbint = 1;
+                self.typeres = AnaResultType::Line;
+                self.nbint = 1;
                 let p2 = apex + 10.0 * axis_dir;
                 let d2 = a * p2.x + b * p2.y + c_n * p2.z + d;
-                self.pt1 = apex; self.dir1 = p2 - d2 * normp - apex;
+                self.pt1 = apex;
+                self.dir1 = p2 - d2 * normp - apex;
             } else if cost < sina {
-                self.typeres = AnaResultType::Line; self.nbint = 2;
+                self.typeres = AnaResultType::Line;
+                self.nbint = 2;
                 let dh = (sina * sina - cost * cost).sqrt() / cosa;
                 let xd = axey.cross(normp);
-                self.pt1 = apex; self.pt2 = apex;
-                self.dir1 = xd + dh * axey; self.dir2 = xd - dh * axey;
-            } else { self.typeres = AnaResultType::Point; self.nbint = 1; self.pt1 = apex; }
+                self.pt1 = apex;
+                self.pt2 = apex;
+                self.dir1 = xd + dh * axey;
+                self.dir2 = xd - dh * axey;
+            } else {
+                self.typeres = AnaResultType::Point;
+                self.nbint = 1;
+                self.pt1 = apex;
+            }
         } else {
             let xv = axey.cross(normp);
             if cost < tol_ang {
-                self.typeres = AnaResultType::Hyperbola; self.nbint = 2;
-                self.pt1 = apex - dist * normp; self.pt2 = self.pt1;
-                self.dir1 = normp; self.dir2 = xv.normalize_or_zero();
-                self.param1 = (dist / semi_angle.tan()).abs(); self.param2 = self.param1;
-                self.param1bis = dist.abs(); self.param2bis = dist.abs();
+                self.typeres = AnaResultType::Hyperbola;
+                self.nbint = 2;
+                self.pt1 = apex - dist * normp;
+                self.pt2 = self.pt1;
+                self.dir1 = normp;
+                self.dir2 = xv.normalize_or_zero();
+                self.param1 = (dist / semi_angle.tan()).abs();
+                self.param2 = self.param1;
+                self.param1bis = dist.abs();
+                self.param2bis = dist.abs();
             } else {
                 let denom = a * axis_dir.x + b * axis_dir.y + c_n * axis_dir.z;
                 let centre = apex - dist * axis_dir / denom.max(1e-16);
                 let distance = apex.distance(centre);
                 if costa.abs() < tol_ang {
-                    self.typeres = AnaResultType::Parabola; self.nbint = 1;
-                    let dc = distance / 2.0 / cosa; let ax = xv.normalize_or_zero();
-                    self.pt1 = centre - dc * ax; self.dir1 = normp; self.dir2 = ax;
+                    self.typeres = AnaResultType::Parabola;
+                    self.nbint = 1;
+                    let dc = distance / 2.0 / cosa;
+                    let ax = xv.normalize_or_zero();
+                    self.pt1 = centre - dc * ax;
+                    self.dir1 = normp;
+                    self.dir2 = ax;
                     self.param1 = dc * sina * sina;
                 } else if sint < tol_ang {
-                    self.typeres = AnaResultType::Circle; self.nbint = 1;
-                    self.pt1 = centre; self.dir1 = axis_dir; self.param1 = distance * semi_angle.tan().abs();
+                    self.typeres = AnaResultType::Circle;
+                    self.nbint = 1;
+                    self.pt1 = centre;
+                    self.dir1 = axis_dir;
+                    self.param1 = distance * semi_angle.tan().abs();
                 } else if cost < sina {
-                    self.typeres = AnaResultType::Hyperbola; self.nbint = 2;
-                    let ax = xv.normalize_or_zero(); let den = sina * sina - cost * cost;
+                    self.typeres = AnaResultType::Hyperbola;
+                    self.nbint = 2;
+                    let ax = xv.normalize_or_zero();
+                    let den = sina * sina - cost * cost;
                     let dc = sint * sina * sina * distance / den;
-                    self.pt1 = centre - dc * ax; self.pt2 = self.pt1;
-                    self.dir1 = normp; self.dir2 = ax;
-                    self.param1 = cost * sina * cosa * distance / den; self.param2 = self.param1;
-                    self.param1bis = cost * sina * distance / den.sqrt(); self.param2bis = self.param1bis;
+                    self.pt1 = centre - dc * ax;
+                    self.pt2 = self.pt1;
+                    self.dir1 = normp;
+                    self.dir2 = ax;
+                    self.param1 = cost * sina * cosa * distance / den;
+                    self.param2 = self.param1;
+                    self.param1bis = cost * sina * distance / den.sqrt();
+                    self.param2bis = self.param1bis;
                 } else {
-                    self.typeres = AnaResultType::Ellipse; self.nbint = 1;
+                    self.typeres = AnaResultType::Ellipse;
+                    self.nbint = 1;
                     let den = cost * cost - sina * sina;
                     let rad = cost * sina * cosa * distance / den;
                     let dc = sint * sina * sina * distance / den;
                     let ax = xv.normalize_or_zero();
-                    self.pt1 = centre + dc * ax; self.dir1 = normp; self.dir2 = ax;
-                    self.param1 = rad; self.param1bis = cost * sina * distance / den.sqrt();
+                    self.pt1 = centre + dc * ax;
+                    self.dir1 = normp;
+                    self.dir2 = ax;
+                    self.param1 = rad;
+                    self.param1bis = cost * sina * distance / den.sqrt();
                 }
             }
         }
-        if self.typeres == AnaResultType::Ellipse && self.param1.abs() > 1.0E9 { self.done = false; return; }
-        if self.typeres == AnaResultType::Hyperbola && self.param1.abs() > 2.0E6 { self.done = false; return; }
+        if self.typeres == AnaResultType::Ellipse && self.param1.abs() > 1.0E9 {
+            self.done = false;
+            return;
+        }
+        if self.typeres == AnaResultType::Hyperbola && self.param1.abs() > 2.0E6 {
+            self.done = false;
+            return;
+        }
         self.done = true;
     }
 
     /// OCCT L1050: Cylinder/Cylinder
     pub fn perform_cylinder_cylinder(&mut self, c1: &Quadric, c2: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let r1 = c1.radius(); let r2 = c2.radius();
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
+        let r1 = c1.radius();
+        let r2 = c2.radius();
         let rm_r = if r1 > r2 { r1 - r2 } else { r2 - r1 };
         let rmax = if r1 > r2 { r1 } else { r2 };
         let rm_r_rel = rm_r / rmax;
-        let a1 = c1.axis_dir(); let p1 = c1.axis_loc();
-        let a2 = c2.axis_dir(); let p2t = c2.axis_loc();
+        let a1 = c1.axis_dir();
+        let p1 = c1.axis_loc();
+        let a2 = c2.axis_dir();
+        let p2t = c2.axis_loc();
         let cross = a1.cross(a2);
         let is_parallel = cross.length() <= self.my_epsilon_axes_para;
         let dist_a1a2 = if is_parallel {
@@ -522,42 +658,58 @@ impl QuadQuadGeo {
         };
         if is_parallel {
             if dist_a1a2 <= tol {
-                if rm_r <= tol { self.typeres = AnaResultType::Same; }
-                else { self.typeres = AnaResultType::Empty; }
+                if rm_r <= tol {
+                    self.typeres = AnaResultType::Same;
+                } else {
+                    self.typeres = AnaResultType::Empty;
+                }
                 return;
             }
             let dir_cyl = a1.normalize_or_zero();
             let p2 = p2t - (p2t - p1).dot(dir_cyl) * dir_cyl;
             let r1pr2 = r1 + r2;
             let dist = (p2 - p1).length();
-            if dist > r1pr2 + tol { self.typeres = AnaResultType::Empty; return; }
+            if dist > r1pr2 + tol {
+                self.typeres = AnaResultType::Empty;
+                return;
+            }
             if (r1pr2 - dist) <= 1e-15 {
-                self.typeres = AnaResultType::Line; self.nbint = 1;
+                self.typeres = AnaResultType::Line;
+                self.nbint = 1;
                 self.dir1 = dir_cyl;
                 self.pt1 = p1 + (r1 / r1pr2) * (p2 - p1);
                 return;
             }
             if dist > rm_r {
-                self.typeres = AnaResultType::Line; self.nbint = 2;
-                self.dir1 = dir_cyl; self.dir2 = dir_cyl;
-                let a_cos = 0.5 * (r1*r1 - r2*r2 + dist*dist) / (r1 * dist);
+                self.typeres = AnaResultType::Line;
+                self.nbint = 2;
+                self.dir1 = dir_cyl;
+                self.dir2 = dir_cyl;
+                let a_cos = 0.5 * (r1 * r1 - r2 * r2 + dist * dist) / (r1 * dist);
                 let a_sin2 = 1.0 - a_cos * a_cos;
-                let is_tangent = (4.0 * r1*r1 * a_sin2) < tol*tol;
+                let is_tangent = (4.0 * r1 * r1 * a_sin2) < tol * tol;
                 let dir_a1a2 = (p2 - p1) / dist;
                 if is_tangent {
                     self.nbint = 1;
                     self.pt1 = p1 + dir_a1a2 * r1 * a_cos;
                 } else {
                     let a_sin = a_sin2.sqrt();
-                    let x_dir = c1.x_dir(); let y_dir = c1.y_dir();
-                    let a_dx = dir_a1a2.dot(x_dir); let a_dy = dir_a1a2.dot(y_dir);
-                    self.pt1 = p1 + (a_dx*a_cos - a_dy*a_sin)*r1*x_dir + (a_dy*a_cos + a_dx*a_sin)*r1*y_dir;
-                    self.pt2 = p1 + (a_dx*a_cos + a_dy*a_sin)*r1*x_dir + (a_dy*a_cos - a_dx*a_sin)*r1*y_dir;
+                    let x_dir = c1.x_dir();
+                    let y_dir = c1.y_dir();
+                    let a_dx = dir_a1a2.dot(x_dir);
+                    let a_dy = dir_a1a2.dot(y_dir);
+                    self.pt1 = p1
+                        + (a_dx * a_cos - a_dy * a_sin) * r1 * x_dir
+                        + (a_dy * a_cos + a_dx * a_sin) * r1 * y_dir;
+                    self.pt2 = p1
+                        + (a_dx * a_cos + a_dy * a_sin) * r1 * x_dir
+                        + (a_dy * a_cos - a_dx * a_sin) * r1 * y_dir;
                 }
                 return;
             }
             if dist > rm_r - tol {
-                self.typeres = AnaResultType::Line; self.nbint = 1;
+                self.typeres = AnaResultType::Line;
+                self.nbint = 1;
                 self.dir1 = dir_cyl;
                 let r1_rmr = if r1 < r2 { -(r1 / rm_r) } else { r1 / rm_r };
                 self.pt1 = p1 + r1_rmr * (p2 - p1);
@@ -566,33 +718,46 @@ impl QuadQuadGeo {
             self.typeres = AnaResultType::Empty;
         } else {
             if rm_r_rel <= self.my_epsilon_cylinder_delta_radius {
-                let dir1 = a1.normalize_or_zero(); let dir2 = a2.normalize_or_zero();
+                let dir1 = a1.normalize_or_zero();
+                let dir2 = a2.normalize_or_zero();
                 let cross_n = cross.normalize_or_zero();
                 let t1 = (p2t - p1).cross(a2).dot(cross_n) / cross.length_squared().max(1e-16);
                 let t2 = (p2t - p1).cross(a1).dot(cross_n) / cross.length_squared().max(1e-16);
-                let pt_int = ((p1 + t1*a1) + (p2t + t2*a2)) * 0.5;
-                let d_pt = (p1 + t1*a1 - p2t - t2*a2).length();
+                let pt_int = ((p1 + t1 * a1) + (p2t + t2 * a2)) * 0.5;
+                let d_pt = (p1 + t1 * a1 - p2t - t2 * a2).length();
                 if d_pt <= self.my_epsilon_distance {
-                    self.typeres = AnaResultType::Ellipse; self.nbint = 2;
-                    self.pt1 = pt_int; self.pt2 = pt_int;
+                    self.typeres = AnaResultType::Ellipse;
+                    self.nbint = 2;
+                    self.pt1 = pt_int;
+                    self.pt2 = pt_int;
                     let angle = dir1.dot(dir2).abs().acos();
                     let a_val = (0.5_f64 * (std::f64::consts::PI - angle)).sin().abs();
                     let b_val = (0.5_f64 * angle).sin().abs();
-                    if a_val == 0.0 || b_val == 0.0 { self.typeres = AnaResultType::Same; return; }
+                    if a_val == 0.0 || b_val == 0.0 {
+                        self.typeres = AnaResultType::Same;
+                        return;
+                    }
                     self.dir1 = (dir1 + dir2).normalize_or_zero();
                     self.dir2 = (dir1 - dir2).normalize_or_zero();
-                    self.param2 = r1 / a_val; self.param1 = r1 / b_val;
-                    self.param2bis = r1; self.param1bis = r1;
-                    if self.param1 < self.param1bis { std::mem::swap(&mut self.param1, &mut self.param1bis); }
-                    if self.param2 < self.param2bis { std::mem::swap(&mut self.param2, &mut self.param2bis); }
+                    self.param2 = r1 / a_val;
+                    self.param1 = r1 / b_val;
+                    self.param2bis = r1;
+                    self.param1bis = r1;
+                    if self.param1 < self.param1bis {
+                        std::mem::swap(&mut self.param1, &mut self.param1bis);
+                    }
+                    if self.param2 < self.param2bis {
+                        std::mem::swap(&mut self.param2, &mut self.param2bis);
+                    }
                     return;
                 }
             }
             if (dist_a1a2 - r1 - r2).abs() < tol {
-                self.typeres = AnaResultType::Point; self.nbint = 1;
+                self.typeres = AnaResultType::Point;
+                self.nbint = 1;
                 let n = cross.normalize_or_zero();
                 let t1 = (p2t - p1).cross(a2).dot(n) / cross.length_squared().max(1e-16);
-                self.pt1 = p1 + t1*a1 + r1*n;
+                self.pt1 = p1 + t1 * a1 + r1 * n;
             } else {
                 self.typeres = AnaResultType::NoGeometricSolution;
             }
@@ -601,24 +766,41 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L1324-1344: Cylinder/Cone (coaxial only)
     pub fn perform_cylinder_cone(&mut self, cyl: &Quadric, con: &Quadric, _tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let cyl_axis = cyl.axis_dir(); let con_axis = con.axis_dir();
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
+        let cyl_axis = cyl.axis_dir();
+        let con_axis = con.axis_dir();
         let cross = cyl_axis.cross(con_axis);
-        if cross.length() > self.my_epsilon_axes_para { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if cross.length() > self.my_epsilon_axes_para {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
         let perp = (con.axis_loc() - cyl.axis_loc()).cross(cyl_axis).length();
-        if perp > self.my_epsilon_distance { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if perp > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
         let dist = cyl.radius() / con.semi_angle().tan();
         let dir = cyl_axis.normalize_or_zero();
         let apex = con.axis_loc();
-        self.pt1 = apex + dist * dir; self.pt2 = apex - dist * dir;
-        self.dir1 = dir; self.dir2 = dir;
-        self.param1 = cyl.radius(); self.param2 = cyl.radius();
-        self.nbint = 2; self.typeres = AnaResultType::Circle;
+        self.pt1 = apex + dist * dir;
+        self.pt2 = apex - dist * dir;
+        self.dir1 = dir;
+        self.dir2 = dir;
+        self.param1 = cyl.radius();
+        self.param2 = cyl.radius();
+        self.nbint = 2;
+        self.typeres = AnaResultType::Circle;
     }
 
     /// OCCT IntAna_QuadQuadGeo.cxx L1373-1405: Cylinder/Sphere
     pub fn perform_cylinder_sphere(&mut self, cyl: &Quadric, sph: &Quadric, _tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         // OCCT L1377: AxeOperator + coaxial check
         let cyl_axis = cyl.axis_dir();
         let cyl_origin = cyl.axis_loc();
@@ -658,11 +840,16 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L1433-1521+: Cone/Cone
     pub fn perform_cone_cone(&mut self, c1: &Quadric, c2: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         let tg1 = c1.semi_angle().tan();
         let tg2 = c2.semi_angle().tan();
-        let a1 = c1.axis_dir(); let a2 = c2.axis_dir();
-        let apex1 = c1.axis_loc(); let apex2 = c2.axis_loc();
+        let a1 = c1.axis_dir();
+        let a2 = c2.axis_dir();
+        let apex1 = c1.axis_loc();
+        let apex2 = c2.axis_loc();
         let a_da1a2 = apex1.distance_squared(apex2);
         let cross = a1.cross(a2);
         let is_same_axis = cross.length() <= self.my_epsilon_axes_para;
@@ -670,17 +857,33 @@ impl QuadQuadGeo {
             // OCCT L1478-1521: same axis
             let d = (apex2 - apex1).dot(a1);
             if (tg1 - tg2).abs() > self.my_epsilon_angle_cone {
-                if d.abs() < 1e-10 { self.typeres = AnaResultType::Point; self.nbint = 1; self.pt1 = apex1; return; }
+                if d.abs() < 1e-10 {
+                    self.typeres = AnaResultType::Point;
+                    self.nbint = 1;
+                    self.pt1 = apex1;
+                    return;
+                }
                 let x1 = (d * tg2) / (tg1 + tg2);
-                self.pt1 = apex1 + x1 * a1; self.param1 = (x1 * tg1).abs();
+                self.pt1 = apex1 + x1 * a1;
+                self.param1 = (x1 * tg1).abs();
                 let x2 = (d * tg2) / (tg2 - tg1);
-                self.pt2 = apex1 + x2 * a1; self.param2 = (x2 * tg1).abs();
-                self.dir1 = a1; self.dir2 = a1; self.nbint = 2; self.typeres = AnaResultType::Circle;
+                self.pt2 = apex1 + x2 * a1;
+                self.param2 = (x2 * tg1).abs();
+                self.dir1 = a1;
+                self.dir2 = a1;
+                self.nbint = 2;
+                self.typeres = AnaResultType::Circle;
             } else {
-                if d.abs() < 1e-10 { self.typeres = AnaResultType::Same; return; }
+                if d.abs() < 1e-10 {
+                    self.typeres = AnaResultType::Same;
+                    return;
+                }
                 let x = d * 0.5;
-                self.pt1 = apex1 + x * a1; self.param1 = (x * tg1).abs();
-                self.dir1 = a1; self.nbint = 1; self.typeres = AnaResultType::Circle;
+                self.pt1 = apex1 + x * a1;
+                self.param1 = (x * tg1).abs();
+                self.dir1 = a1;
+                self.nbint = 1;
+                self.typeres = AnaResultType::Circle;
             }
         } else {
             self.typeres = AnaResultType::NoGeometricSolution;
@@ -689,13 +892,25 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L1917-2033: Sphere/Cone (same axis only)
     pub fn perform_sphere_cone(&mut self, sph: &Quadric, con: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let sph_center = sph.axis_loc(); let sph_radius = sph.radius();
-        let con_apex = con.axis_loc(); let con_axis = con.axis_dir();
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
+        let sph_center = sph.axis_loc();
+        let sph_radius = sph.radius();
+        let con_apex = con.axis_loc();
+        let con_axis = con.axis_dir();
         let cross = con_axis.cross(sph_center - con_apex);
-        if cross.length() > self.my_epsilon_distance { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if cross.length() > self.my_epsilon_distance {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
         let d_apex_sph = sph_center.distance(con_apex);
-        let con_dir = if d_apex_sph > 1e-15 { (sph_center - con_apex).normalize_or_zero() } else { con_axis.normalize_or_zero() };
+        let con_dir = if d_apex_sph > 1e-15 {
+            (sph_center - con_apex).normalize_or_zero()
+        } else {
+            con_axis.normalize_or_zero()
+        };
         let tga = con.semi_angle().tan();
         // OCCT L1947-2033: math_DirectPolynomialRoots → quadratic
         let tgatga = tga * tga;
@@ -703,7 +918,9 @@ impl QuadQuadGeo {
         let b_coeff = 2.0 * tgatga * d_apex_sph;
         let c_coeff = -sph_radius * sph_radius + d_apex_sph * d_apex_sph * tgatga;
         let disc = b_coeff * b_coeff - 4.0 * a_coeff * c_coeff;
-        if disc < 0.0 { return; }
+        if disc < 0.0 {
+            return;
+        }
         let sqrt_disc = disc.sqrt();
         let nbsol = if disc.abs() < 1e-15 { 1 } else { 2 };
         self.typeres = AnaResultType::Circle;
@@ -727,28 +944,50 @@ impl QuadQuadGeo {
 
     /// OCCT L2034: Sphere/Sphere
     pub fn perform_sphere_sphere(&mut self, s1: &Quadric, s2: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let o1 = s1.axis_loc(); let o2 = s2.axis_loc();
-        let d = o1.distance(o2); let r1 = s1.radius(); let r2 = s2.radius();
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
+        let o1 = s1.axis_loc();
+        let o2 = s2.axis_loc();
+        let d = o1.distance(o2);
+        let r1 = s1.radius();
+        let r2 = s2.radius();
         let (rmin, rmax) = if r1 > r2 { (r2, r1) } else { (r1, r2) };
-        if d <= tol && (r1-r2).abs() <= tol { self.typeres = AnaResultType::Same; return; }
-        if d <= tol { return; }
-        let dir = (o2-o1).normalize_or_zero();
+        if d <= tol && (r1 - r2).abs() <= tol {
+            self.typeres = AnaResultType::Same;
+            return;
+        }
+        if d <= tol {
+            return;
+        }
+        let dir = (o2 - o1).normalize_or_zero();
         let t = rmax - d - rmin;
         if t >= 0.0 && t <= tol {
-            self.typeres = AnaResultType::Point; self.nbint = 1;
-            let t2 = if r1 == rmax { (r1+r2+d)*0.5 } else { (-r1+d-r2)*0.5 };
-            self.pt1 = o1 + t2*dir;
-        } else if d > r1+r2+tol || rmax > d+rmin+tol { return; } else {
-            let alpha = 0.5*(r1*r1 - r2*r2 + d*d)/d;
-            let beta_sq = r1*r1 - alpha*alpha;
+            self.typeres = AnaResultType::Point;
+            self.nbint = 1;
+            let t2 = if r1 == rmax {
+                (r1 + r2 + d) * 0.5
+            } else {
+                (-r1 + d - r2) * 0.5
+            };
+            self.pt1 = o1 + t2 * dir;
+        } else if d > r1 + r2 + tol || rmax > d + rmin + tol {
+            return;
+        } else {
+            let alpha = 0.5 * (r1 * r1 - r2 * r2 + d * d) / d;
+            let beta_sq = r1 * r1 - alpha * alpha;
             let beta = if beta_sq > 0.0 { beta_sq.sqrt() } else { 0.0 };
             if beta <= TOLERANCE_CLAMP_MIN {
-                self.typeres = AnaResultType::Point; self.nbint = 1;
-                self.pt1 = o1 + ((r1+d-r2)*0.5)*dir;
+                self.typeres = AnaResultType::Point;
+                self.nbint = 1;
+                self.pt1 = o1 + ((r1 + d - r2) * 0.5) * dir;
             } else {
-                self.typeres = AnaResultType::Circle; self.nbint = 1;
-                self.dir1 = dir; self.param1 = beta; self.pt1 = o1 + alpha*dir;
+                self.typeres = AnaResultType::Circle;
+                self.nbint = 1;
+                self.dir1 = dir;
+                self.param1 = beta;
+                self.pt1 = o1 + alpha * dir;
             }
         }
     }
@@ -756,12 +995,18 @@ impl QuadQuadGeo {
     /// OCCT L2163: Plane/Torus
     /// OCCT IntAna_QuadQuadGeo.cxx L2163-2249: Plane/Torus
     pub fn perform_plane_torus(&mut self, p: &Quadric, tor: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         // OCCT L2169-2170: aRMin, aRMaj
         let a_rmaj = tor.major_radius();
         let a_rmin = tor.minor_radius();
         // OCCT L2171-2175: if aRMin >= aRMaj -> NoGeometricSolution
-        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if a_rmin >= a_rmaj {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
 
         let p_axis_dir = p.axis_dir();
         let t_axis_dir = tor.axis_dir();
@@ -769,10 +1014,13 @@ impl QuadQuadGeo {
         let is_parallel = t_axis_dir.cross(p_axis_dir).length() <= self.my_epsilon_axes_para;
         let is_normal = if !is_parallel {
             t_axis_dir.dot(p_axis_dir).abs() <= self.my_epsilon_axes_para
-        } else { false };
+        } else {
+            false
+        };
         // OCCT L2184-2188: if neither ∥ nor ⟂ -> NoGeometricSolution
         if !is_normal && !is_parallel {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
 
         let t_loc = tor.axis_loc();
@@ -783,13 +1031,20 @@ impl QuadQuadGeo {
             let a_dist = a * t_loc.x + b * t_loc.y + c_n * t_loc.z + d;
             let a_dr = a_dist.abs() - a_rmin;
             if a_dr > self.my_epsilon_cylinder_delta_radius {
-                self.typeres = AnaResultType::Empty; return;
+                self.typeres = AnaResultType::Empty;
+                return;
             }
             let adj_dist = if a_dr.abs() < self.my_epsilon_cylinder_delta_radius {
                 if a_dist < 0.0 { -a_rmin } else { a_rmin }
-            } else { a_dist };
+            } else {
+                a_dist
+            };
             self.typeres = AnaResultType::Circle;
-            self.pt1 = DVec3::new(t_loc.x - adj_dist * a, t_loc.y - adj_dist * b, t_loc.z - adj_dist * c_n);
+            self.pt1 = DVec3::new(
+                t_loc.x - adj_dist * a,
+                t_loc.y - adj_dist * b,
+                t_loc.z - adj_dist * c_n,
+            );
             let a_dt = (a_rmin * a_rmin - a_dist * a_dist).abs().sqrt();
             self.param1 = a_rmaj + a_dt;
             self.dir1 = t_axis_dir.normalize_or_zero();
@@ -802,9 +1057,11 @@ impl QuadQuadGeo {
             }
         } else {
             // OCCT L2231-2248: normal case
-            let a_dist = (a * t_loc.x + b * t_loc.y + c_n * t_loc.z + d).abs() / (a*a + b*b + c_n*c_n).sqrt();
+            let a_dist = (a * t_loc.x + b * t_loc.y + c_n * t_loc.z + d).abs()
+                / (a * a + b * b + c_n * c_n).sqrt();
             if a_dist > self.my_epsilon_distance {
-                self.typeres = AnaResultType::NoGeometricSolution; return;
+                self.typeres = AnaResultType::NoGeometricSolution;
+                return;
             }
             self.typeres = AnaResultType::Circle;
             self.param1 = a_rmin;
@@ -820,11 +1077,17 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L2278-2330: Cylinder/Torus (coaxial only)
     pub fn perform_cylinder_torus(&mut self, cyl: &Quadric, tor: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         // OCCT L2284-2290: minor >= major -> NoGeometricSolution
         let a_rmin = tor.minor_radius();
         let a_rmaj = tor.major_radius();
-        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if a_rmin >= a_rmaj {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
 
         let cyl_axis = cyl.axis_dir();
         let tor_axis = tor.axis_dir();
@@ -834,16 +1097,20 @@ impl QuadQuadGeo {
         let tor_loc = tor.axis_loc();
         let perp = (tor_loc - cyl_loc).cross(tor_axis).length();
         if !para || perp > self.my_epsilon_distance {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
         // OCCT L2305-2312: cylinder radius vs torus radii
         let r_cyl = cyl.radius();
         if (r_cyl + tol) < (a_rmaj - a_rmin) || (r_cyl - tol) > (a_rmaj + a_rmin) {
-            self.typeres = AnaResultType::Empty; return;
+            self.typeres = AnaResultType::Empty;
+            return;
         }
         // OCCT L2314-2329: 1 or 2 circles
         self.typeres = AnaResultType::Circle;
-        let a_dist = (a_rmin * a_rmin - (r_cyl - a_rmaj) * (r_cyl - a_rmaj)).abs().sqrt();
+        let a_dist = (a_rmin * a_rmin - (r_cyl - a_rmaj) * (r_cyl - a_rmaj))
+            .abs()
+            .sqrt();
         let tor_loc_xyz = tor_loc;
         self.dir1 = tor_axis.normalize_or_zero();
         self.pt1 = tor_loc_xyz + a_dist * self.dir1;
@@ -859,10 +1126,16 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L2357-2469: Cone/Torus (coaxial only)
     pub fn perform_cone_torus(&mut self, con: &Quadric, tor: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         let a_rmin = tor.minor_radius();
         let a_rmaj = tor.major_radius();
-        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if a_rmin >= a_rmaj {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
         let con_axis = con.axis_dir();
         let tor_axis = tor.axis_dir();
         let is_parallel = tor_axis.cross(con_axis).length() <= self.my_epsilon_axes_para;
@@ -870,7 +1143,8 @@ impl QuadQuadGeo {
         let tor_loc = tor.axis_loc();
         let perp = (tor_loc - con_apex).cross(tor_axis).length();
         if !is_parallel || perp > self.my_epsilon_distance {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
         // OCCT L2389-2468: rotate cone generatrix around torus, find circles
         // GAP: rcad does not implement the full cone-torus coaxial solution.
@@ -879,33 +1153,46 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L2496-2561: Sphere/Torus (sphere center on torus axis only)
     pub fn perform_sphere_torus(&mut self, sph: &Quadric, tor: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
         // OCCT L2502-2508: minor >= major -> NoGeometricSolution
         let a_rmin = tor.minor_radius();
         let a_rmaj = tor.major_radius();
-        if a_rmin >= a_rmaj { self.typeres = AnaResultType::NoGeometricSolution; return; }
+        if a_rmin >= a_rmaj {
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
+        }
         // OCCT L2514-2518: sphere center on torus axis?
         let tor_axis = tor.axis_dir();
         let tor_loc = tor.axis_loc();
         let sph_loc = sph.axis_loc();
         let perp = (sph_loc - tor_loc).cross(tor_axis).length();
         if perp > self.my_epsilon_distance {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
         // OCCT L2523-2533: distance check
         let r_sph = sph.radius();
         let a_x_dir = {
-            let up = if tor_axis.x.abs() > 0.1 || tor_axis.y.abs() > 0.1 { DVec3::Z } else { DVec3::X };
+            let up = if tor_axis.x.abs() > 0.1 || tor_axis.y.abs() > 0.1 {
+                DVec3::Z
+            } else {
+                DVec3::X
+            };
             tor_axis.cross(up).cross(tor_axis).normalize_or_zero()
         };
         let a_tor_loc = tor_loc + a_rmaj * a_x_dir;
         let a_dist = (sph_loc - a_tor_loc).length();
         if (a_dist - tol) > (a_rmin + r_sph) || (a_dist + tol) < (a_rmin - r_sph).abs() {
-            self.typeres = AnaResultType::Empty; return;
+            self.typeres = AnaResultType::Empty;
+            return;
         }
         // OCCT L2535-2560: circle
         self.typeres = AnaResultType::Circle;
-        let an_alpha = 0.5 * (a_rmin * a_rmin - r_sph * r_sph + a_dist * a_dist) / a_dist.max(1e-15);
+        let an_alpha =
+            0.5 * (a_rmin * a_rmin - r_sph * r_sph + a_dist * a_dist) / a_dist.max(1e-15);
         let a_beta = (a_rmin * a_rmin - an_alpha * an_alpha).abs().sqrt();
         let a_dir12 = (sph_loc - a_tor_loc).normalize_or_zero();
         let a_ph = a_tor_loc + an_alpha * a_dir12;
@@ -929,35 +1216,50 @@ impl QuadQuadGeo {
 
     /// OCCT IntAna_QuadQuadGeo.cxx L2588-2650: Torus/Torus (coaxial only)
     pub fn perform_torus_torus(&mut self, t1: &Quadric, t2: &Quadric, tol: f64) {
-        self.init_tolerances(); self.done = true; self.typeres = AnaResultType::Empty; self.nbint = 0;
-        let a1 = t1.axis_dir(); let loc1 = t1.axis_loc();
-        let a2 = t2.axis_dir(); let loc2 = t2.axis_loc();
-        let rmj1 = t1.major_radius(); let rmn1 = t1.minor_radius();
-        let rmj2 = t2.major_radius(); let rmn2 = t2.minor_radius();
+        self.init_tolerances();
+        self.done = true;
+        self.typeres = AnaResultType::Empty;
+        self.nbint = 0;
+        let a1 = t1.axis_dir();
+        let loc1 = t1.axis_loc();
+        let a2 = t2.axis_dir();
+        let loc2 = t2.axis_loc();
+        let rmj1 = t1.major_radius();
+        let rmn1 = t1.minor_radius();
+        let rmj2 = t2.major_radius();
+        let rmn2 = t2.minor_radius();
         // OCCT L2605-2610: coaxial check
         let is_parallel = a1.cross(a2).length() <= self.my_epsilon_axes_para;
         let perp = (loc2 - loc1).cross(a1).length();
         if !is_parallel || perp > self.my_epsilon_distance {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
         // OCCT L2612-2617: same torus check
         if loc1.distance(loc2) <= tol && (rmn1 - rmn2).abs() <= tol && (rmj1 - rmj2).abs() <= tol {
-            self.typeres = AnaResultType::Same; return;
+            self.typeres = AnaResultType::Same;
+            return;
         }
         // OCCT L2619-2623: invalid geometry
         if rmn1 >= rmj1 || rmn2 >= rmj2 {
-            self.typeres = AnaResultType::NoGeometricSolution; return;
+            self.typeres = AnaResultType::NoGeometricSolution;
+            return;
         }
         // OCCT L2625-2650: distance-based circles
         let a_x_dir = {
-            let up = if a1.x.abs() > 0.1 || a1.y.abs() > 0.1 { DVec3::Z } else { DVec3::X };
+            let up = if a1.x.abs() > 0.1 || a1.y.abs() > 0.1 {
+                DVec3::Z
+            } else {
+                DVec3::X
+            };
             a1.cross(up).cross(a1).normalize_or_zero()
         };
         let a_p1 = loc1 + rmj1 * a_x_dir;
         let a_p2 = loc2 + rmj2 * a_x_dir;
         let a_dist = (a_p1 - a_p2).length();
         if (a_dist - tol) > (rmn1 + rmn2) || (a_dist + tol) < (rmn1 - rmn2).abs() {
-            self.typeres = AnaResultType::Empty; return;
+            self.typeres = AnaResultType::Empty;
+            return;
         }
         self.typeres = AnaResultType::Circle;
         let an_alpha = 0.5 * (rmn1 * rmn1 - rmn2 * rmn2 + a_dist * a_dist) / a_dist.max(1e-15);

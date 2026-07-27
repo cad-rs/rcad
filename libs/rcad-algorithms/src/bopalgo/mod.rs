@@ -1,11 +1,11 @@
-pub mod pave_filler;
 pub mod builder;
+pub mod pave_filler;
 
-use glam::DVec3;
-use std::collections::{HashMap, HashSet, BTreeMap};
 use crate::bopds::ds::DS;
 use crate::boptools::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
+use glam::DVec3;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// BOPAlgo_GlueEnum — glue mode for coincident-face detection.
 ///   GlueOff=0: no glue (standard intersection).
@@ -19,7 +19,9 @@ pub enum GlueEnum {
 }
 
 impl Default for GlueEnum {
-    fn default() -> Self { GlueEnum::GlueOff }
+    fn default() -> Self {
+        GlueEnum::GlueOff
+    }
 }
 
 /// BOPAlgo_Alert base — alert types for pipeline diagnostics.
@@ -66,23 +68,42 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn new() -> Self { Self { alerts: Vec::new() } }
-    pub fn add_alert(&mut self, alert: Alert) { self.alerts.push(alert); }
-    pub fn has_alerts(&self) -> bool { !self.alerts.is_empty() }
-    pub fn alerts(&self) -> &[Alert] { &self.alerts }
-    pub fn clear(&mut self) { self.alerts.clear(); }
+    pub fn new() -> Self {
+        Self { alerts: Vec::new() }
+    }
+    pub fn add_alert(&mut self, alert: Alert) {
+        self.alerts.push(alert);
+    }
+    pub fn has_alerts(&self) -> bool {
+        !self.alerts.is_empty()
+    }
+    pub fn alerts(&self) -> &[Alert] {
+        &self.alerts
+    }
+    pub fn clear(&mut self) {
+        self.alerts.clear();
+    }
 
     /// HasErrors — checks for fatal alerts (OCCT: TooSmallRange is warning, not error).
     pub fn has_errors(&self) -> bool {
-        self.alerts.iter().any(|a| matches!(a,
-            Alert::EdgeWithoutCurve(_)
-            | Alert::TooFewArguments | Alert::NoFiller
-            | Alert::BOPNotAllowed | Alert::BOPNotSet | Alert::EmptyShape))
+        self.alerts.iter().any(|a| {
+            matches!(
+                a,
+                Alert::EdgeWithoutCurve(_)
+                    | Alert::TooFewArguments
+                    | Alert::NoFiller
+                    | Alert::BOPNotAllowed
+                    | Alert::BOPNotSet
+                    | Alert::EmptyShape
+            )
+        })
     }
 
     /// HasAlert — check if a specific alert type is present.
     pub fn has_alert(&self, alert_type: &Alert) -> bool {
-        self.alerts.iter().any(|a| std::mem::discriminant(a) == std::mem::discriminant(alert_type))
+        self.alerts
+            .iter()
+            .any(|a| std::mem::discriminant(a) == std::mem::discriminant(alert_type))
     }
 
     /// Merge — merge another report's alerts into this one.
@@ -92,29 +113,31 @@ impl Report {
 
     /// GetAlerts — get alerts matching a predicate, grouped.
     ///   rcad: simplified — returns all alerts.
-    pub fn get_alerts(&self) -> &[Alert] { &self.alerts }
+    pub fn get_alerts(&self) -> &[Alert] {
+        &self.alerts
+    }
 
     /// compatibility check for code that uses simple bool.
     pub fn has_error(&self) -> bool {
-        self.alerts.iter().any(|a| matches!(a, Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)))
+        self.alerts
+            .iter()
+            .any(|a| matches!(a, Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)))
     }
 }
 
 /// BOPAlgo_Tools::FillMap (hxx L83-102).
 /// BOPAlgo_Tools::FillMap (generic, supports any Ord + Copy key type).
 /// rcad: fills bidirectional adjacency in a connection map.
-pub fn fill_map<K: std::cmp::Ord + Copy>(
-    map: &mut BTreeMap<K, Vec<K>>,
-    n1: K,
-    n2: K,
-) {
+pub fn fill_map<K: std::cmp::Ord + Copy>(map: &mut BTreeMap<K, Vec<K>>, n1: K, n2: K) {
     map.entry(n1).or_default().push(n2);
     map.entry(n2).or_default().push(n1);
 }
 
 /// BOPAlgo_Tools::MakeBlocks (hxx L45-80).
 /// rcad: generic version for `BTreeMap<K, Vec<K>>` → `Vec<Vec<K>>`.
-pub fn make_blocks<K: std::cmp::Ord + Copy + std::hash::Hash>(map: &BTreeMap<K, Vec<K>>) -> Vec<Vec<K>> {
+pub fn make_blocks<K: std::cmp::Ord + Copy + std::hash::Hash>(
+    map: &BTreeMap<K, Vec<K>>,
+) -> Vec<Vec<K>> {
     let mut fence: std::collections::HashSet<K> = std::collections::HashSet::new();
     let mut blocks: Vec<Vec<K>> = Vec::new();
     for (&key, _) in map {
@@ -149,11 +172,7 @@ pub fn make_blocks<K: std::cmp::Ord + Copy + std::hash::Hash>(map: &BTreeMap<K, 
 ///   fuzzy_value — additional tolerance for intersection (half added to each vertex).
 ///
 /// Returns: groups of vertex indices that intersect each other.
-pub fn intersect_vertices(
-    vertex_indices: &[usize],
-    ds: &DS,
-    fuzzy_value: f64,
-) -> Vec<Vec<usize>> {
+pub fn intersect_vertices(vertex_indices: &[usize], ds: &DS, fuzzy_value: f64) -> Vec<Vec<usize>> {
     let a_nb_v = vertex_indices.len();
     if a_nb_v <= 1 {
         return vertex_indices.iter().map(|&vi| vec![vi]).collect();
@@ -166,13 +185,17 @@ pub fn intersect_vertices(
 
     for i in 0..a_nb_v {
         let vi = vertex_indices[i];
-        let Some(v) = ds.vertices.get(vi) else { continue; };
+        let Some(v) = ds.vertices.get(vi) else {
+            continue;
+        };
         let a_tol = ds.vertex_tolerance(vi).max(0.0);
         let total_tol = a_tol + a_tol_add;
 
         for j in (i + 1)..a_nb_v {
             let vj = vertex_indices[j];
-            let Some(v2) = ds.vertices.get(vj) else { continue; };
+            let Some(v2) = ds.vertices.get(vj) else {
+                continue;
+            };
             let a_tol_j = ds.vertex_tolerance(vj).max(0.0);
             let total_tol_j = a_tol_j + a_tol_add;
             let total_tol_sum = total_tol + total_tol_j;
@@ -199,9 +222,10 @@ pub fn intersect_vertices(
     }
 
     // Convert internal indices back to DS vertex indices
-    blocks.iter().map(|block| {
-        block.iter().map(|&idx| vertex_indices[idx]).collect()
-    }).collect()
+    blocks
+        .iter()
+        .map(|block| block.iter().map(|&idx| vertex_indices[idx]).collect())
+        .collect()
 }
 
 /// BOPAlgo_Tools::EdgesToWires (hxx L360-663).
@@ -222,11 +246,12 @@ pub fn edges_to_wires(
     }
 
     // Filter out degenerated edges
-    let a_le: Vec<usize> = edge_indices.iter()
+    let a_le: Vec<usize> = edge_indices
+        .iter()
         .filter(|&&ei| {
-            ds.edges.get(ei).map_or(false, |e| {
-                !ds.is_edge_degenerated(ei) && e.is_geometric
-            })
+            ds.edges
+                .get(ei)
+                .map_or(false, |e| !ds.is_edge_degenerated(ei) && e.is_geometric)
         })
         .copied()
         .collect();
@@ -244,8 +269,14 @@ pub fn edges_to_wires(
     let mut a_ve_map: BTreeMap<usize, Vec<(usize, bool)>> = BTreeMap::new();
     for &ei in &a_le {
         let edge = &ds.edges[ei];
-        a_ve_map.entry(edge.start_vertex).or_default().push((ei, true));
-        a_ve_map.entry(edge.end_vertex).or_default().push((ei, false));
+        a_ve_map
+            .entry(edge.start_vertex)
+            .or_default()
+            .push((ei, true));
+        a_ve_map
+            .entry(edge.end_vertex)
+            .or_default()
+            .push((ei, false));
     }
 
     // Fence map for processed edges
@@ -259,7 +290,9 @@ pub fn edges_to_wires(
 
     // First pass: edges with valence-1 vertices (free ends)
     for &ei in &a_le {
-        if a_m_fence.contains(&ei) { continue; }
+        if a_m_fence.contains(&ei) {
+            continue;
+        }
         let edge = &ds.edges[ei];
         let sv = edge.start_vertex;
         let ev = edge.end_vertex;
@@ -272,7 +305,9 @@ pub fn edges_to_wires(
     }
     // Second pass: remaining edges
     for &ei in &a_le {
-        if a_m_fence.insert(ei) { continue; }
+        if a_m_fence.insert(ei) {
+            continue;
+        }
         start_edges.push((ei, true));
     }
 
@@ -284,7 +319,9 @@ pub fn edges_to_wires(
 
     // Walk each start edge to build wires
     for &(start_ei, start_fwd) in &start_edges {
-        if !a_m_fence.contains(&start_ei) { continue; }
+        if !a_m_fence.contains(&start_ei) {
+            continue;
+        }
 
         let mut wire: Vec<(usize, bool)> = Vec::new();
         let edge = &ds.edges[start_ei];
@@ -299,10 +336,14 @@ pub fn edges_to_wires(
 
         // Walk forward
         loop {
-            let Some(neighbors) = a_ve_map.get(&a_v_cur) else { break; };
+            let Some(neighbors) = a_ve_map.get(&a_v_cur) else {
+                break;
+            };
             let mut found = false;
             for &(next_ei, _next_fwd) in neighbors {
-                if !a_m_fence.contains(&next_ei) { continue; }
+                if !a_m_fence.contains(&next_ei) {
+                    continue;
+                }
                 let next_edge = &ds.edges[next_ei];
                 if next_edge.start_vertex == a_v_cur {
                     a_v_cur = next_edge.end_vertex;
@@ -317,7 +358,9 @@ pub fn edges_to_wires(
                 found = true;
                 break;
             }
-            if !found { break; }
+            if !found {
+                break;
+            }
         }
 
         a_lwires.push(wire);
@@ -346,16 +389,23 @@ pub fn classify_faces(
     let mut the_in_parts: Vec<Vec<usize>> = vec![Vec::new(); n_solids];
 
     // Precompute flat DS face sets per solid (for classify_point)
-    let solid_faces: Vec<Vec<usize>> = the_solids.iter()
+    let solid_faces: Vec<Vec<usize>> = the_solids
+        .iter()
         .map(|shells| shells.iter().flat_map(|sh| sh.iter().copied()).collect())
         .collect();
 
     for (si, sfaces) in solid_faces.iter().enumerate() {
-        if sfaces.is_empty() { continue; }
+        if sfaces.is_empty() {
+            continue;
+        }
         let sbox = &aabb_of_solid[si];
         for (pi, &fi) in the_faces.iter().enumerate() {
-            if pi >= face_samples.len() { continue; }
-            if !aabb_of_face[pi].intersects(sbox) { continue; }
+            if pi >= face_samples.len() {
+                continue;
+            }
+            if !aabb_of_face[pi].intersects(sbox) {
+                continue;
+            }
             let class = classify_point(face_samples[pi], sfaces, ds);
             if class == Classification::In {
                 the_in_parts[si].push(fi);
@@ -403,60 +453,58 @@ pub fn trsf_to_point(
     Some(point - a_box.min)
 }
 
+// ===== GlueEnum =====
 
+#[test]
+fn glue_enum_default_is_off() {
+    assert_eq!(GlueEnum::default(), GlueEnum::GlueOff);
+}
 
-    // ===== GlueEnum =====
+#[test]
+fn glue_enum_discriminants() {
+    assert_eq!(GlueEnum::GlueOff as i32, 0);
+    assert_eq!(GlueEnum::GlueFull as i32, 1);
+    assert_eq!(GlueEnum::GlueShift as i32, 2);
+}
 
-    #[test]
-    fn glue_enum_default_is_off() {
-        assert_eq!(GlueEnum::default(), GlueEnum::GlueOff);
-    }
+// ===== Alert / Report =====
 
-    #[test]
-    fn glue_enum_discriminants() {
-        assert_eq!(GlueEnum::GlueOff as i32, 0);
-        assert_eq!(GlueEnum::GlueFull as i32, 1);
-        assert_eq!(GlueEnum::GlueShift as i32, 2);
-    }
+#[test]
+fn report_empty_initially() {
+    let r = Report::new();
+    assert!(!r.has_alerts());
+    assert!(!r.has_error());
+}
 
-    // ===== Alert / Report =====
+#[test]
+fn report_collects_alerts() {
+    let mut r = Report::new();
+    r.add_alert(Alert::TooSmallRange(3, 1e-12));
+    assert!(r.has_alerts());
+    assert!(r.has_error());
+}
 
-    #[test]
-    fn report_empty_initially() {
-        let r = Report::new();
-        assert!(!r.has_alerts());
-        assert!(!r.has_error());
-    }
+#[test]
+fn report_building_pcurve_failed_not_fatal() {
+    let mut r = Report::new();
+    r.add_alert(Alert::BuildingPCurveFailed(5, 2));
+    assert!(r.has_alerts());
+    assert!(!r.has_error(), "pcurve failure should not count as error");
+}
 
-    #[test]
-    fn report_collects_alerts() {
-        let mut r = Report::new();
-        r.add_alert(Alert::TooSmallRange(3, 1e-12));
-        assert!(r.has_alerts());
-        assert!(r.has_error());
-    }
+#[test]
+fn report_clear_removes_alerts() {
+    let mut r = Report::new();
+    r.add_alert(Alert::TooSmallRange(0, 1e-9));
+    r.clear();
+    assert!(!r.has_alerts());
+}
 
-    #[test]
-    fn report_building_pcurve_failed_not_fatal() {
-        let mut r = Report::new();
-        r.add_alert(Alert::BuildingPCurveFailed(5, 2));
-        assert!(r.has_alerts());
-        assert!(!r.has_error(), "pcurve failure should not count as error");
-    }
-
-    #[test]
-    fn report_clear_removes_alerts() {
-        let mut r = Report::new();
-        r.add_alert(Alert::TooSmallRange(0, 1e-9));
-        r.clear();
-        assert!(!r.has_alerts());
-    }
-
-    #[test]
-    fn report_alerts_slice_order() {
-        let mut r = Report::new();
-        r.add_alert(Alert::EdgeWithoutCurve(1));
-        r.add_alert(Alert::SolidBuilderUnusedFaces(vec![2, 3]));
-        assert_eq!(r.alerts().len(), 2);
-        assert!(matches!(r.alerts()[0], Alert::EdgeWithoutCurve(1)));
-    }
+#[test]
+fn report_alerts_slice_order() {
+    let mut r = Report::new();
+    r.add_alert(Alert::EdgeWithoutCurve(1));
+    r.add_alert(Alert::SolidBuilderUnusedFaces(vec![2, 3]));
+    assert_eq!(r.alerts().len(), 2);
+    assert!(matches!(r.alerts()[0], Alert::EdgeWithoutCurve(1)));
+}

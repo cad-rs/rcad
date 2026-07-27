@@ -4,10 +4,7 @@
 
 use glam::DVec3;
 use rcad_algorithms::{
-    BooleanOpType,
-    SimplifyOptions,
-    boolean_op_simplified,
-    geom_populate::populate_box_geom,
+    BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom,
 };
 use rcad_kernel::BRep;
 use rcad_modeling::*;
@@ -41,12 +38,16 @@ fn main() {
 
     // ── 2. Intersection of two overlapping boxes ───────────────────────
     println!("2. Intersection of two overlapping boxes");
-    let (intersection, _) = boolean_op_simplified(BooleanOpType::Intersection, &a, &b, simplify_opts).expect("intersection");
+    let (intersection, _) =
+        boolean_op_simplified(BooleanOpType::Intersection, &a, &b, simplify_opts)
+            .expect("intersection");
     write_step(&intersection, "output_bool_intersection.step");
 
     // ── 3. Difference A - B ────────────────────────────────────────────
     println!("3. Difference A - B");
-    let (difference, report) = boolean_op_simplified(BooleanOpType::Difference, &a, &b, simplify_opts).expect("difference");
+    let (difference, report) =
+        boolean_op_simplified(BooleanOpType::Difference, &a, &b, simplify_opts)
+            .expect("difference");
     println!(
         "   Simplified: merges={}, internal_removed={}, small_edges_removed={}, wires_fixed={}, vertices_merged={}",
         report.same_domain_face_merges,
@@ -59,7 +60,8 @@ fn main() {
 
     // ── 4. Difference B - A (asymmetric) ──────────────────────────────
     println!("4. Difference B - A");
-    let (diff_ba, _) = boolean_op_simplified(BooleanOpType::Difference, &b, &a, simplify_opts).expect("difference B-A");
+    let (diff_ba, _) = boolean_op_simplified(BooleanOpType::Difference, &b, &a, simplify_opts)
+        .expect("difference B-A");
     write_step(&diff_ba, "output_bool_difference_ba.step");
 
     // ── 5. Box with a rectangular hole (contained subtraction) ────────
@@ -69,7 +71,9 @@ fn main() {
     populate_box_geom(&mut outer);
     populate_box_geom(&mut slot);
 
-    let (slotted, _) = boolean_op_simplified(BooleanOpType::Difference, &outer, &slot, simplify_opts).expect("slot");
+    let (slotted, _) =
+        boolean_op_simplified(BooleanOpType::Difference, &outer, &slot, simplify_opts)
+            .expect("slot");
     write_step(&slotted, "output_bool_slot.step");
 
     // ── 6. Three-box union (chained) ──────────────────────────────────
@@ -81,7 +85,8 @@ fn main() {
     populate_box_geom(&mut by);
     populate_box_geom(&mut bz);
 
-    let (mut cross, _) = boolean_op_simplified(BooleanOpType::Union, &bx, &by, simplify_opts).expect("cross xy");
+    let (mut cross, _) =
+        boolean_op_simplified(BooleanOpType::Union, &bx, &by, simplify_opts).expect("cross xy");
     // The result of union doesn't have GeomStore populated for further booleans,
     // so we export the two-arm cross and the third arm separately.
     // For full chaining, populate_box_geom would need to be generalized.
@@ -180,14 +185,20 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
         let face = &brep.solids[*si].shells[*shi].faces[*fi];
         raw_outer_edges += face.outer_wire.edges.len();
         for we in &face.outer_wire.edges {
-            let Some(edge) = brep.edges.get(we.idx) else { continue };
+            let Some(edge) = brep.edges.get(we.idx) else {
+                continue;
+            };
             let (sv, ev) = if we.forward {
                 (edge.start, edge.end)
             } else {
                 (edge.end, edge.start)
             };
-            let Some(sp) = brep.vertices.get(sv).map(|v| v.point) else { continue };
-            let Some(ep) = brep.vertices.get(ev).map(|v| v.point) else { continue };
+            let Some(sp) = brep.vertices.get(sv).map(|v| v.point) else {
+                continue;
+            };
+            let Some(ep) = brep.vertices.get(ev).map(|v| v.point) else {
+                continue;
+            };
             let k = segment_key(sp, ep);
             *all_seg_counts.entry(k).or_insert(0) += 1;
 
@@ -226,12 +237,19 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
         .sum::<usize>();
     let merged_collinear_total = merged_y_edges + merged_z_edges;
 
-    println!("   [diag] Union intersection patch (x=3): face patch count = {}", patch_faces.len());
+    println!(
+        "   [diag] Union intersection patch (x=3): face patch count = {}",
+        patch_faces.len()
+    );
     println!("   [diag] Raw outer-loop edge count = {raw_outer_edges}");
     println!("   [diag] Unique geometric edge segments = {unique_segments}");
-    println!("   [diag] Repeated segment groups = {repeated_groups}, repeated segment total = {repeated_total}");
+    println!(
+        "   [diag] Repeated segment groups = {repeated_groups}, repeated segment total = {repeated_total}"
+    );
     println!("   [diag] Boundary edge segments (excluding interior sharing) = {boundary_segments}");
-    println!("   [diag] Edges after collinear merge = {merged_collinear_total} (~4 for a simple rectangular contact loop; more with holes or fragments)");
+    println!(
+        "   [diag] Edges after collinear merge = {merged_collinear_total} (~4 for a simple rectangular contact loop; more with holes or fragments)"
+    );
 }
 
 fn segment_key(a: DVec3, b: DVec3) -> String {
@@ -246,10 +264,7 @@ fn segment_key(a: DVec3, b: DVec3) -> String {
         (b.z * 1e9).round() as i64,
     );
     let (p, q) = if qa <= qb { (qa, qb) } else { (qb, qa) };
-    format!(
-        "{}:{}:{}|{}:{}:{}",
-        p.0, p.1, p.2, q.0, q.1, q.2
-    )
+    format!("{}:{}:{}|{}:{}:{}", p.0, p.1, p.2, q.0, q.1, q.2)
 }
 
 fn merge_intervals_count(intervals: &[(f64, f64)]) -> usize {

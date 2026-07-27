@@ -335,7 +335,11 @@ mod tests {
         let (k1, k2) = principal_curvatures(&s, 0.5, 0.5);
         assert!(approx_eq(k1, 1.0 / r, TOL), "k1 should be 1/r");
         assert!(approx_eq(k2, 1.0 / r, TOL), "k2 should be 1/r");
-        assert!(approx_eq(gaussian_curvature(&s, 0.5, 0.5), 1.0 / (r * r), TOL));
+        assert!(approx_eq(
+            gaussian_curvature(&s, 0.5, 0.5),
+            1.0 / (r * r),
+            TOL
+        ));
     }
 
     #[test]
@@ -353,7 +357,10 @@ mod tests {
         let k_max = k1.max(k2);
         let k_min = k1.min(k2);
         assert!(approx_eq(k_max, 1.0 / r, TOL), "k_max should be 1/r");
-        assert!(approx_eq(k_min, 0.0, TOL), "k_min should be 0 (developable)");
+        assert!(
+            approx_eq(k_min, 0.0, TOL),
+            "k_min should be 0 (developable)"
+        );
         // Gaussian curvature should be 0 (developable surface)
         assert!(approx_eq(gaussian_curvature(&s, 0.0, 0.0), 0.0, TOL));
     }
@@ -416,7 +423,10 @@ mod tests {
             ref_dir: any_perpendicular(DVec3::Z),
         });
         let osr = osculating_radius(&s, 0.5, 0.5);
-        assert!(approx_eq(osr, r, TOL), "osculating radius should equal sphere radius");
+        assert!(
+            approx_eq(osr, r, TOL),
+            "osculating radius should equal sphere radius"
+        );
     }
 
     #[test]

@@ -7,12 +7,11 @@
 // (Same tree as --occt-root at generation time.)
 
 use glam::DVec3;
+use rcad_algorithms::{BooleanOpType, boolean_op, total_surface_area, total_volume};
 use rcad_modeling::make_box_brep;
-use rcad_algorithms::{boolean_op, BooleanOpType, total_surface_area, total_volume};
 
 #[test]
-fn occt_boolean_supported_a1_geometry_loads() {
-}
+fn occt_boolean_supported_a1_geometry_loads() {}
 
 #[test]
 fn occt_boolean_supported_a1_draw_script_rcad_equivalent() {
@@ -24,12 +23,17 @@ fn occt_boolean_supported_a1_draw_script_rcad_equivalent() {
     // checknbshapes result -solid 1
     //
 
-    let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0)
-        .expect("DRAW box b1");
-    let b2 = make_box_brep(DVec3::new(5.0, 0.0, 0.0), DVec3::X, DVec3::Y, 10.0, 10.0, 10.0)
-        .expect("DRAW box b2");
-    let result = boolean_op(BooleanOpType::Union, &b1, &b2)
-        .expect("DRAW bfuse result");
+    let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("DRAW box b1");
+    let b2 = make_box_brep(
+        DVec3::new(5.0, 0.0, 0.0),
+        DVec3::X,
+        DVec3::Y,
+        10.0,
+        10.0,
+        10.0,
+    )
+    .expect("DRAW box b2");
+    let result = boolean_op(BooleanOpType::Union, &b1, &b2).expect("DRAW bfuse result");
     // OCCT `checkprops -s` 800.0. Orthogonal coplanar merge uses 2D bbox area overlap; some
     // side fragments remain and `total_surface_area` can be ~600 until full consolidation.
     assert_close(total_surface_area(&result), 800.0, 220.0, "surface area");
@@ -38,5 +42,8 @@ fn occt_boolean_supported_a1_draw_script_rcad_equivalent() {
 }
 
 fn assert_close(actual: f64, expected: f64, tol: f64, label: &str) {
-    assert!((actual - expected).abs() <= tol, "{label}: expected {expected}, got {actual}");
+    assert!(
+        (actual - expected).abs() <= tol,
+        "{label}: expected {expected}, got {actual}"
+    );
 }

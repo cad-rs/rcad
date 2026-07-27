@@ -412,11 +412,7 @@ impl<'a> super::PaveFiller<'a> {
                         // OCCT L607: aNC.SetTolerance(std::max(aIC.Tolerance(), aTolFF));
                         ic.geom_tol = ic.geom_tol.max(a_tol_ff);
                     }
-                    if b_is_valid {
-                        Some(ci)
-                    } else {
-                        None
-                    }
+                    if b_is_valid { Some(ci) } else { None }
                 })
                 .collect();
             self.ds.interf_ff[ff_idx].curves = retained_curves;

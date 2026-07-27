@@ -1,4 +1,4 @@
-﻿#[allow(unused_imports)]
+#[allow(unused_imports)]
 use glam::DVec3;
 use rcad_kernel::geom::*;
 
@@ -74,5 +74,3 @@ pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> Plan
         minor_radius,
     })
 }
-
-

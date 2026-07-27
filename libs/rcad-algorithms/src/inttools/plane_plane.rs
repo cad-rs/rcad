@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -57,5 +57,3 @@ fn solve_two_plane_point(n1: DVec3, d1: f64, n2: DVec3, d2: f64, dir: DVec3) -> 
         DVec3::new(x, y, 0.0)
     }
 }
-
-

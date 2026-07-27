@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 // =============================================================================
 // Curve2dIntersection - Result of 2D curve-curve intersection
@@ -41,7 +41,12 @@ pub fn circle_through_three_points(p1: DVec2, p2: DVec2, p3: DVec2) -> Option<Ci
         return None;
     }
 
-    Some(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y })
+    Some(Circle2d {
+        center,
+        radius,
+        x_dir: DVec2::X,
+        y_dir: DVec2::Y,
+    })
 }
 
 /// Construct circles through two points and tangent to `base`.
@@ -98,11 +103,17 @@ pub fn circles_tangent_to_circle_through_points(
             continue;
         }
         if circles.iter().any(|c: &Circle2d| {
-            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
+            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8
+                && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
         }) {
             continue;
         }
-        circles.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
+        circles.push(Circle2d {
+            center,
+            radius,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+        });
     }
     circles.sort_by(|a, b| b.radius.partial_cmp(&a.radius).unwrap());
     circles
@@ -285,11 +296,17 @@ pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2
                 continue;
             }
             if result.iter().any(|c: &Circle2d| {
-                (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
+                (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8
+                    && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
             }) {
                 continue;
             }
-            result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
+            result.push(Circle2d {
+                center,
+                radius,
+                x_dir: DVec2::X,
+                y_dir: DVec2::Y,
+            });
         }
     }
 
@@ -389,10 +406,17 @@ pub fn circles_tangent_to_two_circles_and_line(
                     {
                         continue;
                     }
-                    if (signed_distance_to_line(center, line, n).abs() - r).abs() > TOLERANCE_MESH_LEGACY {
+                    if (signed_distance_to_line(center, line, n).abs() - r).abs()
+                        > TOLERANCE_MESH_LEGACY
+                    {
                         continue;
                     }
-                    out.push(Circle2d { center, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r });
+                    out.push(Circle2d {
+                        center,
+                        x_dir: DVec2::X,
+                        y_dir: DVec2::Y,
+                        radius: r,
+                    });
                 }
             }
         }
@@ -408,7 +432,10 @@ pub fn circles_tangent_to_two_circles_and_line(
 /// Returns up to eight solutions in a fixed branch order that matches
 /// OCCT `circ2d3Tan` / `CircleCircleCircle_11` for `checklength tan1_1` … `tan1_8`.
 pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d) -> Vec<Circle2d> {
-    if c1.radius <= TOLERANCE_LEN_MIN || c2.radius <= TOLERANCE_LEN_MIN || c3.radius <= TOLERANCE_LEN_MIN {
+    if c1.radius <= TOLERANCE_LEN_MIN
+        || c2.radius <= TOLERANCE_LEN_MIN
+        || c3.radius <= TOLERANCE_LEN_MIN
+    {
         return Vec::new();
     }
     let o1 = c1.center;
@@ -464,7 +491,8 @@ pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d
                         continue;
                     }
                     if out.iter().any(|c: &Circle2d| {
-                        (c.center - center).length() < TOLERANCE_MESH_LEGACY && (c.radius - r_candidate).abs() < TOLERANCE_MESH_LEGACY
+                        (c.center - center).length() < TOLERANCE_MESH_LEGACY
+                            && (c.radius - r_candidate).abs() < TOLERANCE_MESH_LEGACY
                     }) {
                         continue;
                     }
@@ -611,13 +639,19 @@ fn append_circle_circle_point_solutions(
         if !is_tangent_to_circle(center, radius, c1) || !is_tangent_to_circle(center, radius, c2) {
             continue;
         }
-        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
+        result.push(Circle2d {
+            center,
+            radius,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+        });
     }
 }
 
 fn is_tangent_to_circle(center: DVec2, radius: f64, base: Circle2d) -> bool {
     let d = (center - base.center).length();
-    (d - (radius + base.radius)).abs() < TOLERANCE_ABS || (d - (radius - base.radius).abs()).abs() < TOLERANCE_ABS
+    (d - (radius + base.radius)).abs() < TOLERANCE_ABS
+        || (d - (radius - base.radius).abs()).abs() < TOLERANCE_ABS
 }
 
 fn append_circle_line_point_solutions(
@@ -658,7 +692,8 @@ fn append_circle_line_point_solutions(
         yr,
         |center, radius| {
             is_tangent_to_circle(center, radius, circle)
-                && (signed_distance_to_line(center, line, normal).abs() - radius).abs() <= TOLERANCE_ABS
+                && (signed_distance_to_line(center, line, normal).abs() - radius).abs()
+                    <= TOLERANCE_ABS
         },
         result,
     );
@@ -716,7 +751,12 @@ fn append_circle_line_line_solutions(
         {
             continue;
         }
-        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
+        result.push(Circle2d {
+            center,
+            radius,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+        });
     }
 }
 
@@ -804,11 +844,17 @@ fn append_radius_roots(
             continue;
         }
         if result.iter().any(|c: &Circle2d| {
-            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
+            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8
+                && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
         }) {
             continue;
         }
-        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
+        result.push(Circle2d {
+            center,
+            radius,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+        });
     }
 }
 
@@ -830,7 +876,12 @@ fn solve_three_signed_lines(lines: &[(Line2d, DVec2); 3], signs: [f64; 3]) -> Op
     let is_tangent = lines.iter().all(|(line, normal)| {
         (signed_distance_to_line(center, *line, *normal).abs() - radius).abs() <= TOLERANCE_ABS
     });
-    is_tangent.then_some(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y })
+    is_tangent.then_some(Circle2d {
+        center,
+        radius,
+        x_dir: DVec2::X,
+        y_dir: DVec2::Y,
+    })
 }
 
 fn solve_3x3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
@@ -902,9 +953,13 @@ pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f6
                     let world_dir = DVec2::new(
                         local_dir.x * e.major_dir.x - local_dir.y * e.major_dir.y,
                         local_dir.x * e.major_dir.y + local_dir.y * e.major_dir.x,
-                    ).normalize_or_zero();
+                    )
+                    .normalize_or_zero();
                     if world_dir.length_squared() > 0.5 {
-                        sols.push(Line2d { origin: origin_2d, direction: world_dir });
+                        sols.push(Line2d {
+                            origin: origin_2d,
+                            direction: world_dir,
+                        });
                     }
                 }
             }
@@ -928,8 +983,14 @@ pub fn lines_tangent_to_curve_from_point(curve: &Curve2d, point: DVec2, _tol: f6
             let t1 = DVec2::new(-rot1.y, rot1.x);
             let t2 = DVec2::new(-rot2.y, rot2.x);
             vec![
-                Line2d { origin: point + rot1 * (c.radius * alpha.sin()), direction: t1 },
-                Line2d { origin: point + rot2 * (c.radius * alpha.sin()), direction: t2 },
+                Line2d {
+                    origin: point + rot1 * (c.radius * alpha.sin()),
+                    direction: t1,
+                },
+                Line2d {
+                    origin: point + rot2 * (c.radius * alpha.sin()),
+                    direction: t2,
+                },
             ]
         }
         _ => Vec::new(),
@@ -950,24 +1011,33 @@ pub fn common_tangents_curve_curve(curve1: &Curve2d, curve2: &Curve2d, tol: f64)
         let t1 = (i as f64 / n_sample as f64) * std::f64::consts::TAU;
         let p1 = curve1.point_at(t1);
         let d1 = curve2d_d1(curve1, t1);
-        if d1.length_squared() < TOLERANCE_CLAMP_MIN { continue; }
+        if d1.length_squared() < TOLERANCE_CLAMP_MIN {
+            continue;
+        }
         let n1 = DVec2::new(-d1.y, d1.x).normalize(); // normal at p1
 
         for j in 0..n_sample {
             let t2 = (j as f64 / n_sample as f64) * std::f64::consts::TAU;
             let p2 = curve2.point_at(t2);
             let d2 = curve2d_d1(curve2, t2);
-            if d2.length_squared() < TOLERANCE_CLAMP_MIN { continue; }
+            if d2.length_squared() < TOLERANCE_CLAMP_MIN {
+                continue;
+            }
             let n2 = DVec2::new(-d2.y, d2.x).normalize();
 
             // Check if line through p1-p2 has normals opposite at both endpoints
             let line_dir = (p2 - p1).normalize_or_zero();
-            if line_dir.length_squared() < 0.5 { continue; }
+            if line_dir.length_squared() < 0.5 {
+                continue;
+            }
             let dot1 = n1.dot(line_dir).abs();
             let dot2 = n2.dot(line_dir).abs();
             if dot1 < tol && dot2 < tol {
                 // Both normals are perpendicular to line direction → tangent
-                sols.push(Line2d { origin: p1, direction: line_dir });
+                sols.push(Line2d {
+                    origin: p1,
+                    direction: line_dir,
+                });
             }
         }
     }
@@ -994,4 +1064,3 @@ fn curve2d_d1(curve: &Curve2d, t: f64) -> DVec2 {
         }
     }
 }
-

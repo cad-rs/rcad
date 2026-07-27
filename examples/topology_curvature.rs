@@ -12,8 +12,8 @@ use rcad_kernel::{
     curvature::{gaussian_curvature, mean_curvature, principal_curvatures},
     geom::{BSplineSurface, Surface3},
     topo_query::{
-        edge_adjacent_faces, edge_count, face_count, face_edges, vertex_adjacent_edges,
-        topological_vertex_count, vertex_indices,
+        edge_adjacent_faces, edge_count, face_count, face_edges, topological_vertex_count,
+        vertex_adjacent_edges, vertex_indices,
     },
 };
 use rcad_modeling::{box_brep, cylinder_brep, sphere_brep, torus_brep};

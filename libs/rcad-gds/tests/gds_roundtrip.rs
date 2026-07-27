@@ -1,7 +1,10 @@
 // rcad/libs/rcad-gds/tests/gds_roundtrip.rs
 
-use rcad_gds::{GdsReader, GdsWriter, GdsLibrary, GdsStructure, GdsBoundary, LayerConfig, LayerSettings, GdsReference, Transform2D};
 use glam::DVec2;
+use rcad_gds::{
+    GdsBoundary, GdsLibrary, GdsReader, GdsReference, GdsStructure, GdsWriter, LayerConfig,
+    LayerSettings, Transform2D,
+};
 
 /// Test basic roundtrip: create library -> write -> read -> compare
 #[test]
@@ -82,8 +85,7 @@ fn test_to_brep() {
 
     library.structures.insert("TOP".to_string(), structure);
 
-    let config = LayerConfig::new()
-        .with_layer(1, LayerSettings::new(10.0));
+    let config = LayerConfig::new().with_layer(1, LayerSettings::new(10.0));
 
     let brep = library.to_brep("TOP", &config).expect("Failed to convert");
 

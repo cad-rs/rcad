@@ -66,7 +66,9 @@ impl GdsReader {
         for element in &structure.elements {
             match element {
                 laykit::gdsii::GDSElement::Boundary(boundary) => {
-                    let points: Vec<glam::DVec2> = boundary.xy.iter()
+                    let points: Vec<glam::DVec2> = boundary
+                        .xy
+                        .iter()
                         .map(|&(x, y)| glam::DVec2::new(x as f64 * scale, y as f64 * scale))
                         .collect();
                     result.boundaries.push(GdsBoundary {
@@ -76,7 +78,9 @@ impl GdsReader {
                     });
                 }
                 laykit::gdsii::GDSElement::Path(path) => {
-                    let points: Vec<glam::DVec2> = path.xy.iter()
+                    let points: Vec<glam::DVec2> = path
+                        .xy
+                        .iter()
                         .map(|&(x, y)| glam::DVec2::new(x as f64 * scale, y as f64 * scale))
                         .collect();
                     let width = path.width.unwrap_or(0) as f64 * scale;
@@ -108,7 +112,11 @@ impl GdsReader {
                     });
                 }
                 laykit::gdsii::GDSElement::ArrayRef(aref) => {
-                    let transform = Self::extract_transform(&aref.strans, aref.xy.first().copied().unwrap_or((0, 0)), scale);
+                    let transform = Self::extract_transform(
+                        &aref.strans,
+                        aref.xy.first().copied().unwrap_or((0, 0)),
+                        scale,
+                    );
 
                     // In GDS, AREF has 3 points: origin, column spacing point, row spacing point
                     // The column/row offsets are calculated from these points
@@ -169,7 +177,8 @@ impl GdsLibrary {
             }
         }
 
-        self.structures.keys()
+        self.structures
+            .keys()
             .filter(|name| !referenced.contains(name.as_str()))
             .map(|s| s.as_str())
             .collect()
@@ -196,21 +205,24 @@ mod tests {
             structures: std::collections::HashMap::new(),
         };
 
-        library.structures.insert("TOP".to_string(), GdsStructure {
-            name: "TOP".to_string(),
-            boundaries: vec![GdsBoundary {
-                layer: 1,
-                datatype: 0,
-                points: vec![
-                    glam::DVec2::new(0.0, 0.0),
-                    glam::DVec2::new(10.0, 0.0),
-                    glam::DVec2::new(10.0, 10.0),
-                    glam::DVec2::new(0.0, 10.0),
-                    glam::DVec2::new(0.0, 0.0),
-                ],
-            }],
-            ..Default::default()
-        });
+        library.structures.insert(
+            "TOP".to_string(),
+            GdsStructure {
+                name: "TOP".to_string(),
+                boundaries: vec![GdsBoundary {
+                    layer: 1,
+                    datatype: 0,
+                    points: vec![
+                        glam::DVec2::new(0.0, 0.0),
+                        glam::DVec2::new(10.0, 0.0),
+                        glam::DVec2::new(10.0, 10.0),
+                        glam::DVec2::new(0.0, 10.0),
+                        glam::DVec2::new(0.0, 0.0),
+                    ],
+                }],
+                ..Default::default()
+            },
+        );
 
         assert!(library.has_cell("TOP"));
         assert_eq!(library.top_cells(), vec!["TOP"]);
@@ -224,20 +236,26 @@ mod tests {
             structures: std::collections::HashMap::new(),
         };
 
-        library.structures.insert("TOP".to_string(), GdsStructure {
-            name: "TOP".to_string(),
-            references: vec![GdsReference {
-                cell_name: "CELL_A".to_string(),
-                transform: Transform2D::default(),
-                array: None,
-            }],
-            ..Default::default()
-        });
+        library.structures.insert(
+            "TOP".to_string(),
+            GdsStructure {
+                name: "TOP".to_string(),
+                references: vec![GdsReference {
+                    cell_name: "CELL_A".to_string(),
+                    transform: Transform2D::default(),
+                    array: None,
+                }],
+                ..Default::default()
+            },
+        );
 
-        library.structures.insert("CELL_A".to_string(), GdsStructure {
-            name: "CELL_A".to_string(),
-            ..Default::default()
-        });
+        library.structures.insert(
+            "CELL_A".to_string(),
+            GdsStructure {
+                name: "CELL_A".to_string(),
+                ..Default::default()
+            },
+        );
 
         let top = library.top_cells();
         assert_eq!(top.len(), 1);

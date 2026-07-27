@@ -26,8 +26,8 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{
-    BSplineCurve3, BSplineSurface, Circle3, ConicalSurface, CylindricalSurface,
-    Ellipse3, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface,
+    BSplineCurve3, BSplineSurface, Circle3, ConicalSurface, CylindricalSurface, Ellipse3, Line3,
+    Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 
@@ -75,7 +75,10 @@ pub fn construct_line(p1: DVec3, p2: DVec3) -> Option<Line3> {
 /// of the chords (p1, p2) and (p2, p3).
 pub fn construct_circle_from_3_points(p1: DVec3, p2: DVec3, p3: DVec3) -> Option<Circle3> {
     // Check for coincident points
-    if (p1 - p2).length() < TOLERANCE_ABS || (p2 - p3).length() < TOLERANCE_ABS || (p1 - p3).length() < TOLERANCE_ABS {
+    if (p1 - p2).length() < TOLERANCE_ABS
+        || (p2 - p3).length() < TOLERANCE_ABS
+        || (p1 - p3).length() < TOLERANCE_ABS
+    {
         return None;
     }
 
@@ -129,8 +132,11 @@ pub fn construct_circle_from_3_points(p1: DVec3, p2: DVec3, p3: DVec3) -> Option
                 let a_sq = v12.length_squared();
                 let b_sq = v23.length_squared();
                 let c_sq = v13.length_squared();
-                let denom = 2.0 * (a_sq * b_sq + b_sq * c_sq + c_sq * a_sq
-                    - a_sq * a_sq - b_sq * b_sq - c_sq * c_sq);
+                let denom = 2.0
+                    * (a_sq * b_sq + b_sq * c_sq + c_sq * a_sq
+                        - a_sq * a_sq
+                        - b_sq * b_sq
+                        - c_sq * c_sq);
                 if denom.abs() < TOLERANCE_ABS {
                     return None;
                 }
@@ -241,7 +247,11 @@ pub fn construct_plane_from_point_normal(point: DVec3, normal: DVec3) -> Plane {
 /// * `axis_point` - A point on the cylinder axis
 /// * `axis_dir` - Direction of the cylinder axis (will be normalized)
 /// * `radius` - Radius of the cylinder (must be positive)
-pub fn construct_cylinder_from_axis(axis_point: DVec3, axis_dir: DVec3, radius: f64) -> CylindricalSurface {
+pub fn construct_cylinder_from_axis(
+    axis_point: DVec3,
+    axis_dir: DVec3,
+    radius: f64,
+) -> CylindricalSurface {
     CylindricalSurface {
         origin: axis_point,
         axis: axis_dir.normalize_or(DVec3::Z),
@@ -261,7 +271,9 @@ pub fn construct_cone_from_axis(apex: DVec3, axis_dir: DVec3, angle: f64) -> Con
         apex,
         axis: axis_dir.normalize_or(DVec3::Z),
         radius: 0.0,
-        half_angle_rad: angle.abs().clamp(TOLERANCE_ANG, std::f64::consts::FRAC_PI_2 - TOLERANCE_ANG),
+        half_angle_rad: angle
+            .abs()
+            .clamp(TOLERANCE_ANG, std::f64::consts::FRAC_PI_2 - TOLERANCE_ANG),
     }
 }
 
@@ -322,7 +334,11 @@ pub fn construct_torus_from_center_radii(
 /// let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
 /// let curve = construct_bspline_curve(&pts, &knots, 2);
 /// ```
-pub fn construct_bspline_curve(control_points: &[DVec3], knots: &[f64], degree: usize) -> BSplineCurve3 {
+pub fn construct_bspline_curve(
+    control_points: &[DVec3],
+    knots: &[f64],
+    degree: usize,
+) -> BSplineCurve3 {
     let n_cp = control_points.len();
     let expected_knots = n_cp + degree + 1;
 
@@ -394,8 +410,12 @@ pub fn construct_bspline_surface(
     let expected_u_knots = n_u + u_deg + 1;
     let expected_v_knots = n_v + v_deg + 1;
 
-    if n_u < 2 || n_v < 2 || u_deg == 0 || v_deg == 0
-        || u_knots.len() != expected_u_knots || v_knots.len() != expected_v_knots
+    if n_u < 2
+        || n_v < 2
+        || u_deg == 0
+        || v_deg == 0
+        || u_knots.len() != expected_u_knots
+        || v_knots.len() != expected_v_knots
         || control_points.iter().any(|row| row.len() != n_v)
     {
         // Return a degenerate surface
@@ -404,7 +424,10 @@ pub fn construct_bspline_surface(
             degree_v: 1,
             knots_u: vec![0.0, 0.0, 1.0, 1.0],
             knots_v: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![vec![DVec3::ZERO, DVec3::Y], vec![DVec3::X, DVec3::X + DVec3::Y]],
+            control_points: vec![
+                vec![DVec3::ZERO, DVec3::Y],
+                vec![DVec3::X, DVec3::X + DVec3::Y],
+            ],
             weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
         };
     }
@@ -431,7 +454,10 @@ pub fn construct_bspline_surface(
     };
 
     // Default weights (non-rational surface)
-    let weights: Vec<Vec<f64>> = control_points.iter().map(|row| vec![1.0; row.len()]).collect();
+    let weights: Vec<Vec<f64>> = control_points
+        .iter()
+        .map(|row| vec![1.0; row.len()])
+        .collect();
 
     BSplineSurface {
         degree_u: u_deg,
@@ -475,20 +501,34 @@ pub fn construct_polygon_wire(points: &[DVec3], closed: bool) -> (Vec<DVec3>, Ve
     }
 
     let n = points.len();
-    let edge_count = if closed && n >= 3 { n } else { n.saturating_sub(1) };
+    let edge_count = if closed && n >= 3 {
+        n
+    } else {
+        n.saturating_sub(1)
+    };
 
     // Build edges
     let mut edges = Vec::with_capacity(edge_count);
     for i in 0..n.saturating_sub(1) {
-        edges.push(Edge { start: i, end: i + 1 });
+        edges.push(Edge {
+            start: i,
+            end: i + 1,
+        });
     }
     if closed && n >= 3 {
-        edges.push(Edge { start: n - 1, end: 0 });
+        edges.push(Edge {
+            start: n - 1,
+            end: 0,
+        });
     }
 
     // Build wire with forward-oriented edges
     let wire = Wire {
-        edges: edges.iter().enumerate().map(|(i, _)| WireEdge::fwd(i)).collect(),
+        edges: edges
+            .iter()
+            .enumerate()
+            .map(|(i, _)| WireEdge::fwd(i))
+            .collect(),
     };
 
     (points.to_vec(), edges, wire)
@@ -552,7 +592,11 @@ pub fn construct_circle_wire(
 
     // Build wire
     let wire = Wire {
-        edges: edges.iter().enumerate().map(|(i, _)| WireEdge::fwd(i)).collect(),
+        edges: edges
+            .iter()
+            .enumerate()
+            .map(|(i, _)| WireEdge::fwd(i))
+            .collect(),
     };
 
     (vertices, edges, wire)
@@ -583,7 +627,7 @@ pub fn construct_planar_face_from_wire(wire: &Wire, surface: &Surface3) -> Face 
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
-                surface_idx: None,
+        surface_idx: None,
     }
 }
 
@@ -611,7 +655,11 @@ pub fn construct_planar_face_from_wire(wire: &Wire, surface: &Surface3) -> Face 
 /// let face = construct_face_from_boundary(outer, vec![], surface);
 /// assert!(face.inner_wires.is_empty());
 /// ```
-pub fn construct_face_from_boundary(outer_wire: Wire, inner_wires: Vec<Wire>, surface: Surface3) -> Face {
+pub fn construct_face_from_boundary(
+    outer_wire: Wire,
+    inner_wires: Vec<Wire>,
+    surface: Surface3,
+) -> Face {
     let normal = match &surface {
         Surface3::Plane(p) => p.normal,
         Surface3::Cylinder(c) => {
@@ -634,7 +682,7 @@ pub fn construct_face_from_boundary(outer_wire: Wire, inner_wires: Vec<Wire>, su
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
-                surface_idx: None,
+        surface_idx: None,
     }
 }
 
@@ -671,14 +719,20 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 /// The surface is degree (3, 3) with clamped knots.
 pub fn build_plate_surface(profiles: &[Vec<DVec3>]) -> Option<Surface3> {
     let n_profiles = profiles.len();
-    if n_profiles < 2 { return None; }
+    if n_profiles < 2 {
+        return None;
+    }
 
     let n_pts = profiles[0].len();
-    if n_pts < 3 { return None; }
+    if n_pts < 3 {
+        return None;
+    }
 
     // Validate all profiles have same length
     for p in profiles {
-        if p.len() != n_pts { return None; }
+        if p.len() != n_pts {
+            return None;
+        }
     }
 
     // Build a (n_profiles x n_pts) control point grid
@@ -715,14 +769,18 @@ fn build_clamped_knots(n: usize, p: usize) -> Vec<f64> {
     let nk = n + p + 1;
     let n_internal = n - p - 1;
     let mut knots = Vec::with_capacity(nk);
-    for _ in 0..=p { knots.push(0.0); }
+    for _ in 0..=p {
+        knots.push(0.0);
+    }
     if n_internal > 0 {
         let step = 1.0 / (n_internal as f64 + 1.0);
         for i in 1..=n_internal {
             knots.push(i as f64 * step);
         }
     }
-    for _ in 0..=p { knots.push(1.0); }
+    for _ in 0..=p {
+        knots.push(1.0);
+    }
     knots
 }
 
@@ -733,9 +791,13 @@ fn build_clamped_knots(n: usize, p: usize) -> Vec<f64> {
 /// Lower energy = smoother surface = better plate.
 pub fn plate_plate_energy(samples: &[Vec<DVec3>]) -> f64 {
     let n_rows = samples.len();
-    if n_rows < 3 { return 0.0; }
+    if n_rows < 3 {
+        return 0.0;
+    }
     let n_cols = samples[0].len();
-    if n_cols < 3 { return 0.0; }
+    if n_cols < 3 {
+        return 0.0;
+    }
 
     let mut energy = 0.0;
     // Second differences in u-direction (along columns)

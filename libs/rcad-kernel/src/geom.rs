@@ -18,7 +18,10 @@ pub struct Line3 {
 impl Line3 {
     /// OCCT-aligned: construct from point and direction (direction normalized to unit).
     pub fn new(origin: DVec3, direction: DVec3) -> Self {
-        Line3 { origin, direction: direction.normalize_or_zero() }
+        Line3 {
+            origin,
+            direction: direction.normalize_or_zero(),
+        }
     }
 
     /// OCCT-aligned: gp_Lin::Distance(gp_Pnt) — perpendicular distance.
@@ -29,13 +32,19 @@ impl Line3 {
     }
 
     /// OCCT-aligned: Geom_Line::ReversedParameter(t) = -t
-    pub fn reversed_parameter(&self, t: f64) -> f64 { -t }
+    pub fn reversed_parameter(&self, t: f64) -> f64 {
+        -t
+    }
 
     /// OCCT-aligned: Geom_Line::IsClosed() = false
-    pub fn is_closed(&self) -> bool { false }
+    pub fn is_closed(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: Geom_Line::IsPeriodic() = false
-    pub fn is_periodic(&self) -> bool { false }
+    pub fn is_periodic(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -53,11 +62,19 @@ fn stable_x_dir(normal: Vec3) -> Vec3 {
     // OCCT-aligned: gp_Ax2 reference direction for circle's local frame.
     // Use X as reference; if N is parallel to X (|N·X| ≥ 1-1e-12), use Z instead.
     // u_dir = (ref - N * (N·ref)).normalize()
-    let ref_dir = if normal.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+    let ref_dir = if normal.x.abs() > 1.0 - 1e-12 {
+        DVec3::Z
+    } else {
+        DVec3::X
+    };
     (ref_dir - normal * ref_dir.dot(normal)).normalize_or_zero()
 }
-fn circle3_x_dir_default() -> Vec3 { DVec3::X }
-fn circle3_y_dir_default() -> Vec3 { DVec3::Y }
+fn circle3_x_dir_default() -> Vec3 {
+    DVec3::X
+}
+fn circle3_y_dir_default() -> Vec3 {
+    DVec3::Y
+}
 
 impl Circle3 {
     /// OCCT-aligned: construct a circle with orthonormal frame.
@@ -65,7 +82,13 @@ impl Circle3 {
         let normal = normal.normalize_or_zero();
         let x_dir = stable_x_dir(normal);
         let y_dir = normal.cross(x_dir).normalize();
-        Self { center, normal, x_dir, y_dir, radius }
+        Self {
+            center,
+            normal,
+            x_dir,
+            y_dir,
+            radius,
+        }
     }
 
     /// OCCT-aligned: gp_Circ::Distance(gp_Pnt) — min distance from point to circle curve.
@@ -255,10 +278,18 @@ pub struct TrimmedCurve3 {
 
 impl TrimmedCurve3 {
     pub fn new(curve: Curve3, first: f64, last: f64) -> Self {
-        Self { curve: Box::new(curve), first, last }
+        Self {
+            curve: Box::new(curve),
+            first,
+            last,
+        }
     }
-    pub fn map_param(&self, t: f64) -> f64 { t }
-    pub fn basis_curve(&self) -> &Curve3 { &self.curve }
+    pub fn map_param(&self, t: f64) -> f64 {
+        t
+    }
+    pub fn basis_curve(&self) -> &Curve3 {
+        &self.curve
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,7 +339,12 @@ impl Plane {
         };
         let u_dir = (ref_dir - normal * ref_dir.dot(normal)).normalize_or_zero();
         let v_dir = normal.cross(u_dir).normalize_or_zero();
-        Plane { origin, normal, u_dir, v_dir }
+        Plane {
+            origin,
+            normal,
+            u_dir,
+            v_dir,
+        }
     }
 
     /// OCCT-aligned: construct from origin, normal, and explicit u_dir.
@@ -318,7 +354,12 @@ impl Plane {
         let normal = normal.normalize_or_zero();
         let u_dir = u_dir.normalize();
         let v_dir = normal.cross(u_dir).normalize_or_zero();
-        Plane { origin, normal, u_dir, v_dir }
+        Plane {
+            origin,
+            normal,
+            u_dir,
+            v_dir,
+        }
     }
 }
 
@@ -760,7 +801,10 @@ pub struct Line2d {
 impl Line2d {
     /// OCCT-aligned: construct from point + direction (direction is normalized to unit).
     pub fn new(origin: DVec2, direction: DVec2) -> Self {
-        Line2d { origin, direction: direction.normalize_or_zero() }
+        Line2d {
+            origin,
+            direction: direction.normalize_or_zero(),
+        }
     }
 
     /// OCCT-aligned: Geom2d_Line::Distance(gp_Pnt2d)
@@ -772,13 +816,19 @@ impl Line2d {
     }
 
     /// OCCT-aligned: Geom2d_Line::ReversedParameter(t) → -t
-    pub fn reversed_parameter(&self, t: f64) -> f64 { -t }
+    pub fn reversed_parameter(&self, t: f64) -> f64 {
+        -t
+    }
 
     /// OCCT-aligned: Geom2d_Line::IsClosed() → false
-    pub fn is_closed(&self) -> bool { false }
+    pub fn is_closed(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: Geom2d_Line::IsPeriodic() → false
-    pub fn is_periodic(&self) -> bool { false }
+    pub fn is_periodic(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: Geom2d_Line::SetDirection(gp_Dir2d)
     pub fn with_direction(&self, direction: DVec2) -> Self {
@@ -787,12 +837,18 @@ impl Line2d {
 
     /// OCCT-aligned: Geom2d_Line::SetLocation(gp_Pnt2d)
     pub fn with_origin(&self, origin: DVec2) -> Self {
-        Line2d { origin, direction: self.direction }
+        Line2d {
+            origin,
+            direction: self.direction,
+        }
     }
 
     /// OCCT-aligned: Geom2d_Line::Transform(gp_Trsf2d) — translation
     pub fn translate(&self, offset: DVec2) -> Self {
-        Line2d { origin: self.origin + offset, direction: self.direction }
+        Line2d {
+            origin: self.origin + offset,
+            direction: self.direction,
+        }
     }
 
     /// OCCT-aligned: Geom2d_Line::Transform(gp_Trsf2d) — rotation around center
@@ -800,10 +856,7 @@ impl Line2d {
         let cos_a = angle_rad.cos();
         let sin_a = angle_rad.sin();
         let p = self.origin - center;
-        let origin = center + DVec2::new(
-            p.x * cos_a - p.y * sin_a,
-            p.x * sin_a + p.y * cos_a,
-        );
+        let origin = center + DVec2::new(p.x * cos_a - p.y * sin_a, p.x * sin_a + p.y * cos_a);
         let dir = DVec2::new(
             self.direction.x * cos_a - self.direction.y * sin_a,
             self.direction.x * sin_a + self.direction.y * cos_a,
@@ -833,13 +886,22 @@ pub struct Circle2d {
     pub radius: f64,
 }
 
-fn x_dir_default() -> Vec2 { DVec2::X }
-fn y_dir_default() -> Vec2 { DVec2::Y }
+fn x_dir_default() -> Vec2 {
+    DVec2::X
+}
+fn y_dir_default() -> Vec2 {
+    DVec2::Y
+}
 
 impl Circle2d {
     /// Create a circle with identity frame (X=(1,0), Y=(0,1)).
     pub fn new(center: Point2, radius: f64) -> Self {
-        Self { center, x_dir: DVec2::X, y_dir: DVec2::Y, radius }
+        Self {
+            center,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius,
+        }
     }
 
     /// Rotate the circle's local frame around its center by `angle` radians.
@@ -851,14 +913,8 @@ impl Circle2d {
         let sin_a = angle.sin();
         let x = self.x_dir;
         let y = self.y_dir;
-        self.x_dir = DVec2::new(
-            x.x * cos_a + y.x * sin_a,
-            x.y * cos_a + y.y * sin_a,
-        );
-        self.y_dir = DVec2::new(
-            -x.x * sin_a + y.x * cos_a,
-            -x.y * sin_a + y.y * cos_a,
-        );
+        self.x_dir = DVec2::new(x.x * cos_a + y.x * sin_a, x.y * cos_a + y.y * sin_a);
+        self.y_dir = DVec2::new(-x.x * sin_a + y.x * cos_a, -x.y * sin_a + y.y * cos_a);
     }
 }
 
@@ -905,8 +961,8 @@ pub struct Hyperbola2d {
     pub center: Point2,
     /// Normalized major-axis direction.
     pub major_dir: Vec2,
-    pub semi_major: f64,  // a (transverse semi-axis, > 0)
-    pub semi_minor: f64,  // b (conjugate semi-axis, > 0)
+    pub semi_major: f64, // a (transverse semi-axis, > 0)
+    pub semi_minor: f64, // b (conjugate semi-axis, > 0)
 }
 
 /// A 2D involute of a base circle in parameter space.
@@ -1110,7 +1166,11 @@ pub enum Curve2d {
 pub fn any_perpendicular(v: DVec3) -> DVec3 {
     // OCCT gp_Ax2 reference direction selection:
     // Use X (1,0,0) as default; if |v·X| ≥ 1-1e-12 (v parallel to X), use Z (0,0,1).
-    let ref_dir = if v.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+    let ref_dir = if v.x.abs() > 1.0 - 1e-12 {
+        DVec3::Z
+    } else {
+        DVec3::X
+    };
     // Project reference onto plane perpendicular to v: ref - v*(v·ref)
     let perp = ref_dir - v * ref_dir.dot(v);
     perp.normalize_or_zero()
@@ -1154,16 +1214,22 @@ pub trait CurveEval {
     fn default_domain(&self) -> [f64; 2];
 
     /// OCCT-aligned: IsClosed — true for periodic curves where start == end (circle, ellipse).
-    fn is_closed(&self) -> bool { false }
+    fn is_closed(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: IsPeriodic — true for curves with cyclic parameter (circle, ellipse).
-    fn is_periodic(&self) -> bool { false }
+    fn is_periodic(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: ReversedParameter(t) — parameter of the same geometric point
     /// when traversed in the opposite direction.
     /// For periodic curves (circle): `period - t` (mod period).
     /// For non-periodic curves: `-t` (line).
-    fn reversed_parameter(&self, t: f64) -> f64 { t }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        t
+    }
 }
 
 /// Parametric evaluation of a 3D surface: `(u, v) -> Point3`.
@@ -1187,16 +1253,28 @@ pub trait SurfaceEval {
     }
 
     /// OCCT-aligned: IsUClosed / IsVClosed — true if surface is closed in that direction.
-    fn is_u_closed(&self) -> bool { false }
-    fn is_v_closed(&self) -> bool { false }
+    fn is_u_closed(&self) -> bool {
+        false
+    }
+    fn is_v_closed(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: IsUPeriodic / IsVPeriodic — true if parameter is cyclic.
-    fn is_u_periodic(&self) -> bool { false }
-    fn is_v_periodic(&self) -> bool { false }
+    fn is_u_periodic(&self) -> bool {
+        false
+    }
+    fn is_v_periodic(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: UReversedParameter / VReversedParameter — parameter in reverse direction.
-    fn u_reversed_parameter(&self, t: f64) -> f64 { t }
-    fn v_reversed_parameter(&self, t: f64) -> f64 { t }
+    fn u_reversed_parameter(&self, t: f64) -> f64 {
+        t
+    }
+    fn v_reversed_parameter(&self, t: f64) -> f64 {
+        t
+    }
 }
 
 /// Parametric evaluation of a 2D curve (PCurve): `t -> Point2`.
@@ -1227,13 +1305,19 @@ pub trait Curve2dEval {
     }
 
     /// OCCT-aligned: IsClosed — true for closed curves (circle, ellipse).
-    fn is_closed(&self) -> bool { false }
+    fn is_closed(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: IsPeriodic — true for periodic curves (circle, ellipse).
-    fn is_periodic(&self) -> bool { false }
+    fn is_periodic(&self) -> bool {
+        false
+    }
 
     /// OCCT-aligned: ReversedParameter(t) — parameter of the same point in reverse.
-    fn reversed_parameter(&self, t: f64) -> f64 { t }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        t
+    }
 }
 
 // --- CurveEval implementations ---
@@ -1251,7 +1335,9 @@ impl CurveEval for Line3 {
     fn default_domain(&self) -> [f64; 2] {
         [f64::NEG_INFINITY, f64::INFINITY]
     }
-    fn reversed_parameter(&self, t: f64) -> f64 { -t }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        -t
+    }
 }
 
 impl CurveEval for Circle3 {
@@ -1267,9 +1353,15 @@ impl CurveEval for Circle3 {
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
     }
-    fn is_closed(&self) -> bool { true }
-    fn is_periodic(&self) -> bool { true }
-    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn is_closed(&self) -> bool {
+        true
+    }
+    fn is_periodic(&self) -> bool {
+        true
+    }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl CurveEval for Ellipse3 {
@@ -1291,9 +1383,15 @@ impl CurveEval for Ellipse3 {
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
     }
-    fn is_closed(&self) -> bool { true }
-    fn is_periodic(&self) -> bool { true }
-    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn is_closed(&self) -> bool {
+        true
+    }
+    fn is_periodic(&self) -> bool {
+        true
+    }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl CurveEval for Hyperbola3 {
@@ -1496,10 +1594,19 @@ impl SurfaceEval for Plane {
         self.normal
     }
     fn default_domain(&self) -> [f64; 4] {
-        [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY]
+        [
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+        ]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
-        (self.origin + u * self.u_dir + v * self.v_dir, self.u_dir, self.v_dir)
+        (
+            self.origin + u * self.u_dir + v * self.v_dir,
+            self.u_dir,
+            self.v_dir,
+        )
     }
 }
 
@@ -1527,9 +1634,15 @@ impl SurfaceEval for CylindricalSurface {
         let dpu = self.radius * (-su * x_ax + cu * y_ax);
         (p, dpu, self.axis)
     }
-    fn is_u_closed(&self) -> bool { true }
-    fn is_u_periodic(&self) -> bool { true }
-    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn is_u_closed(&self) -> bool {
+        true
+    }
+    fn is_u_periodic(&self) -> bool {
+        true
+    }
+    fn u_reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl SphericalSurface {
@@ -1606,10 +1719,18 @@ impl SurfaceEval for SphericalSurface {
         let dpv = self.radius * (cv * radial - sv * self.axis);
         (p, dpu, dpv)
     }
-    fn is_u_closed(&self) -> bool { true }
-    fn is_u_periodic(&self) -> bool { true }
-    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
-    fn v_reversed_parameter(&self, t: f64) -> f64 { PI - t }  // OCCT: colatitude [0, π]
+    fn is_u_closed(&self) -> bool {
+        true
+    }
+    fn is_u_periodic(&self) -> bool {
+        true
+    }
+    fn u_reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
+    fn v_reversed_parameter(&self, t: f64) -> f64 {
+        PI - t
+    } // OCCT: colatitude [0, π]
 }
 
 impl SurfaceEval for ConicalSurface {
@@ -1686,12 +1807,24 @@ impl SurfaceEval for ToroidalSurface {
         let dpv = -r_minor * sv * r_vec + r_minor * cv * self.axis;
         (p, dpu, dpv)
     }
-    fn is_u_closed(&self) -> bool { true }
-    fn is_u_periodic(&self) -> bool { true }
-    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
-    fn is_v_closed(&self) -> bool { true }
-    fn is_v_periodic(&self) -> bool { true }
-    fn v_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn is_u_closed(&self) -> bool {
+        true
+    }
+    fn is_u_periodic(&self) -> bool {
+        true
+    }
+    fn u_reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
+    fn is_v_closed(&self) -> bool {
+        true
+    }
+    fn is_v_periodic(&self) -> bool {
+        true
+    }
+    fn v_reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl ToroidalSurface {
@@ -2392,7 +2525,9 @@ fn bezier_tangent_analytic(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
 /// Same formula as `bezier_tangent_analytic` but operating on DVec2.
 fn bezier_tangent_analytic_2d(points: &[DVec2], weights: &[f64], t: f64) -> DVec2 {
     let n = points.len();
-    if n < 2 { return DVec2::ZERO; }
+    if n < 2 {
+        return DVec2::ZERO;
+    }
     let deg = (n - 1) as f64;
     let mut a_prime: Vec<DVec2> = Vec::with_capacity(n - 1);
     let mut w_prime: Vec<DVec3> = Vec::with_capacity(n - 1);
@@ -2407,7 +2542,9 @@ fn bezier_tangent_analytic_2d(points: &[DVec2], weights: &[f64], t: f64) -> DVec
     let w_pts: Vec<DVec3> = weights.iter().map(|&w| DVec3::new(w, 0.0, 0.0)).collect();
     let w_unit = vec![1.0f64; n];
     let w_t = de_casteljau_3d(&w_pts, &w_unit, t).x;
-    if w_t.abs() < 1e-15 { return DVec2::ZERO; }
+    if w_t.abs() < 1e-15 {
+        return DVec2::ZERO;
+    }
     let c_t = de_casteljau_2d(points, weights, t);
     a_prime_t - (w_prime_t * c_t) / w_t
 }
@@ -2536,9 +2673,15 @@ impl Curve2dEval for Line2d {
         self.origin + t * self.direction
     }
     /// OCCT-aligned: D1(t) = Direction = constant unit vector (gp_Dir2d invariant).
-    fn tangent_at(&self, _t: f64) -> DVec2 { self.direction }
-    fn derivative_at(&self, _t: f64) -> DVec2 { self.direction }
-    fn reversed_parameter(&self, t: f64) -> f64 { -t }
+    fn tangent_at(&self, _t: f64) -> DVec2 {
+        self.direction
+    }
+    fn derivative_at(&self, _t: f64) -> DVec2 {
+        self.direction
+    }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        -t
+    }
 }
 
 impl Curve2dEval for Circle2d {
@@ -2552,29 +2695,48 @@ impl Curve2dEval for Circle2d {
     fn derivative_at(&self, t: f64) -> DVec2 {
         self.radius * (-t.sin() * self.x_dir + t.cos() * self.y_dir)
     }
-    fn default_domain(&self) -> [f64; 2] { [0.0, 2.0 * PI] }
-    fn is_closed(&self) -> bool { true }
-    fn is_periodic(&self) -> bool { true }
-    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, 2.0 * PI]
+    }
+    fn is_closed(&self) -> bool {
+        true
+    }
+    fn is_periodic(&self) -> bool {
+        true
+    }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl Curve2dEval for Ellipse2d {
     fn point_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        self.center + self.major_dir * (self.major_radius * t.cos()) + minor * (self.minor_radius * t.sin())
+        self.center
+            + self.major_dir * (self.major_radius * t.cos())
+            + minor * (self.minor_radius * t.sin())
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        (-self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor).normalize()
+        (-self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor)
+            .normalize()
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
         -self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor
     }
-    fn default_domain(&self) -> [f64; 2] { [0.0, 2.0 * PI] }
-    fn is_closed(&self) -> bool { true }
-    fn is_periodic(&self) -> bool { true }
-    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, 2.0 * PI]
+    }
+    fn is_closed(&self) -> bool {
+        true
+    }
+    fn is_periodic(&self) -> bool {
+        true
+    }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        2.0 * PI - t
+    }
 }
 
 impl Curve2dEval for Parabola2d {
@@ -2594,7 +2756,9 @@ impl Curve2dEval for Parabola2d {
 impl Curve2dEval for Hyperbola2d {
     fn point_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        self.center + self.semi_major * t.cosh() * self.major_dir + self.semi_minor * t.sinh() * minor
+        self.center
+            + self.semi_major * t.cosh() * self.major_dir
+            + self.semi_minor * t.sinh() * minor
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
@@ -2666,9 +2830,13 @@ impl Curve2dEval for BSplineCurve2 {
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
         let n = self.knots.len();
-        if n > 2 * d { [self.knots[d], self.knots[n - d - 1]] }
-        else if n >= 2 { [self.knots[0], self.knots[n - 1]] }
-        else { [0.0, 1.0] }
+        if n > 2 * d {
+            [self.knots[d], self.knots[n - d - 1]]
+        } else if n >= 2 {
+            [self.knots[0], self.knots[n - 1]]
+        } else {
+            [0.0, 1.0]
+        }
     }
 }
 
@@ -2742,8 +2910,13 @@ impl Curve2dEval for Curve2d {
             Curve2d::LogarithmicSpiral(_) => [0.0, 4.0 * PI],
             Curve2d::SineWave(_) => [-10.0, 10.0],
             Curve2d::BSpline(c) => {
-                let d = c.degree; let n = c.knots.len();
-                if n > 2*d { [c.knots[d], c.knots[n-d-1]] } else { [0.0, 1.0] }
+                let d = c.degree;
+                let n = c.knots.len();
+                if n > 2 * d {
+                    [c.knots[d], c.knots[n - d - 1]]
+                } else {
+                    [0.0, 1.0]
+                }
             }
             Curve2d::Bezier(_) => [0.0, 1.0],
             Curve2d::Offset(c) => c.basis.default_domain(),
@@ -2788,7 +2961,9 @@ impl Curve2dEval for TrimmedCurve2 {
         let t_clamped = t.clamp(self.t_min, self.t_max);
         self.curve.derivative_at(t_clamped)
     }
-    fn default_domain(&self) -> [f64; 2] { [self.t_min, self.t_max] }
+    fn default_domain(&self) -> [f64; 2] {
+        [self.t_min, self.t_max]
+    }
 }
 
 impl Curve2dEval for OffsetCurve2d {
@@ -2846,14 +3021,20 @@ impl Curve2dEval for AHTBezierCurve2 {
             let mut pt = DVec2::ZERO;
             let mut wsum = 0.0;
             for i in 0..n {
-                let w = if i < self.weights.len() { self.weights[i] } else { 1.0 };
+                let w = if i < self.weights.len() {
+                    self.weights[i]
+                } else {
+                    1.0
+                };
                 pt += self.control_points[i] * (w * basis[i]);
                 wsum += w * basis[i];
             }
             if wsum.abs() > 1e-15 { pt / wsum } else { pt }
         }
     }
-    fn default_domain(&self) -> [f64; 2] { [0.0, 1.0] }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, 1.0]
+    }
 }
 
 impl Curve2dEval for TBezierCurve2 {
@@ -2875,17 +3056,29 @@ impl Curve2dEval for TBezierCurve2 {
             let idx_c = 2 * i - 1;
             let idx_s = 2 * i;
             if idx_c < self.control_points.len() {
-                let wc = if has_weights && idx_c < self.weights.len() { self.weights[idx_c] } else { 1.0 };
+                let wc = if has_weights && idx_c < self.weights.len() {
+                    self.weights[idx_c]
+                } else {
+                    1.0
+                };
                 pt += self.control_points[idx_c] * (wc * c);
                 wsum += wc * c;
             }
             if idx_s < self.control_points.len() {
-                let ws = if has_weights && idx_s < self.weights.len() { self.weights[idx_s] } else { 1.0 };
+                let ws = if has_weights && idx_s < self.weights.len() {
+                    self.weights[idx_s]
+                } else {
+                    1.0
+                };
                 pt += self.control_points[idx_s] * (ws * s);
                 wsum += ws * s;
             }
         }
-        if has_weights && wsum.abs() > 1e-15 { pt / wsum } else { pt }
+        if has_weights && wsum.abs() > 1e-15 {
+            pt / wsum
+        } else {
+            pt
+        }
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, std::f64::consts::PI / self.alpha]
@@ -2923,12 +3116,22 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
             let sx = loc.transform_vector3(c.x_dir).length().max(1e-12);
             let sy = loc.transform_vector3(c.y_dir).length().max(1e-12);
             let radius = c.radius * (sx * sy).sqrt(); // geometric mean = area scale
-            Curve3::Circle(Circle3 { center, normal, x_dir, y_dir, radius })
+            Curve3::Circle(Circle3 {
+                center,
+                normal,
+                x_dir,
+                y_dir,
+                radius,
+            })
         }
         Curve3::BSpline(bs) => Curve3::BSpline(BSplineCurve3 {
             degree: bs.degree,
             knots: bs.knots.clone(),
-            control_points: bs.control_points.iter().map(|&p| loc.transform_point3(p)).collect(),
+            control_points: bs
+                .control_points
+                .iter()
+                .map(|&p| loc.transform_point3(p))
+                .collect(),
             weights: bs.weights.clone(),
         }),
         other => other.clone(),
@@ -2938,7 +3141,10 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
 /// OCCT-aligned: apply TopLoc_Location transform to a Surface3.
 pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     match surface {
-        Surface3::Plane(p) => Surface3::Plane(Plane::new(loc.transform_point3(p.origin), loc.transform_vector3(p.normal).normalize_or_zero())),
+        Surface3::Plane(p) => Surface3::Plane(Plane::new(
+            loc.transform_point3(p.origin),
+            loc.transform_vector3(p.normal).normalize_or_zero(),
+        )),
         Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
             origin: loc.transform_point3(c.origin),
             axis: loc.transform_vector3(c.axis).normalize_or_zero(),
@@ -2956,9 +3162,11 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
             degree_v: bs.degree_v,
             knots_u: bs.knots_u.clone(),
             knots_v: bs.knots_v.clone(),
-            control_points: bs.control_points.iter().map(|row| {
-                row.iter().map(|&p| loc.transform_point3(p)).collect()
-            }).collect(),
+            control_points: bs
+                .control_points
+                .iter()
+                .map(|row| row.iter().map(|&p| loc.transform_point3(p)).collect())
+                .collect(),
             weights: bs.weights.clone(),
         }),
         other => other.clone(),
@@ -3309,7 +3517,9 @@ impl Curve2dEval for BezierCurve2 {
     fn tangent_at(&self, t: f64) -> DVec2 {
         self.derivative_at(t).normalize_or_zero()
     }
-    fn default_domain(&self) -> [f64; 2] { [0.0, 1.0] }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, 1.0]
+    }
 }
 
 impl CurveEval for OffsetCurve3 {
@@ -3369,8 +3579,7 @@ mod eval_tests {
     #[test]
     fn circle3_point_at_zero_is_on_circle() {
         // Circle in XY plane, normal = Z
-        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
-        );
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0);
         let p0 = c.point_at(0.0);
         assert!((p0.length() - 2.0).abs() < 1e-10);
     }
@@ -3385,8 +3594,7 @@ mod eval_tests {
 
     #[test]
     fn circle3_quarter_turn() {
-        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        );
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
         let p0 = c.point_at(0.0);
         let p90 = c.point_at(FRAC_PI_2);
         // 90° rotation: p0 and p90 should be perpendicular from center
@@ -3785,8 +3993,7 @@ mod eval_tests {
     #[test]
     fn bspline_circle_tangent_perpendicular_to_radius() {
         // Use circle_to_bspline to get an exact NURBS circle, then check tangents.
-        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        );
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
         let c = crate::nurbs_convert::circle_to_bspline(&circle);
         for &t in &[0.0, 0.5, 1.0, 1.5, 2.0] {
             let pt = c.point_at(t);
@@ -3817,7 +4024,10 @@ mod eval_tests {
 
     #[test]
     fn line_eval_d0_d1() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         let p = line.point_at(5.0);
         assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-12);
         let t = line.tangent_at(5.0);
@@ -3826,7 +4036,10 @@ mod eval_tests {
 
     #[test]
     fn line_eval_d2_zero_second_derivative() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         // For a line, the first derivative (tangent) is constant; second derivative is zero.
         // The curve is linear: P(t) = origin + t * direction
         // The second derivative: d²P/dt² = 0
@@ -3834,7 +4047,10 @@ mod eval_tests {
         let d1 = line.derivative_at(0.0);
         let d2 = (line.derivative_at(1e-4) - line.derivative_at(-1e-4)) / (2.0 * 1e-4);
         assert!((d1 - DVec3::X).length() < 1e-10);
-        assert!(d2.length() < 1e-10, "Line second derivative should be 0, got {d2:?}");
+        assert!(
+            d2.length() < 1e-10,
+            "Line second derivative should be 0, got {d2:?}"
+        );
     }
 
     #[test]
@@ -3933,8 +4149,10 @@ mod eval_tests {
         // P(0,0) = 3*X = (3, 0, 0)
         // P(PI/2, 5) = 3*Y + 5*Z = (0, 3, 5)
         let cyl = CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            radius: 3.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+            ref_dir: DVec3::X,
         };
         let p0 = cyl.point_at(0.0, 0.0);
         assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
@@ -3945,8 +4163,10 @@ mod eval_tests {
     #[test]
     fn sphere_eval_d0_full_sphere() {
         let s = SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            radius: 2.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            ref_dir: DVec3::X,
         };
         for u in [0.0, 1.0, 2.0, 4.0, 6.0] {
             for v in [-1.0, -0.5, 0.0, 0.5, 1.0] {
@@ -3959,8 +4179,10 @@ mod eval_tests {
     #[test]
     fn cone_eval_d0() {
         let cone = ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z,
-            radius: 2.0, half_angle_rad: 45.0_f64.to_radians(),
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            half_angle_rad: 45.0_f64.to_radians(),
         };
         // At V=0, radius=2
         let p0 = cone.point_at(0.0, 0.0);
@@ -3975,8 +4197,10 @@ mod eval_tests {
         // P(u,v) = (R + r*cos(v))*(cos(u)*X + sin(u)*Y) + r*sin(v)*Z
         // P(0,0) = (5+1)*X = (6, 0, 0)
         let t = ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            major_radius: 5.0, minor_radius: 1.0,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
         };
         let p = t.point_at(0.0, 0.0);
         assert!((p - DVec3::new(6.0, 0.0, 0.0)).length() < 1e-9);
@@ -4002,7 +4226,10 @@ mod eval_tests {
 
     #[test]
     fn line2d_eval_d0() {
-        let l = Line2d { origin: DVec2::ZERO, direction: DVec2::X };
+        let l = Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::X,
+        };
         let p = l.point_at(3.0);
         assert!((p - DVec2::new(3.0, 0.0)).length() < 1e-12);
     }
@@ -4031,8 +4258,10 @@ mod eval_tests {
     fn ellipse2d_eval_d0() {
         use std::f64::consts::PI;
         let e = Ellipse2d {
-            center: DVec2::ZERO, major_dir: DVec2::X,
-            major_radius: 10.0, minor_radius: 5.0,
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 10.0,
+            minor_radius: 5.0,
         };
         let p0 = e.point_at(0.0);
         assert!((p0 - DVec2::new(10.0, 0.0)).length() < 1e-12);
@@ -4043,7 +4272,9 @@ mod eval_tests {
     #[test]
     fn parabola2d_eval_d0() {
         let p = Parabola2d {
-            origin: DVec2::ZERO, axis_dir: DVec2::X, focal_param: 4.0,
+            origin: DVec2::ZERO,
+            axis_dir: DVec2::X,
+            focal_param: 4.0,
         };
         // P(t) = (t²/(2p), t) = (t²/8, t)
         let p0 = p.point_at(0.0);
@@ -4055,8 +4286,10 @@ mod eval_tests {
     #[test]
     fn hyperbola2d_eval_d0() {
         let h = Hyperbola2d {
-            center: DVec2::ZERO, major_dir: DVec2::X,
-            semi_major: 3.0, semi_minor: 2.0,
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            semi_major: 3.0,
+            semi_minor: 2.0,
         };
         let p0 = h.point_at(0.0);
         // X = a*cosh(0) = 3, Y = b*sinh(0) = 0
@@ -4079,7 +4312,11 @@ mod eval_tests {
     #[test]
     fn bezier2_eval_d0() {
         let c = BezierCurve2 {
-            control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(0.5, 1.0), DVec2::new(1.0, 0.0)],
+            control_points: vec![
+                DVec2::new(0.0, 0.0),
+                DVec2::new(0.5, 1.0),
+                DVec2::new(1.0, 0.0),
+            ],
             weights: vec![1.0; 3],
         };
         assert!((c.point_at(0.0) - DVec2::ZERO).length() < 1e-12);
@@ -4123,7 +4360,9 @@ mod eval_tests {
     #[test]
     fn circle_involute2d_eval() {
         let inv = CircleInvolute2d {
-            center: DVec2::ZERO, base_radius: 3.0, start_angle: 0.0,
+            center: DVec2::ZERO,
+            base_radius: 3.0,
+            start_angle: 0.0,
         };
         // At t=0: P = center + r*(cos(0)+0*sin(0), sin(0)-0*cos(0)) = center + (r, 0)
         let p0 = inv.point_at(0.0);
@@ -4132,7 +4371,11 @@ mod eval_tests {
 
     #[test]
     fn sine_wave2d_eval() {
-        let w = SineWave2d { amplitude: 2.0, frequency: 1.0, phase: 0.0 };
+        let w = SineWave2d {
+            amplitude: 2.0,
+            frequency: 1.0,
+            phase: 0.0,
+        };
         let p0 = w.point_at(0.0);
         assert!((p0 - DVec2::ZERO).length() < 1e-12);
         let p_pi = w.point_at(std::f64::consts::PI / 2.0);
@@ -4142,7 +4385,10 @@ mod eval_tests {
     #[test]
     fn archimedean_spiral2d_eval() {
         let s = ArchimedeanSpiral2d {
-            center: DVec2::ZERO, a: 0.0, b: 1.0, start_angle: 0.0,
+            center: DVec2::ZERO,
+            a: 0.0,
+            b: 1.0,
+            start_angle: 0.0,
         };
         // r(t) = 0 + 1*t, theta(t) = t
         let p0 = s.point_at(0.0);
@@ -4154,7 +4400,10 @@ mod eval_tests {
     #[test]
     fn logarithmic_spiral2d_eval() {
         let s = LogarithmicSpiral2d {
-            center: DVec2::ZERO, a: 1.0, b: 0.5, start_angle: 0.0,
+            center: DVec2::ZERO,
+            a: 1.0,
+            b: 0.5,
+            start_angle: 0.0,
         };
         let p0 = s.point_at(0.0);
         assert!((p0 - DVec2::new(1.0, 0.0)).length() < 1e-10);
@@ -4200,7 +4449,10 @@ mod eval_tests {
 
     #[test]
     fn line3_eval_at_multiple_points() {
-        let line = Line3 { origin: DVec3::new(1.0, 2.0, 3.0), direction: DVec3::new(0.0, 1.0, 0.0) };
+        let line = Line3 {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            direction: DVec3::new(0.0, 1.0, 0.0),
+        };
         assert!((line.point_at(0.0) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-12);
         assert!((line.point_at(5.0) - DVec3::new(1.0, 7.0, 3.0)).length() < 1e-12);
         assert!((line.point_at(-3.0) - DVec3::new(1.0, -1.0, 3.0)).length() < 1e-12);
@@ -4208,7 +4460,10 @@ mod eval_tests {
 
     #[test]
     fn line3_constant_tangent_and_derivative() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::new(1.0, 1.0, 1.0).normalize() };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::new(1.0, 1.0, 1.0).normalize(),
+        };
         let d = DVec3::new(1.0, 1.0, 1.0).normalize();
         for &t in &[-10.0, -1.0, 0.0, 1.0, 10.0] {
             assert!((line.tangent_at(t) - d).length() < 1e-12);
@@ -4218,7 +4473,10 @@ mod eval_tests {
 
     #[test]
     fn line3_default_domain_infinite() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         let [t0, t1] = line.default_domain();
         assert!(t0.is_infinite() && t0.is_sign_negative());
         assert!(t1.is_infinite() && t1.is_sign_positive());
@@ -4230,21 +4488,32 @@ mod eval_tests {
     fn circle3_eval_four_quadrants() {
         // Use explicit x_dir/y_dir for predictable orientation
         let c = Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z,
-            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 5.0,
         };
         // P(0) = (5,0,0), P(PI/2) = (0,5,0), P(PI) = (-5,0,0), P(3PI/2) = (0,-5,0)
         assert!((c.point_at(0.0) - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
-        assert!((c.point_at(std::f64::consts::PI / 2.0) - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        assert!(
+            (c.point_at(std::f64::consts::PI / 2.0) - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10
+        );
         assert!((c.point_at(std::f64::consts::PI) - DVec3::new(-5.0, 0.0, 0.0)).length() < 1e-10);
-        assert!((c.point_at(3.0 * std::f64::consts::PI / 2.0) - DVec3::new(0.0, -5.0, 0.0)).length() < 1e-10);
+        assert!(
+            (c.point_at(3.0 * std::f64::consts::PI / 2.0) - DVec3::new(0.0, -5.0, 0.0)).length()
+                < 1e-10
+        );
     }
 
     #[test]
     fn circle3_tangent_at_quadrants() {
         let c = Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z,
-            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 5.0,
         };
         use std::f64::consts::PI;
         // tangent = (-R*sin(t)*X + R*cos(t)*Y).normalize()
@@ -4257,14 +4526,22 @@ mod eval_tests {
     #[test]
     fn circle3_derivative_nonzero() {
         let c = Circle3 {
-            center: DVec3::ZERO, normal: DVec3::Z,
-            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 5.0,
         };
         // derivative = R * (-sin(t)*X + cos(t)*Y), always non-zero for R>0
         for &t in &[0.0, 0.5, 1.0, 2.0, 4.0, 6.0] {
             let d = c.derivative_at(t);
             assert!(d.length() > 0.0);
-            assert!((d.length() - 5.0).abs() < 1e-10, "t={} |d|={}", t, d.length());
+            assert!(
+                (d.length() - 5.0).abs() < 1e-10,
+                "t={} |d|={}",
+                t,
+                d.length()
+            );
         }
     }
 
@@ -4281,8 +4558,11 @@ mod eval_tests {
     #[test]
     fn ellipse3_eval_vertices() {
         let e = Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 10.0, minor_radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 10.0,
+            minor_radius: 5.0,
         };
         use std::f64::consts::PI;
         // Major vertices: t=0 → (10,0,0), t=PI → (-10,0,0)
@@ -4296,8 +4576,11 @@ mod eval_tests {
     #[test]
     fn ellipse3_tangent_at_major_vertex() {
         let e = Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 10.0, minor_radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 10.0,
+            minor_radius: 5.0,
         };
         // Tangent at major vertex t=0: direction = (0, 5, 0) = Y
         // (derivative: -a*sin(0)*X + b*cos(0)*Y = 5*Y)
@@ -4308,8 +4591,11 @@ mod eval_tests {
     #[test]
     fn ellipse3_derivative_at_vertices() {
         let e = Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 10.0, minor_radius: 5.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 10.0,
+            minor_radius: 5.0,
         };
         // derivative at t=0: a*(-sin(0))*X + b*cos(0)*Y = b*Y = 5*Y
         let d0 = e.derivative_at(0.0);
@@ -4327,8 +4613,10 @@ mod eval_tests {
             degree: 2,
             knots: vec![0.0, 0.0, 0.0, 0.3, 0.7, 1.0, 1.0, 1.0],
             control_points: vec![
-                DVec3::new(0.0, 0.0, 0.0), DVec3::new(3.0, 5.0, 0.0),
-                DVec3::new(6.0, 5.0, 0.0), DVec3::new(9.0, 0.0, 0.0),
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(3.0, 5.0, 0.0),
+                DVec3::new(6.0, 5.0, 0.0),
+                DVec3::new(9.0, 0.0, 0.0),
             ],
             weights: vec![1.0; 4],
         };
@@ -4371,13 +4659,17 @@ mod eval_tests {
         // Rational Bezier with center weight > 1 pulls curve toward control point
         let non_rational = BezierCurve3 {
             control_points: vec![
-                DVec3::new(-1.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0),
+                DVec3::new(-1.0, 0.0, 0.0),
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
             ],
             weights: vec![1.0, 1.0, 1.0],
         };
         let rational = BezierCurve3 {
             control_points: vec![
-                DVec3::new(-1.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0),
+                DVec3::new(-1.0, 0.0, 0.0),
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
             ],
             weights: vec![1.0, 5.0, 1.0], // heavy center weight pulls up
         };
@@ -4395,7 +4687,9 @@ mod eval_tests {
         // Parabola: dir_perp = axis_dir.cross(normal) = X.cross(Z) = -Y
         // P(t) = (t²/(2p)) * X + t * (-Y) = (t²/8, -t, 0)
         let p = Parabola3 {
-            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
             focal_param: 4.0,
         };
         // P(0) = (0,0,0)
@@ -4415,8 +4709,11 @@ mod eval_tests {
     fn hyperbola3_eval_and_derivative() {
         use std::f64::consts::PI;
         let h = Hyperbola3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            semi_major: 3.0, semi_minor: 2.0,
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 3.0,
+            semi_minor: 2.0,
         };
         // P(0) = (a*cosh(0), 0, 0) = (3, 0, 0)  (since minor_dir = normal×major_dir = Z×X = Y)
         // Actually: P(t) = center + a*cosh(t)*X + b*sinh(t)*Y
@@ -4438,8 +4735,11 @@ mod eval_tests {
     fn helix3_full_turn_pitch_advance() {
         // Helix with pitch 2: after one full turn, Z advances by 2
         let h = CircularHelix3 {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            ref_dir: DVec3::X, radius: 3.0, pitch: 2.0,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 3.0,
+            pitch: 2.0,
         };
         use std::f64::consts::{PI, TAU};
         // x_axis = ref_dir - axis * dot = X - 0 = X
@@ -4453,8 +4753,11 @@ mod eval_tests {
     #[test]
     fn helix3_half_turn_opposite() {
         let h = CircularHelix3 {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            ref_dir: DVec3::X, radius: 3.0, pitch: 2.0,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 3.0,
+            pitch: 2.0,
         };
         use std::f64::consts::PI;
         // P(PI) = (-3, 0, 1)
@@ -4467,9 +4770,12 @@ mod eval_tests {
     #[test]
     fn sine_wave3_eval_and_derivative() {
         let w = SineWave3 {
-            origin: DVec3::ZERO, baseline_dir: DVec3::X,
-            amplitude_dir: DVec3::Y, amplitude: 2.0,
-            frequency: 1.0, phase: 0.0,
+            origin: DVec3::ZERO,
+            baseline_dir: DVec3::X,
+            amplitude_dir: DVec3::Y,
+            amplitude: 2.0,
+            frequency: 1.0,
+            phase: 0.0,
         };
         use std::f64::consts::PI;
         // P(0) = (0, 0, 0)
@@ -4489,7 +4795,10 @@ mod eval_tests {
         // Line along X, offset along Z: tangent = X, perp = X×Z = -Y
         // The offset displaces in the -Y direction (perpendicular to both tangent and offset_dir)
         // FD tangent gives approximate direction, so just check the point differs from the line
-        let basis = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let basis = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let off = OffsetCurve3 {
             basis: Box::new(basis),
             offset_distance: 2.0,
@@ -4528,8 +4837,10 @@ mod eval_tests {
     #[test]
     fn cylinder_derivatives_and_normal() {
         let cyl = CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            radius: 3.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+            ref_dir: DVec3::X,
         };
         let (p, dpu, dpv) = cyl.derivatives(0.0, 5.0);
         // dP/dv should be axis (Z)
@@ -4546,8 +4857,10 @@ mod eval_tests {
     #[test]
     fn cylinder_normal_radial() {
         let cyl = CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            radius: 3.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+            ref_dir: DVec3::X,
         };
         // Cylinder with axis Z, ref_dir=X:
         // x_ax = X, y_ax = Z×X = Y
@@ -4561,8 +4874,10 @@ mod eval_tests {
     #[test]
     fn sphere_derivatives_and_normal() {
         let s = SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         };
         // At equator (v=PI/2), u=0: point = (5, 0, 0)
         use std::f64::consts::PI;
@@ -4581,8 +4896,10 @@ mod eval_tests {
     #[test]
     fn sphere_normal_at_poles() {
         let s = SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            radius: 5.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
         };
         // North pole v=0: point=(0,0,5), normal should be +Z
         let n_north = s.normal_at(0.0, 0.0);
@@ -4598,8 +4915,10 @@ mod eval_tests {
     fn cone_derivatives() {
         let sa = 30.0_f64.to_radians(); // 30 degree half-angle
         let cone = ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z,
-            radius: 2.0, half_angle_rad: sa,
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            half_angle_rad: sa,
         };
         let (_p, dpu, dpv) = cone.derivatives(0.0, 0.0);
         // At v=0: radial = 2, axial = 0
@@ -4623,8 +4942,10 @@ mod eval_tests {
     fn torus_derivatives_and_normal() {
         use std::f64::consts::PI;
         let t = ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            major_radius: 5.0, minor_radius: 1.0,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
         };
         // OCCT-aligned: x_ax=X, y_ax=Y. At u=0, v=0: outer equator, point=(6,0,0)
         let (p, dpu, dpv) = t.derivatives(0.0, 0.0);
@@ -4642,8 +4963,10 @@ mod eval_tests {
     fn torus_inner_equator_normal() {
         use std::f64::consts::PI;
         let t = ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            major_radius: 5.0, minor_radius: 1.0,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
         };
         // Inner equator: u=0, v=PI → point=(4,0,0), normal should be -X (inward)
         let n_inner = t.normal_at(0.0, PI);
@@ -4655,7 +4978,8 @@ mod eval_tests {
     #[test]
     fn bspline_surface_eval_d0() {
         let surf = BSplineSurface {
-            degree_u: 1, degree_v: 1,
+            degree_u: 1,
+            degree_v: 1,
             knots_u: vec![0.0, 0.0, 1.0, 1.0],
             knots_v: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![
@@ -4685,8 +5009,10 @@ mod eval_tests {
     #[test]
     fn surface3_sphere_dispatch() {
         let s = Surface3::Sphere(SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z,
-            radius: 3.0, ref_dir: DVec3::X,
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+            ref_dir: DVec3::X,
         });
         // Verify D1/dPdu through Surface3 dispatch
         let (p, _dpu, _dpv) = s.derivatives(0.0, 0.0);
@@ -4698,8 +5024,10 @@ mod eval_tests {
     #[test]
     fn surface3_cylinder_dispatch() {
         let s = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z,
-            radius: 2.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            ref_dir: DVec3::X,
         });
         // Cylinder with axis Z, ref_dir=X: dP/du at u=0 = R*y_ax = 2*Y = (0,2,0)
         let (_p, dpu, dpv) = s.derivatives(0.0, 0.0);

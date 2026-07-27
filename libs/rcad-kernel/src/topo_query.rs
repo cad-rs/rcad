@@ -1,12 +1,12 @@
-﻿//! Topology query helpers 鈥?analogous to OCCT `TopExp_Explorer` and
+//! Topology query helpers 鈥?analogous to OCCT `TopExp_Explorer` and
 //! `TopExp::MapShapesAndAncestors`.
 //!
 //! All functions operate on `topods::BRep` and use ShapeRef-based access.
 
 use std::collections::HashSet;
 
-use crate::topology::WireEdge;
 use crate::topods;
+use crate::topology::WireEdge;
 
 /// Returns wire edges in order, keeping only the **first** occurrence of each
 /// `edge_idx` (semantic edge 鈥?one row per edge index in tree UIs).
@@ -16,10 +16,7 @@ use crate::topods;
 /// not separate semantic edges.
 pub fn wire_edges_unique_by_index(edges: &[WireEdge]) -> Vec<&WireEdge> {
     let mut seen = HashSet::new();
-    edges
-        .iter()
-        .filter(|we| seen.insert(we.idx))
-        .collect()
+    edges.iter().filter(|we| seen.insert(we.idx)).collect()
 }
 
 /// Helper: find all vertex tshape indices in a topods::BRep.
@@ -71,9 +68,13 @@ pub fn edge_adjacent_faces(brep: &topods::BRep, edge_tshape_idx: usize) -> Vec<u
     collect_face_indices(brep)
         .into_iter()
         .filter(|&fi| {
-            let topods::TShape::Face(fd) = &*brep.tshapes[fi] else { return false };
+            let topods::TShape::Face(fd) = &*brep.tshapes[fi] else {
+                return false;
+            };
             let outer_wire = &brep.tshapes[fd.outer_wire.index];
-            let topods::TShape::Wire(wd) = &**outer_wire else { return false };
+            let topods::TShape::Wire(wd) = &**outer_wire else {
+                return false;
+            };
             wd.edges.iter().any(|sr| sr.index == edge_tshape_idx)
         })
         .collect()
@@ -85,8 +86,12 @@ pub fn edge_adjacent_faces(brep: &topods::BRep, edge_tshape_idx: usize) -> Vec<u
 /// Duplicate edge indices (e.g. seam edges) are preserved as they appear
 /// in the wire.
 pub fn face_edges(brep: &topods::BRep, face_tshape_idx: usize) -> Vec<usize> {
-    let topods::TShape::Face(fd) = &*brep.tshapes[face_tshape_idx] else { return vec![] };
-    let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else { return vec![] };
+    let topods::TShape::Face(fd) = &*brep.tshapes[face_tshape_idx] else {
+        return vec![];
+    };
+    let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else {
+        return vec![];
+    };
     wd.edges.iter().map(|sr| sr.index).collect()
 }
 
@@ -96,7 +101,9 @@ pub fn vertex_adjacent_edges(brep: &topods::BRep, vertex_tshape_idx: usize) -> V
     collect_edge_indices(brep)
         .into_iter()
         .filter(|&ei| {
-            let topods::TShape::Edge(ed) = &*brep.tshapes[ei] else { return false };
+            let topods::TShape::Edge(ed) = &*brep.tshapes[ei] else {
+                return false;
+            };
             ed.first.index == vertex_tshape_idx || ed.last.index == vertex_tshape_idx
         })
         .collect()
@@ -128,14 +135,24 @@ pub fn topological_vertex_count(brep: &topods::BRep) -> usize {
 ///
 /// Analogous to `BRep_Tool::Degenerated(edge)` in OCCT.
 pub fn is_degenerate_edge(brep: &topods::BRep, edge_tshape_idx: usize) -> bool {
-    let topods::TShape::Edge(ed) = &*brep.tshapes[edge_tshape_idx] else { return false };
+    let topods::TShape::Edge(ed) = &*brep.tshapes[edge_tshape_idx] else {
+        return false;
+    };
     if ed.degenerated {
         return true;
     }
-    let Some(v_start) = brep.tshapes.get(ed.first.index) else { return false };
-    let Some(v_end) = brep.tshapes.get(ed.last.index) else { return false };
-    let topods::TShape::Vertex(vd_start) = &**v_start else { return false };
-    let topods::TShape::Vertex(vd_end) = &**v_end else { return false };
+    let Some(v_start) = brep.tshapes.get(ed.first.index) else {
+        return false;
+    };
+    let Some(v_end) = brep.tshapes.get(ed.last.index) else {
+        return false;
+    };
+    let topods::TShape::Vertex(vd_start) = &**v_start else {
+        return false;
+    };
+    let topods::TShape::Vertex(vd_end) = &**v_end else {
+        return false;
+    };
     (vd_end.point - vd_start.point).length_squared() < 1e-20
 }
 
@@ -150,14 +167,24 @@ pub fn periodic_seam_edge_indices(brep: &topods::BRep) -> Vec<usize> {
     collect_edge_indices(brep)
         .into_iter()
         .filter(|&ei| {
-            let topods::TShape::Edge(ed) = &*brep.tshapes[ei] else { return false };
+            let topods::TShape::Edge(ed) = &*brep.tshapes[ei] else {
+                return false;
+            };
             if ed.degenerated {
                 return false;
             }
-            let Some(v_start) = brep.tshapes.get(ed.first.index) else { return false };
-            let Some(v_end) = brep.tshapes.get(ed.last.index) else { return false };
-            let topods::TShape::Vertex(vd_start) = &**v_start else { return false };
-            let topods::TShape::Vertex(vd_end) = &**v_end else { return false };
+            let Some(v_start) = brep.tshapes.get(ed.first.index) else {
+                return false;
+            };
+            let Some(v_end) = brep.tshapes.get(ed.last.index) else {
+                return false;
+            };
+            let topods::TShape::Vertex(vd_start) = &**v_start else {
+                return false;
+            };
+            let topods::TShape::Vertex(vd_end) = &**v_end else {
+                return false;
+            };
             (vd_end.point - vd_start.point).length_squared() < 1e-10
         })
         .collect()
@@ -193,18 +220,36 @@ pub fn salient_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
                 return true;
             }
             // Center vertex point
-            let topods::TShape::Vertex(vd_center) = &*brep.tshapes[vi] else { return true };
+            let topods::TShape::Vertex(vd_center) = &*brep.tshapes[vi] else {
+                return true;
+            };
             let center = vd_center.point;
 
             // Get the two adjacent edges and find the opposite-end vertices
-            let topods::TShape::Edge(ed_a) = &*brep.tshapes[adj[0]] else { return true };
-            let topods::TShape::Edge(ed_b) = &*brep.tshapes[adj[1]] else { return true };
+            let topods::TShape::Edge(ed_a) = &*brep.tshapes[adj[0]] else {
+                return true;
+            };
+            let topods::TShape::Edge(ed_b) = &*brep.tshapes[adj[1]] else {
+                return true;
+            };
 
-            let other_a = if ed_a.first.index == vi { ed_a.last.index } else { ed_a.first.index };
-            let other_b = if ed_b.first.index == vi { ed_b.last.index } else { ed_b.first.index };
+            let other_a = if ed_a.first.index == vi {
+                ed_a.last.index
+            } else {
+                ed_a.first.index
+            };
+            let other_b = if ed_b.first.index == vi {
+                ed_b.last.index
+            } else {
+                ed_b.first.index
+            };
 
-            let topods::TShape::Vertex(vd_a) = &*brep.tshapes[other_a] else { return true };
-            let topods::TShape::Vertex(vd_b) = &*brep.tshapes[other_b] else { return true };
+            let topods::TShape::Vertex(vd_a) = &*brep.tshapes[other_a] else {
+                return true;
+            };
+            let topods::TShape::Vertex(vd_b) = &*brep.tshapes[other_b] else {
+                return true;
+            };
 
             let dir_a = (vd_a.point - center).normalize();
             let dir_b = (vd_b.point - center).normalize();
@@ -212,4 +257,3 @@ pub fn salient_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
         })
         .collect()
 }
-

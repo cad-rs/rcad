@@ -12,13 +12,13 @@
 //! Trimmed 3D curves (record type 8) are unsupported.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::{topods, any_perpendicular, BRep};
 use rcad_kernel::geom::{
     BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3, Circle2d, Circle3,
     ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse2d, Ellipse3, Hyperbola3, Line2d,
     Line3, OffsetCurve3, OffsetSurface, Parabola3, Plane, SphericalSurface, Surface3,
     ToroidalSurface, TrimmedSurface,
 };
+use rcad_kernel::{BRep, any_perpendicular, topods};
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -345,7 +345,12 @@ fn parse_curve2d(c: &mut Cursor<'_>) -> Result<Curve2d, OcctBrepError> {
             let center = c.parse_point2()?;
             let _dx = c.parse_dir2()?;
             let _dy = c.parse_dir2()?;
-            Ok(Curve2d::Circle(Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: c.parse_f64()?, }))
+            Ok(Curve2d::Circle(Circle2d {
+                center,
+                x_dir: glam::DVec2::X,
+                y_dir: glam::DVec2::Y,
+                radius: c.parse_f64()?,
+            }))
         }
         "3" => Ok(Curve2d::Ellipse(Ellipse2d {
             center: c.parse_point2()?,
@@ -959,15 +964,21 @@ fn build_brep(
     // Pass 2: Create all edge TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Edge {
-            curve3d, v0, v1, tol, ..
+            curve3d,
+            v0,
+            v1,
+            tol,
+            ..
         } = &s.kind
         {
             let i0 = shape_index(n, v0.1);
             let i1 = shape_index(n, v1.1);
-            let vr0 = shape_refs[i0]
-                .ok_or_else(|| OcctBrepError::EmptyResult("edge references missing vertex".into()))?;
-            let vr1 = shape_refs[i1]
-                .ok_or_else(|| OcctBrepError::EmptyResult("edge references missing vertex".into()))?;
+            let vr0 = shape_refs[i0].ok_or_else(|| {
+                OcctBrepError::EmptyResult("edge references missing vertex".into())
+            })?;
+            let vr1 = shape_refs[i1].ok_or_else(|| {
+                OcctBrepError::EmptyResult("edge references missing vertex".into())
+            })?;
 
             let (edge_curve, edge_range) = if let Some((ci, u0, u1)) = curve3d {
                 if *ci > 0 && *ci <= curves.len() {
@@ -991,9 +1002,8 @@ fn build_brep(
             let mut edge_srs = Vec::with_capacity(wrefs.len());
             for (o, back, _loc) in wrefs {
                 let si = shape_index(n, *back);
-                let esr = shape_refs[si].ok_or_else(|| {
-                    OcctBrepError::EmptyResult("wire references non-edge".into())
-                })?;
+                let esr = shape_refs[si]
+                    .ok_or_else(|| OcctBrepError::EmptyResult("wire references non-edge".into()))?;
                 // Apply orientation from the reference character
                 let orient = match o {
                     '+' => topods::Orientation::Forward,
@@ -1002,7 +1012,9 @@ fn build_brep(
                     'e' => topods::Orientation::External,
                     _ => topods::Orientation::Forward,
                 };
-                edge_srs.push(topods::ShapeRef::synthetic_with_orientation(esr.index, orient));
+                edge_srs.push(topods::ShapeRef::synthetic_with_orientation(
+                    esr.index, orient,
+                ));
             }
             let w = brep.add_twire(edge_srs);
             // Set flags from the parsed shape flags
@@ -1035,17 +1047,15 @@ fn build_brep(
                 return Err(OcctBrepError::EmptyResult("face has no wires".into()));
             }
             let wsi = shape_index(n, s.children[0].1);
-            let outer_wire_sr = shape_refs[wsi].ok_or_else(|| {
-                OcctBrepError::EmptyResult("face outer is not a wire".into())
-            })?;
+            let outer_wire_sr = shape_refs[wsi]
+                .ok_or_else(|| OcctBrepError::EmptyResult("face outer is not a wire".into()))?;
 
             // Inner wires from remaining children
             let mut inner_wire_srs = Vec::new();
             for ch in s.children.iter().skip(1) {
                 let wsi2 = shape_index(n, ch.1);
-                let iw_sr = shape_refs[wsi2].ok_or_else(|| {
-                    OcctBrepError::EmptyResult("face inner is not a wire".into())
-                })?;
+                let iw_sr = shape_refs[wsi2]
+                    .ok_or_else(|| OcctBrepError::EmptyResult("face inner is not a wire".into()))?;
                 // Apply orientation from the reference
                 let orient = match ch.0 {
                     '+' => topods::Orientation::Forward,
@@ -1054,7 +1064,10 @@ fn build_brep(
                     'e' => topods::Orientation::External,
                     _ => topods::Orientation::Forward,
                 };
-                inner_wire_srs.push(topods::ShapeRef::synthetic_with_orientation(iw_sr.index, orient));
+                inner_wire_srs.push(topods::ShapeRef::synthetic_with_orientation(
+                    iw_sr.index,
+                    orient,
+                ));
             }
 
             let natural_flag = *natural != 0;

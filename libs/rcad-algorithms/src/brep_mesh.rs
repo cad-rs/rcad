@@ -9,12 +9,11 @@
 //! - Quality metrics for mesh analysis
 //! - Mesh refinement for improved quality
 
-
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::topology::{Face, Wire, WireEdge};
 use std::collections::HashMap;
 
@@ -54,7 +53,7 @@ impl Default for MeshParams {
     fn default() -> Self {
         Self {
             deflection: 0.001,
-            angle_deflection: 0.5,  // ~28.6 degrees
+            angle_deflection: 0.5, // ~28.6 degrees
             min_mesh_size: 0.0,
             max_mesh_size: f64::MAX,
             optimize: true,
@@ -222,7 +221,8 @@ impl Mesh {
         self.nodes.extend_from_slice(&other.nodes);
         self.normals.extend_from_slice(&other.normals);
         for tri in &other.triangles {
-            self.triangles.push([tri[0] + base, tri[1] + base, tri[2] + base]);
+            self.triangles
+                .push([tri[0] + base, tri[1] + base, tri[2] + base]);
         }
     }
 }
@@ -340,7 +340,11 @@ pub fn mesh_face(_face: &Face, surface: &Surface3, params: &MeshParams) -> Mesh 
     }
 
     // Weld duplicate mesh nodes
-    let mesh = weld_mesh(Mesh { nodes, triangles, normals });
+    let mesh = weld_mesh(Mesh {
+        nodes,
+        triangles,
+        normals,
+    });
 
     // Optimize if requested
     if params.optimize && !mesh.triangles.is_empty() {
@@ -358,13 +362,29 @@ fn estimate_initial_divisions(
     params: &MeshParams,
     is_u: bool,
 ) -> usize {
-    let _span = if is_u { u_range[1] - u_range[0] } else { v_range[1] - v_range[0] };
+    let _span = if is_u {
+        u_range[1] - u_range[0]
+    } else {
+        v_range[1] - v_range[0]
+    };
 
     let base_count = match surface {
         Surface3::Plane(_) => 2,
-        Surface3::Cylinder(_) => if is_u { 16 } else { 2 },
+        Surface3::Cylinder(_) => {
+            if is_u {
+                16
+            } else {
+                2
+            }
+        }
         Surface3::Sphere(_) => 16,
-        Surface3::Cone(_) => if is_u { 16 } else { 2 },
+        Surface3::Cone(_) => {
+            if is_u {
+                16
+            } else {
+                2
+            }
+        }
         Surface3::Torus(_) => 24,
         _ => 8,
     };
@@ -430,10 +450,46 @@ fn subdivide_quad_for_face(
 
     if should_subdivide {
         // Subdivide into 4 sub-quads
-        subdivide_quad_for_face(surface, [u0, um], [v0, vm], params, depth + 1, nodes, normals, triangles);
-        subdivide_quad_for_face(surface, [um, u1], [v0, vm], params, depth + 1, nodes, normals, triangles);
-        subdivide_quad_for_face(surface, [u0, um], [vm, v1], params, depth + 1, nodes, normals, triangles);
-        subdivide_quad_for_face(surface, [um, u1], [vm, v1], params, depth + 1, nodes, normals, triangles);
+        subdivide_quad_for_face(
+            surface,
+            [u0, um],
+            [v0, vm],
+            params,
+            depth + 1,
+            nodes,
+            normals,
+            triangles,
+        );
+        subdivide_quad_for_face(
+            surface,
+            [um, u1],
+            [v0, vm],
+            params,
+            depth + 1,
+            nodes,
+            normals,
+            triangles,
+        );
+        subdivide_quad_for_face(
+            surface,
+            [u0, um],
+            [vm, v1],
+            params,
+            depth + 1,
+            nodes,
+            normals,
+            triangles,
+        );
+        subdivide_quad_for_face(
+            surface,
+            [um, u1],
+            [vm, v1],
+            params,
+            depth + 1,
+            nodes,
+            normals,
+            triangles,
+        );
     } else {
         // Emit triangles
         let n = nodes.len() as u32;
@@ -502,7 +558,9 @@ fn weld_mesh(mesh: Mesh) -> Mesh {
         let mut matched = None;
         if let Some(candidates) = buckets.get(&key) {
             for &candidate in candidates {
-                if (welded_vertices[candidate] - *point).length_squared() <= WELD_TOLERANCE * WELD_TOLERANCE {
+                if (welded_vertices[candidate] - *point).length_squared()
+                    <= WELD_TOLERANCE * WELD_TOLERANCE
+                {
                     matched = Some(candidate);
                     break;
                 }
@@ -607,8 +665,16 @@ fn optimize_mesh(mut mesh: Mesh) -> Mesh {
 /// Check if an edge flip would improve triangle quality.
 fn should_flip_edge(nodes: &[DVec3], t0: [u32; 3], t1: [u32; 3], edge: (u32, u32)) -> bool {
     // Find opposite mesh nodes
-    let opp0 = t0.iter().find(|&&v| v != edge.0 && v != edge.1).copied().unwrap();
-    let opp1 = t1.iter().find(|&&v| v != edge.0 && v != edge.1).copied().unwrap();
+    let opp0 = t0
+        .iter()
+        .find(|&&v| v != edge.0 && v != edge.1)
+        .copied()
+        .unwrap();
+    let opp1 = t1
+        .iter()
+        .find(|&&v| v != edge.0 && v != edge.1)
+        .copied()
+        .unwrap();
 
     if opp0 == opp1 {
         return false;
@@ -624,8 +690,8 @@ fn should_flip_edge(nodes: &[DVec3], t0: [u32; 3], t1: [u32; 3], edge: (u32, u32
         return false;
     };
 
-    let min_angle_before = min_triangle_angle(*p_e0, *p_e1, *p_opp0)
-        .min(min_triangle_angle(*p_e0, *p_e1, *p_opp1));
+    let min_angle_before =
+        min_triangle_angle(*p_e0, *p_e1, *p_opp0).min(min_triangle_angle(*p_e0, *p_e1, *p_opp1));
 
     let min_angle_after = min_triangle_angle(*p_opp0, *p_opp1, *p_e0)
         .min(min_triangle_angle(*p_opp0, *p_opp1, *p_e1));
@@ -698,7 +764,9 @@ pub fn mesh_brep(brep: &rcad_kernel::BRep, params: &MeshParams) -> BRepMesh {
     let mut brep_mesh = BRepMesh::new();
 
     for ts in &brep.tshapes {
-        let TShape::Face(fd) = ts.as_ref() else { continue };
+        let TShape::Face(fd) = ts.as_ref() else {
+            continue;
+        };
 
         // Build a flat Face struct for the existing mesh_face / mesh_face_from_wire API.
         let flat_face = build_flat_face(brep, fd);
@@ -722,7 +790,9 @@ pub fn mesh_brep(brep: &rcad_kernel::BRep, params: &MeshParams) -> BRepMesh {
 pub fn mesh_brep_topods(brep: &topods::BRep, params: &MeshParams) -> BRepMesh {
     let mut brep_mesh = BRepMesh::new();
     for ts in &brep.tshapes {
-        let topods::TShape::Face(fd) = &**ts else { continue };
+        let topods::TShape::Face(fd) = &**ts else {
+            continue;
+        };
         if let Some(surface) = &fd.surface {
             // Build a flat Face struct for the existing mesh_face API.
             let mut outer_edges = Vec::new();
@@ -758,20 +828,34 @@ fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshPara
     for we in &face.outer_wire.edges {
         // Access edge data via tshapes
         let ed = match brep.tshapes.get(we.idx).and_then(|ts| {
-            if let TShape::Edge(e) = ts.as_ref() { Some(e) } else { None }
+            if let TShape::Edge(e) = ts.as_ref() {
+                Some(e)
+            } else {
+                None
+            }
         }) {
             Some(e) => e,
             None => continue,
         };
 
-        let start_idx = if we.forward { ed.first.index } else { ed.last.index };
-        let end_idx = if we.forward { ed.last.index } else { ed.first.index };
+        let start_idx = if we.forward {
+            ed.first.index
+        } else {
+            ed.last.index
+        };
+        let end_idx = if we.forward {
+            ed.last.index
+        } else {
+            ed.first.index
+        };
 
         // Add start point
         if let Some(pt) = brep.vertex_point(start_idx)
-            && (poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB) {
-                poly_pts.push(pt);
-            }
+            && (poly_pts.is_empty()
+                || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB)
+        {
+            poly_pts.push(pt);
+        }
 
         // Sample edge curve if present
         if let Some(curve) = &ed.curve {
@@ -788,7 +872,9 @@ fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshPara
                 for i in 1..=n_segs {
                     let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
                     let pt = curve.point_at(t);
-                    if poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB {
+                    if poly_pts.is_empty()
+                        || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB
+                    {
                         poly_pts.push(pt);
                     }
                 }
@@ -797,13 +883,17 @@ fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshPara
 
         // Add end point
         if let Some(pt) = brep.vertex_point(end_idx)
-            && (poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB) {
-                poly_pts.push(pt);
-            }
+            && (poly_pts.is_empty()
+                || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB)
+        {
+            poly_pts.push(pt);
+        }
     }
 
     // Remove duplicate closing point
-    if poly_pts.len() >= 2 && (poly_pts[0] - poly_pts[poly_pts.len() - 1]).length() < TOLERANCE_COORD_SUB {
+    if poly_pts.len() >= 2
+        && (poly_pts[0] - poly_pts[poly_pts.len() - 1]).length() < TOLERANCE_COORD_SUB
+    {
         poly_pts.pop();
     }
 
@@ -823,7 +913,11 @@ fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshPara
     // Compute normals
     let normals = vec![face.normal; poly_pts.len()];
 
-    Mesh { nodes: poly_pts, triangles, normals }
+    Mesh {
+        nodes: poly_pts,
+        triangles,
+        normals,
+    }
 }
 
 /// Estimate number of segments for curve discretization.
@@ -1016,9 +1110,7 @@ fn discretize_edge_in_range(curve: &Curve3, t0: f64, t1: f64, params: &MeshParam
             // Check segment length
             let seg_len = (p1 - p0).length();
 
-            if chord_error > params.deflection
-                || seg_len > params.max_mesh_size
-            {
+            if chord_error > params.deflection || seg_len > params.max_mesh_size {
                 new_segments.push([seg[0], mid]);
                 new_segments.push([mid, seg[1]]);
             } else {
@@ -1059,7 +1151,11 @@ fn discretize_edge_in_range(curve: &Curve3, t0: f64, t1: f64, params: &MeshParam
 ///
 /// # Returns
 /// A vector of points in world coordinates.
-pub fn discretize_edge_on_surface(curve: &Curve3, surface: &Surface3, params: &MeshParams) -> Vec<DVec3> {
+pub fn discretize_edge_on_surface(
+    curve: &Curve3,
+    surface: &Surface3,
+    params: &MeshParams,
+) -> Vec<DVec3> {
     // For now, just use the 3D curve discretization
     // In a full implementation, we would also check surface deviation
     let points = discretize_edge(curve, params);
@@ -1212,9 +1308,8 @@ pub fn refine_mesh(mesh: &Mesh, max_edge_length: f64) -> Mesh {
         let e1_len = (p2 - p1).length();
         let e2_len = (p0 - p2).length();
 
-        let needs_refinement = e0_len > max_edge_length
-            || e1_len > max_edge_length
-            || e2_len > max_edge_length;
+        let needs_refinement =
+            e0_len > max_edge_length || e1_len > max_edge_length || e2_len > max_edge_length;
 
         if needs_refinement {
             // Get or create midpoints
@@ -1271,7 +1366,3 @@ fn get_or_create_midpoint(
 // ============================================================================
 // Tests
 // ============================================================================
-
-
-
-

@@ -25,9 +25,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use glam::DVec3;
-use rcad_kernel::{BRep, BSplineSurface, Curve3, Surface3};
 use rcad_kernel::geom::{BSplineCurve3, Circle3, Line3, Plane};
 use rcad_kernel::topods::{ShapeRef, TShape};
+use rcad_kernel::{BRep, BSplineSurface, Curve3, Surface3};
 
 /// Errors that can occur when reading or parsing an IGES file.
 #[derive(Debug, Clone)]
@@ -44,10 +44,7 @@ pub enum IgesError {
     /// Parse produced an empty or degenerate result.
     EmptyResult(String),
     /// Unsupported entity type encountered.
-    UnsupportedEntity {
-        entity_type: i32,
-        message: String,
-    },
+    UnsupportedEntity { entity_type: i32, message: String },
 }
 
 impl std::fmt::Display for IgesError {
@@ -176,8 +173,7 @@ pub struct IgesReader;
 impl IgesReader {
     /// Read and parse an IGES file from disk.
     pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, IgesError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| IgesError::Io(e.to_string()))?;
+        let content = std::fs::read_to_string(path).map_err(|e| IgesError::Io(e.to_string()))?;
         Self::parse_string(&content)
     }
 
@@ -245,11 +241,7 @@ impl IgesReader {
         // Concatenate all parameter data from G section
         let mut param_text = String::new();
         for line in lines {
-            let data = if line.len() > 72 {
-                &line[..72]
-            } else {
-                line
-            };
+            let data = if line.len() > 72 { &line[..72] } else { line };
             param_text.push_str(data.trim_end());
         }
 
@@ -410,11 +402,7 @@ impl IgesReader {
             };
 
             // Extract parameter data from columns 1-64
-            let param_part = if line.len() >= 64 {
-                &line[..64]
-            } else {
-                line
-            };
+            let param_part = if line.len() >= 64 { &line[..64] } else { line };
 
             // Check if this is a new entity
             if let Some(&de_seq) = ptr_to_seq.get(&de_ptr) {
@@ -499,7 +487,8 @@ impl IgesReader {
 
         // Check for pointer reference (negative number or number with trailing P)
         if s.starts_with('-') || s.ends_with('P') || s.ends_with('p') {
-            let num: i64 = s.trim_end_matches(|c: char| c == 'P' || c == 'p' || c.is_ascii_digit())
+            let num: i64 = s
+                .trim_end_matches(|c: char| c == 'P' || c == 'p' || c.is_ascii_digit())
                 .parse()
                 .unwrap_or(0);
             return Ok(IgesValue::Pointer(num.abs()));
@@ -623,8 +612,8 @@ impl IgesReader {
 struct IgesBrepBuilder {
     brep: BRep,
     // Maps from IGES entity pointers to RCAD indices
-    point_map: HashMap<i32, ShapeRef>,    // pointer -> vertex ShapeRef
-    curve_map: HashMap<i32, Curve3>,     // pointer -> 3D curve
+    point_map: HashMap<i32, ShapeRef>, // pointer -> vertex ShapeRef
+    curve_map: HashMap<i32, Curve3>,   // pointer -> 3D curve
     surface_map: HashMap<i32, Surface3>, // pointer -> surface
     // Parsed geometry cache
     points: HashMap<i32, DVec3>,
@@ -649,17 +638,17 @@ impl IgesBrepBuilder {
     /// Parse a single IGES entity.
     fn parse_entity(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
         match de.entity_type {
-            116 => self.parse_point(de, pd),        // Point
-            100 => self.parse_circular_arc(de, pd), // Circular Arc
-            110 => self.parse_line(de, pd),         // Line
-            126 => self.parse_bspline_curve(de, pd),// B-Spline Curve
-            128 => self.parse_bspline_surface(de, pd), // B-Spline Surface
+            116 => self.parse_point(de, pd),            // Point
+            100 => self.parse_circular_arc(de, pd),     // Circular Arc
+            110 => self.parse_line(de, pd),             // Line
+            126 => self.parse_bspline_curve(de, pd),    // B-Spline Curve
+            128 => self.parse_bspline_surface(de, pd),  // B-Spline Surface
             142 => self.parse_curve_on_surface(de, pd), // Curve on Surface
             144 => self.parse_trimmed_surface(de, pd), // Trimmed Surface (topology handled separately)
-            108 => self.parse_plane(de, pd),        // Plane
-            124 => self.parse_transformation(de, pd), // Transformation Matrix
-            130 => self.parse_offset_curve(de, pd), // Offset Curve
-            140 => self.parse_offset_surface(de, pd), // Offset Surface
+            108 => self.parse_plane(de, pd),           // Plane
+            124 => self.parse_transformation(de, pd),  // Transformation Matrix
+            130 => self.parse_offset_curve(de, pd),    // Offset Curve
+            140 => self.parse_offset_surface(de, pd),  // Offset Surface
             102 => Ok(()), // Composite Curve - just reference child curves
             _ => {
                 // Silently ignore unsupported entities during first pass
@@ -692,7 +681,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse a Circular Arc entity (Type 100).
-    fn parse_circular_arc(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_circular_arc(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 100: zt, x1, y1, x2, y2, x3, y3
         // (center is defined by a plane normal and two points)
         if pd.values.len() < 7 {
@@ -771,7 +764,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse a B-Spline Curve entity (Type 126).
-    fn parse_bspline_curve(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_bspline_curve(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 126 parameters:
         // 1: DE pointer to transformation matrix (0 = identity)
         // 2: Upper index of sum (degree)
@@ -867,7 +864,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse a B-Spline Surface entity (Type 128).
-    fn parse_bspline_surface(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_bspline_surface(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 128 parameters (similar to Type 126 but with two parameter directions)
         if pd.values.len() < 20 {
             return Err(IgesError::InvalidFormat(format!(
@@ -900,9 +901,10 @@ impl IgesBrepBuilder {
 
         // Read U knots
         if pd.values.len() < idx + n_knots_u {
-            return Err(IgesError::InvalidFormat(
-                format!("B-Spline Surface entity {} has insufficient U knots", de.sequence)
-            ));
+            return Err(IgesError::InvalidFormat(format!(
+                "B-Spline Surface entity {} has insufficient U knots",
+                de.sequence
+            )));
         }
         let mut knots_u: Vec<f64> = Vec::with_capacity(n_knots_u);
         for i in 0..n_knots_u {
@@ -912,9 +914,10 @@ impl IgesBrepBuilder {
 
         // Read V knots
         if pd.values.len() < idx + n_knots_v {
-            return Err(IgesError::InvalidFormat(
-                format!("B-Spline Surface entity {} has insufficient V knots", de.sequence)
-            ));
+            return Err(IgesError::InvalidFormat(format!(
+                "B-Spline Surface entity {} has insufficient V knots",
+                de.sequence
+            )));
         }
         let mut knots_v: Vec<f64> = Vec::with_capacity(n_knots_v);
         for i in 0..n_knots_v {
@@ -926,9 +929,10 @@ impl IgesBrepBuilder {
         let mut weights: Vec<Vec<f64>> = vec![vec![1.0; n_ctrl_v]; n_ctrl_u];
         if rational {
             if pd.values.len() < idx + n_ctrl_u * n_ctrl_v {
-                return Err(IgesError::InvalidFormat(
-                    format!("B-Spline Surface entity {} has insufficient weights", de.sequence)
-                ));
+                return Err(IgesError::InvalidFormat(format!(
+                    "B-Spline Surface entity {} has insufficient weights",
+                    de.sequence
+                )));
             }
             for (i, row) in weights.iter_mut().enumerate().take(n_ctrl_u) {
                 for (j, w) in row.iter_mut().enumerate().take(n_ctrl_v) {
@@ -940,9 +944,10 @@ impl IgesBrepBuilder {
 
         // Read control points (X, Y, Z for each)
         if pd.values.len() < idx + n_ctrl_u * n_ctrl_v * 3 {
-            return Err(IgesError::InvalidFormat(
-                format!("B-Spline Surface entity {} has insufficient ctrl pts", de.sequence)
-            ));
+            return Err(IgesError::InvalidFormat(format!(
+                "B-Spline Surface entity {} has insufficient ctrl pts",
+                de.sequence
+            )));
         }
 
         let mut control_points: Vec<Vec<DVec3>> = Vec::with_capacity(n_ctrl_u);
@@ -967,13 +972,18 @@ impl IgesBrepBuilder {
             weights,
         };
 
-        self.surface_map.insert(de.sequence, Surface3::BSpline(bspline));
+        self.surface_map
+            .insert(de.sequence, Surface3::BSpline(bspline));
 
         Ok(())
     }
 
     /// Parse a Curve on Parametric Surface entity (Type 142).
-    fn parse_curve_on_surface(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_curve_on_surface(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 142: curve_on_surface = (surface_ptr, curve_3d_ptr, curve_2d_ptr, preference)
         if pd.values.len() < 4 {
             return Err(IgesError::InvalidFormat(format!(
@@ -994,7 +1004,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse a Trimmed Surface entity (Type 144).
-    fn parse_trimmed_surface(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_trimmed_surface(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 144: trimmed_surface = (surface_ptr, outer_bound_ptr, n_inner, [inner_bounds...], ...)
         if pd.values.len() < 3 {
             return Err(IgesError::InvalidFormat(format!(
@@ -1005,7 +1019,11 @@ impl IgesBrepBuilder {
 
         let surface_ptr = self.get_int(&pd.values[1])? as i32;
         let _outer_bound = self.get_int(&pd.values[2])?;
-        let n_inner = if pd.values.len() > 3 { self.get_int(&pd.values[3])? as usize } else { 0 };
+        let n_inner = if pd.values.len() > 3 {
+            self.get_int(&pd.values[3])? as usize
+        } else {
+            0
+        };
 
         // Track this for building faces later
         let _ = (surface_ptr, n_inner);
@@ -1048,7 +1066,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse a Transformation Matrix entity (Type 124).
-    fn parse_transformation(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_transformation(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 124: 12 values forming a 3x4 transformation matrix (row-major)
         // R11, R12, R13, T1, R21, R22, R23, T2, R31, R32, R33, T3
         if pd.values.len() < 13 {
@@ -1084,7 +1106,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse an Offset Curve entity (Type 130).
-    fn parse_offset_curve(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_offset_curve(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 130: offset_curve = (curve_ptr, offset_dist, ...flags)
         if pd.values.len() < 3 {
             return Err(IgesError::InvalidFormat(format!(
@@ -1102,7 +1128,11 @@ impl IgesBrepBuilder {
     }
 
     /// Parse an Offset Surface entity (Type 140).
-    fn parse_offset_surface(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn parse_offset_surface(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 140: offset_surface = (surface_ptr, offset_dist, ...)
         if pd.values.len() < 3 {
             return Err(IgesError::InvalidFormat(format!(
@@ -1120,7 +1150,11 @@ impl IgesBrepBuilder {
     }
 
     /// Build trimmed surface topology.
-    fn build_trimmed_surface(&mut self, de: &DirectoryEntry, pd: &ParameterData) -> Result<(), IgesError> {
+    fn build_trimmed_surface(
+        &mut self,
+        de: &DirectoryEntry,
+        pd: &ParameterData,
+    ) -> Result<(), IgesError> {
         // Type 144: Trimmed (Parametric) Surface
         if pd.values.len() < 3 {
             return Err(IgesError::InvalidFormat(format!(
@@ -1131,7 +1165,11 @@ impl IgesBrepBuilder {
 
         let surface_ptr = self.get_int(&pd.values[1])? as i32;
         let _outer_bound_ptr = self.get_int(&pd.values[2])?;
-        let _n_inner = if pd.values.len() > 3 { self.get_int(&pd.values[3])? as usize } else { 0 };
+        let _n_inner = if pd.values.len() > 3 {
+            self.get_int(&pd.values[3])? as usize
+        } else {
+            0
+        };
 
         // Get surface from map
         let surface = self.surface_map.get(&surface_ptr).cloned();
@@ -1143,11 +1181,11 @@ impl IgesBrepBuilder {
         let face_sr = self.brep.add_tface(
             surface,
             outer_wire,
-            vec![],       // no inner wires
-            None,         // no sample point
-            None,         // no UV domain
-            vec![],       // no internal vertices
-            false,        // not natural restriction
+            vec![], // no inner wires
+            None,   // no sample point
+            None,   // no UV domain
+            vec![], // no internal vertices
+            false,  // not natural restriction
         );
         self.face_refs.push(face_sr);
 
@@ -1309,7 +1347,10 @@ impl IgesWriter {
     }
 
     /// Write topods::BRep to an IGES file (converts internally).
-    pub fn write_file_topods<P: AsRef<Path>>(brep: &rcad_kernel::topods::BRep, path: P) -> Result<usize, io::Error> {
+    pub fn write_file_topods<P: AsRef<Path>>(
+        brep: &rcad_kernel::topods::BRep,
+        path: P,
+    ) -> Result<usize, io::Error> {
         Self::write_file(brep, path)
     }
 
@@ -1345,7 +1386,8 @@ impl IgesWriter {
                         let de_seq = self.next_seq;
                         self.next_seq += 1;
 
-                        let (d1, d2) = self.make_directory_entry(128, de_seq, (params.len() / 64 + 1) as i32);
+                        let (d1, d2) =
+                            self.make_directory_entry(128, de_seq, (params.len() / 64 + 1) as i32);
                         d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
                         d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
 
@@ -1366,7 +1408,11 @@ impl IgesWriter {
                         let de_seq = self.next_seq;
                         self.next_seq += 1;
 
-                        let (d1, d2) = self.make_directory_entry(entity_type, de_seq, (params.len() / 64 + 1) as i32);
+                        let (d1, d2) = self.make_directory_entry(
+                            entity_type,
+                            de_seq,
+                            (params.len() / 64 + 1) as i32,
+                        );
                         d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
                         d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
 
@@ -1382,10 +1428,7 @@ impl IgesWriter {
         // Write vertices as points (from vertex tshapes)
         for ts in &brep.tshapes {
             if let TShape::Vertex(vd) = ts.as_ref() {
-                let params = format!(
-                    "116,{:.9},{:.9},{:.9};",
-                    vd.point.x, vd.point.y, vd.point.z
-                );
+                let params = format!("116,{:.9},{:.9},{:.9};", vd.point.x, vd.point.y, vd.point.z);
                 let de_seq = self.next_seq;
                 self.next_seq += 1;
 
@@ -1406,7 +1449,10 @@ impl IgesWriter {
         let d_count = d_lines.len();
         let p_count = p_lines.len();
 
-        let term = format!("S{:>7}G{:>7}D{:>7}P{:>7}", s_count, g_count, d_count, p_count);
+        let term = format!(
+            "S{:>7}G{:>7}D{:>7}P{:>7}",
+            s_count, g_count, d_count, p_count
+        );
         lines.push(section_line(&term, 'T', 1));
 
         for line in lines {
@@ -1422,13 +1468,29 @@ impl IgesWriter {
         let mut s = String::new();
         s.push_str("1H,,1H;,");
         // product_id
-        s.push_str(&format!("{}H{},", self.global.product_id.len(), self.global.product_id));
+        s.push_str(&format!(
+            "{}H{},",
+            self.global.product_id.len(),
+            self.global.product_id
+        ));
         // file_name (as empty string for simplicity)
-        s.push_str(&format!("{}H{},", self.global.file_name.len(), self.global.file_name));
+        s.push_str(&format!(
+            "{}H{},",
+            self.global.file_name.len(),
+            self.global.file_name
+        ));
         // system_id
-        s.push_str(&format!("{}H{},", self.global.system_id.len(), self.global.system_id));
+        s.push_str(&format!(
+            "{}H{},",
+            self.global.system_id.len(),
+            self.global.system_id
+        ));
         // preprocessor_version
-        s.push_str(&format!("{}H{},", self.global.preprocessor_version.len(), self.global.preprocessor_version));
+        s.push_str(&format!(
+            "{}H{},",
+            self.global.preprocessor_version.len(),
+            self.global.preprocessor_version
+        ));
         // significant_digits, units_flag
         s.push_str(&format!("6,{},", self.global.units_flag));
         s.push(';');
@@ -1461,20 +1523,26 @@ impl IgesWriter {
                     p.normal.x, p.normal.y, p.normal.z, d
                 ))
             }
-            Surface3::Sphere(s) => {
-                Some(format!(
-                    "196,{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9};",
-                    s.center.x, s.center.y, s.center.z,
-                    s.axis.x, s.axis.y, s.axis.z,
-                    s.radius
-                ))
-            }
+            Surface3::Sphere(s) => Some(format!(
+                "196,{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9};",
+                s.center.x, s.center.y, s.center.z, s.axis.x, s.axis.y, s.axis.z, s.radius
+            )),
             Surface3::BSpline(bs) => {
                 let mut params = format!(
                     "128,0,{},{},0,0,{},0,0,0,0,{},{}",
-                    bs.degree_u, bs.degree_v,
-                    if bs.weights.iter().all(|r| r.iter().all(|&w| (w - 1.0).abs() < 1e-9)) { 0 } else { 1 },
-                    bs.knots_u.len() - 1, bs.knots_v.len() - 1
+                    bs.degree_u,
+                    bs.degree_v,
+                    if bs
+                        .weights
+                        .iter()
+                        .all(|r| r.iter().all(|&w| (w - 1.0).abs() < 1e-9))
+                    {
+                        0
+                    } else {
+                        1
+                    },
+                    bs.knots_u.len() - 1,
+                    bs.knots_v.len() - 1
                 );
 
                 for &k in &bs.knots_u {
@@ -1485,7 +1553,11 @@ impl IgesWriter {
                     params.push_str(&format!("{:.9},", k));
                 }
 
-                if bs.weights.iter().any(|r| r.iter().any(|&w| (w - 1.0).abs() >= 1e-9)) {
+                if bs
+                    .weights
+                    .iter()
+                    .any(|r| r.iter().any(|&w| (w - 1.0).abs() >= 1e-9))
+                {
                     for row in &bs.weights {
                         for &w in row {
                             params.push_str(&format!("{:.9},", w));
@@ -1518,8 +1590,7 @@ impl IgesWriter {
                     110,
                     format!(
                         "110,{:.9},{:.9},{:.9},{:.9},{:.9},{:.9};",
-                        l.origin.x, l.origin.y, l.origin.z,
-                        end.x, end.y, end.z
+                        l.origin.x, l.origin.y, l.origin.z, end.x, end.y, end.z
                     ),
                 ))
             }
@@ -1534,8 +1605,7 @@ impl IgesWriter {
                     100,
                     format!(
                         "100,{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9};",
-                        c.center.z,
-                        p1.x, p1.y, p2.x, p2.y, p3.x, p3.y
+                        c.center.z, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y
                     ),
                 ))
             }
@@ -1544,7 +1614,11 @@ impl IgesWriter {
                     "126,0,{},{},0,{},1,0,{}",
                     bs.degree,
                     0,
-                    if bs.weights.iter().all(|&w| (w - 1.0).abs() < 1e-9) { 0 } else { 1 },
+                    if bs.weights.iter().all(|&w| (w - 1.0).abs() < 1e-9) {
+                        0
+                    } else {
+                        1
+                    },
                     bs.knots.len() - 1
                 );
 
@@ -1630,11 +1704,7 @@ mod tests {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        let edge = brep.add_tedge(
-            Some(Curve3::Line(line)),
-            v0, v1,
-            [0.0, 1.0],
-        );
+        let edge = brep.add_tedge(Some(Curve3::Line(line)), v0, v1, [0.0, 1.0]);
 
         // Add face with plane surface
         let plane = Plane::new(DVec3::ZERO, DVec3::Z);
@@ -1642,7 +1712,11 @@ mod tests {
         brep.add_tface(
             Some(Surface3::Plane(plane)),
             wire,
-            vec![], None, None, vec![], false,
+            vec![],
+            None,
+            None,
+            vec![],
+            false,
         );
 
         brep
@@ -1674,7 +1748,10 @@ mod tests {
 
     #[test]
     fn parse_hollerith_string() {
-        assert_eq!(IgesReader::parse_hollerith("5HHello"), Some("Hello".to_string()));
+        assert_eq!(
+            IgesReader::parse_hollerith("5HHello"),
+            Some("Hello".to_string())
+        );
         assert_eq!(IgesReader::parse_hollerith("1H,"), Some(",".to_string()));
         assert_eq!(IgesReader::parse_hollerith("2HAB"), Some("AB".to_string()));
     }

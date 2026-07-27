@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use rcad_kernel::BRep;
+use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::topods;
 use rcad_kernel::topods::{Orientation, ShapeRef};
-use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Shell, Wire, WireEdge};
 
 use crate::builder::BuildError;
@@ -26,14 +26,25 @@ fn idx_to_shaperef(brep: &BRep, idx: usize) -> Option<ShapeRef> {
 
 /// Build a TShape::Wire from a topology `Wire`, adding it to the BRep.
 fn birep_wire(brep: &mut BRep, wire: &Wire) -> ShapeRef {
-    let edge_refs: Vec<ShapeRef> = wire.edges.iter().map(|we| {
-        brep.tshapes.get(we.idx).map(|ts| ShapeRef {
-            ptr_id: Arc::as_ptr(ts) as u64,
-            index: we.idx,
-            orientation: if we.forward { Orientation::Forward } else { Orientation::Reversed },
-            location: 0,
-        }).unwrap_or(ShapeRef::NULL)
-    }).collect();
+    let edge_refs: Vec<ShapeRef> = wire
+        .edges
+        .iter()
+        .map(|we| {
+            brep.tshapes
+                .get(we.idx)
+                .map(|ts| ShapeRef {
+                    ptr_id: Arc::as_ptr(ts) as u64,
+                    index: we.idx,
+                    orientation: if we.forward {
+                        Orientation::Forward
+                    } else {
+                        Orientation::Reversed
+                    },
+                    location: 0,
+                })
+                .unwrap_or(ShapeRef::NULL)
+        })
+        .collect();
     brep.add_twire(edge_refs)
 }
 
@@ -53,18 +64,26 @@ pub fn make_edge(
     v0: usize,
     v1: usize,
 ) -> Result<usize, BuildError> {
-    let v0_sr = brep.tshapes.get(v0).map(|ts| ShapeRef {
-        ptr_id: Arc::as_ptr(ts) as u64,
-        index: v0,
-        orientation: Orientation::Forward,
-        location: 0,
-    }).ok_or(BuildError::InvalidIndex(v0))?;
-    let v1_sr = brep.tshapes.get(v1).map(|ts| ShapeRef {
-        ptr_id: Arc::as_ptr(ts) as u64,
-        index: v1,
-        orientation: Orientation::Forward,
-        location: 0,
-    }).ok_or(BuildError::InvalidIndex(v1))?;
+    let v0_sr = brep
+        .tshapes
+        .get(v0)
+        .map(|ts| ShapeRef {
+            ptr_id: Arc::as_ptr(ts) as u64,
+            index: v0,
+            orientation: Orientation::Forward,
+            location: 0,
+        })
+        .ok_or(BuildError::InvalidIndex(v0))?;
+    let v1_sr = brep
+        .tshapes
+        .get(v1)
+        .map(|ts| ShapeRef {
+            ptr_id: Arc::as_ptr(ts) as u64,
+            index: v1,
+            orientation: Orientation::Forward,
+            location: 0,
+        })
+        .ok_or(BuildError::InvalidIndex(v1))?;
     let sr = brep.add_tedge(Some(curve), v0_sr, v1_sr, [t1, t2]);
     Ok(sr.index)
 }
@@ -98,27 +117,36 @@ pub fn make_face(
 /// Each face in each shell should already have been created via [`make_face`].
 /// The shells are searched by face wire structure to find the matching TShapes.
 pub fn make_solid(brep: &mut BRep, shells: Vec<Shell>) -> usize {
-    let shell_srs: Vec<ShapeRef> = shells.iter().map(|shell| {
-        let face_srs: Vec<ShapeRef> = shell.faces.iter().filter_map(|_face| {
-            // Search for the face TShape by matching wire structure.
-            // This is a best-effort lookup; in practice callers should
-            // use higher-level operations that return ShapeRef directly.
-            brep.tshapes.iter().enumerate().find_map(|(_i, ts)| {
-                if let topods::TShape::Face(fd) = &**ts {
-                    // Match by wire edge count as a heuristic
-                    if fd.outer_wire.index < brep.tshapes.len() {
-                        if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
-                            if wd.edges.len() == _face.outer_wire.edges.len() {
-                                return idx_to_shaperef(brep, fd.outer_wire.index);
+    let shell_srs: Vec<ShapeRef> = shells
+        .iter()
+        .map(|shell| {
+            let face_srs: Vec<ShapeRef> = shell
+                .faces
+                .iter()
+                .filter_map(|_face| {
+                    // Search for the face TShape by matching wire structure.
+                    // This is a best-effort lookup; in practice callers should
+                    // use higher-level operations that return ShapeRef directly.
+                    brep.tshapes.iter().enumerate().find_map(|(_i, ts)| {
+                        if let topods::TShape::Face(fd) = &**ts {
+                            // Match by wire edge count as a heuristic
+                            if fd.outer_wire.index < brep.tshapes.len() {
+                                if let topods::TShape::Wire(wd) =
+                                    &*brep.tshapes[fd.outer_wire.index]
+                                {
+                                    if wd.edges.len() == _face.outer_wire.edges.len() {
+                                        return idx_to_shaperef(brep, fd.outer_wire.index);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                None
-            })
-        }).collect();
-        brep.add_tshell(face_srs)
-    }).collect();
+                        None
+                    })
+                })
+                .collect();
+            brep.add_tshell(face_srs)
+        })
+        .collect();
     let sr = brep.add_tsolid(shell_srs);
     sr.index
 }

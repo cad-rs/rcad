@@ -45,43 +45,70 @@ pub const INFINITE_VALUE: f64 = 2e100;
 
 /// OCCT-aligned: Precision::IsInfinite (Precision.hxx L350-353).
 /// OCCT: std::abs(R) >= 0.5 * Precision::Infinite() where Precision::Infinite() = 2e100.
-pub fn is_infinite_value(r: f64) -> bool { r.abs() >= 0.5 * INFINITE_VALUE }
+pub fn is_infinite_value(r: f64) -> bool {
+    r.abs() >= 0.5 * INFINITE_VALUE
+}
 
 /// OCCT-aligned: Precision::Epsilon (Precision.hxx L336-341).
 /// Returns `|thePar| * 1e-12` (or `1e-12` if thePar is zero).
 /// Used by BRepLib::FindValidRange for parametric convergence threshold.
 pub fn parametric_epsilon(the_par: f64) -> f64 {
-    if the_par == 0.0 { 1e-12 } else { the_par.abs() * 1e-12 }
+    if the_par == 0.0 {
+        1e-12
+    } else {
+        the_par.abs() * 1e-12
+    }
 }
 
 /// OCCT-aligned: Precision::IsPositiveInfinite (Precision.hxx L357-360).
-pub fn is_positive_infinite_value(r: f64) -> bool { r >= 0.5 * INFINITE_VALUE }
+pub fn is_positive_infinite_value(r: f64) -> bool {
+    r >= 0.5 * INFINITE_VALUE
+}
 
 /// OCCT-aligned: Precision::IsNegativeInfinite (Precision.hxx L364-367).
-pub fn is_negative_infinite_value(r: f64) -> bool { r <= -0.5 * INFINITE_VALUE }
+pub fn is_negative_infinite_value(r: f64) -> bool {
+    r <= -0.5 * INFINITE_VALUE
+}
 
 // ── Per-shape tolerance helpers (topods::BRep) ─────────────────────────────
 
 /// Vertex tolerance from a TShape vertex.
 fn vtol(vd: &topods::TVertexData) -> f64 {
-    if vd.tolerance > 0.0 { vd.tolerance } else { CONFUSION }
+    if vd.tolerance > 0.0 {
+        vd.tolerance
+    } else {
+        CONFUSION
+    }
 }
 
 /// Edge tolerance from a TShape edge.
 fn etol(ed: &topods::TEdgeData) -> f64 {
-    if ed.tolerance > 0.0 { ed.tolerance } else { CONFUSION }
+    if ed.tolerance > 0.0 {
+        ed.tolerance
+    } else {
+        CONFUSION
+    }
 }
 
 /// Face tolerance from a TShape face.
 fn ftol(fd: &topods::TFaceData) -> f64 {
-    if fd.tolerance > 0.0 { fd.tolerance } else { CONFUSION }
+    if fd.tolerance > 0.0 {
+        fd.tolerance
+    } else {
+        CONFUSION
+    }
 }
 
 /// Returns the tolerance for the vertex at `tshape_idx`.
 pub fn vertex_tolerance(brep: &topods::BRep, tshape_idx: usize) -> f64 {
-    brep.tshapes.get(tshape_idx)
+    brep.tshapes
+        .get(tshape_idx)
         .and_then(|ts| {
-            if let topods::TShape::Vertex(vd) = &**ts { Some(vtol(vd)) } else { None }
+            if let topods::TShape::Vertex(vd) = &**ts {
+                Some(vtol(vd))
+            } else {
+                None
+            }
         })
         .unwrap_or(CONFUSION)
 }
@@ -107,9 +134,14 @@ pub fn update_vertex_tolerance(brep: &mut topods::BRep, tshape_idx: usize, tol: 
 
 /// Returns the tolerance for the edge at `tshape_idx`.
 pub fn edge_tolerance(brep: &topods::BRep, tshape_idx: usize) -> f64 {
-    brep.tshapes.get(tshape_idx)
+    brep.tshapes
+        .get(tshape_idx)
         .and_then(|ts| {
-            if let topods::TShape::Edge(ed) = &**ts { Some(etol(ed)) } else { None }
+            if let topods::TShape::Edge(ed) = &**ts {
+                Some(etol(ed))
+            } else {
+                None
+            }
         })
         .unwrap_or(CONFUSION)
 }
@@ -137,9 +169,14 @@ pub fn update_edge_tolerance(brep: &mut topods::BRep, tshape_idx: usize, tol: f6
 
 /// Returns the tolerance for the face at `tshape_idx`.
 pub fn face_tolerance(brep: &topods::BRep, tshape_idx: usize) -> f64 {
-    brep.tshapes.get(tshape_idx)
+    brep.tshapes
+        .get(tshape_idx)
         .and_then(|ts| {
-            if let topods::TShape::Face(fd) = &**ts { Some(ftol(fd)) } else { None }
+            if let topods::TShape::Face(fd) = &**ts {
+                Some(ftol(fd))
+            } else {
+                None
+            }
         })
         .unwrap_or(CONFUSION)
 }
@@ -170,13 +207,19 @@ pub fn finalize_tolerance_hierarchy(brep: &mut topods::BRep) {
         let ts_mut = std::sync::Arc::make_mut(ts);
         match ts_mut {
             topods::TShape::Vertex(vd) => {
-                if vd.tolerance <= 0.0 { vd.tolerance = CONFUSION; }
+                if vd.tolerance <= 0.0 {
+                    vd.tolerance = CONFUSION;
+                }
             }
             topods::TShape::Edge(ed) => {
-                if ed.tolerance <= 0.0 { ed.tolerance = CONFUSION; }
+                if ed.tolerance <= 0.0 {
+                    ed.tolerance = CONFUSION;
+                }
             }
             topods::TShape::Face(fd) => {
-                if fd.tolerance <= 0.0 { fd.tolerance = CONFUSION; }
+                if fd.tolerance <= 0.0 {
+                    fd.tolerance = CONFUSION;
+                }
             }
             _ => {}
         }
@@ -186,28 +229,41 @@ pub fn finalize_tolerance_hierarchy(brep: &mut topods::BRep) {
 /// Compute per-edge SameParameter flag.
 /// In OCCT's model this is stored on the edge itself.
 pub fn edge_same_parameter(brep: &topods::BRep, tshape_idx: usize) -> bool {
-    brep.tshapes.get(tshape_idx)
+    brep.tshapes
+        .get(tshape_idx)
         .and_then(|ts| {
-            if let topods::TShape::Edge(ed) = &**ts { Some(ed.same_parameter) } else { None }
+            if let topods::TShape::Edge(ed) = &**ts {
+                Some(ed.same_parameter)
+            } else {
+                None
+            }
         })
         .unwrap_or(true)
 }
 
 /// Compute per-edge SameRange flag.
 pub fn edge_same_range(brep: &topods::BRep, tshape_idx: usize) -> bool {
-    brep.tshapes.get(tshape_idx)
+    brep.tshapes
+        .get(tshape_idx)
         .and_then(|ts| {
-            if let topods::TShape::Edge(ed) = &**ts { Some(ed.same_range) } else { None }
+            if let topods::TShape::Edge(ed) = &**ts {
+                Some(ed.same_range)
+            } else {
+                None
+            }
         })
         .unwrap_or(true)
 }
 
 /// Compute per-face natural domain flag.
 pub fn face_domain(brep: &topods::BRep, tshape_idx: usize) -> Option<[f64; 4]> {
-    brep.tshapes.get(tshape_idx)
-        .and_then(|ts| {
-            if let topods::TShape::Face(fd) = &**ts { fd.uv_domain } else { None }
-        })
+    brep.tshapes.get(tshape_idx).and_then(|ts| {
+        if let topods::TShape::Face(fd) = &**ts {
+            fd.uv_domain
+        } else {
+            None
+        }
+    })
 }
 
 /// Model-level tolerance: max of all vertex/edge tolerances.
@@ -216,13 +272,19 @@ pub fn model_tolerance(brep: &topods::BRep) -> f64 {
     for ts in &brep.tshapes {
         match &**ts {
             topods::TShape::Vertex(vd) => {
-                if vd.tolerance > max_tol { max_tol = vd.tolerance; }
+                if vd.tolerance > max_tol {
+                    max_tol = vd.tolerance;
+                }
             }
             topods::TShape::Edge(ed) => {
-                if ed.tolerance > max_tol { max_tol = ed.tolerance; }
+                if ed.tolerance > max_tol {
+                    max_tol = ed.tolerance;
+                }
             }
             topods::TShape::Face(fd) => {
-                if fd.tolerance > max_tol { max_tol = fd.tolerance; }
+                if fd.tolerance > max_tol {
+                    max_tol = fd.tolerance;
+                }
             }
             _ => {}
         }
@@ -233,7 +295,11 @@ pub fn model_tolerance(brep: &topods::BRep) -> f64 {
 /// Compute brep SameParameter by checking all edges.
 pub fn brep_same_parameter(brep: &topods::BRep) -> bool {
     brep.tshapes.iter().all(|ts| {
-        if let topods::TShape::Edge(ed) = &**ts { ed.same_parameter } else { true }
+        if let topods::TShape::Edge(ed) = &**ts {
+            ed.same_parameter
+        } else {
+            true
+        }
     })
 }
 

@@ -1,6 +1,6 @@
 //! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
 //!
-//! 
+//!
 //! - `SolidClassifier` (class): classify point relative to a solid using
 //!   `new(brep, solid_ref)` / `perform(point, tol)` / `state()` / `is_done()`.
 //! - DS-based functions: classify_point, classify_solid_in_solid for the
@@ -16,8 +16,8 @@ use crate::bopds::ds::*;
 use crate::boptools::bvh::{Aabb, Bvh};
 use crate::inttools;
 use crate::tolerance::{
-    AdaptiveTolerance, ToleranceContext, ToleranceLevel, TOLERANCE_CLAMP_MIN,
-    TOLERANCE_LEN_MIN, TOLERANCE_LEN_SQ_DIV_SAFE, TOLERANCE_MESH_LEGACY,
+    AdaptiveTolerance, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_MIN, TOLERANCE_LEN_SQ_DIV_SAFE,
+    TOLERANCE_MESH_LEGACY, ToleranceContext, ToleranceLevel,
 };
 
 // =============================================================================
@@ -46,7 +46,12 @@ pub struct SolidClassifier<'a> {
 impl<'a> SolidClassifier<'a> {
     /// constructor with solid.
     pub fn new(brep: &'a topods::BRep, solid_ref: topods::ShapeRef) -> Self {
-        Self { brep, solid_ref, state: Classification::Out, performed: false }
+        Self {
+            brep,
+            solid_ref,
+            state: Classification::Out,
+            performed: false,
+        }
     }
 
     /// Perform  ?classify point against the solid with tolerance.
@@ -84,7 +89,8 @@ impl<'a> SolidClassifier<'a> {
                         if t > tol {
                             // Check if the hit point is within the face boundaries
                             let hit_pt = point + ray_dir * t;
-                            let proj = rcad_kernel::projection::closest_point_on_surface(surf, hit_pt, 16);
+                            let proj =
+                                rcad_kernel::projection::closest_point_on_surface(surf, hit_pt, 16);
                             // Approximate UV-boundary check via sampling the face wire
                             if proj.distance < tol * 10.0 {
                                 intersections += 1;
@@ -95,7 +101,11 @@ impl<'a> SolidClassifier<'a> {
             }
         }
 
-        self.state = if intersections % 2 == 1 { Classification::In } else { Classification::Out };
+        self.state = if intersections % 2 == 1 {
+            Classification::In
+        } else {
+            Classification::Out
+        };
         self.performed = true;
     }
 
@@ -105,10 +115,14 @@ impl<'a> SolidClassifier<'a> {
     }
 
     /// State  ?classification result.
-    pub fn state(&self) -> Classification { self.state }
+    pub fn state(&self) -> Classification {
+        self.state
+    }
 
     /// IsDone.
-    pub fn is_done(&self) -> bool { self.performed }
+    pub fn is_done(&self) -> bool {
+        self.performed
+    }
 }
 
 /// Collect all face ShapeRefs from a solid in a topods::BRep.
@@ -129,7 +143,9 @@ fn ray_face_intersect(origin: DVec3, dir: DVec3, surf: &Surface3, _tol: f64) -> 
     match surf {
         Surface3::Plane(p) => {
             let denom = p.normal.dot(dir);
-            if denom.abs() < TOLERANCE_CLAMP_MIN { return None; }
+            if denom.abs() < TOLERANCE_CLAMP_MIN {
+                return None;
+            }
             let t = (p.origin - origin).dot(p.normal) / denom;
             if t >= 0.0 { Some(t) } else { None }
         }
@@ -139,11 +155,19 @@ fn ray_face_intersect(origin: DVec3, dir: DVec3, surf: &Surface3, _tol: f64) -> 
             let b = 2.0 * oc.dot(dir);
             let c = oc.dot(oc) - s.radius * s.radius;
             let disc = b * b - 4.0 * a * c;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let sqrt_disc = disc.sqrt();
             let t1 = (-b - sqrt_disc) / (2.0 * a);
             let t2 = (-b + sqrt_disc) / (2.0 * a);
-            let t = if t1 >= 0.0 { t1 } else if t2 >= 0.0 { t2 } else { return None };
+            let t = if t1 >= 0.0 {
+                t1
+            } else if t2 >= 0.0 {
+                t2
+            } else {
+                return None;
+            };
             Some(t)
         }
         Surface3::Cylinder(c) => {
@@ -157,21 +181,33 @@ fn ray_face_intersect(origin: DVec3, dir: DVec3, surf: &Surface3, _tol: f64) -> 
             let a2 = dx * dx + dy * dy;
             let b2 = 2.0 * (ox * dx + oy * dy);
             let c2 = ox * ox + oy * oy - c.radius * c.radius;
-            if a2.abs() < TOLERANCE_CLAMP_MIN { return None; }
+            if a2.abs() < TOLERANCE_CLAMP_MIN {
+                return None;
+            }
             let disc = b2 * b2 - 4.0 * a2 * c2;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let sqrt_disc = disc.sqrt();
             let t1 = (-b2 - sqrt_disc) / (2.0 * a2);
             let t2 = (-b2 + sqrt_disc) / (2.0 * a2);
-            let t = if t1 >= 0.0 { t1 } else if t2 >= 0.0 { t2 } else { return None };
+            let t = if t1 >= 0.0 {
+                t1
+            } else if t2 >= 0.0 {
+                t2
+            } else {
+                return None;
+            };
             Some(t)
         }
         _ => {
             // Generic: use polyline sampling + intersection
             let domain = surf.default_domain();
             let n = 20usize;
-            let u0 = domain[0]; let u1 = domain[1];
-            let v0 = domain[2]; let v1 = domain[3];
+            let u0 = domain[0];
+            let u1 = domain[1];
+            let v0 = domain[2];
+            let v1 = domain[3];
             let du = (u1 - u0) / n as f64;
             let dv = (v1 - v0) / n as f64;
             for i in 0..n {
@@ -181,9 +217,13 @@ fn ray_face_intersect(origin: DVec3, dir: DVec3, surf: &Surface3, _tol: f64) -> 
                     let pt = surf.point_at(u, v);
                     let to_pt = pt - origin;
                     let t = to_pt.dot(dir);
-                    if t < 0.0 { continue; }
+                    if t < 0.0 {
+                        continue;
+                    }
                     let lateral = (to_pt - dir * t).length();
-                    if lateral < TOLERANCE_MESH_LEGACY { return Some(t); }
+                    if lateral < TOLERANCE_MESH_LEGACY {
+                        return Some(t);
+                    }
                 }
             }
             None
@@ -195,7 +235,9 @@ use rcad_kernel::geom::any_perpendicular;
 fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
     let z = axis.normalize_or_zero();
     let mut x = ref_dir - z * ref_dir.dot(z);
-    if x.length_squared() < 1e-24 { x = any_perpendicular(z); }
+    if x.length_squared() < 1e-24 {
+        x = any_perpendicular(z);
+    }
     x = x.normalize();
     let y = z.cross(x);
     (z, x, y)
@@ -364,9 +406,9 @@ impl ClassifyContext {
         // (same set of face indices, independent of slice order in the input).
         let mut sorted = solid_face_indices.to_vec();
         sorted.sort_unstable();
-        let hash = sorted.iter().fold(0u64, |h, &fi| {
-            h.wrapping_mul(31).wrapping_add(fi as u64)
-        });
+        let hash = sorted
+            .iter()
+            .fold(0u64, |h, &fi| h.wrapping_mul(31).wrapping_add(fi as u64));
 
         if !self.cache.contains_key(&hash) {
             let aabb = self.compute_solid_aabb(&sorted);
@@ -394,7 +436,9 @@ impl ClassifyContext {
     fn compute_solid_aabb(&self, face_indices: &[usize]) -> Aabb {
         let mut aabb = Aabb::empty();
         for &fi in face_indices {
-            let Some(face) = self.ds.faces.get(fi) else { continue; };
+            let Some(face) = self.ds.faces.get(fi) else {
+                continue;
+            };
             for &vi in &face.boundary_verts {
                 aabb.expand_point(self.ds.vertex_point(vi));
             }
@@ -430,8 +474,14 @@ impl ClassifyContext {
         }
 
         // Filter out invalid face indices to prevent cascading panics downstream.
-        let valid: Vec<usize> = solid_face_indices.iter().filter(|&&fi| fi < self.ds.faces.len()).copied().collect();
-        if valid.is_empty() { return Classification::Out; }
+        let valid: Vec<usize> = solid_face_indices
+            .iter()
+            .filter(|&&fi| fi < self.ds.faces.len())
+            .copied()
+            .collect();
+        if valid.is_empty() {
+            return Classification::Out;
+        }
 
         // Extract tolerance before borrowing
         let mut sorted_for_tol = valid.to_vec();
@@ -455,7 +505,9 @@ impl ClassifyContext {
             if !cache.aabb.contains_point(point) {
                 let expanded_aabb = Aabb {
                     min: cache.aabb.min - DVec3::splat(coarse_tol),
-                    max: cache.aabb.max + DVec3::splat(coarse_tol), gap: 0.0 };
+                    max: cache.aabb.max + DVec3::splat(coarse_tol),
+                    gap: 0.0,
+                };
                 if !expanded_aabb.contains_point(point) {
                     return Classification::Out;
                 }
@@ -497,7 +549,9 @@ impl ClassifyContext {
         let _cache = self.get_or_create_cache(solid_face_indices);
 
         // Split work across threads
-        let n_threads = thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
+        let n_threads = thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4);
         let n_threads = n_threads.min(points.len()); // Don't create more threads than points
         let chunk_size = points.len().div_ceil(n_threads);
 
@@ -601,8 +655,14 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     }
     // Filter out invalid face indices (can happen when wire building produces
     // unexpected face splits; skip to avoid cascading panics downstream).
-    let valid: Vec<usize> = solid_face_indices.iter().filter(|&&fi| fi < ds.faces.len()).copied().collect();
-    if valid.is_empty() { return Classification::Out; }
+    let valid: Vec<usize> = solid_face_indices
+        .iter()
+        .filter(|&&fi| fi < ds.faces.len())
+        .copied()
+        .collect();
+    if valid.is_empty() {
+        return Classification::Out;
+    }
     let mut sorted = valid;
     sorted.sort_unstable();
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
@@ -650,9 +710,13 @@ fn classify_point_internal(
     let mut edge_aabbs: Vec<(usize, Aabb)> = Vec::new();
     let mut seen_edges = std::collections::HashSet::new();
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() { continue; }
+        if fi >= ds.faces.len() {
+            continue;
+        }
         for &ei in &ds.faces[fi].boundary_edges {
-            if !seen_edges.insert(ei) { continue; }
+            if !seen_edges.insert(ei) {
+                continue;
+            }
             if let Some(edge) = ds.edges.get(ei) {
                 let sv = ds.vertices[edge.start_vertex].point;
                 let ev = ds.vertices[edge.end_vertex].point;
@@ -668,7 +732,9 @@ fn classify_point_internal(
     // OCCT L218-230: Vertex/Edge proximity via UB-tree -> On
     let query_aabb = Aabb {
         min: point - DVec3::splat(edge_tol),
-        max: point + DVec3::splat(edge_tol), gap: 0.0 };
+        max: point + DVec3::splat(edge_tol),
+        gap: 0.0,
+    };
     for &ei in &edge_tree.query_aabb(&query_aabb) {
         if let Some(edge) = ds.edges.get(ei) {
             let sv = ds.vertices[edge.start_vertex].point;
@@ -689,7 +755,9 @@ fn classify_point_internal(
         }
     }
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() { continue; }
+        if fi >= ds.faces.len() {
+            continue;
+        }
         for &vi in &ds.faces[fi].boundary_verts {
             if let Some(v) = ds.vertices.get(vi) {
                 if point.distance_squared(v.point) < edge_tol * edge_tol {
@@ -702,27 +770,47 @@ fn classify_point_internal(
     // OCCT L232-234: mapEF - edge->face adjacency
     let mut map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &fi in solid_face_indices {
-        if fi >= ds.faces.len() { continue; }
+        if fi >= ds.faces.len() {
+            continue;
+        }
         for &ei in &ds.faces[fi].boundary_edges {
             map_ef.entry(ei).or_default().push(fi);
         }
     }
 
     // Build direction list (OCCT L257-278: Segment + OtherSegment)
-    struct DirEntry { dir: DVec3, max_par: f64 }
+    struct DirEntry {
+        dir: DVec3,
+        max_par: f64,
+    }
     let mut dirs: Vec<DirEntry> = Vec::new();
     for &fi in solid_face_indices {
         let face_verts = ds.face_boundary_points(fi);
-        if face_verts.len() < 3 { continue; }
+        if face_verts.len() < 3 {
+            continue;
+        }
         let centroid = face_verts.iter().sum::<DVec3>() / face_verts.len() as f64;
         let ray_dir = centroid - point;
         let dir_len = ray_dir.length();
         if dir_len > TOLERANCE_LEN_SQ_DIV_SAFE {
-            dirs.push(DirEntry { dir: ray_dir / dir_len, max_par: dir_len * 10.0 });
+            dirs.push(DirEntry {
+                dir: ray_dir / dir_len,
+                max_par: dir_len * 10.0,
+            });
         }
     }
-    for &d in &[DVec3::X, DVec3::Y, DVec3::Z, -DVec3::X, -DVec3::Y, -DVec3::Z] {
-        dirs.push(DirEntry { dir: d, max_par: 1e10 });
+    for &d in &[
+        DVec3::X,
+        DVec3::Y,
+        DVec3::Z,
+        -DVec3::X,
+        -DVec3::Y,
+        -DVec3::Z,
+    ] {
+        dirs.push(DirEntry {
+            dir: d,
+            max_par: 1e10,
+        });
     }
 
     // OCCT L203-523: BRepClass3d_SClassifier::Perform
@@ -748,9 +836,15 @@ fn classify_point_internal(
 
         // OCCT L280-297: iFlag handling
         match i_flag {
-            1 => { my_state = 2; break; } // OnFace -> ON
-            2 => { my_state = 4; break; } // Outside -> OUT
-            3 => continue,                 // bad face -> skip
+            1 => {
+                my_state = 2;
+                break;
+            } // OnFace -> ON
+            2 => {
+                my_state = 4;
+                break;
+            } // Outside -> OUT
+            3 => continue, // bad face -> skip
             _ => {}
         }
 
@@ -765,7 +859,9 @@ fn classify_point_internal(
         let line_ext = edge_tol * 100.0;
         let line_aabb = Aabb {
             min: point - DVec3::splat(line_ext),
-            max: point + DVec3::splat(line_ext), gap: 0.0 };
+            max: point + DVec3::splat(line_ext),
+            gap: 0.0,
+        };
         // OCCT L314-316: collect vertex hits
         let mut lv_ints: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &fi in solid_face_indices {
@@ -870,9 +966,8 @@ fn classify_point_internal(
             // OCCT L375-397: Intersector3d.Perform(L, minW, maxW)
             let min_w = -rd.max_par.max(10.0 * ray_tol + 0.01 * rd.max_par);
             let max_w = rd.max_par.min(1e10);
-            let result = ray_cast_classify_point_on_face(
-                point, rd.dir, fi, ds, boundary_tol, ray_tol,
-            );
+            let result =
+                ray_cast_classify_point_on_face(point, rd.dir, fi, ds, boundary_tol, ray_tol);
             match result {
                 RayFaceResult::On => {
                     // OCCT L451-455: |parmin| <= Tol -> ON
@@ -895,7 +990,7 @@ fn classify_point_internal(
                         // RayFaceResult::Out(t) = ray enters = transition=In, state=IN
                         let mut tran = match result {
                             RayFaceResult::Out(_) => 0i32, // In (entering)
-                            _ => 1i32, // Out (exiting)
+                            _ => 1i32,                     // Out (exiting)
                         };
                         // OCCT L463-469: TANGENT -> continue
                         // (rcad doesn't produce tangent transitions from face intersection)
@@ -918,9 +1013,7 @@ fn classify_point_internal(
         }
 
         // OCCT L511-515: NearFaultPar vs parmin -> faulty line
-        if near_fault_par.is_finite()
-            && parmin.abs() >= near_fault_par.abs() - 1e-12
-        {
+        if near_fault_par.is_finite() && parmin.abs() >= near_fault_par.abs() - 1e-12 {
             is_faulty_line = true;
         }
     }
@@ -973,7 +1066,10 @@ fn ray_cast_classify_point_on_face(
                 return RayFaceResult::Faulty; // grazes boundary  ?faulty
             }
             if !inttools::edge_face::point_in_planar_face_with_tol(
-                hit, plane, &face_verts, boundary_tol,
+                hit,
+                plane,
+                &face_verts,
+                boundary_tol,
             ) {
                 return RayFaceResult::Faulty; // hit outside face bounds
             }
@@ -982,19 +1078,23 @@ fn ray_cast_classify_point_on_face(
             // If ray enters: point was OUTSIDE before intersection.
             // If ray exits:  point was INSIDE before intersection.
             if denom < 0.0 {
-                RayFaceResult::Out(t)  // ray enters solid  ?point was Out
+                RayFaceResult::Out(t) // ray enters solid  ?point was Out
             } else {
-                RayFaceResult::In(t)   // ray exits solid  ?point was In
+                RayFaceResult::In(t) // ray exits solid  ?point was In
             }
         }
         Surface3::Sphere(s) => {
             let oc = point - s.center;
             let a = ray_dir.length_squared();
-            if a < ray_tol { return RayFaceResult::Faulty; }
+            if a < ray_tol {
+                return RayFaceResult::Faulty;
+            }
             let b = 2.0 * oc.dot(ray_dir);
             let cc = oc.length_squared() - s.radius * s.radius;
             let disc = b * b - 4.0 * a * cc;
-            if disc < 0.0 { return RayFaceResult::Faulty; }
+            if disc < 0.0 {
+                return RayFaceResult::Faulty;
+            }
             let sq = disc.sqrt();
             let mut nearest = f64::MAX;
             let mut found = false;
@@ -1037,8 +1137,6 @@ fn ray_cast_classify_point_on_face(
         _ => RayFaceResult::Faulty, // non-analytic surface  ?skip
     }
 }
-
-
 
 // =============================================================================
 // Point-on-Face Classification
@@ -1102,7 +1200,6 @@ pub fn classify_point_on_face(
         FaceClassification::Outside
     }
 }
-
 
 /// Check if two solids intersect by testing a point from one against the other's faces.
 pub fn classify_solid_in_solid(
@@ -1228,12 +1325,7 @@ fn compute_faces_aabb(face_indices: &[usize], ds: &DS) -> Aabb {
 }
 
 /// Check if any faces from two sets intersect.
-fn check_face_intersections(
-    faces_a: &[usize],
-    faces_b: &[usize],
-    ds: &DS,
-    tolerance: f64,
-) -> bool {
+fn check_face_intersections(faces_a: &[usize], faces_b: &[usize], ds: &DS, tolerance: f64) -> bool {
     // Quick AABB check for face pairs
     for &fi_a in faces_a {
         let face_a = &ds.faces[fi_a];
@@ -1258,7 +1350,10 @@ fn check_face_intersections(
                 for &vi in &face_b.boundary_verts {
                     let point = ds.vertex_point(vi);
                     let class = classify_point_on_face(point, fi_a, ds, tolerance);
-                    if matches!(class, FaceClassification::Inside | FaceClassification::OnSurface) {
+                    if matches!(
+                        class,
+                        FaceClassification::Inside | FaceClassification::OnSurface
+                    ) {
                         return true;
                     }
                 }
@@ -1331,8 +1426,12 @@ fn cylinder_face_angle_range(
     let mut min_a = angles[0];
     let mut max_a = angles[0];
     for &a in &angles[1..] {
-        if a < min_a { min_a = a; }
-        if a > max_a { max_a = a; }
+        if a < min_a {
+            min_a = a;
+        }
+        if a > max_a {
+            max_a = a;
+        }
     }
     if max_a - min_a < TOLERANCE_MESH_LEGACY {
         return (0.0, std::f64::consts::TAU);
@@ -1343,8 +1442,12 @@ fn cylinder_face_angle_range(
             .iter()
             .map(|&a| {
                 let mut d = a - ref_a;
-                while d < 0.0 { d += std::f64::consts::TAU; }
-                while d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+                while d < 0.0 {
+                    d += std::f64::consts::TAU;
+                }
+                while d > std::f64::consts::TAU {
+                    d -= std::f64::consts::TAU;
+                }
                 d
             })
             .collect();
@@ -1391,7 +1494,12 @@ fn point_in_face_aabb(point: DVec3, face_verts: &[DVec3], slack: f64) -> bool {
 }
 
 /// Check if a point is close to any edge of a polygon (within tolerance).
-fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane, boundary_tol: f64) -> bool {
+fn is_near_polygon_boundary(
+    point: &DVec3,
+    verts: &[DVec3],
+    plane: &Plane,
+    boundary_tol: f64,
+) -> bool {
     let (u_axis, v_axis) = inttools::edge_face::plane_local_basis(plane);
     let project = |p: DVec3| -> (f64, f64) {
         let d = p - plane.origin;
@@ -1431,12 +1539,8 @@ fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane, bound
 /// Compute distance from point to surface.
 fn distance_to_surface(point: DVec3, surface: &Surface3) -> f64 {
     match surface {
-        Surface3::Plane(plane) => {
-            (point - plane.origin).dot(plane.normal).abs()
-        }
-        Surface3::Sphere(s) => {
-            ((point - s.center).length() - s.radius).abs()
-        }
+        Surface3::Plane(plane) => (point - plane.origin).dot(plane.normal).abs(),
+        Surface3::Sphere(s) => ((point - s.center).length() - s.radius).abs(),
         Surface3::Cylinder(c) => {
             let v = point - c.origin;
             let along = v.dot(c.axis);
@@ -1506,5 +1610,3 @@ fn point_in_uv_polygon(point: glam::DVec2, polygon: &[glam::DVec2]) -> bool {
 // =============================================================================
 // Tests
 // =============================================================================
-
-

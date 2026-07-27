@@ -1,16 +1,17 @@
+use super::fclass2d::{FClass2d, State};
+use crate::bopds::ds::DS;
 /// 鉁?IntTools_Context 鈥?shared computation context with caches.
 ///   OCCT IntTools_Context.hxx caches: FClass2d, ProjPS, ProjPC, ProjPT,
 ///   SurfaceData, SolidClassifier, Hatcher, SurfaceAdaptor, OBB.
 ///   rcad: caches FClass2d per face and surface/curve projectors.
 use glam::DVec2;
 use glam::DVec3;
-use crate::bopds::ds::DS;
-use super::fclass2d::{FClass2d, State};
-use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::CurveEval;
-use rcad_kernel::projection::{closest_point_on_surface, closest_point_on_curve,
-    closest_point_on_curve_range,
-    SurfaceProjection, CurveProjection};
+use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
+use rcad_kernel::projection::{
+    CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_curve_range,
+    closest_point_on_surface,
+};
 
 pub struct Context {
     fclass2d_cache: Vec<Option<FClass2d>>,
@@ -105,11 +106,18 @@ impl Context {
         }
     }
 
-    pub fn tol_uv(&self) -> f64 { self.tol_uv }
+    pub fn tol_uv(&self) -> f64 {
+        self.tol_uv
+    }
 
     /// OCCT: FClass2d(theFace) 鈥?returns cached 2D point classifier for a face.
     pub fn fclass2d(&mut self, ds: &DS, face_idx: usize) -> &FClass2d {
-        assert!(face_idx < self.num_faces, "Context: face_idx {} out of range ({})", face_idx, self.num_faces);
+        assert!(
+            face_idx < self.num_faces,
+            "Context: face_idx {} out of range ({})",
+            face_idx,
+            self.num_faces
+        );
         if self.fclass2d_cache[face_idx].is_none() {
             self.fclass2d_cache[face_idx] = Some(FClass2d::new(ds, face_idx, self.tol_uv));
         }
@@ -127,27 +135,45 @@ impl Context {
         self.fclass2d(ds, face_idx).perform(uv, true) == State::In
     }
 
-        /// OCCT-aligned: IsValidPointForFace(theP, theFace, theTol)
+    /// OCCT-aligned: IsValidPointForFace(theP, theFace, theTol)
     /// projects onto the face surface within tolerance and UV in/on the face.
     /// OCCT IntTools_Context.cxx L648-674.
-    pub fn is_valid_point_for_face(&mut self, ds: &DS, p: DVec3, face_idx: usize, tol: f64) -> bool {
-        if face_idx >= self.num_faces { return false; }
+    pub fn is_valid_point_for_face(
+        &mut self,
+        ds: &DS,
+        p: DVec3,
+        face_idx: usize,
+        tol: f64,
+    ) -> bool {
+        if face_idx >= self.num_faces {
+            return false;
+        }
         let proj = self.proj_ps(ds, face_idx, p);
-        let Some((uv, _p3d, dist)) = proj else { return false; };
-        if dist > tol { return false; }
+        let Some((uv, _p3d, dist)) = proj else {
+            return false;
+        };
+        if dist > tol {
+            return false;
+        }
         self.is_point_in_on_face(ds, face_idx, uv)
     }
 
     /// OCCT: ProjPS(theFace) 鈥?projects a 3D point onto the face surface.
     /// Returns (uv, 3d_point, distance) on success.
     pub fn proj_ps(&mut self, ds: &DS, face_idx: usize, p: DVec3) -> Option<(DVec2, DVec3, f64)> {
-        if face_idx >= self.num_faces { return None; }
+        if face_idx >= self.num_faces {
+            return None;
+        }
         let surf = &ds.faces[face_idx].surface;
         let proj = closest_point_on_surface(surf, p, 16);
         if proj.distance.is_finite() {
             self.proj_ps_latest[face_idx] = Some(proj);
             let cached = self.proj_ps_latest[face_idx].as_ref().unwrap();
-            Some((glam::DVec2::new(cached.params.0, cached.params.1), cached.point, cached.distance))
+            Some((
+                glam::DVec2::new(cached.params.0, cached.params.1),
+                cached.point,
+                cached.distance,
+            ))
         } else {
             None
         }
@@ -156,7 +182,9 @@ impl Context {
     /// OCCT: ProjPC(theEdge) 鈥?projects a 3D point onto the edge's curve.
     /// Returns (param, 3d_point, distance) on success.
     pub fn proj_pc(&mut self, ds: &DS, edge_idx: usize, p: DVec3) -> Option<(f64, DVec3, f64)> {
-        if edge_idx >= ds.edges.len() { return None; }
+        if edge_idx >= ds.edges.len() {
+            return None;
+        }
         let curve = &ds.edges[edge_idx].curve;
         let [t0, t1] = ds.edges[edge_idx].t_range;
         // OCCT L281: pProjPC->Init(aC3D, f, l) - restrict projection to edge trim range
@@ -212,12 +240,22 @@ impl Context {
     ///   return 0;
     /// }
     /// ```
-    pub fn compute_ve(&mut self, ds: &DS, vi: usize, ei: usize, fuzz: f64) -> Result<VeResult, VeError> {
+    pub fn compute_ve(
+        &mut self,
+        ds: &DS,
+        vi: usize,
+        ei: usize,
+        fuzz: f64,
+    ) -> Result<VeResult, VeError> {
         use crate::tolerance::CONFUSION;
         // L505-508: OCCT BRep_Tool::Degenerated
-        if ds.is_edge_degenerated(ei) { return Err(VeError::DegeneratedEdge); }
+        if ds.is_edge_degenerated(ei) {
+            return Err(VeError::DegeneratedEdge);
+        }
         // L509-512: OCCT BRep_Tool::IsGeometric
-        if !ds.edge_is_geometric(ei) { return Err(VeError::NotGeometric); }
+        if !ds.edge_is_geometric(ei) {
+            return Err(VeError::NotGeometric);
+        }
         // L513-517: aP = BRep_Tool::Pnt(theV)
         let p = ds.vertex_point(vi);
         // L519-526: ProjPC(theE).Perform(aP) -> check NbPoints
@@ -233,14 +271,19 @@ impl Context {
         // L535: theT = aProjector.LowerDistanceParameter()
         let t = proj.0;
         // L536: OCCT debug trace (always on)
-        eprintln!("[OCCT_VE] pt={} V=({},{},{}) dist={} tolSum={} tolV={} tolE={}",
-            t, p.x, p.y, p.z, dist, tol_sum, tol_v, tol_e);
+        eprintln!(
+            "[OCCT_VE] pt={} V=({},{},{}) dist={} tolSum={} tolV={} tolE={}",
+            t, p.x, p.y, p.z, dist, tol_sum, tol_v, tol_e
+        );
         // L537-539: distance check
         if dist > tol_sum {
             return Err(VeError::DistanceTooLarge);
         }
         // L541: return 0
-        Ok(VeResult { param: t, tolerance: new_tol })
+        Ok(VeResult {
+            param: t,
+            tolerance: new_tol,
+        })
     }
 
     /// ComputePE (IntTools_Context.cxx L438-496).
@@ -249,9 +292,17 @@ impl Context {
     ///   NotGeometric (-2): edge has no 3D curve
     ///   ProjectionFailed (-3): projection + endpoint checks all failed
     ///   DistanceTooLarge (-4): distance > tolP + tolE + Precision::Confusion()
-    pub fn compute_pe(&mut self, ds: &DS, p: DVec3, tol_p: f64, ei: usize) -> Result<PeResult, PeError> {
+    pub fn compute_pe(
+        &mut self,
+        ds: &DS,
+        p: DVec3,
+        tol_p: f64,
+        ei: usize,
+    ) -> Result<PeResult, PeError> {
         use crate::tolerance::CONFUSION;
-        if !ds.edge_is_geometric(ei) { return Err(PeError::NotGeometric); }
+        if !ds.edge_is_geometric(ei) {
+            return Err(PeError::NotGeometric);
+        }
         let proj = self.proj_pc(ds, ei, p).ok_or(PeError::ProjectionFailed)?;
         let dist = proj.2;
         let tol_e = ds.edge_tolerance(ei);
@@ -259,7 +310,10 @@ impl Context {
         let param = proj.0;
         // OCCT L461-467: if projection found, check distance
         if dist <= tol_sum {
-            return Ok(PeResult { param, distance: dist });
+            return Ok(PeResult {
+                param,
+                distance: dist,
+            });
         }
         // OCCT L469-493: projection found but too far 鈥?fallback: check endpoint vertices
         // (when the point is beyond the curve's range, nearest endpoint may be within tol)
@@ -275,12 +329,19 @@ impl Context {
                 let v_tol = ds.vertex_tolerance(vi);
                 if d < best_dist && d < tol_p + v_tol + CONFUSION {
                     best_dist = d;
-                    best_param = if vi == sv { ds.edge_range(ei)[0] } else { ds.edge_range(ei)[1] };
+                    best_param = if vi == sv {
+                        ds.edge_range(ei)[0]
+                    } else {
+                        ds.edge_range(ei)[1]
+                    };
                 }
             }
         }
         if best_dist.is_finite() {
-            Ok(PeResult { param: best_param, distance: best_dist })
+            Ok(PeResult {
+                param: best_param,
+                distance: best_dist,
+            })
         } else {
             Err(PeError::ProjectionFailed)
         }
@@ -289,7 +350,13 @@ impl Context {
     /// ComputeVF (IntTools_Context.cxx L546-591).
     /// Projects a vertex onto a face surface and classifies the UV against the
     /// face's trimmed domain. Returns Ok(u, v, tolerance) on success, or Err(VfError).
-    pub fn compute_vf(&mut self, ds: &DS, vi: usize, fi: usize, fuzz: f64) -> Result<VfResult, VfError> {
+    pub fn compute_vf(
+        &mut self,
+        ds: &DS,
+        vi: usize,
+        fi: usize,
+        fuzz: f64,
+    ) -> Result<VfResult, VfError> {
         use crate::tolerance::CONFUSION;
         let p = ds.vertex_point(vi);
         // OCCT L558-562: ProjPS + Perform
@@ -302,11 +369,19 @@ impl Context {
         // OCCT L575: theTol = aDist + aTolF
         let new_tol = dist + tol_f;
         // OCCT L581-582: if distance too large
-        if dist > tol_sum { return Err(VfError::DistanceTooLarge); }
+        if dist > tol_sum {
+            return Err(VfError::DistanceTooLarge);
+        }
         // OCCT L584-589: IsPointInFace check
         let in_face = self.is_point_in_face(ds, fi, DVec2::new(uv.x, uv.y));
-        if !in_face { return Err(VfError::PointOutsideFace); }
-        Ok(VfResult { u: uv.x, v: uv.y, tolerance: new_tol })
+        if !in_face {
+            return Err(VfError::PointOutsideFace);
+        }
+        Ok(VfResult {
+            u: uv.x,
+            v: uv.y,
+            tolerance: new_tol,
+        })
     }
 
     /// ProjectPointOnEdge (IntTools_Context.cxx L997-1011).
@@ -333,7 +408,12 @@ impl Context {
     where
         Self: 'static,
     {
-        assert!(face_idx < self.num_faces, "surface_adaptor: face_idx {} >= {}", face_idx, self.num_faces);
+        assert!(
+            face_idx < self.num_faces,
+            "surface_adaptor: face_idx {} >= {}",
+            face_idx,
+            self.num_faces
+        );
         if self.surface_cache[face_idx].is_none() {
             self.surface_cache[face_idx] = Some(ds.faces[face_idx].surface.clone());
         }
@@ -362,29 +442,55 @@ impl Context {
     /// Projects the 3D point onto the face surface; if distance < tol,
     /// classifies the projected UV against the face's trimmed domain.
     pub fn is_point_in_face_3d(&mut self, ds: &DS, face_idx: usize, p: DVec3, tol: f64) -> bool {
-        let Some(surf) = (if face_idx < self.num_faces { self.surface_cache.get(face_idx) } else { None }).and_then(|s| s.as_ref()) else {
+        let Some(surf) = (if face_idx < self.num_faces {
+            self.surface_cache.get(face_idx)
+        } else {
+            None
+        })
+        .and_then(|s| s.as_ref()) else {
             return false;
         };
         let proj = closest_point_on_surface(surf, p, 16);
-        if !proj.distance.is_finite() || proj.distance >= tol { return false; }
+        if !proj.distance.is_finite() || proj.distance >= tol {
+            return false;
+        }
         let uv = DVec2::new(proj.params.0, proj.params.1);
         self.is_point_in_face(ds, face_idx, uv)
     }
 
     /// OCCT: IsValidPointForFaces(theP, theF1, theF2, theTol) 鈥?returns true
     /// if the 3D point is valid on BOTH faces.
-    pub fn is_valid_point_for_faces(&mut self, ds: &DS, p: DVec3, fi1: usize, fi2: usize, tol: f64) -> bool {
-        self.is_valid_point_for_face(ds, p, fi1, tol) && self.is_valid_point_for_face(ds, p, fi2, tol)
+    pub fn is_valid_point_for_faces(
+        &mut self,
+        ds: &DS,
+        p: DVec3,
+        fi1: usize,
+        fi2: usize,
+        tol: f64,
+    ) -> bool {
+        self.is_valid_point_for_face(ds, p, fi1, tol)
+            && self.is_valid_point_for_face(ds, p, fi2, tol)
     }
 
     /// OCCT: IsInfiniteFace(theFace) 鈥?returns true if the face has infinite bounds.
     /// OCCT checks the surface type: Plane, Cylinder, Cone, Sphere, Torus are infinite.
     pub fn is_infinite_face(&self, face_idx: usize) -> bool {
-        if face_idx >= self.num_faces { return false; }
-        self.surface_cache.get(face_idx).and_then(|s| s.as_ref()).map_or(false, |surf| {
-            matches!(surf, Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_)
-                | Surface3::Sphere(_) | Surface3::Torus(_))
-        })
+        if face_idx >= self.num_faces {
+            return false;
+        }
+        self.surface_cache
+            .get(face_idx)
+            .and_then(|s| s.as_ref())
+            .map_or(false, |surf| {
+                matches!(
+                    surf,
+                    Surface3::Plane(_)
+                        | Surface3::Cylinder(_)
+                        | Surface3::Cone(_)
+                        | Surface3::Sphere(_)
+                        | Surface3::Torus(_)
+                )
+            })
     }
 
     /// Resize context caches to match a new number of faces.
@@ -412,8 +518,8 @@ mod tests {
 
     /// Helper: create a DS with a unit sphere.
     fn sphere_ds() -> DS {
-        let brep = rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0)
-            .expect("make_sphere_brep failed");
+        let brep =
+            rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).expect("make_sphere_brep failed");
         new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), TOLERANCE_ABS)
     }
 
@@ -518,21 +624,26 @@ mod tests {
         let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
         // Edge 0: from (0,0,0) to (1,0,0). Vertex 0 is at (0,0,0).
         let result = ctx.compute_ve(&ds, 0, 0, 0.0);
-        assert!(result.is_ok(), "vertex at edge endpoint should be on edge: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "vertex at edge endpoint should be on edge: {:?}",
+            result
+        );
         if let Ok(res) = result {
-            assert!((res.param - 0.0).abs() < 1e-6 || (res.param - 1.0).abs() < 1e-6,
-                "param should be at endpoint (~0 or ~1), got {}", res.param);
+            assert!(
+                (res.param - 0.0).abs() < 1e-6 || (res.param - 1.0).abs() < 1e-6,
+                "param should be at endpoint (~0 or ~1), got {}",
+                res.param
+            );
         }
     }
 
     #[test]
     fn proj_pc_rotated_cylinder_vertex_on_cap_circle() {
-        let a = rcad_modeling::make_cylinder_brep(
-            DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0,
-        ).expect("make cylinder a");
-        let mut b = rcad_modeling::make_cylinder_brep(
-            DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0,
-        ).expect("make cylinder b");
+        let a = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0)
+            .expect("make cylinder a");
+        let mut b = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0)
+            .expect("make cylinder b");
         crate::brep_tools::transform_shape_topods(
             &mut b,
             glam::DAffine3::from_rotation_z(45.0_f64.to_radians()),
@@ -540,21 +651,27 @@ mod tests {
         let ds = new_from_topods(&a, &b, TOLERANCE_ABS);
         let mut ctx = Context::new(ds.faces.len(), TOLERANCE_ABS);
         let cap_edge = (0..ds.a_edge_count)
-            .find(|&edge_idx| matches!(
-                ds.edges[edge_idx].curve,
-                Curve3::Circle(circle) if (circle.center.z - 1.0).abs() <= 1.0e-10
-            ))
+            .find(|&edge_idx| {
+                matches!(
+                    ds.edges[edge_idx].curve,
+                    Curve3::Circle(circle) if (circle.center.z - 1.0).abs() <= 1.0e-10
+                )
+            })
             .expect("cylinder cap circle");
         let rotated_vertex = (ds.a_vertex_count..ds.vertices.len())
             .find(|&vertex_idx| {
-                (ds.vertex_point(vertex_idx) - DVec3::new(
-                    std::f64::consts::FRAC_1_SQRT_2,
-                    std::f64::consts::FRAC_1_SQRT_2,
-                    1.0,
-                )).length() <= 1.0e-10
+                (ds.vertex_point(vertex_idx)
+                    - DVec3::new(
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        1.0,
+                    ))
+                .length()
+                    <= 1.0e-10
             })
             .expect("rotated cylinder cap vertex");
-        let projection = ctx.proj_pc(&ds, cap_edge, ds.vertex_point(rotated_vertex))
+        let projection = ctx
+            .proj_pc(&ds, cap_edge, ds.vertex_point(rotated_vertex))
             .expect("projection onto cylinder cap circle");
 
         assert!(projection.2 <= 1.0e-10, "projection = {projection:?}");

@@ -11,7 +11,10 @@ use rcad_scene::assembly::{Assembly, AssemblyNode, NodeContent, assembly_from_pa
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 fn face_count(brep: &topods::BRep) -> usize {
-    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    brep.tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+        .count()
 }
 
 fn make_box() -> topods::BRep {
@@ -66,11 +69,7 @@ fn to_brep_face_count() {
     let box_brep = make_box_arc();
     let mut asm = Assembly::new("two_boxes");
     asm.add_part("a", Arc::clone(&box_brep));
-    asm.add_part_at(
-        "b",
-        Arc::clone(&box_brep),
-        DVec3::new(3.0, 0.0, 0.0),
-    );
+    asm.add_part_at("b", Arc::clone(&box_brep), DVec3::new(3.0, 0.0, 0.0));
 
     let merged = asm.to_brep();
     let merged_t = merged.to_topods();
@@ -124,11 +123,14 @@ fn serde_roundtrip() {
 #[test]
 fn assembly_from_parts_helper() {
     let box_brep = make_box();
-    let sphere_brep =
-        make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+    let sphere_brep = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
 
     let parts = vec![
-        ("box".to_string(), rcad_kernel::BRep::from_topods(&box_brep), DAffine3::IDENTITY),
+        (
+            "box".to_string(),
+            rcad_kernel::BRep::from_topods(&box_brep),
+            DAffine3::IDENTITY,
+        ),
         (
             "sphere".to_string(),
             rcad_kernel::BRep::from_topods(&sphere_brep),

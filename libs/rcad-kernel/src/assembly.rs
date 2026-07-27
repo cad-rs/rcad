@@ -144,9 +144,10 @@ impl Assembly {
                 return Some(component);
             }
             if let ShapeRef::Assembly(sub) = &component.shape
-                && let Some(found) = sub.find_component(name) {
-                    return Some(found);
-                }
+                && let Some(found) = sub.find_component(name)
+            {
+                return Some(found);
+            }
         }
         None
     }
@@ -158,10 +159,13 @@ impl Assembly {
 
     /// Total BRep leaf count (recursive).
     pub fn leaf_count(&self) -> usize {
-        self.components.iter().map(|c| match &c.shape {
-            ShapeRef::Brep(_) => 1,
-            ShapeRef::Assembly(sub) => sub.leaf_count(),
-        }).sum()
+        self.components
+            .iter()
+            .map(|c| match &c.shape {
+                ShapeRef::Brep(_) => 1,
+                ShapeRef::Assembly(sub) => sub.leaf_count(),
+            })
+            .sum()
     }
 }
 
@@ -191,10 +195,10 @@ impl Serialize for SerializableAffine3 {
         let t = self.0.translation;
         // Serialize as 12 f64: [col0 x3, col1 x3, col2 x3, translation x3]
         let mut seq = serializer.serialize_seq(Some(12))?;
-        for v in [m.x_axis.x, m.x_axis.y, m.x_axis.z,
-                   m.y_axis.x, m.y_axis.y, m.y_axis.z,
-                   m.z_axis.x, m.z_axis.y, m.z_axis.z,
-                   t.x, t.y, t.z] {
+        for v in [
+            m.x_axis.x, m.x_axis.y, m.x_axis.z, m.y_axis.x, m.y_axis.y, m.y_axis.z, m.z_axis.x,
+            m.z_axis.y, m.z_axis.z, t.x, t.y, t.z,
+        ] {
             seq.serialize_element(&v)?;
         }
         seq.end()

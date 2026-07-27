@@ -208,8 +208,7 @@ pub enum NamingRule {
 ///
 /// When a topology operation produces new entities from existing ones,
 /// the `NamePropagationPolicy` determines how names flow to the results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NamePropagationPolicy {
     /// Keep the original entity's name (for minor modifications).
     #[default]
@@ -221,7 +220,6 @@ pub enum NamePropagationPolicy {
     /// Combine names from multiple source entities (for merges).
     Combine,
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NamingConflictResolution
@@ -287,7 +285,11 @@ impl EntityTypeStability {
     /// Calculate the stability score for this entity type.
     pub fn stability_score(&self) -> f64 {
         let total = self.preserved + self.lost;
-        if total == 0 { 1.0 } else { self.preserved as f64 / total as f64 }
+        if total == 0 {
+            1.0
+        } else {
+            self.preserved as f64 / total as f64
+        }
     }
 }
 
@@ -359,12 +361,16 @@ impl NamingStabilityReport {
 
     /// Returns `true` if any names were lost or conflicts occurred.
     pub fn has_issues(&self) -> bool {
-        self.stability_score < 1.0 || !self.lost_names.is_empty() || !self.conflict_resolutions.is_empty()
+        self.stability_score < 1.0
+            || !self.lost_names.is_empty()
+            || !self.conflict_resolutions.is_empty()
     }
 
     /// Returns `true` if there are critical issues.
     pub fn has_critical_issues(&self) -> bool {
-        self.issues.iter().any(|i| i.severity == IssueSeverity::Critical)
+        self.issues
+            .iter()
+            .any(|i| i.severity == IssueSeverity::Critical)
     }
 
     /// Get the stability breakdown for a specific entity type.
@@ -401,7 +407,10 @@ impl NamingStabilityReport {
             self.new_names.len(),
             self.conflict_resolutions.len(),
             self.issues.len(),
-            self.issues.iter().filter(|i| i.severity == IssueSeverity::Critical).count(),
+            self.issues
+                .iter()
+                .filter(|i| i.severity == IssueSeverity::Critical)
+                .count(),
             self.broken_chains
         )
     }
@@ -496,7 +505,11 @@ impl PersistentNamingEngine {
     /// Begin a new operation for history tracking.
     ///
     /// Returns an operation ID that should be used when finalizing the operation.
-    pub fn begin_operation(&mut self, operation_type: OperationType, label: Option<String>) -> OperationId {
+    pub fn begin_operation(
+        &mut self,
+        operation_type: OperationType,
+        label: Option<String>,
+    ) -> OperationId {
         // Finalize any pending operation first.
         if self.current_operation.is_some() {
             self.cancel_operation();
@@ -600,9 +613,10 @@ impl PersistentNamingEngine {
         }
         // Check for conflict.
         if let Some(existing_entity) = self.context.get_entity(pid)
-            && existing_entity != entity_id {
-                return false;
-            }
+            && existing_entity != entity_id
+        {
+            return false;
+        }
         self.context.bind(entity_id, pid);
 
         // Track event if in an operation.
@@ -749,9 +763,7 @@ impl PersistentNamingEngine {
                     self.assign_persistent_id(target_entity_id)
                 }
             }
-            NamePropagationPolicy::Generate => {
-                self.assign_persistent_id(target_entity_id)
-            }
+            NamePropagationPolicy::Generate => self.assign_persistent_id(target_entity_id),
             NamePropagationPolicy::Combine => {
                 // Use the first persistent ID but record the merge.
                 if let Some(pid) = primary_pid {
@@ -846,9 +858,10 @@ impl PersistentNamingEngine {
         // Find new names (entities with persistent IDs not in the before context).
         for &entity_id in entity_ids_after {
             if let Some(pid) = self.context.get_persistent(entity_id)
-                && !before.has_persistent(pid) {
-                    new_names.push(entity_id);
-                }
+                && !before.has_persistent(pid)
+            {
+                new_names.push(entity_id);
+            }
         }
 
         report.lost_names = lost;
@@ -864,12 +877,17 @@ impl PersistentNamingEngine {
         let edge_weight = 0.3;
         let vertex_weight = 0.2;
         // Assume equal distribution for simplicity.
-        report.weighted_stability_score = report.stability_score * (face_weight + edge_weight + vertex_weight) / 1.0;
+        report.weighted_stability_score =
+            report.stability_score * (face_weight + edge_weight + vertex_weight) / 1.0;
 
         // Detect issues.
         report.issues = self.detect_issues(&report);
-        report.broken_chains = report.issues.iter()
-            .filter(|i| i.severity == IssueSeverity::Severe || i.severity == IssueSeverity::Critical)
+        report.broken_chains = report
+            .issues
+            .iter()
+            .filter(|i| {
+                i.severity == IssueSeverity::Severe || i.severity == IssueSeverity::Critical
+            })
             .count();
 
         report
@@ -922,7 +940,10 @@ impl PersistentNamingEngine {
             issues.push(NamingIssue {
                 severity: IssueSeverity::Critical,
                 entity_type: None,
-                description: format!("Severe naming stability degradation: {:.1}%", report.stability_score * 100.0),
+                description: format!(
+                    "Severe naming stability degradation: {:.1}%",
+                    report.stability_score * 100.0
+                ),
                 affected_entity_ids: report.lost_names.clone(),
                 affected_persistent_ids: vec![],
                 suggested_resolution: None,
@@ -931,7 +952,10 @@ impl PersistentNamingEngine {
             issues.push(NamingIssue {
                 severity: IssueSeverity::Severe,
                 entity_type: None,
-                description: format!("Moderate naming stability degradation: {:.1}%", report.stability_score * 100.0),
+                description: format!(
+                    "Moderate naming stability degradation: {:.1}%",
+                    report.stability_score * 100.0
+                ),
                 affected_entity_ids: report.lost_names.clone(),
                 affected_persistent_ids: vec![],
                 suggested_resolution: None,
@@ -968,7 +992,12 @@ impl PersistentNamingEngine {
     }
 
     /// Import events from a NamingHistory into the cross-operation history.
-    pub fn import_naming_history(&mut self, history: &NamingHistory, operation_type: OperationType, label: Option<String>) {
+    pub fn import_naming_history(
+        &mut self,
+        history: &NamingHistory,
+        operation_type: OperationType,
+        label: Option<String>,
+    ) {
         let _op_id = self.begin_operation(operation_type, label);
         for event in history.iter() {
             self.pending_events.push(event.clone());
@@ -977,10 +1006,22 @@ impl PersistentNamingEngine {
         let stats = OperationStats {
             entity_count_before: self.context.len(),
             entity_count_after: self.context.len(),
-            names_preserved: history.iter().filter(|e| matches!(e, NamingEvent::Propagated { .. })).count(),
-            names_lost: history.iter().filter(|e| matches!(e, NamingEvent::Lost { .. })).count(),
-            names_generated: history.iter().filter(|e| matches!(e, NamingEvent::Assigned { .. })).count(),
-            conflicts_resolved: history.iter().filter(|e| matches!(e, NamingEvent::ConflictResolved { .. })).count(),
+            names_preserved: history
+                .iter()
+                .filter(|e| matches!(e, NamingEvent::Propagated { .. }))
+                .count(),
+            names_lost: history
+                .iter()
+                .filter(|e| matches!(e, NamingEvent::Lost { .. }))
+                .count(),
+            names_generated: history
+                .iter()
+                .filter(|e| matches!(e, NamingEvent::Assigned { .. }))
+                .count(),
+            conflicts_resolved: history
+                .iter()
+                .filter(|e| matches!(e, NamingEvent::ConflictResolved { .. }))
+                .count(),
         };
         self.finalize_operation(stats);
     }
@@ -1153,24 +1194,42 @@ impl PersistentNamingEngine {
     /// Apply a single naming event to this engine.
     pub fn apply_event(&mut self, event: &NamingEvent) {
         match event {
-            NamingEvent::Assigned { entity_id, persistent_id } => {
+            NamingEvent::Assigned {
+                entity_id,
+                persistent_id,
+            } => {
                 self.context.bind(*entity_id, *persistent_id);
             }
-            NamingEvent::Propagated { from_entity: _, to_entity, persistent_id } => {
+            NamingEvent::Propagated {
+                from_entity: _,
+                to_entity,
+                persistent_id,
+            } => {
                 // Propagation typically means the old entity is gone.
                 // Bind the new entity to the same persistent ID.
                 self.context.bind(*to_entity, *persistent_id);
             }
-            NamingEvent::Split { source_entity, target_entities, source_persistent_id: _, target_persistent_ids } => {
+            NamingEvent::Split {
+                source_entity,
+                target_entities,
+                source_persistent_id: _,
+                target_persistent_ids,
+            } => {
                 // Remove the source entity binding.
                 self.context.unbind_entity(*source_entity);
                 // Bind each target to its assigned persistent ID.
-                for (&target_id, &target_pid) in target_entities.iter().zip(target_persistent_ids.iter()) {
+                for (&target_id, &target_pid) in
+                    target_entities.iter().zip(target_persistent_ids.iter())
+                {
                     let _ = target_id; // Used for iteration
                     self.context.bind(target_id, target_pid);
                 }
             }
-            NamingEvent::Merged { source_entities, target_entity, result_persistent_id } => {
+            NamingEvent::Merged {
+                source_entities,
+                target_entity,
+                result_persistent_id,
+            } => {
                 // Remove all source entity bindings.
                 for source_id in source_entities {
                     self.context.unbind_entity(*source_id);
@@ -1178,7 +1237,10 @@ impl PersistentNamingEngine {
                 // Bind the target to the result persistent ID.
                 self.context.bind(*target_entity, *result_persistent_id);
             }
-            NamingEvent::Lost { entity_id, persistent_id: _ } => {
+            NamingEvent::Lost {
+                entity_id,
+                persistent_id: _,
+            } => {
                 // The entity was removed without a successor.
                 self.context.unbind_entity(*entity_id);
             }
@@ -1214,7 +1276,9 @@ pub struct OperationId(pub u64);
 
 impl OperationId {
     pub const NULL: OperationId = OperationId(0);
-    pub fn is_null(&self) -> bool { self.0 == 0 }
+    pub fn is_null(&self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// Types of topology operations that can affect naming.
@@ -1321,7 +1385,11 @@ impl CrossOperationHistory {
     }
 
     /// Begin a new operation and return its ID.
-    pub fn begin_operation(&mut self, operation_type: OperationType, label: Option<String>) -> OperationId {
+    pub fn begin_operation(
+        &mut self,
+        operation_type: OperationType,
+        label: Option<String>,
+    ) -> OperationId {
         let id = OperationId(self.next_operation_id);
         self.next_operation_id += 1;
         let sequence = self.next_sequence;
@@ -1359,39 +1427,61 @@ impl CrossOperationHistory {
 
     fn update_genealogy(&mut self, operation_id: OperationId, event: &NamingEvent) {
         match event {
-            NamingEvent::Assigned { entity_id, persistent_id } => {
-                self.genealogy.entry(*persistent_id).or_insert_with(|| EntityGenealogy {
-                    persistent_id: *persistent_id,
-                    created_in_operation: operation_id,
-                    evolution: vec![(operation_id, *entity_id)],
-                    current_entity_id: Some(*entity_id),
-                    is_deleted: false,
-                });
+            NamingEvent::Assigned {
+                entity_id,
+                persistent_id,
+            } => {
+                self.genealogy
+                    .entry(*persistent_id)
+                    .or_insert_with(|| EntityGenealogy {
+                        persistent_id: *persistent_id,
+                        created_in_operation: operation_id,
+                        evolution: vec![(operation_id, *entity_id)],
+                        current_entity_id: Some(*entity_id),
+                        is_deleted: false,
+                    });
             }
-            NamingEvent::Propagated { from_entity: _, to_entity, persistent_id } => {
+            NamingEvent::Propagated {
+                from_entity: _,
+                to_entity,
+                persistent_id,
+            } => {
                 if let Some(genealogy) = self.genealogy.get_mut(persistent_id) {
                     genealogy.evolution.push((operation_id, *to_entity));
                     genealogy.current_entity_id = Some(*to_entity);
                 }
             }
-            NamingEvent::Split { source_entity: _, target_entities, source_persistent_id, target_persistent_ids } => {
+            NamingEvent::Split {
+                source_entity: _,
+                target_entities,
+                source_persistent_id,
+                target_persistent_ids,
+            } => {
                 // Mark source as deleted.
                 if let Some(g) = self.genealogy.get_mut(source_persistent_id) {
                     g.is_deleted = true;
                     g.current_entity_id = None;
                 }
                 // Create genealogy for new targets.
-                for (&target_id, &target_pid) in target_entities.iter().zip(target_persistent_ids.iter()) {
-                    self.genealogy.entry(target_pid).or_insert_with(|| EntityGenealogy {
-                        persistent_id: target_pid,
-                        created_in_operation: operation_id,
-                        evolution: vec![(operation_id, target_id)],
-                        current_entity_id: Some(target_id),
-                        is_deleted: false,
-                    });
+                for (&target_id, &target_pid) in
+                    target_entities.iter().zip(target_persistent_ids.iter())
+                {
+                    self.genealogy
+                        .entry(target_pid)
+                        .or_insert_with(|| EntityGenealogy {
+                            persistent_id: target_pid,
+                            created_in_operation: operation_id,
+                            evolution: vec![(operation_id, target_id)],
+                            current_entity_id: Some(target_id),
+                            is_deleted: false,
+                        });
                 }
             }
-            NamingEvent::Merged { source_entities, target_entity, result_persistent_id } => {
+            NamingEvent::Merged {
+                source_entities,
+                target_entity,
+                result_persistent_id,
+            } => {
                 // Mark all sources as deleted.
                 for source_id in source_entities {
                     // Try to find the genealogy for each source.
@@ -1408,7 +1498,10 @@ impl CrossOperationHistory {
                     g.current_entity_id = Some(*target_entity);
                 }
             }
-            NamingEvent::Lost { entity_id: _, persistent_id } => {
+            NamingEvent::Lost {
+                entity_id: _,
+                persistent_id,
+            } => {
                 if let Some(g) = self.genealogy.get_mut(persistent_id) {
                     g.is_deleted = true;
                     g.current_entity_id = None;
@@ -1426,8 +1519,13 @@ impl CrossOperationHistory {
     }
 
     /// Get all operations of a specific type.
-    pub fn operations_by_type(&self, operation_type: OperationType) -> impl Iterator<Item = &OperationRecord> {
-        self.operations.iter().filter(move |op| op.operation_type == operation_type)
+    pub fn operations_by_type(
+        &self,
+        operation_type: OperationType,
+    ) -> impl Iterator<Item = &OperationRecord> {
+        self.operations
+            .iter()
+            .filter(move |op| op.operation_type == operation_type)
     }
 
     /// Get the genealogy for a persistent ID.
@@ -1449,15 +1547,24 @@ impl CrossOperationHistory {
                         result.push(op);
                         break;
                     }
-                    NamingEvent::Split { target_persistent_ids, .. } if target_persistent_ids.contains(&pid) => {
+                    NamingEvent::Split {
+                        target_persistent_ids,
+                        ..
+                    } if target_persistent_ids.contains(&pid) => {
                         result.push(op);
                         break;
                     }
-                    NamingEvent::Merged { result_persistent_id, .. } if *result_persistent_id == pid => {
+                    NamingEvent::Merged {
+                        result_persistent_id,
+                        ..
+                    } if *result_persistent_id == pid => {
                         result.push(op);
                         break;
                     }
-                    NamingEvent::Lost { persistent_id: lost_pid, .. } if *lost_pid == pid => {
+                    NamingEvent::Lost {
+                        persistent_id: lost_pid,
+                        ..
+                    } if *lost_pid == pid => {
                         result.push(op);
                         break;
                     }
@@ -1729,7 +1836,10 @@ mod tests {
 
         let resolutions = engine.merge_contexts(&other);
 
-        assert!(resolutions.is_empty(), "Should have no conflicts with different PIDs");
+        assert!(
+            resolutions.is_empty(),
+            "Should have no conflicts with different PIDs"
+        );
         assert!(engine.has_entity(1));
         assert!(engine.has_entity(2));
     }
@@ -1827,7 +1937,8 @@ mod tests {
     #[test]
     fn cross_op_history_begins_operation() {
         let mut history = CrossOperationHistory::new();
-        let op_id = history.begin_operation(OperationType::BooleanUnion, Some("test_op".to_string()));
+        let op_id =
+            history.begin_operation(OperationType::BooleanUnion, Some("test_op".to_string()));
 
         assert!(!op_id.is_null());
         assert_eq!(history.len(), 1);
@@ -1840,8 +1951,15 @@ mod tests {
         let op_id = history.begin_operation(OperationType::Generic, None);
 
         let events = vec![
-            NamingEvent::Assigned { entity_id: 1, persistent_id: PersistentId(1) },
-            NamingEvent::Propagated { from_entity: 2, to_entity: 3, persistent_id: PersistentId(2) },
+            NamingEvent::Assigned {
+                entity_id: 1,
+                persistent_id: PersistentId(1),
+            },
+            NamingEvent::Propagated {
+                from_entity: 2,
+                to_entity: 3,
+                persistent_id: PersistentId(2),
+            },
         ];
 
         history.add_events(op_id, events.clone());
@@ -1856,9 +1974,13 @@ mod tests {
         let op_id = history.begin_operation(OperationType::Generic, None);
 
         let pid = PersistentId(1);
-        history.add_events(op_id, vec![
-            NamingEvent::Assigned { entity_id: 42, persistent_id: pid },
-        ]);
+        history.add_events(
+            op_id,
+            vec![NamingEvent::Assigned {
+                entity_id: 42,
+                persistent_id: pid,
+            }],
+        );
 
         let genealogy = history.get_genealogy(pid).unwrap();
         assert_eq!(genealogy.persistent_id, pid);
@@ -1871,14 +1993,17 @@ mod tests {
         let mut history = CrossOperationHistory::new();
 
         let op_id = history.begin_operation(OperationType::BooleanUnion, None);
-        history.finalize_operation(op_id, OperationStats {
-            entity_count_before: 10,
-            entity_count_after: 8,
-            names_preserved: 7,
-            names_lost: 1,
-            names_generated: 2,
-            conflicts_resolved: 0,
-        });
+        history.finalize_operation(
+            op_id,
+            OperationStats {
+                entity_count_before: 10,
+                entity_count_after: 8,
+                names_preserved: 7,
+                names_lost: 1,
+                names_generated: 2,
+                conflicts_resolved: 0,
+            },
+        );
 
         let report = history.stability_report();
         assert_eq!(report.total_operations, 1);

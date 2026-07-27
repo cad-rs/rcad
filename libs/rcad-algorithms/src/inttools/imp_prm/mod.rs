@@ -7,11 +7,11 @@
 //! Full 1:1 translation is in progress.
 
 pub mod arc_function;
-pub mod surf_function;
+pub mod decompose;
+pub mod i_walking;
+pub mod intersection;
 pub mod s_on_bounds;
 pub mod search_inside;
-pub mod i_walking;
-pub mod decompose;
-pub mod intersection;
+pub mod surf_function;
 
 pub use intersection::ImpPrmIntersection;

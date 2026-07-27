@@ -1,5 +1,5 @@
-use super::*;
 use super::helpers::{chord_length_params_2d, clamped_knots_from_params, solve_interpolation_2d};
+use super::*;
 
 // =============================================================================
 // PointsToBSpline - Fit BSpline to 2D points

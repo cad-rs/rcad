@@ -19,49 +19,46 @@
 //!
 //! - Multiple section support: parallel planes, cross-sections along a path
 
-use glam::DVec3;
 use glam::DVec2;
-use rcad_kernel::{face_tolerance};
-use rcad_kernel::topods::{BRep, TShape, ShapeRef};
-pub use rcad_kernel::topods;
+use glam::DVec3;
+use rcad_kernel::face_tolerance;
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
     SphericalSurface, Surface3, ToroidalSurface, any_perpendicular,
 };
+pub use rcad_kernel::topods;
+use rcad_kernel::topods::{BRep, ShapeRef, TShape};
 use std::f64::consts::PI;
 
-use crate::inttools::{
-    intersect_surfaces_with_density_tol, SurfaceCurve, SurfaceIntersectionResult,
-};
-use crate::inttools::plane_plane::PlanePlaneResult;
-use crate::inttools::plane_cylinder::PlaneCylinderResult;
-use crate::inttools::plane_sphere::PlaneSphereResult;
 use crate::inttools::plane_cone::PlaneConicalResult;
-use crate::tolerance::{
-    intss_geom_tol_floor,
-    max_face_tolerance_or_abs_pair,
-    tessellation_merge_linear_from_brep,
-    tessellation_merge_linear_from_two_breps,
-    TOLERANCE_ABS,
-    TOLERANCE_AREA_REL,
-    TOLERANCE_CLAMP_MIN,
-    TOLERANCE_COORD_SUB,
-    TOLERANCE_LEN_MIN,
-    TOLERANCE_MESH_LEGACY,
+use crate::inttools::plane_cylinder::PlaneCylinderResult;
+use crate::inttools::plane_plane::PlanePlaneResult;
+use crate::inttools::plane_sphere::PlaneSphereResult;
+use crate::inttools::{
+    SurfaceCurve, SurfaceIntersectionResult, intersect_surfaces_with_density_tol,
 };
-use crate::triangulate::{mesh_brep, triangulate_polygon, TessellationParams};
+use crate::tolerance::{
+    TOLERANCE_ABS, TOLERANCE_AREA_REL, TOLERANCE_CLAMP_MIN, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
+    TOLERANCE_MESH_LEGACY, intss_geom_tol_floor, max_face_tolerance_or_abs_pair,
+    tessellation_merge_linear_from_brep, tessellation_merge_linear_from_two_breps,
+};
+use crate::triangulate::{TessellationParams, mesh_brep, triangulate_polygon};
 
 // = =  Helpers for extracting face data from topods::BRep  = = = = = = = = = =
 
 /// Iterate all Solid ShapeRefs in a BRep.
 fn iter_solid_refs(brep: &BRep) -> Vec<ShapeRef> {
-    brep.tshapes.iter().enumerate().filter_map(|(i, ts)| {
-        if matches!(ts.as_ref(), TShape::Solid(_)) {
-            Some(ShapeRef::synthetic(i))
-        } else {
-            None
-        }
-    }).collect()
+    brep.tshapes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ts)| {
+            if matches!(ts.as_ref(), TShape::Solid(_)) {
+                Some(ShapeRef::synthetic(i))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Iterate all shell ShapeRefs inside a solid.
@@ -126,27 +123,32 @@ fn collect_face_triangles_tshape(brep: &BRep, face_ref: ShapeRef) -> Vec<[DVec3;
         TShape::Wire(wd) => &wd.edges,
         _ => return vec![],
     };
-    let wire_pts: Vec<DVec3> = edges.iter().map(|edge_sr| {
-        match &*brep.tshapes[edge_sr.index] {
+    let wire_pts: Vec<DVec3> = edges
+        .iter()
+        .map(|edge_sr| match &*brep.tshapes[edge_sr.index] {
             TShape::Edge(ed) => {
                 let loc = brep.get_location(edge_sr.location);
                 loc.transform_point3(brep.vertex(ed.first).point)
             }
             _ => DVec3::ZERO,
-        }
-    }).collect();
+        })
+        .collect();
     if wire_pts.len() < 3 {
         return vec![];
     }
     // Compute normal for fan triangulation
-    let normal = (wire_pts[1] - wire_pts[0]).cross(wire_pts[2] - wire_pts[0]).normalize_or_zero();
+    let normal = (wire_pts[1] - wire_pts[0])
+        .cross(wire_pts[2] - wire_pts[0])
+        .normalize_or_zero();
     let tris = crate::triangulate::triangulate_polygon(&wire_pts, normal);
-    tris.iter().filter_map(|&[i, j, k]| {
-        let a = wire_pts.get(i)?;
-        let b = wire_pts.get(j)?;
-        let c = wire_pts.get(k)?;
-        Some([*a, *b, *c])
-    }).collect()
+    tris.iter()
+        .filter_map(|&[i, j, k]| {
+            let a = wire_pts.get(i)?;
+            let b = wire_pts.get(j)?;
+            let c = wire_pts.get(k)?;
+            Some([*a, *b, *c])
+        })
+        .collect()
 }
 
 /// Find the global flat face index for a ShapeRef in the BRep's TShape tree.
@@ -170,7 +172,7 @@ fn face_flat_index(brep: &BRep, target_face: ShapeRef) -> Option<usize> {
     None
 }
 
-// = =  Internal helpers = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+// = =  Internal helpers = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 /// Flat BRep face index => geometric floor for numerical IntSS (phase C).
 #[inline]
@@ -338,7 +340,9 @@ fn chain_segments_eps(segments: Vec<[DVec3; 2]>, merge_eps: f64) -> Vec<Vec<DVec
         let mut extended = true;
         while extended {
             extended = false;
-            let tail = *chain.last().expect("chain is non-empty (initialized with 2 points)");
+            let tail = *chain
+                .last()
+                .expect("chain is non-empty (initialized with 2 points)");
             for i in 0..remaining.len() {
                 if pts_close_eps(remaining[i][0], tail, merge_eps) {
                     chain.push(remaining[i][1]);
@@ -380,7 +384,7 @@ fn chain_segments_eps(segments: Vec<[DVec3; 2]>, merge_eps: f64) -> Vec<Vec<DVec
     chains
 }
 
-// = =  Public API: Plane Section = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+// = =  Public API: Plane Section = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 /// Compute the section of a BRep with a cutting plane.
 ///
@@ -440,13 +444,21 @@ fn extract_planar_face_info(brep: &BRep, flat_face_idx: usize) -> Option<PlanarF
     let y_axis = plane.v_dir;
 
     let wire_pts = face_wire_points(brep, face_ref);
-    let wire_2d: Vec<DVec2> = wire_pts.iter().map(|p| {
-        let v = *p - plane.origin;
-        DVec2::new(v.dot(x_axis), v.dot(y_axis))
-    }).collect();
+    let wire_2d: Vec<DVec2> = wire_pts
+        .iter()
+        .map(|p| {
+            let v = *p - plane.origin;
+            DVec2::new(v.dot(x_axis), v.dot(y_axis))
+        })
+        .collect();
 
     if wire_2d.len() >= 3 {
-        Some(PlanarFaceInfo { plane, x_axis, y_axis, wire_2d })
+        Some(PlanarFaceInfo {
+            plane,
+            x_axis,
+            y_axis,
+            wire_2d,
+        })
     } else {
         None
     }
@@ -479,11 +491,8 @@ fn point_in_polygon_2d(p: DVec2, poly: &[DVec2], tol: f64) -> bool {
     for i in 0..poly.len() {
         let yi = poly[i].y;
         let yj = poly[j].y;
-        if ((yi + tol > p.y) != (yj + tol > p.y))
-            || ((yi - tol > p.y) != (yj - tol > p.y))
-        {
-            let x_intersect = poly[j].x
-                + (poly[i].x - poly[j].x) * (p.y - yj) / (yi - yj);
+        if ((yi + tol > p.y) != (yj + tol > p.y)) || ((yi - tol > p.y) != (yj - tol > p.y)) {
+            let x_intersect = poly[j].x + (poly[i].x - poly[j].x) * (p.y - yj) / (yi - yj);
             if p.x < x_intersect + tol {
                 inside = !inside;
             }
@@ -495,11 +504,7 @@ fn point_in_polygon_2d(p: DVec2, poly: &[DVec2], tol: f64) -> bool {
 
 /// Check whether `point` (which lies in the plane of the planar face) is
 /// inside the face's boundary polygon.
-fn point_in_planar_face(
-    point: DVec3,
-    info: &PlanarFaceInfo,
-    tol: f64,
-) -> bool {
+fn point_in_planar_face(point: DVec3, info: &PlanarFaceInfo, tol: f64) -> bool {
     let v = point - info.plane.origin;
     let p2 = DVec2::new(v.dot(info.x_axis), v.dot(info.y_axis));
     point_in_polygon_2d(p2, &info.wire_2d, tol)
@@ -631,17 +636,13 @@ fn try_analytic_face_pair(
     };
 
     match (sa, sb) {
-        // = =  Plane vs Plane = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+        // = =  Plane vs Plane = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         (Plane(pa), Plane(pb)) => {
             let result = crate::inttools::plane_plane::intersect_plane_plane(pa, pb);
             match result {
                 PlanePlaneResult::Line(line) => {
-                    let polylines = sample_line_trimmed_to_planar_faces(
-                        &line,
-                        a_info,
-                        b_info,
-                        point_tol,
-                    );
+                    let polylines =
+                        sample_line_trimmed_to_planar_faces(&line, a_info, b_info, point_tol);
                     for pl in &polylines {
                         push_polyline_segments(pl, segments);
                     }
@@ -651,7 +652,7 @@ fn try_analytic_face_pair(
             }
         }
 
-        // = =  Plane vs Cylinder = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+        // = =  Plane vs Cylinder = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         (Plane(pa), Cylinder(cb)) => {
             intersect_plane_cylinder_pair(pa, cb, a_info, b_info, point_tol, segments)
         }
@@ -659,7 +660,7 @@ fn try_analytic_face_pair(
             intersect_plane_cylinder_pair(pb, ca, b_info, a_info, point_tol, segments)
         }
 
-        // = =  Plane vs Sphere = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+        // = =  Plane vs Sphere = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         (Plane(pa), Sphere(sb)) => {
             intersect_plane_sphere_pair(pa, sb, a_info, b_info, point_tol, segments)
         }
@@ -667,7 +668,7 @@ fn try_analytic_face_pair(
             intersect_plane_sphere_pair(pb, sa, b_info, a_info, point_tol, segments)
         }
 
-        // = =  Plane vs Cone = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+        // = =  Plane vs Cone = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         (Plane(pa), Cone(cb)) => {
             intersect_plane_cone_pair(pa, cb, a_info, b_info, point_tol, segments)
         }
@@ -779,7 +780,11 @@ fn intersect_plane_cone_pair(
     match result {
         PlaneConicalResult::Circle(c) => {
             let polylines = sample_closed_curve_trimmed_to_planar_faces(
-                &c, &sample_circle, plane_info, cone_info, point_tol,
+                &c,
+                &sample_circle,
+                plane_info,
+                cone_info,
+                point_tol,
             );
             for pl in &polylines {
                 push_polyline_segments(pl, segments);
@@ -788,7 +793,11 @@ fn intersect_plane_cone_pair(
         }
         PlaneConicalResult::Ellipse(e) => {
             let polylines = sample_closed_curve_trimmed_to_planar_faces(
-                &e, &sample_ellipse, plane_info, cone_info, point_tol,
+                &e,
+                &sample_ellipse,
+                plane_info,
+                cone_info,
+                point_tol,
             );
             for pl in &polylines {
                 push_polyline_segments(pl, segments);
@@ -799,7 +808,8 @@ fn intersect_plane_cone_pair(
             let pts: Vec<DVec3> = (0..128)
                 .map(|i| p.point_at(-20.0 + 40.0 * i as f64 / 127.0))
                 .collect();
-            let in_both: Vec<bool> = pts.iter()
+            let in_both: Vec<bool> = pts
+                .iter()
                 .map(|p| {
                     plane_info.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
                         && cone_info.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
@@ -809,19 +819,24 @@ fn intersect_plane_cone_pair(
             while i < pts.len() {
                 if in_both[i] {
                     let start = i;
-                    while i < pts.len() && in_both[i] { i += 1; }
+                    while i < pts.len() && in_both[i] {
+                        i += 1;
+                    }
                     if i - start >= 2 {
                         push_polyline_segments(&pts[start..i], segments);
                         found = true;
                     }
-                } else { i += 1; }
+                } else {
+                    i += 1;
+                }
             }
         }
         PlaneConicalResult::Hyperbola(h) => {
             let pts: Vec<DVec3> = (0..128)
                 .map(|i| h.point_at(-10.0 + 20.0 * i as f64 / 127.0))
                 .collect();
-            let in_both: Vec<bool> = pts.iter()
+            let in_both: Vec<bool> = pts
+                .iter()
                 .map(|p| {
                     plane_info.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
                         && cone_info.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
@@ -831,12 +846,16 @@ fn intersect_plane_cone_pair(
             while i < pts.len() {
                 if in_both[i] {
                     let start = i;
-                    while i < pts.len() && in_both[i] { i += 1; }
+                    while i < pts.len() && in_both[i] {
+                        i += 1;
+                    }
                     if i - start >= 2 {
                         push_polyline_segments(&pts[start..i], segments);
                         found = true;
                     }
-                } else { i += 1; }
+                } else {
+                    i += 1;
+                }
             }
         }
         PlaneConicalResult::SingleLine(l) | PlaneConicalResult::TwoLines(l, _) => {
@@ -867,8 +886,8 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
     mesh_brep(&mut a_tess, &TessellationParams::standard());
     mesh_brep(&mut b_tess, &TessellationParams::analysis());
 
-    let pair_eps = crate::tolerance::tessellation_merge_linear_from_two_breps(a, b)
-        .max(TOLERANCE_ABS);
+    let pair_eps =
+        crate::tolerance::tessellation_merge_linear_from_two_breps(a, b).max(TOLERANCE_ABS);
     let merge_eps = pair_eps;
     let point_tol = pair_eps.max(TOLERANCE_ABS);
 
@@ -933,8 +952,7 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
                         let b_tris = collect_face_triangles_tshape(&b_tess, *b_face_ref);
                         for ta in &a_tris {
                             for tb in &b_tris {
-                                if let Some(seg) =
-                                    triangle_triangle_intersect_eps(ta, tb, pair_eps)
+                                if let Some(seg) = triangle_triangle_intersect_eps(ta, tb, pair_eps)
                                 {
                                     segments.push(seg);
                                 }
@@ -1065,7 +1083,7 @@ pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
     chain_segments_eps(segments, merge_eps)
 }
 
-// = =  Public API: Curved Surface Section = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+// = =  Public API: Curved Surface Section = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 /// Cutting surface for section operations.
 ///
@@ -1140,16 +1158,12 @@ impl SectionCurveType {
                     .map(|i| line.point_at(t0 + (t1 - t0) * i as f64 / (n - 1).max(1) as f64))
                     .collect()
             }
-            SectionCurveType::Circle(circle) => {
-                (0..n)
-                    .map(|i| circle.point_at(2.0 * PI * i as f64 / (n - 1).max(1) as f64))
-                    .collect()
-            }
-            SectionCurveType::Ellipse(ellipse) => {
-                (0..n)
-                    .map(|i| ellipse.point_at(2.0 * PI * i as f64 / (n - 1).max(1) as f64))
-                    .collect()
-            }
+            SectionCurveType::Circle(circle) => (0..n)
+                .map(|i| circle.point_at(2.0 * PI * i as f64 / (n - 1).max(1) as f64))
+                .collect(),
+            SectionCurveType::Ellipse(ellipse) => (0..n)
+                .map(|i| ellipse.point_at(2.0 * PI * i as f64 / (n - 1).max(1) as f64))
+                .collect(),
             SectionCurveType::BSpline(bspline) => {
                 let [t0, t1] = bspline.default_domain();
                 (0..n)
@@ -1224,9 +1238,10 @@ pub fn section_with_surface(brep: &BRep, cutting_surface: &CuttingSurface) -> Se
         CuttingSurface::Cone(cone) => section_by_cone(brep, cone),
         CuttingSurface::Torus(torus) => section_by_torus(brep, torus),
         CuttingSurface::Surface(surface) => section_by_analytic_surface(brep, surface),
-        CuttingSurface::BRepSurface { brep: tool_brep, face_idx } => {
-            section_by_brep_surface(brep, tool_brep, *face_idx)
-        }
+        CuttingSurface::BRepSurface {
+            brep: tool_brep,
+            face_idx,
+        } => section_by_brep_surface(brep, tool_brep, *face_idx),
     }
 }
 
@@ -1326,12 +1341,8 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
         let face_surface = face_surface_from_ref(brep, *face_ref).cloned();
 
         if let Some(face_surf) = face_surface {
-            let intersection = intersect_surfaces_with_density_tol(
-                &face_surf,
-                cutting_surface,
-                48,
-                geom_floor,
-            );
+            let intersection =
+                intersect_surfaces_with_density_tol(&face_surf, cutting_surface, 48, geom_floor);
 
             for curve_result in intersection.curves {
                 let (curve, polyline, is_closed) =
@@ -1352,8 +1363,8 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
             let face_polylines =
                 section_face_by_surface_marching(brep, *face_ref, cutting_surface, geom_floor);
             for pts in &face_polylines {
-                let is_closed = pts.len() > 2
-                    && pts_close_eps(pts[0], *pts.last().unwrap(), geom_floor);
+                let is_closed =
+                    pts.len() > 2 && pts_close_eps(pts[0], *pts.last().unwrap(), geom_floor);
                 curves.push(SectionCurveResult {
                     curve: SectionCurveType::Polyline(pts.clone()),
                     is_closed,
@@ -1384,8 +1395,7 @@ fn section_by_brep_surface(brep: &BRep, tool_brep: &BRep, face_idx: usize) -> Se
         Some(surface) => section_by_analytic_surface(brep, &surface),
         None => {
             // Fall back to triangle-based intersection
-            let cutting_face_ref = find_face_by_flat_index(tool_brep, face_idx)
-                .map(|(sr, _)| sr);
+            let cutting_face_ref = find_face_by_flat_index(tool_brep, face_idx).map(|(sr, _)| sr);
             let (polylines, merge_eps) =
                 section_by_face_triangles(brep, tool_brep, face_idx, cutting_face_ref);
 
@@ -1459,17 +1469,25 @@ fn convert_surface_curve(
             }
         }
         SurfaceCurve::Point(_) => (SectionCurveType::Polyline(vec![]), None, false),
-        SurfaceCurve::BSplineCurve(b) => {
-            (SectionCurveType::BSpline((**b).clone()), None, false)
-        }
+        SurfaceCurve::BSplineCurve(b) => (SectionCurveType::BSpline((**b).clone()), None, false),
         SurfaceCurve::Polyline(pts) => {
-            let is_closed = pts.len() > 2
-                && pts_close_eps(pts[0], *pts.last().unwrap(), polyline_close_eps);
+            let is_closed =
+                pts.len() > 2 && pts_close_eps(pts[0], *pts.last().unwrap(), polyline_close_eps);
             if pts.len() >= 4
-                && let Ok(bspline) = rcad_kernel::fit::approximate_points(pts, (pts.len() / 2).max(4)) {
-                return (SectionCurveType::BSpline(bspline), Some(pts.clone()), is_closed);
+                && let Ok(bspline) =
+                    rcad_kernel::fit::approximate_points(pts, (pts.len() / 2).max(4))
+            {
+                return (
+                    SectionCurveType::BSpline(bspline),
+                    Some(pts.clone()),
+                    is_closed,
+                );
             }
-            (SectionCurveType::Polyline(pts.clone()), Some(pts.clone()), is_closed)
+            (
+                SectionCurveType::Polyline(pts.clone()),
+                Some(pts.clone()),
+                is_closed,
+            )
         }
     }
 }
@@ -1482,8 +1500,8 @@ fn section_face_by_surface_marching(
     geom_floor: f64,
 ) -> Vec<Vec<DVec3>> {
     let edge_eps = geom_floor.max(TOLERANCE_ABS);
-    let bisect_tol =
-        (edge_eps * TOLERANCE_AREA_REL).clamp(TOLERANCE_CLAMP_MIN, edge_eps.max(TOLERANCE_MESH_LEGACY));
+    let bisect_tol = (edge_eps * TOLERANCE_AREA_REL)
+        .clamp(TOLERANCE_CLAMP_MIN, edge_eps.max(TOLERANCE_MESH_LEGACY));
 
     // Get triangles for the face
     let triangles = collect_face_triangles_tshape(brep, face_ref);
@@ -1492,9 +1510,7 @@ fn section_face_by_surface_marching(
     let mut segments: Vec<[DVec3; 2]> = Vec::new();
 
     for tri in triangles {
-        if let Some(seg) =
-            triangle_surface_intersect(&tri, cutting_surface, edge_eps, bisect_tol)
-        {
+        if let Some(seg) = triangle_surface_intersect(&tri, cutting_surface, edge_eps, bisect_tol) {
             segments.push(seg);
         }
     }
@@ -1552,12 +1568,8 @@ fn triangle_surface_intersect(
 /// Positive = outside, negative = inside (for closed surfaces).
 fn signed_distance_to_surface(p: DVec3, surface: &Surface3) -> f64 {
     match surface {
-        Surface3::Plane(plane) => {
-            plane.normal.dot(p - plane.origin)
-        }
-        Surface3::Sphere(sphere) => {
-            (p - sphere.center).length() - sphere.radius
-        }
+        Surface3::Plane(plane) => plane.normal.dot(p - plane.origin),
+        Surface3::Sphere(sphere) => (p - sphere.center).length() - sphere.radius,
         Surface3::Cylinder(cyl) => {
             let axis = cyl.axis.normalize();
             let v = p - cyl.origin;
@@ -1586,7 +1598,12 @@ fn signed_distance_to_surface(p: DVec3, surface: &Surface3) -> f64 {
         }
         _ => {
             let proj = rcad_kernel::projection::closest_point_on_surface(surface, p, 8);
-            (p - proj.point).length() * if proj.params.0.fract().abs() < 0.5 { 1.0 } else { -1.0 }
+            (p - proj.point).length()
+                * if proj.params.0.fract().abs() < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
         }
     }
 }
@@ -1670,9 +1687,7 @@ fn section_by_face_triangles(
 
         for brep_tri in &brep_triangles {
             for cut_tri in &cutting_triangles {
-                if let Some(seg) =
-                    triangle_triangle_intersect_eps(brep_tri, cut_tri, pair_eps)
-                {
+                if let Some(seg) = triangle_triangle_intersect_eps(brep_tri, cut_tri, pair_eps) {
                     segments.push(seg);
                 }
             }
@@ -1768,7 +1783,11 @@ fn point_in_triangle_eps(p: DVec3, tri: &[DVec3; 3], pair_eps: f64) -> bool {
     let e0 = tri[1] - tri[0];
     let e1_edge = tri[2] - tri[1];
     let e2_edge = tri[2] - tri[0];
-    let scale = e0.length().max(e1_edge.length()).max(e2_edge.length()).max(TOLERANCE_LEN_MIN);
+    let scale = e0
+        .length()
+        .max(e1_edge.length())
+        .max(e2_edge.length())
+        .max(TOLERANCE_LEN_MIN);
     let margin = (pe / scale).min(0.05).max(TOLERANCE_LEN_MIN);
 
     s >= -margin && t >= -margin && s + t <= 1.0 + margin
@@ -1793,7 +1812,11 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
             let vb = result.add_tvertex(b);
 
             let len = (b - a).length();
-            let dir = if len > TOLERANCE_ABS { (b - a) / len } else { DVec3::X };
+            let dir = if len > TOLERANCE_ABS {
+                (b - a) / len
+            } else {
+                DVec3::X
+            };
             let curve = Curve3::Line(Line3 {
                 origin: a,
                 direction: dir,
@@ -1814,7 +1837,7 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
     result
 }
 
-// = =  Section Properties Computation = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+// = =  Section Properties Computation = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 /// Compute properties of a planar section.
 ///

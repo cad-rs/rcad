@@ -1,4 +1,4 @@
-﻿//! IntAna-style analytical intersection algorithms.
+//! IntAna-style analytical intersection algorithms.
 //!
 //! This module provides analytical solutions for geometric intersections between
 //! curves (lines) and surfaces (planes, cylinders, spheres, cones, tori), as well
@@ -696,8 +696,14 @@ pub fn intersect_plane_cone_intana(plane: &Plane, cone: &ConicalSurface) -> PlnC
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
             let d2 = (projected_axis * half.cos() - perp_in_plane * half.sin()).normalize();
             return PlnConResult::TwoLines(
-                Line3 { origin: apex, direction: d1 },
-                Line3 { origin: apex, direction: d2 },
+                Line3 {
+                    origin: apex,
+                    direction: d1,
+                },
+                Line3 {
+                    origin: apex,
+                    direction: d2,
+                },
             );
         }
 
@@ -837,7 +843,10 @@ fn build_hyperbola_result(
         let rho = d;
         (rho / tan_beta, rho)
     } else {
-        (d * sin_beta / sqrt_d, d * sin_angle * cos_angle.abs() / sqrt_d)
+        (
+            d * sin_beta / sqrt_d,
+            d * sin_angle * cos_angle.abs() / sqrt_d,
+        )
     };
 
     if a < TOLERANCE_ABS {
@@ -878,7 +887,10 @@ pub enum CylCylResult {
 /// - Circles (coaxial, same radius)
 /// - Ellipses (rare, special cases)
 /// - Bicurves (general case, typically 3D curves)
-pub fn intersect_cylinder_cylinder(cyl1: &CylindricalSurface, cyl2: &CylindricalSurface) -> CylCylResult {
+pub fn intersect_cylinder_cylinder(
+    cyl1: &CylindricalSurface,
+    cyl2: &CylindricalSurface,
+) -> CylCylResult {
     // Check for parallel axes
     let axis1 = cyl1.axis.normalize();
     let axis2 = cyl2.axis.normalize();
@@ -939,7 +951,7 @@ fn intersect_parallel_cylinders(
     // Concentric same-radius cylinders
     if dist_between_axes < TOLERANCE_ABS && (r1 - r2).abs() < TOLERANCE_ABS {
         // Same cylinder - return a representative circle
-        return CylCylResult::SingleCurve(Curve3::Circle(Circle3::new(cyl1.origin, axis, r1,)));
+        return CylCylResult::SingleCurve(Curve3::Circle(Circle3::new(cyl1.origin, axis, r1)));
     }
 
     // Two parallel cylinders with overlapping cross-sections
@@ -975,8 +987,14 @@ fn intersect_parallel_cylinders(
     let p2 = cyl1.origin + dir * x - perp * h;
 
     CylCylResult::TwoCurves(
-        Curve3::Line(Line3 { origin: p1, direction: axis }),
-        Curve3::Line(Line3 { origin: p2, direction: axis }),
+        Curve3::Line(Line3 {
+            origin: p1,
+            direction: axis,
+        }),
+        Curve3::Line(Line3 {
+            origin: p2,
+            direction: axis,
+        }),
     )
 }
 
@@ -1191,7 +1209,8 @@ fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
     let b_depressed = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
 
     // Discriminant
-    let discriminant = b_depressed * b_depressed / 4.0 + a_depressed * a_depressed * a_depressed / 27.0;
+    let discriminant =
+        b_depressed * b_depressed / 4.0 + a_depressed * a_depressed * a_depressed / 27.0;
 
     let offset = p / 3.0;
 
@@ -1244,14 +1263,9 @@ fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
     }
 
     let sqrt_disc = discriminant.sqrt();
-    vec![
-        (-b - sqrt_disc) / (2.0 * a),
-        (-b + sqrt_disc) / (2.0 * a),
-    ]
+    vec![(-b - sqrt_disc) / (2.0 * a), (-b + sqrt_disc) / (2.0 * a)]
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
-
-

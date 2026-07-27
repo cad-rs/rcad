@@ -18,7 +18,9 @@ fn all_faces_selection() -> ExportSelection<'static> {
 fn face_count(t: &topods::BRep) -> usize {
     let mut c = 0;
     for ts in &t.tshapes {
-        if matches!(&**ts, topods::TShape::Face(_)) { c += 1; }
+        if matches!(&**ts, topods::TShape::Face(_)) {
+            c += 1;
+        }
     }
     c
 }
@@ -26,7 +28,9 @@ fn face_count(t: &topods::BRep) -> usize {
 fn vertex_count(t: &topods::BRep) -> usize {
     let mut c = 0;
     for ts in &t.tshapes {
-        if matches!(&**ts, topods::TShape::Vertex(_)) { c += 1; }
+        if matches!(&**ts, topods::TShape::Vertex(_)) {
+            c += 1;
+        }
     }
     c
 }
@@ -67,8 +71,7 @@ fn box_fea_vertex_budget_after_round_trip() {
 
 #[test]
 fn cylinder_fea_vertex_budget_after_round_trip() {
-    let brep =
-        make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 5.0, 15.0).expect("cylinder");
+    let brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 5.0, 15.0).expect("cylinder");
     let step_str = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
 
@@ -87,7 +90,10 @@ fn sphere_fea_tessellated_bbox_after_round_trip() {
     let step_str = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
 
-    assert!(face_count(&parsed) >= 1, "sphere should have at least one face");
+    assert!(
+        face_count(&parsed) >= 1,
+        "sphere should have at least one face"
+    );
 
     let bbox = bounding_box(&parsed).expect("should have bounding box");
     let [min, max] = bbox;

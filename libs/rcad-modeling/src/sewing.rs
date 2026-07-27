@@ -27,7 +27,7 @@
 use glam::DVec3;
 use rcad_kernel::{
     topods,
-    topods::{TShape, Orientation},
+    topods::{Orientation, TShape},
     topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
 
@@ -402,18 +402,14 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
                     } else {
                         Orientation::Reversed
                     };
-                    topods::ShapeRef::synthetic_with_orientation(
-                        edge_refs[we.idx].index,
-                        orient,
-                    )
+                    topods::ShapeRef::synthetic_with_orientation(edge_refs[we.idx].index, orient)
                 })
                 .collect();
             result.add_twire(edge_srs)
         };
 
         let outer_wire_sr = build_wire(&f.outer_wire);
-        let inner_wire_refs: Vec<topods::ShapeRef> =
-            f.inner_wires.iter().map(build_wire).collect();
+        let inner_wire_refs: Vec<topods::ShapeRef> = f.inner_wires.iter().map(build_wire).collect();
 
         let face_sr = result.add_tface(
             None,

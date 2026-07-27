@@ -14,23 +14,20 @@ use pyo3::exceptions::{PyException, PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rcad_algorithms::{
+    BooleanError, BooleanOpType, BooleanOptions, BrepProjOptions, OffsetError, SweepError,
     boolean_op, boolean_op_with_options, brep_proj_cylindrical, linear_sweep_wire, offset_solid,
-    pipe_sweep_wire, repair, resolved_boolean_fuzzy_tol_for_ds, tolerance, BrepProjOptions,
-    BooleanError, BooleanOpType, BooleanOptions, OffsetError, SweepError,
+    pipe_sweep_wire, repair, resolved_boolean_fuzzy_tol_for_ds, tolerance,
 };
-use rcad_features::{operations::FeatureOperations, FeaturesError as FeatErr};
-use rcad_kernel::properties::{centroid, inertia_tensor, signed_volume, surface_area, volume};
+use rcad_features::{FeaturesError as FeatErr, operations::FeatureOperations};
 use rcad_kernel::BRep;
+use rcad_kernel::properties::{centroid, inertia_tensor, signed_volume, surface_area, volume};
 use rcad_kernel::topods;
 use rcad_modeling::{
-    chamfer_edge, cone_brep, cylinder_brep, extrude, fillet_edge, fillet_edges, loft, make_box_brep,
-    make_conical_frustum_brep, project_wire_onto_surface, revolve, sphere_brep, sweep_pipe,
-    torus_brep,
+    chamfer_edge, cone_brep, cylinder_brep, extrude, fillet_edge, fillet_edges, loft,
+    make_box_brep, make_conical_frustum_brep, project_wire_onto_surface, revolve, sphere_brep,
+    sweep_pipe, torus_brep,
 };
-use rcad_step::{
-    ExportSelection, IgesReader, IgesWriter, StepReader,
-    StepWriter,
-};
+use rcad_step::{ExportSelection, IgesReader, IgesWriter, StepReader, StepWriter};
 
 fn vec3_tuple(v: (f64, f64, f64)) -> DVec3 {
     DVec3::new(v.0, v.1, v.2)
@@ -41,8 +38,7 @@ fn tuple3(v: DVec3) -> (f64, f64, f64) {
 }
 
 fn face_count(brep: &BRep) -> usize {
-    brep
-        .solids
+    brep.solids
         .iter()
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
@@ -221,7 +217,9 @@ fn py_build_err(e: rcad_modeling::BuildError) -> PyErr {
         rcad_modeling::BuildError::NonPositiveValue(_) => ModelingNonPositiveValue::new_err(msg),
         rcad_modeling::BuildError::ZeroVector(_) => ModelingZeroVector::new_err(msg),
         rcad_modeling::BuildError::ParallelVectors(_, _) => ModelingParallelVectors::new_err(msg),
-        rcad_modeling::BuildError::DegenerateGeometry(_) => ModelingDegenerateGeometry::new_err(msg),
+        rcad_modeling::BuildError::DegenerateGeometry(_) => {
+            ModelingDegenerateGeometry::new_err(msg)
+        }
         rcad_modeling::BuildError::InvalidIndex(_) => ModelingInvalidIndex::new_err(msg),
     }
 }
@@ -341,7 +339,9 @@ impl PyHistoryDocument {
     }
 
     fn to_json(&self) -> PyResult<String> {
-        self.inner.to_json().map_err(|e| PyValueError::new_err(e.to_string()))
+        self.inner
+            .to_json()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn to_json_pretty(&self) -> PyResult<String> {
@@ -362,16 +362,14 @@ impl PyHistoryDocument {
 
     /// Dependency order check (referenced features must appear earlier in the tree).
     fn validate_dependency_order(&self) -> PyResult<()> {
-        self.inner.validate_dependency_order().map_err(py_history_err)
+        self.inner
+            .validate_dependency_order()
+            .map_err(py_history_err)
     }
 
     /// Feature ids in tree order (same as Rust ``Document::features()``).
     fn feature_ids(&self) -> Vec<u64> {
-        self.inner
-            .features()
-            .iter()
-            .map(|f| f.id.0)
-            .collect()
+        self.inner.features().iter().map(|f| f.id.0).collect()
     }
 
     /// Next id that ``add_feature`` would assign (Rust ``next_feature_sequence``).
@@ -460,9 +458,7 @@ impl PyHistoryDocument {
     }
 
     fn final_brep(&self) -> Option<PyBRep> {
-        self.inner
-            .final_brep()
-            .map(|b| PyBRep { inner: b.clone() })
+        self.inner.final_brep().map(|b| PyBRep { inner: b.clone() })
     }
 
     #[getter]
@@ -676,10 +672,7 @@ impl PyBRep {
     /// Pipe sweep: 2D profile in the local XY plane (≥3 points) along a 3D spine polyline (≥2 points). Uses lofted cross-sections (``rcad_modeling::sweep_pipe``).
     #[staticmethod]
     fn sweep_pipe(profile_2d: Vec<(f64, f64)>, spine: Vec<(f64, f64, f64)>) -> PyResult<Self> {
-        let p2: Vec<DVec2> = profile_2d
-            .iter()
-            .map(|(x, y)| DVec2::new(*x, *y))
-            .collect();
+        let p2: Vec<DVec2> = profile_2d.iter().map(|(x, y)| DVec2::new(*x, *y)).collect();
         let sp: Vec<DVec3> = spine.into_iter().map(vec3_tuple).collect();
         let brep = sweep_pipe(&p2, &sp).map_err(py_build_err)?;
         Ok(Self { inner: brep })
@@ -688,10 +681,7 @@ impl PyBRep {
     /// Pipe sweep wire (``rcad_algorithms::pipe_sweep_wire``): alternate sweep kernel with pipe mode; same arguments as ``sweep_pipe``.
     #[staticmethod]
     fn pipe_sweep_wire(profile_2d: Vec<(f64, f64)>, spine: Vec<(f64, f64, f64)>) -> PyResult<Self> {
-        let p2: Vec<DVec2> = profile_2d
-            .iter()
-            .map(|(x, y)| DVec2::new(*x, *y))
-            .collect();
+        let p2: Vec<DVec2> = profile_2d.iter().map(|(x, y)| DVec2::new(*x, *y)).collect();
         let sp: Vec<DVec3> = spine.into_iter().map(vec3_tuple).collect();
         let brep = pipe_sweep_wire(&p2, &sp).map_err(py_sweep_err)?;
         Ok(Self { inner: brep })
@@ -701,7 +691,9 @@ impl PyBRep {
     #[staticmethod]
     fn read_step(path: &str) -> PyResult<Self> {
         let brep = StepReader::read_file(path).map_err(py_step_err)?;
-        Ok(Self { inner: BRep::from_topods(&brep) })
+        Ok(Self {
+            inner: BRep::from_topods(&brep),
+        })
     }
 
     /// Load STEP geometry plus document metadata as a ``dict`` (JSON round-trip of ``StepDocumentMetadata``: products, file schema, tolerances, PMI-related lists, etc.).
@@ -709,7 +701,12 @@ impl PyBRep {
     fn read_step_with_metadata(py: Python<'_>, path: &str) -> PyResult<(Self, Py<PyAny>)> {
         let (brep, meta) = StepReader::read_file_with_metadata(path).map_err(py_step_err)?;
         let d = step_metadata_to_py(py, &meta)?;
-        Ok((Self { inner: BRep::from_topods(&brep) }, d))
+        Ok((
+            Self {
+                inner: BRep::from_topods(&brep),
+            },
+            d,
+        ))
     }
 
     /// Write AP214 STEP to a file using OCCT-style interchange (``SURFACE_CURVE`` / ``PCURVE``, si_metre, radians).
@@ -741,8 +738,11 @@ impl PyBRep {
 
     /// Boolean union ``self | other``.
     fn union(&self, other: &PyBRep) -> PyResult<Self> {
-        let out = boolean_op(BooleanOpType::Union, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: BRep::from_topods(&out) })
+        let out =
+            boolean_op(BooleanOpType::Union, &self.inner, &other.inner).map_err(py_bool_err)?;
+        Ok(Self {
+            inner: BRep::from_topods(&out),
+        })
     }
 
     /// Boolean union ``self | other`` with execution options (see [`BooleanOptions`]).
@@ -759,9 +759,11 @@ impl PyBRep {
 
     /// Boolean intersection ``self & other``.
     fn intersection(&self, other: &PyBRep) -> PyResult<Self> {
-        let out =
-            boolean_op(BooleanOpType::Intersection, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: BRep::from_topods(&out) })
+        let out = boolean_op(BooleanOpType::Intersection, &self.inner, &other.inner)
+            .map_err(py_bool_err)?;
+        Ok(Self {
+            inner: BRep::from_topods(&out),
+        })
     }
 
     /// Boolean intersection with execution options (see [`BooleanOptions`]).
@@ -782,9 +784,11 @@ impl PyBRep {
 
     /// Boolean difference ``self - other``.
     fn difference(&self, other: &PyBRep) -> PyResult<Self> {
-        let out =
-            boolean_op(BooleanOpType::Difference, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: BRep::from_topods(&out) })
+        let out = boolean_op(BooleanOpType::Difference, &self.inner, &other.inner)
+            .map_err(py_bool_err)?;
+        Ok(Self {
+            inner: BRep::from_topods(&out),
+        })
     }
 
     /// Boolean difference ``self - other`` with execution options (see [`BooleanOptions`]).
@@ -805,9 +809,14 @@ impl PyBRep {
 
     /// Extrude face ``face_idx`` (index in the first solid's outer shell) along ``direction`` by ``distance``.
     #[pyo3(signature = (face_idx, direction, distance))]
-    fn extrude(&self, face_idx: usize, direction: (f64, f64, f64), distance: f64) -> PyResult<Self> {
-        let brep =
-            extrude(&self.inner, face_idx, vec3_tuple(direction), distance).map_err(py_build_err)?;
+    fn extrude(
+        &self,
+        face_idx: usize,
+        direction: (f64, f64, f64),
+        distance: f64,
+    ) -> PyResult<Self> {
+        let brep = extrude(&self.inner, face_idx, vec3_tuple(direction), distance)
+            .map_err(py_build_err)?;
         Ok(Self { inner: brep })
     }
 
@@ -874,13 +883,8 @@ impl PyBRep {
         direction: (f64, f64, f64),
         distance: f64,
     ) -> PyResult<Self> {
-        let brep = linear_sweep_wire(
-            &self.inner,
-            face_idx,
-            vec3_tuple(direction),
-            distance,
-        )
-        .map_err(py_sweep_err)?;
+        let brep = linear_sweep_wire(&self.inner, face_idx, vec3_tuple(direction), distance)
+            .map_err(py_sweep_err)?;
         Ok(Self { inner: brep })
     }
 
@@ -899,9 +903,7 @@ impl PyBRep {
             .get(flat)
             .copied()
             .flatten()
-            .ok_or_else(|| {
-                PyValueError::new_err("face has no associated surface in GeomStore")
-            })?;
+            .ok_or_else(|| PyValueError::new_err("face has no associated surface in GeomStore"))?;
         let surface = self
             .inner
             .geom
@@ -915,13 +917,9 @@ impl PyBRep {
             .and_then(|s| s.shells.first())
             .and_then(|sh| sh.faces.get(face_idx))
             .ok_or_else(|| PyValueError::new_err("face_idx out of range"))?;
-        let (_wire, pts) = project_wire_onto_surface(
-            &self.inner,
-            &face.outer_wire,
-            surface,
-            n_samples,
-        )
-        .map_err(py_build_err)?;
+        let (_wire, pts) =
+            project_wire_onto_surface(&self.inner, &face.outer_wire, surface, n_samples)
+                .map_err(py_build_err)?;
         Ok(pts.into_iter().map(tuple3).collect())
     }
 
@@ -954,11 +952,7 @@ impl PyBRep {
 
     /// Uniform scale in-place about ``center`` (default world origin).
     #[pyo3(signature = (factor, center=None))]
-    fn scale_uniform(
-        &mut self,
-        factor: f64,
-        center: Option<(f64, f64, f64)>,
-    ) -> PyResult<()> {
+    fn scale_uniform(&mut self, factor: f64, center: Option<(f64, f64, f64)>) -> PyResult<()> {
         if !factor.is_finite() || factor <= 0.0 {
             return Err(PyValueError::new_err("factor must be finite and positive"));
         }
@@ -1159,14 +1153,8 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "HistoryEmptyDocument",
         py.get_type::<HistoryEmptyDocument>(),
     )?;
-    m.add(
-        "HistoryNotEvaluated",
-        py.get_type::<HistoryNotEvaluated>(),
-    )?;
-    m.add(
-        "HistoryPersistError",
-        py.get_type::<HistoryPersistError>(),
-    )?;
+    m.add("HistoryNotEvaluated", py.get_type::<HistoryNotEvaluated>())?;
+    m.add("HistoryPersistError", py.get_type::<HistoryPersistError>())?;
 
     m.add("BooleanOpError", py.get_type::<BooleanOpError>())?;
     m.add("BooleanOpEmptyInput", py.get_type::<BooleanOpEmptyInput>())?;
@@ -1186,7 +1174,10 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "BooleanOpEmptyCollection",
         py.get_type::<BooleanOpEmptyCollection>(),
     )?;
-    m.add("BooleanOpInvalidResult", py.get_type::<BooleanOpInvalidResult>())?;
+    m.add(
+        "BooleanOpInvalidResult",
+        py.get_type::<BooleanOpInvalidResult>(),
+    )?;
     m.add(
         "BooleanOpIncompleteIntersection",
         py.get_type::<BooleanOpIncompleteIntersection>(),
@@ -1196,10 +1187,7 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<BooleanOpSelfIntersection>(),
     )?;
 
-    m.add(
-        "FeaturesKernelError",
-        py.get_type::<FeaturesKernelError>(),
-    )?;
+    m.add("FeaturesKernelError", py.get_type::<FeaturesKernelError>())?;
     m.add("FeaturesZeroNormal", py.get_type::<FeaturesZeroNormal>())?;
     m.add(
         "FeaturesZeroDirection",
@@ -1221,12 +1209,18 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "FeaturesInvalidHoleDepth",
         py.get_type::<FeaturesInvalidHoleDepth>(),
     )?;
-    m.add("FeaturesDatumNotFound", py.get_type::<FeaturesDatumNotFound>())?;
+    m.add(
+        "FeaturesDatumNotFound",
+        py.get_type::<FeaturesDatumNotFound>(),
+    )?;
     m.add(
         "FeaturesPatternGenerationFailed",
         py.get_type::<FeaturesPatternGenerationFailed>(),
     )?;
-    m.add("FeaturesMirrorFailed", py.get_type::<FeaturesMirrorFailed>())?;
+    m.add(
+        "FeaturesMirrorFailed",
+        py.get_type::<FeaturesMirrorFailed>(),
+    )?;
     m.add(
         "FeaturesBooleanFailed",
         py.get_type::<FeaturesBooleanFailed>(),
@@ -1299,14 +1293,14 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "OffsetQualityCheckFailed",
         py.get_type::<OffsetQualityCheckFailed>(),
     )?;
-    m.add("OffsetRecoveryFailed", py.get_type::<OffsetRecoveryFailed>())?;
+    m.add(
+        "OffsetRecoveryFailed",
+        py.get_type::<OffsetRecoveryFailed>(),
+    )?;
 
     m.add("SweepKernelError", py.get_type::<SweepKernelError>())?;
     m.add("SweepZeroVector", py.get_type::<SweepZeroVector>())?;
-    m.add(
-        "SweepNonFiniteInput",
-        py.get_type::<SweepNonFiniteInput>(),
-    )?;
+    m.add("SweepNonFiniteInput", py.get_type::<SweepNonFiniteInput>())?;
     m.add(
         "SweepNonPositiveInput",
         py.get_type::<SweepNonPositiveInput>(),
@@ -1337,10 +1331,7 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("SweepModelingError", py.get_type::<SweepModelingError>())?;
 
-    m.add(
-        "StepExchangeError",
-        py.get_type::<StepExchangeError>(),
-    )?;
+    m.add("StepExchangeError", py.get_type::<StepExchangeError>())?;
     m.add("StepIoError", py.get_type::<StepIoError>())?;
     m.add(
         "StepInvalidFormatError",
@@ -1355,10 +1346,7 @@ fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<StepEmptyResultError>(),
     )?;
 
-    m.add(
-        "IgesExchangeError",
-        py.get_type::<IgesExchangeError>(),
-    )?;
+    m.add("IgesExchangeError", py.get_type::<IgesExchangeError>())?;
     m.add("IgesIoError", py.get_type::<IgesIoError>())?;
     m.add(
         "IgesInvalidFormatError",

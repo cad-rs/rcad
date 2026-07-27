@@ -9,7 +9,7 @@
 //! - `ShapeExtend_Explorer`: Extended shape exploration utilities
 
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topods::{self, TShape, ShapeType};
+use rcad_kernel::topods::{self, ShapeType, TShape};
 use rcad_kernel::vertex_indices;
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -34,288 +34,280 @@ use rcad_kernel::vertex_indices;
 /// ```
 #[derive(Debug, Clone)]
 pub struct WireData {
- /// List of (edge_idx, orientation) pairs.
- /// orientation: true = forward, false = reversed.
- edges: Vec<(usize, bool)>,
- /// Cached wire length (sum of edge lengths).
- cached_length: Option<f64>,
- /// Flag indicating if the wire is closed.
- closed: Option<bool>,
+    /// List of (edge_idx, orientation) pairs.
+    /// orientation: true = forward, false = reversed.
+    edges: Vec<(usize, bool)>,
+    /// Cached wire length (sum of edge lengths).
+    cached_length: Option<f64>,
+    /// Flag indicating if the wire is closed.
+    closed: Option<bool>,
 }
 
 impl Default for WireData {
- fn default() -> Self {
- Self::new()
- }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WireData {
- /// Create a new empty wire data.
- pub fn new() -> Self {
- WireData {
- edges: Vec::new(),
- cached_length: None,
- closed: None,
- }
- }
+    /// Create a new empty wire data.
+    pub fn new() -> Self {
+        WireData {
+            edges: Vec::new(),
+            cached_length: None,
+            closed: None,
+        }
+    }
 
- /// Create a wire data with pre-allocated capacity.
- pub fn with_capacity(capacity: usize) -> Self {
- WireData {
- edges: Vec::with_capacity(capacity),
- cached_length: None,
- closed: None,
- }
- }
+    /// Create a wire data with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        WireData {
+            edges: Vec::with_capacity(capacity),
+            cached_length: None,
+            closed: None,
+        }
+    }
 
- /// Add an edge to the end of the wire.
- ///
- /// # Arguments
- /// * `edge_idx` - Index of the edge in the BRep.
- /// * `orientation` - true for forward, false for reversed.
- pub fn add_edge(&mut self, edge_idx: usize, orientation: bool) {
- self.edges.push((edge_idx, orientation));
- self.cached_length = None;
- self.closed = None;
- }
+    /// Add an edge to the end of the wire.
+    ///
+    /// # Arguments
+    /// * `edge_idx` - Index of the edge in the BRep.
+    /// * `orientation` - true for forward, false for reversed.
+    pub fn add_edge(&mut self, edge_idx: usize, orientation: bool) {
+        self.edges.push((edge_idx, orientation));
+        self.cached_length = None;
+        self.closed = None;
+    }
 
- /// Add an edge at a specific position in the wire.
- ///
- /// # Arguments
- /// * `pos` - Position to insert at (0-indexed).
- /// * `edge_idx` - Index of the edge in the BRep.
- /// * `orientation` - true for forward, false for reversed.
- ///
- /// # Panics
- /// Panics if `pos` is greater than the current edge count.
- pub fn add_edge_at(&mut self, pos: usize, edge_idx: usize, orientation: bool) {
- if pos > self.edges.len() {
- panic!(
- "Position {} out of bounds (wire has {} edges)",
- pos,
- self.edges.len()
- );
- }
- self.edges.insert(pos, (edge_idx, orientation));
- self.cached_length = None;
- self.closed = None;
- }
+    /// Add an edge at a specific position in the wire.
+    ///
+    /// # Arguments
+    /// * `pos` - Position to insert at (0-indexed).
+    /// * `edge_idx` - Index of the edge in the BRep.
+    /// * `orientation` - true for forward, false for reversed.
+    ///
+    /// # Panics
+    /// Panics if `pos` is greater than the current edge count.
+    pub fn add_edge_at(&mut self, pos: usize, edge_idx: usize, orientation: bool) {
+        if pos > self.edges.len() {
+            panic!(
+                "Position {} out of bounds (wire has {} edges)",
+                pos,
+                self.edges.len()
+            );
+        }
+        self.edges.insert(pos, (edge_idx, orientation));
+        self.cached_length = None;
+        self.closed = None;
+    }
 
- /// Remove an edge at the specified position.
- ///
- /// # Arguments
- /// * `pos` - Position of the edge to remove (0-indexed).
- ///
- /// # Returns
- /// The removed (edge_idx, orientation) pair.
- ///
- /// # Panics
- /// Panics if `pos` is out of bounds.
- pub fn remove_edge(&mut self, pos: usize) -> (usize, bool) {
- if pos >= self.edges.len() {
- panic!(
- "Position {} out of bounds (wire has {} edges)",
- pos,
- self.edges.len()
- );
- }
- let removed = self.edges.remove(pos);
- self.cached_length = None;
- self.closed = None;
- removed
- }
+    /// Remove an edge at the specified position.
+    ///
+    /// # Arguments
+    /// * `pos` - Position of the edge to remove (0-indexed).
+    ///
+    /// # Returns
+    /// The removed (edge_idx, orientation) pair.
+    ///
+    /// # Panics
+    /// Panics if `pos` is out of bounds.
+    pub fn remove_edge(&mut self, pos: usize) -> (usize, bool) {
+        if pos >= self.edges.len() {
+            panic!(
+                "Position {} out of bounds (wire has {} edges)",
+                pos,
+                self.edges.len()
+            );
+        }
+        let removed = self.edges.remove(pos);
+        self.cached_length = None;
+        self.closed = None;
+        removed
+    }
 
- /// Get the edge at the specified position.
- ///
- /// # Arguments
- /// * `pos` - Position of the edge (0-indexed).
- ///
- /// # Returns
- /// The (edge_idx, orientation) pair, or None if out of bounds.
- pub fn edge_at(&self, pos: usize) -> Option<(usize, bool)> {
- self.edges.get(pos).copied()
- }
+    /// Get the edge at the specified position.
+    ///
+    /// # Arguments
+    /// * `pos` - Position of the edge (0-indexed).
+    ///
+    /// # Returns
+    /// The (edge_idx, orientation) pair, or None if out of bounds.
+    pub fn edge_at(&self, pos: usize) -> Option<(usize, bool)> {
+        self.edges.get(pos).copied()
+    }
 
- /// Get a slice of all edges.
- ///
- /// Returns `&[(edge_idx, orientation)]`.
- pub fn edges(&self) -> &[(usize, bool)] {
- &self.edges
- }
+    /// Get a slice of all edges.
+    ///
+    /// Returns `&[(edge_idx, orientation)]`.
+    pub fn edges(&self) -> &[(usize, bool)] {
+        &self.edges
+    }
 
- /// Get the number of edges in the wire.
- pub fn edge_count(&self) -> usize {
- self.edges.len()
- }
+    /// Get the number of edges in the wire.
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
 
- /// Check if the wire has no edges.
- pub fn is_empty(&self) -> bool {
- self.edges.is_empty()
- }
+    /// Check if the wire has no edges.
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
 
- /// Set the orientation of an edge at the specified position.
- ///
- /// # Arguments
- /// * `pos` - Position of the edge.
- /// * `orientation` - New orientation (true = forward, false = reversed).
- pub fn set_orientation(&mut self, pos: usize, orientation: bool) {
- if pos < self.edges.len() {
- self.edges[pos].1 = orientation;
- self.closed = None;
- }
- }
+    /// Set the orientation of an edge at the specified position.
+    ///
+    /// # Arguments
+    /// * `pos` - Position of the edge.
+    /// * `orientation` - New orientation (true = forward, false = reversed).
+    pub fn set_orientation(&mut self, pos: usize, orientation: bool) {
+        if pos < self.edges.len() {
+            self.edges[pos].1 = orientation;
+            self.closed = None;
+        }
+    }
 
- /// Reverse the orientation of all edges.
- ///
- /// This also reverses the order of edges to maintain wire continuity.
- pub fn reverse(&mut self) {
- self.edges.reverse();
- for edge in &mut self.edges {
- edge.1 = !edge.1;
- }
- self.closed = None;
- }
+    /// Reverse the orientation of all edges.
+    ///
+    /// This also reverses the order of edges to maintain wire continuity.
+    pub fn reverse(&mut self) {
+        self.edges.reverse();
+        for edge in &mut self.edges {
+            edge.1 = !edge.1;
+        }
+        self.closed = None;
+    }
 
- /// Check if the wire forms a closed loop.
- ///
- /// For a wire to be closed, it must have at least one edge
- /// and the edges must form a continuous chain.
- ///
- /// Note: This method returns the cached value if available.
- /// Use `is_closed_with_brep` for accurate checking with topology.
- pub fn is_closed(&self) -> bool {
- self.closed.unwrap_or(!self.edges.is_empty())
- }
+    /// Check if the wire forms a closed loop.
+    ///
+    /// For a wire to be closed, it must have at least one edge
+    /// and the edges must form a continuous chain.
+    ///
+    /// Note: This method returns the cached value if available.
+    /// Use `is_closed_with_brep` for accurate checking with topology.
+    pub fn is_closed(&self) -> bool {
+        self.closed.unwrap_or(!self.edges.is_empty())
+    }
 
- /// Check if the wire is closed using BRep topology.
- ///
- /// # Arguments
- /// * `brep` - The BRep containing the edge topology.
- ///
- /// # Returns
- /// true if the wire forms a closed loop.
- pub fn is_closed_with_brep(&self, brep: &rcad_kernel::BRep) -> bool {
- if self.edges.is_empty() {
- return false;
- }
+    /// Check if the wire is closed using BRep topology.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep containing the edge topology.
+    ///
+    /// # Returns
+    /// true if the wire forms a closed loop.
+    pub fn is_closed_with_brep(&self, brep: &rcad_kernel::BRep) -> bool {
+        if self.edges.is_empty() {
+            return false;
+        }
 
- // Get the first and last vertices
- let first_edge_idx = self.edges[0].0;
- let last_edge_idx = self.edges[self.edges.len() - 1].0;
+        // Get the first and last vertices
+        let first_edge_idx = self.edges[0].0;
+        let last_edge_idx = self.edges[self.edges.len() - 1].0;
 
- let edge_endpoints = |ei: usize| -> Option<(usize, usize)> {
-  let ts = brep.tshapes.get(ei)?;
-  match &**ts {
-   TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
-   _ => None,
-  }
- };
+        let edge_endpoints = |ei: usize| -> Option<(usize, usize)> {
+            let ts = brep.tshapes.get(ei)?;
+            match &**ts {
+                TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+                _ => None,
+            }
+        };
 
- let (first_start, first_end) = match edge_endpoints(first_edge_idx) {
-  Some(ep) => ep,
-  None => return false,
- };
- let (last_start, last_end) = match edge_endpoints(last_edge_idx) {
-  Some(ep) => ep,
-  None => return false,
- };
+        let (first_start, first_end) = match edge_endpoints(first_edge_idx) {
+            Some(ep) => ep,
+            None => return false,
+        };
+        let (last_start, last_end) = match edge_endpoints(last_edge_idx) {
+            Some(ep) => ep,
+            None => return false,
+        };
 
- let first_orient = self.edges[0].1;
- let last_orient = self.edges[self.edges.len() - 1].1;
+        let first_orient = self.edges[0].1;
+        let last_orient = self.edges[self.edges.len() - 1].1;
 
- // First vertex of wire
- let first_vertex = if first_orient {
- first_start
- } else {
- first_end
- };
+        // First vertex of wire
+        let first_vertex = if first_orient { first_start } else { first_end };
 
- // Last vertex of wire
- let last_vertex = if last_orient {
- last_end
- } else {
- last_start
- };
+        // Last vertex of wire
+        let last_vertex = if last_orient { last_end } else { last_start };
 
- first_vertex == last_vertex
- }
+        first_vertex == last_vertex
+    }
 
- /// Compute the total length of the wire.
- ///
- /// For a wire with no edges, returns 0.0.
- /// This is a placeholder that returns edge count * 1.0 for now,
- /// as actual length computation requires curve geometry.
- pub fn length(&self) -> f64 {
- self.cached_length.unwrap_or(0.0)
- }
+    /// Compute the total length of the wire.
+    ///
+    /// For a wire with no edges, returns 0.0.
+    /// This is a placeholder that returns edge count * 1.0 for now,
+    /// as actual length computation requires curve geometry.
+    pub fn length(&self) -> f64 {
+        self.cached_length.unwrap_or(0.0)
+    }
 
- /// Compute the wire length using BRep geometry.
- ///
- /// # Arguments
- /// * `brep` - The BRep containing edge geometry.
- ///
- /// # Returns
- /// The total length of all edges in the wire.
- pub fn length_with_brep(&self, brep: &rcad_kernel::BRep) -> f64 {
- let mut total = 0.0;
+    /// Compute the wire length using BRep geometry.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep containing edge geometry.
+    ///
+    /// # Returns
+    /// The total length of all edges in the wire.
+    pub fn length_with_brep(&self, brep: &rcad_kernel::BRep) -> f64 {
+        let mut total = 0.0;
 
- for &(edge_idx, _orientation) in &self.edges {
- let ts = match brep.tshapes.get(edge_idx) {
-  Some(ts) => ts,
-  None => continue,
- };
- let ed = match &**ts {
-  TShape::Edge(ed) => ed,
-  _ => continue,
- };
+        for &(edge_idx, _orientation) in &self.edges {
+            let ts = match brep.tshapes.get(edge_idx) {
+                Some(ts) => ts,
+                None => continue,
+            };
+            let ed = match &**ts {
+                TShape::Edge(ed) => ed,
+                _ => continue,
+            };
 
- // Try to get curve bounds from edge data
- if let Some(ref curve) = ed.curve {
-  let range = ed.range;
-  // Approximate length by sampling
-  let steps = 10;
-  let du = (range[1] - range[0]) / steps as f64;
-  for i in 0..steps {
-   let u = range[0] + du * i as f64;
-   let u_next = range[0] + du * (i + 1) as f64;
-   let p1 = curve.point_at(u);
-   let p2 = curve.point_at(u_next);
-   total += (p2 - p1).length();
-  }
- }
- }
+            // Try to get curve bounds from edge data
+            if let Some(ref curve) = ed.curve {
+                let range = ed.range;
+                // Approximate length by sampling
+                let steps = 10;
+                let du = (range[1] - range[0]) / steps as f64;
+                for i in 0..steps {
+                    let u = range[0] + du * i as f64;
+                    let u_next = range[0] + du * (i + 1) as f64;
+                    let p1 = curve.point_at(u);
+                    let p2 = curve.point_at(u_next);
+                    total += (p2 - p1).length();
+                }
+            }
+        }
 
- total
- }
+        total
+    }
 
- /// Clear all edges from the wire.
- pub fn clear(&mut self) {
- self.edges.clear();
- self.cached_length = None;
- self.closed = None;
- }
+    /// Clear all edges from the wire.
+    pub fn clear(&mut self) {
+        self.edges.clear();
+        self.cached_length = None;
+        self.closed = None;
+    }
 
- /// Check if the wire contains a specific edge.
- ///
- /// # Arguments
- /// * `edge_idx` - Edge index to search for.
- ///
- /// # Returns
- /// true if the edge is in the wire.
- pub fn contains_edge(&self, edge_idx: usize) -> bool {
- self.edges.iter().any(|(idx, _)| *idx == edge_idx)
- }
+    /// Check if the wire contains a specific edge.
+    ///
+    /// # Arguments
+    /// * `edge_idx` - Edge index to search for.
+    ///
+    /// # Returns
+    /// true if the edge is in the wire.
+    pub fn contains_edge(&self, edge_idx: usize) -> bool {
+        self.edges.iter().any(|(idx, _)| *idx == edge_idx)
+    }
 
- /// Find the position of an edge in the wire.
- ///
- /// # Arguments
- /// * `edge_idx` - Edge index to search for.
- ///
- /// # Returns
- /// The position of the edge, or None if not found.
- pub fn find_edge(&self, edge_idx: usize) -> Option<usize> {
- self.edges.iter().position(|(idx, _)| *idx == edge_idx)
- }
+    /// Find the position of an edge in the wire.
+    ///
+    /// # Arguments
+    /// * `edge_idx` - Edge index to search for.
+    ///
+    /// # Returns
+    /// The position of the edge, or None if not found.
+    pub fn find_edge(&self, edge_idx: usize) -> Option<usize> {
+        self.edges.iter().position(|(idx, _)| *idx == edge_idx)
+    }
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -325,12 +317,12 @@ impl WireData {
 /// A patch in a composite surface.
 #[derive(Debug, Clone)]
 struct SurfacePatch {
- /// The surface geometry.
- surface: Surface3,
- /// U parameter range for this patch.
- u_range: [f64; 2],
- /// V parameter range for this patch.
- v_range: [f64; 2],
+    /// The surface geometry.
+    surface: Surface3,
+    /// U parameter range for this patch.
+    u_range: [f64; 2],
+    /// V parameter range for this patch.
+    v_range: [f64; 2],
 }
 
 /// Composite surface made of multiple surface patches.
@@ -353,167 +345,173 @@ struct SurfacePatch {
 /// ```
 #[derive(Debug, Clone)]
 pub struct CompositeSurface {
- /// List of surface patches.
- patches: Vec<SurfacePatch>,
- /// Global U range.
- u_range: [f64; 2],
- /// Global V range.
- v_range: [f64; 2],
+    /// List of surface patches.
+    patches: Vec<SurfacePatch>,
+    /// Global U range.
+    u_range: [f64; 2],
+    /// Global V range.
+    v_range: [f64; 2],
 }
 
 impl Default for CompositeSurface {
- fn default() -> Self {
- Self::new()
- }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CompositeSurface {
- /// Create a new empty composite surface.
- pub fn new() -> Self {
- CompositeSurface {
- patches: Vec::new(),
- u_range: [0.0, 0.0],
- v_range: [0.0, 0.0],
- }
- }
+    /// Create a new empty composite surface.
+    pub fn new() -> Self {
+        CompositeSurface {
+            patches: Vec::new(),
+            u_range: [0.0, 0.0],
+            v_range: [0.0, 0.0],
+        }
+    }
 
- /// Create a composite surface with pre-allocated capacity.
- pub fn with_capacity(capacity: usize) -> Self {
- CompositeSurface {
- patches: Vec::with_capacity(capacity),
- u_range: [0.0, 0.0],
- v_range: [0.0, 0.0],
- }
- }
+    /// Create a composite surface with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        CompositeSurface {
+            patches: Vec::with_capacity(capacity),
+            u_range: [0.0, 0.0],
+            v_range: [0.0, 0.0],
+        }
+    }
 
- /// Add a surface patch to the composite.
- ///
- /// # Arguments
- /// * `surface` - The surface geometry.
- /// * `u_range` - U parameter range [u_min, u_max].
- /// * `v_range` - V parameter range [v_min, v_max].
- pub fn add_surface(&mut self, surface: Surface3, u_range: [f64; 2], v_range: [f64; 2]) {
- // Update global range
- if self.patches.is_empty() {
- self.u_range = u_range;
- self.v_range = v_range;
- } else {
- self.u_range[0] = self.u_range[0].min(u_range[0]);
- self.u_range[1] = self.u_range[1].max(u_range[1]);
- self.v_range[0] = self.v_range[0].min(v_range[0]);
- self.v_range[1] = self.v_range[1].max(v_range[1]);
- }
+    /// Add a surface patch to the composite.
+    ///
+    /// # Arguments
+    /// * `surface` - The surface geometry.
+    /// * `u_range` - U parameter range [u_min, u_max].
+    /// * `v_range` - V parameter range [v_min, v_max].
+    pub fn add_surface(&mut self, surface: Surface3, u_range: [f64; 2], v_range: [f64; 2]) {
+        // Update global range
+        if self.patches.is_empty() {
+            self.u_range = u_range;
+            self.v_range = v_range;
+        } else {
+            self.u_range[0] = self.u_range[0].min(u_range[0]);
+            self.u_range[1] = self.u_range[1].max(u_range[1]);
+            self.v_range[0] = self.v_range[0].min(v_range[0]);
+            self.v_range[1] = self.v_range[1].max(v_range[1]);
+        }
 
- self.patches.push(SurfacePatch {
- surface,
- u_range,
- v_range,
- });
- }
+        self.patches.push(SurfacePatch {
+            surface,
+            u_range,
+            v_range,
+        });
+    }
 
- /// Get the number of surface patches.
- pub fn patch_count(&self) -> usize {
- self.patches.len()
- }
+    /// Get the number of surface patches.
+    pub fn patch_count(&self) -> usize {
+        self.patches.len()
+    }
 
- /// Check if the composite has no patches.
- pub fn is_empty(&self) -> bool {
- self.patches.is_empty()
- }
+    /// Check if the composite has no patches.
+    pub fn is_empty(&self) -> bool {
+        self.patches.is_empty()
+    }
 
- /// Get the global U parameter range.
- pub fn global_u_range(&self) -> [f64; 2] {
- self.u_range
- }
+    /// Get the global U parameter range.
+    pub fn global_u_range(&self) -> [f64; 2] {
+        self.u_range
+    }
 
- /// Get the global V parameter range.
- pub fn global_v_range(&self) -> [f64; 2] {
- self.v_range
- }
+    /// Get the global V parameter range.
+    pub fn global_v_range(&self) -> [f64; 2] {
+        self.v_range
+    }
 
- /// Get the surface patch at the given global parameters.
- ///
- /// # Arguments
- /// * `u` - Global U parameter.
- /// * `v` - Global V parameter.
- ///
- /// # Returns
- /// Reference to the surface containing the given parameters, or None.
- pub fn surface_at(&self, u: f64, v: f64) -> Option<&Surface3> {
- for patch in &self.patches {
- if u >= patch.u_range[0] && u <= patch.u_range[1]
- && v >= patch.v_range[0] && v <= patch.v_range[1]
- {
- return Some(&patch.surface);
- }
- }
- None
- }
+    /// Get the surface patch at the given global parameters.
+    ///
+    /// # Arguments
+    /// * `u` - Global U parameter.
+    /// * `v` - Global V parameter.
+    ///
+    /// # Returns
+    /// Reference to the surface containing the given parameters, or None.
+    pub fn surface_at(&self, u: f64, v: f64) -> Option<&Surface3> {
+        for patch in &self.patches {
+            if u >= patch.u_range[0]
+                && u <= patch.u_range[1]
+                && v >= patch.v_range[0]
+                && v <= patch.v_range[1]
+            {
+                return Some(&patch.surface);
+            }
+        }
+        None
+    }
 
- /// Convert global parameters to local patch parameters.
- ///
- /// # Arguments
- /// * `u` - Global U parameter.
- /// * `v` - Global V parameter.
- ///
- /// # Returns
- /// A tuple (patch_index, local_u, local_v), or (0, u, v) if no patch found.
- pub fn local_params(&self, u: f64, v: f64) -> (usize, f64, f64) {
- for (idx, patch) in self.patches.iter().enumerate() {
- if u >= patch.u_range[0] && u <= patch.u_range[1]
- && v >= patch.v_range[0] && v <= patch.v_range[1]
- {
- // Map global params to local params (identity for now)
- // In a real implementation, this would apply a transformation
- let local_u = (u - patch.u_range[0]) / (patch.u_range[1] - patch.u_range[0]);
- let local_v = (v - patch.v_range[0]) / (patch.v_range[1] - patch.v_range[0]);
- return (idx, local_u, local_v);
- }
- }
- (0, u, v)
- }
+    /// Convert global parameters to local patch parameters.
+    ///
+    /// # Arguments
+    /// * `u` - Global U parameter.
+    /// * `v` - Global V parameter.
+    ///
+    /// # Returns
+    /// A tuple (patch_index, local_u, local_v), or (0, u, v) if no patch found.
+    pub fn local_params(&self, u: f64, v: f64) -> (usize, f64, f64) {
+        for (idx, patch) in self.patches.iter().enumerate() {
+            if u >= patch.u_range[0]
+                && u <= patch.u_range[1]
+                && v >= patch.v_range[0]
+                && v <= patch.v_range[1]
+            {
+                // Map global params to local params (identity for now)
+                // In a real implementation, this would apply a transformation
+                let local_u = (u - patch.u_range[0]) / (patch.u_range[1] - patch.u_range[0]);
+                let local_v = (v - patch.v_range[0]) / (patch.v_range[1] - patch.v_range[0]);
+                return (idx, local_u, local_v);
+            }
+        }
+        (0, u, v)
+    }
 
- /// Get a patch by index.
- ///
- /// # Arguments
- /// * `idx` - Patch index.
- ///
- /// # Returns
- /// The patch surface and ranges, or None if out of bounds.
- pub fn patch(&self, idx: usize) -> Option<(&Surface3, [f64; 2], [f64; 2])> {
- self.patches.get(idx).map(|p| (&p.surface, p.u_range, p.v_range))
- }
+    /// Get a patch by index.
+    ///
+    /// # Arguments
+    /// * `idx` - Patch index.
+    ///
+    /// # Returns
+    /// The patch surface and ranges, or None if out of bounds.
+    pub fn patch(&self, idx: usize) -> Option<(&Surface3, [f64; 2], [f64; 2])> {
+        self.patches
+            .get(idx)
+            .map(|p| (&p.surface, p.u_range, p.v_range))
+    }
 
- /// Evaluate the composite surface at the given parameters.
- ///
- /// # Arguments
- /// * `u` - Global U parameter.
- /// * `v` - Global V parameter.
- ///
- /// # Returns
- /// The point on the surface, or None if parameters are outside all patches.
- pub fn point_at(&self, u: f64, v: f64) -> Option<glam::DVec3> {
- self.surface_at(u, v).map(|surf| surf.point_at(u, v))
- }
+    /// Evaluate the composite surface at the given parameters.
+    ///
+    /// # Arguments
+    /// * `u` - Global U parameter.
+    /// * `v` - Global V parameter.
+    ///
+    /// # Returns
+    /// The point on the surface, or None if parameters are outside all patches.
+    pub fn point_at(&self, u: f64, v: f64) -> Option<glam::DVec3> {
+        self.surface_at(u, v).map(|surf| surf.point_at(u, v))
+    }
 
- /// Evaluate the normal at the given parameters.
- ///
- /// # Arguments
- /// * `u` - Global U parameter.
- /// * `v` - Global V parameter.
- ///
- /// # Returns
- /// The normal vector, or None if parameters are outside all patches.
- pub fn normal_at(&self, u: f64, v: f64) -> Option<glam::DVec3> {
- self.surface_at(u, v).map(|surf| surf.normal_at(u, v))
- }
+    /// Evaluate the normal at the given parameters.
+    ///
+    /// # Arguments
+    /// * `u` - Global U parameter.
+    /// * `v` - Global V parameter.
+    ///
+    /// # Returns
+    /// The normal vector, or None if parameters are outside all patches.
+    pub fn normal_at(&self, u: f64, v: f64) -> Option<glam::DVec3> {
+        self.surface_at(u, v).map(|surf| surf.normal_at(u, v))
+    }
 
- /// Clear all patches from the composite surface.
- pub fn clear(&mut self) {
- self.patches.clear();
- self.u_range = [0.0, 0.0];
- self.v_range = [0.0, 0.0];
- }
+    /// Clear all patches from the composite surface.
+    pub fn clear(&mut self) {
+        self.patches.clear();
+        self.u_range = [0.0, 0.0];
+        self.v_range = [0.0, 0.0];
+    }
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -523,64 +521,64 @@ impl CompositeSurface {
 /// Message severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageSeverity {
- /// Informational message.
- Info,
- /// Warning message.
- Warning,
- /// Error message.
- Error,
- /// Failure message (operation failed).
- Fail,
+    /// Informational message.
+    Info,
+    /// Warning message.
+    Warning,
+    /// Error message.
+    Error,
+    /// Failure message (operation failed).
+    Fail,
 }
 
 impl std::fmt::Display for MessageSeverity {
- fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
- match self {
- MessageSeverity::Info => write!(f, "Info"),
- MessageSeverity::Warning => write!(f, "Warning"),
- MessageSeverity::Error => write!(f, "Error"),
- MessageSeverity::Fail => write!(f, "Fail"),
- }
- }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MessageSeverity::Info => write!(f, "Info"),
+            MessageSeverity::Warning => write!(f, "Warning"),
+            MessageSeverity::Error => write!(f, "Error"),
+            MessageSeverity::Fail => write!(f, "Fail"),
+        }
+    }
 }
 
 /// A registered message with severity.
 #[derive(Debug, Clone)]
 pub struct ShapeMessage {
- /// The message text.
- pub message: String,
- /// The message severity.
- pub severity: MessageSeverity,
+    /// The message text.
+    pub message: String,
+    /// The message severity.
+    pub severity: MessageSeverity,
 }
 
 impl ShapeMessage {
- /// Create a new shape message.
- pub fn new(message: impl Into<String>, severity: MessageSeverity) -> Self {
- ShapeMessage {
- message: message.into(),
- severity,
- }
- }
+    /// Create a new shape message.
+    pub fn new(message: impl Into<String>, severity: MessageSeverity) -> Self {
+        ShapeMessage {
+            message: message.into(),
+            severity,
+        }
+    }
 
- /// Create an informational message.
- pub fn info(message: impl Into<String>) -> Self {
- Self::new(message, MessageSeverity::Info)
- }
+    /// Create an informational message.
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSeverity::Info)
+    }
 
- /// Create a warning message.
- pub fn warning(message: impl Into<String>) -> Self {
- Self::new(message, MessageSeverity::Warning)
- }
+    /// Create a warning message.
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSeverity::Warning)
+    }
 
- /// Create an error message.
- pub fn error(message: impl Into<String>) -> Self {
- Self::new(message, MessageSeverity::Error)
- }
+    /// Create an error message.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSeverity::Error)
+    }
 
- /// Create a failure message.
- pub fn fail(message: impl Into<String>) -> Self {
- Self::new(message, MessageSeverity::Fail)
- }
+    /// Create a failure message.
+    pub fn fail(message: impl Into<String>) -> Self {
+        Self::new(message, MessageSeverity::Fail)
+    }
 }
 
 /// Basic message registrator for collecting messages.
@@ -600,112 +598,120 @@ impl ShapeMessage {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct MessageRegistrator {
- /// List of registered messages.
- messages: Vec<ShapeMessage>,
+    /// List of registered messages.
+    messages: Vec<ShapeMessage>,
 }
 
 impl MessageRegistrator {
- /// Create a new empty message registrator.
- pub fn new() -> Self {
- MessageRegistrator {
- messages: Vec::new(),
- }
- }
+    /// Create a new empty message registrator.
+    pub fn new() -> Self {
+        MessageRegistrator {
+            messages: Vec::new(),
+        }
+    }
 
- /// Create a registrator with pre-allocated capacity.
- pub fn with_capacity(capacity: usize) -> Self {
- MessageRegistrator {
- messages: Vec::with_capacity(capacity),
- }
- }
+    /// Create a registrator with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        MessageRegistrator {
+            messages: Vec::with_capacity(capacity),
+        }
+    }
 
- /// Add a message with the given severity.
- ///
- /// # Arguments
- /// * `msg` - The message text.
- /// * `severity` - The message severity.
- pub fn add_message(&mut self, msg: impl Into<String>, severity: MessageSeverity) {
- self.messages.push(ShapeMessage::new(msg, severity));
- }
+    /// Add a message with the given severity.
+    ///
+    /// # Arguments
+    /// * `msg` - The message text.
+    /// * `severity` - The message severity.
+    pub fn add_message(&mut self, msg: impl Into<String>, severity: MessageSeverity) {
+        self.messages.push(ShapeMessage::new(msg, severity));
+    }
 
- /// Add an informational message.
- pub fn add_info(&mut self, msg: impl Into<String>) {
- self.add_message(msg, MessageSeverity::Info);
- }
+    /// Add an informational message.
+    pub fn add_info(&mut self, msg: impl Into<String>) {
+        self.add_message(msg, MessageSeverity::Info);
+    }
 
- /// Add a warning message.
- pub fn add_warning(&mut self, msg: impl Into<String>) {
- self.add_message(msg, MessageSeverity::Warning);
- }
+    /// Add a warning message.
+    pub fn add_warning(&mut self, msg: impl Into<String>) {
+        self.add_message(msg, MessageSeverity::Warning);
+    }
 
- /// Add an error message.
- pub fn add_error(&mut self, msg: impl Into<String>) {
- self.add_message(msg, MessageSeverity::Error);
- }
+    /// Add an error message.
+    pub fn add_error(&mut self, msg: impl Into<String>) {
+        self.add_message(msg, MessageSeverity::Error);
+    }
 
- /// Add a failure message.
- pub fn add_fail(&mut self, msg: impl Into<String>) {
- self.add_message(msg, MessageSeverity::Fail);
- }
+    /// Add a failure message.
+    pub fn add_fail(&mut self, msg: impl Into<String>) {
+        self.add_message(msg, MessageSeverity::Fail);
+    }
 
- /// Get all registered messages.
- pub fn messages(&self) -> &[ShapeMessage] {
- &self.messages
- }
+    /// Get all registered messages.
+    pub fn messages(&self) -> &[ShapeMessage] {
+        &self.messages
+    }
 
- /// Get the number of messages.
- pub fn message_count(&self) -> usize {
- self.messages.len()
- }
+    /// Get the number of messages.
+    pub fn message_count(&self) -> usize {
+        self.messages.len()
+    }
 
- /// Check if there are no messages.
- pub fn is_empty(&self) -> bool {
- self.messages.is_empty()
- }
+    /// Check if there are no messages.
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
 
- /// Get messages of a specific severity.
- ///
- /// # Arguments
- /// * `severity` - The severity to filter by.
- ///
- /// # Returns
- /// Vector of messages with the given severity.
- pub fn messages_by_severity(&self, severity: MessageSeverity) -> Vec<&ShapeMessage> {
- self.messages.iter().filter(|m| m.severity == severity).collect()
- }
+    /// Get messages of a specific severity.
+    ///
+    /// # Arguments
+    /// * `severity` - The severity to filter by.
+    ///
+    /// # Returns
+    /// Vector of messages with the given severity.
+    pub fn messages_by_severity(&self, severity: MessageSeverity) -> Vec<&ShapeMessage> {
+        self.messages
+            .iter()
+            .filter(|m| m.severity == severity)
+            .collect()
+    }
 
- /// Count messages of a specific severity.
- ///
- /// # Arguments
- /// * `severity` - The severity to count.
- ///
- /// # Returns
- /// Number of messages with the given severity.
- pub fn count_by_severity(&self, severity: MessageSeverity) -> usize {
- self.messages.iter().filter(|m| m.severity == severity).count()
- }
+    /// Count messages of a specific severity.
+    ///
+    /// # Arguments
+    /// * `severity` - The severity to count.
+    ///
+    /// # Returns
+    /// Number of messages with the given severity.
+    pub fn count_by_severity(&self, severity: MessageSeverity) -> usize {
+        self.messages
+            .iter()
+            .filter(|m| m.severity == severity)
+            .count()
+    }
 
- /// Check if there are any errors or failures.
- pub fn has_errors(&self) -> bool {
- self.messages.iter().any(|m| {
- m.severity == MessageSeverity::Error || m.severity == MessageSeverity::Fail
- })
- }
+    /// Check if there are any errors or failures.
+    pub fn has_errors(&self) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.severity == MessageSeverity::Error || m.severity == MessageSeverity::Fail)
+    }
 
- /// Check if there are any warnings.
- pub fn has_warnings(&self) -> bool {
- self.messages.iter().any(|m| m.severity == MessageSeverity::Warning)
- }
+    /// Check if there are any warnings.
+    pub fn has_warnings(&self) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.severity == MessageSeverity::Warning)
+    }
 
- /// Clear all messages.
- pub fn clear(&mut self) {
- self.messages.clear();
- }
+    /// Clear all messages.
+    pub fn clear(&mut self) {
+        self.messages.clear();
+    }
 
- /// Merge messages from another registrator.
- pub fn merge(&mut self, other: &MessageRegistrator) {
- self.messages.extend(other.messages.clone());
- }
+    /// Merge messages from another registrator.
+    pub fn merge(&mut self, other: &MessageRegistrator) {
+        self.messages.extend(other.messages.clone());
+    }
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -715,10 +721,10 @@ impl MessageRegistrator {
 /// A message associated with a shape index.
 #[derive(Debug, Clone)]
 pub struct ShapeContextMessage {
- /// The shape index the message is associated with.
- pub shape_idx: usize,
- /// The message.
- pub message: ShapeMessage,
+    /// The shape index the message is associated with.
+    pub shape_idx: usize,
+    /// The message.
+    pub message: ShapeMessage,
 }
 
 /// Message registrator with shape context.
@@ -738,132 +744,144 @@ pub struct ShapeContextMessage {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct ShapeMessageRegistrator {
- /// List of messages with shape context.
- messages: Vec<ShapeContextMessage>,
+    /// List of messages with shape context.
+    messages: Vec<ShapeContextMessage>,
 }
 
 impl ShapeMessageRegistrator {
- /// Create a new empty shape message registrator.
- pub fn new() -> Self {
- ShapeMessageRegistrator {
- messages: Vec::new(),
- }
- }
+    /// Create a new empty shape message registrator.
+    pub fn new() -> Self {
+        ShapeMessageRegistrator {
+            messages: Vec::new(),
+        }
+    }
 
- /// Create a registrator with pre-allocated capacity.
- pub fn with_capacity(capacity: usize) -> Self {
- ShapeMessageRegistrator {
- messages: Vec::with_capacity(capacity),
- }
- }
+    /// Create a registrator with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        ShapeMessageRegistrator {
+            messages: Vec::with_capacity(capacity),
+        }
+    }
 
- /// Add a message associated with a shape.
- ///
- /// # Arguments
- /// * `shape_idx` - Index of the shape the message is about.
- /// * `msg` - The message text.
- /// * `severity` - The message severity.
- pub fn add_shape_message(&mut self, shape_idx: usize, msg: impl Into<String>, severity: MessageSeverity) {
- self.messages.push(ShapeContextMessage {
- shape_idx,
- message: ShapeMessage::new(msg, severity),
- });
- }
+    /// Add a message associated with a shape.
+    ///
+    /// # Arguments
+    /// * `shape_idx` - Index of the shape the message is about.
+    /// * `msg` - The message text.
+    /// * `severity` - The message severity.
+    pub fn add_shape_message(
+        &mut self,
+        shape_idx: usize,
+        msg: impl Into<String>,
+        severity: MessageSeverity,
+    ) {
+        self.messages.push(ShapeContextMessage {
+            shape_idx,
+            message: ShapeMessage::new(msg, severity),
+        });
+    }
 
- /// Add an informational message for a shape.
- pub fn add_info(&mut self, shape_idx: usize, msg: impl Into<String>) {
- self.add_shape_message(shape_idx, msg, MessageSeverity::Info);
- }
+    /// Add an informational message for a shape.
+    pub fn add_info(&mut self, shape_idx: usize, msg: impl Into<String>) {
+        self.add_shape_message(shape_idx, msg, MessageSeverity::Info);
+    }
 
- /// Add a warning message for a shape.
- pub fn add_warning(&mut self, shape_idx: usize, msg: impl Into<String>) {
- self.add_shape_message(shape_idx, msg, MessageSeverity::Warning);
- }
+    /// Add a warning message for a shape.
+    pub fn add_warning(&mut self, shape_idx: usize, msg: impl Into<String>) {
+        self.add_shape_message(shape_idx, msg, MessageSeverity::Warning);
+    }
 
- /// Add an error message for a shape.
- pub fn add_error(&mut self, shape_idx: usize, msg: impl Into<String>) {
- self.add_shape_message(shape_idx, msg, MessageSeverity::Error);
- }
+    /// Add an error message for a shape.
+    pub fn add_error(&mut self, shape_idx: usize, msg: impl Into<String>) {
+        self.add_shape_message(shape_idx, msg, MessageSeverity::Error);
+    }
 
- /// Add a failure message for a shape.
- pub fn add_fail(&mut self, shape_idx: usize, msg: impl Into<String>) {
- self.add_shape_message(shape_idx, msg, MessageSeverity::Fail);
- }
+    /// Add a failure message for a shape.
+    pub fn add_fail(&mut self, shape_idx: usize, msg: impl Into<String>) {
+        self.add_shape_message(shape_idx, msg, MessageSeverity::Fail);
+    }
 
- /// Get all messages with shape context.
- pub fn messages(&self) -> &[ShapeContextMessage] {
- &self.messages
- }
+    /// Get all messages with shape context.
+    pub fn messages(&self) -> &[ShapeContextMessage] {
+        &self.messages
+    }
 
- /// Get the number of messages.
- pub fn message_count(&self) -> usize {
- self.messages.len()
- }
+    /// Get the number of messages.
+    pub fn message_count(&self) -> usize {
+        self.messages.len()
+    }
 
- /// Check if there are no messages.
- pub fn is_empty(&self) -> bool {
- self.messages.is_empty()
- }
+    /// Check if there are no messages.
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
 
- /// Get all messages for a specific shape.
- ///
- /// # Arguments
- /// * `shape_idx` - The shape index to filter by.
- ///
- /// # Returns
- /// Vector of messages for the given shape.
- pub fn messages_for_shape(&self, shape_idx: usize) -> Vec<&ShapeContextMessage> {
- self.messages.iter().filter(|m| m.shape_idx == shape_idx).collect()
- }
+    /// Get all messages for a specific shape.
+    ///
+    /// # Arguments
+    /// * `shape_idx` - The shape index to filter by.
+    ///
+    /// # Returns
+    /// Vector of messages for the given shape.
+    pub fn messages_for_shape(&self, shape_idx: usize) -> Vec<&ShapeContextMessage> {
+        self.messages
+            .iter()
+            .filter(|m| m.shape_idx == shape_idx)
+            .collect()
+    }
 
- /// Get all shapes that have messages of a specific severity.
- ///
- /// # Arguments
- /// * `severity` - The severity to filter by.
- ///
- /// # Returns
- /// Vector of shape indices with messages of the given severity.
- pub fn shapes_with_severity(&self, severity: MessageSeverity) -> Vec<usize> {
- let mut shapes: Vec<usize> = self.messages
- .iter()
- .filter(|m| m.message.severity == severity)
- .map(|m| m.shape_idx)
- .collect();
- shapes.sort();
- shapes.dedup();
- shapes
- }
+    /// Get all shapes that have messages of a specific severity.
+    ///
+    /// # Arguments
+    /// * `severity` - The severity to filter by.
+    ///
+    /// # Returns
+    /// Vector of shape indices with messages of the given severity.
+    pub fn shapes_with_severity(&self, severity: MessageSeverity) -> Vec<usize> {
+        let mut shapes: Vec<usize> = self
+            .messages
+            .iter()
+            .filter(|m| m.message.severity == severity)
+            .map(|m| m.shape_idx)
+            .collect();
+        shapes.sort();
+        shapes.dedup();
+        shapes
+    }
 
- /// Check if there are any errors or failures.
- pub fn has_errors(&self) -> bool {
- self.messages.iter().any(|m| {
- m.message.severity == MessageSeverity::Error || m.message.severity == MessageSeverity::Fail
- })
- }
+    /// Check if there are any errors or failures.
+    pub fn has_errors(&self) -> bool {
+        self.messages.iter().any(|m| {
+            m.message.severity == MessageSeverity::Error
+                || m.message.severity == MessageSeverity::Fail
+        })
+    }
 
- /// Check if there are any warnings.
- pub fn has_warnings(&self) -> bool {
- self.messages.iter().any(|m| m.message.severity == MessageSeverity::Warning)
- }
+    /// Check if there are any warnings.
+    pub fn has_warnings(&self) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.message.severity == MessageSeverity::Warning)
+    }
 
- /// Clear all messages.
- pub fn clear(&mut self) {
- self.messages.clear();
- }
+    /// Clear all messages.
+    pub fn clear(&mut self) {
+        self.messages.clear();
+    }
 
- /// Merge messages from another registrator.
- pub fn merge(&mut self, other: &ShapeMessageRegistrator) {
- self.messages.extend(other.messages.clone());
- }
+    /// Merge messages from another registrator.
+    pub fn merge(&mut self, other: &ShapeMessageRegistrator) {
+        self.messages.extend(other.messages.clone());
+    }
 
- /// Convert to a basic message registrator (without shape context).
- pub fn to_basic(&self) -> MessageRegistrator {
- let mut basic = MessageRegistrator::with_capacity(self.messages.len());
- for msg in &self.messages {
- basic.add_message(msg.message.message.clone(), msg.message.severity);
- }
- basic
- }
+    /// Convert to a basic message registrator (without shape context).
+    pub fn to_basic(&self) -> MessageRegistrator {
+        let mut basic = MessageRegistrator::with_capacity(self.messages.len());
+        for msg in &self.messages {
+            basic.add_message(msg.message.message.clone(), msg.message.severity);
+        }
+        basic
+    }
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -877,194 +895,224 @@ impl ShapeMessageRegistrator {
 pub struct ShapeExplorer;
 
 impl ShapeExplorer {
- /// Helper to collect edge indices from a face's wires.
- fn face_edge_indices(brep: &rcad_kernel::BRep, face_ref: topods::ShapeRef) -> Vec<usize> {
-  let mut indices = Vec::new();
-  let fd = match brep.tshapes.get(face_ref.index) {
-   Some(ts) => match &**ts { TShape::Face(fd) => fd, _ => return indices },
-   None => return indices,
-  };
-  // Collect from outer wire
-  if let Some(wd) = brep.tshapes.get(fd.outer_wire.index).and_then(|ts| match &**ts { TShape::Wire(wd) => Some(wd), _ => None }) {
-   for er in &wd.edges { indices.push(er.index); }
-  }
-  // Collect from inner wires
-  for iw in &fd.inner_wires {
-   if let Some(wd) = brep.tshapes.get(iw.index).and_then(|ts| match &**ts { TShape::Wire(wd) => Some(wd), _ => None }) {
-    for er in &wd.edges { indices.push(er.index); }
-   }
-  }
-  indices
- }
-
- /// Count subshapes of a given type in a BRep.
- ///
- /// # Arguments
- /// * `brep` - The BRep to analyze.
- /// * `shape_type` - The type of shape to count.
- ///
- /// # Returns
- /// Number of shapes of the given type.
- pub fn count_subshapes(brep: &rcad_kernel::BRep, shape_type: ShapeType) -> usize {
-  match shape_type {
-  ShapeType::Vertex => brep.nb_vertices(),
-  ShapeType::Edge => brep.nb_edges(),
-  ShapeType::Wire => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Wire(_))).count(),
-  ShapeType::Face => brep.face_count(),
-  ShapeType::Shell => brep.nb_shells(),
-  ShapeType::Solid => brep.solid_count(),
-  ShapeType::CompSolid => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::CompSolid(_))).count(),
-  ShapeType::Compound => brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Compound(_))).count(),
-  ShapeType::Shape => 1,
-  }
- }
-
- /// Get all unique edge indices in the BRep.
- ///
- /// # Arguments
- /// * `brep` - The BRep to explore.
- ///
- /// # Returns
- /// Vector of all edge indices referenced in wires.
- pub fn all_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
-  let mut edges: Vec<usize> = Vec::new();
-  for ts in &brep.tshapes {
-   if let TShape::Wire(wd) = ts.as_ref() {
-    for er in &wd.edges {
-     edges.push(er.index);
+    /// Helper to collect edge indices from a face's wires.
+    fn face_edge_indices(brep: &rcad_kernel::BRep, face_ref: topods::ShapeRef) -> Vec<usize> {
+        let mut indices = Vec::new();
+        let fd = match brep.tshapes.get(face_ref.index) {
+            Some(ts) => match &**ts {
+                TShape::Face(fd) => fd,
+                _ => return indices,
+            },
+            None => return indices,
+        };
+        // Collect from outer wire
+        if let Some(wd) = brep
+            .tshapes
+            .get(fd.outer_wire.index)
+            .and_then(|ts| match &**ts {
+                TShape::Wire(wd) => Some(wd),
+                _ => None,
+            })
+        {
+            for er in &wd.edges {
+                indices.push(er.index);
+            }
+        }
+        // Collect from inner wires
+        for iw in &fd.inner_wires {
+            if let Some(wd) = brep.tshapes.get(iw.index).and_then(|ts| match &**ts {
+                TShape::Wire(wd) => Some(wd),
+                _ => None,
+            }) {
+                for er in &wd.edges {
+                    indices.push(er.index);
+                }
+            }
+        }
+        indices
     }
-   }
-  }
-  edges.sort();
-  edges.dedup();
-  edges
- }
 
- /// Get all unique vertex indices in the BRep.
- ///
- /// # Arguments
- /// * `brep` - The BRep to explore.
- ///
- /// # Returns
- /// Vector of all vertex indices used by edges.
- pub fn all_vertices(brep: &rcad_kernel::BRep) -> Vec<usize> {
-  vertex_indices(brep)
- }
-
- /// Find faces that share a given edge.
- ///
- /// # Arguments
- /// * `brep` - The BRep to search.
- /// * `edge_idx` - The edge index to find sharing faces for.
- ///
- /// # Returns
- /// Vector of face indices (0-based global face index) that reference the given edge.
- pub fn faces_sharing_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
-  let mut faces = Vec::new();
-  let mut face_counter = 0;
-  for ts in &brep.tshapes {
-   if let TShape::Face(fd) = ts.as_ref() {
-    let has_edge = Self::face_edge_indices(brep, topods::ShapeRef::synthetic(fd.outer_wire.index))
-     .contains(&edge_idx);
-    if has_edge {
-     faces.push(face_counter);
+    /// Count subshapes of a given type in a BRep.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to analyze.
+    /// * `shape_type` - The type of shape to count.
+    ///
+    /// # Returns
+    /// Number of shapes of the given type.
+    pub fn count_subshapes(brep: &rcad_kernel::BRep, shape_type: ShapeType) -> usize {
+        match shape_type {
+            ShapeType::Vertex => brep.nb_vertices(),
+            ShapeType::Edge => brep.nb_edges(),
+            ShapeType::Wire => brep
+                .tshapes
+                .iter()
+                .filter(|ts| matches!(ts.as_ref(), TShape::Wire(_)))
+                .count(),
+            ShapeType::Face => brep.face_count(),
+            ShapeType::Shell => brep.nb_shells(),
+            ShapeType::Solid => brep.solid_count(),
+            ShapeType::CompSolid => brep
+                .tshapes
+                .iter()
+                .filter(|ts| matches!(ts.as_ref(), TShape::CompSolid(_)))
+                .count(),
+            ShapeType::Compound => brep
+                .tshapes
+                .iter()
+                .filter(|ts| matches!(ts.as_ref(), TShape::Compound(_)))
+                .count(),
+            ShapeType::Shape => 1,
+        }
     }
-    face_counter += 1;
-   }
-  }
-  faces
- }
 
- /// Find edges that share a given vertex.
- ///
- /// # Arguments
- /// * `brep` - The BRep to search.
- /// * `vertex_idx` - The vertex index to find sharing edges for.
- ///
- /// # Returns
- /// Vector of edge indices that reference the given vertex.
- pub fn edges_sharing_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
-  let mut edges = Vec::new();
-  for (ei, ts) in brep.tshapes.iter().enumerate() {
-   if let TShape::Edge(ed) = ts.as_ref() {
-    if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
-     edges.push(ei);
+    /// Get all unique edge indices in the BRep.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to explore.
+    ///
+    /// # Returns
+    /// Vector of all edge indices referenced in wires.
+    pub fn all_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
+        let mut edges: Vec<usize> = Vec::new();
+        for ts in &brep.tshapes {
+            if let TShape::Wire(wd) = ts.as_ref() {
+                for er in &wd.edges {
+                    edges.push(er.index);
+                }
+            }
+        }
+        edges.sort();
+        edges.dedup();
+        edges
     }
-   }
-  }
-  edges
- }
 
- /// Find the boundary edges of a shell or solid.
- ///
- /// # Arguments
- /// * `brep` - The BRep to analyze.
- ///
- /// # Returns
- /// Vector of edge indices that appear exactly once (boundary edges).
- pub fn boundary_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
-  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-  for ts in &brep.tshapes {
-   if let TShape::Wire(wd) = ts.as_ref() {
-    for er in &wd.edges {
-     *edge_counts.entry(er.index).or_insert(0) += 1;
+    /// Get all unique vertex indices in the BRep.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to explore.
+    ///
+    /// # Returns
+    /// Vector of all vertex indices used by edges.
+    pub fn all_vertices(brep: &rcad_kernel::BRep) -> Vec<usize> {
+        vertex_indices(brep)
     }
-   }
-  }
-  edge_counts
-  .into_iter()
-  .filter(|(_, count)| *count == 1)
-  .map(|(idx, _)| idx)
-  .collect()
- }
 
- /// Find non-manifold edges in the BRep.
- ///
- /// A non-manifold edge is shared by more than two faces.
- ///
- /// # Arguments
- /// * `brep` - The BRep to analyze.
- ///
- /// # Returns
- /// Vector of non-manifold edge indices.
- pub fn non_manifold_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
-  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-  for ts in &brep.tshapes {
-   if let TShape::Wire(wd) = ts.as_ref() {
-    for er in &wd.edges {
-     *edge_counts.entry(er.index).or_insert(0) += 1;
+    /// Find faces that share a given edge.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to search.
+    /// * `edge_idx` - The edge index to find sharing faces for.
+    ///
+    /// # Returns
+    /// Vector of face indices (0-based global face index) that reference the given edge.
+    pub fn faces_sharing_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
+        let mut faces = Vec::new();
+        let mut face_counter = 0;
+        for ts in &brep.tshapes {
+            if let TShape::Face(fd) = ts.as_ref() {
+                let has_edge =
+                    Self::face_edge_indices(brep, topods::ShapeRef::synthetic(fd.outer_wire.index))
+                        .contains(&edge_idx);
+                if has_edge {
+                    faces.push(face_counter);
+                }
+                face_counter += 1;
+            }
+        }
+        faces
     }
-   }
-  }
-  edge_counts
-  .into_iter()
-  .filter(|(_, count)| *count > 2)
-  .map(|(idx, _)| idx)
-  .collect()
- }
 
- /// Get a summary of the BRep topology.
- ///
- /// # Arguments
- /// * `brep` - The BRep to summarize.
- ///
- /// # Returns
- /// A string describing the topology.
- pub fn topology_summary(brep: &rcad_kernel::BRep) -> String {
-  format!(
-  "BRep topology: {} vertices, {} edges, {} wires, {} faces, {} shells, {} solids",
-  brep.nb_vertices(),
-  brep.nb_edges(),
-  Self::count_subshapes(brep, ShapeType::Wire),
-  brep.face_count(),
-  brep.nb_shells(),
-  brep.solid_count()
-  )
- }
+    /// Find edges that share a given vertex.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to search.
+    /// * `vertex_idx` - The vertex index to find sharing edges for.
+    ///
+    /// # Returns
+    /// Vector of edge indices that reference the given vertex.
+    pub fn edges_sharing_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
+        let mut edges = Vec::new();
+        for (ei, ts) in brep.tshapes.iter().enumerate() {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                if ed.first.index == vertex_idx || ed.last.index == vertex_idx {
+                    edges.push(ei);
+                }
+            }
+        }
+        edges
+    }
+
+    /// Find the boundary edges of a shell or solid.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to analyze.
+    ///
+    /// # Returns
+    /// Vector of edge indices that appear exactly once (boundary edges).
+    pub fn boundary_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
+        let mut edge_counts: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        for ts in &brep.tshapes {
+            if let TShape::Wire(wd) = ts.as_ref() {
+                for er in &wd.edges {
+                    *edge_counts.entry(er.index).or_insert(0) += 1;
+                }
+            }
+        }
+        edge_counts
+            .into_iter()
+            .filter(|(_, count)| *count == 1)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Find non-manifold edges in the BRep.
+    ///
+    /// A non-manifold edge is shared by more than two faces.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to analyze.
+    ///
+    /// # Returns
+    /// Vector of non-manifold edge indices.
+    pub fn non_manifold_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
+        let mut edge_counts: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        for ts in &brep.tshapes {
+            if let TShape::Wire(wd) = ts.as_ref() {
+                for er in &wd.edges {
+                    *edge_counts.entry(er.index).or_insert(0) += 1;
+                }
+            }
+        }
+        edge_counts
+            .into_iter()
+            .filter(|(_, count)| *count > 2)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Get a summary of the BRep topology.
+    ///
+    /// # Arguments
+    /// * `brep` - The BRep to summarize.
+    ///
+    /// # Returns
+    /// A string describing the topology.
+    pub fn topology_summary(brep: &rcad_kernel::BRep) -> String {
+        format!(
+            "BRep topology: {} vertices, {} edges, {} wires, {} faces, {} shells, {} solids",
+            brep.nb_vertices(),
+            brep.nb_edges(),
+            Self::count_subshapes(brep, ShapeType::Wire),
+            brep.face_count(),
+            brep.nb_shells(),
+            brep.solid_count()
+        )
+    }
 }
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Tests
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
-
-

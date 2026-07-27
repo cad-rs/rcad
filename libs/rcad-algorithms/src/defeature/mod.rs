@@ -48,19 +48,23 @@
 //! assert_eq!(report.holes_removed, 0);
 //! ```
 
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::DVec3;
+use rcad_kernel::geom::{
+    ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
+    any_perpendicular,
+};
 use rcad_kernel::topods;
-use rcad_kernel::topods::{TShape, TEdgeData, TFaceData, TWireData, TShellData, TSolidData, ShapeRef};
-use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface, any_perpendicular};
+use rcad_kernel::topods::{
+    ShapeRef, TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData,
+};
 use rcad_modeling::make_cylinder_brep;
 
-use crate::tolerance::*;
+use crate::BooleanOpType;
 use crate::bop_occt_ops::boolean_op_generic as boolean_op;
-use crate::{BooleanOpType};
 use crate::brep_repair::make_connected_enhanced;
+use crate::tolerance::*;
 
 // -- Tolerances --------------------------------------------------------------
 
@@ -598,7 +602,12 @@ impl std::error::Error for DefeaturingError {}
 
 /// Walk the TShape hierarchy to find the Nth solid's Nth shell's Nth face TShape.
 /// Returns (solid_index_in_tshapes, shell_index_in_tshapes, face_index_in_tshapes, &TFaceData).
-fn walk_ssf<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<(usize, usize, usize, &'a TFaceData)> {
+fn walk_ssf<'a>(
+    brep: &'a rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<(usize, usize, usize, &'a TFaceData)> {
     let mut solid_count = 0usize;
     for (solid_ts_idx, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Solid(sd) = ts.as_ref() {
@@ -619,7 +628,12 @@ fn walk_ssf<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -
 }
 
 /// Walk TShape hierarchy and return TFaceData for a face at (si, shi, fi).
-fn get_face_data<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<&'a TFaceData> {
+fn get_face_data<'a>(
+    brep: &'a rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<&'a TFaceData> {
     walk_ssf(brep, si, shi, fi).map(|(_, _, _, fd)| fd)
 }
 
@@ -627,7 +641,11 @@ fn get_face_data<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usi
 fn get_edge_data<'a>(brep: &'a rcad_kernel::BRep, ei: usize) -> Option<&'a TEdgeData> {
     match brep.tshapes.get(ei)? {
         t if matches!(t.as_ref(), TShape::Edge(_)) => {
-            if let TShape::Edge(ed) = t.as_ref() { Some(ed) } else { None }
+            if let TShape::Edge(ed) = t.as_ref() {
+                Some(ed)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -635,7 +653,12 @@ fn get_edge_data<'a>(brep: &'a rcad_kernel::BRep, ei: usize) -> Option<&'a TEdge
 
 /// Return the `CylindricalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a cylinder.
-fn face_cylinder(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<CylindricalSurface> {
+fn face_cylinder(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<CylindricalSurface> {
     let fd = get_face_data(brep, si, shi, fi)?;
     match fd.surface.as_ref()? {
         Surface3::Cylinder(c) => Some(*c),
@@ -665,7 +688,12 @@ fn face_plane(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Opt
 
 /// Return the `ToroidalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a torus.
-fn face_torus(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalSurface> {
+fn face_torus(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<ToroidalSurface> {
     let fd = get_face_data(brep, si, shi, fi)?;
     match fd.surface.as_ref()? {
         Surface3::Torus(t) => Some(*t),
@@ -675,7 +703,12 @@ fn face_torus(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Opt
 
 /// Return the `SphericalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a sphere.
-fn face_sphere(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<SphericalSurface> {
+fn face_sphere(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<SphericalSurface> {
     let fd = get_face_data(brep, si, shi, fi)?;
     match fd.surface.as_ref()? {
         Surface3::Sphere(s) => Some(*s),
@@ -685,7 +718,14 @@ fn face_sphere(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Op
 
 /// Check if a face is likely a planar blend/chamfer face.
 /// Returns Some((is_fillet, radius_or_chamfer_dist)) if detected.
-fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize, max_blend_radius: f64, max_chamfer_distance: f64) -> Option<BlendFeature> {
+fn detect_blend_face(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+    max_blend_radius: f64,
+    max_chamfer_distance: f64,
+) -> Option<BlendFeature> {
     // Check for torus (fillet)
     if max_blend_radius > 0.0 {
         if let Some(torus) = face_torus(brep, si, shi, fi) {
@@ -709,63 +749,68 @@ fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize,
 
         // Check for sphere (ball-end fillet)
         if let Some(sphere) = face_sphere(brep, si, shi, fi)
-            && sphere.radius > 0.0 && sphere.radius <= max_blend_radius {
-                let normal = get_face_data(brep, si, shi, fi)
-                    .and_then(|fd| fd.surface.as_ref())
-                    .map(|s| surface_normal_at_origin(s))
-                    .unwrap_or_default();
-                return Some(BlendFeature {
-                    face_indices: vec![fi],
-                    is_fillet: true,
-                    radius: sphere.radius,
-                    chamfer_distance: 0.0,
-                    sample_point: sphere.center,
-                    normal,
-                });
-            }
+            && sphere.radius > 0.0
+            && sphere.radius <= max_blend_radius
+        {
+            let normal = get_face_data(brep, si, shi, fi)
+                .and_then(|fd| fd.surface.as_ref())
+                .map(|s| surface_normal_at_origin(s))
+                .unwrap_or_default();
+            return Some(BlendFeature {
+                face_indices: vec![fi],
+                is_fillet: true,
+                radius: sphere.radius,
+                chamfer_distance: 0.0,
+                sample_point: sphere.center,
+                normal,
+            });
+        }
 
         // Check for cylinder with small radius (edge fillet)
         if let Some(cyl) = face_cylinder(brep, si, shi, fi)
-            && cyl.radius > 0.0 && cyl.radius <= max_blend_radius {
-                let sample_point = cyl.origin;
-                let normal = get_face_data(brep, si, shi, fi)
-                    .and_then(|fd| fd.surface.as_ref())
-                    .map(|s| surface_normal_at_origin(s))
-                    .unwrap_or_default();
-                return Some(BlendFeature {
-                    face_indices: vec![fi],
-                    is_fillet: true,
-                    radius: cyl.radius,
-                    chamfer_distance: 0.0,
-                    sample_point,
-                    normal,
-                });
-            }
+            && cyl.radius > 0.0
+            && cyl.radius <= max_blend_radius
+        {
+            let sample_point = cyl.origin;
+            let normal = get_face_data(brep, si, shi, fi)
+                .and_then(|fd| fd.surface.as_ref())
+                .map(|s| surface_normal_at_origin(s))
+                .unwrap_or_default();
+            return Some(BlendFeature {
+                face_indices: vec![fi],
+                is_fillet: true,
+                radius: cyl.radius,
+                chamfer_distance: 0.0,
+                sample_point,
+                normal,
+            });
+        }
     }
 
     // Check for chamfer (small planar face connecting two other faces at an angle)
     if max_chamfer_distance > 0.0
-        && let Some(_plane) = face_plane(brep, si, shi, fi) {
-            // Estimate chamfer size from face dimensions
-            let face_area = estimate_face_area(brep, si, shi, fi);
-            let chamfer_estimate = face_area.sqrt() / 1.414; // Approximate for 45-degree chamfer
+        && let Some(_plane) = face_plane(brep, si, shi, fi)
+    {
+        // Estimate chamfer size from face dimensions
+        let face_area = estimate_face_area(brep, si, shi, fi);
+        let chamfer_estimate = face_area.sqrt() / 1.414; // Approximate for 45-degree chamfer
 
-            if chamfer_estimate > 0.0 && chamfer_estimate <= max_chamfer_distance {
-                let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or_default();
-                let normal = get_face_data(brep, si, shi, fi)
-                    .and_then(|fd| fd.surface.as_ref())
-                    .map(|s| surface_normal_at_origin(s))
-                    .unwrap_or_default();
-                return Some(BlendFeature {
-                    face_indices: vec![fi],
-                    is_fillet: false,
-                    radius: 0.0,
-                    chamfer_distance: chamfer_estimate,
-                    sample_point,
-                    normal,
-                });
-            }
+        if chamfer_estimate > 0.0 && chamfer_estimate <= max_chamfer_distance {
+            let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or_default();
+            let normal = get_face_data(brep, si, shi, fi)
+                .and_then(|fd| fd.surface.as_ref())
+                .map(|s| surface_normal_at_origin(s))
+                .unwrap_or_default();
+            return Some(BlendFeature {
+                face_indices: vec![fi],
+                is_fillet: false,
+                radius: 0.0,
+                chamfer_distance: chamfer_estimate,
+                sample_point,
+                normal,
+            });
         }
+    }
 
     None
 }
@@ -777,9 +822,16 @@ fn surface_normal_at_origin(surface: &Surface3) -> DVec3 {
 }
 
 /// Get a sample point from a face (first vertex).
-fn get_face_sample_point(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
+fn get_face_sample_point(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+) -> Option<DVec3> {
     let fd = get_face_data(brep, si, shi, fi)?;
-    collect_wire_vertices(brep, fd.outer_wire, false).first().copied()
+    collect_wire_vertices(brep, fd.outer_wire, false)
+        .first()
+        .copied()
 }
 
 /// Estimate the area of a face using fan triangulation.
@@ -812,7 +864,9 @@ fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire_sr: ShapeRef, orient: bo
     if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
         for edge_sr in &wd.edges {
             if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
-                let vi = if orient && edge_sr.orientation == rcad_kernel::topods::Orientation::Reversed {
+                let vi = if orient
+                    && edge_sr.orientation == rcad_kernel::topods::Orientation::Reversed
+                {
                     ed.last.index
                 } else {
                     ed.first.index
@@ -858,7 +912,9 @@ fn axes_same_line(o1: DVec3, ax1: DVec3, o2: DVec3, ax2: DVec3) -> bool {
 fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurface) -> bool {
     let ax = cyl.axis.normalize_or_zero();
     // Compute face normal from surface at origin.
-    let face_n = fd.surface.as_ref()
+    let face_n = fd
+        .surface
+        .as_ref()
         .map(|s| surface_normal_at_origin(s))
         .unwrap_or_default()
         .normalize_or_zero();
@@ -868,16 +924,17 @@ fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurfa
 
     // Collect unique vertex indices from all wires of this face.
     let mut seen: HashSet<usize> = HashSet::new();
-    let collect_wire_verts = |brep: &rcad_kernel::BRep, wire_sr: ShapeRef, seen: &mut HashSet<usize>| {
-        if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
-            for edge_sr in &wd.edges {
-                if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
-                    seen.insert(ed.first.index);
-                    seen.insert(ed.last.index);
+    let collect_wire_verts =
+        |brep: &rcad_kernel::BRep, wire_sr: ShapeRef, seen: &mut HashSet<usize>| {
+            if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
+                for edge_sr in &wd.edges {
+                    if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                        seen.insert(ed.first.index);
+                        seen.insert(ed.last.index);
+                    }
                 }
             }
-        }
-    };
+        };
     collect_wire_verts(brep, fd.outer_wire, &mut seen);
     for iw_sr in &fd.inner_wires {
         collect_wire_verts(brep, *iw_sr, &mut seen);
@@ -886,7 +943,9 @@ fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurfa
     let mut hole_votes: i32 = 0;
     let mut boss_votes: i32 = 0;
     for &vi in &seen {
-        let Some(pt) = brep.vertex_point(vi) else { continue; };
+        let Some(pt) = brep.vertex_point(vi) else {
+            continue;
+        };
         let to_pt = pt - cyl.origin;
         let radial = to_pt - to_pt.dot(ax) * ax;
         if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
@@ -918,7 +977,9 @@ fn axis_extent_of_group(
     let mut t_max = f64::NEG_INFINITY;
 
     for &fi in face_indices {
-        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        let Some(fd) = get_face_data(brep, si, shi, fi) else {
+            continue;
+        };
         // Walk outer wire edges to collect vertex positions.
         if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
             for edge_sr in &wd.edges {
@@ -926,8 +987,12 @@ fn axis_extent_of_group(
                     for &vi in &[ed.first.index, ed.last.index] {
                         if let Some(pt) = brep.vertex_point(vi) {
                             let t = (pt - cyl.origin).dot(ax);
-                            if t < t_min { t_min = t; }
-                            if t > t_max { t_max = t; }
+                            if t < t_min {
+                                t_min = t;
+                            }
+                            if t > t_max {
+                                t_max = t;
+                            }
                         }
                     }
                 }
@@ -945,7 +1010,11 @@ fn axis_extent_of_group(
 // -- Public detection functions ---------------------------------------------
 
 /// Helper: build edge index to face-local-index adjacency from TShape data.
-fn build_edge_to_faces_map(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> HashMap<usize, Vec<usize>> {
+fn build_edge_to_faces_map(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+) -> HashMap<usize, Vec<usize>> {
     let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut fi: usize = 0;
     // Find first solid and its shell with given indices.
@@ -1076,7 +1145,9 @@ pub fn detect_cylindrical_features(
         while let Some(fi) = queue.pop_front() {
             group.push(fi);
 
-            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else {
+                continue;
+            };
             let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
@@ -1106,8 +1177,7 @@ pub fn detect_cylindrical_features(
         let group_hole_count = group
             .iter()
             .filter(|&&fi| {
-                get_face_data(brep, si, shi, fi)
-                    .is_some_and(|fd| is_hole_face(fd, brep, &cyl))
+                get_face_data(brep, si, shi, fi).is_some_and(|fd| is_hole_face(fd, brep, &cyl))
             })
             .count();
         let is_hole = group_hole_count * 2 >= group.len();
@@ -1190,7 +1260,9 @@ pub fn detect_conical_features(
         while let Some(fi) = queue.pop_front() {
             group.push(fi);
 
-            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else {
+                continue;
+            };
             let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
@@ -1208,7 +1280,9 @@ pub fn detect_conical_features(
                     if !axes_same_line(cone.apex, cone.axis, ncone.apex, ncone.axis) {
                         continue;
                     }
-                    if (ncone.half_angle_rad - cone.half_angle_rad).abs() > TOLERANCE_RETRY_LADDER_COARSE {
+                    if (ncone.half_angle_rad - cone.half_angle_rad).abs()
+                        > TOLERANCE_RETRY_LADDER_COARSE
+                    {
                         continue;
                     }
                     visited[nfi] = true;
@@ -1221,7 +1295,9 @@ pub fn detect_conical_features(
         // and the face normal points inward (toward axis).
         let ax = cone.axis.normalize_or_zero();
         let is_hole = if let Some(fd) = get_face_data(brep, si, shi, group[0]) {
-            let fnormal = fd.surface.as_ref()
+            let fnormal = fd
+                .surface
+                .as_ref()
                 .map(|s| surface_normal_at_origin(s))
                 .unwrap_or_default()
                 .normalize_or_zero();
@@ -1262,7 +1338,9 @@ pub fn detect_conical_features(
         let mut t_min = f64::INFINITY;
         let mut t_max = f64::NEG_INFINITY;
         for &fi in &group {
-            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else {
+                continue;
+            };
             if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
                 for edge_sr in &wd.edges {
                     if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
@@ -1363,11 +1441,14 @@ pub fn detect_slot_features(
                 planes.push(plane);
             }
             if let Some(cyl) = face_cylinder(brep, si, shi, fi)
-                && cyl.radius <= max_width {
-                    cylinders.push((cyl, fi));
-                }
+                && cyl.radius <= max_width
+            {
+                cylinders.push((cyl, fi));
+            }
 
-            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else {
+                continue;
+            };
             let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
@@ -1399,7 +1480,9 @@ pub fn detect_slot_features(
         }
 
         // Try to identify slot geometry
-        if let Some(slot) = analyze_slot_group(brep, si, shi, &group, &planes, &cylinders, max_width, max_depth) {
+        if let Some(slot) = analyze_slot_group(
+            brep, si, shi, &group, &planes, &cylinders, max_width, max_depth,
+        ) {
             features.push(slot);
         }
     }
@@ -1426,7 +1509,9 @@ fn analyze_slot_group(
     // Collect all vertices
     let mut vertices: Vec<DVec3> = Vec::new();
     for &fi in group {
-        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        let Some(fd) = get_face_data(brep, si, shi, fi) else {
+            continue;
+        };
         if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
             for edge_sr in &wd.edges {
                 if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
@@ -1576,12 +1661,15 @@ pub fn detect_pocket_features(
                 wall_planes.push(plane);
             }
             if let Some(cyl) = face_cylinder(brep, si, shi, fi)
-                && cyl.radius <= max_diameter {
-                    has_cylindrical_walls = true;
-                    cylindrical_radius = cyl.radius;
-                }
+                && cyl.radius <= max_diameter
+            {
+                has_cylindrical_walls = true;
+                cylindrical_radius = cyl.radius;
+            }
 
-            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else {
+                continue;
+            };
             let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
@@ -1643,7 +1731,9 @@ fn analyze_pocket_group(
     // Collect all vertices using TShape API
     let mut vertices: Vec<DVec3> = Vec::new();
     for &fi in group {
-        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        let Some(fd) = get_face_data(brep, si, shi, fi) else {
+            continue;
+        };
         vertices.extend(collect_wire_vertices(brep, fd.outer_wire, true));
     }
 
@@ -1708,5 +1798,3 @@ fn analyze_pocket_group(
 include!("e1.rs");
 include!("e2.rs");
 include!("suppression.rs");
-
-

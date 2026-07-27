@@ -1,13 +1,13 @@
+use crate::bopds::ds::DS;
+use crate::tolerance::TOLERANCE_CLAMP_MIN;
+use glam::DVec3;
+use rcad_kernel::geom::*;
+use rcad_kernel::topods::{self, BRepTool, Orientation, ShapeRef, ShapeType};
 /// OCCT BRepTool adaptor over the existing DS data source.
 ///
 /// During Phase 1 migration, this allows TopoDS-based wire path code to
 /// read from the existing DS by wrapping DS indices as ShapeRef handles.
 use std::collections::HashMap;
-use glam::DVec3;
-use crate::bopds::ds::DS;
-use crate::tolerance::TOLERANCE_CLAMP_MIN;
-use rcad_kernel::geom::*;
-use rcad_kernel::topods::{self, BRepTool, ShapeRef, Orientation, ShapeType};
 
 /// Adaptor: wraps DS + face_idx as a BRepTool, mapping ShapeRef.index  ?DS array index.
 ///
@@ -42,22 +42,37 @@ impl<'a> DSAsBRep<'a> {
             }
         }
         // Build vertex param cache from DSEdge.vertex_params
-        let vertex_param_cache: HashMap<usize, HashMap<usize, f64>> = ds.edges.iter()
+        let vertex_param_cache: HashMap<usize, HashMap<usize, f64>> = ds
+            .edges
+            .iter()
             .enumerate()
             .map(|(ei, edge)| (ei, edge.vertex_params.clone()))
             .collect();
 
-        DSAsBRep { ds, face_idx, pcurve_cache, vertex_param_cache }
+        DSAsBRep {
+            ds,
+            face_idx,
+            pcurve_cache,
+            vertex_param_cache,
+        }
     }
 }
 
 impl BRepTool for DSAsBRep<'_> {
     fn vertex_position(&self, v: ShapeRef) -> DVec3 {
-        self.ds.vertices.get(v.index).map(|v| v.point).unwrap_or(DVec3::ZERO)
+        self.ds
+            .vertices
+            .get(v.index)
+            .map(|v| v.point)
+            .unwrap_or(DVec3::ZERO)
     }
 
     fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
-        self.ds.vertices.get(v.index).map(|v| v.geom_tol).unwrap_or(0.0)
+        self.ds
+            .vertices
+            .get(v.index)
+            .map(|v| v.geom_tol)
+            .unwrap_or(0.0)
     }
 
     fn is_edge_degenerated(&self, e: ShapeRef) -> bool {
@@ -71,30 +86,45 @@ impl BRepTool for DSAsBRep<'_> {
             } else {
                 ShapeRef::synthetic(e.start_vertex)
             }
-        } else { v }
+        } else {
+            v
+        }
     }
 
     fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
-        self.ds.edges.get(edge.index)
+        self.ds
+            .edges
+            .get(edge.index)
             .map(|e| ShapeRef::synthetic(e.start_vertex))
             .unwrap_or(edge)
     }
 
     fn last_vertex(&self, edge: ShapeRef) -> ShapeRef {
-        self.ds.edges.get(edge.index)
+        self.ds
+            .edges
+            .get(edge.index)
             .map(|e| ShapeRef::synthetic(e.end_vertex))
             .unwrap_or(edge)
     }
 
     fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef {
-        self.ds.edges.get(edge.index).map(|e| {
-            let vi = if orientation == Orientation::Reversed { e.end_vertex } else { e.start_vertex };
-            ShapeRef::synthetic(vi)
-        }).unwrap_or(edge)
+        self.ds
+            .edges
+            .get(edge.index)
+            .map(|e| {
+                let vi = if orientation == Orientation::Reversed {
+                    e.end_vertex
+                } else {
+                    e.start_vertex
+                };
+                ShapeRef::synthetic(vi)
+            })
+            .unwrap_or(edge)
     }
 
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
-        self.vertex_param_cache.get(&edge.index)
+        self.vertex_param_cache
+            .get(&edge.index)
             .and_then(|vpm| vpm.get(&vertex.index).copied())
     }
 
@@ -110,10 +140,17 @@ impl BRepTool for DSAsBRep<'_> {
         let is_internal = if v.index < self.ds.vertex_is_internal.len() {
             self.ds.vertex_is_internal[v.index]
         } else {
-            self.ds.vertices.get(v.index).map_or(false, |dv| dv.is_internal)
+            self.ds
+                .vertices
+                .get(v.index)
+                .map_or(false, |dv| dv.is_internal)
         };
         let is_new = v.index >= self.ds.vertex_is_internal.len()
-            && self.ds.vertices.get(v.index).map_or(false, |dv| dv.origin.is_none());
+            && self
+                .ds
+                .vertices
+                .get(v.index)
+                .map_or(false, |dv| dv.origin.is_none());
         if is_internal || is_new {
             Orientation::Internal
         } else {
@@ -126,7 +163,10 @@ impl BRepTool for DSAsBRep<'_> {
     }
 
     fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
-        self.ds.edges.get(edge.index).map(|e| (e.curve.clone(), e.t_range))
+        self.ds
+            .edges
+            .get(edge.index)
+            .map(|e| (e.curve.clone(), e.t_range))
     }
 
     fn u_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
@@ -152,17 +192,29 @@ impl BRepTool for DSAsBRep<'_> {
         }
     }
 
-    fn tolerance(&self, _s: ShapeRef) -> f64 { 0.0 }
-
-    fn shape_type(&self, s: ShapeRef) -> ShapeType {
-        if self.ds.vertices.get(s.index).is_some() { ShapeType::Vertex }
-        else if self.ds.edges.get(s.index).is_some() { ShapeType::Edge }
-        else { ShapeType::Shape }
+    fn tolerance(&self, _s: ShapeRef) -> f64 {
+        0.0
     }
 
-    fn has_flag(&self, _s: ShapeRef, _flag: u16) -> bool { false }
+    fn shape_type(&self, s: ShapeRef) -> ShapeType {
+        if self.ds.vertices.get(s.index).is_some() {
+            ShapeType::Vertex
+        } else if self.ds.edges.get(s.index).is_some() {
+            ShapeType::Edge
+        } else {
+            ShapeType::Shape
+        }
+    }
 
-    fn edge_data(&self, _e: ShapeRef) -> Option<&topods::TEdgeData> { None }
+    fn has_flag(&self, _s: ShapeRef, _flag: u16) -> bool {
+        false
+    }
 
-    fn face_data(&self, _f: ShapeRef) -> Option<&topods::TFaceData> { None }
+    fn edge_data(&self, _e: ShapeRef) -> Option<&topods::TEdgeData> {
+        None
+    }
+
+    fn face_data(&self, _f: ShapeRef) -> Option<&topods::TFaceData> {
+        None
+    }
 }

@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use rcad_kernel::topods::{self, ShapeRef, Orientation, BRepTool};
-use rcad_kernel::geom::*;
-use crate::bopds::ds::DS;
-use crate::bopalgo::builder::types::*;
-use crate::bopalgo::builder::{WireEdgeSource, FaceOrigin};
 use crate::bopalgo::builder::ds_as_brep::DSAsBRep;
+use crate::bopalgo::builder::types::*;
+use crate::bopalgo::builder::{FaceOrigin, WireEdgeSource};
+use crate::bopds::ds::DS;
+use rcad_kernel::geom::*;
+use rcad_kernel::topods::{self, BRepTool, Orientation, ShapeRef};
+use std::collections::HashMap;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
 /// Self-contained face splitting class.
@@ -42,7 +42,14 @@ impl<'a> BuilderFace<'a> {
     ) -> Self {
         let ds_tool = DSAsBRep::new(ds, face_idx);
         Self {
-            ds, brep, ds_tool, face_refs, ic_edge_map, my_face_refs, face_idx, is_a,
+            ds,
+            brep,
+            ds_tool,
+            face_refs,
+            ic_edge_map,
+            my_face_refs,
+            face_idx,
+            is_a,
             shapes: None,
             my_areas: Vec::new(),
             my_result: crate::bopalgo::builder::result_builder::ResultBuilder::new(),
@@ -64,7 +71,9 @@ impl<'a> BuilderFace<'a> {
     /// is not yet populated at this pipeline stage.
     pub(crate) fn perform(&mut self, t: &mut topods::BRep) {
         // OCCT L119-125: CheckData
-        if self.face_idx >= self.face_refs.len() { return; }
+        if self.face_idx >= self.face_refs.len() {
+            return;
+        }
 
         let shapes = match &self.shapes {
             Some(s) => s,
@@ -74,71 +83,124 @@ impl<'a> BuilderFace<'a> {
         // convert myShapes (aLE) to WireSegments.
         // In OCCT, myShapes is already TopoDS_Edge list set externally.
         let segments = self.shapes_to_segments(shapes);
-        if segments.is_empty() { return; }
+        if segments.is_empty() {
+            return;
+        }
 
         let segments_topo = crate::bopalgo::builder::builder_utils_topo_ds::segments_to_topo_ds(
-            &segments, self.ds, self.face_idx, self.face_refs, self.ic_edge_map);
+            &segments,
+            self.ds,
+            self.face_idx,
+            self.face_refs,
+            self.ic_edge_map,
+        );
         let tool: &dyn BRepTool = &self.ds_tool;
 
         // OCCT L152-235: PerformShapesToAvoid
-        let (avoided_pids, pid_segs) = crate::bopalgo::builder::wire_splitter::perform_shapes_to_avoid_topo(
-            &segments_topo, tool);
-        let mut avoided = crate::bopalgo::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
+        let (avoided_pids, pid_segs) =
+            crate::bopalgo::builder::wire_splitter::perform_shapes_to_avoid_topo(
+                &segments_topo,
+                tool,
+            );
+        let mut avoided =
+            crate::bopalgo::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
 
         // OCCT L239-385: PerformLoops (via BOPAlgo_WireSplitter)
         let wires = crate::bopalgo::builder::wire_path_topo_ds::build_closed_wires(
-            &segments_topo, &avoided, tool);
+            &segments_topo,
+            &avoided,
+            tool,
+        );
 
         // OCCT L330-385: Post-treatment — build myLoopsInternal from myShapesToAvoid
         let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {
-            if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
+            if !in_loop.contains(&si) && !avoided.contains(&si) {
+                avoided.insert(si);
+            }
         }
         let internal_wire_groups = crate::bopalgo::builder::wire_path_topo_ds::build_internal_wires(
-            &segments_topo, &avoided);
+            &segments_topo,
+            &avoided,
+        );
 
         // OCCT L387-499: PerformAreas
         let wfs = if !wires.is_empty() {
             crate::bopalgo::builder::wire_path_topo_ds::perform_areas(
-                &wires, &internal_wire_groups, &segments_topo, tool, self.face_idx, self.ds)
+                &wires,
+                &internal_wire_groups,
+                &segments_topo,
+                tool,
+                self.face_idx,
+                self.ds,
+            )
         } else {
             vec![]
         };
-        if wfs.is_empty() { return; }
+        if wfs.is_empty() {
+            return;
+        }
 
         let mut wfs = wfs;
 
         // OCCT L618-912: PerformInternalShapes
         let face_ref = self.face_refs[self.face_idx];
         crate::bopalgo::builder::wire_path_topo_ds::perform_internal_shapes(
-            &mut wfs, &internal_wire_groups, &segments_topo, tool, self.face_idx, face_ref, self.ds);
+            &mut wfs,
+            &internal_wire_groups,
+            &segments_topo,
+            tool,
+            self.face_idx,
+            face_ref,
+            self.ds,
+        );
 
         // Store results in myAreas (OCCT PerformAreas returns TopoDS_Face list;
         // rcad emits to T BRep and stores ShapeRefs)
         let e_base = self.ds.vertices.len();
-        let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments.iter()
+        let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments
+            .iter()
             .filter_map(|seg| match &seg.source {
                 WireEdgeSource::DsEdge(ei) => Some((*ei, ShapeRef::synthetic(e_base + *ei))),
                 _ => None,
-            }).collect();
-        let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
+            })
+            .collect();
+        let sr_index_to_ds_ei: HashMap<usize, usize> = segments
+            .iter()
             .filter_map(|seg| match &seg.source {
                 WireEdgeSource::DsEdge(ei) => Some((e_base + *ei, *ei)),
                 _ => None,
-            }).collect();
+            })
+            .collect();
         let origin = if self.is_a {
             FaceOrigin::FromA(self.ds.faces[self.face_idx].source_face_idx)
         } else {
             FaceOrigin::FromB(self.ds.faces[self.face_idx].source_face_idx)
         };
-        let ic_curves: HashMap<usize, Curve3> = self.ds.intersection_curves.iter()
-            .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
+        let ic_curves: HashMap<usize, Curve3> = self
+            .ds
+            .intersection_curves
+            .iter()
+            .enumerate()
+            .map(|(ci, ic)| (ci, ic.curve.clone()))
+            .collect();
         self.my_result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
         for wf in &wfs {
-            self.my_result.emit_wire_face_topods(self.face_idx, wf, &segments_topo, tool,
-                &ic_curves, false, origin, &HashMap::new(),
-                self.face_refs[self.face_idx], self.ds.faces[self.face_idx].natural_restriction,
-                &ds_ei_to_sr, &sr_index_to_ds_ei, self.ds);
+            self.my_result.emit_wire_face_topods(
+                self.face_idx,
+                wf,
+                &segments_topo,
+                tool,
+                &ic_curves,
+                false,
+                origin,
+                &HashMap::new(),
+                self.face_refs[self.face_idx],
+                self.ds.faces[self.face_idx].natural_restriction,
+                &ds_ei_to_sr,
+                &sr_index_to_ds_ei,
+                self.ds,
+            );
             let fi = self.my_result.faces.len().wrapping_sub(1);
             if fi < self.my_result.faces.len() {
                 let mut real_face_refs = Vec::new();
@@ -169,15 +231,21 @@ impl<'a> BuilderFace<'a> {
 
         for &sr in shapes {
             let ei = sr.index.saturating_sub(e_base);
-            if ei >= self.ds.edges.len() { continue; }
+            if ei >= self.ds.edges.len() {
+                continue;
+            }
             let edge = &self.ds.edges[ei];
 
             let (sv, ev) = match sr.orientation {
-                Orientation::Forward | Orientation::Internal => (edge.start_vertex, edge.end_vertex),
+                Orientation::Forward | Orientation::Internal => {
+                    (edge.start_vertex, edge.end_vertex)
+                }
                 Orientation::Reversed => (edge.end_vertex, edge.start_vertex),
                 _ => (edge.start_vertex, edge.end_vertex),
             };
-            if sv == ev { continue; }
+            if sv == ev {
+                continue;
+            }
 
             let rep = self.ds.edge_on_face(ei, self.face_idx);
             let is_closed = self.ds.edges[ei].start_vertex == self.ds.edge_end_vertex_ds(ei);

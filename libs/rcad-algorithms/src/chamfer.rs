@@ -38,8 +38,8 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
- geom::{Curve3, Surface3, Line3, Plane},
- topods::{self, TShape},
+    geom::{Curve3, Line3, Plane, Surface3},
+    topods::{self, TShape},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -63,130 +63,135 @@ const PARALLEL_TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 /// Analogous to OCCT `ChFiDS_ChamfMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChamferMode {
- /// Symmetric chamfer: equal distance on both adjacent faces.
- /// Single distance parameter used.
- Symmetric,
- /// Asymmetric chamfer: two different distances on each face.
- /// `d1` on first face, `d2` on second face.
- Asymmetric,
- /// Distance-angle chamfer: one distance and an angle from the first face.
- /// The angle is measured from the first face normal.
- DistanceAngle,
+    /// Symmetric chamfer: equal distance on both adjacent faces.
+    /// Single distance parameter used.
+    Symmetric,
+    /// Asymmetric chamfer: two different distances on each face.
+    /// `d1` on first face, `d2` on second face.
+    Asymmetric,
+    /// Distance-angle chamfer: one distance and an angle from the first face.
+    /// The angle is measured from the first face normal.
+    DistanceAngle,
 }
 
 /// Parameters controlling the chamfer operation.
 #[derive(Debug, Clone)]
 pub struct ChamferParams {
- /// Chamfer mode (symmetric, asymmetric, distance-angle).
- pub mode: ChamferMode,
- /// Primary distance (used in all modes).
- pub distance1: f64,
- /// Secondary distance (used only in asymmetric mode).
- pub distance2: f64,
- /// Angle in radians (used only in distance-angle mode).
- /// The angle is measured from the first face.
- pub angle: f64,
+    /// Chamfer mode (symmetric, asymmetric, distance-angle).
+    pub mode: ChamferMode,
+    /// Primary distance (used in all modes).
+    pub distance1: f64,
+    /// Secondary distance (used only in asymmetric mode).
+    pub distance2: f64,
+    /// Angle in radians (used only in distance-angle mode).
+    /// The angle is measured from the first face.
+    pub angle: f64,
 }
 
 impl Default for ChamferParams {
- fn default() -> Self {
- Self {
- mode: ChamferMode::Symmetric,
- distance1: 1.0,
- distance2: 1.0,
- angle: std::f64::consts::FRAC_PI_4,
- }
- }
+    fn default() -> Self {
+        Self {
+            mode: ChamferMode::Symmetric,
+            distance1: 1.0,
+            distance2: 1.0,
+            angle: std::f64::consts::FRAC_PI_4,
+        }
+    }
 }
 
 impl ChamferParams {
- /// Create symmetric chamfer parameters with a single distance.
- pub fn symmetric(distance: f64) -> Self {
- Self {
- mode: ChamferMode::Symmetric,
- distance1: distance,
- distance2: distance,
- angle: std::f64::consts::FRAC_PI_4,
- }
- }
+    /// Create symmetric chamfer parameters with a single distance.
+    pub fn symmetric(distance: f64) -> Self {
+        Self {
+            mode: ChamferMode::Symmetric,
+            distance1: distance,
+            distance2: distance,
+            angle: std::f64::consts::FRAC_PI_4,
+        }
+    }
 
- /// Create asymmetric chamfer parameters with two distances.
- pub fn asymmetric(d1: f64, d2: f64) -> Self {
- Self {
- mode: ChamferMode::Asymmetric,
- distance1: d1,
- distance2: d2,
- angle: std::f64::consts::FRAC_PI_4,
- }
- }
+    /// Create asymmetric chamfer parameters with two distances.
+    pub fn asymmetric(d1: f64, d2: f64) -> Self {
+        Self {
+            mode: ChamferMode::Asymmetric,
+            distance1: d1,
+            distance2: d2,
+            angle: std::f64::consts::FRAC_PI_4,
+        }
+    }
 
- /// Create distance-angle chamfer parameters.
- pub fn distance_angle(distance: f64, angle_rad: f64) -> Self {
- Self {
- mode: ChamferMode::DistanceAngle,
- distance1: distance,
- distance2: distance * angle_rad.tan(),
- angle: angle_rad,
- }
- }
+    /// Create distance-angle chamfer parameters.
+    pub fn distance_angle(distance: f64, angle_rad: f64) -> Self {
+        Self {
+            mode: ChamferMode::DistanceAngle,
+            distance1: distance,
+            distance2: distance * angle_rad.tan(),
+            angle: angle_rad,
+        }
+    }
 
- /// Validate the parameters.
- pub fn validate(&self) -> Result<(), ChamferError> {
- if self.distance1 <= 0.0 {
- return Err(ChamferError::InvalidDistance {
- value: self.distance1,
- reason: "distance1 must be positive".to_string(),
- });
- }
- if self.mode == ChamferMode::Asymmetric && self.distance2 <= 0.0 {
- return Err(ChamferError::InvalidDistance {
- value: self.distance2,
- reason: "distance2 must be positive for asymmetric mode".to_string(),
- });
- }
- if self.mode == ChamferMode::DistanceAngle
- && (self.angle <= 0.0 || self.angle >= std::f64::consts::FRAC_PI_2) {
- return Err(ChamferError::InvalidAngle {
- value: self.angle,
- reason: "angle must be between 0 and 90 degrees".to_string(),
- });
- }
- Ok(())
- }
+    /// Validate the parameters.
+    pub fn validate(&self) -> Result<(), ChamferError> {
+        if self.distance1 <= 0.0 {
+            return Err(ChamferError::InvalidDistance {
+                value: self.distance1,
+                reason: "distance1 must be positive".to_string(),
+            });
+        }
+        if self.mode == ChamferMode::Asymmetric && self.distance2 <= 0.0 {
+            return Err(ChamferError::InvalidDistance {
+                value: self.distance2,
+                reason: "distance2 must be positive for asymmetric mode".to_string(),
+            });
+        }
+        if self.mode == ChamferMode::DistanceAngle
+            && (self.angle <= 0.0 || self.angle >= std::f64::consts::FRAC_PI_2)
+        {
+            return Err(ChamferError::InvalidAngle {
+                value: self.angle,
+                reason: "angle must be between 0 and 90 degrees".to_string(),
+            });
+        }
+        Ok(())
+    }
 
- /// Get the effective distances on both faces.
- /// Returns (distance_on_face1, distance_on_face2).
- pub fn get_distances(&self) -> (f64, f64) {
- match self.mode {
- ChamferMode::Symmetric => (self.distance1, self.distance1),
- ChamferMode::Asymmetric => (self.distance1, self.distance2),
- ChamferMode::DistanceAngle => (self.distance1, self.distance1 * self.angle.tan()),
- }
- }
+    /// Get the effective distances on both faces.
+    /// Returns (distance_on_face1, distance_on_face2).
+    pub fn get_distances(&self) -> (f64, f64) {
+        match self.mode {
+            ChamferMode::Symmetric => (self.distance1, self.distance1),
+            ChamferMode::Asymmetric => (self.distance1, self.distance2),
+            ChamferMode::DistanceAngle => (self.distance1, self.distance1 * self.angle.tan()),
+        }
+    }
 }
 
 /// Result of a chamfer operation.
 #[derive(Debug)]
 pub struct ChamferResult {
- /// The resulting BRep with chamfers applied.
- pub brep: rcad_kernel::BRep,
- /// Number of edges chamfered.
- pub edges_chamfered: usize,
- /// Number of chamfer faces created.
- pub chamfer_faces_created: usize,
- /// Warnings encountered during the operation.
- pub warnings: Vec<ChamferWarning>,
+    /// The resulting BRep with chamfers applied.
+    pub brep: rcad_kernel::BRep,
+    /// Number of edges chamfered.
+    pub edges_chamfered: usize,
+    /// Number of chamfer faces created.
+    pub chamfer_faces_created: usize,
+    /// Warnings encountered during the operation.
+    pub warnings: Vec<ChamferWarning>,
 }
 
 /// Warning messages from chamfer operations.
 #[derive(Debug, Clone)]
 pub enum ChamferWarning {
- /// Edge could not be chamfered due to geometry limitations.
- EdgeSkipped { edge_index: usize, reason: String },
- /// Chamfer distance was reduced to avoid geometry issues.
- DistanceReduced { edge_index: usize, original: f64, reduced: f64 },
- /// Face topology was modified unexpectedly.
- TopologyModified { description: String },
+    /// Edge could not be chamfered due to geometry limitations.
+    EdgeSkipped { edge_index: usize, reason: String },
+    /// Chamfer distance was reduced to avoid geometry issues.
+    DistanceReduced {
+        edge_index: usize,
+        original: f64,
+        reduced: f64,
+    },
+    /// Face topology was modified unexpectedly.
+    TopologyModified { description: String },
 }
 
 // ===========================================================?
@@ -196,63 +201,82 @@ pub enum ChamferWarning {
 /// Error type for chamfer operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChamferError {
- /// Invalid chamfer distance.
- InvalidDistance { value: f64, reason: String },
- /// Invalid chamfer angle.
- InvalidAngle { value: f64, reason: String },
- /// Edge not found in the BRep.
- EdgeNotFound { edge_index: usize },
- /// Edge has no adjacent faces.
- NoAdjacentFaces { edge_index: usize },
- /// Face geometry is not supported for chamfer.
- UnsupportedSurface { face_index: usize, surface_type: String },
- /// Chamfer would create invalid geometry.
- InvalidResult { description: String },
- /// Failed to compute chamfer surface.
- ChamferSurfaceFailed { edge_index: usize, reason: String },
- /// Input shape is invalid.
- InvalidInput { description: String },
- /// Topology error during chamfer construction.
- TopologyError { description: String },
- /// Boolean operation failed.
- BooleanFailed { description: String },
+    /// Invalid chamfer distance.
+    InvalidDistance { value: f64, reason: String },
+    /// Invalid chamfer angle.
+    InvalidAngle { value: f64, reason: String },
+    /// Edge not found in the BRep.
+    EdgeNotFound { edge_index: usize },
+    /// Edge has no adjacent faces.
+    NoAdjacentFaces { edge_index: usize },
+    /// Face geometry is not supported for chamfer.
+    UnsupportedSurface {
+        face_index: usize,
+        surface_type: String,
+    },
+    /// Chamfer would create invalid geometry.
+    InvalidResult { description: String },
+    /// Failed to compute chamfer surface.
+    ChamferSurfaceFailed { edge_index: usize, reason: String },
+    /// Input shape is invalid.
+    InvalidInput { description: String },
+    /// Topology error during chamfer construction.
+    TopologyError { description: String },
+    /// Boolean operation failed.
+    BooleanFailed { description: String },
 }
 
 impl std::fmt::Display for ChamferError {
- fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
- match self {
- Self::InvalidDistance { value, reason } => {
- write!(f, "invalid distance {}: {}", value, reason)
- }
- Self::InvalidAngle { value, reason } => {
- write!(f, "invalid angle {:.2} degrees: {}", value.to_degrees(), reason)
- }
- Self::EdgeNotFound { edge_index } => {
- write!(f, "edge {} not found in BRep", edge_index)
- }
- Self::NoAdjacentFaces { edge_index } => {
- write!(f, "edge {} has no adjacent faces", edge_index)
- }
- Self::UnsupportedSurface { face_index, surface_type } => {
- write!(f, "face {} has unsupported surface type: {}", face_index, surface_type)
- }
- Self::InvalidResult { description } => {
- write!(f, "chamfer produced invalid result: {}", description)
- }
- Self::ChamferSurfaceFailed { edge_index, reason } => {
- write!(f, "failed to compute chamfer surface for edge {}: {}", edge_index, reason)
- }
- Self::InvalidInput { description } => {
- write!(f, "invalid input: {}", description)
- }
- Self::TopologyError { description } => {
- write!(f, "topology error: {}", description)
- }
- Self::BooleanFailed { description } => {
- write!(f, "boolean operation failed: {}", description)
- }
- }
- }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidDistance { value, reason } => {
+                write!(f, "invalid distance {}: {}", value, reason)
+            }
+            Self::InvalidAngle { value, reason } => {
+                write!(
+                    f,
+                    "invalid angle {:.2} degrees: {}",
+                    value.to_degrees(),
+                    reason
+                )
+            }
+            Self::EdgeNotFound { edge_index } => {
+                write!(f, "edge {} not found in BRep", edge_index)
+            }
+            Self::NoAdjacentFaces { edge_index } => {
+                write!(f, "edge {} has no adjacent faces", edge_index)
+            }
+            Self::UnsupportedSurface {
+                face_index,
+                surface_type,
+            } => {
+                write!(
+                    f,
+                    "face {} has unsupported surface type: {}",
+                    face_index, surface_type
+                )
+            }
+            Self::InvalidResult { description } => {
+                write!(f, "chamfer produced invalid result: {}", description)
+            }
+            Self::ChamferSurfaceFailed { edge_index, reason } => {
+                write!(
+                    f,
+                    "failed to compute chamfer surface for edge {}: {}",
+                    edge_index, reason
+                )
+            }
+            Self::InvalidInput { description } => {
+                write!(f, "invalid input: {}", description)
+            }
+            Self::TopologyError { description } => {
+                write!(f, "topology error: {}", description)
+            }
+            Self::BooleanFailed { description } => {
+                write!(f, "boolean operation failed: {}", description)
+            }
+        }
+    }
 }
 
 impl std::error::Error for ChamferError {}
@@ -264,63 +288,63 @@ impl std::error::Error for ChamferError {}
 /// Information about an edge and its adjacent faces.
 #[derive(Debug, Clone)]
 struct EdgeInfo {
- /// Edge tshape index in the BRep.
- edge_index: usize,
- /// Start vertex tshape index.
- start_vertex: usize,
- /// End vertex tshape index.
- end_vertex: usize,
- /// Start point in 3D.
- start_point: DVec3,
- /// End point in 3D.
- end_point: DVec3,
- /// Edge tangent direction (normalized).
- tangent: DVec3,
- /// Edge length.
- length: f64,
- /// Adjacent face tshape indices.
- adjacent_faces: Vec<usize>,
+    /// Edge tshape index in the BRep.
+    edge_index: usize,
+    /// Start vertex tshape index.
+    start_vertex: usize,
+    /// End vertex tshape index.
+    end_vertex: usize,
+    /// Start point in 3D.
+    start_point: DVec3,
+    /// End point in 3D.
+    end_point: DVec3,
+    /// Edge tangent direction (normalized).
+    tangent: DVec3,
+    /// Edge length.
+    length: f64,
+    /// Adjacent face tshape indices.
+    adjacent_faces: Vec<usize>,
 }
 
 /// Information about adjacent face geometry.
 #[derive(Debug, Clone)]
 struct AdjacentFaceInfo {
- /// Face index (tshape index).
- face_index: usize,
- /// Face surface directly from TFaceData.
- surface: Option<Surface3>,
- /// Face normal at edge midpoint.
- normal: DVec3,
- /// Surface type.
- surface_type: SurfaceType,
- /// Reference point on the face near the edge.
- reference_point: DVec3,
+    /// Face index (tshape index).
+    face_index: usize,
+    /// Face surface directly from TFaceData.
+    surface: Option<Surface3>,
+    /// Face normal at edge midpoint.
+    normal: DVec3,
+    /// Surface type.
+    surface_type: SurfaceType,
+    /// Reference point on the face near the edge.
+    reference_point: DVec3,
 }
 
 /// Classification of surface types for chamfer computation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceType {
- Plane,
- Cylinder,
- Cone,
- Sphere,
- Torus,
- BSpline,
- Other,
+    Plane,
+    Cylinder,
+    Cone,
+    Sphere,
+    Torus,
+    BSpline,
+    Other,
 }
 
 impl From<&Surface3> for SurfaceType {
- fn from(surface: &Surface3) -> Self {
- match surface {
- Surface3::Plane(_) => SurfaceType::Plane,
- Surface3::Cylinder(_) => SurfaceType::Cylinder,
- Surface3::Cone(_) => SurfaceType::Cone,
- Surface3::Sphere(_) => SurfaceType::Sphere,
- Surface3::Torus(_) => SurfaceType::Torus,
- Surface3::BSpline(_) => SurfaceType::BSpline,
- _ => SurfaceType::Other,
- }
- }
+    fn from(surface: &Surface3) -> Self {
+        match surface {
+            Surface3::Plane(_) => SurfaceType::Plane,
+            Surface3::Cylinder(_) => SurfaceType::Cylinder,
+            Surface3::Cone(_) => SurfaceType::Cone,
+            Surface3::Sphere(_) => SurfaceType::Sphere,
+            Surface3::Torus(_) => SurfaceType::Torus,
+            Surface3::BSpline(_) => SurfaceType::BSpline,
+            _ => SurfaceType::Other,
+        }
+    }
 }
 
 // ===========================================================?
@@ -348,12 +372,12 @@ impl From<&Surface3> for SurfaceType {
 /// let result = make_chamfer_edge(&box_brep, &[0, 1, 2], 0.1).unwrap();
 /// ```
 pub fn make_chamfer_edge(
- brep: &rcad_kernel::BRep,
- edge_indices: &[usize],
- distance: f64,
+    brep: &rcad_kernel::BRep,
+    edge_indices: &[usize],
+    distance: f64,
 ) -> Result<ChamferResult, ChamferError> {
- let params = ChamferParams::symmetric(distance);
- make_chamfer(brep, edge_indices, &params)
+    let params = ChamferParams::symmetric(distance);
+    make_chamfer(brep, edge_indices, &params)
 }
 
 /// Create an asymmetric chamfer on specified edges.
@@ -371,13 +395,13 @@ pub fn make_chamfer_edge(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_asymmetric(
- brep: &rcad_kernel::BRep,
- edge_indices: &[usize],
- d1: f64,
- d2: f64,
+    brep: &rcad_kernel::BRep,
+    edge_indices: &[usize],
+    d1: f64,
+    d2: f64,
 ) -> Result<ChamferResult, ChamferError> {
- let params = ChamferParams::asymmetric(d1, d2);
- make_chamfer(brep, edge_indices, &params)
+    let params = ChamferParams::asymmetric(d1, d2);
+    make_chamfer(brep, edge_indices, &params)
 }
 
 /// Create a distance-angle chamfer on specified edges.
@@ -395,13 +419,13 @@ pub fn make_chamfer_asymmetric(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_angle(
- brep: &rcad_kernel::BRep,
- edge_indices: &[usize],
- distance: f64,
- angle: f64,
+    brep: &rcad_kernel::BRep,
+    edge_indices: &[usize],
+    distance: f64,
+    angle: f64,
 ) -> Result<ChamferResult, ChamferError> {
- let params = ChamferParams::distance_angle(distance, angle);
- make_chamfer(brep, edge_indices, &params)
+    let params = ChamferParams::distance_angle(distance, angle);
+    make_chamfer(brep, edge_indices, &params)
 }
 
 /// Apply chamfer to all edges of a solid.
@@ -415,117 +439,130 @@ pub fn make_chamfer_angle(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_all_edges(
- brep: &rcad_kernel::BRep,
- distance: f64,
+    brep: &rcad_kernel::BRep,
+    distance: f64,
 ) -> Result<ChamferResult, ChamferError> {
- let all_edges: Vec<usize> = brep.tshapes.iter().enumerate()
-  .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Edge(_)))
-  .map(|(i, _)| i)
-  .collect();
- make_chamfer_edge(brep, &all_edges, distance)
+    let all_edges: Vec<usize> = brep
+        .tshapes
+        .iter()
+        .enumerate()
+        .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Edge(_)))
+        .map(|(i, _)| i)
+        .collect();
+    make_chamfer_edge(brep, &all_edges, distance)
 }
 
 /// Core chamfer implementation.
 ///
 /// This function processes all specified edges and creates chamfers.
 fn make_chamfer(
- brep: &rcad_kernel::BRep,
- edge_indices: &[usize],
- params: &ChamferParams,
+    brep: &rcad_kernel::BRep,
+    edge_indices: &[usize],
+    params: &ChamferParams,
 ) -> Result<ChamferResult, ChamferError> {
- // Validate parameters
- params.validate()?;
+    // Validate parameters
+    params.validate()?;
 
- // Validate input
- if !brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))) {
- return Err(ChamferError::InvalidInput {
- description: "BRep has no solids".to_string(),
- });
- }
+    // Validate input
+    if !brep
+        .tshapes
+        .iter()
+        .any(|ts| matches!(ts.as_ref(), TShape::Solid(_)))
+    {
+        return Err(ChamferError::InvalidInput {
+            description: "BRep has no solids".to_string(),
+        });
+    }
 
- // Build edge-to-face adjacency
- let edge_to_faces = build_edge_face_adjacency(brep);
+    // Build edge-to-face adjacency
+    let edge_to_faces = build_edge_face_adjacency(brep);
 
- // Process each edge
- let mut result_brep = brep.clone();
- let mut edges_chamfered = 0;
- let mut chamfer_faces_created = 0;
- let mut warnings = Vec::new();
+    // Process each edge
+    let mut result_brep = brep.clone();
+    let mut edges_chamfered = 0;
+    let mut chamfer_faces_created = 0;
+    let mut warnings = Vec::new();
 
- for &edge_idx in edge_indices {
- if edge_idx >= brep.edge_count() {
- warnings.push(ChamferWarning::EdgeSkipped {
- edge_index: edge_idx,
- reason: "edge index out of range".to_string(),
- });
- continue;
- }
+    for &edge_idx in edge_indices {
+        if edge_idx >= brep.edge_count() {
+            warnings.push(ChamferWarning::EdgeSkipped {
+                edge_index: edge_idx,
+                reason: "edge index out of range".to_string(),
+            });
+            continue;
+        }
 
- let adjacent_faces = match edge_to_faces.get(&edge_idx) {
- Some(faces) if faces.len() >= 2 => faces.clone(),
- _ => {
- warnings.push(ChamferWarning::EdgeSkipped {
- edge_index: edge_idx,
- reason: "edge has fewer than 2 adjacent faces".to_string(),
- });
- continue;
- }
- };
+        let adjacent_faces = match edge_to_faces.get(&edge_idx) {
+            Some(faces) if faces.len() >= 2 => faces.clone(),
+            _ => {
+                warnings.push(ChamferWarning::EdgeSkipped {
+                    edge_index: edge_idx,
+                    reason: "edge has fewer than 2 adjacent faces".to_string(),
+                });
+                continue;
+            }
+        };
 
- // Get edge information
- let edge_info = get_edge_info(brep, edge_idx, &adjacent_faces)?;
+        // Get edge information
+        let edge_info = get_edge_info(brep, edge_idx, &adjacent_faces)?;
 
- // Get adjacent face information
- let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
+        // Get adjacent face information
+        let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
 
- if face_infos.len() < 2 {
- warnings.push(ChamferWarning::EdgeSkipped {
- edge_index: edge_idx,
- reason: "could not get adjacent face info".to_string(),
- });
- continue;
- }
+        if face_infos.len() < 2 {
+            warnings.push(ChamferWarning::EdgeSkipped {
+                edge_index: edge_idx,
+                reason: "could not get adjacent face info".to_string(),
+            });
+            continue;
+        }
 
- // Compute chamfer geometry based on surface types
- let chamfer_geom = match compute_chamfer_geometry(&edge_info, &face_infos, params) {
- Ok(g) => g,
- Err(e) => {
- warnings.push(ChamferWarning::EdgeSkipped {
- edge_index: edge_idx,
- reason: format!("chamfer computation failed: {}", e),
- });
- continue;
- }
- };
+        // Compute chamfer geometry based on surface types
+        let chamfer_geom = match compute_chamfer_geometry(&edge_info, &face_infos, params) {
+            Ok(g) => g,
+            Err(e) => {
+                warnings.push(ChamferWarning::EdgeSkipped {
+                    edge_index: edge_idx,
+                    reason: format!("chamfer computation failed: {}", e),
+                });
+                continue;
+            }
+        };
 
- // Apply chamfer to the result BRep
- match apply_chamfer_to_brep(&mut result_brep, &edge_info, &face_infos, &chamfer_geom, params) {
- Ok(faces_added) => {
- edges_chamfered += 1;
- chamfer_faces_created += faces_added;
- }
- Err(e) => {
- warnings.push(ChamferWarning::EdgeSkipped {
- edge_index: edge_idx,
- reason: format!("failed to apply chamfer: {}", e),
- });
- }
- }
- }
+        // Apply chamfer to the result BRep
+        match apply_chamfer_to_brep(
+            &mut result_brep,
+            &edge_info,
+            &face_infos,
+            &chamfer_geom,
+            params,
+        ) {
+            Ok(faces_added) => {
+                edges_chamfered += 1;
+                chamfer_faces_created += faces_added;
+            }
+            Err(e) => {
+                warnings.push(ChamferWarning::EdgeSkipped {
+                    edge_index: edge_idx,
+                    reason: format!("failed to apply chamfer: {}", e),
+                });
+            }
+        }
+    }
 
- // If no edges were chamfered, return an error
- if edges_chamfered == 0 {
- return Err(ChamferError::InvalidResult {
- description: "no edges could be chamfered".to_string(),
- });
- }
+    // If no edges were chamfered, return an error
+    if edges_chamfered == 0 {
+        return Err(ChamferError::InvalidResult {
+            description: "no edges could be chamfered".to_string(),
+        });
+    }
 
- Ok(ChamferResult {
- brep: result_brep,
- edges_chamfered,
- chamfer_faces_created,
- warnings,
- })
+    Ok(ChamferResult {
+        brep: result_brep,
+        edges_chamfered,
+        chamfer_faces_created,
+        warnings,
+    })
 }
 
 // ===========================================================?
@@ -535,20 +572,20 @@ fn make_chamfer(
 /// Chamfer geometry resulting from computation.
 #[derive(Debug, Clone)]
 struct ChamferGeometry {
- /// Chamfer surface (always a plane for simple chamfers).
- chamfer_surface: Surface3,
- /// Origin point of the chamfer surface.
- origin: DVec3,
- /// Normal of the chamfer surface.
- normal: DVec3,
- /// New vertex positions at the start of the edge.
- start_vertices: [DVec3; 2],
- /// New vertex positions at the end of the edge.
- end_vertices: [DVec3; 2],
- /// Chamfer distance on face 1.
- d1: f64,
- /// Chamfer distance on face 2.
- d2: f64,
+    /// Chamfer surface (always a plane for simple chamfers).
+    chamfer_surface: Surface3,
+    /// Origin point of the chamfer surface.
+    origin: DVec3,
+    /// Normal of the chamfer surface.
+    normal: DVec3,
+    /// New vertex positions at the start of the edge.
+    start_vertices: [DVec3; 2],
+    /// New vertex positions at the end of the edge.
+    end_vertices: [DVec3; 2],
+    /// Chamfer distance on face 1.
+    d1: f64,
+    /// Chamfer distance on face 2.
+    d2: f64,
 }
 
 /// Compute chamfer surface between two adjacent faces.
@@ -556,388 +593,390 @@ struct ChamferGeometry {
 /// This function determines the chamfer surface based on the surface types
 /// of the adjacent faces and the chamfer parameters.
 fn compute_chamfer_geometry(
- edge_info: &EdgeInfo,
- face_infos: &[AdjacentFaceInfo],
- params: &ChamferParams,
+    edge_info: &EdgeInfo,
+    face_infos: &[AdjacentFaceInfo],
+    params: &ChamferParams,
 ) -> Result<ChamferGeometry, ChamferError> {
- let face0 = &face_infos[0];
- let face1 = &face_infos[1];
+    let face0 = &face_infos[0];
+    let face1 = &face_infos[1];
 
- let (d1, d2) = params.get_distances();
+    let (d1, d2) = params.get_distances();
 
- // Check if we can reduce to plane-plane case
- match (face0.surface_type, face1.surface_type) {
- (SurfaceType::Plane, SurfaceType::Plane) => {
- compute_chamfer_plane_plane(edge_info, face0, face1, d1, d2)
- }
- (SurfaceType::Plane, SurfaceType::Cylinder) |
- (SurfaceType::Cylinder, SurfaceType::Plane) => {
- compute_chamfer_cylinder_plane(edge_info, face0, face1, d1, d2)
- }
- (SurfaceType::Cylinder, SurfaceType::Cylinder) => {
- compute_chamfer_cylinder_cylinder(edge_info, face0, face1, d1, d2)
- }
- _ => {
- // General case: approximate with plane
- compute_chamfer_general(edge_info, face0, face1, d1, d2)
- }
- }
+    // Check if we can reduce to plane-plane case
+    match (face0.surface_type, face1.surface_type) {
+        (SurfaceType::Plane, SurfaceType::Plane) => {
+            compute_chamfer_plane_plane(edge_info, face0, face1, d1, d2)
+        }
+        (SurfaceType::Plane, SurfaceType::Cylinder)
+        | (SurfaceType::Cylinder, SurfaceType::Plane) => {
+            compute_chamfer_cylinder_plane(edge_info, face0, face1, d1, d2)
+        }
+        (SurfaceType::Cylinder, SurfaceType::Cylinder) => {
+            compute_chamfer_cylinder_cylinder(edge_info, face0, face1, d1, d2)
+        }
+        _ => {
+            // General case: approximate with plane
+            compute_chamfer_general(edge_info, face0, face1, d1, d2)
+        }
+    }
 }
 
 /// Compute chamfer for plane-plane intersection.
 ///
 /// This is the most common case and produces a planar chamfer face.
 fn compute_chamfer_plane_plane(
- edge_info: &EdgeInfo,
- face0: &AdjacentFaceInfo,
- face1: &AdjacentFaceInfo,
- d1: f64,
- d2: f64,
+    edge_info: &EdgeInfo,
+    face0: &AdjacentFaceInfo,
+    face1: &AdjacentFaceInfo,
+    d1: f64,
+    d2: f64,
 ) -> Result<ChamferGeometry, ChamferError> {
- let n0 = face0.normal.normalize();
- let n1 = face1.normal.normalize();
- let edge_dir = edge_info.tangent;
+    let n0 = face0.normal.normalize();
+    let n1 = face1.normal.normalize();
+    let edge_dir = edge_info.tangent;
 
- // Compute the direction along each face (perpendicular to edge)
- let along_face0 = edge_dir.cross(n0).normalize();
- let along_face1 = edge_dir.cross(n1).normalize();
+    // Compute the direction along each face (perpendicular to edge)
+    let along_face0 = edge_dir.cross(n0).normalize();
+    let along_face1 = edge_dir.cross(n1).normalize();
 
- // Compute offset points on each face
- let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    // Compute offset points on each face
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
 
- // Points offset from the edge along each face
- let p0_offset = mid_point + along_face0 * d1;
- let p1_offset = mid_point + along_face1 * d2;
+    // Points offset from the edge along each face
+    let p0_offset = mid_point + along_face0 * d1;
+    let p1_offset = mid_point + along_face1 * d2;
 
- // The chamfer surface passes through the edge and the two offset points
- // For plane-plane, the chamfer is also a plane
+    // The chamfer surface passes through the edge and the two offset points
+    // For plane-plane, the chamfer is also a plane
 
- // Compute chamfer plane normal
- // The chamfer plane bisects the angle between the two face planes (for symmetric case)
- // For asymmetric case, it's adjusted based on d1 and d2 ratio
+    // Compute chamfer plane normal
+    // The chamfer plane bisects the angle between the two face planes (for symmetric case)
+    // For asymmetric case, it's adjusted based on d1 and d2 ratio
 
- let edge_to_p0 = p0_offset - mid_point;
- let edge_to_p1 = p1_offset - mid_point;
+    let edge_to_p0 = p0_offset - mid_point;
+    let edge_to_p1 = p1_offset - mid_point;
 
- // Chamfer plane normal is perpendicular to the edge and to the vector from edge to chamfer center
- let chamfer_normal = edge_dir.cross(edge_to_p0 + edge_to_p1).normalize();
+    // Chamfer plane normal is perpendicular to the edge and to the vector from edge to chamfer center
+    let chamfer_normal = edge_dir.cross(edge_to_p0 + edge_to_p1).normalize();
 
- // Verify the normal direction
- if chamfer_normal.length() < PARALLEL_TOL {
- // Edge and faces are coplanar - shouldn't happen for valid edge
- return Err(ChamferError::ChamferSurfaceFailed {
- edge_index: edge_info.edge_index,
- reason: "faces are coplanar, no chamfer possible".to_string(),
- });
- }
+    // Verify the normal direction
+    if chamfer_normal.length() < PARALLEL_TOL {
+        // Edge and faces are coplanar - shouldn't happen for valid edge
+        return Err(ChamferError::ChamferSurfaceFailed {
+            edge_index: edge_info.edge_index,
+            reason: "faces are coplanar, no chamfer possible".to_string(),
+        });
+    }
 
- // Compute new vertex positions
- // For each end of the edge, compute where the chamfer intersects each face
- let start_p0 = edge_info.start_point + along_face0 * d1;
- let start_p1 = edge_info.start_point + along_face1 * d2;
- let end_p0 = edge_info.end_point + along_face0 * d1;
- let end_p1 = edge_info.end_point + along_face1 * d2;
+    // Compute new vertex positions
+    // For each end of the edge, compute where the chamfer intersects each face
+    let start_p0 = edge_info.start_point + along_face0 * d1;
+    let start_p1 = edge_info.start_point + along_face1 * d2;
+    let end_p0 = edge_info.end_point + along_face0 * d1;
+    let end_p1 = edge_info.end_point + along_face1 * d2;
 
- Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
- origin: mid_point,
- normal: chamfer_normal,
- start_vertices: [start_p0, start_p1],
- end_vertices: [end_p0, end_p1],
- d1,
- d2,
- })
+    Ok(ChamferGeometry {
+        chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
+        origin: mid_point,
+        normal: chamfer_normal,
+        start_vertices: [start_p0, start_p1],
+        end_vertices: [end_p0, end_p1],
+        d1,
+        d2,
+    })
 }
 
 /// Compute chamfer for cylinder-plane intersection.
 fn compute_chamfer_cylinder_plane(
- edge_info: &EdgeInfo,
- face0: &AdjacentFaceInfo,
- face1: &AdjacentFaceInfo,
- d1: f64,
- d2: f64,
+    edge_info: &EdgeInfo,
+    face0: &AdjacentFaceInfo,
+    face1: &AdjacentFaceInfo,
+    d1: f64,
+    d2: f64,
 ) -> Result<ChamferGeometry, ChamferError> {
- // Identify which face is cylinder and which is plane
- let (cyl_face, plane_face, dc, dp) = if face0.surface_type == SurfaceType::Cylinder {
- (face0, face1, d1, d2)
- } else {
- (face1, face0, d2, d1)
- };
+    // Identify which face is cylinder and which is plane
+    let (cyl_face, plane_face, dc, dp) = if face0.surface_type == SurfaceType::Cylinder {
+        (face0, face1, d1, d2)
+    } else {
+        (face1, face0, d2, d1)
+    };
 
- let cylinder = match cyl_face.surface.as_ref() {
- Some(Surface3::Cylinder(c)) => c,
- _ => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
- };
+    let cylinder = match cyl_face.surface.as_ref() {
+        Some(Surface3::Cylinder(c)) => c,
+        _ => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
+    };
 
- let n_plane = plane_face.normal.normalize();
- let edge_dir = edge_info.tangent;
- let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    let n_plane = plane_face.normal.normalize();
+    let edge_dir = edge_info.tangent;
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
 
- // Compute radial direction from cylinder axis to edge point
- let axis = cylinder.axis.normalize();
- let to_edge = mid_point - cylinder.origin;
- let radial_dir = (to_edge - axis * to_edge.dot(axis)).normalize();
+    // Compute radial direction from cylinder axis to edge point
+    let axis = cylinder.axis.normalize();
+    let to_edge = mid_point - cylinder.origin;
+    let radial_dir = (to_edge - axis * to_edge.dot(axis)).normalize();
 
- // For cylinder, the chamfer moves along the radial direction
- // For plane, it moves perpendicular to edge in the plane
- let along_plane = edge_dir.cross(n_plane).normalize();
+    // For cylinder, the chamfer moves along the radial direction
+    // For plane, it moves perpendicular to edge in the plane
+    let along_plane = edge_dir.cross(n_plane).normalize();
 
- // Compute chamfer surface
- // The chamfer plane is defined by the edge and the two offset directions
- let cyl_offset_dir = radial_dir; // Direction away from cylinder axis
- let plane_offset_dir = along_plane;
+    // Compute chamfer surface
+    // The chamfer plane is defined by the edge and the two offset directions
+    let cyl_offset_dir = radial_dir; // Direction away from cylinder axis
+    let plane_offset_dir = along_plane;
 
- let offset_on_cyl = mid_point + cyl_offset_dir * dc;
- let offset_on_plane = mid_point + plane_offset_dir * dp;
+    let offset_on_cyl = mid_point + cyl_offset_dir * dc;
+    let offset_on_plane = mid_point + plane_offset_dir * dp;
 
- // Compute chamfer plane normal
- let v1 = offset_on_cyl - mid_point;
- let v2 = offset_on_plane - mid_point;
- let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
+    // Compute chamfer plane normal
+    let v1 = offset_on_cyl - mid_point;
+    let v2 = offset_on_plane - mid_point;
+    let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
 
- if chamfer_normal.length() < PARALLEL_TOL {
- return Err(ChamferError::ChamferSurfaceFailed {
- edge_index: edge_info.edge_index,
- reason: "could not compute chamfer normal".to_string(),
- });
- }
+    if chamfer_normal.length() < PARALLEL_TOL {
+        return Err(ChamferError::ChamferSurfaceFailed {
+            edge_index: edge_info.edge_index,
+            reason: "could not compute chamfer normal".to_string(),
+        });
+    }
 
- // Compute new vertex positions
- let start_on_cyl = edge_info.start_point + cyl_offset_dir * dc;
- let start_on_plane = edge_info.start_point + plane_offset_dir * dp;
- let end_on_cyl = edge_info.end_point + cyl_offset_dir * dc;
- let end_on_plane = edge_info.end_point + plane_offset_dir * dp;
+    // Compute new vertex positions
+    let start_on_cyl = edge_info.start_point + cyl_offset_dir * dc;
+    let start_on_plane = edge_info.start_point + plane_offset_dir * dp;
+    let end_on_cyl = edge_info.end_point + cyl_offset_dir * dc;
+    let end_on_plane = edge_info.end_point + plane_offset_dir * dp;
 
- // Return in consistent order (face0, face1)
- if face0.surface_type == SurfaceType::Cylinder {
- Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
- origin: mid_point,
- normal: chamfer_normal,
- start_vertices: [start_on_cyl, start_on_plane],
- end_vertices: [end_on_cyl, end_on_plane],
- d1,
- d2,
- })
- } else {
- Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
- origin: mid_point,
- normal: chamfer_normal,
- start_vertices: [start_on_plane, start_on_cyl],
- end_vertices: [end_on_plane, end_on_cyl],
- d1,
- d2,
- })
- }
+    // Return in consistent order (face0, face1)
+    if face0.surface_type == SurfaceType::Cylinder {
+        Ok(ChamferGeometry {
+            chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
+            origin: mid_point,
+            normal: chamfer_normal,
+            start_vertices: [start_on_cyl, start_on_plane],
+            end_vertices: [end_on_cyl, end_on_plane],
+            d1,
+            d2,
+        })
+    } else {
+        Ok(ChamferGeometry {
+            chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
+            origin: mid_point,
+            normal: chamfer_normal,
+            start_vertices: [start_on_plane, start_on_cyl],
+            end_vertices: [end_on_plane, end_on_cyl],
+            d1,
+            d2,
+        })
+    }
 }
 
 /// Compute chamfer for cylinder-cylinder intersection.
 fn compute_chamfer_cylinder_cylinder(
- edge_info: &EdgeInfo,
- face0: &AdjacentFaceInfo,
- face1: &AdjacentFaceInfo,
- d1: f64,
- d2: f64,
+    edge_info: &EdgeInfo,
+    face0: &AdjacentFaceInfo,
+    face1: &AdjacentFaceInfo,
+    d1: f64,
+    d2: f64,
 ) -> Result<ChamferGeometry, ChamferError> {
- // Get cylinder parameters for both faces
- let get_cylinder = |face: &AdjacentFaceInfo| -> Option<(DVec3, DVec3, f64)> {
- if let Some(Surface3::Cylinder(c)) = face.surface.as_ref() {
- Some((c.origin, c.axis.normalize(), c.radius))
- } else {
- None
- }
- };
+    // Get cylinder parameters for both faces
+    let get_cylinder = |face: &AdjacentFaceInfo| -> Option<(DVec3, DVec3, f64)> {
+        if let Some(Surface3::Cylinder(c)) = face.surface.as_ref() {
+            Some((c.origin, c.axis.normalize(), c.radius))
+        } else {
+            None
+        }
+    };
 
- let cyl0 = match get_cylinder(face0) {
- Some(c) => c,
- None => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
- };
+    let cyl0 = match get_cylinder(face0) {
+        Some(c) => c,
+        None => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
+    };
 
- let cyl1 = match get_cylinder(face1) {
- Some(c) => c,
- None => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
- };
+    let cyl1 = match get_cylinder(face1) {
+        Some(c) => c,
+        None => return compute_chamfer_general(edge_info, face0, face1, d1, d2),
+    };
 
- let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
- let edge_dir = edge_info.tangent;
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    let edge_dir = edge_info.tangent;
 
- // Compute radial directions from each cylinder axis
- let (_origin0, axis0, _radius0) = cyl0;
- let (_origin1, axis1, _radius1) = cyl1;
+    // Compute radial directions from each cylinder axis
+    let (_origin0, axis0, _radius0) = cyl0;
+    let (_origin1, axis1, _radius1) = cyl1;
 
- let to_edge0 = mid_point - cyl0.0;
- let radial0 = (to_edge0 - axis0 * to_edge0.dot(axis0)).normalize();
+    let to_edge0 = mid_point - cyl0.0;
+    let radial0 = (to_edge0 - axis0 * to_edge0.dot(axis0)).normalize();
 
- let to_edge1 = mid_point - cyl1.0;
- let radial1 = (to_edge1 - axis1 * to_edge1.dot(axis1)).normalize();
+    let to_edge1 = mid_point - cyl1.0;
+    let radial1 = (to_edge1 - axis1 * to_edge1.dot(axis1)).normalize();
 
- // Compute offset points
- let offset0 = mid_point + radial0 * d1;
- let offset1 = mid_point + radial1 * d2;
+    // Compute offset points
+    let offset0 = mid_point + radial0 * d1;
+    let offset1 = mid_point + radial1 * d2;
 
- // Compute chamfer plane normal
- let v1 = offset0 - mid_point;
- let v2 = offset1 - mid_point;
- let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
+    // Compute chamfer plane normal
+    let v1 = offset0 - mid_point;
+    let v2 = offset1 - mid_point;
+    let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
 
- if chamfer_normal.length() < PARALLEL_TOL {
- return Err(ChamferError::ChamferSurfaceFailed {
- edge_index: edge_info.edge_index,
- reason: "could not compute chamfer normal for cylinder-cylinder".to_string(),
- });
- }
+    if chamfer_normal.length() < PARALLEL_TOL {
+        return Err(ChamferError::ChamferSurfaceFailed {
+            edge_index: edge_info.edge_index,
+            reason: "could not compute chamfer normal for cylinder-cylinder".to_string(),
+        });
+    }
 
- // Compute new vertex positions
- let start0 = edge_info.start_point + radial0 * d1;
- let start1 = edge_info.start_point + radial1 * d2;
- let end0 = edge_info.end_point + radial0 * d1;
- let end1 = edge_info.end_point + radial1 * d2;
+    // Compute new vertex positions
+    let start0 = edge_info.start_point + radial0 * d1;
+    let start1 = edge_info.start_point + radial1 * d2;
+    let end0 = edge_info.end_point + radial0 * d1;
+    let end1 = edge_info.end_point + radial1 * d2;
 
- Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
- origin: mid_point,
- normal: chamfer_normal,
- start_vertices: [start0, start1],
- end_vertices: [end0, end1],
- d1,
- d2,
- })
+    Ok(ChamferGeometry {
+        chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
+        origin: mid_point,
+        normal: chamfer_normal,
+        start_vertices: [start0, start1],
+        end_vertices: [end0, end1],
+        d1,
+        d2,
+    })
 }
 
 /// Compute chamfer for general surface-surface intersection.
 ///
 /// Uses approximation based on face normals at the edge.
 fn compute_chamfer_general(
- edge_info: &EdgeInfo,
- face0: &AdjacentFaceInfo,
- face1: &AdjacentFaceInfo,
- d1: f64,
- d2: f64,
+    edge_info: &EdgeInfo,
+    face0: &AdjacentFaceInfo,
+    face1: &AdjacentFaceInfo,
+    d1: f64,
+    d2: f64,
 ) -> Result<ChamferGeometry, ChamferError> {
- let n0 = face0.normal.normalize();
- let n1 = face1.normal.normalize();
- let edge_dir = edge_info.tangent;
+    let n0 = face0.normal.normalize();
+    let n1 = face1.normal.normalize();
+    let edge_dir = edge_info.tangent;
 
- let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
 
- // Compute directions along each face (perpendicular to edge in the face plane)
- let along_face0 = edge_dir.cross(n0).normalize();
- let along_face1 = edge_dir.cross(n1).normalize();
+    // Compute directions along each face (perpendicular to edge in the face plane)
+    let along_face0 = edge_dir.cross(n0).normalize();
+    let along_face1 = edge_dir.cross(n1).normalize();
 
- // Compute chamfer plane using the same logic as plane-plane
- let offset0 = mid_point + along_face0 * d1;
- let offset1 = mid_point + along_face1 * d2;
+    // Compute chamfer plane using the same logic as plane-plane
+    let offset0 = mid_point + along_face0 * d1;
+    let offset1 = mid_point + along_face1 * d2;
 
- let v1 = offset0 - mid_point;
- let v2 = offset1 - mid_point;
- let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
+    let v1 = offset0 - mid_point;
+    let v2 = offset1 - mid_point;
+    let chamfer_normal = edge_dir.cross(v1 + v2).normalize();
 
- if chamfer_normal.length() < PARALLEL_TOL {
- return Err(ChamferError::ChamferSurfaceFailed {
- edge_index: edge_info.edge_index,
- reason: "degenerate chamfer geometry".to_string(),
- });
- }
+    if chamfer_normal.length() < PARALLEL_TOL {
+        return Err(ChamferError::ChamferSurfaceFailed {
+            edge_index: edge_info.edge_index,
+            reason: "degenerate chamfer geometry".to_string(),
+        });
+    }
 
- // Compute new vertex positions
- let start0 = edge_info.start_point + along_face0 * d1;
- let start1 = edge_info.start_point + along_face1 * d2;
- let end0 = edge_info.end_point + along_face0 * d1;
- let end1 = edge_info.end_point + along_face1 * d2;
+    // Compute new vertex positions
+    let start0 = edge_info.start_point + along_face0 * d1;
+    let start1 = edge_info.start_point + along_face1 * d2;
+    let end0 = edge_info.end_point + along_face0 * d1;
+    let end1 = edge_info.end_point + along_face1 * d2;
 
- Ok(ChamferGeometry {
- chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
- origin: mid_point,
- normal: chamfer_normal,
- start_vertices: [start0, start1],
- end_vertices: [end0, end1],
- d1,
- d2,
- })
+    Ok(ChamferGeometry {
+        chamfer_surface: Surface3::Plane(Plane::new(mid_point, chamfer_normal)),
+        origin: mid_point,
+        normal: chamfer_normal,
+        start_vertices: [start0, start1],
+        end_vertices: [end0, end1],
+        d1,
+        d2,
+    })
 }
 
 /// Compute the chamfer surface (public API).
 ///
 /// Returns the chamfer surface between two adjacent faces.
 pub fn compute_chamfer_surface(
- brep: &rcad_kernel::BRep,
- edge_index: usize,
- params: &ChamferParams,
+    brep: &rcad_kernel::BRep,
+    edge_index: usize,
+    params: &ChamferParams,
 ) -> Result<Surface3, ChamferError> {
- let edge_to_faces = build_edge_face_adjacency(brep);
- let adjacent_faces = edge_to_faces.get(&edge_index).cloned().unwrap_or_default();
+    let edge_to_faces = build_edge_face_adjacency(brep);
+    let adjacent_faces = edge_to_faces.get(&edge_index).cloned().unwrap_or_default();
 
- if adjacent_faces.len() < 2 {
- return Err(ChamferError::NoAdjacentFaces { edge_index });
- }
+    if adjacent_faces.len() < 2 {
+        return Err(ChamferError::NoAdjacentFaces { edge_index });
+    }
 
- let edge_info = get_edge_info(brep, edge_index, &adjacent_faces)?;
- let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
+    let edge_info = get_edge_info(brep, edge_index, &adjacent_faces)?;
+    let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
 
- if face_infos.len() < 2 {
- return Err(ChamferError::NoAdjacentFaces { edge_index });
- }
+    if face_infos.len() < 2 {
+        return Err(ChamferError::NoAdjacentFaces { edge_index });
+    }
 
- let chamfer_geom = compute_chamfer_geometry(&edge_info, &face_infos, params)?;
- Ok(chamfer_geom.chamfer_surface)
+    let chamfer_geom = compute_chamfer_geometry(&edge_info, &face_infos, params)?;
+    Ok(chamfer_geom.chamfer_surface)
 }
 
 /// Compute the boundary curves of a chamfer.
 ///
 /// Returns the two curves where the chamfer face meets the original faces.
 pub fn compute_chamfer_curves(
- brep: &rcad_kernel::BRep,
- edge_index: usize,
- params: &ChamferParams,
+    brep: &rcad_kernel::BRep,
+    edge_index: usize,
+    params: &ChamferParams,
 ) -> Result<(Curve3, Curve3), ChamferError> {
- let edge_to_faces = build_edge_face_adjacency(brep);
- let adjacent_faces = edge_to_faces.get(&edge_index).cloned().unwrap_or_default();
+    let edge_to_faces = build_edge_face_adjacency(brep);
+    let adjacent_faces = edge_to_faces.get(&edge_index).cloned().unwrap_or_default();
 
- if adjacent_faces.len() < 2 {
- return Err(ChamferError::NoAdjacentFaces { edge_index });
- }
+    if adjacent_faces.len() < 2 {
+        return Err(ChamferError::NoAdjacentFaces { edge_index });
+    }
 
- let edge_info = get_edge_info(brep, edge_index, &adjacent_faces)?;
- let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
+    let edge_info = get_edge_info(brep, edge_index, &adjacent_faces)?;
+    let face_infos = get_adjacent_face_infos(brep, &adjacent_faces, &edge_info)?;
 
- if face_infos.len() < 2 {
- return Err(ChamferError::NoAdjacentFaces { edge_index });
- }
+    if face_infos.len() < 2 {
+        return Err(ChamferError::NoAdjacentFaces { edge_index });
+    }
 
- let chamfer_geom = compute_chamfer_geometry(&edge_info, &face_infos, params)?;
+    let chamfer_geom = compute_chamfer_geometry(&edge_info, &face_infos, params)?;
 
- // Create lines for the two boundary curves
- let curve1 = Curve3::Line(Line3 {
- origin: chamfer_geom.start_vertices[0],
- direction: (chamfer_geom.end_vertices[0] - chamfer_geom.start_vertices[0]).normalize_or(DVec3::X),
- });
+    // Create lines for the two boundary curves
+    let curve1 = Curve3::Line(Line3 {
+        origin: chamfer_geom.start_vertices[0],
+        direction: (chamfer_geom.end_vertices[0] - chamfer_geom.start_vertices[0])
+            .normalize_or(DVec3::X),
+    });
 
- let curve2 = Curve3::Line(Line3 {
- origin: chamfer_geom.start_vertices[1],
- direction: (chamfer_geom.end_vertices[1] - chamfer_geom.start_vertices[1]).normalize_or(DVec3::X),
- });
+    let curve2 = Curve3::Line(Line3 {
+        origin: chamfer_geom.start_vertices[1],
+        direction: (chamfer_geom.end_vertices[1] - chamfer_geom.start_vertices[1])
+            .normalize_or(DVec3::X),
+    });
 
- Ok((curve1, curve2))
+    Ok((curve1, curve2))
 }
 
 /// Trim adjacent faces to meet the chamfer.
 ///
 /// This function modifies the BRep by adjusting face boundaries.
 pub fn trim_adjacent_faces(
- _brep: &mut rcad_kernel::BRep,
- _edge_index: usize,
- _params: &ChamferParams,
+    _brep: &mut rcad_kernel::BRep,
+    _edge_index: usize,
+    _params: &ChamferParams,
 ) -> Result<(), ChamferError> {
- // This is a placeholder for the face trimming implementation.
- // In a full implementation, this would:
- // 1. Compute the intersection curves between chamfer surface and each face
- // 2. Create new edges along these curves
- // 3. Modify the face boundaries to use the new edges
- // 4. Update the topology
+    // This is a placeholder for the face trimming implementation.
+    // In a full implementation, this would:
+    // 1. Compute the intersection curves between chamfer surface and each face
+    // 2. Create new edges along these curves
+    // 3. Modify the face boundaries to use the new edges
+    // 4. Update the topology
 
- // For now, we return Ok as the trimming is handled in apply_chamfer_to_brep
- Ok(())
+    // For now, we return Ok as the trimming is handled in apply_chamfer_to_brep
+    Ok(())
 }
 
 // ===========================================================?
@@ -952,69 +991,79 @@ pub fn trim_adjacent_faces(
 /// 3. Creates the chamfer face
 /// 4. Updates the shell topology
 fn apply_chamfer_to_brep(
- brep: &mut rcad_kernel::BRep,
- _edge_info: &EdgeInfo,
- _face_infos: &[AdjacentFaceInfo],
- chamfer_geom: &ChamferGeometry,
- _params: &ChamferParams,
+    brep: &mut rcad_kernel::BRep,
+    _edge_info: &EdgeInfo,
+    _face_infos: &[AdjacentFaceInfo],
+    chamfer_geom: &ChamferGeometry,
+    _params: &ChamferParams,
 ) -> Result<usize, ChamferError> {
- // Add new vertices using topods builder API
- let v_start_0 = brep.add_tvertex(chamfer_geom.start_vertices[0]);
- let v_start_1 = brep.add_tvertex(chamfer_geom.start_vertices[1]);
- let v_end_0 = brep.add_tvertex(chamfer_geom.end_vertices[0]);
- let v_end_1 = brep.add_tvertex(chamfer_geom.end_vertices[1]);
+    // Add new vertices using topods builder API
+    let v_start_0 = brep.add_tvertex(chamfer_geom.start_vertices[0]);
+    let v_start_1 = brep.add_tvertex(chamfer_geom.start_vertices[1]);
+    let v_end_0 = brep.add_tvertex(chamfer_geom.end_vertices[0]);
+    let v_end_1 = brep.add_tvertex(chamfer_geom.end_vertices[1]);
 
- // Create new edges for chamfer boundaries
- let e0_sr = create_line_edge(brep, v_start_0, v_end_0);
- let e1_sr = create_line_edge(brep, v_start_1, v_end_1);
- let e_start_sr = create_line_edge(brep, v_start_0, v_start_1);
- let e_end_sr = create_line_edge(brep, v_end_0, v_end_1);
+    // Create new edges for chamfer boundaries
+    let e0_sr = create_line_edge(brep, v_start_0, v_end_0);
+    let e1_sr = create_line_edge(brep, v_start_1, v_end_1);
+    let e_start_sr = create_line_edge(brep, v_start_0, v_start_1);
+    let e_end_sr = create_line_edge(brep, v_end_0, v_end_1);
 
- // Create wire with oriented edge references
- let wire = brep.add_twire(vec![
-  e0_sr,
-  e_end_sr,
-  topods::ShapeRef::synthetic_with_orientation(e1_sr.index, topods::Orientation::Reversed),
-  topods::ShapeRef::synthetic_with_orientation(e_start_sr.index, topods::Orientation::Reversed),
- ]);
+    // Create wire with oriented edge references
+    let wire = brep.add_twire(vec![
+        e0_sr,
+        e_end_sr,
+        topods::ShapeRef::synthetic_with_orientation(e1_sr.index, topods::Orientation::Reversed),
+        topods::ShapeRef::synthetic_with_orientation(
+            e_start_sr.index,
+            topods::Orientation::Reversed,
+        ),
+    ]);
 
- // Create chamfer face with the chamfer surface
- let face_sr = brep.add_tface(
-  Some(chamfer_geom.chamfer_surface.clone()),
-  wire,
-  vec![],   // no inner wires
-  None,     // no sample point
-  None,     // no uv domain
-  vec![],   // no internal vertices
-  true,     // natural restriction
- );
+    // Create chamfer face with the chamfer surface
+    let face_sr = brep.add_tface(
+        Some(chamfer_geom.chamfer_surface.clone()),
+        wire,
+        vec![], // no inner wires
+        None,   // no sample point
+        None,   // no uv domain
+        vec![], // no internal vertices
+        true,   // natural restriction
+    );
 
- // Add face to the first Solid's first Shell
- for arc in &mut brep.tshapes {
-  if let TShape::Solid(sd) = &mut *Arc::get_mut(arc).unwrap() {
-   if let Some(&sh_sr) = sd.shells.first() {
-    let sh = brep.shell_mut(sh_sr);
-    sh.faces.push(face_sr);
-    sh.my_shapes.push(face_sr);
-   }
-   break;
-  }
- }
+    // Add face to the first Solid's first Shell
+    for arc in &mut brep.tshapes {
+        if let TShape::Solid(sd) = &mut *Arc::get_mut(arc).unwrap() {
+            if let Some(&sh_sr) = sd.shells.first() {
+                let sh = brep.shell_mut(sh_sr);
+                sh.faces.push(face_sr);
+                sh.my_shapes.push(face_sr);
+            }
+            break;
+        }
+    }
 
- Ok(1) // One chamfer face created
+    Ok(1) // One chamfer face created
 }
 
 /// Create a line edge between two vertices using topods builder API.
 /// Returns the ShapeRef of the new edge.
-fn create_line_edge(brep: &mut rcad_kernel::BRep, start_sr: topods::ShapeRef, end_sr: topods::ShapeRef) -> topods::ShapeRef {
- let p0 = brep.vertex(start_sr).point;
- let p1 = brep.vertex(end_sr).point;
- let d = p1 - p0;
- let len = d.length();
- let dir = if len > TOLERANCE { d / len } else { DVec3::X };
- let curve = Curve3::Line(Line3 { origin: p0, direction: dir });
+fn create_line_edge(
+    brep: &mut rcad_kernel::BRep,
+    start_sr: topods::ShapeRef,
+    end_sr: topods::ShapeRef,
+) -> topods::ShapeRef {
+    let p0 = brep.vertex(start_sr).point;
+    let p1 = brep.vertex(end_sr).point;
+    let d = p1 - p0;
+    let len = d.length();
+    let dir = if len > TOLERANCE { d / len } else { DVec3::X };
+    let curve = Curve3::Line(Line3 {
+        origin: p0,
+        direction: dir,
+    });
 
- brep.add_tedge(Some(curve), start_sr, end_sr, [0.0, len])
+    brep.add_tedge(Some(curve), start_sr, end_sr, [0.0, len])
 }
 
 // ===========================================================?
@@ -1025,118 +1074,136 @@ fn create_line_edge(brep: &mut rcad_kernel::BRep, start_sr: topods::ShapeRef, en
 /// Uses tshape indices directly — both keys (edge indices) and values (face indices)
 /// are indices into `brep.tshapes`.
 fn build_edge_face_adjacency(brep: &rcad_kernel::BRep) -> HashMap<usize, Vec<usize>> {
- let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
 
- for (fi, ts) in brep.tshapes.iter().enumerate() {
-  if let TShape::Face(fd) = ts.as_ref() {
-   // Outer wire edges
-   if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
-    if let TShape::Wire(wd) = wts.as_ref() {
-     for er in &wd.edges {
-      edge_to_faces.entry(er.index).or_default().push(fi);
-     }
+    for (fi, ts) in brep.tshapes.iter().enumerate() {
+        if let TShape::Face(fd) = ts.as_ref() {
+            // Outer wire edges
+            if let Some(wts) = brep.tshapes.get(fd.outer_wire.index) {
+                if let TShape::Wire(wd) = wts.as_ref() {
+                    for er in &wd.edges {
+                        edge_to_faces.entry(er.index).or_default().push(fi);
+                    }
+                }
+            }
+            // Inner wire edges
+            for iw_sr in &fd.inner_wires {
+                if let Some(wts) = brep.tshapes.get(iw_sr.index) {
+                    if let TShape::Wire(wd) = wts.as_ref() {
+                        for er in &wd.edges {
+                            edge_to_faces.entry(er.index).or_default().push(fi);
+                        }
+                    }
+                }
+            }
+        }
     }
-   }
-   // Inner wire edges
-   for iw_sr in &fd.inner_wires {
-    if let Some(wts) = brep.tshapes.get(iw_sr.index) {
-     if let TShape::Wire(wd) = wts.as_ref() {
-      for er in &wd.edges {
-       edge_to_faces.entry(er.index).or_default().push(fi);
-      }
-     }
-    }
-   }
-  }
- }
 
- edge_to_faces
+    edge_to_faces
 }
 
 /// Get information about an edge.
 /// `edge_idx` is the tshape index of the edge in `brep.tshapes`.
 fn get_edge_info(
- brep: &rcad_kernel::BRep,
- edge_idx: usize,
- adjacent_faces: &[usize],
+    brep: &rcad_kernel::BRep,
+    edge_idx: usize,
+    adjacent_faces: &[usize],
 ) -> Result<EdgeInfo, ChamferError> {
- let ed = match brep.tshapes.get(edge_idx) {
-  Some(ts) => match ts.as_ref() {
-   TShape::Edge(e) => e,
-   _ => return Err(ChamferError::EdgeNotFound { edge_index: edge_idx }),
-  },
-  None => return Err(ChamferError::EdgeNotFound { edge_index: edge_idx }),
- };
+    let ed = match brep.tshapes.get(edge_idx) {
+        Some(ts) => match ts.as_ref() {
+            TShape::Edge(e) => e,
+            _ => {
+                return Err(ChamferError::EdgeNotFound {
+                    edge_index: edge_idx,
+                });
+            }
+        },
+        None => {
+            return Err(ChamferError::EdgeNotFound {
+                edge_index: edge_idx,
+            });
+        }
+    };
 
- let start_vertex = ed.first.index;
- let end_vertex = ed.last.index;
+    let start_vertex = ed.first.index;
+    let end_vertex = ed.last.index;
 
- let start_point = brep.vertex_point(start_vertex)
-  .ok_or(ChamferError::EdgeNotFound { edge_index: edge_idx })?;
+    let start_point = brep
+        .vertex_point(start_vertex)
+        .ok_or(ChamferError::EdgeNotFound {
+            edge_index: edge_idx,
+        })?;
 
- let end_point = brep.vertex_point(end_vertex)
-  .ok_or(ChamferError::EdgeNotFound { edge_index: edge_idx })?;
+    let end_point = brep
+        .vertex_point(end_vertex)
+        .ok_or(ChamferError::EdgeNotFound {
+            edge_index: edge_idx,
+        })?;
 
- let diff = end_point - start_point;
- let length = diff.length();
- let tangent = if length > TOLERANCE { diff / length } else { DVec3::X };
+    let diff = end_point - start_point;
+    let length = diff.length();
+    let tangent = if length > TOLERANCE {
+        diff / length
+    } else {
+        DVec3::X
+    };
 
- Ok(EdgeInfo {
-  edge_index: edge_idx,
-  start_vertex,
-  end_vertex,
-  start_point,
-  end_point,
-  tangent,
-  length,
-  adjacent_faces: adjacent_faces.to_vec(),
- })
+    Ok(EdgeInfo {
+        edge_index: edge_idx,
+        start_vertex,
+        end_vertex,
+        start_point,
+        end_point,
+        tangent,
+        length,
+        adjacent_faces: adjacent_faces.to_vec(),
+    })
 }
 
 /// Get information about adjacent faces.
 /// `adjacent_faces` contains tshape indices of face TShapes.
 fn get_adjacent_face_infos(
- brep: &rcad_kernel::BRep,
- adjacent_faces: &[usize],
- edge_info: &EdgeInfo,
+    brep: &rcad_kernel::BRep,
+    adjacent_faces: &[usize],
+    edge_info: &EdgeInfo,
 ) -> Result<Vec<AdjacentFaceInfo>, ChamferError> {
- let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
 
- let mut face_infos = Vec::with_capacity(adjacent_faces.len());
+    let mut face_infos = Vec::with_capacity(adjacent_faces.len());
 
- for &fi in adjacent_faces {
-  let fd = match brep.tshapes.get(fi) {
-   Some(ts) => match ts.as_ref() {
-    TShape::Face(f) => f,
-    _ => continue,
-   },
-   None => continue,
-  };
+    for &fi in adjacent_faces {
+        let fd = match brep.tshapes.get(fi) {
+            Some(ts) => match ts.as_ref() {
+                TShape::Face(f) => f,
+                _ => continue,
+            },
+            None => continue,
+        };
 
-  let surface = fd.surface.clone();
-  let surface_type = surface.as_ref()
-   .map(SurfaceType::from)
-   .unwrap_or(SurfaceType::Other);
+        let surface = fd.surface.clone();
+        let surface_type = surface
+            .as_ref()
+            .map(SurfaceType::from)
+            .unwrap_or(SurfaceType::Other);
 
-  // Compute face normal from surface
-  let normal = surface.as_ref()
-   .map(|s| rcad_kernel::SurfaceEval::normal_at(s, 0.0, 0.0))
-   .unwrap_or(DVec3::ZERO);
+        // Compute face normal from surface
+        let normal = surface
+            .as_ref()
+            .map(|s| rcad_kernel::SurfaceEval::normal_at(s, 0.0, 0.0))
+            .unwrap_or(DVec3::ZERO);
 
-  face_infos.push(AdjacentFaceInfo {
-   face_index: fi,
-   surface,
-   normal,
-   surface_type,
-   reference_point: mid_point,
-  });
- }
+        face_infos.push(AdjacentFaceInfo {
+            face_index: fi,
+            surface,
+            normal,
+            surface_type,
+            reference_point: mid_point,
+        });
+    }
 
- Ok(face_infos)
+    Ok(face_infos)
 }
 
 // ===========================================================?
 // Tests
 // ===========================================================?
-
-

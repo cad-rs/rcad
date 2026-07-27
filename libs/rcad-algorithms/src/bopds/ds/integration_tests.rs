@@ -10,18 +10,17 @@
 //! "OCCT ref:" were aspirational annotations, not confirmed values.
 //! These fake assertions have been deleted — what remains is honest.
 
-use super::types::*;
 use super::DS;
+use super::types::*;
 use crate::bopalgo::pave_filler::PaveFiller;
-use crate::tolerance::TOLERANCE_ABS;
 use crate::boptools::bvh::Bvh;
-use rcad_kernel::topods::{self, TShape};
+use crate::tolerance::TOLERANCE_ABS;
 use glam::DVec3;
+use rcad_kernel::topods::{self, TShape};
 
 /// Sphere (psphere r=1) 鈥?OCCT: 1 face, 4 vertices, 3 edges (seam+degenerated).
 fn make_unit_sphere() -> topods::BRep {
-    rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0)
-        .expect("Unit sphere creation failed")
+    rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).expect("Unit sphere creation failed")
 }
 
 /// Box (1x1x1) 鈥?OCCT: 6 faces, 8 vertices, 12 edges.
@@ -76,13 +75,25 @@ fn fuse(a: &topods::BRep, b: &topods::BRep) -> topods::BRep {
         filler.perform(a, b);
     }
     let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(
-        &ds, crate::BooleanOpType::Union, brep, Vec::new(), Vec::new());
-    builder.build_with_history().map(|(r, _)| r).expect("fuse failed")
+        &ds,
+        crate::BooleanOpType::Union,
+        brep,
+        Vec::new(),
+        Vec::new(),
+    );
+    builder
+        .build_with_history()
+        .map(|(r, _)| r)
+        .expect("fuse failed")
 }
 
 /// Count topology entities in a BRep
 fn count_topo(brep: &topods::BRep) -> (usize, usize, usize, usize, usize) {
-    let mut v=0; let mut e=0; let mut f=0; let mut sh=0; let mut so=0;
+    let mut v = 0;
+    let mut e = 0;
+    let mut f = 0;
+    let mut sh = 0;
+    let mut so = 0;
     for ts in &brep.tshapes {
         match &**ts {
             TShape::Vertex(_) => v += 1,
@@ -98,7 +109,8 @@ fn count_topo(brep: &topods::BRep) -> (usize, usize, usize, usize, usize) {
 
 /// Count surface types among faces
 fn count_surfaces(brep: &topods::BRep) -> (usize, usize) {
-    let mut sphere = 0; let mut plane = 0;
+    let mut sphere = 0;
+    let mut plane = 0;
     for ts in &brep.tshapes {
         if let TShape::Face(fd) = &**ts {
             match &fd.surface {
@@ -127,7 +139,7 @@ fn ds_load_sphere_surface_type() {
     let brep = make_unit_sphere();
     let ds = DS::new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
     match &ds.faces[0].surface {
-        rcad_kernel::geom::Surface3::Sphere(_) => {},
+        rcad_kernel::geom::Surface3::Sphere(_) => {}
         _ => panic!("sphere face should be SphericalSurface"),
     }
 }
@@ -143,7 +155,10 @@ fn ds_load_sphere_and_box_face_count() {
     let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
     assert_eq!(ds.faces.len(), 7, "sphere(1) + box(6) = 7 faces");
     assert!(ds.vertices.len() >= 8, ">=8 vertices (box has 8)");
-    assert!(ds.edges.len() >= 14, ">=14 edges (box has 12 + sphere has >=2)");
+    assert!(
+        ds.edges.len() >= 14,
+        ">=14 edges (box has 12 + sphere has >=2)"
+    );
 }
 
 #[test]
@@ -151,8 +166,16 @@ fn ds_load_sphere_and_box_origin_flags() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
     let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
-    let a_count = ds.faces.iter().filter(|f| f.origin == ShapeOrigin::ShapeA).count();
-    let b_count = ds.faces.iter().filter(|f| f.origin == ShapeOrigin::ShapeB).count();
+    let a_count = ds
+        .faces
+        .iter()
+        .filter(|f| f.origin == ShapeOrigin::ShapeA)
+        .count();
+    let b_count = ds
+        .faces
+        .iter()
+        .filter(|f| f.origin == ShapeOrigin::ShapeB)
+        .count();
     assert_eq!(a_count, 1, "sphere (A) has 1 face");
     assert_eq!(b_count, 6, "box (B) has 6 faces");
 }
@@ -166,8 +189,10 @@ fn ds_load_sphere_and_box_origin_flags() {
 // unless a different geometry is named.
 
 fn overlapping_boxes() -> (topods::BRep, topods::BRep) {
-    (box_at(DVec3::ZERO, 2.0, 2.0, 2.0),
-     box_at(DVec3::new(0.5, 0.5, 0.5), 2.0, 2.0, 2.0))
+    (
+        box_at(DVec3::ZERO, 2.0, 2.0, 2.0),
+        box_at(DVec3::new(0.5, 0.5, 0.5), 2.0, 2.0, 2.0),
+    )
 }
 
 fn sphere_box() -> (topods::BRep, topods::BRep) {
@@ -204,8 +229,11 @@ fn stage_init_uv_boundaries_exist() {
     let (b1, b2) = overlapping_boxes();
     let ds = pave_fill_stage(&b1, &b2, "after_Init");
     for fi in 0..ds.faces.len() {
-        assert!(ds.faces[fi].uv_boundary.is_some() || ds.faces[fi].boundary_verts.len() >= 3,
-            "Init: face {} has UV boundary or >=3 boundary verts", fi);
+        assert!(
+            ds.faces[fi].uv_boundary.is_some() || ds.faces[fi].boundary_verts.len() >= 3,
+            "Init: face {} has UV boundary or >=3 boundary verts",
+            fi
+        );
     }
 }
 
@@ -222,7 +250,10 @@ fn stage_prepare_has_shapes() {
     assert!(ds.intersection_curves.is_empty(), "Prepare: no ICs yet");
     // Edge-face representations exist for at least some edges
     let face_reps_exist: usize = ds.edges.iter().map(|e| e.face_reps.len()).sum();
-    assert!(face_reps_exist > 0, "Prepare: at least one edge has face_rep");
+    assert!(
+        face_reps_exist > 0,
+        "Prepare: at least one edge has face_rep"
+    );
 }
 
 // 鈹€鈹€ Stage: PerformVV 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -244,8 +275,11 @@ fn stage_vv_non_intersecting_empty() {
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformVV");
     // far-separated boxes 鈫?no VV interferences (shapes[8] is now correctly a Vertex)
-    assert!(ds.interf_vv.is_empty(),
-        "VV: non-intersecting boxes -> 0 VV (got {})", ds.interf_vv.len());
+    assert!(
+        ds.interf_vv.is_empty(),
+        "VV: non-intersecting boxes -> 0 VV (got {})",
+        ds.interf_vv.len()
+    );
 }
 
 // 鈹€鈹€ Stage: PerformVE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -257,13 +291,22 @@ fn stage_ve_has_paves() {
     // VE interferences may or may not exist depending on geometry
     // But at minimum, edge paves should be initialized
     let any_paves: usize = ds.edges.iter().map(|e| e.paves.len()).sum();
-    assert!(any_paves >= ds.edges.len() * 2,
-        "VE: at least 2 paves per edge (start+end). Got sum={}", any_paves);
+    assert!(
+        any_paves >= ds.edges.len() * 2,
+        "VE: at least 2 paves per edge (start+end). Got sum={}",
+        any_paves
+    );
     // Consistency: edge arrays match
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "VE: start/end vertex arrays length match");
-    assert_eq!(ds.edge_paves.len(), ds.edges.len(),
-        "VE: edge_paves per-edge length matches edge count");
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_end_vertex.len(),
+        "VE: start/end vertex arrays length match"
+    );
+    assert_eq!(
+        ds.edge_paves.len(),
+        ds.edges.len(),
+        "VE: edge_paves per-edge length matches edge count"
+    );
 }
 
 // 鈹€鈹€ Stage: PerformEE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -279,8 +322,10 @@ fn stage_ee_has_interferences() {
         eprintln!("EE: overlaps may not produce EE interferences (handled by FF)");
     } else {
         for ee in &ds.interf_ee {
-            assert!(ee.e1 < ds.edges.len() && ee.e2 < ds.edges.len(),
-                "EE: edge indices in range");
+            assert!(
+                ee.e1 < ds.edges.len() && ee.e2 < ds.edges.len(),
+                "EE: edge indices in range"
+            );
         }
     }
 }
@@ -290,8 +335,10 @@ fn stage_ee_non_intersecting_empty() {
     let b1 = box_at(DVec3::new(-5.0, -5.0, -5.0), 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformEE");
-    assert!(ds.interf_ee.is_empty(),
-        "EE: non-intersecting boxes -> 0 EE");
+    assert!(
+        ds.interf_ee.is_empty(),
+        "EE: non-intersecting boxes -> 0 EE"
+    );
 }
 
 // 鈹€鈹€ Stage: PerformVF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -301,10 +348,8 @@ fn stage_vf_consistent() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_PerformVF");
     for vf in &ds.interf_vf {
-        assert!(vf.vertex < ds.vertices.len(),
-            "VF: vertex index in range");
-        assert!(vf.face < ds.faces.len(),
-            "VF: face index in range");
+        assert!(vf.vertex < ds.vertices.len(), "VF: vertex index in range");
+        assert!(vf.face < ds.faces.len(), "VF: face index in range");
     }
 }
 
@@ -318,8 +363,12 @@ fn stage_ef_consistent() {
     eprintln!("EF: {} edge-face interferences", ef_count);
     for ef in &ds.interf_ef {
         if ef.new_vertex != usize::MAX {
-            assert!(ef.new_vertex < ds.vertices.len(),
-                "EF: new_vertex {} in range (max {})", ef.new_vertex, ds.vertices.len());
+            assert!(
+                ef.new_vertex < ds.vertices.len(),
+                "EF: new_vertex {} in range (max {})",
+                ef.new_vertex,
+                ds.vertices.len()
+            );
         }
         assert!(ef.edge < ds.edges.len(), "EF: edge index in range");
         assert!(ef.face < ds.faces.len(), "EF: face index in range");
@@ -331,8 +380,10 @@ fn stage_ef_non_intersecting_empty() {
     let b1 = box_at(DVec3::new(-5.0, -5.0, -5.0), 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformEF");
-    assert!(ds.interf_ef.is_empty(),
-        "EF: non-intersecting boxes -> 0 EF");
+    assert!(
+        ds.interf_ef.is_empty(),
+        "EF: non-intersecting boxes -> 0 EF"
+    );
 }
 
 // 鈹€鈹€ Stage: RepeatIntersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -347,10 +398,16 @@ fn stage_force_ee_consistent() {
         if !ds.edge_pave_blocks(ei).is_empty() {
             for spb in ds.edge_pave_blocks(ei) {
                 let pb = spb.0.read().unwrap();
-                assert!(pb.pave1.vertex_idx < ds.vertices.len(),
-                    "ForceEE: PB pave1 vertex {} in range", pb.pave1.vertex_idx);
-                assert!(pb.pave2.vertex_idx < ds.vertices.len(),
-                    "ForceEE: PB pave2 vertex {} in range", pb.pave2.vertex_idx);
+                assert!(
+                    pb.pave1.vertex_idx < ds.vertices.len(),
+                    "ForceEE: PB pave1 vertex {} in range",
+                    pb.pave1.vertex_idx
+                );
+                assert!(
+                    pb.pave2.vertex_idx < ds.vertices.len(),
+                    "ForceEE: PB pave2 vertex {} in range",
+                    pb.pave2.vertex_idx
+                );
             }
         }
     }
@@ -365,8 +422,12 @@ fn stage_force_ef_consistent() {
     for fi in 0..ds.faces.len() {
         let fi_info = ds.face_info(fi);
         for &vi in &fi_info.vertices_in {
-            assert!(vi < ds.vertices.len(),
-                "ForceEF: face {} vertices_in {} in range", fi, vi);
+            assert!(
+                vi < ds.vertices.len(),
+                "ForceEF: face {} vertices_in {} in range",
+                fi,
+                vi
+            );
         }
     }
 }
@@ -377,13 +438,21 @@ fn stage_force_ef_consistent() {
 fn stage_ff_has_intersection_curves_for_overlap() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_PerformFF");
-    assert!(!ds.intersection_curves.is_empty(),
-        "FF: sphere-box should produce intersection curves");
-    assert!(!ds.interf_ff.is_empty(),
-        "FF: sphere-box should have FF interferences");
+    assert!(
+        !ds.intersection_curves.is_empty(),
+        "FF: sphere-box should produce intersection curves"
+    );
+    assert!(
+        !ds.interf_ff.is_empty(),
+        "FF: sphere-box should have FF interferences"
+    );
     for (ci, ic) in ds.intersection_curves.iter().enumerate() {
-        assert!(ic.t_range[1] > ic.t_range[0],
-            "FF: IC {} has valid t_range {:?}", ci, ic.t_range);
+        assert!(
+            ic.t_range[1] > ic.t_range[0],
+            "FF: IC {} has valid t_range {:?}",
+            ci,
+            ic.t_range
+        );
     }
 }
 
@@ -392,11 +461,15 @@ fn stage_ff_no_ics_for_non_intersecting() {
     let b1 = box_at(DVec3::new(-5.0, -5.0, -5.0), 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformFF");
-    assert!(ds.intersection_curves.is_empty(),
-        "FF: non-intersecting boxes -> 0 ICs");
+    assert!(
+        ds.intersection_curves.is_empty(),
+        "FF: non-intersecting boxes -> 0 ICs"
+    );
     // OCCT registers empty FF interferences for parallel/far plane pairs
-    assert!(ds.interf_ff.iter().all(|ff| ff.curves.is_empty()),
-        "FF: non-intersecting boxes -> 0 FF curves");
+    assert!(
+        ds.interf_ff.iter().all(|ff| ff.curves.is_empty()),
+        "FF: non-intersecting boxes -> 0 FF curves"
+    );
 }
 
 #[test]
@@ -406,9 +479,14 @@ fn stage_ff_ics_have_start_end_vertices() {
     for (ci, ic) in ds.intersection_curves.iter().enumerate() {
         let has_sv = ic.start_vertex < ds.vertices.len();
         let has_ev = ic.end_vertex < ds.vertices.len();
-        assert!(has_sv && has_ev,
+        assert!(
+            has_sv && has_ev,
             "FF: IC {} has sv={} ev={} (nV={})",
-            ci, ic.start_vertex, ic.end_vertex, ds.vertices.len());
+            ci,
+            ic.start_vertex,
+            ic.end_vertex,
+            ds.vertices.len()
+        );
         if !ic.pave_blocks.is_empty() {
             eprintln!("FF: IC {} has {} PB(s)", ci, ic.pave_blocks.len());
         }
@@ -421,13 +499,21 @@ fn stage_ff_ics_have_start_end_vertices() {
 fn stage_make_split_edges_creates_edges() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeSplitEdges");
-    assert!(ds.edge_start_vertex.len() >= 14,
+    assert!(
+        ds.edge_start_vertex.len() >= 14,
         "MakeSplitEdges: >= 14 edges (post={})",
-        ds.edge_start_vertex.len());
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "MakeSplitEdges: start/end vertex arrays same length");
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_origins.len(),
-        "MakeSplitEdges: origins same length as edges");
+        ds.edge_start_vertex.len()
+    );
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_end_vertex.len(),
+        "MakeSplitEdges: start/end vertex arrays same length"
+    );
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_origins.len(),
+        "MakeSplitEdges: origins same length as edges"
+    );
 }
 
 #[test]
@@ -437,10 +523,16 @@ fn stage_make_split_edges_pbs_consistent() {
     for ei in 0..ds.edge_start_vertex.len() {
         for spb in ds.edge_pave_blocks(ei) {
             let pb = spb.0.read().unwrap();
-            assert!(pb.pave1.vertex_idx < ds.vertices.len(),
-                "MakeSplitEdges: edge {} PB v1 in range", ei);
-            assert!(pb.pave2.vertex_idx < ds.vertices.len(),
-                "MakeSplitEdges: edge {} PB v2 in range", ei);
+            assert!(
+                pb.pave1.vertex_idx < ds.vertices.len(),
+                "MakeSplitEdges: edge {} PB v1 in range",
+                ei
+            );
+            assert!(
+                pb.pave2.vertex_idx < ds.vertices.len(),
+                "MakeSplitEdges: edge {} PB v2 in range",
+                ei
+            );
         }
     }
 }
@@ -466,8 +558,12 @@ fn stage_make_blocks_creates_section_edge_refs() {
     let total_se_refs: usize = ds.section_edge_refs.iter().map(|v| v.len()).sum();
     if total_se_refs == 0 {
         eprintln!("MakeBlocks: no section edge refs (0 total)");
-        eprintln!("  ICs={}, faces={}, edges={}",
-            ds.intersection_curves.len(), ds.faces.len(), ds.edges.len());
+        eprintln!(
+            "  ICs={}, faces={}, edges={}",
+            ds.intersection_curves.len(),
+            ds.faces.len(),
+            ds.edges.len()
+        );
     }
     // At minimum, if there are ICs, section_edge_refs[ci] entry exists for each
     for ci in 0..ds.intersection_curves.len() {
@@ -477,11 +573,16 @@ fn stage_make_blocks_creates_section_edge_refs() {
     }
     // Pave blocks exist in global pool
     let pb_count = ds.pave_blocks.len();
-    eprintln!("MakeBlocks: global pool has {} PBs, {} section edges total",
-        pb_count, total_se_refs);
+    eprintln!(
+        "MakeBlocks: global pool has {} PBs, {} section edges total",
+        pb_count, total_se_refs
+    );
     // Face PBs exist in at least one face
-    let faces_with_sc: usize = ds.faces.iter()
-        .filter(|f| !f.face_info.pave_blocks_sc.is_empty()).count();
+    let faces_with_sc: usize = ds
+        .faces
+        .iter()
+        .filter(|f| !f.face_info.pave_blocks_sc.is_empty())
+        .count();
     eprintln!("MakeBlocks: {} faces have pave_blocks_sc", faces_with_sc);
 }
 
@@ -491,15 +592,26 @@ fn stage_make_blocks_pave_block_indices_valid() {
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeBlocks");
     for (fi, f) in ds.faces.iter().enumerate() {
         for &pb_idx in &f.face_info.pave_blocks_sc {
-            assert!(pb_idx < ds.pave_blocks.len(),
+            assert!(
+                pb_idx < ds.pave_blocks.len(),
                 "MakeBlocks: face {} PB idx {} in pool (size {})",
-                fi, pb_idx, ds.pave_blocks.len());
+                fi,
+                pb_idx,
+                ds.pave_blocks.len()
+            );
         }
-        for &pb_idx in f.face_info.pave_blocks_on.iter()
+        for &pb_idx in f
+            .face_info
+            .pave_blocks_on
+            .iter()
             .chain(f.face_info.pave_blocks_in.iter())
         {
-            assert!(pb_idx < ds.pave_blocks.len() || pb_idx < ds.pave_blocks.len(),
-                "MakeBlocks: face {} ON/IN PB idx {} out of range", fi, pb_idx);
+            assert!(
+                pb_idx < ds.pave_blocks.len() || pb_idx < ds.pave_blocks.len(),
+                "MakeBlocks: face {} ON/IN PB idx {} out of range",
+                fi,
+                pb_idx
+            );
         }
     }
 }
@@ -510,10 +622,16 @@ fn stage_make_blocks_pave_block_indices_valid() {
 fn stage_make_pcurves_completes() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakePCurves");
-    assert!(ds.edge_start_vertex.len() >= 14,
-        "MakePCurves: >= 14 edges, got {}", ds.edge_start_vertex.len());
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
-        "MakePCurves: origins/edges len match");
+    assert!(
+        ds.edge_start_vertex.len() >= 14,
+        "MakePCurves: >= 14 edges, got {}",
+        ds.edge_start_vertex.len()
+    );
+    assert_eq!(
+        ds.edge_origins.len(),
+        ds.edge_start_vertex.len(),
+        "MakePCurves: origins/edges len match"
+    );
 }
 
 #[test]
@@ -542,16 +660,28 @@ fn stage_process_de_consistent() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_ProcessDE");
     // ProcessDE handles degenerate edges 鈥?check arrays consistent
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "ProcessDE: start/end arrays same length");
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
-        "ProcessDE: origins same length as edges");
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_end_vertex.len(),
+        "ProcessDE: start/end arrays same length"
+    );
+    assert_eq!(
+        ds.edge_origins.len(),
+        ds.edge_start_vertex.len(),
+        "ProcessDE: origins same length as edges"
+    );
     // No hanging references: all edge vertex indices valid
     for ei in 0..ds.edges.len() {
-        assert!(ds.edges[ei].start_vertex < ds.vertices.len(),
-            "ProcessDE: edge {} start vertex in range", ei);
-        assert!(ds.edges[ei].end_vertex < ds.vertices.len(),
-            "ProcessDE: edge {} end vertex in range", ei);
+        assert!(
+            ds.edges[ei].start_vertex < ds.vertices.len(),
+            "ProcessDE: edge {} start vertex in range",
+            ei
+        );
+        assert!(
+            ds.edges[ei].end_vertex < ds.vertices.len(),
+            "ProcessDE: edge {} end vertex in range",
+            ei
+        );
     }
 }
 
@@ -562,23 +692,39 @@ fn stage_full_pipeline_consistent() {
     let (sphere, bx) = sphere_box();
     let (ds, _brep) = pave_fill_two(&sphere, &bx);
     // Final state: all arrays consistent
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "Full: start/end arrays same length");
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
-        "Full: origins same length as edges");
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_end_vertex.len(),
+        "Full: start/end arrays same length"
+    );
+    assert_eq!(
+        ds.edge_origins.len(),
+        ds.edge_start_vertex.len(),
+        "Full: origins same length as edges"
+    );
     // Face info indices valid
     for fi in 0..ds.faces.len() {
-        for &vi in ds.face_info(fi).vertices_in.iter()
+        for &vi in ds
+            .face_info(fi)
+            .vertices_in
+            .iter()
             .chain(ds.face_info(fi).vertices_on.iter())
         {
-            assert!(vi < ds.vertices.len(),
-                "Full: face {} vertex {} in range", fi, vi);
+            assert!(
+                vi < ds.vertices.len(),
+                "Full: face {} vertex {} in range",
+                fi,
+                vi
+            );
         }
     }
     // If ICs exist, section edges reference them
     if !ds.intersection_curves.is_empty() {
-        assert_eq!(ds.section_edge_refs.len(), ds.intersection_curves.len(),
-            "Full: section_edge_refs len matches ICs");
+        assert_eq!(
+            ds.section_edge_refs.len(),
+            ds.intersection_curves.len(),
+            "Full: section_edge_refs len matches ICs"
+        );
     }
 }
 
@@ -593,23 +739,33 @@ fn pavefill_sphere_box_has_intersections() {
     let (ds, _brep) = pave_fill_two(&sphere, &bx);
 
     // Intersection curves exist
-    assert!(!ds.intersection_curves.is_empty(),
-        "sphere-box should have intersection curves");
+    assert!(
+        !ds.intersection_curves.is_empty(),
+        "sphere-box should have intersection curves"
+    );
 
     // FF interferences exist
-    assert!(!ds.interf_ff.is_empty(),
-        "sphere-box should have FF interferences");
+    assert!(
+        !ds.interf_ff.is_empty(),
+        "sphere-box should have FF interferences"
+    );
 
     // Known issue: pave_blocks_sc is empty despite IC curves existing.
     // This is the root cause of the V=6 bug 鈥?MakeBlocks not registering SC PBs.
     // Tracked in: fuse_sphere_box_ref_topology
-    if ds.faces.iter().all(|f| f.face_info.pave_blocks_sc.is_empty()) {
+    if ds
+        .faces
+        .iter()
+        .all(|f| f.face_info.pave_blocks_sc.is_empty())
+    {
         // Don't fail 鈥?this is a known issue documented in the ignored test below.
         // When fixed, this condition should become false.
         return;
     }
-    assert!(ds.faces.iter().any(|f| !f.face_info.curves_sc.is_empty()),
-        "at least one face should have curves_sc");
+    assert!(
+        ds.faces.iter().any(|f| !f.face_info.curves_sc.is_empty()),
+        "at least one face should have curves_sc"
+    );
 }
 
 /// Known issue: pave_blocks_sc not populated after PaveFiller for sphere-box.
@@ -619,9 +775,12 @@ fn pavefill_sphere_box_sc_pbs_populated() {
     let bx = make_unit_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_PerformFF");
     // ICs should have valid start/end vertices after PerformFF
-    assert!(ds.intersection_curves.iter().any(|ic|
-        ic.start_vertex < ds.vertices.len() && ic.end_vertex < ds.vertices.len()),
-        "ICs should have valid start/end vertices after PerformFF");
+    assert!(
+        ds.intersection_curves
+            .iter()
+            .any(|ic| ic.start_vertex < ds.vertices.len() && ic.end_vertex < ds.vertices.len()),
+        "ICs should have valid start/end vertices after PerformFF"
+    );
 }
 
 #[test]
@@ -630,12 +789,16 @@ fn pavefill_non_intersecting_boxes_no_ics() {
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let (ds, _brep) = pave_fill_two(&b1, &b2);
 
-    assert!(ds.intersection_curves.is_empty(),
-        "non-intersecting boxes: 0 IC curves");
+    assert!(
+        ds.intersection_curves.is_empty(),
+        "non-intersecting boxes: 0 IC curves"
+    );
     // OCCT registers empty FF interferences for parallel/far plane pairs
     // (CheckPlanes=false 鈫?Init(0,0)).  Ensure none have actual curves.
-    assert!(ds.interf_ff.iter().all(|ff| ff.curves.is_empty()),
-        "non-intersecting boxes: no FF curves");
+    assert!(
+        ds.interf_ff.iter().all(|ff| ff.curves.is_empty()),
+        "non-intersecting boxes: no FF curves"
+    );
 }
 
 // =========================================================================
@@ -650,9 +813,9 @@ fn fuse_sphere_box_ref_topology() {
     let result = fuse(&sphere, &bx);
 
     let (nv, ne, nf, nsh, nso) = count_topo(&result);
-    assert_eq!(nv, 8,  "OCCT ref: VERTEX=8");
+    assert_eq!(nv, 8, "OCCT ref: VERTEX=8");
     assert_eq!(ne, 15, "OCCT ref: EDGE=15");
-    assert_eq!(nf, 7,  "OCCT ref: FACE=7");
+    assert_eq!(nf, 7, "OCCT ref: FACE=7");
     assert_eq!(nsh, 1, "OCCT ref: SHELL=1");
     assert_eq!(nso, 1, "OCCT ref: SOLID=1");
 
@@ -671,7 +834,11 @@ fn fuse_two_boxes_overlapping() {
     let result = fuse(&b1, &b2);
 
     let (nv, _ne, _nf, _nsh, nso) = count_topo(&result);
-    assert!(nv >= 8, "overlapping boxes produce >=8 vertices, got {}", nv);
+    assert!(
+        nv >= 8,
+        "overlapping boxes produce >=8 vertices, got {}",
+        nv
+    );
     assert_eq!(nso, 1, "should produce 1 solid");
 }
 
@@ -687,9 +854,15 @@ fn shape_info_populated_for_source_shapes() {
     let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
 
     // nb_source_shapes = total shape_info entries from source loading
-    assert!(ds.nb_source_shapes() > 0, "shape_info must have source entries");
-    assert_eq!(ds.nb_source_shapes(), ds.shape_info.len(),
-        "nb_source_shapes must match shape_info.len() (all loaded shapes are source)");
+    assert!(
+        ds.nb_source_shapes() > 0,
+        "shape_info must have source entries"
+    );
+    assert_eq!(
+        ds.nb_source_shapes(),
+        ds.shape_info.len(),
+        "nb_source_shapes must match shape_info.len() (all loaded shapes are source)"
+    );
 
     // Every shape_info entry must be type-checkable without panic
     for i in 0..ds.shape_info.len() {
@@ -715,17 +888,33 @@ fn shape_info_populated_for_source_shapes() {
         }
     }
     // Box has 8 vertices, sphere face has boundary vertices 鈥?at least 8 total
-    assert!(n_vertex >= 8, "shape_info: >=8 Vertex entries, got {}", n_vertex);
+    assert!(
+        n_vertex >= 8,
+        "shape_info: >=8 Vertex entries, got {}",
+        n_vertex
+    );
     // Box has 12 edges, sphere seam edge(s) 鈥?at least 12
-    assert!(n_edge >= 12, "shape_info: >=12 Edge entries, got {}", n_edge);
+    assert!(
+        n_edge >= 12,
+        "shape_info: >=12 Edge entries, got {}",
+        n_edge
+    );
     // Box has 6 faces + sphere 1 face
     assert!(n_face >= 7, "shape_info: >=7 Face entries, got {}", n_face);
     // Box has wires per face
     assert!(n_wire >= 6, "shape_info: >=6 Wire entries, got {}", n_wire);
     // Box has 1 shell
-    assert!(n_shell >= 1, "shape_info: >=1 Shell entries, got {}", n_shell);
+    assert!(
+        n_shell >= 1,
+        "shape_info: >=1 Shell entries, got {}",
+        n_shell
+    );
     // Box has 1 solid
-    assert!(n_solid >= 1, "shape_info: >=1 Solid entries, got {}", n_solid);
+    assert!(
+        n_solid >= 1,
+        "shape_info: >=1 Solid entries, got {}",
+        n_solid
+    );
 }
 
 #[test]
@@ -741,7 +930,10 @@ fn shape_info_sub_shapes_form_hierarchy() {
     // OCCT hierarchy: Face 鈫?Wire 鈫?Edge 鈫?Vertex
     // rcad hierarchy: Face 鈫?Edge 鈫?Vertex (wire level is skipped in shape_info)
     // This is a known divergence from OCCT's BOPDS_ShapeInfo.
-    let face_info: Vec<(usize, Vec<usize>)> = ds.shape_info.iter().enumerate()
+    let face_info: Vec<(usize, Vec<usize>)> = ds
+        .shape_info
+        .iter()
+        .enumerate()
         .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Face)
         .map(|(i, si)| (i, si.sub_shapes.clone()))
         .collect();
@@ -751,34 +943,52 @@ fn shape_info_sub_shapes_form_hierarchy() {
         for &sub_si in subs {
             // rcad: can be Edge (not Wire like OCCT)
             let st = ds.shape_info[sub_si].shape_type;
-            assert!(st == rcad_kernel::topods::ShapeType::Edge
-                 || st == rcad_kernel::topods::ShapeType::Wire,
+            assert!(
+                st == rcad_kernel::topods::ShapeType::Edge
+                    || st == rcad_kernel::topods::ShapeType::Wire,
                 "Face shape_info[{}] sub should be Edge or Wire, got {:?}",
-                face_si_idx, st);
+                face_si_idx,
+                st
+            );
         }
     }
 
     // For each Wire in shape_info, its sub_shapes should be Edge-type
-    let wire_sub_shapes: Vec<Vec<usize>> = ds.shape_info.iter()
+    let wire_sub_shapes: Vec<Vec<usize>> = ds
+        .shape_info
+        .iter()
         .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire)
         .map(|si| si.sub_shapes.clone())
         .collect();
     for subs in &wire_sub_shapes {
         for &sub_si in subs {
             let sub_type = ds.shape_info[sub_si].shape_type;
-            assert_eq!(sub_type, rcad_kernel::topods::ShapeType::Edge,
-                "Wire sub_shape should be Edge, got {:?}", sub_type);
+            assert_eq!(
+                sub_type,
+                rcad_kernel::topods::ShapeType::Edge,
+                "Wire sub_shape should be Edge, got {:?}",
+                sub_type
+            );
         }
     }
 
     // For each Edge in shape_info, its sub_shapes should be Vertex-type
     for (ei, si) in ds.shape_info.iter().enumerate() {
-        if si.shape_type != rcad_kernel::topods::ShapeType::Edge { continue; }
-        if si.sub_shapes.is_empty() { continue; }
+        if si.shape_type != rcad_kernel::topods::ShapeType::Edge {
+            continue;
+        }
+        if si.sub_shapes.is_empty() {
+            continue;
+        }
         for &sub_si in &si.sub_shapes {
             let sub_type = ds.shape_info[sub_si].shape_type;
-            assert_eq!(sub_type, rcad_kernel::topods::ShapeType::Vertex,
-                "Edge shape_info[{}] sub should be Vertex, got {:?}", ei, sub_type);
+            assert_eq!(
+                sub_type,
+                rcad_kernel::topods::ShapeType::Vertex,
+                "Edge shape_info[{}] sub should be Vertex, got {:?}",
+                ei,
+                sub_type
+            );
         }
     }
 }
@@ -790,7 +1000,10 @@ fn shape_info_edge_flag_detects_degenerated_edges() {
     let ds = DS::new_from_topods(&sphere, &topods::BRep::new(), TOLERANCE_ABS);
 
     // Find edges with start_vertex == end_vertex (degenerated)
-    let degen_edges: Vec<usize> = ds.edges.iter().enumerate()
+    let degen_edges: Vec<usize> = ds
+        .edges
+        .iter()
+        .enumerate()
         .filter(|(_, e)| e.start_vertex == e.end_vertex)
         .map(|(i, _)| i)
         .collect();
@@ -805,13 +1018,19 @@ fn shape_info_edge_flag_detects_degenerated_edges() {
             return;
         }
         for &ei in &flagged {
-            assert!(ds.is_edge_degenerated(ei),
-                "flagged edge {} must be degenerated", ei);
+            assert!(
+                ds.is_edge_degenerated(ei),
+                "flagged edge {} must be degenerated",
+                ei
+            );
         }
     } else {
         for &ei in &degen_edges {
-            assert!(ds.edge_has_flag(ei) || ds.is_edge_degenerated(ei),
-                "degenerated edge {} must have flag set", ei);
+            assert!(
+                ds.edge_has_flag(ei) || ds.is_edge_degenerated(ei),
+                "degenerated edge {} must have flag set",
+                ei
+            );
         }
     }
 }
@@ -825,9 +1044,11 @@ fn shape_info_is_new_for_source_vertices_is_false() {
     // All source-loaded vertices must have is_new == false
     for vi in 0..ds.vertices.len() {
         let is_new = ds.is_new_vertex(vi);
-        assert!(!is_new,
+        assert!(
+            !is_new,
             "source vertex {} must NOT be new (is_new=false), origin={:?}",
-            vi, ds.vertices[vi].origin);
+            vi, ds.vertices[vi].origin
+        );
     }
 }
 
@@ -844,8 +1065,11 @@ fn shape_info_rank_matches_origin() {
     for &vi in &sphere_verts {
         let si = ds.vertex_shape_idx.get(vi).copied().unwrap_or(vi);
         if si < ds.shape_info.len() {
-            assert_eq!(ds.shape_info[si].rank, 0,
-                "ShapeA vertex {} should have rank 0", vi);
+            assert_eq!(
+                ds.shape_info[si].rank, 0,
+                "ShapeA vertex {} should have rank 0",
+                vi
+            );
         }
     }
 
@@ -856,8 +1080,11 @@ fn shape_info_rank_matches_origin() {
     for &vi in &box_verts {
         let si = ds.vertex_shape_idx.get(vi).copied().unwrap_or(vi);
         if si < ds.shape_info.len() {
-            assert_eq!(ds.shape_info[si].rank, 1,
-                "ShapeB vertex {} should have rank 1", vi);
+            assert_eq!(
+                ds.shape_info[si].rank, 1,
+                "ShapeB vertex {} should have rank 1",
+                vi
+            );
         }
     }
 }
@@ -870,19 +1097,32 @@ fn shape_info_flag_reference_consistency() {
     let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
 
     for ei in 0..ds.edges.len() {
-        let si = ds.edge_shape_idx.get(ei).copied()
+        let si = ds
+            .edge_shape_idx
+            .get(ei)
+            .copied()
             .unwrap_or(ds.vertices.len() + ei);
-        if si >= ds.shape_info.len() { continue; }
+        if si >= ds.shape_info.len() {
+            continue;
+        }
         // reference = edge index (or at least >= 0)
         let ref_val = ds.shape_info[si].reference;
-        assert!(ref_val >= 0 || ref_val == -1,
+        assert!(
+            ref_val >= 0 || ref_val == -1,
             "edge {} shape_info[{}].reference should be >= 0 or -1, got {}",
-            ei, si, ref_val);
+            ei,
+            si,
+            ref_val
+        );
         // flag: -1 = unset, 0+ = degenerated/purpose flag
         let flag_val = ds.shape_info[si].flag;
-        assert!(flag_val == -1 || flag_val >= 0,
+        assert!(
+            flag_val == -1 || flag_val >= 0,
             "edge {} shape_info[{}].flag should be -1 or >= 0, got {}",
-            ei, si, flag_val);
+            ei,
+            si,
+            flag_val
+        );
     }
 }
 
@@ -905,33 +1145,76 @@ fn shape_info_box_is_out_works() {
 /// Debug output helper — prints DS stage metrics without assertions.
 /// All stage_ref tests use this until real OCCT reference data is available.
 fn dbg_stage(ds: &DS, stage_name: &str) {
-    eprintln!("  {}: nV={} nE={} nF={} nIC={} nCB={} nPB={}",
-        stage_name, ds.vertices.len(), ds.edges.len(), ds.faces.len(),
-        ds.intersection_curves.len(), ds.common_blocks.len(), ds.pave_blocks.len());
-    eprintln!("    VV={} VE={} EE={} VF={} EF={} FF={}",
-        ds.interf_vv.len(), ds.interf_ve.len(), ds.interf_ee.len(),
-        ds.interf_vf.len(), ds.interf_ef.len(), ds.interf_ff.len());
+    eprintln!(
+        "  {}: nV={} nE={} nF={} nIC={} nCB={} nPB={}",
+        stage_name,
+        ds.vertices.len(),
+        ds.edges.len(),
+        ds.faces.len(),
+        ds.intersection_curves.len(),
+        ds.common_blocks.len(),
+        ds.pave_blocks.len()
+    );
+    eprintln!(
+        "    VV={} VE={} EE={} VF={} EF={} FF={}",
+        ds.interf_vv.len(),
+        ds.interf_ve.len(),
+        ds.interf_ee.len(),
+        ds.interf_vf.len(),
+        ds.interf_ef.len(),
+        ds.interf_ff.len()
+    );
     // Array consistency (always checked)
-    assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len(),
-        "{}: start/end arrays same length", stage_name);
-    assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len(),
-        "{}: origins same length as edges", stage_name);
+    assert_eq!(
+        ds.edge_start_vertex.len(),
+        ds.edge_end_vertex.len(),
+        "{}: start/end arrays same length",
+        stage_name
+    );
+    assert_eq!(
+        ds.edge_origins.len(),
+        ds.edge_start_vertex.len(),
+        "{}: origins same length as edges",
+        stage_name
+    );
 }
 
 /// Assert DS counts against OCCT reference data (from pipeline dump).
 /// nV_min allows for sphere vertex count difference (OCCT=3, rcad=4).
 /// All other fields assert exact equality — any deviation is a real gap.
-fn check_stage_occt(ds: &DS, stage_name: &str,
-    nV_min: usize, exp_nE: usize, exp_nF: usize, exp_nIC: usize,
-    exp_VV: usize, exp_EE: usize, exp_EF: usize, exp_FF: usize)
-{
-    eprintln!("  {}: OCCT ref: nV>={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
-        stage_name, nV_min, exp_nE, exp_nF, exp_nIC, exp_VV, exp_EE, exp_EF, exp_FF);
-    eprintln!("    rcad:    nV={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
-        ds.vertices.len(), ds.edges.len(), ds.faces.len(),
+fn check_stage_occt(
+    ds: &DS,
+    stage_name: &str,
+    nV_min: usize,
+    exp_nE: usize,
+    exp_nF: usize,
+    exp_nIC: usize,
+    exp_VV: usize,
+    exp_EE: usize,
+    exp_EF: usize,
+    exp_FF: usize,
+) {
+    eprintln!(
+        "  {}: OCCT ref: nV>={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
+        stage_name, nV_min, exp_nE, exp_nF, exp_nIC, exp_VV, exp_EE, exp_EF, exp_FF
+    );
+    eprintln!(
+        "    rcad:    nV={} nE={} nF={} nIC={} | VV={} EE={} EF={} FF={}",
+        ds.vertices.len(),
+        ds.edges.len(),
+        ds.faces.len(),
         ds.intersection_curves.len(),
-        ds.interf_vv.len(), ds.interf_ee.len(), ds.interf_ef.len(), ds.interf_ff.len());
-    assert!(ds.vertices.len() >= nV_min, "{}: nV >= {}", stage_name, nV_min);
+        ds.interf_vv.len(),
+        ds.interf_ee.len(),
+        ds.interf_ef.len(),
+        ds.interf_ff.len()
+    );
+    assert!(
+        ds.vertices.len() >= nV_min,
+        "{}: nV >= {}",
+        stage_name,
+        nV_min
+    );
     assert_eq!(ds.edges.len(), exp_nE, "{}: nE", stage_name);
     assert_eq!(ds.faces.len(), exp_nF, "{}: nF", stage_name);
     assert_eq!(ds.intersection_curves.len(), exp_nIC, "{}: nIC", stage_name);
@@ -945,13 +1228,23 @@ fn check_stage_occt(ds: &DS, stage_name: &str,
 fn pavefiller_sphere_box_has_intersection() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_ProcessDE");
-    assert!(!ds.interf_ff.is_empty(),
-        "sphere_box: FF interferences expected, got {}", ds.interf_ff.len());
-    assert!(!ds.intersection_curves.is_empty(),
-        "sphere_box: ICs expected, got {}", ds.intersection_curves.len());
+    assert!(
+        !ds.interf_ff.is_empty(),
+        "sphere_box: FF interferences expected, got {}",
+        ds.interf_ff.len()
+    );
+    assert!(
+        !ds.intersection_curves.is_empty(),
+        "sphere_box: ICs expected, got {}",
+        ds.intersection_curves.len()
+    );
     let source_verts = 10;
-    assert!(ds.vertices.len() > source_verts,
-        "sphere_box: >{} vertices, got {}", source_verts, ds.vertices.len());
+    assert!(
+        ds.vertices.len() > source_verts,
+        "sphere_box: >{} vertices, got {}",
+        source_verts,
+        ds.vertices.len()
+    );
 }
 
 #[test]
@@ -962,10 +1255,18 @@ fn pavefiller_overlapping_boxes_consistent() {
     assert_eq!(ds.edge_start_vertex.len(), ds.edge_end_vertex.len());
     assert_eq!(ds.edge_origins.len(), ds.edge_start_vertex.len());
     for fi in 0..ds.faces.len() {
-        for &vi in ds.face_info(fi).vertices_in.iter()
+        for &vi in ds
+            .face_info(fi)
+            .vertices_in
+            .iter()
             .chain(ds.face_info(fi).vertices_on.iter())
         {
-            assert!(vi < ds.vertices.len(), "face {} vertex {} out of range", fi, vi);
+            assert!(
+                vi < ds.vertices.len(),
+                "face {} vertex {} out of range",
+                fi,
+                vi
+            );
         }
     }
 }
@@ -975,8 +1276,12 @@ fn pavefiller_coincident_boxes_common_blocks() {
     let b1 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_ProcessDE");
-    eprintln!("coincident boxes: ICs={}, FF={}, CB={}",
-        ds.intersection_curves.len(), ds.interf_ff.len(), ds.common_blocks.len());
+    eprintln!(
+        "coincident boxes: ICs={}, FF={}, CB={}",
+        ds.intersection_curves.len(),
+        ds.interf_ff.len(),
+        ds.common_blocks.len()
+    );
 }
 
 /// Two non-intersecting boxes 鈥?fuse should produce 2 separate solids.
@@ -997,7 +1302,8 @@ fn make_cyl(radius: f64, height: f64) -> topods::BRep {
     rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height).unwrap()
 }
 fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
-    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, 0.0, height).unwrap()
+    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, 0.0, height)
+        .unwrap()
 }
 
 /// Stage ref: plane_plane (box x box)
@@ -1058,23 +1364,23 @@ fn pavefiller_stage_ref_plane_sphere() {
 
     // Stages VV through VF: all counts match OCCT exactly
     let ds = pave_fill_stage(&a, &b, "after_PerformVV");
-    check_stage_occt(&ds, "VV",  10, 15, 7, 0, 1, 0, 0, 0);
+    check_stage_occt(&ds, "VV", 10, 15, 7, 0, 1, 0, 0, 0);
     let ds = pave_fill_stage(&a, &b, "after_PerformVE");
-    check_stage_occt(&ds, "VE",  10, 15, 7, 0, 1, 0, 0, 0);
+    check_stage_occt(&ds, "VE", 10, 15, 7, 0, 1, 0, 0, 0);
     let ds = pave_fill_stage(&a, &b, "after_PerformEE");
-    check_stage_occt(&ds, "EE",  10, 15, 7, 0, 1, 0, 0, 0);
+    check_stage_occt(&ds, "EE", 10, 15, 7, 0, 1, 0, 0, 0);
     let ds = pave_fill_stage(&a, &b, "after_PerformVF");
-    check_stage_occt(&ds, "VF",  10, 15, 7, 0, 1, 0, 0, 0);
+    check_stage_occt(&ds, "VF", 10, 15, 7, 0, 1, 0, 0, 0);
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
-    check_stage_occt(&ds, "EF",  10, 15, 7, 0, 1, 0, 0, 0);
+    check_stage_occt(&ds, "EF", 10, 15, 7, 0, 1, 0, 0, 0);
 
     // FF: nIC=3, rcad=4 — ALIGNMENT GAP (extra intersection curve)
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
-    check_stage_occt(&ds, "FF",  10, 15, 7, 0, 1, 0, 0, 6);
+    check_stage_occt(&ds, "FF", 10, 15, 7, 0, 1, 0, 0, 6);
 
     // MakeBlocks: nE=15 (OCCT) vs rcad nE=21
     let ds = pave_fill_stage(&a, &b, "after_MakeBlocks");
-    check_stage_occt(&ds, "MB",  10, 15, 7, 0, 1, 0, 0, 6);
+    check_stage_occt(&ds, "MB", 10, 15, 7, 0, 1, 0, 0, 6);
 }
 /// Stage ref: plane_cylinder (box x pcylinder)
 /// OCCT reference: bopsurf_pairs P1 (Box(2x2x2) n Cyl(R=0.5, H=2)).
@@ -1140,7 +1446,9 @@ fn pavefiller_stage_ref_cone_cone() {
     };
     let b = {
         let mut c = make_cone_fn(1.0, 2.0);
-        c.apply_transform(glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, -0.75)));
+        c.apply_transform(glam::DAffine3::from_translation(DVec3::new(
+            0.0, 0.0, -0.75,
+        )));
         // Flip second cone (r1->r2 swap not easily done, approximate with inverted orientation)
         c
     };
@@ -1200,7 +1508,6 @@ fn pavefiller_stage_ref_cone_cone() {
     // OCCT ref: interf_ee=1, nV=7
     // OCCT ref: interf_ef=2, nV=7
     // OCCT ref: interf_ff=3, nV=7
-
 }
 /// Stage ref: sphere_sphere (psphere x psphere)
 /// OCCT reference: bopsurf_pairs S1 (Sphere(R=2) n Sphere(R=2) at X=1).
@@ -1223,7 +1530,7 @@ fn pavefiller_stage_ref_sphere_sphere() {
 fn pavefiller_stage_ref_plane_torus() {
     let a = box_at(DVec3::new(-3.0, -1.5, -1.5), 6.0, 3.0, 3.0);
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1235,7 +1542,7 @@ fn pavefiller_stage_ref_plane_torus() {
 fn pavefiller_stage_ref_cylinder_cone() {
     let a = make_cyl(1.0, 3.0);
     let b = make_cone_fn(1.5, 2.0);
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1247,7 +1554,7 @@ fn pavefiller_stage_ref_cylinder_cone() {
 fn pavefiller_stage_ref_cone_sphere() {
     let a = make_cone_fn(1.5, 2.0);
     let b = rcad_modeling::make_sphere_brep(DVec3::new(0.0, 0.0, 3.0), 1.5).unwrap();
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1258,8 +1565,9 @@ fn pavefiller_stage_ref_cone_sphere() {
 #[test]
 fn pavefiller_stage_ref_cone_torus() {
     let a = make_cone_fn(1.5, 3.0);
-    let b = rcad_modeling::make_torus_brep(DVec3::new(0.0, 0.0, 1.5), DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    let b = rcad_modeling::make_torus_brep(DVec3::new(0.0, 0.0, 1.5), DVec3::Z, DVec3::X, 2.0, 0.5)
+        .unwrap();
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1271,7 +1579,7 @@ fn pavefiller_stage_ref_cone_torus() {
 fn pavefiller_stage_ref_sphere_torus() {
     let a = rcad_modeling::make_sphere_brep(DVec3::new(-1.0, 0.0, 0.0), 1.5).unwrap();
     let b = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1281,9 +1589,12 @@ fn pavefiller_stage_ref_sphere_torus() {
 /// Debug output only — see file header for status.
 #[test]
 fn pavefiller_stage_ref_torus_torus() {
-    let a = rcad_modeling::make_torus_brep(DVec3::new(-1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5).unwrap();
-    let b = rcad_modeling::make_torus_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5).unwrap();
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    let a =
+        rcad_modeling::make_torus_brep(DVec3::new(-1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5)
+            .unwrap();
+    let b = rcad_modeling::make_torus_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 2.5, 0.5)
+        .unwrap();
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1295,7 +1606,7 @@ fn pavefiller_stage_ref_torus_torus() {
 fn pavefiller_stage_ref_box_box_offset() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
     let b = box_at(DVec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0);
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1307,7 +1618,7 @@ fn pavefiller_stage_ref_box_box_offset() {
 fn pavefiller_stage_ref_box_box_tangent() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
     let b = box_at(DVec3::new(2.0, 0.0, 0.0), 2.0, 2.0, 2.0);
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1319,7 +1630,7 @@ fn pavefiller_stage_ref_box_box_tangent() {
 fn pavefiller_stage_ref_box_box_contained() {
     let a = box_at(DVec3::ZERO, 3.0, 3.0, 3.0);
     let b = box_at(DVec3::new(0.5, 0.5, 0.5), 1.0, 1.0, 1.0);
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
@@ -1331,21 +1642,23 @@ fn pavefiller_stage_ref_box_box_contained() {
 fn pavefiller_stage_ref_box_box_disjoint() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b = box_at(DVec3::new(5.0, 0.0, 0.0), 1.0, 1.0, 1.0);
-    for s in &["after_PerformVV","after_PerformFF","after_MakeBlocks"] {
+    for s in &["after_PerformVV", "after_PerformFF", "after_MakeBlocks"] {
         let ds = pave_fill_stage(&a, &b, s);
         dbg_stage(&ds, s);
     }
 }
 
-use crate::bopalgo::builder::{BooleanBuilder, BooleanOpType};
 use crate::bopalgo::GlueEnum;
+use crate::bopalgo::builder::{BooleanBuilder, BooleanOpType};
 use crate::inttools::context::Context;
 
-
 /// Run the full boolean pipeline stage by stage, returning Vec<StageSnapshot>.
-fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glue: bool)
-    -> Result<Vec<crate::bopalgo::builder::StageSnapshot>, crate::bopalgo::builder::BooleanError>
-{
+fn builder_stages(
+    a: &topods::BRep,
+    b: &topods::BRep,
+    op: BooleanOpType,
+    use_glue: bool,
+) -> Result<Vec<crate::bopalgo::builder::StageSnapshot>, crate::bopalgo::builder::BooleanError> {
     // 1. PaveFiller
     let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
     let brep = topods::BRep::new();
@@ -1354,7 +1667,9 @@ fn builder_stages(a: &topods::BRep, b: &topods::BRep, op: BooleanOpType, use_glu
     {
         let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
-        if use_glue { filler.configure_glue(true, TOLERANCE_ABS); }
+        if use_glue {
+            filler.configure_glue(true, TOLERANCE_ABS);
+        }
         filler.perform(a, b);
     }
 
@@ -1375,19 +1690,38 @@ fn builder_diagnostic_bfuse_simple_a1() {
         .expect("builder stage-by-stage failed");
 
     println!("=== Builder Stage Diagnostic: bfuse_simple A1 (sphere+box) ===");
-    println!("{:<30} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-        "Stage", "nDS_V", "nDS_E", "nDS_F", "br_V", "br_E", "br_F");
-    println!("{:-<30}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}","","","","","","","");
+    println!(
+        "{:<30} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+        "Stage", "nDS_V", "nDS_E", "nDS_F", "br_V", "br_E", "br_F"
+    );
+    println!(
+        "{:-<30}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}-+-{:-<6}",
+        "", "", "", "", "", "", ""
+    );
 
     for (i, s) in snaps.iter().enumerate() {
-        println!("{:>2} {:<27} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
-            i, s.stage_name, s.n_ds_vertices, s.n_ds_edges, s.n_ds_faces,
-            s.n_brep_vertices, s.n_brep_edges, s.n_brep_faces);
+        println!(
+            "{:>2} {:<27} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6} | {:>6}",
+            i,
+            s.stage_name,
+            s.n_ds_vertices,
+            s.n_ds_edges,
+            s.n_ds_faces,
+            s.n_brep_vertices,
+            s.n_brep_edges,
+            s.n_brep_faces
+        );
     }
 
-    let last = &snaps[snaps.len()-1];
-    println!("\nPipeline complete: {} stages, final V/E/F/Shell/Solid = {}/{}/{}/{}/{}",
-        snaps.len(), last.n_brep_vertices, last.n_brep_edges, last.n_brep_faces,
-        last.n_brep_shells, last.n_brep_solids);
+    let last = &snaps[snaps.len() - 1];
+    println!(
+        "\nPipeline complete: {} stages, final V/E/F/Shell/Solid = {}/{}/{}/{}/{}",
+        snaps.len(),
+        last.n_brep_vertices,
+        last.n_brep_edges,
+        last.n_brep_faces,
+        last.n_brep_shells,
+        last.n_brep_solids
+    );
     assert!(!snaps.is_empty(), "no stages produced");
 }

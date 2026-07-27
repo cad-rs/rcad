@@ -1,4 +1,4 @@
-﻿use crate::tolerance::*;
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2dEval, CurveEval};
 use std::collections::BTreeMap;
@@ -393,7 +393,8 @@ fn rational_basis_and_derivative_coefficients(
     if coeffs.is_empty() {
         return Vec::new();
     }
-    let eps = ((knots[knots.len() - degree - 1] - knots[degree]).abs() * TOLERANCE_MESH_LEGACY).max(TOLERANCE_LINEAR_RELAX_8);
+    let eps = ((knots[knots.len() - degree - 1] - knots[degree]).abs() * TOLERANCE_MESH_LEGACY)
+        .max(TOLERANCE_LINEAR_RELAX_8);
     let u0 = (u - eps).max(knots[degree]);
     let u1 = (u + eps).min(knots[knots.len() - degree - 1]);
     if (u1 - u0).abs() <= TOLERANCE_FLOAT_LOOSE {
@@ -489,5 +490,3 @@ fn basis_functions(span: usize, u: f64, degree: usize, knots: &[f64]) -> Vec<f64
     }
     basis
 }
-
-

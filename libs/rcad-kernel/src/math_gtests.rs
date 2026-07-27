@@ -33,10 +33,18 @@ const TOL_EVAL: f64 = 1e-6;
 mod function_root_tests {
     use super::*;
 
-    fn f_quadratic(x: f64) -> f64 { x * x - 4.0 }          // roots at ±2
-    fn df_quadratic(x: f64) -> f64 { 2.0 * x }
-    fn f_sin(x: f64) -> f64 { x.sin() - 0.5 }               // root at π/6
-    fn d_sin(x: f64) -> f64 { x.cos() }
+    fn f_quadratic(x: f64) -> f64 {
+        x * x - 4.0
+    } // roots at ±2
+    fn df_quadratic(x: f64) -> f64 {
+        2.0 * x
+    }
+    fn f_sin(x: f64) -> f64 {
+        x.sin() - 0.5
+    } // root at π/6
+    fn d_sin(x: f64) -> f64 {
+        x.cos()
+    }
 
     #[test]
     fn newton_raphson_quadratic() {
@@ -76,8 +84,12 @@ mod function_root_tests {
     #[test]
     fn newton_raphson_no_convergence() {
         // f(x) = x^2 + 1 has no real root
-        fn f_no_root(x: f64) -> f64 { x * x + 1.0 }
-        fn df_no_root(x: f64) -> f64 { 2.0 * x }
+        fn f_no_root(x: f64) -> f64 {
+            x * x + 1.0
+        }
+        fn df_no_root(x: f64) -> f64 {
+            2.0 * x
+        }
         let root = crate::math_utils::newton_raphson(f_no_root, df_no_root, 0.0, 1e-12, 10);
         assert!(root.is_none());
     }
@@ -201,8 +213,12 @@ mod polynomial_roots_tests {
 mod integration_tests {
     use super::*;
 
-    fn f_x_squared(x: f64) -> f64 { x * x }
-    fn f_sin(x: f64) -> f64 { x.sin() }
+    fn f_x_squared(x: f64) -> f64 {
+        x * x
+    }
+    fn f_sin(x: f64) -> f64 {
+        x.sin()
+    }
 
     #[test]
     fn simpson_x_squared() {
@@ -323,7 +339,8 @@ mod optimization_tests {
     #[test]
     fn golden_section_min_quadratic() {
         // f(x) = (x-2)^2 + 1, minimum at x=2
-        let xmin = crate::math_utils::golden_section_min(|x| (x - 2.0) * (x - 2.0) + 1.0, 0.0, 5.0, 1e-8);
+        let xmin =
+            crate::math_utils::golden_section_min(|x| (x - 2.0) * (x - 2.0) + 1.0, 0.0, 5.0, 1e-8);
         assert!((xmin - 2.0).abs() < 1e-6);
     }
 
@@ -337,7 +354,8 @@ mod optimization_tests {
     #[test]
     fn golden_section_max_negative_quadratic() {
         // f(x) = -(x-3)^2 + 5, maximum at x=3
-        let xmax = crate::math_utils::golden_section_max(|x| -(x - 3.0) * (x - 3.0) + 5.0, 0.0, 6.0, 1e-8);
+        let xmax =
+            crate::math_utils::golden_section_max(|x| -(x - 3.0) * (x - 3.0) + 5.0, 0.0, 6.0, 1e-8);
         assert!((xmax - 3.0).abs() < 1e-6);
     }
 }
@@ -546,8 +564,10 @@ mod newton_min_tests {
         g[0] = 2.0 * (x[0] - 1.0);
         g[1] = 4.0 * (x[1] - 2.0);
         // Hessian: [[2,0],[0,4]]
-        h[0] = 2.0; h[1] = 0.0;
-        h[2] = 0.0; h[3] = 4.0;
+        h[0] = 2.0;
+        h[1] = 0.0;
+        h[2] = 0.0;
+        h[3] = 4.0;
         (x[0] - 1.0).powi(2) + 2.0 * (x[1] - 2.0).powi(2)
     }
 
@@ -582,16 +602,20 @@ mod frpr_tests {
         100.0 * (x[1] - x[0] * x[0]).powi(2) + (1.0 - x[0]).powi(2)
     }
 
-    #[test] fn frpr_quadratic_bowl() {
+    #[test]
+    fn frpr_quadratic_bowl() {
         let r = crate::math_utils::frpr_minimize(&[0.0, 0.0], quad_grad, 1e-10, 100);
-        assert!(r.is_some()); let x = r.unwrap();
+        assert!(r.is_some());
+        let x = r.unwrap();
         assert!((x[0] - 1.0).abs() < 1e-6);
         assert!((x[1] - 2.0).abs() < 1e-6);
     }
 
-    #[test] fn frpr_rosenbrock() {
+    #[test]
+    fn frpr_rosenbrock() {
         let r = crate::math_utils::frpr_minimize(&[-1.0, 1.0], rosenbrock_grad, 1e-8, 500);
-        assert!(r.is_some()); let x = r.unwrap();
+        assert!(r.is_some());
+        let x = r.unwrap();
         assert!((x[0] - 1.0).abs() < 1e-3);
         assert!((x[1] - 1.0).abs() < 1e-3);
     }
@@ -617,16 +641,18 @@ mod powell_tests {
 mod householder_tests {
     use super::*;
 
-    #[test] fn householder_3x3() {
+    #[test]
+    fn householder_3x3() {
         // Verify Householder produces a result (even if approximate)
-        let a = vec![1.0,2.0,3.0, 4.0,5.0,6.0, 7.0,8.0,10.0];
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0];
         let b = vec![14.0, 32.0, 55.0];
         let x = crate::math_utils::householder_solve(&a, &b, 3);
         assert!(x.is_some(), "Householder should produce a solution");
     }
 
-    #[test] fn householder_vs_crout() {
-        let a = vec![2.0,1.0,0.0, 1.0,2.0,1.0, 0.0,1.0,2.0];
+    #[test]
+    fn householder_vs_crout() {
+        let a = vec![2.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 2.0];
         let b = vec![6.0, 9.0, 8.0];
         let x_crout = crate::math_utils::crout_solve(&a, &b, 3);
         assert!(x_crout.is_some(), "Crout should solve the system");
@@ -643,13 +669,17 @@ mod householder_tests {
 mod crout_tests {
     use super::*;
 
-    #[test] fn crout_3x3() {
-        let a = vec![2.0,1.0,0.0, 1.0,2.0,1.0, 0.0,1.0,2.0];
+    #[test]
+    fn crout_3x3() {
+        let a = vec![2.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 2.0];
         let b = vec![6.0, 9.0, 8.0];
         let x = crate::math_utils::crout_solve(&a, &b, 3);
-        assert!(x.is_some()); let x = x.unwrap();
-        let ax = |i: usize| -> f64 { (0..3).map(|j| a[i*3+j] * x[j]).sum() };
-        for i in 0..3 { assert!((ax(i) - b[i]).abs() < 1e-10); }
+        assert!(x.is_some());
+        let x = x.unwrap();
+        let ax = |i: usize| -> f64 { (0..3).map(|j| a[i * 3 + j] * x[j]).sum() };
+        for i in 0..3 {
+            assert!((ax(i) - b[i]).abs() < 1e-10);
+        }
     }
 }
 
@@ -661,13 +691,15 @@ mod crout_tests {
 mod biss_newton_tests {
     use super::*;
 
-    #[test] fn biss_newton_quadratic() {
-        let r = crate::math_utils::biss_newton(|x| x*x - 4.0, |x| 2.0*x, 0.0, 5.0, 1e-12);
+    #[test]
+    fn biss_newton_quadratic() {
+        let r = crate::math_utils::biss_newton(|x| x * x - 4.0, |x| 2.0 * x, 0.0, 5.0, 1e-12);
         assert!(r.is_some());
         assert!((r.unwrap() - 2.0).abs() < 1e-6);
     }
 
-    #[test] fn biss_newton_sin() {
+    #[test]
+    fn biss_newton_sin() {
         let r = crate::math_utils::biss_newton(|x| x.sin() - 0.5, |x| x.cos(), 0.0, 1.5, 1e-12);
         assert!(r.is_some());
         assert!((r.unwrap() - std::f64::consts::FRAC_PI_6).abs() < 1e-6);
@@ -682,16 +714,20 @@ mod biss_newton_tests {
 mod trig_roots_tests {
     use super::*;
 
-    #[test] fn trig_sin_only() {
+    #[test]
+    fn trig_sin_only() {
         // sin(x) - 0.5 = 0 → x = π/6, 5π/6 in [0, 2π]
-        let roots = crate::math_utils::trig_roots_sin_only(1.0, -0.5, 0.0, 2.0 * std::f64::consts::PI);
+        let roots =
+            crate::math_utils::trig_roots_sin_only(1.0, -0.5, 0.0, 2.0 * std::f64::consts::PI);
         assert!(roots.len() >= 1);
         assert!((roots[0].sin() - 0.5).abs() < 1e-6);
     }
 
-    #[test] fn trig_cos_sin() {
+    #[test]
+    fn trig_cos_sin() {
         // cos(x) + sin(x) - 1 = 0
-        let roots = crate::math_utils::trig_roots_cos_sin(1.0, 1.0, -1.0, 0.0, 2.0 * std::f64::consts::PI);
+        let roots =
+            crate::math_utils::trig_roots_cos_sin(1.0, 1.0, -1.0, 0.0, 2.0 * std::f64::consts::PI);
         assert!(roots.len() >= 1);
     }
 }
@@ -704,20 +740,23 @@ mod trig_roots_tests {
 mod laguerre_tests {
     use super::*;
 
-    #[test] fn laguerre_linear() {
+    #[test]
+    fn laguerre_linear() {
         let r = crate::math_utils::laguerre_roots(&[-4.0, 2.0]); // 2x - 4 = 0
         assert_eq!(r.len(), 1);
         assert!((r[0] - 2.0).abs() < TOL);
     }
 
-    #[test] fn laguerre_quadratic() {
+    #[test]
+    fn laguerre_quadratic() {
         let r = crate::math_utils::laguerre_roots(&[0.0, -3.0, 1.0]); // x^2 - 3x = 0
         assert_eq!(r.len(), 2);
         assert!((r[0] - 0.0).abs() < TOL);
         assert!((r[1] - 3.0).abs() < TOL);
     }
 
-    #[test] fn laguerre_cubic() {
+    #[test]
+    fn laguerre_cubic() {
         // x^3 - 6x^2 + 11x - 6 = (x-1)(x-2)(x-3)
         let r = crate::math_utils::laguerre_roots(&[-6.0, 11.0, -6.0, 1.0]);
         assert_eq!(r.len(), 3);
@@ -735,12 +774,15 @@ mod laguerre_tests {
 mod brent_tests {
     use super::*;
 
-    #[test] fn brent_quadratic() {
-        let xmin = crate::math_utils::brent_minimize(|x| (x-2.0)*(x-2.0) + 1.0, 0.0, 5.0, 1e-10);
+    #[test]
+    fn brent_quadratic() {
+        let xmin =
+            crate::math_utils::brent_minimize(|x| (x - 2.0) * (x - 2.0) + 1.0, 0.0, 5.0, 1e-10);
         assert!((xmin - 2.0).abs() < 1e-6);
     }
 
-    #[test] fn brent_sin() {
+    #[test]
+    fn brent_sin() {
         let xmin = crate::math_utils::brent_minimize(|x| x.sin(), 2.0, 5.0, 1e-10);
         assert!((xmin - 3.0 * std::f64::consts::FRAC_PI_2).abs() < 1e-6);
     }
@@ -754,21 +796,26 @@ mod brent_tests {
 mod multi_root_tests {
     use super::*;
 
-    #[test] fn find_roots_quadratic() {
-        let r = crate::math_utils::find_roots_in(|x| x*x - 4.0, -5.0, 5.0, 100);
+    #[test]
+    fn find_roots_quadratic() {
+        let r = crate::math_utils::find_roots_in(|x| x * x - 4.0, -5.0, 5.0, 100);
         assert_eq!(r.len(), 2);
         assert!((r[0] + 2.0).abs() < 1e-6);
         assert!((r[1] - 2.0).abs() < 1e-6);
     }
 
-    #[test] fn find_roots_sin() {
+    #[test]
+    fn find_roots_sin() {
         let r = crate::math_utils::find_roots_in(|x| x.sin(), 0.0, 4.0 * std::f64::consts::PI, 100);
         assert!(r.len() >= 2);
-        for &root in &r { assert!(root.sin().abs() < 1e-6); }
+        for &root in &r {
+            assert!(root.sin().abs() < 1e-6);
+        }
     }
 
-    #[test] fn bracket_find_root() {
-        let b = crate::math_utils::bracket_root(|x| x*x - 4.0, 0.0, 1.0, 10);
+    #[test]
+    fn bracket_find_root() {
+        let b = crate::math_utils::bracket_root(|x| x * x - 4.0, 0.0, 1.0, 10);
         assert!(b.is_some());
         let (a, b) = b.unwrap();
         assert!((a * a - 4.0) * (b * b - 4.0) <= 0.0);
@@ -783,15 +830,18 @@ mod multi_root_tests {
 mod poly_eval_tests {
     use super::*;
 
-    #[test] fn poly_constant() {
+    #[test]
+    fn poly_constant() {
         assert!((crate::math_utils::poly_eval(&[5.0], 10.0) - 5.0).abs() < TOL);
     }
 
-    #[test] fn poly_linear() {
+    #[test]
+    fn poly_linear() {
         assert!((crate::math_utils::poly_eval(&[3.0, 2.0], 4.0) - 11.0).abs() < TOL);
     }
 
-    #[test] fn poly_quadratic() {
+    #[test]
+    fn poly_quadratic() {
         assert!((crate::math_utils::poly_eval(&[1.0, 2.0, 1.0], 3.0) - 16.0).abs() < TOL);
     }
 }
@@ -804,8 +854,9 @@ mod poly_eval_tests {
 mod bracket_min_tests {
     use super::*;
 
-    #[test] fn bracket_min_via_scan() {
-        let b = crate::math_utils::bracket_root(|x| (x-3.0)*(x-3.0), 0.0, 1.0, 10);
+    #[test]
+    fn bracket_min_via_scan() {
+        let b = crate::math_utils::bracket_root(|x| (x - 3.0) * (x - 3.0), 0.0, 1.0, 10);
         assert!(b.is_some());
     }
 }
@@ -818,20 +869,30 @@ mod bracket_min_tests {
 mod glob_opt_tests {
     use super::*;
 
-    #[test] fn glob_opt_quadratic() {
+    #[test]
+    fn glob_opt_quadratic() {
         // Simple bowl: minimum at (1,2)
         let x = crate::math_utils::glob_opt_min(
-            |x| (x[0]-1.0).powi(2) + (x[1]-2.0).powi(2),
-            &[-5.0, -5.0], &[5.0, 5.0], 5, 3);
+            |x| (x[0] - 1.0).powi(2) + (x[1] - 2.0).powi(2),
+            &[-5.0, -5.0],
+            &[5.0, 5.0],
+            5,
+            3,
+        );
         assert!((x[0] - 1.0).abs() < 0.5, "x should be ~1, got {}", x[0]);
         assert!((x[1] - 2.0).abs() < 0.5, "y should be ~2, got {}", x[1]);
     }
 
-    #[test] fn glob_opt_1d() {
+    #[test]
+    fn glob_opt_1d() {
         // sin(x) + 0.5*sin(3x), multiple local minima
         let x = crate::math_utils::glob_opt_min(
-            |x| (x[0]*x[0] - 4.0).powi(2) + 0.1 * x[0],
-            &[-5.0], &[5.0], 10, 5);
+            |x| (x[0] * x[0] - 4.0).powi(2) + 0.1 * x[0],
+            &[-5.0],
+            &[5.0],
+            10,
+            5,
+        );
         assert!(x[0].is_finite());
     }
 }
@@ -844,25 +905,43 @@ mod glob_opt_tests {
 mod pso_tests {
     use super::*;
 
-    #[test] fn pso_quadratic() {
+    #[test]
+    fn pso_quadratic() {
         let x = crate::math_utils::pso_minimize(
-            |x| (x[0]-1.0).powi(2) + (x[1]-2.0).powi(2),
-            &[-5.0, -5.0], &[5.0, 5.0], 30, 200, 1e-6);
+            |x| (x[0] - 1.0).powi(2) + (x[1] - 2.0).powi(2),
+            &[-5.0, -5.0],
+            &[5.0, 5.0],
+            30,
+            200,
+            1e-6,
+        );
         assert!((x[0] - 1.0).abs() < 0.3, "x should be ~1, got {}", x[0]);
         assert!((x[1] - 2.0).abs() < 0.3, "y should be ~2, got {}", x[1]);
     }
 
-    #[test] fn pso_1d_quadratic() {
+    #[test]
+    fn pso_1d_quadratic() {
         let x = crate::math_utils::pso_minimize(
-            |x| (x[0]-3.0).powi(2),
-            &[-10.0], &[10.0], 20, 100, 1e-6);
+            |x| (x[0] - 3.0).powi(2),
+            &[-10.0],
+            &[10.0],
+            20,
+            100,
+            1e-6,
+        );
         assert!((x[0] - 3.0).abs() < 0.3, "should be ~3, got {}", x[0]);
     }
 
-    #[test] fn pso_rosenbrock() {
+    #[test]
+    fn pso_rosenbrock() {
         let x = crate::math_utils::pso_minimize(
-            |x| 100.0*(x[1]-x[0]*x[0]).powi(2) + (1.0-x[0]).powi(2),
-            &[-2.0, -2.0], &[2.0, 2.0], 50, 300, 1e-6);
+            |x| 100.0 * (x[1] - x[0] * x[0]).powi(2) + (1.0 - x[0]).powi(2),
+            &[-2.0, -2.0],
+            &[2.0, 2.0],
+            50,
+            300,
+            1e-6,
+        );
         assert!((x[0] - 1.0).abs() < 0.3, "x should be ~1, got {}", x[0]);
         assert!((x[1] - 1.0).abs() < 0.5, "y should be ~1, got {}", x[1]);
     }
@@ -880,12 +959,15 @@ mod lm_tests {
     fn linear_residual(x: &[f64], f: &mut [f64], j: &mut [f64]) -> f64 {
         f[0] = x[0] + x[1] - 3.0;
         f[1] = x[0] - x[1] - 1.0;
-        j[0] = 1.0; j[1] = 1.0;  // df0/dx0, df0/dx1
-        j[2] = 1.0; j[3] = -1.0; // df1/dx0, df1/dx1
-        0.5 * (f[0]*f[0] + f[1]*f[1])
+        j[0] = 1.0;
+        j[1] = 1.0; // df0/dx0, df0/dx1
+        j[2] = 1.0;
+        j[3] = -1.0; // df1/dx0, df1/dx1
+        0.5 * (f[0] * f[0] + f[1] * f[1])
     }
 
-    #[test] fn lm_linear() {
+    #[test]
+    fn lm_linear() {
         let sol = crate::math_utils::lm_solve(&[0.0, 0.0], linear_residual, 2, 50, 1e-10);
         assert!(sol.is_some(), "LM should solve linear system");
         let x = sol.unwrap();
@@ -895,11 +977,13 @@ mod lm_tests {
 
     /// Circle-hyperbola: x² + y² = 4, xy = 1
     fn circle_hyperbola(x: &[f64], f: &mut [f64], j: &mut [f64]) -> f64 {
-        f[0] = x[0]*x[0] + x[1]*x[1] - 4.0;
-        f[1] = x[0]*x[1] - 1.0;
-        j[0] = 2.0*x[0]; j[1] = 2.0*x[1];
-        j[2] = x[1];     j[3] = x[0];
-        0.5 * (f[0]*f[0] + f[1]*f[1])
+        f[0] = x[0] * x[0] + x[1] * x[1] - 4.0;
+        f[1] = x[0] * x[1] - 1.0;
+        j[0] = 2.0 * x[0];
+        j[1] = 2.0 * x[1];
+        j[2] = x[1];
+        j[3] = x[0];
+        0.5 * (f[0] * f[0] + f[1] * f[1])
     }
 
     // Nonlinear LM test disabled — requires better initial guess or damping strategy.
@@ -908,14 +992,17 @@ mod lm_tests {
 
     /// Rosenbrock as least squares: f1 = 10*(y-x²), f2 = 1-x
     fn rosenbrock_residual(x: &[f64], f: &mut [f64], j: &mut [f64]) -> f64 {
-        f[0] = 10.0 * (x[1] - x[0]*x[0]);
+        f[0] = 10.0 * (x[1] - x[0] * x[0]);
         f[1] = 1.0 - x[0];
-        j[0] = -20.0*x[0]; j[1] = 10.0;
-        j[2] = -1.0;        j[3] = 0.0;
-        0.5 * (f[0]*f[0] + f[1]*f[1])
+        j[0] = -20.0 * x[0];
+        j[1] = 10.0;
+        j[2] = -1.0;
+        j[3] = 0.0;
+        0.5 * (f[0] * f[0] + f[1] * f[1])
     }
 
-    #[test] fn lm_rosenbrock() {
+    #[test]
+    fn lm_rosenbrock() {
         let sol = crate::math_utils::lm_solve(&[-1.0, 1.0], rosenbrock_residual, 2, 200, 1e-10);
         assert!(sol.is_some(), "LM should optimize Rosenbrock");
         let x = sol.unwrap();
@@ -952,8 +1039,14 @@ mod geom_plate_tests {
         // Verify interpolation at each constraint
         for p in &pts {
             let f = crate::math_utils::evaluate_tps(p.x, p.y, &w, &a, &pts);
-            assert!((f - p.z).abs() < 1e-8,
-                "TPS should interpolate at ({},{}): got {:.8}, expected {}", p.x, p.y, f, p.z);
+            assert!(
+                (f - p.z).abs() < 1e-8,
+                "TPS should interpolate at ({},{}): got {:.8}, expected {}",
+                p.x,
+                p.y,
+                f,
+                p.z
+            );
         }
     }
 
@@ -998,7 +1091,10 @@ mod geom_plate_tests {
         // Middle points for better conditioning
         pts.push(DVec3::new(0.5, 0.5, 0.3));
         let surf = crate::math_utils::build_plate_surface(&pts, 6, 6);
-        assert!(surf.is_some(), "Plate surface from curve samples should build");
+        assert!(
+            surf.is_some(),
+            "Plate surface from curve samples should build"
+        );
         let s = surf.unwrap();
         assert!(s.point_at(0.3, 0.3).is_finite());
     }

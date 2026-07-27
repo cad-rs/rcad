@@ -4,7 +4,6 @@
 //! the polyline along `2·mdis·D`, then intersect that prism with the target shape's
 //! triangle soup to obtain projected polylines as wires.
 
-
 use std::collections::HashSet;
 
 use glam::DVec3;
@@ -78,9 +77,13 @@ fn aabb_distance(a: [DVec3; 2], b: [DVec3; 2]) -> f64 {
 /// Get the first face's outer wire edge chain from TShape iteration.
 fn first_outer_wire_edge_chain(brep: &rcad_kernel::BRep) -> Option<Vec<usize>> {
     for ts in &brep.tshapes {
-        let TShape::Face(fd) = ts.as_ref() else { continue };
+        let TShape::Face(fd) = ts.as_ref() else {
+            continue;
+        };
         let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
-        let TShape::Wire(wd) = wire_ts.as_ref() else { continue };
+        let TShape::Wire(wd) = wire_ts.as_ref() else {
+            continue;
+        };
         if wd.edges.is_empty() {
             return None;
         }
@@ -94,7 +97,9 @@ fn build_vertex_edge_adj(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
     let nv = brep.vertex_count();
     let mut adj = vec![Vec::new(); nv];
     for (ei, ts) in brep.tshapes.iter().enumerate() {
-        let TShape::Edge(ed) = ts.as_ref() else { continue };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            continue;
+        };
         let s = ed.first.index;
         let e = ed.last.index;
         if s < adj.len() {
@@ -119,7 +124,10 @@ fn edge_chains_greedy(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
 
     while let Some(&start_e) = remaining.iter().next() {
         let ts = &brep.tshapes[start_e];
-        let TShape::Edge(ed) = ts.as_ref() else { remaining.remove(&start_e); continue };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            remaining.remove(&start_e);
+            continue;
+        };
         let mut v = ed.first.index;
         let mut next_e = start_e;
         let mut chain: Vec<usize> = Vec::new();
@@ -131,7 +139,11 @@ fn edge_chains_greedy(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
             chain.push(next_e);
             let ts = &brep.tshapes[next_e];
             let TShape::Edge(ed) = ts.as_ref() else { break };
-            v = if ed.first.index == v { ed.last.index } else { ed.first.index };
+            v = if ed.first.index == v {
+                ed.last.index
+            } else {
+                ed.first.index
+            };
             let mut cont: Option<usize> = None;
             for &cand in &adj[v] {
                 if remaining.contains(&cand) {
@@ -206,18 +218,26 @@ fn sample_edge(
     push_pt(pts, p1, tol);
 }
 
-fn dense_polyline_from_chain(brep: &rcad_kernel::BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
+fn dense_polyline_from_chain(
+    brep: &rcad_kernel::BRep,
+    chain: &[usize],
+    options: &BrepProjOptions,
+) -> Vec<DVec3> {
     if chain.is_empty() {
         return Vec::new();
     }
     let mut pts: Vec<DVec3> = Vec::new();
     // Get first edge's first vertex
     let first_ts = &brep.tshapes[chain[0]];
-    let TShape::Edge(first_ed) = first_ts.as_ref() else { return Vec::new() };
+    let TShape::Edge(first_ed) = first_ts.as_ref() else {
+        return Vec::new();
+    };
     let mut v = first_ed.first.index;
     for &ei in chain {
         let ts = &brep.tshapes[ei];
-        let TShape::Edge(ed) = ts.as_ref() else { continue };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            continue;
+        };
         let (from_v, to_v) = if ed.first.index == v {
             (ed.first.index, ed.last.index)
         } else if ed.last.index == v {
@@ -269,11 +289,7 @@ fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> rcad_kernel::BRep {
         let b = poly[i + 1];
         let d = b - a;
         let len = d.length();
-        let dir = if len > tol {
-            d / len
-        } else {
-            DVec3::X
-        };
+        let dir = if len > tol { d / len } else { DVec3::X };
         let curve = Curve3::Line(Line3 {
             origin: a,
             direction: dir,

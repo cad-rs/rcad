@@ -7,10 +7,10 @@
 //! Used by IntStart_SearchInside (interior point search) and
 //! IntStart_SearchOnBoundaries (tangency computation).
 
+use super::super::super::inttools::int_surf_quadric::Quadric;
+use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
-use crate::tolerance::TOLERANCE_LEN_SQ_DIV_SAFE;
-use super::super::super::inttools::int_surf_quadric::Quadric;
 
 /// IntPatch_TheSurfFunction
 ///
@@ -68,15 +68,18 @@ impl SurfFunction {
             surf: Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z)),
             quad: Quadric::new(),
             tol: 1e-7,
-            u: 0.0, v: 0.0,
+            u: 0.0,
+            v: 0.0,
             valf: 0.0,
             pntsol: DVec3::ZERO,
             computed: false,
             tangent: false,
             derived: false,
-            tgdu: 0.0, tgdv: 0.0,
+            tgdu: 0.0,
+            tgdv: 0.0,
             gradient: DVec3::ZERO,
-            d1u: DVec3::ZERO, d1v: DVec3::ZERO,
+            d1u: DVec3::ZERO,
+            d1v: DVec3::ZERO,
             d3d: DVec3::ZERO,
             d2d: DVec2::ZERO,
         }
@@ -114,10 +117,14 @@ impl SurfFunction {
     }
 
     /// OCCT L50: NbVariables() → 2 (u, v)
-    pub fn nb_variables(&self) -> i32 { 2 }
+    pub fn nb_variables(&self) -> i32 {
+        2
+    }
 
     /// OCCT L52: NbEquations() → 1 (F=0)
-    pub fn nb_equations(&self) -> i32 { 1 }
+    pub fn nb_equations(&self) -> i32 {
+        1
+    }
 
     /// OCCT L54: Value(X, F)
     /// X = [u, v], F[0] = Q(P(u,v))
@@ -162,13 +169,19 @@ impl SurfFunction {
     }
 
     /// OCCT L60: Root() → F value
-    pub fn root(&self) -> f64 { self.valf }
+    pub fn root(&self) -> f64 {
+        self.valf
+    }
 
     /// OCCT L64: Tolerance()
-    pub fn tolerance(&self) -> f64 { self.tol }
+    pub fn tolerance(&self) -> f64 {
+        self.tol
+    }
 
     /// OCCT L66: Point() → last 3D point
-    pub fn point(&self) -> &DVec3 { &self.pntsol }
+    pub fn point(&self) -> &DVec3 {
+        &self.pntsol
+    }
 
     /// OCCT L68: IsTangent() — true if |grad(F)| is near zero
     pub fn is_tangent(&mut self) -> bool {
@@ -218,8 +231,12 @@ impl SurfFunction {
     }
 
     /// OCCT L74: PSurface() → parametric surface
-    pub fn p_surface(&self) -> &Surface3 { &self.surf }
+    pub fn p_surface(&self) -> &Surface3 {
+        &self.surf
+    }
 
     /// OCCT L76: ISurface() → quadric
-    pub fn i_surface(&self) -> &Quadric { &self.quad }
+    pub fn i_surface(&self) -> &Quadric {
+        &self.quad
+    }
 }

@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a sphere with a torus.
+//! Analytic intersection of a sphere with a torus.
 //!
 //! # Cases
 //!
@@ -20,7 +20,7 @@
 use std::f64::consts::TAU;
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, SphericalSurface, ToroidalSurface};
+use rcad_kernel::geom::{Circle3, SphericalSurface, ToroidalSurface, any_perpendicular};
 
 use crate::tolerance::*;
 
@@ -391,9 +391,7 @@ pub fn intersect_skew_sphere_torus(
                     .filter(|v| v.is_finite())
                     .map(|&v| {
                         let (cv, sv) = (v.cos(), v.sin());
-                        let p = o_t
-                            + (r_major + r_minor * cv) * r_dir
-                            + r_minor * sv * a;
+                        let p = o_t + (r_major + r_minor * cv) * r_dir + r_minor * sv * a;
                         (v, p)
                     })
                     .filter(|(_, p)| p.is_finite())
@@ -407,7 +405,10 @@ pub fn intersect_skew_sphere_torus(
             };
 
             let refined = crate::inttools::pcurve_derive::refine_polyline(
-                &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
+                &branch,
+                eval_fn,
+                CHORD_TOL,
+                REFINE_DEPTH,
             );
             refined.into_iter().map(|(_, p)| p).collect()
         })
@@ -435,5 +436,3 @@ pub fn intersect_skew_sphere_torus(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

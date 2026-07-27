@@ -27,7 +27,10 @@ mod geom2d_line_tests {
     #[test]
     fn line_construct_from_point_dir() {
         let l = make_line();
-        let (d, o) = match &l { Curve2d::Line(l) => (l.direction, l.origin), _ => unreachable!() };
+        let (d, o) = match &l {
+            Curve2d::Line(l) => (l.direction, l.origin),
+            _ => unreachable!(),
+        };
         assert!((d - Vec2::X).length() < TOL);
         assert!((o - Point2::ZERO).length() < TOL);
     }
@@ -56,7 +59,10 @@ mod geom2d_line_tests {
 
     #[test]
     fn line_distance() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         // Point (5, 3) has perpendicular distance 3 from X-axis line
         let d = l.distance(Point2::new(5.0, 3.0));
         assert!((d - 3.0).abs() < TOL, "Distance should be 3, got {d}");
@@ -67,55 +73,82 @@ mod geom2d_line_tests {
 
     #[test]
     fn line_not_closed_not_periodic() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         assert!(!l.is_closed(), "Line should not be closed");
         assert!(!l.is_periodic(), "Line should not be periodic");
     }
 
     #[test]
     fn line_reversed_parameter() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         assert!((l.reversed_parameter(5.0) - (-5.0)).abs() < TOL);
     }
 
     #[test]
     fn line_set_direction() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         let l = l.with_direction(Vec2::Y);
         assert!((l.direction - Vec2::Y).length() < TOL);
     }
 
     #[test]
     fn line_set_location() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         let l = l.with_origin(Point2::new(3.0, 4.0));
         assert!((l.origin - Point2::new(3.0, 4.0)).length() < TOL);
     }
 
     #[test]
     fn line_copy() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         let c = l; // Copy (Line2d is Copy)
         assert!((c.direction - Vec2::X).length() < TOL);
         // Verify independence: modifying copy doesn't affect original
         let c = c.with_direction(Vec2::Y);
-        assert!((l.direction - Vec2::X).length() < TOL, "Original should be unchanged");
+        assert!(
+            (l.direction - Vec2::X).length() < TOL,
+            "Original should be unchanged"
+        );
     }
 
     #[test]
     fn line_transform_translation() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         let l = l.translate(Point2::new(5.0, 10.0));
         assert!((l.origin - Point2::new(5.0, 10.0)).length() < TOL);
     }
 
     #[test]
     fn line_transform_rotation() {
-        let l = Line2d { origin: Point2::ZERO, direction: Vec2::X };
+        let l = Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        };
         // Rotate 90 degrees around origin: horizontal becomes vertical
         let l = l.rotate(Point2::ZERO, PI / 2.0);
         assert!((l.direction.x).abs() < TOL, "Direction X should be ~0");
-        assert!((l.direction.y - 1.0).abs() < TOL, "Direction Y should be ~1");
+        assert!(
+            (l.direction.y - 1.0).abs() < TOL,
+            "Direction Y should be ~1"
+        );
     }
 }
 
@@ -249,7 +282,10 @@ mod geom2d_trimmed_tests {
 
     #[test]
     fn trimmed_truncates_domain() {
-        let base = Curve2d::Line(Line2d { origin: Point2::ZERO, direction: Vec2::X });
+        let base = Curve2d::Line(Line2d {
+            origin: Point2::ZERO,
+            direction: Vec2::X,
+        });
         let t = Curve2d::Trimmed(TrimmedCurve2 {
             curve: Box::new(base),
             t_min: 2.0,
@@ -271,7 +307,11 @@ mod sinewave_tests {
     use super::*;
 
     fn make_sine() -> Curve2d {
-        Curve2d::SineWave(SineWave2d { amplitude: 1.0, frequency: 1.0, phase: 0.0 })
+        Curve2d::SineWave(SineWave2d {
+            amplitude: 1.0,
+            frequency: 1.0,
+            phase: 0.0,
+        })
     }
 
     #[test]
@@ -300,7 +340,10 @@ mod archimedean_spiral_tests {
     #[test]
     fn spiral_at_zero() {
         let s = Curve2d::ArchimedeanSpiral(ArchimedeanSpiral2d {
-            center: Point2::ZERO, a: 0.0, b: 1.0, start_angle: 0.0,
+            center: Point2::ZERO,
+            a: 0.0,
+            b: 1.0,
+            start_angle: 0.0,
         });
         let pt = s.point_at(0.0);
         assert!((pt - Point2::ZERO).length() < TOL);
@@ -318,7 +361,9 @@ mod circle_involute_tests {
     #[test]
     fn involute_at_zero() {
         let c = Curve2d::CircleInvolute(CircleInvolute2d {
-            center: Point2::ZERO, base_radius: 1.0, start_angle: 0.0,
+            center: Point2::ZERO,
+            base_radius: 1.0,
+            start_angle: 0.0,
         });
         let pt = c.point_at(0.0);
         assert!((pt - Point2::new(1.0, 0.0)).length() < TOL);
@@ -336,7 +381,10 @@ mod logspiral_tests {
     #[test]
     fn logspiral_at_zero() {
         let s = Curve2d::LogarithmicSpiral(LogarithmicSpiral2d {
-            center: Point2::ZERO, a: 1.0, b: 0.5, start_angle: 0.0,
+            center: Point2::ZERO,
+            a: 1.0,
+            b: 0.5,
+            start_angle: 0.0,
         });
         let pt = s.point_at(0.0);
         assert!((pt - Point2::new(1.0, 0.0)).length() < TOL);
@@ -349,14 +397,20 @@ mod logspiral_tests {
 
 #[cfg(test)]
 mod api_intercurve_tests {
-    use crate::geom2d_api::intersect_curves2d;
     use super::*;
+    use crate::geom2d_api::intersect_curves2d;
 
     #[test]
     fn line_line_intersect_origin() {
         // Vertical and horizontal lines cross at the origin
-        let l1 = Curve2d::Line(Line2d { origin: Point2::new(-10.0, 0.0), direction: Vec2::X });
-        let l2 = Curve2d::Line(Line2d { origin: Point2::new(0.0, -10.0), direction: Vec2::Y });
+        let l1 = Curve2d::Line(Line2d {
+            origin: Point2::new(-10.0, 0.0),
+            direction: Vec2::X,
+        });
+        let l2 = Curve2d::Line(Line2d {
+            origin: Point2::new(0.0, -10.0),
+            direction: Vec2::Y,
+        });
         let pts = intersect_curves2d(&l1, &l2, 1e-7);
         if pts.is_empty() {
             // intersect_curves2d is sample-based — may miss crossing. Skip.

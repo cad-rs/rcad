@@ -12,9 +12,9 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{topods, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
 use rcad_kernel::geom::TrimmedCurve3;
 use rcad_kernel::topods::TShape;
+use rcad_kernel::{Curve3, CurveEval, Surface3, SurfaceEval, Wire, topods};
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -253,17 +253,15 @@ impl<'a> EdgeAdaptor<'a> {
         let p1 = self.brep.vertex_point(v1_idx).unwrap_or(DVec3::X);
 
         let dir = (p1 - p0).normalize_or_zero();
-        if self.reversed {
-            -dir
-        } else {
-            dir
-        }
+        if self.reversed { -dir } else { dir }
     }
 
     /// Get the first vertex index of this edge.
     pub fn first_vertex(&self) -> Option<usize> {
         let ts = self.brep.tshapes.get(self.edge_idx)?;
-        let TShape::Edge(ed) = ts.as_ref() else { return None };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            return None;
+        };
         if self.reversed {
             Some(ed.last.index)
         } else {
@@ -274,7 +272,9 @@ impl<'a> EdgeAdaptor<'a> {
     /// Get the last vertex index of this edge.
     pub fn last_vertex(&self) -> Option<usize> {
         let ts = self.brep.tshapes.get(self.edge_idx)?;
-        let TShape::Edge(ed) = ts.as_ref() else { return None };
+        let TShape::Edge(ed) = ts.as_ref() else {
+            return None;
+        };
         if self.reversed {
             Some(ed.first.index)
         } else {
@@ -336,7 +336,8 @@ impl<'a> FaceAdaptor<'a> {
                 TShape::Face(fd) => {
                     let s = fd.surface.as_ref();
                     let r = fd.uv_domain.unwrap_or_else(|| {
-                        s.map(|surf| surf.default_domain()).unwrap_or([0.0, 1.0, 0.0, 1.0])
+                        s.map(|surf| surf.default_domain())
+                            .unwrap_or([0.0, 1.0, 0.0, 1.0])
                     });
                     (s, r)
                 }
@@ -492,7 +493,8 @@ impl<'a> FaceAdaptor<'a> {
                     | Surface3::Revolution(_) => {
                         let [u0, u1, _, _] = inner.trim;
                         let [du0, du1, _, _] = inner.basis.default_domain();
-                        (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                        (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                            && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
                     }
                     _ => false,
                 }
@@ -523,7 +525,9 @@ impl<'a> FaceAdaptor<'a> {
                 | Surface3::Revolution(_) => {
                     let [u0, u1, _, _] = inner.trim;
                     let [du0, du1, _, _] = inner.basis.default_domain();
-                    if (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
+                    if (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                        && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                    {
                         Some(2.0 * PI)
                     } else {
                         None
@@ -587,7 +591,8 @@ impl<'a> FaceAdaptor<'a> {
                 if let Surface3::Torus(_) = inner.basis.as_ref() {
                     let [_, _, v0, v1] = inner.trim;
                     let [_, _, dv0, dv1] = inner.basis.default_domain();
-                    (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                    (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                        && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
                 } else {
                     false
                 }
@@ -606,7 +611,9 @@ impl<'a> FaceAdaptor<'a> {
                 if let Surface3::Torus(_) = inner.basis.as_ref() {
                     let [_, _, v0, v1] = inner.trim;
                     let [_, _, dv0, dv1] = inner.basis.default_domain();
-                    if (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
+                    if (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                        && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+                    {
                         Some(2.0 * PI)
                     } else {
                         None
@@ -646,7 +653,9 @@ impl<'a> FaceAdaptor<'a> {
             Some(ts) => ts,
             None => return DVec3::ZERO,
         };
-        let TShape::Wire(wd) = wire_ts.as_ref() else { return DVec3::ZERO };
+        let TShape::Wire(wd) = wire_ts.as_ref() else {
+            return DVec3::ZERO;
+        };
 
         let mut sum = DVec3::ZERO;
         let mut count = 0usize;
@@ -655,7 +664,9 @@ impl<'a> FaceAdaptor<'a> {
                 Some(ts) => ts,
                 None => continue,
             };
-            let TShape::Edge(ed) = edge_ts.as_ref() else { continue };
+            let TShape::Edge(ed) = edge_ts.as_ref() else {
+                continue;
+            };
             if let Some(p) = self.brep.vertex_point(ed.first.index) {
                 sum += p;
                 count += 1;
@@ -679,11 +690,17 @@ impl<'a> FaceAdaptor<'a> {
             Some(f) => f,
             None => return DVec3::Z,
         };
-        let Some(surf) = &fd.surface else { return DVec3::Z };
+        let Some(surf) = &fd.surface else {
+            return DVec3::Z;
+        };
         let dom = surf.default_domain();
         let u = (dom[0] + dom[1]) * 0.5;
         let v = (dom[2] + dom[3]) * 0.5;
-        if u.is_finite() && v.is_finite() { surf.normal_at(u, v) } else { DVec3::Z }
+        if u.is_finite() && v.is_finite() {
+            surf.normal_at(u, v)
+        } else {
+            DVec3::Z
+        }
     }
 
     /// Get the tolerance for this face.
@@ -1093,11 +1110,14 @@ impl<'a> std::ops::Index<usize> for CurveAdaptorArray<'a> {
 
 /// Evaluate the normal of a face at parameter (u, v) on a topods::BRep.
 pub fn evaluate_face_normal(brep: &topods::BRep, face_idx: usize, u: f64, v: f64) -> DVec3 {
-    let faces: Vec<&topods::TShape> = brep.tshapes.iter()
+    let faces: Vec<&topods::TShape> = brep
+        .tshapes
+        .iter()
         .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
         .map(|ts| ts.as_ref())
         .collect();
-    faces.get(face_idx)
+    faces
+        .get(face_idx)
         .and_then(|ts| match ts {
             topods::TShape::Face(fd) => fd.surface.as_ref(),
             _ => None,
@@ -1108,11 +1128,14 @@ pub fn evaluate_face_normal(brep: &topods::BRep, face_idx: usize, u: f64, v: f64
 
 /// Evaluate the unit tangent of an edge at normalized parameter t in [0, 1].
 pub fn evaluate_edge_tangent(brep: &topods::BRep, edge_idx: usize, t: f64) -> DVec3 {
-    let edges: Vec<&topods::TShape> = brep.tshapes.iter()
+    let edges: Vec<&topods::TShape> = brep
+        .tshapes
+        .iter()
         .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
         .map(|ts| ts.as_ref())
         .collect();
-    edges.get(edge_idx)
+    edges
+        .get(edge_idx)
         .and_then(|ts| match ts {
             topods::TShape::Edge(ed) => ed.curve.as_ref().map(|c| (ed.range, c)),
             _ => None,
@@ -1127,13 +1150,17 @@ pub fn evaluate_edge_tangent(brep: &topods::BRep, edge_idx: usize, t: f64) -> DV
 /// Evaluate approximate normal at a vertex (average of adjacent face normals).
 /// Simplified — returns Z for unconnected vertices.
 pub fn evaluate_vertex_normal(brep: &topods::BRep, vertex_idx: usize) -> DVec3 {
-    let v_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
-    if vertex_idx >= v_count { return DVec3::Z; }
+    let v_count = brep
+        .tshapes
+        .iter()
+        .filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_)))
+        .count();
+    if vertex_idx >= v_count {
+        return DVec3::Z;
+    }
     DVec3::Z
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
-
-

@@ -1,22 +1,23 @@
-﻿use std::collections::{HashMap, VecDeque};
-use indexmap::IndexMap;
-use glam::DVec2; use glam::DVec3;
-use rcad_kernel::geom::*;
-use rcad_kernel::PCurve;
-use crate::bopds::ds::*; use crate::tolerance::*;
-use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
-use super::types::{WireSegment, WireFace, WireEdgeSource, WireOrientation};
+use super::angle_2d::{angle_2d, clock_wise_angle, dir_to_angle};
+use super::types::{WireEdgeSource, WireFace, WireOrientation, WireSegment};
 use super::wire_splitter::{
-    EdgeInfo, world_to_uv, mark_edge_passed, mark_edge_passed_both_dirs,
-    find_angle_at, select_best_outgoing, are_verts_coincident,
+    EdgeInfo, are_verts_coincident, find_angle_at, mark_edge_passed, mark_edge_passed_both_dirs,
+    select_best_outgoing, world_to_uv,
 };
 use crate::bopalgo::builder::point_in_polygon_2d;
+use crate::bopds::ds::*;
+use crate::tolerance::*;
+use glam::DVec2;
+use glam::DVec3;
+use indexmap::IndexMap;
+use rcad_kernel::PCurve;
+use rcad_kernel::geom::*;
+use std::collections::{HashMap, VecDeque};
 // use crate::classify::{Classification, classify_point};
+use super::intres2d::IntRes2dDomain;
+use super::types::BooleanOpType;
 use crate::inttools::context::Context;
 use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult, curve2d_nb_samples};
-use super::types::BooleanOpType;
-use super::intres2d::IntRes2dDomain;
-
 
 pub(crate) fn refine_angles(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
@@ -27,7 +28,9 @@ pub(crate) fn refine_angles(
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
     let face_surface = &ds.faces[face_idx].surface;
     for &v in &vertices {
-        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        let Some(infos) = smart_map.get(&v).cloned() else {
+            continue;
+        };
 
         let mut cnt_bnd = 0;
         let mut cnt_int = 0;
@@ -37,21 +40,29 @@ pub(crate) fn refine_angles(
         for ei in &infos {
             if !ei.is_inside {
                 cnt_bnd += 1;
-                if !ei.in_flag { a1_bnd = ei.angle; } // outgoing (in_flag=false)
-                else { a2_bnd = ei.angle; } // incoming (in_flag=true)
+                if !ei.in_flag {
+                    a1_bnd = ei.angle;
+                }
+                // outgoing (in_flag=false)
+                else {
+                    a2_bnd = ei.angle;
+                } // incoming (in_flag=true)
             } else {
                 cnt_int += 1;
             }
         }
 
         // OCCT L965-968: only vertices with exactly 2 boundary edges
-        if cnt_bnd != 2 { continue; }
+        if cnt_bnd != 2 {
+            continue;
+        }
 
         let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
 
         // OCCT L970-1000: refine IC outgoing angles
         // Maps edge index  ?refined angle (OCCT aDMSR)
-        let mut refined_map: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        let mut refined_map: std::collections::HashMap<usize, f64> =
+            std::collections::HashMap::new();
         for ei in &infos {
             if ei.is_inside && !ei.in_flag {
                 let a_ic = ei.angle;
@@ -61,7 +72,17 @@ pub(crate) fn refine_angles(
                 }
 
                 // OCCT L991: try pcurve-based refinement first
-                let b_refined = refine_angle_2d(v, &segments[ei.seg_idx], segments, ds, face_surface, a1_bnd, a2_bnd, a_delta, a_ic);
+                let b_refined = refine_angle_2d(
+                    v,
+                    &segments[ei.seg_idx],
+                    segments,
+                    ds,
+                    face_surface,
+                    a1_bnd,
+                    a2_bnd,
+                    a_delta,
+                    a_ic,
+                );
                 if let Some(refined_angle) = b_refined {
                     refined_map.insert(ei.seg_idx, refined_angle);
                 } else if cnt_int == 2 {
@@ -77,7 +98,9 @@ pub(crate) fn refine_angles(
             }
         }
 
-        if refined_map.is_empty() { continue; }
+        if refined_map.is_empty() {
+            continue;
+        }
 
         // OCCT L1008-1028: update angles in SmartMap
         if let Some(infos_mut) = smart_map.get_mut(&v) {
@@ -138,14 +161,18 @@ pub(crate) fn intersect_ray_curve_2d(
             let c = ray_dir.y;
             let d = -line.direction.y;
             let det = a * d - b * c;
-            if det.abs() < TOLERANCE_CLAMP_MIN { return vec![]; }
+            if det.abs() < TOLERANCE_CLAMP_MIN {
+                return vec![];
+            }
             let rhs_x = line.origin.x - ray_origin.x;
             let rhs_y = line.origin.y - ray_origin.y;
             let s = (d * rhs_x - b * rhs_y) / det;
             let t = (a * rhs_y - c * rhs_x) / det;
             if s >= 0.0 && t >= t_min_a && t <= t_max_a {
                 vec![(t + tr_shift, s)]
-            } else { vec![] }
+            } else {
+                vec![]
+            }
         }
         Curve2d::Circle(circle) => {
             let oc = ray_origin - circle.center;
@@ -153,14 +180,21 @@ pub(crate) fn intersect_ray_curve_2d(
             let b_c = 2.0 * ray_dir.dot(oc);
             let c_c = oc.dot(oc) - circle.radius * circle.radius;
             let disc = b_c * b_c - 4.0 * a_c * c_c;
-            if disc < 0.0 { return vec![]; }
+            if disc < 0.0 {
+                return vec![];
+            }
             let sqrt_disc = disc.sqrt();
             let mut result = Vec::new();
-            for &s in &[(-b_c - sqrt_disc) / (2.0 * a_c), (-b_c + sqrt_disc) / (2.0 * a_c)] {
+            for &s in &[
+                (-b_c - sqrt_disc) / (2.0 * a_c),
+                (-b_c + sqrt_disc) / (2.0 * a_c),
+            ] {
                 if s >= 0.0 {
                     let p = ray_origin + s * ray_dir;
                     let mut t = (p.y - circle.center.y).atan2(p.x - circle.center.x);
-                    if t < 0.0 { t += std::f64::consts::TAU; }
+                    if t < 0.0 {
+                        t += std::f64::consts::TAU;
+                    }
                     if t >= t_min_a && t <= t_max_a {
                         result.push((t + tr_shift, s));
                     }
@@ -192,15 +226,22 @@ pub(crate) fn intersect_ray_curve_2d(
             let b_c = 2.0 * (du * ou + dv * ov);
             let c_c = ou * ou + ov * ov - 1.0;
             let disc = b_c * b_c - 4.0 * a_c * c_c;
-            if disc < 0.0 { return vec![]; }
+            if disc < 0.0 {
+                return vec![];
+            }
             let sqrt_disc = disc.sqrt();
             let mut result = Vec::new();
-            for &s in &[(-b_c - sqrt_disc) / (2.0 * a_c), (-b_c + sqrt_disc) / (2.0 * a_c)] {
+            for &s in &[
+                (-b_c - sqrt_disc) / (2.0 * a_c),
+                (-b_c + sqrt_disc) / (2.0 * a_c),
+            ] {
                 if s >= 0.0 {
                     let p = ray_origin + s * ray_dir;
                     let dp = p - ellipse.center;
                     let mut t = dp.y.atan2(dp.x);
-                    if t < 0.0 { t += std::f64::consts::TAU; }
+                    if t < 0.0 {
+                        t += std::f64::consts::TAU;
+                    }
                     if t >= t_min_a && t <= t_max_a {
                         result.push((t + tr_shift, s));
                     }
@@ -221,7 +262,9 @@ pub(crate) fn intersect_ray_curve_2d(
         _ => {
             const N_SEG: usize = 256;
             let ray_len2 = ray_dir.length_squared();
-            if ray_len2 < TOLERANCE_LEN_SQ_DIV_SAFE { return vec![]; }
+            if ray_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+                return vec![];
+            }
             let ray_d = ray_dir / ray_len2.sqrt();
             let mut candidates: Vec<(f64, f64)> = Vec::new();
             for i in 0..=N_SEG {
@@ -229,28 +272,43 @@ pub(crate) fn intersect_ray_curve_2d(
                 let p = curve.point_at(t + tr_shift);
                 let delta = p - ray_origin;
                 let s = delta.dot(ray_d);
-                if s < 0.0 { continue; }
+                if s < 0.0 {
+                    continue;
+                }
                 let perp = (delta - ray_d * s).length_squared();
                 if perp < 1e-10 {
-                    let is_dup = candidates.last().map_or(false, |&(lt, _)| (t - lt).abs() < 1e-9 * (t_max_a - t_min_a + 1.0));
-                    if !is_dup { candidates.push((t, s)); }
+                    let is_dup = candidates.last().map_or(false, |&(lt, _)| {
+                        (t - lt).abs() < 1e-9 * (t_max_a - t_min_a + 1.0)
+                    });
+                    if !is_dup {
+                        candidates.push((t, s));
+                    }
                 }
             }
-            if !candidates.is_empty() { return candidates.into_iter().map(|(t, s)| (t + tr_shift, s)).collect(); }
+            if !candidates.is_empty() {
+                return candidates
+                    .into_iter()
+                    .map(|(t, s)| (t + tr_shift, s))
+                    .collect();
+            }
             let mut best: Option<(f64, f64, f64)> = None;
             for i in 0..=N_SEG {
                 let t = t_min_a + (t_max_a - t_min_a) * (i as f64) / (N_SEG as f64);
                 let p = curve.point_at(t + tr_shift);
                 let delta = p - ray_origin;
                 let s = delta.dot(ray_d);
-                if s < 0.0 { continue; }
+                if s < 0.0 {
+                    continue;
+                }
                 let perp = (delta - ray_d * s).length();
                 if best.map_or(true, |(bp, _, _)| perp < bp) {
                     best = Some((perp, t, s));
                 }
             }
             if let Some((perp, t0, s0)) = best {
-                if perp > 1e-4 { return vec![]; }
+                if perp > 1e-4 {
+                    return vec![];
+                }
                 let eps_der = 1e-7;
                 let mut t = t0;
                 for _ in 0..20 {
@@ -261,12 +319,16 @@ pub(crate) fn intersect_ray_curve_2d(
                     let dp = p - ray_origin;
                     let f = dp.x * ray_d.y - dp.y * ray_d.x;
                     let df = der.x * ray_d.y - der.y * ray_d.x;
-                    if df.abs() < TOLERANCE_CLAMP_MIN { break; }
+                    if df.abs() < TOLERANCE_CLAMP_MIN {
+                        break;
+                    }
                     let dt = -f / df;
                     t = (t + dt).clamp(t_min_a, t_max_a);
                     if dt.abs() < 1e-12 {
                         let s = (curve.point_at(t + tr_shift) - ray_origin).dot(ray_d);
-                        if s >= 0.0 { return vec![(t + tr_shift, s)]; }
+                        if s >= 0.0 {
+                            return vec![(t + tr_shift, s)];
+                        }
                         break;
                     }
                 }
@@ -293,14 +355,18 @@ pub(crate) fn project_uv_to_curve(
             // Project UV onto line: t = dot(UV - L0, Ld) / |Ld|^2
             let dir = line.direction;
             let denom = dir.dot(dir);
-            if denom < TOLERANCE_LEN_SQ_DIV_SAFE { return None; }
+            if denom < TOLERANCE_LEN_SQ_DIV_SAFE {
+                return None;
+            }
             let t = (uv - line.origin).dot(dir) / denom;
             let t_clamped = t.clamp(t_min - tr_shift, t_max - tr_shift);
             Some(t_clamped + tr_shift)
         }
         Curve2d::Circle(circle) => {
             let mut t = (uv.y - circle.center.y).atan2(uv.x - circle.center.x);
-            if t < 0.0 { t += std::f64::consts::TAU; }
+            if t < 0.0 {
+                t += std::f64::consts::TAU;
+            }
             // Normalize to [t_min, t_min + period) by wrapping
             let period = std::f64::consts::TAU;
             let t_norm = if t < t_min {
@@ -377,8 +443,17 @@ pub(crate) fn refine_angle_2d(
                 let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
                 let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
                 let dir = uv_e - uv_s;
-                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return None; }
-                (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
+                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                    return None;
+                }
+                (
+                    Curve2d::Line(Line2d {
+                        origin: uv_s,
+                        direction: dir,
+                    }),
+                    0.0,
+                    1.0,
+                )
             }
         }
         WireEdgeSource::DsEdge(_ei) => {
@@ -398,8 +473,17 @@ pub(crate) fn refine_angle_2d(
                 let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
                 let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
                 let dir = uv_e - uv_s;
-                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return None; }
-                (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
+                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                    return None;
+                }
+                (
+                    Curve2d::Line(Line2d {
+                        origin: uv_s,
+                        direction: dir,
+                    }),
+                    0.0,
+                    1.0,
+                )
             }
         }
         WireEdgeSource::SeamEdge => {
@@ -414,8 +498,17 @@ pub(crate) fn refine_angle_2d(
                 let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
                 let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
                 let dir = uv_e - uv_s;
-                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { return None; }
-                (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
+                if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                    return None;
+                }
+                (
+                    Curve2d::Line(Line2d {
+                        origin: uv_s,
+                        direction: dir,
+                    }),
+                    0.0,
+                    1.0,
+                )
             }
         }
     };
@@ -424,14 +517,19 @@ pub(crate) fn refine_angle_2d(
     //   For DSEdge/SeamEdge: use DSEdge.vertex_params directly.
     //   For IntersectionCurve: vertex param = curve endpoint (t_min or t_max).
     let t_v = match &seg.source {
-        WireEdgeSource::DsEdge(ei) => {
-            ds.edges[*ei].vertex_param(vertex_idx)
-                .unwrap_or_else(|| {
-                    if vertex_idx == seg.start_vertex { t_min } else { t_max }
-                })
-        }
+        WireEdgeSource::DsEdge(ei) => ds.edges[*ei].vertex_param(vertex_idx).unwrap_or_else(|| {
+            if vertex_idx == seg.start_vertex {
+                t_min
+            } else {
+                t_max
+            }
+        }),
         WireEdgeSource::SeamEdge | WireEdgeSource::IntersectionCurve(_) => {
-            if vertex_idx == seg.start_vertex { t_min } else { t_max }
+            if vertex_idx == seg.start_vertex {
+                t_min
+            } else {
+                t_max
+            }
         }
     };
 
@@ -440,13 +538,16 @@ pub(crate) fn refine_angle_2d(
         WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
             world_to_uv(face_surface, ds.vertex_point(vertex_idx))
         }
-        WireEdgeSource::IntersectionCurve(_) => {
-            Some(curve2d.point_at(t_v))
-        }
-    }.unwrap_or(DVec2::ZERO);
+        WireEdgeSource::IntersectionCurve(_) => Some(curve2d.point_at(t_v)),
+    }
+    .unwrap_or(DVec2::ZERO);
 
     //  ?OCCT L1063-1065: determine "other end" direction and MaxDT
-    let t_op = if (t_v - t_min).abs() < (t_v - t_max).abs() { t_max } else { t_min };
+    let t_op = if (t_v - t_min).abs() < (t_v - t_max).abs() {
+        t_max
+    } else {
+        t_min
+    };
     let max_dt = 0.3 * (t_max - t_min);
     let a_tol_int = 1e-10;
     let a_cf = 0.01;
@@ -460,20 +561,37 @@ pub(crate) fn refine_angle_2d(
     //  ?OCCT L1070: try both boundary directions (aA1, aA2+M_PI)
     let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
     for i in 0..2 {
-        let a_ai = if i == 0 { a1_bnd } else { a2_bnd + std::f64::consts::PI };
+        let a_ai = if i == 0 {
+            a1_bnd
+        } else {
+            a2_bnd + std::f64::consts::PI
+        };
         let ray_dir = DVec2::new(a_ai.cos(), a_ai.sin());
-        if ray_dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
+        if ray_dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+            continue;
+        }
 
         //  ?OCCT L1084-1094: create ray line + call Geom2dInt_GInter.
-        let ray_line = Curve2d::Line(Line2d { origin: v_uv, direction: ray_dir });
-        let mut domain_ray = IntRes2dDomain::new();  // infinite domain (no bounds)
+        let ray_line = Curve2d::Line(Line2d {
+            origin: v_uv,
+            direction: ray_dir,
+        });
+        let mut domain_ray = IntRes2dDomain::new(); // infinite domain (no bounds)
         // OCCT uses Geom2dInt_GInter::Perform with two domains.
         let hits = crate::bopalgo::builder::intersection::intersect_curves_2d_ginter(
-            &curve2d, &domain_curve, &ray_line, &domain_ray, a_tol_int, a_tol_int);
+            &curve2d,
+            &domain_curve,
+            &ray_line,
+            &domain_ray,
+            a_tol_int,
+            a_tol_int,
+        );
         // hits: (param_on_curve, param_on_ray)  ?swap to (t_on_curve, t_on_ray)
         let hits: Vec<(f64, f64)> = hits.into_iter().map(|(tc, tr)| (tr, tc)).collect();
 
-        if hits.is_empty() { continue; }
+        if hits.is_empty() {
+            continue;
+        }
 
         //  ?OCCT L1100-1114: find best intersection (max param_on_ray, within MaxDT)
         let mut best: Option<(f64, f64)> = None;
@@ -490,17 +608,25 @@ pub(crate) fn refine_angle_2d(
         if let Some((t_1max, _t_2max)) = best {
             // OCCT L1104-1108: skip if intersection is at far end
             let dt = t_op - t_1max;
-            if dt.abs() < a_tol_int { continue; }
+            if dt.abs() < a_tol_int {
+                continue;
+            }
 
             // OCCT L1110-1113: sample curve slightly before intersection
             let t_sample = t_1max + a_cf * dt;
             let p_sample = curve2d.point_at(t_sample);
             let dir = p_sample - v_uv;
-            if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { continue; }
+            if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                continue;
+            }
 
             // OCCT L1115-1121: compute angle and check if inside boundary wedge
             let a_angle = dir.y.atan2(dir.x);
-            let a_angle = if a_angle < 0.0 { a_angle + std::f64::consts::TAU } else { a_angle };
+            let a_angle = if a_angle < 0.0 {
+                a_angle + std::f64::consts::TAU
+            } else {
+                a_angle
+            };
             let a_da = clock_wise_angle(a2_bnd, a_angle);
             if a_da < a_delta {
                 return Some(a_angle);
@@ -527,27 +653,52 @@ pub(crate) fn walk_path_extract_wires(
     let start_seg = &segments[start_si];
     // If this segment has no EdgeInfo, it cannot be walked.
     // Mark a dummy EdgeInfo as passed so the outer loop skips it.
-    let has_info = smart_map.values().any(|v| v.iter().any(|ei| ei.seg_idx == start_si));
-    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+    let has_info = smart_map
+        .values()
+        .any(|v| v.iter().any(|ei| ei.seg_idx == start_si));
+    if std::env::var("RCAD_DEBUG_IC").is_ok()
+        && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_))
+    {
         let seg_src = match &segments[start_si].source {
             WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
             WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
             WireEdgeSource::SeamEdge => "Seam".to_string(),
         };
-        eprintln!("[WALK_START] face={} si={} seg={} start_v={} end_v={} fwd={:?} seam={} has_info={}",
-            face_idx, start_si, seg_src,
-            segments[start_si].start_vertex, segments[start_si].end_vertex,
-            segments[start_si].orientation, segments[start_si].is_closed_on_face, has_info);
+        eprintln!(
+            "[WALK_START] face={} si={} seg={} start_v={} end_v={} fwd={:?} seam={} has_info={}",
+            face_idx,
+            start_si,
+            seg_src,
+            segments[start_si].start_vertex,
+            segments[start_si].end_vertex,
+            segments[start_si].orientation,
+            segments[start_si].is_closed_on_face,
+            has_info
+        );
     }
     if !has_info {
-        smart_map.entry(start_seg.start_vertex).or_default().push(EdgeInfo {
-            seg_idx: start_si, passed: true, in_flag: false,
-            is_inside: false, is_circle_arc: false, angle: 0.0,
-        });
-        smart_map.entry(start_seg.end_vertex).or_default().push(EdgeInfo {
-            seg_idx: start_si, passed: true, in_flag: true,
-            is_inside: false, is_circle_arc: false, angle: 0.0,
-        });
+        smart_map
+            .entry(start_seg.start_vertex)
+            .or_default()
+            .push(EdgeInfo {
+                seg_idx: start_si,
+                passed: true,
+                in_flag: false,
+                is_inside: false,
+                is_circle_arc: false,
+                angle: 0.0,
+            });
+        smart_map
+            .entry(start_seg.end_vertex)
+            .or_default()
+            .push(EdgeInfo {
+                seg_idx: start_si,
+                passed: true,
+                in_flag: true,
+                is_inside: false,
+                is_circle_arc: false,
+                angle: 0.0,
+            });
         return;
     }
 
@@ -596,9 +747,15 @@ pub(crate) fn walk_path_extract_wires(
                 //   so vi == ic.start_vertex fails silently for remapped vertices.
                 //   Use geometric distance at remap_ic_v's tolerance.
                 let vi_at_pole = ds.vertex_point(vi);
-                let t = if ds.vertices[ic.start_vertex].point.distance_squared(vi_at_pole)
-                    <= TOLERANCE_ABS_SQ * 1_000_000.0 { ic.t_range[0] }
-                        else { ic.t_range[1] };
+                let t = if ds.vertices[ic.start_vertex]
+                    .point
+                    .distance_squared(vi_at_pole)
+                    <= TOLERANCE_ABS_SQ * 1_000_000.0
+                {
+                    ic.t_range[0]
+                } else {
+                    ic.t_range[1]
+                };
                 Some(pc.point_at(t))
             }
             WireEdgeSource::DsEdge(_) if segment.is_closed_on_face => {
@@ -622,7 +779,11 @@ pub(crate) fn walk_path_extract_wires(
                 if segment.start_vertex == segment.end_vertex {
                     match &segment.second_pcurve {
                         Some(Curve2d::Line(l)) => {
-                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            let t = if at_start {
+                                segment.t_range[0]
+                            } else {
+                                segment.t_range[1]
+                            };
                             Some(l.point_at(t))
                         }
                         _ => {
@@ -634,12 +795,14 @@ pub(crate) fn walk_path_extract_wires(
                 } else if segment.orientation == WireOrientation::Forward {
                     match (&segment.first_pcurve, &segment.second_pcurve) {
                         (Some(Curve2d::Line(l)), _) => {
-                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            let t = if at_start {
+                                segment.t_range[0]
+                            } else {
+                                segment.t_range[1]
+                            };
                             Some(l.point_at(t))
                         }
-                        _ => {
-                            world_to_uv(face_surface, ds.vertex_point(vi))
-                        }
+                        _ => world_to_uv(face_surface, ds.vertex_point(vi)),
                     }
                 } else {
                     // for REVERSED seam traversal, use second_pcurve
@@ -647,12 +810,14 @@ pub(crate) fn walk_path_extract_wires(
                     //   (e.g. degenerated seam edge at sphere pole).
                     match &segment.second_pcurve {
                         Some(Curve2d::Line(l)) => {
-                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            let t = if at_start {
+                                segment.t_range[0]
+                            } else {
+                                segment.t_range[1]
+                            };
                             Some(l.point_at(t))
                         }
-                        _ => {
-                            world_to_uv(face_surface, ds.vertex_point(vi))
-                        }
+                        _ => world_to_uv(face_surface, ds.vertex_point(vi)),
                     }
                 }
             }
@@ -666,7 +831,11 @@ pub(crate) fn walk_path_extract_wires(
         if let WireEdgeSource::DsEdge(_) = &segment.source {
             if !segment.is_closed_on_face {
                 if let Some(pc) = &segment.first_pcurve {
-                    let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                    let t = if at_start {
+                        segment.t_range[0]
+                    } else {
+                        segment.t_range[1]
+                    };
                     return Some(pc.point_at(t));
                 }
             }
@@ -682,7 +851,9 @@ pub(crate) fn walk_path_extract_wires(
                 let ax = c.axis.normalize_or_zero();
                 let v = (v_pt - c.origin).dot(ax);
                 let to_axis = v_pt - (c.origin + ax * v);
-                let u = to_axis.dot(c.ref_dir).atan2(to_axis.dot(c.ref_dir.cross(ax)));
+                let u = to_axis
+                    .dot(c.ref_dir)
+                    .atan2(to_axis.dot(c.ref_dir.cross(ax)));
                 Some(DVec2::new(u, v))
             }
             Surface3::Plane(p) => {
@@ -696,9 +867,7 @@ pub(crate) fn walk_path_extract_wires(
     };
 
     // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L859-901).
-    let vtol = |vi: usize| -> f64 {
-        ds.vertex_tolerance(vi).max(TOLERANCE_ABS)
-    };
+    let vtol = |vi: usize| -> f64 { ds.vertex_tolerance(vi).max(TOLERANCE_ABS) };
     let u_resolution = |vt: f64| -> f64 {
         match face_surface {
             Surface3::Sphere(s) => vt / s.radius.max(TOLERANCE_CLAMP_MIN),
@@ -721,7 +890,9 @@ pub(crate) fn walk_path_extract_wires(
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
         let mut t2d = u_resolution(vt).max(v_resolution(vt)).max(vt);
-        if matches!(face_surface, Surface3::BSpline(_) | Surface3::Bezier(_)) { t2d *= 1.1; }
+        if matches!(face_surface, Surface3::BSpline(_) | Surface3::Bezier(_)) {
+            t2d *= 1.1;
+        }
         t2d
     };
     // OCCT L885-891: UTolerance2D = UResolution(aTolV3D)
@@ -735,7 +906,9 @@ pub(crate) fn walk_path_extract_wires(
         if edge_seq.len() == 1 {
             let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
                 (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
-                (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => ca == cb,
+                (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
+                    ca == cb
+                }
                 (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => true,
                 _ => false,
             };
@@ -773,7 +946,9 @@ pub(crate) fn walk_path_extract_wires(
                     WireEdgeSource::DsEdge(ei) => !ds.is_edge_degenerated(*ei),
                     _ => true,
                 };
-                if !b_has_edge { continue; }
+                if !b_has_edge {
+                    continue;
+                }
             }
 
             let is_same_v = prev_v == arrived_vertex;
@@ -807,7 +982,10 @@ pub(crate) fn walk_path_extract_wires(
                     let b = &segments[wire[1]];
                     let same_edge = match (&a.source, &b.source) {
                         (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
-                        (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => ca == cb,
+                        (
+                            WireEdgeSource::IntersectionCurve(ca),
+                            WireEdgeSource::IntersectionCurve(cb),
+                        ) => ca == cb,
                         (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => true,
                         _ => false,
                     };
@@ -847,7 +1025,10 @@ pub(crate) fn walk_path_extract_wires(
         };
 
         let raw_candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
-            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
+            infos
+                .iter()
+                .filter(|ei| !ei.passed && !ei.in_flag)
+                .collect()
         } else {
             return;
         };
@@ -863,7 +1044,10 @@ pub(crate) fn walk_path_extract_wires(
         };
 
         let raw_candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
-            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
+            infos
+                .iter()
+                .filter(|ei| !ei.passed && !ei.in_flag)
+                .collect()
         } else {
             return;
         };
@@ -884,22 +1068,30 @@ pub(crate) fn walk_path_extract_wires(
 
         // For closed vertices, filter multi-candidates by 2D UV distance
         let candidates: Vec<&EdgeInfo> = if b_is_closed {
-            let is_periodic = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
+            let is_periodic = matches!(
+                ds.faces[face_idx].surface,
+                Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_)
+            );
             let pb_uv = if is_periodic {
                 world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
                     .unwrap_or(DVec2::ZERO)
-            } else { a_pb };
-            raw_candidates.into_iter().filter(|ei| {
-                let cand_uv = if is_periodic {
-                    world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
-                        .unwrap_or(DVec2::ZERO)
-                } else {
-                    vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
-                        .unwrap_or(DVec2::ZERO)
-                };
-                let a_d2 = cand_uv.distance_squared(pb_uv);
-                a_d2 < a_tol_2d_sq
-            }).collect()
+            } else {
+                a_pb
+            };
+            raw_candidates
+                .into_iter()
+                .filter(|ei| {
+                    let cand_uv = if is_periodic {
+                        world_to_uv(&ds.faces[face_idx].surface, ds.vertex_point(arrived_vertex))
+                            .unwrap_or(DVec2::ZERO)
+                    } else {
+                        vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
+                            .unwrap_or(DVec2::ZERO)
+                    };
+                    let a_d2 = cand_uv.distance_squared(pb_uv);
+                    a_d2 < a_tol_2d_sq
+                })
+                .collect()
         } else {
             raw_candidates
         };
@@ -909,8 +1101,9 @@ pub(crate) fn walk_path_extract_wires(
         }
 
         // Use is_inside flag from EdgeInfo for boundary check (OCCT: !anEdgeInfo->IsInside())
-        let incoming_info = smart_map.get(&arrived_vertex).and_then(|infos|
-            infos.iter().find(|ei| ei.seg_idx == ci && ei.in_flag));
+        let incoming_info = smart_map
+            .get(&arrived_vertex)
+            .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == ci && ei.in_flag));
         let incoming_is_boundary = incoming_info.map_or(false, |ei| !ei.is_inside);
         let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, ci) {
             Some(e) => e,
@@ -928,7 +1121,10 @@ pub(crate) fn walk_path_extract_wires(
 }
 
 /// Mark ALL EdgeInfo entries for a segment as passed (both in_flag values).
-pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+pub(crate) fn mark_all_edge_infos_passed(
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
+    seg_idx: usize,
+) {
     for infos in smart_map.values_mut() {
         for ei in infos.iter_mut() {
             if ei.seg_idx == seg_idx {
@@ -961,26 +1157,34 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<Edg
 /// Compute the signed area of a UV polygon using the shoelace formula.
 /// Used for sorting wires by size  ?the largest wire is the outer boundary.
 pub(crate) fn uv_polygon_area(poly: &[DVec2]) -> f64 {
-    if poly.len() < 3 { return 0.0; }
+    if poly.len() < 3 {
+        return 0.0;
+    }
     let n = poly.len();
-    (0..n).map(|i| {
-        let j = (i + 1) % n;
-        poly[i].x * poly[j].y - poly[j].x * poly[i].y
-    }).sum::<f64>().abs() * 0.5
+    (0..n)
+        .map(|i| {
+            let j = (i + 1) % n;
+            poly[i].x * poly[j].y - poly[j].x * poly[i].y
+        })
+        .sum::<f64>()
+        .abs()
+        * 0.5
 }
 
 /// Test whether a UV point is inside a UV polygon using the ray casting method.
 /// Handles periodic U wrapping for values in [0, 2pi).
 pub(crate) fn point_in_uv_polygon(pt: DVec2, poly: &[DVec2]) -> bool {
-    if poly.len() < 3 { return false; }
+    if poly.len() < 3 {
+        return false;
+    }
     let mut inside = false;
     let n = poly.len();
     for i in 0..n {
         let j = (n + i - 1) % n;
         let vi = poly[i];
         let vj = poly[j];
-        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
-            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
+        if ((vi.y > pt.y) != (vj.y > pt.y))
+            && pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
         {
             inside = !inside;
         }
@@ -990,11 +1194,21 @@ pub(crate) fn point_in_uv_polygon(pt: DVec2, poly: &[DVec2]) -> bool {
 
 /// Compute the projected area of a 3D polygon onto the given coordinate plane.
 pub(crate) fn projected_area_on(b: &[DVec3], u_idx: usize, v_idx: usize) -> f64 {
-    let pick = |p: DVec3, i: usize| -> f64 { match i { 0 => p.x, 1 => p.y, _ => p.z } };
-    (0..b.len()).map(|i| {
-        let j = (i + 1) % b.len();
-        pick(b[i], u_idx) * pick(b[j], v_idx) - pick(b[j], u_idx) * pick(b[i], v_idx)
-    }).sum::<f64>().abs() * 0.5
+    let pick = |p: DVec3, i: usize| -> f64 {
+        match i {
+            0 => p.x,
+            1 => p.y,
+            _ => p.z,
+        }
+    };
+    (0..b.len())
+        .map(|i| {
+            let j = (i + 1) % b.len();
+            pick(b[i], u_idx) * pick(b[j], v_idx) - pick(b[j], u_idx) * pick(b[i], v_idx)
+        })
+        .sum::<f64>()
+        .abs()
+        * 0.5
 }
 
 /// Compute the maximum projected area across XY, YZ, and XZ planes.
@@ -1020,17 +1234,37 @@ pub(crate) fn point_in_polygon_best(pt: DVec3, poly: &[DVec3]) -> bool {
 }
 
 /// Ray casting point-in-polygon test in the given 2D projection (u,v).
-pub(crate) fn point_in_polygon_xy_impl(pt: DVec3, poly: &[DVec3], u_idx: usize, v_idx: usize) -> bool {
-    let pu = |p: DVec3| -> f64 { match u_idx { 0 => p.x, 1 => p.y, _ => p.z } };
-    let pv = |p: DVec3| -> f64 { match v_idx { 0 => p.x, 1 => p.y, _ => p.z } };
+pub(crate) fn point_in_polygon_xy_impl(
+    pt: DVec3,
+    poly: &[DVec3],
+    u_idx: usize,
+    v_idx: usize,
+) -> bool {
+    let pu = |p: DVec3| -> f64 {
+        match u_idx {
+            0 => p.x,
+            1 => p.y,
+            _ => p.z,
+        }
+    };
+    let pv = |p: DVec3| -> f64 {
+        match v_idx {
+            0 => p.x,
+            1 => p.y,
+            _ => p.z,
+        }
+    };
     let mut inside = false;
     let n = poly.len();
     for i in 0..n {
         let j = (n + i - 1) % n;
-        let vi = poly[i]; let vj = poly[j];
-        if ((pv(vi) > pv(pt)) != (pv(vj) > pv(pt))) &&
-            pu(pt) < (pu(vj) - pu(vi)) * (pv(pt) - pv(vi)) / (pv(vj) - pv(vi)) + pu(vi)
-        { inside = !inside; }
+        let vi = poly[i];
+        let vj = poly[j];
+        if ((pv(vi) > pv(pt)) != (pv(vj) > pv(pt)))
+            && pu(pt) < (pu(vj) - pu(vi)) * (pv(pt) - pv(vi)) / (pv(vj) - pv(vi)) + pu(vi)
+        {
+            inside = !inside;
+        }
     }
     inside
 }

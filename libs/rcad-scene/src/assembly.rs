@@ -8,8 +8,8 @@
 //!   - [`Assembly::flatten`] — `(Arc<BRep>, world transform)` per leaf (lazy instancing).
 //!   - [`Assembly::to_brep`] — fuse into one `BRep` via `BRep::transformed` + `append_brep`.
 
-use std::sync::Arc;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
@@ -228,8 +228,9 @@ impl Assembly {
         transform: DAffine3,
     ) -> u64 {
         let id = self.alloc_id();
-        self.roots
-            .push(AssemblyNode::new_leaf_with_transform(id, name, brep, transform));
+        self.roots.push(AssemblyNode::new_leaf_with_transform(
+            id, name, brep, transform,
+        ));
         id
     }
 
@@ -334,7 +335,10 @@ mod tests {
 
         assert_eq!(asm.metadata.layer.as_deref(), Some("L1"));
         assert_eq!(asm.metadata.material.as_deref(), Some("Aluminum"));
-        assert_eq!(asm.metadata.attributes.get("owner").map(String::as_str), Some("team-a"));
+        assert_eq!(
+            asm.metadata.attributes.get("owner").map(String::as_str),
+            Some("team-a")
+        );
     }
 
     #[test]

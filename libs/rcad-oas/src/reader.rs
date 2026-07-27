@@ -109,7 +109,9 @@ impl OasReader {
         let base_points: Vec<glam::DVec2> = polygon
             .points
             .iter()
-            .map(|&(x, y)| glam::DVec2::new(polygon.x as f64 + x as f64, polygon.y as f64 + y as f64))
+            .map(|&(x, y)| {
+                glam::DVec2::new(polygon.x as f64 + x as f64, polygon.y as f64 + y as f64)
+            })
             .collect();
 
         let offsets = Self::get_repetition_offsets(&polygon.repetition);
@@ -198,9 +200,22 @@ impl OasReader {
             let y = placement.y as f64 + dy;
 
             // Convert repetition to array format if it's a matrix
-            let array = if let Some(laykit::Repetition::Matrix { x_count, y_count, x_space, y_space }) = &placement.repetition {
+            let array = if let Some(laykit::Repetition::Matrix {
+                x_count,
+                y_count,
+                x_space,
+                y_space,
+            }) = &placement.repetition
+            {
                 if *x_count > 1 || *y_count > 1 {
-                    Some((*x_count, *y_count, *x_space as f64, 0.0, 0.0, *y_space as f64))
+                    Some((
+                        *x_count,
+                        *y_count,
+                        *x_space as f64,
+                        0.0,
+                        0.0,
+                        *y_space as f64,
+                    ))
                 } else {
                     None
                 }
@@ -307,14 +322,46 @@ impl OasReader {
 
             // CTRAPEZOID types 0-7 are half-width triangles, 8-23 are various trapezoids
             let points = match ctrap.trap_type {
-                0 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x + w, y), glam::DVec2::new(x + w, y + h)],
-                1 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x + w, y), glam::DVec2::new(x, y + h)],
-                2 => vec![glam::DVec2::new(x, y + h), glam::DVec2::new(x + w, y), glam::DVec2::new(x + w, y + h)],
-                3 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x, y + h), glam::DVec2::new(x + w, y + h)],
-                4 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x + w, y + h), glam::DVec2::new(x, y + h)],
-                5 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x + w, y), glam::DVec2::new(x, y + h)],
-                6 => vec![glam::DVec2::new(x, y), glam::DVec2::new(x + w, y + h), glam::DVec2::new(x + w, y)],
-                7 => vec![glam::DVec2::new(x, y + h), glam::DVec2::new(x + w, y), glam::DVec2::new(x, y)],
+                0 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x + w, y),
+                    glam::DVec2::new(x + w, y + h),
+                ],
+                1 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x + w, y),
+                    glam::DVec2::new(x, y + h),
+                ],
+                2 => vec![
+                    glam::DVec2::new(x, y + h),
+                    glam::DVec2::new(x + w, y),
+                    glam::DVec2::new(x + w, y + h),
+                ],
+                3 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x, y + h),
+                    glam::DVec2::new(x + w, y + h),
+                ],
+                4 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x + w, y + h),
+                    glam::DVec2::new(x, y + h),
+                ],
+                5 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x + w, y),
+                    glam::DVec2::new(x, y + h),
+                ],
+                6 => vec![
+                    glam::DVec2::new(x, y),
+                    glam::DVec2::new(x + w, y + h),
+                    glam::DVec2::new(x + w, y),
+                ],
+                7 => vec![
+                    glam::DVec2::new(x, y + h),
+                    glam::DVec2::new(x + w, y),
+                    glam::DVec2::new(x, y),
+                ],
                 // For types 8+, we default to a simple rectangle approximation
                 _ => vec![
                     glam::DVec2::new(x, y),
@@ -370,7 +417,12 @@ impl OasReader {
         match repetition {
             None => vec![(0.0, 0.0)],
             Some(laykit::Repetition::ReusePrevious) => vec![(0.0, 0.0)], // Would need to track previous
-            Some(laykit::Repetition::Matrix { x_count, y_count, x_space, y_space }) => {
+            Some(laykit::Repetition::Matrix {
+                x_count,
+                y_count,
+                x_space,
+                y_space,
+            }) => {
                 let mut offsets = Vec::new();
                 for iy in 0..*y_count {
                     for ix in 0..*x_count {
@@ -379,7 +431,10 @@ impl OasReader {
                 }
                 offsets
             }
-            Some(laykit::Repetition::Arbitrary { x_displacements, y_displacements }) => {
+            Some(laykit::Repetition::Arbitrary {
+                x_displacements,
+                y_displacements,
+            }) => {
                 let mut offsets = vec![(0.0, 0.0)];
                 let mut x_acc = 0i64;
                 let mut y_acc = 0i64;
@@ -418,7 +473,8 @@ impl OasLibrary {
             }
         }
 
-        self.cells.keys()
+        self.cells
+            .keys()
             .filter(|name| !referenced.contains(name.as_str()))
             .map(|s| s.as_str())
             .collect()
@@ -447,20 +503,23 @@ mod tests {
             cells: HashMap::new(),
         };
 
-        library.cells.insert("TOP".to_string(), OasCell {
-            name: "TOP".to_string(),
-            polygons: vec![OasPolygon {
-                layer: 1,
-                datatype: 0,
-                points: vec![
-                    glam::DVec2::new(0.0, 0.0),
-                    glam::DVec2::new(10.0, 0.0),
-                    glam::DVec2::new(10.0, 10.0),
-                    glam::DVec2::new(0.0, 10.0),
-                ],
-            }],
-            ..Default::default()
-        });
+        library.cells.insert(
+            "TOP".to_string(),
+            OasCell {
+                name: "TOP".to_string(),
+                polygons: vec![OasPolygon {
+                    layer: 1,
+                    datatype: 0,
+                    points: vec![
+                        glam::DVec2::new(0.0, 0.0),
+                        glam::DVec2::new(10.0, 0.0),
+                        glam::DVec2::new(10.0, 10.0),
+                        glam::DVec2::new(0.0, 10.0),
+                    ],
+                }],
+                ..Default::default()
+            },
+        );
 
         assert!(library.has_cell("TOP"));
         assert_eq!(library.top_cells(), vec!["TOP"]);
@@ -473,24 +532,30 @@ mod tests {
             cells: HashMap::new(),
         };
 
-        library.cells.insert("TOP".to_string(), OasCell {
-            name: "TOP".to_string(),
-            placements: vec![OasPlacement {
-                cell_name: "CELL_A".to_string(),
-                x: 0.0,
-                y: 0.0,
-                rotation: 0.0,
-                reflection: false,
-                magnification: 1.0,
-                array: None,
-            }],
-            ..Default::default()
-        });
+        library.cells.insert(
+            "TOP".to_string(),
+            OasCell {
+                name: "TOP".to_string(),
+                placements: vec![OasPlacement {
+                    cell_name: "CELL_A".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    rotation: 0.0,
+                    reflection: false,
+                    magnification: 1.0,
+                    array: None,
+                }],
+                ..Default::default()
+            },
+        );
 
-        library.cells.insert("CELL_A".to_string(), OasCell {
-            name: "CELL_A".to_string(),
-            ..Default::default()
-        });
+        library.cells.insert(
+            "CELL_A".to_string(),
+            OasCell {
+                name: "CELL_A".to_string(),
+                ..Default::default()
+            },
+        );
 
         let top = library.top_cells();
         assert_eq!(top.len(), 1);

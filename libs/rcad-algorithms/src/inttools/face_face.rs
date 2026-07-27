@@ -1,9 +1,9 @@
-use glam::DVec3;
-use rcad_kernel::geom::*;
 use crate::bopds::ds::DS;
-use crate::inttools::intss::{SurfaceSurfaceIntersection, SurfaceCurve};
+use crate::inttools::intss::{SurfaceCurve, SurfaceSurfaceIntersection};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ABS_SQ};
+use glam::DVec3;
 use rcad_kernel::geom::CurveEval;
+use rcad_kernel::geom::*;
 
 /// IntTools_FaceFace — face-face intersection result.
 ///
@@ -78,12 +78,18 @@ pub fn compute_tol_reached_3d(
                 let uv = pc.point_at(t);
                 let surf_pt = surf1.point_at(uv.x, uv.y);
                 let d = (p3d - surf_pt).length();
-                if d > max_d { max_d = d; }
+                if d > max_d {
+                    max_d = d;
+                }
             }
-            if max_d > a_tol_c { a_tol_c = max_d; }
+            if max_d > a_tol_c {
+                a_tol_c = max_d;
+            }
         } else {
             let max_d = find_max_distance(&ic.curve, t1, t2, surf1);
-            if max_d > a_tol_c { a_tol_c = max_d; }
+            if max_d > a_tol_c {
+                a_tol_c = max_d;
+            }
         }
         // Check pcurve on surf2
         if let Some(ref pc) = ic.pcurve2 {
@@ -94,12 +100,18 @@ pub fn compute_tol_reached_3d(
                 let uv = pc.point_at(t);
                 let surf_pt = surf2.point_at(uv.x, uv.y);
                 let d = (p3d - surf_pt).length();
-                if d > max_d { max_d = d; }
+                if d > max_d {
+                    max_d = d;
+                }
             }
-            if max_d > a_tol_c { a_tol_c = max_d; }
+            if max_d > a_tol_c {
+                a_tol_c = max_d;
+            }
         } else {
             let max_d = find_max_distance(&ic.curve, t1, t2, surf2);
-            if max_d > a_tol_c { a_tol_c = max_d; }
+            if max_d > a_tol_c {
+                a_tol_c = max_d;
+            }
         }
         ic.tolerance = a_tol_c;
         if ic.tang_tolerance < a_tol_f_max {
@@ -125,7 +137,9 @@ fn find_max_distance(curve: &Curve3, t1: f64, t2: f64, surf: &Surface3) -> f64 {
 
 /// PrepareLines3D (IntTools_FaceFace.cxx L1932-2015).
 pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
-    if !b_to_split { return; }
+    if !b_to_split {
+        return;
+    }
     let mut i = 0;
     while i < curves.len() {
         let (t0, t1) = (curves[i].t_range[0], curves[i].t_range[1]);
@@ -139,9 +153,7 @@ pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
         if is_closed {
             // OCCT L214-221: for BSpline/Bezier use IntermediatePoint, else regular midpoint
             let t_mid = match &curves[i].curve {
-                Curve3::BSpline(_) | Curve3::Bezier(_) => {
-                    0.56786082 * t0 + 0.43213918 * t1
-                }
+                Curve3::BSpline(_) | Curve3::Bezier(_) => 0.56786082 * t0 + 0.43213918 * t1,
                 _ => 0.5 * (t0 + t1),
             };
             let c2 = IntersectionCurve {
@@ -206,7 +218,8 @@ pub fn intersect_faces(
     tol_f1: f64,
     tol_f2: f64,
 ) -> Vec<IntersectionCurve> {
-    let intss = crate::inttools::intss::intersect_surfaces_with_tolerance(surf1, surf2, tol_f1 + tol_f2);
+    let intss =
+        crate::inttools::intss::intersect_surfaces_with_tolerance(surf1, surf2, tol_f1 + tol_f2);
     let mut curves = intersection_to_curves(&intss);
     compute_tol_reached_3d(&mut curves, surf1, surf2, tol_f1, tol_f2);
     prepare_lines_3d(&mut curves, true);

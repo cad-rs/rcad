@@ -10,9 +10,9 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Surface3, CurveEval, SurfaceEval, Curve2dEval};
 use rcad_kernel::PCurve;
-use rcad_kernel::topods::{self, TShape, ShapeRef, Orientation};
+use rcad_kernel::geom::{Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::topods::{self, Orientation, ShapeRef, TShape};
 use std::sync::Arc;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,9 @@ fn ns_solid<'a>(brep: &'a rcad_kernel::BRep, n: usize) -> Option<ShapeRef> {
     let mut count = 0usize;
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if matches!(ts.as_ref(), TShape::Solid(_)) {
-            if count == n { return Some(ShapeRef::synthetic(i)); }
+            if count == n {
+                return Some(ShapeRef::synthetic(i));
+            }
             count += 1;
         }
     }
@@ -44,26 +46,50 @@ fn ns_solid<'a>(brep: &'a rcad_kernel::BRep, n: usize) -> Option<ShapeRef> {
 /// Get a reference to the n-th TShape::Solid's data.
 fn ns_solid_data<'a>(brep: &'a rcad_kernel::BRep, n: usize) -> Option<&'a topods::TSolidData> {
     let sr = ns_solid(brep, n)?;
-    match &*brep.tshapes[sr.index] { TShape::Solid(sd) => Some(sd), _ => None }
+    match &*brep.tshapes[sr.index] {
+        TShape::Solid(sd) => Some(sd),
+        _ => None,
+    }
 }
 
 /// Get the shell data for a (solid_idx, shell_idx) pair.
-fn ns_shell_data<'a>(brep: &'a rcad_kernel::BRep, solid_idx: usize, shell_idx: usize) -> Option<&'a topods::TShellData> {
+fn ns_shell_data<'a>(
+    brep: &'a rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+) -> Option<&'a topods::TShellData> {
     let sd = ns_solid_data(brep, solid_idx)?;
     let sh_sr = sd.shells.get(shell_idx)?;
-    match &*brep.tshapes[sh_sr.index] { TShape::Shell(shd) => Some(shd), _ => None }
+    match &*brep.tshapes[sh_sr.index] {
+        TShape::Shell(shd) => Some(shd),
+        _ => None,
+    }
 }
 
 /// Get the face data for a (solid_idx, shell_idx, face_idx) triple.
-fn ns_face_data<'a>(brep: &'a rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Option<&'a topods::TFaceData> {
+fn ns_face_data<'a>(
+    brep: &'a rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+) -> Option<&'a topods::TFaceData> {
     let shd = ns_shell_data(brep, solid_idx, shell_idx)?;
     let f_sr = shd.faces.get(face_idx)?;
-    match &*brep.tshapes[f_sr.index] { TShape::Face(fd) => Some(fd), _ => None }
+    match &*brep.tshapes[f_sr.index] {
+        TShape::Face(fd) => Some(fd),
+        _ => None,
+    }
 }
 
 /// Get a ShapeRef for the (solid_idx, shell_idx, face_idx, wire_idx) wire.
 /// wire_idx = None → outer wire, Some(i) → inner wire.
-fn ns_wire_ref(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize, wire_idx: Option<usize>) -> Option<ShapeRef> {
+fn ns_wire_ref(
+    brep: &rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    wire_idx: Option<usize>,
+) -> Option<ShapeRef> {
     let fd = ns_face_data(brep, solid_idx, shell_idx, face_idx)?;
     match wire_idx {
         None => Some(fd.outer_wire),
@@ -72,15 +98,27 @@ fn ns_wire_ref(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, fac
 }
 
 /// Get the wire data for a (solid_idx, shell_idx, face_idx, wire_idx) wire.
-fn ns_wire_data<'a>(brep: &'a rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize, wire_idx: Option<usize>) -> Option<&'a topods::TWireData> {
+fn ns_wire_data<'a>(
+    brep: &'a rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    wire_idx: Option<usize>,
+) -> Option<&'a topods::TWireData> {
     let wr = ns_wire_ref(brep, solid_idx, shell_idx, face_idx, wire_idx)?;
-    match &*brep.tshapes[wr.index] { TShape::Wire(wd) => Some(wd), _ => None }
+    match &*brep.tshapes[wr.index] {
+        TShape::Wire(wd) => Some(wd),
+        _ => None,
+    }
 }
 
 /// Get edge data by flat edge index (position in tshapes).
 fn e_edge_data<'a>(brep: &'a rcad_kernel::BRep, edge_idx: usize) -> Option<&'a topods::TEdgeData> {
     let ts = brep.tshapes.get(edge_idx)?;
-    match &**ts { TShape::Edge(ed) => Some(ed), _ => None }
+    match &**ts {
+        TShape::Edge(ed) => Some(ed),
+        _ => None,
+    }
 }
 
 /// Look up the 3D curve for an edge.  (Was: brep.geom.curves[edge_curve[ei]])
@@ -95,7 +133,9 @@ fn edge_range9(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<[f64; 2]> {
 
 /// Check if an edge is degenerate.  (Was: brep.geom.edge_degenerated[ei])
 fn edge_degenerated9(brep: &rcad_kernel::BRep, edge_idx: usize) -> bool {
-    e_edge_data(brep, edge_idx).map(|ed| ed.degenerated).unwrap_or(false)
+    e_edge_data(brep, edge_idx)
+        .map(|ed| ed.degenerated)
+        .unwrap_or(false)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,8 +384,15 @@ fn is_bspline_periodic(knots: &[f64], degree: usize) -> bool {
     let last_knot = knots[n - 1];
 
     // Periodic if there's enough repetition at boundaries
-    let first_count = knots.iter().take_while(|&&k| (k - first_knot).abs() < eps).count();
-    let last_count = knots.iter().rev().take_while(|&&k| (k - last_knot).abs() < eps).count();
+    let first_count = knots
+        .iter()
+        .take_while(|&&k| (k - first_knot).abs() < eps)
+        .count();
+    let last_count = knots
+        .iter()
+        .rev()
+        .take_while(|&&k| (k - last_knot).abs() < eps)
+        .count();
 
     // For uniform periodic splines, multiplicity should be 1 at internal knots
     first_count == 1 && last_count == 1 && span > eps
@@ -667,10 +714,9 @@ fn detect_curve_self_intersections(curve: &Curve3, n_samples: usize) -> Vec<Curv
 
             // Check segment intersection in 2D (project to XY plane for simplicity)
             // A more robust implementation would use 3D segment distance
-            if let Some((t, s)) = segment_intersection_2d(
-                [p1.x, p1.y], [p2.x, p2.y],
-                [p3.x, p3.y], [p4.x, p4.y],
-            ) {
+            if let Some((t, s)) =
+                segment_intersection_2d([p1.x, p1.y], [p2.x, p2.y], [p3.x, p3.y], [p4.x, p4.y])
+            {
                 let point = DVec3::new(
                     p1.x + t * (p2.x - p1.x),
                     p1.y + t * (p2.y - p1.y),
@@ -695,8 +741,10 @@ fn detect_curve_self_intersections(curve: &Curve3, n_samples: usize) -> Vec<Curv
 /// 2D segment intersection test.
 /// Returns (t, s) parameters if segments intersect, where t is on segment 1 and s is on segment 2.
 fn segment_intersection_2d(
-    p1: [f64; 2], p2: [f64; 2],
-    p3: [f64; 2], p4: [f64; 2],
+    p1: [f64; 2],
+    p2: [f64; 2],
+    p3: [f64; 2],
+    p4: [f64; 2],
 ) -> Option<(f64, f64)> {
     let d1 = [p2[0] - p1[0], p2[1] - p1[1]];
     let d2 = [p4[0] - p3[0], p4[1] - p3[1]];
@@ -724,19 +772,30 @@ fn segment_intersection_2d(
 fn determine_curve_continuity(curve: &Curve3) -> ContinuityLevel {
     match curve {
         Curve3::Line(_) | Curve3::Circle(_) | Curve3::Ellipse(_) => ContinuityLevel::CN,
-        Curve3::Hyperbola(_) | Curve3::Parabola(_) | Curve3::CircularHelix(_) | Curve3::SineWave(_) => ContinuityLevel::CN,
+        Curve3::Hyperbola(_)
+        | Curve3::Parabola(_)
+        | Curve3::CircularHelix(_)
+        | Curve3::SineWave(_) => ContinuityLevel::CN,
         Curve3::BSpline(bs) => {
             // BSpline continuity is degree - multiplicity at each knot
             // For simplicity, assume at least C2 if degree >= 3
-            if bs.degree >= 3 { ContinuityLevel::C2 }
-            else if bs.degree >= 2 { ContinuityLevel::C1 }
-            else { ContinuityLevel::C0 }
+            if bs.degree >= 3 {
+                ContinuityLevel::C2
+            } else if bs.degree >= 2 {
+                ContinuityLevel::C1
+            } else {
+                ContinuityLevel::C0
+            }
         }
         Curve3::Bezier(bez) => {
             // Bezier curves are C-infinity on (0,1), but C{degree-1} at endpoints
-            if bez.control_points.len() >= 4 { ContinuityLevel::C2 }
-            else if bez.control_points.len() >= 3 { ContinuityLevel::C1 }
-            else { ContinuityLevel::C0 }
+            if bez.control_points.len() >= 4 {
+                ContinuityLevel::C2
+            } else if bez.control_points.len() >= 3 {
+                ContinuityLevel::C1
+            } else {
+                ContinuityLevel::C0
+            }
         }
         Curve3::Offset(_) => ContinuityLevel::C1, // Conservative estimate
         Curve3::Trimmed(tc) => determine_curve_continuity(tc.basis_curve()),
@@ -954,7 +1013,8 @@ pub fn analyze_wire(
     }
 
     // Check for topological self-intersection (vertex appears more than twice)
-    let mut vertex_count: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut vertex_count: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
     for &(start, end) in &vertices {
         *vertex_count.entry(start).or_insert(0) += 1;
         *vertex_count.entry(end).or_insert(0) += 1;
@@ -964,7 +1024,8 @@ pub fn analyze_wire(
         if count > 2 {
             let point = brep.vertex_point(v).unwrap_or(DVec3::ZERO);
             // Find which edges share this vertex
-            let edges_with_vertex: Vec<usize> = vertices.iter()
+            let edges_with_vertex: Vec<usize> = vertices
+                .iter()
                 .enumerate()
                 .filter(|(_, (s, e))| *s == v || *e == v)
                 .map(|(i, _)| i)
@@ -985,7 +1046,12 @@ pub fn analyze_wire(
 }
 
 /// Check if all wires in a face are valid.
-pub fn check_face_wires(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Vec<WireAnalysisReport> {
+pub fn check_face_wires(
+    brep: &rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+) -> Vec<WireAnalysisReport> {
     let mut reports = Vec::new();
 
     // Check outer wire
@@ -1052,7 +1118,12 @@ pub enum SurfaceWireIssueKind {
 }
 
 /// Analyze a face for validity and characteristics.
-pub fn analyze_face(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> FaceAnalysisReport {
+pub fn analyze_face(
+    brep: &rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+) -> FaceAnalysisReport {
     let mut report = FaceAnalysisReport {
         has_surface: false,
         surface_report: None,
@@ -1088,10 +1159,12 @@ pub fn analyze_face(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize
     }
 
     // Check surface-wire consistency
-    report.surface_wire_issues = check_surface_wire_consistency(brep, solid_idx, shell_idx, face_idx);
+    report.surface_wire_issues =
+        check_surface_wire_consistency(brep, solid_idx, shell_idx, face_idx);
 
     // Check orientation
-    report.orientation_matches_surface = check_face_orientation(brep, solid_idx, shell_idx, face_idx);
+    report.orientation_matches_surface =
+        check_face_orientation(brep, solid_idx, shell_idx, face_idx);
 
     report
 }
@@ -1133,11 +1206,15 @@ fn check_surface_wire_consistency(
                 .map(|ed| ed.degenerated)
                 .unwrap_or(false);
             if !is_degenerate {
-                if let Some(ref curve) = e_edge_data(brep, edge_idx).and_then(|ed| ed.curve.as_ref()) {
-                    let range = e_edge_data(brep, edge_idx).map(|ed| ed.range).unwrap_or_else(|| {
-                        let d = curve.default_domain();
-                        [d[0], d[1]]
-                    });
+                if let Some(ref curve) =
+                    e_edge_data(brep, edge_idx).and_then(|ed| ed.curve.as_ref())
+                {
+                    let range = e_edge_data(brep, edge_idx)
+                        .map(|ed| ed.range)
+                        .unwrap_or_else(|| {
+                            let d = curve.default_domain();
+                            [d[0], d[1]]
+                        });
 
                     let n_samples = 5;
                     let dt = (range[1] - range[0]) / n_samples as f64;
@@ -1155,7 +1232,10 @@ fn check_surface_wire_consistency(
                     if max_deviation > TOLERANCE_MESH_LEGACY {
                         issues.push(SurfaceWireIssue {
                             kind: SurfaceWireIssueKind::EdgeNotOnSurface,
-                            description: format!("Edge {} does not lie on surface (max deviation: {})", edge_idx, max_deviation),
+                            description: format!(
+                                "Edge {} does not lie on surface (max deviation: {})",
+                                edge_idx, max_deviation
+                            ),
                             edge_idx: Some(edge_idx),
                         });
                     }
@@ -1208,7 +1288,12 @@ fn project_point_to_surface_simple(surface: &Surface3, point: DVec3) -> Option<D
 }
 
 /// Check if face orientation matches surface normal direction.
-fn check_face_orientation(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> bool {
+fn check_face_orientation(
+    brep: &rcad_kernel::BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+) -> bool {
     let fd = match ns_face_data(brep, solid_idx, shell_idx, face_idx) {
         Some(fd) => fd,
         None => return true,
@@ -1229,7 +1314,11 @@ fn check_face_orientation(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx:
     // TFaceData does not store an explicit normal; the face orientation
     // is determined by the outer_wire ShapeRef's orientation.
     let is_forward = fd.outer_wire.orientation == rcad_kernel::topods::Orientation::Forward;
-    let normal = if is_forward { surface_normal } else { -surface_normal };
+    let normal = if is_forward {
+        surface_normal
+    } else {
+        -surface_normal
+    };
 
     // Check that the resulting normal is sensible
     let dot = surface_normal.dot(normal);
@@ -1266,7 +1355,11 @@ pub fn analyze_brep(brep: &rcad_kernel::BRep) -> BRepAnalysisReport {
             if let Some(ref surface) = fd.surface {
                 let surf_report = analyze_surface(surface);
                 if !surf_report.uv_issues.is_empty() {
-                    issues.push(format!("Surface on face tshape {} has {} UV issues", si, surf_report.uv_issues.len()));
+                    issues.push(format!(
+                        "Surface on face tshape {} has {} UV issues",
+                        si,
+                        surf_report.uv_issues.len()
+                    ));
                 }
                 report.surfaces.push(surf_report);
             }
@@ -1279,7 +1372,11 @@ pub fn analyze_brep(brep: &rcad_kernel::BRep) -> BRepAnalysisReport {
             if let Some(ref curve) = ed.curve {
                 let curve_report = analyze_curve(curve, 32);
                 if !curve_report.self_intersections.is_empty() {
-                    issues.push(format!("Curve on edge tshape {} has {} self-intersections", ei, curve_report.self_intersections.len()));
+                    issues.push(format!(
+                        "Curve on edge tshape {} has {} self-intersections",
+                        ei,
+                        curve_report.self_intersections.len()
+                    ));
                 }
                 report.curves.push(curve_report);
             }
@@ -1294,11 +1391,17 @@ pub fn analyze_brep(brep: &rcad_kernel::BRep) -> BRepAnalysisReport {
                     for (fi, _f_sr) in sh_data.faces.iter().enumerate() {
                         let face_report = analyze_face(brep, si, shi, fi);
                         if !face_report.all_wires_closed {
-                            issues.push(format!("Face ({}, {}, {}) has unclosed wires", si, shi, fi));
+                            issues
+                                .push(format!("Face ({}, {}, {}) has unclosed wires", si, shi, fi));
                         }
                         if !face_report.surface_wire_issues.is_empty() {
-                            issues.push(format!("Face ({}, {}, {}) has {} surface-wire issues",
-                                si, shi, fi, face_report.surface_wire_issues.len()));
+                            issues.push(format!(
+                                "Face ({}, {}, {}) has {} surface-wire issues",
+                                si,
+                                shi,
+                                fi,
+                                face_report.surface_wire_issues.len()
+                            ));
                         }
                         report.faces.push((si, shi, fi, face_report));
                     }
@@ -1540,4 +1643,3 @@ pub fn analyze_surface_bounds(
 }
 include!("e1.rs");
 include!("e2.rs");
-

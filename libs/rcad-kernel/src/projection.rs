@@ -30,34 +30,57 @@ fn solve_cubic(a: f64, b: f64, c: f64) -> Vec<f64> {
 /// Solve quartic a·x⁴ + b·x³ + c·x² + d·x + e = 0.
 /// OCCT-aligned: math_DirectPolynomialRoots.
 fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
-    if a.abs() < 1e-30 { return vec![]; }
+    if a.abs() < 1e-30 {
+        return vec![];
+    }
     let inv_a = 1.0 / a;
-    let ba = b * inv_a; let ca = c * inv_a; let da = d * inv_a; let ea = e * inv_a;
+    let ba = b * inv_a;
+    let ca = c * inv_a;
+    let da = d * inv_a;
+    let ea = e * inv_a;
     let p = ca - 3.0 * ba * ba / 8.0;
     let q = da - ba * ca / 2.0 + ba * ba * ba / 8.0;
     let r = ea - ba * da / 4.0 + ba * ba * ca / 16.0 - 3.0 * ba * ba * ba * ba / 256.0;
     if q.abs() < 1e-30 {
         let disc = p * p - 4.0 * r;
-        if disc < 0.0 { return vec![]; }
+        if disc < 0.0 {
+            return vec![];
+        }
         let sd = disc.sqrt();
         let mut roots = Vec::new();
         for &t in &[(-p + sd) / 2.0, (-p - sd) / 2.0] {
-            if t >= 0.0 { roots.push(t.sqrt()); }
-            if t > 0.0 { roots.push(-t.sqrt()); }
+            if t >= 0.0 {
+                roots.push(t.sqrt());
+            }
+            if t > 0.0 {
+                roots.push(-t.sqrt());
+            }
         }
         let shift = -ba / 4.0;
         return roots.into_iter().map(|x| x + shift).collect();
     }
     let rc = solve_cubic(2.0 * p, p * p - 4.0 * r, -q * q);
     let m = rc.into_iter().find(|&m| m > 0.0).unwrap_or(0.0);
-    if m <= 0.0 { return vec![]; }
+    if m <= 0.0 {
+        return vec![];
+    }
     let sq = (m * 2.0).sqrt();
-    let t1 = -p - m; let t2 = q / sq;
-    let disc1 = -t1 - 2.0 * t2; let disc2 = -t1 + 2.0 * t2;
+    let t1 = -p - m;
+    let t2 = q / sq;
+    let disc1 = -t1 - 2.0 * t2;
+    let disc2 = -t1 + 2.0 * t2;
     let shift = -ba / 4.0;
     let mut roots = Vec::new();
-    if disc1 >= 0.0 { let s = disc1.sqrt(); roots.push((sq + s) / 2.0 + shift); roots.push((-sq + s) / 2.0 + shift); }
-    if disc2 >= 0.0 { let s = disc2.sqrt(); roots.push((s - sq) / 2.0 + shift); roots.push((-sq - s) / 2.0 + shift); }
+    if disc1 >= 0.0 {
+        let s = disc1.sqrt();
+        roots.push((sq + s) / 2.0 + shift);
+        roots.push((-sq + s) / 2.0 + shift);
+    }
+    if disc2 >= 0.0 {
+        let s = disc2.sqrt();
+        roots.push((s - sq) / 2.0 + shift);
+        roots.push((-sq - s) / 2.0 + shift);
+    }
     roots
 }
 
@@ -113,9 +136,11 @@ fn newton_refine(
         let diff = p - query;
         let deriv = curve.derivative_at(*t);
         let deriv_sq = deriv.dot(deriv);
-        if deriv_sq < 1e-20 { break; }
-        let curv = (curve.point_at(*t + 2.0 * dt) - 2.0 * p
-            + curve.point_at(*t - 2.0 * dt)) / (dt * dt);
+        if deriv_sq < 1e-20 {
+            break;
+        }
+        let curv =
+            (curve.point_at(*t + 2.0 * dt) - 2.0 * p + curve.point_at(*t - 2.0 * dt)) / (dt * dt);
         let denom = deriv_sq + diff.dot(curv);
         let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
         let new_t = clamp(*t - delta);
@@ -124,7 +149,9 @@ fn newton_refine(
             *best_dist = new_dist;
             *t = new_t;
         }
-        if delta.abs() < 1e-10 { break; }
+        if delta.abs() < 1e-10 {
+            break;
+        }
     }
 }
 
@@ -193,13 +220,17 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let o = circ.center;
             let axis = circ.normal.normalize_or_zero();
             let axial = (query - o).dot(axis);
-            let pp = query - axis * axial;  // Pp = P projected to circle plane
-            let opp = pp - o;               // OPp vector from center to projected point
+            let pp = query - axis * axial; // Pp = P projected to circle plane
+            let opp = pp - o; // OPp vector from center to projected point
             let opp_mag = opp.length();
             if opp_mag < 1e-15 {
                 // P on axis → infinite solutions; return center(0) (OCCT returns IsDone=false)
                 let pt = circ.point_at(0.0);
-                return CurveProjection { point: pt, param: 0.0, distance: (pt - query).length() };
+                return CurveProjection {
+                    point: pt,
+                    param: 0.0,
+                    distance: (pt - query).length(),
+                };
             }
             // Circle axes (OCCT: C.XAxis().Direction() and C.YAxis().Direction())
             let cx = circ.x_dir.normalize();
@@ -207,9 +238,13 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let x = opp.dot(cx);
             let y = opp.dot(cy);
             // OCCT L138: Usol[0] = XAxis.AngleWithRef(OPp, Axis) → atan2 of (X×OPp)·Axis, X·OPp
-            let u_min = y.atan2(x);                          // angle of OPp (minimum distance)
+            let u_min = y.atan2(x); // angle of OPp (minimum distance)
             let half = std::f64::consts::PI;
-            let u_max = if u_min < 0.0 { u_min + half } else { u_min - half };  // antipodal (maximum)
+            let u_max = if u_min < 0.0 {
+                u_min + half
+            } else {
+                u_min - half
+            }; // antipodal (maximum)
             let [t0, t1] = curve.default_domain();
             // Adjust each solution into [t0, t0+TAU) then check against [t0, t1]
             let mut best_t = u_min;
@@ -221,13 +256,20 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                     let period = std::f64::consts::TAU;
                     let diff = u_adj - t0;
                     u_adj = t0 + diff - period * (diff / period).floor();
-                    if u_adj < t0 - 1e-12 { u_adj += period; }
-                    if u_adj > t0 + period + 1e-12 { u_adj -= period; }
+                    if u_adj < t0 - 1e-12 {
+                        u_adj += period;
+                    }
+                    if u_adj > t0 + period + 1e-12 {
+                        u_adj -= period;
+                    }
                 }
                 if u_adj >= t0 - 1e-12 && u_adj <= t1 + 1e-12 {
                     let pt = circ.point_at(u_adj);
                     let d = (pt - query).length();
-                    if d < best_d { best_d = d; best_t = u_adj; }
+                    if d < best_d {
+                        best_d = d;
+                        best_t = u_adj;
+                    }
                 }
             }
             // If no solution in range, try endpoints + fallback to u_min clamped
@@ -236,7 +278,11 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                 best_d = (circ.point_at(best_t) - query).length();
             }
             let pt = circ.point_at(best_t);
-            return CurveProjection { point: pt, param: best_t, distance: (pt - query).length() };
+            return CurveProjection {
+                point: pt,
+                param: best_t,
+                distance: (pt - query).length(),
+            };
         }
 
         Curve3::Ellipse(ell) => {
@@ -252,7 +298,11 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             if opp.length_squared() < 1e-30 && (ell.major_radius - ell.minor_radius).abs() < 1e-15 {
                 // Point at center of circular ellipse → infinite solutions
                 let pt = ell.point_at(0.0);
-                return CurveProjection { point: pt, param: 0.0, distance: (pt - query).length() };
+                return CurveProjection {
+                    point: pt,
+                    param: 0.0,
+                    distance: (pt - query).length(),
+                };
             }
             let ex = ell.major_dir.normalize();
             let ey = axis.cross(ex).normalize();
@@ -274,7 +324,10 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                 let u = t0 + (t1 - t0) * i as f64 / n as f64;
                 let pt = ell.point_at(u);
                 let d = (pt - query).length();
-                if d < d_best { d_best = d; u_best = u; }
+                if d < d_best {
+                    d_best = d;
+                    u_best = u;
+                }
             }
             // Sign-change-based refinement (OCCT: TrigonometricFunctionRoots per-interval)
             let clamp = |u: f64| u.clamp(t0, t1);
@@ -287,17 +340,27 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                     let mut t = clamp(u_mid);
                     let mut dist = (ell.point_at(t) - query).length();
                     newton_refine(curve, &mut t, &mut dist, query, 20, clamp);
-                    if dist < d_best { d_best = dist; u_best = t; }
+                    if dist < d_best {
+                        d_best = dist;
+                        u_best = t;
+                    }
                 }
                 g_prev = g_cur;
             }
             // Fallback: endpoints
             for &u in &[t0, t1] {
                 let d = (ell.point_at(u) - query).length();
-                if d < d_best { d_best = d; u_best = u; }
+                if d < d_best {
+                    d_best = d;
+                    u_best = u;
+                }
             }
             let pt = ell.point_at(u_best);
-            return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
+            return CurveProjection {
+                point: pt,
+                param: u_best,
+                distance: (pt - query).length(),
+            };
         }
 
         // OCCT-aligned: Extrema_ExtPElC::Perform(Hyperbola) L294-389.
@@ -323,13 +386,31 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
             for v in roots {
-                if v > 0.0 { let u = v.ln();
-                    if u >= t0 && u <= t1 { let pt = hyp.point_at(u); let d = (pt - query).length(); if d < d_best { d_best = d; u_best = u; } }
+                if v > 0.0 {
+                    let u = v.ln();
+                    if u >= t0 && u <= t1 {
+                        let pt = hyp.point_at(u);
+                        let d = (pt - query).length();
+                        if d < d_best {
+                            d_best = d;
+                            u_best = u;
+                        }
+                    }
                 }
             }
-            for &u in &[t0, t1] { let d = (hyp.point_at(u) - query).length(); if d < d_best { d_best = d; u_best = u; } }
+            for &u in &[t0, t1] {
+                let d = (hyp.point_at(u) - query).length();
+                if d < d_best {
+                    d_best = d;
+                    u_best = u;
+                }
+            }
             let pt = hyp.point_at(u_best);
-            return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
+            return CurveProjection {
+                point: pt,
+                param: u_best,
+                distance: (pt - query).length(),
+            };
         }
 
         // OCCT-aligned: Extrema_ExtPElC::Perform(Parabola) L402-480.
@@ -350,10 +431,29 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let [t0, t1] = curve.default_domain();
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
-            for u in roots { if u >= t0 && u <= t1 { let pt = par.point_at(u); let d = (pt - query).length(); if d < d_best { d_best = d; u_best = u; } } }
-            for &u in &[t0, t1] { let d = (par.point_at(u) - query).length(); if d < d_best { d_best = d; u_best = u; } }
+            for u in roots {
+                if u >= t0 && u <= t1 {
+                    let pt = par.point_at(u);
+                    let d = (pt - query).length();
+                    if d < d_best {
+                        d_best = d;
+                        u_best = u;
+                    }
+                }
+            }
+            for &u in &[t0, t1] {
+                let d = (par.point_at(u) - query).length();
+                if d < d_best {
+                    d_best = d;
+                    u_best = u;
+                }
+            }
             let pt = par.point_at(u_best);
-            return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
+            return CurveProjection {
+                point: pt,
+                param: u_best,
+                distance: (pt - query).length(),
+            };
         }
 
         // OCCT-aligned: BSpline — C2 interval splitting,
@@ -372,7 +472,9 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                 let lo = intervals[wi];
                 let hi = intervals[wi + 1];
                 let span = hi - lo;
-                if span < 1e-15 { continue; }
+                if span < 1e-15 {
+                    continue;
+                }
 
                 // Sample n_per_int points in this interval
                 for i in 0..=n_per_int {
@@ -508,7 +610,13 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
 /// Calls closest_point_on_curve then clamps parameter to [t0, t1] and
 /// re-evaluates at the endpoint if the original projection fell outside range.
 /// Matches OCCT GeomAPI_ProjectPointOnCurve::Init(curve, f, l).
-pub fn closest_point_on_curve_range(curve: &Curve3, query: DVec3, t0: f64, t1: f64, n_samples: usize) -> CurveProjection {
+pub fn closest_point_on_curve_range(
+    curve: &Curve3,
+    query: DVec3,
+    t0: f64,
+    t1: f64,
+    n_samples: usize,
+) -> CurveProjection {
     let mut result = closest_point_on_curve(curve, query, n_samples);
     if result.param < t0 || result.param > t1 {
         let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
@@ -585,7 +693,11 @@ pub fn closest_point_on_surface(
             let r = (point - cyl.origin - cyl.axis * along).normalize_or_zero();
             let theta = r.dot(v_axis).atan2(r.dot(u_axis));
             // Map [-π, π] → [0, 2π] to match the canonical cylinder UV domain.
-            let theta = if theta < 0.0 { theta + std::f64::consts::TAU } else { theta };
+            let theta = if theta < 0.0 {
+                theta + std::f64::consts::TAU
+            } else {
+                theta
+            };
             SurfaceProjection {
                 point,
                 params: (theta, along),
@@ -628,7 +740,11 @@ pub fn closest_point_on_surface(
             let radial_len = radial.length();
             // Compute a reference direction in the equatorial plane (like any_perpendicular)
             let torus_ref_dir = {
-                let ref_dir = if torus.axis.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
+                let ref_dir = if torus.axis.x.abs() > 1.0 - 1e-12 {
+                    DVec3::Z
+                } else {
+                    DVec3::X
+                };
                 (ref_dir - torus.axis * ref_dir.dot(torus.axis)).normalize_or_zero()
             };
             let major_dir = if radial_len < 1e-14 {
@@ -658,8 +774,11 @@ pub fn closest_point_on_surface(
         }
 
         // ── Planar BSpline: use analytic plane projection ──────────────────────
-        Surface3::BSpline(bsp) if bsp.degree_u == 1 && bsp.degree_v == 1
-            && bsp.control_points.len() >= 2 && bsp.control_points[0].len() >= 2 =>
+        Surface3::BSpline(bsp)
+            if bsp.degree_u == 1
+                && bsp.degree_v == 1
+                && bsp.control_points.len() >= 2
+                && bsp.control_points[0].len() >= 2 =>
         {
             // The degree-1 BSpline from plane_to_bspline is geometrically a plane.
             // Use the analytic Plane projection instead of numeric_surface_projection
@@ -684,7 +803,11 @@ pub fn closest_point_on_surface(
                 } else {
                     (0.0, 0.0)
                 };
-                SurfaceProjection { point, params: (u, v), distance: d.abs() }
+                SurfaceProjection {
+                    point,
+                    params: (u, v),
+                    distance: d.abs(),
+                }
             } else {
                 numeric_surface_projection(surface, query, n_samples)
             }
@@ -700,31 +823,41 @@ pub fn closest_point_on_surface(
 /// ✅ OCCT-aligned: TreatSolution (Extrema_ExtPS L97-135).
 ///   Wraps periodic UV into [uinf, uinf+period), then checks bounds.
 fn treat_solution(
-    u: f64, v: f64,
+    u: f64,
+    v: f64,
     point: DVec3,
-    uinf: f64, usup: f64,
-    vinf: f64, vsup: f64,
+    uinf: f64,
+    usup: f64,
+    vinf: f64,
+    vsup: f64,
     u_period: Option<f64>,
     v_period: Option<f64>,
-    tolu: f64, tolv: f64,
+    tolu: f64,
+    tolv: f64,
 ) -> Option<(f64, f64, DVec3)> {
     let mut u = u;
     let mut v = v;
     if let Some(per) = u_period {
         let diff = u - uinf;
         u = uinf + diff - per * (diff / per).floor();
-        if u > usup + tolu { u -= per; }
-        if u < uinf - tolu { u += per; }
+        if u > usup + tolu {
+            u -= per;
+        }
+        if u < uinf - tolu {
+            u += per;
+        }
     }
     if let Some(per) = v_period {
         let diff = v - vinf;
         v = vinf + diff - per * (diff / per).floor();
-        if v > vsup + tolv { v -= per; }
-        if v < vinf - tolv { v += per; }
+        if v > vsup + tolv {
+            v -= per;
+        }
+        if v < vinf - tolv {
+            v += per;
+        }
     }
-    if (uinf - u) <= tolu && (u - usup) <= tolu
-        && (vinf - v) <= tolv && (v - vsup) <= tolv
-    {
+    if (uinf - u) <= tolu && (u - usup) <= tolu && (vinf - v) <= tolv && (v - vsup) <= tolv {
         Some((u, v, point))
     } else {
         None
@@ -754,17 +887,29 @@ pub fn closest_point_on_surface_near(
         let hvv = dv.dot(dv);
         let huv = du.dot(dv);
         let det = huu * hvv - huv * huv;
-        if det.abs() < 1e-20 { break; }
+        if det.abs() < 1e-20 {
+            break;
+        }
         let du_step = (hvv * gu - huv * gv) / det;
         let dv_step = (huu * gv - huv * gu) / det;
         let nu = (u - du_step).clamp(uinf, usup);
         let nv = (v - dv_step).clamp(vinf, vsup);
         let nd = (surface.point_at(nu, nv) - query).length();
-        if nd < best_dist { best_dist = nd; u = nu; v = nv; }
-        if du_step.abs() < 1e-10 && dv_step.abs() < 1e-10 { break; }
+        if nd < best_dist {
+            best_dist = nd;
+            u = nu;
+            v = nv;
+        }
+        if du_step.abs() < 1e-10 && dv_step.abs() < 1e-10 {
+            break;
+        }
     }
     let point = surface.point_at(u, v);
-    SurfaceProjection { point, params: (u, v), distance: (point - query).length() }
+    SurfaceProjection {
+        point,
+        params: (u, v),
+        distance: (point - query).length(),
+    }
 }
 ///   Initialize: grid size = 32 (44 for BSpline, 300 when isoparametric curves degenerate).
 ///   Perform: grid sampling → Newton refinement with analytic derivatives.
@@ -788,22 +933,34 @@ fn numeric_surface_projection(
     let step_u = (u1 - u0) / 10.0;
     let step_v = (v1 - v0) / 10.0;
     if step_u.is_finite() && u1 > u0 {
-        let d_max = (0..=10).filter_map(|i| {
-            let u = u0 + step_u * i as f64;
-            if u < u0 || u > u1 { return None; }
-            let (_p, du, _dv) = surface.derivatives(u, v0);
-            Some(du.length_squared())
-        }).fold(0.0_f64, f64::max);
-        if d_max < 1e-18 || d_max > 1e9 { nu = nu.max(300); }
+        let d_max = (0..=10)
+            .filter_map(|i| {
+                let u = u0 + step_u * i as f64;
+                if u < u0 || u > u1 {
+                    return None;
+                }
+                let (_p, du, _dv) = surface.derivatives(u, v0);
+                Some(du.length_squared())
+            })
+            .fold(0.0_f64, f64::max);
+        if d_max < 1e-18 || d_max > 1e9 {
+            nu = nu.max(300);
+        }
     }
     if step_v.is_finite() && v1 > v0 {
-        let d_max = (0..=10).filter_map(|i| {
-            let v = v0 + step_v * i as f64;
-            if v < v0 || v > v1 { return None; }
-            let (_p, _du, dv) = surface.derivatives(u0, v);
-            Some(dv.length_squared())
-        }).fold(0.0_f64, f64::max);
-        if d_max < 1e-18 || d_max > 1e9 { nv = nv.max(300); }
+        let d_max = (0..=10)
+            .filter_map(|i| {
+                let v = v0 + step_v * i as f64;
+                if v < v0 || v > v1 {
+                    return None;
+                }
+                let (_p, _du, dv) = surface.derivatives(u0, v);
+                Some(dv.length_squared())
+            })
+            .fold(0.0_f64, f64::max);
+        if d_max < 1e-18 || d_max > 1e9 {
+            nv = nv.max(300);
+        }
     }
 
     // Coarse sampling (OCCT L261: myExtPS.Initialize with nbU, nbV)
@@ -816,7 +973,11 @@ fn numeric_surface_projection(
                 let v = v0 + (v1 - v0) * j as f64 / nv as f64;
                 let p = surface.point_at(u, v);
                 let d = (p - query).length_squared();
-                if d < bd { bd = d; bu = u; bv = v; }
+                if d < bd {
+                    bd = d;
+                    bu = u;
+                    bv = v;
+                }
             }
         }
         (bu, bv, bd.sqrt())
@@ -833,7 +994,9 @@ fn numeric_surface_projection(
         let hvv = dv.dot(dv);
         let huv = du.dot(dv);
         let det = huu * hvv - huv * huv;
-        if det.abs() < 1e-20 { break; }
+        if det.abs() < 1e-20 {
+            break;
+        }
         let delta_u = (hvv * gu - huv * gv) / det;
         let delta_v = (huu * gv - huv * gu) / det;
         let new_u = (best_u - delta_u).clamp(u0, u1);
@@ -844,7 +1007,9 @@ fn numeric_surface_projection(
             best_u = new_u;
             best_v = new_v;
         }
-        if delta_u.abs() < 1e-10 && delta_v.abs() < 1e-10 { break; }
+        if delta_u.abs() < 1e-10 && delta_v.abs() < 1e-10 {
+            break;
+        }
     }
 
     let best_point = surface.point_at(best_u, best_v);
@@ -875,18 +1040,26 @@ pub fn make_pcurve_on_surface(
 
     let n = n_samples.max(2);
     let [t0, t1] = t_range;
-    let dt = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+    let dt = if n > 1 {
+        (t1 - t0) / (n - 1) as f64
+    } else {
+        0.0
+    };
 
     let mut uv_pts: Vec<DVec2> = Vec::with_capacity(n);
     for i in 0..n {
         let t = t0 + dt * i as f64;
         let pt3d = curve.point_at(t);
         let proj = closest_point_on_surface(surface, pt3d, 8);
-        if proj.distance > 1e-4 { continue; }
+        if proj.distance > 1e-4 {
+            continue;
+        }
         uv_pts.push(DVec2::new(proj.params.0, proj.params.1));
     }
 
-    if uv_pts.len() < 2 { return None; }
+    if uv_pts.len() < 2 {
+        return None;
+    }
     uv_pts.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
 
     let bspline = interpolate_points_2d(&uv_pts).ok()?;
@@ -978,19 +1151,30 @@ mod tests {
         let q = on_surface + query_normal * 0.25;
         let r = closest_point_on_surface(&cone, q, 16);
 
-        assert!((r.point - on_surface).length() < 5e-3, "projected point={}", r.point);
-        assert!((r.params.1 - expected_slant).abs() < 5e-3, "slant={}", r.params.1);
+        assert!(
+            (r.point - on_surface).length() < 5e-3,
+            "projected point={}",
+            r.point
+        );
+        assert!(
+            (r.params.1 - expected_slant).abs() < 5e-3,
+            "slant={}",
+            r.params.1
+        );
         let lifted = match &cone {
             Surface3::Cone(surface) => surface.point_at(r.params.0, r.params.1),
             _ => unreachable!(),
         };
-        assert!((lifted - r.point).length() < 1e-6, "lifted point={lifted} projected={}", r.point);
+        assert!(
+            (lifted - r.point).length() < 1e-6,
+            "lifted point={lifted} projected={}",
+            r.point
+        );
     }
 
     #[test]
     fn project_onto_circle_curve() {
-        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        ));
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         let q = DVec3::new(2.0, 0.0, 0.0);
         let r = closest_point_on_curve(&circle, q, 64);
         assert!(
@@ -1086,8 +1270,7 @@ mod tests {
     #[test]
     fn project_onto_partial_circle_arc() {
         // Arc from 0 to π/2 (first quadrant).
-        let arc = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        ));
+        let arc = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         // For a full circle, query at (-2, 0, 0) should give t = π, point = (-1, 0, 0).
         let q = DVec3::new(-2.0, 0.0, 0.0);
         let r = closest_point_on_curve(&arc, q, 64);
@@ -1142,7 +1325,10 @@ mod tests {
         // Query along axis away from apex
         let q2 = DVec3::new(0.0, 0.0, 5.0);
         let r2 = closest_point_on_surface(&cone, q2, 16);
-        assert!(r2.distance > 0.0, "axis projection distance should be positive");
+        assert!(
+            r2.distance > 0.0,
+            "axis projection distance should be positive"
+        );
     }
 
     #[test]
@@ -1161,7 +1347,10 @@ mod tests {
         // Query on outer ring
         let q2 = DVec3::new(4.0, 0.0, 0.0);
         let r2 = closest_point_on_surface(&torus, q2, 16);
-        assert!((r2.distance - 0.0).abs() < 0.1, "on-torus distance should be small");
+        assert!(
+            (r2.distance - 0.0).abs() < 0.1,
+            "on-torus distance should be small"
+        );
     }
 
     #[test]
@@ -1175,7 +1364,10 @@ mod tests {
         // Query inside cylinder
         let q = DVec3::new(0.0, 0.0, 1.0);
         let r = closest_point_on_surface(&cyl, q, 16);
-        assert!((r.distance - 2.0).abs() < 1e-6, "interior distance should be radius");
+        assert!(
+            (r.distance - 2.0).abs() < 1e-6,
+            "interior distance should be radius"
+        );
     }
 
     #[test]
@@ -1189,7 +1381,10 @@ mod tests {
         // Query inside sphere
         let q = DVec3::new(1.0, 1.0, 1.0);
         let r = closest_point_on_surface(&sphere, q, 16);
-        assert!(r.distance < 3.0, "interior distance should be less than radius");
+        assert!(
+            r.distance < 3.0,
+            "interior distance should be less than radius"
+        );
     }
 
     #[test]
@@ -1235,7 +1430,10 @@ mod tests {
         let r = closest_point_on_surface(&sphere, q, 16);
         // Distance should be approximately |q| - radius
         let expected_dist = q.length() - 1.0;
-        assert!((r.distance - expected_dist).abs() < 1.0, "distant projection distance");
+        assert!(
+            (r.distance - expected_dist).abs() < 1.0,
+            "distant projection distance"
+        );
     }
 
     #[test]

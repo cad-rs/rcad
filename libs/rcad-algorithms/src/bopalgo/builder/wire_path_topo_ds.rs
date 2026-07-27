@@ -1,22 +1,19 @@
+use super::angle_2d::clock_wise_angle;
+use super::point_in_polygon_2d;
+use super::types::{WireEdgeSourceTopoDS, WireFace, WireSegmentTopoDS};
+use super::wire_splitter::{EdgeInfo, find_angle_at, mark_edge_passed};
+use crate::inttools::fclass2d::curve2d_nb_samples;
+use crate::tolerance::*;
+use glam::DVec2;
+use glam::DVec3;
+use indexmap::IndexMap;
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
+use rcad_kernel::topods::{BRepTool, Orientation, ShapeRef};
 /// TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.
 use std::collections::{HashMap, HashSet, VecDeque};
-use indexmap::IndexMap;
-use glam::DVec2;
-use glam::DVec3;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, Curve3};
-use rcad_kernel::topods::{BRepTool, Orientation, ShapeRef};
-use crate::tolerance::*;
-use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS, WireFace};
-use super::wire_splitter::{
-    EdgeInfo, mark_edge_passed,
-    find_angle_at,
-};
-use super::angle_2d::clock_wise_angle;
-use crate::inttools::fclass2d::curve2d_nb_samples;
-use super::point_in_polygon_2d;
 
 // ---------------------------------------------------------------------------
 // TopoDS-native EdgeInfo — no seg_idx, holds edge+face directly (OCCT aligned)
@@ -58,7 +55,9 @@ pub(crate) fn find_angle_at_topo(
     vertex: usize,
     in_flag: bool,
 ) -> Option<f64> {
-    smart_map.get(&vertex)?.iter()
+    smart_map
+        .get(&vertex)?
+        .iter()
         .find(|ei| ei.edge.index == edge.index && ei.in_flag == in_flag)
         .map(|ei| ei.angle)
 }
@@ -70,7 +69,9 @@ pub(crate) fn select_best_outgoing_topo<'a>(
     incoming_is_boundary: bool,
     incoming_edge: ShapeRef,
 ) -> Option<&'a EdgeInfoTopoDS> {
-    if candidates.is_empty() { return None; }
+    if candidates.is_empty() {
+        return None;
+    }
     let a_two_pi = std::f64::consts::TAU;
     let eps = std::f64::EPSILON;
     let mut a_min_angle = 100.0;
@@ -92,7 +93,9 @@ pub(crate) fn select_best_outgoing_topo<'a>(
             p_edge_info = Some(an_ei);
         }
     }
-    if a_nb_ways_inside == 1 { p_edge_info = p_only_way_in; }
+    if a_nb_ways_inside == 1 {
+        p_edge_info = p_only_way_in;
+    }
     p_edge_info
 }
 
@@ -133,15 +136,20 @@ pub(crate) fn walk_path_extract_wires(
         let u = u_tolerance(vi);
         let v = v_tolerance(vi);
         let mut t = u.max(v);
-        if t < vt { t = vt; }
-        if matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_))) { t *= 1.1; }
+        if t < vt {
+            t = vt;
+        }
+        if matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_))) {
+            t *= 1.1;
+        }
         t
     };
 
     // OCCT Coord2d (WireSplitter_1.cxx L677-683)
     let coord2d = |vi: usize, si: usize| -> DVec2 {
         let s = &segments[si];
-        let t = tool.parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
+        let t = tool
+            .parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
             .unwrap_or(DVec2::ZERO.x);
         let pc = tool.curve_on_surface(s.edge, s.face);
         pc.map(|(pc, _, _)| pc.point_at(t)).unwrap_or(DVec2::ZERO)
@@ -151,7 +159,10 @@ pub(crate) fn walk_path_extract_wires(
     let set_passed = |sm: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize, v: usize| {
         if let Some(infos) = sm.get_mut(&v) {
             for ei in infos.iter_mut() {
-                if ei.seg_idx == seg_idx { ei.passed = true; return; }
+                if ei.seg_idx == seg_idx {
+                    ei.passed = true;
+                    return;
+                }
             }
         }
     };
@@ -162,7 +173,9 @@ pub(crate) fn walk_path_extract_wires(
         let a_nb = a_ls.len();
         if a_nb == 1 {
             let an_e_prev = a_ls[a_nb - 1];
-            if an_e_prev == a_e_outa { return; }
+            if an_e_prev == a_e_outa {
+                return;
+            }
         }
 
         // OCCT L405-408: SetPassed, append edge/vertex/coord
@@ -174,7 +187,11 @@ pub(crate) fn walk_path_extract_wires(
 
         // OCCT L415: GetNextVertex
         let seg = &segments[a_e_outa];
-        let a_vb = if seg.start_vertex.index == a_va { seg.end_vertex.index } else { seg.start_vertex.index };
+        let a_vb = if seg.start_vertex.index == a_va {
+            seg.end_vertex.index
+        } else {
+            seg.start_vertex.index
+        };
 
         // OCCT L417: aPb = Coord2d(aVb, aEOuta, myFace)
         let a_pb = coord2d(a_vb, a_e_outa);
@@ -203,7 +220,9 @@ pub(crate) fn walk_path_extract_wires(
                 segments[a_e_prev].start_vertex.index != segments[a_e_prev].end_vertex.index
                     || !segments[a_e_prev].is_closed_on_face
             };
-            if !has_non_degen { continue; }
+            if !has_non_degen {
+                continue;
+            }
 
             // OCCT L447: anIsSameV
             let an_is_same_v = a_v_prev == a_vb;
@@ -228,49 +247,61 @@ pub(crate) fn walk_path_extract_wires(
                     // OCCT L478-496: MakeWire from aLS(i..aNb)
                     let wire: Vec<usize> = a_ls[ii..].to_vec();
                     // same-edge degenerate check (OCCT L490-494)
-                    let same_edge = wire.len() == 2 &&
-                        segments[wire[0]].start_vertex.index == segments[wire[0]].end_vertex.index &&
-                        segments[wire[1]].start_vertex.index == segments[wire[1]].end_vertex.index;
+                    let same_edge = wire.len() == 2
+                        && segments[wire[0]].start_vertex.index
+                            == segments[wire[0]].end_vertex.index
+                        && segments[wire[1]].start_vertex.index
+                            == segments[wire[1]].end_vertex.index;
                     if !same_edge && wire.len() >= 2 {
                         wires.push(wire);
                     }
 
                     // OCCT L503-523: backtrack
-                    if ii == 0 { return; }
+                    if ii == 0 {
+                        return;
+                    }
                     let loop_start_v = a_vert_va[ii];
                     a_ls.truncate(ii);
                     a_vert_va.truncate(ii);
                     a_coord_va.truncate(ii);
                     a_e_outa = *a_ls.last().unwrap_or(&start_si);
-                    a_va = loop_start_v;  // OCCT L503: aVb=aVertVa(i), L622: aVa=aVb
+                    a_va = loop_start_v; // OCCT L503: aVb=aVertVa(i), L622: aVa=aVb
                     loop_found = true;
                     break;
                 }
             }
         }
-        if loop_found { continue; }
+        if loop_found {
+            continue;
+        }
 
         // OCCT L526-624: Outgoing edge selection
         // Count unpassed outgoing edges at aVb
         let i_cnt = smart_map.get(&a_vb).map_or(0, |infos| {
             infos.iter().filter(|ei| !ei.passed && !ei.in_flag).count()
         });
-        if i_cnt == 0 { return; }
+        if i_cnt == 0 {
+            return;
+        }
 
         // OCCT L529: anAngleIn
         let an_angle_in = find_angle_at(smart_map, a_e_outa, a_vb, true).unwrap_or(0.0);
 
         // OCCT L533: isBoundary = !anEdgeInfo->IsInside()
-        let incoming_is_boundary = smart_map.get(&a_vb)
+        let incoming_is_boundary = smart_map
+            .get(&a_vb)
             .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == a_e_outa))
             .map(|ei| !ei.is_inside)
             .unwrap_or(true);
 
         // Collect unpassed outgoing edges
-        let le_info: Vec<&EdgeInfo> = smart_map.get(&a_vb)
+        let le_info: Vec<&EdgeInfo> = smart_map
+            .get(&a_vb)
             .map(|v| v.iter().filter(|ei| !ei.passed && !ei.in_flag).collect())
             .unwrap_or_default();
-        if le_info.is_empty() { return; }
+        if le_info.is_empty() {
+            return;
+        }
         if le_info.len() == 1 {
             a_va = a_vb;
             a_e_outa = le_info[0].seg_idx;
@@ -291,15 +322,20 @@ pub(crate) fn walk_path_extract_wires(
                 // OCCT L570-582: bIsClosed 2D check (Coord2dVf)
                 if b_is_closed {
                     let candidate_seg = &segments[an_ei.seg_idx];
-                    let pc_opt = tool.curve_on_surface(candidate_seg.edge, candidate_seg.face)
+                    let pc_opt = tool
+                        .curve_on_surface(candidate_seg.edge, candidate_seg.face)
                         .map(|(pc, _, _)| pc)
-                        .or(candidate_seg.first_pcurve.as_ref()
+                        .or(candidate_seg
+                            .first_pcurve
+                            .as_ref()
                             .or(candidate_seg.second_pcurve.as_ref()));
                     if let Some(pc) = pc_opt {
                         let t_mid = (candidate_seg.t_range[0] + candidate_seg.t_range[1]) * 0.5;
                         let a_p2_dx = pc.point_at(t_mid);
                         let a_d2 = a_p2_dx.distance_squared(a_pb);
-                        if a_d2 > a_tol_2d_2 { continue; }
+                        if a_d2 > a_tol_2d_2 {
+                            continue;
+                        }
                     }
                 }
                 let an_angle_out = an_ei.angle;
@@ -346,7 +382,9 @@ fn refine_angles(
 ) {
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &vertices {
-        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        let Some(infos) = smart_map.get(&v).cloned() else {
+            continue;
+        };
         // OCCT L308: aEI.SetIsInside(!aMS.Contains(aE))
         // IsInside: edge whose src_key is NOT in a_ms (appeared odd times) → interior edge
         {
@@ -364,39 +402,67 @@ fn refine_angles(
         let mut a1_bnd = 0.0;
         let mut a2_bnd = 0.0;
         for ei in &infos {
-            if !ei.is_inside { cnt_bnd += 1; if !ei.in_flag { a1_bnd = ei.angle; } else { a2_bnd = ei.angle; } }
-            else { cnt_int += 1; }
+            if !ei.is_inside {
+                cnt_bnd += 1;
+                if !ei.in_flag {
+                    a1_bnd = ei.angle;
+                } else {
+                    a2_bnd = ei.angle;
+                }
+            } else {
+                cnt_int += 1;
+            }
         }
-        if cnt_bnd != 2 { continue; }
+        if cnt_bnd != 2 {
+            continue;
+        }
         let a_delta = super::angle_2d::clock_wise_angle(a2_bnd, a1_bnd);
-        let mut refined_map: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        let mut refined_map: std::collections::HashMap<usize, f64> =
+            std::collections::HashMap::new();
         for ei in &infos {
-            if !ei.is_inside || ei.in_flag { continue; }
+            if !ei.is_inside || ei.in_flag {
+                continue;
+            }
             let a_ic = ei.angle;
             let a_da = super::angle_2d::clock_wise_angle(a2_bnd, a_ic);
-            if a_da < a_delta { continue; }
+            if a_da < a_delta {
+                continue;
+            }
             let seg = &segments[ei.seg_idx];
             let v_ref = rcad_kernel::topods::ShapeRef::synthetic(v);
             let geom_tol = tool.vertex_tolerance(v_ref);
-            let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
-                .unwrap_or_else(|| if v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] });
+            let t_v = tool
+                .parameter_on_edge(v_ref, seg.edge, seg.face)
+                .unwrap_or_else(|| {
+                    if v == seg.start_vertex.index {
+                        seg.t_range[0]
+                    } else {
+                        seg.t_range[1]
+                    }
+                });
             let domain = seg.t_range;
             let pc = seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref());
             let b_refined = match pc {
                 Some(pc) => {
                     let ta = pc.point_at(t_v);
-                    
+
                     // Check if angle is near boundary — true refine via micro-step
                     let eps = 1e-12;
-                    let dt = (1e-8 * (domain[1] - domain[0]).abs().max(1.0)).min((domain[1] - domain[0]).abs() * 0.1);
+                    let dt = (1e-8 * (domain[1] - domain[0]).abs().max(1.0))
+                        .min((domain[1] - domain[0]).abs() * 0.1);
                     let t2 = (t_v + dt).min(domain[1]);
                     let pt2 = pc.point_at(t2);
                     let dir = pt2 - ta;
-                    if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE { false }
-                    else {
+                    if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
+                        false
+                    } else {
                         let new_ang = dir.y.atan2(dir.x);
-                        if clock_wise_angle(a2_bnd, new_ang) < a_delta { false }
-                        else { refined_map.insert(ei.seg_idx, new_ang); true }
+                        if clock_wise_angle(a2_bnd, new_ang) < a_delta {
+                            false
+                        } else {
+                            refined_map.insert(ei.seg_idx, new_ang);
+                            true
+                        }
                     }
                 }
                 None => false,
@@ -411,11 +477,17 @@ fn refine_angles(
                 refined_map.insert(ei.seg_idx, new_angle);
             }
         }
-        if refined_map.is_empty() { continue; }
+        if refined_map.is_empty() {
+            continue;
+        }
         if let Some(infos_mut) = smart_map.get_mut(&v) {
             for ei in infos_mut.iter_mut() {
                 if let Some(&new_angle) = refined_map.get(&ei.seg_idx) {
-                    ei.angle = if ei.in_flag { (new_angle + std::f64::consts::PI) % std::f64::consts::TAU } else { new_angle };
+                    ei.angle = if ei.in_flag {
+                        (new_angle + std::f64::consts::PI) % std::f64::consts::TAU
+                    } else {
+                        new_angle
+                    };
                 }
             }
         }
@@ -451,11 +523,11 @@ pub(crate) fn split_block(
     // OCCT L331-350: Path extraction (after angles are set)
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
-        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        let Some(infos) = smart_map.get(&v).cloned() else {
+            continue;
+        };
         for ei in &infos {
-            if !ei.passed && !ei.in_flag
-                && ei.seg_idx < segments.len()
-            {
+            if !ei.passed && !ei.in_flag && ei.seg_idx < segments.len() {
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool, a_vert_map);
             }
         }
@@ -471,17 +543,29 @@ pub(crate) fn build_closed_wires(
     avoided: &HashSet<usize>,
     tool: &dyn BRepTool,
 ) -> Vec<Vec<usize>> {
-    if segments.is_empty() { return vec![]; }
+    if segments.is_empty() {
+        return vec![];
+    }
 
     let n = segments.len();
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
-        if avoided.contains(&si) { continue; }
-        vert_to_segs.entry(seg.start_vertex.index).or_default().push(si);
-        vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
+        if avoided.contains(&si) {
+            continue;
+        }
+        vert_to_segs
+            .entry(seg.start_vertex.index)
+            .or_default()
+            .push(si);
+        vert_to_segs
+            .entry(seg.end_vertex.index)
+            .or_default()
+            .push(si);
     }
 
-    if avoided.len() == n && !segments.is_empty() { return vec![]; }
+    if avoided.len() == n && !segments.is_empty() {
+        return vec![];
+    }
 
     // Build connexity blocks
     let blocks = make_connexity_blocks(segments, avoided, &vert_to_segs, n);
@@ -500,7 +584,15 @@ pub(crate) fn build_closed_wires(
         }
 
         // OCCT SplitBlock L227-285: Path extraction (always, no regular fast path)
-        split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool, &a_ms, &a_vert_map);
+        split_block(
+            block,
+            segments,
+            &mut (smart_map.clone()),
+            &mut wires,
+            tool,
+            &a_ms,
+            &a_vert_map,
+        );
     }
     wires
 }
@@ -512,7 +604,11 @@ fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
-) -> (IndexMap<usize, Vec<EdgeInfo>>, HashMap<usize, bool>, HashSet<usize>) {
+) -> (
+    IndexMap<usize, Vec<EdgeInfo>>,
+    HashMap<usize, bool>,
+    HashSet<usize>,
+) {
     // OCCT L134: NCollection_Map<TopoDS_Shape> aMS — edge parity tracking
     // Orientation-independent key: same physical edge = same key (OCCT TopoDS_Shape ignores orientation)
     let src_key_of = |seg: &WireSegmentTopoDS| -> usize {
@@ -540,12 +636,14 @@ fn build_smart_map(
         let seg = &segments[si];
         // OCCT L141-144: skip edges without pcurve on face
         let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
-            || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
-        if !has_pcurve { continue; }
+            || seg.first_pcurve.is_some()
+            || seg.second_pcurve.is_some();
+        if !has_pcurve {
+            continue;
+        }
 
         // OCCT L146: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace)
-        let b_is_closed = seg.start_vertex.index == seg.end_vertex.index
-            || seg.is_closed_on_face;
+        let b_is_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
 
         // OCCT L148-151: aMS parity (insert; if already exists and not closed, remove)
         let src_key = src_key_of(seg);
@@ -585,8 +683,12 @@ fn build_smart_map(
             if added.insert((src_key, b_is_in)) {
                 let entry = smart_map.entry(a_v).or_default();
                 entry.push(EdgeInfo {
-                    seg_idx: si, passed: false, in_flag: b_is_in,
-                    is_inside: false, is_circle_arc: false, angle: 0.0,
+                    seg_idx: si,
+                    passed: false,
+                    in_flag: b_is_in,
+                    is_inside: false,
+                    is_circle_arc: false,
+                    angle: 0.0,
                 });
             }
 
@@ -594,8 +696,13 @@ fn build_smart_map(
 
             // OCCT L183-193: aVertMap
             let closed = b_is_closed;
-            a_vert_map.entry(a_v)
-                .and_modify(|v| { if closed { *v = true; } })
+            a_vert_map
+                .entry(a_v)
+                .and_modify(|v| {
+                    if closed {
+                        *v = true;
+                    }
+                })
                 .or_insert(closed);
         }
 
@@ -611,8 +718,12 @@ fn build_smart_map(
             if added.insert((src_key, b_is_in)) {
                 let entry = smart_map.entry(a_v).or_default();
                 entry.push(EdgeInfo {
-                    seg_idx: si, passed: false, in_flag: b_is_in,
-                    is_inside: false, is_circle_arc: false, angle: 0.0,
+                    seg_idx: si,
+                    passed: false,
+                    in_flag: b_is_in,
+                    is_inside: false,
+                    is_circle_arc: false,
+                    angle: 0.0,
                 });
             }
 
@@ -622,8 +733,13 @@ fn build_smart_map(
 
             // OCCT L183-193: aVertMap
             let closed = b_is_closed;
-            a_vert_map.entry(a_v)
-                .and_modify(|v| { if closed { *v = true; } })
+            a_vert_map
+                .entry(a_v)
+                .and_modify(|v| {
+                    if closed {
+                        *v = true;
+                    }
+                })
                 .or_insert(closed);
         }
     }
@@ -637,9 +753,14 @@ fn build_smart_map(
             // OCCT L311-316: compute Angle2D
             // IsInside flag (OCCT L308) moved to refine_angles (after Path walk, matching OCCT order).
             let seg = &segments[ei.seg_idx];
-            let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
+            let t_v = tool
+                .parameter_on_edge(v_ref, seg.edge, seg.face)
                 .unwrap_or_else(|| {
-                    if *v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] }
+                    if *v == seg.start_vertex.index {
+                        seg.t_range[0]
+                    } else {
+                        seg.t_range[1]
+                    }
                 });
             let domain = seg.t_range;
             let (curve, curve_domain): (&Curve2d, [f64; 2]) = match &seg.source {
@@ -653,7 +774,8 @@ fn build_smart_map(
                     }
                 }
                 _ => {
-                    let pc = tool.curve_on_surface(seg.edge, seg.face)
+                    let pc = tool
+                        .curve_on_surface(seg.edge, seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                     match pc {
@@ -662,10 +784,19 @@ fn build_smart_map(
                     }
                 }
             };
-            let default_surf = Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
+            let default_surf =
+                Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
             let surf = tool.face_surface(seg.face).unwrap_or(&default_surf);
-            let new_angle = super::angle_2d::angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
-                .unwrap_or(0.0);
+            let new_angle = super::angle_2d::angle_2d(
+                curve,
+                t_v,
+                curve_domain,
+                ei.in_flag,
+                surf,
+                geom_tol,
+                None,
+            )
+            .unwrap_or(0.0);
             ei.angle = new_angle;
         }
     }
@@ -682,7 +813,9 @@ fn build_smart_map(
 /// OCCT-aligned: BOPAlgo_WireSplitter.lxx MakeWire (BRep_Builder::Add loop)
 /// + implicit edge ordering from BOPTools_AlgoTools::MakeConnexityBlocks.
 fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option<Vec<usize>> {
-    if block.is_empty() { return None; }
+    if block.is_empty() {
+        return None;
+    }
     if block.len() == 1 {
         // Single edge → self-loop
         return Some(vec![block[0]]);
@@ -692,8 +825,14 @@ fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for &si in block {
         let seg = &segments[si];
-        vert_to_segs.entry(seg.start_vertex.index).or_default().push(si);
-        vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
+        vert_to_segs
+            .entry(seg.start_vertex.index)
+            .or_default()
+            .push(si);
+        vert_to_segs
+            .entry(seg.end_vertex.index)
+            .or_default()
+            .push(si);
     }
 
     // For a regular block, each vertex has exactly 2 incident segments.
@@ -716,10 +855,14 @@ fn build_regular_wire(block: &[usize], segments: &[WireSegmentTopoDS]) -> Option
     loop {
         // Find the next unused segment with cur_v as start vertex
         let next = vert_to_segs.get(&cur_v).and_then(|neighbors| {
-            neighbors.iter().find(|&&ni| !used_si.contains(&ni) && segments[ni].start_vertex.index == cur_v)
+            neighbors
+                .iter()
+                .find(|&&ni| !used_si.contains(&ni) && segments[ni].start_vertex.index == cur_v)
                 .or_else(|| {
                     // Try matching end vertex (reversed orientation)
-                    neighbors.iter().find(|&&ni| !used_si.contains(&ni) && segments[ni].end_vertex.index == cur_v)
+                    neighbors.iter().find(|&&ni| {
+                        !used_si.contains(&ni) && segments[ni].end_vertex.index == cur_v
+                    })
                 })
                 .copied()
         });
@@ -764,8 +907,12 @@ fn make_connexity_blocks(
     let mut visited_seg = vec![false; n];
     let mut blocks: Vec<Vec<usize>> = Vec::new();
     for si in 0..n {
-        if visited_seg[si] { continue; }
-        if avoided.contains(&si) { continue; }
+        if visited_seg[si] {
+            continue;
+        }
+        if avoided.contains(&si) {
+            continue;
+        }
         let mut block = Vec::new();
         let mut queue = VecDeque::new();
         queue.push_back(si);
@@ -809,11 +956,14 @@ pub(crate) fn perform_areas(
     face_idx: usize,
     ds: &crate::bopds::ds::DS,
 ) -> Vec<WireFace> {
-    
     // OCCT L400-414: no loops -> handle NaturalRestriction / infinite face
     if wires.is_empty() {
         if ds.face_natural_restriction(face_idx) {
-            return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
+            return vec![WireFace {
+                outer_wire: vec![],
+                inner_wires: vec![],
+                internal_wires: vec![],
+            }];
         }
         return vec![];
     }
@@ -821,25 +971,25 @@ pub(crate) fn perform_areas(
     // OCCT L416-424: aNewFaces (growth), aHoleFaces, aMHE (hole edge map)
     let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
 
-    
     let mut a_new_faces: Vec<Vec<usize>> = Vec::new(); // growth wires
     let mut a_hole_faces: Vec<Vec<usize>> = Vec::new(); // hole wires
 
     for w in wires {
-        
-        
         let b_is_growth = if !a_mhe.is_empty() {
             w.iter().any(|&si| {
                 if let Some(seg) = segments.get(si) {
                     a_mhe.contains(&seg.edge)
-                } else { false }
+                } else {
+                    false
+                }
             })
-        } else { false };
+        } else {
+            false
+        };
 
         let b_is_growth = if b_is_growth {
             true
         } else {
-            
             // rcad: UV signed area (equivalent: CW = hole, CCW = growth).
             let mut uv_boundary: Vec<DVec2> = Vec::new();
             for &si in w {
@@ -855,30 +1005,38 @@ pub(crate) fn perform_areas(
                     let t0 = seg.t_range[0];
                     let t1 = seg.t_range[1];
                     let n = curve2d_nb_samples(pc, t0, t1).max(2);
-                    let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                    let du = if n > 1 {
+                        (t1 - t0) / (n - 1) as f64
+                    } else {
+                        0.0
+                    };
                     for i in 0..n {
                         uv_boundary.push(pc.point_at(t0 + du * i as f64));
                     }
                 }
             }
             uv_boundary.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
-            if uv_boundary.len() < 3 { continue; }
+            if uv_boundary.len() < 3 {
+                continue;
+            }
             // OCCT IsHole(): signed area < 0 means CW = hole.
-            let area: f64 = uv_boundary.windows(2).map(|pair| {
-                pair[0].x * pair[1].y - pair[1].x * pair[0].y
-            }).sum::<f64>() + {
-                let n = uv_boundary.len();
-                uv_boundary[n-1].x * uv_boundary[0].y - uv_boundary[0].x * uv_boundary[n-1].y
-            } * 0.5;
+            let area: f64 = uv_boundary
+                .windows(2)
+                .map(|pair| pair[0].x * pair[1].y - pair[1].x * pair[0].y)
+                .sum::<f64>()
+                + {
+                    let n = uv_boundary.len();
+                    uv_boundary[n - 1].x * uv_boundary[0].y
+                        - uv_boundary[0].x * uv_boundary[n - 1].y
+                } * 0.5;
             area >= 0.0 // IsHole() = area < 0 → growth = !IsHole = area >= 0
         };
 
-        
         if b_is_growth {
             a_new_faces.push(w.clone());
         } else {
             a_hole_faces.push(w.clone());
-            
+
             for &si in w {
                 if let Some(seg) = segments.get(si) {
                     a_mhe.insert(seg.edge);
@@ -887,41 +1045,53 @@ pub(crate) fn perform_areas(
         }
     }
 
-    
     if a_hole_faces.is_empty() {
-        return a_new_faces.iter().map(|w| WireFace {
-            outer_wire: w.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec(),
-        }).collect();
+        return a_new_faces
+            .iter()
+            .map(|w| WireFace {
+                outer_wire: w.clone(),
+                inner_wires: vec![],
+                internal_wires: internal_wires.to_vec(),
+            })
+            .collect();
     }
 
-    
     // rcad: compute UV bounding boxes for hole wires.
-    let mut hole_uv_boxes: Vec<Option<[f64; 4]>> = a_hole_faces.iter().map(|w| {
-        let mut uv_bnd: Vec<DVec2> = Vec::new();
-        for &si in w {
-            let seg = &segments[si];
-            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
-                .map(|(pc, _, _)| pc)
-                .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
-            if let Some(pc) = pc_opt {
-                let t0 = seg.t_range[0];
-                let t1 = seg.t_range[1];
-                let n = curve2d_nb_samples(pc, t0, t1).max(2);
-                let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
-                for i in 0..n {
-                    uv_bnd.push(pc.point_at(t0 + du * i as f64));
+    let mut hole_uv_boxes: Vec<Option<[f64; 4]>> = a_hole_faces
+        .iter()
+        .map(|w| {
+            let mut uv_bnd: Vec<DVec2> = Vec::new();
+            for &si in w {
+                let seg = &segments[si];
+                let pc_opt = tool
+                    .curve_on_surface(seg.edge, seg.face)
+                    .map(|(pc, _, _)| pc)
+                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                if let Some(pc) = pc_opt {
+                    let t0 = seg.t_range[0];
+                    let t1 = seg.t_range[1];
+                    let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                    let du = if n > 1 {
+                        (t1 - t0) / (n - 1) as f64
+                    } else {
+                        0.0
+                    };
+                    for i in 0..n {
+                        uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                    }
                 }
             }
-        }
-        if uv_bnd.len() < 3 { return None; }
-        let u_min = uv_bnd.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let u_max = uv_bnd.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-        let v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-        let v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-        Some([u_min, u_max, v_min, v_max])
-    }).collect();
+            if uv_bnd.len() < 3 {
+                return None;
+            }
+            let u_min = uv_bnd.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let u_max = uv_bnd.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+            let v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+            let v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+            Some([u_min, u_max, v_min, v_max])
+        })
+        .collect();
 
-    
     // rcad: for each hole, find the smallest-enclosing growth via point-in-polygon.
     let mut h2g: Vec<(usize, usize)> = Vec::new();
     for (hi, h_wire) in a_hole_faces.iter().enumerate() {
@@ -929,14 +1099,19 @@ pub(crate) fn perform_areas(
             let mut uv_bnd: Vec<DVec2> = Vec::new();
             for &si in h_wire {
                 let seg = &segments[si];
-                let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                let pc_opt = tool
+                    .curve_on_surface(seg.edge, seg.face)
                     .map(|(pc, _, _)| pc)
                     .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                 if let Some(pc) = pc_opt {
                     let t0 = seg.t_range[0];
                     let t1 = seg.t_range[1];
                     let n = curve2d_nb_samples(pc, t0, t1).max(2);
-                    let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                    let du = if n > 1 {
+                        (t1 - t0) / (n - 1) as f64
+                    } else {
+                        0.0
+                    };
                     for i in 0..n {
                         uv_bnd.push(pc.point_at(t0 + du * i as f64));
                     }
@@ -944,24 +1119,38 @@ pub(crate) fn perform_areas(
             }
             uv_bnd
         };
-        if h_uv.len() < 3 { continue; }
+        if h_uv.len() < 3 {
+            continue;
+        }
         let h_center = h_uv.iter().copied().sum::<DVec2>() / h_uv.len() as f64;
 
         let mut assigned = false;
         for (gi, g_wire) in a_new_faces.iter().enumerate() {
             if let Some(ref uv_box) = hole_uv_boxes.get(hi).copied().flatten() {
-                if h_center.x < uv_box[0] || h_center.x > uv_box[1] || h_center.y < uv_box[2] || h_center.y > uv_box[3] { continue; }
+                if h_center.x < uv_box[0]
+                    || h_center.x > uv_box[1]
+                    || h_center.y < uv_box[2]
+                    || h_center.y > uv_box[3]
+                {
+                    continue;
+                }
             }
             // Build growth UV boundary for containment test
-            let g_uv: Vec<DVec2> = g_wire.iter().filter_map(|&si| {
-                let seg = &segments[si];
-                let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
-                    .map(|(pc, _, _)| pc)
-                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
-                pc_opt.map(|pc| pc.point_at(seg.t_range[0]))
-            }).collect();
+            let g_uv: Vec<DVec2> = g_wire
+                .iter()
+                .filter_map(|&si| {
+                    let seg = &segments[si];
+                    let pc_opt = tool
+                        .curve_on_surface(seg.edge, seg.face)
+                        .map(|(pc, _, _)| pc)
+                        .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                    pc_opt.map(|pc| pc.point_at(seg.t_range[0]))
+                })
+                .collect();
             if g_uv.len() >= 3 && point_in_polygon_2d(&g_uv, h_center) {
-                h2g.push((hi, gi)); assigned = true; break;
+                h2g.push((hi, gi));
+                assigned = true;
+                break;
             }
         }
         if !assigned && !a_new_faces.is_empty() {
@@ -969,28 +1158,34 @@ pub(crate) fn perform_areas(
         }
     }
 
-    
     let assigned_hole_set: std::collections::HashSet<usize> = h2g.iter().map(|&(h, _)| h).collect();
     let orphan_holes: Vec<usize> = (0..a_hole_faces.len())
         .filter(|hi| !assigned_hole_set.contains(hi))
         .collect();
 
-    
     let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
-    for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
+    for &(h, g) in &h2g {
+        g2h.entry(g).or_default().push(h);
+    }
 
-    
     //   OCCT BOPAlgo_BuilderFace::PerformAreas creates a separate TopoDS_Face
     //   for EACH wire (growth or hole).  The caller (ComputeState) then classifies
     //   each face independently, removing those that are In the opposing solid.
     //   rcad legacy approach merged holes as inner_wires, preventing per-face
     //   classification and leaving internal vertices in the result.
-    
-    let mut result: Vec<WireFace> = a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
-        outer_wire: w.clone(),
-        inner_wires: g2h.get(&gi).map(|hs| hs.iter().map(|&h| a_hole_faces[h].clone()).collect()).unwrap_or_default(),
-        internal_wires: internal_wires.to_vec(),
-    }).collect();
+
+    let mut result: Vec<WireFace> = a_new_faces
+        .iter()
+        .enumerate()
+        .map(|(gi, w)| WireFace {
+            outer_wire: w.clone(),
+            inner_wires: g2h
+                .get(&gi)
+                .map(|hs| hs.iter().map(|&h| a_hole_faces[h].clone()).collect())
+                .unwrap_or_default(),
+            internal_wires: internal_wires.to_vec(),
+        })
+        .collect();
 
     // OCCT L514-544: Add unused holes to the original face (if the original face is open/infinite)
     // OCCT: aHoleFaces.Extent() != aHoleFaceMap.Extent() → orphan holes exist
@@ -999,8 +1194,10 @@ pub(crate) fn perform_areas(
     if !orphan_holes.is_empty() && !ds.face_natural_restriction(face_idx) {
         // OCCT: Create new face from original surface (no outer wire = infinite surface)
         //        Add all orphan holes as inner wires
-        let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter()
-            .map(|&hi| a_hole_faces[hi].clone()).collect();
+        let orphan_inner: Vec<Vec<usize>> = orphan_holes
+            .iter()
+            .map(|&hi| a_hole_faces[hi].clone())
+            .collect();
         result.push(WireFace {
             outer_wire: vec![],
             inner_wires: orphan_inner,
@@ -1028,56 +1225,73 @@ pub(crate) fn perform_internal_shapes(
     face_ref: rcad_kernel::topods::ShapeRef,
     ds: &crate::bopds::ds::DS,
 ) {
-    if internal_wire_groups.is_empty() { return; }
-    if wfs.is_empty() { return; }
+    if internal_wire_groups.is_empty() {
+        return;
+    }
+    if wfs.is_empty() {
+        return;
+    }
 
-    
-    let face_uv_bounds: Vec<Vec<DVec2>> = wfs.iter().map(|wf| {
-        let mut uv_bnd: Vec<DVec2> = Vec::new();
-        for &si in &wf.outer_wire {
-            let seg = &segments[si];
-            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
-                .map(|(pc, _, _)| pc)
-                .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
-            if let Some(pc) = pc_opt {
-                let t0 = seg.t_range[0];
-                let t1 = seg.t_range[1];
-                let n = curve2d_nb_samples(pc, t0, t1).max(2);
-                let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
-                for i in 0..n {
-                    uv_bnd.push(pc.point_at(t0 + du * i as f64));
-                }
-            }
-        }
-        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
-        // Fallback: if pcurve sampling gave <3 points, build UV polygon by
-        // projecting outer wire vertices to UV using the face surface.
-        if uv_bnd.len() < 3 && !wf.outer_wire.is_empty() {
-            uv_bnd.clear();
-            if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::synthetic(face_idx)) {
-                for &si in &wf.outer_wire {
-                    let seg = &segments[si];
-                    let pt = tool.vertex_position(seg.start_vertex);
-                    if let Some(uv) = crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, pt) {
-                        uv_bnd.push(uv);
+    let face_uv_bounds: Vec<Vec<DVec2>> = wfs
+        .iter()
+        .map(|wf| {
+            let mut uv_bnd: Vec<DVec2> = Vec::new();
+            for &si in &wf.outer_wire {
+                let seg = &segments[si];
+                let pc_opt = tool
+                    .curve_on_surface(seg.edge, seg.face)
+                    .map(|(pc, _, _)| pc)
+                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                if let Some(pc) = pc_opt {
+                    let t0 = seg.t_range[0];
+                    let t1 = seg.t_range[1];
+                    let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                    let du = if n > 1 {
+                        (t1 - t0) / (n - 1) as f64
+                    } else {
+                        0.0
+                    };
+                    for i in 0..n {
+                        uv_bnd.push(pc.point_at(t0 + du * i as f64));
                     }
                 }
-                uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
             }
-        }
-        uv_bnd
-    }).collect();
+            uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+            // Fallback: if pcurve sampling gave <3 points, build UV polygon by
+            // projecting outer wire vertices to UV using the face surface.
+            if uv_bnd.len() < 3 && !wf.outer_wire.is_empty() {
+                uv_bnd.clear();
+                if let Some(face_surf) =
+                    tool.face_surface(rcad_kernel::topods::ShapeRef::synthetic(face_idx))
+                {
+                    for &si in &wf.outer_wire {
+                        let seg = &segments[si];
+                        let pt = tool.vertex_position(seg.start_vertex);
+                        if let Some(uv) =
+                            crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, pt)
+                        {
+                            uv_bnd.push(uv);
+                        }
+                    }
+                    uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+                }
+            }
+            uv_bnd
+        })
+        .collect();
 
-
-    
     // OCCT L670-671: aMEDone — fence to track classified internal edge groups.
     let mut a_me_done: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let n_total_groups = internal_wire_groups.len();
 
     for group in internal_wire_groups {
-        if group.is_empty() { continue; }
+        if group.is_empty() {
+            continue;
+        }
         let si = group[0];
-        if si >= segments.len() { continue; }
+        if si >= segments.len() {
+            continue;
+        }
         let seg = &segments[si];
 
         // OCCT L692-716: check if group already classified
@@ -1091,7 +1305,8 @@ pub(crate) fn perform_internal_shapes(
         let uv_pt = {
             let mut pt = DVec2::ZERO;
             let mut found = false;
-            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+            let pc_opt = tool
+                .curve_on_surface(seg.edge, seg.face)
                 .map(|(pc, _, _)| pc)
                 .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
             if let Some(pc) = pc_opt {
@@ -1109,23 +1324,28 @@ pub(crate) fn perform_internal_shapes(
             }
             if !found {
                 // Second fallback: project internal wire vertex to UV via face surface
-            if let Some(face_surf) = tool.face_surface(face_ref) {
+                if let Some(face_surf) = tool.face_surface(face_ref) {
                     let v_pt = tool.vertex_position(seg.start_vertex);
                     pt = crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, v_pt)
                         .unwrap_or(DVec2::ZERO);
                     found = true;
                 }
             }
-            if !found { continue; }
+            if !found {
+                continue;
+            }
             pt
         };
 
-        
         for (fi, wf) in wfs.iter_mut().enumerate() {
-            if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
-                && crate::bopalgo::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
+            if fi < face_uv_bounds.len()
+                && face_uv_bounds[fi].len() >= 3
+                && crate::bopalgo::builder::wire_path::point_in_uv_polygon(
+                    uv_pt,
+                    &face_uv_bounds[fi],
+                )
             {
-                    wf.internal_wires.push(group.clone());
+                wf.internal_wires.push(group.clone());
 
                 // OCCT L736-740: early exit if all internal edge groups classified.
                 if a_me_done.len() == n_total_groups {
@@ -1144,9 +1364,13 @@ pub(crate) fn perform_internal_shapes(
         // Add unclassified groups to the first wire face (OCCT adds to myFace directly).
         if let Some(wf) = wfs.first_mut() {
             for group in internal_wire_groups {
-                if group.is_empty() { continue; }
+                if group.is_empty() {
+                    continue;
+                }
                 let group_id = group[0];
-                if a_me_done.contains(&group_id) { continue; }
+                if a_me_done.contains(&group_id) {
+                    continue;
+                }
                 wf.internal_wires.push(group.clone());
             }
         }
@@ -1162,7 +1386,9 @@ pub(crate) fn build_internal_wires(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
 ) -> Vec<Vec<usize>> {
-    if avoided.is_empty() { return vec![]; }
+    if avoided.is_empty() {
+        return vec![];
+    }
     let mut v_to_e: HashMap<usize, Vec<usize>> = HashMap::new();
     for &si in avoided {
         let seg = &segments[si];
@@ -1172,7 +1398,9 @@ pub(crate) fn build_internal_wires(
     let mut visited: HashSet<usize> = HashSet::new();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for &si in avoided {
-        if visited.contains(&si) { continue; }
+        if visited.contains(&si) {
+            continue;
+        }
         let mut group: Vec<usize> = Vec::new();
         let mut queue: VecDeque<usize> = VecDeque::new();
         queue.push_back(si);

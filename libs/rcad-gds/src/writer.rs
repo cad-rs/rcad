@@ -42,7 +42,8 @@ impl GdsWriter {
 
         // Convert structures
         for structure in library.structures.values() {
-            gds.structures.push(Self::convert_structure(structure, &library.units)?);
+            gds.structures
+                .push(Self::convert_structure(structure, &library.units)?);
         }
 
         Ok(gds)
@@ -69,23 +70,29 @@ impl GdsWriter {
 
         // Convert boundaries
         for boundary in &structure.boundaries {
-            result.elements.push(laykit::gdsii::GDSElement::Boundary(
-                Self::convert_boundary(boundary, scale),
-            ));
+            result
+                .elements
+                .push(laykit::gdsii::GDSElement::Boundary(Self::convert_boundary(
+                    boundary, scale,
+                )));
         }
 
         // Convert paths
         for path in &structure.paths {
-            result.elements.push(laykit::gdsii::GDSElement::Path(
-                Self::convert_path(path, scale),
-            ));
+            result
+                .elements
+                .push(laykit::gdsii::GDSElement::Path(Self::convert_path(
+                    path, scale,
+                )));
         }
 
         // Convert texts
         for text in &structure.texts {
-            result.elements.push(laykit::gdsii::GDSElement::Text(
-                Self::convert_text(text, scale),
-            ));
+            result
+                .elements
+                .push(laykit::gdsii::GDSElement::Text(Self::convert_text(
+                    text, scale,
+                )));
         }
 
         // Convert references (SRef and ARef)
@@ -112,12 +119,7 @@ impl GdsWriter {
             xy: boundary
                 .points
                 .iter()
-                .map(|p| {
-                    (
-                        (p.x * scale).round() as i32,
-                        (p.y * scale).round() as i32,
-                    )
-                })
+                .map(|p| ((p.x * scale).round() as i32, (p.y * scale).round() as i32))
                 .collect(),
             elflags: None,
             plex: None,
@@ -143,12 +145,7 @@ impl GdsWriter {
             xy: path
                 .points
                 .iter()
-                .map(|p| {
-                    (
-                        (p.x * scale).round() as i32,
-                        (p.y * scale).round() as i32,
-                    )
-                })
+                .map(|p| ((p.x * scale).round() as i32, (p.y * scale).round() as i32))
                 .collect(),
             elflags: None,
             plex: None,
@@ -550,9 +547,15 @@ mod tests {
 
         // Check that transform has non-default values
         // (Due to laykit unit handling, exact values may differ, but the transform should exist)
-        assert!(reference.transform.rotation.abs() > 0.01,
-            "Rotation should be non-zero: {}", reference.transform.rotation);
-        assert!((reference.transform.magnification - 1.0).abs() > 0.1,
-            "Magnification should differ from 1.0: {}", reference.transform.magnification);
+        assert!(
+            reference.transform.rotation.abs() > 0.01,
+            "Rotation should be non-zero: {}",
+            reference.transform.rotation
+        );
+        assert!(
+            (reference.transform.magnification - 1.0).abs() > 0.1,
+            "Magnification should differ from 1.0: {}",
+            reference.transform.magnification
+        );
     }
 }

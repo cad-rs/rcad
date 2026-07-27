@@ -5,8 +5,8 @@
 //! Tests for: BRepExtrema, BRepIntCurveSurface, TopTools.
 
 use glam::DVec3;
-use rcad_kernel::topods;
 use rcad_kernel::PrimitiveSolid;
+use rcad_kernel::topods;
 
 const TOL: f64 = 1e-6;
 
@@ -17,8 +17,8 @@ fn make_unit_box() -> rcad_kernel::BRep {
 }
 
 fn make_box_at(origin: DVec3, size: f64) -> rcad_kernel::BRep {
-    let t = rcad_modeling::make_box_brep(origin, DVec3::X, DVec3::Y, size, size, size)
-        .expect("box");
+    let t =
+        rcad_modeling::make_box_brep(origin, DVec3::X, DVec3::Y, size, size, size).expect("box");
     (t).clone()
 }
 
@@ -42,7 +42,11 @@ mod brep_extrema_tests {
         let b1 = make_unit_box();
         let b2 = make_unit_box();
         let (dist, _, _) = distance_brep_brep(&b1, &b2);
-        assert!(dist < TOL, "identical boxes should have dist 0, got {}", dist);
+        assert!(
+            dist < TOL,
+            "identical boxes should have dist 0, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -69,18 +73,16 @@ mod brep_int_curve_surface_tests {
     #[test]
     fn line_through_box_two_hits() {
         let b = make_unit_box();
-        let hits = intersect_line_with_brep(
-            DVec3::new(0.5, 0.5, 5.0), DVec3::NEG_Z, &b, TOLERANCE_ABS,
-        );
+        let hits =
+            intersect_line_with_brep(DVec3::new(0.5, 0.5, 5.0), DVec3::NEG_Z, &b, TOLERANCE_ABS);
         assert_eq!(hits.len(), 2, "line through box should have entry and exit");
     }
 
     #[test]
     fn line_misses_box() {
         let b = make_unit_box();
-        let hits = intersect_line_with_brep(
-            DVec3::new(10.0, 10.0, 0.0), DVec3::NEG_Z, &b, TOLERANCE_ABS,
-        );
+        let hits =
+            intersect_line_with_brep(DVec3::new(10.0, 10.0, 0.0), DVec3::NEG_Z, &b, TOLERANCE_ABS);
         assert!(hits.is_empty(), "line far from box should have no hits");
     }
 
@@ -125,7 +127,9 @@ mod toptools_map_tests {
     #[test]
     fn map_of_integer_extent() {
         let mut m = MapOfInteger::new();
-        m.insert(10); m.insert(20); m.insert(30);
+        m.insert(10);
+        m.insert(20);
+        m.insert(30);
         // Use insert return value to verify each was new
         assert!(m.contains(10) && m.contains(20) && m.contains(30));
     }
@@ -142,7 +146,9 @@ mod toptools_map_tests {
     #[test]
     fn indexed_map_contains() {
         let mut m: IndexedMap<i32> = IndexedMap::new();
-        m.add(10); m.add(20); m.add(30);
+        m.add(10);
+        m.add(20);
+        m.add(30);
         assert!(m.contains(&10));
         assert!(!m.contains(&99));
     }
@@ -163,7 +169,7 @@ mod toptools_map_tests {
 
 #[cfg(test)]
 mod solid_classifier_tests {
-    use crate::classify::{SolidClassifier, Classification};
+    use crate::classify::{Classification, SolidClassifier};
     use glam::DVec3;
 
     fn make_unit_cube() -> (rcad_kernel::topods::BRep, rcad_kernel::topods::ShapeRef) {
@@ -171,7 +177,10 @@ mod solid_classifier_tests {
         let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("unit cube");
         // Find the solid ref
-        let solid_ref = brep.tshapes.iter().enumerate()
+        let solid_ref = brep
+            .tshapes
+            .iter()
+            .enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
             .map(|(i, _)| rcad_kernel::topods::ShapeRef::synthetic(i))
             .expect("solid should exist");
@@ -183,7 +192,11 @@ mod solid_classifier_tests {
         let (brep, solid_ref) = make_unit_cube();
         let mut cls = SolidClassifier::new(&brep, solid_ref);
         cls.perform(DVec3::splat(0.5), 1e-6);
-        assert_eq!(cls.state(), Classification::In, "center of unit cube should be In");
+        assert_eq!(
+            cls.state(),
+            Classification::In,
+            "center of unit cube should be In"
+        );
     }
 
     #[test]
@@ -191,7 +204,11 @@ mod solid_classifier_tests {
         let (brep, solid_ref) = make_unit_cube();
         let mut cls = SolidClassifier::new(&brep, solid_ref);
         cls.perform(DVec3::new(10.0, 10.0, 10.0), 1e-6);
-        assert_eq!(cls.state(), Classification::Out, "point far away should be Out");
+        assert_eq!(
+            cls.state(),
+            Classification::Out,
+            "point far away should be Out"
+        );
     }
 
     #[test]
@@ -199,7 +216,11 @@ mod solid_classifier_tests {
         let (brep, solid_ref) = make_unit_cube();
         let mut cls = SolidClassifier::new(&brep, solid_ref);
         cls.perform(DVec3::new(0.5, 0.5, 0.0), 0.1);
-        assert_eq!(cls.state(), Classification::On, "point on face should be On");
+        assert_eq!(
+            cls.state(),
+            Classification::On,
+            "point on face should be On"
+        );
     }
 
     #[test]
@@ -211,4 +232,3 @@ mod solid_classifier_tests {
         assert!(cls.is_done(), "after perform, is_done should be true");
     }
 }
-

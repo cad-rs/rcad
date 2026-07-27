@@ -17,13 +17,13 @@
 //! | OffsetCurve2d  | Base curve box + |offset|                     |
 //! | OtherCurve2d   | Adaptive sampling with deflection             |
 
-use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval};
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_CLAMP_MIN};
+use glam::DVec2;
 use rcad_kernel::geom::{
-    BezierCurve2, BSplineCurve2, Circle2d, Ellipse2d, Hyperbola2d,
-    Line2d, OffsetCurve2d, Parabola2d,
+    BSplineCurve2, BezierCurve2, Circle2d, Ellipse2d, Hyperbola2d, Line2d, OffsetCurve2d,
+    Parabola2d,
 };
+use rcad_kernel::geom::{Curve2d, Curve2dEval};
 
 // =============================================================================
 // BoundingBox2d �� 2D Axis-Aligned Bounding Box
@@ -43,7 +43,9 @@ pub struct BoundingBox2d {
 }
 
 impl Default for BoundingBox2d {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BoundingBox2d {
@@ -56,15 +58,22 @@ impl BoundingBox2d {
     }
 
     /// Create from a single point.
-    pub fn from_point(p: DVec2) -> Self { Self { min: p, max: p } }
+    pub fn from_point(p: DVec2) -> Self {
+        Self { min: p, max: p }
+    }
 
     /// Create from two corners (order agnostic).
     pub fn from_corners(p1: DVec2, p2: DVec2) -> Self {
-        Self { min: p1.min(p2), max: p1.max(p2) }
+        Self {
+            min: p1.min(p2),
+            max: p1.max(p2),
+        }
     }
 
     /// Create from known-ordered min/max.
-    pub fn from_min_max(min: DVec2, max: DVec2) -> Self { Self { min, max } }
+    pub fn from_min_max(min: DVec2, max: DVec2) -> Self {
+        Self { min, max }
+    }
 
     /// Whether the box contains at least one finite point.
     pub fn is_valid(&self) -> bool {
@@ -75,7 +84,9 @@ impl BoundingBox2d {
     }
 
     /// Whether the box is empty.
-    pub fn is_empty(&self) -> bool { !self.is_valid() }
+    pub fn is_empty(&self) -> bool {
+        !self.is_valid()
+    }
 
     /// Expand to include a point.
     pub fn add_point(&mut self, p: DVec2) {
@@ -105,24 +116,38 @@ impl BoundingBox2d {
     }
 
     /// Center point.
-    pub fn center(&self) -> DVec2 { (self.min + self.max) * 0.5 }
+    pub fn center(&self) -> DVec2 {
+        (self.min + self.max) * 0.5
+    }
 
     /// Size (extent) vector.
-    pub fn size(&self) -> DVec2 { self.max - self.min }
+    pub fn size(&self) -> DVec2 {
+        self.max - self.min
+    }
 
     /// Width (X extent).
-    pub fn width(&self) -> f64 { self.max.x - self.min.x }
+    pub fn width(&self) -> f64 {
+        self.max.x - self.min.x
+    }
 
     /// Height (Y extent).
-    pub fn height(&self) -> f64 { self.max.y - self.min.y }
+    pub fn height(&self) -> f64 {
+        self.max.y - self.min.y
+    }
 
     /// Diagonal length.
-    pub fn diagonal(&self) -> f64 { (self.max - self.min).length() }
+    pub fn diagonal(&self) -> f64 {
+        (self.max - self.min).length()
+    }
 
     /// Area.
     pub fn area(&self) -> f64 {
         let s = self.size();
-        if s.x > 0.0 && s.y > 0.0 { s.x * s.y } else { 0.0 }
+        if s.x > 0.0 && s.y > 0.0 {
+            s.x * s.y
+        } else {
+            0.0
+        }
     }
 }
 
@@ -173,29 +198,29 @@ pub fn curve_bounds_optimal(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> Boun
 
 fn curve_box(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     match curve {
-        Curve2d::Line(c)    => line_box(c, t1, t2, tol),
-        Curve2d::Circle(c)  => circle_box(c, t1, t2, tol),
+        Curve2d::Line(c) => line_box(c, t1, t2, tol),
+        Curve2d::Circle(c) => circle_box(c, t1, t2, tol),
         Curve2d::Ellipse(c) => ellipse_box(c, t1, t2, tol),
-        Curve2d::Parabola(c)=> parabola_box(c, t1, t2, tol),
-        Curve2d::Hyperbola(c)=> hyperbola_box(c, t1, t2, tol),
+        Curve2d::Parabola(c) => parabola_box(c, t1, t2, tol),
+        Curve2d::Hyperbola(c) => hyperbola_box(c, t1, t2, tol),
         Curve2d::BSpline(c) => bspline_curve_box(c, t1, t2, tol),
-        Curve2d::Bezier(c)  => bezier_curve_box(c, t1, t2, tol),
-        Curve2d::Offset(c)  => offset_curve_box(c, t1, t2, tol),
-        _                   => other_curve_box(curve, t1, t2, tol),
+        Curve2d::Bezier(c) => bezier_curve_box(c, t1, t2, tol),
+        Curve2d::Offset(c) => offset_curve_box(c, t1, t2, tol),
+        _ => other_curve_box(curve, t1, t2, tol),
     }
 }
 
 fn curve_box_optimal(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     match curve {
-        Curve2d::Line(c)    => line_box(c, t1, t2, tol),
-        Curve2d::Circle(c)  => circle_box(c, t1, t2, tol),
+        Curve2d::Line(c) => line_box(c, t1, t2, tol),
+        Curve2d::Circle(c) => circle_box(c, t1, t2, tol),
         Curve2d::Ellipse(c) => ellipse_box(c, t1, t2, tol),
-        Curve2d::Parabola(c)=> parabola_box(c, t1, t2, tol),
-        Curve2d::Hyperbola(c)=> hyperbola_box(c, t1, t2, tol),
+        Curve2d::Parabola(c) => parabola_box(c, t1, t2, tol),
+        Curve2d::Hyperbola(c) => hyperbola_box(c, t1, t2, tol),
         Curve2d::BSpline(c) => bspline_curve_box_optimal(c, t1, t2, tol),
-        Curve2d::Bezier(c)  => bezier_curve_box_optimal(c, t1, t2, tol),
-        Curve2d::Offset(c)  => offset_curve_box(c, t1, t2, tol),
-        _                   => other_curve_box_optimal(curve, t1, t2, tol),
+        Curve2d::Bezier(c) => bezier_curve_box_optimal(c, t1, t2, tol),
+        Curve2d::Offset(c) => offset_curve_box(c, t1, t2, tol),
+        _ => other_curve_box_optimal(curve, t1, t2, tol),
     }
 }
 
@@ -203,7 +228,9 @@ fn curve_box_optimal(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox
 // Analytical evaluators �� 2D, matching GeomBndLib_Curve2d
 // =============================================================================
 
-fn eval_point(curve: &Curve2d, t: f64) -> DVec2 { curve.point_at(t) }
+fn eval_point(curve: &Curve2d, t: f64) -> DVec2 {
+    curve.point_at(t)
+}
 
 // ���� Line2d ��������������������������������������������������������������������������������������������������������������������������������
 
@@ -212,8 +239,12 @@ fn line_box(line: &Line2d, mut t1: f64, mut t2: f64, tol: f64) -> BoundingBox2d 
     let mut bbox = BoundingBox2d::new();
     if t1.is_infinite() || t2.is_infinite() {
         // rcad BoundingBox2d has no open flags; add finite endpoints only.
-        if t1.is_infinite() { t1 = 0.0; }
-        if t2.is_infinite() { t2 = 0.0; }
+        if t1.is_infinite() {
+            t1 = 0.0;
+        }
+        if t2.is_infinite() {
+            t2 = 0.0;
+        }
     }
     let p1 = line.point_at(t1);
     let p2 = line.point_at(t2);
@@ -250,8 +281,11 @@ fn circle_box(circle: &Circle2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     for k in 0..2 {
         let xk = xd[k];
         let yk = yd[k];
-        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN { yk.atan2(xk) }
-                     else { std::f64::consts::PI / 2.0 };
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN {
+            yk.atan2(xk)
+        } else {
+            std::f64::consts::PI / 2.0
+        };
         let t_extr2 = {
             let v = t_extr + std::f64::consts::PI;
             if v > period { v - period } else { v }
@@ -277,10 +311,8 @@ fn full_circle_box(o: DVec2, xd: DVec2, yd: DVec2, r: f64, tol: f64) -> Bounding
         bmin[k] = o[k] - amp;
         bmax[k] = o[k] + amp;
     }
-    let mut bbox = BoundingBox2d::from_corners(
-        DVec2::new(bmin[0], bmin[1]),
-        DVec2::new(bmax[0], bmax[1]),
-    );
+    let mut bbox =
+        BoundingBox2d::from_corners(DVec2::new(bmin[0], bmin[1]), DVec2::new(bmax[0], bmax[1]));
     bbox.enlarge(tol);
     bbox
 }
@@ -312,8 +344,11 @@ fn ellipse_box(ell: &Ellipse2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     for k in 0..2 {
         let xk = xd[k];
         let yk = yd[k];
-        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN { (a_min * yk).atan2(a_maj * xk) }
-                     else { std::f64::consts::PI / 2.0 };
+        let t_extr = if xk.abs() > TOLERANCE_CLAMP_MIN {
+            (a_min * yk).atan2(a_maj * xk)
+        } else {
+            std::f64::consts::PI / 2.0
+        };
         let t_extr2 = if t_extr <= std::f64::consts::PI {
             t_extr + std::f64::consts::PI
         } else {
@@ -330,7 +365,14 @@ fn ellipse_box(ell: &Ellipse2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     bbox
 }
 
-fn full_ellipse_box(o: DVec2, xd: DVec2, yd: DVec2, a_maj: f64, a_min: f64, tol: f64) -> BoundingBox2d {
+fn full_ellipse_box(
+    o: DVec2,
+    xd: DVec2,
+    yd: DVec2,
+    a_maj: f64,
+    a_min: f64,
+    tol: f64,
+) -> BoundingBox2d {
     let mut bmin = [f64::INFINITY; 2];
     let mut bmax = [f64::NEG_INFINITY; 2];
     for k in 0..2 {
@@ -340,10 +382,8 @@ fn full_ellipse_box(o: DVec2, xd: DVec2, yd: DVec2, a_maj: f64, a_min: f64, tol:
         bmin[k] = o[k] - amp;
         bmax[k] = o[k] + amp;
     }
-    let mut bbox = BoundingBox2d::from_corners(
-        DVec2::new(bmin[0], bmin[1]),
-        DVec2::new(bmax[0], bmax[1]),
-    );
+    let mut bbox =
+        BoundingBox2d::from_corners(DVec2::new(bmin[0], bmin[1]), DVec2::new(bmax[0], bmax[1]));
     bbox.enlarge(tol);
     bbox
 }
@@ -353,9 +393,15 @@ fn full_ellipse_box(o: DVec2, xd: DVec2, yd: DVec2, a_maj: f64, a_min: f64, tol:
 fn parabola_box(par: &Parabola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     use rcad_kernel::geom::Curve2dEval;
     let mut bbox = BoundingBox2d::new();
-    if t1.is_finite() { bbox.add_point(par.point_at(t1)); }
-    if t2.is_finite() { bbox.add_point(par.point_at(t2)); }
-    if t1 * t2 < 0.0 { bbox.add_point(par.point_at(0.0)); }
+    if t1.is_finite() {
+        bbox.add_point(par.point_at(t1));
+    }
+    if t2.is_finite() {
+        bbox.add_point(par.point_at(t2));
+    }
+    if t1 * t2 < 0.0 {
+        bbox.add_point(par.point_at(0.0));
+    }
     bbox.enlarge(tol);
     bbox
 }
@@ -365,9 +411,15 @@ fn parabola_box(par: &Parabola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
 fn hyperbola_box(hyp: &Hyperbola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     use rcad_kernel::geom::Curve2dEval;
     let mut bbox = BoundingBox2d::new();
-    if t1.is_finite() { bbox.add_point(hyp.point_at(t1)); }
-    if t2.is_finite() { bbox.add_point(hyp.point_at(t2)); }
-    if t1 * t2 < 0.0 { bbox.add_point(hyp.point_at(0.0)); }
+    if t1.is_finite() {
+        bbox.add_point(hyp.point_at(t1));
+    }
+    if t2.is_finite() {
+        bbox.add_point(hyp.point_at(t2));
+    }
+    if t1 * t2 < 0.0 {
+        bbox.add_point(hyp.point_at(0.0));
+    }
 
     let a_maj = hyp.semi_major;
     let a_min = hyp.semi_minor;
@@ -380,7 +432,9 @@ fn hyperbola_box(hyp: &Hyperbola2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d
         let b = a_maj * xd[k];
         let abp = (a + b).abs();
         let bam = (b - a).abs();
-        if abp < eps || bam < eps { continue; }
+        if abp < eps || bam < eps {
+            continue;
+        }
         let cf = bam / abp;
         let t3 = 0.5 * cf.ln();
         if t3 >= t1.min(t2) && t3 <= t1.max(t2) {
@@ -436,7 +490,9 @@ fn bezier_curve_box_optimal(curve: &BezierCurve2, t1: f64, t2: f64, tol: f64) ->
 fn offset_curve_box(curve: &OffsetCurve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d {
     let offset = curve.offset_distance.abs();
     let basis_box = curve_box(&curve.basis, t1, t2, 0.0);
-    if !basis_box.is_valid() { return basis_box; }
+    if !basis_box.is_valid() {
+        return basis_box;
+    }
     let mut bbox = basis_box;
     bbox.enlarge(offset + tol);
     bbox
@@ -448,7 +504,9 @@ fn other_curve_box(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> BoundingBox2d
     let weakness = 1.5;
     let n = 33;
     let (mut bbox, max_deflection) = sample_curve_box_2d(&|t| curve.point_at(t), t1, t2, n);
-    if bbox.is_valid() { bbox.enlarge(weakness * max_deflection); }
+    if bbox.is_valid() {
+        bbox.enlarge(weakness * max_deflection);
+    }
     bbox.enlarge(tol);
     bbox
 }
@@ -458,7 +516,10 @@ fn other_curve_box_optimal(curve: &Curve2d, t1: f64, t2: f64, tol: f64) -> Bound
 }
 
 fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec2>(
-    eval: &F, t1: f64, t2: f64, tol: f64,
+    eval: &F,
+    t1: f64,
+    t2: f64,
+    tol: f64,
 ) -> BoundingBox2d {
     let n = 65usize.max(1);
     let dt = (t2 - t1) / (n - 1) as f64;
@@ -490,7 +551,11 @@ fn other_curve_box_optimal_from_fn<F: Fn(f64) -> DVec2>(
         }
     }
 
-    let eps = if tol > TOLERANCE_ABS { tol } else { TOLERANCE_ABS };
+    let eps = if tol > TOLERANCE_ABS {
+        tol
+    } else {
+        TOLERANCE_ABS
+    };
     for k in 0..2 {
         let d = defl_max[k];
         if d > eps {
@@ -525,14 +590,18 @@ fn fill_bspline_span_2d<F: Fn(f64) -> DVec2>(eval: &F, a: f64, b: f64) -> (Bound
         let mid = eval(t - dt * 0.5);
         let chord_center = (prev + p) * 0.5;
         let deflection = (mid - chord_center).length();
-        if deflection > max_deflection { max_deflection = deflection; }
+        if deflection > max_deflection {
+            max_deflection = deflection;
+        }
         prev = p;
     }
     (bbox, max_deflection)
 }
 
 fn reduce_curve_box_2d(poles: &[DVec2], sampled: &BoundingBox2d) -> BoundingBox2d {
-    if poles.is_empty() { return *sampled; }
+    if poles.is_empty() {
+        return *sampled;
+    }
     let mut pole_min = DVec2::splat(f64::INFINITY);
     let mut pole_max = DVec2::splat(f64::NEG_INFINITY);
     for &p in poles {
@@ -545,9 +614,16 @@ fn reduce_curve_box_2d(poles: &[DVec2], sampled: &BoundingBox2d) -> BoundingBox2
     )
 }
 
-fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(eval: &F, t1: f64, t2: f64, n: usize) -> (BoundingBox2d, f64) {
+fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(
+    eval: &F,
+    t1: f64,
+    t2: f64,
+    n: usize,
+) -> (BoundingBox2d, f64) {
     let mut bbox = BoundingBox2d::new();
-    if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN { return (bbox, 0.0f64); }
+    if (t2 - t1).abs() < TOLERANCE_CLAMP_MIN {
+        return (bbox, 0.0f64);
+    }
     let dt = (t2 - t1) / (2 * n) as f64;
     let mut p1 = eval(t1);
     bbox.add_point(p1);
@@ -562,7 +638,9 @@ fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(eval: &F, t1: f64, t2: f64, n: usize
         bbox.add_point(p3);
         let chord_center = (p1 + p3) * 0.5;
         let dist = (p2 - chord_center).length();
-        if dist > max_tol { max_tol = dist; }
+        if dist > max_tol {
+            max_tol = dist;
+        }
         p1 = p3;
     }
     (bbox, max_tol)
@@ -577,5 +655,3 @@ fn sample_curve_box_2d<F: Fn(f64) -> DVec2>(eval: &F, t1: f64, t2: f64, n: usize
 //     BndLib_Test.cxx                          (2D gp-level tests)
 //     GeomBndLib_Curve2d_Test.cxx              (GeomBndLib_Curve2d tests)
 //     GeomBndLib_OffsetCurve2d_Test.cxx        (2D offset curve tests)
-
-

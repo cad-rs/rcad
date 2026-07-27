@@ -1,10 +1,10 @@
-use rcad_kernel::appearance::{Color, StepColor};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
+use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::topods;
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Curve2dEval, CurveEval, Curve3, Ellipse2d, GeomStore, PCurve,
+    BRep, BSplineCurve2, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve,
     Surface3, SurfaceEval,
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
@@ -23,9 +23,8 @@ pub mod writer;
 pub use occt_brep::{OcctBrepError, OcctBrepReader};
 
 pub use assembly::{
-    AssemblyComponent, AssemblyImportHealingJsonV1, AssemblyNode,
-    AssemblyNodeHealingReport, read_assembly, read_assembly_tree,
-    read_assembly_tree_with_healing, read_assembly_with_healing,
+    AssemblyComponent, AssemblyImportHealingJsonV1, AssemblyNode, AssemblyNodeHealingReport,
+    read_assembly, read_assembly_tree, read_assembly_tree_with_healing, read_assembly_with_healing,
     read_assembly_with_healing_report_json, write_assembly, write_assembly_tree,
 };
 pub use iges::{IgesError, IgesReader, IgesWriter};
@@ -452,48 +451,117 @@ impl StepDocumentMetadata {
     pub fn summary(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!("Products: {}", self.products.len()));
-        lines.push(format!("Product definitions: {}", self.product_definitions.len()));
-        lines.push(format!("Assembly occurrences: {}", self.assembly_occurrences.len()));
+        lines.push(format!(
+            "Product definitions: {}",
+            self.product_definitions.len()
+        ));
+        lines.push(format!(
+            "Assembly occurrences: {}",
+            self.assembly_occurrences.len()
+        ));
         lines.push(format!("Materials: {}", self.materials.len()));
         lines.push(format!("Layers: {}", self.layers.len()));
-        lines.push(format!("General properties: {}", self.general_properties.len()));
-        lines.push(format!("Property definitions: {}", self.property_definitions.len()));
-        lines.push(format!("Property definition representations: {}", self.property_definition_representations.len()));
-        lines.push(format!("Dimensional locations: {}", self.dimensional_locations.len()));
-        lines.push(format!("Dimensional sizes: {}", self.dimensional_sizes.len()));
-        lines.push(format!("Geometric tolerances: {}", self.geometric_tolerances.len()));
-        lines.push(format!("Geometric tolerances with datum references: {}", self.geometric_tolerances_with_datum_references.len()));
+        lines.push(format!(
+            "General properties: {}",
+            self.general_properties.len()
+        ));
+        lines.push(format!(
+            "Property definitions: {}",
+            self.property_definitions.len()
+        ));
+        lines.push(format!(
+            "Property definition representations: {}",
+            self.property_definition_representations.len()
+        ));
+        lines.push(format!(
+            "Dimensional locations: {}",
+            self.dimensional_locations.len()
+        ));
+        lines.push(format!(
+            "Dimensional sizes: {}",
+            self.dimensional_sizes.len()
+        ));
+        lines.push(format!(
+            "Geometric tolerances: {}",
+            self.geometric_tolerances.len()
+        ));
+        lines.push(format!(
+            "Geometric tolerances with datum references: {}",
+            self.geometric_tolerances_with_datum_references.len()
+        ));
         lines.push(format!("Datums: {}", self.datums.len()));
         lines.push(format!("Datum systems: {}", self.datum_systems.len()));
         lines.push(format!("Kinematic pairs: {}", self.kinematic_pairs.len()));
         lines.push(format!("Tolerance zones: {}", self.tolerance_zones.len()));
-        lines.push(format!("Tolerance zone definitions: {}", self.tolerance_zone_definitions.len()));
+        lines.push(format!(
+            "Tolerance zone definitions: {}",
+            self.tolerance_zone_definitions.len()
+        ));
         lines.push(format!("Datum features: {}", self.datum_features.len()));
-        lines.push(format!("Datum reference elements: {}", self.datum_reference_elements.len()));
+        lines.push(format!(
+            "Datum reference elements: {}",
+            self.datum_reference_elements.len()
+        ));
         lines.push(format!("Shape aspects: {}", self.shape_aspects.len()));
-        lines.push(format!("Shape aspect definitions: {}", self.shape_aspect_definitions.len()));
-        lines.push(format!("Derived shape aspects: {}", self.derived_shape_aspects.len()));
-        lines.push(format!("Dimensional tolerances: {}", self.dimensional_tolerances.len()));
+        lines.push(format!(
+            "Shape aspect definitions: {}",
+            self.shape_aspect_definitions.len()
+        ));
+        lines.push(format!(
+            "Derived shape aspects: {}",
+            self.derived_shape_aspects.len()
+        ));
+        lines.push(format!(
+            "Dimensional tolerances: {}",
+            self.dimensional_tolerances.len()
+        ));
         lines.push(format!("Tolerance values: {}", self.tolerance_values.len()));
-        lines.push(format!("Position tolerances: {}", self.position_tolerances.len()));
-        lines.push(format!("Orientation tolerances: {}", self.orientation_tolerances.len()));
+        lines.push(format!(
+            "Position tolerances: {}",
+            self.position_tolerances.len()
+        ));
+        lines.push(format!(
+            "Orientation tolerances: {}",
+            self.orientation_tolerances.len()
+        ));
         lines.push(format!("Form tolerances: {}", self.form_tolerances.len()));
-        lines.push(format!("Runout tolerances: {}", self.runout_tolerances.len()));
-        lines.push(format!("Profile tolerances: {}", self.profile_tolerances.len()));
-        lines.push(format!("Datum reference frames: {}", self.datum_reference_frames.len()));
+        lines.push(format!(
+            "Runout tolerances: {}",
+            self.runout_tolerances.len()
+        ));
+        lines.push(format!(
+            "Profile tolerances: {}",
+            self.profile_tolerances.len()
+        ));
+        lines.push(format!(
+            "Datum reference frames: {}",
+            self.datum_reference_frames.len()
+        ));
         lines.push(format!("Datum targets: {}", self.datum_targets.len()));
-        lines.push(format!("Enhanced tolerance zone definitions: {}", self.tolerance_zone_definitions_enhanced.len()));
+        lines.push(format!(
+            "Enhanced tolerance zone definitions: {}",
+            self.tolerance_zone_definitions_enhanced.len()
+        ));
         lines.push(format!("FEA models: {}", self.fea_models.len()));
         lines.push(format!("FEA meshes: {}", self.fea_meshes.len()));
         lines.push(format!("FEA node sets: {}", self.fea_node_sets.len()));
         lines.push(format!("FEA element sets: {}", self.fea_element_sets.len()));
-        lines.push(format!("FEA material properties: {}", self.fea_material_properties.len()));
-        lines.push(format!("FEA boundary conditions: {}", self.fea_boundary_conditions.len()));
+        lines.push(format!(
+            "FEA material properties: {}",
+            self.fea_material_properties.len()
+        ));
+        lines.push(format!(
+            "FEA boundary conditions: {}",
+            self.fea_boundary_conditions.len()
+        ));
         lines.push(format!("FEA loads: {}", self.fea_loads.len()));
         lines.push(format!("FEA node groups: {}", self.fea_node_groups.len()));
         lines.push(format!("FEA analyses: {}", self.fea_analyses.len()));
         lines.push(format!("FEA states: {}", self.fea_states.len()));
-        lines.push(format!("FEA material models: {}", self.fea_material_models.len()));
+        lines.push(format!(
+            "FEA material models: {}",
+            self.fea_material_models.len()
+        ));
         lines.push(format!("FEA nodes: {}", self.fea_nodes.len()));
         lines.push(format!("FEA elements: {}", self.fea_elements.len()));
         lines.push(format!("FEA steps: {}", self.fea_steps.len()));
@@ -503,31 +571,76 @@ impl StepDocumentMetadata {
         lines.push(format!("Cameras: {}", self.cameras.len()));
         lines.push(format!("View volumes: {}", self.view_volumes.len()));
         lines.push(format!("Notes: {}", self.notes.len()));
-        lines.push(format!("Annotation planes: {}", self.annotation_planes.len()));
-        lines.push(format!("Annotation occurrences: {}", self.annotation_occurrences.len()));
+        lines.push(format!(
+            "Annotation planes: {}",
+            self.annotation_planes.len()
+        ));
+        lines.push(format!(
+            "Annotation occurrences: {}",
+            self.annotation_occurrences.len()
+        ));
         lines.push(format!("Dimension curves: {}", self.dimension_curves.len()));
-        lines.push(format!("Terminator symbols: {}", self.terminator_symbols.len()));
-        lines.push(format!("Datum feature callouts: {}", self.datum_feature_callouts.len()));
+        lines.push(format!(
+            "Terminator symbols: {}",
+            self.terminator_symbols.len()
+        ));
+        lines.push(format!(
+            "Datum feature callouts: {}",
+            self.datum_feature_callouts.len()
+        ));
         // AP242 Product Definition Relationship Chains
-        lines.push(format!("Product definition relationships: {}", self.product_definition_relationships.len()));
+        lines.push(format!(
+            "Product definition relationships: {}",
+            self.product_definition_relationships.len()
+        ));
         // AP242 Shape Representation Associations
-        lines.push(format!("Shape representation relationships: {}", self.shape_representation_relationships.len()));
-        lines.push(format!("Product definition shapes: {}", self.product_definition_shapes.len()));
+        lines.push(format!(
+            "Shape representation relationships: {}",
+            self.shape_representation_relationships.len()
+        ));
+        lines.push(format!(
+            "Product definition shapes: {}",
+            self.product_definition_shapes.len()
+        ));
         // AP242 Configuration Management
-        lines.push(format!("Configuration designs: {}", self.configuration_designs.len()));
-        lines.push(format!("Configuration items: {}", self.configuration_items.len()));
+        lines.push(format!(
+            "Configuration designs: {}",
+            self.configuration_designs.len()
+        ));
+        lines.push(format!(
+            "Configuration items: {}",
+            self.configuration_items.len()
+        ));
         lines.push(format!("Product concepts: {}", self.product_concepts.len()));
-        lines.push(format!("Configuration effectivities: {}", self.configuration_effectivities.len()));
+        lines.push(format!(
+            "Configuration effectivities: {}",
+            self.configuration_effectivities.len()
+        ));
         // AP242 Approval and Security
         lines.push(format!("Approvals: {}", self.approvals.len()));
-        lines.push(format!("Approval assignments: {}", self.approval_assignments.len()));
-        lines.push(format!("Security classifications: {}", self.security_classifications.len()));
-        lines.push(format!("Security classification assignments: {}", self.security_classification_assignments.len()));
+        lines.push(format!(
+            "Approval assignments: {}",
+            self.approval_assignments.len()
+        ));
+        lines.push(format!(
+            "Security classifications: {}",
+            self.security_classifications.len()
+        ));
+        lines.push(format!(
+            "Security classification assignments: {}",
+            self.security_classification_assignments.len()
+        ));
         // AP242 Document References
         lines.push(format!("Documents: {}", self.documents.len()));
         lines.push(format!("Document files: {}", self.document_files.len()));
-        lines.push(format!("Document usage assignments: {}", self.document_usage_assignments.len()));
-        lines.push(format!("Document representation relationships: {}", self.document_representation_relationships.len()));
+        lines.push(format!(
+            "Document usage assignments: {}",
+            self.document_usage_assignments.len()
+        ));
+        lines.push(format!(
+            "Document representation relationships: {}",
+            self.document_representation_relationships.len()
+        ));
         lines.join("\n")
     }
 }
@@ -1796,7 +1909,9 @@ fn extract_product_definitions(content: &str) -> Vec<StepProductDefinitionInfo> 
     out
 }
 
-fn extract_shape_definition_representations(content: &str) -> Vec<StepShapeDefinitionRepresentation> {
+fn extract_shape_definition_representations(
+    content: &str,
+) -> Vec<StepShapeDefinitionRepresentation> {
     use std::collections::{HashMap, HashSet};
 
     let Ok(data) = extract_data_section(content) else {
@@ -1857,10 +1972,11 @@ fn extract_shape_definition_representations(content: &str) -> Vec<StepShapeDefin
 fn extract_assembly_occurrences(content: &str) -> Vec<StepAssemblyUsageOccurrence> {
     use std::collections::HashMap;
 
-    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> = extract_product_definitions(content)
-        .into_iter()
-        .map(|definition| (definition.entity_id, definition))
-        .collect();
+    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> =
+        extract_product_definitions(content)
+            .into_iter()
+            .map(|definition| (definition.entity_id, definition))
+            .collect();
 
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
@@ -1928,7 +2044,10 @@ fn extract_materials(content: &str) -> Vec<StepMaterial> {
     while let Some(pos) = search.find("MATERIAL(") {
         let rest = &search[pos + "MATERIAL(".len()..];
         if let Some(name) = extract_first_string_arg(rest) {
-            materials.push(StepMaterial { name, density: None });
+            materials.push(StepMaterial {
+                name,
+                density: None,
+            });
         }
         search = &search[pos + 1..];
     }
@@ -1942,9 +2061,10 @@ fn extract_layers(content: &str) -> Vec<StepLayer> {
     while let Some(pos) = search.find("PRESENTATION_LAYER_ASSIGNMENT(") {
         let rest = &search[pos + "PRESENTATION_LAYER_ASSIGNMENT(".len()..];
         if let Some(name) = extract_first_string_arg(rest)
-            && !layers.iter().any(|l: &StepLayer| l.name == name) {
-                layers.push(StepLayer { name });
-            }
+            && !layers.iter().any(|l: &StepLayer| l.name == name)
+        {
+            layers.push(StepLayer { name });
+        }
         search = &search[pos + 1..];
     }
     layers
@@ -1980,10 +2100,11 @@ fn extract_general_properties_with_ids(content: &str) -> Vec<(u64, StepGeneralPr
             continue;
         };
         if entity.eq_ignore_ascii_case("GENERAL_PROPERTY")
-            && let Some(name) = extract_nth_string_arg(args, 0) {
-                let description = extract_nth_string_arg(args, 1);
-                props.push((id, StepGeneralProperty { name, description }));
-            }
+            && let Some(name) = extract_nth_string_arg(args, 0)
+        {
+            let description = extract_nth_string_arg(args, 1);
+            props.push((id, StepGeneralProperty { name, description }));
+        }
     }
 
     props
@@ -1995,7 +2116,9 @@ fn extract_property_definitions(content: &str) -> Vec<StepPropertyDefinition> {
     use std::collections::HashMap;
 
     let general_by_id: HashMap<u64, StepGeneralProperty> =
-        extract_general_properties_with_ids(content).into_iter().collect();
+        extract_general_properties_with_ids(content)
+            .into_iter()
+            .collect();
 
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
@@ -2044,66 +2167,119 @@ fn extract_property_definitions(content: &str) -> Vec<StepPropertyDefinition> {
 
 /// Extract the first single-quoted string argument from a STEP entity argument list.
 fn extract_property_definition_reprs(content: &str) -> Vec<StepPropertyDefinitionRepr> {
-    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for record in split_records(data) {
-        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
-        let Some((entity, args)) = parse_entity_body(body) else { continue; };
-        if !entity.eq_ignore_ascii_case("PROPERTY_DEFINITION_REPRESENTATION") { continue; }
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PROPERTY_DEFINITION_REPRESENTATION") {
+            continue;
+        }
         let parts = split_top_level(args, ',');
         let pd_id = parts.first().and_then(|p| parse_ref(p.trim()));
         let rep_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
-        out.push(StepPropertyDefinitionRepr { entity_id: id, property_definition_id: pd_id, representation_id: rep_id });
+        out.push(StepPropertyDefinitionRepr {
+            entity_id: id,
+            property_definition_id: pd_id,
+            representation_id: rep_id,
+        });
     }
     out
 }
 
 fn extract_dimensional_locations(content: &str) -> Vec<StepDimensionalLocation> {
-    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for record in split_records(data) {
-        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
-        let Some((entity, args)) = parse_entity_body(body) else { continue; };
-        if !entity.eq_ignore_ascii_case("DIMENSIONAL_LOCATION") { continue; }
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DIMENSIONAL_LOCATION") {
+            continue;
+        }
         let parts = split_top_level(args, ',');
         let name = extract_nth_string_arg(args, 0);
         let description = extract_nth_string_arg(args, 1);
         let from_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
         let to_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
-        out.push(StepDimensionalLocation { entity_id: id, name, description, from_entity_id: from_id, to_entity_id: to_id });
+        out.push(StepDimensionalLocation {
+            entity_id: id,
+            name,
+            description,
+            from_entity_id: from_id,
+            to_entity_id: to_id,
+        });
     }
     out
 }
 
 fn extract_dimensional_sizes(content: &str) -> Vec<StepDimensionalSize> {
-    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for record in split_records(data) {
-        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
-        let Some((entity, args)) = parse_entity_body(body) else { continue; };
-        if !entity.eq_ignore_ascii_case("DIMENSIONAL_SIZE") { continue; }
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DIMENSIONAL_SIZE") {
+            continue;
+        }
         let parts = split_top_level(args, ',');
         let name = extract_nth_string_arg(args, 0);
         let description = extract_nth_string_arg(args, 1);
         let shape_aspect_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
-        out.push(StepDimensionalSize { entity_id: id, name, description, shape_aspect_id });
+        out.push(StepDimensionalSize {
+            entity_id: id,
+            name,
+            description,
+            shape_aspect_id,
+        });
     }
     out
 }
 
 fn extract_geometric_tolerances(content: &str) -> Vec<StepGeometricTolerance> {
-    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for record in split_records(data) {
-        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
-        let Some((entity, args)) = parse_entity_body(body) else { continue; };
-        if !entity.eq_ignore_ascii_case("GEOMETRIC_TOLERANCE") { continue; }
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("GEOMETRIC_TOLERANCE") {
+            continue;
+        }
         let parts = split_top_level(args, ',');
         let name = extract_nth_string_arg(args, 0);
         let description = extract_nth_string_arg(args, 1);
         let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
-        out.push(StepGeometricTolerance { entity_id: id, name, description, value_entity_id, shape_aspect_id });
+        out.push(StepGeometricTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+        });
     }
     out
 }
@@ -2548,7 +2724,10 @@ fn extract_position_tolerances(content: &str) -> Vec<StepPositionTolerance> {
         let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
         let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
-        let projected = parts.get(5).and_then(|p| parse_bool_arg(p.trim())).unwrap_or(false);
+        let projected = parts
+            .get(5)
+            .and_then(|p| parse_bool_arg(p.trim()))
+            .unwrap_or(false);
         let projected_height = parts.get(6).and_then(|p| parse_float_arg(p.trim()));
         out.push(StepPositionTolerance {
             entity_id: id,
@@ -2813,7 +2992,8 @@ fn extract_datum_targets(content: &str) -> Vec<StepDatumTarget> {
             continue;
         };
         let entity_upper = entity.to_ascii_uppercase();
-        let target_type = if entity_upper == "DATUM_TARGET" || entity_upper == "DATUM_TARGET_POINT" {
+        let target_type = if entity_upper == "DATUM_TARGET" || entity_upper == "DATUM_TARGET_POINT"
+        {
             Some(DatumTargetType::Point)
         } else if entity_upper == "DATUM_TARGET_LINE" {
             Some(DatumTargetType::Line)
@@ -2845,7 +3025,9 @@ fn extract_datum_targets(content: &str) -> Vec<StepDatumTarget> {
     out
 }
 
-fn extract_tolerance_zone_definitions_enhanced(content: &str) -> Vec<StepToleranceZoneDefinitionEnhanced> {
+fn extract_tolerance_zone_definitions_enhanced(
+    content: &str,
+) -> Vec<StepToleranceZoneDefinitionEnhanced> {
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
     };
@@ -2976,10 +3158,7 @@ fn extract_fea_node_sets(content: &str) -> Vec<StepFeaNodeSet> {
             continue;
         };
         let entity_upper = entity.to_uppercase();
-        if !matches!(
-            entity_upper.as_str(),
-            "FEA_NODE_SET" | "FEAMEDIAN_NODE_SET"
-        ) {
+        if !matches!(entity_upper.as_str(), "FEA_NODE_SET" | "FEAMEDIAN_NODE_SET") {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -3108,10 +3287,7 @@ fn extract_fea_loads(content: &str) -> Vec<StepFeaLoad> {
             continue;
         };
         let entity_upper = entity.to_uppercase();
-        if !matches!(
-            entity_upper.as_str(),
-            "FEA_LOAD" | "FEAMEDIAN_LOAD"
-        ) {
+        if !matches!(entity_upper.as_str(), "FEA_LOAD" | "FEAMEDIAN_LOAD") {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -3130,7 +3306,6 @@ fn extract_fea_loads(content: &str) -> Vec<StepFeaLoad> {
     }
     out
 }
-
 
 fn extract_fea_node_groups(content: &str) -> Vec<StepFeaNodeGroup> {
     let Ok(data) = extract_data_section(content) else {
@@ -3216,10 +3391,7 @@ fn extract_fea_states(content: &str) -> Vec<StepFeaState> {
             continue;
         };
         let entity_upper = entity.to_uppercase();
-        if !matches!(
-            entity_upper.as_str(),
-            "FEA_STATE" | "FEAMEDIAN_STATE"
-        ) {
+        if !matches!(entity_upper.as_str(), "FEA_STATE" | "FEAMEDIAN_STATE") {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -3310,9 +3482,15 @@ fn extract_fea_nodes(content: &str) -> Vec<StepFeaNode> {
         // NODE_REPRESENTATION(name, node_number, (x, y, z), mesh_ref)
         // or FEA_NODE(node_number, (x, y, z), mesh_ref)
         let node_number = if entity_upper == "NODE_REPRESENTATION" {
-            parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts
+                .get(1)
+                .and_then(|p| parse_uint_arg(p.trim()))
+                .unwrap_or(id)
         } else {
-            parts.first().and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts
+                .first()
+                .and_then(|p| parse_uint_arg(p.trim()))
+                .unwrap_or(id)
         };
         // Find the coordinates - could be a tuple or a reference to a CARTESIAN_POINT
         let coords_str = if entity_upper == "NODE_REPRESENTATION" {
@@ -3364,9 +3542,15 @@ fn extract_fea_elements(content: &str) -> Vec<StepFeaElement> {
         // String indices: for ELEMENT_REPRESENTATION, strings are name(0) and element_type(1)
         // For FEA_ELEMENT, only string is element_type(0)
         let element_number = if is_element_repr {
-            parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts
+                .get(1)
+                .and_then(|p| parse_uint_arg(p.trim()))
+                .unwrap_or(id)
         } else {
-            parts.first().and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts
+                .first()
+                .and_then(|p| parse_uint_arg(p.trim()))
+                .unwrap_or(id)
         };
         // element_type is string index 1 for ELEMENT_REPRESENTATION, 0 for FEA_ELEMENT
         let element_type = if is_element_repr {
@@ -3410,10 +3594,7 @@ fn extract_fea_steps(content: &str) -> Vec<StepFeaStep> {
             continue;
         };
         let entity_upper = entity.to_uppercase();
-        if !matches!(
-            entity_upper.as_str(),
-            "FEA_STEP" | "FEAMEDIAN_STEP"
-        ) {
+        if !matches!(entity_upper.as_str(), "FEA_STEP" | "FEAMEDIAN_STEP") {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -3485,10 +3666,7 @@ fn extract_fea_cases(content: &str) -> Vec<StepFeaCase> {
             continue;
         };
         let entity_upper = entity.to_uppercase();
-        if !matches!(
-            entity_upper.as_str(),
-            "FEA_CASE" | "FEAMEDIAN_CASE"
-        ) {
+        if !matches!(entity_upper.as_str(), "FEA_CASE" | "FEAMEDIAN_CASE") {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -3597,7 +3775,10 @@ fn extract_view_volumes(content: &str) -> Vec<StepViewVolume> {
         let parts = split_top_level(args, ',');
         let name = extract_nth_string_arg(args, 0);
         // VIEW_VOLUME has complex structure - extract what we can
-        let volume_type = if parts.iter().any(|p| p.trim().to_uppercase().contains("PERSPECTIVE")) {
+        let volume_type = if parts
+            .iter()
+            .any(|p| p.trim().to_uppercase().contains("PERSPECTIVE"))
+        {
             ViewVolumeType::Perspective
         } else {
             ViewVolumeType::Orthographic
@@ -3816,13 +3997,16 @@ fn extract_datum_feature_callouts(content: &str) -> Vec<StepDatumFeatureCallout>
 
 // ???? AP242 Product Definition Relationship Chains ??????????????????????????????????????????????????????????????
 
-fn extract_product_definition_relationships(content: &str) -> Vec<StepProductDefinitionRelationship> {
+fn extract_product_definition_relationships(
+    content: &str,
+) -> Vec<StepProductDefinitionRelationship> {
     use std::collections::HashMap;
 
-    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> = extract_product_definitions(content)
-        .into_iter()
-        .map(|definition| (definition.entity_id, definition))
-        .collect();
+    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> =
+        extract_product_definitions(content)
+            .into_iter()
+            .map(|definition| (definition.entity_id, definition))
+            .collect();
 
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
@@ -3852,10 +4036,14 @@ fn extract_product_definition_relationships(content: &str) -> Vec<StepProductDef
             relating_product_definition_id,
             related_product_definition_id,
             relating_product_name: relating_product_definition_id.and_then(|pd| {
-                product_defs_by_id.get(&pd).and_then(|d| d.product_name.clone())
+                product_defs_by_id
+                    .get(&pd)
+                    .and_then(|d| d.product_name.clone())
             }),
             related_product_name: related_product_definition_id.and_then(|pd| {
-                product_defs_by_id.get(&pd).and_then(|d| d.product_name.clone())
+                product_defs_by_id
+                    .get(&pd)
+                    .and_then(|d| d.product_name.clone())
             }),
         });
     }
@@ -3865,7 +4053,9 @@ fn extract_product_definition_relationships(content: &str) -> Vec<StepProductDef
 
 // ???? AP242 Shape Representation Associations ????????????????????????????????????????????????????????????????????????
 
-fn extract_shape_representation_relationships(content: &str) -> Vec<StepShapeRepresentationRelationship> {
+fn extract_shape_representation_relationships(
+    content: &str,
+) -> Vec<StepShapeRepresentationRelationship> {
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
     };
@@ -4090,8 +4280,8 @@ fn extract_approvals(content: &str) -> Vec<StepApproval> {
             entity_id: id,
             status,
             level: extract_nth_string_arg(args, 0), // level is the first quoted string
-            date: None, // Populated from APPROVAL_DATE
-            approver: None, // Populated from APPROVAL_PERSON_ORGANIZATION
+            date: None,                             // Populated from APPROVAL_DATE
+            approver: None,                         // Populated from APPROVAL_PERSON_ORGANIZATION
         });
     }
 
@@ -4138,7 +4328,10 @@ fn parse_security_level(s: &str) -> SecurityClassificationLevel {
         SecurityClassificationLevel::Secret
     } else if s.contains("CONFIDENTIAL") || s == ".CONFIDENTIAL." {
         SecurityClassificationLevel::Confidential
-    } else if s.contains("PROPRIETARY") || s == ".PROPRIETARY." || s.contains("COMPANY_CONFIDENTIAL") {
+    } else if s.contains("PROPRIETARY")
+        || s == ".PROPRIETARY."
+        || s.contains("COMPANY_CONFIDENTIAL")
+    {
         SecurityClassificationLevel::Proprietary
     } else if s.contains("UNCLASSIFIED") || s == ".UNCLASSIFIED." {
         SecurityClassificationLevel::Unclassified
@@ -4166,7 +4359,8 @@ fn extract_security_classifications(content: &str) -> Vec<StepSecurityClassifica
 
         let parts = split_top_level(args, ',');
         // SECURITY_CLASSIFICATION(name, description, security_level)
-        let security_level = parts.get(2)
+        let security_level = parts
+            .get(2)
             .map(|s| parse_security_level(s))
             .unwrap_or(SecurityClassificationLevel::Unknown);
 
@@ -4181,7 +4375,9 @@ fn extract_security_classifications(content: &str) -> Vec<StepSecurityClassifica
     out
 }
 
-fn extract_security_classification_assignments(content: &str) -> Vec<StepSecurityClassificationAssignment> {
+fn extract_security_classification_assignments(
+    content: &str,
+) -> Vec<StepSecurityClassificationAssignment> {
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
     };
@@ -4311,7 +4507,9 @@ fn extract_document_usage_assignments(content: &str) -> Vec<StepDocumentUsageAss
     out
 }
 
-fn extract_document_representation_relationships(content: &str) -> Vec<StepDocumentRepresentationRelationship> {
+fn extract_document_representation_relationships(
+    content: &str,
+) -> Vec<StepDocumentRepresentationRelationship> {
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
     };
@@ -4560,7 +4758,9 @@ impl StepReader {
             profile_tolerances: extract_profile_tolerances(content),
             datum_reference_frames: extract_datum_reference_frames(content),
             datum_targets: extract_datum_targets(content),
-            tolerance_zone_definitions_enhanced: extract_tolerance_zone_definitions_enhanced(content),
+            tolerance_zone_definitions_enhanced: extract_tolerance_zone_definitions_enhanced(
+                content,
+            ),
             fea_models: extract_fea_models(content),
             fea_meshes: extract_fea_meshes(content),
             fea_node_sets: extract_fea_node_sets(content),
@@ -4600,12 +4800,16 @@ impl StepReader {
             approvals: extract_approvals(content),
             approval_assignments: extract_approval_assignments(content),
             security_classifications: extract_security_classifications(content),
-            security_classification_assignments: extract_security_classification_assignments(content),
+            security_classification_assignments: extract_security_classification_assignments(
+                content,
+            ),
             // AP242 Document References
             documents: extract_documents(content),
             document_files: extract_document_files(content),
             document_usage_assignments: extract_document_usage_assignments(content),
-            document_representation_relationships: extract_document_representation_relationships(content),
+            document_representation_relationships: extract_document_representation_relationships(
+                content,
+            ),
         };
 
         Ok((brep, metadata))
@@ -4649,7 +4853,11 @@ impl StepReader {
             .iter()
             .map(|pass| pass.degenerate_faces_removed)
             .sum();
-        let normals_recomputed = report.passes.iter().map(|pass| pass.normals_recomputed).sum();
+        let normals_recomputed = report
+            .passes
+            .iter()
+            .map(|pass| pass.normals_recomputed)
+            .sum();
         let faces_reoriented = report.passes.iter().map(|pass| pass.faces_reoriented).sum();
         let wires_fixed = report.passes.iter().map(|pass| pass.wires_fixed).sum();
         let same_range_fixed = report
@@ -4695,8 +4903,9 @@ impl StepReader {
             wire_geometric_self_intersections: wire.total_geometric_self_intersections,
         };
 
-        let json = serde_json::to_string_pretty(&payload)
-            .map_err(|e| StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}")))?;
+        let json = serde_json::to_string_pretty(&payload).map_err(|e| {
+            StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}"))
+        })?;
 
         Ok((healed, report, json))
     }
@@ -4731,7 +4940,9 @@ impl StepReader {
     }
 
     /// Parse a STEP string, returning both the BRep and an optional color map.
-    pub fn parse_string_with_color(content: &str) -> Result<(topods::BRep, Option<StepColor>), StepError> {
+    pub fn parse_string_with_color(
+        content: &str,
+    ) -> Result<(topods::BRep, Option<StepColor>), StepError> {
         if !content.contains("ISO-10303-21") {
             return Err(StepError::InvalidFormat(
                 "missing ISO-10303-21 header".into(),
@@ -4742,7 +4953,8 @@ impl StepReader {
         // Build face index map: iterate tshapes and assign flat indices to faces
         let mut face_idx: usize = 0;
         let mut face_id_map: HashMap<u64, usize> = HashMap::new();
-        let mut ordered: Vec<(u64, topods::ShapeRef)> = face_ref_by_id.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut ordered: Vec<(u64, topods::ShapeRef)> =
+            face_ref_by_id.iter().map(|(k, v)| (*k, *v)).collect();
         ordered.sort_by_key(|(_, sr)| sr.index);
         for (step_face_id, _sr) in &ordered {
             face_id_map.insert(*step_face_id, face_idx);
@@ -4938,7 +5150,9 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                     }
                 }
                 "EDGE_CURVE" => {
-                    if let Some((start, end, curve_ref, same_sense)) = parse_edge_curve_vertices(args) {
+                    if let Some((start, end, curve_ref, same_sense)) =
+                        parse_edge_curve_vertices(args)
+                    {
                         parsed
                             .edge_curves
                             .insert(id, (start, end, curve_ref, same_sense));
@@ -5099,7 +5313,10 @@ fn get_shell_for_solid(parsed: &ParsedStep, solid_ref: u64) -> Option<u64> {
     // MANIFOLD_SOLID_BREP references a CLOSED_SHELL
     // We need to find which shell this solid refers to
     // In the current implementation, manifold_solids is a Vec of shell refs
-    let idx = parsed.manifold_solids.iter().position(|&r| r == solid_ref)?;
+    let idx = parsed
+        .manifold_solids
+        .iter()
+        .position(|&r| r == solid_ref)?;
     parsed.manifold_solids.get(idx).copied()
 }
 
@@ -5128,7 +5345,8 @@ fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError>
     let mut referenced: std::collections::HashSet<u64> = std::collections::HashSet::new();
     for elems in parsed.compounds.values() {
         for &elem_ref in elems {
-            if parsed.compounds.contains_key(&elem_ref) || parsed.compsolids.contains_key(&elem_ref) {
+            if parsed.compounds.contains_key(&elem_ref) || parsed.compsolids.contains_key(&elem_ref)
+            {
                 referenced.insert(elem_ref);
             }
         }
@@ -5141,13 +5359,17 @@ fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError>
         for &elem_ref in elems {
             if parsed.manifold_solids.contains(&elem_ref) {
                 if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
-                    && let Some(solid_ref) = build_topods_solid_from_shell(parsed, shell_ref, &mut t)? {
-                        refs.push(solid_ref);
-                    }
+                    && let Some(solid_ref) =
+                        build_topods_solid_from_shell(parsed, shell_ref, &mut t)?
+                {
+                    refs.push(solid_ref);
+                }
             } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
                 if let Some(solid_ref) = build_topods_solid_from_shell(parsed, *outer, &mut t)? {
                     for void_ref in voids {
-                        if let Some(void_solid_ref) = build_topods_solid_from_shell(parsed, *void_ref, &mut t)? {
+                        if let Some(void_solid_ref) =
+                            build_topods_solid_from_shell(parsed, *void_ref, &mut t)?
+                        {
                             let void_shells = t.solid(void_solid_ref).shells.clone();
                             t.solid_mut(solid_ref).shells.extend(void_shells);
                         }
@@ -5159,9 +5381,10 @@ fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError>
                 let sub = build_compound_topods_nested(parsed, elem_ref, &mut t)?;
                 refs.extend(sub);
             } else if parsed.compsolids.contains_key(&elem_ref)
-                && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, &mut t)? {
-                    refs.push(cs_ref);
-                }
+                && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, &mut t)?
+            {
+                refs.push(cs_ref);
+            }
         }
     }
 
@@ -5186,13 +5409,16 @@ fn build_compound_topods_nested(
     for &elem_ref in elems {
         if parsed.manifold_solids.contains(&elem_ref) {
             if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
-                && let Some(solid_ref) = build_topods_solid_from_shell(parsed, shell_ref, t)? {
-                    refs.push(solid_ref);
-                }
+                && let Some(solid_ref) = build_topods_solid_from_shell(parsed, shell_ref, t)?
+            {
+                refs.push(solid_ref);
+            }
         } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
             if let Some(mut solid_ref) = build_topods_solid_from_shell(parsed, *outer, t)? {
                 for void_ref in voids {
-                    if let Some(void_solid_ref) = build_topods_solid_from_shell(parsed, *void_ref, t)? {
+                    if let Some(void_solid_ref) =
+                        build_topods_solid_from_shell(parsed, *void_ref, t)?
+                    {
                         let void_shells = t.solid(void_solid_ref).shells.clone();
                         t.solid_mut(solid_ref).shells.extend(void_shells);
                     }
@@ -5203,9 +5429,10 @@ fn build_compound_topods_nested(
             let sub = build_compound_topods_nested(parsed, elem_ref, t)?;
             refs.extend(sub);
         } else if parsed.compsolids.contains_key(&elem_ref)
-            && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, t)? {
-                refs.push(cs_ref);
-            }
+            && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, t)?
+        {
+            refs.push(cs_ref);
+        }
     }
     Ok(refs)
 }
@@ -5231,10 +5458,10 @@ fn build_topods_compsolid(
     let mut refs: Vec<topods::ShapeRef> = Vec::new();
     for &solid_ref in solid_refs {
         if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref)
-            && let Some(sr) = build_topods_solid_from_shell(parsed, shell_ref, t)? {
-                refs.push(sr);
-            }
-        else if let Some((outer, voids)) = parsed.brep_with_voids.get(&solid_ref) {
+            && let Some(sr) = build_topods_solid_from_shell(parsed, shell_ref, t)?
+        {
+            refs.push(sr);
+        } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&solid_ref) {
             if let Some(mut sr) = build_topods_solid_from_shell(parsed, *outer, t)? {
                 for void_ref in voids {
                     if let Some(void_sr) = build_topods_solid_from_shell(parsed, *void_ref, t)? {
@@ -5278,8 +5505,12 @@ fn build_topods_solid_from_shell(
                 if let Some(&(loop_id, _)) = parsed.face_bounds.get(bound_id) {
                     if let Some(oriented_ids) = parsed.edge_loops.get(&loop_id) {
                         for oriented_id in oriented_ids {
-                            if let Some(&(edge_curve_id, _)) = parsed.oriented_edges.get(oriented_id) {
-                                if let Some(&(start, end, _, _)) = parsed.edge_curves.get(&edge_curve_id) {
+                            if let Some(&(edge_curve_id, _)) =
+                                parsed.oriented_edges.get(oriented_id)
+                            {
+                                if let Some(&(start, end, _, _)) =
+                                    parsed.edge_curves.get(&edge_curve_id)
+                                {
                                     used_vids.insert(start);
                                     used_vids.insert(end);
                                 }
@@ -5303,8 +5534,12 @@ fn build_topods_solid_from_shell(
     let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
     for &face_id in face_ids {
         if let Some((face_ref, surface_step_id)) = build_face_topods(
-            parsed, face_id, t, &vertex_ref_by_id,
-            &mut edge_ref_by_curve, &mut curve_store_index_by_step,
+            parsed,
+            face_id,
+            t,
+            &vertex_ref_by_id,
+            &mut edge_ref_by_curve,
+            &mut curve_store_index_by_step,
         ) {
             if let Some(surf_step_id) = surface_step_id {
                 if !surface_store_index_by_step.contains_key(&surf_step_id) {
@@ -5328,7 +5563,9 @@ fn build_topods_solid_from_shell(
 
 /// TopoDS version of build_brep_with_face_map: produces a pool-based BRep
 /// and a mapping from STEP ADVANCED_FACE entity IDs to face ShapeRefs (for color resolution).
-fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, HashMap<u64, topods::ShapeRef>), StepError> {
+fn build_topods_with_face_map(
+    parsed: &ParsedStep,
+) -> Result<(topods::BRep, HashMap<u64, topods::ShapeRef>), StepError> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
         collect_edge_vertices(parsed)
@@ -5352,10 +5589,20 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
     let mut vertex_ids: Vec<u64> = used_vertex_ids.into_iter().collect();
     vertex_ids.sort_unstable();
     for vertex_id in &vertex_ids {
-        let point_id = *parsed.vertex_points.get(vertex_id)
-            .ok_or(StepError::MissingEntity { entity_type: "VERTEX_POINT", id: Some(*vertex_id) })?;
-        let point = *parsed.cartesian_points.get(&point_id)
-            .ok_or(StepError::MissingEntity { entity_type: "CARTESIAN_POINT", id: Some(point_id) })?;
+        let point_id = *parsed
+            .vertex_points
+            .get(vertex_id)
+            .ok_or(StepError::MissingEntity {
+                entity_type: "VERTEX_POINT",
+                id: Some(*vertex_id),
+            })?;
+        let point = *parsed
+            .cartesian_points
+            .get(&point_id)
+            .ok_or(StepError::MissingEntity {
+                entity_type: "CARTESIAN_POINT",
+                id: Some(point_id),
+            })?;
         let sr = t.add_tvertex(glam::DVec3::new(point[0], point[1], point[2]));
         vertex_ref_by_id.insert(*vertex_id, sr);
     }
@@ -5366,8 +5613,12 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
         let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
         for &face_id in shell_faces {
             if let Some((face_ref, surface_step_id)) = build_face_topods(
-                parsed, face_id, &mut t, &vertex_ref_by_id,
-                &mut edge_ref_by_curve, &mut curve_store_index_by_step,
+                parsed,
+                face_id,
+                &mut t,
+                &vertex_ref_by_id,
+                &mut edge_ref_by_curve,
+                &mut curve_store_index_by_step,
             ) {
                 // Resolve surface and set on face after creation
                 if let Some(surf_step_id) = surface_step_id {
@@ -5423,32 +5674,46 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
             continue;
         }
         let _ = ensure_edge_topods(
-            parsed, *start_id, *end_id, *curve_ref, *same_sense,
-            &mut t, &vertex_ref_by_id, &mut edge_ref_by_curve,
-            &mut curve_store_index_by_step, *edge_curve_id,
+            parsed,
+            *start_id,
+            *end_id,
+            *curve_ref,
+            *same_sense,
+            &mut t,
+            &vertex_ref_by_id,
+            &mut edge_ref_by_curve,
+            &mut curve_store_index_by_step,
+            *edge_curve_id,
         );
     }
 
     // Standalone 1D curves from GEOMETRIC_CURVE_SET
     for curve_set in &parsed.geometric_curve_sets {
         for &curve_ref in curve_set {
-            let (basis_curve_ref, _trim_range) = if let Some(&(underlying_ref, t0, t1)) =
-                parsed.trimmed_curves.get(&curve_ref)
-            {
-                (underlying_ref, Some([t0, t1]))
-            } else {
-                (curve_ref, None)
+            let (basis_curve_ref, _trim_range) =
+                if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&curve_ref) {
+                    (underlying_ref, Some([t0, t1]))
+                } else {
+                    (curve_ref, None)
+                };
+            let Some(curve) = resolve_curve(parsed, basis_curve_ref) else {
+                continue;
             };
-            let Some(curve) = resolve_curve(parsed, basis_curve_ref) else { continue; };
             let points = sample_standalone_curve(parsed, curve_ref);
-            let (Some(start), Some(end)) = (points.first().copied(), points.last().copied()) else { continue; };
+            let (Some(start), Some(end)) = (points.first().copied(), points.last().copied()) else {
+                continue;
+            };
 
             let start_sr = t.add_tvertex(start);
             let end_sr = t.add_tvertex(end);
             let range = _trim_range.unwrap_or_else(|| {
                 use rcad_kernel::geom::CurveEval;
-                let t0 = (start - curve.point_at(curve.default_domain()[0])).length().min(0.0);
-                let t1 = (end - curve.point_at(curve.default_domain()[1])).length().max(0.0);
+                let t0 = (start - curve.point_at(curve.default_domain()[0]))
+                    .length()
+                    .min(0.0);
+                let t1 = (end - curve.point_at(curve.default_domain()[1]))
+                    .length()
+                    .max(0.0);
                 // Fallback: use default domain
                 curve.default_domain()
             });
@@ -5459,29 +5724,47 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
     // Populate edge pcurves from SURFACE_CURVE entities
     for (step_curve_id, (_inner_3d_ref, pcurve_ids, _same_param)) in &parsed.surface_curves {
         let edge_ref = edge_ref_by_curve.get(step_curve_id).copied().or_else(|| {
-            parsed.edge_curves.iter().find_map(|(ec_id, (_, _, cr, _))| {
-                if cr.as_ref() == Some(step_curve_id) {
-                    edge_ref_by_curve.get(ec_id).copied()
-                } else {
-                    None
-                }
-            })
+            parsed
+                .edge_curves
+                .iter()
+                .find_map(|(ec_id, (_, _, cr, _))| {
+                    if cr.as_ref() == Some(step_curve_id) {
+                        edge_ref_by_curve.get(ec_id).copied()
+                    } else {
+                        None
+                    }
+                })
         });
         let Some(edge_ref) = edge_ref else { continue };
 
         for &pc_step_id in pcurve_ids {
-            let Some(&(surface_step_id, def_rep_id)) = parsed.pcurves.get(&pc_step_id) else { continue; };
-            let Some(&curve2d_step_id) = parsed.definitional_reps.get(&def_rep_id) else { continue; };
+            let Some(&(surface_step_id, def_rep_id)) = parsed.pcurves.get(&pc_step_id) else {
+                continue;
+            };
+            let Some(&curve2d_step_id) = parsed.definitional_reps.get(&def_rep_id) else {
+                continue;
+            };
 
             let face_ref = face_ref_by_id.iter().find_map(|(&fid, &fr)| {
                 let bounds = parsed.advanced_faces.get(&fid)?;
-                if bounds.surface == Some(surface_step_id) { Some(fr) } else { None }
+                if bounds.surface == Some(surface_step_id) {
+                    Some(fr)
+                } else {
+                    None
+                }
             });
-            let Some(face_ref) = face_ref else { continue; };
+            let Some(face_ref) = face_ref else {
+                continue;
+            };
 
-            let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else { continue; };
+            let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else {
+                continue;
+            };
             let default_range = [0.0_f64, 1.0];
-            t.edge_mut(edge_ref).pcurves.insert(face_ref.index, (curve2d, default_range[0], default_range[1]));
+            t.edge_mut(edge_ref).pcurves.insert(
+                face_ref.index,
+                (curve2d, default_range[0], default_range[1]),
+            );
         }
     }
 
@@ -5520,9 +5803,18 @@ fn build_face_topods(
 ) -> Option<(topods::ShapeRef, Option<u64>)> {
     let bound_ids = parsed.advanced_faces.get(&face_id)?;
 
-    let outer_bound = bound_ids.bounds.iter().copied().find(|bid| {
-        parsed.face_bounds.get(bid).map(|(_, is_outer)| *is_outer).unwrap_or(false)
-    }).unwrap_or(*bound_ids.bounds.first()?);
+    let outer_bound = bound_ids
+        .bounds
+        .iter()
+        .copied()
+        .find(|bid| {
+            parsed
+                .face_bounds
+                .get(bid)
+                .map(|(_, is_outer)| *is_outer)
+                .unwrap_or(false)
+        })
+        .unwrap_or(*bound_ids.bounds.first()?);
 
     let (loop_id, _) = *parsed.face_bounds.get(&outer_bound)?;
 
@@ -5542,34 +5834,76 @@ fn build_face_topods(
         let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
 
         let edge_ref = ensure_edge_topods(
-            parsed, start_id, end_id, curve_ref, same_sense,
-            t, vertex_ref_by_id, edge_ref_by_curve,
-            curve_store_index_by_step, edge_curve_id,
+            parsed,
+            start_id,
+            end_id,
+            curve_ref,
+            same_sense,
+            t,
+            vertex_ref_by_id,
+            edge_ref_by_curve,
+            curve_store_index_by_step,
+            edge_curve_id,
         )?;
 
-        let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
-        wire_edges.push(topods::ShapeRef { ptr_id: edge_ref.ptr_id, index: edge_ref.index, orientation: orient, location: 0 });
+        let orient = if orientation {
+            topods::Orientation::Forward
+        } else {
+            topods::Orientation::Reversed
+        };
+        wire_edges.push(topods::ShapeRef {
+            ptr_id: edge_ref.ptr_id,
+            index: edge_ref.index,
+            orientation: orient,
+            location: 0,
+        });
     }
 
     // Build inner wires (holes)
     let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
-    for inner_bound in bound_ids.bounds.iter().copied().filter(|bid| *bid != outer_bound) {
-        let Some((inner_loop_id, _)) = parsed.face_bounds.get(&inner_bound).copied() else { continue; };
-        let Some(inner_oriented_ids) = parsed.edge_loops.get(&inner_loop_id) else { continue; };
+    for inner_bound in bound_ids
+        .bounds
+        .iter()
+        .copied()
+        .filter(|bid| *bid != outer_bound)
+    {
+        let Some((inner_loop_id, _)) = parsed.face_bounds.get(&inner_bound).copied() else {
+            continue;
+        };
+        let Some(inner_oriented_ids) = parsed.edge_loops.get(&inner_loop_id) else {
+            continue;
+        };
 
         let mut inner_edges = Vec::new();
         for oriented_id in inner_oriented_ids {
             let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
-            let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
+            let (start_id, end_id, curve_ref, same_sense) =
+                *parsed.edge_curves.get(&edge_curve_id)?;
 
             let edge_ref = ensure_edge_topods(
-                parsed, start_id, end_id, curve_ref, same_sense,
-                t, vertex_ref_by_id, edge_ref_by_curve,
-                curve_store_index_by_step, edge_curve_id,
+                parsed,
+                start_id,
+                end_id,
+                curve_ref,
+                same_sense,
+                t,
+                vertex_ref_by_id,
+                edge_ref_by_curve,
+                curve_store_index_by_step,
+                edge_curve_id,
             )?;
 
-            let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
-            inner_edges.push(topods::ShapeRef { ptr_id: edge_ref.ptr_id, index: edge_ref.index, orientation: orient, location: 0 });
+            let orient = if orientation {
+                topods::Orientation::Forward
+            } else {
+                topods::Orientation::Reversed
+            };
+            inner_edges.push(topods::ShapeRef {
+                ptr_id: edge_ref.ptr_id,
+                index: edge_ref.index,
+                orientation: orient,
+                location: 0,
+            });
         }
 
         if !inner_edges.is_empty() {
@@ -5610,7 +5944,9 @@ fn ensure_edge_topods(
         if curve_store_index_by_step.contains_key(&step_curve) {
             // Already resolved ? no need to resolve again (curve is stored directly on edge later)
             // Return None; the edge creation uses the resolved curve from the store
-            return curve_store_index_by_step.get(&step_curve).copied()
+            return curve_store_index_by_step
+                .get(&step_curve)
+                .copied()
                 .and_then(|_cidx| resolve_curve(parsed, step_curve));
         }
         let resolved = resolve_curve(parsed, step_curve)?;
@@ -5624,9 +5960,15 @@ fn ensure_edge_topods(
         if let Some(&(_, t0, t1)) = parsed.trimmed_curves.get(&step_curve) {
             return Some([t0, t1]);
         }
-        parsed.surface_curves.get(&step_curve).and_then(|(inner_ref, _, _)| {
-            parsed.trimmed_curves.get(inner_ref).map(|&(_, t0, t1)| [t0, t1])
-        })
+        parsed
+            .surface_curves
+            .get(&step_curve)
+            .and_then(|(inner_ref, _, _)| {
+                parsed
+                    .trimmed_curves
+                    .get(inner_ref)
+                    .map(|&(_, t0, t1)| [t0, t1])
+            })
     });
 
     let range = explicit_trim_range.unwrap_or_else(|| {
@@ -6097,14 +6439,15 @@ fn resolve_surface_for_trim_ops(parsed: &ParsedStep, surface_ref: u64) -> Option
 // CONVERSION FUNCTIONS: Kernel annotation types to STEP types
 // ?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T?T
 
-use rcad_kernel::annotation::{
-    Annotation, Note, NoteCategory, View, ViewProjection,
-};
+use rcad_kernel::annotation::{Annotation, Note, NoteCategory, View, ViewProjection};
 
 /// Convert a kernel View to STEP view entities.
 ///
 /// Returns (StepView, StepCameraModelD3, StepViewVolume) for writing to STEP.
-pub fn view_to_step_entities(view: &View, start_id: u64) -> (StepView, StepCameraModelD3, StepViewVolume) {
+pub fn view_to_step_entities(
+    view: &View,
+    start_id: u64,
+) -> (StepView, StepCameraModelD3, StepViewVolume) {
     let view_id = start_id;
     let camera_id = start_id + 1;
     let volume_id = start_id + 2;
@@ -6162,7 +6505,11 @@ pub fn note_to_step(note: &Note) -> StepNote {
 pub fn annotation_to_step_entities(
     annotation: &Annotation,
     _start_id: u64,
-) -> (StepNote, Option<StepAnnotationPlane>, Option<StepAnnotationOccurrence>) {
+) -> (
+    StepNote,
+    Option<StepAnnotationPlane>,
+    Option<StepAnnotationOccurrence>,
+) {
     let step_note = StepNote {
         entity_id: annotation.id,
         name: Some(annotation.name.clone()),
@@ -6188,17 +6535,21 @@ pub fn step_views_to_kernel(
         .map(|step_view| {
             // Find corresponding camera
             let camera = step_view.camera_model_id.and_then(|cam_id| {
-                cameras.iter().find(|c| c.entity_id == cam_id || c.entity_id == step_view.entity_id)
+                cameras
+                    .iter()
+                    .find(|c| c.entity_id == cam_id || c.entity_id == step_view.entity_id)
             });
 
             // Find corresponding view volume
             let volume = camera.and_then(|cam| {
-                cam.view_volume_id.and_then(|vol_id| {
-                    volumes.iter().find(|v| v.entity_id == vol_id)
-                })
+                cam.view_volume_id
+                    .and_then(|vol_id| volumes.iter().find(|v| v.entity_id == vol_id))
             });
 
-            let mut view = View::new(step_view.entity_id, step_view.name.clone().unwrap_or_default());
+            let mut view = View::new(
+                step_view.entity_id,
+                step_view.name.clone().unwrap_or_default(),
+            );
 
             if let Some(cam) = camera {
                 view.projection = if cam.perspective {
@@ -6243,10 +6594,18 @@ pub fn step_notes_to_kernel(notes: &[StepNote]) -> Vec<Note> {
         .iter()
         .map(|step_note| {
             let category = match step_note.name.as_deref() {
-                Some(name) if name.contains("warning") || name.contains("Warning") => NoteCategory::Warning,
-                Some(name) if name.contains("requirement") || name.contains("Requirement") => NoteCategory::Requirement,
-                Some(name) if name.contains("comment") || name.contains("Comment") => NoteCategory::Comment,
-                Some(name) if name.contains("approval") || name.contains("Approval") => NoteCategory::Approval,
+                Some(name) if name.contains("warning") || name.contains("Warning") => {
+                    NoteCategory::Warning
+                }
+                Some(name) if name.contains("requirement") || name.contains("Requirement") => {
+                    NoteCategory::Requirement
+                }
+                Some(name) if name.contains("comment") || name.contains("Comment") => {
+                    NoteCategory::Comment
+                }
+                Some(name) if name.contains("approval") || name.contains("Approval") => {
+                    NoteCategory::Approval
+                }
                 _ => NoteCategory::Info,
             };
 
@@ -6407,10 +6766,7 @@ fn parse_offset_surface(args: &str) -> Option<(u64, f64)> {
     if parts.len() < 4 {
         return None;
     }
-    Some((
-        parse_ref(parts[1])?,
-        parts[2].trim().parse::<f64>().ok()?,
-    ))
+    Some((parse_ref(parts[1])?, parts[2].trim().parse::<f64>().ok()?))
 }
 
 fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
@@ -6443,7 +6799,9 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
 
     if let Some((placement_ref, radius)) = parsed.circles.get(&actual_ref) {
         let (center, normal) = placement_from_ref(parsed, *placement_ref)?;
-        return Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(center, normal, *radius)));
+        return Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(
+            center, normal, *radius,
+        )));
     }
 
     if let Some((placement_ref, major_radius, minor_radius)) = parsed.ellipses.get(&actual_ref) {
@@ -6520,7 +6878,9 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
 fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
     if let Some(placement_ref) = parsed.planes.get(&surface_ref) {
         let (origin, normal, u_dir) = placement_frame_from_ref(parsed, *placement_ref)?;
-        return Some(Surface3::Plane(rcad_kernel::geom::Plane::with_axes(origin, normal, u_dir)));
+        return Some(Surface3::Plane(rcad_kernel::geom::Plane::with_axes(
+            origin, normal, u_dir,
+        )));
     }
 
     if let Some((placement_ref, radius)) = parsed.cylindrical_surfaces.get(&surface_ref) {
@@ -7152,7 +7512,12 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
                     .and_then(|(loc_ref, _, _)| parsed.cartesian_points.get(loc_ref))
                     .map(|&p| glam::DVec2::new(p[0], p[1]))
             })?;
-        return Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: *radius, }));
+        return Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
+            center,
+            x_dir: glam::DVec2::X,
+            y_dir: glam::DVec2::Y,
+            radius: *radius,
+        }));
     }
 
     // 2D Ellipse: ELLIPSE referencing an AXIS2_PLACEMENT_2D
@@ -7247,20 +7612,48 @@ impl std::fmt::Display for ExportIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use ExportIssue::*;
         match self {
-            PcurveSurfaceOutOfRange { edge_idx, surface_idx } =>
-                write!(f, "edge {edge_idx}: PCurve surface_idx {surface_idx} out of range"),
-            PcurveCurveOutOfRange { edge_idx, curve2d_idx } =>
-                write!(f, "edge {edge_idx}: PCurve curve2d_idx {curve2d_idx} out of range"),
-            EdgeToleranceTooTight { edge_idx, tolerance } =>
-                write!(f, "edge {edge_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
-            VertexToleranceTooTight { vertex_idx, tolerance } =>
-                write!(f, "vertex {vertex_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
-            FaceToleranceTooTight { face_idx, tolerance } =>
-                write!(f, "face {face_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
-            TooManyPcurves { edge_idx, count } =>
-                write!(f, "edge {edge_idx}: has {count} PCurves (max 2 expected)"),
-            MissingPcurve { edge_idx } =>
-                write!(f, "edge {edge_idx}: used by surface-bearing face but no PCurve stored"),
+            PcurveSurfaceOutOfRange {
+                edge_idx,
+                surface_idx,
+            } => write!(
+                f,
+                "edge {edge_idx}: PCurve surface_idx {surface_idx} out of range"
+            ),
+            PcurveCurveOutOfRange {
+                edge_idx,
+                curve2d_idx,
+            } => write!(
+                f,
+                "edge {edge_idx}: PCurve curve2d_idx {curve2d_idx} out of range"
+            ),
+            EdgeToleranceTooTight {
+                edge_idx,
+                tolerance,
+            } => write!(
+                f,
+                "edge {edge_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"
+            ),
+            VertexToleranceTooTight {
+                vertex_idx,
+                tolerance,
+            } => write!(
+                f,
+                "vertex {vertex_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"
+            ),
+            FaceToleranceTooTight {
+                face_idx,
+                tolerance,
+            } => write!(
+                f,
+                "face {face_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"
+            ),
+            TooManyPcurves { edge_idx, count } => {
+                write!(f, "edge {edge_idx}: has {count} PCurves (max 2 expected)")
+            }
+            MissingPcurve { edge_idx } => write!(
+                f,
+                "edge {edge_idx}: used by surface-bearing face but no PCurve stored"
+            ),
         }
     }
 }
@@ -7289,7 +7682,9 @@ impl ExportReadinessReport {
         } else {
             format!(
                 "NOT export-ready: {} issue(s) across {} edges / {} pcurves",
-                self.issues.len(), self.edges_checked, self.pcurves_checked
+                self.issues.len(),
+                self.edges_checked,
+                self.pcurves_checked
             )
         }
     }
@@ -7320,31 +7715,49 @@ pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
 
     // Check edge tolerances and pcurves from topods TShape data.
     for (ei, ts) in brep.tshapes.iter().enumerate() {
-        let topods::TShape::Edge(ed) = &**ts else { continue };
+        let topods::TShape::Edge(ed) = &**ts else {
+            continue;
+        };
         edges_checked += 1;
         let n_pc = ed.pcurves.len();
         if n_pc > 2 {
-            issues.push(ExportIssue::TooManyPcurves { edge_idx: ei, count: n_pc });
+            issues.push(ExportIssue::TooManyPcurves {
+                edge_idx: ei,
+                count: n_pc,
+            });
         }
         pcurves_checked += n_pc;
         if ed.tolerance > 0.0 && ed.tolerance < CONFUSION {
-            issues.push(ExportIssue::EdgeToleranceTooTight { edge_idx: ei, tolerance: ed.tolerance });
+            issues.push(ExportIssue::EdgeToleranceTooTight {
+                edge_idx: ei,
+                tolerance: ed.tolerance,
+            });
         }
     }
 
     // Check vertex tolerances.
     for (vi, ts) in brep.tshapes.iter().enumerate() {
-        let topods::TShape::Vertex(vd) = &**ts else { continue };
+        let topods::TShape::Vertex(vd) = &**ts else {
+            continue;
+        };
         if vd.tolerance > 0.0 && vd.tolerance < CONFUSION {
-            issues.push(ExportIssue::VertexToleranceTooTight { vertex_idx: vi, tolerance: vd.tolerance });
+            issues.push(ExportIssue::VertexToleranceTooTight {
+                vertex_idx: vi,
+                tolerance: vd.tolerance,
+            });
         }
     }
 
     // Check face tolerances.
     for (fi, ts) in brep.tshapes.iter().enumerate() {
-        let topods::TShape::Face(fd) = &**ts else { continue };
+        let topods::TShape::Face(fd) = &**ts else {
+            continue;
+        };
         if fd.tolerance > 0.0 && fd.tolerance < CONFUSION {
-            issues.push(ExportIssue::FaceToleranceTooTight { face_idx: fi, tolerance: fd.tolerance });
+            issues.push(ExportIssue::FaceToleranceTooTight {
+                face_idx: fi,
+                tolerance: fd.tolerance,
+            });
         }
     }
 
@@ -7397,8 +7810,12 @@ mod tests {
                     topological_vertices.insert(ed.first.index);
                     topological_vertices.insert(ed.last.index);
                 }
-                topods::TShape::Shell(_) => { shells += 1; }
-                topods::TShape::Face(_) => { faces += 1; }
+                topods::TShape::Shell(_) => {
+                    shells += 1;
+                }
+                topods::TShape::Face(_) => {
+                    faces += 1;
+                }
                 _ => {}
             }
         }
@@ -7408,8 +7825,8 @@ mod tests {
 
     #[test]
     fn round_trip_box_brep() {
-        use rcad_modeling::make_box_brep;
         use glam::DVec3;
+        use rcad_modeling::make_box_brep;
 
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let (v1, e1, f1, s1) = count_topology(&a);
@@ -7435,8 +7852,16 @@ mod tests {
     #[test]
     fn parses_hfss_into_non_trivial_brep() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let n_vertices = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
-        let n_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        let n_vertices = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_)))
+            .count();
+        let n_edges = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .count();
         assert!(n_vertices > 8, "hfss should have more than box vertices");
         assert!(n_edges > 0, "hfss should produce edges");
     }
@@ -7444,14 +7869,22 @@ mod tests {
     #[test]
     fn triangulates_spherical_face_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        let n_faces = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+            .count();
         assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
     #[test]
     fn triangulates_toroidal_face_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        let n_faces = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+            .count();
         assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
@@ -7459,17 +7892,18 @@ mod tests {
     #[ignore = "hfss fixture topology no longer guarantees a single outer-wire edge on disc/trim faces"]
     fn triangulates_single_edge_planar_faces_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        let n_faces = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+            .count();
         assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
     #[test]
     fn parse_hfss_with_healing_returns_report() {
         let result = std::panic::catch_unwind(|| {
-            StepReader::parse_string_with_healing(
-                HFSS_STEP,
-                HealingOptions::default(),
-            )
+            StepReader::parse_string_with_healing(HFSS_STEP, HealingOptions::default())
         });
         match result {
             Ok(Ok((t, report))) => {
@@ -7488,10 +7922,7 @@ mod tests {
     #[test]
     fn parse_hfss_with_healing_report_json_contains_schema_and_counts() {
         let result = std::panic::catch_unwind(|| {
-            StepReader::parse_string_with_healing_report_json(
-                HFSS_STEP,
-                HealingOptions::default(),
-            )
+            StepReader::parse_string_with_healing_report_json(HFSS_STEP, HealingOptions::default())
         });
         match result {
             Ok(Ok((t, report, json))) => {
@@ -7564,7 +7995,8 @@ mod tests {
                 selected_edges: &[],
             },
         );
-        let parsed = parse_entities(&step).expect("tagged ellipsoid STEP should parse into entities");
+        let parsed =
+            parse_entities(&step).expect("tagged ellipsoid STEP should parse into entities");
         let (&surface_id, _) = parsed
             .b_spline_surfaces
             .iter()
@@ -7610,7 +8042,8 @@ mod tests {
                 selected_edges: &[],
             },
         );
-        let parsed = parse_entities(&step).expect("tagged helicoid STEP should parse into entities");
+        let parsed =
+            parse_entities(&step).expect("tagged helicoid STEP should parse into entities");
         let (&surface_id, _) = parsed
             .b_spline_surfaces
             .iter()
@@ -7706,7 +8139,10 @@ END-ISO-10303-21;
         assert_eq!(products[0].entity_id, 11);
         assert_eq!(products[0].product_id.as_deref(), Some("ASM-100"));
         assert_eq!(products[0].name.as_deref(), Some("Top Assembly"));
-        assert_eq!(products[0].description.as_deref(), Some("assembly description"));
+        assert_eq!(
+            products[0].description.as_deref(),
+            Some("assembly description")
+        );
     }
 
     #[test]
@@ -7860,7 +8296,10 @@ END-ISO-10303-21;
         assert_eq!(defs[0].definition_id, 30);
         assert_eq!(defs[0].referenced_entity_id, Some(21));
         assert_eq!(defs[0].general_property_name.as_deref(), Some("PartNumber"));
-        assert_eq!(defs[0].general_property_description.as_deref(), Some("ERP key"));
+        assert_eq!(
+            defs[0].general_property_description.as_deref(),
+            Some("ERP key")
+        );
 
         assert_eq!(defs[1].definition_id, 31);
         assert_eq!(defs[1].referenced_entity_id, Some(22));
@@ -7871,9 +8310,21 @@ END-ISO-10303-21;
     #[test]
     fn preserves_standalone_edge_only_geometry() {
         let t = StepReader::parse_string(EDGE_ONLY_STEP).expect("edge-only STEP should parse");
-        let n_vertices = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
-        let n_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
-        let n_solids = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
+        let n_vertices = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_)))
+            .count();
+        let n_edges = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .count();
+        let n_solids = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+            .count();
         assert_eq!(n_vertices, 2);
         assert_eq!(n_edges, 1);
         assert_eq!(n_solids, 0, "edge-only data should not fabricate solids");
@@ -7882,7 +8333,11 @@ END-ISO-10303-21;
     #[test]
     fn preserves_geometric_curve_sets_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let total_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        let total_edges = t
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .count();
         assert!(
             total_edges >= 4,
             "expected geometric curve set edges, got total edge count = {total_edges}"
@@ -7895,11 +8350,27 @@ END-ISO-10303-21;
         let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
             .expect("box.step stream parse should succeed");
         assert_eq!(a.nb_faces(), b.nb_faces());
-        let n_edges_a = a.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
-        let n_edges_b = b.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        let n_edges_a = a
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .count();
+        let n_edges_b = b
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+            .count();
         assert_eq!(n_edges_a, n_edges_b);
-        let n_solids_a = a.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
-        let n_solids_b = b.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
+        let n_solids_a = a
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+            .count();
+        let n_solids_b = b
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+            .count();
         assert_eq!(n_solids_a, n_solids_b);
     }
 
@@ -8074,7 +8545,10 @@ END-ISO-10303-21;
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].entity_id, 100);
         assert_eq!(models[0].name.as_deref(), Some("bracket_fea"));
-        assert_eq!(models[0].description.as_deref(), Some("FEA model for bracket"));
+        assert_eq!(
+            models[0].description.as_deref(),
+            Some("FEA model for bracket")
+        );
     }
 
     #[test]
@@ -8242,7 +8716,10 @@ END-ISO-10303-21;
         assert_eq!(analyses.len(), 2);
         assert_eq!(analyses[0].entity_id, 100);
         assert_eq!(analyses[0].name.as_deref(), Some("static_analysis"));
-        assert_eq!(analyses[0].description.as_deref(), Some("Static structural analysis"));
+        assert_eq!(
+            analyses[0].description.as_deref(),
+            Some("Static structural analysis")
+        );
         assert_eq!(analyses[0].model_id, Some(50));
         assert_eq!(analyses[0].analysis_type.as_deref(), Some("STATIC"));
         assert_eq!(analyses[0].creation_date.as_deref(), Some("2024-01-15"));
@@ -8380,27 +8857,52 @@ END-ISO-10303-21;
 
     #[test]
     fn parse_reader_with_metadata_matches_string_variant() {
-        let (_a_brep, a_md) =
-            StepReader::parse_string_with_metadata(BOX_STEP).expect("string metadata parse should succeed");
-        let (_b_brep, b_md) = StepReader::parse_reader_with_metadata(Cursor::new(BOX_STEP.as_bytes()))
-            .expect("stream metadata parse should succeed");
+        let (_a_brep, a_md) = StepReader::parse_string_with_metadata(BOX_STEP)
+            .expect("string metadata parse should succeed");
+        let (_b_brep, b_md) =
+            StepReader::parse_reader_with_metadata(Cursor::new(BOX_STEP.as_bytes()))
+                .expect("stream metadata parse should succeed");
 
         assert_eq!(a_md.file_schema, b_md.file_schema);
         assert_eq!(a_md.protocol_hint as u8, b_md.protocol_hint as u8);
         assert_eq!(a_md.products.len(), b_md.products.len());
-        assert_eq!(a_md.product_definition_formations.len(), b_md.product_definition_formations.len());
-        assert_eq!(a_md.product_definitions.len(), b_md.product_definitions.len());
-        assert_eq!(a_md.shape_definition_representations.len(), b_md.shape_definition_representations.len());
-        assert_eq!(a_md.assembly_occurrences.len(), b_md.assembly_occurrences.len());
+        assert_eq!(
+            a_md.product_definition_formations.len(),
+            b_md.product_definition_formations.len()
+        );
+        assert_eq!(
+            a_md.product_definitions.len(),
+            b_md.product_definitions.len()
+        );
+        assert_eq!(
+            a_md.shape_definition_representations.len(),
+            b_md.shape_definition_representations.len()
+        );
+        assert_eq!(
+            a_md.assembly_occurrences.len(),
+            b_md.assembly_occurrences.len()
+        );
         assert_eq!(a_md.product_names, b_md.product_names);
         assert_eq!(a_md.materials.len(), b_md.materials.len());
         assert_eq!(a_md.layers.len(), b_md.layers.len());
         assert_eq!(a_md.general_properties.len(), b_md.general_properties.len());
-        assert_eq!(a_md.property_definitions.len(), b_md.property_definitions.len());
-        assert_eq!(a_md.property_definition_representations.len(), b_md.property_definition_representations.len());
-        assert_eq!(a_md.dimensional_locations.len(), b_md.dimensional_locations.len());
+        assert_eq!(
+            a_md.property_definitions.len(),
+            b_md.property_definitions.len()
+        );
+        assert_eq!(
+            a_md.property_definition_representations.len(),
+            b_md.property_definition_representations.len()
+        );
+        assert_eq!(
+            a_md.dimensional_locations.len(),
+            b_md.dimensional_locations.len()
+        );
         assert_eq!(a_md.dimensional_sizes.len(), b_md.dimensional_sizes.len());
-        assert_eq!(a_md.geometric_tolerances.len(), b_md.geometric_tolerances.len());
+        assert_eq!(
+            a_md.geometric_tolerances.len(),
+            b_md.geometric_tolerances.len()
+        );
         assert_eq!(
             a_md.geometric_tolerances_with_datum_references.len(),
             b_md.geometric_tolerances_with_datum_references.len()
@@ -8409,30 +8911,63 @@ END-ISO-10303-21;
         assert_eq!(a_md.datum_systems.len(), b_md.datum_systems.len());
         assert_eq!(a_md.kinematic_pairs.len(), b_md.kinematic_pairs.len());
         assert_eq!(a_md.tolerance_zones.len(), b_md.tolerance_zones.len());
-        assert_eq!(a_md.tolerance_zone_definitions.len(), b_md.tolerance_zone_definitions.len());
+        assert_eq!(
+            a_md.tolerance_zone_definitions.len(),
+            b_md.tolerance_zone_definitions.len()
+        );
         assert_eq!(a_md.datum_features.len(), b_md.datum_features.len());
-        assert_eq!(a_md.datum_reference_elements.len(), b_md.datum_reference_elements.len());
+        assert_eq!(
+            a_md.datum_reference_elements.len(),
+            b_md.datum_reference_elements.len()
+        );
         assert_eq!(a_md.shape_aspects.len(), b_md.shape_aspects.len());
-        assert_eq!(a_md.shape_aspect_definitions.len(), b_md.shape_aspect_definitions.len());
-        assert_eq!(a_md.derived_shape_aspects.len(), b_md.derived_shape_aspects.len());
+        assert_eq!(
+            a_md.shape_aspect_definitions.len(),
+            b_md.shape_aspect_definitions.len()
+        );
+        assert_eq!(
+            a_md.derived_shape_aspects.len(),
+            b_md.derived_shape_aspects.len()
+        );
         assert_eq!(a_md.fea_models.len(), b_md.fea_models.len());
         assert_eq!(a_md.fea_meshes.len(), b_md.fea_meshes.len());
         assert_eq!(a_md.fea_node_sets.len(), b_md.fea_node_sets.len());
         assert_eq!(a_md.fea_element_sets.len(), b_md.fea_element_sets.len());
-        assert_eq!(a_md.fea_material_properties.len(), b_md.fea_material_properties.len());
-        assert_eq!(a_md.fea_boundary_conditions.len(), b_md.fea_boundary_conditions.len());
+        assert_eq!(
+            a_md.fea_material_properties.len(),
+            b_md.fea_material_properties.len()
+        );
+        assert_eq!(
+            a_md.fea_boundary_conditions.len(),
+            b_md.fea_boundary_conditions.len()
+        );
         assert_eq!(a_md.fea_loads.len(), b_md.fea_loads.len());
         // GDT extended fields
-        assert_eq!(a_md.dimensional_tolerances.len(), b_md.dimensional_tolerances.len());
+        assert_eq!(
+            a_md.dimensional_tolerances.len(),
+            b_md.dimensional_tolerances.len()
+        );
         assert_eq!(a_md.tolerance_values.len(), b_md.tolerance_values.len());
-        assert_eq!(a_md.position_tolerances.len(), b_md.position_tolerances.len());
-        assert_eq!(a_md.orientation_tolerances.len(), b_md.orientation_tolerances.len());
+        assert_eq!(
+            a_md.position_tolerances.len(),
+            b_md.position_tolerances.len()
+        );
+        assert_eq!(
+            a_md.orientation_tolerances.len(),
+            b_md.orientation_tolerances.len()
+        );
         assert_eq!(a_md.form_tolerances.len(), b_md.form_tolerances.len());
         assert_eq!(a_md.runout_tolerances.len(), b_md.runout_tolerances.len());
         assert_eq!(a_md.profile_tolerances.len(), b_md.profile_tolerances.len());
-        assert_eq!(a_md.datum_reference_frames.len(), b_md.datum_reference_frames.len());
+        assert_eq!(
+            a_md.datum_reference_frames.len(),
+            b_md.datum_reference_frames.len()
+        );
         assert_eq!(a_md.datum_targets.len(), b_md.datum_targets.len());
-        assert_eq!(a_md.tolerance_zone_definitions_enhanced.len(), b_md.tolerance_zone_definitions_enhanced.len());
+        assert_eq!(
+            a_md.tolerance_zone_definitions_enhanced.len(),
+            b_md.tolerance_zone_definitions_enhanced.len()
+        );
     }
 
     #[test]
@@ -8469,7 +9004,10 @@ END-ISO-10303-21;
         let brep = BRep::new();
         let report = validate_export_readiness(&brep);
         let s = report.summary();
-        assert!(s.contains("export-ready"), "summary should say export-ready: {s}");
+        assert!(
+            s.contains("export-ready"),
+            "summary should say export-ready: {s}"
+        );
     }
 
     // ???? GDT Extended entity extraction tests ????????????????????????????????????????????????????????????????????????????
@@ -8521,7 +9059,10 @@ END-ISO-10303-21;
         assert_eq!(tols.len(), 1);
         assert_eq!(tols[0].entity_id, 40);
         assert_eq!(tols[0].name.as_deref(), Some("ang_tol"));
-        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Angularity);
+        assert_eq!(
+            tols[0].orientation_type,
+            OrientationToleranceType::Angularity
+        );
     }
 
     #[test]
@@ -8530,7 +9071,10 @@ END-ISO-10303-21;
         let tols = extract_orientation_tolerances(step);
         assert_eq!(tols.len(), 1);
         assert_eq!(tols[0].entity_id, 41);
-        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Perpendicularity);
+        assert_eq!(
+            tols[0].orientation_type,
+            OrientationToleranceType::Perpendicularity
+        );
     }
 
     #[test]
@@ -8539,7 +9083,10 @@ END-ISO-10303-21;
         let tols = extract_orientation_tolerances(step);
         assert_eq!(tols.len(), 1);
         assert_eq!(tols[0].entity_id, 42);
-        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Parallelism);
+        assert_eq!(
+            tols[0].orientation_type,
+            OrientationToleranceType::Parallelism
+        );
     }
 
     #[test]

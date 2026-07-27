@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a torus and a cone.
+//! Analytic intersection of a torus and a cone.
 //!
 //! # Case classification
 //!
@@ -35,8 +35,8 @@
 use std::f64::consts::TAU;
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, ToroidalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, ConicalSurface, ToroidalSurface, any_perpendicular};
 
 use crate::tolerance::*;
 
@@ -67,10 +67,7 @@ pub enum TorusConeResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute the analytic intersection of `torus` and `cone`.
-pub fn intersect_torus_cone(
-    torus: &ToroidalSurface,
-    cone: &ConicalSurface,
-) -> TorusConeResult {
+pub fn intersect_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> TorusConeResult {
     intersect_torus_cone_with_tolerance(torus, cone, 0.0)
 }
 
@@ -128,7 +125,11 @@ fn intersect_torus_cone_coaxial(
     let ta = cone.half_angle_rad.tan();
 
     // Determine cone orientation relative to torus axis
-    let sigma = if cone.axis_dir().dot(axis) >= 0.0 { 1.0 } else { -1.0 };
+    let sigma = if cone.axis_dir().dot(axis) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let apex = cone.apex_point();
     let r_ref = cone.radius;
 
@@ -238,10 +239,7 @@ fn intersect_torus_cone_coaxial(
 /// |P|² = S0(u) + v·S1(u) + v²     (since |B1|² = 1 for the cone)
 /// P·a_tor = T0(u) + v·T1(u)
 /// ```
-fn intersect_skew_torus_cone(
-    torus: &ToroidalSurface,
-    cone: &ConicalSurface,
-) -> Vec<Vec<DVec3>> {
+fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> Vec<Vec<DVec3>> {
     let a_tor = torus.axis.normalize();
     let a_cone = cone.axis_dir();
     let apex = cone.apex_point();
@@ -266,8 +264,8 @@ fn intersect_skew_torus_cone(
     // ── Pre-computed constants (independent of u) ──────────────────────────
     let apex_sq = o.length_squared();
     let a_dot_at = a_cone.dot(a_tor);
-    let apex_o_at = o.dot(a_tor);   // apex · a_tor
-    let apex_o_ac = o.dot(a_cone);  // apex · a_cone
+    let apex_o_at = o.dot(a_tor); // apex · a_tor
+    let apex_o_ac = o.dot(a_cone); // apex · a_cone
 
     // Components of apex-in-torus-frame and a_tor in the cone's perpendicular plane
     let ox = o.dot(x_cone);
@@ -289,8 +287,8 @@ fn intersect_skew_torus_cone(
         let (cu, su) = (u.cos(), u.sin());
 
         // r_dir(u) = cos(u)·x_cone + sin(u)·y_cone
-        let apex_r = ox * cu + oy * su;   // apex · r_dir(u)
-        let at_r = cx * cu + cy * su;     // a_tor · r_dir(u)
+        let apex_r = ox * cu + oy * su; // apex · r_dir(u)
+        let at_r = cx * cu + cy * su; // a_tor · r_dir(u)
 
         // ── Compute quartic coefficients ───────────────────────────────────
         // S0 = |B0|² = |o|² + r_ref² + 2·r_ref·(o·r_dir)
@@ -307,9 +305,11 @@ fn intersect_skew_torus_cone(
 
         // Monic quartic: v⁴ + a₃·v³ + a₂·v² + a₁·v + a₀ = 0
         let a3 = 2.0 * s1;
-        let a2 = 2.0 * s0 - 2.0 * r_major_sq - 2.0 * r_minor_sq + s1 * s1 + 4.0 * r_major_sq * t1 * t1;
+        let a2 =
+            2.0 * s0 - 2.0 * r_major_sq - 2.0 * r_minor_sq + s1 * s1 + 4.0 * r_major_sq * t1 * t1;
         let a1 = 2.0 * s1 * (s0 - r_major_sq - r_minor_sq) + 8.0 * r_major_sq * t0 * t1;
-        let a0 = s0 * s0 - 2.0 * s0 * (r_major_sq + r_minor_sq) + c_sq_sq + 4.0 * r_major_sq * t0 * t0;
+        let a0 =
+            s0 * s0 - 2.0 * s0 * (r_major_sq + r_minor_sq) + c_sq_sq + 4.0 * r_major_sq * t0 * t0;
 
         let v_roots = crate::solve_quartic(1.0, a3, a2, a1, a0);
 
@@ -448,10 +448,12 @@ fn intersect_skew_torus_cone(
                     .map(|(_, p)| p)
             };
 
-            let refined =
-                crate::inttools::pcurve_derive::refine_polyline(
-                    &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
-                );
+            let refined = crate::inttools::pcurve_derive::refine_polyline(
+                &branch,
+                eval_fn,
+                CHORD_TOL,
+                REFINE_DEPTH,
+            );
             refined.into_iter().map(|(_, p)| p).collect()
         })
         .collect();
@@ -474,5 +476,3 @@ fn intersect_skew_torus_cone(
 
     result
 }
-
-

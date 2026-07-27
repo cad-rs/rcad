@@ -43,11 +43,11 @@
 //! - **Parallel processing**: Multi-threaded processing for large models
 
 use crate::tolerance::*;
-use std::collections::{HashMap, HashSet};
-use rayon::prelude::*;
 use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
+use rayon::prelude::*;
 use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
-use rcad_kernel::{topods, SurfaceEval};
+use rcad_kernel::{SurfaceEval, topods};
+use std::collections::{HashMap, HashSet};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -405,8 +405,10 @@ impl SurfacePropertyCache {
     /// Get or compute surface properties at (u, v).
     pub fn get_or_compute(&mut self, surface: &Surface3, u: f64, v: f64) -> SurfaceProperties {
         let [u0, u1, v0, v1] = self.domain;
-        let i = ((u - u0) / (u1 - u0) * self.resolution as f64).min(self.resolution as f64 - 1.0) as usize;
-        let j = ((v - v0) / (v1 - v0) * self.resolution as f64).min(self.resolution as f64 - 1.0) as usize;
+        let i = ((u - u0) / (u1 - u0) * self.resolution as f64).min(self.resolution as f64 - 1.0)
+            as usize;
+        let j = ((v - v0) / (v1 - v0) * self.resolution as f64).min(self.resolution as f64 - 1.0)
+            as usize;
 
         if let Some(&props) = self.cache.get(&(i, j)) {
             return props;
@@ -420,8 +422,10 @@ impl SurfacePropertyCache {
     /// Get cached properties if available.
     pub fn get(&self, u: f64, v: f64) -> Option<&SurfaceProperties> {
         let [u0, u1, v0, v1] = self.domain;
-        let i = ((u - u0) / (u1 - u0) * self.resolution as f64).min(self.resolution as f64 - 1.0) as usize;
-        let j = ((v - v0) / (v1 - v0) * self.resolution as f64).min(self.resolution as f64 - 1.0) as usize;
+        let i = ((u - u0) / (u1 - u0) * self.resolution as f64).min(self.resolution as f64 - 1.0)
+            as usize;
+        let j = ((v - v0) / (v1 - v0) * self.resolution as f64).min(self.resolution as f64 - 1.0)
+            as usize;
         self.cache.get(&(i, j))
     }
 
@@ -518,7 +522,13 @@ pub fn compute_adaptive_samples(
     let [u0, u1, v0, v1] = domain;
 
     // Find silhouette seed points
-    let seeds = find_silhouette_seeds(surface, view_dir, domain, config.base_samples, opts.tangent_tolerance);
+    let seeds = find_silhouette_seeds(
+        surface,
+        view_dir,
+        domain,
+        config.base_samples,
+        opts.tangent_tolerance,
+    );
 
     if seeds.is_empty() {
         return Vec::new();
@@ -538,13 +548,17 @@ pub fn compute_adaptive_samples(
         }
 
         // Trace the silhouette curve
-        let curve_samples = trace_adaptive_silhouette(surface, view_dir, domain, u, v, config, opts);
+        let curve_samples =
+            trace_adaptive_silhouette(surface, view_dir, domain, u, v, config, opts);
 
         // Mark visited cells
         for sample in &curve_samples {
             let ci = ((sample.uv.0 - u0) / (u1 - u0) * config.base_samples as f64) as usize;
             let cj = ((sample.uv.1 - v0) / (v1 - v0) * config.base_samples as f64) as usize;
-            visited.insert((ci.min(config.base_samples - 1), cj.min(config.base_samples - 1)));
+            visited.insert((
+                ci.min(config.base_samples - 1),
+                cj.min(config.base_samples - 1),
+            ));
         }
 
         all_samples.extend(curve_samples);
@@ -609,7 +623,9 @@ fn trace_adaptive_silhouette(
             }
 
             // Project back onto the silhouette curve
-            if let Some((u_proj, v_proj)) = project_to_silhouette(surface, view_dir, u_new, v_new, opts.tangent_tolerance) {
+            if let Some((u_proj, v_proj)) =
+                project_to_silhouette(surface, view_dir, u_new, v_new, opts.tangent_tolerance)
+            {
                 u = u_proj;
                 v = v_proj;
 
@@ -625,14 +641,22 @@ fn trace_adaptive_silhouette(
                         // Check angular deviation
                         let dir_new = (sample.point - prev.point).normalize_or_zero();
                         let dir_prev = if samples.len() >= 2 {
-                            (samples[samples.len() - 1].point - samples[samples.len() - 2].point).normalize_or_zero()
+                            (samples[samples.len() - 1].point - samples[samples.len() - 2].point)
+                                .normalize_or_zero()
                         } else {
                             dir_new
                         };
                         let angle = dir_new.dot(dir_prev).acos().abs();
                         if angle > config.max_angle_deviation {
                             // Add intermediate samples for high angular deviation
-                            add_intermediate_samples(surface, view_dir, prev, sample, &mut samples, config);
+                            add_intermediate_samples(
+                                surface,
+                                view_dir,
+                                prev,
+                                sample,
+                                &mut samples,
+                                config,
+                            );
                         }
                     }
 
@@ -658,7 +682,12 @@ fn trace_adaptive_silhouette(
 }
 
 /// Create an adaptive sample at a parameter location.
-fn create_adaptive_sample(surface: &Surface3, view_dir: DVec3, u: f64, v: f64) -> Option<AdaptiveSample> {
+fn create_adaptive_sample(
+    surface: &Surface3,
+    view_dir: DVec3,
+    u: f64,
+    v: f64,
+) -> Option<AdaptiveSample> {
     let point = surface.point_at(u, v);
     let normal = surface.normal_at(u, v);
     let curvatures = rcad_kernel::curvature::principal_curvatures(surface, u, v);
@@ -689,7 +718,8 @@ fn add_intermediate_samples(
     samples: &mut Vec<AdaptiveSample>,
     config: &AdaptiveSamplingConfig,
 ) {
-    let num_intermediate = ((end.point - start.point).length() / config.min_chord_length).ceil() as usize;
+    let num_intermediate =
+        ((end.point - start.point).length() / config.min_chord_length).ceil() as usize;
     let num_intermediate = num_intermediate.min(4);
 
     for i in 1..num_intermediate {
@@ -732,7 +762,8 @@ fn refine_adaptive_samples(
             || chord_len > config.min_chord_length * 4.0;
 
         if needs_refinement {
-            let num_subdivisions = (avg_curvature * chord_len / config.curvature_threshold).ceil() as usize;
+            let num_subdivisions =
+                (avg_curvature * chord_len / config.curvature_threshold).ceil() as usize;
             let num_subdivisions = num_subdivisions.min(4).max(1);
 
             for j in 1..num_subdivisions {
@@ -1077,10 +1108,8 @@ impl TriBvh {
         let (split_axis, split_pos) = self.sah_split(tri_indices, &aabb);
 
         // Partition triangles
-        let (left_tris, right_tris): (Vec<usize>, Vec<usize>) = tri_indices
-            .iter()
-            .copied()
-            .partition(|&ti| {
+        let (left_tris, right_tris): (Vec<usize>, Vec<usize>) =
+            tri_indices.iter().copied().partition(|&ti| {
                 let center = match split_axis {
                     0 => self.triangle_centers[ti].x,
                     1 => self.triangle_centers[ti].y,
@@ -1188,7 +1217,13 @@ impl TriBvh {
 
         if best_cost.is_infinite() {
             let d = parent_aabb.max - parent_aabb.min;
-            best_axis = if d.x >= d.y && d.x >= d.z { 0 } else if d.y >= d.z { 1 } else { 2 };
+            best_axis = if d.x >= d.y && d.x >= d.z {
+                0
+            } else if d.y >= d.z {
+                1
+            } else {
+                2
+            };
             best_pos = parent_aabb.center()[best_axis];
         }
 
@@ -1196,7 +1231,13 @@ impl TriBvh {
     }
 
     /// Test if a point is occluded by any triangle in the BVH.
-    pub fn is_occluded(&self, point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: f64) -> bool {
+    pub fn is_occluded(
+        &self,
+        point: DVec3,
+        eye: DVec3,
+        triangles: &[[DVec3; 3]],
+        dist_to_eye: f64,
+    ) -> bool {
         if self.nodes.is_empty() {
             return false;
         }
@@ -1234,9 +1275,10 @@ impl TriBvh {
             TriBvhNode::Leaf { tris, .. } => {
                 for &ti in tris {
                     if let Some(t) = ray_triangle_intersect(origin, dir, &triangles[ti])
-                        && t < dist_to_eye - TOLERANCE_RETRY_LADDER_COARSE {
-                            return true;
-                        }
+                        && t < dist_to_eye - TOLERANCE_RETRY_LADDER_COARSE
+                    {
+                        return true;
+                    }
                 }
                 false
             }
@@ -1295,7 +1337,11 @@ pub struct SilhouetteCurve3 {
 ///
 /// # Returns
 /// A vector of 3D silhouette curves, each represented as a series of world-space points.
-pub fn extract_silhouette_curves(brep: &rcad_kernel::BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve3> {
+pub fn extract_silhouette_curves(
+    brep: &rcad_kernel::BRep,
+    view_dir: DVec3,
+    opts: &HlrOptions,
+) -> Vec<SilhouetteCurve3> {
     let mut curves: Vec<SilhouetteCurve3> = Vec::new();
 
     if brep.solids().is_empty() {
@@ -1321,7 +1367,13 @@ pub fn extract_silhouette_curves(brep: &rcad_kernel::BRep, view_dir: DVec3, opts
 
             // Extract silhouettes based on surface type
             let face_curves = extract_surface_silhouettes(
-                &surface, view_dir, domain, brep, opts, line_samples, dense_curve_samples,
+                &surface,
+                view_dir,
+                domain,
+                brep,
+                opts,
+                line_samples,
+                dense_curve_samples,
             );
 
             for pts in face_curves {
@@ -1355,23 +1407,50 @@ fn extract_surface_silhouettes(
 
     match surface {
         Surface3::Cylinder(cyl) => {
-            curves.extend(extract_cylinder_silhouettes(cyl, view_dir, brep, line_samples, v0, v1));
+            curves.extend(extract_cylinder_silhouettes(
+                cyl,
+                view_dir,
+                brep,
+                line_samples,
+                v0,
+                v1,
+            ));
         }
 
         Surface3::Sphere(sph) => {
-            curves.push(extract_sphere_silhouette(sph, view_dir, dense_curve_samples));
+            curves.push(extract_sphere_silhouette(
+                sph,
+                view_dir,
+                dense_curve_samples,
+            ));
         }
 
         Surface3::Cone(con) => {
-            curves.extend(extract_cone_silhouettes(con, view_dir, brep, line_samples, v0, v1));
+            curves.extend(extract_cone_silhouettes(
+                con,
+                view_dir,
+                brep,
+                line_samples,
+                v0,
+                v1,
+            ));
         }
 
         Surface3::Torus(tor) => {
-            curves.extend(extract_torus_silhouettes(tor, view_dir, dense_curve_samples));
+            curves.extend(extract_torus_silhouettes(
+                tor,
+                view_dir,
+                dense_curve_samples,
+            ));
         }
 
         Surface3::Ellipsoid(ell) => {
-            curves.extend(extract_ellipsoid_silhouettes(ell, view_dir, opts, dense_curve_samples));
+            curves.extend(extract_ellipsoid_silhouettes(
+                ell,
+                view_dir,
+                opts,
+                dense_curve_samples,
+            ));
         }
 
         // For general surfaces, use numerical silhouette extraction
@@ -1569,7 +1648,6 @@ fn extract_ellipsoid_silhouettes(
     opts: &HlrOptions,
     samples: usize,
 ) -> Vec<Vec<DVec3>> {
-    
     use std::f64::consts::PI;
 
     // Build the orthonormal frame of the ellipsoid
@@ -1593,11 +1671,7 @@ fn extract_ellipsoid_silhouettes(
     let b = ell.radius_y;
     let c = ell.radius_z;
 
-    let plane_normal_local = DVec3::new(
-        vx / (a * a),
-        vy / (b * b),
-        vz / (c * c),
-    );
+    let plane_normal_local = DVec3::new(vx / (a * a), vy / (b * b), vz / (c * c));
 
     // Handle the degenerate case where the plane normal is zero
     // This happens when all components are zero, which shouldn't occur for valid view direction
@@ -1680,12 +1754,9 @@ fn extract_ellipsoid_silhouettes(
         let z = p_local.dot(axis);
 
         // Normal direction (gradient of implicit equation)
-        let grad_local = DVec3::new(
-            x / (a * a),
-            y / (b * b),
-            z / (c * c),
-        );
-        let normal = (grad_local.x * x_axis + grad_local.y * y_axis + grad_local.z * axis).normalize_or_zero();
+        let grad_local = DVec3::new(x / (a * a), y / (b * b), z / (c * c));
+        let normal = (grad_local.x * x_axis + grad_local.y * y_axis + grad_local.z * axis)
+            .normalize_or_zero();
         let dot = normal.dot(view_dir);
 
         // Check if silhouette condition is approximately satisfied
@@ -1755,7 +1826,9 @@ fn extract_ellipsoid_silhouettes_numerical(
             let by = b_local.dot(y_axis);
             let angle_a = ay.atan2(ax);
             let angle_b = by.atan2(bx);
-            angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+            angle_a
+                .partial_cmp(&angle_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         vec![silhouette_points]
@@ -1764,4 +1837,3 @@ fn extract_ellipsoid_silhouettes_numerical(
     }
 }
 include!("e1.rs");
-

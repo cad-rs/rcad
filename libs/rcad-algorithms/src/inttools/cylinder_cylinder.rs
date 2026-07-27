@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of two cylinders.
+//! Analytic intersection of two cylinders.
 //!
 //! # Case classification
 //!
@@ -29,12 +29,12 @@
 //! fall back to numeric marching.
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, Ellipse3, Line3};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, CylindricalSurface, Ellipse3, Line3, any_perpendicular};
 use std::f64::consts::TAU;
 
-use crate::tolerance::*;
 use super::pcurve_derive::refine_polyline;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -222,8 +222,14 @@ fn intersect_parallel_cylinders(
     let p2 = cyl1.origin + dir_perp * x - v_perp * y;
 
     CylinderCylinderResult::TwoGeneratorLines(
-        Line3 { origin: p1, direction: axis },
-        Line3 { origin: p2, direction: axis },
+        Line3 {
+            origin: p1,
+            direction: axis,
+        },
+        Line3 {
+            origin: p2,
+            direction: axis,
+        },
     )
 }
 
@@ -465,15 +471,29 @@ fn intersect_skew_cylinder_cylinder(
         let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
     let eval_minus = |u: f64| -> Option<DVec3> {
         let (cos_u, sin_u) = (u.cos(), u.sin());
@@ -485,22 +505,40 @@ fn intersect_skew_cylinder_cylinder(
         let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
         if a_v.abs() > 1e-12 {
             let disc = b_v * b_v - 4.0 * a_v * c_v;
-            if disc < 0.0 { return None; }
+            if disc < 0.0 {
+                return None;
+            }
             let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
-            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
         } else if b_v.abs() > 1e-12 {
             let v = -c_v / b_v;
-            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            if v.is_finite() {
+                let p = cyl1.point_at(u, v);
+                if p.is_finite() {
+                    return Some(p);
+                }
+            }
             None
-        } else { None }
+        } else {
+            None
+        }
     };
 
     let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
         refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
         refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
     );
 
     // Dedup: remove trailing points that nearly duplicate the first point
@@ -632,5 +670,3 @@ pub fn sample_perpendicular_offset_curves(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

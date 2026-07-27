@@ -44,5 +44,3 @@ impl FaceInfo {
         self.curves_sc.iter().copied().collect()
     }
 }
-
-

@@ -2,20 +2,20 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{any_perpendicular, Curve3, Surface3};
 use rcad_kernel::CurveEval;
+use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
 
-use crate::bopalgo::{fill_map, make_blocks, GlueEnum};
+use crate::bopalgo::pave_filler::helpers::*;
+use crate::bopalgo::{GlueEnum, fill_map, make_blocks};
 use crate::bopds::ds::{
-    DSVertex, InterferenceEE, InterferenceEF, InterferenceVE, InterferenceVF, InterferenceVV,
-    ShapeOrigin, DS,
+    DS, DSVertex, InterferenceEE, InterferenceEF, InterferenceVE, InterferenceVF, InterferenceVV,
+    ShapeOrigin,
 };
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::context::VfError;
 use crate::inttools::edge_edge::compute_curve_aabb;
 use crate::inttools::fclass2d::{FClass2d, State};
-use crate::bopalgo::pave_filler::helpers::*;
 use crate::tolerance::*;
 use rcad_kernel::topods::ShapeType;
 
@@ -374,7 +374,11 @@ impl VertexFaceTask {
 
 impl<'a> super::PaveFiller<'a> {
     /// OCCT PaveFiller L145: BOPDS_Iterator  ?BVH pair enumeration
-    pub(crate) fn build_box_tree(&self, is_a: bool, is_edge: bool) -> crate::boptools::bvh::BoxTree {
+    pub(crate) fn build_box_tree(
+        &self,
+        is_a: bool,
+        is_edge: bool,
+    ) -> crate::boptools::bvh::BoxTree {
         use crate::boptools::bvh::{Aabb, BoxTree};
         let (ds_start, end) = if is_edge {
             if is_a {
@@ -1491,9 +1495,9 @@ impl<'a> super::PaveFiller<'a> {
             a_task.set_indices(nVx, nF);
             a_vv_f.push(a_task);
         } // for (; myIterator->More(); myIterator->Next()) {
-          //
-          // OCCT L234-240: SetProgressRange
-          // OCCT L242: BOPTools_Parallel::Perform
+        //
+        // OCCT L234-240: SetProgressRange
+        // OCCT L242: BOPTools_Parallel::Perform
         for task in &mut a_vv_f {
             task.perform(&mut self.context, self.ds, self.fuzzy_tolerance);
         }
@@ -2836,11 +2840,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L416-417: analytic ??aBC.Resolution(aRes)
                 Curve3::Line(l) => {
                     let dir_len = l.direction.length();
-                    if dir_len > 1e-12 {
-                        etf / dir_len
-                    } else {
-                        etf
-                    }
+                    if dir_len > 1e-12 { etf / dir_len } else { etf }
                 }
                 Curve3::Circle(c) => etf / c.radius.max(TOLERANCE_ABS),
                 Curve3::Ellipse(e) => etf / e.major_radius.max(TOLERANCE_ABS),
@@ -2850,11 +2850,7 @@ impl<'a> super::PaveFiller<'a> {
                     let p1 = edge_curve.point_at(t - dt);
                     let p2 = edge_curve.point_at(t + dt);
                     let dm = (p2 - p1).length() / (2.0 * dt);
-                    if dm > 1e-12 {
-                        etf / dm
-                    } else {
-                        etf
-                    }
+                    if dm > 1e-12 { etf / dm } else { etf }
                 }
             };
             // OCCT L420-427: shrink endpoint

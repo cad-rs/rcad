@@ -24,9 +24,9 @@ pub struct Gap;
 pub struct Overlap;
 #[derive(Debug, Clone)]
 pub struct GapOverlapReport;
-pub fn detect_gaps_overlaps(
-    _a: &topods::BRep, _b: &topods::BRep, _tol: f64,
-) -> GapOverlapReport {
+pub fn detect_gaps_overlaps(_a: &topods::BRep, _b: &topods::BRep, _tol: f64) -> GapOverlapReport {
     GapOverlapReport
 }
-pub fn min_distance(_a: &topods::BRep, _b: &topods::BRep) -> f64 { f64::MAX }
+pub fn min_distance(_a: &topods::BRep, _b: &topods::BRep) -> f64 {
+    f64::MAX
+}

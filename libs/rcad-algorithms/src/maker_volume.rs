@@ -60,7 +60,10 @@ impl std::fmt::Display for MakerVolumeError {
             Self::EmptyInput => write!(f, "empty input"),
             Self::EmptySelection => write!(f, "empty cell selection"),
             Self::RegionMaskLengthMismatch { expected, got } => {
-                write!(f, "region mask length mismatch: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "region mask length mismatch: expected {expected}, got {got}"
+                )
             }
             Self::InvalidCellIndex { index, count } => {
                 write!(f, "invalid cell index {index}; available cells: 0..{count}")
@@ -130,7 +133,10 @@ impl MakerVolume {
     }
 
     /// Build a solid from a boolean region mask.
-    pub fn build_from_region_mask(&self, region_mask: &[bool]) -> Result<topods::BRep, MakerVolumeError> {
+    pub fn build_from_region_mask(
+        &self,
+        region_mask: &[bool],
+    ) -> Result<topods::BRep, MakerVolumeError> {
         let selection = self.selection_from_region_mask(region_mask)?;
         self.build_from_indices(&selection.selected_cell_indices)
     }
@@ -147,10 +153,20 @@ impl MakerVolume {
     /// Build a solid from an explicit cell index list.
     pub fn build_from_indices(&self, indices: &[usize]) -> Result<topods::BRep, MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
-            if acc.tshapes.is_empty() { Ok(part) }
-            else { crate::bop_occt_ops::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
-        })?;
+        let result = parts
+            .into_iter()
+            .try_fold(topods::BRep::new(), |acc, part| {
+                if acc.tshapes.is_empty() {
+                    Ok(part)
+                } else {
+                    crate::bop_occt_ops::boolean_op_generic(
+                        crate::BooleanOpType::Union,
+                        &acc,
+                        &part,
+                    )
+                    .map_err(MakerVolumeError::Boolean)
+                }
+            })?;
         Ok(result)
     }
 
@@ -160,11 +176,20 @@ impl MakerVolume {
         indices: &[usize],
     ) -> Result<(topods::BRep, ()), MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
-        let result = parts.into_iter().try_fold(topods::BRep::new(), |acc, part| {
-            if acc.tshapes.is_empty() { Ok(part) }
-            else { crate::bop_occt_ops::boolean_op_generic(crate::BooleanOpType::Union, &acc, &part).map_err(MakerVolumeError::Boolean) }
-
-        })?;
+        let result = parts
+            .into_iter()
+            .try_fold(topods::BRep::new(), |acc, part| {
+                if acc.tshapes.is_empty() {
+                    Ok(part)
+                } else {
+                    crate::bop_occt_ops::boolean_op_generic(
+                        crate::BooleanOpType::Union,
+                        &acc,
+                        &part,
+                    )
+                    .map_err(MakerVolumeError::Boolean)
+                }
+            })?;
         Ok((result, ()))
     }
 
@@ -211,14 +236,14 @@ impl MakerVolume {
 
         let mut parts = Vec::with_capacity(unique_indices.len());
         for index in unique_indices {
-            let cell = self
-                .cells
-                .get(index)
-                .cloned()
-                .ok_or(MakerVolumeError::InvalidCellIndex {
-                    index,
-                    count: self.cells.len(),
-                })?;
+            let cell =
+                self.cells
+                    .get(index)
+                    .cloned()
+                    .ok_or(MakerVolumeError::InvalidCellIndex {
+                        index,
+                        count: self.cells.len(),
+                    })?;
             parts.push(cell);
         }
         Ok(parts)
@@ -262,4 +287,3 @@ fn unique_cell_indices(indices: &[usize]) -> Vec<usize> {
     }
     out
 }
-

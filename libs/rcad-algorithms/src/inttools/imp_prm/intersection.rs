@@ -8,27 +8,35 @@
 //!   - IntPatch_TheSOnBounds / TheSearchInside / TheIWalking →
 //!     placeholder impls (WIP, signatures match)
 
-use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval, Line2d};
-use super::super::super::inttools::int_surf_quadric::Quadric;
 use super::super::super::inttools::geom_abs_surface_type::GeomAbsSurfaceType;
 use super::super::super::inttools::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
 use super::super::super::inttools::int_patch_point::IntPatchPoint;
 #[allow(unused_imports)]
 use super::super::super::inttools::int_patch_type::IntPatchIType;
+use super::super::super::inttools::int_surf_quadric::Quadric;
 use super::arc_function::ArcFunction;
-use super::surf_function::SurfFunction;
+use super::i_walking::IWalking;
 use super::s_on_bounds::SOnBounds;
 use super::search_inside::SearchInside;
-use super::i_walking::IWalking;
+use super::surf_function::SurfFunction;
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Line2d, Surface3, SurfaceEval};
 
 // OCCT IntSurf_Transition
 #[derive(Clone, Copy, PartialEq)]
-enum Transition { In, Out, Undecided }
+enum Transition {
+    In,
+    Out,
+    Undecided,
+}
 
 // OCCT IntSurf_TypeTrans
 #[derive(Clone, Copy, PartialEq)]
-enum TypeTrans { In, Out, Undecided }
+enum TypeTrans {
+    In,
+    Out,
+    Undecided,
+}
 
 // ============================================================================
 // OCCT L32-90: IntPatch_ImpPrmIntersection class (hxx)
@@ -84,12 +92,24 @@ impl ImpPrmIntersection {
     // ======================================================================
     // OCCT L60-68: accessors (lxx)
     // ======================================================================
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn is_empty(&self) -> bool { self.empt }
-    pub fn nb_points(&self) -> usize { self.spnt.len() }
-    pub fn point(&self, index: usize) -> &IntPatchPoint { &self.spnt[index] }
-    pub fn nb_lines(&self) -> usize { self.slin.len() }
-    pub fn line(&self, index: usize) -> &IntPatchLine { &self.slin[index] }
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    pub fn is_empty(&self) -> bool {
+        self.empt
+    }
+    pub fn nb_points(&self) -> usize {
+        self.spnt.len()
+    }
+    pub fn point(&self, index: usize) -> &IntPatchPoint {
+        &self.spnt[index]
+    }
+    pub fn nb_lines(&self) -> usize {
+        self.slin.len()
+    }
+    pub fn line(&self, index: usize) -> &IntPatchLine {
+        &self.slin[index]
+    }
 
     // ======================================================================
     // OCCT L617-728: Perform setup — identify quadric, build Func/AFunc
@@ -122,14 +142,21 @@ impl ImpPrmIntersection {
 
         // OCCT L669-714: identify quadric surface, set `reversed`
         let _has_quadric = match type_s1 {
-            GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
-            | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => true,
+            GeomAbsSurfaceType::Plane
+            | GeomAbsSurfaceType::Cylinder
+            | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Cone => true,
             _ => {
                 reversed = true;
                 match type_s2 {
-                    GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
-                    | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => true,
-                    _ => { self.done = true; return; }
+                    GeomAbsSurfaceType::Plane
+                    | GeomAbsSurfaceType::Cylinder
+                    | GeomAbsSurfaceType::Sphere
+                    | GeomAbsSurfaceType::Cone => true,
+                    _ => {
+                        self.done = true;
+                        return;
+                    }
                 }
             }
         };
@@ -176,7 +203,15 @@ impl ImpPrmIntersection {
             (u_min1, u_max1, v_min1, v_max1)
         };
 
-        self.solrst.perform(&mut a_func, p_u_min, p_u_max, p_v_min, p_v_max, tol_arc, tol_tang);
+        self.solrst.perform(
+            &mut a_func,
+            p_u_min,
+            p_u_max,
+            p_v_min,
+            p_v_max,
+            tol_arc,
+            tol_tang,
+        );
         if !self.solrst.is_done() {
             return;
         }
@@ -198,17 +233,11 @@ impl ImpPrmIntersection {
         let mut interior_pts: Vec<super::search_inside::InteriorPoint> = Vec::new();
         if search_ins {
             if !self.my_is_start_pnt {
-                self.solins.perform(
-                    &mut func,
-                    p_u_min, p_u_max, p_v_min, p_v_max,
-                    tol_tang,
-                );
+                self.solins
+                    .perform(&mut func, p_u_min, p_u_max, p_v_min, p_v_max, tol_tang);
             } else {
-                self.solins.perform_from_point(
-                    &mut func,
-                    self.my_u_start,
-                    self.my_v_start,
-                );
+                self.solins
+                    .perform_from_point(&mut func, self.my_u_start, self.my_v_start);
             }
             nb_point_ins = self.solins.nb_points();
             for i in 0..nb_point_ins {
@@ -226,7 +255,13 @@ impl ImpPrmIntersection {
         if nb_point_dep > 0 || interior_pts.len() > 0 {
             // OCCT L849-851: create and perform IWalking
             let mut iwalk = IWalking::new(tol_tang, _fleche, _a_local_pas);
-            iwalk.perform(&path_points, &interior_pts, &mut func, if reversed { s1 } else { s2 }, reversed);
+            iwalk.perform(
+                &path_points,
+                &interior_pts,
+                &mut func,
+                if reversed { s1 } else { s2 },
+                reversed,
+            );
 
             if !iwalk.is_done() {
                 return;
@@ -234,7 +269,7 @@ impl ImpPrmIntersection {
 
             // OCCT L857-867: V bounds on quadric surface
             let (v_min, v_max) = if !reversed {
-                (u_min1, u_max1)  // NOTE: in OCCT it's V parameter of quadric
+                (u_min1, u_max1) // NOTE: in OCCT it's V parameter of quadric
             } else {
                 (u_min2, u_max2)
             };
@@ -283,14 +318,18 @@ impl ImpPrmIntersection {
 
                     // OCCT L914-1071: convert IWLine points → WLine points
                     // with periodic UV recadrage
-                    let wline_pnts: Vec<WLinePnt> = (0..nbpts).map(|k| {
-                        let (p3d, u1, v1) = iwline.point_at(k);
-                        WLinePnt {
-                            p3d: *p3d,
-                            u1: *u1, v1: *v1,
-                            u2: 0.0, v2: 0.0,
-                        }
-                    }).collect();
+                    let wline_pnts: Vec<WLinePnt> = (0..nbpts)
+                        .map(|k| {
+                            let (p3d, u1, v1) = iwline.point_at(k);
+                            WLinePnt {
+                                p3d: *p3d,
+                                u1: *u1,
+                                v1: *v1,
+                                u2: 0.0,
+                                v2: 0.0,
+                            }
+                        })
+                        .collect();
 
                     // OCCT L1073: new IntPatch_WLine
                     let mut line = IntPatchLine::walking(wline_pnts, WLineType::ImpPrm);
@@ -323,20 +362,33 @@ impl ImpPrmIntersection {
             if seg.has_first_point() && seg.has_last_point() {
                 let tol2 = 1e-14;
                 let (pp0, pp1) = (seg.first_point_index, seg.last_point_index);
-                if pp0 > 0 && pp1 > 0 && pp0 <= self.solrst.nb_points() && pp1 <= self.solrst.nb_points() {
+                if pp0 > 0
+                    && pp1 > 0
+                    && pp0 <= self.solrst.nb_points()
+                    && pp1 <= self.solrst.nb_points()
+                {
                     let fp = self.solrst.point(pp0 - 1);
                     let lp = self.solrst.point(pp1 - 1);
-                    if fp.value.distance_squared(lp.value) <= tol2 { continue; }
+                    if fp.value.distance_squared(lp.value) <= tol2 {
+                        continue;
+                    }
                 }
             }
             let rline = IntPatchLine {
                 line_type: IntPatchIType::Restriction,
-                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin: DVec3::ZERO,
+                    direction: DVec3::X,
+                }),
                 t_range: [0.0, 1.0],
-                pcurve1: None, pcurve2: None,
-                tolerance: tol_arc, tang_tolerance: tol_tang,
-                wline_pnts: Vec::new(), is_purging_allowed: false,
-                wl_type: WLineType::Unknown, vertices: Vec::new(),
+                pcurve1: None,
+                pcurve2: None,
+                tolerance: tol_arc,
+                tang_tolerance: tol_tang,
+                wline_pnts: Vec::new(),
+                is_purging_allowed: false,
+                wl_type: WLineType::Unknown,
+                vertices: Vec::new(),
             };
             self.slin.push(rline);
         }
@@ -386,7 +438,9 @@ impl ImpPrmIntersection {
         let mut i = 0;
         while i < self.slin.len() {
             let is_rline1 = self.slin[i].line_type == IntPatchIType::Restriction;
-            if !is_rline1 { break; }
+            if !is_rline1 {
+                break;
+            }
 
             // OCCT L1828-1837: restriction line must be isoline (line in 2D)
             // rcad: skip this check — all our restriction curves are lines
@@ -450,7 +504,9 @@ impl ImpPrmIntersection {
         self.done = true;
 
         // OCCT L1918-1921: early return if no lines
-        if self.slin.is_empty() { return; }
+        if self.slin.is_empty() {
+            return;
+        }
 
         // ================================================================
         // OCCT L1923-1963: DecomposeResult for sphere/cone/cylinder/torus
@@ -459,10 +515,19 @@ impl ImpPrmIntersection {
         // periodic/seamed parameterization. Splits lines at seam/pole
         // boundaries into proper segments.
         // ================================================================
-        let is_decompose_required = matches!(type_s1, GeomAbsSurfaceType::Cone | GeomAbsSurfaceType::Sphere
-            | GeomAbsSurfaceType::Cylinder | GeomAbsSurfaceType::Torus)
-            || matches!(type_s2, GeomAbsSurfaceType::Cone | GeomAbsSurfaceType::Sphere
-            | GeomAbsSurfaceType::Cylinder | GeomAbsSurfaceType::Torus);
+        let is_decompose_required = matches!(
+            type_s1,
+            GeomAbsSurfaceType::Cone
+                | GeomAbsSurfaceType::Sphere
+                | GeomAbsSurfaceType::Cylinder
+                | GeomAbsSurfaceType::Torus
+        ) || matches!(
+            type_s2,
+            GeomAbsSurfaceType::Cone
+                | GeomAbsSurfaceType::Sphere
+                | GeomAbsSurfaceType::Cylinder
+                | GeomAbsSurfaceType::Torus
+        );
 
         if is_decompose_required {
             let quad = if !reversed {
@@ -496,7 +561,6 @@ impl ImpPrmIntersection {
     }
 }
 
-
 // ============================================================================
 // Helper: classify surface type for dispatch
 // ============================================================================
@@ -520,7 +584,10 @@ fn uv_bounds(s: &Surface3) -> (f64, f64, f64, f64) {
 /// Approximate 3D chord length of an IntPatchLine
 fn line_length(line: &IntPatchLine) -> f64 {
     if line.is_wline() && line.wline_pnts.len() >= 2 {
-        line.wline_pnts.windows(2).map(|w| w[0].p3d.distance(w[1].p3d)).sum()
+        line.wline_pnts
+            .windows(2)
+            .map(|w| w[0].p3d.distance(w[1].p3d))
+            .sum()
     } else {
         // For RLine without wline_pnts, use a default estimate
         line.t_range[1] - line.t_range[0]
@@ -530,4 +597,3 @@ fn line_length(line: &IntPatchLine) -> f64 {
 // ═══════════════════════════════════════════════════════════════════════
 // Integration test: full pipeline plane-vs-plane ImpPrm
 // ═══════════════════════════════════════════════════════════════════════
-

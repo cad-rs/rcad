@@ -24,14 +24,12 @@ impl Default for GdsUnits {
 }
 
 /// GDS library (top-level container).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GdsLibrary {
     pub name: String,
     pub units: GdsUnits,
     pub structures: std::collections::HashMap<String, GdsStructure>,
 }
-
 
 /// GDS structure (cell).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -52,15 +50,13 @@ pub struct GdsBoundary {
 }
 
 /// GDS path (wire with width).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum EndCapType {
     #[default]
     Flush,
     Round,
     Square,
 }
-
 
 /// GDS path (wire).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +82,7 @@ pub struct GdsText {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Transform2D {
     pub translation: DVec2,
-    pub rotation: f64,  // radians
+    pub rotation: f64, // radians
     pub reflection: bool,
     pub magnification: f64,
 }
@@ -117,7 +113,7 @@ impl Transform2D {
     pub fn transform_point(&self, p: DVec2) -> DVec2 {
         let mut result = p * self.magnification;
         if self.reflection {
-            result.y = -result.y;  // Reflect across X-axis (flip Y)
+            result.y = -result.y; // Reflect across X-axis (flip Y)
         }
         let (sin, cos) = self.rotation.sin_cos();
         let rotated = DVec2::new(
@@ -156,7 +152,7 @@ mod tests {
     fn test_rotation_90_degrees() {
         let transform = Transform2D {
             translation: DVec2::ZERO,
-            rotation: std::f64::consts::FRAC_PI_2,  // 90 degrees
+            rotation: std::f64::consts::FRAC_PI_2, // 90 degrees
             reflection: false,
             magnification: 1.0,
         };

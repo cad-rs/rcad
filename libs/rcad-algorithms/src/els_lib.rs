@@ -1,4 +1,4 @@
-﻿//! ElSLib-style elementary surface utilities.
+//! ElSLib-style elementary surface utilities.
 //!
 //! Provides utilities for elementary surfaces analogous to OCCT `ElSLib` package.
 //! Includes evaluation, parameter computation, and differential properties
@@ -24,8 +24,8 @@
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
-    any_perpendicular, Plane, CylindricalSurface, SphericalSurface,
-    ConicalSurface, ToroidalSurface, BSplineSurface, SurfaceEval,
+    BSplineSurface, ConicalSurface, CylindricalSurface, Plane, SphericalSurface, SurfaceEval,
+    ToroidalSurface, any_perpendicular,
 };
 use std::f64::consts::PI;
 
@@ -465,6 +465,3 @@ pub fn bspline_surface_derivatives(surf: &BSplineSurface, u: f64, v: f64) -> [DV
 // =============================================================================
 // Tests
 // =============================================================================
-
-
-

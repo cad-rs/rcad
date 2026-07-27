@@ -1,4 +1,4 @@
-﻿//! Analytic intersection of a sphere and a cylinder.
+//! Analytic intersection of a sphere and a cylinder.
 //!
 //! # Case classification
 //!
@@ -44,12 +44,12 @@
 //! in `v` for each cylinder azimuth `u` — see [`intersect_skew_sphere_cylinder`].
 
 use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, SphericalSurface};
 use rcad_kernel::SurfaceEval;
+use rcad_kernel::geom::{Circle3, CylindricalSurface, SphericalSurface, any_perpendicular};
 use std::f64::consts::TAU;
 
-use crate::tolerance::*;
 use super::pcurve_derive::refine_polyline;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -135,10 +135,8 @@ pub fn intersect_sphere_cylinder_with_tolerance(
         }
 
         let delta_h = disc.sqrt();
-        let c1 = Circle3::new(cyl.origin + axis * (h_c - delta_h), axis, r,
-        );
-        let c2 = Circle3::new(cyl.origin + axis * (h_c + delta_h), axis, r,
-        );
+        let c1 = Circle3::new(cyl.origin + axis * (h_c - delta_h), axis, r);
+        let c2 = Circle3::new(cyl.origin + axis * (h_c + delta_h), axis, r);
         return SphereCylinderResult::TwoCircles(c1, c2);
     }
 
@@ -276,9 +274,16 @@ fn intersect_skew_sphere_cylinder(
         let b_v = 2.0 * d0.dot(a_cyl);
         let c_v = d0.length_squared() - r_sph * r_sph;
         let disc = b_v * b_v - 4.0 * c_v;
-        if disc < 0.0 { return None; }
+        if disc < 0.0 {
+            return None;
+        }
         let v = (-b_v + disc.sqrt()) * 0.5;
-        if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+        if v.is_finite() {
+            let p = cyl.point_at(u, v);
+            if p.is_finite() {
+                return Some(p);
+            }
+        }
         None
     };
     let eval_minus = |u: f64| -> Option<DVec3> {
@@ -287,17 +292,28 @@ fn intersect_skew_sphere_cylinder(
         let b_v = 2.0 * d0.dot(a_cyl);
         let c_v = d0.length_squared() - r_sph * r_sph;
         let disc = b_v * b_v - 4.0 * c_v;
-        if disc < 0.0 { return None; }
+        if disc < 0.0 {
+            return None;
+        }
         let v = (-b_v - disc.sqrt()) * 0.5;
-        if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+        if v.is_finite() {
+            let p = cyl.point_at(u, v);
+            if p.is_finite() {
+                return Some(p);
+            }
+        }
         None
     };
 
     let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
         refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
         refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
-            .into_iter().map(|(_, p)| p).collect(),
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
     );
 
     // Dedup: remove trailing points that nearly duplicate the first point
@@ -339,5 +355,3 @@ fn intersect_skew_sphere_cylinder(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
-
-

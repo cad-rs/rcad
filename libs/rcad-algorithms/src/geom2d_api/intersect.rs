@@ -1,5 +1,5 @@
-use super::*;
 use super::helpers::{curve2d_domain, refine_curve2d_intersection};
+use super::*;
 
 // =============================================================================
 // InterCurveCurve - 2D curve-curve intersection
@@ -77,4 +77,3 @@ pub fn intersect_curves2d(
 
     intersections
 }
-

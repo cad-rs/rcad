@@ -20,9 +20,9 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::geom::SurfaceEval;
-use rcad_kernel::topods::{BRep, TShape, ShapeRef};
+use rcad_kernel::geom::{Curve3, Line3, Surface3};
+use rcad_kernel::topods::{BRep, ShapeRef, TShape};
 use std::collections::HashMap;
 
 /// Default tolerance for geometric operations.
@@ -112,7 +112,10 @@ impl Default for DraftValidationConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DraftError {
     /// A face has a surface type that is not yet supported for drafting.
-    UnsupportedSurface { face_index: usize, surface_type: String },
+    UnsupportedSurface {
+        face_index: usize,
+        surface_type: String,
+    },
     /// The draft angle is too large (> 89 degrees).
     AngleTooLarge { angle_rad: f64 },
     /// The draft angle is too small for manufacturability.
@@ -122,7 +125,10 @@ pub enum DraftError {
     /// Self-intersection detected after drafting.
     SelfIntersection { description: String },
     /// Undercut detected in the draft direction.
-    UndercutDetected { face_index: usize, description: String },
+    UndercutDetected {
+        face_index: usize,
+        description: String,
+    },
     /// Invalid pull direction (zero vector).
     InvalidPullDirection,
     /// Neutral surface definition failed.
@@ -132,21 +138,42 @@ pub enum DraftError {
 impl std::fmt::Display for DraftError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedSurface { face_index, surface_type } => {
-                write!(f, "face {} has unsupported surface type: {}", face_index, surface_type)
+            Self::UnsupportedSurface {
+                face_index,
+                surface_type,
+            } => {
+                write!(
+                    f,
+                    "face {} has unsupported surface type: {}",
+                    face_index, surface_type
+                )
             }
             Self::AngleTooLarge { angle_rad } => {
-                write!(f, "draft angle must be < 89 degrees, got {:.1} degrees", angle_rad.to_degrees())
+                write!(
+                    f,
+                    "draft angle must be < 89 degrees, got {:.1} degrees",
+                    angle_rad.to_degrees()
+                )
             }
-            Self::AngleTooSmall { angle_rad, min_angle_rad } => {
-                write!(f, "draft angle {:.2} degrees is below minimum {:.2} degrees",
-                    angle_rad.to_degrees(), min_angle_rad.to_degrees())
+            Self::AngleTooSmall {
+                angle_rad,
+                min_angle_rad,
+            } => {
+                write!(
+                    f,
+                    "draft angle {:.2} degrees is below minimum {:.2} degrees",
+                    angle_rad.to_degrees(),
+                    min_angle_rad.to_degrees()
+                )
             }
             Self::NoFaces => write!(f, "input BRep has no faces"),
             Self::SelfIntersection { description } => {
                 write!(f, "self-intersection detected: {}", description)
             }
-            Self::UndercutDetected { face_index, description } => {
+            Self::UndercutDetected {
+                face_index,
+                description,
+            } => {
                 write!(f, "undercut on face {}: {}", face_index, description)
             }
             Self::InvalidPullDirection => write!(f, "pull direction must be a non-zero vector"),
@@ -289,33 +316,42 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
     let tan_angle = params.draft_angle.tan();
 
     // Step 1: Compute new vertex positions (preserve old vertex order)
-    let new_pts: Vec<DVec3> = brep.tshapes.iter().filter_map(|ts| {
-        if let TShape::Vertex(vd) = ts.as_ref() {
-            let h = (vd.point - neutral).dot(pull);
-            Some(vd.point + pull * (h * tan_angle))
-        } else {
-            None
-        }
-    }).collect();
+    let new_pts: Vec<DVec3> = brep
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                let h = (vd.point - neutral).dot(pull);
+                Some(vd.point + pull * (h * tan_angle))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Step 2: Compute new face normals
-    let new_face_normals: Vec<DVec3> = face_srs.iter().map(|&sr| {
-        let fd = brep.face(sr);
-        let n = fd.surface.as_ref()
-            .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
-            .unwrap_or_default()
-            .normalize();
-        let axis = n.cross(pull);
-        let axis_len = axis.length();
-        if axis_len < TOLERANCE_LINEAR_ULTRA_STRICT {
-            return n;
-        }
-        let k = axis / axis_len;
-        let cos_a = params.draft_angle.cos();
-        let sin_a = params.draft_angle.sin();
-        let rotated = n * cos_a + k.cross(n) * sin_a;
-        rotated.normalize_or(n)
-    }).collect();
+    let new_face_normals: Vec<DVec3> = face_srs
+        .iter()
+        .map(|&sr| {
+            let fd = brep.face(sr);
+            let n = fd
+                .surface
+                .as_ref()
+                .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
+                .unwrap_or_default()
+                .normalize();
+            let axis = n.cross(pull);
+            let axis_len = axis.length();
+            if axis_len < TOLERANCE_LINEAR_ULTRA_STRICT {
+                return n;
+            }
+            let k = axis / axis_len;
+            let cos_a = params.draft_angle.cos();
+            let sin_a = params.draft_angle.sin();
+            let rotated = n * cos_a + k.cross(n) * sin_a;
+            rotated.normalize_or(n)
+        })
+        .collect();
 
     // Step 3: Build result BRep
     build_drafted_brep(brep, &new_pts, &new_face_normals, &face_srs)
@@ -328,10 +364,7 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
 /// - Variable draft angles with transition zones
 /// - Non-planar surface handling
 /// - Internal feature detection and handling
-pub fn draft_solid_advanced(
-    brep: &BRep,
-    params: &DraftParamsAdvanced,
-) -> Result<BRep, DraftError> {
+pub fn draft_solid_advanced(brep: &BRep, params: &DraftParamsAdvanced) -> Result<BRep, DraftError> {
     validate_draft_params(&params.base)?;
 
     let face_srs = collect_face_refs(brep).ok_or(DraftError::NoFaces)?;
@@ -343,26 +376,42 @@ pub fn draft_solid_advanced(
     let neutral = params.base.neutral_point;
 
     // Compute per-vertex displacements accounting for adjacent face angles
-    let vertex_displacements = compute_vertex_displacements(brep, &face_srs, params, pull, neutral)?;
+    let vertex_displacements =
+        compute_vertex_displacements(brep, &face_srs, params, pull, neutral)?;
 
     // Apply displacements
-    let new_pts: Vec<DVec3> = brep.tshapes.iter().enumerate().map(|(i, ts)| {
-        if let TShape::Vertex(vd) = ts.as_ref() {
-            vd.point + vertex_displacements.get(&i).copied().unwrap_or(DVec3::ZERO)
-        } else {
-            DVec3::ZERO
-        }
-    }).collect();
+    let new_pts: Vec<DVec3> = brep
+        .tshapes
+        .iter()
+        .enumerate()
+        .map(|(i, ts)| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                vd.point + vertex_displacements.get(&i).copied().unwrap_or(DVec3::ZERO)
+            } else {
+                DVec3::ZERO
+            }
+        })
+        .collect();
 
     // Compute new face normals with per-face angles
-    let new_face_normals: Vec<DVec3> = face_srs.iter().enumerate().map(|(fi, &sr)| {
-        let fd = brep.face(sr);
-        let n = fd.surface.as_ref()
-            .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
-            .unwrap_or_default();
-        let angle = params.face_angle_overrides.get(&fi).copied().unwrap_or(params.base.draft_angle);
-        compute_rotated_normal(&n, pull, angle)
-    }).collect();
+    let new_face_normals: Vec<DVec3> = face_srs
+        .iter()
+        .enumerate()
+        .map(|(fi, &sr)| {
+            let fd = brep.face(sr);
+            let n = fd
+                .surface
+                .as_ref()
+                .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
+                .unwrap_or_default();
+            let angle = params
+                .face_angle_overrides
+                .get(&fi)
+                .copied()
+                .unwrap_or(params.base.draft_angle);
+            compute_rotated_normal(&n, pull, angle)
+        })
+        .collect();
 
     // Build result
     build_drafted_brep(brep, &new_pts, &new_face_normals, &face_srs)
@@ -385,19 +434,21 @@ pub fn draft_cylindrical_face(
     // Get surface geometry from the face
     let face_ts = brep.tshapes.get(face_index).ok_or(DraftError::NoFaces)?;
     let cylinder_surf = match &**face_ts {
-        TShape::Face(fd) => {
-            match fd.surface.as_ref() {
-                Some(Surface3::Cylinder(c)) => c.clone(),
-                Some(other) => return Err(DraftError::UnsupportedSurface {
+        TShape::Face(fd) => match fd.surface.as_ref() {
+            Some(Surface3::Cylinder(c)) => c.clone(),
+            Some(other) => {
+                return Err(DraftError::UnsupportedSurface {
                     face_index,
                     surface_type: surface_type_name(other),
-                }),
-                None => return Err(DraftError::UnsupportedSurface {
+                });
+            }
+            None => {
+                return Err(DraftError::UnsupportedSurface {
                     face_index,
                     surface_type: "none".to_string(),
-                }),
+                });
             }
-        }
+        },
         _ => return Err(DraftError::NoFaces),
     };
 
@@ -415,9 +466,17 @@ pub fn draft_cylindrical_face(
     }
 
     // Collect vertex positions
-    let vpts: Vec<DVec3> = brep.tshapes.iter().filter_map(|ts| {
-        if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.point) } else { None }
-    }).collect();
+    let vpts: Vec<DVec3> = brep
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                Some(vd.point)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Compute new vertex positions based on cylindrical draft
     let mut new_pts: Vec<DVec3> = vpts.clone();
@@ -426,7 +485,9 @@ pub fn draft_cylindrical_face(
         if let Some(pt) = brep.vertex_point(vi) {
             let h = (pt - neutral).dot(pull);
             // For a cylinder, the radial displacement is proportional to height
-            let radial_dir = (pt - cylinder_surf.origin).reject_from(axis).normalize_or(DVec3::ZERO);
+            let radial_dir = (pt - cylinder_surf.origin)
+                .reject_from(axis)
+                .normalize_or(DVec3::ZERO);
             if radial_dir.length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                 let radial_displacement = h * tan_angle;
                 new_pts[vi] = pt + radial_dir * radial_displacement;
@@ -435,12 +496,16 @@ pub fn draft_cylindrical_face(
     }
 
     // Face normal remains essentially unchanged for drafted cylinders
-    let new_face_normals: Vec<DVec3> = face_srs.iter().map(|&sr| {
-        let fd = brep.face(sr);
-        fd.surface.as_ref()
-            .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
-            .unwrap_or_default()
-    }).collect();
+    let new_face_normals: Vec<DVec3> = face_srs
+        .iter()
+        .map(|&sr| {
+            let fd = brep.face(sr);
+            fd.surface
+                .as_ref()
+                .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
+                .unwrap_or_default()
+        })
+        .collect();
 
     build_drafted_brep(brep, &new_pts, &new_face_normals, &face_srs)
 }
@@ -462,19 +527,21 @@ pub fn draft_conical_face(
     // Get surface geometry from the face
     let face_ts = brep.tshapes.get(face_index).ok_or(DraftError::NoFaces)?;
     let cone_surf = match &**face_ts {
-        TShape::Face(fd) => {
-            match fd.surface.as_ref() {
-                Some(Surface3::Cone(c)) => c.clone(),
-                Some(other) => return Err(DraftError::UnsupportedSurface {
+        TShape::Face(fd) => match fd.surface.as_ref() {
+            Some(Surface3::Cone(c)) => c.clone(),
+            Some(other) => {
+                return Err(DraftError::UnsupportedSurface {
                     face_index,
                     surface_type: surface_type_name(other),
-                }),
-                None => return Err(DraftError::UnsupportedSurface {
+                });
+            }
+            None => {
+                return Err(DraftError::UnsupportedSurface {
                     face_index,
                     surface_type: "none".to_string(),
-                }),
+                });
             }
-        }
+        },
         _ => return Err(DraftError::NoFaces),
     };
 
@@ -493,9 +560,17 @@ pub fn draft_conical_face(
     let effective_draft = cone_surf.half_angle_rad + params.draft_angle;
 
     // Compute new vertex positions
-    let vpts: Vec<DVec3> = brep.tshapes.iter().filter_map(|ts| {
-        if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.point) } else { None }
-    }).collect();
+    let vpts: Vec<DVec3> = brep
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                Some(vd.point)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let mut new_pts: Vec<DVec3> = vpts.clone();
     let tan_effective = effective_draft.tan();
@@ -521,16 +596,21 @@ pub fn draft_conical_face(
     }
 
     // Compute new normal for the conical face
-    let new_face_normals: Vec<DVec3> = face_srs.iter().enumerate().map(|(fi, &sr)| {
-        let fd = brep.face(sr);
-        if fi == face_index {
-            compute_cone_normal(effective_draft, axis, pull)
-        } else {
-            fd.surface.as_ref()
-                .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
-                .unwrap_or_default()
-        }
-    }).collect();
+    let new_face_normals: Vec<DVec3> = face_srs
+        .iter()
+        .enumerate()
+        .map(|(fi, &sr)| {
+            let fd = brep.face(sr);
+            if fi == face_index {
+                compute_cone_normal(effective_draft, axis, pull)
+            } else {
+                fd.surface
+                    .as_ref()
+                    .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
+                    .unwrap_or_default()
+            }
+        })
+        .collect();
 
     build_drafted_brep(brep, &new_pts, &new_face_normals, &face_srs)
 }
@@ -557,7 +637,9 @@ pub fn draft_face_general(
     // Get the face surface normal
     let face_sr = face_srs[face_index];
     let fd = brep.face(face_sr);
-    let face_normal = fd.surface.as_ref()
+    let face_normal = fd
+        .surface
+        .as_ref()
         .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
         .unwrap_or_default()
         .normalize();
@@ -566,24 +648,33 @@ pub fn draft_face_general(
     let displacement_dir = face_normal.cross(pull).normalize_or(pull);
 
     // Compute new vertex positions
-    let new_pts: Vec<DVec3> = brep.tshapes.iter().filter_map(|ts| {
-        if let TShape::Vertex(vd) = ts.as_ref() {
-            let h = (vd.point - neutral).dot(pull);
-            let displacement = h * tan_angle * displacement_dir;
-            Some(vd.point + displacement)
-        } else {
-            None
-        }
-    }).collect();
+    let new_pts: Vec<DVec3> = brep
+        .tshapes
+        .iter()
+        .filter_map(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                let h = (vd.point - neutral).dot(pull);
+                let displacement = h * tan_angle * displacement_dir;
+                Some(vd.point + displacement)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Compute new face normals
-    let new_face_normals: Vec<DVec3> = face_srs.iter().map(|&sr| {
-        let fd = brep.face(sr);
-        let n = fd.surface.as_ref()
-            .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
-            .unwrap_or_default();
-        compute_rotated_normal(&n, pull, params.draft_angle)
-    }).collect();
+    let new_face_normals: Vec<DVec3> = face_srs
+        .iter()
+        .map(|&sr| {
+            let fd = brep.face(sr);
+            let n = fd
+                .surface
+                .as_ref()
+                .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
+                .unwrap_or_default();
+            compute_rotated_normal(&n, pull, params.draft_angle)
+        })
+        .collect();
 
     build_drafted_brep(brep, &new_pts, &new_face_normals, &face_srs)
 }
@@ -617,7 +708,9 @@ pub fn validate_draft_angles(
 
     for (fi, &sr) in face_srs.iter().enumerate() {
         let fd = brep.face(sr);
-        let normal = fd.surface.as_ref()
+        let normal = fd
+            .surface
+            .as_ref()
             .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
             .unwrap_or_default()
             .normalize();
@@ -651,13 +744,14 @@ pub fn validate_draft_angles(
         }
 
         // Compute quality contribution
-        let angle_quality = if draft_angle >= config.min_draft_angle && draft_angle <= config.max_draft_angle {
-            1.0
-        } else if draft_angle > 0.0 {
-            draft_angle / config.min_draft_angle
-        } else {
-            0.0
-        };
+        let angle_quality =
+            if draft_angle >= config.min_draft_angle && draft_angle <= config.max_draft_angle {
+                1.0
+            } else if draft_angle > 0.0 {
+                draft_angle / config.min_draft_angle
+            } else {
+                0.0
+            };
         quality_sum += angle_quality;
     }
 
@@ -714,7 +808,9 @@ pub fn detect_undercuts(
 
     for (fi, &sr) in face_srs.iter().enumerate() {
         let fd = brep.face(sr);
-        let normal = fd.surface.as_ref()
+        let normal = fd
+            .surface
+            .as_ref()
             .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
             .unwrap_or_default()
             .normalize();
@@ -748,7 +844,9 @@ pub fn detect_parting_line(
 
     for &sr in &face_srs {
         let fd = brep.face(sr);
-        let normal = fd.surface.as_ref()
+        let normal = fd
+            .surface
+            .as_ref()
             .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
             .unwrap_or_default()
             .normalize();
@@ -847,8 +945,12 @@ pub fn optimize_draft_direction(
 
     // Try variations around the initial direction
     let variations = [
-        DVec3::X, DVec3::Y, DVec3::Z,
-        DVec3::NEG_X, DVec3::NEG_Y, DVec3::NEG_Z,
+        DVec3::X,
+        DVec3::Y,
+        DVec3::Z,
+        DVec3::NEG_X,
+        DVec3::NEG_Y,
+        DVec3::NEG_Z,
     ];
 
     for v in variations {
@@ -861,7 +963,10 @@ pub fn optimize_draft_direction(
     }
 
     // Fine-tune with small angle variations
-    for angle in [15.0_f64, 30.0_f64, 45.0_f64].iter().map(|a| a.to_radians()) {
+    for angle in [15.0_f64, 30.0_f64, 45.0_f64]
+        .iter()
+        .map(|a| a.to_radians())
+    {
         for axis in [DVec3::X, DVec3::Y] {
             let rotated = rotate_vector_around_axis(best_direction, axis, angle);
             let score = evaluate_draft_direction(brep, &face_srs, rotated);
@@ -931,8 +1036,16 @@ fn compute_vertex_displacements(
     let mut displacements: HashMap<usize, DVec3> = HashMap::new();
 
     for (fi, &sr) in face_srs.iter().enumerate() {
-        let angle = params.face_angle_overrides.get(&fi).copied().unwrap_or(params.base.draft_angle);
-        let face_neutral = params.face_neutral_overrides.get(&fi).copied().unwrap_or(neutral);
+        let angle = params
+            .face_angle_overrides
+            .get(&fi)
+            .copied()
+            .unwrap_or(params.base.draft_angle);
+        let face_neutral = params
+            .face_neutral_overrides
+            .get(&fi)
+            .copied()
+            .unwrap_or(neutral);
         let tan_angle = angle.tan();
 
         // Get vertices belonging to this face
@@ -941,7 +1054,8 @@ fn compute_vertex_displacements(
             for esr in &wd.edges {
                 if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
                     for &vi in &[ed.first.index, ed.last.index] {
-                        let h = (brep.vertex_point(vi).unwrap_or(DVec3::ZERO) - face_neutral).dot(pull);
+                        let h =
+                            (brep.vertex_point(vi).unwrap_or(DVec3::ZERO) - face_neutral).dot(pull);
                         let displacement = pull * (h * tan_angle);
 
                         // Average displacements if vertex belongs to multiple faces
@@ -1028,8 +1142,14 @@ fn build_drafted_brep(
     let mut emap: HashMap<usize, ShapeRef> = HashMap::new(); // old edge tshape idx -> new ShapeRef
     for (ts_idx, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Edge(ed) = ts.as_ref() {
-            let vs = vmap.get(&ed.first.index).copied().ok_or(DraftError::NoFaces)?;
-            let ve = vmap.get(&ed.last.index).copied().ok_or(DraftError::NoFaces)?;
+            let vs = vmap
+                .get(&ed.first.index)
+                .copied()
+                .ok_or(DraftError::NoFaces)?;
+            let ve = vmap
+                .get(&ed.last.index)
+                .copied()
+                .ok_or(DraftError::NoFaces)?;
 
             // Compute curve between the new vertex positions
             let p1 = out.vertex_point(vs.index).unwrap_or(DVec3::ZERO);
@@ -1069,22 +1189,34 @@ fn build_drafted_brep(
         });
 
         // Create the new edge ShapeRefs for the outer wire
-        let new_wire_edges: Vec<ShapeRef> = if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
-            wd.edges.iter().filter_map(|esr| emap.get(&esr.index).copied()).collect()
-        } else {
-            Vec::new()
-        };
-        let new_outer_wire = out.add_twire(new_wire_edges);
-
-        // Inner wires
-        let new_inner_wires: Vec<ShapeRef> = fd.inner_wires.iter().map(|iw_sr| {
-            let inner_edges: Vec<ShapeRef> = if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
-                iwd.edges.iter().filter_map(|esr| emap.get(&esr.index).copied()).collect()
+        let new_wire_edges: Vec<ShapeRef> =
+            if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                wd.edges
+                    .iter()
+                    .filter_map(|esr| emap.get(&esr.index).copied())
+                    .collect()
             } else {
                 Vec::new()
             };
-            out.add_twire(inner_edges)
-        }).collect();
+        let new_outer_wire = out.add_twire(new_wire_edges);
+
+        // Inner wires
+        let new_inner_wires: Vec<ShapeRef> = fd
+            .inner_wires
+            .iter()
+            .map(|iw_sr| {
+                let inner_edges: Vec<ShapeRef> =
+                    if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
+                        iwd.edges
+                            .iter()
+                            .filter_map(|esr| emap.get(&esr.index).copied())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                out.add_twire(inner_edges)
+            })
+            .collect();
 
         // Create the face with updated surface
         let new_face_sr = out.add_tface(
@@ -1152,8 +1284,12 @@ fn check_self_intersection(brep: &BRep) -> Result<Vec<SelfIntersectionIssue>, Dr
     // Check for degenerate edges (zero length)
     for (ei, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Edge(ed) = ts.as_ref() {
-            let Some(vs) = brep.vertex_point(ed.first.index) else { continue; };
-            let Some(ve) = brep.vertex_point(ed.last.index) else { continue; };
+            let Some(vs) = brep.vertex_point(ed.first.index) else {
+                continue;
+            };
+            let Some(ve) = brep.vertex_point(ed.last.index) else {
+                continue;
+            };
             let len = (ve - vs).length();
             if len < TOLERANCE {
                 issues.push(SelfIntersectionIssue {
@@ -1243,11 +1379,7 @@ fn group_connected_faces(brep: &BRep, face_srs: &[ShapeRef]) -> Vec<Vec<usize>> 
     groups.into_values().collect()
 }
 
-fn classify_feature_type(
-    brep: &BRep,
-    face_indices: &[usize],
-    pull: DVec3,
-) -> InternalFeatureType {
+fn classify_feature_type(brep: &BRep, face_indices: &[usize], pull: DVec3) -> InternalFeatureType {
     let face_srs = match collect_face_refs(brep) {
         Some(srs) => srs,
         None => return InternalFeatureType::Unknown,
@@ -1259,7 +1391,9 @@ fn classify_feature_type(
     for &fi in face_indices {
         if let Some(&sr) = face_srs.get(fi) {
             let fd = brep.face(sr);
-            let normal = fd.surface.as_ref()
+            let normal = fd
+                .surface
+                .as_ref()
                 .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
                 .unwrap_or_default()
                 .normalize();
@@ -1352,7 +1486,9 @@ fn evaluate_draft_direction(_brep: &BRep, face_srs: &[ShapeRef], direction: DVec
 
     for &sr in face_srs {
         let fd = _brep.face(sr);
-        let normal = fd.surface.as_ref()
+        let normal = fd
+            .surface
+            .as_ref()
             .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
             .unwrap_or_default()
             .normalize();

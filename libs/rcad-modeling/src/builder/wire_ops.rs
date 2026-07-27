@@ -23,10 +23,10 @@ use std::f64::consts::PI;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
-use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::projection::closest_point_on_surface;
-use rcad_kernel::topology::{Vertex, WireEdge, Wire};
+use rcad_kernel::topods;
+use rcad_kernel::topology::{Vertex, Wire, WireEdge};
 
 use crate::builder::BuildError;
 
@@ -88,19 +88,26 @@ pub fn project_wire_onto_surface(
             continue; // skip degenerate (coincident) projected edge
         }
         let dir = (pb - pa) / len;
-        let curve = Curve3::Line(Line3 { origin: pa, direction: dir });
+        let curve = Curve3::Line(Line3 {
+            origin: pa,
+            direction: dir,
+        });
         let eid = all_edges.len();
         all_edges.push((curve, 0.0, len, va_idx, vb_idx));
         new_wire_edges.push(WireEdge::fwd(eid));
     }
 
     if new_wire_edges.is_empty() {
-        return Err(BuildError::DegenerateGeometry("all projected edges degenerated"));
+        return Err(BuildError::DegenerateGeometry(
+            "all projected edges degenerated",
+        ));
     }
 
     // We only need the wire representation (not a full BRep) so we return
     // the wire plus the projected point positions for the caller to use.
-    let out_wire = Wire { edges: new_wire_edges };
+    let out_wire = Wire {
+        edges: new_wire_edges,
+    };
     Ok((out_wire, proj_pts))
 }
 
@@ -115,7 +122,11 @@ fn wire_ordered_vertex_positions(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
     for we in &wire.edges {
         if let Some(ts) = brep.tshapes.get(we.idx) {
             if let TShape::Edge(ed) = &**ts {
-                let v_idx = if we.forward { ed.first.index } else { ed.last.index };
+                let v_idx = if we.forward {
+                    ed.first.index
+                } else {
+                    ed.last.index
+                };
                 if let Some(pt) = brep.vertex_point(v_idx) {
                     pts.push(pt);
                 }
@@ -146,11 +157,7 @@ fn wire_ordered_vertex_positions(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
 /// # Errors
 /// Returns `BuildError::NonPositiveValue` if `radius ≤ 0`.
 /// Returns `BuildError::DegenerateGeometry` if fewer than 2 points are given.
-pub fn fillet_wire_2d(
-    pts: &[DVec2],
-    radius: f64,
-    closed: bool,
-) -> Result<Vec<DVec2>, BuildError> {
+pub fn fillet_wire_2d(pts: &[DVec2], radius: f64, closed: bool) -> Result<Vec<DVec2>, BuildError> {
     if radius <= 0.0 {
         return Err(BuildError::NonPositiveValue("radius"));
     }
@@ -161,7 +168,7 @@ pub fn fillet_wire_2d(
         // Two points: nothing to round.
         return Ok(pts.to_vec());
     }
-    round_corners_2d(pts, radius, closed, /*chamfer=*/false)
+    round_corners_2d(pts, radius, closed, /*chamfer=*/ false)
 }
 
 /// Bevel the corners of a 2-D polygon.
@@ -174,11 +181,7 @@ pub fn fillet_wire_2d(
 /// # Errors
 /// Returns `BuildError::NonPositiveValue` if `dist ≤ 0`.
 /// Returns `BuildError::DegenerateGeometry` if fewer than 2 points are given.
-pub fn chamfer_wire_2d(
-    pts: &[DVec2],
-    dist: f64,
-    closed: bool,
-) -> Result<Vec<DVec2>, BuildError> {
+pub fn chamfer_wire_2d(pts: &[DVec2], dist: f64, closed: bool) -> Result<Vec<DVec2>, BuildError> {
     if dist <= 0.0 {
         return Err(BuildError::NonPositiveValue("dist"));
     }
@@ -188,7 +191,7 @@ pub fn chamfer_wire_2d(
     if pts.len() < 3 {
         return Ok(pts.to_vec());
     }
-    round_corners_2d(pts, dist, closed, /*chamfer=*/true)
+    round_corners_2d(pts, dist, closed, /*chamfer=*/ true)
 }
 
 // ── Shared corner-rounding core ───────────────────────────────────────────────
@@ -227,8 +230,8 @@ fn round_corners_2d(
     struct Corner {
         /// True if this corner was actually rounded/bevelled.
         active: bool,
-        prev: DVec2, // setback point on prev edge end
-        next: DVec2, // setback point on next edge start
+        prev: DVec2,        // setback point on prev edge end
+        next: DVec2,        // setback point on next edge start
         mid: Option<DVec2>, // arc midpoint (fillet only)
     }
 
@@ -250,7 +253,7 @@ fn round_corners_2d(
         let prev_i = if ci == 0 { n - 1 } else { ci - 1 };
         let next_i = if ci + 1 >= n { 0 } else { ci + 1 };
         let p_prev = pts[prev_i];
-        let p_cur  = pts[i];
+        let p_cur = pts[i];
         let p_next = pts[next_i];
 
         let d0 = (p_cur - p_prev).normalize_or_zero();
@@ -295,19 +298,27 @@ fn round_corners_2d(
             let center = p_cur + bisect * (param / half_angle.sin().max(1e-10) - param);
             let arc_mid = (prev_pt + next_pt) * 0.5;
             // Pull arc_mid radially outward so it lies on the circle.
-            let from_center = arc_mid - (p_cur + bisect * (param / half_angle.sin().max(1e-10) - param));
+            let from_center =
+                arc_mid - (p_cur + bisect * (param / half_angle.sin().max(1e-10) - param));
             let r_nominal = from_center.length();
-            let _ = arc_dist; let _ = center;
+            let _ = arc_dist;
+            let _ = center;
             if r_nominal < 1e-12 {
                 None
             } else {
-                let on_arc = p_cur + bisect * (param / half_angle.sin().max(1e-10) - param)
+                let on_arc = p_cur
+                    + bisect * (param / half_angle.sin().max(1e-10) - param)
                     + from_center * (param / r_nominal);
                 Some(on_arc)
             }
         };
 
-        corners[i] = Some(Corner { active: true, prev: prev_pt, next: next_pt, mid });
+        corners[i] = Some(Corner {
+            active: true,
+            prev: prev_pt,
+            next: next_pt,
+            mid,
+        });
     }
 
     // Now rebuild the output polygon.
@@ -372,20 +383,35 @@ fn round_corners_2d(
 mod tests {
     use super::*;
     use glam::DVec2;
-    use rcad_kernel::geom::{Plane, PrimitiveSolid, Surface3};
     use rcad_kernel::BRep;
+    use rcad_kernel::geom::{Plane, PrimitiveSolid, Surface3};
 
     // ── project_wire_onto_surface ─────────────────────────────────────────────
 
     fn box_wire_0(brep: &BRep) -> Wire {
         use topods::TShape;
-        let solid_idx = brep.tshapes.iter().position(|ts| matches!(&**ts, TShape::Solid(_)))
+        let solid_idx = brep
+            .tshapes
+            .iter()
+            .position(|ts| matches!(&**ts, TShape::Solid(_)))
             .expect("box should have a solid");
-        let sd = match &*brep.tshapes[solid_idx] { TShape::Solid(sd) => sd, _ => unreachable!() };
+        let sd = match &*brep.tshapes[solid_idx] {
+            TShape::Solid(sd) => sd,
+            _ => unreachable!(),
+        };
         let shell_ref = &sd.shells[0];
-        let face_ref = match &*brep.tshapes[shell_ref.index] { TShape::Shell(sd) => &sd.faces[0], _ => panic!("not a shell") };
-        let wire_ref = match &*brep.tshapes[face_ref.index] { TShape::Face(fd) => &fd.outer_wire, _ => panic!("not a face") };
-        let wd = match &*brep.tshapes[wire_ref.index] { TShape::Wire(wd) => wd, _ => panic!("not a wire") };
+        let face_ref = match &*brep.tshapes[shell_ref.index] {
+            TShape::Shell(sd) => &sd.faces[0],
+            _ => panic!("not a shell"),
+        };
+        let wire_ref = match &*brep.tshapes[face_ref.index] {
+            TShape::Face(fd) => &fd.outer_wire,
+            _ => panic!("not a face"),
+        };
+        let wd = match &*brep.tshapes[wire_ref.index] {
+            TShape::Wire(wd) => wd,
+            _ => panic!("not a wire"),
+        };
         let edges = wd.edges.iter().map(|sr| WireEdge::fwd(sr.index)).collect();
         Wire { edges }
     }
@@ -423,7 +449,12 @@ mod tests {
         let e2 = brep.add_edge_flat(v2, v3, None, [0.0, f64::NAN]);
         let e3 = brep.add_edge_flat(v3, v0, None, [0.0, f64::NAN]);
         let wire = Wire {
-            edges: vec![WireEdge::fwd(e0), WireEdge::fwd(e1), WireEdge::fwd(e2), WireEdge::fwd(e3)],
+            edges: vec![
+                WireEdge::fwd(e0),
+                WireEdge::fwd(e1),
+                WireEdge::fwd(e2),
+                WireEdge::fwd(e3),
+            ],
         };
 
         let plane = Surface3::Plane(Plane::new(glam::DVec3::ZERO, glam::DVec3::Z));
@@ -510,11 +541,15 @@ mod tests {
 
     #[test]
     fn chamfer_open_polygon_preserves_endpoints() {
-        let l = vec![DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0), DVec2::new(1.0, 1.0)];
+        let l = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 0.0),
+            DVec2::new(1.0, 1.0),
+        ];
         let result = chamfer_wire_2d(&l, 0.1, false).unwrap();
         // First and last must be preserved.
         assert!((result.first().unwrap() - DVec2::new(0.0, 0.0)).length() < 1e-9);
-        assert!((result.last().unwrap()  - DVec2::new(1.0, 1.0)).length() < 1e-9);
+        assert!((result.last().unwrap() - DVec2::new(1.0, 1.0)).length() < 1e-9);
     }
 
     #[test]

@@ -27,12 +27,12 @@ use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
-use rcad_kernel::geom::{
-    any_perpendicular, BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3,
-    BezierSurface, Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3,
-    Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3,
-};
 use rcad_kernel::fit::interpolate_points;
+use rcad_kernel::geom::{
+    BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3, BezierSurface,
+    Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
+    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3, any_perpendicular,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Conversion Parameters
@@ -162,15 +162,15 @@ pub fn circle_to_bspline(circle: &Circle3, _degree: usize) -> BSplineCurve3 {
 
     // 9 control points for full circle
     let pts = [
-        c + a * x_ax,                     // 0°
-        c + a * x_ax + b * y_ax,          // corner (a, b)
-        c + b * y_ax,                      // 90°
-        c - a * x_ax + b * y_ax,          // corner (-a, b)
-        c - a * x_ax,                      // 180°
-        c - a * x_ax - b * y_ax,          // corner (-a, -b)
-        c - b * y_ax,                      // 270°
-        c + a * x_ax - b * y_ax,          // corner (a, -b)
-        c + a * x_ax,                      // 360° = 0° (closed)
+        c + a * x_ax,            // 0°
+        c + a * x_ax + b * y_ax, // corner (a, b)
+        c + b * y_ax,            // 90°
+        c - a * x_ax + b * y_ax, // corner (-a, b)
+        c - a * x_ax,            // 180°
+        c - a * x_ax - b * y_ax, // corner (-a, -b)
+        c - b * y_ax,            // 270°
+        c + a * x_ax - b * y_ax, // corner (a, -b)
+        c + a * x_ax,            // 360° = 0° (closed)
     ];
 
     let weights = [1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0];
@@ -205,15 +205,15 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3, _degree: usize) -> BSplineCurve3 {
     let w = (2.0_f64).sqrt() / 2.0;
 
     let pts = [
-        c + a * x_ax,                     // 0°
-        c + a * x_ax + b * y_ax,          // corner
-        c + b * y_ax,                      // 90°
-        c - a * x_ax + b * y_ax,          // corner
-        c - a * x_ax,                      // 180°
-        c - a * x_ax - b * y_ax,          // corner
-        c - b * y_ax,                      // 270°
-        c + a * x_ax - b * y_ax,          // corner
-        c + a * x_ax,                      // 360°
+        c + a * x_ax,            // 0°
+        c + a * x_ax + b * y_ax, // corner
+        c + b * y_ax,            // 90°
+        c - a * x_ax + b * y_ax, // corner
+        c - a * x_ax,            // 180°
+        c - a * x_ax - b * y_ax, // corner
+        c - b * y_ax,            // 270°
+        c + a * x_ax - b * y_ax, // corner
+        c + a * x_ax,            // 360°
     ];
 
     let weights = [1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0];
@@ -372,7 +372,11 @@ pub fn plane_to_bspline(plane: &Plane, _u_deg: usize, _v_deg: usize) -> BSplineS
 /// * `cyl` - The cylinder to convert
 /// * `u_deg` - Degree in u direction (minimum 2 for exact circle)
 /// * `v_deg` - Degree in v direction (minimum 1)
-pub fn cylinder_to_bspline(cyl: &CylindricalSurface, _u_deg: usize, _v_deg: usize) -> BSplineSurface {
+pub fn cylinder_to_bspline(
+    cyl: &CylindricalSurface,
+    _u_deg: usize,
+    _v_deg: usize,
+) -> BSplineSurface {
     let x_ax = cyl.ref_dir.normalize();
     let y_ax = cyl.axis.cross(x_ax).normalize();
 
@@ -396,9 +400,14 @@ pub fn cylinder_to_bspline(cyl: &CylindricalSurface, _u_deg: usize, _v_deg: usiz
 
     // Create two rows of control points (at v=0 and v=1)
     let pts_v0: Vec<DVec3> = circle_pts.iter().map(|p| cyl.origin + *p).collect();
-    let pts_v1: Vec<DVec3> = circle_pts.iter().map(|p| cyl.origin + *p + cyl.axis).collect();
+    let pts_v1: Vec<DVec3> = circle_pts
+        .iter()
+        .map(|p| cyl.origin + *p + cyl.axis)
+        .collect();
 
-    let knots_u = vec![0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0];
+    let knots_u = vec![
+        0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+    ];
 
     BSplineSurface {
         degree_u: 2,
@@ -419,7 +428,11 @@ pub fn cylinder_to_bspline(cyl: &CylindricalSurface, _u_deg: usize, _v_deg: usiz
 /// * `sphere` - The sphere to convert
 /// * `u_deg` - Degree in u direction (minimum 2)
 /// * `v_deg` - Degree in v direction (minimum 2)
-pub fn sphere_to_bspline(sphere: &SphericalSurface, _u_deg: usize, _v_deg: usize) -> BSplineSurface {
+pub fn sphere_to_bspline(
+    sphere: &SphericalSurface,
+    _u_deg: usize,
+    _v_deg: usize,
+) -> BSplineSurface {
     let r = sphere.radius;
     let x_ax = sphere.ref_dir.normalize();
     let y_ax = sphere.axis.cross(x_ax).normalize();
@@ -482,7 +495,9 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface, _u_deg: usize, _v_deg: usize
         .map(|ui| (0..n_v).map(|vi| weights[vi][ui]).collect())
         .collect();
 
-    let knots_u = vec![0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0];
+    let knots_u = vec![
+        0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+    ];
     let knots_v = vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0];
 
     BSplineSurface {
@@ -548,7 +563,9 @@ pub fn cone_to_bspline(cone: &ConicalSurface, _u_deg: usize, _v_deg: usize) -> B
     };
 
     let circle_weights = [1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0];
-    let knots_u = vec![0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0];
+    let knots_u = vec![
+        0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+    ];
 
     BSplineSurface {
         degree_u: 2,
@@ -624,7 +641,9 @@ pub fn torus_to_bspline(torus: &ToroidalSurface, _u_deg: usize, _v_deg: usize) -
         }
     }
 
-    let knots = vec![0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0];
+    let knots = vec![
+        0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+    ];
 
     BSplineSurface {
         degree_u: 2,
@@ -671,14 +690,20 @@ pub fn surface_to_bspline(surf: &Surface3, params: &ConvertParams) -> BSplineSur
         Surface3::Torus(t) => torus_to_bspline(t, params.max_degree, params.max_degree),
         Surface3::BSpline(b) => b.clone(),
         Surface3::Bezier(b) => bezier_surface_to_bspline(b),
-        _ => approx_surface_to_bspline(surf, params.tolerance, params.max_degree, params.max_degree),
+        _ => {
+            approx_surface_to_bspline(surf, params.tolerance, params.max_degree, params.max_degree)
+        }
     }
 }
 
 /// Convert a `BezierSurface` to a `BSplineSurface`.
 fn bezier_surface_to_bspline(bezier: &BezierSurface) -> BSplineSurface {
     let nu = bezier.control_points.len();
-    let nv = if nu > 0 { bezier.control_points[0].len() } else { 0 };
+    let nv = if nu > 0 {
+        bezier.control_points[0].len()
+    } else {
+        0
+    };
     let deg_u = (nu - 1).max(1);
     let deg_v = (nv - 1).max(1);
 
@@ -704,12 +729,25 @@ fn bezier_surface_to_bspline(bezier: &BezierSurface) -> BSplineSurface {
 /// * `_tol` - Tolerance (currently unused)
 /// * `u_deg` - Degree in u direction
 /// * `v_deg` - Degree in v direction
-pub fn approx_surface_to_bspline(surf: &Surface3, _tol: f64, u_deg: usize, v_deg: usize) -> BSplineSurface {
+pub fn approx_surface_to_bspline(
+    surf: &Surface3,
+    _tol: f64,
+    u_deg: usize,
+    v_deg: usize,
+) -> BSplineSurface {
     let [u0, u1, v0, v1] = surf.default_domain();
 
     // For unbounded surfaces, use reasonable ranges
-    let (u0, u1) = if (u1 - u0).abs() > 1e6 { (-10.0, 10.0) } else { (u0, u1) };
-    let (v0, v1) = if (v1 - v0).abs() > 1e6 { (-10.0, 10.0) } else { (v0, v1) };
+    let (u0, u1) = if (u1 - u0).abs() > 1e6 {
+        (-10.0, 10.0)
+    } else {
+        (u0, u1)
+    };
+    let (v0, v1) = if (v1 - v0).abs() > 1e6 {
+        (-10.0, 10.0)
+    } else {
+        (v0, v1)
+    };
 
     // Sample the surface on a grid
     let n_u = 10;
@@ -803,12 +841,16 @@ pub fn bspline_to_bezier(spline: &BSplineCurve3) -> Vec<BezierCurve3> {
         while i < spline.knots.len() {
             let knot = spline.knots[i];
             let mut mult = 0;
-            while i < spline.knots.len() && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
+            while i < spline.knots.len()
+                && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+            {
                 mult += 1;
                 i += 1;
             }
             // Only interior knots
-            if knot > spline.knots[0] + TOLERANCE_LINEAR_ULTRA_STRICT && knot < spline.knots[spline.knots.len() - 1] - TOLERANCE_LINEAR_ULTRA_STRICT {
+            if knot > spline.knots[0] + TOLERANCE_LINEAR_ULTRA_STRICT
+                && knot < spline.knots[spline.knots.len() - 1] - TOLERANCE_LINEAR_ULTRA_STRICT
+            {
                 result.push((knot, mult));
             }
         }
@@ -932,7 +974,11 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
 
     // For each v-column, decompose the u-direction curve
     let n_u = spline.control_points.len();
-    let n_v = if n_u > 0 { spline.control_points[0].len() } else { 0 };
+    let n_v = if n_u > 0 {
+        spline.control_points[0].len()
+    } else {
+        0
+    };
 
     for j in 0..n_v {
         let col_pts: Vec<DVec3> = (0..n_u).map(|i| spline.control_points[i][j]).collect();
@@ -1023,17 +1069,25 @@ fn insert_knot_2d(
     u: f64,
 ) {
     let n = knots.len();
-    if n < 2 { return; }
+    if n < 2 {
+        return;
+    }
 
     let mut k = degree;
     for i in degree..n - degree {
-        if knots[i] > u + TOLERANCE_LINEAR_ULTRA_STRICT { break; }
+        if knots[i] > u + TOLERANCE_LINEAR_ULTRA_STRICT {
+            break;
+        }
         k = i;
     }
 
     let alpha = |i: usize| -> f64 {
         let denom = knots[i + degree] - knots[i];
-        if denom.abs() < TOLERANCE_FLOAT_DEDUP { 0.0 } else { (u - knots[i]) / denom }
+        if denom.abs() < TOLERANCE_FLOAT_DEDUP {
+            0.0
+        } else {
+            (u - knots[i]) / denom
+        }
     };
 
     let mut new_ctrl = Vec::with_capacity(ctrl_pts.len() + 1);
@@ -1080,7 +1134,9 @@ pub fn bspline_to_bezier_2d(spline: &BSplineCurve2) -> Vec<BezierCurve2> {
         while i < spline.knots.len() {
             let knot = spline.knots[i];
             let mut mult = 0;
-            while i < spline.knots.len() && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
+            while i < spline.knots.len()
+                && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
+            {
                 mult += 1;
                 i += 1;
             }
@@ -1133,7 +1189,10 @@ mod geom_convert_approx_tests {
     fn approx_line_to_bspline_exact() {
         // approx_curve_to_bspline samples the curve and interpolates.
         // Verify it produces a valid BSpline without error.
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         let bs = approx_curve_to_bspline(&line, 1e-10, 2);
         assert!(bs.knots.len() >= 2, "should have knots");
         assert!(bs.control_points.len() >= 2, "should have control points");
@@ -1143,8 +1202,14 @@ mod geom_convert_approx_tests {
         let exact = curve_to_bspline(&line, &params);
         let p0 = exact.point_at(exact.default_domain()[0]);
         let p1 = exact.point_at(exact.default_domain()[1]);
-        assert!((p0 - DVec3::ZERO).length() < 1e-6, "exact line start should be origin");
-        assert!((p1 - DVec3::X).length() < 1e-6, "exact line end should be (1,0,0)");
+        assert!(
+            (p0 - DVec3::ZERO).length() < 1e-6,
+            "exact line start should be origin"
+        );
+        assert!(
+            (p1 - DVec3::X).length() < 1e-6,
+            "exact line end should be (1,0,0)"
+        );
     }
 
     #[test]
@@ -1155,7 +1220,11 @@ mod geom_convert_approx_tests {
         // Check the curve evaluates to a point near the circle
         let domain = bs.default_domain();
         let p_mid = bs.point_at((domain[0] + domain[1]) / 2.0);
-        assert!((p_mid.length() - 5.0).abs() < 1.0, "circle approx radius at midpoint should be near 5, got {}", p_mid.length());
+        assert!(
+            (p_mid.length() - 5.0).abs() < 1.0,
+            "circle approx radius at midpoint should be near 5, got {}",
+            p_mid.length()
+        );
         assert!(bs.knots.len() >= 2, "should have knots");
         assert!(bs.control_points.len() >= 2, "should have control points");
     }
@@ -1180,14 +1249,21 @@ mod geom_convert_approx_tests {
     #[test]
     fn approx_curve_default_domain() {
         // Line along X from 0 to 10
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X * 10.0 });
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X * 10.0,
+        });
         let bs = approx_curve_to_bspline(&line, 1e-6, 2);
         let domain = bs.default_domain();
         assert!(domain[1] > domain[0], "should have valid domain");
         let p_end = bs.point_at(domain[1]);
         // End point should be somewhere along the X axis
         assert!(p_end.x > 0.0, "end x should be positive, got {}", p_end.x);
-        assert!(p_end.y.abs() < 0.1, "end y should be near 0, got {}", p_end.y);
+        assert!(
+            p_end.y.abs() < 0.1,
+            "end y should be near 0, got {}",
+            p_end.y
+        );
     }
 
     #[test]
@@ -1200,7 +1276,11 @@ mod geom_convert_approx_tests {
         };
         let beziers = bspline_to_bezier(&spline);
         assert_eq!(beziers.len(), 2, "should produce 2 bezier segments");
-        assert_eq!(beziers[0].control_points.len(), 2, "each bezier should be degree 1");
+        assert_eq!(
+            beziers[0].control_points.len(),
+            2,
+            "each bezier should be degree 1"
+        );
     }
 
     #[test]
@@ -1219,7 +1299,11 @@ mod geom_convert_approx_tests {
         let patches = bspline_surface_to_bezier(&surf);
         assert_eq!(patches.len(), 1, "should produce 1 patch in u");
         assert_eq!(patches[0].len(), 1, "should produce 1 patch in v");
-        assert_eq!(patches[0][0].control_points.len(), 2, "2 control points in u");
+        assert_eq!(
+            patches[0][0].control_points.len(),
+            2,
+            "2 control points in u"
+        );
     }
 
     #[test]
@@ -1237,7 +1321,10 @@ mod geom_convert_approx_tests {
         let knots = build_uniform_knots(5, 3);
         assert_eq!(knots.len(), 9, "5 ctrl pts + deg 3 = 9 knots");
         assert!((knots[0] - 0.0).abs() < 1e-15, "first knot should be 0");
-        assert!((knots[knots.len() - 1] - 1.0).abs() < 1e-15, "last knot should be 1");
+        assert!(
+            (knots[knots.len() - 1] - 1.0).abs() < 1e-15,
+            "last knot should be 1"
+        );
         // Check non-decreasing
         for i in 1..knots.len() {
             assert!(knots[i] >= knots[i - 1], "knots should be non-decreasing");
@@ -1260,8 +1347,9 @@ mod geom_convert_approx_tests {
         // Use curve_to_bspline instead for robust handling
         let params = ConvertParams::new(1e-3);
         let bs2 = curve_to_bspline(&hyper, &params);
-        assert!(bs2.knots.len() >= 2, "curve_to_bspline should also produce knots");
+        assert!(
+            bs2.knots.len() >= 2,
+            "curve_to_bspline should also produce knots"
+        );
     }
 }
-
-

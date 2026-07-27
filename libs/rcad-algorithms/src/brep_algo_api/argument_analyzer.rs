@@ -14,10 +14,10 @@
 use rcad_kernel::topods;
 use rcad_kernel::topods::BRep;
 
-use crate::tolerance::TOLERANCE_ABS;
-use crate::brep_tools::{get_shape_type, ShapeType};
 use crate::bopds::checker_si::CheckerSI;
 use crate::brep_check::diagnose_face_surface_consistency;
+use crate::brep_tools::{ShapeType, get_shape_type};
+use crate::tolerance::TOLERANCE_ABS;
 use glam::DVec3;
 
 // =============================================================================
@@ -41,7 +41,10 @@ pub enum OperationType {
 impl OperationType {
     /// Returns true if the operation is a Boolean operation (not section).
     pub fn is_boolean(&self) -> bool {
-        matches!(self, OperationType::Common | OperationType::Fuse | OperationType::Cut)
+        matches!(
+            self,
+            OperationType::Common | OperationType::Fuse | OperationType::Cut
+        )
     }
 }
 
@@ -914,11 +917,13 @@ impl ArgumentAnalyzer {
         let Some(edge) = _edges.get(edge_idx) else {
             return 0.0;
         };
-        let start_pt = brep.vertices()
+        let start_pt = brep
+            .vertices()
             .get(edge.start)
             .map(|v| v.point)
             .unwrap_or(DVec3::ZERO);
-        let end_pt = brep.vertices()
+        let end_pt = brep
+            .vertices()
             .get(edge.end)
             .map(|v| v.point)
             .unwrap_or(DVec3::ZERO);
@@ -1033,11 +1038,7 @@ impl ArgumentAnalyzer {
                 } else {
                     fe.start
                 };
-                let last_end = if !last_edge.forward {
-                    le.start
-                } else {
-                    le.end
-                };
+                let last_end = if !last_edge.forward { le.start } else { le.end };
                 // For a closed wire, the start of the first edge must equal
                 // the end of the last edge (same vertex index).
                 if first_start != last_end {
@@ -1307,11 +1308,8 @@ impl ArgumentAnalyzer {
         if let Some(s1) = self.shape1.as_ref() {
             let diagnosis = diagnose_face_surface_consistency(s1, TOLERANCE_ABS * 10.0);
             if !diagnosis.is_clean() {
-                let faulty: Vec<usize> = diagnosis
-                    .suspect_edges
-                    .iter()
-                    .map(|e| e.edge_idx)
-                    .collect();
+                let faulty: Vec<usize> =
+                    diagnosis.suspect_edges.iter().map(|e| e.edge_idx).collect();
                 if !faulty.is_empty() {
                     self.results.push(CheckResult::with_faulty1(
                         CheckStatus::InvalidCurveOnSurface,
@@ -1328,11 +1326,8 @@ impl ArgumentAnalyzer {
         if let Some(s2) = self.shape2.as_ref() {
             let diagnosis = diagnose_face_surface_consistency(s2, TOLERANCE_ABS * 10.0);
             if !diagnosis.is_clean() {
-                let faulty: Vec<usize> = diagnosis
-                    .suspect_edges
-                    .iter()
-                    .map(|e| e.edge_idx)
-                    .collect();
+                let faulty: Vec<usize> =
+                    diagnosis.suspect_edges.iter().map(|e| e.edge_idx).collect();
                 if !faulty.is_empty() {
                     self.results.push(CheckResult::with_faulty2(
                         CheckStatus::InvalidCurveOnSurface,
@@ -1347,5 +1342,3 @@ impl ArgumentAnalyzer {
 // =============================================================================
 // Tests
 // =============================================================================
-
-

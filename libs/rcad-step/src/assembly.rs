@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{DAffine3, DVec3};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
-use rcad_kernel::topods;
 use rcad_kernel::appearance::StepColor;
+use rcad_kernel::topods;
 use serde::Serialize;
 
 use crate::StepError;
@@ -197,8 +197,7 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
         "( CONVERSION_BASED_UNIT('DEGREE',#{}) NAMED_UNIT(#{}) PLANE_ANGLE_UNIT() )",
         meas, dim_exp
     ));
-    let sol_unit =
-        push!("( NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.) )".to_string());
+    let sol_unit = push!("( NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.) )".to_string());
     let uncert = push!(format!(
         "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-6),#{},'distance_accuracy_value','confusion accuracy')",
         len_unit
@@ -235,7 +234,10 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
             } else {
                 StepWriter::write_string(
                     brep,
-                    ExportSelection { selected_faces: &[], selected_edges: &[] },
+                    ExportSelection {
+                        selected_faces: &[],
+                        selected_edges: &[],
+                    },
                 )
             };
             let comp_records = extract_data_records(&comp_step);
@@ -254,26 +256,51 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
         };
 
         // Emit PRODUCT / PRODUCT_DEFINITION for this node.
-        let prod = push_record(records, next_id, format!(
-            "PRODUCT('{}','{}','',( #{} ))",
-            node.name, node.name, prod_ctx
-        ));
-        let formation = push_record(records, next_id, format!("PRODUCT_DEFINITION_FORMATION('','',#{})", prod));
-        let pd = push_record(records, next_id, format!(
-            "PRODUCT_DEFINITION('','',#{},#{})",
-            formation, def_ctx
-        ));
-        let pds = push_record(records, next_id, format!("PRODUCT_DEFINITION_SHAPE('','',#{})", pd));
+        let prod = push_record(
+            records,
+            next_id,
+            format!(
+                "PRODUCT('{}','{}','',( #{} ))",
+                node.name, node.name, prod_ctx
+            ),
+        );
+        let formation = push_record(
+            records,
+            next_id,
+            format!("PRODUCT_DEFINITION_FORMATION('','',#{})", prod),
+        );
+        let pd = push_record(
+            records,
+            next_id,
+            format!("PRODUCT_DEFINITION('','',#{},#{})", formation, def_ctx),
+        );
+        let pds = push_record(
+            records,
+            next_id,
+            format!("PRODUCT_DEFINITION_SHAPE('','',#{})", pd),
+        );
 
         if let Some(sr) = shape_rep_id {
-            push_record(records, next_id, format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, sr));
+            push_record(
+                records,
+                next_id,
+                format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, sr),
+            );
         } else {
             // Branch node: emit an empty shape representation.
-            let empty_sr = push_record(records, next_id, format!(
-                "SHAPE_REPRESENTATION('{}',( #{} ),#{})",
-                node.name, geom_ctx, geom_ctx
-            ));
-            push_record(records, next_id, format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, empty_sr));
+            let empty_sr = push_record(
+                records,
+                next_id,
+                format!(
+                    "SHAPE_REPRESENTATION('{}',( #{} ),#{})",
+                    node.name, geom_ctx, geom_ctx
+                ),
+            );
+            push_record(
+                records,
+                next_id,
+                format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, empty_sr),
+            );
         }
 
         // Recursively emit children and link via NAUO.
@@ -282,14 +309,22 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
                 child, records, next_id, prod_ctx, def_ctx, geom_ctx, nauo_seq,
             );
             *nauo_seq += 1;
-            let nauo = push_record(records, next_id, format!(
-                "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','{}','',#{},#{},$)",
-                nauo_seq, child.name, pd, child_pd
-            ));
-            push_record(records, next_id, format!(
-                "PRODUCT_DEFINITION_SHAPE('Acme','occurrence shape',#{})",
-                nauo
-            ));
+            let nauo = push_record(
+                records,
+                next_id,
+                format!(
+                    "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','{}','',#{},#{},$)",
+                    nauo_seq, child.name, pd, child_pd
+                ),
+            );
+            push_record(
+                records,
+                next_id,
+                format!(
+                    "PRODUCT_DEFINITION_SHAPE('Acme','occurrence shape',#{})",
+                    nauo
+                ),
+            );
         }
 
         pd
@@ -351,20 +386,21 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
 
     for body in entity_map.values() {
         if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE")
-            && let Some(args) = parse_args(rest) {
-                let parent_pd = parse_ref(args.get(3).copied().unwrap_or(""));
-                let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
-                let rel_name = unquote(args.get(1).copied().unwrap_or(""));
-                // Ignore placement NAUOs from inlined part STEP (empty name); those are
-                // not assembly children of the outer product tree.
-                if parent_pd > 0 && child_pd > 0 && !rel_name.is_empty() {
-                    children_of
-                        .entry(parent_pd)
-                        .or_default()
-                        .push((child_pd, rel_name));
-                    all_child_pds.insert(child_pd);
-                }
+            && let Some(args) = parse_args(rest)
+        {
+            let parent_pd = parse_ref(args.get(3).copied().unwrap_or(""));
+            let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
+            let rel_name = unquote(args.get(1).copied().unwrap_or(""));
+            // Ignore placement NAUOs from inlined part STEP (empty name); those are
+            // not assembly children of the outer product tree.
+            if parent_pd > 0 && child_pd > 0 && !rel_name.is_empty() {
+                children_of
+                    .entry(parent_pd)
+                    .or_default()
+                    .push((child_pd, rel_name));
+                all_child_pds.insert(child_pd);
             }
+        }
     }
 
     // Find root PD(s): PDs that appear in NAUOs (as parent or child) but are
@@ -401,8 +437,8 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
         children_of: &HashMap<u64, Vec<(u64, String)>>,
         merged_brep: &topods::BRep,
     ) -> AssemblyNode {
-        let name = resolve_product_name(pd_id, entity_map)
-            .unwrap_or_else(|| format!("node_{}", pd_id));
+        let name =
+            resolve_product_name(pd_id, entity_map).unwrap_or_else(|| format!("node_{}", pd_id));
 
         let child_entries = children_of.get(&pd_id);
 
@@ -411,27 +447,19 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
             let children: Vec<AssemblyNode> = entries
                 .iter()
                 .map(|(child_pd, _)| {
-                    build_node(
-                        *child_pd,
-                        entity_map,
-                        reverse_map,
-                        children_of,
-                        merged_brep,
-                    )
+                    build_node(*child_pd, entity_map, reverse_map, children_of, merged_brep)
                 })
                 .collect();
             AssemblyNode::branch(name, children)
         } else {
             // Leaf node: isolate geometry.
-            let brep =
-                if let Some(sr_id) = find_shape_rep_for_pd(pd_id, entity_map, reverse_map) {
-                    let reachable = collect_reachable(sr_id, entity_map);
-                    let comp_step = build_component_step(entity_map, &reachable);
-                    crate::StepReader::parse_string(&comp_step)
-                        .unwrap_or_else(|_| merged_brep.clone())
-                } else {
-                    merged_brep.clone()
-                };
+            let brep = if let Some(sr_id) = find_shape_rep_for_pd(pd_id, entity_map, reverse_map) {
+                let reachable = collect_reachable(sr_id, entity_map);
+                let comp_step = build_component_step(entity_map, &reachable);
+                crate::StepReader::parse_string(&comp_step).unwrap_or_else(|_| merged_brep.clone())
+            } else {
+                merged_brep.clone()
+            };
             AssemblyNode::leaf(name, brep)
         }
     }
@@ -448,21 +476,11 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
     } else {
         let children: Vec<AssemblyNode> = root_pds
             .iter()
-            .map(|&pd| {
-                build_node(
-                    pd,
-                    &entity_map,
-                    &reverse_map,
-                    &children_of,
-                    &merged_brep,
-                )
-            })
+            .map(|&pd| build_node(pd, &entity_map, &reverse_map, &children_of, &merged_brep))
             .collect();
         Ok(AssemblyNode::branch("root".to_string(), children))
     }
 }
-
-
 
 /// Write a multi-component STEP assembly.
 ///
@@ -738,18 +756,14 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
 
     let mut components = Vec::new();
     for (pd_id, nauo_name) in &nauo_children {
-        let name = resolve_product_name(*pd_id, &entity_map)
-            .unwrap_or_else(|| nauo_name.clone());
+        let name = resolve_product_name(*pd_id, &entity_map).unwrap_or_else(|| nauo_name.clone());
 
-        let brep = if let Some(sr_id) =
-            find_shape_rep_for_pd(*pd_id, &entity_map, &reverse_map)
-        {
+        let brep = if let Some(sr_id) = find_shape_rep_for_pd(*pd_id, &entity_map, &reverse_map) {
             // BFS-collect all entities reachable from this component's shape
             // representation, then build a self-contained sub-STEP string.
             let reachable = collect_reachable(sr_id, &entity_map);
             let comp_step = build_component_step(&entity_map, &reachable);
-            crate::StepReader::parse_string(&comp_step)
-                .unwrap_or_else(|_| merged_brep.clone())
+            crate::StepReader::parse_string(&comp_step).unwrap_or_else(|_| merged_brep.clone())
         } else {
             merged_brep.clone()
         };
@@ -814,8 +828,9 @@ pub fn read_assembly_with_healing_report_json(
         issue_histogram: issue_map.into_iter().collect(),
     };
 
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(|e| StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}")))?;
+    let json = serde_json::to_string_pretty(&payload).map_err(|e| {
+        StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}"))
+    })?;
 
     Ok((components, reports, json))
 }
@@ -888,9 +903,10 @@ fn extract_refs(body: &str) -> Vec<u64> {
                 i += 1;
             }
             if i > start
-                && let Ok(n) = body[start..i].parse::<u64>() {
-                    refs.push(n);
-                }
+                && let Ok(n) = body[start..i].parse::<u64>()
+            {
+                refs.push(n);
+            }
         } else {
             i += 1;
         }
@@ -984,7 +1000,10 @@ fn find_shape_rep_for_pd(
         let reach = collect_reachable(sr_id, map);
         reach
             .iter()
-            .filter(|&&id| map.get(&id).is_some_and(|b| b.starts_with("MANIFOLD_SOLID_BREP(")))
+            .filter(|&&id| {
+                map.get(&id)
+                    .is_some_and(|b| b.starts_with("MANIFOLD_SOLID_BREP("))
+            })
             .count()
     }
 
@@ -1015,15 +1034,20 @@ fn find_shape_rep_for_pd(
     // Prefer a representation whose BFS closure contains real geometry but only
     // one solid — merged assemblies can accidentally link two manifolds through
     // shared context entities when scoring by "any solid" alone.
-    let best_single = candidates.iter().copied().filter(|&c| {
-        solid_geometry_score(map, c) > 0 && manifold_solid_count(map, c) == 1
-    }).max_by_key(|c| solid_geometry_score(map, *c));
+    let best_single = candidates
+        .iter()
+        .copied()
+        .filter(|&c| solid_geometry_score(map, c) > 0 && manifold_solid_count(map, c) == 1)
+        .max_by_key(|c| solid_geometry_score(map, *c));
 
     if let Some(sr) = best_single {
         return Some(sr);
     }
 
-    let best = candidates.iter().copied().max_by_key(|c| solid_geometry_score(map, *c))?;
+    let best = candidates
+        .iter()
+        .copied()
+        .max_by_key(|c| solid_geometry_score(map, *c))?;
     if solid_geometry_score(map, best) > 0 {
         Some(best)
     } else {
@@ -1038,9 +1062,7 @@ fn build_component_step(map: &HashMap<u64, String>, reachable: &HashSet<u64>) ->
     out.push_str("ISO-10303-21;\n");
     out.push_str("HEADER;\n");
     out.push_str("FILE_DESCRIPTION(('RCAD component'),'2;1');\n");
-    out.push_str(
-        "FILE_NAME('component.step','2026-04-11T00:00:00',(''),(''),'RCAD','RCAD','');\n",
-    );
+    out.push_str("FILE_NAME('component.step','2026-04-11T00:00:00',(''),(''),'RCAD','RCAD','');\n");
     out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
     out.push_str("ENDSEC;\n");
     out.push_str("DATA;\n");
@@ -1076,13 +1098,14 @@ fn parse_entity_map(step: &str) -> std::collections::HashMap<u64, String> {
             continue;
         }
         if let Some(stripped) = line.strip_prefix('#')
-            && let Some(eq) = stripped.find('=') {
-                let id_str = &stripped[..eq];
-                let body = stripped[eq + 1..].trim_end_matches(';');
-                if let Ok(id) = id_str.parse::<u64>() {
-                    map.insert(id, body.to_string());
-                }
+            && let Some(eq) = stripped.find('=')
+        {
+            let id_str = &stripped[..eq];
+            let body = stripped[eq + 1..].trim_end_matches(';');
+            if let Ok(id) = id_str.parse::<u64>() {
+                map.insert(id, body.to_string());
             }
+        }
     }
     map
 }
@@ -1140,7 +1163,14 @@ fn parse_args(args_str: &str) -> Option<Vec<&str>> {
 
 /// Parse `#N` → N, returning 0 on failure.
 fn parse_ref(s: &str) -> u64 {
-    s.trim().strip_prefix('#').and_then(|n| n.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()).unwrap_or(0)
+    s.trim()
+        .strip_prefix('#')
+        .and_then(|n| {
+            n.trim_end_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0)
 }
 
 /// Strip surrounding single-quotes from a STEP string literal.
@@ -1160,7 +1190,11 @@ fn resolve_product_name(
 ) -> Option<String> {
     // PD body: PRODUCT_DEFINITION('','',#formation,#ctx)
     let pd_body = map.get(&pd_id)?;
-    let pd_args = parse_args(pd_body.strip_prefix("PRODUCT_DEFINITION(")?.strip_suffix(')')?)?;
+    let pd_args = parse_args(
+        pd_body
+            .strip_prefix("PRODUCT_DEFINITION(")?
+            .strip_suffix(')')?,
+    )?;
     // Actually strip_entity_name handles compound; simpler approach:
     let formation_id = pd_args.get(2).map(|s| parse_ref(s))?;
     if formation_id == 0 {
@@ -1171,7 +1205,8 @@ fn resolve_product_name(
     let form_body = map.get(&formation_id)?;
     let form_args = parse_args(
         form_body
-            .strip_prefix("PRODUCT_DEFINITION_FORMATION(")?.strip_suffix(')')?,
+            .strip_prefix("PRODUCT_DEFINITION_FORMATION(")?
+            .strip_suffix(')')?,
     )?;
     let prod_id = form_args.get(2).map(|s| parse_ref(s))?;
     if prod_id == 0 {
@@ -1193,9 +1228,10 @@ fn find_root_product_name(map: &std::collections::HashMap<u64, String>) -> Optio
     for id in ids {
         let body = &map[&id];
         if body.starts_with("PRODUCT(")
-            && let Some(args) = parse_args(body.strip_prefix("PRODUCT(")?.strip_suffix(')')?) {
-                return args.get(1).map(|s| unquote(s));
-            }
+            && let Some(args) = parse_args(body.strip_prefix("PRODUCT(")?.strip_suffix(')')?)
+        {
+            return args.get(1).map(|s| unquote(s));
+        }
     }
     None
 }

@@ -2,7 +2,7 @@ use super::{BuildError, normalize_vector, validate_point, validate_positive};
 use glam::DVec3;
 use rcad_kernel::Surface3;
 use rcad_kernel::geom::{
-    any_perpendicular, ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface,
+    ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface, any_perpendicular,
 };
 
 pub fn plane(origin: DVec3, normal: DVec3) -> Result<Surface3, BuildError> {
@@ -43,7 +43,9 @@ pub fn spherical_surface(center: DVec3, radius: f64) -> Result<Surface3, BuildEr
     let center = validate_point("center", center)?;
     let radius = validate_positive("radius", radius)?;
     Ok(Surface3::Sphere(SphericalSurface::new(
-        center, DVec3::Z, radius,
+        center,
+        DVec3::Z,
+        radius,
     )))
 }
 

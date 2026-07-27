@@ -1,4 +1,4 @@
-﻿//! Law-style evolution functions for variable operations.
+//! Law-style evolution functions for variable operations.
 //!
 //! This module provides mathematical functions that evolve over a parameter range,
 //! similar to OCCT's `Law_Function`, `Law_Linear`, `Law_BSpline`, etc.
@@ -422,7 +422,8 @@ impl BSplineLaw {
                 let (lower, upper) = mat.split_at_mut(row);
                 let pivot_row = &lower[col];
                 let elim_row = &mut upper[0];
-                for (elim_val, &pivot_val) in elim_row[col..=n].iter_mut().zip(pivot_row[col..=n].iter())
+                for (elim_val, &pivot_val) in
+                    elim_row[col..=n].iter_mut().zip(pivot_row[col..=n].iter())
                 {
                     *elim_val -= pivot_val * factor;
                 }
@@ -437,7 +438,11 @@ impl BSplineLaw {
                 sum -= mat[i][j] * x[j];
             }
             let diag = mat[i][i];
-            x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE { sum / diag } else { 0.0 };
+            x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE {
+                sum / diag
+            } else {
+                0.0
+            };
         }
         x
     }
@@ -629,9 +634,8 @@ impl CompositeLaw {
         }
         self.segments.push(CompositeSegment { t1, t2, law });
         // Sort segments by t1
-        self.segments.sort_by(|a, b| {
-            a.t1.partial_cmp(&b.t1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        self.segments
+            .sort_by(|a, b| a.t1.partial_cmp(&b.t1).unwrap_or(std::cmp::Ordering::Equal));
     }
 
     /// Find the segment containing parameter t.
@@ -643,13 +647,15 @@ impl CompositeLaw {
         }
         // Check if t is just before first segment or after last
         if let Some(first) = self.segments.first()
-            && t < first.t1 {
-                return Some((0, first.t1));
-            }
+            && t < first.t1
+        {
+            return Some((0, first.t1));
+        }
         if let Some(last) = self.segments.last()
-            && t > last.t2 {
-                return Some((self.segments.len() - 1, last.t2));
-            }
+            && t > last.t2
+        {
+            return Some((self.segments.len() - 1, last.t2));
+        }
         None
     }
 }
@@ -762,7 +768,9 @@ impl InterpolateLaw {
                     let dt_next = sorted_points[next].0 - sorted_points[i].0;
                     let dv_prev = sorted_points[i].1 - sorted_points[prev].1;
                     let dv_next = sorted_points[next].1 - sorted_points[i].1;
-                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE && dt_next.abs() > TOLERANCE_FLOAT_LOOSE {
+                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE
+                        && dt_next.abs() > TOLERANCE_FLOAT_LOOSE
+                    {
                         0.5 * (dv_prev / dt_prev + dv_next / dt_next)
                     } else {
                         0.0
@@ -789,7 +797,9 @@ impl InterpolateLaw {
                     let dt_next = sorted_points[i + 1].0 - sorted_points[i].0;
                     let dv_prev = sorted_points[i].1 - sorted_points[i - 1].1;
                     let dv_next = sorted_points[i + 1].1 - sorted_points[i].1;
-                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE && dt_next.abs() > TOLERANCE_FLOAT_LOOSE {
+                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE
+                        && dt_next.abs() > TOLERANCE_FLOAT_LOOSE
+                    {
                         0.5 * (dv_prev / dt_prev + dv_next / dt_next)
                     } else {
                         0.0
@@ -1033,5 +1043,3 @@ pub fn smooth_step_law(t1: f64, t2: f64) -> SmoothStepLaw {
 // ============================================================================
 // Tests
 // ============================================================================
-
-

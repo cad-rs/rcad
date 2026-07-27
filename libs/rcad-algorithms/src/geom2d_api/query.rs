@@ -1,9 +1,8 @@
-
-use super::*;
 use super::helpers::{
-    curve2d_domain, curve2d_tangent, curve2d_derivative, curve2d_second_derivative,
-    refine_point_curve2d_distance, refine_curve2d_distance,
+    curve2d_derivative, curve2d_domain, curve2d_second_derivative, curve2d_tangent,
+    refine_curve2d_distance, refine_point_curve2d_distance,
 };
+use super::*;
 
 // =============================================================================
 // ProjectPointOnCurve - Project point on 2D curve
@@ -165,4 +164,3 @@ pub fn curve2d_curvature_at(curve: &Curve2d, t: f64) -> f64 {
 
     cross / speed.powi(3)
 }
-

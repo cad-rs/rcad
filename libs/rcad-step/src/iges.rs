@@ -118,7 +118,10 @@ impl IgesWriter {
         }
         let p_count = p_seq.saturating_sub(1);
 
-        let term = format!("S{:>7}G{:>7}D{:>7}P{:>7}", s_count, g_count, d_count, p_count);
+        let term = format!(
+            "S{:>7}G{:>7}D{:>7}P{:>7}",
+            s_count, g_count, d_count, p_count
+        );
         lines.push(section_line(&term, 'T', 1));
 
         for line in lines {
@@ -226,7 +229,10 @@ impl IgesReader {
 
         // Build a topods BRep with proper topology from the mesh data.
         let mut brep = BRep::new();
-        let vert_refs: Vec<_> = vert_positions.iter().map(|&p| brep.add_tvertex(p)).collect();
+        let vert_refs: Vec<_> = vert_positions
+            .iter()
+            .map(|&p| brep.add_tvertex(p))
+            .collect();
         let mut face_refs = Vec::new();
         for fd in &face_datas {
             for &tri in &fd.triangles {
@@ -328,7 +334,10 @@ mod tests {
         // topods BRep has no triangle data, so the writer produces an
         // empty IGES with just the S/G/T section markers
         #[allow(unused)]
-        let s_count = text.lines().filter(|l| l.len() > 72 && l.as_bytes().get(72) == Some(&b'S')).count();
+        let s_count = text
+            .lines()
+            .filter(|l| l.len() > 72 && l.as_bytes().get(72) == Some(&b'S'))
+            .count();
         assert!(s_count >= 1, "IGES output should contain S section marker");
     }
 
