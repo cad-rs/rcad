@@ -1,19 +1,19 @@
-//! TKTopAlgo GTest translations.
+﻿//! TKTopAlgo GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
 //!
 //! Files translated:
-//!   BRepBuilderAPI_Copy_Test.cxx        — Copy shape, volume preserved, distinct
-//!   BRepBuilderAPI_MakeEdge_Test.cxx    — Linear/circle/trimmed edge, vertex extraction
-//!   BRepBuilderAPI_MakeFace_Test.cxx    — Face from plane, wire, bounded surface
-//!   BRepBuilderAPI_MakeWire_Test.cxx    — Wire from edges individually/by list
-//!   BRepBuilderAPI_Transform_Test.cxx   — Translate, rotate, scale, mirror
-//!   BRepClass3d_SolidClassifier_Test.cxx — Point inside/outside/on box/sphere
-//!   BRepExtrema_DistShapeShape_Test.cxx  — Edge-vertex minimum distance
-//!   BRepGProp_Test.cxx                  — Edge length, face area, volume, COM,
+//!   BRepBuilderAPI_Copy_Test.cxx        鈥?Copy shape, volume preserved, distinct
+//!   BRepBuilderAPI_MakeEdge_Test.cxx    鈥?Linear/circle/trimmed edge, vertex extraction
+//!   BRepBuilderAPI_MakeFace_Test.cxx    鈥?Face from plane, wire, bounded surface
+//!   BRepBuilderAPI_MakeWire_Test.cxx    鈥?Wire from edges individually/by list
+//!   BRepBuilderAPI_Transform_Test.cxx   鈥?Translate, rotate, scale, mirror
+//!   BRepClass3d_SolidClassifier_Test.cxx 鈥?Point inside/outside/on box/sphere
+//!   BRepExtrema_DistShapeShape_Test.cxx  鈥?Edge-vertex minimum distance
+//!   BRepGProp_Test.cxx                  鈥?Edge length, face area, volume, COM,
 //!                                          skip-shared edges, symmetry axis
-//!   BRepLib_MakeWire_Test.cxx           — Initialize with null wire
-//!   BRepOffsetAPI_ThruSections_Test.cxx — Loft/fusion, BSpline profiles (stub only)
+//!   BRepLib_MakeWire_Test.cxx           鈥?Initialize with null wire
+//!   BRepOffsetAPI_ThruSections_Test.cxx 鈥?Loft/fusion, BSpline profiles (stub only)
 //!
 //! Missing rcad APIs are stubbed as `unimplemented!()` or `todo!()` for future implementation.
 
@@ -119,23 +119,27 @@ impl MakeFaceStub {
     }
 }
 
-/// Stub: BRepBuilderAPI_MakeWire equivalent — builds a wire from edges.
+/// Stub: BRepBuilderAPI_MakeWire equivalent 鈥?builds a wire from edges.
 struct MakeWireStub {
-    edges: Vec<topods::ShapeRef>,
-    built_wire: Option<topods::ShapeRef>,
+    edges: Vec<topods::Shape>,
+    built_wire: Option<topods::Shape>,
 }
 
 impl MakeWireStub {
     pub fn new() -> Self { Self { edges: Vec::new(), built_wire: None } }
-    pub fn add_edge(&mut self, edge_sr: topods::ShapeRef) { self.edges.push(edge_sr); }
-    pub fn add_edges(&mut self, edges: &[topods::ShapeRef]) { self.edges.extend_from_slice(edges); }
-    pub fn build(&mut self, brep: &mut topods::BRep) -> topods::ShapeRef {
-        let wire = brep.add_twire(self.edges.clone());
+    pub fn add_edge(&mut self, edge_sr: topods::Shape) { self.edges.push(edge_sr); }
+    pub fn add_edges(&mut self, edges: &[topods::Shape]) { self.edges.extend_from_slice(edges); }
+    pub fn build(&mut self, brep: &mut topods::BRep) -> topods::Shape {
+        let edge_refs: Vec<topods::ShapeRef> = self.edges.iter()
+            .map(|e| brep.shape_to_ref(e))
+            .collect();
+        let wire_sr = brep.add_twire(edge_refs);
+        let wire = brep.ref_to_shape(wire_sr);
         self.built_wire = Some(wire);
         wire
     }
     pub fn is_done(&self) -> bool { !self.edges.is_empty() }
-    pub fn shape(&self) -> Option<topods::ShapeRef> { self.built_wire }
+    pub fn shape(&self) -> Option<topods::Shape> { self.built_wire }
 }
 
 /// Transform a BRep by applying an affine transform to all vertex positions.
@@ -149,18 +153,18 @@ fn transform_brep(brep: &topods::BRep, xf: &DAffine3) -> topods::BRep {
     out
 }
 
-/// Stub: BRepBuilderAPI_Transform — translate by offset vector.
+/// Stub: BRepBuilderAPI_Transform 鈥?translate by offset vector.
 fn transform_brep_translate(brep: &topods::BRep, offset: DVec3) -> topods::BRep {
     transform_brep(brep, &DAffine3::from_translation(offset))
 }
 
-/// Stub: BRepBuilderAPI_Transform — rotate around axis through origin.
+/// Stub: BRepBuilderAPI_Transform 鈥?rotate around axis through origin.
 fn transform_brep_rotate(brep: &topods::BRep, axis: DVec3, angle_rad: f64) -> topods::BRep {
     let rot = DMat3::from_axis_angle(axis.normalize_or_zero(), angle_rad);
     transform_brep(brep, &DAffine3::from_mat3_translation(rot, DVec3::ZERO))
 }
 
-/// Stub: BRepBuilderAPI_Transform — scale uniformly about origin.
+/// Stub: BRepBuilderAPI_Transform 鈥?scale uniformly about origin.
 fn transform_brep_scale(brep: &topods::BRep, factor: f64) -> topods::BRep {
     transform_brep(brep, &DAffine3::from_scale(DVec3::splat(factor)))
 }
@@ -194,13 +198,13 @@ fn total_edge_length(brep: &topods::BRep, _skip_shared: bool) -> f64 {
     total
 }
 
-/// Stub: BRepClass3d_SolidClassifier — wraps real classify::SolidClassifier.
+/// Stub: BRepClass3d_SolidClassifier 鈥?wraps real classify::SolidClassifier.
 ///
 /// Stores the BRep by value to avoid lifetime coupling, and creates a
 /// temporary classifier on each perform call.
 struct SolidClassifierStub {
     brep: topods::BRep,
-    solid_ref: topods::ShapeRef,
+    solid_ref: topods::Shape,
     state: TopAbsState,
     performed: bool,
 }
@@ -216,10 +220,10 @@ fn classify_to_state(c: crate::classify::Classification) -> TopAbsState {
 
 impl SolidClassifierStub {
     /// Find the first solid ShapeRef in a BRep.
-    fn find_solid_ref(brep: &topods::BRep) -> topods::ShapeRef {
+    fn find_solid_ref(brep: &topods::BRep) -> topods::Shape {
         brep.tshapes.iter().enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))
-            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .map(|(i, _)| topods::Shape::new(brep.tshapes[i].clone(), 0, topods::Orientation::Forward))
             .expect("BRep must contain a solid")
     }
 
@@ -253,7 +257,7 @@ impl SolidClassifierStub {
     pub fn is_done(&self) -> bool { self.performed }
 }
 
-/// Stub: BRepExtrema_DistShapeShape — distance between edge and vertex.
+/// Stub: BRepExtrema_DistShapeShape 鈥?distance between edge and vertex.
 ///
 /// Computes minimum distance from point to line segment for linear edges.
 /// For curved edges falls back to 0.0 (unimplemented for non-linear).
@@ -297,7 +301,7 @@ fn point_to_segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
 }
 
 /// Stub: PrincipalProperties / symmetry axis
-/// Principal properties / symmetry axis — check inertia tensor principal moments
+/// Principal properties / symmetry axis 鈥?check inertia tensor principal moments
 fn has_symmetry_axis(brep: &topods::BRep) -> bool {
     let inertia = rcad_kernel::inertia_tensor(brep);
     let ixx = inertia.ixx.abs();
@@ -475,19 +479,21 @@ mod make_wire_tests {
         let v3 = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
 
         let e1 = MakeEdgeStub::from_points(DVec3::new(0.0, 0.0, 0.0), DVec3::new(5.0, 0.0, 0.0));
-        let e1_ref = e1.brep().tshapes.iter().enumerate()
+        let e1_brep = e1.brep();
+        let e1_ref = e1_brep.tshapes.iter().enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Edge(_)))
-            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .map(|(i, _)| topods::Shape::new(brep.tshapes[i].clone(), 0, topods::Orientation::Forward))
             .unwrap();
         let e2 = MakeEdgeStub::from_points(DVec3::new(5.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0));
-        let e2_ref = e2.brep().tshapes.iter().enumerate()
+        let e2_brep = e2.brep();
+        let e2_ref = e2_brep.tshapes.iter().enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Edge(_)))
-            .map(|(i, _)| topods::ShapeRef::synthetic(i))
+            .map(|(i, _)| topods::Shape::new(brep.tshapes[i].clone(), 0, topods::Orientation::Forward))
             .unwrap();
 
         // Build wire with individually added edges
         let mut mw = MakeWireStub::new();
-        // Edges from separate BReps can't easily share a BRep — just test the wire builder logic
+        // Edges from separate BReps can't easily share a BRep 鈥?just test the wire builder logic
         mw.add_edge(e1_ref);
         mw.add_edge(e2_ref);
         assert!(mw.is_done(), "Wire builder with edges should indicate done");
@@ -508,8 +514,8 @@ mod make_wire_tests {
         mw2.add_edge(c1);
         mw2.add_edge(c2);
         let wire = mw2.build(&mut brep);
-        assert!(wire.index < brep.tshapes.len(), "Wire should be built");
-        if let topods::TShape::Wire(wd) = &*brep.tshapes[wire.index] {
+        assert!(brep.shape_idx(&wire) < brep.tshapes.len(), "Wire should be built");
+        if let topods::TShape::Wire(wd) = &*brep.tshapes[brep.shape_idx(&wire)] {
             assert_eq!(wd.edges.len(), 2, "Wire should contain 2 edges");
         } else {
             panic!("Wire shape expected");
@@ -525,9 +531,9 @@ mod make_wire_tests {
         let e4 = brep.add_tedge(None, v5, v7, [0.0, 2.0]);
 
         let mut mw3 = MakeWireStub::new();
-        mw3.add_edges(&[e3, e4]);
+        mw3.add_edges(&[brep.ref_to_shape(e3), brep.ref_to_shape(e4)]);
         let wire2 = mw3.build(&mut brep);
-        assert!(wire2.index < brep.tshapes.len(), "Second wire should be built");
+        assert!(brep.shape_idx(&wire2) < brep.tshapes.len(), "Second wire should be built");
     }
 }
 
@@ -559,7 +565,7 @@ mod transform_tests {
         let t = transform_brep_rotate(&b, DVec3::Z, std::f64::consts::FRAC_PI_2);
         assert_eq!(face_count(&t), face_count(&b), "rotate should preserve face count");
         assert_eq!(topological_vertex_count(&t), topological_vertex_count(&b), "rotate should preserve vertex count");
-        // After 90° rotation about Z, x-extent should match y-extent
+        // After 90掳 rotation about Z, x-extent should match y-extent
         let t_bb = t.bounding_box().expect("should have bbox");
         let x_ext = (t_bb[1].x - t_bb[0].x).abs();
         let y_ext = (t_bb[1].y - t_bb[0].y).abs();
@@ -732,7 +738,7 @@ mod gprop_tests {
     fn occ49_cylinder_has_symmetry_axis() {
         let c = make_cylinder(10.0, 20.0);
         let has = has_symmetry_axis(&c);
-        // Cylinder has rotational symmetry — inertia tensor may not capture it precisely
+        // Cylinder has rotational symmetry 鈥?inertia tensor may not capture it precisely
         // with mesh-based computation, so test is informational
         assert!(true, "Cylinder symmetry axis: {has}");
     }
@@ -745,7 +751,7 @@ mod gprop_tests {
         let _has_cyl = has_symmetry_axis(&cyl);
         let _has_box = has_symmetry_axis(&b);
         // A box is symmetric, a cylinder is symmetric
-        assert!(true, "Cut shape test — full boolean cut needs pipeline alignment");
+        assert!(true, "Cut shape test 鈥?full boolean cut needs pipeline alignment");
     }
 
     #[test]
@@ -784,12 +790,12 @@ mod brep_lib_make_wire_tests {
         let v = b.add_tvertex(DVec3::ZERO);
         let wire = b.add_twire(vec![]);
         let face = b.add_tface(None, wire, vec![], Some(DVec3::ZERO), None, vec![], true);
-        assert!(face.index < b.tshapes.len(), "Face with null wire should be created");
+        assert!(b.shape_idx(&face) < b.tshapes.len(), "Face with null wire should be created");
     }
 }
 
 // =============================================================================
-// BRepOffsetAPI_ThruSections_Test.cxx (3 tests — rcad: brep_feat::build_loft_solid)
+// BRepOffsetAPI_ThruSections_Test.cxx (3 tests 鈥?rcad: brep_feat::build_loft_solid)
 // =============================================================================
 
 #[cfg(test)]
@@ -836,7 +842,7 @@ mod thru_sections_tests {
 
     #[test]
     fn occ895_two_circular_arc_wires_no_twist() {
-        // OCCT: ThruSections with circular arc wires; verifies surface area ≈ 18.1614.
+        // OCCT: ThruSections with circular arc wires; verifies surface area 鈮?18.1614.
         // rcad: build_loft_solid with two circular profiles
         let profiles: Vec<Vec<DVec3>> = vec![
             (0..64).map(|i| {
@@ -850,6 +856,6 @@ mod thru_sections_tests {
         ];
         let result = crate::brep_feat::build_loft_solid(&profiles);
         assert!(result.is_ok(), "Two circular section loft should succeed");
-        // OCCT additionally verifies surface area ≈ 18.1614.
+        // OCCT additionally verifies surface area 鈮?18.1614.
     }
 }

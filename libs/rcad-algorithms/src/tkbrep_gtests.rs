@@ -1,14 +1,14 @@
-//! TKBRep GTest translations (topods::BRep API).
+﻿//! TKBRep GTest translations (topods::BRep API).
 //!
 //! OCCT source: src/ModelingData/TKBRep/GTests/
 //!
 //! Files translated:
-//!   TopoDS_TShape_Test.cxx      — TShape flags, ShapeType, NbChildren, EmptyCopy
-//!   TopExp_Test.cxx             — Vertex/Edge properties
-//!   TopoDS_Iterator_Test.cxx    — TopoDS_Iterator over sub-shapes
+//!   TopoDS_TShape_Test.cxx      鈥?TShape flags, ShapeType, NbChildren, EmptyCopy
+//!   TopExp_Test.cxx             鈥?Vertex/Edge properties
+//!   TopoDS_Iterator_Test.cxx    鈥?TopoDS_Iterator over sub-shapes
 
 use glam::DVec3;
-use rcad_kernel::topods::{self, BRep, ShapeRef, ShapeType, TShape, tshape_flags};
+use rcad_kernel::topods::{self, BRep, Shape, ShapeType, TShape, tshape_flags};
 
 const TOL: f64 = 1e-7;
 
@@ -26,7 +26,7 @@ fn shape_type_of(brep: &BRep, sr: ShapeRef) -> ShapeType {
 }
 
 // =============================================================================
-// TopoDS_TShape_Test.cxx — ShapeType, flags, EmptyCopy
+// TopoDS_TShape_Test.cxx 鈥?ShapeType, flags, EmptyCopy
 // =============================================================================
 
 #[cfg(test)]
@@ -37,22 +37,22 @@ mod topods_tshape_tests {
     fn shapetype_all_types() {
         let mut b = BRep::new();
         let v = b.add_tvertex(DVec3::ZERO);
-        assert_eq!(shape_type_of(&b, v), ShapeType::Vertex);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(v)), ShapeType::Vertex);
 
-        let e = b.add_tedge(None, v, ShapeRef::synthetic(1), [0.0, 1.0]);
-        assert_eq!(shape_type_of(&b, e), ShapeType::Edge);
+        let e = b.add_tedge(None, v, Shape::null(), [0.0, 1.0]);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(e)), ShapeType::Edge);
 
         let w = b.add_twire(vec![]);
-        assert_eq!(shape_type_of(&b, w), ShapeType::Wire);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(w)), ShapeType::Wire);
 
         let f = b.add_tface(None, w, vec![], None, None, vec![], true);
-        assert_eq!(shape_type_of(&b, f), ShapeType::Face);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(f)), ShapeType::Face);
 
         let sh = b.add_tshell(vec![]);
-        assert_eq!(shape_type_of(&b, sh), ShapeType::Shell);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(sh)), ShapeType::Shell);
 
         let s = b.add_tsolid(vec![]);
-        assert_eq!(shape_type_of(&b, s), ShapeType::Solid);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(s)), ShapeType::Solid);
     }
 
     #[test]
@@ -84,12 +84,12 @@ mod topods_tshape_tests {
     fn empty_copy_same_type_no_children() {
         let mut b = BRep::new();
         let w = b.add_twire(vec![]);
-        assert_eq!(shape_type_of(&b, w), ShapeType::Wire);
+        assert_eq!(shape_type_of(&b, &b.ref_to_shape(w)), ShapeType::Wire);
     }
 }
 
 // =============================================================================
-// TopExp_Test.cxx — Vertex/Edge properties
+// TopExp_Test.cxx 鈥?Vertex/Edge properties
 // =============================================================================
 
 #[cfg(test)]
@@ -110,7 +110,7 @@ mod topexp_tests {
         let sv = b.add_tvertex(DVec3::ZERO);
         let ev = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
         let e = b.add_tedge(None, sv, ev, [0.0, 1.0]);
-        let te = &*b.tshapes[e.index];
+        let te = &*b.tshapes[b.shape_idx(&e)];
         if let TShape::Edge(ed) = te {
             assert!(ed.curve.is_none());
         } else {
@@ -130,7 +130,7 @@ mod topexp_tests {
             1.0,
         )));
         let e = b.add_tedge(circle, sv, ev, [0.0, std::f64::consts::TAU]);
-        if let TShape::Edge(ed) = &*b.tshapes[e.index] {
+        if let TShape::Edge(ed) = &*b.tshapes[b.shape_idx(&e)] {
             assert!(ed.first.index == ed.last.index);
         } else {
             panic!("expected Edge");
@@ -148,7 +148,7 @@ mod topexp_tests {
             direction: DVec3::X,
         }));
         let e = b.add_tedge(line, sv, ev, [0.0, 10.0]);
-        if let TShape::Edge(ed) = &*b.tshapes[e.index] {
+        if let TShape::Edge(ed) = &*b.tshapes[b.shape_idx(&e)] {
             assert!(ed.first.index != ed.last.index);
         } else {
             panic!("expected Edge");
@@ -157,7 +157,7 @@ mod topexp_tests {
 }
 
 // =============================================================================
-// TopoDS_Iterator_Test.cxx — Iteration over sub-shapes
+// TopoDS_Iterator_Test.cxx 鈥?Iteration over sub-shapes
 // =============================================================================
 
 #[cfg(test)]
@@ -171,7 +171,7 @@ mod topods_iterator_tests {
         let v2 = b.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
         let c = b.add_tcompound(vec![v1, v2]);
 
-        let count = match &*b.tshapes[c.index] {
+        let count = match &*b.tshapes[b.shape_idx(&c)] {
             TShape::Compound(cd) => cd.len(),
             _ => 0,
         };

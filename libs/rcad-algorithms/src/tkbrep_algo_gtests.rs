@@ -1,4 +1,4 @@
-//! TKTopAlgo GTest translations.
+﻿//! TKTopAlgo GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
 //!
@@ -172,7 +172,7 @@ mod solid_classifier_tests {
     use crate::classify::{Classification, SolidClassifier};
     use glam::DVec3;
 
-    fn make_unit_cube() -> (rcad_kernel::topods::BRep, rcad_kernel::topods::ShapeRef) {
+    fn make_unit_cube() -> (rcad_kernel::topods::BRep, rcad_kernel::topods::Shape) {
         // Use make_box_brep which creates faces with Plane surfaces
         let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("unit cube");
@@ -182,7 +182,7 @@ mod solid_classifier_tests {
             .iter()
             .enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
-            .map(|(i, _)| rcad_kernel::topods::ShapeRef::synthetic(i))
+            .map(|(i, _)| rcad_kernel::topods::Shape::new(brep.tshapes[i].clone(), 0, rcad_kernel::topods::Orientation::Forward))
             .expect("solid should exist");
         (brep, solid_ref)
     }
