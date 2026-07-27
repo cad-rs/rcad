@@ -382,15 +382,15 @@ impl<'a> super::PaveFiller<'a> {
         use crate::boptools::bvh::{Aabb, BoxTree};
         let (ds_start, end) = if is_edge {
             if is_a {
-                (0, self.ds.a_edge_count)
+                (0, self.ds.a_edge_count())
             } else {
-                (self.ds.a_edge_count, self.ds.edge_count())
+                (self.ds.a_edge_count(), self.ds.edge_count())
             }
         } else {
             if is_a {
-                (0, self.ds.a_vertex_count)
+                (0, self.ds.a_vertex_count())
             } else {
-                (self.ds.a_vertex_count, self.ds.vertex_count())
+                (self.ds.a_vertex_count(), self.ds.vertex_count())
             }
         };
         let n = end - ds_start;
@@ -515,8 +515,8 @@ impl<'a> super::PaveFiller<'a> {
 
         // OCCT L155: NCollection_IndexedDataMap<handle<PaveBlock>, NCollection_List<int>> aMVEPairs
         // rcad: HashMap<edge_idx, Vec<vertex_idx> (edge identified by its first PB)
-        let a_vc = self.ds.a_vertex_count;
-        let a_ec = self.ds.a_edge_count;
+        let a_vc = self.ds.a_vertex_count();
+        let a_ec = self.ds.a_edge_count();
         let mut a_mve_pairs: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
 
@@ -878,7 +878,7 @@ impl<'a> super::PaveFiller<'a> {
         self.ds.interf_ee.reserve(i_size);
 
         // OCCT L181: for (; myIterator->More(); myIterator->Next())
-        let a_ec = self.ds.a_edge_count;
+        let a_ec = self.ds.a_edge_count();
         let mut a_vee: Vec<EeTask> = Vec::new();
 
         for _ in 0..i_size {
@@ -1945,9 +1945,9 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn build_box_tree_face(&self, is_a: bool) -> crate::boptools::bvh::BoxTree {
         use crate::boptools::bvh::{Aabb, BoxTree};
         let (start, end) = if is_a {
-            (0, self.ds.a_face_count)
+            (0, self.ds.a_face_count())
         } else {
-            (self.ds.a_face_count, self.ds.face_count())
+            (self.ds.a_face_count(), self.ds.face_count())
         };
         let n = end - start;
         let mut indices = Vec::with_capacity(n);
@@ -2069,7 +2069,7 @@ impl<'a> super::PaveFiller<'a> {
         // If all faces are fully glued, skip V-F pass
         !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
-                == self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count)
+                == self.ds.a_face_count() * (self.ds.face_count() - self.ds.a_face_count())
     }
     /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ef_pass(&self) -> bool {
@@ -2080,7 +2080,7 @@ impl<'a> super::PaveFiller<'a> {
         // If all faces are fully glued, skip E-F pass
         !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
-                == self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count)
+                == self.ds.a_face_count() * (self.ds.face_count() - self.ds.a_face_count())
     }
     /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ff_pass(&self) -> bool {
@@ -2089,7 +2089,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // If all faces are fully glued, skip F-F pass
-        let total_face_pairs = self.ds.a_face_count * (self.ds.face_count() - self.ds.a_face_count);
+        let total_face_pairs = self.ds.a_face_count() * (self.ds.face_count() - self.ds.a_face_count());
         self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
     }
     // OCCT BOPAlgo_PaveFiller_1.cxx L45-132: PerformVV

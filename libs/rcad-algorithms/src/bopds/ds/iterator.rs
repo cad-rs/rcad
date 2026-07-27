@@ -116,9 +116,9 @@ impl<'a> BOPDS_Iterator<'a> {
             return;
         }
 
-        let a_vc = self.ds.a_vertex_count;
-        let a_ec = self.ds.a_edge_count;
-        let a_fc = self.ds.a_face_count;
+        let a_vc = self.ds.a_vertex_count();
+        let a_ec = self.ds.a_edge_count();
+        let a_fc = self.ds.a_face_count();
         let mut add_pair = |s1: usize, s2: usize, t1: ShapeType, t2: ShapeType| {
             // Cross-operand filter: skip same-operand pairs
             // Vertex range: 0..a_vc = operand A, a_vc..nv = operand B

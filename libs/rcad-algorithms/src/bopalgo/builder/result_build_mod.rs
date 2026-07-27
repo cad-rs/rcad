@@ -51,19 +51,19 @@ impl<'a> BooleanBuilder<'a> {
 
         for (side_idx, a_ms) in a_maps.iter_mut().enumerate() {
             let v_range = if side_idx == 0 {
-                (0usize, self.ds.a_vertex_count)
+                (0usize, self.ds.a_vertex_count())
             } else {
-                (self.ds.a_vertex_count, self.ds.vertex_count())
+                (self.ds.a_vertex_count(), self.ds.vertex_count())
             };
             let e_range = if side_idx == 0 {
-                (0usize, self.ds.a_edge_count)
+                (0usize, self.ds.a_edge_count())
             } else {
-                (self.ds.a_edge_count, self.ds.edge_count())
+                (self.ds.a_edge_count(), self.ds.edge_count())
             };
             let f_range = if side_idx == 0 {
-                (0usize, self.ds.a_face_count)
+                (0usize, self.ds.a_face_count())
             } else {
-                (self.ds.a_face_count, self.ds.face_count())
+                (self.ds.a_face_count(), self.ds.face_count())
             };
             for vi in v_range.0..v_range.1 {
                 a_ms.insert(vi);
@@ -959,7 +959,7 @@ impl<'a> BooleanBuilder<'a> {
                 let side_offset = if side == ShapeOrigin::ShapeA {
                     0usize
                 } else {
-                    self.ds.a_face_count
+                    self.ds.a_face_count()
                 };
                 for (fi, df) in self.ds.faces.iter().enumerate() {
                     if df.origin != side {
@@ -1131,8 +1131,8 @@ impl<'a> BooleanBuilder<'a> {
                     } else {
                         for &sub in &self.ds.shape_info[wi].sub_shapes {
                             // Convert flat shape index to per-type edge index
-                            if sub >= self.ds.a_vertex_count {
-                                let ei = sub - self.ds.a_vertex_count;
+                            if sub >= self.ds.a_vertex_count() {
+                                let ei = sub - self.ds.a_vertex_count();
                                 if ei < e_map.len() && e_map[ei] != rcad_kernel::topods::ShapeRef::NULL
                                 {
                                     wire_edges.push(e_map[ei]);
@@ -1194,8 +1194,8 @@ impl<'a> BooleanBuilder<'a> {
         let my_images = self.my_images.borrow();
         let my_in_parts = self.my_in_parts.borrow();
 
-        let has_objects = self.ds.a_face_count > 0;
-        let has_tools = self.ds.face_count() > self.ds.a_face_count;
+        let has_objects = self.ds.a_face_count() > 0;
+        let has_tools = self.ds.face_count() > self.ds.a_face_count();
         if !has_objects && !has_tools {
             self.my_report
                 .borrow_mut()

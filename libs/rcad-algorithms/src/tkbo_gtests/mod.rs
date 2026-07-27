@@ -2018,9 +2018,9 @@ mod pave_filler_internal_tests {
             },
             None,
         );
-        ds.a_vertex_count = 0;
-        ds.a_edge_count = 2; // edges 0-1 belong to operand A
-        ds.a_face_count = 1;
+        ds.a_vertex_count() = 0;
+        ds.a_edge_count() = 2; // edges 0-1 belong to operand A
+        ds.a_face_count() = 1;
         ds
     }
 
@@ -2095,7 +2095,7 @@ mod pave_filler_internal_tests {
             },
             None,
         );
-        ds.a_vertex_count = 0;
+        ds.a_vertex_count() = 0;
         ds
     }
 

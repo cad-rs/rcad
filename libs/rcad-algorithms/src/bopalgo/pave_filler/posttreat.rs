@@ -295,12 +295,11 @@ impl<'a> PaveFiller<'a> {
         }
 
         // Set up DS for PaveFiller pipeline
-        a_pds.a_vertex_count = a_map_nested_to_main.len() / 2;
         a_pds.nb_source_shapes = a_map_nested_to_main.len();
         for i in 0..a_map_nested_to_main.len() {
             let mut si =
                 crate::bopds::ds::types::ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
-            si.is_new = (i >= a_pds.a_vertex_count);
+            si.is_new = (i >= a_pds.a_vertex_count());
             if i < a_pds.shape_info.len() {
                 a_pds.shape_info[i] = si;
             } else {

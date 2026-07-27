@@ -93,7 +93,7 @@ fn round_pt(p: glam::DVec3) -> [f64; 3] {
 
 fn serialize_ds(ds: &DS) -> serde_json::Value {
     let nv = ds.vertex_count();
-    let av = ds.a_vertex_count;
+    let av = ds.a_vertex_count();
     let n_interf_total = ds.interf_vv.len()
         + ds.interf_ve.len()
         + ds.interf_vf.len()

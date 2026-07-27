@@ -33,9 +33,6 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
         intersection_curves: Vec::new(),
         ff_points: Vec::new(),
         section_edge_refs: Vec::new(),
-        a_vertex_count: 0,
-        a_edge_count: 0,
-        a_face_count: 0,
         shared_topology: SharedTopologyInfo::default(),
         shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
         same_domain_overlaps: Vec::new(),
@@ -53,9 +50,6 @@ pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> DS
 
     // per-operand loading A_V,A_E,A_F then B_V,B_E,B_F
     load_topods_brep(&mut ds, a, ShapeOrigin::ShapeA);
-    ds.a_vertex_count = ds.vertex_count();
-    ds.a_edge_count = ds.edge_count();
-    ds.a_face_count = ds.face_count();
     load_topods_brep(&mut ds, b, ShapeOrigin::ShapeB);
 
     ds.compute_uv_boundaries();

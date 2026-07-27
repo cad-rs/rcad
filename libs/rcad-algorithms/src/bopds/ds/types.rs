@@ -770,12 +770,9 @@ pub struct DS {
     /// Populated during PaveFiller::make_blocks (PostTreatFF + CorrectToleranceOfSE).
     /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
     pub section_edge_refs: Vec<Vec<usize>>,
-    /// Number of vertices loaded from shape A (first shape). Shape A DS vertex indices are 0..a_vertex_count.
-    pub a_vertex_count: usize,
-    /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count.
-    pub a_edge_count: usize,
-    /// Number of faces loaded from shape A. Shape A DS face indices are 0..a_face_count.
-    pub a_face_count: usize,
+    /// Number of vertices loaded from shape A (first shape). Shape A DS vertex indices are 0..a_vertex_count().
+    /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count().
+    /// Number of faces loaded from shape A. Shape A DS face indices are 0..a_face_count().
     /// Shared topology information for glue path optimization.
     pub shared_topology: SharedTopologyInfo,
     /// =BOPDS_ShapeSD =same-domain shape mapping (built from shared_topology).

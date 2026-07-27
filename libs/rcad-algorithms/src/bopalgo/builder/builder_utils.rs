@@ -144,7 +144,7 @@ pub(crate) fn map_result_shapes(brep: &topods::BRep, ds: &DS) -> (Vec<usize>, Ve
 pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut BooleanHistory, ds: &DS) {
     let (result_to_ds, _) = map_result_shapes(brep, ds);
 
-    let a_vc = ds.a_vertex_count;
+    let a_vc = ds.a_vertex_count();
     let n_result_verts = brep
         .tshapes
         .iter()
@@ -165,14 +165,14 @@ pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut Boolea
     history.vertex_origins = vertex_origins;
 
     // --- edge origins ---
-    let a_vc = ds.a_vertex_count;
+    let a_vc = ds.a_vertex_count();
     let n_result_edges = brep
         .tshapes
         .iter()
         .filter(|ts| std::matches!(ts.as_ref(), topods::TShape::Edge(_)))
         .count();
     let mut edge_origins: Vec<EdgeOrigin> = Vec::with_capacity(n_result_edges);
-    let a_ec = ds.a_edge_count;
+    let a_ec = ds.a_edge_count();
     let total_ds_edges = ds.edge_count();
 
     for ts in &brep.tshapes {

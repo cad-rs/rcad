@@ -183,7 +183,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut overlaps = Vec::new();
 
         // Iterate over all face pairs from different shapes
-        let a_fcount = self.ds.a_face_count;
+        let a_fcount = self.ds.a_face_count();
         let mut pit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while pit.more() {
             let pk = pit.value();
@@ -303,7 +303,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut overlaps = Vec::new();
 
         // Iterate over all edge pairs from different shapes
-        let a_ecount = self.ds.a_edge_count;
+        let a_ecount = self.ds.a_edge_count();
         let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edge_count());
         while eit.more() {
             let pk = eit.value();
@@ -918,7 +918,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
         let mut containments = Vec::new();
 
-        let a_ecount = self.ds.a_edge_count;
+        let a_ecount = self.ds.a_edge_count();
         let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edge_count());
         while eit.more() {
             let pk = eit.value();
@@ -939,7 +939,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut tangent_faces = Vec::new();
 
         // Iterate over all face pairs from different shapes
-        let a_fcount = self.ds.a_face_count;
+        let a_fcount = self.ds.a_face_count();
         let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while fit.more() {
             let pk = fit.value();
@@ -1210,7 +1210,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn handle_near_coincident_faces(&self) -> Vec<NearCoincidentFaceInfo> {
         let mut coincident_faces = Vec::new();
 
-        let a_fcount = self.ds.a_face_count;
+        let a_fcount = self.ds.a_face_count();
         let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
         while fit.more() {
             let pk = fit.value();

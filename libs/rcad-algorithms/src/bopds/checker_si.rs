@@ -93,9 +93,9 @@ impl CheckerSI {
         let mut pf = PaveFiller::new(&mut ds);
         pf.perform(brep, brep);
         // a_vertex/edge/face counts set by init() inside perform()
-        let a_vc = ds.a_vertex_count;
-        let a_ec = ds.a_edge_count;
-        let a_fc = ds.a_face_count;
+        let a_vc = ds.a_vertex_count();
+        let a_ec = ds.a_edge_count();
+        let a_fc = ds.a_face_count();
 
         // Filter interferences:
         // 1. Remove trivial A-B pairs (same original entity from two copies).

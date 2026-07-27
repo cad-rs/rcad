@@ -102,7 +102,7 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
 
     // Phase 3: fuzzy_tol removed from DS (moved to PaveFiller config).
     // Validation is handled by the PaveFiller's configure_fuzzy() call.
-    if ds.a_vertex_count > nv || ds.a_edge_count > ne || ds.a_face_count > nf {
+    if ds.a_vertex_count() > nv || ds.a_edge_count() > ne || ds.a_face_count() > nf {
         return Err(BooleanError::InvalidResult(
             "bop: DS shape A extent vs pool size inconsistent",
         ));

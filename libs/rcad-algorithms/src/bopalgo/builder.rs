@@ -332,8 +332,8 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Vec<crate::history::SourceShapeEntry> {
         use crate::history::{HistoryStatus, SourceShapeEntry};
 
-        let a_vc = self.ds.a_vertex_count;
-        let a_ec = self.ds.a_edge_count;
+        let a_vc = self.ds.a_vertex_count();
+        let a_ec = self.ds.a_edge_count();
         let side_is_a = side == ShapeOrigin::ShapeA;
         let mut entries = Vec::new();
 
@@ -858,9 +858,9 @@ impl<'a> BooleanBuilder<'a> {
         // Compute myDims from argument shape types.
         // OCCT: BRep_Tool::Dimension(myArguments.First/Last) → VERTEX=0, EDGE=1, WIRE/FACE=2, SHELL/SOLID=3.
         // rcad: infer from per-origin shape counts in the DS.
-        let a_n_verts = self.ds.a_vertex_count;
-        let a_n_edges = self.ds.a_edge_count;
-        let a_n_faces = self.ds.a_face_count;
+        let a_n_verts = self.ds.a_vertex_count();
+        let a_n_edges = self.ds.a_edge_count();
+        let a_n_faces = self.ds.a_face_count();
         let b_n_verts = self.ds.vertex_count() - a_n_verts;
         let b_n_edges = self.ds.edge_count() - a_n_edges;
         let b_n_faces = self.ds.face_count() - a_n_faces;
@@ -1149,9 +1149,9 @@ impl<'a> BooleanBuilder<'a> {
 
         // OCCT L438-443: Prepare
         let mut result = self.prepare().1;
-        let a_n_verts = self.ds.a_vertex_count;
-        let a_n_edges = self.ds.a_edge_count;
-        let a_n_faces = self.ds.a_face_count;
+        let a_n_verts = self.ds.a_vertex_count();
+        let a_n_edges = self.ds.a_edge_count();
+        let a_n_faces = self.ds.a_face_count();
         let b_n_verts = self.ds.vertex_count() - a_n_verts;
         let b_n_edges = self.ds.edge_count() - a_n_edges;
         let b_n_faces = self.ds.face_count() - a_n_faces;

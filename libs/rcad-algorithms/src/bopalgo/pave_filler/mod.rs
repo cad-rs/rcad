@@ -601,10 +601,7 @@ impl<'a> PaveFiller<'a> {
     fn prepare_vertices(&mut self, a: &topods::BRep, b: &topods::BRep) {
         use crate::bopds::ds::topods_builder::load_vertices_from_brep;
         load_vertices_from_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
-        // Capture A counts before loading B (original init() interleaving behavior)
-        self.ds.a_vertex_count = self.ds.vertex_count();
-        self.ds.a_edge_count = self.ds.edge_count();
-        self.ds.a_face_count = self.ds.face_count();
+        // Phase 3: A counts derived from shape_info, no longer stored as DS fields
         load_vertices_from_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
     }
 

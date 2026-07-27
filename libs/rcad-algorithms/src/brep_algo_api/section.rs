@@ -202,8 +202,8 @@ impl Section {
     fn build_section_edges(ds: &DS) -> (BRep, Vec<usize>) {
         let mut result = BRep::new();
         let mut edge_to_ic = Vec::new();
-        let a_vc = ds.a_vertex_count;
-        let a_ec = ds.a_edge_count;
+        let a_vc = ds.a_vertex_count();
+        let a_ec = ds.a_edge_count();
 
         // OCCT L188-241: collect section edges and vertices from FaceInfo
         // 1.1 VerticesSc — section vertices from FF intersection

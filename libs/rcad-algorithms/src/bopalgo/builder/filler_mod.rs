@@ -223,7 +223,7 @@ impl<'a> BooleanBuilder<'a> {
             let df = self.ds.faces.get(fi).unwrap();
             let is_a = self.ds.face_origin(fi) == ShapeOrigin::ShapeA;
             let sf_idx = self.ds.source_face_idx(fi);
-            let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+            let side_offset = if is_a { 0usize } else { self.ds.a_face_count() };
             let flat_idx = f_base + side_offset + sf_idx;
 
             // Build outer wire edge refs from DS face boundary_edges,
@@ -467,7 +467,7 @@ impl<'a> BooleanBuilder<'a> {
                     .get(fi)
                     .map_or(true, |f| f.origin == ShapeOrigin::ShapeA);
                 let sf_idx = self.ds.source_face_idx(fi);
-                let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+                let side_offset = if is_a { 0usize } else { self.ds.a_face_count() };
                 let flat_idx = f_base + side_offset + sf_idx;
                 let sr = if flat_idx < t_brep.tshapes.len() {
                     self.brep_sr(flat_idx)
@@ -537,7 +537,7 @@ impl<'a> BooleanBuilder<'a> {
 
             let sf_idx = self.ds.source_face_idx(fi);
             let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
-            let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+            let side_offset = if is_a { 0usize } else { self.ds.a_face_count() };
             let f_sr = self.brep_sr(f_base + side_offset + sf_idx);
 
             // OCCT L298-351: No IN/SC PBs branch.
@@ -614,7 +614,7 @@ impl<'a> BooleanBuilder<'a> {
 
             let face_sr = {
                 let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
-                let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+                let side_offset = if is_a { 0usize } else { self.ds.a_face_count() };
                 let sf_idx = self.ds.source_face_idx(fi);
                 self.brep_sr(f_base + side_offset + sf_idx)
             };
@@ -1740,7 +1740,7 @@ impl<'a> BooleanBuilder<'a> {
         let side_offset = if side == 0 {
             0usize
         } else {
-            self.ds.a_face_count
+            self.ds.a_face_count()
         };
 
         // Iterate sub-shapes (shells) of the solid.
@@ -1868,7 +1868,7 @@ impl<'a> BooleanBuilder<'a> {
                 + (if df.origin == ShapeOrigin::ShapeA {
                     0
                 } else {
-                    self.ds.a_face_count
+                    self.ds.a_face_count()
                 })
                 + df.source_face_idx;
             let src_key = self.brep_sr(src_flat);
@@ -2032,7 +2032,7 @@ impl<'a> BooleanBuilder<'a> {
                             let side_offset = if side == 0 {
                                 0usize
                             } else {
-                                self.ds.a_face_count
+                                self.ds.a_face_count()
                             };
                             let src_key = self.brep_sr(f_base + side_offset + df.source_face_idx);
                             if self.my_images.borrow().contains_key(&src_key) {
@@ -2224,7 +2224,7 @@ impl<'a> BooleanBuilder<'a> {
                     let side_offset = if side == 0 {
                         0usize
                     } else {
-                        self.ds.a_face_count
+                        self.ds.a_face_count()
                     };
                     let src_key = self.brep_sr(f_base + side_offset + df.source_face_idx);
                     if let Some(split_refs) = imgs.get(&src_key) {

@@ -451,7 +451,7 @@ impl<'a> super::PaveFiller<'a> {
                 .filter(|&(fa, fb)| self.ds.face_origin(fa) != self.ds.face_origin(fb))
                 .collect()
         } else {
-            let a_fcount = self.ds.a_face_count;
+            let a_fcount = self.ds.a_face_count();
             let mut result = Vec::new();
             let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
             while fit.more() {

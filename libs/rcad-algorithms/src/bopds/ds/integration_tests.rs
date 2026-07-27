@@ -219,9 +219,9 @@ fn stage_init_loaded_shapes() {
     // Shape info consistent
     assert!(ds.nb_source_shapes() > 0, "Init: nb_source_shapes set");
     // a_vertex/edge/face counts set for operand A
-    assert_eq!(ds.a_vertex_count, 8, "Init: operand A has 8 vertices");
-    assert_eq!(ds.a_edge_count, 12, "Init: operand A has 12 edges");
-    assert_eq!(ds.a_face_count, 6, "Init: operand A has 6 faces");
+    assert_eq!(ds.a_vertex_count(), 8, "Init: operand A has 8 vertices");
+    assert_eq!(ds.a_edge_count(), 12, "Init: operand A has 12 edges");
+    assert_eq!(ds.a_face_count(), 6, "Init: operand A has 6 faces");
 }
 
 #[test]

@@ -650,7 +650,7 @@ mod tests {
         );
         let ds = new_from_topods(&a, &b, TOLERANCE_ABS);
         let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
-        let cap_edge = (0..ds.a_edge_count)
+        let cap_edge = (0..ds.a_edge_count())
             .find(|&edge_idx| {
                 matches!(
                     ds.edge_curve(edge_idx).unwrap(),
@@ -658,7 +658,7 @@ mod tests {
                 )
             })
             .expect("cylinder cap circle");
-        let rotated_vertex = (ds.a_vertex_count..ds.vertex_count())
+        let rotated_vertex = (ds.a_vertex_count()..ds.vertex_count())
             .find(|&vertex_idx| {
                 (ds.vertex_point(vertex_idx)
                     - DVec3::new(

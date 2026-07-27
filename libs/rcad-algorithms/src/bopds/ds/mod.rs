@@ -49,9 +49,6 @@ impl DS {
             intersection_curves: Vec::new(),
             ff_points: Vec::new(),
             section_edge_refs: Vec::new(),
-            a_vertex_count: 0,
-            a_edge_count: 0,
-            a_face_count: 0,
             shared_topology: Default::default(),
             shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
             same_domain_overlaps: Vec::new(),
@@ -81,6 +78,28 @@ impl DS {
     /// Count of faces.
     pub fn face_count(&self) -> usize {
         self.faces.len()
+    }
+
+    /// Count of source vertices from operand A (derived from shape_info).
+    pub fn a_vertex_count(&self) -> usize {
+        self.shape_info[..self.nb_source_shapes]
+            .iter()
+            .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Vertex)
+            .count()
+    }
+    /// Count of source edges from operand A.
+    pub fn a_edge_count(&self) -> usize {
+        self.shape_info[..self.nb_source_shapes]
+            .iter()
+            .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Edge)
+            .count()
+    }
+    /// Count of source faces from operand A.
+    pub fn a_face_count(&self) -> usize {
+        self.shape_info[..self.nb_source_shapes]
+            .iter()
+            .filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Face)
+            .count()
     }
 
     /// Mutable access to TVertexData for a vertex (for write operations).
@@ -854,7 +873,7 @@ impl DS {
             box_max,
             box_gap: geom_tol + TOLERANCE_ABS * 0.5,
             is_new: false,
-            rank: if fi < self.a_face_count { 0 } else { 1 },
+            rank: if fi < self.a_face_count() { 0 } else { 1 },
             source_idx: source_face_idx,
             is_internal: false,
             source_shell_idx: None,
@@ -1127,7 +1146,7 @@ impl DS {
     /// Returns the rank (operand index 0=A, 1=B) of a shape.
     /// 0 for shapes from operand A, 1 for operand B.
     pub fn rank(&self, vi: usize) -> usize {
-        if vi < self.a_vertex_count { 0 } else { 1 }
+        if vi < self.a_vertex_count() { 0 } else { 1 }
     }
 
     ///  ?BOPDS_DS::Range (L207-212).
@@ -1135,9 +1154,9 @@ impl DS {
     /// rcad: returns [0, a_vertex_count) for A, [a_vertex_count, end) for B.
     pub fn range(&self, is_a: bool) -> (usize, usize) {
         if is_a {
-            (0, self.a_vertex_count)
+            (0, self.a_vertex_count())
         } else {
-            (self.a_vertex_count, self.vertices.len())
+            (self.a_vertex_count(), self.vertices.len())
         }
     }
 
@@ -2268,8 +2287,8 @@ impl DS {
         self.shared_topology = SharedTopologyInfo::default();
 
         // Detect shared vertices
-        for vi_a in 0..self.a_vertex_count {
-            for vi_b in self.a_vertex_count..self.vertices.len() {
+        for vi_a in 0..self.a_vertex_count() {
+            for vi_b in self.a_vertex_count()..self.vertices.len() {
                 let p_a = self.vertices[vi_a].point;
                 let p_b = self.vertices[vi_b].point;
                 let pair_tol = tol
@@ -2283,8 +2302,8 @@ impl DS {
         }
 
         // Detect shared edges
-        for ei_a in 0..self.a_edge_count {
-            for ei_b in self.a_edge_count..self.edges.len() {
+        for ei_a in 0..self.a_edge_count() {
+            for ei_b in self.a_edge_count()..self.edges.len() {
                 let edge_tol = tol
                     .max(self.edges[ei_a].geom_tol)
                     .max(self.edges[ei_b].geom_tol);
@@ -2295,8 +2314,8 @@ impl DS {
         }
 
         // Detect shared faces (full and partial)
-        for fi_a in 0..self.a_face_count {
-            for fi_b in self.a_face_count..self.faces.len() {
+        for fi_a in 0..self.a_face_count() {
+            for fi_b in self.a_face_count()..self.faces.len() {
                 if self.faces[fi_a].origin == self.faces[fi_b].origin {
                     continue; // Same shape, skip
                 }
