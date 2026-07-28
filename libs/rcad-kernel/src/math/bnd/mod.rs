@@ -245,6 +245,86 @@ impl BndBox {
     pub fn open_ymax(&mut self) { self.flags |= YMAX_OPEN; }
     pub fn open_zmin(&mut self) { self.flags |= ZMIN_OPEN; }
     pub fn open_zmax(&mut self) { self.flags |= ZMAX_OPEN; }
+
+    // ── BVH query helpers (not in OCCT Bnd_Box, but needed for BVH) ─────
+
+    /// Center of the box. Returns `DVec3::ZERO` if void.
+    pub fn center(&self) -> DVec3 {
+        if self.is_void() { return DVec3::ZERO; }
+        DVec3::new(
+            0.5 * (self.x_min + self.x_max),
+            0.5 * (self.y_min + self.y_max),
+            0.5 * (self.z_min + self.z_max),
+        )
+    }
+
+    /// Surface area of the box (for SAH). Returns 0 if void.
+    pub fn surface_area(&self) -> f64 {
+        if self.is_void() { return 0.0; }
+        let dx = self.x_max - self.x_min;
+        let dy = self.y_max - self.y_min;
+        let dz = self.z_max - self.z_min;
+        2.0 * (dx * dy + dx * dz + dy * dz)
+    }
+
+    /// True if this box intersects another (inverse of is_out_box).
+    pub fn intersects(&self, other: &BndBox) -> bool {
+        !self.is_out_box(other)
+    }
+
+    /// Ray-box intersection using the slab method.
+    /// `inv_dir` = 1.0 / ray_direction (component-wise; INF for zero components).
+    /// Returns `Some(t)` where `t ≥ 0` is the entry distance, or `None`.
+    pub fn ray_intersect(&self, origin: DVec3, inv_dir: DVec3) -> Option<f64> {
+        if self.is_void() { return None; }
+        let (xmin, ymin, zmin, xmax, ymax, zmax) = self.get()?;
+        let t1 = (xmin - origin.x) * inv_dir.x;
+        let t2 = (xmax - origin.x) * inv_dir.x;
+        let t3 = (ymin - origin.y) * inv_dir.y;
+        let t4 = (ymax - origin.y) * inv_dir.y;
+        let t5 = (zmin - origin.z) * inv_dir.z;
+        let t6 = (zmax - origin.z) * inv_dir.z;
+        let t_enter = t1.min(t2).max(t3.min(t4)).max(t5.min(t6));
+        let t_exit = t1.max(t2).min(t3.max(t4)).min(t5.max(t6));
+        if t_enter <= t_exit && t_exit >= 0.0 { Some(t_enter.max(0.0)) } else { None }
+    }
+
+    /// Minimum squared distance from a point to this box.  Returns 0 if inside.
+    pub fn point_dist_sq(&self, point: DVec3) -> f64 {
+        if self.is_void() { return f64::INFINITY; }
+        let g = self.gap;
+        let dx = if point.x < self.x_min - g { self.x_min - g - point.x }
+                 else if point.x > self.x_max + g { point.x - self.x_max - g }
+                 else { 0.0 };
+        let dy = if point.y < self.y_min - g { self.y_min - g - point.y }
+                 else if point.y > self.y_max + g { point.y - self.y_max - g }
+                 else { 0.0 };
+        let dz = if point.z < self.z_min - g { self.z_min - g - point.z }
+                 else if point.z > self.z_max + g { point.z - self.z_max - g }
+                 else { 0.0 };
+        dx * dx + dy * dy + dz * dz
+    }
+
+    /// Alias for `add_point` — extend to include a point.
+    pub fn expand_point(&mut self, p: DVec3) { self.add_point(p); }
+
+    /// Alias for `add_box` — extend to enclose another box.
+    pub fn expand_aabb(&mut self, other: &BndBox) { self.add_box(other); }
+
+    /// Raw minimum corner (without gap). For BVH SAH computations.
+    pub fn raw_min(&self) -> DVec3 { DVec3::new(self.x_min, self.y_min, self.z_min) }
+
+    /// Raw maximum corner (without gap). For BVH SAH computations.
+    pub fn raw_max(&self) -> DVec3 { DVec3::new(self.x_max, self.y_max, self.z_max) }
+
+    /// Raw x-axis span.
+    pub fn dx(&self) -> f64 { self.x_max - self.x_min }
+
+    /// Raw y-axis span.
+    pub fn dy(&self) -> f64 { self.y_max - self.y_min }
+
+    /// Raw z-axis span.
+    pub fn dz(&self) -> f64 { self.z_max - self.z_min }
 }
 
 impl Default for BndBox {

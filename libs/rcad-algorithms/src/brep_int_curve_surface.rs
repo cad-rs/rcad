@@ -6,6 +6,7 @@
 //! - Utility free functions: intersect_line_with_brep, ray_cast, etc.
 
 use crate::boptools::bvh::{Aabb, Bvh};
+use rcad_kernel::math::bnd::BndBox;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
 use crate::inttools::curve_surface::{
     intersect_line_cone as intersect_line_cone_range,
@@ -1333,7 +1334,11 @@ fn filter_faces_by_line_aabb(
     ray_aabb.expand_point(origin + DVec3::splat(TOLERANCE_ABS));
 
     // Use BVH to query faces that intersect the ray AABB
-    let candidate_faces = bvh.query_aabb(&ray_aabb);
+    let ray_bnd = BndBox::from_corners(
+        ray_aabb.min.x, ray_aabb.min.y, ray_aabb.min.z,
+        ray_aabb.max.x, ray_aabb.max.y, ray_aabb.max.z,
+    );
+    let candidate_faces = bvh.query_aabb(&ray_bnd);
 
     // Filter to only return faces that are in the original list
     let face_set: std::collections::HashSet<usize> = face_indices.iter().copied().collect();

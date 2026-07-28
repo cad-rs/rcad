@@ -3,9 +3,11 @@
 //! | OCCT | rcad |
 //! |------|------|
 //! | `Bnd_Box` | `bnd_box::Aabb` |
-//! | `BVH_Tree` / `BVH_Builder` | `bvh_tree::Bvh` |
+//! | `BVH_Tree` / `BVH_Builder` | `rcad_kernel::math::bvh::Bvh` |
 //! | `BOPTools_BoxTree` | `box_tree::BoxTree` |
 
 pub use crate::bnd_box::Aabb;
 pub use crate::boptools::box_tree::BoxTree;
-pub use crate::boptools::bvh_tree::{Bvh, BvhStats};
+
+/// BVH moved to rcad_kernel::math::bvh. Re-exported for backward compat.
+pub use rcad_kernel::math::bvh::{Bvh, BvhStats};
