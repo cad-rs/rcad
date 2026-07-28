@@ -512,8 +512,43 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_internal_shapes();
     }
 
-    fn fill_in_3d_parts(&mut self) {}
-    fn build_split_solids(&mut self) {}
+    /// OCCT BOPAlgo_Builder::FillIn3DParts (Builder_3.cxx L97+).
+    fn fill_in_3d_parts(&mut self) {
+        let a_nb_s = self.ds.nb_source_shapes();
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != topods::ShapeType::Solid { continue; }
+            let solid_shape = self.brep_sr(i);
+            if let Some(imgs) = self.my_images.get(&solid_shape) {
+                for img in imgs {
+                    let fi = self.ds.index(img);
+                    if fi >= 0 {
+                        self.my_in_parts.entry(i).or_default().push(fi as usize);
+                    }
+                }
+            }
+        }
+    }
+
+    /// OCCT BOPAlgo_Builder::BuildSplitSolids (Builder_3.cxx L400+).
+    fn build_split_solids(&mut self) {
+        for (&solid_idx, face_indices) in &self.my_in_parts {
+            let face_shapes: Vec<Shape> = face_indices.iter()
+                .filter_map(|&fi| {
+                    let si = self.ds.shape_info(fi);
+                    if si.shape_type == topods::ShapeType::Face {
+                        Some(self.brep_sr(fi))
+                    } else { None }
+                })
+                .collect();
+            if face_shapes.is_empty() { continue; }
+            let solid_src = self.brep_sr(solid_idx);
+            for fs in &face_shapes {
+                self.my_images.entry(solid_src.clone())
+                    .or_default().push(fs.clone());
+            }
+        }
+    }
     fn fill_internal_shapes(&mut self) {}
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).

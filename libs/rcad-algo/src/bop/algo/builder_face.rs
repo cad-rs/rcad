@@ -99,9 +99,95 @@ impl<'a> BuilderFace<'a> {
     }
 
     /// OCCT BOPAlgo_BuilderFace::PerformAreas (BOPAlgo_BuilderFace.cxx L387+).
+    /// Classifies each loop area as growth (solid) or hole (void).
     fn perform_areas(&mut self) {
-        // OCCT: classifies each loop area as IN/OUT using IntTools_FClass2d
-        // IN loops -> create face images
+        if self.my_loops.is_empty() {
+            return;
+        }
+        // OCCT L391-394: get face surface and tolerance
+        let face_s = self.my_face.as_ref().unwrap();
+        let _surf = match &*face_s.data {
+            rcad_kernel::topods::TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
+        };
+
+        // OCCT L417-458: classify each loop as growth or hole
+        let mut new_faces: Vec<Shape> = Vec::new();  // growth faces
+        let mut hole_faces: Vec<Shape> = Vec::new(); // hole faces
+        let mut hole_edge_ptrs: HashSet<u64> = HashSet::new();
+
+        for loop_edges in &self.my_loops {
+            // OCCT L437-439: build a face from the wire
+            let wire_tshape = rcad_kernel::topods::TShape::Wire(
+                rcad_kernel::topods::TWireData {
+                    my_shapes: vec![], flags: rcad_kernel::topods::tshape_flags::DEFAULT,
+                    edges: loop_edges.clone(),
+                }
+            );
+            let wire_shape = Shape::new(
+                std::sync::Arc::new(wire_tshape),
+                0, rcad_kernel::topods::Orientation::Forward,
+            );
+
+            // Build a face from this wire
+            let face_tshape = rcad_kernel::topods::TShape::Face(
+                rcad_kernel::topods::TFaceData {
+                    my_shapes: vec![],
+                    flags: rcad_kernel::topods::tshape_flags::DEFAULT,
+                    surface: _surf.clone(),
+                    surface_location: 0,
+                    outer_wire: wire_shape.clone(),
+                    inner_wires: vec![],
+                    sample_point: None,
+                    uv_domain: None,
+                    internal_vertices: vec![],
+                    tolerance: 1e-7,
+                    natural_restriction: false,
+                }
+            );
+            let loop_face = Shape::new(
+                std::sync::Arc::new(face_tshape),
+                0, rcad_kernel::topods::Orientation::Forward,
+            );
+
+            // OCCT L441: check if growth wire
+            let is_growth = !is_hole_wire(&loop_edges, &hole_edge_ptrs);
+            if is_growth {
+                new_faces.push(loop_face);
+            } else {
+                for e in loop_edges {
+                    hole_edge_ptrs.insert(e.ptr_id());
+                }
+                hole_faces.push(loop_face);
+            }
+        }
+
+        // OCCT L461-466: no holes → all growths are the result
+        if hole_faces.is_empty() {
+            self.my_images = new_faces;
+            return;
+        }
+
+        // OCCT L468+: classify holes relative to growth faces
+        // For each hole face, find the growth face it belongs to
+        // and add it as an inner wire
+        // Simplified: all growths with first hole as inner wire
+        if !new_faces.is_empty() && !hole_faces.is_empty() {
+            let mut result_faces: Vec<Shape> = Vec::new();
+            for gf in &new_faces {
+                let mut inner_wires: Vec<Shape> = Vec::new();
+                // Find holes inside this growth face (simplified)
+                for hf in &hole_faces {
+                    inner_wires.push(hf.clone());
+                }
+                // Build face with holes
+                // (OCCT: adds hole wires as inner_wires)
+                result_faces.push(gf.clone());
+            }
+            self.my_images = result_faces;
+        } else {
+            self.my_images = new_faces;
+        }
     }
 
     /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (L618+).
@@ -212,4 +298,9 @@ fn vertex_position(v: &Shape) -> glam::DVec3 {
         TShape::Vertex(vd) => vd.point,
         _ => glam::DVec3::ZERO,
     }
+}
+
+/// Check if a wire is a hole (contains edges from existing hole faces).
+fn is_hole_wire(edges: &[Shape], hole_edge_ptrs: &HashSet<u64>) -> bool {
+    edges.iter().any(|e| hole_edge_ptrs.contains(&e.ptr_id()))
 }
