@@ -18,6 +18,7 @@ pub mod gcpnts;
 pub mod gprop;
 
 // keep flat — OCCT LProp package (partial)
+pub mod top_loc;
 pub mod curvature;
 
 // legacy flat modules (keep during migration)
