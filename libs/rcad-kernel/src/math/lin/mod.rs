@@ -34,7 +34,7 @@ pub fn eigenvalues_3x3(m: DMat3) -> (f64, f64, f64) {
     let s = (m.y_axis.y * m.z_axis.z - m.y_axis.z * m.z_axis.y)
           + (m.x_axis.x * m.z_axis.z - m.x_axis.z * m.z_axis.x)
           + (m.x_axis.x * m.y_axis.y - m.x_axis.y * m.y_axis.x);
-    let roots = crate::math::poly::solve_cubic(1.0, -trace, s, -det);
+    let roots = crate::math::math_poly::solve_cubic(1.0, -trace, s, -det);
     match roots.len() {
         0 => (0.0, 0.0, 0.0),
         1 => (roots[0], roots[0], roots[0]),

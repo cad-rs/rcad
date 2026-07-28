@@ -4,6 +4,8 @@ pub mod bspl;
 pub mod bvh;
 pub mod convert;
 pub mod el;
+pub mod math_poly;
+pub mod plib;
 pub mod root;
 pub mod poly;
 pub mod opt;

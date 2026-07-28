@@ -17,7 +17,7 @@ pub use crate::math::root::{
     trig_roots, trig_roots_sin_only, trig_roots_cos_sin,
     find_roots_in, bracket_root,
 };
-pub use crate::math::poly::{
+pub use crate::math::math_poly::{
     solve_linear, solve_quadratic, solve_cubic, solve_quartic,
     laguerre_roots, poly_eval,
 };
