@@ -1408,6 +1408,18 @@ impl ConicEval for Parabola3 {
     fn y_axis(&self) -> DVec3 { self.axis_dir.cross(self.normal).normalize_or_zero() }
 }
 
+// --- BoundedCurveEval implementations ---
+
+impl BoundedCurveEval for BSplineCurve3 {
+    fn degree(&self) -> usize { self.degree }
+}
+
+impl BoundedCurveEval for BezierCurve3 {
+    fn degree(&self) -> usize {
+        self.control_points.len().saturating_sub(1)
+    }
+}
+
 // --- Curve3 type-group accessors (OCCT-aligned IsKind / DownCast equivalents) ---
 
 impl Curve3 {
@@ -1428,6 +1440,15 @@ impl Curve3 {
             Curve3::Ellipse(c) => Some(c as &dyn ConicEval),
             Curve3::Hyperbola(c) => Some(c as &dyn ConicEval),
             Curve3::Parabola(c) => Some(c as &dyn ConicEval),
+            _ => None,
+        }
+    }
+
+    /// OCCT-aligned: downcast to bounded curve trait object.
+    pub fn as_bounded(&self) -> Option<&dyn BoundedCurveEval> {
+        match self {
+            Curve3::BSpline(c) => Some(c as &dyn BoundedCurveEval),
+            Curve3::Bezier(c) => Some(c as &dyn BoundedCurveEval),
             _ => None,
         }
     }
@@ -1525,6 +1546,15 @@ impl Curve2d {
             Curve2d::Ellipse(c) => Some(c as &dyn Conic2dEval),
             Curve2d::Hyperbola(c) => Some(c as &dyn Conic2dEval),
             Curve2d::Parabola(c) => Some(c as &dyn Conic2dEval),
+            _ => None,
+        }
+    }
+
+    /// OCCT-aligned: downcast to bounded 2D curve trait object.
+    pub fn as_bounded(&self) -> Option<&dyn BoundedCurve2dEval> {
+        match self {
+            Curve2d::BSpline(c) => Some(c as &dyn BoundedCurve2dEval),
+            Curve2d::Bezier(c) => Some(c as &dyn BoundedCurve2dEval),
             _ => None,
         }
     }
@@ -2391,6 +2421,21 @@ impl Surface3 {
         match self {
             Surface3::BSpline(s) => Some(s as &dyn BoundedSurfaceEval),
             Surface3::Bezier(s) => Some(s as &dyn BoundedSurfaceEval),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if this surface is a swept surface
+    /// (OCCT: `IsKind(Geom_SweptSurface)`).
+    pub fn is_swept(&self) -> bool {
+        matches!(self, Surface3::LinearExtrusion(_) | Surface3::Revolution(_))
+    }
+
+    /// OCCT-aligned: downcast to swept surface trait object.
+    pub fn as_swept(&self) -> Option<&dyn SweptSurfaceEval> {
+        match self {
+            Surface3::LinearExtrusion(s) => Some(s as &dyn SweptSurfaceEval),
+            Surface3::Revolution(s) => Some(s as &dyn SweptSurfaceEval),
             _ => None,
         }
     }
