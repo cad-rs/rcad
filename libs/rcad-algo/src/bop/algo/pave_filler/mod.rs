@@ -266,8 +266,23 @@ impl<'a> PaveFiller<'a> {
         self.ds.update_pave_blocks_with_sd_vertices();
     }
 
-    /// OCCT: UpdateInterfsWithSDVertices.
-    fn update_interfs_with_sd_vertices(&mut self) {}
+    /// OCCT BOPAlgo_PaveFiller::UpdateInterfsWithSDVertices (_10.cxx L248-255).
+    fn update_interfs_with_sd_vertices(&mut self) {
+        let pairs: Vec<(usize, usize)> = self.ds.interf_vv.iter()
+            .filter_map(|vv| {
+                if vv.merged_vertex != usize::MAX {
+                    let mut sd = usize::MAX;
+                    if self.ds.has_shape_sd(vv.merged_vertex, &mut sd) {
+                        Some((vv.merged_vertex, sd))
+                    } else { None }
+                } else { None }
+            }).collect();
+        for &(old, new) in &pairs {
+            for vv in &mut self.ds.interf_vv {
+                if vv.merged_vertex == old { vv.merged_vertex = new; }
+            }
+        }
+    }
 
     /// OCCT: UpdateBlocksWithSharedVertices.
     fn update_blocks_with_shared_vertices(&mut self) {}
