@@ -35,6 +35,6 @@ pub use crate::math::lin::{
 };
 pub use crate::math::integ::{simpson_integrate, gaussian_quadrature};
 pub use crate::math::sys::{newton_2d, newton_3d};
-pub use crate::math::gprop::plate::{
+pub use crate::base::gprop::plate::{
     thin_plate_spline, evaluate_tps, build_plate_surface,
 };

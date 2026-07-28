@@ -29,7 +29,7 @@ pub use math::math_utils;
 pub use math::curvature;
 pub use math::arc_length;
 pub use base::extend;
-pub use math::convert as nurbs_convert;
+pub use base::convert as nurbs_convert;
 
 /// Geometric (analytic) model types: position, curve, surface, primitive descriptors.
 ///
@@ -145,7 +145,7 @@ pub use math::properties::face_flat_iter;
 // Re-exports from base (TKGeomBase)
 // ============================================================================
 
-pub use math::convert::{
+pub use base::convert::{
     bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
     cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, line_to_bspline_range,
     plane_to_bspline, sphere_to_bspline, surface_to_bspline,
@@ -281,16 +281,16 @@ impl GeomStore {
 pub use topo::topods::BRep;
 
 /// Conservative bounding-box contribution from an analytic curve.
-/// OCCT Bnd_Box for curves. Delegates to math::bnd.
+/// OCCT Bnd_Box for curves. Delegates to base::bnd_lib.
 pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
-    math::bnd::curve_bounding_box(curve)
+    base::bnd_lib::curve_bounding_box(curve)
 }
 
 /// Conservative bounding-box contribution from an analytic surface.
-/// OCCT Bnd_Box for surfaces. Delegates to math::bnd.
+/// OCCT Bnd_Box for surfaces. Delegates to base::bnd_lib.
 pub fn surface_bounding_box(
     surface: &geom::Surface3,
     vertices: &[crate::topo::topology::Vertex],
 ) -> Option<[DVec3; 2]> {
-    math::bnd::surface_bounding_box(surface, vertices)
+    base::bnd_lib::surface_bounding_box(surface, vertices)
 }

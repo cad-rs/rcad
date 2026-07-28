@@ -54,6 +54,532 @@ pub struct ExtremaPair {
     pub distance: f64,
 }
 
+/// Point on a curve at an extremum distance (OCCT `Extrema_POnCurv`).
+#[derive(Debug, Clone)]
+pub struct POnCurve {
+    /// Parameter on the curve.
+    pub param: f64,
+    /// Point on the curve.
+    pub point: DVec3,
+}
+
+/// Point on a surface at an extremum distance (OCCT `Extrema_POnSurf`).
+#[derive(Debug, Clone)]
+pub struct POnSurface {
+    /// Parameter U on the surface.
+    pub u: f64,
+    /// Parameter V on the surface.
+    pub v: f64,
+    /// Point on the surface.
+    pub point: DVec3,
+}
+
+// ============================================================================
+// Extrema_ExtPC — Point-to-Curve extremum (OCCT-aligned class)
+// ============================================================================
+
+/// OCCT-aligned: computes all extremum distances between a point and a curve.
+///
+/// Uses coarse grid sampling to find seeds, then Newton refinement for each
+/// local minimum.  Mirrors `Extrema_ExtPC` / `Extrema_GGExtPC`.
+///
+/// OCCT: `Extrema_ExtPC(Point, Curve, TolC, Uinf, Usup)`.
+pub struct ExtPC {
+    done: bool,
+    points: Vec<POnCurve>,
+    sq_dists: Vec<f64>,
+    tol: f64,
+}
+
+impl ExtPC {
+    /// Constructor: compute all extrema between `point` and `curve` on [uinf, usup].
+    ///
+    /// OCCT: `Extrema_ExtPC(gp_Pnt, Adaptor3d_Curve, TolC, Uinf, Usup)`.
+    pub fn new(point: DVec3, curve: &Curve3, tol: f64, uinf: f64, usup: f64) -> Self {
+        let mut ext = ExtPC {
+            done: false,
+            points: Vec::new(),
+            sq_dists: Vec::new(),
+            tol: tol.max(1e-12),
+        };
+        ext.perform(point, curve, uinf, usup);
+        ext
+    }
+
+    /// Compute the extrema (can be called after default construction + Initialize).
+    ///
+    /// OCCT: `Perform(Point)`.
+    pub fn perform(&mut self, point: DVec3, curve: &Curve3, uinf: f64, usup: f64) {
+        self.points.clear();
+        self.sq_dists.clear();
+
+        // 1. Analytic path: handle elementary curve types directly
+        let analytic_result = match curve {
+            Curve3::Line(l) => self.ext_pelc_line(point, l, uinf, usup),
+            Curve3::Circle(c) => self.ext_pelc_circle(point, c, uinf, usup),
+            _ => None,
+        };
+
+        if let Some((pts, sqs)) = analytic_result {
+            self.points = pts;
+            self.sq_dists = sqs;
+            self.done = true;
+            return;
+        }
+
+        // 2. General path: coarse grid + Newton refinement
+        let (t_min, t_max) = (uinf.max(f64::NEG_INFINITY), usup.min(f64::INFINITY));
+        if !t_min.is_finite() || !t_max.is_finite() || (t_max - t_min).abs() < self.tol {
+            self.done = true;
+            return;
+        }
+
+        const N_GRID: usize = 51;
+        let mut candidates: Vec<(f64, f64)> = Vec::new(); // (t, dist²)
+
+        for i in 0..=N_GRID {
+            let t = t_min + (t_max - t_min) * (i as f64) / (N_GRID as f64);
+            let p = curve.point_at(t);
+            let d2 = (p - point).length_squared();
+            // Keep local minima
+            if (i == 0 || d2 <= candidates.last().map(|&(_, ld)| ld).unwrap_or(f64::INFINITY))
+                && (i == N_GRID || {
+                    let next_t = t_min + (t_max - t_min) * ((i + 1) as f64) / (N_GRID as f64);
+                    let next_p = curve.point_at(next_t);
+                    let next_d2 = (next_p - point).length_squared();
+                    d2 <= next_d2
+                })
+            {
+                candidates.push((t, d2));
+            }
+        }
+
+        // Deduplicate close candidates
+        candidates.dedup_by(|a, b| (a.0 - b.0).abs() < (t_max - t_min) / (N_GRID as f64) * 0.5);
+
+        // 3. Newton refinement for each candidate
+        for &(t0, _) in &candidates {
+            let t = self.newton_refine_curve(point, curve, t0, t_min, t_max);
+            let p = curve.point_at(t);
+            let d2 = (p - point).length_squared();
+
+            // Deduplicate against already-found solutions
+            let is_dup = self.points.iter().any(|existing| {
+                let dt = (existing.param - t).abs();
+                let dp = (existing.point - p).length();
+                dt < self.tol && dp < self.tol * 10.0
+            });
+
+            if !is_dup {
+                self.points.push(POnCurve { param: t, point: p });
+                self.sq_dists.push(d2);
+            }
+        }
+
+        // Sort by distance
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| self.sq_dists[a].partial_cmp(&self.sq_dists[b]).unwrap());
+        self.points = indices.iter().map(|&i| self.points[i].clone()).collect();
+        self.sq_dists = indices.iter().map(|&i| self.sq_dists[i]).collect();
+
+        self.done = true;
+    }
+
+    /// OCCT: `IsDone()`.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT: `NbExt()`.
+    pub fn nb_ext(&self) -> usize {
+        self.points.len()
+    }
+
+    /// OCCT: `SquareDistance(N)` — 1-indexed.
+    pub fn square_distance(&self, n: usize) -> f64 {
+        assert!(n >= 1 && n <= self.sq_dists.len(), "ExtPC: index out of range");
+        self.sq_dists[n - 1]
+    }
+
+    /// OCCT: `Point(N)` — returns the point on curve. 1-indexed.
+    pub fn point(&self, n: usize) -> &POnCurve {
+        assert!(n >= 1 && n <= self.points.len(), "ExtPC: index out of range");
+        &self.points[n - 1]
+    }
+
+    // --- Analytic sub-solvers ---
+
+    fn ext_pelc_line(&self, point: DVec3, line: &crate::geom::Line3, uinf: f64, usup: f64) -> Option<(Vec<POnCurve>, Vec<f64>)> {
+        // Project point onto infinite line: t = (p - o)·d
+        let t = (point - line.origin).dot(line.direction);
+        let t_clamped = t.clamp(uinf, usup);
+        let p = line.origin + t_clamped * line.direction;
+        let d2 = (p - point).length_squared();
+        Some((
+            vec![POnCurve { param: t_clamped, point: p }],
+            vec![d2],
+        ))
+    }
+
+    fn ext_pelc_circle(&self, point: DVec3, circle: &crate::geom::Circle3, uinf: f64, usup: f64) -> Option<(Vec<POnCurve>, Vec<f64>)> {
+        // Project point onto circle center plane, then find angle
+        let d = point - circle.center;
+        let along = d.dot(circle.normal);
+        let planar = d - circle.normal * along;
+        let r = planar.length();
+        if r < 1e-15 {
+            // Point at center: return any point on circle
+            let t = uinf;
+            let p = circle.center + circle.x_dir * circle.radius * t.cos()
+                + circle.y_dir * circle.radius * t.sin();
+            let d2 = (p - point).length_squared();
+            return Some((vec![POnCurve { param: t, point: p }], vec![d2]));
+        }
+        let angle = planar.dot(circle.y_dir).atan2(planar.dot(circle.x_dir));
+        let t = angle.clamp(uinf, usup);
+        let p = circle.center + circle.x_dir * circle.radius * t.cos()
+            + circle.y_dir * circle.radius * t.sin();
+        let d2 = (p - point).length_squared();
+
+        // May also need to check endpoints if domain is restricted
+        let mut pts = vec![POnCurve { param: t, point: p }];
+        let mut sqs = vec![d2];
+
+        if uinf.is_finite() && usup.is_finite() {
+            for &bound in &[uinf, usup] {
+                let bp = circle.center + circle.x_dir * circle.radius * bound.cos()
+                    + circle.y_dir * circle.radius * bound.sin();
+                let bd2 = (bp - point).length_squared();
+                if bd2 < d2 - 1e-12 {
+                    pts.push(POnCurve { param: bound, point: bp });
+                    sqs.push(bd2);
+                }
+            }
+        }
+
+        Some((pts, sqs))
+    }
+
+    fn newton_refine_curve(&self, point: DVec3, curve: &Curve3, t0: f64, t_min: f64, t_max: f64) -> f64 {
+        let mut t = t0.clamp(t_min, t_max);
+        for _ in 0..20 {
+            let p = curve.point_at(t);
+            let dp = curve.derivative_at(t);
+            let d = p - point;
+            let f = d.dot(dp);
+            let speed_sq = dp.length_squared();
+            if speed_sq < 1e-30 || f.abs() < self.tol {
+                break;
+            }
+            let d2 = if speed_sq > 1e-30 {
+                let ddp = curve.derivative2_at(t);
+                let df = dp.dot(dp) + d.dot(ddp);
+                df
+            } else {
+                speed_sq
+            };
+            if d2.abs() < 1e-30 {
+                break;
+            }
+            let dt = -f / d2;
+            t = (t + dt).clamp(t_min, t_max);
+            if dt.abs() < self.tol {
+                break;
+            }
+        }
+        t
+    }
+}
+
+// ============================================================================
+// Extrema_GenLocateExtPS — Point-to-Surface local extremum (OCCT-aligned)
+// ============================================================================
+
+/// OCCT-aligned: computes the closest point on a surface from an initial (u,v) guess.
+///
+/// Uses Newton iteration on the surface param space.  Mirrors
+/// `Extrema_GenLocateExtPS` / the local-refinement path of `Extrema_ExtPS`.
+///
+/// OCCT: `Extrema_GenLocateExtPS(Point, Surface, U, V, TolU, TolV, Uinf, Usup, Vinf, Vsup)`.
+pub struct GenLocateExtPS {
+    done: bool,
+    u: f64,
+    v: f64,
+    point: DVec3,
+    sq_dist: f64,
+}
+
+impl GenLocateExtPS {
+    /// Constructor and compute in one call.
+    ///
+    /// OCCT: `GenLocateExtPS(gp_Pnt, Surface, U0, V0, TolU, TolV, Uinf, Usup, Vinf, Vsup)`.
+    pub fn new(
+        point: DVec3,
+        surface: &Surface3,
+        u0: f64,
+        v0: f64,
+        tol_u: f64,
+        tol_v: f64,
+        uinf: f64,
+        usup: f64,
+        vinf: f64,
+        vsup: f64,
+    ) -> Self {
+        let mut ext = GenLocateExtPS {
+            done: false,
+            u: u0.clamp(uinf, usup),
+            v: v0.clamp(vinf, vsup),
+            point: DVec3::ZERO,
+            sq_dist: f64::INFINITY,
+        };
+        ext.perform(point, surface, tol_u, tol_v, uinf, usup, vinf, vsup);
+        ext
+    }
+
+    /// Perform the local search.
+    ///
+    /// OCCT: `Perform(Point)`.
+    pub fn perform(&mut self, point: DVec3, surface: &Surface3, tol_u: f64, tol_v: f64, uinf: f64, usup: f64, vinf: f64, vsup: f64) {
+        let tol_u = tol_u.max(1e-12);
+        let tol_v = tol_v.max(1e-12);
+
+        for _ in 0..30 {
+            let (p, pu, pv) = surface.derivatives(self.u, self.v);
+            self.point = p;
+
+            let d = p - point;
+            let gu = d.dot(pu);
+            let gv = d.dot(pv);
+            self.sq_dist = d.length_squared();
+
+            if gu.abs() < tol_u && gv.abs() < tol_v {
+                self.done = true;
+                return;
+            }
+
+            let huu = pu.dot(pu);
+            let hvv = pv.dot(pv);
+            let huv = pu.dot(pv);
+            let det = huu * hvv - huv * huv;
+            if det.abs() < 1e-30 {
+                break;
+            }
+
+            let du = (hvv * gu - huv * gv) / det;
+            let dv = (huu * gv - huv * gu) / det;
+
+            self.u = (self.u - du).clamp(uinf, usup);
+            self.v = (self.v - dv).clamp(vinf, vsup);
+
+            if du.abs() < tol_u && dv.abs() < tol_v {
+                self.done = true;
+                return;
+            }
+        }
+        self.done = true;
+    }
+
+    /// OCCT: `IsDone()`.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT: `SquareDistance()`.
+    pub fn square_distance(&self) -> f64 {
+        self.sq_dist
+    }
+
+    /// OCCT: `Point()` — returns the point on surface.
+    pub fn point_on_surface(&self) -> DVec3 {
+        self.point
+    }
+
+    /// Parameter (U, V) of the solution.
+    /// OCCT: accessed via `Extrema_POnSurf`.
+    pub fn parameters(&self) -> (f64, f64) {
+        (self.u, self.v)
+    }
+}
+
+// ============================================================================
+// Extrema_ExtPS — Point-to-Surface full extrema (OCCT-aligned class)
+// ============================================================================
+
+/// OCCT-aligned: computes all extremum distances between a point and a surface.
+///
+/// Uses a coarse (Nu × Nv) grid to find seeds, then Newton refinement for each
+/// candidate.  Mirrors `Extrema_ExtPS`.
+///
+/// OCCT: `Extrema_ExtPS(Point, Surface, TolU, TolV)` with optional domain.
+pub struct ExtPS {
+    done: bool,
+    points: Vec<POnSurface>,
+    sq_dists: Vec<f64>,
+}
+
+impl ExtPS {
+    /// Constructor with automatic domain from the surface.
+    ///
+    /// OCCT: `Extrema_ExtPS(gp_Pnt, Adaptor3d_Surface, TolU, TolV)`.
+    pub fn new(point: DVec3, surface: &Surface3, tol_u: f64, tol_v: f64) -> Self {
+        let dom = surface.default_domain();
+        let (uinf, usup, vinf, vsup) = (dom[0], dom[1], dom[2], dom[3]);
+        Self::with_domain(point, surface, uinf, usup, vinf, vsup, tol_u, tol_v)
+    }
+
+    /// Constructor with explicit domain.
+    ///
+    /// OCCT: `Extrema_ExtPS(gp_Pnt, Adaptor3d_Surface, Uinf, Usup, Vinf, Vsup, TolU, TolV)`.
+    pub fn with_domain(
+        point: DVec3,
+        surface: &Surface3,
+        uinf: f64,
+        usup: f64,
+        vinf: f64,
+        vsup: f64,
+        tol_u: f64,
+        tol_v: f64,
+    ) -> Self {
+        let mut ext = ExtPS {
+            done: false,
+            points: Vec::new(),
+            sq_dists: Vec::new(),
+        };
+        ext.perform(point, surface, uinf, usup, vinf, vsup, tol_u, tol_v);
+        ext
+    }
+
+    /// Perform the computation.
+    ///
+    /// OCCT: `Perform(Point)` (after Initialize).
+    pub fn perform(
+        &mut self,
+        point: DVec3,
+        surface: &Surface3,
+        uinf: f64,
+        usup: f64,
+        vinf: f64,
+        vsup: f64,
+        tol_u: f64,
+        tol_v: f64,
+    ) {
+        self.points.clear();
+        self.sq_dists.clear();
+
+        if !uinf.is_finite() || !usup.is_finite() || !vinf.is_finite() || !vsup.is_finite() {
+            self.done = true;
+            return;
+        }
+
+        let range_u = usup - uinf;
+        let range_v = vsup - vinf;
+        if range_u < tol_u || range_v < tol_v {
+            self.done = true;
+            return;
+        }
+
+        // 1. Coarse grid to find candidate seeds
+        let n_u = (range_u / tol_u).ceil() as usize;
+        let n_v = (range_v / tol_v).ceil() as usize;
+        let n_u = n_u.clamp(5, 30);
+        let n_v = n_v.clamp(5, 30);
+
+        let mut grid: Vec<Vec<f64>> = vec![vec![0.0; n_v]; n_u];
+        for i in 0..n_u {
+            let u = uinf + range_u * (i as f64) / ((n_u - 1).max(1) as f64);
+            for j in 0..n_v {
+                let v = vinf + range_v * (j as f64) / ((n_v - 1).max(1) as f64);
+                let p = surface.point_at(u, v);
+                grid[i][j] = (p - point).length_squared();
+            }
+        }
+
+        // 2. Find local minima in the grid
+        let mut seeds: Vec<(f64, f64)> = Vec::new();
+        for i in 0..n_u {
+            for j in 0..n_v {
+                let val = grid[i][j];
+                let is_min = {
+                    let i_min = if i > 0 { i - 1 } else { i };
+                    let i_max = if i + 1 < n_u { i + 1 } else { i };
+                    let j_min = if j > 0 { j - 1 } else { j };
+                    let j_max = if j + 1 < n_v { j + 1 } else { j };
+
+                    (i_min..=i_max).all(|ii| {
+                        (j_min..=j_max).all(|jj| {
+                            if ii == i && jj == j { true } else { grid[ii][jj] >= val }
+                        })
+                    })
+                };
+
+                if is_min {
+                    let u = uinf + range_u * (i as f64) / ((n_u - 1).max(1) as f64);
+                    let v = vinf + range_v * (j as f64) / ((n_v - 1).max(1) as f64);
+                    seeds.push((u, v));
+                }
+            }
+        }
+
+        // Deduplicate seeds
+        let tol_u_v = (range_u / n_u as f64 * 0.5).max(tol_u);
+        let tol_v_v = (range_v / n_v as f64 * 0.5).max(tol_v);
+        seeds.dedup_by(|a, b| (a.0 - b.0).abs() < tol_u_v && (a.1 - b.1).abs() < tol_v_v);
+
+        // 3. Newton refinement from each seed
+        for &(u0, v0) in &seeds {
+            let mut loc = GenLocateExtPS::new(
+                point, surface, u0, v0, tol_u, tol_v, uinf, usup, vinf, vsup,
+            );
+            if loc.is_done() {
+                let u = loc.parameters().0;
+                let v = loc.parameters().1;
+                let p = loc.point_on_surface();
+                let d2 = loc.square_distance();
+
+                // Deduplicate
+                let is_dup = self.points.iter().any(|existing| {
+                    (existing.u - u).abs() < tol_u && (existing.v - v).abs() < tol_v
+                });
+
+                if !is_dup {
+                    self.points.push(POnSurface { u, v, point: p });
+                    self.sq_dists.push(d2);
+                }
+            }
+        }
+
+        // Sort by distance
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| self.sq_dists[a].partial_cmp(&self.sq_dists[b]).unwrap());
+        self.points = indices.iter().map(|&i| self.points[i].clone()).collect();
+        self.sq_dists = indices.iter().map(|&i| self.sq_dists[i]).collect();
+
+        self.done = true;
+    }
+
+    /// OCCT: `IsDone()`.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT: `NbExt()`.
+    pub fn nb_ext(&self) -> usize {
+        self.points.len()
+    }
+
+    /// OCCT: `SquareDistance(N)` — 1-indexed.
+    pub fn square_distance(&self, n: usize) -> f64 {
+        assert!(n >= 1 && n <= self.sq_dists.len(), "ExtPS: index out of range");
+        self.sq_dists[n - 1]
+    }
+
+    /// OCCT: `Point(N)` — 1-indexed, returns the point on surface.
+    pub fn point(&self, n: usize) -> &POnSurface {
+        assert!(n >= 1 && n <= self.points.len(), "ExtPS: index out of range");
+        &self.points[n - 1]
+    }
+}
+
 /// Collection of all local minima found between two curves.
 #[derive(Debug, Clone)]
 pub struct CurveCurveExtrema {

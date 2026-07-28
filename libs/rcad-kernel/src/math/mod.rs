@@ -2,7 +2,6 @@
 pub mod bnd;
 pub mod bspl;
 pub mod bvh;
-pub mod convert;
 pub mod el;
 pub mod math_poly;
 pub mod plib;
@@ -12,12 +11,6 @@ pub mod opt;
 pub mod lin;
 pub mod integ;
 pub mod sys;
-
-// OCCT GCPnts package
-pub mod gcpnts;
-
-// OCCT GProp package
-pub mod gprop;
 
 // keep flat — OCCT LProp package (partial)
 pub mod top_loc;
