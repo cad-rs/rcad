@@ -643,7 +643,7 @@ pub fn estimate_uv_domain_from_wire(
     if pts.is_empty() { return Some(surf.default_domain()); }
     use crate::geom::SurfaceEval;
     let proj: Vec<DVec2> = pts.iter().map(|&p| {
-        let r = crate::math::geom_api::project::closest_point_on_surface(surf, p, 64);
+        let r = crate::base::geom_api::project::closest_point_on_surface(surf, p, 64);
         DVec2::new(r.params.0, r.params.1)
     }).collect();
     let mut u0 = f64::INFINITY; let mut u1 = f64::NEG_INFINITY;

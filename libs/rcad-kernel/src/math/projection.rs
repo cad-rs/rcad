@@ -2,4 +2,4 @@
 //!
 //! Forwarding to math::geom_api::project. Old path kept for backward compat.
 
-pub use crate::math::geom_api::project::*;
+pub use crate::base::geom_api::project::*;

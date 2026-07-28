@@ -14,7 +14,7 @@ use crate::geom::{
 use crate::topo::topods;
 use crate::topo::topology::{Face, Wire, WireEdge};
 use crate::math::gprop::tri::*;
-use crate::math::geom_api::project::closest_point_on_surface;
+use crate::base::geom_api::project::closest_point_on_surface;
 
 /// Total surface area of a BRep.
 pub fn surface_area(brep: &topods::BRep) -> f64 {

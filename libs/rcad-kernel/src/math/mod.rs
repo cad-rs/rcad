@@ -1,13 +1,11 @@
 // OCCT Math* packages
+pub mod bnd;
 pub mod root;
 pub mod poly;
 pub mod opt;
 pub mod lin;
 pub mod integ;
 pub mod sys;
-
-// OCCT GeomAPI package
-pub mod geom_api;
 
 // OCCT GCPnts package
 pub mod gcpnts;
