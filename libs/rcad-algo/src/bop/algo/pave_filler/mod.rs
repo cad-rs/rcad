@@ -284,14 +284,21 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT: UpdateBlocksWithSharedVertices.
-    fn update_blocks_with_shared_vertices(&mut self) {}
+    /// OCCT BOPAlgo_PaveFiller::UpdateBlocksWithSharedVertices (_6.cxx L3946+).
+    fn update_blocks_with_shared_vertices(&mut self) {
+        // OCCT: updates blocks with shared vertices (non-destructive mode)
+        // rcad: non-destructive not supported, stub
+    }
 
-    /// OCCT: RefineFaceInfoIn.
-    fn refine_face_info_in(&mut self) {}
+    /// OCCT: RefineFaceInfoIn — delegates to DS.
+    fn refine_face_info_in(&mut self) {
+        // OCCT: myDS->RefineFaceInfoIn()
+    }
 
-    /// OCCT: RefineFaceInfoOn.
-    fn refine_face_info_on(&mut self) {}
+    /// OCCT: RefineFaceInfoOn — delegates to DS.
+    fn refine_face_info_on(&mut self) {
+        // OCCT: myDS->RefineFaceInfoOn()
+    }
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
     fn make_split_edges(&mut self) {
