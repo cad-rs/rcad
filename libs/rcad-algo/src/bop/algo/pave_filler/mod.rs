@@ -276,85 +276,73 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn update_vv_sd(&mut self) {
-        let pairs: Vec<(usize, usize)> = self.ds.interf_vv.iter()
-            .filter_map(|vv| {
+        let idx: Vec<usize> = self.ds.interf_vv.iter().enumerate()
+            .filter_map(|(i, vv)| {
                 if vv.merged_vertex != usize::MAX {
                     let mut sd = usize::MAX;
-                    if self.ds.has_shape_sd(vv.merged_vertex, &mut sd) {
-                        Some((vv.merged_vertex, sd))
-                    } else { None }
+                    if self.ds.has_shape_sd(vv.merged_vertex, &mut sd) { Some(i) } else { None }
                 } else { None }
             }).collect();
-        for &(old, new) in &pairs {
-            for vv in &mut self.ds.interf_vv {
-                if vv.merged_vertex == old { vv.merged_vertex = new; }
+        for &i in &idx {
+            let mut sd = usize::MAX;
+            if self.ds.has_shape_sd(self.ds.interf_vv[i].merged_vertex, &mut sd) {
+                self.ds.interf_vv[i].merged_vertex = sd;
             }
         }
     }
 
     fn update_ve_sd(&mut self) {
-        let pairs: Vec<(usize, usize)> = self.ds.interf_ve.iter()
-            .filter_map(|ve| {
+        let idx: Vec<usize> = self.ds.interf_ve.iter().enumerate()
+            .filter_map(|(i, ve)| {
                 if ve.index_new != 0 {
                     let mut sd = usize::MAX;
-                    if self.ds.has_shape_sd(ve.index_new, &mut sd) {
-                        Some((ve.index_new, sd))
-                    } else { None }
+                    if self.ds.has_shape_sd(ve.index_new, &mut sd) { Some(i) } else { None }
                 } else { None }
             }).collect();
-        for &(old, new) in &pairs {
-            for ve in &mut self.ds.interf_ve {
-                if ve.index_new == old { ve.index_new = new; }
+        for &i in &idx {
+            let mut sd = usize::MAX;
+            if self.ds.has_shape_sd(self.ds.interf_ve[i].index_new, &mut sd) {
+                self.ds.interf_ve[i].index_new = sd;
             }
         }
     }
 
     fn update_vf_sd(&mut self) {
-        let pairs: Vec<(usize, usize)> = self.ds.interf_vf.iter()
-            .filter_map(|vf| {
+        let idx: Vec<(usize, usize)> = self.ds.interf_vf.iter().enumerate()
+            .filter_map(|(i, vf)| {
                 vf.index_new.and_then(|nv| {
                     let mut sd = usize::MAX;
-                    if self.ds.has_shape_sd(nv, &mut sd) { Some((nv, sd)) } else { None }
+                    if self.ds.has_shape_sd(nv, &mut sd) { Some((i, sd)) } else { None }
                 })
             }).collect();
-        for &(old, new) in &pairs {
-            for vf in &mut self.ds.interf_vf {
-                if vf.index_new == Some(old) { vf.index_new = Some(new); }
-            }
+        for (i, sd) in idx {
+            self.ds.interf_vf[i].index_new = Some(sd);
         }
     }
 
     fn update_ee_sd(&mut self) {
-        let pairs: Vec<(usize, usize)> = self.ds.interf_ee.iter()
-            .filter_map(|ee| {
+        let idx: Vec<(usize, usize)> = self.ds.interf_ee.iter().enumerate()
+            .filter_map(|(i, ee)| {
                 if ee.new_vertex != usize::MAX {
                     let mut sd = usize::MAX;
-                    if self.ds.has_shape_sd(ee.new_vertex, &mut sd) {
-                        Some((ee.new_vertex, sd))
-                    } else { None }
+                    if self.ds.has_shape_sd(ee.new_vertex, &mut sd) { Some((i, sd)) } else { None }
                 } else { None }
             }).collect();
-        for &(old, new) in &pairs {
-            for ee in &mut self.ds.interf_ee {
-                if ee.new_vertex == old { ee.new_vertex = new; }
-            }
+        for (i, sd) in idx {
+            self.ds.interf_ee[i].new_vertex = sd;
         }
     }
 
     fn update_ef_sd(&mut self) {
-        let pairs: Vec<(usize, usize)> = self.ds.interf_ef.iter()
-            .filter_map(|ef| {
+        let idx: Vec<(usize, usize)> = self.ds.interf_ef.iter().enumerate()
+            .filter_map(|(i, ef)| {
                 if ef.new_vertex != usize::MAX {
                     let mut sd = usize::MAX;
-                    if self.ds.has_shape_sd(ef.new_vertex, &mut sd) {
-                        Some((ef.new_vertex, sd))
-                    } else { None }
+                    if self.ds.has_shape_sd(ef.new_vertex, &mut sd) { Some((i, sd)) } else { None }
                 } else { None }
             }).collect();
-        for &(old, new) in &pairs {
-            for ef in &mut self.ds.interf_ef {
-                if ef.new_vertex == old { ef.new_vertex = new; }
-            }
+        for (i, sd) in idx {
+            self.ds.interf_ef[i].new_vertex = sd;
         }
     }
 
