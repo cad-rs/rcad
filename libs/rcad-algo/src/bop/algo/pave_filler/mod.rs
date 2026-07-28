@@ -72,11 +72,11 @@ impl<'a> PaveFiller<'a> {
         self.make_blocks();                                                     // L351
         // OCCT L358: CheckSelfInterference
         self.update_interfs_with_sd_vertices();                                 // L360
-        // OCCT L361: ReleasePaveBlocks
+        self.ds.release_pave_blocks();                                          // L361
         self.refine_face_info_on();                                             // L362
-        // OCCT L364: RemoveMicroEdges
-        // OCCT L366: MakePCurves
-        // OCCT L373: ProcessDE
+        self.remove_micro_edges();                                              // L364
+        self.make_pcurves();                                                    // L366
+        self.process_de();                                                      // L373
     }
 
     // ====================================================================
@@ -412,4 +412,30 @@ impl<'a> PaveFiller<'a> {
         }
         (v1, v2)
     }
+
+    /// OCCT BOPAlgo_PaveFiller::RemoveMicroEdges (_6.cxx L4388-4435).
+    fn remove_micro_edges(&mut self) {
+        let mut micro: Vec<usize> = Vec::new();
+        for i in 0..self.ds.pave_blocks_pool.len() {
+            let pb_list = self.ds.pave_blocks_pool[i].clone();
+            if pb_list.len() < 2 { continue; }
+            for pb in &pb_list {
+                let pbr = pb.0.read().unwrap();
+                if pbr.pave1.vertex_idx == pbr.pave2.vertex_idx {
+                    micro.push(pbr.edge);
+                }
+            }
+        }
+        for ei in &micro {
+            for pool in &mut self.ds.pave_blocks_pool {
+                pool.retain(|pb| pb.0.read().unwrap().edge != *ei);
+            }
+        }
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589+).
+    fn make_pcurves(&mut self) {}
+
+    /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54+).
+    fn process_de(&mut self) {}
 }
