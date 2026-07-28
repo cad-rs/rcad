@@ -457,7 +457,7 @@ pub fn reverse_curve(curve: Curve3) -> Curve3 {
         Curve3::Trimmed(tc) => {
             let c = tc.curve.as_ref().clone();
             let reversed = reverse_curve(c);
-            Curve3::Trimmed(Box::new(TrimmedCurve3::new(reversed, tc.first, tc.last)))
+            Curve3::Trimmed(TrimmedCurve3::new(reversed, tc.first, tc.last))
         }
     }
 }
@@ -702,7 +702,7 @@ pub fn transform_curve(curve: &Curve3, transform: DAffine3) -> Curve3 {
         }
         Curve3::Trimmed(tc) => {
             let transformed = transform_curve(tc.basis_curve(), transform);
-            Curve3::Trimmed(Box::new(TrimmedCurve3::new(transformed, tc.first, tc.last)))
+            Curve3::Trimmed(TrimmedCurve3::new(transformed, tc.first, tc.last))
         }
     }
 }

@@ -1937,11 +1937,11 @@ fn resolve_to_direct_curve(curve: &Curve3) -> Curve3 {
         | c @ Curve3::Parabola(_)
         | c @ Curve3::CircularHelix(_)
         | c @ Curve3::SineWave(_) => c.clone(),
-        Curve3::Trimmed(tc) => Curve3::Trimmed(Box::new(TrimmedCurve3::new(
+        Curve3::Trimmed(tc) => Curve3::Trimmed(TrimmedCurve3::new(
             resolve_to_direct_curve(tc.basis_curve()),
             tc.first,
             tc.last,
-        ))),
+        )),
     }
 }
 

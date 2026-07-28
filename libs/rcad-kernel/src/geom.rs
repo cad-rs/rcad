@@ -305,7 +305,7 @@ pub enum Curve3 {
     CircularHelix(CircularHelix3),
     SineWave(SineWave3),
     /// OCCT Geom_TrimmedCurve: a curve bounded to a parameter range [first, last].
-    Trimmed(Box<TrimmedCurve3>),
+    Trimmed(TrimmedCurve3),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

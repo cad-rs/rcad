@@ -1034,7 +1034,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L2514: new Geom_TrimmedCurve(aGLin, pmin, pmax)
         // OCCT L2521: new Geom2d_TrimmedCurve(C2d, pmin, pmax)
         let trimmed_curve =
-            Curve3::Trimmed(Box::new(TrimmedCurve3::new(line3d.clone(), pmin, pmax)));
+            Curve3::Trimmed(TrimmedCurve3::new(line3d.clone(), pmin, pmax));
         let trimmed_pca = Some(Curve2d::Trimmed(TrimmedCurve2 {
             curve: Box::new(pcurve1),
             t_min: pmin,
@@ -1336,7 +1336,7 @@ impl<'a> super::PaveFiller<'a> {
 
                 // OCCT L814-815: new Geom_TrimmedCurve(newc, fprm, lprm)
                 let trimmed_curve =
-                    Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
+                    Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
 
                 // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
                 let mut curve_extra = crate::bopds::ds::CurveExtra::default();
@@ -1510,7 +1510,7 @@ impl<'a> super::PaveFiller<'a> {
                 let trimmed_pca = pca.clone();
                 let trimmed_pcb = pcb.clone();
                 let trimmed_curve =
-                    Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
+                    Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
 
                 let mut curve_extra = crate::bopds::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
@@ -1533,7 +1533,7 @@ impl<'a> super::PaveFiller<'a> {
                 let pcb = self.compute_pcurve_on_surface(curve, f2);
                 // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
                 let trimmed_curve =
-                    Curve3::Trimmed(Box::new(TrimmedCurve3::new(curve.clone(), fprm, lprm)));
+                    Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
                 let mut curve_extra = crate::bopds::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
                 result.push(crate::bopds::ds::IntersectionCurve {

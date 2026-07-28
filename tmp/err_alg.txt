@@ -1,0 +1,404 @@
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0599]: no method named `ptr_id` found for reference `&filler_mod::<impl BooleanBuilder<'a>>::fill_in_3d_parts::FaceEntry` in the current scope
+error[E0599]: no method named `ptr_id` found for reference `&filler_mod::<impl BooleanBuilder<'a>>::fill_in_3d_parts::FaceEntry` in the current scope
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this method takes 0 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: mismatched types
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: arguments to this method are incorrect
+error[E0308]: arguments to this method are incorrect
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0560]: struct `rcad_kernel::topods::Shape` has no field named `ptr_id`
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0560]: struct `rcad_kernel::topods::Shape` has no field named `ptr_id`
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0308]: mismatched types
+error[E0308]: mismatched types
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0308]: mismatched types
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0599]: `std::iter::Copied<std::slice::Iter<'_, rcad_kernel::topods::Shape>>` is not an iterator
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0599]: `std::iter::Copied<std::slice::Iter<'_, rcad_kernel::topods::Shape>>` is not an iterator
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0277]: the trait bound `rcad_kernel::topods::Shape: Copy` is not satisfied
+error[E0507]: cannot move out of a shared reference
+error[E0382]: use of moved value: `w`
+error[E0382]: use of moved value: `w`
+error[E0382]: use of moved value: `outer_wire`
+error[E0382]: use of moved value: `a_e`
+error[E0382]: use of moved value: `a_sp_r`
+error[E0382]: use of moved value: `a_e`
+error[E0382]: use of moved value: `a_sp_r`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `ed.first` which is behind a shared reference
+error[E0507]: cannot move out of `ed.last` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of index of `Vec<std::option::Option<rcad_kernel::topods::Shape>>`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*iwsr` which is behind a shared reference
+error[E0382]: use of moved value: `shell_ref`
+error[E0382]: use of moved value: `shell_ref`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0382]: use of moved value: `cs_ref`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `ed.first` which is behind a shared reference
+error[E0507]: cannot move out of `ed.last` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0382]: use of moved value: `sr`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `ed.first` which is behind a shared reference
+error[E0507]: cannot move out of `ed.last` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*iw_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of `*iw_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*we_sr` which is behind a shared reference
+error[E0508]: cannot move out of type `[rcad_kernel::topods::Shape]`, a non-copy slice
+error[E0507]: cannot move out of `*we_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*shape` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*iw_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*fsr` which is behind a shared reference
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*shell_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `face_a.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_b.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_a.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_b.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_a.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_b.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_a.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `face_b.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0382]: use of moved value: `wire_ref`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0382]: use of moved value: `fr`
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*iwr` which is behind a shared reference
+error[E0507]: cannot move out of `*wire_b[_]`, as `*wire_b` is a captured variable in an `FnMut` closure
+error[E0507]: cannot move out of `*sr` which is behind a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of `self.solid_ref` which is behind a mutable reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*wire_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*iw_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*shell_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0382]: use of moved value: `f1_sr`
+error[E0382]: use of moved value: `f2_sr`
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0508]: cannot move out of type `[rcad_kernel::topods::Shape]`, a non-copy slice
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0382]: use of moved value: `v_start_0`
+error[E0382]: use of moved value: `v_start_1`
+error[E0382]: use of moved value: `v_end_0`
+error[E0382]: use of moved value: `v_end_1`
+error[E0507]: cannot move out of a shared reference
+error[E0382]: use of moved value: `face_sr`
+error[E0382]: use of moved value: `start_sr`
+error[E0382]: use of moved value: `end_sr`
+error[E0382]: use of moved value: `fillet_face_sr`
+error[E0382]: use of moved value: `fillet_face_sr`
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0382]: use of moved value: `new_wire_sr`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0382]: use of moved value: `new_wire_sr`
+error[E0507]: cannot move out of `*shell_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*other_face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0382]: use of moved value: `face_sr`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0382]: use of moved value: `face_sr`
+error[E0507]: cannot move out of `*face_refs[_]`, as `*face_refs` is a captured variable in an `FnMut` closure
+error[E0507]: cannot move out of `*face_refs[_]`, as `*face_refs` is a captured variable in an `FnMut` closure
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*esr` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `ed.first` which is behind a shared reference
+error[E0507]: cannot move out of `ed.first` which is behind a shared reference
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+error[E0507]: cannot move out of `*face_sr` which is behind a shared reference
+error[E0382]: use of moved value: `face_ref`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*a_face_ref` which is behind a shared reference
+error[E0507]: cannot move out of `*b_face_ref` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*face_ref` which is behind a shared reference
+error[E0507]: cannot move out of `*face_ref` which is behind a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of a shared reference
+error[E0382]: use of moved value: `v10`
+error[E0382]: use of moved value: `v01`
+error[E0382]: use of moved value: `v00`
+error[E0382]: use of moved value: `v01`
+error[E0382]: use of moved value: `v10`
+error[E0382]: use of moved value: `v10`
+error[E0382]: use of moved value: `v11`
+error[E0382]: use of moved value: `v01`
+error[E0507]: cannot move out of a shared reference
+error[E0507]: cannot move out of `*face_ref` which is behind a shared reference
+error[E0507]: cannot move out of `*face_ref` which is behind a shared reference
+error[E0507]: cannot move out of `*face_ref` which is behind a shared reference
+error[E0382]: use of moved value: `shell_sr`
+error[E0382]: use of moved value: `face_sr`
+error[E0382]: use of moved value: `face_sr`
+error[E0382]: use of moved value: `out_shell`
+error[E0382]: use of moved value: `shell_sr`
+error[E0382]: use of moved value: `shell_sr`
+error[E0382]: use of moved value: `out_shell`
+error: could not compile `rcad-algorithms` (lib) due to 403 previous errors; 497 warnings emitted

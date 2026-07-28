@@ -1,0 +1,1453 @@
+﻿cargo : warning: unnecessary parentheses around `break` value
+At line:1 char:340
++ ... s\lilu\works\rcad-pro\rcad; cargo check -p rcad-modeling 2>&1 | Out-F ...
++                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unnece...d `break` value:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    --> libs\rcad-kernel\src\properties.rs:2209:31
+     |
+2209 |                     break 'du (std::f64::consts::PI * 2.0);
+     |                               ^                          ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+2209 -                     break 'du (std::f64::consts::PI * 2.0);
+2209 +                     break 'du std::f64::consts::PI * 2.0;
+     |
+
+warning: unused import: `topology::Wire`
+ --> libs\rcad-kernel\src\topo_simplify.rs:1:29
+  |
+1 | use crate::{BRep, WireEdge, topology::Wire};
+  |                             ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> libs\rcad-kernel\src\topo_simplify.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `any_perpendicular`
+    --> libs\rcad-kernel\src\topods.rs:1720:77
+     |
+1720 |             Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval, any_perpendicular,
+     |                                                                             ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Edge`, `Face`, `Shell`, `Solid`, `Vertex`, `WireEdge`, and `Wire`
+  --> libs\rcad-kernel\src\array.rs:20:23
+   |
+20 | use crate::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+   |                       ^^^^  ^^^^  ^^^^^  ^^^^^  ^^^^^^  ^^^^  ^^^^^^^^
+
+warning: unreachable statement
+    --> libs\rcad-kernel\src\properties.rs:1799:9
+     |
+1798 |         continue;
+     |         -------- any code following this expression is unreachable
+1799 |         let mut h = sample_wire_polyline_3d(brep, w);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+     |
+     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `SurfaceEval`
+  --> libs\rcad-kernel\src\projection.rs:89:57
+   |
+89 | use crate::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval};
+   |                                                         ^^^^^^^^^^^
+
+warning: unused variable: `v_range`
+    --> libs\rcad-kernel\src\properties.rs:2064:9
+     |
+2064 |     let v_range = vmax - vmin;
+     |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_v_range`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `s`
+    --> libs\rcad-kernel\src\properties.rs:4047:23
+     |
+4047 |                 .map(|s| ())?;
+     |                       ^ help: if this is intentional, prefix it with an underscore: `_s`
+
+warning: unused variable: `surf_idx`
+    --> libs\rcad-kernel\src\properties.rs:4037:17
+     |
+4037 |             let surf_idx = brep
+     |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_surf_idx`
+
+warning: unused variable: `ei`
+   --> libs\rcad-kernel\src\topo_query.rs:198:10
+    |
+198 |     for (ei, ts) in brep.tshapes.iter().enumerate() {
+    |          ^^ help: if this is intentional, prefix it with an underscore: `_ei`
+
+warning: unused variable: `face_idx`
+   --> libs\rcad-kernel\src\brep_graph.rs:964:24
+    |
+964 |     pub fn face(&self, face_idx: usize) -> Option<&'a Face> {
+    |                        ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_face_idx`
+
+warning: unused variable: `face_idx`
+    --> libs\rcad-kernel\src\brep_graph.rs:1006:31
+     |
+1006 |     pub fn face_normal(&self, face_idx: usize) -> Option<DVec3> {
+     |                               ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_face_idx`
+
+warning: unused variable: `edge_idx`
+    --> libs\rcad-kernel\src\brep_graph.rs:1034:32
+     |
+1034 |     pub fn edge_pcurves(&self, edge_idx: usize) -> Option<&'a [PCurve]> {
+     |                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_edge_idx`
+
+warning: unused variable: `ti`
+    --> libs\rcad-kernel\src\topods.rs:1185:18
+     |
+1185 |             for (ti, ts) in s.tshapes.iter().enumerate() {
+     |                  ^^ help: if this is intentional, prefix it with an underscore: `_ti`
+
+warning: unused variable: `edge`
+    --> libs\rcad-kernel\src\topods.rs:1253:9
+     |
+1253 |         edge: &Shape,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_edge`
+
+warning: unused variable: `face`
+    --> libs\rcad-kernel\src\topods.rs:1254:9
+     |
+1254 |         face: &Shape,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_face`
+
+warning: unused variable: `key`
+    --> libs\rcad-kernel\src\topods.rs:1881:21
+     |
+1881 |                 let key = if a < b { (a, b, true) } else { (b, a, false) };
+     |                     ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: value assigned to `best_d` is never read
+   --> libs\rcad-kernel\src\projection.rs:278:17
+    |
+278 |                 best_d = (circ.point_at(best_t) - query).length();
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> libs\rcad-kernel\src\array.rs:928:13
+    |
+928 |         let mut shell_refs = Vec::new();
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> libs\rcad-kernel\src\array.rs:931:21
+    |
+931 |                 let mut face_refs: Vec<topods::Shape> = Vec::new();
+    |                     ----^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+
+warning: unused variable: `face_refs`
+   --> libs\rcad-kernel\src\array.rs:931:21
+    |
+931 |                 let mut face_refs: Vec<topods::Shape> = Vec::new();
+    |                     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_face_refs`
+
+warning: type `OrderedFloat` is more private than the item `IndexedMapOfReal`
+   --> libs\rcad-kernel\src\tcol_std.rs:641:1
+    |
+641 | pub type IndexedMapOfReal = IndexedMap<OrderedFloat>;
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ type alias `IndexedMapOfReal` is reachable at visibility `pub`
+    |
+note: but type `OrderedFloat` is only usable at visibility `pub(self)`
+   --> libs\rcad-kernel\src\tcol_std.rs:478:1
+    |
+478 | struct OrderedFloat(f64);
+    | ^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: field `center_2d` is never read
+    --> libs\rcad-kernel\src\properties.rs:1495:9
+     |
+1491 |     struct EdgeInfo {
+     |            -------- field in this struct
+...
+1495 |         center_2d: DVec2, // for arcs: circle center projected to face plane
+     |         ^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `gl_s_u_subs` is never used
+    --> libs\rcad-kernel\src\properties.rs:3663:4
+     |
+3663 | fn gl_s_u_subs(surf: &Surface3) -> usize {
+     |    ^^^^^^^^^^^
+
+warning: function `gl_s_v_subs` is never used
+    --> libs\rcad-kernel\src\properties.rs:3675:4
+     |
+3675 | fn gl_s_v_subs(surf: &Surface3) -> usize {
+     |    ^^^^^^^^^^^
+
+warning: function `collect_vertex_indices` is never used
+  --> libs\rcad-kernel\src\topo_query.rs:23:4
+   |
+23 | fn collect_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
+   |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `collect_solid_indices` is never used
+  --> libs\rcad-kernel\src\topo_query.rs:53:4
+   |
+53 | fn collect_solid_indices(brep: &topods::BRep) -> Vec<usize> {
+   |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `oriented_edge_vertices` is never used
+ --> libs\rcad-kernel\src\topo_simplify.rs:4:4
+  |
+4 | fn oriented_edge_vertices(brep: &BRep, we: WireEdge) -> Option<(usize, usize)> {
+  |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `points_are_collinear_forward` is never used
+  --> libs\rcad-kernel\src\topo_simplify.rs:14:4
+   |
+14 | fn points_are_collinear_forward(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `find_existing_edge_between_vertices` is never used
+  --> libs\rcad-kernel\src\topo_simplify.rs:33:4
+   |
+33 | fn find_existing_edge_between_vertices(brep: &BRep, from: usize, to: usize) -> Option<WireEdge> {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `push_topology_edge` is never used
+  --> libs\rcad-kernel\src\topo_simplify.rs:46:4
+   |
+46 | fn push_topology_edge(brep: &mut BRep, start: usize, end: usize) -> WireEdge {
+   |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `merge_collinear_consecutive_edges_in_wire` is never used
+  --> libs\rcad-kernel\src\topo_simplify.rs:51:4
+   |
+51 | fn merge_collinear_consecutive_edges_in_wire(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `flat_face_count` is never used
+   --> libs\rcad-kernel\src\naming.rs:279:4
+    |
+279 | fn flat_face_count(brep: &topods::BRep) -> usize {
+    |    ^^^^^^^^^^^^^^^
+
+warning: constant `SYNTH_PTR_ID` is never used
+  --> libs\rcad-kernel\src\topods.rs:74:7
+   |
+74 | const SYNTH_PTR_ID: u64 = 0xFFFFFFFF_DEAD0000;
+   |       ^^^^^^^^^^^^
+
+warning: function `treat_solution` is never used
+   --> libs\rcad-kernel\src\projection.rs:825:4
+    |
+825 | fn treat_solution(
+    |    ^^^^^^^^^^^^^^
+
+warning: constant `PHI` is never used
+   --> libs\rcad-kernel\src\math_utils.rs:670:7
+    |
+670 | const PHI: f64 = 1.618033988749895;
+    |       ^^^
+
+warning: function `transform_curve` is never used
+   --> libs\rcad-kernel\src\array.rs:996:4
+    |
+996 | fn transform_curve(curve: &Curve3, mat: &DMat4) -> Curve3 {
+    |    ^^^^^^^^^^^^^^^
+
+warning: function `transform_surface` is never used
+    --> libs\rcad-kernel\src\array.rs:1048:4
+     |
+1048 | fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: `rcad-kernel` (lib) generated 39 warnings (run `cargo fix --lib -p rcad-kernel` to apply 19 suggestions)
+    Checking rcad-modeling v0.1.0 (C:\Users\lilu\works\rcad-pro\rcad\libs\rcad-modeling)
+warning: unused import: `std::sync::Arc`
+ --> libs\rcad-modeling\src\builder\brep_builder.rs:7:5
+  |
+7 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `SurfaceEval`
+  --> libs\rcad-modeling\src\builder\brep_builder.rs:10:43
+   |
+10 | use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
+   |                                           ^^^^^^^^^^^
+
+warning: unused import: `Face`
+  --> libs\rcad-modeling\src\builder\brep_builder.rs:13:29
+   |
+13 | use rcad_kernel::topology::{Face, Shell, Wire, WireEdge};
+   |                             ^^^^
+
+warning: unused import: `Shape`
+  --> libs\rcad-modeling\src\builder\fillet.rs:21:33
+   |
+21 | use rcad_kernel::topods::{self, Shape, TShape};
+   |                                 ^^^^^
+
+warning: unused imports: `do_mirror_brep`, `transform_brep`, and `translate_brep`
+ --> libs\rcad-modeling\src\builder\solid.rs:2:54
+  |
+2 |     BuildError, basis_from_axis_ref, basis_from_x_y, do_mirror_brep, normalize_vector,
+  |                                                      ^^^^^^^^^^^^^^
+3 |     transform_brep, translate_brep, validate_point, validate_positive,
+  |     ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+error[E0382]: use of moved value: `north`
+   --> libs\rcad-modeling\src\builder\solid.rs:251:42
+    |
+238 |     let north = t.add_tvertex(c + DVec3::Z * r);
+    |         ----- move occurs because `north` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+251 |     let e_top = t.add_tedge(None, north, north, [0.0, std::f64::consts::PI * r]);
+    |                                   -----  ^^^^^ value used here after move
+    |                                   |
+    |                                   value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+251 |     let e_top = t.add_tedge(None, north.clone(), north, [0.0, std::f64::consts::PI * r]);
+    |                                        ++++++++
+
+error[E0382]: use of moved value: `north`
+   --> libs\rcad-modeling\src\builder\solid.rs:255:9
+    |
+238 |     let north = t.add_tvertex(c + DVec3::Z * r);
+    |         ----- move occurs because `north` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+251 |     let e_top = t.add_tedge(None, north, north, [0.0, std::f64::consts::PI * r]);
+    |                                          ----- value moved here
+...
+255 |         north,
+    |         ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+251 |     let e_top = t.add_tedge(None, north, north.clone(), [0.0, std::f64::consts::PI * r]);
+    |                                               ++++++++
+
+error[E0382]: use of moved value: `south`
+   --> libs\rcad-modeling\src\builder\solid.rs:260:35
+    |
+239 |     let south = t.add_tvertex(c - DVec3::Z * r);
+    |         ----- move occurs because `south` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+256 |         south,
+    |         ----- value moved here
+...
+260 |     let e_bot = t.add_tedge(None, south, south, [0.0, std::f64::consts::PI * r]);
+    |                                   ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+256 |         south.clone(),
+    |              ++++++++
+
+error[E0382]: use of moved value: `south`
+   --> libs\rcad-modeling\src\builder\solid.rs:260:42
+    |
+239 |     let south = t.add_tvertex(c - DVec3::Z * r);
+    |         ----- move occurs because `south` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+260 |     let e_bot = t.add_tedge(None, south, south, [0.0, std::f64::consts::PI * r]);
+    |                                   -----  ^^^^^ value used here after move
+    |                                   |
+    |                                   value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+260 |     let e_bot = t.add_tedge(None, south.clone(), south, [0.0, std::f64::consts::PI * r]);
+    |                                        ++++++++
+
+error[E0382]: use of moved value: `e_seam`
+   --> libs\rcad-modeling\src\builder\solid.rs:262:59
+    |
+253 |     let e_seam = t.add_tedge(
+    |         ------ move occurs because `e_seam` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+262 |     let wire = t.add_twire(vec![e_top, e_seam, e_bot, rev(e_seam)]);
+    |                                        ------             ^^^^^^ value used here after move
+    |                                        |
+    |                                        value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+262 |     let wire = t.add_twire(vec![e_top, e_seam.clone(), e_bot, rev(e_seam)]);
+    |                                              ++++++++
+
+error[E0382]: use of moved value: `top_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:327:9
+    |
+318 |     let top_v = t.add_tvertex(top_pos);
+    |         ----- move occurs because `top_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+326 |         top_v,
+    |         ----- value moved here
+327 |         top_v,
+    |         ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+326 |         top_v.clone(),
+    |              ++++++++
+
+error[E0382]: use of moved value: `bot_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:333:9
+    |
+319 |     let bot_v = t.add_tvertex(bot_pos);
+    |         ----- move occurs because `bot_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+332 |         bot_v,
+    |         ----- value moved here
+333 |         bot_v,
+    |         ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+332 |         bot_v.clone(),
+    |              ++++++++
+
+error[E0382]: use of moved value: `top_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:341:48
+    |
+318 |     let top_v = t.add_tvertex(top_pos);
+    |         ----- move occurs because `top_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+327 |         top_v,
+    |         ----- value moved here
+...
+341 |     let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [0.0, h]);
+    |                                                ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+327 |         top_v.clone(),
+    |              ++++++++
+
+error[E0382]: use of moved value: `bot_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:341:55
+    |
+319 |     let bot_v = t.add_tvertex(bot_pos);
+    |         ----- move occurs because `bot_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+333 |         bot_v,
+    |         ----- value moved here
+...
+341 |     let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [0.0, h]);
+    |                                                       ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+333 |         bot_v.clone(),
+    |              ++++++++
+
+error[E0382]: use of moved value: `e_seam`
+   --> libs\rcad-modeling\src\builder\solid.rs:344:65
+    |
+341 |     let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [0.0, h]);
+    |         ------ move occurs because `e_seam` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+344 |     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
+    |                                         ------ value moved here ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+344 |     let lateral_wire = t.add_twire(vec![e_seam.clone(), rev(e_bot), rev(e_seam), e_top]);
+    |                                               ++++++++
+
+error[E0382]: use of moved value: `e_top`
+   --> libs\rcad-modeling\src\builder\solid.rs:345:37
+    |
+324 |     let e_top = t.add_tedge(
+    |         ----- move occurs because `e_top` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+344 |     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
+    |                                                                          ----- value moved here
+345 |     let top_wire = t.add_twire(vec![e_top]);
+    |                                     ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+344 |     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top.clone()]);
+    |                                                                               ++++++++
+
+error[E0382]: use of moved value: `e_bot`
+   --> libs\rcad-modeling\src\builder\solid.rs:346:41
+    |
+330 |     let e_bot = t.add_tedge(
+    |         ----- move occurs because `e_bot` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+344 |     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
+    |                                                     ----- value moved here
+345 |     let top_wire = t.add_twire(vec![e_top]);
+346 |     let bot_wire = t.add_twire(vec![rev(e_bot)]);
+    |                                         ^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+344 |     let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot.clone()), rev(e_seam), e_top]);
+    |                                                          ++++++++
+
+warning: unused variable: `half`
+   --> libs\rcad-modeling\src\builder\solid.rs:311:9
+    |
+311 |     let half = h * 0.5;
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_half`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+error[E0382]: use of moved value: `apex`
+   --> libs\rcad-modeling\src\builder\solid.rs:451:42
+    |
+448 |     let apex = t.add_tvertex(p(0.0, half, 0.0));
+    |         ---- move occurs because `apex` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+451 |     let e_apex = t.add_tedge(None, apex, apex, [0.0, r * std::f64::consts::TAU]);
+    |                                    ----  ^^^^ value used here after move
+    |                                    |
+    |                                    value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+451 |     let e_apex = t.add_tedge(None, apex.clone(), apex, [0.0, r * std::f64::consts::TAU]);
+    |                                        ++++++++
+
+error[E0382]: use of moved value: `base_c`
+   --> libs\rcad-modeling\src\builder\solid.rs:452:44
+    |
+449 |     let base_c = t.add_tvertex(p(0.0, -half, 0.0));
+    |         ------ move occurs because `base_c` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+452 |     let e_base = t.add_tedge(None, base_c, base_c, [0.0, r * std::f64::consts::TAU]);
+    |                                    ------  ^^^^^^ value used here after move
+    |                                    |
+    |                                    value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+452 |     let e_base = t.add_tedge(None, base_c.clone(), base_c, [0.0, r * std::f64::consts::TAU]);
+    |                                          ++++++++
+
+error[E0382]: use of moved value: `apex`
+   --> libs\rcad-modeling\src\builder\solid.rs:457:48
+    |
+448 |     let apex = t.add_tvertex(p(0.0, half, 0.0));
+    |         ---- move occurs because `apex` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+451 |     let e_apex = t.add_tedge(None, apex, apex, [0.0, r * std::f64::consts::TAU]);
+    |                                          ---- value moved here
+...
+457 |     let e_seam = t.add_tedge(Some(seam_curve), apex, base_c, [-half, half]);
+    |                                                ^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+451 |     let e_apex = t.add_tedge(None, apex, apex.clone(), [0.0, r * std::f64::consts::TAU]);
+    |                                              ++++++++
+
+error[E0382]: use of moved value: `base_c`
+   --> libs\rcad-modeling\src\builder\solid.rs:457:54
+    |
+449 |     let base_c = t.add_tvertex(p(0.0, -half, 0.0));
+    |         ------ move occurs because `base_c` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+452 |     let e_base = t.add_tedge(None, base_c, base_c, [0.0, r * std::f64::consts::TAU]);
+    |                                            ------ value moved here
+...
+457 |     let e_seam = t.add_tedge(Some(seam_curve), apex, base_c, [-half, half]);
+    |                                                      ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+452 |     let e_base = t.add_tedge(None, base_c, base_c.clone(), [0.0, r * std::f64::consts::TAU]);
+    |                                                  ++++++++
+
+error[E0382]: use of moved value: `e_seam`
+   --> libs\rcad-modeling\src\builder\solid.rs:459:62
+    |
+457 |     let e_seam = t.add_tedge(Some(seam_curve), apex, base_c, [-half, half]);
+    |         ------ move occurs because `e_seam` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+458 |
+459 |     let top_wire = t.add_twire(vec![e_seam, rev(e_base), rev(e_seam), e_apex]);
+    |                                     ------ value moved here  ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+459 |     let top_wire = t.add_twire(vec![e_seam.clone(), rev(e_base), rev(e_seam), e_apex]);
+    |                                           ++++++++
+
+error[E0382]: use of moved value: `e_base`
+   --> libs\rcad-modeling\src\builder\solid.rs:460:37
+    |
+452 |     let e_base = t.add_tedge(None, base_c, base_c, [0.0, r * std::f64::consts::TAU]);
+    |         ------ move occurs because `e_base` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+459 |     let top_wire = t.add_twire(vec![e_seam, rev(e_base), rev(e_seam), e_apex]);
+    |                                                 ------ value moved here
+460 |     let bot_wire = t.add_twire(vec![e_base]);
+    |                                     ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+459 |     let top_wire = t.add_twire(vec![e_seam, rev(e_base.clone()), rev(e_seam), e_apex]);
+    |                                                       ++++++++
+
+error[E0382]: use of moved value: `v0`
+   --> libs\rcad-modeling\src\builder\solid.rs:570:51
+    |
+559 |     let v0 = t.add_tvertex(bottom_pt);
+    |         -- move occurs because `v0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    |                                               --  ^^ value used here after move
+    |                                               |
+    |                                               value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0.clone(), v0, [0.0, 2.0 * PI]);
+    |                                                 ++++++++
+
+error[E0382]: use of moved value: `v1`
+   --> libs\rcad-modeling\src\builder\solid.rs:571:48
+    |
+560 |     let v1 = t.add_tvertex(top_pt);
+    |         -- move occurs because `v1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    |                                            --  ^^ value used here after move
+    |                                            |
+    |                                            value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+571 |     let e1 = t.add_tedge(Some(top_circle), v1.clone(), v1, [0.0, 2.0 * PI]);
+    |                                              ++++++++
+
+error[E0382]: use of moved value: `v0`
+   --> libs\rcad-modeling\src\builder\solid.rs:572:44
+    |
+559 |     let v0 = t.add_tvertex(bottom_pt);
+    |         -- move occurs because `v0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    |                                                   -- value moved here
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+572 |     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
+    |                                            ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0.clone(), [0.0, 2.0 * PI]);
+    |                                                     ++++++++
+
+error[E0382]: use of moved value: `v1`
+   --> libs\rcad-modeling\src\builder\solid.rs:572:48
+    |
+560 |     let v1 = t.add_tvertex(top_pt);
+    |         -- move occurs because `v1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    |                                                -- value moved here
+572 |     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
+    |                                                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1.clone(), [0.0, 2.0 * PI]);
+    |                                                  ++++++++
+
+error[E0382]: use of moved value: `e2`
+   --> libs\rcad-modeling\src\builder\solid.rs:591:52
+    |
+572 |     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
+    |         -- move occurs because `e2` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    |                                   --               ^^ value used here after move
+    |                                   |
+    |                                   value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+591 |     let w0 = t.add_twire(vec![e0, e2.clone(), rev(e1), rev(e2)]);
+    |                                     ++++++++
+
+error[E0382]: use of moved value: `e0`
+   --> libs\rcad-modeling\src\builder\solid.rs:602:35
+    |
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    |                               -- value moved here
+...
+602 |     let w1 = t.add_twire(vec![rev(e0)]);
+    |                                   ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+591 |     let w0 = t.add_twire(vec![e0.clone(), e2, rev(e1), rev(e2)]);
+    |                                 ++++++++
+
+error[E0382]: use of moved value: `e1`
+   --> libs\rcad-modeling\src\builder\solid.rs:613:31
+    |
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    |                                           -- value moved here
+...
+613 |     let w2 = t.add_twire(vec![e1]);
+    |                               ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1.clone()), rev(e2)]);
+    |                                             ++++++++
+
+error[E0382]: use of moved value: `e0`
+   --> libs\rcad-modeling\src\builder\solid.rs:640:16
+    |
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+602 |     let w1 = t.add_twire(vec![rev(e0)]);
+    |                                   -- value moved here
+...
+640 |     t.edge_mut(e0)
+    |                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+602 |     let w1 = t.add_twire(vec![rev(e0.clone())]);
+    |                                     ++++++++
+
+error[E0382]: use of moved value: `e0`
+   --> libs\rcad-modeling\src\builder\solid.rs:643:16
+    |
+570 |     let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+640 |     t.edge_mut(e0)
+    |                -- value moved here
+...
+643 |     t.edge_mut(e0)
+    |                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+640 |     t.edge_mut(e0.clone())
+    |                  ++++++++
+
+error[E0382]: use of moved value: `e1`
+   --> libs\rcad-modeling\src\builder\solid.rs:646:16
+    |
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+613 |     let w2 = t.add_twire(vec![e1]);
+    |                               -- value moved here
+...
+646 |     t.edge_mut(e1)
+    |                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+613 |     let w2 = t.add_twire(vec![e1.clone()]);
+    |                                 ++++++++
+
+error[E0382]: use of moved value: `e1`
+   --> libs\rcad-modeling\src\builder\solid.rs:649:16
+    |
+571 |     let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    |         -- move occurs because `e1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+646 |     t.edge_mut(e1)
+    |                -- value moved here
+...
+649 |     t.edge_mut(e1)
+    |                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+646 |     t.edge_mut(e1.clone())
+    |                  ++++++++
+
+error[E0382]: use of moved value: `e2`
+   --> libs\rcad-modeling\src\builder\solid.rs:652:16
+    |
+572 |     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
+    |         -- move occurs because `e2` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    |                                                    -- value moved here
+...
+652 |     t.edge_mut(e2)
+    |                ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+591 |     let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2.clone())]);
+    |                                                      ++++++++
+
+warning: unused variable: `half_h`
+   --> libs\rcad-modeling\src\builder\solid.rs:526:9
+    |
+526 |     let half_h = height * 0.5;
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_half_h`
+
+error[E0382]: use of moved value: `seam_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:713:9
+    |
+701 |     let seam_v = t.add_tvertex(p(maj + min, 0.0, 0.0));
+    |         ------ move occurs because `seam_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+712 |         seam_v,
+    |         ------ value moved here
+713 |         seam_v,
+    |         ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+712 |         seam_v.clone(),
+    |               ++++++++
+
+error[E0382]: use of moved value: `seam_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:718:9
+    |
+701 |     let seam_v = t.add_tvertex(p(maj + min, 0.0, 0.0));
+    |         ------ move occurs because `seam_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+713 |         seam_v,
+    |         ------ value moved here
+...
+718 |         seam_v,
+    |         ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+713 |         seam_v.clone(),
+    |               ++++++++
+
+error[E0382]: use of moved value: `seam_v`
+   --> libs\rcad-modeling\src\builder\solid.rs:719:9
+    |
+701 |     let seam_v = t.add_tvertex(p(maj + min, 0.0, 0.0));
+    |         ------ move occurs because `seam_v` has type `rcad_kernel::topods::Shape`, which does not implement the 
+`Copy` trait
+...
+718 |         seam_v,
+    |         ------ value moved here
+719 |         seam_v,
+    |         ^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+718 |         seam_v.clone(),
+    |               ++++++++
+
+error[E0382]: use of moved value: `e_major`
+   --> libs\rcad-modeling\src\builder\solid.rs:723:55
+    |
+710 |     let e_major = t.add_tedge(
+    |         ------- move occurs because `e_major` has type `rcad_kernel::topods::Shape`, which does not implement 
+the `Copy` trait
+...
+723 |     let wire = t.add_twire(vec![e_major, e_minor, rev(e_major), rev(e_minor)]);
+    |                                 -------               ^^^^^^^ value used here after move
+    |                                 |
+    |                                 value moved here
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+723 |     let wire = t.add_twire(vec![e_major.clone(), e_minor, rev(e_major), rev(e_minor)]);
+    |                                        ++++++++
+
+error[E0382]: use of moved value: `e_minor`
+   --> libs\rcad-modeling\src\builder\solid.rs:723:69
+    |
+716 |     let e_minor = t.add_tedge(
+    |         ------- move occurs because `e_minor` has type `rcad_kernel::topods::Shape`, which does not implement 
+the `Copy` trait
+...
+723 |     let wire = t.add_twire(vec![e_major, e_minor, rev(e_major), rev(e_minor)]);
+    |                                          ------- value moved here   ^^^^^^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+723 |     let wire = t.add_twire(vec![e_major, e_minor.clone(), rev(e_major), rev(e_minor)]);
+    |                                                 ++++++++
+
+error[E0382]: use of moved value: `v1`
+   --> libs\rcad-modeling\src\builder\solid.rs:839:9
+    |
+811 |     let v1 = t.add_tvertex(c1);
+    |         -- move occurs because `v1` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+831 |         v1,
+    |         -- value moved here
+...
+839 |         v1,
+    |         ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+831 |         v1.clone(),
+    |           ++++++++
+
+error[E0382]: use of moved value: `v2`
+   --> libs\rcad-modeling\src\builder\solid.rs:848:9
+    |
+812 |     let v2 = t.add_tvertex(c2);
+    |         -- move occurs because `v2` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+840 |         v2,
+    |         -- value moved here
+...
+848 |         v2,
+    |         ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+840 |         v2.clone(),
+    |           ++++++++
+
+error[E0382]: use of moved value: `v3`
+   --> libs\rcad-modeling\src\builder\solid.rs:857:9
+    |
+813 |     let v3 = t.add_tvertex(c3);
+    |         -- move occurs because `v3` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+849 |         v3,
+    |         -- value moved here
+...
+857 |         v3,
+    |         ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+849 |         v3.clone(),
+    |           ++++++++
+
+error[E0382]: use of moved value: `v0`
+   --> libs\rcad-modeling\src\builder\solid.rs:858:9
+    |
+810 |     let v0 = t.add_tvertex(c0);
+    |         -- move occurs because `v0` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` 
+trait
+...
+830 |         v0,
+    |         -- value moved here
+...
+858 |         v0,
+    |         ^^ value used here after move
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+830 |         v0.clone(),
+    |           ++++++++
+
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+   --> libs\rcad-modeling\src\builder\solid.rs:918:13
+    |
+918 |             verts[i],
+    |             ^^^^^^^^ move occurs because value has type `rcad_kernel::topods::Shape`, which does not implement 
+the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+918 |             verts[i].clone(),
+    |                     ++++++++
+
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+   --> libs\rcad-modeling\src\builder\solid.rs:919:13
+    |
+919 |             verts[j],
+    |             ^^^^^^^^ move occurs because value has type `rcad_kernel::topods::Shape`, which does not implement 
+the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+919 |             verts[j].clone(),
+    |                     ++++++++
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1214:65
+     |
+1214 |                 let mirrored: Vec<Shape> = wd.edges.iter().map(|&sr| rev(sr)).collect();
+     |                                                                 ^--
+     |                                                                  |
+     |                                                                  data moved here
+     |                                                                  move occurs because `sr` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider removing the borrow
+     |
+1214 -                 let mirrored: Vec<Shape> = wd.edges.iter().map(|&sr| rev(sr)).collect();
+1214 +                 let mirrored: Vec<Shape> = wd.edges.iter().map(|sr| rev(sr)).collect();
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1223:31
+     |
+1223 |                     .map(|sr| *wmap.get(&sr.ptr_id()).unwrap_or(sr))
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1223 -                     .map(|sr| *wmap.get(&sr.ptr_id()).unwrap_or(sr))
+1223 +                     .map(|sr| wmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1244:31
+     |
+1244 |                     .map(|sr| *fmap.get(&sr.ptr_id()).unwrap_or(sr))
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1244 -                     .map(|sr| *fmap.get(&sr.ptr_id()).unwrap_or(sr))
+1244 +                     .map(|sr| fmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1253:31
+     |
+1253 |                     .map(|sr| *shmap.get(&sr.ptr_id()).unwrap_or(sr))
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1253 -                     .map(|sr| *shmap.get(&sr.ptr_id()).unwrap_or(sr))
+1253 +                     .map(|sr| shmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1196:25
+     |
+1196 |             let first = *vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first);
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider removing the dereference here
+     |
+1196 -             let first = *vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first);
+1196 +             let first = vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first);
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1196 -             let first = *vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first);
+1196 +             let first = vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first).clone();
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1197:24
+     |
+1197 |             let last = *vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last);
+     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because value has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider removing the dereference here
+     |
+1197 -             let last = *vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last);
+1197 +             let last = vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last);
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1197 -             let last = *vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last);
+1197 +             let last = vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last).clone();
+     |
+
+error[E0507]: cannot move out of a shared reference
+    --> libs\rcad-modeling\src\builder\solid.rs:1219:29
+     |
+1219 |                 let outer = *wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire);
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because 
+value has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+     |
+help: consider removing the dereference here
+     |
+1219 -                 let outer = *wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire);
+1219 +                 let outer = wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire);
+     |
+help: consider cloning the value if the performance cost is acceptable
+     |
+1219 -                 let outer = *wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire);
+1219 +                 let outer = wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire).clone();
+     |
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+    --> libs\rcad-modeling\src\builder\mod.rs:320:29
+     |
+ 320 |                 .map(|w_sr| old_to_new[w_sr.index].unwrap_or(*w_sr))
+     |                             ^^^^^^^^^^^^^^^^^^^^^^ ---------------- value moved due to this method call
+     |                             |
+     |                             help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+     |                             move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which does 
+not implement the `Copy` trait
+     |
+note: `Option::<T>::unwrap_or` takes ownership of the receiver `self`, which moves value
+    --> 
+C:\Users\lilu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1038:28
+     |
+1038 |     pub const fn unwrap_or(self, default: T) -> T
+     |                            ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+     |
+ 320 |                 .map(|w_sr| <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[w_sr.index]).unwrap_or(*w_sr))
+     |                             ++++++++++++++++++++++++++++++++++++++++++++++++++++++                      +
+help: consider cloning the value if the performance cost is acceptable
+     |
+ 320 |                 .map(|w_sr| old_to_new[w_sr.index].clone().unwrap_or(*w_sr))
+     |                                                   ++++++++
+
+error[E0507]: cannot move out of `*w_sr` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:320:62
+    |
+320 |                 .map(|w_sr| old_to_new[w_sr.index].unwrap_or(*w_sr))
+    |                                                              ^^^^^ move occurs because `*w_sr` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+320 -                 .map(|w_sr| old_to_new[w_sr.index].unwrap_or(*w_sr))
+320 +                 .map(|w_sr| old_to_new[w_sr.index].unwrap_or(w_sr.clone()))
+    |
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+    --> libs\rcad-modeling\src\builder\mod.rs:341:29
+     |
+ 341 |                 .map(|f_sr| old_to_new[f_sr.index].unwrap_or(*f_sr))
+     |                             ^^^^^^^^^^^^^^^^^^^^^^ ---------------- value moved due to this method call
+     |                             |
+     |                             help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+     |                             move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which does 
+not implement the `Copy` trait
+     |
+note: `Option::<T>::unwrap_or` takes ownership of the receiver `self`, which moves value
+    --> 
+C:\Users\lilu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1038:28
+     |
+1038 |     pub const fn unwrap_or(self, default: T) -> T
+     |                            ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+     |
+ 341 |                 .map(|f_sr| <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[f_sr.index]).unwrap_or(*f_sr))
+     |                             ++++++++++++++++++++++++++++++++++++++++++++++++++++++                      +
+help: consider cloning the value if the performance cost is acceptable
+     |
+ 341 |                 .map(|f_sr| old_to_new[f_sr.index].clone().unwrap_or(*f_sr))
+     |                                                   ++++++++
+
+error[E0507]: cannot move out of `*f_sr` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:341:62
+    |
+341 |                 .map(|f_sr| old_to_new[f_sr.index].unwrap_or(*f_sr))
+    |                                                              ^^^^^ move occurs because `*f_sr` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+341 -                 .map(|f_sr| old_to_new[f_sr.index].unwrap_or(*f_sr))
+341 +                 .map(|f_sr| old_to_new[f_sr.index].unwrap_or(f_sr.clone()))
+    |
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+    --> libs\rcad-modeling\src\builder\mod.rs:353:30
+     |
+ 353 |                 .map(|sh_sr| old_to_new[sh_sr.index].unwrap_or(*sh_sr))
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^ ----------------- value moved due to this method call
+     |                              |
+     |                              help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+     |                              move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which 
+does not implement the `Copy` trait
+     |
+note: `Option::<T>::unwrap_or` takes ownership of the receiver `self`, which moves value
+    --> 
+C:\Users\lilu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1038:28
+     |
+1038 |     pub const fn unwrap_or(self, default: T) -> T
+     |                            ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+     |
+ 353 |                 .map(|sh_sr| <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[sh_sr.index]).unwrap_or(*sh_sr))
+     |                              ++++++++++++++++++++++++++++++++++++++++++++++++++++++                       +
+help: consider cloning the value if the performance cost is acceptable
+     |
+ 353 |                 .map(|sh_sr| old_to_new[sh_sr.index].clone().unwrap_or(*sh_sr))
+     |                                                     ++++++++
+
+error[E0507]: cannot move out of `*sh_sr` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:353:64
+    |
+353 |                 .map(|sh_sr| old_to_new[sh_sr.index].unwrap_or(*sh_sr))
+    |                                                                ^^^^^^ move occurs because `*sh_sr` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+353 -                 .map(|sh_sr| old_to_new[sh_sr.index].unwrap_or(*sh_sr))
+353 +                 .map(|sh_sr| old_to_new[sh_sr.index].unwrap_or(sh_sr.clone()))
+    |
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+   --> libs\rcad-modeling\src\builder\mod.rs:199:25
+    |
+199 |             let first = old_to_new[e.first.index].unwrap_or(e.first);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ ------------------ value moved due to this method call
+    |                         |
+    |                         help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+    |                         move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which does not 
+implement the `Copy` trait
+    |
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+    |
+199 |             let first = <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[e.first.index]).unwrap_or(e.first);
+    |                         ++++++++++++++++++++++++++++++++++++++++++++++++++++++                         +
+help: consider cloning the value if the performance cost is acceptable
+    |
+199 |             let first = old_to_new[e.first.index].clone().unwrap_or(e.first);
+    |                                                  ++++++++
+
+error[E0507]: cannot move out of `e.first` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:199:61
+    |
+199 |             let first = old_to_new[e.first.index].unwrap_or(e.first);
+    |                                                             ^^^^^^^ move occurs because `e.first` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+199 |             let first = old_to_new[e.first.index].unwrap_or(e.first.clone());
+    |                                                                    ++++++++
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+   --> libs\rcad-modeling\src\builder\mod.rs:200:24
+    |
+200 |             let last = old_to_new[e.last.index].unwrap_or(e.last);
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^ ----------------- value moved due to this method call
+    |                        |
+    |                        help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+    |                        move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which does not 
+implement the `Copy` trait
+    |
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+    |
+200 |             let last = <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[e.last.index]).unwrap_or(e.last);
+    |                        ++++++++++++++++++++++++++++++++++++++++++++++++++++++                        +
+help: consider cloning the value if the performance cost is acceptable
+    |
+200 |             let last = old_to_new[e.last.index].clone().unwrap_or(e.last);
+    |                                                ++++++++
+
+error[E0507]: cannot move out of `e.last` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:200:59
+    |
+200 |             let last = old_to_new[e.last.index].unwrap_or(e.last);
+    |                                                           ^^^^^^ move occurs because `e.last` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+200 |             let last = old_to_new[e.last.index].unwrap_or(e.last.clone());
+    |                                                                 ++++++++
+
+error[E0507]: cannot move out of index of `Vec<Option<rcad_kernel::topods::Shape>>`
+    --> libs\rcad-modeling\src\builder\mod.rs:316:30
+     |
+ 316 |             let outer_wire = old_to_new[f.outer_wire.index].unwrap_or(f.outer_wire);
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ----------------------- value moved due to this 
+method call
+     |                              |
+     |                              help: consider calling `.as_ref()` or `.as_mut()` to borrow the type's contents
+     |                              move occurs because value has type `Option<rcad_kernel::topods::Shape>`, which 
+does not implement the `Copy` trait
+     |
+note: `Option::<T>::unwrap_or` takes ownership of the receiver `self`, which moves value
+    --> 
+C:\Users\lilu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1038:28
+     |
+1038 |     pub const fn unwrap_or(self, default: T) -> T
+     |                            ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+     |
+ 316 |             let outer_wire = <Option<rcad_kernel::topods::Shape> as 
+Clone>::clone(&old_to_new[f.outer_wire.index]).unwrap_or(f.outer_wire);
+     |                              ++++++++++++++++++++++++++++++++++++++++++++++++++++++                             
+ +
+help: consider cloning the value if the performance cost is acceptable
+     |
+ 316 |             let outer_wire = old_to_new[f.outer_wire.index].clone().unwrap_or(f.outer_wire);
+     |                                                            ++++++++
+
+error[E0507]: cannot move out of `f.outer_wire` which is behind a shared reference
+   --> libs\rcad-modeling\src\builder\mod.rs:316:71
+    |
+316 |             let outer_wire = old_to_new[f.outer_wire.index].unwrap_or(f.outer_wire);
+    |                                                                       ^^^^^^^^^^^^ move occurs because 
+`f.outer_wire` has type `rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+316 |             let outer_wire = old_to_new[f.outer_wire.index].unwrap_or(f.outer_wire.clone());
+    |                                                                                   ++++++++
+
+error[E0507]: cannot move out of a shared reference
+   --> libs\rcad-modeling\src\sewing.rs:178:65
+    |
+178 |                         inner_wires: fd.inner_wires.iter().map(|&w| reindex_wire(w)).collect(),
+    |                                                                 ^-
+    |                                                                  |
+    |                                                                  data moved here
+    |                                                                  move occurs because `w` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider removing the borrow
+    |
+178 -                         inner_wires: fd.inner_wires.iter().map(|&w| reindex_wire(w)).collect(),
+178 +                         inner_wires: fd.inner_wires.iter().map(|w| reindex_wire(w)).collect(),
+    |
+
+error[E0507]: cannot move out of a shared reference
+   --> libs\rcad-modeling\src\sewing.rs:157:30
+    |
+157 |             for &shell_sr in &sd.shells {
+    |                  --------    ^^^^^^^^^^
+    |                  |
+    |                  data moved here
+    |                  move occurs because `shell_sr` has type `rcad_kernel::topods::Shape`, which does not implement 
+the `Copy` trait
+    |
+help: consider removing the borrow
+    |
+157 -             for &shell_sr in &sd.shells {
+157 +             for shell_sr in &sd.shells {
+    |
+
+error[E0507]: cannot move out of a shared reference
+   --> libs\rcad-modeling\src\sewing.rs:159:33
+    |
+159 |                 for &face_sr in &shd.faces {
+    |                      -------    ^^^^^^^^^^
+    |                      |
+    |                      data moved here
+    |                      move occurs because `face_sr` has type `rcad_kernel::topods::Shape`, which does not 
+implement the `Copy` trait
+    |
+help: consider removing the borrow
+    |
+159 -                 for &face_sr in &shd.faces {
+159 +                 for face_sr in &shd.faces {
+    |
+
+error[E0507]: cannot move out of `fd.outer_wire` which is behind a shared reference
+   --> libs\rcad-modeling\src\sewing.rs:177:50
+    |
+177 |                         outer_wire: reindex_wire(fd.outer_wire),
+    |                                                  ^^^^^^^^^^^^^ move occurs because `fd.outer_wire` has type 
+`rcad_kernel::topods::Shape`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+177 |                         outer_wire: reindex_wire(fd.outer_wire.clone()),
+    |                                                               ++++++++
+
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+   --> libs\rcad-modeling\src\sewing.rs:387:21
+    |
+387 |         let first = vert_refs[e.start];
+    |                     ^^^^^^^^^^^^^^^^^^ move occurs because value has type `rcad_kernel::topods::Shape`, which 
+does not implement the `Copy` trait
+    |
+help: consider borrowing here
+    |
+387 |         let first = &vert_refs[e.start];
+    |                     +
+help: consider cloning the value if the performance cost is acceptable
+    |
+387 |         let first = vert_refs[e.start].clone();
+    |                                       ++++++++
+
+error[E0507]: cannot move out of index of `Vec<rcad_kernel::topods::Shape>`
+   --> libs\rcad-modeling\src\sewing.rs:388:20
+    |
+388 |         let last = vert_refs[e.end];
+    |                    ^^^^^^^^^^^^^^^^ move occurs because value has type `rcad_kernel::topods::Shape`, which does 
+not implement the `Copy` trait
+    |
+help: consider borrowing here
+    |
+388 |         let last = &vert_refs[e.end];
+    |                    +
+help: consider cloning the value if the performance cost is acceptable
+    |
+388 |         let last = vert_refs[e.end].clone();
+    |                                    ++++++++
+
+Some errors have detailed explanations: E0382, E0507.
+For more information about an error, try `rustc --explain E0382`.
+warning: `rcad-modeling` (lib) generated 7 warnings
+error: could not compile `rcad-modeling` (lib) due to 66 previous errors; 7 warnings emitted

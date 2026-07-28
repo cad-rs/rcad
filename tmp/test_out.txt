@@ -1,0 +1,6 @@
+//! TKTopAlgo GTest translations.
+//!
+//! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
+//!
+//! Files translated:
+//!   BRepBuilderAPI_Copy_Test.cxx        â€?Copy shape, volume preserved,
