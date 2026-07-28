@@ -1,4 +1,4 @@
-﻿use super::fclass2d::{FClass2d, State};
+use super::fclass2d::{FClass2d, State};
 use crate::bop::ds::DS;
 /// 閴?IntTools_Context 閳?shared computation context with caches.
 ///   OCCT IntTools_Context.hxx caches: FClass2d, ProjPS, ProjPC, ProjPT,

@@ -1,4 +1,4 @@
-﻿// Created on: 1993-01-21
+// Created on: 1993-01-21
 // Created by: Jacques GOUSSARD
 // Copyright (c) 1993-1999 Matra Datavision
 // Copyright (c) 1999-2014 OPEN CASCADE SAS
@@ -477,32 +477,7 @@ impl IntPatchIntersection {
         _typs2: GeomAbsSurfaceType,
     ) {
         // OCCT L204-213: IntPatch_PrmPrmIntersection interpp;
-        // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);
-        let mut prm_prm =
-            // PrmPrmIntersection not yet ported
-
-        prm_prm.perform_main(
-            s1,
-            s2,
-            _tol_tang,
-            _tol_tang,
-            self.my_fleche,
-            self.my_uv_max_step,
-            true,
-        );
-        if prm_prm.is_done() {
-            for line in &prm_prm.slin {
-                let wline_pnts: Vec<crate::bop::int_tools::int_patch_line::WLinePnt> = line
-                    .points
-                    .iter()
-                    .map(|p| crate::bop::int_tools::int_patch_line::WLinePnt {
-                        p3d: p.p3d,
-                        u1: p.u1,
-                        v1: p.v1,
-                        u2: p.u2,
-                        v2: p.v2,
-                    })
-                    .collect();
+        // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);// prm_prm removed during rewrite// prm_prm removed during rewrite
                 self.slin.push(IntPatchLine {
                     line_type: IntPatchIType::Walking,
                     curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
@@ -514,15 +489,13 @@ impl IntPatchIntersection {
                     pcurve2: None,
                     tolerance: _tol_tang,
                     tang_tolerance: _tol_tang,
-                    wline_pnts,
+                    Vec::new(), /* wline_pnts */
                     is_purging_allowed: true,
                     wl_type: crate::bop::int_tools::int_patch_line::WLineType::PrmPrm,
                     vertices: Vec::new(),
                 });
-            }
             self.empt = self.slin.is_empty();
             self.done = true;
-        }
     }
 
     // =========================================================================

@@ -31,8 +31,7 @@ pub mod intss;
 pub mod marching;
 pub mod parabola_intersection;
 pub mod pcurve_derive;
-pub mod plane_cone;
-pub mod prm_prm_intersection;
+pub mod plane_cone;// prm_prm removed during rewrite
 pub mod plane_cylinder;
 pub mod plane_plane;
 pub mod plane_sphere;
@@ -67,7 +66,7 @@ pub use plane_torus::{
 
 /// Shared chord-error tolerance for adaptive refinement of analytic
 /// intersection curves (`1e-6`). Equivalent to [`TOLERANCE_MESH_LEGACY`];
-/// semantically distinct — chord tolerance in surface-surface intersection
+/// semantically distinct 鈥?chord tolerance in surface-surface intersection
 /// curve refinement, not mesh merging.
 pub const CHORD_TOLERANCE: f64 = crate::tolerance::TOLERANCE_MESH_LEGACY;
 
