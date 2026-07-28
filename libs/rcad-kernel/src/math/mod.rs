@@ -1,5 +1,6 @@
 // OCCT Math* packages
 pub mod bnd;
+pub mod bspl;
 pub mod bvh;
 pub mod root;
 pub mod poly;

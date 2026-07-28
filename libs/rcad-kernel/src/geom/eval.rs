@@ -1547,7 +1547,7 @@ pub(crate) fn bspline_tangent_analytic(
     let w_prime_t = de_boor(degree - 1, deriv_knots, &w_prime, &unit, t).x;
 
     // W(t) and C(t) from the homogeneous evaluation
-    let h = de_boor_homo(degree, knots, points, weights, t);
+    let h = crate::math::bspl::de_boor_homo(degree, knots, points, weights, t);
     let w_t = h[3];
     if w_t.abs() < 1e-15 {
         return DVec3::ZERO;
@@ -1668,48 +1668,26 @@ pub(crate) fn bezier_tangent_analytic_2d(points: &[DVec2], weights: &[f64], t: f
 
 impl CurveEval for BSplineCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        de_boor(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t,
+        crate::math::bspl::de_boor(
+            self.degree, &self.knots, &self.control_points, &self.weights, t,
         )
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        bspline_tangent_analytic(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t,
-        )
-        .normalize_or_zero()
+        crate::math::bspl::bspline_tangent(
+            self.degree, &self.knots, &self.control_points, &self.weights, t,
+        ).normalize_or_zero()
     }
     fn derivative_at(&self, t: f64) -> DVec3 {
-        bspline_tangent_analytic(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t,
+        crate::math::bspl::bspline_tangent(
+            self.degree, &self.knots, &self.control_points, &self.weights, t,
         )
     }
     fn derivative2_at(&self, t: f64) -> DVec3 {
-        // Central difference of analytic D1 — O(h²) using analytically exact derivatives
         let h = 1e-5;
-        (bspline_tangent_analytic(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t + h,
-        ) - bspline_tangent_analytic(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t - h,
+        (crate::math::bspl::bspline_tangent(
+            self.degree, &self.knots, &self.control_points, &self.weights, t + h,
+        ) - crate::math::bspl::bspline_tangent(
+            self.degree, &self.knots, &self.control_points, &self.weights, t - h,
         )) / (2.0 * h)
     }
     fn derivative3_at(&self, t: f64) -> DVec3 {
@@ -1719,9 +1697,7 @@ impl CurveEval for BSplineCurve3 {
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
         let n = self.knots.len();
-        if n < 2 * d + 2 {
-            return [0.0, 1.0];
-        }
+        if n < 2 * d + 2 { return [0.0, 1.0]; }
         [self.knots[d], self.knots[n - d - 1]]
     }
 }
@@ -1746,7 +1722,7 @@ impl SurfaceEval for BSplineSurface {
             .map(|j| {
                 let pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
                 let wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
-                de_boor_homo(self.degree_u, &self.knots_u, &pts, &wts, u)
+                crate::math::bspl::de_boor_homo(self.degree_u, &self.knots_u, &pts, &wts, u)
             })
             .collect();
         // Step 2: build the v-direction "control points" and "weights" from col_homo
@@ -1763,7 +1739,7 @@ impl SurfaceEval for BSplineSurface {
             .collect();
         let v_wts: Vec<f64> = col_homo.iter().map(|h| h[3]).collect();
         // Step 3: rational de Boor in v
-        de_boor(self.degree_v, &self.knots_v, &v_pts, &v_wts, v)
+        crate::math::bspl::de_boor(self.degree_v, &self.knots_v, &v_pts, &v_wts, v)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let eps = 1e-5;
@@ -2180,7 +2156,7 @@ impl Curve2dEval for SineWave2d {
 
 impl Curve2dEval for BSplineCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
-        de_boor_2d(
+        crate::math::bspl::de_boor_2d(
             self.degree,
             &self.knots,
             &self.control_points,
@@ -2189,7 +2165,7 @@ impl Curve2dEval for BSplineCurve2 {
         )
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
-        bspline_tangent_analytic_2d(
+        crate::math::bspl::bspline_tangent_2d(
             self.degree,
             &self.knots,
             &self.control_points,
