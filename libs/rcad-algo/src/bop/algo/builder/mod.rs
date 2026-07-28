@@ -549,10 +549,14 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
     }
-    fn fill_internal_shapes(&mut self) {}
+    fn fill_internal_shapes(&mut self) {
+        // OCCT: adds internal vertices/edges to solids. Stub.
+    }
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
-    fn fill_images_compounds(&mut self) {}
+    fn fill_images_compounds(&mut self) {
+        // OCCT: iterates source compounds. Stub.
+    }
 
     /// OCCT BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).
     /// Builds topology at the given shape type level.

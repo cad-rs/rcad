@@ -191,7 +191,10 @@ impl<'a> BuilderFace<'a> {
     }
 
     /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (L618+).
-    fn perform_internal_shapes(&mut self) {}
+    fn perform_internal_shapes(&mut self) {
+        // OCCT: adds internal wires from unconnected vertices
+        // Stub
+    }
 }
 
 /// Build closed wires from a set of edges by matching shared vertices.
