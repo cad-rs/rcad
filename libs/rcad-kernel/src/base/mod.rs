@@ -4,6 +4,7 @@ pub mod extend;
 pub mod gc;
 pub mod gcpnts;
 pub mod geom_api;
+pub mod geom_proj_lib;
 pub mod geom_lib;
 pub mod geom_lprop;
 pub mod gprop;

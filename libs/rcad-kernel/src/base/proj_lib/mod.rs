@@ -12,7 +12,7 @@ use glam::{DVec2, DVec3};
 
 use crate::geom::{
     Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
-    Parabola3, Plane, Point2, SphericalSurface, Surface3, ToroidalSurface,
+    Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 
 // ============================================================================

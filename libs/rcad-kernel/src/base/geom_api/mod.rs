@@ -8,6 +8,8 @@
 pub mod interpolate;
 pub mod project;
 pub mod extrema;
+pub mod int_cs;
+pub mod int_ss;
 
 pub use interpolate::{approximate_points, interpolate_points, interpolate_points_2d};
 pub use project::{
