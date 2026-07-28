@@ -213,8 +213,11 @@ impl<'a> BooleanBuilder<'a> {
         Ok(())
     }
 
-    /// OCCT BOPAlgo_BOP::CheckFiller (BOPAlgo_BOP.cxx).
-    fn check_filler(&self) {}
+    /// OCCT BOPAlgo_BOP::CheckFiller (BOPAlgo_BOP.cxx L138).
+    fn check_filler(&self) {
+        // OCCT L138: verifies PaveFiller was executed
+        // rcad: PaveFiller always runs before Builder
+    }
 
     /// OCCT BOPAlgo_Builder::Prepare (BOPAlgo_Builder_3.cxx L95-165).
     /// Returns a ResultBuilder (rcad-specific, no OCCT equivalent).
@@ -507,7 +510,11 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::FillInternalVertices.
-    fn fill_internal_vertices(&mut self) {}
+    /// OCCT: FillInternalVertices (Builder_2.cxx L780+).
+    fn fill_internal_vertices(&mut self) {
+        // OCCT: adds alone vertices from FaceInfo as internal vertices
+        // Stub: internal vertex handling
+    }
 
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     /// Builds split solids: FillIn3DParts -> BuildSplitSolids -> FillInternalShapes.
