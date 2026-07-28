@@ -261,8 +261,10 @@ impl<'a> PaveFiller<'a> {
     // OCCT BOPAlgo_PaveFiller sub-steps
     // ====================================================================
 
-    /// OCCT: UpdatePaveBlocksWithSDVertices.
-    fn update_pave_blocks_with_sd_vertices(&mut self) {}
+    /// OCCT: UpdatePaveBlocksWithSDVertices — delegates to DS.
+    fn update_pave_blocks_with_sd_vertices(&mut self) {
+        self.ds.update_pave_blocks_with_sd_vertices();
+    }
 
     /// OCCT: UpdateInterfsWithSDVertices.
     fn update_interfs_with_sd_vertices(&mut self) {}
