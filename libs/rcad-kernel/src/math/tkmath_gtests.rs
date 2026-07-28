@@ -705,14 +705,14 @@ mod convert_circle_tests {
     #[test]
     fn circle_to_bspline_degree_two() {
         let c = Circle3::new(DVec3::ZERO, DVec3::Z, 5.0);
-        let bspline = crate::base::nurbs_convert::circle_to_bspline(&c);
+        let bspline = crate::math::convert::circle_to_bspline(&c);
         assert_eq!(bspline.degree, 2);
     }
 
     #[test]
     fn circle_to_bspline_eval_matches_circle() {
         let c = Circle3::new(DVec3::ZERO, DVec3::Z, 5.0);
-        let bspline = crate::base::nurbs_convert::circle_to_bspline(&c);
+        let bspline = crate::math::convert::circle_to_bspline(&c);
         let curve = Curve3::BSpline(bspline);
         // BSpline domain is [0, 1], circle domain is [0, TAU].
         // Map the circle parameter t ∈ [0, TAU] to BSpline parameter s ∈ [0, 1].
@@ -741,7 +741,7 @@ mod convert_circle_tests {
 mod convert_sphere_tests {
     use super::*;
     use crate::geom::{SphericalSurface, Surface3, SurfaceEval};
-    use crate::base::nurbs_convert::surface_to_bspline;
+    use crate::math::convert::surface_to_bspline;
 
     #[test]
     fn sphere_to_bspline_evaluates() {

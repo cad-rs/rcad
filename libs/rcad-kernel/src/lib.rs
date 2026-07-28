@@ -29,7 +29,7 @@ pub use math::math_utils;
 pub use math::curvature;
 pub use math::arc_length;
 pub use base::extend;
-pub use base::nurbs_convert;
+pub use math::convert as nurbs_convert;
 
 /// Geometric (analytic) model types: position, curve, surface, primitive descriptors.
 ///
@@ -145,7 +145,7 @@ pub use math::properties::face_flat_iter;
 // Re-exports from base (TKGeomBase)
 // ============================================================================
 
-pub use base::nurbs_convert::{
+pub use math::convert::{
     bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
     cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, line_to_bspline_range,
     plane_to_bspline, sphere_to_bspline, surface_to_bspline,

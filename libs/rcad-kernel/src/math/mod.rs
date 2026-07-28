@@ -2,6 +2,7 @@
 pub mod bnd;
 pub mod bspl;
 pub mod bvh;
+pub mod convert;
 pub mod el;
 pub mod root;
 pub mod poly;
