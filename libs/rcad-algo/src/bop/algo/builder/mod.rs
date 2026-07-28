@@ -571,7 +571,18 @@ impl<'a> BooleanBuilder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
     fn fill_images_compounds(&mut self) {
-        // OCCT: iterates source compounds. Stub.
+        // OCCT: iterates source compounds, calls FillImagesCompound. Stub.
+    }
+
+    /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
+    fn prepare_history(&mut self) {
+        if !self.my_fill_history { return; }
+        // OCCT: iterate source shapes, check images → Modified/Generated/Deleted
+    }
+
+    /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461+).
+    fn post_treat(&mut self) {
+        // OCCT: non-destructive mode, history fill. Stub.
     }
 
     /// OCCT BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).
@@ -729,9 +740,4 @@ impl<'a> BooleanBuilder<'a> {
         shapes.iter().map(|s| self.remap_shape(s)).collect()
     }
 
-    /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
-    fn prepare_history(&mut self) {}
-
-    /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder_4.cxx L254-310).
-    fn post_treat(&mut self) {}
 }
