@@ -286,18 +286,42 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT BOPAlgo_PaveFiller::UpdateBlocksWithSharedVertices (_6.cxx L3946+).
     fn update_blocks_with_shared_vertices(&mut self) {
-        // OCCT: updates blocks with shared vertices (non-destructive mode)
-        // rcad: non-destructive not supported, stub
+        // OCCT L3948: only active in non-destructive mode
     }
 
-    /// OCCT: RefineFaceInfoIn — delegates to DS.
+    /// OCCT BOPDS_DS::RefineFaceInfoIn (BOPDS_DS.cxx L995-1024).
     fn refine_face_info_in(&mut self) {
-        // OCCT: myDS->RefineFaceInfoIn()
+        let n = self.ds.nb_source_shapes();
+        for i in 0..n {
+            let si = self.ds.shape_info(i);
+            if si.shape_type != ShapeType::Face || !si.has_reference() { continue; }
+            let pb_on = self.ds.face_info(i).pave_blocks_on.clone();
+            let pb_in = self.ds.face_info(i).pave_blocks_in.clone();
+            if pb_in.is_empty() || pb_on.is_empty() { continue; }
+            let mut to_rem: Vec<usize> = Vec::new();
+            for &pb in &pb_in { if pb_on.contains(&pb) { to_rem.push(pb); } }
+            let fi = self.ds.change_face_info(i);
+            for &r in &to_rem { fi.pave_blocks_in.swap_remove(&r); }
+        }
     }
 
-    /// OCCT: RefineFaceInfoOn — delegates to DS.
+    /// OCCT BOPDS_DS::RefineFaceInfoOn (BOPDS_DS.cxx L975-991).
     fn refine_face_info_on(&mut self) {
-        // OCCT: myDS->RefineFaceInfoOn()
+        for i in 0..self.ds.face_info_pool.len() {
+            let idx = self.ds.face_info_pool[i].index();
+            let pb_on = self.ds.face_info(idx).pave_blocks_on.clone();
+            let mut to_rem: Vec<usize> = Vec::new();
+            for &pb in &pb_on {
+                if pb >= self.ds.pave_blocks_pool.len() { to_rem.push(pb); continue; }
+                let has = self.ds.pave_blocks_pool[pb].first()
+                    .map_or(false, |p| p.0.read().unwrap().edge != usize::MAX);
+                if !has { to_rem.push(pb); }
+            }
+            if !to_rem.is_empty() {
+                let fi = self.ds.change_face_info(idx);
+                for &r in &to_rem { fi.pave_blocks_on.swap_remove(&r); }
+            }
+        }
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
