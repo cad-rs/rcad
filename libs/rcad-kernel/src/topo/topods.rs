@@ -336,6 +336,7 @@ impl BRep {
             same_range: true,
         }));
 
+        self.tshapes.push(tshape);
         let sr = Shape {
             data: self.tshapes[index].clone(),
             index,
@@ -343,7 +344,6 @@ impl BRep {
             location: 0,
         };
         self.edge_by_key.insert(ekey, sr.clone());
-        self.tshapes.push(tshape);
         sr
     }
 
