@@ -10,7 +10,11 @@ use std::fmt;
 // ============================================================================
 
 /// Color definition systems.
+///
+/// OCCT: `Quantity_TypeOfColor`.
+/// Variant names match OCCT's spelling (e.g. `sRGB` not `Srgb`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum TypeOfColor {
     /// Normalized linear RGB, each component in [0, 1].
     RGB,

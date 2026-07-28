@@ -57,9 +57,9 @@ pub fn is_infinite_value(r: f64) -> bool {
     r.abs() >= 0.5 * INFINITE_VALUE
 }
 
-/// OCCT-aligned: Precision::Epsilon (Precision.hxx L336-341).
 /// Returns `|thePar| * 1e-12` (or `1e-12` if thePar is zero).
 /// Used by BRepLib::FindValidRange for parametric convergence threshold.
+/// Not a member of OCCT's `Precision` class itself (no `Precision::Epsilon` exists).
 pub fn parametric_epsilon(the_par: f64) -> f64 {
     if the_par == 0.0 {
         1e-12

@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 // Module tree — aligned with OCCT toolkit hierarchy
 // ============================================================================
 
-// Module-level re-exports for backward compatibility.
+// Module-level re-exports for canonical access paths.
 // Downstream crates import these as `rcad_kernel::topods`, `rcad_kernel::topology`, etc.
+// `core::precision as tolerance` is kept for backward compatibility.
 pub use topo::topods;
 pub use topo::topology;
 pub use topo::topo_query;
@@ -36,7 +37,7 @@ pub use base::nurbs_convert;
 /// Corresponds to OCCT TKG2d + TKG3d.
 pub mod geom;
 
-/// Core TKernel-level types: precision, collections, naming, appearance, GD&T, annotations.
+/// Core TKernel-level types: precision constants, unit conversion, color, message/progress.
 pub mod core;
 
 /// Topology model types (TopoDS/ModelingData): vertex/edge/face/shell/solid incidence.
@@ -48,9 +49,10 @@ pub mod math;
 /// Geometry foundation (TKGeomBase): NURBS conversion, curve/surface extension/trimming.
 pub mod base;
 
-/// Assemblies: hierarchy, instancing, and world-transform flattening.
+/// OCAF application framework: naming, appearance, GD&T, annotations, assembly.
 ///
-/// Analogous to the shape hierarchy managed by OCCT `XCAFDoc_ShapeTool`.
+/// Analogous to OCCT OCAF packages: XCAFDoc_ShapeTool, XCAFDoc_ColorTool,
+/// XCAFDimTolObjects, XCAFNoteObjects, and OCAF TopoNaming.
 pub mod ocaf;
 
 // ============================================================================
