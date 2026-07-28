@@ -484,7 +484,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             // OCCT: Create BuilderFace, process face
-            // (disabled — BuilderFace images need proper index remapping)
+            // (disabled — shell/solid images not built yet)
         }
     }
 
