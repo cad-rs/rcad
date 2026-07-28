@@ -1,7 +1,7 @@
-//! BoxTree — simple linear-scan bounding box collection.
+//! BoxTree 鈥?simple linear-scan bounding box collection.
 use crate::bnd_box::Aabb;
 
-/// Simple linear-scan BVH (no tree structure — O(n) search).
+/// Simple linear-scan BVH (no tree structure 鈥?O(n) search).
 pub struct BoxTree {
     items: Vec<(usize, Aabb)>,
 }

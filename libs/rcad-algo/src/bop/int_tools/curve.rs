@@ -8,7 +8,7 @@ pub struct Curve {
     pub has_reversed: bool,
 }
 impl Curve {
-    pub fn new() -> Self { Curve { curve: Curve3::Line(Default::default()), tolerance: 0.0, has_forward: false, has_reversed: false } }
+    pub fn new() -> Self { Curve { curve: Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::X }), tolerance: 0.0, has_forward: false, has_reversed: false } }
     pub fn set_curve(&mut self, c: Curve3) { self.curve = c; }
     pub fn curve(&self) -> &Curve3 { &self.curve }
     pub fn set_tolerance(&mut self, t: f64) { self.tolerance = t; }

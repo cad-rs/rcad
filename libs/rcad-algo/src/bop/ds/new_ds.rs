@@ -320,21 +320,23 @@ impl DS {
         &mut self.face_info_pool[self.shapes[i].reference as usize]
     }
     pub fn update_face_info_in(&mut self, the_index: usize) {
+        let has_interf: Vec<bool> = (0..self.nb_shapes()).map(|i| {
+            i < self.nb_shapes() && self.shapes[i].shape_type == ShapeType::Vertex
+                && (self.interf_tb.contains(&(the_index, i)) || self.interf_tb.contains(&(i, the_index)))
+        }).collect();
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_in.clear();
-        for i in 0..self.nb_shapes() {
-            if self.shapes[i].shape_type != ShapeType::Vertex { continue; }
+        for i in 0..has_interf.len() {
             if i == the_index { continue; }
-            let has_on = pfi.vertices_on.contains(&i);
-            let has_in = pfi.vertices_in.contains(&i);
-            if self.interf_tb.contains(&(the_index, i)) || self.interf_tb.contains(&(i, the_index)) {
-                if !has_on { pfi.vertices_in.insert(i); }
+            if has_interf[i] && !pfi.vertices_on.contains(&i) {
+                pfi.vertices_in.insert(i);
             }
         }
     }
     pub fn update_face_info_on(&mut self, the_index: usize) {
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_on.clear();
+        drop(pfi);
     }
 
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    // Same-domain shapes
@@ -565,7 +567,7 @@ impl DS {
             let shape = self.shapes[i].shape.clone();
             let vt = self.vertex_tolerance(&shape);
             self.shapes[i].box_gap = vt + tol;
-            if let Some(pt) = self.vertex_point(&shape) {
+            if let Some(pt) = self.vertex_point_on_shape(&shape) {
                 self.shapes[i].box_min = Some(pt - DVec3::splat(vt));
                 self.shapes[i].box_max = Some(pt + DVec3::splat(vt));
             }
@@ -661,7 +663,7 @@ impl DS {
         match self.shapes[i].shape_type {
             ShapeType::Vertex => {
                 let shape = self.shapes[i].shape.clone();
-                let p = self.vertex_point(&shape);
+                let p = self.vertex_point_on_shape(&shape);
                 let t = self.vertex_tolerance(&shape);
                 if let Some(pt) = p {
                     let tol = t.max(1e-10);
@@ -696,7 +698,7 @@ impl DS {
     pub fn vertex_tolerance(&self, s: &Shape) -> f64 {
         s.as_vertex().map_or(0.0, |vd| vd.tolerance)
     }
-    fn vertex_point(&self, s: &Shape) -> Option<DVec3> {
+    pub fn vertex_point_on_shape(&self, s: &Shape) -> Option<DVec3> {
         s.as_vertex().map(|vd| vd.point)
     }
 
@@ -706,7 +708,7 @@ impl DS {
     pub fn edge_curve(&self, i: usize) -> Option<rcad_kernel::geom::Curve3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().map(|e| e.curve.clone())
+            si.shape.as_edge().and_then(|e| e.curve.clone())
         })
     }
 
@@ -730,7 +732,7 @@ impl DS {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
             si.shape.as_edge().and_then(|e| {
-                Some((e.first.ptr_id() == e.last.ptr_id()) && (e.index < self.nb_shapes()))
+                Some(e.first.ptr_id() == e.last.ptr_id())
             })
         }).unwrap_or(false)
     }

@@ -1,18 +1,15 @@
-// BOPAlgo_Tools — CommonBlock merging and tolerance computation.
+// BOPAlgo_Tools 鈥?CommonBlock merging and tolerance computation.
 //
 // OCCT: BOPAlgo_Tools.cxx L107-356
 // Operates on BOPDS_DS to group geometrically coincident PaveBlocks.
-
 use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
-
 use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::pave::{NO_EDGE, Pave, PaveBlock, SharedPB};
 use crate::bop::ds::DS;
 use crate::tolerance::*;
-
-/// BOPAlgo_Tools::PerformCommonBlocks — group PBs with same (v1,v2) into CommonBlocks.
+/// BOPAlgo_Tools::PerformCommonBlocks 鈥?group PBs with same (v1,v2) into CommonBlocks.
 pub fn perform_common_blocks(ds: &mut DS) {
     // Collect all PBs from the per-edge pool.
     let mut all_pbs: Vec<(usize, usize, SharedPB)> = Vec::new();
@@ -22,7 +19,6 @@ pub fn perform_common_blocks(ds: &mut DS) {
             all_pbs.push((ei, local_i, pbs[local_i].clone()));
         }
     }
-
     // Build map: (v1, v2) -> Vec<(global_idx, ei, local_i, SharedPB)>
     let mut groups: HashMap<(usize, usize), Vec<(usize, usize, usize, SharedPB)>> = HashMap::new();
     for &(ei, local_i, ref pb) in &all_pbs {
@@ -32,7 +28,6 @@ pub fn perform_common_blocks(ds: &mut DS) {
         let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
         groups.entry(key).or_default().push((all_pbs.len(), ei, local_i, pb.clone()));
     }
-
     // Create CommonBlocks for groups that span multiple edges.
     for (_key, entries) in groups.iter() {
         if entries.len() < 2 { continue; }
@@ -55,7 +50,6 @@ pub fn perform_common_blocks(ds: &mut DS) {
                 }
             }
         }
-
         // Add PBs and faces to CommonBlock.
         for &(_gi, ei, _li, ref pb) in entries {
             let oe = pb.0.read().unwrap().original_edge;
@@ -73,8 +67,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
         }
     }
 }
-
-/// BOPAlgo_Tools::ComputeToleranceOfCB — compute combined tolerance for a CommonBlock.
+/// BOPAlgo_Tools::ComputeToleranceOfCB 鈥?compute combined tolerance for a CommonBlock.
 fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(usize, usize)]) -> f64 {
     let mut tol_max = TOLERANCE_ABS;
     for &(pb_idx, _) in pb_list {

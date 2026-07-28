@@ -1,3 +1,4 @@
+use crate::bop::ds::DS;
 /// OCCT BOPDS_CommonBlock: groups geometrically coincident PaveBlocks
 /// (edges that lie on the same geometry but belong to different faces).
 ///
@@ -13,7 +14,7 @@
 pub struct CommonBlock {
     /// PaveBlock indices paired with their face indices.
     /// Each entry stores `(pave_block_index, face_index)`.
-    /// OCCT: `myPaveBlocks` (`BOPDS_ListOfPaveBlock`) — stores handles to PaveBlock
+    /// OCCT: `myPaveBlocks` (`BOPDS_ListOfPaveBlock`) 鈥?stores handles to PaveBlock
     /// objects that lie on the same geometry. The rcad equivalent uses flat indices
     /// referencing the DS edge's `pave_blocks` array.
     myPaveBlocks: Vec<(usize, usize)>,
@@ -21,14 +22,13 @@ pub struct CommonBlock {
     /// OCCT: `myFaces` (`TColStd_ListOfInteger`).
     myFaces: Vec<usize>,
     /// The real edge index (if this common block sits on a real edge).
-    /// OCCT: `myEdge` — set when the common block corresponds to an edge
+    /// OCCT: `myEdge` 鈥?set when the common block corresponds to an edge
     /// from the original shape (not a section edge).
     myEdge: Option<usize>,
     /// Tolerance of this CommonBlock (max deviation between merged PaveBlocks).
-    /// OCCT: `myTolerance` — computed by `BOPAlgo_Tools::ComputeToleranceOfCB`.
+    /// OCCT: `myTolerance` 鈥?computed by `BOPAlgo_Tools::ComputeToleranceOfCB`.
     myTolerance: f64,
 }
-
 impl CommonBlock {
     /// Create an empty `CommonBlock`.
     /// default constructor.
@@ -40,12 +40,11 @@ impl CommonBlock {
             myTolerance: 0.0,
         }
     }
-
     /// Add a `PaveBlock` with its associated face index.
     /// `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
     ///
-    /// `pb_idx` — flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
-    /// `face_idx` — face index in the DS that this PaveBlock belongs to.
+    /// `pb_idx` 鈥?flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
+    /// `face_idx` 鈥?face index in the DS that this PaveBlock belongs to.
     ///
     /// OCCT BOPDS_CommonBlock::AddPaveBlock inserts at the front of the list so
     /// that `PaveBlock1()` returns the first-added block (the one on the real edge).
@@ -54,7 +53,6 @@ impl CommonBlock {
     pub fn add_pave_block(&mut self, pb_idx: usize, face_idx: usize) {
         self.myPaveBlocks.push((pb_idx, face_idx));
     }
-
     /// Replace all `PaveBlock`/face pairs at once.
     /// `SetPaveBlocks(const BOPDS_ListOfPaveBlock&)`.
     ///
@@ -62,7 +60,6 @@ impl CommonBlock {
     pub fn set_pave_blocks(&mut self, blocks: Vec<(usize, usize)>) {
         self.myPaveBlocks = blocks;
     }
-
     /// Add a face index to this common block.
     /// `AddFace(const int)`.
     /// Duplicate faces are silently ignored.
@@ -71,13 +68,11 @@ impl CommonBlock {
             self.myFaces.push(face_idx);
         }
     }
-
     /// Replace all face indices at once.
     /// `SetFaces(const TColStd_ListOfInteger&)`.
     pub fn set_faces(&mut self, faces: Vec<usize>) {
         self.myFaces = faces;
     }
-
     /// Append additional face indices to the existing set.
     /// `AppendFaces(const TColStd_ListOfInteger&)`.
     /// Duplicates are silently ignored.
@@ -86,25 +81,21 @@ impl CommonBlock {
             self.add_face(f);
         }
     }
-
     /// Get the `PaveBlock`/face pair list.
     /// `PaveBlocks()`.
     pub fn pave_blocks(&self) -> &[(usize, usize)] {
         &self.myPaveBlocks
     }
-
     /// Get the face indices.
     /// `Faces()`.
     pub fn faces(&self) -> &[usize] {
         &self.myFaces
     }
-
     /// Get the first `PaveBlock` index, if any.
     /// `PaveBlock1()`.
     pub fn pave_block1(&self) -> Option<usize> {
         self.myPaveBlocks.first().map(|&(pb, _)| pb)
     }
-
     /// sort PaveBlocks so that the block on the real edge
     ///   (original_edge == myEdge) is first, matching OCCT's insertion order
     ///   invariant where `AddPaveBlock` inserts the real-edge block first.
@@ -127,7 +118,6 @@ impl CommonBlock {
             }
         }
     }
-
     /// Get the `PaveBlock` on the real edge.
     /// `PaveBlockOnEdge()`.
     ///
@@ -140,50 +130,42 @@ impl CommonBlock {
     pub fn pave_block_on_edge(&self) -> Option<usize> {
         self.myPaveBlocks.first().map(|&(pb, _)| pb)
     }
-
     /// Check if the given face index has a `PaveBlock` in this common block.
     /// `IsPaveBlockOnFace(const int)`.
     pub fn is_pave_block_on_face(&self, face_idx: usize) -> bool {
         self.myPaveBlocks.iter().any(|&(_, fi)| fi == face_idx)
     }
-
     /// Check if this common block has a `PaveBlock` on a real edge
     /// (i.e., `myEdge` is set).
     /// `IsPaveBlockOnEdge()`.
     pub fn is_pave_block_on_edge(&self) -> bool {
         self.myEdge.is_some()
     }
-
     /// Check if the given `PaveBlock` index is contained in this common block.
     /// `Contains(const Handle(BOPDS_PaveBlock)&)`.
     pub fn contains(&self, pb_idx: usize) -> bool {
         self.myPaveBlocks.iter().any(|&(pb, _)| pb == pb_idx)
     }
-
     /// Set the real edge index.
     /// `SetEdge(const int)`.
     pub fn set_edge(&mut self, edge_idx: usize) {
         self.myEdge = Some(edge_idx);
     }
-
     /// Get the real edge index, if set.
     /// `Edge()`.
     pub fn edge(&self) -> Option<usize> {
         self.myEdge
     }
-
     /// Set the tolerance of this CommonBlock.
     /// `SetTolerance()`.
     pub fn set_tolerance(&mut self, tol: f64) {
         self.myTolerance = tol;
     }
-
     /// Get the tolerance of this CommonBlock.
     /// `Tolerance()`.
     pub fn tolerance(&self) -> f64 {
         self.myTolerance
     }
-
     /// Debug dump.
     /// `Dump()`.
     pub fn dump(&self) -> String {
@@ -199,7 +181,6 @@ impl CommonBlock {
         )
     }
 }
-
 impl Default for CommonBlock {
     fn default() -> Self {
         Self::new()

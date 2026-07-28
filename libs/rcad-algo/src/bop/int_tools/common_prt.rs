@@ -64,12 +64,13 @@ impl CommonPrt {
     }
 
     pub fn new_edge(range1: [f64; 2], ranges2: Vec<[f64; 2]>, p1: DVec3, p2: DVec3) -> Self {
+        let vp2 = ranges2.first().map_or(0.0, |r| r[0]);
         CommonPrt {
             is_edge: true,
             range1,
             ranges2,
             vertex_param1: range1[0],
-            vertex_param2: ranges2.first().map_or(0.0, |r| r[0]),
+            vertex_param2: vp2,
             bounding_point1: p1,
             bounding_point2: p2,
             all_null: false,
