@@ -5,6 +5,7 @@
 
 pub use crate::bop::algo::BooleanOpType;
 use crate::bop::algo::{GlueEnum, Report};
+use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
@@ -326,14 +327,13 @@ impl<'a> BooleanBuilder<'a> {
         let mut has_modified = false;
         for ss in &sub_shapes {
             if let Some(imgs) = self.my_images.get(ss) {
-                // OCCT L229: pLFIm->Extent() != 1 || !pLFIm->First().IsSame(aSS)
                 if imgs.len() != 1 || imgs[0].ptr_id() != ss.ptr_id() {
                     has_modified = true;
                     break;
                 }
             }
         }
-        // OCCT L235-240: if none modified, return
+        eprintln!("[FIC] {:?} subs={} mod={} imgs={}", the_type, sub_shapes.len(), has_modified, self.my_images.len());
         if !has_modified {
             return;
         }
@@ -494,7 +494,20 @@ impl<'a> BooleanBuilder<'a> {
                     continue;
                 }
             }
-            // OCCT: Create BuilderFace, process face (disabled)
+            // OCCT: Create BuilderFace, process face
+            let face_s = self.brep_sr(i);
+            let sub_edges = self.shape_sub_shapes(&face_s);
+            let mut bf = BuilderFace::new(self.ds);
+            bf.my_face = Some(face_s.clone());
+            bf.my_edges = sub_edges;
+            bf.perform();
+            if !bf.my_images.is_empty() {
+                for img in &bf.my_images {
+                    self.my_images.entry(face_s.clone())
+                        .or_default()
+                        .push(img.clone());
+                }
+            }
         }
     }
 
