@@ -112,57 +112,6 @@ mod brep_int_curve_surface_tests {
 // TopTools_MapOfInteger_Test.cxx
 // =============================================================================
 
-#[cfg(test)]
-mod toptools_map_tests {
-    use rcad_kernel::tcol_std::*;
-
-    #[test]
-    fn map_of_integer_insert_and_find() {
-        let mut m = MapOfInteger::new();
-        assert!(!m.contains(42));
-        m.insert(42);
-        assert!(m.contains(42));
-    }
-
-    #[test]
-    fn map_of_integer_extent() {
-        let mut m = MapOfInteger::new();
-        m.insert(10);
-        m.insert(20);
-        m.insert(30);
-        // Use insert return value to verify each was new
-        assert!(m.contains(10) && m.contains(20) && m.contains(30));
-    }
-
-    #[test]
-    fn indexed_map_append_and_find() {
-        let mut m: IndexedMap<i32> = IndexedMap::new();
-        assert_eq!(m.add(100), 1); // 1-indexed
-        assert_eq!(m.add(200), 2);
-        assert_eq!(m.find_index(&100), 1);
-        assert_eq!(m.find_key(2), Some(&200));
-    }
-
-    #[test]
-    fn indexed_map_contains() {
-        let mut m: IndexedMap<i32> = IndexedMap::new();
-        m.add(10);
-        m.add(20);
-        m.add(30);
-        assert!(m.contains(&10));
-        assert!(!m.contains(&99));
-    }
-
-    #[test]
-    fn list_append_len() {
-        let mut list: List<i32> = List::new();
-        assert!(list.is_empty());
-        list.append(42);
-        assert!(!list.is_empty());
-        assert_eq!(list.len(), 1);
-    }
-}
-
 // =============================================================================
 // BRepClass3d_SolidClassifier_Test.cxx
 // =============================================================================

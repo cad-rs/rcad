@@ -33,10 +33,13 @@ pub const INTERSECTION: f64 = CONFUSION * 0.01;
 pub const COMPUTATIONAL: f64 = f64::EPSILON;
 pub const SQUARE_COMPUTATIONAL: f64 = COMPUTATIONAL * COMPUTATIONAL;
 
-/// Parametric tolerance for small-range checks.
-/// NOTE: Does not directly match OCCT `Precision::PConfusion()` (which = 1e-9).
-/// This is a tighter parametric tolerance used by rcad algorithms.
-pub const PCONFUSION: f64 = 1e-12;
+/// Parametric confusion on a default curve (mean tangent length = 100.0).
+/// Analogous to `Precision::PConfusion()` = Confusion() * 0.01 = 1e-9 in OCCT.
+///
+/// NOTE: Changed from 1e-12 to 1e-9 during rcad-kernel module restructure
+/// (July 2026) to match OCCT value exactly. If you see behavioral diff in
+/// parametric tolerance checks, verify callers expected the tighter bound.
+pub const PCONFUSION: f64 = CONFUSION * 0.01;
 
 /// Square of CONFUSION — used for squared-distance comparisons.
 pub const SQUARE_CONFUSION: f64 = CONFUSION * CONFUSION;

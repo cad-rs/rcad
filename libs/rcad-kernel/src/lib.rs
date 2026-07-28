@@ -14,11 +14,13 @@ pub use topo::topo_shape;
 pub use topo::brep_graph;
 pub use core::precision;
 pub use core::precision as tolerance;
-pub use core::persistent_naming;
-pub use core::naming;
-pub use core::appearance;
-pub use core::annotation;
+pub use ocaf::persistent_naming;
+pub use ocaf::naming;
+pub use ocaf::appearance;
+pub use ocaf::annotation;
+pub use ocaf::dim_tol;
 pub use core::units;
+pub use core::message;
 pub use math::projection;
 pub use math::fit;
 pub use math::math_utils;
@@ -48,7 +50,7 @@ pub mod base;
 /// Assemblies: hierarchy, instancing, and world-transform flattening.
 ///
 /// Analogous to the shape hierarchy managed by OCCT `XCAFDoc_ShapeTool`.
-pub mod assembly;
+pub mod ocaf;
 
 // ============================================================================
 // Re-exports from core (TKernel)
@@ -70,24 +72,22 @@ pub use core::precision::{
     vertex_tolerance,
 };
 
-pub use core::tcol_std::*;
+pub use ocaf::appearance::{Color, FaceColor, StepColor};
 
-pub use core::appearance::{Color, FaceColor, StepColor};
-
-pub use core::annotation::{
+pub use ocaf::annotation::{
     Annotation, AnnotationKind, AnnotationNote, AnnotationStore, ArrowType, BalloonAnnotation,
     LeaderLine, Note, NoteCategory, NoteTarget, NoteType, SurfaceTextureSymbol, TextAnnotation,
     View, ViewProjection, WeldSymbol, WeldType,
 };
 
-pub use core::dim_tol::{
+pub use ocaf::dim_tol::{
     DatumReference, DatumSystem, DimTolStore, DimensionType, DimensionalTolerance,
     GeometricToleranceObject, GeometricToleranceType, ToleranceModifier,
 };
 
-pub use core::naming::{PersistentNamingHooks, TopoEntityRef};
+pub use ocaf::naming::{PersistentNamingHooks, TopoEntityRef};
 
-pub use core::persistent_naming::{
+pub use ocaf::persistent_naming::{
     ConflictResolution, CrossOperationHistory, CrossOperationStabilityReport, EntityGenealogy,
     EntityType, EntityTypeStability, IssueSeverity, NamePropagationPolicy,
     NamingConflictResolution, NamingContext, NamingEvent, NamingHistory, NamingIssue, NamingRule,
