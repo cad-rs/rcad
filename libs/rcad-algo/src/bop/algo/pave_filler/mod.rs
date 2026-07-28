@@ -303,10 +303,65 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-900+).
+    /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-1020).
     fn make_blocks(&mut self) {
         if self.ds.interf_ff.is_empty() { return; }
-        // OCCT: for each FF pair, create section edge pave blocks
-        // Stub: requires face info and pcurve setup
+        let ff_data: Vec<_> = self.ds.interf_ff.iter().map(|ff| {
+            (ff.f1, ff.f2, ff.curves.clone())
+        }).collect();
+        for (f1, f2, curves) in ff_data {
+            let mut new_pb: Vec<usize> = Vec::new();
+            let mut v1_last = 0; let mut v2_last = 0;
+            for &cid in &curves {
+                if cid >= self.ds.intersection_curves.len() { continue; }
+                let ic = self.ds.intersection_curves[cid].clone();
+                let (v1, v2) = self.curve_vertices_mut(&ic.curve, ic.t_range);
+                let ei = self.ds.push_edge(ic.curve.clone(), ic.t_range, v1, v2);
+                let p1 = crate::bop::ds::pave::Pave { vertex_idx: v1, param: ic.t_range[0] };
+                let p2 = crate::bop::ds::pave::Pave { vertex_idx: v2, param: ic.t_range[1] };
+                let pbx = crate::bop::ds::pave::PaveBlock::new(ei, p1, p2);
+                let spb = crate::bop::ds::pave::SharedPB::new(pbx);
+                let idx = self.ds.pave_blocks_pool.len();
+                self.ds.pave_blocks_pool.push(vec![spb]);
+                if let Some(last) = self.ds.pave_blocks_pool.last_mut() {
+                    for pb2 in last.iter() { pb2.0.write().unwrap().edge = ei; }
+                }
+                new_pb.push(idx);
+                v1_last = v1; v2_last = v2;
+            }
+            if !new_pb.is_empty() {
+                // Read vertex indices before mutable borrow
+                let fi1 = f1; let fi2 = f2;
+                for &pi in &new_pb {
+                    self.ds.change_face_info(fi1).pave_blocks_sc.insert(pi);
+                    self.ds.change_face_info(fi2).pave_blocks_sc.insert(pi);
+                }
+                self.ds.change_face_info(fi1).vertices_sc.insert(v1_last);
+                self.ds.change_face_info(fi1).vertices_sc.insert(v2_last);
+                self.ds.change_face_info(fi2).vertices_sc.insert(v1_last);
+                self.ds.change_face_info(fi2).vertices_sc.insert(v2_last);
+            }
+        }
+    }
+
+    fn curve_vertices_mut(&mut self, curve: &rcad_kernel::geom::Curve3, range: [f64; 2]) -> (usize, usize) {
+        let p1 = curve.point_at(range[0]);
+        let p2 = curve.point_at(range[1]);
+        let mut v1 = usize::MAX; let mut v2 = usize::MAX;
+        for i in 0..self.ds.nb_shapes() {
+            if self.ds.shapes[i].shape_type != ShapeType::Vertex { continue; }
+            let vp = self.ds.vertex_point_by_idx(i);
+            if (vp - p1).length() < 1e-7 { v1 = i; }
+            if (vp - p2).length() < 1e-7 { v2 = i; }
+        }
+        if v1 == usize::MAX {
+            let _ = self.ds.push_vertex(p1, 1e-7);
+            v1 = self.ds.nb_shapes() - 1;
+        }
+        if v2 == usize::MAX {
+            let _ = self.ds.push_vertex(p2, 1e-7);
+            v2 = self.ds.nb_shapes() - 1;
+        }
+        (v1, v2)
     }
 }
