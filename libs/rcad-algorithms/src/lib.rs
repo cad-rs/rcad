@@ -10,7 +10,7 @@
 )]
 #![allow(clippy::all)]
 
-pub use brep_graph::{
+pub use rcad_brep::graph::{
     BRepGraphHistory, NamedGraph, NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent,
     TopoGraphValidationIssue, TopoNode,
 };
@@ -18,19 +18,12 @@ pub mod bnd_box;
 pub mod bnd_lib;
 pub mod bnd_lib_2d;
 pub mod boolean;
-pub mod bopalgo;
-pub mod bopds;
-pub mod boptools;
-pub mod brep_algo;
-pub mod brep_algo_api;
+pub mod bop;
 pub mod brep_bnd;
 pub mod brep_extrema;
 pub mod brep_check;
-pub mod brep_check_parallel;
-pub mod brep_graph;
 pub mod brep_lib;
 pub mod brep_repair;
-pub mod brep_tools;
 pub mod brep_top_adaptor;
 pub mod bspline_approx_interp;
 pub mod bspline_edit;
@@ -86,7 +79,7 @@ pub mod app_cont;
 pub mod approx_int;
 pub mod blend;
 pub mod bop_occt_ops;
-pub mod brep_adaptor;
+pub mod bool_ops_ext;
 pub mod brep_feat;
 pub mod brep_int_curve_surface;
 pub mod brep_mesh;
@@ -101,7 +94,6 @@ pub mod gc_make;
 pub mod gcpnts;
 pub mod geom2d_api;
 pub mod int_ana;
-pub mod inttools;
 pub mod law;
 pub mod lprop_cur_and_inf;
 pub mod maker_volume;
@@ -135,7 +127,7 @@ pub mod triangulate;
 
 use serde::Serialize;
 
-pub use crate::boptools::bvh::{Aabb, Bvh, BvhStats};
+pub use crate::bop::tools::bvh::{Aabb, Bvh, BvhStats};
 pub use approx_int::{
     ApproxOptions, ApproxResult, IntersectionApproximator, IntersectionSample,
     adjust_same_parameter, approximate_2d_curve, approximate_2d_curve_with_ctrl,
@@ -143,7 +135,7 @@ pub use approx_int::{
     compute_same_parameter_bspline, sample_curve_segment, sample_intersection_points,
     sample_with_adaptive_density,
 };
-pub use brep_algo::{BRepAlgoError, FaceSection, NormalProject};
+// pub use brep_algo::{BRepAlgoError, FaceSection, NormalProject}; // removed — no OCCT BRepAlgo package
 pub use brep_bnd::{
     BoundingBox, add_brep_to_bbox, add_edge_to_bbox, add_face_to_bbox, add_vertex_to_bbox,
     curve_bounds, curve_bounds_default, curve_bounds_with_range, surface_bounds,
@@ -157,12 +149,12 @@ pub use brep_lib::{
     sort_faces_by_distance, total_surface_area, total_surface_area_topods, total_volume,
     total_volume_topods,
 };
-pub use brep_tools::{
+pub use rcad_brep::tools::{
     BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
-    count_vertices, count_wires, extract_shells, extract_solids, get_curve, get_edge_range,
+    count_vertices, count_wires, get_curve, get_edge_range,
     get_edge_tolerance, get_face_tolerance, get_inner_wires, get_outer_wire, get_pcurve,
     get_shape_type, get_surface, get_vertex_tolerance, is_closed, is_edge_degenerate, mirror_shape,
-    n_ary_partition, read_brep_from_file, read_brep_from_string, rotate_shape, scale_shape,
+    read_brep_from_file, read_brep_from_string, rotate_shape, scale_shape,
     transform_shape, write_brep_to_file, write_brep_to_string,
 };
 pub use brep_top_adaptor::{
@@ -301,7 +293,7 @@ pub use top_loc::{
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
-pub use crate::bopalgo::builder::{BooleanError, BooleanOpType};
+pub use crate::bop::algo::builder::{BooleanError, BooleanOpType};
 pub use blend::{
     BlendBoundary, BlendContinuity, BlendError, BlendMode, BlendParams, BlendQuality, BlendResult,
     RadiusLaw, SurfaceCurvePair, apply_blend_to_edge, blend_edge_to_face, blend_two_surfaces,
@@ -312,8 +304,8 @@ pub use boolean::{
     BooleanAttemptDiagnostic, BooleanDiagnosticReport, BooleanFailureClass, FailureAnalyzer,
     FinalSuccessfulConfig, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
 };
-pub use brep_algo_api::{BooleanOp, BooleanOptions, SectionOp};
-pub use brep_algo_api::{common, cut, fuse};
+pub use crate::bop::algo_api::{BooleanOp, BooleanOptions, SectionOp};
+pub use crate::bop::algo_api::{common, cut, fuse};
 pub use brep_check::{
     CheckIssue,
     CheckResult,
@@ -370,11 +362,6 @@ pub use brep_check::{
     validate_shell_orientation,
     validate_solid_closure,
     validate_wire_orientation,
-};
-pub use brep_check_parallel::{
-    ParallelCheckIssue, ParallelCheckOptions, ParallelCheckResult, ParallelCheckStats,
-    check_many_parallel, check_many_parallel_with_options, check_parallel,
-    check_parallel_with_batch_size, check_parallel_with_options, check_parallel_with_stats,
 };
 pub use brep_int_curve_surface::{
     CurveBRepIntersection, CurveFaceIntersection, CurveSurfaceInter, RayHit,
@@ -588,7 +575,7 @@ pub use int_ana::{
     intersect_plane_plane_intana,
     intersect_plane_sphere_intana,
 };
-pub use inttools::{
+pub use crate::bop::int_tools::{
     ASPECT_RATIO_THRESHOLD,
     ASPECT_RATIO_VERY_HIGH,
     // Extreme geometry handling

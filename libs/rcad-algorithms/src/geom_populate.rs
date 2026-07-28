@@ -6,7 +6,7 @@ use rcad_kernel::PCurve;
 use rcad_kernel::geom::*;
 use rcad_kernel::topods::{self, TShape};
 
-use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;
+use crate::bop::int_tools::pcurve_derive::fallback_pcurve_by_projection;
 
 /// Populates `brep.geom` with analytic geometry for a box BRep.
 ///
@@ -337,7 +337,7 @@ pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
             let polyline: Vec<_> = (0..17)
                 .map(|i| p0 + (p1 - p0) * (i as f64 / 16.0))
                 .collect();
-            match crate::inttools::pcurve_derive::polyline_pcurve_by_projection(&polyline, &surface)
+            match crate::bop::int_tools::pcurve_derive::polyline_pcurve_by_projection(&polyline, &surface)
             {
                 Some(c2d) => c2d,
                 None => continue,

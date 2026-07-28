@@ -3,8 +3,8 @@
 // Do not edit manually.
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::bopalgo::pave_filler::PaveFiller;
-use rcad_algorithms::bopds::ds::DS;
+use rcad_algorithms::crate::bop::algo::pave_filler::PaveFiller;
+use rcad_algorithms::crate::bop::ds::ds::DS;
 use rcad_algorithms::brep_tools::transform_shape_topods;
 use rcad_algorithms::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;

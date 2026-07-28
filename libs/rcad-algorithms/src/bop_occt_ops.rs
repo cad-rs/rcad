@@ -5,10 +5,10 @@
 //! control flow:
 //!
 //! 1. **Prepare arguments** -- build the interference descriptor from both operands
-//!    ([`bopds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
-//! 2. **Intersection and paving** -- [`crate::bopalgo::pave_filler::PaveFiller::perform`], analogous to
+//!    ([`crate::bop::ds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
+//! 2. **Intersection and paving** -- [`crate::bop::algo::pave_filler::PaveFiller::perform`], analogous to
 //!    `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
-//! 3. **Build result** -- [`crate::bopalgo::builder::BooleanBuilder`] with the requested
+//! 3. **Build result** -- [`crate::bop::algo::builder::BooleanBuilder`] with the requested
 //!    [`BooleanOpType`], analogous to building the result solid from classified pieces.
 //! 4. **Post-process** (serial `fuse` only) -- [`crate::geom_populate::recompute_plane_surfaces`]
 //!    then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
@@ -32,7 +32,7 @@
 //! ## In-pipeline validation
 //!
 //! Each phase runs consistency checks before the next: operand [`BRep`] pool indices and
-//! finite coordinates, full [`bopds::ds::DS`] internal consistency, then the same index/finite
+//! finite coordinates, full [`crate::bop::ds::ds::DS`] internal consistency, then the same index/finite
 //! checks on the result (and again after plane recompute on the serial path). These mirror
 //! invariants the implementation is expected to maintain; they are intentionally weaker than
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
@@ -40,13 +40,13 @@
 
 use crate::BooleanError;
 use crate::BooleanOpType;
-use crate::bopalgo::builder;
-use crate::bopalgo::pave_filler;
-use crate::bopds;
-use crate::bopds::ds::DS;
-use crate::bopds::pave::NO_EDGE;
-use crate::boptools::bvh;
-use crate::boptools::bvh::{Aabb, Bvh};
+use crate::bop::algo::builder;
+use crate::bop::algo::pave_filler;
+use crate::bop::ds;
+use crate::bop::ds::ds::DS;
+use crate::bop::ds::pave::NO_EDGE;
+use crate::bop::tools::bvh;
+use crate::bop::tools::bvh::{Aabb, Bvh};
 use crate::geom_populate;
 use crate::history::{BooleanHistory, FaceOrigin};
 use crate::tolerance::*;
@@ -341,7 +341,7 @@ pub fn pave_fill(
     use_bvh: bool,
     fuzzy_tol: f64,
 ) -> (
-    bopds::ds::DS,
+    crate::bop::ds::ds::DS,
     Vec<rcad_kernel::topods::Shape>,
     Vec<Option<rcad_kernel::topods::Shape>>,
 ) {
@@ -350,7 +350,7 @@ pub fn pave_fill(
     } else {
         (None, None)
     };
-    let mut ds = bopds::ds::DS::new_empty();
+    let mut ds = crate::bop::ds::ds::DS::new_empty();
     {
         let mut filler = match (&bvh_a, &bvh_b) {
             (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),

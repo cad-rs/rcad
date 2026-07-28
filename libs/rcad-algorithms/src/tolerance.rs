@@ -7,7 +7,7 @@
 //! # Phase C — numerical IntSS floor & mesh merge
 //!
 //! Use [`intss_geom_tol_floor`] / [`intss_geom_tol_floor_for_brep_bounds`] when passing
-//! [`geom_tol_floor`](crate::inttools::intss::intersect_surfaces_with_density_tol) without a full
+//! [`geom_tol_floor`](crate::bop::int_tools::intss::intersect_surfaces_with_density_tol) without a full
 //! [`ToleranceContext`]. When fuzz / workspace is relevant, reuse [`combined_linear_tol_models`] or
 //! [`combined_linear_tol_for_faces`] — same OCCT-style `Max` semantics.
 //!
@@ -21,7 +21,7 @@
 //! workspace linear band (e.g. boolean fuzzy). Pairwise BRep work tolerances use
 //! [`combined_linear_tol_for_faces`], [`combined_linear_tol_for_edges`],
 //! [`combined_linear_tol_for_vertices`], or [`combined_linear_tol_models`] (OCCT-style `max`).
-//! Point-in-solid **`classify`** folds [`DSFace::geom_tol`](crate::bopds::ds::DSFace) into relaxed
+//! Point-in-solid **`classify`** folds [`DSFace::geom_tol`](crate::bop::ds::ds::DSFace) into relaxed
 //! thresholds using [`effective_linear_with_geom_tol`]. Binary **`boolean_op_with_options`** raises
 //! glue / make-connected toward [`combined_linear_tol_models`] for the paired operands (`lib.rs`).
 //!
@@ -463,7 +463,7 @@ pub fn combined_linear_tol_models(
 }
 
 /// `max(base_linear, geom_tol)` for checks that consume **stored** geometric tolerance
-/// (e.g. [`crate::bopds::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
+/// (e.g. [`crate::bop::ds::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
 #[inline]
 pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) -> f64 {
     if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
@@ -479,7 +479,7 @@ pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) ->
 /// tolerance on participating entities — OCCT-style `max`, with at least [`TOLERANCE_ABS`] on the
 /// baseline before folding `participant_tolerance_max`.
 ///
-/// See [`intersect_surfaces_with_density_tol`](crate::inttools::intss::intersect_surfaces_with_density_tol).
+/// See [`intersect_surfaces_with_density_tol`](crate::bop::int_tools::intss::intersect_surfaces_with_density_tol).
 #[inline]
 pub fn intss_geom_tol_floor(baseline_linear: f64, participant_tolerance_max: f64) -> f64 {
     let base = baseline_linear.max(TOLERANCE_ABS);

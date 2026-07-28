@@ -13,7 +13,7 @@
 //! `builder.rs` (`subdivide_edges_at_interior_vertices`).
 
 use glam::DVec3;
-use rcad_algorithms::bopds::ds::DS;
+use rcad_algorithms::crate::bop::ds::ds::DS;
 use rcad_algorithms::builder::BooleanBuilder;
 use rcad_algorithms::bvh::Bvh;
 use rcad_algorithms::geom_populate::{populate_box_geom, recompute_plane_surfaces};

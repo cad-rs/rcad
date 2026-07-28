@@ -663,7 +663,7 @@ pub fn project_surface_on_surface(
     options: &ProjectionOptions,
 ) -> Vec<Curve3> {
     // Use the existing surface intersection from inttools
-    use crate::inttools::{SurfaceCurve, intersect_surfaces_with_tolerance};
+    use crate::bop::int_tools::{SurfaceCurve, intersect_surfaces_with_tolerance};
 
     let result = intersect_surfaces_with_tolerance(surf1, surf2, options.tolerance);
 

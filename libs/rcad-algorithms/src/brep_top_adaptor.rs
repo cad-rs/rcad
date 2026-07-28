@@ -29,7 +29,7 @@
 //! assert_eq!(face_count, 6);
 //! ```
 
-pub use crate::brep_tools::ShapeType;
+pub use rcad_brep::tools::ShapeType;
 use crate::tolerance::*;
 use rcad_kernel::topods::{self, TShape};
 use rcad_kernel::topology::Face;

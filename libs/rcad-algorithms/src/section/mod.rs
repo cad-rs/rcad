@@ -30,11 +30,11 @@ pub use rcad_kernel::topods;
 use rcad_kernel::topods::{BRep, Orientation, Shape, TShape};
 use std::f64::consts::PI;
 
-use crate::inttools::plane_cone::PlaneConicalResult;
-use crate::inttools::plane_cylinder::PlaneCylinderResult;
-use crate::inttools::plane_plane::PlanePlaneResult;
-use crate::inttools::plane_sphere::PlaneSphereResult;
-use crate::inttools::{
+use crate::bop::int_tools::plane_cone::PlaneConicalResult;
+use crate::bop::int_tools::plane_cylinder::PlaneCylinderResult;
+use crate::bop::int_tools::plane_plane::PlanePlaneResult;
+use crate::bop::int_tools::plane_sphere::PlaneSphereResult;
+use crate::bop::int_tools::{
     SurfaceCurve, SurfaceIntersectionResult, intersect_surfaces_with_density_tol,
 };
 use crate::tolerance::{
@@ -638,7 +638,7 @@ fn try_analytic_face_pair(
     match (sa, sb) {
         // = =  Plane vs Plane = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
         (Plane(pa), Plane(pb)) => {
-            let result = crate::inttools::plane_plane::intersect_plane_plane(pa, pb);
+            let result = crate::bop::int_tools::plane_plane::intersect_plane_plane(pa, pb);
             match result {
                 PlanePlaneResult::Line(line) => {
                     let polylines =
@@ -688,7 +688,7 @@ fn intersect_plane_cylinder_pair(
     point_tol: f64,
     segments: &mut Vec<[DVec3; 2]>,
 ) -> bool {
-    let result = crate::inttools::plane_cylinder::intersect_plane_cylinder(plane, cyl);
+    let result = crate::bop::int_tools::plane_cylinder::intersect_plane_cylinder(plane, cyl);
     let mut found = false;
     match result {
         PlaneCylinderResult::TangentLine(line) => {
@@ -748,7 +748,7 @@ fn intersect_plane_sphere_pair(
     point_tol: f64,
     segments: &mut Vec<[DVec3; 2]>,
 ) -> bool {
-    let result = crate::inttools::plane_sphere::intersect_plane_sphere(plane, sphere);
+    let result = crate::bop::int_tools::plane_sphere::intersect_plane_sphere(plane, sphere);
     match result {
         PlaneSphereResult::Circle(c) => {
             let polylines = sample_closed_curve_trimmed_to_planar_faces(
@@ -775,7 +775,7 @@ fn intersect_plane_cone_pair(
     point_tol: f64,
     segments: &mut Vec<[DVec3; 2]>,
 ) -> bool {
-    let result = crate::inttools::plane_cone::intersect_plane_cone(plane, cone);
+    let result = crate::bop::int_tools::plane_cone::intersect_plane_cone(plane, cone);
     let mut found = false;
     match result {
         PlaneConicalResult::Circle(c) => {

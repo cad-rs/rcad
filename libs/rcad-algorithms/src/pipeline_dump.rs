@@ -4,8 +4,8 @@
 //! Enabled by `RCAD_DUMP_PIPELINE=1`; output goes to `RCAD_DUMP_DIR`.
 //! Grid/case labels from `RCAD_DUMP_GRID` / `RCAD_DUMP_CASE`.
 
-use crate::bopds::ds::DS;
-use crate::bopds::face_info::FaceInfo;
+use crate::bop::ds::ds::DS;
+use crate::bop::ds::face_info::FaceInfo;
 use rcad_kernel::topods::ShapeType;
 use serde_json::json;
 use std::path::PathBuf;

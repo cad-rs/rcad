@@ -115,7 +115,7 @@ mod tkdata_tkbrep_tests {
 
     #[test] fn brep_adaptor_comp_curve() {
         // Test rcad's EdgeAdaptor for wrapping an edge as a curve
-        use crate::brep_adaptor::EdgeAdaptor;
+        use rcad_brep::adaptor::EdgeAdaptor;
         let mut brep = topods::BRep::new();
         let v1 = brep.add_tvertex(DVec3::ZERO);
         let v2 = brep.add_tvertex(DVec3::X);

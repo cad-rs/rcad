@@ -10,7 +10,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Line3};
 use rcad_kernel::topods::{self, TShape};
 
-use crate::brep_tools;
+use rcad_brep::tools as brep_tools;
 use crate::section::{brep_triangle_soup, intersect_triangle_soups_eps};
 use crate::tolerance::*;
 

@@ -412,7 +412,7 @@ fn demo_analytic_booleans() {
     // ── Verify analytic intersection paths ────────────────────────────────
     println!("\nVerifying analytic projection on intersection geometry:");
     // Plane at z=0 intersecting sphere radius=2 centered at origin → circle radius=2 on XY plane
-    // (The PaveFiller dispatches Plane×Sphere to inttools::plane_sphere)
+    // (The PaveFiller dispatches Plane×Sphere to crate::bop::int_tools::plane_sphere)
     let sp = SphericalSurface {
         center: DVec3::ZERO,
         axis: DVec3::Z,

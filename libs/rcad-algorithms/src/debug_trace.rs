@@ -97,7 +97,7 @@ pub fn dump_result_topo(result: &rcad_kernel::BRep, label: &str) {
 }
 
 /// Print DS vertex/edge/face/interference counts.
-pub fn dump_ds(ds: &crate::bopds::ds::DS, label: &str) {
+pub fn dump_ds(ds: &crate::bop::ds::ds::DS, label: &str) {
     let n_interf = ds.interf_vv.len()
         + ds.interf_ve.len()
         + ds.interf_vf.len()

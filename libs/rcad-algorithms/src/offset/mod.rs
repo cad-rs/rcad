@@ -41,15 +41,15 @@
 //! - OCCT `rcad_kernel::BRepOffset_MakeOffset`
 //! - OCCT `rcad_kernel::BRepOffset_Mode` (join types)
 
-use crate::inttools::cone_cone::{ConeConeResult, intersect_cone_cone};
-use crate::inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
-use crate::inttools::cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus};
-use crate::inttools::plane_cone::{PlaneConicalResult, intersect_plane_cone};
-use crate::inttools::plane_torus::{PlaneTorusResult, intersect_plane_torus};
-use crate::inttools::sphere_cone::{SphereConeResult, intersect_sphere_cone_with_tolerance};
-use crate::inttools::sphere_torus::{SphereTorusResult, intersect_sphere_torus};
-use crate::inttools::torus_cone::{TorusConeResult, intersect_torus_cone};
-use crate::inttools::torus_torus::{TorusTorusResult, intersect_torus_torus};
+use crate::bop::int_tools::cone_cone::{ConeConeResult, intersect_cone_cone};
+use crate::bop::int_tools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
+use crate::bop::int_tools::cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus};
+use crate::bop::int_tools::plane_cone::{PlaneConicalResult, intersect_plane_cone};
+use crate::bop::int_tools::plane_torus::{PlaneTorusResult, intersect_plane_torus};
+use crate::bop::int_tools::sphere_cone::{SphereConeResult, intersect_sphere_cone_with_tolerance};
+use crate::bop::int_tools::sphere_torus::{SphereTorusResult, intersect_sphere_torus};
+use crate::bop::int_tools::torus_cone::{TorusConeResult, intersect_torus_cone};
+use crate::bop::int_tools::torus_torus::{TorusTorusResult, intersect_torus_torus};
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::PCurve;
@@ -823,14 +823,14 @@ pub fn intersect_offset_plane_plane(
     let offset_plane2 = Plane::new(plane2.origin + plane2.normal * d2, plane2.normal);
 
     // Use existing plane-plane intersection
-    match crate::inttools::plane_plane::intersect_plane_plane(&offset_plane1, &offset_plane2) {
-        crate::inttools::plane_plane::PlanePlaneResult::Line(line) => {
+    match crate::bop::int_tools::plane_plane::intersect_plane_plane(&offset_plane1, &offset_plane2) {
+        crate::bop::int_tools::plane_plane::PlanePlaneResult::Line(line) => {
             OffsetIntersectionCurve::Line(line)
         }
-        crate::inttools::plane_plane::PlanePlaneResult::Parallel => {
+        crate::bop::int_tools::plane_plane::PlanePlaneResult::Parallel => {
             OffsetIntersectionCurve::NoIntersection
         }
-        crate::inttools::plane_plane::PlanePlaneResult::Coincident => {
+        crate::bop::int_tools::plane_plane::PlanePlaneResult::Coincident => {
             OffsetIntersectionCurve::Coincident
         }
     }
@@ -950,29 +950,29 @@ pub fn intersect_offset_cylinder_cylinder(
     };
 
     // Use existing cylinder-cylinder intersection
-    match crate::inttools::cylinder_cylinder::intersect_cylinder_cylinder(
+    match crate::bop::int_tools::cylinder_cylinder::intersect_cylinder_cylinder(
         &offset_cyl1,
         &offset_cyl2,
     ) {
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::NoIntersection => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::NoIntersection => {
             OffsetIntersectionCurve::NoIntersection
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::Coaxial => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::Coaxial => {
             OffsetIntersectionCurve::Coincident
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::OneGeneratorLine(line) => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::OneGeneratorLine(line) => {
             OffsetIntersectionCurve::Line(line)
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::TwoGeneratorLines(l1, l2) => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::TwoGeneratorLines(l1, l2) => {
             OffsetIntersectionCurve::TwoLines(l1, l2)
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::TwoCircles(c1, c2) => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::TwoCircles(c1, c2) => {
             OffsetIntersectionCurve::TwoCircles(c1, c2)
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::TwoEllipses(e1, e2) => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::TwoEllipses(e1, e2) => {
             OffsetIntersectionCurve::TwoEllipses(e1, e2)
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::SkewQuartic(branches) => {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::SkewQuartic(branches) => {
             // Use analytical quartic solver output (Ferrari method) instead of marching.
             let mut pts = Vec::new();
             for branch in branches {
@@ -984,10 +984,10 @@ pub fn intersect_offset_cylinder_cylinder(
                 OffsetIntersectionCurve::Numerical(pts)
             }
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::PerpendicularOffsetCurves {
+        crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::PerpendicularOffsetCurves {
             ..
         }
-        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
+        | crate::bop::int_tools::cylinder_cylinder::CylinderCylinderResult::General => {
             // Fall back to numerical approximation
             intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2, d1, d2)
         }
@@ -1024,20 +1024,20 @@ pub fn intersect_offset_plane_cylinder(
     };
 
     // Use existing plane-cylinder intersection
-    match crate::inttools::plane_cylinder::intersect_plane_cylinder(&offset_plane, &offset_cyl) {
-        crate::inttools::plane_cylinder::PlaneCylinderResult::NoIntersection => {
+    match crate::bop::int_tools::plane_cylinder::intersect_plane_cylinder(&offset_plane, &offset_cyl) {
+        crate::bop::int_tools::plane_cylinder::PlaneCylinderResult::NoIntersection => {
             OffsetIntersectionCurve::NoIntersection
         }
-        crate::inttools::plane_cylinder::PlaneCylinderResult::TangentLine(line) => {
+        crate::bop::int_tools::plane_cylinder::PlaneCylinderResult::TangentLine(line) => {
             OffsetIntersectionCurve::Line(line)
         }
-        crate::inttools::plane_cylinder::PlaneCylinderResult::TwoLines(l1, l2) => {
+        crate::bop::int_tools::plane_cylinder::PlaneCylinderResult::TwoLines(l1, l2) => {
             OffsetIntersectionCurve::TwoLines(l1, l2)
         }
-        crate::inttools::plane_cylinder::PlaneCylinderResult::Circle(circle) => {
+        crate::bop::int_tools::plane_cylinder::PlaneCylinderResult::Circle(circle) => {
             OffsetIntersectionCurve::Circle(circle)
         }
-        crate::inttools::plane_cylinder::PlaneCylinderResult::Ellipse(ellipse) => {
+        crate::bop::int_tools::plane_cylinder::PlaneCylinderResult::Ellipse(ellipse) => {
             OffsetIntersectionCurve::Ellipse(ellipse)
         }
     }
@@ -1064,15 +1064,15 @@ pub fn intersect_offset_plane_sphere(
     // Create offset sphere
     let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r);
     // Use existing plane-sphere intersection
-    match crate::inttools::plane_sphere::intersect_plane_sphere(&offset_plane, &offset_sphere) {
-        crate::inttools::plane_sphere::PlaneSphereResult::NoIntersection => {
+    match crate::bop::int_tools::plane_sphere::intersect_plane_sphere(&offset_plane, &offset_sphere) {
+        crate::bop::int_tools::plane_sphere::PlaneSphereResult::NoIntersection => {
             OffsetIntersectionCurve::NoIntersection
         }
-        crate::inttools::plane_sphere::PlaneSphereResult::TangentPoint(point) => {
+        crate::bop::int_tools::plane_sphere::PlaneSphereResult::TangentPoint(point) => {
             // Return a degenerate circle
             OffsetIntersectionCurve::Circle(Circle3::new(point, plane.normal, 0.0))
         }
-        crate::inttools::plane_sphere::PlaneSphereResult::Circle(circle) => {
+        crate::bop::int_tools::plane_sphere::PlaneSphereResult::Circle(circle) => {
             OffsetIntersectionCurve::Circle(circle)
         }
     }
@@ -1107,17 +1107,17 @@ pub fn intersect_offset_cylinder_sphere(
     let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r_sphere);
 
     // Use existing sphere-cylinder intersection
-    match crate::inttools::sphere_cylinder::intersect_sphere_cylinder(&offset_sphere, &offset_cyl) {
-        crate::inttools::sphere_cylinder::SphereCylinderResult::NoIntersection => {
+    match crate::bop::int_tools::sphere_cylinder::intersect_sphere_cylinder(&offset_sphere, &offset_cyl) {
+        crate::bop::int_tools::sphere_cylinder::SphereCylinderResult::NoIntersection => {
             OffsetIntersectionCurve::NoIntersection
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::TangentCircle(circle) => {
+        crate::bop::int_tools::sphere_cylinder::SphereCylinderResult::TangentCircle(circle) => {
             OffsetIntersectionCurve::Circle(circle)
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::TwoCircles(c1, c2) => {
+        crate::bop::int_tools::sphere_cylinder::SphereCylinderResult::TwoCircles(c1, c2) => {
             OffsetIntersectionCurve::TwoCircles(c1, c2)
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::SkewQuartic(branches) => {
+        crate::bop::int_tools::sphere_cylinder::SphereCylinderResult::SkewQuartic(branches) => {
             // Use analytical quartic solver output instead of marching.
             let mut pts = Vec::new();
             for branch in branches {
@@ -1129,7 +1129,7 @@ pub fn intersect_offset_cylinder_sphere(
                 OffsetIntersectionCurve::Numerical(pts)
             }
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::General => {
+        crate::bop::int_tools::sphere_cylinder::SphereCylinderResult::General => {
             // Fall back to numerical approximation
             intersect_cylinder_sphere_numerical(&offset_cyl, &offset_sphere, d_cyl, d_sphere)
         }
@@ -1565,7 +1565,7 @@ fn intersect_cylinders_numerical(
     // Use the existing marching algorithm
     let tol_floor = offset_numeric_geom_floor(offset_d1, offset_d2);
     let result =
-        crate::inttools::intss::intersect_surfaces_with_density_tol(&surf1, &surf2, 64, tol_floor);
+        crate::bop::int_tools::intss::intersect_surfaces_with_density_tol(&surf1, &surf2, 64, tol_floor);
 
     if result.curves.is_empty() {
         return OffsetIntersectionCurve::NoIntersection;
@@ -1574,7 +1574,7 @@ fn intersect_cylinders_numerical(
     // Convert to polyline
     let mut points = Vec::new();
     for curve in &result.curves {
-        if let crate::inttools::intss::SurfaceCurve::Polyline(pts) = &curve.curve_3d {
+        if let crate::bop::int_tools::intss::SurfaceCurve::Polyline(pts) = &curve.curve_3d {
             points.extend(pts.iter().copied());
         }
     }
@@ -1598,7 +1598,7 @@ fn intersect_cylinder_sphere_numerical(
 
     let tol_floor = offset_numeric_geom_floor(offset_d_cyl, offset_d_sphere);
     let result =
-        crate::inttools::intss::intersect_surfaces_with_density_tol(&surf1, &surf2, 64, tol_floor);
+        crate::bop::int_tools::intss::intersect_surfaces_with_density_tol(&surf1, &surf2, 64, tol_floor);
 
     if result.curves.is_empty() {
         return OffsetIntersectionCurve::NoIntersection;
@@ -1606,7 +1606,7 @@ fn intersect_cylinder_sphere_numerical(
 
     let mut points = Vec::new();
     for curve in &result.curves {
-        if let crate::inttools::intss::SurfaceCurve::Polyline(pts) = &curve.curve_3d {
+        if let crate::bop::int_tools::intss::SurfaceCurve::Polyline(pts) = &curve.curve_3d {
             points.extend(pts.iter().copied());
         }
     }
@@ -1637,7 +1637,7 @@ fn intersect_surfaces_numerical(
 
     // Use existing intersection
     let tol_floor = offset_numeric_geom_floor(d1, d2);
-    let result = crate::inttools::intss::intersect_surfaces_with_density_tol(
+    let result = crate::bop::int_tools::intss::intersect_surfaces_with_density_tol(
         &offset_surf1,
         &offset_surf2,
         64,
@@ -1651,16 +1651,16 @@ fn intersect_surfaces_numerical(
     // Convert first curve to appropriate type
     for curve in &result.curves {
         match &curve.curve_3d {
-            crate::inttools::intss::SurfaceCurve::Line(l) => {
+            crate::bop::int_tools::intss::SurfaceCurve::Line(l) => {
                 return OffsetIntersectionCurve::Line(*l);
             }
-            crate::inttools::intss::SurfaceCurve::Circle(c) => {
+            crate::bop::int_tools::intss::SurfaceCurve::Circle(c) => {
                 return OffsetIntersectionCurve::Circle(*c);
             }
-            crate::inttools::intss::SurfaceCurve::Ellipse(e) => {
+            crate::bop::int_tools::intss::SurfaceCurve::Ellipse(e) => {
                 return OffsetIntersectionCurve::Ellipse(*e);
             }
-            crate::inttools::intss::SurfaceCurve::Polyline(pts) => {
+            crate::bop::int_tools::intss::SurfaceCurve::Polyline(pts) => {
                 return OffsetIntersectionCurve::Numerical(pts.clone());
             }
             _ => continue,

@@ -5,10 +5,10 @@
 //!   `init()` / `more()` / `next()` / `point()` / `face()` pattern.
 //! - Utility free functions: intersect_line_with_brep, ray_cast, etc.
 
-use crate::boptools::bvh::{Aabb, Bvh};
+use crate::bop::tools::bvh::{Aabb, Bvh};
 use rcad_kernel::math::bnd::BndBox;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
-use crate::inttools::curve_surface::{
+use crate::bop::int_tools::curve_surface::{
     intersect_line_cone as intersect_line_cone_range,
     intersect_line_cylinder as intersect_line_cylinder_range,
     intersect_line_sphere as intersect_line_sphere_range,

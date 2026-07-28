@@ -295,7 +295,7 @@ pub enum SectionCurve {
 
 /// Section a BRep with a plane, returning analytic curves where possible.
 pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
-    use crate::inttools::{
+    use crate::bop::int_tools::{
         plane_cone::{PlaneConicalResult, intersect_plane_cone},
         plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
         plane_plane::{PlanePlaneResult, intersect_plane_plane},

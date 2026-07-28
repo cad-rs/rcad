@@ -22,11 +22,11 @@ use rcad_kernel::topods;
 use rcad_kernel::{surface_area, volume};
 use std::collections::HashMap;
 
-use crate::bopalgo::builder::BooleanOpType;
-use crate::bopalgo::pave_filler::PaveFiller;
-use crate::bopds::ds::DS;
-use crate::boptools::bvh::Bvh;
-use crate::brep_tools::make_face_half_space;
+use crate::bop::algo::builder::BooleanOpType;
+use crate::bop::algo::pave_filler::PaveFiller;
+use crate::bop::ds::ds::DS;
+use crate::bop::tools::bvh::Bvh;
+use crate::bool_ops_ext::make_face_half_space;
 use crate::tolerance::TOLERANCE_ABS;
 
 const TOL: f64 = 1.0e-6;
@@ -274,7 +274,7 @@ mod bop_algo_two_step_tests {
             filler.set_run_parallel(false);
             filler.perform(a, b);
         }
-        let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(
+        let mut builder = crate::bop::algo::builder::BooleanBuilder::with_brep(
             &ds,
             op,
             brep,
@@ -485,7 +485,7 @@ mod pave_filler_tests {
         let cone_b = (cone).clone();
         let box_b = (box_).clone();
 
-        let result = crate::brep_algo_api::fuse(&cone_b, &box_b)
+        let result = crate::bop::algo_api::fuse(&cone_b, &box_b)
             .expect("Boolean fuse of cone and box should succeed");
         assert!(get_volume(&result) > 0.0);
     }
@@ -496,7 +496,7 @@ mod pave_filler_tests {
         let box_b = (make_unit_box().clone());
 
         let result =
-            crate::brep_algo_api::fuse(&sphere_b, &box_b).expect("Boolean fuse should succeed");
+            crate::bop::algo_api::fuse(&sphere_b, &box_b).expect("Boolean fuse should succeed");
         assert!(get_volume(&result) > 0.0);
     }
 
@@ -508,9 +508,9 @@ mod pave_filler_tests {
         let box_b = make_unit_box();
 
         // Use the internal PaveFiller directly (same path as boolean_op_generic)
-        let mut ds = crate::bopds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
         {
-            let mut filler = crate::bopalgo::pave_filler::PaveFiller::new(&mut ds);
+            let mut filler = crate::bop::algo::pave_filler::PaveFiller::new(&mut ds);
             filler.configure_fuzzy(crate::tolerance::TOLERANCE_ABS);
             filler.perform(&sphere, &box_b);
         }
@@ -576,9 +576,9 @@ mod pave_filler_tests {
 #[cfg(test)]
 mod int_tools_face_face_tests {
     use super::*;
-    use crate::inttools::face_face::intersect_faces;
-    use crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo;
-    use crate::inttools::int_surf_quadric::Quadric;
+    use crate::bop::int_tools::face_face::intersect_faces;
+    use crate::bop::int_tools::int_ana_quad_quad_geo::QuadQuadGeo;
+    use crate::bop::int_tools::int_surf_quadric::Quadric;
 
     #[test]
     fn perpendicular_planes_intersect() {
@@ -694,7 +694,7 @@ mod bop_common_simple_tests {
         let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
 
         let result =
-            crate::brep_algo_api::common(&b1, &b2).expect("Common operation should succeed");
+            crate::bop::algo_api::common(&b1, &b2).expect("Common operation should succeed");
         assert!(get_surface_area(&result) > 0.0);
     }
 }
@@ -710,8 +710,8 @@ mod bop_common_simple_tests {
 #[cfg(test)]
 mod quad_quad_geo_tests {
     use super::*;
-    use crate::inttools::int_ana_quad_quad_geo::*;
-    use crate::inttools::int_surf_quadric::Quadric;
+    use crate::bop::int_tools::int_ana_quad_quad_geo::*;
+    use crate::bop::int_tools::int_surf_quadric::Quadric;
     use rcad_kernel::geom::*;
 
     /// Plane through sphere center → Circle with radius = sphere radius.
@@ -971,7 +971,7 @@ mod quad_quad_geo_tests {
 
 #[cfg(test)]
 mod quadric_tests {
-    use crate::inttools::int_surf_quadric::Quadric;
+    use crate::bop::int_tools::int_surf_quadric::Quadric;
     use glam::DVec3;
     use rcad_kernel::geom::*;
 
@@ -1016,7 +1016,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn curve_type_to_integer_all_types() {
-        use crate::inttools::edge_edge::curve_type_to_integer;
+        use crate::bop::int_tools::edge_edge::curve_type_to_integer;
         assert_eq!(
             curve_type_to_integer(&Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))),
             0
@@ -1083,7 +1083,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn point_box_distance_inside() {
-        use crate::inttools::edge_edge::point_box_distance;
+        use crate::bop::int_tools::edge_edge::point_box_distance;
         let p = DVec3::new(0.5, 0.5, 0.5);
         let bmin = DVec3::ZERO;
         let bmax = DVec3::ONE;
@@ -1095,7 +1095,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn point_box_distance_outside() {
-        use crate::inttools::edge_edge::point_box_distance;
+        use crate::bop::int_tools::edge_edge::point_box_distance;
         let p = DVec3::new(2.0, 0.0, 0.0);
         let bmin = DVec3::ZERO;
         let bmax = DVec3::ONE;
@@ -1108,7 +1108,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn point_box_distance_on_boundary() {
-        use crate::inttools::edge_edge::point_box_distance;
+        use crate::bop::int_tools::edge_edge::point_box_distance;
         let p = DVec3::new(1.0, 0.5, 0.5);
         let bmin = DVec3::ZERO;
         let bmax = DVec3::ONE;
@@ -1121,7 +1121,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn point_box_distance_diagonal() {
-        use crate::inttools::edge_edge::point_box_distance;
+        use crate::bop::int_tools::edge_edge::point_box_distance;
         let p = DVec3::new(2.0, 2.0, 2.0);
         let bmin = DVec3::ZERO;
         let bmax = DVec3::ONE;
@@ -1135,7 +1135,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn split_range_on_segments_basic() {
-        use crate::inttools::edge_edge::split_range_on_segments;
+        use crate::bop::int_tools::edge_edge::split_range_on_segments;
         let (num, segs) = split_range_on_segments(0.0, 10.0, 0.1, 5);
         assert_eq!(num, 5, "Should return 5 segments for nb_seg=5");
         assert_eq!(segs.len(), 5);
@@ -1147,7 +1147,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn split_range_on_segments_small_range() {
-        use crate::inttools::edge_edge::split_range_on_segments;
+        use crate::bop::int_tools::edge_edge::split_range_on_segments;
         // range smaller than resolution → single segment
         let (num, segs) = split_range_on_segments(0.0, 0.01, 0.1, 5);
         assert_eq!(num, 1, "Range < resolution should produce single segment");
@@ -1156,7 +1156,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn split_range_on_segments_single_requested() {
-        use crate::inttools::edge_edge::split_range_on_segments;
+        use crate::bop::int_tools::edge_edge::split_range_on_segments;
         let (num, segs) = split_range_on_segments(0.0, 10.0, 0.1, 1);
         assert_eq!(num, 1, "nb_seg=1 should produce single segment");
         assert_eq!(segs.len(), 1);
@@ -1166,7 +1166,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn intersect_line_line_3d_coincident_overlap() {
-        use crate::inttools::edge_edge::intersect_line_line_3d;
+        use crate::bop::int_tools::edge_edge::intersect_line_line_3d;
         // Two collinear line segments overlapping
         let result = intersect_line_line_3d(
             DVec3::ZERO,
@@ -1200,7 +1200,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn intersect_line_line_3d_coincident_no_overlap() {
-        use crate::inttools::edge_edge::intersect_line_line_3d;
+        use crate::bop::int_tools::edge_edge::intersect_line_line_3d;
         // Two collinear line segments that DON'T overlap
         let result = intersect_line_line_3d(
             DVec3::ZERO,
@@ -1219,7 +1219,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn intersect_line_line_3d_crossing() {
-        use crate::inttools::edge_edge::intersect_line_line_3d;
+        use crate::bop::int_tools::edge_edge::intersect_line_line_3d;
         // Two perpendicular lines crossing at (1,0,0)
         // Line1: along X from 0 to 2 → (0,0,0) to (2,0,0)
         // Line2: along Y from -1 to 1 → (1,-1,0) to (1,1,0)
@@ -1255,7 +1255,7 @@ mod edge_edge_tools_tests {
 
     #[test]
     fn intersect_line_line_3d_parallel_no_intersect() {
-        use crate::inttools::edge_edge::intersect_line_line_3d;
+        use crate::bop::int_tools::edge_edge::intersect_line_line_3d;
         // Two parallel lines separated in Y
         let result = intersect_line_line_3d(
             DVec3::ZERO,
@@ -1289,7 +1289,7 @@ mod boptools_helpers_tests {
     #[test]
     fn is_dirs_coinside_same() {
         assert!(
-            crate::boptools::is_dirs_coinside(DVec3::X, DVec3::X),
+            crate::bop::tools::is_dirs_coinside(DVec3::X, DVec3::X),
             "Same direction"
         );
     }
@@ -1297,7 +1297,7 @@ mod boptools_helpers_tests {
     #[test]
     fn is_dirs_coinside_opposite() {
         assert!(
-            crate::boptools::is_dirs_coinside(DVec3::X, -DVec3::X),
+            crate::bop::tools::is_dirs_coinside(DVec3::X, -DVec3::X),
             "Opposite direction (2-d < 0.0002)"
         );
     }
@@ -1305,7 +1305,7 @@ mod boptools_helpers_tests {
     #[test]
     fn is_dirs_coinside_orthogonal() {
         assert!(
-            !crate::boptools::is_dirs_coinside(DVec3::X, DVec3::Y),
+            !crate::bop::tools::is_dirs_coinside(DVec3::X, DVec3::Y),
             "Orthogonal should not be coincident"
         );
     }
@@ -1313,24 +1313,24 @@ mod boptools_helpers_tests {
     #[test]
     fn is_dirs_coinside_with_tol_custom() {
         assert!(
-            crate::boptools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 1.5),
+            crate::bop::tools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 1.5),
             "Orthogonal within loose tol (|X-Y|=sqrt2≈1.414 < 1.5)"
         );
         assert!(
-            !crate::boptools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 0.5),
+            !crate::bop::tools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 0.5),
             "Orthogonal outside tight tol (|X-Y|=sqrt2≈1.414 > 0.5, |2-1.414|=0.586 > 0.5)"
         );
     }
 
     #[test]
     fn intermediate_point_midpoint() {
-        assert!((crate::boptools::intermediate_point(0.0, 10.0) - 5.0).abs() < 1e-15);
+        assert!((crate::bop::tools::intermediate_point(0.0, 10.0) - 5.0).abs() < 1e-15);
     }
 
     #[test]
     fn intermediate_point_occt_weighted() {
         // PAR_T = 0.43213918 → result = (1-0.43213918)*0 + 0.43213918*10 = 4.3213918
-        let r = crate::boptools::intermediate_point_occt(0.0, 10.0);
+        let r = crate::bop::tools::intermediate_point_occt(0.0, 10.0);
         assert!(
             (r - 4.3213918).abs() < 1e-10,
             "OCCT-biased midpoint should be ~4.32, got {r}"
@@ -1340,11 +1340,11 @@ mod boptools_helpers_tests {
     #[test]
     fn is_on_pave_at_boundary() {
         assert!(
-            crate::boptools::is_on_pave(0.0, [0.0, 10.0], 1e-7),
+            crate::bop::tools::is_on_pave(0.0, [0.0, 10.0], 1e-7),
             "At start boundary"
         );
         assert!(
-            crate::boptools::is_on_pave(10.0, [0.0, 10.0], 1e-7),
+            crate::bop::tools::is_on_pave(10.0, [0.0, 10.0], 1e-7),
             "At end boundary"
         );
     }
@@ -1352,7 +1352,7 @@ mod boptools_helpers_tests {
     #[test]
     fn is_on_pave_inside() {
         assert!(
-            !crate::boptools::is_on_pave(5.0, [0.0, 10.0], 1e-7),
+            !crate::bop::tools::is_on_pave(5.0, [0.0, 10.0], 1e-7),
             "Inside range should not be 'on pave'"
         );
     }
@@ -1360,11 +1360,11 @@ mod boptools_helpers_tests {
     #[test]
     fn is_on_pave_near_boundary() {
         assert!(
-            crate::boptools::is_on_pave(0.001, [0.0, 10.0], 0.01),
+            crate::bop::tools::is_on_pave(0.001, [0.0, 10.0], 0.01),
             "Within tolerance of start"
         );
         assert!(
-            !crate::boptools::is_on_pave(0.001, [0.0, 10.0], 1e-10),
+            !crate::bop::tools::is_on_pave(0.001, [0.0, 10.0], 1e-10),
             "Outside tolerance of start"
         );
     }
@@ -1372,15 +1372,15 @@ mod boptools_helpers_tests {
     #[test]
     fn is_in_range_overlapping() {
         assert!(
-            crate::boptools::is_in_range([3.0, 7.0], [0.0, 10.0], 0.0),
+            crate::bop::tools::is_in_range([3.0, 7.0], [0.0, 10.0], 0.0),
             "Fully inside"
         );
         assert!(
-            crate::boptools::is_in_range([-1.0, 5.0], [0.0, 10.0], 0.0),
+            crate::bop::tools::is_in_range([-1.0, 5.0], [0.0, 10.0], 0.0),
             "Partially overlapping (left)"
         );
         assert!(
-            crate::boptools::is_in_range([5.0, 15.0], [0.0, 10.0], 0.0),
+            crate::bop::tools::is_in_range([5.0, 15.0], [0.0, 10.0], 0.0),
             "Partially overlapping (right)"
         );
     }
@@ -1388,11 +1388,11 @@ mod boptools_helpers_tests {
     #[test]
     fn is_in_range_non_overlapping() {
         assert!(
-            !crate::boptools::is_in_range([-10.0, -5.0], [0.0, 10.0], 0.0),
+            !crate::bop::tools::is_in_range([-10.0, -5.0], [0.0, 10.0], 0.0),
             "Completely left"
         );
         assert!(
-            !crate::boptools::is_in_range([20.0, 30.0], [0.0, 10.0], 0.0),
+            !crate::bop::tools::is_in_range([20.0, 30.0], [0.0, 10.0], 0.0),
             "Completely right"
         );
     }
@@ -1401,11 +1401,11 @@ mod boptools_helpers_tests {
     fn is_in_range_tolerance_expands() {
         // With tolerance, range boundaries expand
         assert!(
-            crate::boptools::is_in_range([-1.0, -0.5], [0.0, 10.0], 2.0),
+            crate::bop::tools::is_in_range([-1.0, -0.5], [0.0, 10.0], 2.0),
             "Within tolerance expansion"
         );
         assert!(
-            !crate::boptools::is_in_range([-5.0, -3.0], [0.0, 10.0], 2.0),
+            !crate::bop::tools::is_in_range([-5.0, -3.0], [0.0, 10.0], 2.0),
             "Outside even with tolerance"
         );
     }
@@ -1413,7 +1413,7 @@ mod boptools_helpers_tests {
     #[test]
     fn compute_int_range_perpendicular() {
         // angle = PI/2 (perpendicular) → sin=1, tan=inf → formula handles this
-        let r = crate::boptools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_2);
+        let r = crate::bop::tools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_2);
         assert!(
             r.is_finite(),
             "Perpendicular surfaces should produce finite range"
@@ -1423,7 +1423,7 @@ mod boptools_helpers_tests {
     #[test]
     fn compute_int_range_acute() {
         // angle = PI/3 (60°)
-        let r = crate::boptools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_3);
+        let r = crate::bop::tools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_3);
         assert!(r.is_finite(), "Acute angle should produce finite range");
         assert!(r > 0.0, "Range should be positive");
     }
@@ -1431,11 +1431,11 @@ mod boptools_helpers_tests {
     #[test]
     fn is_split_to_reverse_forward() {
         assert!(
-            !crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::Z),
+            !crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::Z),
             "Same normal → not reverse"
         );
         assert!(
-            !crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.1, 0.99).normalize()),
+            !crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.1, 0.99).normalize()),
             "Slightly off normal → not reverse"
         );
     }
@@ -1443,18 +1443,18 @@ mod boptools_helpers_tests {
     #[test]
     fn is_split_to_reverse_opposite() {
         assert!(
-            crate::boptools::is_split_to_reverse(DVec3::Z, -DVec3::Z),
+            crate::bop::tools::is_split_to_reverse(DVec3::Z, -DVec3::Z),
             "Opposite → reverse"
         );
         assert!(
-            crate::boptools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.0, -1.0)),
+            crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.0, -1.0)),
             "Exact opposite → reverse"
         );
     }
 
     #[test]
     fn point_near_edge_offset() {
-        let pt = crate::boptools::point_near_edge(
+        let pt = crate::bop::tools::point_near_edge(
             &Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z)),
             DVec3::ZERO,
             DVec3::Z,
@@ -1469,13 +1469,13 @@ mod boptools_helpers_tests {
     fn curve_tolerance_default() {
         let line = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         assert!(
-            (crate::boptools::curve_tolerance(&line, 1.0) - 1.0).abs() < 1e-15,
+            (crate::bop::tools::curve_tolerance(&line, 1.0) - 1.0).abs() < 1e-15,
             "Line should return tol_base unchanged"
         );
 
         let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         assert!(
-            (crate::boptools::curve_tolerance(&circle, 1.0) - 1.0).abs() < 1e-15,
+            (crate::bop::tools::curve_tolerance(&circle, 1.0) - 1.0).abs() < 1e-15,
             "Circle should return tol_base unchanged"
         );
     }
@@ -1488,7 +1488,7 @@ mod boptools_helpers_tests {
             axis_dir: DVec3::X,
             focal_param: 1.0,
         });
-        let r = crate::boptools::curve_tolerance(&parabola, 1.0);
+        let r = crate::bop::tools::curve_tolerance(&parabola, 1.0);
         assert!(
             (r - 10.0).abs() < 1e-15,
             "Parabola should get 10x tolerance, got {r}"
@@ -1506,7 +1506,7 @@ mod boptools_helpers_tests {
 mod ds_interf_tests {
     #[test]
     fn try_add_interf_new_pair() {
-        let mut ds = crate::bopds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
         assert!(
             ds.try_add_interf(0, 1),
             "First insertion should return true (new pair)"
@@ -1516,7 +1516,7 @@ mod ds_interf_tests {
 
     #[test]
     fn try_add_interf_duplicate_rejected() {
-        let mut ds = crate::bopds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
         assert!(ds.try_add_interf(0, 1), "First insertion");
         assert!(!ds.try_add_interf(0, 1), "Duplicate should be rejected");
         assert!(
@@ -1527,7 +1527,7 @@ mod ds_interf_tests {
 
     #[test]
     fn try_add_interf_multiple_pairs() {
-        let mut ds = crate::bopds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
         assert!(ds.try_add_interf(0, 1));
         assert!(ds.try_add_interf(0, 2));
         assert!(ds.try_add_interf(1, 2));
@@ -1537,8 +1537,8 @@ mod ds_interf_tests {
 
     #[test]
     fn allocate_pave_block_returns_increasing_indices() {
-        let mut ds = crate::bopds::ds::DS::new_empty();
-        use crate::bopds::pave::{Pave, PaveBlock};
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        use crate::bop::ds::pave::{Pave, PaveBlock};
         let pv1 = Pave {
             vertex_idx: 0,
             param: 0.0,
@@ -1556,7 +1556,7 @@ mod ds_interf_tests {
 
     #[test]
     fn add_shape_sd_then_has_shape_sd() {
-        let mut ds = crate::bopds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::ds::DS::new_empty();
         ds.add_shape_sd(0, 1);
         assert_eq!(ds.has_shape_sd(0), Some(1));
         // Independent pair
@@ -1574,14 +1574,14 @@ mod ds_interf_tests {
 mod face_info_tests {
     #[test]
     fn has_any_interference_empty() {
-        use crate::bopds::face_info::FaceInfo;
+        use crate::bop::ds::face_info::FaceInfo;
         let fi = FaceInfo::default();
         assert!(!fi.has_any_interference());
     }
 
     #[test]
     fn has_any_interference_with_paves() {
-        use crate::bopds::face_info::FaceInfo;
+        use crate::bop::ds::face_info::FaceInfo;
         let mut fi = FaceInfo::default();
         fi.pave_blocks_sc.insert(0);
         assert!(fi.has_any_interference());
@@ -1589,7 +1589,7 @@ mod face_info_tests {
 
     #[test]
     fn has_any_interference_with_vertices_in() {
-        use crate::bopds::face_info::FaceInfo;
+        use crate::bop::ds::face_info::FaceInfo;
         // Note: has_any_interference checks pave_blocks_in/on/sc and curves_sc,
         // NOT vertices_in. Test that vertices_in alone does NOT trigger it.
         let mut fi = FaceInfo::default();
@@ -1607,7 +1607,7 @@ mod face_info_tests {
 
     #[test]
     fn curves_sc_only_returns_section_curves() {
-        use crate::bopds::face_info::FaceInfo;
+        use crate::bop::ds::face_info::FaceInfo;
         let mut fi = FaceInfo::default();
         fi.curves_sc.insert(3);
         fi.curves_sc.insert(1);
@@ -1617,7 +1617,7 @@ mod face_info_tests {
 
     #[test]
     fn curves_sc_only_empty() {
-        use crate::bopds::face_info::FaceInfo;
+        use crate::bop::ds::face_info::FaceInfo;
         let fi = FaceInfo::default();
         assert!(fi.curves_sc_only().is_empty());
     }
@@ -1633,7 +1633,7 @@ mod boptools_extra_tests {
 
     #[test]
     fn min_step_in_2d_constant() {
-        let v = crate::boptools::min_step_in_2d();
+        let v = crate::bop::tools::min_step_in_2d();
         assert!(
             v > 0.0 && v < 1.0,
             "min_step_in_2d should be a small positive constant, got {v}"
@@ -1642,17 +1642,17 @@ mod boptools_extra_tests {
 
     #[test]
     fn sense_flag_parallel() {
-        assert_eq!(crate::boptools::sense_flag(DVec3::Z, DVec3::Z), 1);
+        assert_eq!(crate::bop::tools::sense_flag(DVec3::Z, DVec3::Z), 1);
     }
 
     #[test]
     fn sense_flag_opposite() {
-        assert_eq!(crate::boptools::sense_flag(DVec3::Z, -DVec3::Z), -1);
+        assert_eq!(crate::bop::tools::sense_flag(DVec3::Z, -DVec3::Z), -1);
     }
 
     #[test]
     fn sense_flag_orthogonal() {
-        assert_eq!(crate::boptools::sense_flag(DVec3::Z, DVec3::X), 0);
+        assert_eq!(crate::bop::tools::sense_flag(DVec3::Z, DVec3::X), 0);
     }
 }
 
@@ -1665,7 +1665,7 @@ mod face_face_helper_tests {
     #[test]
     fn correct_surface_boundaries_expands() {
         let mut bounds = [0.0, 1.0, 0.0, 1.0];
-        crate::inttools::face_face::correct_surface_boundaries(&mut bounds, 0.1);
+        crate::bop::int_tools::face_face::correct_surface_boundaries(&mut bounds, 0.1);
         assert!((bounds[0] - (-0.1)).abs() < 1e-15);
         assert!((bounds[1] - 1.1).abs() < 1e-15);
         assert!((bounds[2] - (-0.1)).abs() < 1e-15);
@@ -1675,7 +1675,7 @@ mod face_face_helper_tests {
     #[test]
     fn correct_plane_boundaries_wide() {
         let mut bounds = [0.0, 1.0, 0.0, 1.0];
-        crate::inttools::face_face::correct_plane_boundaries(&mut bounds);
+        crate::bop::int_tools::face_face::correct_plane_boundaries(&mut bounds);
         assert!(
             (bounds[0] - (-1e10)).abs() < 1.0,
             "Plane u_min should be -1e10"
@@ -1718,7 +1718,7 @@ mod stage_classification_tests {
             filler.set_run_parallel(false);
             filler.perform(a, b);
         }
-        let mut builder = crate::bopalgo::builder::BooleanBuilder::with_brep(
+        let mut builder = crate::bop::algo::builder::BooleanBuilder::with_brep(
             &ds,
             op,
             brep,
@@ -1910,8 +1910,8 @@ mod stage_classification_tests {
 #[cfg(test)]
 mod pave_filler_internal_tests {
     use super::*;
-    use crate::bopalgo::pave_filler::build_face_shape_map;
-    use crate::bopds::ds::{DSEdge, DSFace, DSVertex, ShapeOrigin};
+    use crate::bop::algo::pave_filler::build_face_shape_map;
+    use crate::bop::ds::ds::{DSEdge, DSFace, DSVertex, ShapeOrigin};
     use glam::DVec3;
     use rcad_kernel::geom::{Curve3, Surface3};
 
@@ -2006,7 +2006,7 @@ mod pave_filler_internal_tests {
                 inner_wire_idxs: Vec::new(),
                 normal: DVec3::Z,
                 origin: ShapeOrigin::ShapeA,
-                face_info: crate::bopds::face_info::FaceInfo::default(),
+                face_info: crate::bop::ds::face_info::FaceInfo::default(),
                 source_face_idx: 0,
                 geom_tol: 1e-7,
                 location: 0,
@@ -2103,7 +2103,7 @@ mod pave_filler_internal_tests {
     fn intersect_vertices_close_pair_joined() {
         let ds = make_vertex_test_ds();
         // v0 and v1 are within tol → one group
-        let blocks = crate::bopalgo::intersect_vertices(&[0, 1], &ds, 0.0);
+        let blocks = crate::bop::algo::intersect_vertices(&[0, 1], &ds, 0.0);
         assert_eq!(
             blocks.len(),
             1,
@@ -2117,7 +2117,7 @@ mod pave_filler_internal_tests {
     fn intersect_vertices_far_pair_separate() {
         let ds = make_vertex_test_ds();
         // v0 and v2 are far apart → two groups
-        let blocks = crate::bopalgo::intersect_vertices(&[0, 2], &ds, 0.0);
+        let blocks = crate::bop::algo::intersect_vertices(&[0, 2], &ds, 0.0);
         assert_eq!(
             blocks.len(),
             2,
@@ -2129,14 +2129,14 @@ mod pave_filler_internal_tests {
     fn intersect_vertices_chain_connected() {
         let ds = make_vertex_test_ds();
         // v2 and v3 are close → one group
-        let blocks = crate::bopalgo::intersect_vertices(&[2, 3], &ds, 0.0);
+        let blocks = crate::bop::algo::intersect_vertices(&[2, 3], &ds, 0.0);
         assert_eq!(blocks.len(), 1, "chain-close vertices should merge");
     }
 
     #[test]
     fn intersect_vertices_singleton() {
         let ds = make_vertex_test_ds();
-        let blocks = crate::bopalgo::intersect_vertices(&[0], &ds, 0.0);
+        let blocks = crate::bop::algo::intersect_vertices(&[0], &ds, 0.0);
         assert_eq!(blocks.len(), 1, "single vertex -> one group");
         assert_eq!(
             blocks[0],
@@ -2150,13 +2150,13 @@ mod pave_filler_internal_tests {
     /// When theFlag=false, only ext_paves (not pave1/pave2) define sub-PB boundaries.
     #[test]
     fn pave_block_update_false_empty_ext_paves() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
-            crate::bopds::pave::NO_EDGE,
-            crate::bopds::pave::Pave {
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
+            crate::bop::ds::pave::NO_EDGE,
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 1,
                 param: 1.0,
             },
@@ -2168,18 +2168,18 @@ mod pave_filler_internal_tests {
 
     #[test]
     fn pave_block_update_false_one_ext_pave() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
-            crate::bopds::pave::NO_EDGE,
-            crate::bopds::pave::Pave {
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
+            crate::bop::ds::pave::NO_EDGE,
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 2,
                 param: 2.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 1,
             param: 1.0,
         });
@@ -2190,22 +2190,22 @@ mod pave_filler_internal_tests {
 
     #[test]
     fn pave_block_update_false_two_ext_paves_one_sub_pb() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
-            crate::bopds::pave::NO_EDGE,
-            crate::bopds::pave::Pave {
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
+            crate::bop::ds::pave::NO_EDGE,
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 3,
                 param: 3.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 1,
             param: 1.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 2,
             param: 2.0,
         });
@@ -2219,26 +2219,26 @@ mod pave_filler_internal_tests {
 
     #[test]
     fn pave_block_update_false_three_ext_paves_two_sub_pbs() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
-            crate::bopds::pave::NO_EDGE,
-            crate::bopds::pave::Pave {
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
+            crate::bop::ds::pave::NO_EDGE,
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 4,
                 param: 4.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 1,
             param: 1.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 2,
             param: 2.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 3,
             param: 3.0,
         });
@@ -2257,22 +2257,22 @@ mod pave_filler_internal_tests {
     /// Sub-PB splitting with theFlag=true includes pave1/pave2 as boundary paves.
     #[test]
     fn pave_block_update_true_includes_pave1_pave2() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
-            crate::bopds::pave::NO_EDGE,
-            crate::bopds::pave::Pave {
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
+            crate::bop::ds::pave::NO_EDGE,
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 3,
                 param: 3.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 1,
             param: 1.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 2,
             param: 2.0,
         });
@@ -2328,17 +2328,17 @@ mod pave_filler_internal_tests {
     // ===== PaveBlock basic operations =====
 
     /// PaveBlock::Indices / Range / ExtPaves.
-    use crate::bopds::pave::NO_EDGE;
+    use crate::bop::ds::pave::NO_EDGE;
 
     #[test]
     fn pave_block_construction_and_accessors() {
-        let pb = crate::bopds::pave::PaveBlock::new(
+        let pb = crate::bop::ds::pave::PaveBlock::new(
             NO_EDGE,
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 3,
                 param: 1.5,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 7,
                 param: 3.2,
             },
@@ -2353,18 +2353,18 @@ mod pave_filler_internal_tests {
 
     #[test]
     fn pave_block_append_ext_pave_and_contains() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
             NO_EDGE,
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 10,
                 param: 10.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 5,
             param: 5.0,
         });
@@ -2377,26 +2377,26 @@ mod pave_filler_internal_tests {
 
     #[test]
     fn pave_block_ext_paves_sorted_by_param() {
-        let mut pb = crate::bopds::pave::PaveBlock::new(
+        let mut pb = crate::bop::ds::pave::PaveBlock::new(
             NO_EDGE,
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 0,
                 param: 0.0,
             },
-            crate::bopds::pave::Pave {
+            crate::bop::ds::pave::Pave {
                 vertex_idx: 10,
                 param: 10.0,
             },
         );
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 9,
             param: 9.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 3,
             param: 3.0,
         });
-        pb.append_ext_pave(crate::bopds::pave::Pave {
+        pb.append_ext_pave(crate::bop::ds::pave::Pave {
             vertex_idx: 7,
             param: 7.0,
         });

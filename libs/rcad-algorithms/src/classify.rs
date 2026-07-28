@@ -12,9 +12,9 @@ use rcad_kernel::topods;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::bopds::ds::*;
-use crate::boptools::bvh::{Aabb, Bvh};
-use crate::inttools;
+use crate::bop::ds::ds::*;
+use crate::bop::tools::bvh::{Aabb, Bvh};
+use crate::bop::int_tools;
 use crate::tolerance::{
     AdaptiveTolerance, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_MIN, TOLERANCE_LEN_SQ_DIV_SAFE,
     TOLERANCE_MESH_LEGACY, ToleranceContext, ToleranceLevel,
@@ -727,7 +727,7 @@ fn classify_point_internal(
     }
     let edge_indices: Vec<usize> = edge_aabbs.iter().map(|(ei, _)| *ei).collect();
     let aabbs: Vec<Aabb> = edge_aabbs.iter().map(|(_, a)| *a).collect();
-    let edge_tree = crate::boptools::bvh::BoxTree::build(edge_indices.clone(), aabbs);
+    let edge_tree = crate::bop::tools::bvh::BoxTree::build(edge_indices.clone(), aabbs);
 
     // OCCT L218-230: Vertex/Edge proximity via UB-tree -> On
     let query_aabb = Aabb {
@@ -1065,7 +1065,7 @@ fn ray_cast_classify_point_on_face(
             if is_near_polygon_boundary(&hit, &face_verts, plane, boundary_tol) {
                 return RayFaceResult::Faulty; // grazes boundary  ?faulty
             }
-            if !inttools::edge_face::point_in_planar_face_with_tol(
+            if !crate::bop::int_tools::edge_face::point_in_planar_face_with_tol(
                 hit,
                 plane,
                 &face_verts,
@@ -1172,7 +1172,7 @@ pub fn classify_point_on_face(
             match surface {
                 Surface3::Plane(plane) => {
                     let face_verts = ds.face_boundary_points(face_idx);
-                    inttools::edge_face::point_in_planar_face_with_tol(
+                    crate::bop::int_tools::edge_face::point_in_planar_face_with_tol(
                         point,
                         plane,
                         &face_verts,
@@ -1500,7 +1500,7 @@ fn is_near_polygon_boundary(
     plane: &Plane,
     boundary_tol: f64,
 ) -> bool {
-    let (u_axis, v_axis) = inttools::edge_face::plane_local_basis(plane);
+    let (u_axis, v_axis) = crate::bop::int_tools::edge_face::plane_local_basis(plane);
     let project = |p: DVec3| -> (f64, f64) {
         let d = p - plane.origin;
         (d.dot(u_axis), d.dot(v_axis))

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "libs/rcad-kernel",
+    "libs/rcad-brep",
     "libs/rcad-modeling",
     "libs/rcad-algorithms",
     "libs/rcad-step",
@@ -27,3 +28,4 @@ thiserror = "2.0"
 laykit = "0.0"
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
+bitflags = "2"

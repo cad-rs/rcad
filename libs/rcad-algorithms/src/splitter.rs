@@ -13,7 +13,7 @@
 //! - `BOPAlgo_Splitter.cxx` L1-80: BOPAlgo_Splitter::Perform + BuildResult
 //! - `BRepAlgoAPI_Splitter.cxx` L1-50: API wrapper
 
-use crate::bopalgo::builder::BooleanOpType;
+use crate::bop::algo::builder::BooleanOpType;
 use crate::history::FaceOrigin;
 use rcad_kernel::topods;
 

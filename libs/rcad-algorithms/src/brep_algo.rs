@@ -201,7 +201,7 @@ impl FaceSection {
 }
 
 fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> Option<Curve3> {
-    use crate::inttools::face_face::intersect_faces;
+    use crate::bop::int_tools::face_face::intersect_faces;
     let curves = intersect_faces(s1, s2, 1e-7, 1e-7);
     curves.into_iter().next().map(|c| c.curve)
 }

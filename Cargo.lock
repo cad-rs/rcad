@@ -982,11 +982,23 @@ dependencies = [
  "glam",
  "indexmap",
  "rayon",
+ "rcad-brep",
  "rcad-kernel",
  "rcad-modeling",
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "rcad-brep"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "glam",
+ "rcad-kernel",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
