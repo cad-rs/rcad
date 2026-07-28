@@ -271,6 +271,8 @@ pub fn laguerre_roots(coeffs: &[f64]) -> Vec<f64> {
 // =============================================================================
 
 /// Evaluate a polynomial using Horner's method.
+/// OCCT: PLib::EvalPolynomial — belongs to PLib, not MathPoly.
+#[deprecated(since = "0.1.0", note = "use crate::math::plib::eval_polynomial instead")]
 pub fn poly_eval(coeffs: &[f64], x: f64) -> f64 {
-    coeffs.iter().rev().fold(0.0, |acc, &c| acc * x + c)
+    crate::math::plib::eval_polynomial(coeffs, x)
 }

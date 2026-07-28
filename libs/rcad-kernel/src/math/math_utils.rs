@@ -19,8 +19,9 @@ pub use crate::math::root::{
 };
 pub use crate::math::math_poly::{
     solve_linear, solve_quadratic, solve_cubic, solve_quartic,
-    laguerre_roots, poly_eval,
+    laguerre_roots,
 };
+pub use crate::math::plib::eval_polynomial;
 pub use crate::math::opt::{
     bfgs_minimize, frpr_minimize, newton_minimize, powell_minimize,
     golden_section_min, golden_section_max, brent_minimize,
