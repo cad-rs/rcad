@@ -36,16 +36,12 @@ pub(crate) fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
 
 /// Compute the first derivative of a 2D curve using finite differences.
 pub(crate) fn curve2d_derivative(curve: &Curve2d, t: f64) -> DVec2 {
-    const H: f64 = TOLERANCE_ABS;
-    (curve.point_at(t + H) - curve.point_at(t - H)) / (2.0 * H)
+    curve.derivative_at(t)
 }
 
-/// Compute the second derivative of a 2D curve using finite differences.
+/// Compute the second derivative of a 2D curve via the Curve2dEval trait.
 pub(crate) fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
-    const H: f64 = TOLERANCE_MESH_LEGACY;
-    let d_plus = curve2d_derivative(curve, t + H);
-    let d_minus = curve2d_derivative(curve, t - H);
-    (d_plus - d_minus) / (2.0 * H)
+    curve.derivative2_at(t)
 }
 
 /// Compute the unit tangent vector of a 2D curve.

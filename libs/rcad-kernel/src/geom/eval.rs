@@ -189,6 +189,15 @@ impl CurveEval for Line3 {
     fn derivative_at(&self, _t: f64) -> DVec3 {
         self.direction
     }
+    fn derivative2_at(&self, _t: f64) -> DVec3 {
+        DVec3::ZERO
+    }
+    fn derivative3_at(&self, _t: f64) -> DVec3 {
+        DVec3::ZERO
+    }
+    fn curvature_at(&self, _t: f64) -> f64 {
+        0.0
+    }
     fn default_domain(&self) -> [f64; 2] {
         [f64::NEG_INFINITY, f64::INFINITY]
     }
@@ -206,6 +215,17 @@ impl CurveEval for Circle3 {
     }
     fn derivative_at(&self, t: f64) -> DVec3 {
         self.radius * (-t.sin() * self.x_dir + t.cos() * self.y_dir)
+    }
+    fn derivative2_at(&self, t: f64) -> DVec3 {
+        // P''(t) = -R*(cos(t)·X + sin(t)·Y) = -(P(t) - center)
+        -(self.point_at(t) - self.center)
+    }
+    fn derivative3_at(&self, t: f64) -> DVec3 {
+        // P'''(t) = R*(sin(t)·X - cos(t)·Y) = -(1/R)*P'(t) = -derivative_at(t)
+        -self.derivative_at(t)
+    }
+    fn curvature_at(&self, _t: f64) -> f64 {
+        1.0 / self.radius
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -236,6 +256,16 @@ impl CurveEval for Ellipse3 {
         let x_ax = self.major_dir;
         let y_ax = self.normal.cross(x_ax).normalize();
         -self.major_radius * t.sin() * x_ax + self.minor_radius * t.cos() * y_ax
+    }
+    fn derivative2_at(&self, t: f64) -> DVec3 {
+        let x_ax = self.major_dir;
+        let y_ax = self.normal.cross(x_ax).normalize();
+        -self.major_radius * t.cos() * x_ax - self.minor_radius * t.sin() * y_ax
+    }
+    fn derivative3_at(&self, t: f64) -> DVec3 {
+        let x_ax = self.major_dir;
+        let y_ax = self.normal.cross(x_ax).normalize();
+        self.major_radius * t.sin() * x_ax - self.minor_radius * t.cos() * y_ax
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -423,6 +453,81 @@ impl CurveEval for Curve3 {
             Curve3::Trimmed(tc) => tc.derivative_at(t),
         }
     }
+    fn derivative2_at(&self, t: f64) -> DVec3 {
+        match self {
+            Curve3::Line(c) => c.derivative2_at(t),
+            Curve3::Circle(c) => c.derivative2_at(t),
+            Curve3::Ellipse(c) => c.derivative2_at(t),
+            Curve3::BSpline(c) => c.derivative2_at(t),
+            Curve3::Bezier(c) => c.derivative2_at(t),
+            Curve3::Offset(c) => c.derivative2_at(t),
+            Curve3::Hyperbola(c) => c.derivative2_at(t),
+            Curve3::Parabola(c) => c.derivative2_at(t),
+            Curve3::CircularHelix(c) => c.derivative2_at(t),
+            Curve3::SineWave(c) => c.derivative2_at(t),
+            Curve3::Trimmed(tc) => tc.derivative2_at(t),
+        }
+    }
+    fn derivative3_at(&self, t: f64) -> DVec3 {
+        match self {
+            Curve3::Line(c) => c.derivative3_at(t),
+            Curve3::Circle(c) => c.derivative3_at(t),
+            Curve3::Ellipse(c) => c.derivative3_at(t),
+            Curve3::BSpline(c) => c.derivative3_at(t),
+            Curve3::Bezier(c) => c.derivative3_at(t),
+            Curve3::Offset(c) => c.derivative3_at(t),
+            Curve3::Hyperbola(c) => c.derivative3_at(t),
+            Curve3::Parabola(c) => c.derivative3_at(t),
+            Curve3::CircularHelix(c) => c.derivative3_at(t),
+            Curve3::SineWave(c) => c.derivative3_at(t),
+            Curve3::Trimmed(tc) => tc.derivative3_at(t),
+        }
+    }
+    fn curvature_at(&self, t: f64) -> f64 {
+        match self {
+            Curve3::Line(c) => c.curvature_at(t),
+            Curve3::Circle(c) => c.curvature_at(t),
+            Curve3::Ellipse(c) => c.curvature_at(t),
+            Curve3::BSpline(c) => c.curvature_at(t),
+            Curve3::Bezier(c) => c.curvature_at(t),
+            Curve3::Offset(c) => c.curvature_at(t),
+            Curve3::Hyperbola(c) => c.curvature_at(t),
+            Curve3::Parabola(c) => c.curvature_at(t),
+            Curve3::CircularHelix(c) => c.curvature_at(t),
+            Curve3::SineWave(c) => c.curvature_at(t),
+            Curve3::Trimmed(tc) => tc.curvature_at(t),
+        }
+    }
+    fn transformed_parameter(&self, t: f64) -> f64 {
+        match self {
+            Curve3::Line(c) => c.transformed_parameter(t),
+            Curve3::Circle(c) => c.transformed_parameter(t),
+            Curve3::Ellipse(c) => c.transformed_parameter(t),
+            Curve3::BSpline(c) => c.transformed_parameter(t),
+            Curve3::Bezier(c) => c.transformed_parameter(t),
+            Curve3::Offset(c) => c.transformed_parameter(t),
+            Curve3::Hyperbola(c) => c.transformed_parameter(t),
+            Curve3::Parabola(c) => c.transformed_parameter(t),
+            Curve3::CircularHelix(c) => c.transformed_parameter(t),
+            Curve3::SineWave(c) => c.transformed_parameter(t),
+            Curve3::Trimmed(tc) => tc.transformed_parameter(t),
+        }
+    }
+    fn parametric_transformation(&self) -> f64 {
+        match self {
+            Curve3::Line(c) => c.parametric_transformation(),
+            Curve3::Circle(c) => c.parametric_transformation(),
+            Curve3::Ellipse(c) => c.parametric_transformation(),
+            Curve3::BSpline(c) => c.parametric_transformation(),
+            Curve3::Bezier(c) => c.parametric_transformation(),
+            Curve3::Offset(c) => c.parametric_transformation(),
+            Curve3::Hyperbola(c) => c.parametric_transformation(),
+            Curve3::Parabola(c) => c.parametric_transformation(),
+            Curve3::CircularHelix(c) => c.parametric_transformation(),
+            Curve3::SineWave(c) => c.parametric_transformation(),
+            Curve3::Trimmed(tc) => tc.parametric_transformation(),
+        }
+    }
     fn default_domain(&self) -> [f64; 2] {
         match self {
             Curve3::Line(c) => c.default_domain(),
@@ -463,6 +568,16 @@ impl SurfaceEval for Plane {
             self.origin + u * self.u_dir + v * self.v_dir,
             self.u_dir,
             self.v_dir,
+        )
+    }
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        (
+            self.origin + u * self.u_dir + v * self.v_dir,
+            self.u_dir,
+            self.v_dir,
+            DVec3::ZERO, // Puu
+            DVec3::ZERO, // Puv
+            DVec3::ZERO, // Pvv
         )
     }
 }
@@ -903,39 +1018,31 @@ impl SurfaceEval for Surface3 {
             Surface3::Trimmed(s) => s.derivatives(u, v),
         }
     }
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        match self {
+            Surface3::Plane(s) => s.derivatives2(u, v),
+            Surface3::Cylinder(s) => s.derivatives2(u, v),
+            Surface3::Sphere(s) => s.derivatives2(u, v),
+            Surface3::Cone(s) => s.derivatives2(u, v),
+            Surface3::Torus(s) => s.derivatives2(u, v),
+            Surface3::Ellipsoid(s) => s.derivatives2(u, v),
+            Surface3::Helicoid(s) => s.derivatives2(u, v),
+            Surface3::Pipe(s) => s.derivatives2(u, v),
+            Surface3::BSpline(s) => s.derivatives2(u, v),
+            Surface3::LinearExtrusion(s) => s.derivatives2(u, v),
+            Surface3::Revolution(s) => s.derivatives2(u, v),
+            Surface3::Ruled(s) => s.derivatives2(u, v),
+            Surface3::Coons(s) => s.derivatives2(u, v),
+            Surface3::Bezier(s) => s.derivatives2(u, v),
+            Surface3::TriBezier(s) => s.derivatives2(u, v),
+            Surface3::Offset(s) => s.derivatives2(u, v),
+            Surface3::Trimmed(s) => s.derivatives2(u, v),
+        }
+    }
 }
 
 /// OCCT-aligned: `Geom_ElementarySurface` intermediate abstract class.
 ///
-/// Groups analytic surfaces (Plane, Cylinder, Sphere, Cone, Torus, Ellipsoid)
-/// with shared access to position, axis, and local frame — corresponding to
-/// OCCT's `gp_Ax3` / `gp_Ax2` members stored in each elementary surface.
-pub trait ElementarySurfaceEval: SurfaceEval {
-    /// Origin of the local coordinate system (gp_Ax3::Location).
-    fn position(&self) -> DVec3;
-    /// Normal / axis direction (gp_Ax3::Direction).
-    fn axis_dir(&self) -> DVec3;
-    /// U-direction (gp_Ax3::XDirection).
-    fn x_axis(&self) -> DVec3;
-    /// V-direction (gp_Ax3::YDirection).
-    fn y_axis(&self) -> DVec3;
-}
-
-/// OCCT-aligned: `Geom_BoundedSurface` intermediate abstract class.
-///
-/// Groups bounded surfaces (BSpline, Bezier) whose domain is always finite.
-pub trait BoundedSurfaceEval: SurfaceEval {
-    fn degree_u(&self) -> usize;
-    fn degree_v(&self) -> usize;
-}
-
-/// OCCT-aligned: `Geom_SweptSurface` intermediate abstract class.
-///
-/// Groups swept surfaces (LinearExtrusion, Revolution) that share a profile curve.
-pub trait SweptSurfaceEval: SurfaceEval {
-    fn profile(&self) -> &Curve3;
-}
-
 // --- BoundedSurfaceEval implementations ---
 
 impl BoundedSurfaceEval for BSplineSurface {
@@ -1587,6 +1694,27 @@ impl CurveEval for BSplineCurve3 {
             &self.weights,
             t,
         )
+    }
+    fn derivative2_at(&self, t: f64) -> DVec3 {
+        // Central difference of analytic D1 — O(h²) using analytically exact derivatives
+        let h = 1e-5;
+        (bspline_tangent_analytic(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t + h,
+        ) - bspline_tangent_analytic(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t - h,
+        )) / (2.0 * h)
+    }
+    fn derivative3_at(&self, t: f64) -> DVec3 {
+        let h = 1e-4;
+        (self.derivative2_at(t + h) - self.derivative2_at(t - h)) / (2.0 * h)
     }
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;

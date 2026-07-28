@@ -1240,6 +1240,68 @@ pub trait CurveEval {
     fn reversed_parameter(&self, t: f64) -> f64 {
         t
     }
+
+    /// OCCT-aligned: D2(t) — second derivative d²P/dt² at parameter `t`.
+    ///
+    /// Default: 5-point central difference of `point_at`:
+    /// ```text
+    /// f''(t) = [-f(t+2h) + 16f(t+h) - 30f(t) + 16f(t-h) - f(t-2h)] / (12h²)
+    /// ```
+    /// Override with analytic formula when available (Line3 → 0, Circle3 → -R·N, etc.).
+    fn derivative2_at(&self, t: f64) -> DVec3 {
+        let h = 1e-4;
+        let fp2 = self.point_at(t + 2.0 * h);
+        let fp1 = self.point_at(t + h);
+        let f = self.point_at(t);
+        let fm1 = self.point_at(t - h);
+        let fm2 = self.point_at(t - 2.0 * h);
+        (-fp2 + 16.0 * fp1 - 30.0 * f + 16.0 * fm1 - fm2) / (12.0 * h * h)
+    }
+
+    /// OCCT-aligned: D3(t) — third derivative d³P/dt³ at parameter `t`.
+    ///
+    /// Default: central difference of `derivative2_at`.
+    fn derivative3_at(&self, t: f64) -> DVec3 {
+        let h = 1e-4;
+        (self.derivative2_at(t + h) - self.derivative2_at(t - h)) / (2.0 * h)
+    }
+
+    /// Signed curvature at parameter `t`.
+    ///
+    /// For 3D curves: `k = |r' × r''| / |r'|³`.
+    /// Returns 0 when the velocity is zero (degenerate point).
+    /// OCCT-aligned: computed via `D1 × D2 / |D1|³`.
+    fn curvature_at(&self, t: f64) -> f64 {
+        let d1 = self.derivative_at(t);
+        let d2 = self.derivative2_at(t);
+        let speed = d1.length();
+        if speed < 1e-15 {
+            return 0.0;
+        }
+        d1.cross(d2).length() / (speed * speed * speed)
+    }
+
+    /// OCCT-aligned: `Geom_Curve::TransformedParameter(t, T)`.
+    ///
+    /// Returns the parameter on the transformed curve corresponding to parameter
+    /// `t` on the original curve after transformation `T`. Used for curve-on-surface
+    /// evaluation after a `TopLoc_Location` transform.
+    ///
+    /// Default: identity (`t` unchanged — correct for isometric transformations).
+    /// For scaling transformations, override with `t / scale_factor`.
+    fn transformed_parameter(&self, t: f64) -> f64 {
+        t
+    }
+
+    /// OCCT-aligned: `Geom_Curve::ParametricTransformation(T)`.
+    ///
+    /// Returns the scale factor for parametric transformation. Used when computing
+    /// parametric tolerance after a `TopLoc_Location` transformation.
+    ///
+    /// Default: 1.0 (correct for isometric / uniform scaling).
+    fn parametric_transformation(&self) -> f64 {
+        1.0
+    }
 }
 
 /// Parametric evaluation of a 3D surface: `(u, v) -> Point3`.
@@ -1285,6 +1347,35 @@ pub trait SurfaceEval {
     fn v_reversed_parameter(&self, t: f64) -> f64 {
         t
     }
+
+    /// OCCT-aligned: D2(u,v) — second-order partial derivatives.
+    ///
+    /// Returns `(P, dP/du, dP/dv, d²P/du², d²P/dudv, d²P/dv²)`.
+    ///
+    /// Default: 3-point central difference for each second-order term:
+    /// ```text
+    /// Puu  = [P(u+h,v) - 2P(u,v) + P(u-h,v)] / h²
+    /// Pvv  = [P(u,v+h) - 2P(u,v) + P(u,v-h)] / h²
+    /// Puv  = [P(u+h,v+h) - P(u+h,v-h) - P(u-h,v+h) + P(u-h,v-h)] / (4h²)
+    /// ```
+    /// Override with analytic formula for known surface types.
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let h = 1e-5;
+        let (p, pu, pv) = self.derivatives(u, v);
+        let p_up = self.point_at(u + h, v);
+        let p_um = self.point_at(u - h, v);
+        let p_vp = self.point_at(u, v + h);
+        let p_vm = self.point_at(u, v - h);
+        let p_pp = self.point_at(u + h, v + h);
+        let p_pm = self.point_at(u + h, v - h);
+        let p_mp = self.point_at(u - h, v + h);
+        let p_mm = self.point_at(u - h, v - h);
+        let h2 = h * h;
+        let puu = (p_up - 2.0 * p + p_um) / h2;
+        let pvv = (p_vp - 2.0 * p + p_vm) / h2;
+        let puv = (p_pp - p_pm - p_mp + p_mm) / (4.0 * h2);
+        (p, pu, pv, puu, puv, pvv)
+    }
 }
 
 /// Parametric evaluation of a 2D curve (PCurve): `t -> Point2`.
@@ -1327,6 +1418,39 @@ pub trait Curve2dEval {
     /// OCCT-aligned: ReversedParameter(t) — parameter of the same point in reverse.
     fn reversed_parameter(&self, t: f64) -> f64 {
         t
+    }
+
+    /// OCCT-aligned: D2(t) — second derivative d²P/dt² at parameter `t`.
+    /// Default: 5-point central difference of `point_at`.
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        let h = 1e-4;
+        let fp2 = self.point_at(t + 2.0 * h);
+        let fp1 = self.point_at(t + h);
+        let f = self.point_at(t);
+        let fm1 = self.point_at(t - h);
+        let fm2 = self.point_at(t - 2.0 * h);
+        (-fp2 + 16.0 * fp1 - 30.0 * f + 16.0 * fm1 - fm2) / (12.0 * h * h)
+    }
+
+    /// OCCT-aligned: D3(t) — third derivative at parameter `t`.
+    /// Default: central difference of `derivative2_at`.
+    fn derivative3_at(&self, t: f64) -> DVec2 {
+        let h = 1e-4;
+        (self.derivative2_at(t + h) - self.derivative2_at(t - h)) / (2.0 * h)
+    }
+
+    /// Signed curvature at parameter `t` in the 2D plane.
+    ///
+    /// `k = (x'y'' - y'x'') / (x'² + y'²)^(3/2)`.
+    /// Positive = counter-clockwise turning. Returns 0 at degenerate points.
+    fn curvature_at(&self, t: f64) -> f64 {
+        let d1 = self.derivative_at(t);
+        let d2 = self.derivative2_at(t);
+        let speed_sq = d1.length_squared();
+        if speed_sq < 1e-30 {
+            return 0.0;
+        }
+        (d1.x * d2.y - d1.y * d2.x) / (speed_sq * speed_sq.sqrt())
     }
 }
 

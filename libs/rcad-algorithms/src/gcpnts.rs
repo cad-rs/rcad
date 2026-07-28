@@ -28,11 +28,9 @@ fn curve_derivative(curve: &Curve3, t: f64) -> DVec3 {
     (curve.point_at(t + H) - curve.point_at(t - H)) / (2.0 * H)
 }
 
-/// Compute curve second derivative via finite differences.
+/// Compute curve second derivative via the CurveEval trait (automatic fallback).
 fn curve_second_derivative(curve: &Curve3, t: f64) -> DVec3 {
-    let d_plus = curve_derivative(curve, t + H);
-    let d_minus = curve_derivative(curve, t - H);
-    (d_plus - d_minus) / (2.0 * H)
+    curve.derivative2_at(t)
 }
 
 /// Compute surface partial derivatives via finite differences.

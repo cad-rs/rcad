@@ -130,33 +130,10 @@ pub fn osculating_radius(surface: &Surface3, u: f64, v: f64) -> f64 {
 /// ```
 fn numerical_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
     use crate::geom::SurfaceEval;
-    const EPS: f64 = 1e-5;
 
-    // Clamp (u,v) away from the domain boundary so all 9-point stencil evaluations
-    // remain within the valid parameter range.
-    let [u0, u1, v0, v1] = surface.default_domain();
-    let u = u.clamp(u0 + EPS * 3.0, u1 - EPS * 3.0);
-    let v = v.clamp(v0 + EPS * 3.0, v1 - EPS * 3.0);
-
-    let p = surface.point_at(u, v);
-    let p_up = surface.point_at(u + EPS, v);
-    let p_um = surface.point_at(u - EPS, v);
-    let p_vp = surface.point_at(u, v + EPS);
-    let p_vm = surface.point_at(u, v - EPS);
-    let p_pp = surface.point_at(u + EPS, v + EPS);
-    let p_pm = surface.point_at(u + EPS, v - EPS);
-    let p_mp = surface.point_at(u - EPS, v + EPS);
-    // p_mm not needed for 4-point cross-derivative
-
-    // First-order partials
-    let pu = (p_up - p_um) / (2.0 * EPS);
-    let pv = (p_vp - p_vm) / (2.0 * EPS);
-
-    // Second-order partials
-    let eps2 = EPS * EPS;
-    let puu = (p_up - 2.0 * p + p_um) / eps2;
-    let pvv = (p_vp - 2.0 * p + p_vm) / eps2;
-    let puv = (p_pp - p_pm - p_mp + surface.point_at(u - EPS, v - EPS)) / (4.0 * eps2);
+    // Use the surface's derivatives2 method (may be analytic or finite-difference,
+    // but delegates through the trait so custom overrides are automatically used).
+    let (_, pu, pv, puu, puv, pvv) = surface.derivatives2(u, v);
 
     // Unit normal
     let n_raw = pu.cross(pv);
