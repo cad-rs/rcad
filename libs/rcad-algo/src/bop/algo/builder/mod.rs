@@ -5,6 +5,7 @@
 
 pub use crate::bop::algo::BooleanOpType;
 use crate::bop::algo::{GlueEnum, Report};
+use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
@@ -136,6 +137,17 @@ impl<'a> BooleanBuilder<'a> {
         eprintln!("[BUILDER] DS: {} shapes ({} src, {}V/{}E/{}F)",
             self.ds.nb_shapes(), self.ds.nb_source_shapes(),
             self.ds.vertex_count(), self.ds.edge_count(), self.ds.face_count());
+        let (nsh, nso) = {
+            let mut a = 0usize; let mut b = 0usize;
+            for i in 0..self.ds.nb_shapes() {
+                match self.ds.shape_info(i).shape_type {
+                    topods::ShapeType::Shell => a += 1,
+                    topods::ShapeType::Solid => b += 1,
+                    _ => {}
+                }
+            } (a, b)
+        };
+        eprintln!("[BUILDER] DS: {} Shell, {} Solid", nsh, nso);
 
         // OCCT L445-453: TreatEmptyShape
         // (skipped — rcad handles in boolean_op_with_retry)
@@ -484,7 +496,21 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             // OCCT: Create BuilderFace, process face
-            // (disabled — shell/solid images not built yet)
+            let face_s = self.brep_sr(i);
+            let sub_edges = self.shape_sub_shapes(&face_s);
+            let mut bf = BuilderFace::new(self.ds);
+            bf.my_face = Some(face_s.clone());
+            bf.my_edges = sub_edges;
+            bf.perform();
+            if !bf.my_images.is_empty() {
+                for img in &bf.my_images {
+                    let nw = match &*img.data { TShape::Face(fd) => 1 + fd.inner_wires.len() , _ => 0 };
+                    eprintln!("[BF] Face img: wires={}", nw);
+                    self.my_images.entry(face_s.clone())
+                        .or_default()
+                        .push(img.clone());
+                }
+            }
         }
     }
 
