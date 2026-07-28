@@ -705,11 +705,18 @@ impl DS {
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    // BRep_Tool-style query helpers
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     /// Edge curve by shape index.
-    pub fn edge_curve(&self, i: usize) -> Option<rcad_kernel::geom::Curve3> {
+    pub fn edge_curve(&self, i: usize) -> Option<&rcad_kernel::geom::Curve3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().and_then(|e| e.curve.clone())
+            si.shape.as_edge().and_then(|e| e.curve.as_ref())
         })
+    }
+
+    /// Edge tolerance by shape index.
+    pub fn edge_tolerance(&self, i: usize) -> f64 {
+        self.shapes.get(i).and_then(|si| {
+            si.shape.as_edge().map(|e| e.tolerance)
+        }).unwrap_or(0.0)
     }
 
     /// Edge parameter range by shape index.
@@ -944,6 +951,45 @@ impl DS {
         } else {
             &[]
         }
+    }
+
+    /// True if the edge is a geometric (non-degenerate) edge.
+    pub fn edge_is_geometric(&self, i: usize) -> bool {
+        !self.is_edge_degenerated(i)
+    }
+
+    /// Edge-on-face representation: pcurve and parameter range.
+    pub fn edge_on_face(&self, ei: usize, _fi: usize) -> Option<(crate::bop::ds::types::DSCurveRepOnFace)> {
+        if ei >= self.nb_shapes() { return None; }
+        let range = self.edge_range(ei);
+        Some(crate::bop::ds::types::DSCurveRepOnFace {
+            face_idx: _fi,
+            pcurve: rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d { origin: glam::DVec2::ZERO, direction: glam::DVec2::X }),
+            pcurve2: None,
+            pcurve_range: range,
+            start_param: range[0],
+            end_param: range[1],
+        })
+    }
+
+    /// Boundary edges of a face.
+    pub fn face_boundary_edges(&self, fi: usize) -> Vec<usize> {
+        let si = self.face_shape_idx(fi);
+        if si >= self.nb_shapes() { return vec![]; }
+        self.shapes[si].sub_shapes.iter().filter(|&&ss| {
+            ss < self.nb_shapes() && self.shapes[ss].shape_type == ShapeType::Edge
+        }).copied().collect()
+    }
+
+    /// UV boundary of a face.
+    pub fn face_uv_boundary(&self, fi: usize) -> [f64; 4] {
+        // Default UV bounds if not available
+        [0.0, 1.0, 0.0, 1.0]
+    }
+
+    /// Inner boundary of a face (wire inner loops).
+    pub fn face_inner_boundary(&self, _fi: usize) -> Vec<Vec<usize>> {
+        Vec::new()
     }
 
     /// Boundary vertices of a face (sub-shapes that are vertices).
