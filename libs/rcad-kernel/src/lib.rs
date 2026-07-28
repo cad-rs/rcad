@@ -20,6 +20,7 @@ pub use ocaf::appearance;
 pub use ocaf::annotation;
 pub use ocaf::dim_tol;
 pub use core::units;
+pub use core::color;
 pub use core::message;
 pub use math::projection;
 pub use math::fit;
