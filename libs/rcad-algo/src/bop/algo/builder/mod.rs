@@ -1,10 +1,10 @@
-// OCCT BOPAlgo_Builder — shape construction from DS.
+// OCCT BOPAlgo_Builder ?shape construction from DS.
 
 pub use crate::bop::algo::BooleanOpType;
 use crate::bop::algo::{GlueEnum, Report};
 use crate::bop::ds::DS;
 
-/// BOPAlgo_Builder — result builder for boolean operations.
+/// BOPAlgo_Builder ?result builder for boolean operations.
 pub struct BooleanBuilder<'a> {
     ds: &'a DS,
     my_report: Report,

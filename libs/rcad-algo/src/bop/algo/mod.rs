@@ -1,4 +1,4 @@
-//! OCCT BOPAlgo — Boolean Operation Algorithms.
+//! OCCT BOPAlgo ?Boolean Operation Algorithms.
 //!
 //! | Module          | OCCT class              | Description                     |
 //! |-----------------|-------------------------|---------------------------------|
@@ -19,9 +19,9 @@ pub mod checker_si;
 // Re-export shared types
 pub use builder::{BooleanBuilder, BooleanError};
 
-// ========================================================================
-// BOPAlgo_GlueEnum — glue mode for coincident geometry
-// ========================================================================
+// ===
+// BOPAlgo_GlueEnum ?glue mode for coincident geometry
+// ===
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlueEnum {
     GlueOff = 0,
@@ -30,9 +30,9 @@ pub enum GlueEnum {
 }
 impl Default for GlueEnum { fn default() -> Self { GlueEnum::GlueOff } }
 
-// ========================================================================
-// BOPAlgo_Operation — boolean operation type
-// ========================================================================
+// ===
+// BOPAlgo_Operation ?boolean operation type
+// ===
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOpType {
     Union,
@@ -40,9 +40,9 @@ pub enum BooleanOpType {
     Difference,
 }
 
-// ========================================================================
-// BOPAlgo_Alert — diagnostic alerts
-// ========================================================================
+// ===
+// BOPAlgo_Alert ?diagnostic alerts
+// ===
 #[derive(Debug, Clone)]
 pub enum Alert {
     TooSmallRange(usize, f64),
@@ -57,9 +57,9 @@ pub enum Alert {
     IntersectionFailed(usize, usize),
 }
 
-// ========================================================================
-// BOPAlgo_Report — collects alerts during algorithm execution
-// ========================================================================
+// ===
+// BOPAlgo_Report ?collects alerts during algorithm execution
+// ===
 #[derive(Debug, Clone, Default)]
 pub struct Report {
     alerts: Vec<Alert>,

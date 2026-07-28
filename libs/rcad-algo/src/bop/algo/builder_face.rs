@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_BuilderFace — face splitting.
+// OCCT BOPAlgo_BuilderFace ?face splitting.
 use crate::bop::ds::DS;
 
 pub struct BuilderFace {

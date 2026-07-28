@@ -1,13 +1,13 @@
 // OCCT BOPDS_Pave + BOPDS_PaveBlock 1:1 translation.
 //
-// BOPDS_Pave.hxx      — vertex-on-edge parametric point
-// BOPDS_PaveBlock.hxx — edge segment between two paves
+// BOPDS_Pave.hxx      ?vertex-on-edge parametric point
+// BOPDS_PaveBlock.hxx ?edge segment between two paves
 
 use std::sync::{Arc, RwLock};
 
-// ========================================================================
+// ===
 // BOPDS_Pave
-// ========================================================================
+// ===
 #[derive(Debug, Clone, Copy)]
 pub struct Pave {
     pub vertex_idx: usize,
@@ -35,14 +35,14 @@ impl PartialOrd for Pave {
     }
 }
 
-// ========================================================================
-// NO_EDGE sentinel — section edge PaveBlocks have no original edge
-// ========================================================================
+// ===
+// NO_EDGE sentinel ?section edge PaveBlocks have no original edge
+// ===
 pub const NO_EDGE: usize = usize::MAX;
 
-// ========================================================================
-// SharedPaveBlock — Arc<RwLock<PaveBlock>> (Standard_Transient equivalent)
-// ========================================================================
+// ===
+// SharedPaveBlock ?Arc<RwLock<PaveBlock>> (Standard_Transient equivalent)
+// ===
 #[derive(Debug, Clone)]
 pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
 
@@ -52,19 +52,19 @@ impl SharedPB {
     pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, PaveBlock> { self.0.write().unwrap() }
 }
 
-// ========================================================================
+// ===
 // BOPDS_PaveBlock
-// ========================================================================
+// ===
 #[derive(Debug, Clone)]
 pub struct PaveBlock {
     // BOPDS_PaveBlock.hxx fields
-    pub edge: usize,            // myEdge — index of the edge
+    pub edge: usize,            // myEdge ?index of the edge
     pub original_edge: usize,   // myOriginalEdge
     pub pave1: Pave,            // myPave1
     pub pave2: Pave,            // myPave2
     pub ext_paves: Vec<Pave>,   // myExtPaves (NCollection_List)
-    pub ts1: f64,               // myTS1 — shrunk range start
-    pub ts2: f64,               // myTS2 — shrunk range end
+    pub ts1: f64,               // myTS1 ?shrunk range start
+    pub ts2: f64,               // myTS2 ?shrunk range end
     pub common_block_idx: Option<usize>, // rcad: link to common block (OCCT uses DataMap)
 }
 
@@ -132,7 +132,7 @@ impl PaveBlock {
         (t2 - t1).abs() > 1e-15
     }
 
-    /// OCCT: PaveBlock on a curve edge with default paves — not split (section edge).
+    /// OCCT: PaveBlock on a curve edge with default paves ?not split (section edge).
     pub fn new_curve_block() -> Self {
         PaveBlock {
             edge: NO_EDGE, original_edge: NO_EDGE,
@@ -152,9 +152,9 @@ impl PaveBlock {
     }
 }
 
-// ========================================================================
-// BOPDS_PaveBlock::Update — split into sub-blocks using ext paves
-// ========================================================================
+// ===
+// BOPDS_PaveBlock::Update ?split into sub-blocks using ext paves
+// ===
 pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
     if !pb.is_to_update() { return; }
     let mut paves: Vec<Pave> = pb.ext_paves.clone();

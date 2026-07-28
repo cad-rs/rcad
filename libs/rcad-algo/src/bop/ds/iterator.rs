@@ -1,6 +1,6 @@
-// OCCT BOPDS_Iterator 鈥?BVH-based pair enumeration.
+// OCCT BOPDS_Iterator ?BVH-based pair enumeration.
 use crate::bop::ds::DS;
-/// BOPDS_Iterator 鈥?iterates pairs of interfering shapes.
+/// BOPDS_Iterator ?iterates pairs of interfering shapes.
 pub struct BOPDS_Iterator<'a> {
     ds: &'a DS,
     fuzzy_tol: f64,

@@ -1,4 +1,4 @@
-// OCCT IntTools_EdgeEdge — edge-edge intersection.
+// OCCT IntTools_EdgeEdge ?edge-edge intersection.
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 

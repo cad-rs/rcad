@@ -1,4 +1,4 @@
-// BOPAlgo_Tools 闂?CommonBlock merging and tolerance computation.
+// BOPAlgo_Tools ?CommonBlock merging and tolerance computation.
 //
 // OCCT: BOPAlgo_Tools.cxx L107-356
 // Operates on BOPDS_DS to group geometrically coincident PaveBlocks.
@@ -9,7 +9,7 @@ use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::pave::{NO_EDGE, Pave, PaveBlock, SharedPB};
 use crate::bop::ds::DS;
 
-/// BOPAlgo_Tools::PerformCommonBlocks 闂?group PBs with same (v1,v2) into CommonBlocks.
+/// BOPAlgo_Tools::PerformCommonBlocks ?group PBs with same (v1,v2) into CommonBlocks.
 pub fn perform_common_blocks(ds: &mut DS) {
     // Collect all PBs from the per-edge pool.
     let mut all_pbs: Vec<(usize, usize, SharedPB)> = Vec::new();
@@ -67,7 +67,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
         }
     }
 }
-/// BOPAlgo_Tools::ComputeToleranceOfCB 闂?compute combined tolerance for a CommonBlock.
+/// BOPAlgo_Tools::ComputeToleranceOfCB ?compute combined tolerance for a CommonBlock.
 fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(usize, usize)]) -> f64 {
     let mut tol_max = rcad_kernel::CONFUSION;
     for &(pb_idx, _) in pb_list {

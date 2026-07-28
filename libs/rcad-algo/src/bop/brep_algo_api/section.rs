@@ -1,4 +1,4 @@
-//! OCCT BRepAlgoAPI_Section — section operation.
+//! OCCT BRepAlgoAPI_Section ?section operation.
 pub struct SectionOp;
 impl SectionOp {
     pub fn new() -> Self { SectionOp }

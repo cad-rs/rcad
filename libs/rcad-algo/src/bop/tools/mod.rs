@@ -1,4 +1,4 @@
-//! OCCT BOPTools — algorithm tools for boolean operations.
+//! OCCT BOPTools ?algorithm tools for boolean operations.
 //!
 //! | Rust               | OCCT                    |
 //! |--------------------|-------------------------|

@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_BuilderSolid — solid construction from face set.
+// OCCT BOPAlgo_BuilderSolid ?solid construction from face set.
 use crate::bop::ds::DS;
 
 pub struct BuilderSolid {

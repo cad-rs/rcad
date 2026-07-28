@@ -1,4 +1,4 @@
-// OCCT IntTools_EdgeFace — edge-face intersection
+// OCCT IntTools_EdgeFace ?edge-face intersection
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Surface3};
 #[derive(Debug, Clone)]

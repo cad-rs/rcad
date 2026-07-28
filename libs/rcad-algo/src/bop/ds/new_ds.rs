@@ -1,19 +1,19 @@
 // OCCT BOPDS_DS 1:1 translation.
-// `BOPDS_DS.hxx` 閳?Data Structure for Boolean Operations.
+// `BOPDS_DS.hxx` ?Data Structure for Boolean Operations.
 //
 // Maps:
-//   TopoDS_Shape          閳?Shape (rcad_kernel::topo_shape::Shape)
-//   TopAbs_ShapeEnum      閳?ShapeType
-//   BOPDS_ShapeInfo       閳?ShapeInfo (defined below)
-//   BOPDS_IndexRange      閳?IndexRange
-//   BOPDS_CommonBlock     閳?CommonBlock
-//   BOPDS_PaveBlock       閳?PaveBlock via SharedPB
-//   BOPDS_FaceInfo        閳?FaceInfo
-//   BOPDS_InterfVV閳ヮ泙Z     閳?InterferenceVV閳ヮ泙Z
-//   NCollection_DynamicArray 閳?Vec
-//   NCollection_DataMap   閳?HashMap
-//   NCollection_Map       閳?HashSet
-//   NCollection_List      閳?Vec
+//   TopoDS_Shape          ?Shape (rcad_kernel::topo_shape::Shape)
+//   TopAbs_ShapeEnum      ?ShapeType
+//   BOPDS_ShapeInfo       ?ShapeInfo (defined below)
+//   BOPDS_IndexRange      ?IndexRange
+//   BOPDS_CommonBlock     ?CommonBlock
+//   BOPDS_PaveBlock       ?PaveBlock via SharedPB
+//   BOPDS_FaceInfo        ?FaceInfo
+//   BOPDS_InterfVV     ?InterferenceVV
+//   NCollection_DynamicArray ?Vec
+//   NCollection_DataMap   ?HashMap
+//   NCollection_Map       ?HashSet
+//   NCollection_List      ?Vec
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -370,7 +370,7 @@ pub struct InterferenceVF {
     pub face: usize,
     /// BOPDS_InterfVF::myU / myV (Interf.hxx L360-362).
     ///   UV coordinates of the vertex projection on the face surface.
-    ///   Stored as (f64, f64) 闂?use u/v getters for clarity.
+    ///   Stored as (f64, f64) ?use u/v getters for clarity.
     pub u: f64,
     pub v: f64,
     /// BOPDS_Interf::myIndexNew (Interf.hxx L203).
@@ -531,9 +531,9 @@ pub enum NearTangentType {
 /// =BOPDS_ShapeInfo =per-shape metadata in the flat DS index.
 /// Corresponds to one entry in BOPDS_DS::myLines.
 
-// ========================================================================
-// BOPDS_IndexRange 閳?index range for an argument's shapes
-// ========================================================================
+// ===
+// BOPDS_IndexRange ?index range for an argument's shapes
+// ===
 #[derive(Debug, Clone, Copy)]
 pub struct IndexRange {
     pub first: usize,
@@ -544,9 +544,9 @@ impl IndexRange {
     pub fn contains(&self, i: usize) -> bool { i >= self.first && i <= self.last }
 }
 
-// ========================================================================
-// BOPDS_ShapeInfo 閳?type, bounding box, sub-shapes, reference, flag
-// ========================================================================
+// ===
+// BOPDS_ShapeInfo ?type, bounding box, sub-shapes, reference, flag
+// ===
 #[derive(Debug, Clone)]
 pub struct ShapeInfo {
     pub shape: Shape,
@@ -576,17 +576,17 @@ impl ShapeInfo {
     pub fn sub_shapes(&self) -> &[usize] { &self.sub_shapes }
 }
 
-// ========================================================================
-// BOPDS_DS 閳?Data Structure
-// ========================================================================
+// ===
+// BOPDS_DS ?Data Structure
+// ===
 #[derive(Debug)]
 pub struct DS {
-    // BOPDS_DS.hxx fields 閳?1:1 mapping
+    // BOPDS_DS.hxx fields ?1:1 mapping
     pub arguments: Vec<Shape>,
     pub nb_source_shapes: usize,
     pub ranges: Vec<IndexRange>,
     pub shapes: Vec<ShapeInfo>,
-    // (ptr_id, location) 閳?flat index  (TopoDS_Shape 閳?int map)
+    // (ptr_id, location) ?flat index  (TopoDS_Shape ?int map)
     pub map_shape_index: HashMap<(u64, u32), usize>,
     pub pave_blocks_pool: Vec<Vec<SharedPB>>,
     pub map_pb_cb: HashMap<u64, usize>,
@@ -605,8 +605,8 @@ pub struct DS {
 }
 
 impl DS {
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Construction / initialisation
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Construction / initialisation
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn new() -> Self {
         DS {
             arguments: Vec::new(), nb_source_shapes: 0, ranges: Vec::new(),
@@ -648,14 +648,14 @@ impl DS {
         self.common_blocks.clear();
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Arguments
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Arguments
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn set_arguments(&mut self, a: Vec<Shape>) { self.arguments = a; }
     pub fn arguments(&self) -> &[Shape] { &self.arguments }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Init
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
-    /// BOPDS_DS::Init 閳?builds shape index, ranges, and bounding boxes.
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Init
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
+    /// BOPDS_DS::Init ?builds shape index, ranges, and bounding boxes.
     pub fn init(&mut self, _fuzz: f64) {
         if self.arguments.is_empty() { return; }
         let args = self.arguments.clone();
@@ -697,14 +697,14 @@ impl DS {
         }
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Queries 閳?shape count, range, rank
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Queries ?shape count, range, rank
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn nb_shapes(&self) -> usize { self.shapes.len() }
     pub fn nb_source_shapes(&self) -> usize { self.nb_source_shapes }
     pub fn nb_ranges(&self) -> usize { self.ranges.len() }
     pub fn range(&self, i: usize) -> &IndexRange { &self.ranges[i] }
 
-    /// BOPDS_DS::Rank 閳?returns which argument (0-based) the shape belongs to.
+    /// BOPDS_DS::Rank ?returns which argument (0-based) the shape belongs to.
     pub fn rank(&self, i: usize) -> isize {
         for ri in 0..self.nb_ranges() {
             if self.range(ri).contains(i) { return ri as isize; }
@@ -714,8 +714,8 @@ impl DS {
 
     pub fn is_new_shape(&self, i: usize) -> bool { i >= self.nb_source_shapes }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Append
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Append
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     /// Append with pre-built ShapeInfo.
     pub fn append(&mut self, si: ShapeInfo) -> usize {
         let pk = (si.shape.ptr_id(), si.shape.location);
@@ -739,8 +739,8 @@ impl DS {
         idx
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Shape info access
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Shape info access
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn shape_info(&self, i: usize) -> &ShapeInfo { &self.shapes[i] }
     pub fn change_shape_info(&mut self, i: usize) -> &mut ShapeInfo { &mut self.shapes[i] }
     pub fn shape(&self, i: usize) -> &Shape { &self.shapes[i].shape }
@@ -751,8 +751,8 @@ impl DS {
         }
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Pave blocks pool
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Pave blocks pool
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn pave_blocks_pool(&self) -> &[Vec<SharedPB>] { &self.pave_blocks_pool }
     pub fn change_pave_blocks_pool(&mut self) -> &mut Vec<Vec<SharedPB>> { &mut self.pave_blocks_pool }
     pub fn has_pave_blocks(&self, i: usize) -> bool { self.shapes[i].has_reference() }
@@ -775,8 +775,8 @@ impl DS {
         &mut self.pave_blocks_pool[self.shapes[i].reference as usize]
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Common block map
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Common block map
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn is_common_block(&self, pb: &SharedPB) -> bool {
         let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
         self.map_pb_cb.contains_key(&ptr)
@@ -792,8 +792,8 @@ impl DS {
     pub fn real_pave_block<'a>(&self, pb: &'a SharedPB) -> &'a SharedPB { pb }
     pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool { self.common_block(pb).is_some() }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Face info pool
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Face info pool
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn face_info_pool(&self) -> &[FaceInfo] { &self.face_info_pool }
     pub fn change_face_info_pool(&mut self) -> &mut Vec<FaceInfo> { &mut self.face_info_pool }
     pub fn has_face_info(&self, i: usize) -> bool { self.shapes[i].has_reference() }
@@ -834,8 +834,8 @@ impl DS {
         drop(pfi);
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Same-domain shapes
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Same-domain shapes
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn shapes_sd(&mut self) -> &mut HashMap<usize, usize> { &mut self.shapes_sd }
     pub fn add_shape_sd(&mut self, i: usize, sd: usize) {
         if i != sd { self.shapes_sd.insert(i, sd); }
@@ -857,8 +857,8 @@ impl DS {
         r
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Interferences 閳?typed accessors
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Interferences ?typed accessors
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn interf_vv(&mut self) -> &mut Vec<InterferenceVV> { &mut self.interf_vv }
     pub fn interf_ve(&mut self) -> &mut Vec<InterferenceVE> { &mut self.interf_ve }
     pub fn interf_vf(&mut self) -> &mut Vec<InterferenceVF> { &mut self.interf_vf }
@@ -872,7 +872,7 @@ impl DS {
 
     pub fn nb_interf_types() -> usize { 10 }
 
-    /// BOPDS_DS::AddInterf 閳?register an interference pair.
+    /// BOPDS_DS::AddInterf ?register an interference pair.
     pub fn add_interf(&mut self, i1: usize, i2: usize) -> bool {
         let k = if i1 < i2 { (i1, i2) } else { (i2, i1) };
         if self.interf_tb.insert(k) {
@@ -884,10 +884,10 @@ impl DS {
         }
     }
 
-    /// BOPDS_DS::HasInterf (single shape) 閳?true if shape has any interference.
+    /// BOPDS_DS::HasInterf (single shape) ?true if shape has any interference.
     pub fn has_interf_single(&self, i: usize) -> bool { self.interfered.contains(&i) }
 
-    /// BOPDS_DS::HasInterf (pair) 閳?true if the two shapes interfere.
+    /// BOPDS_DS::HasInterf (pair) ?true if the two shapes interfere.
     pub fn has_interf(&self, i1: usize, i2: usize) -> bool {
         let k = if i1 < i2 { (i1, i2) } else { (i2, i1) };
         self.interf_tb.contains(&k)
@@ -906,8 +906,8 @@ impl DS {
 
     pub fn interferences(&self) -> &HashSet<(usize, usize)> { &self.interf_tb }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Dump
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Dump
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn dump(&self) -> String {
         let mut s = String::new();
         s.push_str(" *** DS ***\n");
@@ -927,13 +927,13 @@ impl DS {
         s
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Sub-shape / topology queries
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Sub-shape / topology queries
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn is_sub_shape(&self, c: usize, p: usize) -> bool {
         self.shapes[p].sub_shapes.iter().any(|&s| s == c)
     }
 
-    /// BOPDS_DS::Paves 閳?collect sorted paves for an edge.
+    /// BOPDS_DS::Paves ?collect sorted paves for an edge.
     pub fn paves(&self, e: usize, lp: &mut Vec<Pave>) {
         let pbs = self.pave_blocks(e);
         if pbs.is_empty() { return; }
@@ -975,8 +975,8 @@ impl DS {
         self.shapes[..self.nb_source_shapes].iter().filter(|s| s.shape_type == ShapeType::Face).count()
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Update* methods
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Update* methods
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn update_pave_blocks_with_sd_vertices(&mut self) {
         for list in self.pave_blocks_pool.clone() {
             for pb in &list { self.update_pave_block_with_sd_vertices(pb); }
@@ -1022,8 +1022,8 @@ impl DS {
         true
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // BuildBndBoxSolid 閳?compute solid bounding box from sub-shapes
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // BuildBndBoxSolid ?compute solid bounding box from sub-shapes
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn build_bnd_box_solid(&mut self, idx: usize, the_box: &mut (DVec3, DVec3, f64), _ci: bool) {
         let subs: Vec<usize> = self.shapes[idx].sub_shapes.clone();
         let mut faces: Vec<usize> = Vec::new();
@@ -1044,7 +1044,7 @@ impl DS {
                     }
                 }
                 if self.shapes[fi].box_min.is_none() {
-                    // open face 閳?solid is unbounded
+                    // open face ?solid is unbounded
                     the_box.0 = DVec3::splat(f64::NEG_INFINITY);
                     the_box.1 = DVec3::splat(f64::INFINITY);
                     return;
@@ -1053,8 +1053,8 @@ impl DS {
         }
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // Helpers 閳?DS internal
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Helpers ?DS internal
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     /// Prepare vertex shape info: compute bounding boxes from geometry.
     fn prepare_vertices(&mut self, tol: f64) {
         for i in 0..self.nb_source_shapes {
@@ -1121,7 +1121,7 @@ impl DS {
         }
     }
 
-    /// Prepare solid shape info: flatten sub-shapes (shell閳姁ace閳姀dge閳姵ertex).
+    /// Prepare solid shape info: flatten sub-shapes (shellce€dgertex).
     fn prepare_solids(&mut self) {
         if self.arguments.len() != 1 { return; }
         for si in 0..self.nb_source_shapes {
@@ -1197,8 +1197,8 @@ impl DS {
         s.as_vertex().map(|vd| vd.point)
     }
 
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?    // BRep_Tool-style query helpers
-    // 閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡鎰ㄦ櫜閳烘劏鏅查埡?
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // BRep_Tool-style query helpers
+    // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     /// Edge curve by shape index.
     pub fn edge_curve(&self, i: usize) -> Option<&rcad_kernel::geom::Curve3> {
         self.shapes.get(i).and_then(|si| {
@@ -1496,9 +1496,9 @@ impl DS {
     }
 }
 
-// ========================================================================
+// ===
 // Free function: extract sub-shapes of a Shape (TopExp_Explorer equivalent)
-// ========================================================================
+// ===
 fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
     match &*s.data {
         TShape::Vertex(_) => vec![],

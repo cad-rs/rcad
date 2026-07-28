@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_ShellSplitter — shell partitioning.
+// OCCT BOPAlgo_ShellSplitter ?shell partitioning.
 use crate::bop::ds::DS;
 
 pub struct ShellSplitter {

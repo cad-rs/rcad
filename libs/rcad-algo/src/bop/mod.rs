@@ -1,4 +1,4 @@
-//! TKBO — Boolean Operation algorithms (OCCT TKBO toolkit).
+//! TKBO ?Boolean Operation algorithms (OCCT TKBO toolkit).
 
 pub mod algo;
 pub mod ds;

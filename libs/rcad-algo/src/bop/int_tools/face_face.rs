@@ -1,4 +1,4 @@
-// OCCT IntTools_FaceFace — face-face intersection
+// OCCT IntTools_FaceFace ?face-face intersection
 use rcad_kernel::geom::{Curve3, Surface3};
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_CheckerSI — self-interference checker.
+// OCCT BOPAlgo_CheckerSI ?self-interference checker.
 use crate::bop::ds::DS;
 
 pub struct CheckerSI;

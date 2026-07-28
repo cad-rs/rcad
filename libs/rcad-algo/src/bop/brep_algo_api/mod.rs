@@ -1,4 +1,4 @@
-//! OCCT BRepAlgoAPI — high-level boolean operations.
+//! OCCT BRepAlgoAPI ?high-level boolean operations.
 //!
 //! | Rust        | OCCT                       |
 //! |-------------|----------------------------|

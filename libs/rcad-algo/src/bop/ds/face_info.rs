@@ -1,7 +1,7 @@
 // OCCT BOPDS_FaceInfo 1:1 translation.
 use indexmap::IndexSet;
 
-/// BOPDS_FaceInfo — per-face intersection state.
+/// BOPDS_FaceInfo ?per-face intersection state.
 #[derive(Debug, Clone, Default)]
 pub struct FaceInfo {
     pub face_index: usize,

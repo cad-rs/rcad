@@ -1,4 +1,4 @@
-//! BoxTree — linear-scan bounding box collection using kernel BndBox.
+//! BoxTree ?linear-scan bounding box collection using kernel BndBox.
 
 /// Simple linear-scan BVH using kernel BndBox.
 pub struct BoxTree {

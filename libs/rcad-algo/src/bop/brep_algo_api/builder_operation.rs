@@ -1,4 +1,4 @@
-//! OCCT BRepAlgoAPI_BuilderOperation 閳?boolean operation wrapper.
+//! OCCT BRepAlgoAPI_BuilderOperation ?boolean operation wrapper.
 use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bop::ds::DS;
 pub struct BuilderOperation {

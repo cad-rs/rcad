@@ -14,7 +14,7 @@ use crate::bop::ds::DS;
 pub struct CommonBlock {
     /// PaveBlock indices paired with their face indices.
     /// Each entry stores `(pave_block_index, face_index)`.
-    /// OCCT: `myPaveBlocks` (`BOPDS_ListOfPaveBlock`) 鈥?stores handles to PaveBlock
+    /// OCCT: `myPaveBlocks` (`BOPDS_ListOfPaveBlock`) ?stores handles to PaveBlock
     /// objects that lie on the same geometry. The rcad equivalent uses flat indices
     /// referencing the DS edge's `pave_blocks` array.
     myPaveBlocks: Vec<(usize, usize)>,
@@ -22,11 +22,11 @@ pub struct CommonBlock {
     /// OCCT: `myFaces` (`TColStd_ListOfInteger`).
     myFaces: Vec<usize>,
     /// The real edge index (if this common block sits on a real edge).
-    /// OCCT: `myEdge` 鈥?set when the common block corresponds to an edge
+    /// OCCT: `myEdge` ?set when the common block corresponds to an edge
     /// from the original shape (not a section edge).
     myEdge: Option<usize>,
     /// Tolerance of this CommonBlock (max deviation between merged PaveBlocks).
-    /// OCCT: `myTolerance` 鈥?computed by `BOPAlgo_Tools::ComputeToleranceOfCB`.
+    /// OCCT: `myTolerance` ?computed by `BOPAlgo_Tools::ComputeToleranceOfCB`.
     myTolerance: f64,
 }
 impl CommonBlock {
@@ -43,8 +43,8 @@ impl CommonBlock {
     /// Add a `PaveBlock` with its associated face index.
     /// `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
     ///
-    /// `pb_idx` 鈥?flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
-    /// `face_idx` 鈥?face index in the DS that this PaveBlock belongs to.
+    /// `pb_idx` ?flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
+    /// `face_idx` ?face index in the DS that this PaveBlock belongs to.
     ///
     /// OCCT BOPDS_CommonBlock::AddPaveBlock inserts at the front of the list so
     /// that `PaveBlock1()` returns the first-added block (the one on the real edge).

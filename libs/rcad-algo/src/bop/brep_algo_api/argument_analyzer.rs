@@ -1,4 +1,4 @@
-//! OCCT BOPAlgo_ArgumentAnalyzer — input validation.
+//! OCCT BOPAlgo_ArgumentAnalyzer ?input validation.
 pub struct ArgumentAnalyzer;
 impl ArgumentAnalyzer {
     pub fn new() -> Self { ArgumentAnalyzer }

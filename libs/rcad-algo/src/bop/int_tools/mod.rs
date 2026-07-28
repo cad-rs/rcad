@@ -1,4 +1,4 @@
-//! OCCT IntTools — geometric intersection algorithms.
+//! OCCT IntTools ?geometric intersection algorithms.
 
 pub mod common_prt;
 pub mod curve;
