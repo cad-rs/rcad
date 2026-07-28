@@ -276,11 +276,37 @@ impl<'a> PaveFiller<'a> {
     /// OCCT: RefineFaceInfoOn.
     fn refine_face_info_on(&mut self) {}
 
-    /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371+).
-    /// Creates new edge TShapes from pave blocks with split vertices.
-    fn make_split_edges(&mut self) {}
+    /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
+    fn make_split_edges(&mut self) {
+        let a_nb_pbp = self.ds.pave_blocks_pool.len();
+        if a_nb_pbp == 0 { return; }
+        for i in 0..a_nb_pbp {
+            let a_lpb = self.ds.pave_blocks_pool[i].clone();
+            for a_pb in &a_lpb {
+                let pb = a_pb.0.read().unwrap();
+                let n_e = pb.original_edge;
+                if n_e >= self.ds.nb_shapes() { continue; }
+                let n_v1 = pb.pave1.vertex_idx;
+                let n_v2 = pb.pave2.vertex_idx;
+                let b_v1 = n_v1 >= self.ds.nb_source_shapes();
+                let b_v2 = n_v2 >= self.ds.nb_source_shapes();
+                if !b_v1 && !b_v2 { continue; }
+                let a_t1 = pb.pave1.param;
+                let a_t2 = pb.pave2.param;
+                if let Some(curve) = self.ds.edge_curve(n_e) {
+                    let new_ei = self.ds.push_edge(curve.clone(), [a_t1, a_t2], n_v1, n_v2);
+                    drop(pb);
+                    let mut pbw = a_pb.0.write().unwrap();
+                    pbw.edge = new_ei;
+                } else { drop(pb); }
+            }
+        }
+    }
 
-    /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_7.cxx L500+).
-    /// Creates pave blocks on edges from intersection data.
-    fn make_blocks(&mut self) {}
+    /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-900+).
+    fn make_blocks(&mut self) {
+        if self.ds.interf_ff.is_empty() { return; }
+        // OCCT: for each FF pair, create section edge pave blocks
+        // Stub: requires face info and pcurve setup
+    }
 }
