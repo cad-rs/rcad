@@ -7,7 +7,7 @@
 //! TEdgeData.tolerance, TFaceData.tolerance), matching OCCT's per-entity model.
 //! When absent or zero the functions fall back to the `CONFUSION` constant.
 
-use crate::topods;
+use crate::topo::topods;
 
 // ── Precision constants ───────────────────────────────────────────────────────
 
@@ -34,11 +34,16 @@ pub const COMPUTATIONAL: f64 = f64::EPSILON;
 pub const SQUARE_COMPUTATIONAL: f64 = COMPUTATIONAL * COMPUTATIONAL;
 
 /// Parametric tolerance for small-range checks.
-/// Analogous to `Precision::PConfusion()` = 1e-12 in OCCT.
+/// NOTE: Does not directly match OCCT `Precision::PConfusion()` (which = 1e-9).
+/// This is a tighter parametric tolerance used by rcad algorithms.
 pub const PCONFUSION: f64 = 1e-12;
 
 /// Square of CONFUSION — used for squared-distance comparisons.
 pub const SQUARE_CONFUSION: f64 = CONFUSION * CONFUSION;
+
+/// Square of INTERSECTION — used for squared-distance comparisons in intersection.
+/// Analogous to `Precision::SquareIntersection()` in OCCT.
+pub const SQUARE_INTERSECTION: f64 = INTERSECTION * INTERSECTION;
 
 /// Analogous to `Precision::Infinite()` = 2e+100 in OCCT.
 pub const INFINITE_VALUE: f64 = 2e100;
@@ -68,6 +73,74 @@ pub fn is_positive_infinite_value(r: f64) -> bool {
 /// OCCT-aligned: Precision::IsNegativeInfinite (Precision.hxx L364-367).
 pub fn is_negative_infinite_value(r: f64) -> bool {
     r <= -0.5 * INFINITE_VALUE
+}
+
+// ── Parametric-space precision functions (OCCT Precision Parametric API) ──
+
+/// Convert a real-space precision to a parametric-space precision.
+/// `P` is the real-space tolerance, `T` is the mean tangent length.
+/// OCCT: `Precision::Parametric(P, T)` = P / T
+#[inline]
+pub fn parametric(p: f64, t: f64) -> f64 {
+    p / t
+}
+
+/// Convert a real-space precision to parametric-space on a default curve
+/// (assumes mean tangent length = 100.0).
+/// OCCT: `Precision::Parametric(P)` = P * 0.01
+#[inline]
+pub fn parametric_default(p: f64) -> f64 {
+    p * 0.01
+}
+
+/// Parametric confusion on a default curve (mean tangent length = 100.0).
+/// OCCT: `Precision::PConfusion()` = Confusion() * 0.01 = 1e-9
+#[inline]
+pub fn p_confusion() -> f64 {
+    CONFUSION * 0.01
+}
+
+/// Parametric confusion with explicit tangent length `T`.
+/// OCCT: `Precision::PConfusion(T)` = Confusion() / T
+#[inline]
+pub fn p_confusion_with_tangent(t: f64) -> f64 {
+    CONFUSION / t
+}
+
+/// Square of parametric confusion.
+/// OCCT: `Precision::SquarePConfusion()`
+#[inline]
+pub fn square_p_confusion() -> f64 {
+    let pc = p_confusion();
+    pc * pc
+}
+
+/// Parametric intersection on a default curve.
+/// OCCT: `Precision::PIntersection()` = Intersection() * 0.01 = 1e-11
+#[inline]
+pub fn p_intersection() -> f64 {
+    INTERSECTION * 0.01
+}
+
+/// Parametric intersection with explicit tangent length `T`.
+/// OCCT: `Precision::PIntersection(T)` = Intersection() / T
+#[inline]
+pub fn p_intersection_with_tangent(t: f64) -> f64 {
+    INTERSECTION / t
+}
+
+/// Parametric approximation on a default curve.
+/// OCCT: `Precision::PApproximation()` = Approximation() * 0.01 = 1e-8
+#[inline]
+pub fn p_approximation() -> f64 {
+    APPROXIMATION * 0.01
+}
+
+/// Parametric approximation with explicit tangent length `T`.
+/// OCCT: `Precision::PApproximation(T)` = Approximation() / T
+#[inline]
+pub fn p_approximation_with_tangent(t: f64) -> f64 {
+    APPROXIMATION / t
 }
 
 // ── Per-shape tolerance helpers (topods::BRep) ─────────────────────────────

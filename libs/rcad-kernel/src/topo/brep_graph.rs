@@ -2,7 +2,7 @@
 //!
 //! `BRepGraph` pre-computes and caches all adjacency relations so that repeated
 //! topology queries run in O(1) instead of the O(n) scans performed by the
-//! free functions in [`crate::topo_query`].
+//! free functions in [`crate::topo::topo_query`].
 //!
 //! # What is cached
 //!
@@ -50,7 +50,9 @@
 //! assert!(graph.is_closed());
 //! ```
 
-use crate::{BRep, Face, PCurve, topods};
+use crate::{BRep, PCurve};
+use crate::topo::topods;
+use crate::topo::topology::Face;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -1391,7 +1393,7 @@ impl BRepGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topods::{Orientation, Shape};
+    use crate::topo::topods::{Orientation, Shape};
     use glam::DVec3;
 
     fn unit_box() -> BRep {

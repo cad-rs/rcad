@@ -1,6 +1,6 @@
 use crate::geom::{Curve2d, Curve3, Surface3};
-use crate::tolerance::CONFUSION;
-pub use crate::topo_shape::Shape;
+use crate::core::precision::CONFUSION;
+pub use crate::topo::topo_shape::Shape;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1615,12 +1615,12 @@ impl BRep {
     }
 
     /// Return flat list of edge topologies in tshape order (start/end are old-style vertex indices).
-    pub fn edges(&self) -> Vec<crate::topology::Edge> {
+    pub fn edges(&self) -> Vec<crate::topo::topology::Edge> {
         self.tshapes
             .iter()
             .filter_map(|ts| {
                 if let TShape::Edge(ed) = ts.as_ref() {
-                    Some(crate::topology::Edge {
+                    Some(crate::topo::topology::Edge {
                         start: ed.first.clone().index,
                         end: ed.last.clone().index,
                     })
@@ -1632,7 +1632,7 @@ impl BRep {
     }
 
     /// Return flat list of solid topologies (materialized from tshapes).
-    pub fn solids(&self) -> Vec<crate::topology::Solid> {
+    pub fn solids(&self) -> Vec<crate::topo::topology::Solid> {
         let mut out = Vec::new();
         for ts in &self.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
@@ -1655,14 +1655,14 @@ impl BRep {
                                             &*self.tshapes[fd.outer_wire.index]
                                         {
                                             for esr in &wd.edges {
-                                                edges.push(crate::topology::WireEdge {
+                                                edges.push(crate::topo::topology::WireEdge {
                                                     idx: esr.index,
                                                     forward: true,
                                                 });
                                             }
                                         }
                                     }
-                                    crate::topology::Wire { edges }
+                                    crate::topo::topology::Wire { edges }
                                 };
                                 let inner_wires = fd
                                     .inner_wires
@@ -1672,14 +1672,14 @@ impl BRep {
                                         if iw_sr.index < self.tshapes.len() {
                                             if let TShape::Wire(wd) = &*self.tshapes[iw_sr.index] {
                                                 for esr in &wd.edges {
-                                                    edges.push(crate::topology::WireEdge {
+                                                    edges.push(crate::topo::topology::WireEdge {
                                                         idx: esr.index,
                                                         forward: true,
                                                     });
                                                 }
                                             }
                                         }
-                                        crate::topology::Wire { edges }
+                                        crate::topo::topology::Wire { edges }
                                     })
                                     .collect();
                                 let normal = fd
@@ -1687,7 +1687,7 @@ impl BRep {
                                     .as_ref()
                                     .map(|s| crate::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
                                     .unwrap_or_default();
-                                faces.push(crate::topology::Face {
+                                faces.push(crate::topo::topology::Face {
                                     outer_wire,
                                     inner_wires,
                                     normal,
@@ -1698,10 +1698,10 @@ impl BRep {
                                 });
                             }
                         }
-                        shells.push(crate::topology::Shell { faces });
+                        shells.push(crate::topo::topology::Shell { faces });
                     }
                 }
-                out.push(crate::topology::Solid { shells });
+                out.push(crate::topo::topology::Solid { shells });
             }
         }
         out
@@ -1814,7 +1814,7 @@ impl BRep {
                 }
             }
             // Update edge tolerance
-            let new_tol = max_dev.max(crate::tolerance::CONFUSION);
+            let new_tol = max_dev.max(crate::core::precision::CONFUSION);
             if let TShape::Edge(ed) = Arc::make_mut(&mut self.tshapes[*ei]) {
                 ed.tolerance = ed.tolerance.max(new_tol);
                 ed.same_parameter = true;

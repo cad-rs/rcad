@@ -1,158 +1,165 @@
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
+// ============================================================================
+// Module tree — aligned with OCCT toolkit hierarchy
+// ============================================================================
+
+// Module-level re-exports for backward compatibility.
+// Downstream crates import these as `rcad_kernel::topods`, `rcad_kernel::topology`, etc.
+pub use topo::topods;
+pub use topo::topology;
+pub use topo::topo_query;
+pub use topo::topo_shape;
+pub use topo::brep_graph;
+pub use core::precision;
+pub use core::precision as tolerance;
+pub use core::persistent_naming;
+pub use core::naming;
+pub use core::appearance;
+pub use core::annotation;
+pub use core::units;
+pub use math::projection;
+pub use math::fit;
+pub use math::math_utils;
+pub use math::curvature;
+pub use math::arc_length;
+pub use base::extend;
+pub use base::nurbs_convert;
+
 /// Geometric (analytic) model types: position, curve, surface, primitive descriptors.
 ///
 /// This module describes *what shape is*.
+/// Corresponds to OCCT TKG2d + TKG3d.
 pub mod geom;
+
+/// Core TKernel-level types: precision, collections, naming, appearance, GD&T, annotations.
+pub mod core;
+
+/// Topology model types (TopoDS/ModelingData): vertex/edge/face/shell/solid incidence.
+pub mod topo;
+
+/// Math algorithms (TKMath): arc length, curvature, distance, properties, projection, fitting, extrema.
+pub mod math;
+
+/// Geometry foundation (TKGeomBase): NURBS conversion, curve/surface extension/trimming.
+pub mod base;
 
 /// Assemblies: hierarchy, instancing, and world-transform flattening.
 ///
 /// Analogous to the shape hierarchy managed by OCCT `XCAFDoc_ShapeTool`.
 pub mod assembly;
 
-/// Topology model types: vertex/edge/face/shell/solid incidence relationships.
-///
-/// This module describes *how things are connected*.
-pub mod topology;
+// ============================================================================
+// Re-exports from core (TKernel)
+// ============================================================================
 
-/// Shape properties: surface area, volume, centroid.
-///
-/// Analogous to OCCT `GProp_GProps` + `BRepGProp`.
-pub mod properties;
-pub use crate::properties::face_flat_iter;
-
-/// Topology query helpers: edge adjacency, vertex adjacency, shape counts.
-///
-/// Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
-pub mod topo_query;
-/// Topology simplification helpers: wire/edge cleanup for fragmented topology.
-pub mod topo_simplify;
-
-/// Cached graph-topology wrapper with O(1) adjacency, DFS/BFS traversal,
-/// and mutation-dirty tracking.
-///
-/// Analogous to OCCT `BRepGraph` module (new in OCCT 7.7+).
-pub mod brep_graph;
-
-/// Persistent naming hooks for stable user-level topology labels.
-///
-/// Analogous to OCCT OCAF/TopoNaming-style name tables.
-pub mod naming;
-
-/// Persistent naming semantics for BRepGraph topology entities.
-///
-/// Provides stable, operation-surviving identifiers for topology entities.
-pub mod persistent_naming;
-
-/// Differential geometry: principal curvatures, Gaussian curvature, mean curvature.
-///
-/// Analogous to OCCT `GeomLProp_SLProps`.
-pub mod curvature;
-
-/// Curve arc-length computation.
-///
-/// Analogous to OCCT `GCPnts_AbscissaPoint` / `CPnts_AbscissaPoint::Length`.
-pub mod arc_length;
-
-/// Visual appearance: per-face/solid RGB color and basic material.
-///
-/// Analogous to OCCT `XCAFDoc_ColorTool`.
-pub mod appearance;
-
-/// Dimension and tolerance object model (GD&T).
-///
-/// Analogous to OCCT `XCAFDimTolObjects`.
-pub mod dim_tol;
-
-/// Annotation object model for CAD annotations (PMI).
-///
-/// Analogous to OCCT `XCAFNoteObjects`.
-pub mod annotation;
-
-pub mod tolerance;
-/// Precision constants and per-entity tolerance query helpers.
-///
-/// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
-pub mod topods;
-pub mod topo_shape;
-
-/// Curve fitting: B-spline interpolation and approximation through point sets.
-///
-/// Analogous to OCCT `GeomAPI_Interpolate` and `GeomAPI_PointsToBSpline`.
-pub mod fit;
-
-/// Closest-point projection from a 3D point onto a curve or surface.
-///
-/// Analogous to OCCT `GeomAPI_ProjectPointOnCurve` and
-/// `GeomAPI_ProjectPointOnSurf`.
-pub mod projection;
-
-/// Shape-to-shape and point-to-shape minimum distance.
-///
-/// Analogous to OCCT `BRepExtrema_DistShapeShape`.
-pub mod distance;
-
-/// Curve-curve extrema: find (s,t) minimising |C1(s) − C2(t)|.
-///
-/// Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
-pub mod extrema;
-
-/// NURBS interoperability: convert analytic curves/surfaces to BSpline.
-///
-/// Analogous to OCCT `GeomConvert::CurveToBSplineCurve` /
-/// `GeomConvert::SurfaceToBSplineSurface`.
-pub mod nurbs_convert;
-
-/// Standard collections analogous to OCCT TColStd package.
-pub mod tcol_std;
-
-/// Mathematical utilities analogous to OCCT TKMath package.
-pub mod math_utils;
-
-/// Design-feature array/pattern creation utilities.
-pub mod array;
-
-/// Curve and surface trimming and extension.
-///
-/// Analogous to OCCT `Geom_TrimmedCurve` construction helpers,
-/// `GeomAPI_ExtendCurveToPoint`, and `Geom_RectangularTrimmedSurface`.
-pub mod extend;
-
-pub use distance::{ShapeDistance, min_distance, point_to_shape_distance};
-pub use extend::{
-    CurveEnd, SurfaceBoundary, extend_bspline_surface, extend_curve_by_length,
-    extend_curve_to_point, insert_knot_to_multiplicity, insert_knot_u_once, insert_knot_v_once,
-    refine_bspline_surface_isoparametric_spans, trim_curve, trim_surface,
-};
-pub use extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
-pub use fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};
-pub use nurbs_convert::{
-    bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
-    cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, line_to_bspline_range,
-    plane_to_bspline, sphere_to_bspline, surface_to_bspline,
-};
-pub use projection::{
-    CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_curve_range,
-    closest_point_on_surface, closest_point_on_surface_near, make_pcurve_on_surface,
+pub use core::precision::{
+    ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, INTERSECTION,
+    PCONFUSION, SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, SQUARE_INTERSECTION,
+    brep_same_parameter, edge_same_parameter,
+    edge_same_range, edge_tolerance, face_domain, face_tolerance, finalize_tolerance_hierarchy,
+    is_infinite_value, is_negative_infinite_value, is_positive_infinite_value, model_tolerance,
+    p_approximation, p_approximation_with_tangent,
+    p_confusion, p_confusion_with_tangent,
+    p_intersection, p_intersection_with_tangent,
+    parametric, parametric_default,
+    resize_tolerance_arrays, set_edge_tolerance, set_face_tolerance, set_vertex_tolerance,
+    square_p_confusion,
+    step_export_uncertainty, update_edge_tolerance, update_face_tolerance, update_vertex_tolerance,
+    vertex_tolerance,
 };
 
-pub use annotation::{
+pub use core::tcol_std::*;
+
+pub use core::appearance::{Color, FaceColor, StepColor};
+
+pub use core::annotation::{
     Annotation, AnnotationKind, AnnotationNote, AnnotationStore, ArrowType, BalloonAnnotation,
     LeaderLine, Note, NoteCategory, NoteTarget, NoteType, SurfaceTextureSymbol, TextAnnotation,
     View, ViewProjection, WeldSymbol, WeldType,
 };
-pub use appearance::{Color, FaceColor, StepColor};
-pub use arc_length::arc_length;
-pub use brep_graph::{
-    BRepGraph, BRepGraphBuilder, BRepGraphCheckpointData, BRepGraphTool, BfsFaces,
-    DfsEdgesFromVertex, DfsFaces, ManifoldRepairHints, NonManifoldSummary, RepairHint,
-};
-pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
-pub use dim_tol::{
+
+pub use core::dim_tol::{
     DatumReference, DatumSystem, DimTolStore, DimensionType, DimensionalTolerance,
     GeometricToleranceObject, GeometricToleranceType, ToleranceModifier,
 };
+
+pub use core::naming::{PersistentNamingHooks, TopoEntityRef};
+
+pub use core::persistent_naming::{
+    ConflictResolution, CrossOperationHistory, CrossOperationStabilityReport, EntityGenealogy,
+    EntityType, EntityTypeStability, IssueSeverity, NamePropagationPolicy,
+    NamingConflictResolution, NamingContext, NamingEvent, NamingHistory, NamingIssue, NamingRule,
+    NamingStabilityReport, OperationId, OperationRecord, OperationStats, OperationType,
+    PersistentId, PersistentNamingEngine, PersistentNamingHooksExt,
+};
+
+// ============================================================================
+// Re-exports from topo (TopoDS / ModelingData)
+// ============================================================================
+
+pub use topo::topology::{CompSolid, Compound, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+pub use topo::topo_query::{
+    edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
+    periodic_seam_edge_indices, salient_vertex_indices, topological_vertex_count,
+    vertex_adjacent_edges, vertex_indices, vertex_storage_len, wire_edges_unique_by_index,
+};
+
+pub use topo::topo_simplify::{merge_collinear_brep_edges, merge_collinear_edges_in_wires};
+
+pub use topo::brep_graph::{
+    BRepGraph, BRepGraphBuilder, BRepGraphCheckpointData, BRepGraphTool, BfsFaces,
+    DfsEdgesFromVertex, DfsFaces, ManifoldRepairHints, NonManifoldSummary, RepairHint,
+};
+
+// ============================================================================
+// Re-exports from math (TKMath)
+// ============================================================================
+
+pub use math::arc_length::arc_length;
+
+pub use math::curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
+
+pub use math::distance::{ShapeDistance, min_distance, point_to_shape_distance};
+
+pub use math::extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
+
+pub use math::fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};
+
+pub use math::projection::{
+    CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_curve_range,
+    closest_point_on_surface, closest_point_on_surface_near, make_pcurve_on_surface,
+};
+
+pub use math::properties::{
+    InertiaTensor, centroid, face_surface_area, face_triangles_pub, inertia_tensor,
+    point_in_spherical_polygon_3d_pub, signed_volume, surface_area,
+    try_analytic_face_surface_area_pub, volume,
+};
+pub use math::properties::face_flat_iter;
+
+// ============================================================================
+// Re-exports from base (TKGeomBase)
+// ============================================================================
+
+pub use base::nurbs_convert::{
+    bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
+    cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, line_to_bspline_range,
+    plane_to_bspline, sphere_to_bspline, surface_to_bspline,
+};
+
+pub use base::extend::{
+    CurveEnd, SurfaceBoundary, extend_bspline_surface, extend_curve_by_length,
+    extend_curve_to_point, insert_knot_to_multiplicity, insert_knot_u_once, insert_knot_v_once,
+    refine_bspline_surface_isoparametric_spans, trim_curve, trim_surface,
+};
+
+// ============================================================================
+// Re-exports from geom (TKG2d + TKG3d) — kept alongside crate root for backward compat
+// ============================================================================
+
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
 pub use geom::{
@@ -169,35 +176,10 @@ pub use geom::{Curve2dEval, CurveEval, SurfaceEval, any_perpendicular};
 pub use geom::{EllipsoidalSurface, HelicoidSurface, PipeSurface};
 pub use geom::{OffsetCurve3, OffsetSurface};
 pub use geom::{Point2, Point3, Vec2, Vec3};
-pub use naming::{PersistentNamingHooks, TopoEntityRef};
-pub use persistent_naming::{
-    ConflictResolution, CrossOperationHistory, CrossOperationStabilityReport, EntityGenealogy,
-    EntityType, EntityTypeStability, IssueSeverity, NamePropagationPolicy,
-    NamingConflictResolution, NamingContext, NamingEvent, NamingHistory, NamingIssue, NamingRule,
-    NamingStabilityReport, OperationId, OperationRecord, OperationStats, OperationType,
-    PersistentId, PersistentNamingEngine, PersistentNamingHooksExt,
-};
-pub use properties::{
-    InertiaTensor, centroid, face_surface_area, face_triangles_pub, inertia_tensor,
-    point_in_spherical_polygon_3d_pub, signed_volume, surface_area,
-    try_analytic_face_surface_area_pub, volume,
-};
-pub use tolerance::{
-    ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, INTERSECTION,
-    SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, brep_same_parameter, edge_same_parameter,
-    edge_same_range, edge_tolerance, face_domain, face_tolerance, finalize_tolerance_hierarchy,
-    is_infinite_value, is_negative_infinite_value, is_positive_infinite_value, model_tolerance,
-    resize_tolerance_arrays, set_edge_tolerance, set_face_tolerance, set_vertex_tolerance,
-    step_export_uncertainty, update_edge_tolerance, update_face_tolerance, update_vertex_tolerance,
-    vertex_tolerance,
-};
-pub use topo_query::{
-    edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
-    periodic_seam_edge_indices, salient_vertex_indices, topological_vertex_count,
-    vertex_adjacent_edges, vertex_indices, vertex_storage_len, wire_edges_unique_by_index,
-};
-pub use topo_simplify::{merge_collinear_brep_edges, merge_collinear_edges_in_wires};
-pub use topology::{CompSolid, Compound, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+// ============================================================================
+// Top-level types defined in this crate (no OCCT toolkit mapping)
+// ============================================================================
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
@@ -294,8 +276,8 @@ impl GeomStore {
     }
 }
 
-/// Main BRep type — alias for the OCCT-aligned `topods::BRep`.
-pub use topods::BRep;
+/// Main BRep type — alias for the OCCT-aligned `topo::topods::BRep`.
+pub use topo::topods::BRep;
 
 /// Conservative bounding-box contribution from an analytic curve.
 pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
@@ -349,7 +331,7 @@ pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
 /// expanding based on vertex positions projected onto the surface frame.
 pub fn surface_bounding_box(
     surface: &geom::Surface3,
-    vertices: &[crate::Vertex],
+    vertices: &[crate::topo::topology::Vertex],
 ) -> Option<[DVec3; 2]> {
     match surface {
         geom::Surface3::Cylinder(cyl) => {
@@ -440,9 +422,3 @@ pub fn surface_bounding_box(
         _ => None,
     }
 }
-
-#[cfg(test)]
-pub mod tkmath_gtests;
-
-#[cfg(test)]
-pub mod math_gtests;

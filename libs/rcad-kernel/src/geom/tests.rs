@@ -582,7 +582,7 @@ mod eval_tests {
     fn bspline_circle_tangent_perpendicular_to_radius() {
         // Use circle_to_bspline to get an exact NURBS circle, then check tangents.
         let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
-        let c = crate::nurbs_convert::circle_to_bspline(&circle);
+        let c = crate::base::nurbs_convert::circle_to_bspline(&circle);
         for &t in &[0.0, 0.5, 1.0, 1.5, 2.0] {
             let pt = c.point_at(t);
             let tan = c.tangent_at(t);

@@ -2,7 +2,7 @@ use glam::DAffine3;
 use serde::{Deserialize, Serialize};
 
 use crate::BRep;
-use crate::appearance::Color;
+use crate::core::appearance::Color;
 
 /// Assembly shape reference: either a standalone BRep solid or a nested sub-assembly.
 ///

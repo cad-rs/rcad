@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 use glam::DVec3;
-use crate::topods::{
+use crate::topo::topods::{
     TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData,
     Orientation, ShapeType, TShape,
 };
@@ -151,7 +151,7 @@ impl Shape {
 
     /// Null/uninitialized shape (OCCT: TopoDS_Shape() default constructor).
     pub fn null() -> Self {
-        use crate::topods::tshape_flags;
+        use crate::topo::topods::tshape_flags;
         Shape {
             data: Arc::new(TShape::Vertex(TVertexData {
                 my_shapes: Vec::new(),
@@ -169,7 +169,7 @@ impl Shape {
     /// Synthetic shape from a flat index (for DS adaptor code).
     /// The index is stored in the `index` field.
     pub fn synthetic(index: usize, orientation: Orientation) -> Self {
-        use crate::topods::tshape_flags;
+        use crate::topo::topods::tshape_flags;
         Shape {
             data: Arc::new(TShape::Vertex(TVertexData {
                 my_shapes: Vec::new(),
@@ -186,7 +186,7 @@ impl Shape {
 
     /// Synthetic shape from a flat index with location (for DS adaptor code).
     pub fn synthetic_with_location(index: usize, orientation: Orientation, location: u32) -> Self {
-        use crate::topods::tshape_flags;
+        use crate::topo::topods::tshape_flags;
         Shape {
             data: Arc::new(TShape::Vertex(TVertexData {
                 my_shapes: Vec::new(),
@@ -202,7 +202,7 @@ impl Shape {
     }
 
     /// OCCT TopoDS_Shape::ShapeType -- returns shape type from BRep.
-    pub fn shape_type_from_brep(&self, brep: &crate::topods::BRep) -> ShapeType {
+    pub fn shape_type_from_brep(&self, brep: &crate::topo::topods::BRep) -> ShapeType {
         if self.is_null() {
             return ShapeType::Shape;
         }
@@ -261,7 +261,7 @@ impl Serialize for Shape {
 
 impl<'de> Deserialize<'de> for Shape {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use crate::topods::tshape_flags;
+        use crate::topo::topods::tshape_flags;
         #[derive(Deserialize)]
         struct Temp {
             index: usize,

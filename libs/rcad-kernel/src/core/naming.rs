@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::topods;
-use crate::vertex_indices;
+use crate::topo::topods;
+use crate::topo::topo_query::vertex_indices;
 
 /// A stable reference to a topological entity in a B-Rep.
 ///

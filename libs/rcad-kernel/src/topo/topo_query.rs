@@ -5,8 +5,8 @@
 
 use std::collections::HashSet;
 
-use crate::topods;
-use crate::topology::WireEdge;
+use crate::topo::topods;
+use crate::topo::topology::WireEdge;
 
 /// Returns wire edges in order, keeping only the **first** occurrence of each
 /// `edge_idx` (semantic edge 鈥?one row per edge index in tree UIs).

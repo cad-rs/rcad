@@ -17,8 +17,9 @@ use crate::geom::{
     LinearExtrusionSurface, OffsetSurface, Plane, RevolutionSurface, SphericalSurface, Surface3,
     ToroidalSurface, TrimmedSurface,
 };
-use crate::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use crate::{BRep, any_perpendicular, topods};
+use crate::topo::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use crate::{BRep, any_perpendicular};
+use crate::topo::topods;
 use glam::{DMat4, DVec3};
 
 /// Parameters for a linear pattern.

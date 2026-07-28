@@ -15,8 +15,8 @@ use crate::BRep;
 use crate::geom::{
     ConicalSurface, Curve3, CurveEval, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval,
 };
-use crate::topods;
-use crate::topology::{Face, Wire, WireEdge};
+use crate::topo::topods;
+use crate::topo::topology::{Face, Wire, WireEdge};
 
 // 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -359,7 +359,7 @@ fn try_planar_earcut_simple_outer(outer: &[DVec3], face_normal: DVec3) -> Option
 /// when the analytic surface is a plane or sphere.
 fn try_face_with_holes(
     brep: &BRep,
-    face: &crate::topology::Face,
+    face: &crate::topo::topology::Face,
     face_flat_idx: usize,
 ) -> Option<Vec<[DVec3; 3]>> {
     if face.inner_wires.is_empty() {
@@ -2117,7 +2117,7 @@ fn try_cylinder_trimmed_face_area(
     face: &Face,
     face_flat_idx: usize,
 ) -> Option<f64> {
-    use crate::projection::closest_point_on_surface;
+    use crate::math::projection::closest_point_on_surface;
 
     // Fast path: rectangular UV patch via 2 Lines + 2 Circles (no inner wires).
     //
@@ -2530,7 +2530,7 @@ fn cylinder_outer_wire_uv_shoelace_area(
     brep: &BRep,
     face: &Face,
 ) -> Option<f64> {
-    use crate::projection::closest_point_on_surface;
+    use crate::math::projection::closest_point_on_surface;
     let surf = Surface3::Cylinder(*cyl);
     let mut pts = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, 256);
     trim_almost_closed_polyline(&mut pts, 1e-5);
@@ -2575,7 +2575,7 @@ fn cylinder_outer_wire_uv_shoelace_area(
 /// from the polygon boundary.  This avoids the overcount from `param_rect_area_cross`
 /// which integrates over the bounding rectangle of the UV polygon.
 fn try_cone_trimmed_face_area(cone: &ConicalSurface, brep: &BRep, face: &Face) -> Option<f64> {
-    use crate::projection::closest_point_on_surface;
+    use crate::math::projection::closest_point_on_surface;
 
     let wire_uv_data = |wire: &Wire| -> Option<(f64, f64)> {
         // Returns (area, first_moment_Mu) for the UV polygon
@@ -2704,7 +2704,7 @@ fn try_generic_trimmed_face_area(
     face: &Face,
     _face_flat_idx: usize,
 ) -> Option<f64> {
-    use crate::projection::closest_point_on_surface;
+    use crate::math::projection::closest_point_on_surface;
     const TWO_PI: f64 = std::f64::consts::TAU;
     const PER_WIRE: usize = 256;
 
@@ -3925,7 +3925,7 @@ fn param_rect_area_cross(surf: &Surface3, u0: f64, u1: f64, v0: f64, v1: f64) ->
 /// be determined (e.g. a truly unbounded Plane with no face_surface_range).
 fn tessellate_curved_face(
     brep: &BRep,
-    face: &crate::topology::Face,
+    face: &crate::topo::topology::Face,
     face_flat_idx: usize,
 ) -> Option<Vec<[DVec3; 3]>> {
     // Look up the surface for this face.
@@ -4008,7 +4008,7 @@ fn orient_by_ref(tri: [DVec3; 3], n_ref: DVec3) -> [DVec3; 3] {
 /// vertex projections, with a small margin, for the finite axis.
 fn estimate_uv_domain_from_wire(
     brep: &BRep,
-    face: &crate::topology::Face,
+    face: &crate::topo::topology::Face,
     face_flat_idx: usize,
     surf: &crate::geom::Surface3,
 ) -> Option<[f64; 4]> {
@@ -4146,7 +4146,7 @@ fn estimate_uv_domain_from_wire(
 /// matching the indexing of `GeomStore.face_surface`.
 fn face_triangles(
     brep: &BRep,
-    face: &crate::topology::Face,
+    face: &crate::topo::topology::Face,
     face_flat_idx: usize,
 ) -> Vec<[DVec3; 3]> {
     // Determine whether the face has a curved surface (not Plane).
@@ -4295,14 +4295,14 @@ fn orient_tri(tri: [DVec3; 3], face_normal: DVec3) -> [DVec3; 3] {
 }
 
 /// Iterate over (face_flat_index, &Face) pairs across all solids/shells.
-pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, crate::topology::Face)> {
+pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, crate::topo::topology::Face)> {
     let mut faces = Vec::new();
     for (fi, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Face(fd) = &**ts {
             faces.push((
                 fi,
-                crate::topology::Face {
-                    outer_wire: crate::topology::Wire { edges: Vec::new() },
+                crate::topo::topology::Face {
+                    outer_wire: crate::topo::topology::Wire { edges: Vec::new() },
                     inner_wires: Vec::new(),
                     normal: DVec3::Z,
                     triangles: Vec::new(),
@@ -4323,7 +4323,7 @@ pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, crate::topology::Face)
 #[doc(hidden)]
 pub fn face_triangles_pub(
     brep: &topods::BRep,
-    face: &crate::topology::Face,
+    face: &crate::topo::topology::Face,
     face_flat_idx: usize,
 ) -> Vec<[DVec3; 3]> {
     face_triangles(brep, face, face_flat_idx)

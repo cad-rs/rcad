@@ -15,7 +15,8 @@
 
 use glam::{DVec2, DVec3};
 
-use crate::{BRep, Surface3, closest_point_on_surface, geom::SurfaceEval, topods};
+use crate::{BRep, Surface3, closest_point_on_surface, geom::SurfaceEval};
+use crate::topo::topods;
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Result type
@@ -500,7 +501,7 @@ fn sample_brep_points(brep: &topods::BRep) -> Vec<DVec3> {
 mod tests {
     use super::*;
     use crate::geom::Plane;
-    use crate::topods::{self, Orientation, Shape};
+    use crate::topo::topods::{self, Orientation, Shape};
 
     fn make_square_plane_brep(origin: DVec3, normal: DVec3, width: f64, height: f64) -> BRep {
         let n = normal.normalize_or_zero();

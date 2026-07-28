@@ -1034,7 +1034,7 @@ pub fn make_pcurve_on_surface(
     surface: &Surface3,
     n_samples: usize,
 ) -> Option<Curve2d> {
-    use crate::fit::interpolate_points_2d;
+    use crate::math::fit::interpolate_points_2d;
     use crate::geom::CurveEval;
     use glam::DVec2;
 

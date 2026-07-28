@@ -1,4 +1,5 @@
-use crate::{BRep, WireEdge, topology::Wire};
+use crate::topo::topology::{Wire, WireEdge};
+use crate::{BRep};
 use std::collections::HashMap;
 
 fn oriented_edge_vertices(brep: &BRep, we: WireEdge) -> Option<(usize, usize)> {

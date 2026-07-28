@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn refine_isoparametric_spans_preserves_bilinear_geometry() {
         use crate::geom::{Plane, SurfaceEval};
-        use crate::nurbs_convert::plane_to_bspline_domain;
+        use crate::base::nurbs_convert::plane_to_bspline_domain;
         let pl = Plane::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z);
         let s0 = plane_to_bspline_domain(&pl, 0.0, 1.0, 0.0, 1.0);
         let s1 = refine_bspline_surface_isoparametric_spans(&s0, 5, 5);
