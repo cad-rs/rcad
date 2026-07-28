@@ -15,8 +15,9 @@
 
 use glam::{DVec2, DVec3};
 
-use crate::{BRep, Surface3, closest_point_on_surface, geom::SurfaceEval};
-use crate::topo::topods;
+use rcad_kernel::{BRep, Surface3, closest_point_on_surface};
+use rcad_kernel::geom::SurfaceEval;
+use rcad_kernel::topo::topods;
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Result type
@@ -45,7 +46,7 @@ pub struct ShapeDistance {
 /// ```rust
 /// use glam::DVec3;
 /// use rcad_kernel::BRep;
-/// use rcad_kernel::distance::min_distance;
+/// use rcad_kernel::brep_extrema::min_distance;
 ///
 /// let (a, _) = BRep::build_unit_cube();
 /// let (b, _) = BRep::build_unit_cube();
@@ -333,7 +334,7 @@ fn analytic_parallel_plane_distance(
         return None;
     }
 
-    let u = crate::geom::any_perpendicular(n0);
+    let u = rcad_kernel::geom::any_perpendicular(n0);
     let v = n0.cross(u).normalize_or_zero();
     let poly_a_2d: Vec<DVec2> = polygon_a
         .iter()
@@ -361,7 +362,7 @@ fn to_plane_uv(point: DVec3, origin: DVec3, u: DVec3, v: DVec3) -> DVec2 {
 }
 
 fn point_in_planar_polygon(point: DVec3, origin: DVec3, normal: DVec3, polygon: &[DVec3]) -> bool {
-    let u = crate::geom::any_perpendicular(normal);
+    let u = rcad_kernel::geom::any_perpendicular(normal);
     let v = normal.cross(u).normalize_or_zero();
     let point_uv = to_plane_uv(point, origin, u, v);
     let poly_uv: Vec<DVec2> = polygon
@@ -500,12 +501,12 @@ fn sample_brep_points(brep: &topods::BRep) -> Vec<DVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::Plane;
-    use crate::topo::topods::{self, Orientation, Shape};
+    use rcad_kernel::geom::Plane;
+    use rcad_kernel::topo::topods::{self, Orientation, Shape};
 
     fn make_square_plane_brep(origin: DVec3, normal: DVec3, width: f64, height: f64) -> BRep {
         let n = normal.normalize_or_zero();
-        let u = crate::geom::any_perpendicular(n);
+        let u = rcad_kernel::geom::any_perpendicular(n);
         let v = n.cross(u).normalize_or_zero();
         let hw = width * 0.5;
         let hh = height * 0.5;
@@ -574,7 +575,7 @@ mod tests {
     }
 
     fn make_sphere_brep(radius: f64) -> BRep {
-        use crate::geom::SphericalSurface;
+        use rcad_kernel::geom::SphericalSurface;
         let mut brep = topods::BRep::new();
 
         // 3 vertices forming a triangular patch on the sphere

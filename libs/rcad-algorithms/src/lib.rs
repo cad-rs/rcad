@@ -24,6 +24,7 @@ pub mod boptools;
 pub mod brep_algo;
 pub mod brep_algo_api;
 pub mod brep_bnd;
+pub mod brep_extrema;
 pub mod brep_check;
 pub mod brep_check_parallel;
 pub mod brep_graph;

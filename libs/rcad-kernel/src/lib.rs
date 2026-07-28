@@ -125,8 +125,6 @@ pub use math::arc_length::arc_length;
 
 pub use math::curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 
-pub use math::distance::{ShapeDistance, min_distance, point_to_shape_distance};
-
 pub use math::extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
 
 pub use math::fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};

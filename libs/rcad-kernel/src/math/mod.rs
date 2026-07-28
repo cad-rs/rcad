@@ -16,15 +16,11 @@ pub mod gcpnts;
 // OCCT GProp package
 pub mod gprop;
 
-// OCCT BRepExtrema package
-pub mod brep_extrema;
-
 // keep flat — OCCT LProp package (partial)
 pub mod curvature;
 
 // legacy flat modules (keep during migration)
 pub mod arc_length;
-pub mod distance;
 pub mod extrema;
 pub mod fit;
 pub mod math_utils;
