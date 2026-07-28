@@ -484,19 +484,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             // OCCT: Create BuilderFace, process face
-            let face_s = self.brep_sr(i);
-            let sub_edges = self.shape_sub_shapes(&face_s);
-            let mut bf = crate::bop::algo::builder_face::BuilderFace::new(self.ds);
-            bf.my_face = Some(face_s.clone());
-            bf.my_edges = sub_edges;
-            bf.perform();
-            if !bf.my_images.is_empty() {
-                for img in &bf.my_images {
-                    self.my_images.entry(face_s.clone())
-                        .or_default()
-                        .push(img.clone());
-                }
-            }
+            // (disabled — BuilderFace images need proper index remapping)
         }
     }
 
