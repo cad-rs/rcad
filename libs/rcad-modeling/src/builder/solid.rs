@@ -51,7 +51,7 @@ pub fn make_box_brep(
     let (x_axis, y_axis, z_axis) = basis_from_x_y(x_dir, y_dir)?;
     let o = validate_point("origin", origin)?;
     use rcad_kernel::topods::Orientation;
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
@@ -75,8 +75,8 @@ pub fn make_box_brep(
             origin: p(0.0, 0.0, 0.0),
             direction: x_axis,
         })),
-        v[0],
-        v[1],
+        v[0].clone(),
+        v[1].clone(),
         [0.0, w],
     );
     let e12 = t.add_tedge(
@@ -84,8 +84,8 @@ pub fn make_box_brep(
             origin: p(w, 0.0, 0.0),
             direction: y_axis,
         })),
-        v[1],
-        v[2],
+        v[1].clone(),
+        v[2].clone(),
         [0.0, h],
     );
     let e23 = t.add_tedge(
@@ -93,8 +93,8 @@ pub fn make_box_brep(
             origin: p(w, h, 0.0),
             direction: -x_axis,
         })),
-        v[2],
-        v[3],
+        v[2].clone(),
+        v[3].clone(),
         [0.0, w],
     );
     let e30 = t.add_tedge(
@@ -102,8 +102,8 @@ pub fn make_box_brep(
             origin: p(0.0, h, 0.0),
             direction: -y_axis,
         })),
-        v[3],
-        v[0],
+        v[3].clone(),
+        v[0].clone(),
         [0.0, h],
     );
     let e04 = t.add_tedge(
@@ -111,8 +111,8 @@ pub fn make_box_brep(
             origin: p(0.0, 0.0, 0.0),
             direction: z_axis,
         })),
-        v[0],
-        v[4],
+        v[0].clone(),
+        v[4].clone(),
         [0.0, d],
     );
     let e15 = t.add_tedge(
@@ -120,8 +120,8 @@ pub fn make_box_brep(
             origin: p(w, 0.0, 0.0),
             direction: z_axis,
         })),
-        v[1],
-        v[5],
+        v[1].clone(),
+        v[5].clone(),
         [0.0, d],
     );
     let e26 = t.add_tedge(
@@ -129,8 +129,8 @@ pub fn make_box_brep(
             origin: p(w, h, 0.0),
             direction: z_axis,
         })),
-        v[2],
-        v[6],
+        v[2].clone(),
+        v[6].clone(),
         [0.0, d],
     );
     let e37 = t.add_tedge(
@@ -138,8 +138,8 @@ pub fn make_box_brep(
             origin: p(0.0, h, 0.0),
             direction: z_axis,
         })),
-        v[3],
-        v[7],
+        v[3].clone(),
+        v[7].clone(),
         [0.0, d],
     );
     let e45 = t.add_tedge(
@@ -147,8 +147,8 @@ pub fn make_box_brep(
             origin: p(0.0, 0.0, d),
             direction: x_axis,
         })),
-        v[4],
-        v[5],
+        v[4].clone(),
+        v[5].clone(),
         [0.0, w],
     );
     let e56 = t.add_tedge(
@@ -156,8 +156,8 @@ pub fn make_box_brep(
             origin: p(w, 0.0, d),
             direction: y_axis,
         })),
-        v[5],
-        v[6],
+        v[5].clone(),
+        v[6].clone(),
         [0.0, h],
     );
     let e67 = t.add_tedge(
@@ -165,8 +165,8 @@ pub fn make_box_brep(
             origin: p(w, h, d),
             direction: -x_axis,
         })),
-        v[6],
-        v[7],
+        v[6].clone(),
+        v[7].clone(),
         [0.0, w],
     );
     let e74 = t.add_tedge(
@@ -174,16 +174,16 @@ pub fn make_box_brep(
             origin: p(0.0, h, d),
             direction: -y_axis,
         })),
-        v[7],
-        v[4],
+        v[7].clone(),
+        v[4].clone(),
         [0.0, h],
     );
 
     let wires = [
-        t.add_twire(vec![e01, e12, e23, e30]),
-        t.add_twire(vec![e45, e56, e67, e74]),
-        t.add_twire(vec![e01, e15, rev(e45), rev(e04)]),
-        t.add_twire(vec![rev(e23), e26, e67, rev(e37)]),
+        t.add_twire(vec![e01.clone(), e12.clone(), e23.clone(), e30.clone()]),
+        t.add_twire(vec![e45.clone(), e56.clone(), e67.clone(), e74.clone()]),
+        t.add_twire(vec![e01, e15.clone(), rev(e45), rev(e04.clone())]),
+        t.add_twire(vec![rev(e23), e26.clone(), e67, rev(e37.clone())]),
         t.add_twire(vec![rev(e30), e37, rev(e74), e04]),
         t.add_twire(vec![e12, e26, rev(e56), rev(e15)]),
     ];
@@ -202,7 +202,7 @@ pub fn make_box_brep(
         let surface = Surface3::Plane(Plane::new(centers[i], normals[i]));
         face_refs.push(t.add_tface(
             Some(surface),
-            wires[i],
+            wires[i].clone(),
             vec![],
             Some(centers[i]),
             None,
@@ -229,7 +229,7 @@ pub fn sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildErro
     let c = validate_point("center", center)?;
     let r = validate_positive("radius", radius)?;
     use rcad_kernel::topods::Orientation;
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
@@ -248,18 +248,18 @@ pub fn sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildErro
         y_dir: DVec3::Y,
     });
     // Degenerate edge at north pole (start == end)
-    let e_top = t.add_tedge(None, north, north, [0.0, std::f64::consts::PI * r]);
+    let e_top = t.add_tedge(None, north.clone(), north.clone(), [0.0, std::f64::consts::PI * r]);
     // Seam edge north→south (parameter range: half-circle, 0 = north, π = south)
     let e_seam = t.add_tedge(
         Some(seam_curve.clone()),
         north,
-        south,
+        south.clone(),
         [0.0, std::f64::consts::PI],
     );
     // Degenerate edge at south pole
-    let e_bot = t.add_tedge(None, south, south, [0.0, std::f64::consts::PI * r]);
+    let e_bot = t.add_tedge(None, south.clone(), south, [0.0, std::f64::consts::PI * r]);
 
-    let wire = t.add_twire(vec![e_top, e_seam, e_bot, rev(e_seam)]);
+    let wire = t.add_twire(vec![e_top, e_seam.clone(), e_bot, rev(e_seam)]);
     let surface = Surface3::Sphere(rcad_kernel::geom::SphericalSurface::new(c, DVec3::Y, r));
     let face = t.add_tface(
         Some(surface),
@@ -302,7 +302,7 @@ pub fn cylinder_brep(
     let h = validate_positive("height", height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     use rcad_kernel::topods::Orientation;
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
@@ -323,14 +323,14 @@ pub fn cylinder_brep(
     let bot_circle = Circle3::new(bot_center, -y_axis, r);
     let e_top = t.add_tedge(
         Some(Curve3::Circle(top_circle)),
-        top_v,
-        top_v,
+        top_v.clone(),
+        top_v.clone(),
         [0.0, std::f64::consts::TAU],
     );
     let e_bot = t.add_tedge(
         Some(Curve3::Circle(bot_circle)),
-        bot_v,
-        bot_v,
+        bot_v.clone(),
+        bot_v.clone(),
         [0.0, std::f64::consts::TAU],
     );
     // Seam edge: from top_pos downward along -y_axis (top → bottom)
@@ -341,7 +341,7 @@ pub fn cylinder_brep(
     let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [0.0, h]);
 
     // Faces
-    let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
+    let lateral_wire = t.add_twire(vec![e_seam.clone(), rev(e_bot.clone()), rev(e_seam), e_top.clone()]);
     let top_wire = t.add_twire(vec![e_top]);
     let bot_wire = t.add_twire(vec![rev(e_bot)]);
 
@@ -437,7 +437,7 @@ pub fn cone_brep(
     }
 
     use rcad_kernel::topods::Orientation;
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
@@ -448,15 +448,15 @@ pub fn cone_brep(
     let apex = t.add_tvertex(p(0.0, half, 0.0));
     let base_c = t.add_tvertex(p(0.0, -half, 0.0));
 
-    let e_apex = t.add_tedge(None, apex, apex, [0.0, r * std::f64::consts::TAU]);
-    let e_base = t.add_tedge(None, base_c, base_c, [0.0, r * std::f64::consts::TAU]);
+    let e_apex = t.add_tedge(None, apex.clone(), apex.clone(), [0.0, r * std::f64::consts::TAU]);
+    let e_base = t.add_tedge(None, base_c.clone(), base_c.clone(), [0.0, r * std::f64::consts::TAU]);
     let seam_curve = Curve3::Line(Line3 {
         origin: p(0.0, half, 0.0),
         direction: z_axis,
     });
     let e_seam = t.add_tedge(Some(seam_curve), apex, base_c, [-half, half]);
 
-    let top_wire = t.add_twire(vec![e_seam, rev(e_base), rev(e_seam), e_apex]);
+    let top_wire = t.add_twire(vec![e_seam.clone(), rev(e_base.clone()), rev(e_seam), e_apex]);
     let bot_wire = t.add_twire(vec![e_base]);
 
     let cone_surf = Surface3::Cone(rcad_kernel::geom::ConicalSurface {
@@ -567,8 +567,8 @@ pub fn make_conical_frustum_brep(
         direction: seam_dir,
     });
 
-    let e0 = t.add_tedge(Some(bottom_circle), v0, v0, [0.0, 2.0 * PI]);
-    let e1 = t.add_tedge(Some(top_circle), v1, v1, [0.0, 2.0 * PI]);
+    let e0 = t.add_tedge(Some(bottom_circle), v0.clone(), v0.clone(), [0.0, 2.0 * PI]);
+    let e1 = t.add_tedge(Some(top_circle), v1.clone(), v1.clone(), [0.0, 2.0 * PI]);
     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
 
     // Surfaces
@@ -582,13 +582,13 @@ pub fn make_conical_frustum_brep(
     let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 0.0), -DVec3::Y));
     let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, height, 0.0), DVec3::Y));
 
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
 
     // Wires and faces
-    let w0 = t.add_twire(vec![e0, e2, rev(e1), rev(e2)]);
+    let w0 = t.add_twire(vec![e0.clone(), e2.clone(), rev(e1.clone()), rev(e2.clone())]);
     let f0 = t.add_tface(
         Some(cone_surf),
         w0,
@@ -599,7 +599,7 @@ pub fn make_conical_frustum_brep(
         true,
     );
 
-    let w1 = t.add_twire(vec![rev(e0)]);
+    let w1 = t.add_twire(vec![rev(e0.clone())]);
     let f1 = t.add_tface(
         Some(bottom_plane),
         w1,
@@ -610,7 +610,7 @@ pub fn make_conical_frustum_brep(
         false,
     );
 
-    let w2 = t.add_twire(vec![e1]);
+    let w2 = t.add_twire(vec![e1.clone()]);
     let f2 = t.add_tface(
         Some(top_plane),
         w2,
@@ -637,13 +637,13 @@ pub fn make_conical_frustum_brep(
         direction: DVec2::new(0.0, (v_top - v_bottom) / seam_len),
     });
 
-    t.edge_mut(e0)
+    t.edge_mut(e0.clone())
         .pcurves
         .insert(f0.index, (e0_on_cone, 0.0, 2.0 * PI));
     t.edge_mut(e0)
         .pcurves
         .insert(f1.index, (e0_on_plane, 0.0, 2.0 * PI));
-    t.edge_mut(e1)
+    t.edge_mut(e1.clone())
         .pcurves
         .insert(f0.index, (e1_on_cone, 0.0, 2.0 * PI));
     t.edge_mut(e1)
@@ -691,7 +691,7 @@ pub fn torus_brep(
     let min = validate_positive("minor_radius", minor_radius)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     use rcad_kernel::topods::Orientation;
-    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef {
+    let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
@@ -709,18 +709,18 @@ pub fn torus_brep(
 
     let e_major = t.add_tedge(
         Some(major_circle),
-        seam_v,
-        seam_v,
+        seam_v.clone(),
+        seam_v.clone(),
         [0.0, std::f64::consts::TAU],
     );
     let e_minor = t.add_tedge(
         Some(minor_circle),
-        seam_v,
+        seam_v.clone(),
         seam_v,
         [0.0, std::f64::consts::TAU],
     );
 
-    let wire = t.add_twire(vec![e_major, e_minor, rev(e_major), rev(e_minor)]);
+    let wire = t.add_twire(vec![e_major.clone(), e_minor.clone(), rev(e_major), rev(e_minor)]);
     let surface = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
         center: c,
         axis: z_axis,
@@ -827,8 +827,8 @@ pub fn make_planar_rect_brep(
             origin: c0,
             direction: dir01,
         })),
-        v0,
-        v1,
+        v0.clone(),
+        v1.clone(),
         [0.0, len01],
     );
     let e1 = t.add_tedge(
@@ -837,7 +837,7 @@ pub fn make_planar_rect_brep(
             direction: dir12,
         })),
         v1,
-        v2,
+        v2.clone(),
         [0.0, len12],
     );
     let e2 = t.add_tedge(
@@ -846,7 +846,7 @@ pub fn make_planar_rect_brep(
             direction: dir23,
         })),
         v2,
-        v3,
+        v3.clone(),
         [0.0, len23],
     );
     let e3 = t.add_tedge(
@@ -897,7 +897,7 @@ pub fn make_planar_polygon_brep(
 fn make_polygon_wire_topods(
     t: &mut topods::BRep,
     points: &[DVec3],
-) -> Result<topods::ShapeRef, BuildError> {
+) -> Result<topods::Shape, BuildError> {
     let n = points.len();
     if n < 3 {
         return Err(BuildError::DegenerateGeometry(
@@ -915,8 +915,8 @@ fn make_polygon_wire_topods(
                 origin: points[i],
                 direction: dir,
             })),
-            verts[i],
-            verts[j],
+            verts[i].clone(),
+            verts[j].clone(),
             [0.0, len],
         ));
     }
@@ -1158,14 +1158,14 @@ pub fn mirror_brep(
 
     let mut out = topods::BRep::new();
     use rcad_kernel::topods::TShape;
-    use rcad_kernel::topods::{Orientation, ShapeRef};
-    let rev = |sr: ShapeRef| ShapeRef {
+    use rcad_kernel::topods::{Orientation, Shape};
+    let rev = |sr: Shape| Shape {
         orientation: Orientation::Reversed,
         ..sr
     };
 
-    // Phase 1: mirror all vertices, build ptr_id → new ShapeRef map
-    let mut vmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    // Phase 1: mirror all vertices, build ptr_id → new Shape map
+    let mut vmap: std::collections::HashMap<u64, Shape> = std::collections::HashMap::new();
     for ts in &brep.tshapes {
         if let TShape::Vertex(vd) = &**ts {
             let sr = out.add_tvertex(mirror_p(vd.point));
@@ -1189,12 +1189,12 @@ pub fn mirror_brep(
         }
     };
 
-    // Phase 3: create edges, map old edge ptr_id → new ShapeRef
-    let mut emap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    // Phase 3: create edges, map old edge ptr_id → new Shape
+    let mut emap: std::collections::HashMap<u64, Shape> = std::collections::HashMap::new();
     for ts in &brep.tshapes {
         if let TShape::Edge(ed) = &**ts {
-            let first = *vmap.get(&ed.first.ptr_id).unwrap_or(&ed.first);
-            let last = *vmap.get(&ed.last.ptr_id).unwrap_or(&ed.last);
+            let first = vmap.get(&ed.first.ptr_id()).unwrap_or(&ed.first).clone();
+            let last = vmap.get(&ed.last.ptr_id()).unwrap_or(&ed.last).clone();
             let curve = ed.curve.as_ref().map(mirror_curve);
             let sr = out.add_tedge(curve, first, last, ed.range);
             emap.insert(tshape_ptr_id(ts), sr);
@@ -1203,24 +1203,24 @@ pub fn mirror_brep(
 
     // Phase 4: create wires, faces, shells, solids — traverse in order
     // topods::BRep stores TShapes in flat order. We iterate and build mirror
-    // structures, storing new ShapeRef for wires and faces as we go.
-    let mut wmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
-    let mut fmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
-    let mut shmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    // structures, storing new Shape for wires and faces as we go.
+    let mut wmap: std::collections::HashMap<u64, Shape> = std::collections::HashMap::new();
+    let mut fmap: std::collections::HashMap<u64, Shape> = std::collections::HashMap::new();
+    let mut shmap: std::collections::HashMap<u64, Shape> = std::collections::HashMap::new();
 
     for ts in &brep.tshapes {
         match &**ts {
             TShape::Wire(wd) => {
-                let mirrored: Vec<ShapeRef> = wd.edges.iter().map(|&sr| rev(sr)).collect();
+                let mirrored: Vec<Shape> = wd.edges.iter().map(|sr| rev(sr.clone())).collect();
                 let sr = out.add_twire(mirrored);
                 wmap.insert(tshape_ptr_id(ts), sr);
             }
             TShape::Face(fd) => {
-                let outer = *wmap.get(&fd.outer_wire.ptr_id).unwrap_or(&fd.outer_wire);
-                let inner: Vec<ShapeRef> = fd
+                let outer = wmap.get(&fd.outer_wire.ptr_id()).unwrap_or(&fd.outer_wire).clone();
+                let inner: Vec<Shape> = fd
                     .inner_wires
                     .iter()
-                    .map(|sr| *wmap.get(&sr.ptr_id).unwrap_or(sr))
+                    .map(|sr| wmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
                     .collect();
                 let surface = fd
                     .surface
@@ -1238,19 +1238,19 @@ pub fn mirror_brep(
                 fmap.insert(tshape_ptr_id(ts), sr);
             }
             TShape::Shell(sd) => {
-                let faces: Vec<ShapeRef> = sd
+                let faces: Vec<Shape> = sd
                     .faces
                     .iter()
-                    .map(|sr| *fmap.get(&sr.ptr_id).unwrap_or(sr))
+                    .map(|sr| fmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
                     .collect();
                 let sr = out.add_tshell(faces);
                 shmap.insert(tshape_ptr_id(ts), sr);
             }
             TShape::Solid(sd) => {
-                let shells: Vec<ShapeRef> = sd
+                let shells: Vec<Shape> = sd
                     .shells
                     .iter()
-                    .map(|sr| *shmap.get(&sr.ptr_id).unwrap_or(sr))
+                    .map(|sr| shmap.get(&sr.ptr_id()).unwrap_or(sr).clone())
                     .collect();
                 out.add_tsolid(shells);
             }

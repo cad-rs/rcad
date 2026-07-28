@@ -12,7 +12,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topods::{self, Orientation, ShapeRef, TShape};
+use rcad_kernel::topods::{self, Orientation, Shape, TShape};
 use std::sync::Arc;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,13 +29,13 @@ use std::sync::Arc;
 //   brep.geom.face_surface  → iterate TShape::Face, skip to flat face index
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Find the ShapeRef for the n-th TShape::Solid (0-based).
-fn ns_solid<'a>(brep: &'a rcad_kernel::BRep, n: usize) -> Option<ShapeRef> {
+/// Find the Shape for the n-th TShape::Solid (0-based).
+fn ns_solid<'a>(brep: &'a rcad_kernel::BRep, n: usize) -> Option<Shape> {
     let mut count = 0usize;
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if matches!(ts.as_ref(), TShape::Solid(_)) {
             if count == n {
-                return Some(ShapeRef::synthetic(i));
+                return Some(Shape::synthetic(i, Orientation::Forward));
             }
             count += 1;
         }
@@ -81,7 +81,7 @@ fn ns_face_data<'a>(
     }
 }
 
-/// Get a ShapeRef for the (solid_idx, shell_idx, face_idx, wire_idx) wire.
+/// Get a Shape for the (solid_idx, shell_idx, face_idx, wire_idx) wire.
 /// wire_idx = None → outer wire, Some(i) → inner wire.
 fn ns_wire_ref(
     brep: &rcad_kernel::BRep,
@@ -89,11 +89,11 @@ fn ns_wire_ref(
     shell_idx: usize,
     face_idx: usize,
     wire_idx: Option<usize>,
-) -> Option<ShapeRef> {
+) -> Option<Shape> {
     let fd = ns_face_data(brep, solid_idx, shell_idx, face_idx)?;
     match wire_idx {
-        None => Some(fd.outer_wire),
-        Some(i) => fd.inner_wires.get(i).copied(),
+        None => Some(fd.outer_wire.clone()),
+        Some(i) => fd.inner_wires.get(i).cloned(),
     }
 }
 
@@ -918,7 +918,7 @@ pub fn analyze_wire(
         return report;
     }
 
-    // Collect edge vertices using new ShapeRef-based access
+    // Collect edge vertices using new Shape-based access
     let mut vertices: Vec<(usize, usize)> = Vec::new();
     let mut vertex_set = std::collections::HashSet::new();
 
@@ -1312,7 +1312,7 @@ fn check_face_orientation(
 
     // Face orientation: FORWARD = same as surface normal, REVERSED = opposite.
     // TFaceData does not store an explicit normal; the face orientation
-    // is determined by the outer_wire ShapeRef's orientation.
+    // is determined by the outer_wire Shape's orientation.
     let is_forward = fd.outer_wire.orientation == rcad_kernel::topods::Orientation::Forward;
     let normal = if is_forward {
         surface_normal
@@ -1536,7 +1536,7 @@ pub fn analyze_surface_bounds(
     let mut degenerate_edge_count = 0usize;
 
     // Helper: process a list of edge refs from a wire
-    let mut process_edges = |edge_refs: &[ShapeRef]| {
+    let mut process_edges = |edge_refs: &[Shape]| {
         for er in edge_refs {
             let edge_idx = er.index;
             let ed = match e_edge_data(brep, edge_idx) {

@@ -1054,7 +1054,7 @@ pub fn add_face_with_surface(
     surface: Surface3,
     wires: Vec<Wire>,
 ) -> Result<usize, BRepLibError> {
-    use rcad_kernel::topods::ShapeRef;
+    use rcad_kernel::topods::Shape;
     use std::sync::Arc;
 
     if wires.is_empty() {
@@ -1063,16 +1063,16 @@ pub fn add_face_with_surface(
         ));
     }
 
-    // Convert each old-style Wire to a tshape wire (ShapeRef chain of edges)
-    let mut tshape_wires: Vec<ShapeRef> = Vec::with_capacity(wires.len());
+    // Convert each old-style Wire to a tshape wire (Shape chain of edges)
+    let mut tshape_wires: Vec<Shape> = Vec::with_capacity(wires.len());
     for w in wires {
-        let edge_refs: Vec<ShapeRef> = w
+        let edge_refs: Vec<Shape> = w
             .edges
             .into_iter()
             .map(|we| {
                 let ts = &brep.tshapes[we.idx];
-                ShapeRef {
-                    ptr_id: Arc::as_ptr(ts) as u64,
+                Shape {
+                    data: ts.clone(),
                     index: we.idx,
                     orientation: if we.forward {
                         Orientation::Forward
@@ -1308,7 +1308,7 @@ fn collect_face_wire_vertices(brep: &rcad_kernel::BRep, face_ts_idx: usize) -> V
     };
     let outer_wire = &fd.outer_wire;
     if let TShape::Wire(twd) = &*brep.tshapes[outer_wire.index] {
-        for &edge_ref in &twd.edges {
+        for edge_ref in &twd.edges {
             if let TShape::Edge(ed) = &*brep.tshapes[edge_ref.index] {
                 let (first_pt, last_pt) = (
                     brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO),

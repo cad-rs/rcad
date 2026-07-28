@@ -121,7 +121,7 @@ pub fn count_edges_in_faces(t: &rcad_kernel::topods::BRep) -> usize {
     for ts in &t.tshapes {
         if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
             for wire_sr in std::iter::once(&fd.outer_wire).chain(&fd.inner_wires) {
-                let wd = t.wire(*wire_sr);
+                let wd = t.wire(wire_sr.clone());
                 for e_sr in &wd.edges {
                     used.insert(e_sr.index);
                 }

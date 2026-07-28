@@ -46,7 +46,7 @@ use glam::DVec3;
 use rcad_kernel::{
     CurveEval, SurfaceEval,
     geom::{Curve3, Line3, Plane, Surface3},
-    topods::{Orientation, ShapeRef, TShape},
+    topods::{Orientation, Shape, TShape},
     topology::{Face, Shell, Solid, Wire, WireEdge},
 };
 
@@ -979,7 +979,7 @@ impl<'a> MakePipeShell<'a> {
 
         // Create lateral faces between sections
         let mut lateral_faces = 0;
-        let mut face_shape_refs: Vec<ShapeRef> = Vec::new();
+        let mut face_shape_refs: Vec<Shape> = Vec::new();
 
         for i in 0..all_section_verts.len() - 1 {
             let section0 = &all_section_verts[i];
@@ -1155,7 +1155,7 @@ impl<'a> MakePipeShell<'a> {
         v1: usize,
         v2: usize,
         v3: usize,
-    ) -> Option<ShapeRef> {
+    ) -> Option<Shape> {
         let p0 = result_brep.vertex_point(v0).unwrap();
         let p1 = result_brep.vertex_point(v1).unwrap();
         let _p2 = result_brep.vertex_point(v2).unwrap();
@@ -1167,7 +1167,7 @@ impl<'a> MakePipeShell<'a> {
         let normal = e1.cross(e2).normalize_or(DVec3::Z);
 
         // Create edges
-        let mut edge_srs: Vec<ShapeRef> = Vec::new();
+        let mut edge_srs: Vec<Shape> = Vec::new();
         let verts = [v0, v1, v2, v3];
 
         for i in 0..4 {
@@ -1186,7 +1186,7 @@ impl<'a> MakePipeShell<'a> {
             });
 
             let edge_idx = result_brep.add_edge_flat(start, end, Some(curve), [0.0, len]);
-            edge_srs.push(ShapeRef::synthetic_with_orientation(
+            edge_srs.push(Shape::synthetic(
                 edge_idx,
                 Orientation::Forward,
             ));
@@ -1216,7 +1216,7 @@ impl<'a> MakePipeShell<'a> {
         &self,
         result_brep: &mut rcad_kernel::BRep,
         section_verts: &[usize],
-    ) -> Option<ShapeRef> {
+    ) -> Option<Shape> {
         if section_verts.len() < 3 {
             return None;
         }
@@ -1234,7 +1234,7 @@ impl<'a> MakePipeShell<'a> {
         let normal = (p1 - p0).cross(p2 - p0).normalize_or(DVec3::Z);
 
         // Create fan triangulation
-        let mut edge_srs: Vec<ShapeRef> = Vec::new();
+        let mut edge_srs: Vec<Shape> = Vec::new();
 
         for i in 0..section_verts.len() {
             let start = section_verts[i];
@@ -1252,7 +1252,7 @@ impl<'a> MakePipeShell<'a> {
             });
 
             let edge_idx = result_brep.add_edge_flat(start, end, Some(curve), [0.0, len]);
-            edge_srs.push(ShapeRef::synthetic_with_orientation(
+            edge_srs.push(Shape::synthetic(
                 edge_idx,
                 Orientation::Forward,
             ));
@@ -1471,7 +1471,7 @@ fn add_face(
 ) -> usize {
     // Convert old-style Wires to topods ShapeRefs
     let outer_sr = wire_to_shape_ref(brep, &outer);
-    let inner_srs: Vec<ShapeRef> = inner.iter().map(|w| wire_to_shape_ref(brep, w)).collect();
+    let inner_srs: Vec<Shape> = inner.iter().map(|w| wire_to_shape_ref(brep, w)).collect();
 
     let face_sr = brep.add_tface(
         Some(surface),
@@ -1485,13 +1485,13 @@ fn add_face(
     face_sr.index
 }
 
-/// Convert an old-style Wire to a topods ShapeRef (adding a TWire to the BRep).
-fn wire_to_shape_ref(brep: &mut rcad_kernel::BRep, wire: &Wire) -> ShapeRef {
-    let edge_srs: Vec<ShapeRef> = wire
+/// Convert an old-style Wire to a topods Shape (adding a TWire to the BRep).
+fn wire_to_shape_ref(brep: &mut rcad_kernel::BRep, wire: &Wire) -> Shape {
+    let edge_srs: Vec<Shape> = wire
         .edges
         .iter()
         .map(|we| {
-            ShapeRef::synthetic_with_orientation(
+            Shape::synthetic(
                 we.idx,
                 if we.forward {
                     Orientation::Forward
@@ -1504,8 +1504,8 @@ fn wire_to_shape_ref(brep: &mut rcad_kernel::BRep, wire: &Wire) -> ShapeRef {
     brep.add_twire(edge_srs)
 }
 
-/// Extract an old-style Wire from a topods BRep given a wire ShapeRef.
-fn extract_wire(brep: &rcad_kernel::BRep, wire_sr: ShapeRef) -> Wire {
+/// Extract an old-style Wire from a topods BRep given a wire Shape.
+fn extract_wire(brep: &rcad_kernel::BRep, wire_sr: Shape) -> Wire {
     let wd = match &*brep.tshapes[wire_sr.index] {
         TShape::Wire(wd) => wd,
         _ => unreachable!(),
@@ -1514,22 +1514,22 @@ fn extract_wire(brep: &rcad_kernel::BRep, wire_sr: ShapeRef) -> Wire {
         edges: wd
             .edges
             .iter()
-            .map(|&e| WireEdge::new(e.index, e.orientation == Orientation::Forward))
+            .map(|e| WireEdge::new(e.index, e.orientation == Orientation::Forward))
             .collect(),
     }
 }
 
-/// Extract an old-style Face from a topods BRep given a face ShapeRef.
-fn extract_face_from_sr(brep: &rcad_kernel::BRep, face_sr: ShapeRef) -> Face {
+/// Extract an old-style Face from a topods BRep given a face Shape.
+fn extract_face_from_sr(brep: &rcad_kernel::BRep, face_sr: Shape) -> Face {
     let fd = match &*brep.tshapes[face_sr.index] {
         TShape::Face(fd) => fd,
         _ => unreachable!(),
     };
-    let outer_wire = extract_wire(brep, fd.outer_wire);
+    let outer_wire = extract_wire(brep, fd.outer_wire.clone());
     let inner_wires: Vec<Wire> = fd
         .inner_wires
         .iter()
-        .map(|&iw| extract_wire(brep, iw))
+        .map(|iw| extract_wire(brep, iw.clone()))
         .collect();
     let normal = fd
         .surface
@@ -1565,7 +1565,7 @@ fn extract_solid(brep: &rcad_kernel::BRep) -> Option<Solid> {
         };
         let mut faces = Vec::new();
         for face_sr in &shd.faces {
-            faces.push(extract_face_from_sr(brep, *face_sr));
+            faces.push(extract_face_from_sr(brep, face_sr.clone()));
         }
         shells.push(Shell { faces });
     }
@@ -1589,7 +1589,7 @@ fn first_shell_from_brep(brep: &rcad_kernel::BRep) -> Option<(Shell, usize)> {
     };
     let mut faces = Vec::new();
     for face_sr in &shd.faces {
-        faces.push(extract_face_from_sr(brep, *face_sr));
+        faces.push(extract_face_from_sr(brep, face_sr.clone()));
     }
     Some((Shell { faces }, shell_sr.index))
 }

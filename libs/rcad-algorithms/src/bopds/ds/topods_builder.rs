@@ -266,7 +266,7 @@ fn init_shape_topo(
                 shell_counter,
                 solid_counter,
             );
-            let outer_wire_data = brep.wire(fd.outer_wire);
+            let outer_wire_data = brep.wire(fd.outer_wire.clone());
             let boundary_edges_ordered = reorder_wire_topods(&outer_wire_data.edges, brep, e_map);
             let boundary_edges: Vec<usize> =
                 boundary_edges_ordered.iter().map(|&(ei, _)| ei).collect();
@@ -277,7 +277,7 @@ fn init_shape_topo(
                 if edges.is_empty() {
                     Vec::new()
                 } else if edges.len() == 1 {
-                    let ed = brep.edge(edges[0]);
+                    let ed = brep.edge(edges[0].clone());
                     vec![
                         v_map.get(&ed.first.index).copied().unwrap_or(0),
                         v_map.get(&ed.last.index).copied().unwrap_or(0),
@@ -286,8 +286,8 @@ fn init_shape_topo(
                     let mut verts = Vec::with_capacity(edges.len());
                     for i in 0..edges.len() {
                         let next_i = (i + 1) % edges.len();
-                        let e = brep.edge(edges[i]);
-                        let en = brep.edge(edges[next_i]);
+                        let e = brep.edge(edges[i].clone());
+                        let en = brep.edge(edges[next_i].clone());
                         let shared =
                             if e.first.index == en.first.index || e.first.index == en.last.index {
                                 e.first.index
@@ -339,7 +339,7 @@ fn init_shape_topo(
                 .inner_wires
                 .iter()
                 .map(|iw_sr| {
-                    let iw_data = brep.wire(*iw_sr);
+                    let iw_data = brep.wire(iw_sr.clone());
                     iw_data
                         .edges
                         .iter()
@@ -356,7 +356,7 @@ fn init_shape_topo(
                 .map(|_| ds.push_wire(Vec::new(), None))
                 .collect();
             for (ii, iw_sr) in fd.inner_wires.iter().enumerate() {
-                let iw_data = brep.wire(*iw_sr);
+                let iw_data = brep.wire(iw_sr.clone());
                 let iw_edges: Vec<usize> = iw_data
                     .edges
                     .iter()
@@ -728,7 +728,7 @@ pub fn load_topods_brep(ds: &mut DS, brep: &topods::BRep, origin: ShapeOrigin) {
 /// TopoDS version: reads edge vertex adjacency from topods::BRep.
 /// Returns (DS edge index, forward_in_wire) pairs in traversal order.
 pub fn reorder_wire_topods(
-    wire_edges: &[topods::ShapeRef],
+    wire_edges: &[topods::Shape],
     brep: &topods::BRep,
     e_map: &HashMap<usize, usize>,
 ) -> Vec<(usize, bool)> {
@@ -745,11 +745,11 @@ pub fn reorder_wire_topods(
     }
     let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, we_sr) in wire_edges.iter().enumerate() {
-        let ed = brep.edge(*we_sr);
+        let ed = brep.edge(we_sr.clone());
         adj.entry(ed.first.index).or_default().push(i);
         adj.entry(ed.last.index).or_default().push(i);
     }
-    let first_ed = brep.edge(wire_edges[0]);
+    let first_ed = brep.edge(wire_edges[0].clone());
     let mut cur = first_ed.first.index;
     let mut used = vec![false; wire_edges.len()];
     let mut ordered = Vec::with_capacity(wire_edges.len());
@@ -763,7 +763,7 @@ pub fn reorder_wire_topods(
             .expect("wire is not closed -- broken topology");
         used[next_i] = true;
         let we_sr = &wire_edges[next_i];
-        let ed = brep.edge(*we_sr);
+        let ed = brep.edge(we_sr.clone());
         // orientation = Forward if traversal enters through first vertex,
         // Reversed if enters through last vertex (matches face wire winding).
         let is_fwd = ed.first.index == cur;

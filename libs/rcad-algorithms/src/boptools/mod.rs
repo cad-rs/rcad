@@ -645,13 +645,13 @@ pub fn compute_state_by_one_point(
 /// MakeContainer (BOPTools_AlgoTools.cxx L1600-1645).
 ///
 /// Creates an empty container shape of the specified type.
-/// rcad: maps to topods TShape variants. Returns a ShapeRef with
+/// rcad: maps to topods TShape variants. Returns a Shape with
 /// the appropriate empty TShape.
 pub fn make_container(
     shape_type: u8,
     brep: &mut rcad_kernel::topods::BRep,
-) -> rcad_kernel::topods::ShapeRef {
-    use rcad_kernel::topods::{ShapeRef, TShape, TShellData, TSolidData, TWireData, tshape_flags};
+) -> rcad_kernel::topods::Shape {
+    use rcad_kernel::topods::{Shape, TShape, TShellData, TSolidData, TWireData, tshape_flags};
     let idx = brep.tshapes.len();
     let shape: std::sync::Arc<TShape> = match shape_type {
         0 => std::sync::Arc::new(TShape::Compound(Vec::new())),
@@ -673,12 +673,11 @@ pub fn make_container(
             flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
             edges: Vec::new(),
         })),
-        _ => return ShapeRef::synthetic(0),
+        _ => return Shape::synthetic(0, rcad_kernel::topods::Orientation::Forward),
     };
     brep.tshapes.push(shape);
-    let ptr_id = std::sync::Arc::as_ptr(&brep.tshapes[idx]) as u64;
-    ShapeRef {
-        ptr_id,
+    Shape {
+        data: brep.tshapes[idx].clone(),
         index: idx,
         orientation: rcad_kernel::topods::Orientation::Forward,
         location: 0,
@@ -1144,10 +1143,10 @@ pub fn compute_tolerance_of_cb(cb: &crate::bopds::common_block::CommonBlock, ds:
 /// The fence prevents duplicates when the same sub-shape appears
 /// in multiple compounds (OCCT optional NCollection_Map parameter).
 fn treat_compound_inner(
-    shape: &topods::ShapeRef,
+    shape: &topods::Shape,
     brep: &topods::BRep,
     fence: &mut std::collections::HashSet<usize>,
-    out: &mut Vec<topods::ShapeRef>,
+    out: &mut Vec<topods::Shape>,
 ) {
     let ts = &brep.tshapes[shape.index];
     match &**ts {
@@ -1158,14 +1157,14 @@ fn treat_compound_inner(
         }
         _ => {
             if fence.insert(shape.index) {
-                out.push(*shape);
+                out.push(shape.clone());
             }
         }
     }
 }
 
 /// Pubic wrapper =flattens a compound (with fence).
-pub fn treat_compound(shape: &topods::ShapeRef, brep: &topods::BRep) -> Vec<topods::ShapeRef> {
+pub fn treat_compound(shape: &topods::Shape, brep: &topods::BRep) -> Vec<topods::Shape> {
     let mut out = Vec::new();
     let mut fence = std::collections::HashSet::new();
     treat_compound_inner(shape, brep, &mut fence, &mut out);
@@ -1562,7 +1561,7 @@ pub fn wires_to_faces(
     }
 
     // OCCT L743-789: build faces from each group  ?use tshape API
-    let mut face_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+    let mut face_srs: Vec<rcad_kernel::topods::Shape> = Vec::new();
     for group in &wire_groups {
         if group.is_empty() {
             continue;
@@ -1614,7 +1613,7 @@ pub fn wires_to_faces(
         }
 
         // Create ShapeRefs for vertices and edges (tshape API)
-        let mut edge_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+        let mut edge_srs: Vec<rcad_kernel::topods::Shape> = Vec::new();
         for &ei in &group_ei {
             if ei >= ds.edge_count() {
                 continue;

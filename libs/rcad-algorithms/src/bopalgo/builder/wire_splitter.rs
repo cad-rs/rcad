@@ -1446,7 +1446,7 @@ pub(crate) fn perform_shapes_to_avoid_topo(
             return true;
         }
         if _tag == 0 {
-            tool.is_edge_degenerated(rcad_kernel::topods::ShapeRef::synthetic(idx))
+            tool.is_edge_degenerated(&rcad_kernel::topods::Shape::synthetic(idx, rcad_kernel::topods::Orientation::Forward))
         } else {
             false
         }
@@ -1486,7 +1486,7 @@ pub(crate) fn perform_shapes_to_avoid_topo(
                     continue;
                 }
                 // OCCT L204: skip if vertex has INTERNAL orientation
-                if tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(v))
+                if tool.vertex_orientation(&rcad_kernel::topods::Shape::synthetic(v, rcad_kernel::topods::Orientation::Forward))
                     == rcad_kernel::topods::Orientation::Internal
                 {
                     continue;

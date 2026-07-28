@@ -16,7 +16,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topods::{self, Orientation, ShapeRef, TShape};
+use rcad_kernel::topods::{self, Orientation, Shape, TShape};
 use std::sync::Arc;
 
 use crate::bop_occt_ops::boolean_op_generic as boolean_op;
@@ -263,7 +263,7 @@ fn build_prism_from_sections(
     let mut brep = rcad_kernel::BRep::new();
 
     // Add vertices: bot[0..n] then top[0..n]
-    let mut verts: Vec<ShapeRef> = Vec::with_capacity(2 * n);
+    let mut verts: Vec<Shape> = Vec::with_capacity(2 * n);
     for &p in bot {
         verts.push(brep.add_tvertex(p));
     }
@@ -273,10 +273,10 @@ fn build_prism_from_sections(
 
     fn add_line_edge(
         brep: &mut rcad_kernel::BRep,
-        verts: &[ShapeRef],
+        verts: &[Shape],
         start: usize,
         end: usize,
-    ) -> ShapeRef {
+    ) -> Shape {
         let p0 = brep.vertex_point(verts[start].index).unwrap();
         let p1 = brep.vertex_point(verts[end].index).unwrap();
         let d = p1 - p0;
@@ -287,32 +287,32 @@ fn build_prism_from_sections(
                 origin: p0,
                 direction: dir_vec,
             })),
-            verts[start],
-            ShapeRef::synthetic_with_orientation(verts[end].index, Orientation::Reversed),
+            verts[start].clone(),
+            Shape::synthetic(verts[end].index, Orientation::Reversed),
             [0.0, len],
         )
     }
 
     // Bottom-cap edges
-    let bot_edges: Vec<ShapeRef> = (0..n)
+    let bot_edges: Vec<Shape> = (0..n)
         .map(|i| add_line_edge(&mut brep, &verts, i, (i + 1) % n))
         .collect();
     // Top-cap edges
-    let top_edges: Vec<ShapeRef> = (0..n)
+    let top_edges: Vec<Shape> = (0..n)
         .map(|i| add_line_edge(&mut brep, &verts, n + i, n + (i + 1) % n))
         .collect();
     // Vertical edges
-    let vert_edges: Vec<ShapeRef> = (0..n)
+    let vert_edges: Vec<Shape> = (0..n)
         .map(|i| add_line_edge(&mut brep, &verts, i, n + i))
         .collect();
 
-    let mut face_refs: Vec<ShapeRef> = Vec::with_capacity(n + 2);
+    let mut face_refs: Vec<Shape> = Vec::with_capacity(n + 2);
 
     // Bottom cap (outward normal = -dir)
     {
-        let wire_edge_refs: Vec<ShapeRef> = (0..n)
+        let wire_edge_refs: Vec<Shape> = (0..n)
             .map(|i| {
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(
                     bot_edges[n - 1 - i].index,
                     Orientation::Reversed,
                 )
@@ -333,8 +333,8 @@ fn build_prism_from_sections(
 
     // Top cap (outward normal = +dir)
     {
-        let wire_edge_refs: Vec<ShapeRef> = (0..n)
-            .map(|i| ShapeRef::synthetic_with_orientation(top_edges[i].index, Orientation::Forward))
+        let wire_edge_refs: Vec<Shape> = (0..n)
+            .map(|i| Shape::synthetic(top_edges[i].index, Orientation::Forward))
             .collect();
         let wire_sr = brep.add_twire(wire_edge_refs);
         let face_sr = brep.add_tface(
@@ -366,10 +366,10 @@ fn build_prism_from_sections(
             }
         };
         let wire_edge_refs = vec![
-            ShapeRef::synthetic_with_orientation(bot_edges[i].index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(vert_edges[j].index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(top_edges[i].index, Orientation::Reversed),
-            ShapeRef::synthetic_with_orientation(vert_edges[i].index, Orientation::Reversed),
+            Shape::synthetic(bot_edges[i].index, Orientation::Forward),
+            Shape::synthetic(vert_edges[j].index, Orientation::Forward),
+            Shape::synthetic(top_edges[i].index, Orientation::Reversed),
+            Shape::synthetic(vert_edges[i].index, Orientation::Reversed),
         ];
         let wire_sr = brep.add_twire(wire_edge_refs);
         let face_sr = brep.add_tface(
@@ -400,7 +400,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
     let n = profile_verts.len();
     let mut brep = rcad_kernel::BRep::new();
 
-    let verts: Vec<ShapeRef> = profile_verts.iter().map(|&p| brep.add_tvertex(p)).collect();
+    let verts: Vec<Shape> = profile_verts.iter().map(|&p| brep.add_tvertex(p)).collect();
 
     let normal = {
         let a = profile_verts[0];
@@ -416,7 +416,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
     };
 
     // Build edges for the polygon loop
-    let edge_refs: Vec<ShapeRef> = (0..n)
+    let edge_refs: Vec<Shape> = (0..n)
         .map(|i| {
             let j = (i + 1) % n;
             let p0 = profile_verts[i];
@@ -429,17 +429,17 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
                     origin: p0,
                     direction: dir_vec,
                 })),
-                verts[i],
-                ShapeRef::synthetic_with_orientation(verts[j].index, Orientation::Reversed),
+                verts[i].clone(),
+                Shape::synthetic(verts[j].index, Orientation::Reversed),
                 [0.0, len],
             )
         })
         .collect();
 
     // Wire with all edges Forward
-    let wire_edge_refs: Vec<ShapeRef> = edge_refs
+    let wire_edge_refs: Vec<Shape> = edge_refs
         .iter()
-        .map(|e| ShapeRef::synthetic_with_orientation(e.index, Orientation::Forward))
+        .map(|e| Shape::synthetic(e.index, Orientation::Forward))
         .collect();
     let wire_sr = brep.add_twire(wire_edge_refs);
     let face_sr = brep.add_tface(
@@ -916,7 +916,7 @@ pub(crate) fn build_loft_solid(
     let num_sections = sections.len();
 
     // Add all vertices
-    let mut verts: Vec<ShapeRef> = Vec::with_capacity(num_sections * n);
+    let mut verts: Vec<Shape> = Vec::with_capacity(num_sections * n);
     for si in 0..num_sections {
         for &p in &sections[si] {
             verts.push(brep.add_tvertex(p));
@@ -924,7 +924,7 @@ pub(crate) fn build_loft_solid(
     }
 
     // Helper: add a line edge between two vertex indices
-    let add_line_edge = |brep: &mut rcad_kernel::BRep, start: usize, end: usize| -> ShapeRef {
+    let add_line_edge = |brep: &mut rcad_kernel::BRep, start: usize, end: usize| -> Shape {
         let p0 = brep.vertex_point(verts[start].index).unwrap();
         let p1 = brep.vertex_point(verts[end].index).unwrap();
         let d = p1 - p0;
@@ -935,18 +935,18 @@ pub(crate) fn build_loft_solid(
                 origin: p0,
                 direction: dir_vec,
             })),
-            verts[start],
-            ShapeRef::synthetic_with_orientation(verts[end].index, Orientation::Reversed),
+            verts[start].clone(),
+            Shape::synthetic(verts[end].index, Orientation::Reversed),
             [0.0, len],
         )
     };
 
     // Build edge tables
     // Cap edges for each section
-    let mut cap_edges: Vec<Vec<ShapeRef>> = Vec::with_capacity(num_sections);
+    let mut cap_edges: Vec<Vec<Shape>> = Vec::with_capacity(num_sections);
     for si in 0..num_sections {
         let base = si * n;
-        let mut edges: Vec<ShapeRef> = Vec::with_capacity(n);
+        let mut edges: Vec<Shape> = Vec::with_capacity(n);
         for i in 0..n {
             let ed = add_line_edge(&mut brep, base + i, base + (i + 1) % n);
             edges.push(ed);
@@ -955,11 +955,11 @@ pub(crate) fn build_loft_solid(
     }
 
     // Lateral edges
-    let mut lateral_edges: Vec<Vec<ShapeRef>> = Vec::with_capacity(num_sections - 1);
+    let mut lateral_edges: Vec<Vec<Shape>> = Vec::with_capacity(num_sections - 1);
     for si in 0..num_sections - 1 {
         let base0 = si * n;
         let base1 = (si + 1) * n;
-        let mut edges: Vec<ShapeRef> = Vec::with_capacity(n);
+        let mut edges: Vec<Shape> = Vec::with_capacity(n);
         for i in 0..n {
             let ed = add_line_edge(&mut brep, base0 + i, base1 + i);
             edges.push(ed);
@@ -978,9 +978,9 @@ pub(crate) fn build_loft_solid(
         (b - a).cross(c - a).normalize_or(DVec3::Z)
     };
     {
-        let wire_edge_refs: Vec<ShapeRef> = (0..n)
+        let wire_edge_refs: Vec<Shape> = (0..n)
             .map(|i| {
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(
                     cap_edges[0][n - 1 - i].index,
                     Orientation::Reversed,
                 )
@@ -1007,9 +1007,9 @@ pub(crate) fn build_loft_solid(
         (b - a).cross(c - a).normalize_or(DVec3::Z)
     };
     {
-        let wire_edge_refs: Vec<ShapeRef> = (0..n)
+        let wire_edge_refs: Vec<Shape> = (0..n)
             .map(|i| {
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(
                     cap_edges[num_sections - 1][i].index,
                     Orientation::Forward,
                 )
@@ -1043,16 +1043,16 @@ pub(crate) fn build_loft_solid(
             let normal = (p1 - p0).cross(p2 - p0).normalize_or(top_normal);
 
             let wire_edge_refs = vec![
-                ShapeRef::synthetic_with_orientation(cap_edges[si][i].index, Orientation::Forward),
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(cap_edges[si][i].index, Orientation::Forward),
+                Shape::synthetic(
                     lateral_edges[si][j].index,
                     Orientation::Forward,
                 ),
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(
                     cap_edges[si + 1][i].index,
                     Orientation::Reversed,
                 ),
-                ShapeRef::synthetic_with_orientation(
+                Shape::synthetic(
                     lateral_edges[si][i].index,
                     Orientation::Reversed,
                 ),
@@ -1118,7 +1118,7 @@ fn collect_vertex_points(brep: &rcad_kernel::BRep) -> Vec<DVec3> {
 
 /// Get the first solid's first shell's face list, along with the face count.
 /// This mirrors the old `brep.solids[0].shells[0].faces` pattern.
-fn first_shell_faces(brep: &rcad_kernel::BRep) -> Option<Vec<ShapeRef>> {
+fn first_shell_faces(brep: &rcad_kernel::BRep) -> Option<Vec<Shape>> {
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = ts.as_ref() {
             let shell_sr = sd.shells.first()?;
@@ -1141,10 +1141,10 @@ fn edge_vertex_indices(brep: &rcad_kernel::BRep, idx: usize) -> Option<(usize, u
 }
 
 /// Get the wire edge refs for a given face's outer wire.
-fn face_outer_wire_edges(brep: &rcad_kernel::BRep, face_sr: &ShapeRef) -> Option<Vec<ShapeRef>> {
+fn face_outer_wire_edges(brep: &rcad_kernel::BRep, face_sr: &Shape) -> Option<Vec<Shape>> {
     let ts = brep.tshapes.get(face_sr.index)?;
     if let TShape::Face(fd) = ts.as_ref() {
-        let wire_sr = fd.outer_wire;
+        let wire_sr = fd.outer_wire.clone();
         let wts = brep.tshapes.get(wire_sr.index)?;
         if let TShape::Wire(wd) = wts.as_ref() {
             return Some(wd.edges.clone());

@@ -1552,8 +1552,8 @@ fn add_edge(
     v1: usize,
 ) -> usize {
     // Create vertex ShapeRefs using synthetic references
-    let first_sr = topods::ShapeRef::synthetic(v0);
-    let last_sr = topods::ShapeRef::synthetic(v1);
+    let first_sr = topods::Shape::synthetic(v0, topods::Orientation::Forward);
+    let last_sr = topods::Shape::synthetic(v1, topods::Orientation::Forward);
     brep.add_tedge(Some(curve), first_sr, last_sr, [t0, t1])
         .index
 }
@@ -1563,13 +1563,13 @@ fn add_edge(
 fn add_face(
     brep: &mut rcad_kernel::BRep,
     surface: Surface3,
-    outer: Vec<topods::ShapeRef>,
-    inner: Vec<Vec<topods::ShapeRef>>,
+    outer: Vec<topods::Shape>,
+    inner: Vec<Vec<topods::Shape>>,
 ) -> usize {
     // Create the outer wire from edge refs
     let outer_wire = brep.add_twire(outer);
     // Create inner wires
-    let inner_wires: Vec<topods::ShapeRef> = inner
+    let inner_wires: Vec<topods::Shape> = inner
         .into_iter()
         .map(|edge_refs| brep.add_twire(edge_refs))
         .collect();
@@ -1610,7 +1610,7 @@ fn add_face(
         let shell_ref = {
             let ts = &brep.tshapes[si];
             if let TShape::Solid(sd) = ts.as_ref() {
-                sd.shells.first().copied()
+                sd.shells.first().cloned()
             } else {
                 None
             }
@@ -1618,8 +1618,8 @@ fn add_face(
         if let Some(sh_sr) = shell_ref {
             let arc_sh = &mut brep.tshapes[sh_sr.index];
             if let TShape::Shell(sh) = &mut *Arc::get_mut(arc_sh).unwrap() {
-                sh.faces.push(face_sr);
-                sh.my_shapes.push(face_sr);
+                sh.faces.push(face_sr.clone());
+                sh.my_shapes.push(face_sr.clone());
             }
         }
     }

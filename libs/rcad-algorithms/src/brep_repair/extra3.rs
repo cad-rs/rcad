@@ -955,8 +955,8 @@ pub fn merge_bspline_faces(
     // Perform the merge
     let mut result = brep.clone();
 
-    // Read wire edges via ShapeRef chains
-    let get_wire_edges = |brep: &rcad_kernel::BRep, fi: usize| -> Option<Vec<ShapeRef>> {
+    // Read wire edges via Shape chains
+    let get_wire_edges = |brep: &rcad_kernel::BRep, fi: usize| -> Option<Vec<Shape>> {
         let fd = match &**brep.tshapes.get(fi)? { TShape::Face(f) => f, _ => return None };
         let wd = match &*brep.tshapes[fd.outer_wire.index] { TShape::Wire(w) => w, _ => return None };
         Some(wd.edges.clone())
@@ -966,7 +966,7 @@ pub fn merge_bspline_faces(
     let wire2 = get_wire_edges(brep, face2_idx)?;
 
     // Read inner wires
-    let get_inner_wires = |brep: &rcad_kernel::BRep, fi: usize| -> Option<Vec<Vec<ShapeRef>>> {
+    let get_inner_wires = |brep: &rcad_kernel::BRep, fi: usize| -> Option<Vec<Vec<Shape>>> {
         let fd = match &**brep.tshapes.get(fi)? { TShape::Face(f) => f, _ => return None };
         let mut inners = Vec::new();
         for iwr in &fd.inner_wires {
@@ -983,7 +983,7 @@ pub fn merge_bspline_faces(
 
     // Collect inner wires - we keep inner wires from face1 and add from face2
     let inner_wires_merged = !inner2.is_empty();
-    let mut all_inner_refs: Vec<ShapeRef> = fd1.inner_wires.clone();
+    let mut all_inner_refs: Vec<Shape> = fd1.inner_wires.clone();
     all_inner_refs.extend(fd2.inner_wires.clone());
 
     let merged_edge_count = merged_wire.len();
@@ -991,7 +991,7 @@ pub fn merge_bspline_faces(
     // Determine which face to keep (lower local index) and which to remove
     let (keep_fi, remove_fi) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
 
-    // Build new wire ShapeRef for the merged face
+    // Build new wire Shape for the merged face
     let merged_wire_sr = result.add_twire(merged_wire);
 
     // Build merged TFaceData
@@ -1009,7 +1009,6 @@ pub fn merge_bspline_faces(
         natural_restriction: fd1.natural_restriction,
     };
     let merged_tshape = Arc::new(TShape::Face(merged_fd));
-    let merged_ptr = Arc::as_ptr(&merged_tshape) as u64;
 
     // Determine flat indices for kept/removed faces
     let kept_flat = flat_face_index_global(&result, si, shi, keep_fi);
@@ -1021,15 +1020,15 @@ pub fn merge_bspline_faces(
     // Remove the other face TShape
     result.tshapes.remove(remove_flat);
 
-    // Update shell's face ShapeRefs: remove the removed face's ShapeRef
+    // Update shell's face ShapeRefs: remove the removed face's Shape
     if let TShape::Solid(sd) = &*result.tshapes[si] {
         if let Some(sr) = sd.shells.get(shi) {
             if let TShape::Shell(shd) = &*result.tshapes[sr.index] {
                 // We need to modify the shell's face list
                 // Rebuild shell with updated face refs
                 let mut new_faces = shd.faces.clone();
-                new_faces[keep_fi] = ShapeRef {
-                    ptr_id: merged_ptr,
+                new_faces[keep_fi] = Shape {
+                    data: result.tshapes[kept_flat].clone(),
                     index: kept_flat,
                     orientation: Orientation::Forward,
                     location: 0,
@@ -1043,11 +1042,10 @@ pub fn merge_bspline_faces(
                 // Need mutable access to update
                 // Since Arc is shared, we need to rebuild
                 let new_shd_arc = Arc::new(TShape::Shell(new_shd));
-                let new_shd_ptr = Arc::as_ptr(&new_shd_arc) as u64;
                 let new_shd_idx = result.tshapes.len();
                 let mut new_sd = sd.clone();
-                new_sd.shells[shi] = ShapeRef {
-                    ptr_id: new_shd_ptr,
+                new_sd.shells[shi] = Shape {
+                    data: new_shd_arc.clone(),
                     index: new_shd_idx,
                     orientation: Orientation::Forward,
                     location: 0,
@@ -1152,19 +1150,19 @@ fn find_shared_edge(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi1: usize,
     edges1.intersection(&edges2).copied().next()
 }
 
-/// Splice two wire edge lists together for merging (works with Vec<ShapeRef>).
+/// Splice two wire edge lists together for merging (works with Vec<Shape>).
 fn splice_wires_for_merge_topo(
-    wire_a: &[ShapeRef],
-    wire_b: &[ShapeRef],
+    wire_a: &[Shape],
+    wire_b: &[Shape],
     shared_edge_idx: usize,
-) -> Option<Vec<ShapeRef>> {
+) -> Option<Vec<Shape>> {
     let pos_a = wire_a.iter().position(|er| er.index == shared_edge_idx)?;
     let pos_b = wire_b.iter().position(|er| er.index == shared_edge_idx)?;
 
     let n_b = wire_b.len();
     // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
-    let b_edges: Vec<ShapeRef> =
-        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b]).collect();
+    let b_edges: Vec<Shape> =
+        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b].clone()).collect();
 
     let mut merged = Vec::with_capacity(wire_a.len() - 1 + b_edges.len());
     merged.extend_from_slice(&wire_a[..pos_a]);
@@ -1190,7 +1188,7 @@ fn splice_wires_for_merge(
     let n_b = wire_b.len();
     // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
     let b_edges: Vec<rcad_kernel::topology::WireEdge> =
-        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b]).collect();
+        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b].clone()).collect();
 
     let mut merged = Vec::with_capacity(wire_a.len() - 1 + b_edges.len());
     merged.extend_from_slice(&wire_a[..pos_a]);

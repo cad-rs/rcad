@@ -123,8 +123,8 @@ pub fn remove_small_edges(brep: &rcad_kernel::BRep, min_length: f64) -> (rcad_ke
     TShape::Vertex(v) => Arc::new(TShape::Vertex(v.clone())),
     TShape::Edge(ed2) => {
      let mut e2 = ed2.clone();
-     e2.first = ShapeRef { index: vert_map[e2.first.index], ..e2.first };
-     e2.last = ShapeRef { index: vert_map[e2.last.index], ..e2.last };
+     e2.first = Shape { index: vert_map[e2.first.index], ..e2.first };
+     e2.last = Shape { index: vert_map[e2.last.index], ..e2.last };
      Arc::new(TShape::Edge(e2))
     }
     TShape::Wire(w) => {
@@ -341,7 +341,7 @@ pub fn update_face_tolerance(brep: &mut rcad_kernel::BRep, flat_face_idx: usize,
   if let TShape::Solid(sd) = &**ts {
    for sr in &sd.shells {
     if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
-     if flat_face_idx < cur + shd.faces.len() { found = Some(shd.faces[flat_face_idx - cur]); break; }
+     if flat_face_idx < cur + shd.faces.len() { found = Some(shd.faces[flat_face_idx - cur].clone()); break; }
      cur += shd.faces.len();
     }
    }
@@ -349,7 +349,7 @@ pub fn update_face_tolerance(brep: &mut rcad_kernel::BRep, flat_face_idx: usize,
   if found.is_some() { break; }
  }
  let Some(fr) = found else { return floor; };
- let fd = brep.face(fr);
+ let fd = brep.face(fr.clone());
  let mut max_etol: f64 = floor;
  if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
   for er in &wd.edges { if let TShape::Edge(ed2) = &*brep.tshapes[er.index] { max_etol = max_etol.max(ed2.tolerance); } }
@@ -458,9 +458,9 @@ fn collect_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> 
    if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
     for (fi, fr) in shd.faces.iter().enumerate() {
      if let TShape::Face(fd) = &*brep.tshapes[fr.index] {
-      if let Some(g) = find_wire_gap(fd.outer_wire, brep) { if g.1 <= max_gap && g.1 > tolerance { gaps.push(WireGapInfo { solid: si, shell: shi, face: fi, wire_idx: 0, edge_idx: g.0, gap: g.1 }); } }
+      if let Some(g) = find_wire_gap(fd.outer_wire.clone(), brep) { if g.1 <= max_gap && g.1 > tolerance { gaps.push(WireGapInfo { solid: si, shell: shi, face: fi, wire_idx: 0, edge_idx: g.0, gap: g.1 }); } }
       for (wi, iwr) in fd.inner_wires.iter().enumerate() {
-       if let Some(g) = find_wire_gap(*iwr, brep) { if g.1 <= max_gap && g.1 > tolerance { gaps.push(WireGapInfo { solid: si, shell: shi, face: fi, wire_idx: wi + 1, edge_idx: g.0, gap: g.1 }); } }
+       if let Some(g) = find_wire_gap(iwr.clone(), brep) { if g.1 <= max_gap && g.1 > tolerance { gaps.push(WireGapInfo { solid: si, shell: shi, face: fi, wire_idx: wi + 1, edge_idx: g.0, gap: g.1 }); } }
       }
      }
     }
@@ -470,7 +470,7 @@ fn collect_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> 
  gaps
 }
 
-fn find_wire_gap(wire_ref: ShapeRef, brep: &rcad_kernel::BRep) -> Option<(usize, f64)> {
+fn find_wire_gap(wire_ref: Shape, brep: &rcad_kernel::BRep) -> Option<(usize, f64)> {
  let wd = if let TShape::Wire(w) = &*brep.tshapes[wire_ref.index] { w } else { return None; };
  if wd.edges.len() < 2 { return None; }
  Some((0, 0.0)) // simplified; real impl checks gap between consecutive edges

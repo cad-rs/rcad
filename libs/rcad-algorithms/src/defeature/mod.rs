@@ -57,7 +57,7 @@ use rcad_kernel::geom::{
 };
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
-    ShapeRef, TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData,
+    Shape, TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData,
 };
 use rcad_modeling::make_cylinder_brep;
 
@@ -829,7 +829,7 @@ fn get_face_sample_point(
     fi: usize,
 ) -> Option<DVec3> {
     let fd = get_face_data(brep, si, shi, fi)?;
-    collect_wire_vertices(brep, fd.outer_wire, false)
+    collect_wire_vertices(brep, fd.outer_wire.clone(), false)
         .first()
         .copied()
 }
@@ -842,7 +842,7 @@ fn estimate_face_area(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize
     };
 
     // Collect vertex positions in order
-    let pts = collect_wire_vertices(brep, fd.outer_wire, true);
+    let pts = collect_wire_vertices(brep, fd.outer_wire.clone(), true);
 
     if pts.len() < 3 {
         return 0.0;
@@ -859,7 +859,7 @@ fn estimate_face_area(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize
 }
 
 /// Collect vertex positions from a wire in order.
-fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire_sr: ShapeRef, orient: bool) -> Vec<DVec3> {
+fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire_sr: Shape, orient: bool) -> Vec<DVec3> {
     let mut pts: Vec<DVec3> = Vec::new();
     if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
         for edge_sr in &wd.edges {
@@ -925,7 +925,7 @@ fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurfa
     // Collect unique vertex indices from all wires of this face.
     let mut seen: HashSet<usize> = HashSet::new();
     let collect_wire_verts =
-        |brep: &rcad_kernel::BRep, wire_sr: ShapeRef, seen: &mut HashSet<usize>| {
+        |brep: &rcad_kernel::BRep, wire_sr: Shape, seen: &mut HashSet<usize>| {
             if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
                 for edge_sr in &wd.edges {
                     if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
@@ -935,9 +935,9 @@ fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurfa
                 }
             }
         };
-    collect_wire_verts(brep, fd.outer_wire, &mut seen);
+    collect_wire_verts(brep, fd.outer_wire.clone(), &mut seen);
     for iw_sr in &fd.inner_wires {
-        collect_wire_verts(brep, *iw_sr, &mut seen);
+        collect_wire_verts(brep, iw_sr.clone(), &mut seen);
     }
 
     let mut hole_votes: i32 = 0;
@@ -1734,7 +1734,7 @@ fn analyze_pocket_group(
         let Some(fd) = get_face_data(brep, si, shi, fi) else {
             continue;
         };
-        vertices.extend(collect_wire_vertices(brep, fd.outer_wire, true));
+        vertices.extend(collect_wire_vertices(brep, fd.outer_wire.clone(), true));
     }
 
     if vertices.len() < 3 {

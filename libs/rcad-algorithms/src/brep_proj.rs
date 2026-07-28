@@ -283,8 +283,8 @@ fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> rcad_kernel::BRep {
         vrefs.push(brep.add_tvertex(*p));
     }
     for i in 0..poly.len().saturating_sub(1) {
-        let vi_a = vrefs[i];
-        let vi_b = vrefs[i + 1];
+        let vi_a = vrefs[i].clone();
+        let vi_b = vrefs[i + 1].clone();
         let a = poly[i];
         let b = poly[i + 1];
         let d = b - a;

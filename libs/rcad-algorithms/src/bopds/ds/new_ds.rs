@@ -59,7 +59,7 @@ pub struct DS {
     pub interf_vz: Vec<InterferenceVZ>,pub interf_ez: Vec<InterferenceEZ>,
     pub interf_fz: Vec<InterferenceFZ>,pub interf_zz: Vec<InterferenceZZ>,
     pub interfered: HashSet<usize>,
-    // TShape pool for ShapeRef -> Shape conversion (populated from BRep during load).
+    // TShape pool for Shape -> Shape conversion (populated from BRep during load).
     pub tshapes: Vec<Arc<TShape>>,
 }
 
@@ -157,27 +157,27 @@ impl DS {
     fn get_children(&self,s:&Shape)->Vec<Shape>{
         match &*s.data{
             topods::TShape::Vertex(_)=>vec![],
-            topods::TShape::Edge(ed)=>{let d=self.make_child(ed.first);let d2=self.make_child(ed.last);vec![d,d2]}
-            topods::TShape::Wire(wd)=>wd.edges.iter().map(|&sr|self.make_child(sr)).collect(),
+            topods::TShape::Edge(ed)=>{let d=self.make_child(ed.first.clone());let d2=self.make_child(ed.last.clone());vec![d,d2]}
+            topods::TShape::Wire(wd)=>wd.edges.iter().map(|sr|self.make_child(sr.clone())).collect(),
             topods::TShape::Face(fd)=>{
-                let mut v=vec![self.make_child(fd.outer_wire)];
-                v.extend(fd.inner_wires.iter().map(|&w|self.make_child(w)));
+                let mut v=vec![self.make_child(fd.outer_wire.clone())];
+                v.extend(fd.inner_wires.iter().map(|w|self.make_child(w.clone())));
                 v
             }
-            topods::TShape::Shell(sd)=>sd.faces.iter().map(|&sr|self.make_child(sr)).collect(),
-            topods::TShape::Solid(sd)=>sd.shells.iter().map(|&sr|self.make_child(sr)).collect(),
-            topods::TShape::CompSolid(cd)=>cd.iter().map(|&sr|self.make_child(sr)).collect(),
-            topods::TShape::Compound(cd)=>cd.iter().map(|&sr|self.make_child(sr)).collect(),
+            topods::TShape::Shell(sd)=>sd.faces.iter().map(|sr|self.make_child(sr.clone())).collect(),
+            topods::TShape::Solid(sd)=>sd.shells.iter().map(|sr|self.make_child(sr.clone())).collect(),
+            topods::TShape::CompSolid(cd)=>cd.iter().map(|sr|self.make_child(sr.clone())).collect(),
+            topods::TShape::Compound(cd)=>cd.iter().map(|sr|self.make_child(sr.clone())).collect(),
         }
     }
 
-    // Helpers: get_children calls make_child for each ShapeRef sub-shape.
-    // The TEdgeData/TWireData/etc. use ShapeRef for sub-shape references.
-    // We convert ShapeRef -> Shape by looking up the TShape in self.tshapes
+    // Helpers: get_children calls make_child for each Shape sub-shape.
+    // The TEdgeData/TWireData/etc. use Shape for sub-shape references.
+    // We convert Shape -> Shape by looking up the TShape in self.tshapes
     // (populated during construction from BRep).
-    fn make_child(&self,sr:topods::ShapeRef)->Shape{
+    fn make_child(&self,sr:topods::Shape)->Shape{
         Shape::new(
-            if sr.ptr_id!=0&&sr.index<self.tshapes.len(){self.tshapes[sr.index].clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))},
+            if sr.ptr_id()!=0&&sr.index<self.tshapes.len(){self.tshapes[sr.index].clone()}else{Arc::new(topods::TShape::Vertex(topods::TVertexData{my_shapes:Vec::new(),flags:0,point:DVec3::ZERO,tolerance:0.0,points:Vec::new()}))},
             sr.location,sr.orientation,
         )
     }

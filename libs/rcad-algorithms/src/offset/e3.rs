@@ -36,7 +36,7 @@ pub fn offset_solid_with_options(
  for shell in &solid.shells {
   let offset_brep = offset_shell_with_options(shell, brep, opts)?;
   // Merge tshapes: extend the result with the offset tshapes.
-  // ShapeRef indices within the offset BRep are self-consistent,
+  // Shape indices within the offset BRep are self-consistent,
   // so we can just append all tshapes.
   result.tshapes.extend(offset_brep.tshapes);
  }
@@ -342,7 +342,7 @@ pub fn offset_shape(brep: &rcad_kernel::BRep, opts: OffsetOptions) -> Result<Off
  let mut shell_faces: Vec<Face> = Vec::new();
  for &fi in &face_indices {
   let fd = match &*brep.tshapes[fi] { rcad_kernel::topods::TShape::Face(fd) => fd, _ => continue };
-  // Convert the outer wire from ShapeRef-based to WireEdge-based
+  // Convert the outer wire from Shape-based to WireEdge-based
   let outer_wire = {
   let wd = match &*brep.tshapes[fd.outer_wire.index] { rcad_kernel::topods::TShape::Wire(wd) => wd, _ => continue };
   let edges: Vec<WireEdge> = wd.edges.iter().map(|sr| {

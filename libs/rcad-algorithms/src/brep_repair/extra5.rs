@@ -43,9 +43,9 @@ pub fn fix_all_uv_gaps(brep: &rcad_kernel::BRep, config: &UvGapRepairConfig) -> 
  let mut solid_idx = 0usize;
  while solid_idx < result.tshapes.len() {
   // Clone shell indices to avoid borrowing result during fix_uv_gaps
-  let shell_refs: Vec<(usize, ShapeRef)> = {
+  let shell_refs: Vec<(usize, Shape)> = {
    let TShape::Solid(sd) = &*result.tshapes[solid_idx] else { solid_idx += 1; continue };
-   sd.shells.iter().enumerate().map(|(shi, sr)| (shi, *sr)).collect()
+   sd.shells.iter().enumerate().map(|(shi, sr)| (shi, sr.clone())).collect()
   };
   for (shi, shell_sr) in &shell_refs {
    let n_faces = {
@@ -668,7 +668,7 @@ fn check_if_internal(
  if found_shi1 != found_shi2 {
   // Check if one shell is internal (void)
   // Shell index > 0 in a solid typically indicates a void
-  // In topods, shells are stored as Vec<ShapeRef>, sequential order determines index
+  // In topods, shells are stored as Vec<Shape>, sequential order determines index
   let mut solid_seq = 0usize;
   for ts in &brep.tshapes {
    if let TShape::Solid(sd) = &**ts {
@@ -949,7 +949,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
  }
 
  // Build new tshapes array: keep all TSolids/TShells/TFaces but skip removed faces.
- // Also remap all ShapeRef.index values that shift due to tshape removals.
+ // Also remap all Shape.index values that shift due to tshape removals.
  //
  // Strategy: build a new tshapes Vec, track remapping of every index.
  let mut new_tshapes: Vec<Arc<TShape>> = Vec::new();
@@ -984,11 +984,11 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    TShape::Shell(shd) => {
     // Copy faces, skipping those in remove_set
     let old_flat_start = flat_idx;
-    let kept_faces: Vec<ShapeRef> = shd.faces.iter().enumerate()
+    let kept_faces: Vec<Shape> = shd.faces.iter().enumerate()
      .filter(|&(fi_offset, _)| {
       !remove_set.contains(&(old_flat_start + fi_offset))
      })
-     .map(|(_, sr)| *sr)
+     .map(|(_, sr)| sr.clone())
      .collect();
     flat_idx += shd.faces.len();
 
@@ -1009,8 +1009,8 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    }
    TShape::Solid(sd) => {
     // Filter shells: only keep shells whose new index is Some
-    let kept_shells: Vec<ShapeRef> = sd.shells.iter().filter_map(|sr| {
-     if old_to_new[sr.index].is_some() { Some(*sr) } else { None }
+    let kept_shells: Vec<Shape> = sd.shells.iter().filter_map(|sr| {
+     if old_to_new[sr.index].is_some() { Some(sr.clone()) } else { None }
     }).collect();
 
     if kept_shells.is_empty() {
@@ -1046,17 +1046,17 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
   }
  }
 
- // Remap all ShapeRef.index values in the new tshapes
+ // Remap all Shape.index values in the new tshapes
  let mapped_tshapes: Vec<Arc<TShape>> = new_tshapes.iter().map(|ts| {
   let new_ts: TShape = match &**ts {
    TShape::Vertex(vd) => TShape::Vertex(vd.clone()),
    TShape::Edge(ed) => {
     let mut new_ed = ed.clone();
     if let Some(&n) = global_remap.get(&ed.first.index) {
-     new_ed.first = ShapeRef { index: n, ..ed.first };
+     new_ed.first = { let mut s = ed.first.clone(); s.index = n; s };
     }
     if let Some(&n) = global_remap.get(&ed.last.index) {
-     new_ed.last = ShapeRef { index: n, ..ed.last };
+     new_ed.last = { let mut s = ed.last.clone(); s.index = n; s };
     }
     // Remap pcurve keys (face indices)
     new_ed.pcurves = ed.pcurves.iter().map(|(&fi, &(ref c, t1, t2))| {
@@ -1068,7 +1068,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    TShape::Wire(wd) => {
     let mut new_wd = wd.clone();
     new_wd.edges = wd.edges.iter().map(|er| {
-     let mut new_er = *er;
+     let mut new_er = er.clone();
      if let Some(&n) = global_remap.get(&er.index) {
       new_er.index = n;
      }
@@ -1081,11 +1081,11 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
     let mut new_fd = fd.clone();
     // Remap outer wire
     if let Some(&n) = global_remap.get(&fd.outer_wire.index) {
-     new_fd.outer_wire = ShapeRef { index: n, ..fd.outer_wire };
+     new_fd.outer_wire = { let mut s = fd.outer_wire.clone(); s.index = n; s };
     }
     // Remap inner wires
     new_fd.inner_wires = fd.inner_wires.iter().map(|iwr| {
-     let mut new_iwr = *iwr;
+     let mut new_iwr = iwr.clone();
      if let Some(&n) = global_remap.get(&iwr.index) {
       new_iwr.index = n;
      }
@@ -1093,15 +1093,15 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
     }).collect();
     // Remap internal vertices
     new_fd.internal_vertices = fd.internal_vertices.iter().map(|ivr| {
-     let mut new_ivr = *ivr;
+     let mut new_ivr = ivr.clone();
      if let Some(&n) = global_remap.get(&ivr.index) {
       new_ivr.index = n;
      }
      new_ivr
     }).collect();
     new_fd.my_shapes = {
-     let mut shapes = vec![new_fd.outer_wire];
-     shapes.extend(new_fd.inner_wires.iter().copied());
+     let mut shapes = vec![new_fd.outer_wire.clone()];
+     shapes.extend(new_fd.inner_wires.iter().cloned());
      shapes
     };
     TShape::Face(new_fd)
@@ -1109,7 +1109,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    TShape::Shell(shd) => {
     let mut new_shd = shd.clone();
     new_shd.faces = shd.faces.iter().map(|fr| {
-     let mut new_fr = *fr;
+     let mut new_fr = fr.clone();
      if let Some(&n) = global_remap.get(&fr.index) {
       new_fr.index = n;
      }
@@ -1121,7 +1121,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    TShape::Solid(sd) => {
     let mut new_sd = sd.clone();
     new_sd.shells = sd.shells.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = global_remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1132,7 +1132,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    }
    TShape::CompSolid(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = global_remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1142,7 +1142,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
    }
    TShape::Compound(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = global_remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1210,7 +1210,7 @@ fn remove_orphaned_edges(
   }
  }
 
- // Remap ShapeRef.index values in the new tshapes
+ // Remap Shape.index values in the new tshapes
  let remapped: Vec<Arc<TShape>> = new_tshapes.iter().map(|ts| {
   let new_ts: TShape = match &**ts {
    TShape::Vertex(vd) => TShape::Vertex(vd.clone()),
@@ -1218,7 +1218,7 @@ fn remove_orphaned_edges(
    TShape::Wire(wd) => {
     let mut new_wd = wd.clone();
     new_wd.edges = wd.edges.iter().map(|er| {
-     let mut new_er = *er;
+     let mut new_er = er.clone();
      if let Some(&n) = remap.get(&er.index) {
       new_er.index = n;
      }
@@ -1230,10 +1230,10 @@ fn remove_orphaned_edges(
    TShape::Face(fd) => {
     let mut new_fd = fd.clone();
     if let Some(&n) = remap.get(&fd.outer_wire.index) {
-     new_fd.outer_wire = ShapeRef { index: n, ..fd.outer_wire };
+     new_fd.outer_wire = { let mut s = fd.outer_wire.clone(); s.index = n; s };
     }
     new_fd.inner_wires = fd.inner_wires.iter().map(|iwr| {
-     let mut new_iwr = *iwr;
+     let mut new_iwr = iwr.clone();
      if let Some(&n) = remap.get(&iwr.index) {
       new_iwr.index = n;
      }
@@ -1241,8 +1241,8 @@ fn remove_orphaned_edges(
     }).collect();
     // Remap pcurve keys (face indices)
     new_fd.my_shapes = {
-     let mut shapes = vec![new_fd.outer_wire];
-     shapes.extend(new_fd.inner_wires.iter().copied());
+     let mut shapes = vec![new_fd.outer_wire.clone()];
+     shapes.extend(new_fd.inner_wires.iter().cloned());
      shapes
     };
     TShape::Face(new_fd)
@@ -1250,7 +1250,7 @@ fn remove_orphaned_edges(
    TShape::Shell(shd) => {
     let mut new_shd = shd.clone();
     new_shd.faces = shd.faces.iter().map(|fr| {
-     let mut new_fr = *fr;
+     let mut new_fr = fr.clone();
      if let Some(&n) = remap.get(&fr.index) {
       new_fr.index = n;
      }
@@ -1262,7 +1262,7 @@ fn remove_orphaned_edges(
    TShape::Solid(sd) => {
     let mut new_sd = sd.clone();
     new_sd.shells = sd.shells.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1273,7 +1273,7 @@ fn remove_orphaned_edges(
    }
    TShape::CompSolid(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1283,7 +1283,7 @@ fn remove_orphaned_edges(
    }
    TShape::Compound(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(&n) = remap.get(&sr.index) {
       new_sr.index = n;
      }
@@ -1335,25 +1335,25 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
   }
  }
 
- // Remap ShapeRef.index in edges (first/last vertex references)
+ // Remap Shape.index in edges (first/last vertex references)
  let remapped: Vec<Arc<TShape>> = new_tshapes.iter().map(|ts| {
   let new_ts: TShape = match &**ts {
    TShape::Edge(ed) => {
     let mut new_ed = ed.clone();
     // Remap first vertex reference
     if let Some(n) = old_to_new.get(ed.first.index).and_then(|&x| x) {
-     new_ed.first = ShapeRef { index: n, ..ed.first };
+     new_ed.first = { let mut s = ed.first.clone(); s.index = n; s };
     }
     // Remap last vertex reference
     if let Some(n) = old_to_new.get(ed.last.index).and_then(|&x| x) {
-     new_ed.last = ShapeRef { index: n, ..ed.last };
+     new_ed.last = { let mut s = ed.last.clone(); s.index = n; s };
     }
     TShape::Edge(new_ed)
    }
    TShape::Wire(wd) => {
     let mut new_wd = wd.clone();
     new_wd.edges = wd.edges.iter().map(|er| {
-     let mut new_er = *er;
+     let mut new_er = er.clone();
      if let Some(n) = old_to_new.get(er.index).and_then(|&x| x) {
       new_er.index = n;
      }
@@ -1365,25 +1365,25 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
    TShape::Face(fd) => {
     let mut new_fd = fd.clone();
     if let Some(n) = old_to_new.get(fd.outer_wire.index).and_then(|&x| x) {
-     new_fd.outer_wire = ShapeRef { index: n, ..fd.outer_wire };
+     new_fd.outer_wire = { let mut s = fd.outer_wire.clone(); s.index = n; s };
     }
     new_fd.inner_wires = fd.inner_wires.iter().map(|iwr| {
-     let mut new_iwr = *iwr;
+     let mut new_iwr = iwr.clone();
      if let Some(n) = old_to_new.get(iwr.index).and_then(|&x| x) {
       new_iwr.index = n;
      }
      new_iwr
     }).collect();
     new_fd.internal_vertices = fd.internal_vertices.iter().map(|ivr| {
-     let mut new_ivr = *ivr;
+     let mut new_ivr = ivr.clone();
      if let Some(n) = old_to_new.get(ivr.index).and_then(|&x| x) {
       new_ivr.index = n;
      }
      new_ivr
     }).collect();
     new_fd.my_shapes = {
-     let mut shapes = vec![new_fd.outer_wire];
-     shapes.extend(new_fd.inner_wires.iter().copied());
+     let mut shapes = vec![new_fd.outer_wire.clone()];
+     shapes.extend(new_fd.inner_wires.iter().cloned());
      shapes
     };
     TShape::Face(new_fd)
@@ -1391,7 +1391,7 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
    TShape::Shell(shd) => {
     let mut new_shd = shd.clone();
     new_shd.faces = shd.faces.iter().map(|fr| {
-     let mut new_fr = *fr;
+     let mut new_fr = fr.clone();
      if let Some(n) = old_to_new.get(fr.index).and_then(|&x| x) {
       new_fr.index = n;
      }
@@ -1403,7 +1403,7 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
    TShape::Solid(sd) => {
     let mut new_sd = sd.clone();
     new_sd.shells = sd.shells.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(n) = old_to_new.get(sr.index).and_then(|&x| x) {
       new_sr.index = n;
      }
@@ -1414,7 +1414,7 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
    }
    TShape::CompSolid(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(n) = old_to_new.get(sr.index).and_then(|&x| x) {
       new_sr.index = n;
      }
@@ -1424,7 +1424,7 @@ fn remove_orphaned_vertices(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
    }
    TShape::Compound(shapes) => {
     let new_shapes = shapes.iter().map(|sr| {
-     let mut new_sr = *sr;
+     let mut new_sr = sr.clone();
      if let Some(n) = old_to_new.get(sr.index).and_then(|&x| x) {
       new_sr.index = n;
      }
@@ -1450,7 +1450,7 @@ fn update_geom_after_removal(
 ) -> rcad_kernel::BRep {
  // In topods API, all geometry data is stored on individual TShapes (TEdgeData.curve,
  // TEdgeData.pcurves, etc.). There are no separate GeomStore arrays to update.
- // The edge_remap has already been applied to ShapeRef.index values by the caller.
+ // The edge_remap has already been applied to Shape.index values by the caller.
  // So this is a no-op — just return the brep as-is.
  brep.clone()
 }

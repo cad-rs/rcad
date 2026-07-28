@@ -2,19 +2,19 @@ use crate::bopds::ds::DS;
 use crate::tolerance::TOLERANCE_CLAMP_MIN;
 use glam::DVec3;
 use rcad_kernel::geom::*;
-use rcad_kernel::topods::{self, BRepTool, Orientation, ShapeRef, ShapeType};
+use rcad_kernel::topods::{self, BRepTool, Orientation, Shape, ShapeType};
 /// OCCT BRepTool adaptor over the existing DS data source.
 ///
 /// During Phase 1 migration, this allows TopoDS-based wire path code to
-/// read from the existing DS by wrapping DS indices as ShapeRef handles.
+/// read from the existing DS by wrapping DS indices as Shape handles.
 use std::collections::HashMap;
 
-/// Adaptor: wraps DS + face_idx as a BRepTool, mapping ShapeRef.index  ?DS array index.
+/// Adaptor: wraps DS + face_idx as a BRepTool, mapping Shape.index  ?DS array index.
 ///
-/// ShapeRef values used with this adaptor:
-/// - Vertex ShapeRef.index = DS vertex index
-/// - Edge ShapeRef.index = DS edge index
-/// - Face ShapeRef.index = DS face index
+/// Shape values used with this adaptor:
+/// - Vertex Shape.index = DS vertex index
+/// - Edge Shape.index = DS edge index
+/// - Face Shape.index = DS face index
 ///
 /// pcurves and vertex_params are stored per edge in a lookup map built at construction time.
 pub(crate) struct DSAsBRep<'a> {
@@ -59,7 +59,7 @@ impl<'a> DSAsBRep<'a> {
 }
 
 impl BRepTool for DSAsBRep<'_> {
-    fn vertex_position(&self, v: ShapeRef) -> DVec3 {
+    fn vertex_position(&self, v: &Shape) -> DVec3 {
         self.ds
             .vertices
             .get(v.index)
@@ -67,7 +67,7 @@ impl BRepTool for DSAsBRep<'_> {
             .unwrap_or(DVec3::ZERO)
     }
 
-    fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
+    fn vertex_tolerance(&self, v: &Shape) -> f64 {
         self.ds
             .vertices
             .get(v.index)
@@ -75,39 +75,39 @@ impl BRepTool for DSAsBRep<'_> {
             .unwrap_or(0.0)
     }
 
-    fn is_edge_degenerated(&self, e: ShapeRef) -> bool {
+    fn is_edge_degenerated(&self, e: &Shape) -> bool {
         self.ds.is_edge_degenerated(e.index)
     }
 
-    fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef {
+    fn edge_other_vertex(&self, edge: &Shape, v: &Shape) -> Shape {
         if let Some(e) = self.ds.edges.get(edge.index) {
             if e.start_vertex == v.index {
-                ShapeRef::synthetic(e.end_vertex)
+                Shape::synthetic(e.end_vertex, Orientation::Forward)
             } else {
-                ShapeRef::synthetic(e.start_vertex)
+                Shape::synthetic(e.start_vertex, Orientation::Forward)
             }
         } else {
-            v
+            v.clone()
         }
     }
 
-    fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
+    fn first_vertex(&self, edge: &Shape) -> Shape {
         self.ds
             .edges
             .get(edge.index)
-            .map(|e| ShapeRef::synthetic(e.start_vertex))
-            .unwrap_or(edge)
+            .map(|e| Shape::synthetic(e.start_vertex, Orientation::Forward))
+            .unwrap_or_else(|| edge.clone())
     }
 
-    fn last_vertex(&self, edge: ShapeRef) -> ShapeRef {
+    fn last_vertex(&self, edge: &Shape) -> Shape {
         self.ds
             .edges
             .get(edge.index)
-            .map(|e| ShapeRef::synthetic(e.end_vertex))
-            .unwrap_or(edge)
+            .map(|e| Shape::synthetic(e.end_vertex, Orientation::Forward))
+            .unwrap_or_else(|| edge.clone())
     }
 
-    fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef {
+    fn oriented_first_vertex(&self, edge: &Shape, orientation: Orientation) -> Shape {
         self.ds
             .edges
             .get(edge.index)
@@ -117,26 +117,26 @@ impl BRepTool for DSAsBRep<'_> {
                 } else {
                     e.start_vertex
                 };
-                ShapeRef::synthetic(vi)
+                Shape::synthetic(vi, orientation)
             })
-            .unwrap_or(edge)
+            .unwrap_or_else(|| edge.clone())
     }
 
-    fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
+    fn parameter_on_edge(&self, vertex: &Shape, edge: &Shape, _face: &Shape) -> Option<f64> {
         self.vertex_param_cache
             .get(&edge.index)
             .and_then(|vpm| vpm.get(&vertex.index).copied())
     }
 
-    fn curve_on_surface(&self, edge: ShapeRef, _face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
+    fn curve_on_surface(&self, edge: &Shape, _face: &Shape) -> Option<&(Curve2d, f64, f64)> {
         self.pcurve_cache.get(&edge.index)
     }
 
-    fn face_surface(&self, _face: ShapeRef) -> Option<&Surface3> {
+    fn face_surface(&self, _face: &Shape) -> Option<&Surface3> {
         Some(self.ds.face_surface(self.face_idx).unwrap())
     }
 
-    fn vertex_orientation(&self, v: ShapeRef) -> Orientation {
+    fn vertex_orientation(&self, v: &Shape) -> Orientation {
         let is_internal = self.ds.vertex_is_internal(v.index);
         let is_new = self
             .ds
@@ -150,18 +150,18 @@ impl BRepTool for DSAsBRep<'_> {
         }
     }
 
-    fn face_surface_world(&self, _face: ShapeRef) -> Option<Surface3> {
+    fn face_surface_world(&self, _face: &Shape) -> Option<Surface3> {
         Some(self.ds.face_surface(self.face_idx).cloned().unwrap())
     }
 
-    fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
+    fn edge_curve_world(&self, edge: &Shape) -> Option<(Curve3, [f64; 2])> {
         self.ds
             .edges
             .get(edge.index)
             .map(|e| (e.curve.clone(), e.t_range))
     }
 
-    fn u_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
+    fn u_resolution(&self, _face: &Shape, tol3d: f64) -> f64 {
         // Fallback: use the face surface from DS
         let surf = self.ds.face_surface(self.face_idx).unwrap();
         match surf {
@@ -173,7 +173,7 @@ impl BRepTool for DSAsBRep<'_> {
         }
     }
 
-    fn v_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
+    fn v_resolution(&self, _face: &Shape, tol3d: f64) -> f64 {
         let surf = self.ds.face_surface(self.face_idx).unwrap();
         match surf {
             Surface3::Sphere(s) => tol3d / s.radius.max(TOLERANCE_CLAMP_MIN),
@@ -184,11 +184,11 @@ impl BRepTool for DSAsBRep<'_> {
         }
     }
 
-    fn tolerance(&self, _s: ShapeRef) -> f64 {
+    fn tolerance(&self, _s: &Shape) -> f64 {
         0.0
     }
 
-    fn shape_type(&self, s: ShapeRef) -> ShapeType {
+    fn shape_type(&self, s: &Shape) -> ShapeType {
         if self.ds.vertices.get(s.index).is_some() {
             ShapeType::Vertex
         } else if self.ds.edges.get(s.index).is_some() {
@@ -198,15 +198,15 @@ impl BRepTool for DSAsBRep<'_> {
         }
     }
 
-    fn has_flag(&self, _s: ShapeRef, _flag: u16) -> bool {
+    fn has_flag(&self, _s: &Shape, _flag: u16) -> bool {
         false
     }
 
-    fn edge_data(&self, _e: ShapeRef) -> Option<&topods::TEdgeData> {
+    fn edge_data(&self, _e: &Shape) -> Option<&topods::TEdgeData> {
         None
     }
 
-    fn face_data(&self, _f: ShapeRef) -> Option<&topods::TFaceData> {
+    fn face_data(&self, _f: &Shape) -> Option<&topods::TFaceData> {
         None
     }
 }

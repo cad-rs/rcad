@@ -679,8 +679,8 @@ fn get_face_normal(brep: &rcad_kernel::BRep, face_idx: usize) -> DVec3 {
     }
 }
 
-/// Collect wire edge refs (tshape index, forward) from a ShapeRef pointing to a TShape::Wire.
-fn get_wire_edge_refs(brep: &rcad_kernel::BRep, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
+/// Collect wire edge refs (tshape index, forward) from a Shape pointing to a TShape::Wire.
+fn get_wire_edge_refs(brep: &rcad_kernel::BRep, wire_ref: &topods::Shape) -> Vec<(usize, bool)> {
     let Some(wts) = brep.tshapes.get(wire_ref.index) else {
         return Vec::new();
     };
@@ -1002,7 +1002,7 @@ fn is_point_in_face_bounds(
         None => return true,
     };
 
-    // Get outer wire edges via ShapeRef
+    // Get outer wire edges via Shape
     let outer_wire_edges = get_wire_edge_refs(brep, &fd.outer_wire);
     if outer_wire_edges.is_empty() {
         return true;

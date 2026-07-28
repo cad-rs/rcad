@@ -6,7 +6,7 @@
 //! OCCT source: src/ModelingAlgorithms/TKOffset/BRepOffsetAPI_ThruSections.cxx
 
 use glam::DVec3;
-use rcad_kernel::topods::{self, BRep, ShapeRef, TShape};
+use rcad_kernel::topods::{self, BRep, Shape, TShape};
 
 use crate::brep_feat::build_loft_solid;
 
@@ -55,7 +55,7 @@ impl BRepOffsetAPI_ThruSections {
     /// The wire must be a closed loop of edges. The vertex order is extracted
     /// from the wire's edge sequence. All added wires must have the same
     /// number of vertices.
-    pub fn add_wire(&mut self, brep: &BRep, wire_ref: ShapeRef) {
+    pub fn add_wire(&mut self, brep: &BRep, wire_ref: Shape) {
         let pts = extract_wire_vertices(brep, wire_ref);
         if pts.len() >= 3 {
             self.sections.push(pts);
@@ -100,7 +100,7 @@ impl BRepOffsetAPI_ThruSections {
 /// Walks the wire's edge references, collecting the start vertex of each
 /// edge in order (matching the wire's orientation). The last edge's end
 /// vertex is included to close the loop (if it matches the first vertex).
-fn extract_wire_vertices(brep: &BRep, wire_ref: ShapeRef) -> Vec<DVec3> {
+fn extract_wire_vertices(brep: &BRep, wire_ref: Shape) -> Vec<DVec3> {
     let flat_idx = wire_ref.index;
     if flat_idx >= brep.tshapes.len() {
         return Vec::new();

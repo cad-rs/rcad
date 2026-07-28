@@ -1,4 +1,4 @@
-﻿//! TKShHealing GTest translations.
+//! TKShHealing GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKShHealing/GTests/
 //!
@@ -33,7 +33,7 @@ fn edge_has_curve_3d(brep: &topods::BRep, edge_idx: usize) -> bool {
     false
 }
 
-/// Get the vertices of an edge (first, last) by ShapeRef
+/// Get the vertices of an edge (first, last) by Shape
 fn edge_vertices(brep: &topods::BRep, edge_idx: usize) -> (Option<topods::Shape>, Option<topods::Shape>) {
     if let Some(ts) = brep.tshapes.get(edge_idx) {
         if let topods::TShape::Edge(ed) = &**ts {

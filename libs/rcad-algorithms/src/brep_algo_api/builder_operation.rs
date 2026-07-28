@@ -38,7 +38,7 @@ use rcad_kernel::topods;
 /// This is a lightweight handle that identifies a specific sub-shape
 /// (face, edge, or vertex) in a BRep by its index in the corresponding array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ShapeRef {
+pub enum Shape {
     /// Reference to a face by its flat index in the BRep's face list.
     Face(usize),
     /// Reference to an edge by its index in the BRep's edge list.
@@ -47,22 +47,22 @@ pub enum ShapeRef {
     Vertex(usize),
 }
 
-impl ShapeRef {
+impl Shape {
     /// Returns the entity type name as a string (e.g. "FACE", "EDGE", "VERTEX").
     ///
     /// OCCT ref: TopoDS_Shape::ShapeType() string mapping.
     pub fn type_name(&self) -> &'static str {
         match self {
-            ShapeRef::Face(_) => "FACE",
-            ShapeRef::Edge(_) => "EDGE",
-            ShapeRef::Vertex(_) => "VERTEX",
+            Shape::Face(_) => "FACE",
+            Shape::Edge(_) => "EDGE",
+            Shape::Vertex(_) => "VERTEX",
         }
     }
 
     /// Returns the index of this shape in its entity array.
     pub fn index(&self) -> usize {
         match self {
-            ShapeRef::Face(i) | ShapeRef::Edge(i) | ShapeRef::Vertex(i) => *i,
+            Shape::Face(i) | Shape::Edge(i) | Shape::Vertex(i) => *i,
         }
     }
 }
@@ -253,7 +253,7 @@ impl BuilderOperation {
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
     /// 鉁?returns all modified shapes.
-    pub fn modified(&self) -> Vec<ShapeRef> {
+    pub fn modified(&self) -> Vec<Shape> {
         let Some(ref h) = self.history else {
             return Vec::new();
         };
@@ -263,7 +263,7 @@ impl BuilderOperation {
         for (res_idx, origin) in h.face_origins.iter().enumerate() {
             match origin {
                 crate::history::FaceOrigin::FromA(_) | crate::history::FaceOrigin::FromB(_) => {
-                    result.push(ShapeRef::Face(res_idx));
+                    result.push(Shape::Face(res_idx));
                 }
                 _ => {}
             }
@@ -271,7 +271,7 @@ impl BuilderOperation {
         for &(res_idx, ref origin) in &h.co_face_origins {
             match origin {
                 crate::history::FaceOrigin::FromA(_) | crate::history::FaceOrigin::FromB(_) => {
-                    result.push(ShapeRef::Face(res_idx));
+                    result.push(Shape::Face(res_idx));
                 }
                 _ => {}
             }
@@ -284,7 +284,7 @@ impl BuilderOperation {
                 | crate::history::EdgeOrigin::FromB(_)
                 | crate::history::EdgeOrigin::SplitFromA(_)
                 | crate::history::EdgeOrigin::SplitFromB(_) => {
-                    result.push(ShapeRef::Edge(res_idx));
+                    result.push(Shape::Edge(res_idx));
                 }
                 _ => {}
             }
@@ -294,7 +294,7 @@ impl BuilderOperation {
         for (res_idx, origin) in h.vertex_origins.iter().enumerate() {
             match origin {
                 crate::history::VertexOrigin::FromA(_) | crate::history::VertexOrigin::FromB(_) => {
-                    result.push(ShapeRef::Vertex(res_idx));
+                    result.push(Shape::Vertex(res_idx));
                 }
                 _ => {}
             }
@@ -311,7 +311,7 @@ impl BuilderOperation {
     /// boolean operation (intersection edges, vertices, etc.).
     ///
     /// 鉁?returns generated faces/edges/vertices.
-    pub fn generated(&self) -> Vec<ShapeRef> {
+    pub fn generated(&self) -> Vec<Shape> {
         let Some(ref h) = self.history else {
             return Vec::new();
         };
@@ -320,26 +320,26 @@ impl BuilderOperation {
         // Collect generated faces
         for (res_idx, origin) in h.face_origins.iter().enumerate() {
             if matches!(origin, crate::history::FaceOrigin::Generated) {
-                result.push(ShapeRef::Face(res_idx));
+                result.push(Shape::Face(res_idx));
             }
         }
         for &(res_idx, ref origin) in &h.co_face_origins {
             if matches!(origin, crate::history::FaceOrigin::Generated) {
-                result.push(ShapeRef::Face(res_idx));
+                result.push(Shape::Face(res_idx));
             }
         }
 
         // Collect generated edges
         for (res_idx, origin) in h.edge_origins.iter().enumerate() {
             if matches!(origin, crate::history::EdgeOrigin::Generated) {
-                result.push(ShapeRef::Edge(res_idx));
+                result.push(Shape::Edge(res_idx));
             }
         }
 
         // Collect intersection vertices
         for (res_idx, origin) in h.vertex_origins.iter().enumerate() {
             if matches!(origin, crate::history::VertexOrigin::Intersection) {
-                result.push(ShapeRef::Vertex(res_idx));
+                result.push(Shape::Vertex(res_idx));
             }
         }
 
@@ -355,14 +355,14 @@ impl BuilderOperation {
     /// For edges/vertices: checks the deletion tracker.
     ///
     /// 鉁?face deletion tracking via history.
-    pub fn is_deleted(&self, source: &ShapeRef) -> bool {
+    pub fn is_deleted(&self, source: &Shape) -> bool {
         let Some(ref h) = self.history else {
             return false;
         };
         match source {
-            ShapeRef::Face(idx) => h.deleted_from_a.contains(idx) || h.deleted_from_b.contains(idx),
-            ShapeRef::Edge(idx) => h.tracker.deleted_edges().any(|e| e.entity_index == *idx),
-            ShapeRef::Vertex(idx) => h.tracker.deleted_vertices().any(|v| v.entity_index == *idx),
+            Shape::Face(idx) => h.deleted_from_a.contains(idx) || h.deleted_from_b.contains(idx),
+            Shape::Edge(idx) => h.tracker.deleted_edges().any(|e| e.entity_index == *idx),
+            Shape::Vertex(idx) => h.tracker.deleted_vertices().any(|v| v.entity_index == *idx),
         }
     }
 

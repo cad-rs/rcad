@@ -90,9 +90,9 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     let mut sorted_v: Vec<usize> = vertex_set.iter().copied().collect(); sorted_v.sort();
     let mut sorted_e: Vec<usize> = edge_set.iter().copied().collect(); sorted_e.sort();
 
-    // Old tshape index -> new ShapeRef
-    let mut v_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
-    let mut e_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
+    // Old tshape index -> new Shape
+    let mut v_map: HashMap<usize, topods::Shape> = HashMap::new();
+    let mut e_map: HashMap<usize, topods::Shape> = HashMap::new();
 
     let mut r = topods::BRep::new();
 
@@ -100,7 +100,7 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     for &old in &sorted_v {
         if let topods::TShape::Vertex(vd) = &*brep.tshapes[old] {
             let sr = r.add_tvertex(vd.point);
-            r.vertex_mut(sr).tolerance = vd.tolerance;
+            r.vertex_mut(sr.clone()).tolerance = vd.tolerance;
             v_map.insert(old, sr);
         }
     }
@@ -108,10 +108,10 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     // Add edges with remapped vertex refs
     for &old in &sorted_e {
         if let topods::TShape::Edge(ed) = &*brep.tshapes[old] {
-            let first = v_map[&ed.first.index];
-            let last = v_map[&ed.last.index];
+            let first = v_map[&ed.first.index].clone();
+            let last = v_map[&ed.last.index].clone();
             let sr = r.add_tedge(ed.curve.clone(), first, last, ed.range);
-            let em = r.edge_mut(sr);
+            let em = r.edge_mut(sr.clone());
             em.tolerance = ed.tolerance;
             em.representations = ed.representations.clone();
             em.pcurves = ed.pcurves.clone();
@@ -124,9 +124,9 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     }
 
     // Build wire refs helper
-    let wire_ref = |brep: &topods::BRep, r: &mut topods::BRep, old_wire_sr: &topods::ShapeRef| -> topods::ShapeRef {
+    let wire_ref = |brep: &topods::BRep, r: &mut topods::BRep, old_wire_sr: &topods::Shape| -> topods::Shape {
         if let topods::TShape::Wire(wd) = &*brep.tshapes[old_wire_sr.index] {
-            let edges: Vec<topods::ShapeRef> = wd.edges.iter().map(|sr| e_map[&sr.index]).collect();
+            let edges: Vec<topods::Shape> = wd.edges.iter().map(|sr| e_map[&sr.index].clone()).collect();
             r.add_twire(edges)
         } else {
             old_wire_sr.clone()
@@ -138,15 +138,15 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     for &fi in face_indices {
         if let topods::TShape::Face(fd) = &*brep.tshapes[fi] {
             let ow = wire_ref(brep, &mut r, &fd.outer_wire);
-            let iw: Vec<topods::ShapeRef> = fd.inner_wires.iter().map(|sr| wire_ref(brep, &mut r, sr)).collect();
+            let iw: Vec<topods::Shape> = fd.inner_wires.iter().map(|sr| wire_ref(brep, &mut r, sr)).collect();
 
             // Build internal_vertices: map old vertex tshape indices to new ShapeRefs
-            let iv: Vec<topods::ShapeRef> = fd.internal_vertices.iter()
-                .filter_map(|iv_sr| v_map.get(&iv_sr.index).copied())
+            let iv: Vec<topods::Shape> = fd.internal_vertices.iter()
+                .filter_map(|iv_sr| v_map.get(&iv_sr.index).cloned())
                 .collect();
 
             let sr = r.add_tface(fd.surface.clone(), ow, iw, fd.sample_point, fd.uv_domain, iv, fd.natural_restriction);
-            r.face_mut(sr).tolerance = fd.tolerance;
+            r.face_mut(sr.clone()).tolerance = fd.tolerance;
             face_srs.push(sr);
         }
     }

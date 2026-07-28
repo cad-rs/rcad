@@ -65,7 +65,7 @@ fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
         for shell_sr in &sd.shells {
             if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
                 for face_sr in &shd.faces {
-                    for ei in face_edge_refs(brep, *face_sr) {
+                    for ei in face_edge_refs(brep, face_sr.clone()) {
                         if ei < n_edges {
                             edges.insert(ei);
                             verts.insert(edge_start(brep, ei));
@@ -92,7 +92,7 @@ fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
     let volume: f64 = sd
         .shells
         .iter()
-        .map(|shell_sr| compute_shell_volume(brep, *shell_sr))
+        .map(|shell_sr| compute_shell_volume(brep, shell_sr.clone()))
         .sum();
 
     let has_positive_volume = volume > 0.0;
@@ -143,7 +143,7 @@ fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
 }
 
 /// Compute the volume of a shell using signed volume method.
-fn compute_shell_volume(brep: &BRep, shell_sr: ShapeRef) -> f64 {
+fn compute_shell_volume(brep: &BRep, shell_sr: Shape) -> f64 {
     let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else {
         return 0.0;
     };
@@ -439,7 +439,7 @@ fn check_edges_sequential(brep: &BRep) -> Vec<EdgeCheckResult> {
         for shell_sr in &sd.shells {
             let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { continue };
             for face_sr in &shd.faces {
-                for ei in face_edge_refs(brep, *face_sr) {
+                for ei in face_edge_refs(brep, face_sr.clone()) {
                     if ei < n_edges {
                         edge_face_counts[ei] += 1;
                     }

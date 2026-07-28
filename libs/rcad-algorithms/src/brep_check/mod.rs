@@ -40,18 +40,18 @@ use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
-use rcad_kernel::topods::{self, ShapeRef, TShape};
+use rcad_kernel::topods::{self, Orientation, Shape, TShape};
 
 // ---- Backward-compat BRep navigation helpers ----
 // These let analysis functions navigate topods::BRep using flat indices.
 
-/// Find the ShapeRef for the n-th TShape::Solid (0-based).
-fn ns_solid(brep: &rcad_kernel::BRep, n: usize) -> Option<ShapeRef> {
+/// Find the Shape for the n-th TShape::Solid (0-based).
+fn ns_solid(brep: &rcad_kernel::BRep, n: usize) -> Option<Shape> {
     let mut count = 0usize;
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if matches!(ts.as_ref(), TShape::Solid(_)) {
             if count == n {
-                return Some(ShapeRef::synthetic(i));
+                return Some(Shape::synthetic(i, Orientation::Forward));
             }
             count += 1;
         }
@@ -108,8 +108,8 @@ fn ns_wire_data<'a>(
 ) -> Option<&'a topods::TWireData> {
     let fd = ns_face_data(brep, solid_idx, shell_idx, face_idx)?;
     let wr = match wire_idx {
-        None => fd.outer_wire,
-        Some(i) => *fd.inner_wires.get(i)?,
+        None => fd.outer_wire.clone(),
+        Some(i) => fd.inner_wires.get(i)?.clone(),
     };
     match &*brep.tshapes[wr.index] {
         TShape::Wire(wd) => Some(wd),
@@ -1027,19 +1027,19 @@ pub fn check_wire_closed(brep: &rcad_kernel::BRep, face_idx: usize) -> bool {
         Some(f) => f,
         None => return false,
     };
-    if !check_single_wire_closed(brep, fd.outer_wire) {
+    if !check_single_wire_closed(brep, fd.outer_wire.clone()) {
         return false;
     }
     for iw_sr in &fd.inner_wires {
-        if !check_single_wire_closed(brep, *iw_sr) {
+        if !check_single_wire_closed(brep, iw_sr.clone()) {
             return false;
         }
     }
     true
 }
 
-/// Internal helper: checks closure of a single wire (given by ShapeRef).
-fn check_single_wire_closed(brep: &rcad_kernel::BRep, wire_sr: ShapeRef) -> bool {
+/// Internal helper: checks closure of a single wire (given by Shape).
+fn check_single_wire_closed(brep: &rcad_kernel::BRep, wire_sr: Shape) -> bool {
     let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] else {
         return true;
     };
@@ -1406,7 +1406,7 @@ pub fn analyze_wire_issues(brep: &topods::BRep, tolerance: f64) -> WireAnalysisR
                     continue;
                 };
 
-                let mut all_wires: Vec<(usize, &topods::ShapeRef)> = Vec::new();
+                let mut all_wires: Vec<(usize, &topods::Shape)> = Vec::new();
                 all_wires.push((0, &fd.outer_wire));
                 for (wi, inner) in fd.inner_wires.iter().enumerate() {
                     all_wires.push((wi + 1, inner));

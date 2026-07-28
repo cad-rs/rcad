@@ -342,8 +342,8 @@ pub fn pave_fill(
     fuzzy_tol: f64,
 ) -> (
     bopds::ds::DS,
-    Vec<rcad_kernel::topods::ShapeRef>,
-    Vec<Option<rcad_kernel::topods::ShapeRef>>,
+    Vec<rcad_kernel::topods::Shape>,
+    Vec<Option<rcad_kernel::topods::Shape>>,
 ) {
     let (bvh_a, bvh_b) = if use_bvh {
         optional_bvhs(a, b)

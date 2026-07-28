@@ -1464,7 +1464,7 @@ fn clamp_domain_to_vertices(
         return (u0, u1, v0, v1);
     };
 
-    // Build a dangling topology::Wire from the outer_wire ShapeRef for sampling.
+    // Build a dangling topology::Wire from the outer_wire Shape for sampling.
     let outer_we: Vec<topology::WireEdge> = (if fd.outer_wire.index < brep.tshapes.len() {
         match &*brep.tshapes[fd.outer_wire.index] {
             topods::TShape::Wire(wd) => wd

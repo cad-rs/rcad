@@ -8,7 +8,7 @@ use glam::DVec2;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
-use rcad_kernel::topods::{BRepTool, Orientation, ShapeRef};
+use rcad_kernel::topods::{BRepTool, Orientation, Shape};
 /// TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
@@ -23,8 +23,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Holds the edge and face directly instead of indexing into a WireSegment array.
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeInfoTopoDS {
-    pub(crate) edge: ShapeRef,
-    pub(crate) face: ShapeRef,
+    pub(crate) edge: Shape,
+    pub(crate) face: Shape,
     pub(crate) passed: bool,
     pub(crate) in_flag: bool,
     pub(crate) is_inside: bool,
@@ -34,7 +34,7 @@ pub(crate) struct EdgeInfoTopoDS {
 /// Mark an EdgeInfoTopoDS entry as passed at a given vertex.
 pub(crate) fn mark_edge_passed_topo(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfoTopoDS>>,
-    edge: ShapeRef,
+    edge: Shape,
     vertex: usize,
     in_flag: bool,
 ) {
@@ -51,7 +51,7 @@ pub(crate) fn mark_edge_passed_topo(
 /// Find the angle for an edge at a vertex (TopoDS variant).
 pub(crate) fn find_angle_at_topo(
     smart_map: &IndexMap<usize, Vec<EdgeInfoTopoDS>>,
-    edge: ShapeRef,
+    edge: Shape,
     vertex: usize,
     in_flag: bool,
 ) -> Option<f64> {
@@ -67,7 +67,7 @@ pub(crate) fn select_best_outgoing_topo<'a>(
     candidates: &[&'a EdgeInfoTopoDS],
     angle_in: f64,
     incoming_is_boundary: bool,
-    incoming_edge: ShapeRef,
+    incoming_edge: Shape,
 ) -> Option<&'a EdgeInfoTopoDS> {
     if candidates.is_empty() {
         return None;
@@ -101,7 +101,7 @@ pub(crate) fn select_best_outgoing_topo<'a>(
 
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
-/// Analogous to walk_path_extract_wires but uses ShapeRef handles and BRepTool
+/// Analogous to walk_path_extract_wires but uses Shape handles and BRepTool
 /// ✅ OCCT-aligned: BOPAlgo_WireSplitter::Path (WireSplitter_1.cxx L358-626).
 /// Walks from start segment through smart_map forming closed wires by min-angle selection.
 pub(crate) fn walk_path_extract_wires(
@@ -127,10 +127,10 @@ pub(crate) fn walk_path_extract_wires(
     let mut a_coord_va: Vec<DVec2> = Vec::new();
 
     // OCCT Tolerance2D (WireSplitter_1.cxx L883-905)
-    let face_ref = start_seg.face;
-    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::synthetic(vi)) };
-    let u_tolerance = |vi: usize| -> f64 { tool.u_resolution(face_ref, vtol(vi)) };
-    let v_tolerance = |vi: usize| -> f64 { tool.v_resolution(face_ref, vtol(vi)) };
+    let face_ref = start_seg.face.clone();
+    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(&Shape::synthetic(vi, Orientation::Forward)) };
+    let u_tolerance = |vi: usize| -> f64 { tool.u_resolution(&face_ref, vtol(vi)) };
+    let v_tolerance = |vi: usize| -> f64 { tool.v_resolution(&face_ref, vtol(vi)) };
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
         let u = u_tolerance(vi);
@@ -139,7 +139,7 @@ pub(crate) fn walk_path_extract_wires(
         if t < vt {
             t = vt;
         }
-        if matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_))) {
+        if matches!(tool.face_surface(&face_ref), Some(&Surface3::BSpline(_))) {
             t *= 1.1;
         }
         t
@@ -149,9 +149,9 @@ pub(crate) fn walk_path_extract_wires(
     let coord2d = |vi: usize, si: usize| -> DVec2 {
         let s = &segments[si];
         let t = tool
-            .parameter_on_edge(ShapeRef::synthetic(vi), s.edge, s.face)
+            .parameter_on_edge(&Shape::synthetic(vi, Orientation::Forward), &s.edge, &s.face)
             .unwrap_or(DVec2::ZERO.x);
-        let pc = tool.curve_on_surface(s.edge, s.face);
+        let pc = tool.curve_on_surface(&s.edge, &s.face);
         pc.map(|(pc, _, _)| pc.point_at(t)).unwrap_or(DVec2::ZERO)
     };
 
@@ -323,7 +323,7 @@ pub(crate) fn walk_path_extract_wires(
                 if b_is_closed {
                     let candidate_seg = &segments[an_ei.seg_idx];
                     let pc_opt = tool
-                        .curve_on_surface(candidate_seg.edge, candidate_seg.face)
+                        .curve_on_surface(&candidate_seg.edge, &candidate_seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(candidate_seg
                             .first_pcurve
@@ -429,10 +429,10 @@ fn refine_angles(
                 continue;
             }
             let seg = &segments[ei.seg_idx];
-            let v_ref = rcad_kernel::topods::ShapeRef::synthetic(v);
-            let geom_tol = tool.vertex_tolerance(v_ref);
+            let v_ref = rcad_kernel::topods::Shape::synthetic(v, rcad_kernel::topods::Orientation::Forward);
+            let geom_tol = tool.vertex_tolerance(&v_ref);
             let t_v = tool
-                .parameter_on_edge(v_ref, seg.edge, seg.face)
+                .parameter_on_edge(&v_ref, &seg.edge, &seg.face)
                 .unwrap_or_else(|| {
                     if v == seg.start_vertex.index {
                         seg.t_range[0]
@@ -537,7 +537,7 @@ pub(crate) fn split_block(
 /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).
 /// TopoDS-based build_closed_wires — SmartMap + angle computation + wire walking.
 ///
-/// Simplified version without vi_to_canon/deg_end_canon (ShapeRef handles use DS indices directly).
+/// Simplified version without vi_to_canon/deg_end_canon (Shape handles use DS indices directly).
 pub(crate) fn build_closed_wires(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
@@ -635,7 +635,7 @@ fn build_smart_map(
     for &si in block {
         let seg = &segments[si];
         // OCCT L141-144: skip edges without pcurve on face
-        let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
+        let has_pcurve = tool.curve_on_surface(&seg.edge, &seg.face).is_some()
             || seg.first_pcurve.is_some()
             || seg.second_pcurve.is_some();
         if !has_pcurve {
@@ -747,14 +747,14 @@ fn build_smart_map(
     // OCCT L298-318: 3.Angles in mySmartMap
     // Compute angles using BRepTool (equivalent to OCCT Angle2D)
     for (v, infos) in smart_map.iter_mut() {
-        let v_ref = ShapeRef::synthetic(*v);
-        let geom_tol = tool.vertex_tolerance(v_ref);
+        let v_ref = Shape::synthetic(*v, Orientation::Forward);
+        let geom_tol = tool.vertex_tolerance(&v_ref);
         for ei in infos.iter_mut() {
             // OCCT L311-316: compute Angle2D
             // IsInside flag (OCCT L308) moved to refine_angles (after Path walk, matching OCCT order).
             let seg = &segments[ei.seg_idx];
             let t_v = tool
-                .parameter_on_edge(v_ref, seg.edge, seg.face)
+                .parameter_on_edge(&v_ref, &seg.edge, &seg.face)
                 .unwrap_or_else(|| {
                     if *v == seg.start_vertex.index {
                         seg.t_range[0]
@@ -775,7 +775,7 @@ fn build_smart_map(
                 }
                 _ => {
                     let pc = tool
-                        .curve_on_surface(seg.edge, seg.face)
+                        .curve_on_surface(&seg.edge, &seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                     match pc {
@@ -786,7 +786,7 @@ fn build_smart_map(
             };
             let default_surf =
                 Surface3::Plane(rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z));
-            let surf = tool.face_surface(seg.face).unwrap_or(&default_surf);
+            let surf = tool.face_surface(&seg.face).unwrap_or(&default_surf);
             let new_angle = super::angle_2d::angle_2d(
                 curve,
                 t_v,
@@ -969,7 +969,7 @@ pub(crate) fn perform_areas(
     }
 
     // OCCT L416-424: aNewFaces (growth), aHoleFaces, aMHE (hole edge map)
-    let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
+    let mut a_mhe: HashSet<Shape> = HashSet::new();
 
     let mut a_new_faces: Vec<Vec<usize>> = Vec::new(); // growth wires
     let mut a_hole_faces: Vec<Vec<usize>> = Vec::new(); // hole wires
@@ -997,7 +997,7 @@ pub(crate) fn perform_areas(
                 let pc_opt = if matches!(seg.source, WireEdgeSourceTopoDS::IntersectionCurve(_)) {
                     seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
                 } else {
-                    tool.curve_on_surface(seg.edge, seg.face)
+                    tool.curve_on_surface(&seg.edge, &seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()))
                 };
@@ -1039,7 +1039,7 @@ pub(crate) fn perform_areas(
 
             for &si in w {
                 if let Some(seg) = segments.get(si) {
-                    a_mhe.insert(seg.edge);
+                    a_mhe.insert(seg.edge.clone());
                 }
             }
         }
@@ -1064,7 +1064,7 @@ pub(crate) fn perform_areas(
             for &si in w {
                 let seg = &segments[si];
                 let pc_opt = tool
-                    .curve_on_surface(seg.edge, seg.face)
+                    .curve_on_surface(&seg.edge, &seg.face)
                     .map(|(pc, _, _)| pc)
                     .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                 if let Some(pc) = pc_opt {
@@ -1100,7 +1100,7 @@ pub(crate) fn perform_areas(
             for &si in h_wire {
                 let seg = &segments[si];
                 let pc_opt = tool
-                    .curve_on_surface(seg.edge, seg.face)
+                    .curve_on_surface(&seg.edge, &seg.face)
                     .map(|(pc, _, _)| pc)
                     .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                 if let Some(pc) = pc_opt {
@@ -1141,7 +1141,7 @@ pub(crate) fn perform_areas(
                 .filter_map(|&si| {
                     let seg = &segments[si];
                     let pc_opt = tool
-                        .curve_on_surface(seg.edge, seg.face)
+                        .curve_on_surface(&seg.edge, &seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                     pc_opt.map(|pc| pc.point_at(seg.t_range[0]))
@@ -1222,7 +1222,7 @@ pub(crate) fn perform_internal_shapes(
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
     face_idx: usize,
-    face_ref: rcad_kernel::topods::ShapeRef,
+    face_ref: rcad_kernel::topods::Shape,
     ds: &crate::bopds::ds::DS,
 ) {
     if internal_wire_groups.is_empty() {
@@ -1239,7 +1239,7 @@ pub(crate) fn perform_internal_shapes(
             for &si in &wf.outer_wire {
                 let seg = &segments[si];
                 let pc_opt = tool
-                    .curve_on_surface(seg.edge, seg.face)
+                    .curve_on_surface(&seg.edge, &seg.face)
                     .map(|(pc, _, _)| pc)
                     .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
                 if let Some(pc) = pc_opt {
@@ -1262,11 +1262,11 @@ pub(crate) fn perform_internal_shapes(
             if uv_bnd.len() < 3 && !wf.outer_wire.is_empty() {
                 uv_bnd.clear();
                 if let Some(face_surf) =
-                    tool.face_surface(rcad_kernel::topods::ShapeRef::synthetic(face_idx))
+                    tool.face_surface(&rcad_kernel::topods::Shape::synthetic(face_idx, rcad_kernel::topods::Orientation::Forward))
                 {
                     for &si in &wf.outer_wire {
                         let seg = &segments[si];
-                        let pt = tool.vertex_position(seg.start_vertex);
+                        let pt = tool.vertex_position(&seg.start_vertex);
                         if let Some(uv) =
                             crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, pt)
                         {
@@ -1306,7 +1306,7 @@ pub(crate) fn perform_internal_shapes(
             let mut pt = DVec2::ZERO;
             let mut found = false;
             let pc_opt = tool
-                .curve_on_surface(seg.edge, seg.face)
+                .curve_on_surface(&seg.edge, &seg.face)
                 .map(|(pc, _, _)| pc)
                 .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
             if let Some(pc) = pc_opt {
@@ -1316,7 +1316,7 @@ pub(crate) fn perform_internal_shapes(
             }
             if !found {
                 // Fallback: sample pcurve at midpoint via curve_on_surface
-                if let Some((pc, t0, t1)) = tool.curve_on_surface(seg.edge, seg.face) {
+                if let Some((pc, t0, t1)) = tool.curve_on_surface(&seg.edge, &seg.face) {
                     let t_mid = (t0 + t1) * 0.5;
                     pt = pc.point_at(t_mid);
                     found = true;
@@ -1324,8 +1324,8 @@ pub(crate) fn perform_internal_shapes(
             }
             if !found {
                 // Second fallback: project internal wire vertex to UV via face surface
-                if let Some(face_surf) = tool.face_surface(face_ref) {
-                    let v_pt = tool.vertex_position(seg.start_vertex);
+                if let Some(face_surf) = tool.face_surface(&face_ref) {
+                    let v_pt = tool.vertex_position(&seg.start_vertex);
                     pt = crate::bopalgo::builder::wire_splitter::world_to_uv(face_surf, v_pt)
                         .unwrap_or(DVec2::ZERO);
                     found = true;

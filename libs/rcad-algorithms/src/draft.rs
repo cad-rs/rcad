@@ -22,7 +22,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::SurfaceEval;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
-use rcad_kernel::topods::{BRep, ShapeRef, TShape};
+use rcad_kernel::topods::{BRep, Shape, TShape};
 use std::collections::HashMap;
 
 /// Default tolerance for geometric operations.
@@ -332,8 +332,8 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
     // Step 2: Compute new face normals
     let new_face_normals: Vec<DVec3> = face_srs
         .iter()
-        .map(|&sr| {
-            let fd = brep.face(sr);
+        .map(|sr| {
+            let fd = brep.face(sr.clone());
             let n = fd
                 .surface
                 .as_ref()
@@ -397,8 +397,8 @@ pub fn draft_solid_advanced(brep: &BRep, params: &DraftParamsAdvanced) -> Result
     let new_face_normals: Vec<DVec3> = face_srs
         .iter()
         .enumerate()
-        .map(|(fi, &sr)| {
-            let fd = brep.face(sr);
+        .map(|(fi, sr)| {
+            let fd = brep.face(sr.clone());
             let n = fd
                 .surface
                 .as_ref()
@@ -429,7 +429,7 @@ pub fn draft_cylindrical_face(
     validate_draft_params(params)?;
 
     let face_srs = collect_face_refs(brep).ok_or(DraftError::NoFaces)?;
-    let _face_sr = *face_srs.get(face_index).ok_or(DraftError::NoFaces)?;
+    let _face_sr = face_srs.get(face_index).cloned().ok_or(DraftError::NoFaces)?;
 
     // Get surface geometry from the face
     let face_ts = brep.tshapes.get(face_index).ok_or(DraftError::NoFaces)?;
@@ -498,8 +498,8 @@ pub fn draft_cylindrical_face(
     // Face normal remains essentially unchanged for drafted cylinders
     let new_face_normals: Vec<DVec3> = face_srs
         .iter()
-        .map(|&sr| {
-            let fd = brep.face(sr);
+        .map(|sr| {
+            let fd = brep.face(sr.clone());
             fd.surface
                 .as_ref()
                 .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
@@ -522,7 +522,7 @@ pub fn draft_conical_face(
     validate_draft_params(params)?;
 
     let face_srs = collect_face_refs(brep).ok_or(DraftError::NoFaces)?;
-    let _face_sr = *face_srs.get(face_index).ok_or(DraftError::NoFaces)?;
+    let _face_sr = face_srs.get(face_index).cloned().ok_or(DraftError::NoFaces)?;
 
     // Get surface geometry from the face
     let face_ts = brep.tshapes.get(face_index).ok_or(DraftError::NoFaces)?;
@@ -599,8 +599,8 @@ pub fn draft_conical_face(
     let new_face_normals: Vec<DVec3> = face_srs
         .iter()
         .enumerate()
-        .map(|(fi, &sr)| {
-            let fd = brep.face(sr);
+        .map(|(fi, sr)| {
+            let fd = brep.face(sr.clone());
             if fi == face_index {
                 compute_cone_normal(effective_draft, axis, pull)
             } else {
@@ -635,7 +635,7 @@ pub fn draft_face_general(
     let tan_angle = params.draft_angle.tan();
 
     // Get the face surface normal
-    let face_sr = face_srs[face_index];
+    let face_sr = face_srs[face_index].clone();
     let fd = brep.face(face_sr);
     let face_normal = fd
         .surface
@@ -665,8 +665,8 @@ pub fn draft_face_general(
     // Compute new face normals
     let new_face_normals: Vec<DVec3> = face_srs
         .iter()
-        .map(|&sr| {
-            let fd = brep.face(sr);
+        .map(|sr| {
+            let fd = brep.face(sr.clone());
             let n = fd
                 .surface
                 .as_ref()
@@ -706,8 +706,8 @@ pub fn validate_draft_angles(
     let mut undercut_faces = Vec::new();
     let mut quality_sum = 0.0;
 
-    for (fi, &sr) in face_srs.iter().enumerate() {
-        let fd = brep.face(sr);
+    for (fi, sr) in face_srs.iter().enumerate() {
+        let fd = brep.face(sr.clone());
         let normal = fd
             .surface
             .as_ref()
@@ -806,8 +806,8 @@ pub fn detect_undercuts(
 
     let mut undercut_faces = Vec::new();
 
-    for (fi, &sr) in face_srs.iter().enumerate() {
-        let fd = brep.face(sr);
+    for (fi, sr) in face_srs.iter().enumerate() {
+        let fd = brep.face(sr.clone());
         let normal = fd
             .surface
             .as_ref()
@@ -842,8 +842,8 @@ pub fn detect_parting_line(
     let mut parting_edges = Vec::new();
     let mut parting_points = Vec::new();
 
-    for &sr in &face_srs {
-        let fd = brep.face(sr);
+    for sr in &face_srs {
+        let fd = brep.face(sr.clone());
         let normal = fd
             .surface
             .as_ref()
@@ -1028,14 +1028,14 @@ fn compute_draft_angle(normal: &DVec3, pull: DVec3) -> f64 {
 
 fn compute_vertex_displacements(
     brep: &BRep,
-    face_srs: &[ShapeRef],
+    face_srs: &[Shape],
     params: &DraftParamsAdvanced,
     pull: DVec3,
     neutral: DVec3,
 ) -> Result<HashMap<usize, DVec3>, DraftError> {
     let mut displacements: HashMap<usize, DVec3> = HashMap::new();
 
-    for (fi, &sr) in face_srs.iter().enumerate() {
+    for (fi, sr) in face_srs.iter().enumerate() {
         let angle = params
             .face_angle_overrides
             .get(&fi)
@@ -1049,7 +1049,7 @@ fn compute_vertex_displacements(
         let tan_angle = angle.tan();
 
         // Get vertices belonging to this face
-        let fd = brep.face(sr);
+        let fd = brep.face(sr.clone());
         if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
             for esr in &wd.edges {
                 if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
@@ -1122,13 +1122,13 @@ fn build_drafted_brep(
     brep: &BRep,
     new_pts: &[DVec3],
     new_face_normals: &[DVec3],
-    face_srs: &[ShapeRef],
+    face_srs: &[Shape],
 ) -> Result<BRep, DraftError> {
     let mut out = BRep::new();
 
     // ── Step 1: Create vertices with new positions ──
-    // Build a mapping: old vertex tshape index -> new ShapeRef
-    let mut vmap: HashMap<usize, ShapeRef> = HashMap::new();
+    // Build a mapping: old vertex tshape index -> new Shape
+    let mut vmap: HashMap<usize, Shape> = HashMap::new();
     let mut pt_iter = new_pts.iter();
     for (ts_idx, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Vertex(_) = ts.as_ref() {
@@ -1139,16 +1139,16 @@ fn build_drafted_brep(
     }
 
     // ── Step 2: Create edges ──
-    let mut emap: HashMap<usize, ShapeRef> = HashMap::new(); // old edge tshape idx -> new ShapeRef
+    let mut emap: HashMap<usize, Shape> = HashMap::new(); // old edge tshape idx -> new Shape
     for (ts_idx, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Edge(ed) = ts.as_ref() {
             let vs = vmap
                 .get(&ed.first.index)
-                .copied()
+                .cloned()
                 .ok_or(DraftError::NoFaces)?;
             let ve = vmap
                 .get(&ed.last.index)
-                .copied()
+                .cloned()
                 .ok_or(DraftError::NoFaces)?;
 
             // Compute curve between the new vertex positions
@@ -1172,9 +1172,9 @@ fn build_drafted_brep(
     }
 
     // ── Step 3: Create faces with updated surfaces ──
-    let mut new_face_srs: Vec<ShapeRef> = Vec::new();
-    for (fi, &old_face_sr) in face_srs.iter().enumerate() {
-        let fd = brep.face(old_face_sr);
+    let mut new_face_srs: Vec<Shape> = Vec::new();
+    for (fi, old_face_sr) in face_srs.iter().enumerate() {
+        let fd = brep.face(old_face_sr.clone());
         let updated_normal = new_face_normals.get(fi).copied().unwrap_or(DVec3::Z);
         let surface = fd.surface.clone();
 
@@ -1189,11 +1189,11 @@ fn build_drafted_brep(
         });
 
         // Create the new edge ShapeRefs for the outer wire
-        let new_wire_edges: Vec<ShapeRef> =
+        let new_wire_edges: Vec<Shape> =
             if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
                 wd.edges
                     .iter()
-                    .filter_map(|esr| emap.get(&esr.index).copied())
+                    .filter_map(|esr| emap.get(&esr.index).cloned())
                     .collect()
             } else {
                 Vec::new()
@@ -1201,15 +1201,15 @@ fn build_drafted_brep(
         let new_outer_wire = out.add_twire(new_wire_edges);
 
         // Inner wires
-        let new_inner_wires: Vec<ShapeRef> = fd
+        let new_inner_wires: Vec<Shape> = fd
             .inner_wires
             .iter()
             .map(|iw_sr| {
-                let inner_edges: Vec<ShapeRef> =
+                let inner_edges: Vec<Shape> =
                     if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
                         iwd.edges
                             .iter()
-                            .filter_map(|esr| emap.get(&esr.index).copied())
+                            .filter_map(|esr| emap.get(&esr.index).cloned())
                             .collect()
                     } else {
                         Vec::new()
@@ -1263,7 +1263,7 @@ fn surface_type_name(surface: &Surface3) -> String {
 }
 
 /// Collect all face ShapeRefs from the first solid's first shell.
-fn collect_face_refs(brep: &BRep) -> Option<Vec<ShapeRef>> {
+fn collect_face_refs(brep: &BRep) -> Option<Vec<Shape>> {
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = ts.as_ref() {
             if let Some(shell_sr) = sd.shells.first() {
@@ -1310,7 +1310,7 @@ fn find_faces_with_edge(brep: &BRep, edge_index: usize) -> Vec<usize> {
             if let Some(shell_sr) = sd.shells.first() {
                 if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
                     for (fi, face_sr) in shd.faces.iter().enumerate() {
-                        let fd = brep.face(*face_sr);
+                        let fd = brep.face(face_sr.clone());
                         if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
                             if wd.edges.iter().any(|e| e.index == edge_index) {
                                 faces.push(fi);
@@ -1331,11 +1331,11 @@ fn find_faces_with_edge(brep: &BRep, edge_index: usize) -> Vec<usize> {
     faces
 }
 
-fn group_connected_faces(brep: &BRep, face_srs: &[ShapeRef]) -> Vec<Vec<usize>> {
+fn group_connected_faces(brep: &BRep, face_srs: &[Shape]) -> Vec<Vec<usize>> {
     // Build edge-to-face adjacency using tshape indices
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, &sr) in face_srs.iter().enumerate() {
-        let fd = brep.face(sr);
+    for (fi, sr) in face_srs.iter().enumerate() {
+        let fd = brep.face(sr.clone());
         if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
             for esr in &wd.edges {
                 edge_to_faces.entry(esr.index).or_default().push(fi);
@@ -1389,8 +1389,8 @@ fn classify_feature_type(brep: &BRep, face_indices: &[usize], pull: DVec3) -> In
     let mut face_count = 0;
 
     for &fi in face_indices {
-        if let Some(&sr) = face_srs.get(fi) {
-            let fd = brep.face(sr);
+        if let Some(sr) = face_srs.get(fi) {
+            let fd = brep.face(sr.clone());
             let normal = fd
                 .surface
                 .as_ref()
@@ -1443,8 +1443,8 @@ fn compute_feature_properties(
     let mut heights: Vec<f64> = Vec::new();
 
     for &fi in face_indices {
-        if let Some(&sr) = face_srs.get(fi) {
-            let fd = brep.face(sr);
+        if let Some(sr) = face_srs.get(fi) {
+            let fd = brep.face(sr.clone());
             if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
                 for esr in &wd.edges {
                     if let TShape::Edge(ed) = &*brep.tshapes[esr.index] {
@@ -1481,11 +1481,11 @@ fn compute_feature_properties(
     (center, size, (h_min, h_max))
 }
 
-fn evaluate_draft_direction(_brep: &BRep, face_srs: &[ShapeRef], direction: DVec3) -> f64 {
+fn evaluate_draft_direction(_brep: &BRep, face_srs: &[Shape], direction: DVec3) -> f64 {
     let mut score = 0.0;
 
-    for &sr in face_srs {
-        let fd = _brep.face(sr);
+    for sr in face_srs {
+        let fd = _brep.face(sr.clone());
         let normal = fd
             .surface
             .as_ref()

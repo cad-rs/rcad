@@ -35,7 +35,7 @@ pub use wire_ops::{chamfer_wire_2d, fillet_wire_2d, project_wire_onto_surface};
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Surface3};
-use rcad_kernel::topods::{Orientation, ShapeRef, TShape};
+use rcad_kernel::topods::{Orientation, Shape, TShape};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -182,9 +182,9 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
 
     let mut out = BRep::new();
 
-    // Build old-index → new-ShapeRef mapping
+    // Build old-index → new-Shape mapping
     let n_shapes = brep.tshapes.len();
-    let mut old_to_new: Vec<Option<ShapeRef>> = vec![None; n_shapes];
+    let mut old_to_new: Vec<Option<Shape>> = vec![None; n_shapes];
 
     // Pass 1: mirror vertices (no dependencies)
     for (i, ts) in brep.tshapes.iter().enumerate() {
@@ -196,8 +196,8 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
     // Pass 2: mirror edges (depends on vertices)
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Edge(e) = &**ts {
-            let first = old_to_new[e.first.index].unwrap_or(e.first);
-            let last = old_to_new[e.last.index].unwrap_or(e.last);
+            let first = old_to_new[e.first.index].clone().unwrap_or(e.first.clone());
+            let last = old_to_new[e.last.index].clone().unwrap_or(e.last.clone());
             let curve = e.curve.as_ref().map(|c| {
                 use rcad_kernel::geom::{Circle3, Ellipse3, Hyperbola3, Line3};
                 match c {
@@ -248,11 +248,11 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
     // Pass 3: mirror wires (depends on edges, flip edge orientation)
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Wire(w) = &**ts {
-            let edges: Vec<ShapeRef> = w
+            let edges: Vec<Shape> = w
                 .edges
                 .iter()
-                .map(|e_sr| ShapeRef {
-                    ptr_id: e_sr.ptr_id,
+                .map(|e_sr| Shape {
+                    data: e_sr.data.clone(),
                     index: e_sr.index,
                     orientation: match e_sr.orientation {
                         Orientation::Forward => Orientation::Reversed,
@@ -313,11 +313,11 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                     _ => s.clone(),
                 }
             });
-            let outer_wire = old_to_new[f.outer_wire.index].unwrap_or(f.outer_wire);
-            let inner_wires: Vec<ShapeRef> = f
+            let outer_wire = old_to_new[f.outer_wire.index].clone().unwrap_or(f.outer_wire.clone());
+            let inner_wires: Vec<Shape> = f
                 .inner_wires
                 .iter()
-                .map(|w_sr| old_to_new[w_sr.index].unwrap_or(*w_sr))
+                .map(|w_sr| old_to_new[w_sr.index].clone().unwrap_or_else(|| w_sr.clone()))
                 .collect();
             let sample_point = f.sample_point.map(mirror_point);
             old_to_new[i] = Some(out.add_tface(
@@ -335,10 +335,10 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
     // Pass 5: mirror shells (depends on faces)
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Shell(s) = &**ts {
-            let faces: Vec<ShapeRef> = s
+            let faces: Vec<Shape> = s
                 .faces
                 .iter()
-                .map(|f_sr| old_to_new[f_sr.index].unwrap_or(*f_sr))
+                .map(|f_sr| old_to_new[f_sr.index].clone().unwrap_or_else(|| f_sr.clone()))
                 .collect();
             old_to_new[i] = Some(out.add_tshell(faces));
         }
@@ -347,10 +347,10 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
     // Pass 6: mirror solids (depends on shells)
     for (i, ts) in brep.tshapes.iter().enumerate() {
         if let TShape::Solid(s) = &**ts {
-            let shells: Vec<ShapeRef> = s
+            let shells: Vec<Shape> = s
                 .shells
                 .iter()
-                .map(|sh_sr| old_to_new[sh_sr.index].unwrap_or(*sh_sr))
+                .map(|sh_sr| old_to_new[sh_sr.index].clone().unwrap_or_else(|| sh_sr.clone()))
                 .collect();
             old_to_new[i] = Some(out.add_tsolid(shells));
         }

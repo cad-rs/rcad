@@ -107,8 +107,8 @@ pub fn filter_object_only(
         .collect();
 
     // Walk all input TShapes, rebuilding hierarchy for kept faces.
-    // We use a HashMap to map old tshape index to new ShapeRef.
-    let mut old_to_new: std::collections::HashMap<usize, topods::ShapeRef> =
+    // We use a HashMap to map old tshape index to new Shape.
+    let mut old_to_new: std::collections::HashMap<usize, topods::Shape> =
         std::collections::HashMap::new();
 
     // First, copy all Vertex TShapes.
@@ -125,12 +125,14 @@ pub fn filter_object_only(
     // Copy all Edge TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Edge(ed) = ts.as_ref() {
-            let first = *old_to_new
+            let first = old_to_new
                 .get(&ed.first.index)
-                .unwrap_or(&topods::ShapeRef::NULL);
-            let last = *old_to_new
+                .cloned()
+                .unwrap_or(topods::Shape::null());
+            let last = old_to_new
                 .get(&ed.last.index)
-                .unwrap_or(&topods::ShapeRef::NULL);
+                .cloned()
+                .unwrap_or(topods::Shape::null());
             let sr = out.add_tedge(ed.curve.clone(), first, last, ed.range);
             old_to_new.insert(old_i, sr);
         }
@@ -139,19 +141,19 @@ pub fn filter_object_only(
     // Copy Wire TShapes, filtering out removed edges.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Wire(wd) = ts.as_ref() {
-            let new_edges: Vec<topods::ShapeRef> = wd
+            let new_edges: Vec<topods::Shape> = wd
                 .edges
                 .iter()
-                .filter_map(|e| old_to_new.get(&e.index).copied())
+                .filter_map(|e| old_to_new.get(&e.index).cloned())
                 .collect();
             if !new_edges.is_empty() {
                 // Preserve orientation
-                let new_edges_oriented: Vec<topods::ShapeRef> = wd
+                let new_edges_oriented: Vec<topods::Shape> = wd
                     .edges
                     .iter()
                     .filter_map(|e| {
                         old_to_new.get(&e.index).map(|n| {
-                            topods::ShapeRef::synthetic_with_orientation(n.index, e.orientation)
+                            topods::Shape::synthetic(n.index, e.orientation)
                         })
                     })
                     .collect();
@@ -172,17 +174,17 @@ pub fn filter_object_only(
             }
             let new_outer = old_to_new
                 .get(&fd.outer_wire.index)
-                .copied()
-                .unwrap_or(topods::ShapeRef::NULL);
-            let new_inner: Vec<topods::ShapeRef> = fd
+                .cloned()
+                .unwrap_or(topods::Shape::null());
+            let new_inner: Vec<topods::Shape> = fd
                 .inner_wires
                 .iter()
-                .filter_map(|w| old_to_new.get(&w.index).copied())
+                .filter_map(|w| old_to_new.get(&w.index).cloned())
                 .collect();
-            let new_internal: Vec<topods::ShapeRef> = fd
+            let new_internal: Vec<topods::Shape> = fd
                 .internal_vertices
                 .iter()
-                .filter_map(|v| old_to_new.get(&v.index).copied())
+                .filter_map(|v| old_to_new.get(&v.index).cloned())
                 .collect();
             // Preserve surface, uv_domain, natural_restriction from original face
             let sr = out.add_tface(
@@ -201,12 +203,12 @@ pub fn filter_object_only(
     // Build filtered Shell TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Shell(shd) = ts.as_ref() {
-            let new_faces: Vec<topods::ShapeRef> = shd
+            let new_faces: Vec<topods::Shape> = shd
                 .faces
                 .iter()
                 .filter_map(|f| {
                     old_to_new.get(&f.index).map(|n| {
-                        topods::ShapeRef::synthetic_with_orientation(n.index, f.orientation)
+                        topods::Shape::synthetic(n.index, f.orientation)
                     })
                 })
                 .collect();
@@ -220,12 +222,12 @@ pub fn filter_object_only(
     // Build filtered Solid TShapes.
     for (old_i, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Solid(sd) = ts.as_ref() {
-            let new_shells: Vec<topods::ShapeRef> = sd
+            let new_shells: Vec<topods::Shape> = sd
                 .shells
                 .iter()
                 .filter_map(|s| {
                     old_to_new.get(&s.index).map(|n| {
-                        topods::ShapeRef::synthetic_with_orientation(n.index, s.orientation)
+                        topods::Shape::synthetic(n.index, s.orientation)
                     })
                 })
                 .collect();

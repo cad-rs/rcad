@@ -5,7 +5,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topods::{self, BRep, ShapeRef, TShape};
+use rcad_kernel::topods::{self, BRep, Shape, TShape};
 
 #[derive(Debug, Clone)]
 pub enum BRepAlgoError {
@@ -39,16 +39,17 @@ pub struct NormalProject {
 
 impl NormalProject {
     pub fn new(brep: &BRep, face_idx: usize) -> Result<Self, BRepAlgoError> {
-        let faces: Vec<ShapeRef> = brep
+        let faces: Vec<Shape> = brep
             .tshapes
             .iter()
             .enumerate()
             .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
-            .map(|(i, _)| ShapeRef::synthetic(i))
+            .map(|(i, _)| Shape::synthetic(i, topods::Orientation::Forward))
             .collect();
-        let sr = *faces
+        let sr = faces
             .get(face_idx)
-            .ok_or(BRepAlgoError::InvalidFaceIndex(face_idx))?;
+            .ok_or(BRepAlgoError::InvalidFaceIndex(face_idx))?
+            .clone();
         let surface = match &*brep.tshapes[sr.index] {
             TShape::Face(fd) => fd.surface.clone(),
             _ => None,
@@ -65,16 +66,16 @@ impl NormalProject {
             .as_ref()
             .ok_or(BRepAlgoError::OperationFailed("no target face surface"))?;
         let mut out = BRep::new();
-        let input_vertices: Vec<(ShapeRef, DVec3)> = input
+        let input_vertices: Vec<(Shape, DVec3)> = input
             .tshapes
             .iter()
             .enumerate()
             .filter_map(|(i, ts)| match ts.as_ref() {
-                TShape::Vertex(vd) => Some((ShapeRef::synthetic(i), vd.point)),
+                TShape::Vertex(vd) => Some((Shape::synthetic(i, topods::Orientation::Forward), vd.point)),
                 _ => None,
             })
             .collect();
-        let mut v_map: Vec<ShapeRef> = Vec::new();
+        let mut v_map: Vec<Shape> = Vec::new();
         for (_sr, pt) in &input_vertices {
             let proj = rcad_kernel::projection::closest_point_on_surface(surf, *pt, 16);
             let (u, v) = proj.params;
@@ -91,8 +92,8 @@ impl NormalProject {
                     .iter()
                     .position(|(sr, _)| sr.index == ed.last.index);
                 if let (Some(si), Some(ei)) = (sv_idx, ev_idx) {
-                    let new_sv = v_map[si];
-                    let new_ev = v_map[ei];
+                    let new_sv = v_map[si].clone();
+                    let new_ev = v_map[ei].clone();
                     let _ = out.add_tedge(ed.curve.clone(), new_sv, new_ev, ed.range);
                 }
             }
@@ -123,16 +124,17 @@ pub struct FaceSection {
 
 impl FaceSection {
     pub fn new(brep: &BRep, face_idx: usize) -> Result<Self, BRepAlgoError> {
-        let faces: Vec<ShapeRef> = brep
+        let faces: Vec<Shape> = brep
             .tshapes
             .iter()
             .enumerate()
             .filter(|(_, ts)| matches!(ts.as_ref(), TShape::Face(_)))
-            .map(|(i, _)| ShapeRef::synthetic(i))
+            .map(|(i, _)| Shape::synthetic(i, topods::Orientation::Forward))
             .collect();
-        let sr = *faces
+        let sr = faces
             .get(face_idx)
-            .ok_or(BRepAlgoError::InvalidFaceIndex(face_idx))?;
+            .ok_or(BRepAlgoError::InvalidFaceIndex(face_idx))?
+            .clone();
         let surface = match &*brep.tshapes[sr.index] {
             TShape::Face(fd) => fd.surface.clone(),
             _ => None,

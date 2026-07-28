@@ -58,7 +58,7 @@ fn make_box_brep_topods_internal(
     ];
 
     // Add vertices
-    let v: Vec<topods::ShapeRef> = corners.iter().map(|&p| r.add_tvertex(p)).collect();
+    let v: Vec<topods::Shape> = corners.iter().map(|&p| r.add_tvertex(p)).collect();
 
     // 12 edges (6 faces x 4 edges, some shared)
     let face_loops = [
@@ -76,9 +76,9 @@ fn make_box_brep_topods_internal(
         for j in 0..4 {
             let a = fv[j];
             let b = fv[(j + 1) % 4];
-            let edge_sr = r.add_tedge(None, v[a], v[b], [0.0, 1.0]);
+            let edge_sr = r.add_tedge(None, v[a].clone(), v[b].clone(), [0.0, 1.0]);
             let orient = if a < b { topods::Orientation::Forward } else { topods::Orientation::Reversed };
-            edge_refs.push(topods::ShapeRef::synthetic_with_orientation(edge_sr.index, orient));
+            edge_refs.push(topods::Shape::synthetic(edge_sr.index, orient));
         }
         let wire = r.add_twire(edge_refs);
         let face = r.add_tface(None, wire, vec![], None, None, vec![], true);

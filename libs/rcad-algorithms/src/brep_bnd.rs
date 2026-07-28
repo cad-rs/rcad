@@ -385,12 +385,12 @@ pub fn add_face_to_bbox(brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut Bo
         add_surface_to_bbox_with_domain(surface, &domain, bbox);
     }
 
-    // Helper: add vertices from a wire ShapeRef
-    let add_wire_vertices = |wire_ref: &rcad_kernel::topods::ShapeRef,
+    // Helper: add vertices from a wire Shape
+    let add_wire_vertices = |wire_ref: &rcad_kernel::topods::Shape,
                              brep: &rcad_kernel::BRep,
                              bbox: &mut BoundingBox| {
         if let TShape::Wire(twd) = &*brep.tshapes[wire_ref.index] {
-            for &edge_ref in &twd.edges {
+            for edge_ref in &twd.edges {
                 if let TShape::Edge(ed) = &*brep.tshapes[edge_ref.index] {
                     if let Some(pt) = brep.vertex_point(ed.first.index) {
                         bbox.add_point(pt);

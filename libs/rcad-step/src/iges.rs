@@ -237,9 +237,9 @@ impl IgesReader {
         for fd in &face_datas {
             for &tri in &fd.triangles {
                 let [i, j, k] = tri;
-                let e0 = brep.add_tedge(None, vert_refs[i], vert_refs[j], [0.0, 1.0]);
-                let e1 = brep.add_tedge(None, vert_refs[j], vert_refs[k], [0.0, 1.0]);
-                let e2 = brep.add_tedge(None, vert_refs[k], vert_refs[i], [0.0, 1.0]);
+                let e0 = brep.add_tedge(None, vert_refs[i].clone(), vert_refs[j].clone(), [0.0, 1.0]);
+                let e1 = brep.add_tedge(None, vert_refs[j].clone(), vert_refs[k].clone(), [0.0, 1.0]);
+                let e2 = brep.add_tedge(None, vert_refs[k].clone(), vert_refs[i].clone(), [0.0, 1.0]);
                 let w = brep.add_twire(vec![e0, e1, e2]);
                 let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
                 face_refs.push(f);

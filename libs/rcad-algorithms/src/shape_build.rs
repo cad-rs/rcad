@@ -1086,24 +1086,24 @@ impl BRepBuilder {
 
     /// Build and return the final BRep.
     pub fn build(self) -> rcad_kernel::BRep {
-        use rcad_kernel::topods::{self, Orientation, ShapeRef};
+        use rcad_kernel::topods::{self, Orientation, Shape};
         let mut brep = topods::BRep::new();
 
-        // Map old vertex flat index -> ShapeRef
-        let vrefs: Vec<ShapeRef> = self
+        // Map old vertex flat index -> Shape
+        let vrefs: Vec<Shape> = self
             .vertices
             .iter()
             .map(|v| brep.add_tvertex(v.point))
             .collect();
 
-        // Map old edge flat index -> ShapeRef
-        let erefs: Vec<ShapeRef> = self
+        // Map old edge flat index -> Shape
+        let erefs: Vec<Shape> = self
             .edges
             .iter()
             .enumerate()
             .map(|(i, e)| {
-                let v1 = vrefs.get(e.start).copied().unwrap_or(ShapeRef::NULL);
-                let v2 = vrefs.get(e.end).copied().unwrap_or(ShapeRef::NULL);
+                let v1 = vrefs.get(e.start).cloned().unwrap_or(Shape::null());
+                let v2 = vrefs.get(e.end).cloned().unwrap_or(Shape::null());
                 let curve = self
                     .geom
                     .edge_curve
@@ -1118,11 +1118,11 @@ impl BRepBuilder {
                     .unwrap_or([0.0, 1.0]);
                 let er = brep.add_tedge(curve, v1, v2, range);
                 if let Some(&true) = self.geom.edge_degenerated.get(i) {
-                    brep.edge_mut(er).degenerated = true;
+                    brep.edge_mut(er.clone()).degenerated = true;
                 }
                 if let Some(&tol) = self.geom.edge_tolerance.get(i) {
                     if tol > 0.0 {
-                        brep.edge_mut(er).tolerance = tol;
+                        brep.edge_mut(er.clone()).tolerance = tol;
                     }
                 }
                 er
@@ -1136,12 +1136,12 @@ impl BRepBuilder {
                 let mut face_refs = Vec::new();
                 for face in &shell.faces {
                     // Build outer wire
-                    let outer_edge_refs: Vec<ShapeRef> = face
+                    let outer_edge_refs: Vec<Shape> = face
                         .outer_wire
                         .edges
                         .iter()
                         .map(|we| {
-                            ShapeRef::synthetic_with_orientation(
+                            Shape::synthetic(
                                 erefs.get(we.idx).map(|e| e.index).unwrap_or(usize::MAX),
                                 if we.forward {
                                     Orientation::Forward
@@ -1154,15 +1154,15 @@ impl BRepBuilder {
                     let outer_wire = brep.add_twire(outer_edge_refs);
 
                     // Build inner wires
-                    let inner_wires: Vec<ShapeRef> = face
+                    let inner_wires: Vec<Shape> = face
                         .inner_wires
                         .iter()
                         .map(|wire| {
-                            let wire_edge_refs: Vec<ShapeRef> = wire
+                            let wire_edge_refs: Vec<Shape> = wire
                                 .edges
                                 .iter()
                                 .map(|we| {
-                                    ShapeRef::synthetic_with_orientation(
+                                    Shape::synthetic(
                                         erefs.get(we.idx).map(|e| e.index).unwrap_or(usize::MAX),
                                         if we.forward {
                                             Orientation::Forward

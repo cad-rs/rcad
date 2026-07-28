@@ -22,7 +22,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rayon::prelude::*;
 use rcad_kernel::geom::CurveEval;
-use rcad_kernel::topods::{self, BRep, Orientation, ShapeRef, TShape};
+use rcad_kernel::topods::{self, BRep, Orientation, Shape, TShape};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -58,8 +58,8 @@ pub(crate) fn edge_verts(brep: &BRep, ei: usize) -> (usize, usize) {
     }
 }
 
-/// Iterate all edge references from a face ShapeRef, calling `f(ei, forward)` for each.
-pub(crate) fn for_each_face_edge<F>(brep: &BRep, face_sr: ShapeRef, mut f: F)
+/// Iterate all edge references from a face Shape, calling `f(ei, forward)` for each.
+pub(crate) fn for_each_face_edge<F>(brep: &BRep, face_sr: Shape, mut f: F)
 where
     F: FnMut(usize, bool),
 {
@@ -85,15 +85,15 @@ where
 }
 
 /// Collect all edge indices referenced by a face.
-pub(crate) fn face_edge_refs(brep: &BRep, face_sr: ShapeRef) -> Vec<usize> {
+pub(crate) fn face_edge_refs(brep: &BRep, face_sr: Shape) -> Vec<usize> {
     let mut out = Vec::new();
     for_each_face_edge(brep, face_sr, |ei, _| out.push(ei));
     out
 }
 
-/// Build a wire_verts Vec<(start, end)> from a wire's ShapeRef.
+/// Build a wire_verts Vec<(start, end)> from a wire's Shape.
 /// Uses `we_sr.index` as edge index into the BRep; `forward` is determined by orientation.
-fn wire_vert_pairs(brep: &BRep, wire_sr: ShapeRef) -> Vec<(usize, usize)> {
+fn wire_vert_pairs(brep: &BRep, wire_sr: Shape) -> Vec<(usize, usize)> {
     let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] else {
         return vec![];
     };
@@ -471,7 +471,7 @@ fn compute_edge_face_counts_parallel(brep: &BRep, n_edges: usize) -> Vec<usize> 
         .flat_map(|sd| sd.shells.iter())
         .flat_map(|shell_sr| {
             if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
-                shd.faces.iter().map(|fsr| *fsr).collect::<Vec<_>>()
+                shd.faces.iter().map(|fsr| fsr.clone()).collect::<Vec<_>>()
             } else {
                 vec![]
             }
@@ -546,7 +546,7 @@ fn check_single_face(
         _ => return issues,
     };
     let shell_sr = match sd.shells.get(shi) {
-        Some(sr) => *sr,
+        Some(sr) => sr.clone(),
         None => return issues,
     };
     let shd = match &*brep.tshapes[shell_sr.index] {
@@ -554,7 +554,7 @@ fn check_single_face(
         _ => return issues,
     };
     let face_sr = match shd.faces.get(fi) {
-        Some(sr) => *sr,
+        Some(sr) => sr.clone(),
         None => return issues,
     };
     let fd = match &*brep.tshapes[face_sr.index] {
@@ -579,7 +579,7 @@ fn check_single_face(
     }
 
     // Get outer wire edges
-    let outer_wire_edges: Vec<ShapeRef> = {
+    let outer_wire_edges: Vec<Shape> = {
         let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else {
             issues.push(CheckIssue::DegenerateFace {
                 solid: si,
@@ -1697,7 +1697,7 @@ fn check_single_face_detailed(
         _ => return err_result(),
     };
     let shell_sr = match sd.shells.get(shi) {
-        Some(sr) => *sr,
+        Some(sr) => sr.clone(),
         None => return err_result(),
     };
     let shd = match &*brep.tshapes[shell_sr.index] {
@@ -1705,7 +1705,7 @@ fn check_single_face_detailed(
         _ => return err_result(),
     };
     let face_sr = match shd.faces.get(fi) {
-        Some(sr) => *sr,
+        Some(sr) => sr.clone(),
         None => return err_result(),
     };
     let fd = match &*brep.tshapes[face_sr.index] {
@@ -1732,7 +1732,7 @@ fn check_single_face_detailed(
     }
 
     // Get outer wire edges
-    let outer_wire_edges: Vec<ShapeRef> = {
+    let outer_wire_edges: Vec<Shape> = {
         let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else {
             return FaceCheckResult {
                 solid_idx: si,
@@ -2152,7 +2152,7 @@ fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationR
         _ => panic!("not solid"),
     };
     let shell_sr = match sd.shells.get(shi) {
-        Some(sr) => *sr,
+        Some(sr) => sr.clone(),
         None => panic!("shell index out of range"),
     };
     let shd = match &*brep.tshapes[shell_sr.index] {
@@ -2171,7 +2171,7 @@ fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationR
     let mut unique_vertices: HashSet<usize> = HashSet::new();
 
     for face_sr in &shd.faces {
-        for ei in face_edge_refs(brep, *face_sr) {
+        for ei in face_edge_refs(brep, face_sr.clone()) {
             if ei < n_edges {
                 unique_edges.insert(ei);
                 unique_vertices.insert(edge_start(brep, ei));
@@ -2187,7 +2187,7 @@ fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationR
     // Count edge face references
     let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
     for face_sr in &shd.faces {
-        for ei in face_edge_refs(brep, *face_sr) {
+        for ei in face_edge_refs(brep, face_sr.clone()) {
             if ei < n_edges {
                 *edge_face_count.entry(ei).or_insert(0) += 1;
             }

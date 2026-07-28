@@ -1,4 +1,4 @@
-﻿
+
 /// Project a point onto a plane surface and return UV parameters.
 ///
 /// The UV coordinates are computed using a deterministic orthonormal basis
@@ -1345,16 +1345,16 @@ fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: u
 
 /// Helper to add a face to a BRep and return its tshape index.
 fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
- use rcad_kernel::topods::{ShapeRef, Orientation};
+ use rcad_kernel::topods::{Shape, Orientation};
 
- let wire_edges: Vec<ShapeRef> = outer.edges.iter().map(|we| {
-  ShapeRef::synthetic_with_orientation(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
+ let wire_edges: Vec<Shape> = outer.edges.iter().map(|we| {
+  Shape::synthetic(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
  }).collect();
  let outer_wire_ref = brep.add_twire(wire_edges);
 
- let inner_wire_refs: Vec<ShapeRef> = inner.iter().map(|w| {
-  let e: Vec<ShapeRef> = w.edges.iter().map(|we| {
-   ShapeRef::synthetic_with_orientation(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
+ let inner_wire_refs: Vec<Shape> = inner.iter().map(|w| {
+  let e: Vec<Shape> = w.edges.iter().map(|we| {
+   Shape::synthetic(we.idx, if we.forward { Orientation::Forward } else { Orientation::Reversed })
   }).collect();
   brep.add_twire(e)
  }).collect();

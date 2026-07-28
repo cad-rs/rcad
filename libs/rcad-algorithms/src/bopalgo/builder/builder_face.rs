@@ -3,7 +3,7 @@ use crate::bopalgo::builder::types::*;
 use crate::bopalgo::builder::{FaceOrigin, WireEdgeSource};
 use crate::bopds::ds::DS;
 use rcad_kernel::geom::*;
-use rcad_kernel::topods::{self, BRepTool, Orientation, ShapeRef};
+use rcad_kernel::topods::{self, BRepTool, Orientation, Shape};
 use std::collections::HashMap;
 
 /// BOPAlgo_BuilderFace (BuilderFace.hxx).
@@ -17,15 +17,15 @@ pub(crate) struct BuilderFace<'a> {
     brep: &'a topods::BRep,
     /// DSAsBRep as BRepTool (reads from DS, supports vertex_orientation).
     ds_tool: DSAsBRep<'a>,
-    face_refs: &'a [ShapeRef],
-    ic_edge_map: &'a [Option<ShapeRef>],
-    my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
+    face_refs: &'a [Shape],
+    ic_edge_map: &'a [Option<Shape>],
+    my_face_refs: &'a std::cell::RefCell<Vec<Shape>>,
     face_idx: usize,
     is_a: bool,
     /// myShapes (aLE edge list).
-    shapes: Option<Vec<ShapeRef>>,
+    shapes: Option<Vec<Shape>>,
     /// myAreas — resulting split-face TShape refs.
-    my_areas: Vec<ShapeRef>,
+    my_areas: Vec<Shape>,
     /// Internal ResultBuilder for TShape creation during perform().
     my_result: crate::bopalgo::builder::result_builder::ResultBuilder,
 }
@@ -34,9 +34,9 @@ impl<'a> BuilderFace<'a> {
     pub fn new(
         ds: &'a DS,
         brep: &'a topods::BRep,
-        face_refs: &'a [ShapeRef],
-        ic_edge_map: &'a [Option<ShapeRef>],
-        my_face_refs: &'a std::cell::RefCell<Vec<ShapeRef>>,
+        face_refs: &'a [Shape],
+        ic_edge_map: &'a [Option<Shape>],
+        my_face_refs: &'a std::cell::RefCell<Vec<Shape>>,
         face_idx: usize,
         is_a: bool,
     ) -> Self {
@@ -56,11 +56,11 @@ impl<'a> BuilderFace<'a> {
         }
     }
 
-    pub fn set_shapes(&mut self, shapes: Vec<ShapeRef>) {
+    pub fn set_shapes(&mut self, shapes: Vec<Shape>) {
         self.shapes = Some(shapes);
     }
 
-    pub fn areas(&self) -> &[ShapeRef] {
+    pub fn areas(&self) -> &[Shape] {
         &self.my_areas
     }
 
@@ -144,7 +144,7 @@ impl<'a> BuilderFace<'a> {
         let mut wfs = wfs;
 
         // OCCT L618-912: PerformInternalShapes
-        let face_ref = self.face_refs[self.face_idx];
+        let face_ref = self.face_refs[self.face_idx].clone();
         crate::bopalgo::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs,
             &internal_wire_groups,
@@ -158,10 +158,10 @@ impl<'a> BuilderFace<'a> {
         // Store results in myAreas (OCCT PerformAreas returns TopoDS_Face list;
         // rcad emits to T BRep and stores ShapeRefs)
         let e_base = self.ds.vertex_count();
-        let ds_ei_to_sr: HashMap<usize, ShapeRef> = segments
+        let ds_ei_to_sr: HashMap<usize, Shape> = segments
             .iter()
             .filter_map(|seg| match &seg.source {
-                WireEdgeSource::DsEdge(ei) => Some((*ei, ShapeRef::synthetic(e_base + *ei))),
+                WireEdgeSource::DsEdge(ei) => Some((*ei, Shape::synthetic(e_base + *ei, Orientation::Forward))),
                 _ => None,
             })
             .collect();
@@ -195,7 +195,7 @@ impl<'a> BuilderFace<'a> {
                 false,
                 origin,
                 &HashMap::new(),
-                self.face_refs[self.face_idx],
+                self.face_refs[self.face_idx].clone(),
                 self.ds.face_natural_restriction(self.face_idx),
                 &ds_ei_to_sr,
                 &sr_index_to_ds_ei,
@@ -205,31 +205,31 @@ impl<'a> BuilderFace<'a> {
             if fi < self.my_result.faces.len() {
                 let mut real_face_refs = Vec::new();
                 self.my_result.emit_face_topods(t, &mut real_face_refs);
-                if let Some(&real_ref) = real_face_refs.last() {
+                if let Some(real_ref) = real_face_refs.last().cloned() {
                     if !real_ref.is_null() {
                         self.my_areas.push(real_ref);
                     }
                 } else {
                     let last_idx = t.tshapes.len().wrapping_sub(1);
                     if last_idx < t.tshapes.len() {
-                        self.my_areas.push(topods::ShapeRef::synthetic(last_idx));
+                        self.my_areas.push(topods::Shape::synthetic(last_idx, Orientation::Forward));
                     }
                 }
             }
         }
     }
 
-    /// ✅ OCCT-aligned: Convert myShapes (ShapeRef list from aLE) to WireSegments.
+    /// ✅ OCCT-aligned: Convert myShapes (Shape list from aLE) to WireSegments.
     /// Architecture note: OCCT TopExp_Explorer iterates TopoDS_Edge directly in
-    /// BuildSplitFaces (Builder_2.cxx L362-465). rcad builds aLE as ShapeRef list
+    /// BuildSplitFaces (Builder_2.cxx L362-465). rcad builds aLE as Shape list
     /// in build_split_faces (filler_mod.rs), then converts to WireSegment here for
     /// segment-based wire walking (WireSegmentTopoDS). INTERNAL edges get forward+reverse
     /// copies matching OCCT L371-378.
-    fn shapes_to_segments(&self, shapes: &[ShapeRef]) -> Vec<WireSegment> {
+    fn shapes_to_segments(&self, shapes: &[Shape]) -> Vec<WireSegment> {
         let e_base = self.ds.vertex_count();
         let mut segments: Vec<WireSegment> = Vec::with_capacity(shapes.len());
 
-        for &sr in shapes {
+        for sr in shapes {
             let ei = sr.index.saturating_sub(e_base);
             if ei >= self.ds.edge_count() {
                 continue;

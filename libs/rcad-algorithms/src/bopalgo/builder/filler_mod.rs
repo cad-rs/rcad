@@ -85,12 +85,12 @@ impl<'a> BooleanBuilder<'a> {
                 if n_sp_r == usize::MAX {
                     continue;
                 }
-                let a_l_im = my_images.entry(a_e).or_default();
+                let a_l_im = my_images.entry(a_e.clone()).or_default();
                 let a_sp_r = self.brep_sr(a_nv + n_sp_r);
-                a_l_im.push(a_sp_r);
+                a_l_im.push(a_sp_r.clone());
                 let mut my_origins = self.my_origins.borrow_mut();
-                let p_l_or = my_origins.entry(a_sp_r).or_default();
-                p_l_or.push(a_e);
+                let p_l_or = my_origins.entry(a_sp_r.clone()).or_default();
+                p_l_or.push(a_e.clone());
                 if pb.0.read().unwrap().common_block_idx.is_some() {
                     if let Some(n_sp) = pb.0.read().unwrap().new_edge {
                         if n_sp == usize::MAX {
@@ -108,7 +108,7 @@ impl<'a> BooleanBuilder<'a> {
     pub(super) fn fill_images_container_wire(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertex_count();
         let w_base = e_base + self.ds.edge_count();
-        let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
+        let mut pending: Vec<(topods::Shape, Vec<topods::Shape>)> = Vec::new();
         let my_images = self.my_images.borrow();
         // OCCT FillImagesContainers(WIRE): iterate NbSourceShapes, filter WIRE
         let nb_src = self.ds.nb_source_shapes();
@@ -139,15 +139,15 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L247-272: rebuild wire with split or original sub-edges
-            let mut a_c_im: Vec<topods::ShapeRef> = Vec::new();
+            let mut a_c_im: Vec<topods::Shape> = Vec::new();
             for &flat_ei in &si.sub_shapes {
                 let e_ref = self.brep_sr(flat_ei);
                 if let Some(imgs) = my_images.get(&e_ref) {
-                    for &img_sr in imgs {
+                    for img_sr in imgs {
                         // OCCT L265-269: IsSplitToReverseWithWarn orientation fix
                         //   rcad: orientation handled at edge level during build_split_edges
-                        if !a_c_im.contains(&img_sr) {
-                            a_c_im.push(img_sr);
+                        if !a_c_im.contains(img_sr) {
+                            a_c_im.push(img_sr.clone());
                         }
                     }
                 } else {
@@ -189,7 +189,7 @@ impl<'a> BooleanBuilder<'a> {
     /// Populate T BRep with source shape TShapes (Vertex/Edge/Wire/Face at correct flat indices).
     /// Enables BuildSplitFaces to iterate face->wire->edge from the T BRep (1:1 with OCCT).
     fn populate_source_shapes_in_t_brep(&self, t: &mut topods::BRep) {
-        use topods::ShapeRef;
+        use topods::Shape;
         let nV = self.ds.vertex_count();
         let nE = self.ds.edge_count();
         let nW = self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
@@ -212,8 +212,8 @@ impl<'a> BooleanBuilder<'a> {
         for (w_si, w_info) in self.ds.shape_info.iter().enumerate()
             .filter(|(_, si)| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new)
         {
-            let edge_refs: Vec<ShapeRef> = w_info.sub_shapes.iter()
-                .map(|&s| ShapeRef::synthetic(s))
+            let edge_refs: Vec<Shape> = w_info.sub_shapes.iter()
+                .map(|&s| Shape::synthetic(s, topods::Orientation::Forward))
                 .collect();
             t.ensure_wire_at(w_si, edge_refs);
         }
@@ -228,12 +228,12 @@ impl<'a> BooleanBuilder<'a> {
 
             // Build outer wire edge refs from DS face boundary_edges,
             // using boundary_edge_forwards for correct orientation (OCCT L362-363).
-            let outer_edge_refs: Vec<ShapeRef> = df
+            let outer_edge_refs: Vec<Shape> = df
                 .boundary_edges
                 .iter()
                 .enumerate()
                 .map(|(i, &ei)| {
-                    let mut sr = ShapeRef::synthetic(nV + ei);
+                    let mut sr = Shape::synthetic(nV + ei, topods::Orientation::Forward);
                     if df.boundary_edge_forwards.get(i).copied().unwrap_or(true) {
                         sr.orientation = topods::Orientation::Forward;
                     } else {
@@ -248,13 +248,13 @@ impl<'a> BooleanBuilder<'a> {
             let outer_wire_sr = t.ensure_wire_at(nV + nE + wire_idx, outer_edge_refs);
 
             // Inner wires
-            let inner_wire_refs: Vec<ShapeRef> = self.ds.face_inner_wire_idxs(fi)
+            let inner_wire_refs: Vec<Shape> = self.ds.face_inner_wire_idxs(fi)
                     .iter()
                     .map(|&w_si| {
                         // w_si is the flat shape index of the wire (OCCT-aligned)
-                        let iw_edge_refs: Vec<ShapeRef> = if w_si < self.ds.shape_info.len() {
+                        let iw_edge_refs: Vec<Shape> = if w_si < self.ds.shape_info.len() {
                             self.ds.shape_info[w_si].sub_shapes.iter()
-                                .map(|&s| ShapeRef::synthetic(s))
+                                .map(|&s| Shape::synthetic(s, topods::Orientation::Forward))
                                 .collect()
                         } else {
                             Vec::new()
@@ -262,7 +262,7 @@ impl<'a> BooleanBuilder<'a> {
                         if !iw_edge_refs.is_empty() {
                             t.ensure_wire_at(w_si, iw_edge_refs)
                         } else {
-                            ShapeRef::synthetic(w_si)
+                            Shape::synthetic(w_si, topods::Orientation::Forward)
                         }
                     })
                     .collect();
@@ -355,7 +355,7 @@ impl<'a> BooleanBuilder<'a> {
         //   OCCT BOPTools_AlgoTools_1.cxx L389-423 + L1005-1055.
         {
             let t = self.my_shape.borrow();
-            let mut updates: Vec<(topods::ShapeRef, f64, rcad_kernel::topods::ShapeType)> =
+            let mut updates: Vec<(topods::Shape, f64, rcad_kernel::topods::ShapeType)> =
                 Vec::new();
 
             // Phase 1: Edge → Vertex — if vertex tolerance < edge tolerance, update vertex
@@ -364,14 +364,14 @@ impl<'a> BooleanBuilder<'a> {
                     let a_tol_e = ed.tolerance;
                     // OCCT: TopExp_Explorer on edge finds vertex sub-shapes.
                     // rcad: edge.first and edge.last are the start/end vertex ShapeRefs
-                    let vert_refs = [ed.first, ed.last];
-                    for &v_sr in &vert_refs {
-                        let vi = v_sr.ptr_id as usize;
+                    let vert_refs = [ed.first.clone(), ed.last.clone()];
+                    for v_sr in &vert_refs {
+                        let vi = v_sr.ptr_id() as usize;
                         if vi < t.tshapes.len() {
                             if let rcad_kernel::topods::TShape::Vertex(vd) = &*t.tshapes[vi] {
                                 if vd.tolerance < a_tol_e {
                                     updates.push((
-                                        v_sr,
+                                        v_sr.clone(),
                                         a_tol_e,
                                         rcad_kernel::topods::ShapeType::Vertex,
                                     ));
@@ -388,18 +388,18 @@ impl<'a> BooleanBuilder<'a> {
                     let a_tol_f = fd.tolerance;
                     // Collect edge ShapeRefs from outer and inner wires
                     for w_sr in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
-                        let wi = w_sr.ptr_id as usize;
+                        let wi = w_sr.ptr_id() as usize;
                         if wi < t.tshapes.len() {
                             if let rcad_kernel::topods::TShape::Wire(wd) = &*t.tshapes[wi] {
-                                for &e_sr in &wd.edges {
-                                    let ei = e_sr.ptr_id as usize;
+                                for e_sr in &wd.edges {
+                                    let ei = e_sr.ptr_id() as usize;
                                     if ei < t.tshapes.len() {
                                         if let rcad_kernel::topods::TShape::Edge(ed) =
                                             &*t.tshapes[ei]
                                         {
                                             if ed.tolerance < a_tol_f {
                                                 updates.push((
-                                                    e_sr,
+                                                    e_sr.clone(),
                                                     a_tol_f,
                                                     rcad_kernel::topods::ShapeType::Edge,
                                                 ));
@@ -417,7 +417,7 @@ impl<'a> BooleanBuilder<'a> {
             if !updates.is_empty() {
                 let mut t = self.my_shape.borrow_mut();
                 for (sr, tol, st) in updates {
-                    let ti = sr.ptr_id as usize;
+                    let ti = sr.ptr_id() as usize;
                     if st == rcad_kernel::topods::ShapeType::Edge {
                         if let rcad_kernel::topods::TShape::Edge(ed) = &*t.tshapes[ti].clone() {
                             t.tshapes[ti] = std::sync::Arc::new(rcad_kernel::topods::TShape::Edge(
@@ -456,7 +456,7 @@ impl<'a> BooleanBuilder<'a> {
         // PaveFiller BRep is empty (no tshapes). Use the T BRep (self.my_shape, borrowed as t).
         // face_refs_from_pf is always empty too. Build face_refs from the T BRep's face indices.
         let n_ds_faces = self.ds.face_count();
-        let mut face_refs_owned: Vec<topods::ShapeRef> = Vec::with_capacity(n_ds_faces);
+        let mut face_refs_owned: Vec<topods::Shape> = Vec::with_capacity(n_ds_faces);
         let t_brep: &topods::BRep = &*t;
         {
             let f_base = self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count();
@@ -472,18 +472,18 @@ impl<'a> BooleanBuilder<'a> {
                 let sr = if flat_idx < t_brep.tshapes.len() {
                     self.brep_sr(flat_idx)
                 } else {
-                    topods::ShapeRef::synthetic(flat_idx)
+                    topods::Shape::synthetic(flat_idx, topods::Orientation::Forward)
                 };
                 face_refs_owned.push(sr);
             }
         }
         let brep_owned = t_brep.clone();
         let mut a_vbf: Vec<crate::bopalgo::builder::BuilderFace> = Vec::new();
-        let mut a_vbf_face_srs: Vec<topods::ShapeRef> = Vec::new();
+        let mut a_vbf_face_srs: Vec<topods::Shape> = Vec::new();
         // OCCT aFacesIm: draft face results keyed by source face ref.
         let mut a_faces_im_draft: std::collections::HashMap<
-            topods::ShapeRef,
-            Vec<topods::ShapeRef>,
+            topods::Shape,
+            Vec<topods::Shape>,
         > = std::collections::HashMap::new();
 
         for i in 0..a_nb_s {
@@ -556,7 +556,7 @@ impl<'a> BooleanBuilder<'a> {
                                 if let Some(arc_w) = brep_owned.tshapes.get(w_sr.index) {
                                     if let topods::TShape::Wire(wd) = &**arc_w {
                                         // OCCT L321: itE.More() && itE.Value().Orientation() == TopAbs_INTERNAL
-                                        if let Some(&first_e_sr) = wd.edges.first() {
+                                        if let Some(first_e_sr) = wd.edges.first() {
                                             if first_e_sr.orientation
                                                 == topods::Orientation::Internal
                                             {
@@ -599,9 +599,9 @@ impl<'a> BooleanBuilder<'a> {
                             // Create TShape and capture ref for my_images (OCCT L344-347).
                             let mut tmp_fr = Vec::new();
                             result.emit_face_topods(t, &mut tmp_fr);
-                            if let Some(&draft_ref) = tmp_fr.last() {
+                            if let Some(draft_ref) = tmp_fr.last() {
                                 if !draft_ref.is_null() {
-                                    a_faces_im_draft.entry(f_sr).or_default().push(draft_ref);
+                                    a_faces_im_draft.entry(f_sr.clone()).or_default().push(draft_ref.clone());
                                 }
                             }
                         }
@@ -618,7 +618,7 @@ impl<'a> BooleanBuilder<'a> {
                 let sf_idx = self.ds.source_face_idx(fi);
                 self.brep_sr(f_base + side_offset + sf_idx)
             };
-            let mut a_le: Vec<topods::ShapeRef> = Vec::new();
+            let mut a_le: Vec<topods::Shape> = Vec::new();
             // OCCT L353: aMFence — fence for SEAM edge dedup.
             let mut a_m_fence_local: std::collections::HashSet<u64> =
                 std::collections::HashSet::new();
@@ -640,12 +640,12 @@ impl<'a> BooleanBuilder<'a> {
                 let t_shape: &topods::BRep = &*t;
                 if face_sr.index < t_shape.tshapes.len() {
                     if let topods::TShape::Face(fd) = &*t_shape.tshapes[face_sr.index] {
-                        for &wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                        for wi in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
                             if wi.index >= t_shape.tshapes.len() {
                                 continue;
                             }
                             if let topods::TShape::Wire(wd) = &*t_shape.tshapes[wi.index] {
-                                for &e_sr in &wd.edges {
+                                for e_sr in &wd.edges {
                                     // OCCT L367: anOriE = edge orientation in this wire.
                                     let mut an_ori_e = e_sr.orientation;
                                     // OCCT L362-363: TopExp_Explorer(aFF, EDGE) returns each edge
@@ -675,21 +675,21 @@ impl<'a> BooleanBuilder<'a> {
                                     // OCCT TopExp_Explorer: process each edge TShape only once
                                     // across all wires (outer + inner) to avoid duplicate
                                     // entries in aLE from seam edges that appear twice.
-                                    if !a_m_explorer_set.insert(e_sr.ptr_id) {
+                                    if !a_m_explorer_set.insert(e_sr.ptr_id()) {
                                         continue;
                                     }
 
                                     // OCCT L369-385: edge NOT in myImages.
                                     if !my_images.contains_key(&e_sr) {
                                         if an_ori_e == topods::Orientation::Internal {
-                                            let mut fwd = e_sr;
+                                            let mut fwd = e_sr.clone();
                                             fwd.orientation = topods::Orientation::Forward;
                                             a_le.push(fwd);
-                                            let mut rev = e_sr;
+                                            let mut rev = e_sr.clone();
                                             rev.orientation = topods::Orientation::Reversed;
                                             a_le.push(rev);
                                         } else {
-                                            a_le.push(e_sr);
+                                            a_le.push(e_sr.clone());
                                         }
                                         continue;
                                     }
@@ -717,8 +717,8 @@ impl<'a> BooleanBuilder<'a> {
                                     };
 
                                     if let Some(imgs) = my_images.get(&e_sr) {
-                                        for &sp_sr in imgs {
-                                            let mut a_sp = sp_sr;
+                                        for sp_sr in imgs {
+                                            let mut a_sp = sp_sr.clone();
 
                                             if b_is_degenerated {
                                                 a_sp.orientation = an_ori_e;
@@ -729,14 +729,14 @@ impl<'a> BooleanBuilder<'a> {
                                             if an_ori_e == topods::Orientation::Internal {
                                                 a_sp.orientation = topods::Orientation::Forward;
                                                 a_le.push(a_sp);
-                                                let mut rev = sp_sr;
+                                                let mut rev = sp_sr.clone();
                                                 rev.orientation = topods::Orientation::Reversed;
                                                 a_le.push(rev);
                                                 continue;
                                             }
 
                                             if b_is_closed {
-                                                if a_m_fence_local.insert(a_sp.ptr_id) {
+                                                if a_m_fence_local.insert(a_sp.ptr_id()) {
                                                     let sp_ei = a_sp.index.saturating_sub(e_base);
                                                     if sp_ei < self.ds.edge_count() {
                                                         let sp_is_closed = self
@@ -753,7 +753,7 @@ impl<'a> BooleanBuilder<'a> {
                                                     }
                                                     a_sp.orientation = topods::Orientation::Forward;
                                                     a_le.push(a_sp);
-                                                    let mut rev = sp_sr;
+                                                    let mut rev = sp_sr.clone();
                                                     rev.orientation = topods::Orientation::Reversed;
                                                     a_le.push(rev);
                                                 }
@@ -797,8 +797,8 @@ impl<'a> BooleanBuilder<'a> {
                         .new_edge
                         .unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
                     let e_sr = self.brep_sr(self.ds.vertex_count() + pb_ei);
-                    a_le.push(e_sr);
-                    a_le.push(topods::ShapeRef {
+                    a_le.push(e_sr.clone());
+                    a_le.push(topods::Shape {
                         index: e_sr.index,
                         orientation: topods::Orientation::Reversed,
                         ..e_sr
@@ -815,12 +815,12 @@ impl<'a> BooleanBuilder<'a> {
                         .unwrap_or(self.ds.pave_blocks[pb_idx].0.read().unwrap().original_edge);
                     let e_sr = self.brep_sr(self.ds.vertex_count() + pb_ei);
                     // OCCT L469-494: section edges are added with FORWARD + REVERSED orientation.
-                    a_le.push(topods::ShapeRef {
+                    a_le.push(topods::Shape {
                         index: e_sr.index,
                         orientation: topods::Orientation::Forward,
-                        ..e_sr
+                        ..e_sr.clone()
                     });
-                    a_le.push(topods::ShapeRef {
+                    a_le.push(topods::Shape {
                         index: e_sr.index,
                         orientation: topods::Orientation::Reversed,
                         ..e_sr
@@ -833,7 +833,7 @@ impl<'a> BooleanBuilder<'a> {
                     self.ds.faces.get(fi).unwrap().surface,
                     rcad_kernel::geom::Surface3::Plane(_)
                 ) {
-                    for &e_sr in &a_le {
+                    for e_sr in &a_le {
                         // Skip synthetic refs with no real TShape in the BRep.
                         if e_sr.index >= t.tshapes.len() {
                             continue;
@@ -891,22 +891,22 @@ impl<'a> BooleanBuilder<'a> {
             return;
         }
 
-        let mut a_faces_im: std::collections::HashMap<topods::ShapeRef, Vec<topods::ShapeRef>> =
+        let mut a_faces_im: std::collections::HashMap<topods::Shape, Vec<topods::Shape>> =
             std::collections::HashMap::new();
         for (bf, f_sr) in a_vbf.iter().zip(a_vbf_face_srs.iter()) {
             if bf.areas().is_empty() {
                 continue;
             }
-            let entry = a_faces_im.entry(*f_sr).or_default();
-            for &sr in bf.areas() {
-                entry.push(sr);
+            let entry = a_faces_im.entry(f_sr.clone()).or_default();
+            for sr in bf.areas() {
+                entry.push(sr.clone());
             }
         }
 
         // OCCT L534-552: merge draft face results into aFacesIm before storing to myImages.
         for (src_sr, draft_refs) in &a_faces_im_draft {
-            let entry = a_faces_im.entry(*src_sr).or_default();
-            entry.extend(draft_refs.iter().copied());
+            let entry = a_faces_im.entry(src_sr.clone()).or_default();
+            entry.extend(draft_refs.iter().cloned());
         }
 
         // OCCT L534-552: store aFacesIm entries into myImages with source-face orientation.
@@ -917,9 +917,9 @@ impl<'a> BooleanBuilder<'a> {
                 .map(|sr| sr.orientation)
                 .unwrap_or(topods::Orientation::Forward);
             let mut my_images = self.my_images.borrow_mut();
-            let p_lf_im = my_images.entry(*src_face_sr).or_insert_with(Vec::new);
-            for &a_fr in a_lfr {
-                let mut out_sr = a_fr;
+            let p_lf_im = my_images.entry(src_face_sr.clone()).or_insert_with(Vec::new);
+            for a_fr in a_lfr {
+                let mut out_sr = a_fr.clone();
                 if an_ori_f == topods::Orientation::Reversed {
                     out_sr.orientation = topods::Orientation::Reversed;
                 }
@@ -938,10 +938,10 @@ impl<'a> BooleanBuilder<'a> {
             if !a_faces_im.contains_key(f_sr) {
                 let mut mfr = self.my_face_refs.borrow_mut();
                 if fi >= mfr.len() {
-                    mfr.resize(fi + 1, topods::ShapeRef::NULL);
+                    mfr.resize(fi + 1, topods::Shape::null());
                 }
                 if mfr[fi].is_null() {
-                    mfr[fi] = *f_sr;
+                    mfr[fi] = f_sr.clone();
                 }
             }
         }
@@ -1479,9 +1479,9 @@ impl<'a> BooleanBuilder<'a> {
         result: &mut ResultBuilder,
         t: &mut topods::BRep,
     ) {
-        let mut pending: Vec<(topods::ShapeRef, Vec<topods::ShapeRef>)> = Vec::new();
-        // Pre-build DS face → result face ShapeRef map for fast lookup
-        let mut ds_face_to_ref: Vec<Option<topods::ShapeRef>> = vec![None; self.ds.face_count()];
+        let mut pending: Vec<(topods::Shape, Vec<topods::Shape>)> = Vec::new();
+        // Pre-build DS face → result face Shape map for fast lookup
+        let mut ds_face_to_ref: Vec<Option<topods::Shape>> = vec![None; self.ds.face_count()];
         for (rfi, fo) in result.face_origins.iter().enumerate() {
             let (origin, sfi) = match fo {
                 FaceOrigin::FromA(s) => (ShapeOrigin::ShapeA, *s),
@@ -1495,7 +1495,7 @@ impl<'a> BooleanBuilder<'a> {
                 .position(|f| f.origin == origin && f.source_face_idx == sfi)
             {
                 if dsfi < ds_face_to_ref.len() {
-                    if let Some(&sr) = self.my_face_refs.borrow().get(rfi) {
+                    if let Some(sr) = self.my_face_refs.borrow().get(rfi).cloned() {
                         ds_face_to_ref[dsfi] = Some(sr);
                     }
                 }
@@ -1529,14 +1529,14 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L247-272: rebuild shell with split or original sub-faces
-            let mut shell_faces: Vec<topods::ShapeRef> = Vec::new();
+            let mut shell_faces: Vec<topods::Shape> = Vec::new();
             for &flat_fi in &si.sub_shapes {
                 let f_ref = self.brep_sr(flat_fi);
                 if let Some(imgs) = my_images.get(&f_ref) {
                     // OCCT L260-270: add all split faces (with orientation fix)
-                    for &img_sr in imgs {
-                        if !shell_faces.contains(&img_sr) {
-                            shell_faces.push(img_sr);
+                    for img_sr in imgs {
+                        if !shell_faces.contains(img_sr) {
+                            shell_faces.push(img_sr.clone());
                         }
                     }
                 } else {
@@ -1545,7 +1545,7 @@ impl<'a> BooleanBuilder<'a> {
                         self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count(),
                     );
                     if dsfi < ds_face_to_ref.len() {
-                        if let Some(sr) = ds_face_to_ref[dsfi] {
+                        if let Some(sr) = ds_face_to_ref[dsfi].clone() {
                             if !shell_faces.contains(&sr) {
                                 shell_faces.push(sr);
                             }
@@ -1562,10 +1562,10 @@ impl<'a> BooleanBuilder<'a> {
             let is_closed = {
                 let mut ecount: std::collections::HashMap<usize, usize> =
                     std::collections::HashMap::new();
-                for &fsr in &shell_faces {
+                for fsr in &shell_faces {
                     if let Some(tf) = t.tshapes.get(fsr.index) {
                         if let topods::TShape::Face(fd) = &**tf {
-                            let count_wire_edges = |wsr: topods::ShapeRef| {
+                            let count_wire_edges = |wsr: topods::Shape| {
                                 t.tshapes.get(wsr.index).and_then(|tw| {
                                     if let topods::TShape::Wire(wd) = &**tw {
                                         Some(&wd.edges)
@@ -1574,13 +1574,13 @@ impl<'a> BooleanBuilder<'a> {
                                     }
                                 })
                             };
-                            if let Some(edges) = count_wire_edges(fd.outer_wire) {
+                            if let Some(edges) = count_wire_edges(fd.outer_wire.clone()) {
                                 for esr in edges {
                                     *ecount.entry(esr.index).or_default() += 1;
                                 }
                             }
                             for iwsr in &fd.inner_wires {
-                                if let Some(edges) = count_wire_edges(*iwsr) {
+                                if let Some(edges) = count_wire_edges(iwsr.clone()) {
                                     for esr in edges {
                                         *ecount.entry(esr.index).or_default() += 1;
                                     }
@@ -1595,9 +1595,9 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L275: myImages.Bound(theS, ...)->Append(aCIm)
             let shell_ref = t.add_tshell(shell_faces);
             if is_closed {
-                t.shell_mut(shell_ref).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+                t.shell_mut(shell_ref.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
             }
-            pending.push((s_ref, vec![shell_ref]));
+            pending.push((s_ref, vec![shell_ref.clone()]));
             self.my_shells.borrow_mut().push(shell_ref);
         }
         drop(my_images);
@@ -1616,7 +1616,7 @@ impl<'a> BooleanBuilder<'a> {
         let my_images = self.my_images.borrow();
         let my_solids = self.my_solids.borrow();
         let nb_src = self.ds.nb_source_shapes();
-        let mut pending: Vec<(topods::ShapeRef, topods::ShapeRef)> = Vec::new();
+        let mut pending: Vec<(topods::Shape, topods::Shape)> = Vec::new();
         for i_src in 0..nb_src {
             let si = &self.ds.shape_info[i_src];
             if si.shape_type != topods::ShapeType::CompSolid {
@@ -1641,7 +1641,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L247-272: rebuild compsolid with split or original sub-solids
             // rcad: collect result solid ShapeRefs that belong to this compsolid
-            let mut solid_refs: Vec<topods::ShapeRef> = Vec::new();
+            let mut solid_refs: Vec<topods::Shape> = Vec::new();
             let csi = si.source_idx;
             for (_shi, ds_shell) in self.ds.collect_source_shells().iter() {
                 for &dsfi in ds_shell {
@@ -1662,9 +1662,9 @@ impl<'a> BooleanBuilder<'a> {
                             _ => false,
                         };
                         if matches {
-                            if let Some(&fsr) = self.my_face_refs.borrow().get(rfi) {
-                                for &ssr in my_solids.iter() {
-                                    if !solid_refs.contains(&ssr) {
+                            if let Some(fsr) = self.my_face_refs.borrow().get(rfi).cloned() {
+                                for ssr in my_solids.iter() {
+                                    if !solid_refs.contains(ssr) {
                                         if let Some(ts) = t.tshapes.get(ssr.index) {
                                             if let topods::TShape::Solid(sd) = &**ts {
                                                 if sd.shells.iter().any(|sh_sr| {
@@ -1681,7 +1681,7 @@ impl<'a> BooleanBuilder<'a> {
                                                         },
                                                     )
                                                 }) {
-                                                    solid_refs.push(ssr);
+                                                    solid_refs.push(ssr.clone());
                                                 }
                                             }
                                         }
@@ -1696,7 +1696,7 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L275: myImages.Bound(theS, ...)->Append(aCIm)
             if !solid_refs.is_empty() {
                 let cs_ref = t.add_tcompsolid(solid_refs);
-                pending.push((cs_ref_key, cs_ref));
+                pending.push((cs_ref_key, cs_ref.clone()));
                 self.my_compsolid_groups.borrow_mut().push(cs_ref);
             }
         }
@@ -1794,7 +1794,7 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Compute sample point and AABB for a split face image from the T BRep.
     /// OCCT: IntTools_Context::ComputeSamplePoints on the BRep face.
-    fn split_face_sample_point(&self, sr: &topods::ShapeRef, t: &topods::BRep) -> (DVec3, Aabb) {
+    fn split_face_sample_point(&self, sr: &topods::Shape, t: &topods::BRep) -> (DVec3, Aabb) {
         let idx = sr.index;
         if idx >= t.tshapes.len() {
             return (DVec3::ZERO, Aabb::empty());
@@ -1813,7 +1813,7 @@ impl<'a> BooleanBuilder<'a> {
                                 continue;
                             }
                             if let topods::TShape::Edge(ed) = &*t.tshapes[e_sr.index] {
-                                for &v_sr in &[ed.first, ed.last] {
+                                for v_sr in &[ed.first.clone(), ed.last.clone()] {
                                     if v_sr.index < t.tshapes.len() && seen_v.insert(v_sr.index) {
                                         if let topods::TShape::Vertex(vd) = &*t.tshapes[v_sr.index]
                                         {
@@ -1856,7 +1856,7 @@ impl<'a> BooleanBuilder<'a> {
             dsfi: usize,
             sample: DVec3,
             aabb: Aabb,
-            ptr_id: u64,
+            data: u64,
         }
         let mut face_entries: Vec<FaceEntry> = Vec::new();
         let mut a_m_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
@@ -1876,14 +1876,14 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(split_faces) = imgs.get(&src_key) {
                 // OCCT L131-143: each split image is a separate face for classification.
                 let t = self.my_shape.borrow();
-                for &split_sr in split_faces {
-                    if a_m_fence.insert(split_sr.ptr_id) {
+                for split_sr in split_faces {
+                    if a_m_fence.insert(split_sr.ptr_id()) {
                         let (samp, aabb) = self.split_face_sample_point(&split_sr, &*t);
                         face_entries.push(FaceEntry {
                             dsfi,
                             sample: samp,
                             aabb,
-                            ptr_id: split_sr.ptr_id,
+                            data: split_sr.ptr_id(),
                         });
                     }
                 }
@@ -1910,7 +1910,7 @@ impl<'a> BooleanBuilder<'a> {
                     dsfi,
                     sample: c,
                     aabb,
-                    ptr_id: 0,
+                    data: 0,
                 });
             }
         }
@@ -1987,7 +1987,7 @@ impl<'a> BooleanBuilder<'a> {
                 let mut in_dsfi: Vec<usize> = Vec::new();
                 for &ei in &in_entries {
                     if let Some(fe) = face_entries.get(ei) {
-                        if fe.ptr_id != 0 {
+                        if fe.data != 0 {
                             // Skip split images from faces of the same solid.
                             let fo = self.ds.faces.get(fe.dsfi).map(|f| &f.origin);
                             let same_solid = (dsi == 0
@@ -1995,7 +1995,7 @@ impl<'a> BooleanBuilder<'a> {
                                 || (dsi == 1
                                     && *fo.unwrap_or(&ShapeOrigin::ShapeB) == ShapeOrigin::ShapeB);
                             if !same_solid {
-                                in_split_images.entry(dsi).or_default().insert(fe.ptr_id);
+                                in_split_images.entry(dsi).or_default().insert(fe.data);
                             }
                         }
                         if !in_dsfi.contains(&fe.dsfi) {
@@ -2140,11 +2140,11 @@ impl<'a> BooleanBuilder<'a> {
                 a_mst.push(ds_set);
 
                 // OCCT L451-461: non-interfered solid → build from source DS faces.
-                let mut sf: Vec<topods::ShapeRef> = Vec::new();
+                let mut sf: Vec<topods::Shape> = Vec::new();
                 let e_base = self.ds.vertex_count();
                 for &dsfi in ds_shell {
                     if let Some(df) = self.ds.faces.get(dsfi) {
-                        let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+                        let mut outer_edges: Vec<topods::Shape> = Vec::new();
                         for &ei in &df.boundary_edges {
                             if ei >= self.ds.edge_count() {
                                 continue;
@@ -2179,12 +2179,12 @@ impl<'a> BooleanBuilder<'a> {
                 let shell_ref = t.add_tshell(sf);
                 let solid_ref = t.add_tsolid(vec![shell_ref]);
                 // OCCT: store under source solid key for BuildResult(SOLID) lookup.
-                let src_key = topods::ShapeRef::synthetic(side);
+                let src_key = topods::Shape::synthetic(side, topods::Orientation::Forward);
                 self.my_images
                     .borrow_mut()
                     .entry(src_key)
                     .or_default()
-                    .push(solid_ref);
+                    .push(solid_ref.clone());
                 self.my_solids.borrow_mut().push(solid_ref);
             }
         }
@@ -2208,7 +2208,7 @@ impl<'a> BooleanBuilder<'a> {
             let e_base = self.ds.vertex_count();
 
             // Collect T BRep face refs: OUTSIDE split images + unsplit faces.
-            let mut sf: Vec<topods::ShapeRef> = Vec::new();
+            let mut sf: Vec<topods::Shape> = Vec::new();
             let mut outside_dsfi: Vec<usize> = Vec::new();
             if let Some((_shi, ds_shell)) = self.ds.collect_source_shells().get(si) {
                 for &dsfi in ds_shell {
@@ -2229,10 +2229,10 @@ impl<'a> BooleanBuilder<'a> {
                     let src_key = self.brep_sr(f_base + side_offset + df.source_face_idx);
                     if let Some(split_refs) = imgs.get(&src_key) {
                         // OCCT: use split images from myImages (BuildDraftSolid pattern).
-                        for &s_sr in split_refs {
-                            let is_in = in_side.map_or(false, |s| s.contains(&s_sr.ptr_id));
+                        for s_sr in split_refs {
+                            let is_in = in_side.map_or(false, |s| s.contains(&s_sr.ptr_id()));
                             if !is_in {
-                                sf.push(s_sr);
+                                sf.push(s_sr.clone());
                                 if !outside_dsfi.contains(&dsfi) {
                                     outside_dsfi.push(dsfi);
                                 }
@@ -2240,7 +2240,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     } else {
                         // No split images: create T BRep face from DS data.
-                        let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+                        let mut outer_edges: Vec<topods::Shape> = Vec::new();
                         for &ei in &df.boundary_edges {
                             if ei >= self.ds.edge_count() {
                                 continue;
@@ -2282,12 +2282,12 @@ impl<'a> BooleanBuilder<'a> {
             drop(in_split);
             let shell_ref = t.add_tshell(sf);
             let solid_ref = t.add_tsolid(vec![shell_ref]);
-            let src_key = topods::ShapeRef::synthetic(side);
+            let src_key = topods::Shape::synthetic(side, topods::Orientation::Forward);
             self.my_images
                 .borrow_mut()
                 .entry(src_key)
                 .or_default()
-                .push(solid_ref);
+                .push(solid_ref.clone());
             self.my_solids.borrow_mut().push(solid_ref);
 
             // Store in tmp_shells/tmp_solids for build_topods.

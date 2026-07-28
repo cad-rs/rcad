@@ -4953,8 +4953,8 @@ impl StepReader {
         // Build face index map: iterate tshapes and assign flat indices to faces
         let mut face_idx: usize = 0;
         let mut face_id_map: HashMap<u64, usize> = HashMap::new();
-        let mut ordered: Vec<(u64, topods::ShapeRef)> =
-            face_ref_by_id.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut ordered: Vec<(u64, topods::Shape)> =
+            face_ref_by_id.iter().map(|(k, v)| (*k, v.clone())).collect();
         ordered.sort_by_key(|(_, sr)| sr.index);
         for (step_face_id, _sr) in &ordered {
             face_id_map.insert(*step_face_id, face_idx);
@@ -5340,7 +5340,7 @@ fn build_topods_from_parsed(parsed: &ParsedStep) -> Result<topods::BRep, StepErr
 /// TopoDS version of build_compound_brep.
 fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError> {
     let mut t = topods::BRep::new();
-    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+    let mut refs: Vec<topods::Shape> = Vec::new();
 
     let mut referenced: std::collections::HashSet<u64> = std::collections::HashSet::new();
     for elems in parsed.compounds.values() {
@@ -5371,7 +5371,7 @@ fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError>
                             build_topods_solid_from_shell(parsed, *void_ref, &mut t)?
                         {
                             let void_shells = t.solid(void_solid_ref).shells.clone();
-                            t.solid_mut(solid_ref).shells.extend(void_shells);
+                            t.solid_mut(solid_ref.clone()).shells.extend(void_shells);
                         }
                     }
                     refs.push(solid_ref);
@@ -5401,8 +5401,8 @@ fn build_compound_topods_nested(
     parsed: &ParsedStep,
     compound_id: u64,
     t: &mut topods::BRep,
-) -> Result<Vec<topods::ShapeRef>, StepError> {
-    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+) -> Result<Vec<topods::Shape>, StepError> {
+    let mut refs: Vec<topods::Shape> = Vec::new();
     let Some(elems) = parsed.compounds.get(&compound_id) else {
         return Ok(refs);
     };
@@ -5420,7 +5420,7 @@ fn build_compound_topods_nested(
                         build_topods_solid_from_shell(parsed, *void_ref, t)?
                     {
                         let void_shells = t.solid(void_solid_ref).shells.clone();
-                        t.solid_mut(solid_ref).shells.extend(void_shells);
+                        t.solid_mut(solid_ref.clone()).shells.extend(void_shells);
                     }
                 }
                 refs.push(solid_ref);
@@ -5451,11 +5451,11 @@ fn build_topods_compsolid(
     parsed: &ParsedStep,
     compsolid_id: u64,
     t: &mut topods::BRep,
-) -> Result<Option<topods::ShapeRef>, StepError> {
+) -> Result<Option<topods::Shape>, StepError> {
     let Some(solid_refs) = parsed.compsolids.get(&compsolid_id) else {
         return Ok(None);
     };
-    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+    let mut refs: Vec<topods::Shape> = Vec::new();
     for &solid_ref in solid_refs {
         if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref)
             && let Some(sr) = build_topods_solid_from_shell(parsed, shell_ref, t)?
@@ -5466,7 +5466,7 @@ fn build_topods_compsolid(
                 for void_ref in voids {
                     if let Some(void_sr) = build_topods_solid_from_shell(parsed, *void_ref, t)? {
                         let void_shells = t.solid(void_sr).shells.clone();
-                        t.solid_mut(sr).shells.extend(void_shells);
+                        t.solid_mut(sr.clone()).shells.extend(void_shells);
                     }
                 }
                 refs.push(sr);
@@ -5485,15 +5485,15 @@ fn build_topods_solid_from_shell(
     parsed: &ParsedStep,
     shell_ref: u64,
     t: &mut topods::BRep,
-) -> Result<Option<topods::ShapeRef>, StepError> {
+) -> Result<Option<topods::Shape>, StepError> {
     let face_ids = parsed.closed_shells.get(&shell_ref);
     let face_ids = match face_ids {
         Some(fids) => fids,
         None => return Ok(None),
     };
 
-    let mut vertex_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
-    let mut edge_ref_by_curve: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut vertex_ref_by_id: HashMap<u64, topods::Shape> = HashMap::new();
+    let mut edge_ref_by_curve: HashMap<u64, topods::Shape> = HashMap::new();
     let mut curve_store_index_by_step: HashMap<u64, usize> = HashMap::new();
     let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
 
@@ -5531,7 +5531,7 @@ fn build_topods_solid_from_shell(
         }
     }
 
-    let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+    let mut face_refs: Vec<topods::Shape> = Vec::new();
     for &face_id in face_ids {
         if let Some((face_ref, surface_step_id)) = build_face_topods(
             parsed,
@@ -5545,7 +5545,7 @@ fn build_topods_solid_from_shell(
                 if !surface_store_index_by_step.contains_key(&surf_step_id) {
                     if let Some(surface) = resolve_surface(parsed, surf_step_id) {
                         // Surface stored directly on TFace (OCCT-aligned)
-                        t.face_mut(face_ref).surface = Some(surface);
+                        t.face_mut(face_ref.clone()).surface = Some(surface);
                     }
                 }
             }
@@ -5565,7 +5565,7 @@ fn build_topods_solid_from_shell(
 /// and a mapping from STEP ADVANCED_FACE entity IDs to face ShapeRefs (for color resolution).
 fn build_topods_with_face_map(
     parsed: &ParsedStep,
-) -> Result<(topods::BRep, HashMap<u64, topods::ShapeRef>), StepError> {
+) -> Result<(topods::BRep, HashMap<u64, topods::Shape>), StepError> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
         collect_edge_vertices(parsed)
@@ -5579,11 +5579,11 @@ fn build_topods_with_face_map(
     }
 
     let mut t = topods::BRep::new();
-    let mut vertex_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
-    let mut edge_ref_by_curve: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut vertex_ref_by_id: HashMap<u64, topods::Shape> = HashMap::new();
+    let mut edge_ref_by_curve: HashMap<u64, topods::Shape> = HashMap::new();
     let mut curve_store_index_by_step: HashMap<u64, usize> = HashMap::new();
     let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
-    let mut face_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut face_ref_by_id: HashMap<u64, topods::Shape> = HashMap::new();
 
     // Build vertices
     let mut vertex_ids: Vec<u64> = used_vertex_ids.into_iter().collect();
@@ -5607,30 +5607,31 @@ fn build_topods_with_face_map(
         vertex_ref_by_id.insert(*vertex_id, sr);
     }
 
-    let mut solid_refs: Vec<topods::ShapeRef> = Vec::new();
+    let mut solid_refs: Vec<topods::Shape> = Vec::new();
 
     for shell_faces in &shell_face_sets {
-        let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+        let mut face_refs: Vec<topods::Shape> = Vec::new();
         for &face_id in shell_faces {
-            if let Some((face_ref, surface_step_id)) = build_face_topods(
+            let maybe_result = build_face_topods(
                 parsed,
                 face_id,
                 &mut t,
                 &vertex_ref_by_id,
                 &mut edge_ref_by_curve,
                 &mut curve_store_index_by_step,
-            ) {
+            );
+            if let Some((face_ref, surface_step_id)) = maybe_result {
                 // Resolve surface and set on face after creation
                 if let Some(surf_step_id) = surface_step_id {
                     if !surface_store_index_by_step.contains_key(&surf_step_id) {
                         let maybe_surf = resolve_surface(parsed, surf_step_id);
                         if let Some(surface) = maybe_surf {
                             // Surface stored directly on TFace (OCCT-aligned)
-                            t.face_mut(face_ref).surface = Some(surface);
+                            t.face_mut(face_ref.clone()).surface = Some(surface);
                         }
                     }
                 }
-                face_ref_by_id.insert(face_id, face_ref);
+                face_ref_by_id.insert(face_id, face_ref.clone());
                 face_refs.push(face_ref);
             }
         }
@@ -5654,8 +5655,8 @@ fn build_topods_with_face_map(
             if base + offset + n <= solid_refs.len() {
                 let outer_si = base + offset;
                 for vi in (outer_si + 1)..(outer_si + n) {
-                    let void_shells = t.solid(solid_refs[vi]).shells.clone();
-                    t.solid_mut(solid_refs[outer_si]).shells.extend(void_shells);
+                    let void_shells = t.solid(solid_refs[vi].clone()).shells.clone();
+                    t.solid_mut(solid_refs[outer_si].clone()).shells.extend(void_shells);
                     void_group.insert(vi);
                 }
             }
@@ -5723,13 +5724,13 @@ fn build_topods_with_face_map(
 
     // Populate edge pcurves from SURFACE_CURVE entities
     for (step_curve_id, (_inner_3d_ref, pcurve_ids, _same_param)) in &parsed.surface_curves {
-        let edge_ref = edge_ref_by_curve.get(step_curve_id).copied().or_else(|| {
+        let edge_ref = edge_ref_by_curve.get(step_curve_id).cloned().or_else(|| {
             parsed
                 .edge_curves
                 .iter()
                 .find_map(|(ec_id, (_, _, cr, _))| {
                     if cr.as_ref() == Some(step_curve_id) {
-                        edge_ref_by_curve.get(ec_id).copied()
+                        edge_ref_by_curve.get(ec_id).cloned()
                     } else {
                         None
                     }
@@ -5745,10 +5746,10 @@ fn build_topods_with_face_map(
                 continue;
             };
 
-            let face_ref = face_ref_by_id.iter().find_map(|(&fid, &fr)| {
+            let face_ref = face_ref_by_id.iter().find_map(|(&fid, fr)| {
                 let bounds = parsed.advanced_faces.get(&fid)?;
                 if bounds.surface == Some(surface_step_id) {
-                    Some(fr)
+                    Some(fr.clone())
                 } else {
                     None
                 }
@@ -5761,7 +5762,7 @@ fn build_topods_with_face_map(
                 continue;
             };
             let default_range = [0.0_f64, 1.0];
-            t.edge_mut(edge_ref).pcurves.insert(
+            t.edge_mut(edge_ref.clone()).pcurves.insert(
                 face_ref.index,
                 (curve2d, default_range[0], default_range[1]),
             );
@@ -5778,13 +5779,13 @@ fn build_topods_with_face_map(
         && (tol - CONFUSION).abs() > CONFUSION * 0.5
     {
         for v in vertex_ref_by_id.values() {
-            t.vertex_mut(*v).tolerance = tol;
+            t.vertex_mut(v.clone()).tolerance = tol;
         }
         for e in edge_ref_by_curve.values() {
-            t.edge_mut(*e).tolerance = tol;
+            t.edge_mut(e.clone()).tolerance = tol;
         }
         for f in face_ref_by_id.values() {
-            t.face_mut(*f).tolerance = tol;
+            t.face_mut(f.clone()).tolerance = tol;
         }
     }
 
@@ -5792,15 +5793,15 @@ fn build_topods_with_face_map(
 }
 
 /// Build a single face into a topods::BRep.
-/// Returns (face ShapeRef, surface STEP entity ID if applicable).
+/// Returns (face Shape, surface STEP entity ID if applicable).
 fn build_face_topods(
     parsed: &ParsedStep,
     face_id: u64,
     t: &mut topods::BRep,
-    vertex_ref_by_id: &HashMap<u64, topods::ShapeRef>,
-    edge_ref_by_curve: &mut HashMap<u64, topods::ShapeRef>,
+    vertex_ref_by_id: &HashMap<u64, topods::Shape>,
+    edge_ref_by_curve: &mut HashMap<u64, topods::Shape>,
     curve_store_index_by_step: &mut HashMap<u64, usize>,
-) -> Option<(topods::ShapeRef, Option<u64>)> {
+) -> Option<(topods::Shape, Option<u64>)> {
     let bound_ids = parsed.advanced_faces.get(&face_id)?;
 
     let outer_bound = bound_ids
@@ -5827,7 +5828,7 @@ fn build_face_topods(
 
     let oriented_ids = parsed.edge_loops.get(&loop_id)?;
 
-    let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
+    let mut wire_edges: Vec<topods::Shape> = Vec::new();
 
     for oriented_id in oriented_ids {
         let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
@@ -5851,8 +5852,8 @@ fn build_face_topods(
         } else {
             topods::Orientation::Reversed
         };
-        wire_edges.push(topods::ShapeRef {
-            ptr_id: edge_ref.ptr_id,
+        wire_edges.push(topods::Shape {
+            data: edge_ref.data.clone(),
             index: edge_ref.index,
             orientation: orient,
             location: 0,
@@ -5860,7 +5861,7 @@ fn build_face_topods(
     }
 
     // Build inner wires (holes)
-    let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
+    let mut inner_wires: Vec<topods::Shape> = Vec::new();
     for inner_bound in bound_ids
         .bounds
         .iter()
@@ -5898,8 +5899,8 @@ fn build_face_topods(
             } else {
                 topods::Orientation::Reversed
             };
-            inner_edges.push(topods::ShapeRef {
-                ptr_id: edge_ref.ptr_id,
+            inner_edges.push(topods::Shape {
+                data: edge_ref.data.clone(),
                 index: edge_ref.index,
                 orientation: orient,
                 location: 0,
@@ -5919,7 +5920,7 @@ fn build_face_topods(
 }
 
 /// Ensure an edge exists in the topods::BRep for a STEP EDGE_CURVE entity.
-/// Returns the edge's ShapeRef (creating it if needed).
+/// Returns the edge's Shape (creating it if needed).
 fn ensure_edge_topods(
     parsed: &ParsedStep,
     start_id: u64,
@@ -5927,17 +5928,17 @@ fn ensure_edge_topods(
     curve_ref: Option<u64>,
     same_sense: bool,
     t: &mut topods::BRep,
-    vertex_ref_by_id: &HashMap<u64, topods::ShapeRef>,
-    edge_ref_by_curve: &mut HashMap<u64, topods::ShapeRef>,
+    vertex_ref_by_id: &HashMap<u64, topods::Shape>,
+    edge_ref_by_curve: &mut HashMap<u64, topods::Shape>,
     curve_store_index_by_step: &mut HashMap<u64, usize>,
     edge_curve_id: u64,
-) -> Option<topods::ShapeRef> {
-    if let Some(&sr) = edge_ref_by_curve.get(&edge_curve_id) {
+) -> Option<topods::Shape> {
+    if let Some(sr) = edge_ref_by_curve.get(&edge_curve_id).cloned() {
         return Some(sr);
     }
 
-    let first = *vertex_ref_by_id.get(&start_id)?;
-    let last = *vertex_ref_by_id.get(&end_id)?;
+    let first = vertex_ref_by_id.get(&start_id)?.clone();
+    let last = vertex_ref_by_id.get(&end_id)?.clone();
 
     // Resolve curve ? store directly on edge (OCCT-aligned)
     let curve = curve_ref.and_then(|step_curve| {
@@ -5986,8 +5987,8 @@ fn ensure_edge_topods(
     }
 
     let has_curve = curve.is_some();
-    let edge_ref = t.add_tedge(curve, first, last, adjusted_range);
-    edge_ref_by_curve.insert(edge_curve_id, edge_ref);
+    let edge_ref = t.add_tedge(curve, first.clone(), last.clone(), adjusted_range);
+    edge_ref_by_curve.insert(edge_curve_id, edge_ref.clone());
 
     // Check degenerated
     if has_curve {
@@ -5995,7 +5996,7 @@ fn ensure_edge_topods(
         let p1 = t.vertex(last).point;
         let len = (p1 - p0).length();
         if len <= 1e-12 {
-            t.edge_mut(edge_ref).degenerated = true;
+            t.edge_mut(edge_ref.clone()).degenerated = true;
         }
     }
 

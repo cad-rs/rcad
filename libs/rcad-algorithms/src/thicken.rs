@@ -24,7 +24,7 @@
 use glam::DVec3;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
-use rcad_kernel::topods::{Orientation, ShapeRef, TShape};
+use rcad_kernel::topods::{Orientation, Shape, TShape};
 use rcad_kernel::topology::{Face, Shell, Wire, WireEdge};
 use std::collections::{HashMap, HashSet};
 
@@ -1000,9 +1000,9 @@ fn add_face(
     surface: Surface3,
     outer: Wire,
     inner: Vec<Wire>,
-    shell_sr: ShapeRef,
+    shell_sr: Shape,
 ) -> usize {
-    let outer_edge_refs: Vec<ShapeRef> = outer
+    let outer_edge_refs: Vec<Shape> = outer
         .edges
         .iter()
         .map(|we| {
@@ -1011,14 +1011,14 @@ fn add_face(
             } else {
                 Orientation::Reversed
             };
-            ShapeRef::synthetic_with_orientation(we.idx, orientation)
+            Shape::synthetic(we.idx, orientation)
         })
         .collect();
     let outer_wire = brep.add_twire(outer_edge_refs);
-    let inner_wires: Vec<ShapeRef> = inner
+    let inner_wires: Vec<Shape> = inner
         .iter()
         .map(|w| {
-            let edge_refs: Vec<ShapeRef> = w
+            let edge_refs: Vec<Shape> = w
                 .edges
                 .iter()
                 .map(|we| {
@@ -1027,7 +1027,7 @@ fn add_face(
                     } else {
                         Orientation::Reversed
                     };
-                    ShapeRef::synthetic_with_orientation(we.idx, orientation)
+                    Shape::synthetic(we.idx, orientation)
                 })
                 .collect();
             brep.add_twire(edge_refs)
@@ -1042,9 +1042,11 @@ fn add_face(
         vec![],
         true,
     );
-    brep.shell_mut(shell_sr).faces.push(face_sr);
-    brep.shell_mut(shell_sr).my_shapes.push(face_sr);
-    face_sr.index
+    let sh = brep.shell_mut(shell_sr);
+    let idx = face_sr.index;
+    sh.faces.push(face_sr.clone());
+    sh.my_shapes.push(face_sr);
+    idx
 }
 
 //  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
@@ -1352,7 +1354,7 @@ pub fn thicken_solid(
     // Build result BRep with topods API
     let mut out = rcad_kernel::BRep::new();
     let out_shell = out.add_tshell(vec![]);
-    let _out_solid = out.add_tsolid(vec![out_shell]);
+    let _out_solid = out.add_tsolid(vec![out_shell.clone()]);
 
     let mut orig_vidx: Vec<usize> = Vec::new();
     for i in 0..brep.vertex_count() {
@@ -1408,7 +1410,7 @@ pub fn thicken_solid(
             off_surf,
             Wire { edges: wire_edges },
             Vec::new(),
-            out_shell,
+            out_shell.clone(),
         );
         offset_face_count += 1;
     }
@@ -1496,7 +1498,7 @@ fn create_lateral_faces(
     orig_vidx: &[usize],
     off_vidx: &[usize],
     options: &ThickeningOptions,
-    shell_sr: ShapeRef,
+    shell_sr: Shape,
 ) -> usize {
     let loops = chain_edges(boundary_edges, edges);
     let mut lateral_count = 0;
@@ -1547,7 +1549,7 @@ fn create_lateral_faces(
                     mid_off_vidx,
                     f_vs,
                     normal,
-                    shell_sr,
+                    shell_sr.clone(),
                 );
                 // Second half
                 lateral_count += create_single_lateral_face(
@@ -1557,11 +1559,11 @@ fn create_lateral_faces(
                     f_ve,
                     mid_off_vidx,
                     normal,
-                    shell_sr,
+                    shell_sr.clone(),
                 );
             } else {
                 lateral_count +=
-                    create_single_lateral_face(out, o_vs, o_ve, f_ve, f_vs, normal, shell_sr);
+                    create_single_lateral_face(out, o_vs, o_ve, f_ve, f_vs, normal, shell_sr.clone());
             }
         }
     }
@@ -1577,7 +1579,7 @@ fn create_single_lateral_face(
     v2: usize,
     v3: usize,
     normal: DVec3,
-    shell_sr: ShapeRef,
+    shell_sr: Shape,
 ) -> usize {
     let p0 = out.vertex_point(v0).unwrap();
 
@@ -1721,7 +1723,7 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
     // Build result BRep with topods API
     let mut out = rcad_kernel::BRep::new();
     let out_shell = out.add_tshell(vec![]);
-    let _out_solid = out.add_tsolid(vec![out_shell]);
+    let _out_solid = out.add_tsolid(vec![out_shell.clone()]);
 
     let mut orig_vidx: Vec<usize> = Vec::new();
     for i in 0..brep.vertex_count() {
@@ -1770,7 +1772,7 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
             off_surf,
             Wire { edges: wire_edges },
             Vec::new(),
-            out_shell,
+            out_shell.clone(),
         );
         offset_face_count += 1;
     }
@@ -1825,7 +1827,7 @@ pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<Thicken
                 edges.push(WireEdge::fwd(add_edge(&mut out, curve, 0.0, len, s, en)));
             }
 
-            add_face(&mut out, surf, Wire { edges }, Vec::new(), out_shell);
+            add_face(&mut out, surf, Wire { edges }, Vec::new(), out_shell.clone());
             lateral_count += 1;
         }
     }

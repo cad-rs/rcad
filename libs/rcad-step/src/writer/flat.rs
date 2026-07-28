@@ -283,7 +283,7 @@ impl FlatBRep {
     fn wire_from_topods(
         brep: &topods::BRep,
         e_map: &HashMap<usize, usize>,
-        wire_sr: &topods::ShapeRef,
+        wire_sr: &topods::Shape,
     ) -> Wire {
         if let topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
             let edges: Vec<WireEdge> = wd

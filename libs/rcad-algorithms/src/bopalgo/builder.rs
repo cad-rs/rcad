@@ -61,28 +61,28 @@ pub struct BooleanBuilder<'a> {
     // BOPAlgo_Builder.hxx L497 =myContext
     pub(crate) context: RefCell<Context>,
     // BOPAlgo_Builder.hxx L492 =myArguments
-    pub(crate) my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    pub(crate) my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
     // BOPAlgo_Builder.hxx L494 =myMapFence - fence map for argument uniqueness
     pub(crate) my_map_fence:
-        std::cell::RefCell<std::collections::HashSet<rcad_kernel::topods::ShapeRef>>,
+        std::cell::RefCell<std::collections::HashSet<rcad_kernel::topods::Shape>>,
     // BOPAlgo_Builder.hxx L498 =myEntryPoint - controls deletion of PaveFiller
     pub(crate) my_entry_point: u8,
     // BOPAlgo_Builder.hxx L499 =myImages - map of Images of the sub-shapes of arguments
     pub(crate) my_images: std::cell::RefCell<
         std::collections::HashMap<
-            rcad_kernel::topods::ShapeRef,
-            Vec<rcad_kernel::topods::ShapeRef>,
+            rcad_kernel::topods::Shape,
+            Vec<rcad_kernel::topods::Shape>,
         >,
     >,
     // BOPAlgo_Builder.hxx L500 =myShapesSD - map of SD Shapes
     pub(crate) my_shapes_sd: std::cell::RefCell<
-        std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>,
+        std::collections::HashMap<rcad_kernel::topods::Shape, rcad_kernel::topods::Shape>,
     >,
     // BOPAlgo_Builder.hxx L501 =myOrigins - back map of Images
     pub(crate) my_origins: std::cell::RefCell<
         std::collections::HashMap<
-            rcad_kernel::topods::ShapeRef,
-            Vec<rcad_kernel::topods::ShapeRef>,
+            rcad_kernel::topods::Shape,
+            Vec<rcad_kernel::topods::Shape>,
         >,
     >,
     // BOPAlgo_Builder.hxx L502 =myInParts - map of own and acquired IN faces of the arguments solids
@@ -116,16 +116,16 @@ pub struct BooleanBuilder<'a> {
     pub(crate) brep: std::cell::RefCell<
         Option<(
             rcad_kernel::topods::BRep,
-            Vec<rcad_kernel::topods::ShapeRef>,
-            Vec<Option<rcad_kernel::topods::ShapeRef>>,
+            Vec<rcad_kernel::topods::Shape>,
+            Vec<Option<rcad_kernel::topods::Shape>>,
         )>,
     >,
-    pub(crate) my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
-    pub(crate) my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
-    pub(crate) my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
-    pub(crate) my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
-    pub(crate) my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
-    pub(crate) my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    pub(crate) my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
+    pub(crate) my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
+    pub(crate) my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
+    pub(crate) my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
+    pub(crate) my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
+    pub(crate) my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::Shape>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -489,7 +489,7 @@ impl<'a> BooleanBuilder<'a> {
                     .get(&e_sr)
                     .cloned()
                     .unwrap_or_default();
-                for &sp_sr in &imgs {
+                for sp_sr in &imgs {
                     let sp_ei = sp_sr.index.saturating_sub(e_base);
                     if sp_ei >= ds.edge_count() {
                         continue;
@@ -553,7 +553,7 @@ impl<'a> BooleanBuilder<'a> {
                         .get(&e_sr)
                         .cloned()
                         .unwrap_or_default();
-                    for &sp_sr in &imgs {
+                    for sp_sr in &imgs {
                         let sp_ei = sp_sr.index.saturating_sub(e_base);
                         if sp_ei >= ds.edge_count() {
                             continue;
@@ -651,8 +651,8 @@ impl<'a> BooleanBuilder<'a> {
     pub fn set_brep_with_mappings(
         &self,
         brep: rcad_kernel::topods::BRep,
-        face_refs: Vec<rcad_kernel::topods::ShapeRef>,
-        ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
+        face_refs: Vec<rcad_kernel::topods::Shape>,
+        ic_edge_map: Vec<Option<rcad_kernel::topods::Shape>>,
     ) {
         *self.brep.borrow_mut() = Some((brep, face_refs, ic_edge_map));
     }
@@ -662,27 +662,26 @@ impl<'a> BooleanBuilder<'a> {
         ds: &'a DS,
         op: BooleanOpType,
         brep: rcad_kernel::topods::BRep,
-        face_refs: Vec<rcad_kernel::topods::ShapeRef>,
-        ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
+        face_refs: Vec<rcad_kernel::topods::Shape>,
+        ic_edge_map: Vec<Option<rcad_kernel::topods::Shape>>,
     ) -> Self {
         let builder = Self::new(ds, op);
         builder.set_brep_with_mappings(brep, face_refs, ic_edge_map);
         builder
     }
 
-    /// ShapeRef backed by shared Arc in ds.shapes (myDS->Shape(n) identity).
+    /// Shape backed by shared Arc in ds.shapes (myDS->Shape(n) identity).
     /// Falls back to synthetic for out-of-range indices (shell/solid sentinel keys).
-    fn brep_sr(&self, flat_idx: usize) -> rcad_kernel::topods::ShapeRef {
+    fn brep_sr(&self, flat_idx: usize) -> rcad_kernel::topods::Shape {
         if flat_idx < self.ds.shapes.len() {
-            let ptr_id = std::sync::Arc::as_ptr(&self.ds.shapes[flat_idx]) as u64;
-            return rcad_kernel::topods::ShapeRef {
-                ptr_id,
+            return rcad_kernel::topods::Shape {
+                data: self.ds.shapes[flat_idx].clone(),
                 index: flat_idx,
                 orientation: rcad_kernel::topods::Orientation::Forward,
                 location: 0,
             };
         }
-        { rcad_kernel::topods::ShapeRef::synthetic(flat_idx) }
+        { rcad_kernel::topods::Shape::synthetic(flat_idx, rcad_kernel::topods::Orientation::Forward) }
     }
 
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
@@ -839,8 +838,8 @@ impl<'a> BooleanBuilder<'a> {
         // Populate my_arguments from DS source shapes (OCCT: SetArguments).
         let mut args = self.my_arguments.borrow_mut();
         args.clear();
-        args.push(rcad_kernel::topods::ShapeRef::synthetic(0));
-        args.push(rcad_kernel::topods::ShapeRef::synthetic(1));
+        args.push(rcad_kernel::topods::Shape::synthetic(0, rcad_kernel::topods::Orientation::Forward));
+        args.push(rcad_kernel::topods::Shape::synthetic(1, rcad_kernel::topods::Orientation::Forward));
         drop(args);
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
@@ -1132,8 +1131,8 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L431-436: CheckData
         let mut args = self.my_arguments.borrow_mut();
         args.clear();
-        args.push(rcad_kernel::topods::ShapeRef::synthetic(0));
-        args.push(rcad_kernel::topods::ShapeRef::synthetic(1));
+        args.push(rcad_kernel::topods::Shape::synthetic(0, rcad_kernel::topods::Orientation::Forward));
+        args.push(rcad_kernel::topods::Shape::synthetic(1, rcad_kernel::topods::Orientation::Forward));
         drop(args);
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
@@ -1469,26 +1468,29 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT L258-317: build result topods::BRep from one side's source shapes (TreatEmptyShape path).
     fn brep_of_side_topods(&self, origin: ShapeOrigin, _na: usize, _nb: usize) -> topods::BRep {
         let mut t = topods::BRep::new();
-        let mut v_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
-        let mut e_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
+        let mut v_map: HashMap<usize, topods::Shape> = HashMap::new();
+        let mut e_map: HashMap<usize, topods::Shape> = HashMap::new();
 
         for fi in 0..self.ds.face_count() {
             if self.ds.face_origin(fi) != origin {
                 continue;
             }
-            let mut edge_refs: Vec<topods::ShapeRef> = Vec::new();
+            let mut edge_refs: Vec<topods::Shape> = Vec::new();
             for &ei in self.ds.face_boundary_edges(fi) {
                 if ei >= self.ds.edge_count() {
                     continue;
                 }
                 let sv_idx = self.ds.edge_start_vertex_ds(ei);
                 let ev_idx = self.ds.edge_end_vertex_ds(ei);
-                let sv = *v_map.entry(sv_idx)
-                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(sv_idx)));
-                let ev = *v_map.entry(ev_idx)
-                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(ev_idx)));
-                let edge_sr = *e_map.entry(ei)
-                    .or_insert_with(|| t.add_tedge(None, sv, ev, [0.0, 1.0]));
+                let sv = v_map.entry(sv_idx)
+                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(sv_idx)))
+                    .clone();
+                let ev = v_map.entry(ev_idx)
+                    .or_insert_with(|| t.add_tvertex(self.ds.vertex_point(ev_idx)))
+                    .clone();
+                let edge_sr = e_map.entry(ei)
+                    .or_insert_with(|| t.add_tedge(None, sv, ev, [0.0, 1.0]))
+                    .clone();
                 edge_refs.push(edge_sr);
             }
             if edge_refs.is_empty() {
@@ -1503,13 +1505,13 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // Collect face refs and wrap in Shell → Solid
-        let face_srs: Vec<topods::ShapeRef> = t.tshapes
+        let face_srs: Vec<topods::Shape> = t.tshapes
             .iter()
             .enumerate()
             .filter(|(_, ts)| matches!(&***ts, topods::TShape::Face(_)))
             .map(|(i, _)| {
                 let idx = i;
-                topods::ShapeRef::synthetic(idx)
+                topods::Shape::synthetic(idx, topods::Orientation::Forward)
             })
             .collect();
         if !face_srs.is_empty() {

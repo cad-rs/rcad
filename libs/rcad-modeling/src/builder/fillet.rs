@@ -18,7 +18,7 @@ use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3,
     any_perpendicular,
 };
-use rcad_kernel::topods::{self, ShapeRef, TShape};
+use rcad_kernel::topods::{self, Shape, TShape};
 use rcad_kernel::topology::WireEdge;
 
 use crate::builder::BuildError;

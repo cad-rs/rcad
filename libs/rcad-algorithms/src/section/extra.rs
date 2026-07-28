@@ -217,7 +217,7 @@ fn extract_polylines_from_section(section: &SectionResult) -> Vec<Vec<DVec3>> {
     section.curves.iter().map(|curve| curve.curve.sample_points(33)).collect()
 }
 
-fn create_ruled_face_tshape(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<ShapeRef> {
+fn create_ruled_face_tshape(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<Shape> {
     let n = pts1.len().min(pts2.len());
     if n < 2 {
         return None;
@@ -234,12 +234,12 @@ fn create_ruled_face_tshape(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> 
         let v10 = brep.add_tvertex(resampled2[i]);
         let v11 = brep.add_tvertex(resampled2[i + 1]);
 
-        let e1 = brep.add_tedge(None, v00, v10, [0.0, 1.0]);
-        let e2 = brep.add_tedge(None, v10, v01, [0.0, 1.0]);
-        let e3 = brep.add_tedge(None, v01, v00, [0.0, 1.0]);
+        let e1 = brep.add_tedge(None, v00.clone(), v10.clone(), [0.0, 1.0]);
+        let e2 = brep.add_tedge(None, v10.clone(), v01.clone(), [0.0, 1.0]);
+        let e3 = brep.add_tedge(None, v01.clone(), v00, [0.0, 1.0]);
 
-        let _e4 = brep.add_tedge(None, v01, v10, [0.0, 1.0]);
-        let _e5 = brep.add_tedge(None, v10, v11, [0.0, 1.0]);
+        let _e4 = brep.add_tedge(None, v01.clone(), v10.clone(), [0.0, 1.0]);
+        let _e5 = brep.add_tedge(None, v10, v11.clone(), [0.0, 1.0]);
         let _e6 = brep.add_tedge(None, v11, v01, [0.0, 1.0]);
 
         wire_edges.push(e1);
@@ -310,14 +310,14 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
 
     let merge_eps = plane_section_mesh_merge_eps(brep);
 
-    let face_list: Vec<ShapeRef> = {
+    let face_list: Vec<Shape> = {
         let mut list = Vec::new();
         for ts in &brep.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
                 for shell_sr in &sd.shells {
                     if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
-                        for &face_sr in &shd.faces {
-                            list.push(face_sr);
+                        for face_sr in &shd.faces {
+                            list.push(face_sr.clone());
                         }
                     }
                 }
@@ -328,7 +328,8 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
 
     let mut face_global_idx = 0usize;
     for face_ref in &face_list {
-        let surf_opt = face_surface_from_ref(brep, *face_ref);
+        let face: Shape = face_ref.clone();
+        let surf_opt = face_surface_from_ref(brep, face);
 
         if let Some(surface) = surf_opt {
             let analytic = match surface {
@@ -361,7 +362,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                     PlaneConicalResult::NoIntersection => None,
                 },
                 _ => {
-                    let tris = collect_face_triangles_tshape(brep, *face_ref);
+                    let tris = collect_face_triangles_tshape(brep, face_ref.clone());
                     let segs: Vec<[DVec3; 2]> = tris
                         .into_iter()
                         .filter_map(|tri| triangle_section(plane, tri))
@@ -383,7 +384,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                 results.push(SectionCurve::Analytic(curve));
             }
         } else {
-            let tris = collect_face_triangles_tshape(brep, *face_ref);
+            let tris = collect_face_triangles_tshape(brep, face_ref.clone());
             let segs: Vec<[DVec3; 2]> = tris
                 .into_iter()
                 .filter_map(|tri| triangle_section(plane, tri))

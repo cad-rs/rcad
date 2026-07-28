@@ -949,15 +949,15 @@ fn build_brep(
 
     let mut brep = BRep::new();
 
-    // shape_refs[i] = ShapeRef for the TShape with parsed index i
-    let mut shape_refs: Vec<Option<topods::ShapeRef>> = vec![None; n];
+    // shape_refs[i] = Shape for the TShape with parsed index i
+    let mut shape_refs: Vec<Option<topods::Shape>> = vec![None; n];
 
     // Pass 1: Create all vertex TShapes
     for (i, s) in shapes.iter().enumerate() {
         if let TShapeKind::Vertex { p, tol } = &s.kind {
             let r = brep.add_tvertex(*p);
+            shape_refs[i] = Some(r.clone());
             brep.vertex_mut(r).tolerance = *tol;
-            shape_refs[i] = Some(r);
         }
     }
 
@@ -973,10 +973,10 @@ fn build_brep(
         {
             let i0 = shape_index(n, v0.1);
             let i1 = shape_index(n, v1.1);
-            let vr0 = shape_refs[i0].ok_or_else(|| {
+            let vr0 = shape_refs[i0].clone().ok_or_else(|| {
                 OcctBrepError::EmptyResult("edge references missing vertex".into())
             })?;
-            let vr1 = shape_refs[i1].ok_or_else(|| {
+            let vr1 = shape_refs[i1].clone().ok_or_else(|| {
                 OcctBrepError::EmptyResult("edge references missing vertex".into())
             })?;
 
@@ -991,8 +991,8 @@ fn build_brep(
             };
 
             let e = brep.add_tedge(edge_curve, vr0, vr1, edge_range);
+            shape_refs[i] = Some(e.clone());
             brep.edge_mut(e).tolerance = *tol;
-            shape_refs[i] = Some(e);
         }
     }
 
@@ -1002,7 +1002,7 @@ fn build_brep(
             let mut edge_srs = Vec::with_capacity(wrefs.len());
             for (o, back, _loc) in wrefs {
                 let si = shape_index(n, *back);
-                let esr = shape_refs[si]
+                let esr = shape_refs[si].clone()
                     .ok_or_else(|| OcctBrepError::EmptyResult("wire references non-edge".into()))?;
                 // Apply orientation from the reference character
                 let orient = match o {
@@ -1012,7 +1012,7 @@ fn build_brep(
                     'e' => topods::Orientation::External,
                     _ => topods::Orientation::Forward,
                 };
-                edge_srs.push(topods::ShapeRef::synthetic_with_orientation(
+                edge_srs.push(topods::Shape::synthetic(
                     esr.index, orient,
                 ));
             }
@@ -1020,9 +1020,11 @@ fn build_brep(
             // Set flags from the parsed shape flags
             if s.flags.len() == 7 {
                 let parsed = u16::from_str_radix(&s.flags, 2).unwrap_or(0);
+                shape_refs[i] = Some(w.clone());
                 brep.wire_mut(w).flags = parsed;
+            } else {
+                shape_refs[i] = Some(w);
             }
-            shape_refs[i] = Some(w);
         }
     }
 
@@ -1047,14 +1049,14 @@ fn build_brep(
                 return Err(OcctBrepError::EmptyResult("face has no wires".into()));
             }
             let wsi = shape_index(n, s.children[0].1);
-            let outer_wire_sr = shape_refs[wsi]
+            let outer_wire_sr = shape_refs[wsi].clone()
                 .ok_or_else(|| OcctBrepError::EmptyResult("face outer is not a wire".into()))?;
 
             // Inner wires from remaining children
             let mut inner_wire_srs = Vec::new();
             for ch in s.children.iter().skip(1) {
                 let wsi2 = shape_index(n, ch.1);
-                let iw_sr = shape_refs[wsi2]
+                let iw_sr = shape_refs[wsi2].clone()
                     .ok_or_else(|| OcctBrepError::EmptyResult("face inner is not a wire".into()))?;
                 // Apply orientation from the reference
                 let orient = match ch.0 {
@@ -1064,7 +1066,7 @@ fn build_brep(
                     'e' => topods::Orientation::External,
                     _ => topods::Orientation::Forward,
                 };
-                inner_wire_srs.push(topods::ShapeRef::synthetic_with_orientation(
+                inner_wire_srs.push(topods::Shape::synthetic(
                     iw_sr.index,
                     orient,
                 ));
@@ -1080,8 +1082,8 @@ fn build_brep(
                 vec![], // internal_vertices
                 natural_flag,
             );
+            shape_refs[i] = Some(f.clone());
             brep.face_mut(f).tolerance = *tol;
-            shape_refs[i] = Some(f);
         }
     }
 
@@ -1091,7 +1093,7 @@ fn build_brep(
             let mut face_srs = Vec::with_capacity(frefs.len());
             for (_o, back, _loc) in frefs {
                 let fi = shape_index(n, *back);
-                let fsr = shape_refs[fi].ok_or_else(|| {
+                let fsr = shape_refs[fi].clone().ok_or_else(|| {
                     OcctBrepError::EmptyResult("shell references non-face".into())
                 })?;
                 face_srs.push(fsr);
@@ -1107,7 +1109,7 @@ fn build_brep(
             let mut shell_srs = Vec::with_capacity(srefs.len());
             for (_o, back, _loc) in srefs {
                 let shi = shape_index(n, *back);
-                let ssr = shape_refs[shi].ok_or_else(|| {
+                let ssr = shape_refs[shi].clone().ok_or_else(|| {
                     OcctBrepError::EmptyResult("solid references non-shell".into())
                 })?;
                 shell_srs.push(ssr);
@@ -1123,7 +1125,7 @@ fn build_brep(
             let mut child_srs = Vec::with_capacity(refs.len());
             for (_o, back, _loc) in refs {
                 let ci = shape_index(n, *back);
-                if let Some(csr) = shape_refs[ci] {
+                if let Some(csr) = shape_refs[ci].clone() {
                     child_srs.push(csr);
                 }
             }
@@ -1135,7 +1137,7 @@ fn build_brep(
             let mut child_srs = Vec::with_capacity(refs.len());
             for (_o, back, _loc) in refs {
                 let ci = shape_index(n, *back);
-                if let Some(csr) = shape_refs[ci] {
+                if let Some(csr) = shape_refs[ci].clone() {
                     child_srs.push(csr);
                 }
             }

@@ -337,7 +337,7 @@ impl AspectRatioAdaptiveTolerance {
         ed: &rcad_kernel::topods::TEdgeData,
     ) -> HighAspectRatioEdge {
         use rcad_kernel::topods::TShape;
-        // Get endpoints from edge vertices (ShapeRef indices)
+        // Get endpoints from edge vertices (Shape indices)
         let p_start = match brep.tshapes.get(ed.first.index) {
             Some(ts) => match &**ts {
                 TShape::Vertex(vd) => vd.point,
@@ -557,7 +557,7 @@ impl DegenerateGeometryHandler {
         ed: &rcad_kernel::topods::TEdgeData,
     ) -> Option<NearDegenerateGeometry> {
         use rcad_kernel::topods::TShape;
-        // Get endpoints from edge vertex ShapeRef indices
+        // Get endpoints from edge vertex Shape indices
         let p_start = match brep.tshapes.get(ed.first.index) {
             Some(ts) => match &**ts {
                 TShape::Vertex(vd) => vd.point,

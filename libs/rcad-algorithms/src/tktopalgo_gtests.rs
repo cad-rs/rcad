@@ -1,4 +1,4 @@
-﻿//! TKTopAlgo GTest translations.
+//! TKTopAlgo GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
 //!
@@ -130,7 +130,7 @@ impl MakeWireStub {
     pub fn add_edge(&mut self, edge_sr: topods::Shape) { self.edges.push(edge_sr); }
     pub fn add_edges(&mut self, edges: &[topods::Shape]) { self.edges.extend_from_slice(edges); }
     pub fn build(&mut self, brep: &mut topods::BRep) -> topods::Shape {
-        let edge_refs: Vec<topods::ShapeRef> = self.edges.iter()
+        let edge_refs: Vec<topods::Shape> = self.edges.iter()
             .map(|e| brep.shape_to_ref(e))
             .collect();
         let wire_sr = brep.add_twire(edge_refs);
@@ -219,7 +219,7 @@ fn classify_to_state(c: crate::classify::Classification) -> TopAbsState {
 }
 
 impl SolidClassifierStub {
-    /// Find the first solid ShapeRef in a BRep.
+    /// Find the first solid Shape in a BRep.
     fn find_solid_ref(brep: &topods::BRep) -> topods::Shape {
         brep.tshapes.iter().enumerate()
             .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))

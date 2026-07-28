@@ -1,6 +1,6 @@
 //! Conversion between OASIS geometry and RCAD kernel types.
 
-use rcad_kernel::topods::{ShapeRef, TShape};
+use rcad_kernel::topods::{Shape, TShape};
 use rcad_kernel::{BRep, Edge, Face, Vertex, Wire, WireEdge};
 
 use crate::layer_config::LayerConfig;
@@ -27,7 +27,7 @@ fn polygon_to_brep_face(points: &[glam::DVec2], z_offset: f64) -> Result<BRep, O
     // Edges
     let mut edge_refs = Vec::with_capacity(n);
     for i in 0..n {
-        let sr = brep.add_tedge(None, vert_refs[i], vert_refs[(i + 1) % n], [0.0, 1.0]);
+        let sr = brep.add_tedge(None, vert_refs[i].clone(), vert_refs[(i + 1) % n].clone(), [0.0, 1.0]);
         edge_refs.push(sr);
     }
 
@@ -47,15 +47,15 @@ fn polygon_to_brep_face(points: &[glam::DVec2], z_offset: f64) -> Result<BRep, O
 }
 
 /// Recursively clone a shape (by its tshape index in `src`) into `dst`,
-/// returning the new `ShapeRef`. Uses `map` to avoid cloning already-copied shapes.
+/// returning the new `Shape`. Uses `map` to avoid cloning already-copied shapes.
 fn clone_shape_into(
     dst: &mut BRep,
     src: &BRep,
     src_idx: usize,
-    map: &mut HashMap<usize, ShapeRef>,
-) -> ShapeRef {
-    if let Some(&sr) = map.get(&src_idx) {
-        return sr;
+    map: &mut HashMap<usize, Shape>,
+) -> Shape {
+    if let Some(sr) = map.get(&src_idx) {
+        return sr.clone();
     }
     let ts = &src.tshapes[src_idx];
     let sr = match &**ts {
@@ -66,7 +66,7 @@ fn clone_shape_into(
             dst.add_tedge(ed.curve.clone(), first, last, ed.range)
         }
         TShape::Wire(wd) => {
-            let edges: Vec<ShapeRef> = wd
+            let edges: Vec<Shape> = wd
                 .edges
                 .iter()
                 .map(|e| clone_shape_into(dst, src, e.index, map))
@@ -75,12 +75,12 @@ fn clone_shape_into(
         }
         TShape::Face(fd) => {
             let outer = clone_shape_into(dst, src, fd.outer_wire.index, map);
-            let inner: Vec<ShapeRef> = fd
+            let inner: Vec<Shape> = fd
                 .inner_wires
                 .iter()
                 .map(|w| clone_shape_into(dst, src, w.index, map))
                 .collect();
-            let internal: Vec<ShapeRef> = fd
+            let internal: Vec<Shape> = fd
                 .internal_vertices
                 .iter()
                 .map(|v| clone_shape_into(dst, src, v.index, map))
@@ -96,7 +96,7 @@ fn clone_shape_into(
             )
         }
         TShape::Shell(sd) => {
-            let faces: Vec<ShapeRef> = sd
+            let faces: Vec<Shape> = sd
                 .faces
                 .iter()
                 .map(|f| clone_shape_into(dst, src, f.index, map))
@@ -104,7 +104,7 @@ fn clone_shape_into(
             dst.add_tshell(faces)
         }
         TShape::Solid(sd) => {
-            let shells: Vec<ShapeRef> = sd
+            let shells: Vec<Shape> = sd
                 .shells
                 .iter()
                 .map(|s| clone_shape_into(dst, src, s.index, map))
@@ -112,21 +112,21 @@ fn clone_shape_into(
             dst.add_tsolid(shells)
         }
         TShape::CompSolid(cs) => {
-            let solids: Vec<ShapeRef> = cs
+            let solids: Vec<Shape> = cs
                 .iter()
                 .map(|s| clone_shape_into(dst, src, s.index, map))
                 .collect();
             dst.add_tcompsolid(solids)
         }
         TShape::Compound(c) => {
-            let shapes: Vec<ShapeRef> = c
+            let shapes: Vec<Shape> = c
                 .iter()
                 .map(|s| clone_shape_into(dst, src, s.index, map))
                 .collect();
             dst.add_tcompound(shapes)
         }
     };
-    map.insert(src_idx, sr);
+    map.insert(src_idx, sr.clone());
     sr
 }
 

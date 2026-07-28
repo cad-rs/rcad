@@ -905,16 +905,16 @@ fn build_torus_from_points(
 pub fn append_brep(dst: &mut BRep, src: BRep) {
     let base = dst.tshapes.len();
     // Clone all TShapes from src into dst with index offsets.
-    // All ShapeRef.index values are offset by the number of existing
+    // All Shape.index values are offset by the number of existing
     // tshapes in dst so they point to the correct entries.
     for mut ts in src.tshapes {
-        // Offset all ShapeRef.index values in the TShape
+        // Offset all Shape.index values in the TShape
         offset_shape_refs(&mut ts, base);
         dst.tshapes.push(ts);
     }
 }
 
-/// Recursively offset all ShapeRef.index values in a TShape by `base`.
+/// Recursively offset all Shape.index values in a TShape by `base`.
 fn offset_shape_refs(ts: &mut Arc<TShape>, base: usize) {
     let inner = Arc::make_mut(ts);
     match inner {

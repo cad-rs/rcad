@@ -1,4 +1,4 @@
-﻿// =============================================================================
+// =============================================================================
 // Shell / Solid Extraction (explode equivalent)
 // =============================================================================
 
@@ -505,11 +505,11 @@ pub fn make_face_half_space(plane: &rcad_kernel::geom::Plane, bbox: &[DVec3; 2],
 }
 
 /// Compute the average vertex position of a face's boundary using topods access.
-fn average_vertex_of_face(brep: &rcad_kernel::BRep, face_sr: &rcad_kernel::topods::ShapeRef) -> DVec3 {
+fn average_vertex_of_face(brep: &rcad_kernel::BRep, face_sr: &rcad_kernel::topods::Shape) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
  if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
- let walk_edges = |wire_sr: &rcad_kernel::topods::ShapeRef, sum: &mut DVec3, count: &mut usize| {
+ let walk_edges = |wire_sr: &rcad_kernel::topods::Shape, sum: &mut DVec3, count: &mut usize| {
  if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
  for e_sr in &wd.edges {
  if let rcad_kernel::topods::TShape::Edge(ed) = &*brep.tshapes[e_sr.index] {
@@ -575,7 +575,7 @@ fn connected_face_components(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
  if face_set.contains(&global_fi) {
  let face_sr = &shd.faces[lfi];
  if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
- let collect_edges = |wire_sr: &rcad_kernel::topods::ShapeRef, e2f: &mut HashMap<usize, Vec<usize>>| {
+ let collect_edges = |wire_sr: &rcad_kernel::topods::Shape, e2f: &mut HashMap<usize, Vec<usize>>| {
  if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
  for e_sr in &wd.edges {
  e2f.entry(e_sr.index).or_default().push(global_fi);

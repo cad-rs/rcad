@@ -97,7 +97,7 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
 #[allow(dead_code)]
 pub(crate) fn map_result_shapes(brep: &topods::BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
-    // Collect flat vertex list from topods in ShapeRef.index order
+    // Collect flat vertex list from topods in Shape.index order
     let topo_vertices: Vec<DVec3> = brep
         .tshapes
         .iter()
@@ -117,7 +117,7 @@ pub(crate) fn map_result_shapes(brep: &topods::BRep, ds: &DS) -> (Vec<usize>, Ve
             }
         }
     }
-    // Edge pairs from topods edges: map ShapeRef.index -> flat position
+    // Edge pairs from topods edges: map Shape.index -> flat position
     let topo_edges: Vec<(usize, usize)> = brep
         .tshapes
         .iter()

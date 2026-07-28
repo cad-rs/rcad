@@ -24,7 +24,7 @@ use rcad_kernel::Surface3;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
-    BRep, Orientation, ShapeRef, TEdgeData, TFaceData, TShape, TShellData, TSolidData, TVertexData,
+    BRep, Orientation, Shape, TEdgeData, TFaceData, TShape, TShellData, TSolidData, TVertexData,
     TWireData, tshape_flags,
 };
 use std::sync::Arc;
@@ -230,7 +230,7 @@ fn collect_edges_flat(brep: &BRep) -> Vec<(usize, usize)> {
 /// a minimal reconstruction sufficient for merge/remove repair functions.
 fn build_brep_from_flat(vpts: &[DVec3], edges: &[(usize, usize)]) -> BRep {
     let mut b = BRep::new();
-    // Map old index → new ShapeRef via index rotation
+    // Map old index → new Shape via index rotation
     for &pt in vpts {
         b.add_tvertex(pt);
     }
@@ -269,8 +269,8 @@ fn face_wire_edge_indices(brep: &BRep, fi: usize) -> Vec<usize> {
     Vec::new()
 }
 
-/// Collect wire edge indices from a Wire ShapeRef.
-fn wire_edge_indices(brep: &BRep, wire_ref: ShapeRef) -> Vec<usize> {
+/// Collect wire edge indices from a Wire Shape.
+fn wire_edge_indices(brep: &BRep, wire_ref: Shape) -> Vec<usize> {
     if let TShape::Wire(wd) = &*brep.tshapes[wire_ref.index] {
         wd.edges.iter().map(|er| er.index).collect()
     } else {
@@ -1473,14 +1473,14 @@ fn merge_close_vertices_scoped(
                 _ => unreachable!(),
             };
             let mut new_ed = old_ed.clone();
-            new_ed.first = ShapeRef {
-                ptr_id: Arc::as_ptr(&out.tshapes[new_first]) as u64,
+            new_ed.first = Shape {
+                data: out.tshapes[new_first].clone(),
                 index: new_first,
                 orientation: Orientation::Forward,
                 location: 0,
             };
-            new_ed.last = ShapeRef {
-                ptr_id: Arc::as_ptr(&out.tshapes[new_last]) as u64,
+            new_ed.last = Shape {
+                data: out.tshapes[new_last].clone(),
                 index: new_last,
                 orientation: Orientation::Forward,
                 location: 0,
@@ -1764,14 +1764,14 @@ pub fn sew_close_edges(
                 _ => unreachable!(),
             };
             let mut new_ed = old_ed.clone();
-            new_ed.first = ShapeRef {
-                ptr_id: Arc::as_ptr(&result.tshapes[new_first]) as u64,
+            new_ed.first = Shape {
+                data: result.tshapes[new_first].clone(),
                 index: new_first,
                 orientation: Orientation::Forward,
                 location: 0,
             };
-            new_ed.last = ShapeRef {
-                ptr_id: Arc::as_ptr(&result.tshapes[new_last]) as u64,
+            new_ed.last = Shape {
+                data: result.tshapes[new_last].clone(),
                 index: new_last,
                 orientation: Orientation::Forward,
                 location: 0,

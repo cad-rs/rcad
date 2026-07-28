@@ -1004,8 +1004,8 @@ fn apply_chamfer_to_brep(
     let v_end_1 = brep.add_tvertex(chamfer_geom.end_vertices[1]);
 
     // Create new edges for chamfer boundaries
-    let e0_sr = create_line_edge(brep, v_start_0, v_end_0);
-    let e1_sr = create_line_edge(brep, v_start_1, v_end_1);
+    let e0_sr = create_line_edge(brep, v_start_0.clone(), v_end_0.clone());
+    let e1_sr = create_line_edge(brep, v_start_1.clone(), v_end_1.clone());
     let e_start_sr = create_line_edge(brep, v_start_0, v_start_1);
     let e_end_sr = create_line_edge(brep, v_end_0, v_end_1);
 
@@ -1013,8 +1013,8 @@ fn apply_chamfer_to_brep(
     let wire = brep.add_twire(vec![
         e0_sr,
         e_end_sr,
-        topods::ShapeRef::synthetic_with_orientation(e1_sr.index, topods::Orientation::Reversed),
-        topods::ShapeRef::synthetic_with_orientation(
+        topods::Shape::synthetic(e1_sr.index, topods::Orientation::Reversed),
+        topods::Shape::synthetic(
             e_start_sr.index,
             topods::Orientation::Reversed,
         ),
@@ -1032,29 +1032,34 @@ fn apply_chamfer_to_brep(
     );
 
     // Add face to the first Solid's first Shell
-    for arc in &mut brep.tshapes {
-        if let TShape::Solid(sd) = &mut *Arc::get_mut(arc).unwrap() {
-            if let Some(&sh_sr) = sd.shells.first() {
-                let sh = brep.shell_mut(sh_sr);
-                sh.faces.push(face_sr);
-                sh.my_shapes.push(face_sr);
+    let sh_sr_opt = {
+        let mut found = None;
+        for arc in &mut brep.tshapes {
+            if let TShape::Solid(sd) = &mut *Arc::get_mut(arc).unwrap() {
+                found = sd.shells.first().cloned();
+                break;
             }
-            break;
         }
+        found
+    };
+    if let Some(sh_sr) = sh_sr_opt {
+        let sh = brep.shell_mut(sh_sr);
+        sh.faces.push(face_sr.clone());
+        sh.my_shapes.push(face_sr);
     }
 
     Ok(1) // One chamfer face created
 }
 
 /// Create a line edge between two vertices using topods builder API.
-/// Returns the ShapeRef of the new edge.
+/// Returns the Shape of the new edge.
 fn create_line_edge(
     brep: &mut rcad_kernel::BRep,
-    start_sr: topods::ShapeRef,
-    end_sr: topods::ShapeRef,
-) -> topods::ShapeRef {
-    let p0 = brep.vertex(start_sr).point;
-    let p1 = brep.vertex(end_sr).point;
+    start_sr: topods::Shape,
+    end_sr: topods::Shape,
+) -> topods::Shape {
+    let p0 = brep.vertex(start_sr.clone()).point;
+    let p1 = brep.vertex(end_sr.clone()).point;
     let d = p1 - p0;
     let len = d.length();
     let dir = if len > TOLERANCE { d / len } else { DVec3::X };

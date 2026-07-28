@@ -59,7 +59,7 @@ pub fn classify_hole_type(brep: &rcad_kernel::BRep, feature: &CylindricalFeature
     // Walk TShape hierarchy to find the first shell
     let Some(shell_ts_idx) = brep.tshapes.iter().find_map(|ts| {
         if let TShape::Solid(sd) = ts.as_ref() {
-            sd.shells.first().copied()
+            sd.shells.first().cloned()
         } else {
             None
         }
@@ -421,7 +421,7 @@ fn fill_topology_gaps(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel:
     let (edge_face_count, boundary_edges) = {
         let Some(shell_ts_idx) = current.tshapes.iter().find_map(|ts| {
             if let TShape::Solid(sd) = ts.as_ref() {
-                sd.shells.first().copied()
+                sd.shells.first().cloned()
             } else {
                 None
             }

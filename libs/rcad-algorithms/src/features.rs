@@ -289,7 +289,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
     let mut brep = topods::BRep::new();
 
     // Add vertices
-    let verts: Vec<topods::ShapeRef> = profile_verts.iter().map(|&p| brep.add_tvertex(p)).collect();
+    let verts: Vec<topods::Shape> = profile_verts.iter().map(|&p| brep.add_tvertex(p)).collect();
 
     // Add edges: closed polygon loop
     let mut edge_refs = Vec::with_capacity(n);
@@ -307,7 +307,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
         } else {
             None
         };
-        edge_refs.push(brep.add_tedge(curve, verts[i], verts[j], [0.0, len]));
+        edge_refs.push(brep.add_tedge(curve, verts[i].clone(), verts[j].clone(), [0.0, len]));
     }
 
     // Wire from all edges
@@ -348,17 +348,17 @@ fn build_prism_from_sections(
     let mut brep = topods::BRep::new();
 
     // Add vertices: bot[0..n] then top[0..n]
-    let bot_sr: Vec<topods::ShapeRef> = bot.iter().map(|&p| brep.add_tvertex(p)).collect();
-    let top_sr: Vec<topods::ShapeRef> = top.iter().map(|&p| brep.add_tvertex(p)).collect();
+    let bot_sr: Vec<topods::Shape> = bot.iter().map(|&p| brep.add_tvertex(p)).collect();
+    let top_sr: Vec<topods::Shape> = top.iter().map(|&p| brep.add_tvertex(p)).collect();
 
-    /// Add a line edge from start to end and return its ShapeRef.
+    /// Add a line edge from start to end and return its Shape.
     fn add_line_edge(
         brep: &mut topods::BRep,
         p0: DVec3,
         p1: DVec3,
-        start_sr: topods::ShapeRef,
-        end_sr: topods::ShapeRef,
-    ) -> topods::ShapeRef {
+        start_sr: topods::Shape,
+        end_sr: topods::Shape,
+    ) -> topods::Shape {
         let d = p1 - p0;
         let len = d.length();
         let dir = if len > EPS { d / len } else { DVec3::X };
@@ -374,31 +374,31 @@ fn build_prism_from_sections(
     }
 
     // Bottom-cap edges: bot[i] -> bot[(i+1)%n]
-    let bot_edges: Vec<topods::ShapeRef> = (0..n)
+    let bot_edges: Vec<topods::Shape> = (0..n)
         .map(|i| {
             let j = (i + 1) % n;
-            add_line_edge(&mut brep, bot[i], bot[j], bot_sr[i], bot_sr[j])
+            add_line_edge(&mut brep, bot[i].clone(), bot[j].clone(), bot_sr[i].clone(), bot_sr[j].clone())
         })
         .collect();
     // Top-cap edges: top[i] -> top[(i+1)%n]
-    let top_edges: Vec<topods::ShapeRef> = (0..n)
+    let top_edges: Vec<topods::Shape> = (0..n)
         .map(|i| {
             let j = (i + 1) % n;
-            add_line_edge(&mut brep, top[i], top[j], top_sr[i], top_sr[j])
+            add_line_edge(&mut brep, top[i].clone(), top[j].clone(), top_sr[i].clone(), top_sr[j].clone())
         })
         .collect();
     // Vertical edges: bot[i] -> top[i]
-    let vert_edges: Vec<topods::ShapeRef> = (0..n)
-        .map(|i| add_line_edge(&mut brep, bot[i], top[i], bot_sr[i], top_sr[i]))
+    let vert_edges: Vec<topods::Shape> = (0..n)
+        .map(|i| add_line_edge(&mut brep, bot[i].clone(), top[i].clone(), bot_sr[i].clone(), top_sr[i].clone()))
         .collect();
 
     // Bottom cap (outward normal = -dir): reverse traversal of bot edges
-    let bot_wire: Vec<topods::ShapeRef> = (0..n)
+    let bot_wire: Vec<topods::Shape> = (0..n)
         .map(|i| {
-            let ei = bot_edges[n - 1 - i];
+            let ei = bot_edges[n - 1 - i].clone();
             // Reversed orientation
-            topods::ShapeRef {
-                ptr_id: 0,
+            topods::Shape {
+                data: ei.data.clone(),
                 index: ei.index,
                 orientation: topods::Orientation::Reversed,
                 location: 0,
@@ -417,7 +417,7 @@ fn build_prism_from_sections(
     );
 
     // Top cap (outward normal = +dir): forward traversal of top edges
-    let top_wire_edges: Vec<topods::ShapeRef> = (0..n).map(|i| top_edges[i]).collect();
+    let top_wire_edges: Vec<topods::Shape> = (0..n).map(|i| top_edges[i].clone()).collect();
     let top_wire_sr = brep.add_twire(top_wire_edges);
     brep.add_tface(
         Some(Surface3::Plane(rcad_kernel::geom::Plane::new(top[0], dir))),
@@ -447,16 +447,16 @@ fn build_prism_from_sections(
         };
         // wire: bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev), top[i]->bot[i] (rev)
         let wire_edges = vec![
-            bot_edges[i],
-            vert_edges[j],
-            topods::ShapeRef {
-                ptr_id: 0,
+            bot_edges[i].clone(),
+            vert_edges[j].clone(),
+            topods::Shape {
+                data: top_edges[i].data.clone(),
                 index: top_edges[i].index,
                 orientation: topods::Orientation::Reversed,
                 location: 0,
             },
-            topods::ShapeRef {
-                ptr_id: 0,
+            topods::Shape {
+                data: vert_edges[i].data.clone(),
                 index: vert_edges[i].index,
                 orientation: topods::Orientation::Reversed,
                 location: 0,
@@ -478,13 +478,13 @@ fn build_prism_from_sections(
     }
 
     // Build shell and solid
-    let face_refs: Vec<topods::ShapeRef> = brep
+    let face_refs: Vec<topods::Shape> = brep
         .tshapes
         .iter()
         .enumerate()
         .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
-        .map(|(i, _)| topods::ShapeRef {
-            ptr_id: 0,
+        .map(|(i, ts)| topods::Shape {
+            data: ts.clone(),
             index: i,
             orientation: topods::Orientation::Forward,
             location: 0,
@@ -620,11 +620,11 @@ pub fn split_face_by_wire(
 
     let n = outer_edges.len();
 
-    /// Build a ShapeRef for vertex by index.
-    fn vert_ref(brep: &topods::BRep, idx: usize) -> topods::ShapeRef {
+    /// Build a Shape for vertex by index.
+    fn vert_ref(brep: &topods::BRep, idx: usize) -> topods::Shape {
         let ts = &brep.tshapes[idx];
-        topods::ShapeRef {
-            ptr_id: Arc::as_ptr(ts) as u64,
+        topods::Shape {
+            data: ts.clone(),
             index: idx,
             orientation: topods::Orientation::Forward,
             location: 0,
@@ -632,7 +632,7 @@ pub fn split_face_by_wire(
     }
 
     // Add line edges for the cut path segments.
-    let cut_edge_refs: Vec<topods::ShapeRef> = cut_path
+    let cut_edge_refs: Vec<topods::Shape> = cut_path
         .windows(2)
         .map(|w| {
             let (sv, ev) = (w[0], w[1]);
@@ -658,22 +658,22 @@ pub fn split_face_by_wire(
         .collect();
 
     // Half A: outer[pos_start..pos_end] + cut forward.
-    let mut half_a: Vec<topods::ShapeRef> = (0..(pos_end - pos_start))
+    let mut half_a: Vec<topods::Shape> = (0..(pos_end - pos_start))
         .map(|i| {
             let ei = &outer_edges[(pos_start + i) % n];
-            *ei
+            ei.clone()
         })
         .collect();
-    half_a.extend(cut_edge_refs.iter().copied());
+    half_a.extend(cut_edge_refs.iter().cloned());
     let wire_a = brep.add_twire(half_a);
 
     // Half B: outer[pos_end..] + outer[..pos_start] + cut reversed.
     let half_b_len = n - (pos_end - pos_start);
-    let mut half_b: Vec<topods::ShapeRef> = (0..half_b_len)
-        .map(|i| outer_edges[(pos_end + i) % n])
+    let mut half_b: Vec<topods::Shape> = (0..half_b_len)
+        .map(|i| outer_edges[(pos_end + i) % n].clone())
         .collect();
-    half_b.extend(cut_edge_refs.iter().rev().map(|e| topods::ShapeRef {
-        ptr_id: e.ptr_id,
+    half_b.extend(cut_edge_refs.iter().rev().map(|e| topods::Shape {
+        data: e.data.clone(),
         index: e.index,
         orientation: topods::Orientation::Reversed,
         location: e.location,
@@ -732,9 +732,9 @@ pub fn split_face_by_wire(
     );
 
     // Add faces to the shell
-    let sd = brep.shell_mut(*shell_sr);
+    let sd = brep.shell_mut(shell_sr.clone());
     sd.faces[face_idx] = face_a_ref;
-    sd.faces.insert(face_idx + 1, face_b_ref);
+    sd.faces.insert(face_idx + 1, face_b_ref.clone());
     sd.my_shapes.push(face_b_ref);
 
     Ok(1)

@@ -263,13 +263,12 @@ fn grow_selected_faces_basic() {
     use rcad_modeling::make_box_brep;
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-    let brep_legacy = rcad_kernel::BRep::from_topods(&brep);
     let ctrl = CreationController::default();
     let mut sel = SelectionState {
         selected_faces: vec![0],
         ..Default::default()
     };
-    ctrl.grow_selected_faces(&brep_legacy, &mut sel);
+    ctrl.grow_selected_faces(&brep, &mut sel);
 
     // After growing, should have more faces.
     assert!(
@@ -292,13 +291,12 @@ fn grow_selected_edges_basic() {
     use rcad_modeling::make_box_brep;
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-    let brep_legacy = rcad_kernel::BRep::from_topods(&brep);
     let ctrl = CreationController::default();
     let mut sel = SelectionState {
         selected_edges: vec![0],
         ..Default::default()
     };
-    ctrl.grow_selected_edges(&brep_legacy, &mut sel);
+    ctrl.grow_selected_edges(&brep, &mut sel);
 
     assert!(
         sel.selected_edges.len() > 1,

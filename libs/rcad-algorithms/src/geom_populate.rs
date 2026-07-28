@@ -91,7 +91,7 @@ fn compute_face_plane_from_wire(
     brep: &rcad_kernel::BRep,
     fd: &topods::TFaceData,
 ) -> (DVec3, DVec3) {
-    let get_wire_pts = |sr: &topods::ShapeRef| -> Vec<DVec3> {
+    let get_wire_pts = |sr: &topods::Shape| -> Vec<DVec3> {
         let mut pts = Vec::new();
         let Some(wire_ts) = brep.tshapes.get(sr.index) else {
             return pts;

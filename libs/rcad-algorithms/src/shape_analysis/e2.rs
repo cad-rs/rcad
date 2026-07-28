@@ -6,10 +6,10 @@ fn are_edges_adjacent(edge1_idx: usize, edge2_idx: usize, brep: &rcad_kernel::BR
     ed1.last.index == ed2.first.index || ed1.last.index == ed2.last.index
 }
 
-/// Helper: get the ShapeRef for a face by solid/shell/face indices.
-fn ns_face_ref(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Option<ShapeRef> {
+/// Helper: get the Shape for a face by solid/shell/face indices.
+fn ns_face_ref(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Option<Shape> {
     let shd = ns_shell_data(brep, solid_idx, shell_idx)?;
-    shd.faces.get(face_idx).copied()
+    shd.faces.get(face_idx).cloned()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,7 +373,7 @@ pub fn analyze_periodic_surface_handling(
         TShape::Wire(wd) => wd,
         _ => return report,
     };
-    let mut all_edge_refs: Vec<ShapeRef> = outer_wd.edges.clone();
+    let mut all_edge_refs: Vec<Shape> = outer_wd.edges.clone();
     for iw_sr in &fd.inner_wires {
         if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
             all_edge_refs.extend(iwd.edges.iter().cloned());
@@ -584,7 +584,7 @@ pub struct UnderTrimmedRegion {
 /// Analyze surface bounds for a given surface and face.
 pub fn analyze_surface_bounds_for_face(
     surface: &Surface3,
-    face_sr: ShapeRef,
+    face_sr: Shape,
     brep: &rcad_kernel::BRep,
 ) -> SurfaceBoundsAnalysis {
     let mut analysis = SurfaceBoundsAnalysis::default();
@@ -794,13 +794,13 @@ pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &rcad_kernel::BRe
         TShape::Wire(wd) => wd,
         _ => return report,
     };
-    let mut all_edge_entries: Vec<(ShapeRef, bool)> = outer_wd.edges.iter()
-        .map(|esr| (*esr, esr.orientation == Orientation::Forward))
+    let mut all_edge_entries: Vec<(Shape, bool)> = outer_wd.edges.iter()
+        .map(|esr| (esr.clone(), esr.orientation == Orientation::Forward))
         .collect();
     for iw_sr in &fd.inner_wires {
         if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
             all_edge_entries.extend(iwd.edges.iter()
-                .map(|esr| (*esr, esr.orientation == Orientation::Forward)));
+                .map(|esr| (esr.clone(), esr.orientation == Orientation::Forward)));
         }
     }
 
@@ -1001,7 +1001,7 @@ pub fn compute_surface_deviation(face_idx: usize, brep: &rcad_kernel::BRep, samp
         TShape::Wire(wd) => wd,
         _ => return result,
     };
-    let mut all_edge_refs: Vec<ShapeRef> = outer_wd.edges.clone();
+    let mut all_edge_refs: Vec<Shape> = outer_wd.edges.clone();
     for iw_sr in &fd.inner_wires {
         if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
             all_edge_refs.extend(iwd.edges.iter().cloned());

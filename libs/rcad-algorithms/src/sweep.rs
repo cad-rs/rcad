@@ -440,7 +440,7 @@ pub fn linear_sweep_with_options(
         for i in 0..n {
             let j = (i + 1) % n;
             let ei = add_line_edge(&mut brep, start_vi[i], start_vi[j]);
-            edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+            edge_refs.push(topods::Shape::synthetic(
                 ei,
                 topods::Orientation::Forward,
             ));
@@ -468,7 +468,7 @@ pub fn linear_sweep_with_options(
             let j = (i + 1) % n;
             let ei = add_line_edge(&mut brep, end_vi[i], end_vi[j]);
             // Reverse for correct winding (CCW from +dir view)
-            edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+            edge_refs.push(topods::Shape::synthetic(
                 ei,
                 topods::Orientation::Reversed,
             ));
@@ -506,10 +506,10 @@ pub fn linear_sweep_with_options(
         let e_left = add_line_edge(&mut brep, end_vi[i], start_vi[i]);
 
         let edge_refs = vec![
-            topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_bot, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_right, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_top, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_left, topods::Orientation::Forward),
         ];
         let wire = brep.add_twire(edge_refs);
         let fi = face_refs.len();
@@ -719,7 +719,7 @@ pub fn rotational_sweep_with_options(
             for i in 0..n {
                 let j = (i + 1) % n;
                 let ei = add_line_edge(&mut brep, start_vi[i], start_vi[j]);
-                edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+                edge_refs.push(topods::Shape::synthetic(
                     ei,
                     topods::Orientation::Forward,
                 ));
@@ -745,7 +745,7 @@ pub fn rotational_sweep_with_options(
             for i in 0..n {
                 let j = (i + 1) % n;
                 let ei = add_line_edge(&mut brep, end_vi[i], end_vi[j]);
-                edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+                edge_refs.push(topods::Shape::synthetic(
                     ei,
                     topods::Orientation::Reversed,
                 ));
@@ -786,10 +786,10 @@ pub fn rotational_sweep_with_options(
         let e_left = add_line_edge(&mut brep, end_vi[i], start_vi[i]);
 
         let edge_refs = vec![
-            topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
-            topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_bot, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_right, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_top, topods::Orientation::Forward),
+            topods::Shape::synthetic(e_left, topods::Orientation::Forward),
         ];
         let wire = brep.add_twire(edge_refs);
         let fi = face_refs.len();
@@ -1046,7 +1046,7 @@ fn build_lofted_solid(
         for i in 0..n_verts {
             let j = (i + 1) % n_verts;
             let ei = add_line_edge(&mut brep, vi[0][i], vi[0][j]);
-            edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+            edge_refs.push(topods::Shape::synthetic(
                 ei,
                 topods::Orientation::Forward,
             ));
@@ -1077,7 +1077,7 @@ fn build_lofted_solid(
         for i in 0..n_verts {
             let j = (i + 1) % n_verts;
             let ei = add_line_edge(&mut brep, vi[n_sections - 1][i], vi[n_sections - 1][j]);
-            edge_refs.push(topods::ShapeRef::synthetic_with_orientation(
+            edge_refs.push(topods::Shape::synthetic(
                 ei,
                 topods::Orientation::Reversed,
             ));
@@ -1120,10 +1120,10 @@ fn build_lofted_solid(
             let e_left = add_line_edge(&mut brep, vi[sec + 1][i], vi[sec][i]);
 
             let edge_refs = vec![
-                topods::ShapeRef::synthetic_with_orientation(e_bot, topods::Orientation::Forward),
-                topods::ShapeRef::synthetic_with_orientation(e_right, topods::Orientation::Forward),
-                topods::ShapeRef::synthetic_with_orientation(e_top, topods::Orientation::Forward),
-                topods::ShapeRef::synthetic_with_orientation(e_left, topods::Orientation::Forward),
+                topods::Shape::synthetic(e_bot, topods::Orientation::Forward),
+                topods::Shape::synthetic(e_right, topods::Orientation::Forward),
+                topods::Shape::synthetic(e_top, topods::Orientation::Forward),
+                topods::Shape::synthetic(e_left, topods::Orientation::Forward),
             ];
             let wire = brep.add_twire(edge_refs);
             let fi = face_refs.len();

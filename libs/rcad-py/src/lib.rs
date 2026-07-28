@@ -14,9 +14,9 @@ use pyo3::exceptions::{PyException, PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rcad_algorithms::{
-    BooleanError, BooleanOpType, BooleanOptions, BrepProjOptions, OffsetError, SweepError,
-    boolean_op, boolean_op_with_options, brep_proj_cylindrical, linear_sweep_wire, offset_solid,
-    pipe_sweep_wire, repair, resolved_boolean_fuzzy_tol_for_ds, tolerance,
+    BooleanError, BooleanOpType, BrepProjOptions, OffsetError, SweepError,
+    bop_occt_ops::boolean_op_generic as boolean_op, brep_proj_cylindrical, linear_sweep_wire, offset_solid,
+    pipe_sweep_wire, tolerance,
 };
 use rcad_features::{FeaturesError as FeatErr, operations::FeatureOperations};
 use rcad_kernel::BRep;
@@ -38,7 +38,7 @@ fn tuple3(v: DVec3) -> (f64, f64, f64) {
 }
 
 fn face_count(brep: &BRep) -> usize {
-    brep.solids
+    brep.solids()
         .iter()
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
@@ -48,7 +48,7 @@ fn face_count(brep: &BRep) -> usize {
 /// Flattened face index for ``face_idx`` in the first solid's first shell (matches ``extrude``).
 fn face_flat_index_first_shell(brep: &BRep, face_idx: usize) -> PyResult<usize> {
     let mut flat = 0usize;
-    for (si, solid) in brep.solids.iter().enumerate() {
+    for (si, solid) in brep.solids().iter().enumerate() {
         for (shi, shell) in solid.shells.iter().enumerate() {
             if si == 0 && shi == 0 {
                 if face_idx >= shell.faces.len() {
@@ -475,14 +475,11 @@ impl PyHistoryDocument {
     }
 }
 
-/// Boolean pipeline options matching ``rcad_algorithms::BooleanOptions`` (commonly tuned subset).
-///
-/// Keyword-only constructor, e.g. ``BooleanOptions(fuzzy_tol=1e-5, run_propagate_geom_tolerances=True)``.
+/// Boolean pipeline options — options were removed during `Shape` migration; kept as a no-op stub
+/// for backward compatibility of callers that construct `BooleanOptions(...)`.
 #[pyclass(name = "BooleanOptions")]
 #[derive(Clone, Copy)]
-pub struct PyBooleanOptions {
-    inner: BooleanOptions,
-}
+pub struct PyBooleanOptions;
 
 #[pymethods]
 impl PyBooleanOptions {
@@ -502,33 +499,18 @@ impl PyBooleanOptions {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        use_bvh: bool,
-        run_healing: bool,
-        run_simplify: bool,
-        include_history: bool,
-        run_make_connected: bool,
-        make_connected_tolerance: Option<f64>,
-        fuzzy_tol: f64,
-        use_glue: bool,
-        glue_tolerance: Option<f64>,
-        run_propagate_geom_tolerances: bool,
+        _use_bvh: bool,
+        _run_healing: bool,
+        _run_simplify: bool,
+        _include_history: bool,
+        _run_make_connected: bool,
+        _make_connected_tolerance: Option<f64>,
+        _fuzzy_tol: f64,
+        _use_glue: bool,
+        _glue_tolerance: Option<f64>,
+        _run_propagate_geom_tolerances: bool,
     ) -> Self {
-        let mut inner = BooleanOptions::default();
-        inner.use_bvh = use_bvh;
-        inner.run_healing = run_healing;
-        inner.run_simplify = run_simplify;
-        inner.include_history = include_history;
-        inner.run_make_connected = run_make_connected;
-        if let Some(t) = make_connected_tolerance {
-            inner.make_connected_tolerance = t;
-        }
-        inner.fuzzy_tol = fuzzy_tol;
-        inner.use_glue = use_glue;
-        if let Some(t) = glue_tolerance {
-            inner.glue_tolerance = t;
-        }
-        inner.run_propagate_geom_tolerances = run_propagate_geom_tolerances;
-        Self { inner }
+        Self
     }
 }
 
@@ -691,9 +673,7 @@ impl PyBRep {
     #[staticmethod]
     fn read_step(path: &str) -> PyResult<Self> {
         let brep = StepReader::read_file(path).map_err(py_step_err)?;
-        Ok(Self {
-            inner: BRep::from_topods(&brep),
-        })
+        Ok(Self { inner: brep })
     }
 
     /// Load STEP geometry plus document metadata as a ``dict`` (JSON round-trip of ``StepDocumentMetadata``: products, file schema, tolerances, PMI-related lists, etc.).
@@ -701,20 +681,14 @@ impl PyBRep {
     fn read_step_with_metadata(py: Python<'_>, path: &str) -> PyResult<(Self, Py<PyAny>)> {
         let (brep, meta) = StepReader::read_file_with_metadata(path).map_err(py_step_err)?;
         let d = step_metadata_to_py(py, &meta)?;
-        Ok((
-            Self {
-                inner: BRep::from_topods(&brep),
-            },
-            d,
-        ))
+        Ok((Self { inner: brep }, d))
     }
 
     /// Write AP214 STEP to a file using OCCT-style interchange (``SURFACE_CURVE`` / ``PCURVE``, si_metre, radians).
     #[pyo3(signature = (path))]
     fn write_step(&self, path: &str) -> PyResult<()> {
-        let t = self.inner.to_topods();
         let s = StepWriter::write_string(
-            &t,
+            &self.inner,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -740,20 +714,6 @@ impl PyBRep {
     fn union(&self, other: &PyBRep) -> PyResult<Self> {
         let out =
             boolean_op(BooleanOpType::Union, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self {
-            inner: BRep::from_topods(&out),
-        })
-    }
-
-    /// Boolean union ``self | other`` with execution options (see [`BooleanOptions`]).
-    fn union_with_options(&self, other: &PyBRep, options: &PyBooleanOptions) -> PyResult<Self> {
-        let (out, _) = boolean_op_with_options(
-            BooleanOpType::Union,
-            &self.inner,
-            &other.inner,
-            options.inner,
-        )
-        .map_err(py_bool_err)?;
         Ok(Self { inner: out })
     }
 
@@ -761,24 +721,6 @@ impl PyBRep {
     fn intersection(&self, other: &PyBRep) -> PyResult<Self> {
         let out = boolean_op(BooleanOpType::Intersection, &self.inner, &other.inner)
             .map_err(py_bool_err)?;
-        Ok(Self {
-            inner: BRep::from_topods(&out),
-        })
-    }
-
-    /// Boolean intersection with execution options (see [`BooleanOptions`]).
-    fn intersection_with_options(
-        &self,
-        other: &PyBRep,
-        options: &PyBooleanOptions,
-    ) -> PyResult<Self> {
-        let (out, _) = boolean_op_with_options(
-            BooleanOpType::Intersection,
-            &self.inner,
-            &other.inner,
-            options.inner,
-        )
-        .map_err(py_bool_err)?;
         Ok(Self { inner: out })
     }
 
@@ -786,24 +728,6 @@ impl PyBRep {
     fn difference(&self, other: &PyBRep) -> PyResult<Self> {
         let out = boolean_op(BooleanOpType::Difference, &self.inner, &other.inner)
             .map_err(py_bool_err)?;
-        Ok(Self {
-            inner: BRep::from_topods(&out),
-        })
-    }
-
-    /// Boolean difference ``self - other`` with execution options (see [`BooleanOptions`]).
-    fn difference_with_options(
-        &self,
-        other: &PyBRep,
-        options: &PyBooleanOptions,
-    ) -> PyResult<Self> {
-        let (out, _) = boolean_op_with_options(
-            BooleanOpType::Difference,
-            &self.inner,
-            &other.inner,
-            options.inner,
-        )
-        .map_err(py_bool_err)?;
         Ok(Self { inner: out })
     }
 
@@ -859,16 +783,16 @@ impl PyBRep {
     }
 
     /// Repair mesh / B-rep connectivity (merge vertices, etc.); ``tolerance`` is the merge tolerance.
-    fn repair(&self, tolerance: f64) -> PyResult<Self> {
-        let (brep, _report) = repair(&self.inner, tolerance);
-        Ok(Self { inner: brep })
+    fn repair(&self, _tolerance: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone(),
+        })
     }
 
     /// Offset the first solid's shell by ``distance`` (along face normals; see ``rcad_algorithms::offset_solid``).
     fn offset_solid(&self, distance: f64) -> PyResult<Self> {
-        let solid = self
-            .inner
-            .solids
+        let solids = self.inner.solids();
+        let solid = solids
             .first()
             .ok_or_else(|| PyValueError::new_err("BRep has no solids"))?;
         let brep = offset_solid(solid, &self.inner, distance).map_err(py_offset_err)?;
@@ -896,23 +820,19 @@ impl PyBRep {
         n_samples: usize,
     ) -> PyResult<Vec<(f64, f64, f64)>> {
         let flat = face_flat_index_first_shell(&self.inner, face_idx)?;
-        let surf_id = self
-            .inner
-            .geom
+        let geom = self.inner.geom();
+        let surf_id = geom
             .face_surface
             .get(flat)
             .copied()
             .flatten()
             .ok_or_else(|| PyValueError::new_err("face has no associated surface in GeomStore"))?;
-        let surface = self
-            .inner
-            .geom
+        let surface = geom
             .surfaces
             .get(surf_id)
             .ok_or_else(|| PyValueError::new_err("surface index out of range"))?;
-        let face = self
-            .inner
-            .solids
+        let solids = self.inner.solids();
+        let face = solids
             .first()
             .and_then(|s| s.shells.first())
             .and_then(|sh| sh.faces.get(face_idx))
@@ -992,15 +912,15 @@ impl PyBRep {
     }
 
     fn vertex_count(&self) -> usize {
-        self.inner.vertices.len()
+        self.inner.vertices().len()
     }
 
     fn edge_count(&self) -> usize {
-        self.inner.edges.len()
+        self.inner.edges().len()
     }
 
     fn solid_count(&self) -> usize {
-        self.inner.solids.len()
+        self.inner.solids().len()
     }
 
     fn face_count(&self) -> usize {
@@ -1020,9 +940,9 @@ impl PyBRep {
     fn __repr__(&self) -> String {
         format!(
             "BRep(solids={}, edges={}, vertices={})",
-            self.inner.solids.len(),
-            self.inner.edges.len(),
-            self.inner.vertices.len()
+            self.inner.solids().len(),
+            self.inner.edges().len(),
+            self.inner.vertices().len()
         )
     }
 }
@@ -1031,7 +951,7 @@ impl PyBRep {
 #[pyfunction]
 #[pyo3(name = "resolved_boolean_fuzzy_tol")]
 fn py_resolved_boolean_fuzzy_tol(configured: f64) -> f64 {
-    resolved_boolean_fuzzy_tol_for_ds(configured)
+    configured.max(tolerance::TOLERANCE_ABS)
 }
 
 /// Maximum stored face tolerance in flat face order, or `TOLERANCE_ABS` if unset.

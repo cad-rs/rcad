@@ -41,7 +41,7 @@ use rcad_kernel::{
         Circle3, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3,
         ToroidalSurface, any_perpendicular,
     },
-    topods::{BRep, Orientation, ShapeRef, TShape},
+    topods::{BRep, Orientation, Shape, TShape},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1069,15 +1069,15 @@ fn find_first_shell_index(brep: &rcad_kernel::BRep) -> Option<usize> {
     None
 }
 
-/// Build a ShapeRef for an edge by its tshape index, with given orientation.
+/// Build a Shape for an edge by its tshape index, with given orientation.
 fn edge_shape_ref(
     brep: &rcad_kernel::BRep,
     edge_index: usize,
     orientation: Orientation,
-) -> ShapeRef {
+) -> Shape {
     let ts = &brep.tshapes[edge_index];
-    ShapeRef {
-        ptr_id: Arc::as_ptr(ts) as u64,
+    Shape {
+        data: ts.clone(),
         index: edge_index,
         orientation,
         location: 0,
@@ -1118,7 +1118,7 @@ fn build_fillet_brep(
                 );
                 if let Some(shell_idx) = find_first_shell_index(&result) {
                     if let TShape::Shell(shd) = Arc::make_mut(&mut result.tshapes[shell_idx]) {
-                        shd.faces.push(fillet_face_sr);
+                        shd.faces.push(fillet_face_sr.clone());
                         shd.my_shapes.push(fillet_face_sr);
                     }
                 }
@@ -1393,7 +1393,7 @@ fn apply_cylinder_fillet(
         None => return Ok(()),
     };
     let shell_ts = brep.tshapes[shell_idx].clone();
-    let face_refs: Vec<ShapeRef> = if let TShape::Shell(shd) = shell_ts.as_ref() {
+    let face_refs: Vec<Shape> = if let TShape::Shell(shd) = shell_ts.as_ref() {
         shd.faces.clone()
     } else {
         return Ok(());
@@ -1443,7 +1443,7 @@ fn apply_cylinder_fillet(
 
     // Add fillet face to the shell
     if let TShape::Shell(shd) = Arc::make_mut(&mut brep.tshapes[shell_idx]) {
-        shd.faces.push(fillet_face_sr);
+        shd.faces.push(fillet_face_sr.clone());
         shd.my_shapes.push(fillet_face_sr);
     }
 
@@ -1474,7 +1474,7 @@ fn trim_face_at_vertex(
         (wd.edges.clone(), DVec3::ZERO)
     };
 
-    let mut new_edge_refs: Vec<ShapeRef> = Vec::with_capacity(old_wire_edges.len());
+    let mut new_edge_refs: Vec<Shape> = Vec::with_capacity(old_wire_edges.len());
 
     for esr in &old_wire_edges {
         let (ws_v, we_v) = wire_edge_vertices(brep, esr.index);
@@ -1488,14 +1488,14 @@ fn trim_face_at_vertex(
             let new_e = push_line_edge(brep, ws_v, new_vertex, ws_pt, new_pt);
             new_edge_refs.push(edge_shape_ref(brep, new_e, Orientation::Forward));
         } else {
-            new_edge_refs.push(*esr);
+            new_edge_refs.push(esr.clone());
         }
     }
 
     let new_wire_sr = brep.add_twire(new_edge_refs);
     let face_ts = Arc::make_mut(&mut brep.tshapes[face_flat_idx]);
     if let TShape::Face(fd) = face_ts {
-        fd.outer_wire = new_wire_sr;
+        fd.outer_wire = new_wire_sr.clone();
         if !fd.my_shapes.is_empty() {
             fd.my_shapes[0] = new_wire_sr;
         }
@@ -1580,13 +1580,13 @@ fn build_trimmed_face(
     let after_ep = brep.vertex_point(new_after_e_end).unwrap_or_default();
     let short_after = push_line_edge(brep, new_after_e_start, new_after_e_end, after_pt, after_ep);
 
-    let mut new_edge_refs: Vec<ShapeRef> = Vec::with_capacity(n + 1);
+    let mut new_edge_refs: Vec<Shape> = Vec::with_capacity(n + 1);
 
     for k in 0..pos {
         if k == (pos + n - 1) % n {
             new_edge_refs.push(edge_shape_ref(brep, short_before, Orientation::Forward));
         } else {
-            new_edge_refs.push(old_edges[k]);
+            new_edge_refs.push(old_edges[k].clone());
         }
     }
 
@@ -1601,7 +1601,7 @@ fn build_trimmed_face(
         if k == (pos + 1) % n {
             new_edge_refs.push(edge_shape_ref(brep, short_after, Orientation::Forward));
         } else {
-            new_edge_refs.push(old_edges[k]);
+            new_edge_refs.push(old_edges[k].clone());
         }
     }
 
@@ -1614,7 +1614,7 @@ fn build_trimmed_face(
     let new_wire_sr = brep.add_twire(new_edge_refs);
     let face_ts = Arc::make_mut(&mut brep.tshapes[face_flat_idx]);
     if let TShape::Face(fd) = face_ts {
-        fd.outer_wire = new_wire_sr;
+        fd.outer_wire = new_wire_sr.clone();
         if !fd.my_shapes.is_empty() {
             fd.my_shapes[0] = new_wire_sr;
         }

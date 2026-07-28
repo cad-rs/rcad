@@ -1,4 +1,4 @@
-﻿//! TKBRep GTest translations (topods::BRep API).
+//! TKBRep GTest translations (topods::BRep API).
 //!
 //! OCCT source: src/ModelingData/TKBRep/GTests/
 //!
@@ -40,7 +40,7 @@ mod topods_tshape_tests {
         let v = b.add_tvertex(DVec3::ZERO);
         assert_eq!(shape_type_of(&b, &b.ref_to_shape(v)), ShapeType::Vertex);
 
-        let e = b.add_tedge(None, v, Shape::null(), [0.0, 1.0]);
+        let e = b.add_tedge(None, v, Shape::null()(), [0.0, 1.0]);
         assert_eq!(shape_type_of(&b, &b.ref_to_shape(e)), ShapeType::Edge);
 
         let w = b.add_twire(vec![]);

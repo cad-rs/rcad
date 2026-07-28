@@ -1,11 +1,10 @@
-use crate::bopalgo::builder::SourceSide;
 use crate::bopalgo::builder::types::{
-    FaceEntry, WireEdgeSource, WireEdgeSourceTopoDS, WireFace, WireSegment, WireSegmentTopoDS,
+    FaceEntry, WireEdgeSource, WireFace, WireSegment, WireSegmentTopoDS,
 };
 use crate::bopalgo::builder::{curve_eq, hash_point};
 use crate::bopds::ds::*;
 use crate::history::{
-    BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin,
+    BooleanHistory, FaceOrigin, HistoryTracker,
 };
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
@@ -13,7 +12,6 @@ use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::topods;
-use rcad_kernel::topology::*;
 use std::collections::{HashMap, HashSet};
 
 /// Builds result BRep from accumulated DS face data.
@@ -292,7 +290,7 @@ impl ResultBuilder {
             .map(|iw_es| {
                 let mut pts = Vec::new();
                 for &(ei, _) in iw_es {
-                    let (a, b) = self.edges[ei];
+                    let (a, _b) = self.edges[ei];
                     if pts.is_empty() || pts.last() != Some(&a) {
                         pts.push(a);
                     }
@@ -449,12 +447,12 @@ impl ResultBuilder {
         segments: &[WireSegmentTopoDS],
         tool: &dyn rcad_kernel::topods::BRepTool,
         ic_curves: &HashMap<usize, Curve3>,
-        flip: bool,
+        _flip: bool,
         origin: FaceOrigin,
         vertex_positions: &HashMap<usize, DVec3>,
-        face_ref: rcad_kernel::topods::ShapeRef,
+        face_ref: rcad_kernel::topods::Shape,
         natural_restriction: bool,
-        ds_ei_to_sr: &HashMap<usize, topods::ShapeRef>,
+        _ds_ei_to_sr: &HashMap<usize, topods::Shape>,
         sr_index_to_ds_ei: &HashMap<usize, usize>,
         ds: &crate::bopds::ds::DS,
     ) {
@@ -466,7 +464,7 @@ impl ResultBuilder {
                 ds.vertex_point(vi)
             } else {
                 vertex_positions.get(&vi).copied().unwrap_or_else(|| {
-                    tool.vertex_position(rcad_kernel::topods::ShapeRef::synthetic(vi))
+                    tool.vertex_position(&rcad_kernel::topods::Shape::synthetic(vi, rcad_kernel::topods::Orientation::Forward))
                 })
             }
         };
@@ -497,7 +495,7 @@ impl ResultBuilder {
                 let seam_deg = (get_pos(seg.start_vertex.index) - get_pos(seg.end_vertex.index))
                     .length_squared()
                     < TOLERANCE_ABS_SQ;
-                let sphere_surf = match tool.face_surface(face_ref) {
+                let sphere_surf = match tool.face_surface(&face_ref) {
                     Some(Surface3::Sphere(s)) => s.clone(),
                     _ => SphericalSurface {
                         center: DVec3::ZERO,
@@ -646,7 +644,7 @@ impl ResultBuilder {
                         }
                     }
                     _ if seg.is_closed_on_face => {
-                        let sphere_surf = match tool.face_surface(face_ref) {
+                        let sphere_surf = match tool.face_surface(&face_ref) {
                             Some(Surface3::Sphere(s)) => s.clone(),
                             _ => SphericalSurface {
                                 center: DVec3::ZERO,
@@ -672,7 +670,7 @@ impl ResultBuilder {
 
         // OCCT L611-612: store face (no triangulation, no dedup).
         let surface = tool
-            .face_surface(face_ref)
+            .face_surface(&face_ref)
             .cloned()
             .unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane::new(
                 DVec3::ZERO,
@@ -724,7 +722,7 @@ impl ResultBuilder {
                 let seg = &segments[si];
                 let vi = seg.start_vertex.index;
                 vertex_positions.get(&vi).copied().unwrap_or_else(|| {
-                    tool.vertex_position(rcad_kernel::topods::ShapeRef::synthetic(vi))
+                    tool.vertex_position(&rcad_kernel::topods::Shape::synthetic(vi, rcad_kernel::topods::Orientation::Forward))
                 })
             })
             .collect();
@@ -852,11 +850,11 @@ impl ResultBuilder {
         fi: usize,
         origin: FaceOrigin,
         t: &mut topods::BRep,
-        face_refs: &mut Vec<topods::ShapeRef>,
+        face_refs: &mut Vec<topods::Shape>,
     ) {
         // --- Outer wire from boundary_edges, creating TShape vertices/edges directly ---
-        let e_base = ds.vertex_count();
-        let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
+        let _e_base = ds.vertex_count();
+        let mut outer_edges: Vec<topods::Shape> = Vec::new();
         let mut prev_end: Option<usize> = None;
         for &ei in ds.face_boundary_edges(fi) {
             if ei >= ds.edge_count() {
@@ -886,9 +884,9 @@ impl ResultBuilder {
         let outer_wire = t.add_twire(outer_edges);
 
         // --- Inner wires ---
-        let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
+        let mut inner_wires: Vec<topods::Shape> = Vec::new();
         for iw_edges in ds.face_inner_boundary(fi) {
-            let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
+            let mut wire_edges: Vec<topods::Shape> = Vec::new();
             for &(ei, forward_in_ds) in iw_edges {
                 if ei >= ds.edge_count() {
                     continue;
@@ -961,14 +959,14 @@ impl ResultBuilder {
         &mut self,
         t: &mut topods::BRep,
         groups: Vec<Vec<usize>>,
-        solids: &[topods::ShapeRef],
-        compsolid_groups: &mut Vec<topods::ShapeRef>,
+        solids: &[topods::Shape],
+        compsolid_groups: &mut Vec<topods::Shape>,
     ) {
         let mut bb = topods::BRepBuilder::new();
         for cs_group in &groups {
-            let solid_refs: Vec<topods::ShapeRef> = cs_group
+            let solid_refs: Vec<topods::Shape> = cs_group
                 .iter()
-                .filter_map(|&si| solids.get(si).copied())
+                .filter_map(|&si| solids.get(si).cloned())
                 .collect();
             if !solid_refs.is_empty() {
                 compsolid_groups.push(bb.make_compsolid(t, solid_refs));
@@ -986,13 +984,13 @@ impl ResultBuilder {
         &mut self,
         t: &mut topods::BRep,
         groups: &[Vec<usize>],
-        solids: &[topods::ShapeRef],
+        solids: &[topods::Shape],
     ) {
         let mut bb = topods::BRepBuilder::new();
         for group in groups {
-            let solid_refs: Vec<topods::ShapeRef> = group
+            let solid_refs: Vec<topods::Shape> = group
                 .iter()
-                .filter_map(|&si| solids.get(si).copied())
+                .filter_map(|&si| solids.get(si).cloned())
                 .collect();
             if !solid_refs.is_empty() {
                 bb.make_compound(t, solid_refs);
@@ -1279,9 +1277,9 @@ impl ResultBuilder {
     pub(crate) fn emit_face_topods(
         &mut self,
         t: &mut topods::BRep,
-        face_refs: &mut Vec<topods::ShapeRef>,
+        face_refs: &mut Vec<topods::Shape>,
     ) {
-        use topods::{Orientation, ShapeRef};
+        use topods::{Orientation, Shape};
         let fi = self.faces.len().wrapping_sub(1);
         if fi >= self.faces.len() {
             return; // no face data
@@ -1304,7 +1302,7 @@ impl ResultBuilder {
 
         // Edge --TShape::Edge (read curve/range from custom arrays)
         // Vertex identity is handled by BRep::add_tvertex (vert_by_pos cache).
-        let mut e_map: Vec<ShapeRef> = Vec::with_capacity(edge_indices.len());
+        let mut e_map: Vec<Shape> = Vec::with_capacity(edge_indices.len());
         for &(ei, _forward) in edge_indices.iter() {
             if ei >= self.edges.len() {
                 continue;
@@ -1313,12 +1311,12 @@ impl ResultBuilder {
             let first = if v1 < self.vertices.len() {
                 t.add_tvertex(self.vertices[v1])
             } else {
-                ShapeRef::NULL
+                Shape::null()
             };
             let last = if v2 < self.vertices.len() {
                 t.add_tvertex(self.vertices[v2])
             } else {
-                ShapeRef::NULL
+                Shape::null()
             };
             let curve = self
                 .custom_edge_curves
@@ -1341,13 +1339,13 @@ impl ResultBuilder {
                 .unwrap_or([0.0, 1.0]);
             let e_ref = t.add_tedge(curve, first, last, curve_range);
             while e_map.len() <= ei {
-                e_map.push(ShapeRef::NULL);
+                e_map.push(Shape::null());
             }
             e_map[ei] = e_ref;
         }
 
         // Outer wire
-        let outer_edges: Vec<ShapeRef> = edge_indices
+        let outer_edges: Vec<Shape> = edge_indices
             .iter()
             .filter_map(|&(idx, forward)| {
                 let orient = if forward {
@@ -1356,7 +1354,7 @@ impl ResultBuilder {
                     Orientation::Reversed
                 };
                 if idx < e_map.len() {
-                    Some(ShapeRef::synthetic_with_orientation(
+                    Some(Shape::synthetic(
                         e_map[idx].index,
                         orient,
                     ))
@@ -1366,12 +1364,12 @@ impl ResultBuilder {
             })
             .collect();
         let outer_wire = t.add_twire(outer_edges);
-        t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+        t.wire_mut(outer_wire.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
 
         // Inner wires
         let mut inner_wires = Vec::new();
         for wire_idxs in inner_wire_edges {
-            let iw_edges: Vec<ShapeRef> = wire_idxs
+            let iw_edges: Vec<Shape> = wire_idxs
                 .iter()
                 .filter_map(|&(idx, forward)| {
                     let orient = if forward {
@@ -1380,7 +1378,7 @@ impl ResultBuilder {
                         Orientation::Reversed
                     };
                     if idx < e_map.len() {
-                        Some(ShapeRef::synthetic_with_orientation(
+                        Some(Shape::synthetic(
                             e_map[idx].index,
                             orient,
                         ))
@@ -1391,14 +1389,14 @@ impl ResultBuilder {
                 .collect();
             if !iw_edges.is_empty() {
                 let w = t.add_twire(iw_edges);
-                t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+                t.wire_mut(w.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                 inner_wires.push(w);
             }
         }
 
         // Internal wire edges
         for iw_edges in internal_wire_edges {
-            let iw: Vec<ShapeRef> = iw_edges
+            let iw: Vec<Shape> = iw_edges
                 .iter()
                 .filter_map(|&(idx, forward)| {
                     let orient = if forward {
@@ -1407,7 +1405,7 @@ impl ResultBuilder {
                         Orientation::Reversed
                     };
                     if idx < e_map.len() {
-                        Some(ShapeRef::synthetic_with_orientation(
+                        Some(Shape::synthetic(
                             e_map[idx].index,
                             orient,
                         ))
@@ -1418,14 +1416,14 @@ impl ResultBuilder {
                 .collect();
             if iw.len() >= 2 {
                 let w = t.add_twire(iw);
-                t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+                t.wire_mut(w.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                 inner_wires.push(w);
             }
         }
 
         // Face
         // surface passed directly to add_tface (geometry on TShape)
-        let internal_vtx: Vec<ShapeRef> = Vec::new();
+        let internal_vtx: Vec<Shape> = Vec::new();
         let nr = self
             .face_natural_restriction
             .get(fi)
@@ -1449,10 +1447,10 @@ impl ResultBuilder {
     pub(crate) fn build_topods_faces(
         &mut self,
         t: &mut topods::BRep,
-        wire_refs: &[topods::ShapeRef],
-        face_refs: &mut Vec<topods::ShapeRef>,
+        wire_refs: &[topods::Shape],
+        face_refs: &mut Vec<topods::Shape>,
     ) {
-        use topods::{Orientation, ShapeRef};
+        use topods::{Orientation, Shape};
 
         // Architecture A1: skip faces already emitted as TShapes (via emit_face_topods).
         // face_refs already contains ShapeRefs for incrementally-emitted faces.
@@ -1470,10 +1468,10 @@ impl ResultBuilder {
         }
 
         // 2. Edges --TShape::Edge (use vi_to_ti to map vertex indices).
-        let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
+        let mut e_map: Vec<Shape> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
-            let first = ShapeRef::synthetic(vi_to_ti[start]);
-            let last = ShapeRef::synthetic(vi_to_ti[end]);
+            let first = Shape::synthetic(vi_to_ti[start], Orientation::Forward);
+            let last = Shape::synthetic(vi_to_ti[end], Orientation::Forward);
             let curve = self
                 .custom_edge_curves
                 .get(ei)
@@ -1519,10 +1517,10 @@ impl ResultBuilder {
             // Outer wire --use pre-built if available
             let outer_wire = wire_idxs
                 .and_then(|idxs| idxs.first().copied())
-                .and_then(|wi| wire_refs.get(wi).filter(|sr| !sr.is_null()).copied())
+                .and_then(|wi| wire_refs.get(wi).filter(|sr| !sr.is_null()).cloned())
                 .unwrap_or_else(|| {
                     // Fallback: create wire inline from edge_indices
-                    let outer_edges: Vec<ShapeRef> = edge_indices
+                    let outer_edges: Vec<Shape> = edge_indices
                         .iter()
                         .filter_map(|&(idx, forward)| {
                             let orient = if forward {
@@ -1531,7 +1529,7 @@ impl ResultBuilder {
                                 Orientation::Reversed
                             };
                             if idx < e_map.len() {
-                                Some(ShapeRef::synthetic_with_orientation(
+                                Some(Shape::synthetic(
                                     e_map[idx].index,
                                     orient,
                                 ))
@@ -1549,9 +1547,9 @@ impl ResultBuilder {
             // Pre-built inner wires from wire_refs
             if let Some(ref idxs) = wire_idxs {
                 for &wi in idxs.iter().skip(1) {
-                    if let Some(&sr) = wire_refs.get(wi) {
+                    if let Some(sr) = wire_refs.get(wi) {
                         if !sr.is_null() {
-                            inner_wires.push(sr);
+                            inner_wires.push(sr.clone());
                         }
                     }
                 }
@@ -1560,7 +1558,7 @@ impl ResultBuilder {
             // Fallback: create inner wires inline for any extra edges not covered by wire_refs
             let covered_count = inner_wires.len();
             for wire_idxs in inner_wire_edges.iter().skip(covered_count) {
-                let iw_edges: Vec<ShapeRef> = wire_idxs
+                let iw_edges: Vec<Shape> = wire_idxs
                     .iter()
                     .filter_map(|&(idx, forward)| {
                         let orient = if forward {
@@ -1569,7 +1567,7 @@ impl ResultBuilder {
                             Orientation::Reversed
                         };
                         if idx < e_map.len() {
-                            Some(ShapeRef::synthetic_with_orientation(
+                            Some(Shape::synthetic(
                                 e_map[idx].index,
                                 orient,
                             ))
@@ -1580,13 +1578,13 @@ impl ResultBuilder {
                     .collect();
                 if !iw_edges.is_empty() {
                     let w = t.add_twire(iw_edges);
-                    t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+                    t.wire_mut(w.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                     inner_wires.push(w);
                 }
             }
             // Internal wire edges
             for iw_edges in internal_wire_edges {
-                let iw: Vec<ShapeRef> = iw_edges
+                let iw: Vec<Shape> = iw_edges
                     .iter()
                     .filter_map(|&(idx, forward)| {
                         let orient = if forward {
@@ -1595,7 +1593,7 @@ impl ResultBuilder {
                             Orientation::Reversed
                         };
                         if idx < e_map.len() {
-                            Some(ShapeRef::synthetic_with_orientation(
+                            Some(Shape::synthetic(
                                 e_map[idx].index,
                                 orient,
                             ))
@@ -1606,15 +1604,15 @@ impl ResultBuilder {
                     .collect();
                 if iw.len() >= 2 {
                     let w = t.add_twire(iw);
-                    t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
+                    t.wire_mut(w.clone()).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                     inner_wires.push(w);
                 }
             }
 
-            let internal_vtx: Vec<ShapeRef> =
+            let internal_vtx: Vec<Shape> =
                 self.face_internal_vtx.get(flat_fi).map_or(vec![], |v| {
                     v.iter()
-                        .map(|&vi| ShapeRef::synthetic(vi_to_ti.get(vi).copied().unwrap_or(vi)))
+                        .map(|&vi| Shape::synthetic(vi_to_ti.get(vi).copied().unwrap_or(vi), Orientation::Forward))
                         .collect()
                 });
             let nr = self
@@ -1644,10 +1642,10 @@ impl ResultBuilder {
         &mut self,
         t: &mut topods::BRep,
         fill_history: bool,
-        shells: &[topods::ShapeRef],
-        face_refs: &mut Vec<topods::ShapeRef>,
-        solids: &[topods::ShapeRef],
-        compsolid_groups: &[topods::ShapeRef],
+        shells: &[topods::Shape],
+        face_refs: &mut Vec<topods::Shape>,
+        _solids: &[topods::Shape],
+        _compsolid_groups: &[topods::Shape],
     ) -> BooleanHistory {
         // Use tmp_solids when BuildResult did not create solids.
         // tmp_solids entries contain shell indices (into tmp_shells).
@@ -1655,11 +1653,11 @@ impl ResultBuilder {
         // BuildRC/ComputeState ran, but if skipped (no images), create from scratch.
         if shells.is_empty() && !self.tmp_solids.is_empty() {
             for tmp_solid in std::mem::take(&mut self.tmp_solids) {
-                let faces: Vec<topods::ShapeRef> = tmp_solid
+                let faces: Vec<topods::Shape> = tmp_solid
                     .iter()
                     .filter_map(|&shi| self.tmp_shells.get(shi))
                     .flat_map(|v| v.iter())
-                    .filter_map(|&fi| face_refs.get(fi).copied())
+                    .filter_map(|&fi| face_refs.get(fi).cloned())
                     .filter(|sr| !sr.is_null())
                     .collect();
                 if !faces.is_empty() {

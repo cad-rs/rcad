@@ -1,12 +1,12 @@
-﻿use std::sync::Arc;
-use rcad_kernel::topods::{ShapeRef, Orientation, TShape, TEdgeData};
+use std::sync::Arc;
+use rcad_kernel::topods::{Shape, Orientation, TShape, TEdgeData};
 
 /// Helper: extract face ShapeRefs from the first solid's first shell.
-fn get_first_shell_faces(brep: &rcad_kernel::BRep) -> Vec<ShapeRef> {
+fn get_first_shell_faces(brep: &rcad_kernel::BRep) -> Vec<Shape> {
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = &**ts {
             if let Some(shell_sr) = sd.shells.first() {
-                return brep.shell(*shell_sr).faces.clone();
+                return brep.shell(shell_sr.clone()).faces.clone();
             }
         }
     }
@@ -15,42 +15,42 @@ fn get_first_shell_faces(brep: &rcad_kernel::BRep) -> Vec<ShapeRef> {
 
 /// Helper: extract the first shell's face refs from result, plus produce
 /// a utility closure that maps a face index to its wire edges in (esr, forward) form.
-fn get_face_outer_edges(brep: &rcad_kernel::BRep, face_sr: ShapeRef) -> Vec<(ShapeRef, bool)> {
+fn get_face_outer_edges(brep: &rcad_kernel::BRep, face_sr: Shape) -> Vec<(Shape, bool)> {
     let fd = brep.face(face_sr);
-    let wd = brep.wire(fd.outer_wire);
+    let wd = brep.wire(fd.outer_wire.clone());
     wd.edges.iter().map(|esr| {
         let forward = esr.orientation == Orientation::Forward;
-        (*esr, forward)
+        (esr.clone(), forward)
     }).collect()
 }
 
 /// Helper: get face normal from its surface (evaluate at uv 0,0).
-fn get_face_normal(brep: &rcad_kernel::BRep, face_sr: ShapeRef) -> DVec3 {
+fn get_face_normal(brep: &rcad_kernel::BRep, face_sr: Shape) -> DVec3 {
     let fd = brep.face(face_sr);
     fd.surface.as_ref().map(|s| SurfaceEval::normal_at(s, 0.0, 0.0)).unwrap_or_default()
 }
 
 /// Helper: get the face surface (cloned). Returns None if no surface.
-fn get_face_surface(brep: &rcad_kernel::BRep, face_sr: ShapeRef) -> Option<Surface3> {
+fn get_face_surface(brep: &rcad_kernel::BRep, face_sr: Shape) -> Option<Surface3> {
     brep.face(face_sr).surface.clone()
 }
 
 /// Helper: check if a vertex index is used by a face (in outer or inner wires).
-fn face_uses_vertex(brep: &rcad_kernel::BRep, face_sr: ShapeRef, vi: usize) -> bool {
+fn face_uses_vertex(brep: &rcad_kernel::BRep, face_sr: Shape, vi: usize) -> bool {
     let fd = brep.face(face_sr);
     // Check outer wire
-    let owd = brep.wire(fd.outer_wire);
+    let owd = brep.wire(fd.outer_wire.clone());
     if owd.edges.iter().any(|esr| {
-        let ed = brep.edge(*esr);
+        let ed = brep.edge(esr.clone());
         ed.first.index == vi || ed.last.index == vi
     }) {
         return true;
     }
     // Check inner wires
-    for &iw_sr in &fd.inner_wires {
-        let iwd = brep.wire(iw_sr);
+    for iw_sr in &fd.inner_wires {
+        let iwd = brep.wire(iw_sr.clone());
         if iwd.edges.iter().any(|esr| {
-            let ed = brep.edge(*esr);
+            let ed = brep.edge(esr.clone());
             ed.first.index == vi || ed.last.index == vi
         }) {
             return true;
@@ -106,11 +106,11 @@ pub fn detect_self_intersection_detailed(brep: &rcad_kernel::BRep, distance: f64
     let centroids: Vec<DVec3> = shell_faces
         .iter()
         .map(|face_sr| {
-            let outer_edges = get_face_outer_edges(brep, *face_sr);
+            let outer_edges = get_face_outer_edges(brep, face_sr.clone());
             let mut sum = DVec3::ZERO;
             let mut count = 0;
             for (esr, _forward) in &outer_edges {
-                let ed = brep.edge(*esr);
+                let ed = brep.edge(esr.clone());
                 if let Some(p) = brep.vertex_point(ed.first.index) {
                     sum += p;
                     count += 1;
@@ -131,12 +131,12 @@ pub fn detect_self_intersection_detailed(brep: &rcad_kernel::BRep, distance: f64
     // Build adjacency map
     let mut adjacent_pairs: HashSet<(usize, usize)> = HashSet::new();
     for (fi, face_sr) in shell_faces.iter().enumerate() {
-        let outer_edges = get_face_outer_edges(brep, *face_sr);
+        let outer_edges = get_face_outer_edges(brep, face_sr.clone());
         for (esr, _forward) in &outer_edges {
             for (fj, other_face_sr) in shell_faces.iter().enumerate() {
                 if fi < fj {
-                    let other_edges = get_face_outer_edges(brep, *other_face_sr);
-                    if other_edges.iter().any(|(oesr, _)| oesr.ptr_id == esr.ptr_id) {
+                    let other_edges = get_face_outer_edges(brep, other_face_sr.clone());
+                    if other_edges.iter().any(|(oesr, _)| oesr.ptr_id() == esr.ptr_id()) {
                         adjacent_pairs.insert((fi, fj));
                     }
                 }
@@ -235,9 +235,9 @@ pub fn create_sewing_face(
         let mut sum = DVec3::ZERO;
         let mut count = 0;
         for (fi, face_sr) in shell_faces.iter().enumerate() {
-            let outer_edges = get_face_outer_edges(original_brep, *face_sr);
+            let outer_edges = get_face_outer_edges(original_brep, face_sr.clone());
             let uses = outer_edges.iter().any(|(esr, _)| {
-                let e = original_brep.edge(*esr);
+                let e = original_brep.edge(esr.clone());
                 e.first.index == v_start || e.last.index == v_start
             });
             if uses {
@@ -252,9 +252,9 @@ pub fn create_sewing_face(
         let mut sum = DVec3::ZERO;
         let mut count = 0;
         for (fi, face_sr) in shell_faces.iter().enumerate() {
-            let outer_edges = get_face_outer_edges(original_brep, *face_sr);
+            let outer_edges = get_face_outer_edges(original_brep, face_sr.clone());
             let uses = outer_edges.iter().any(|(esr, _)| {
-                let e = original_brep.edge(*esr);
+                let e = original_brep.edge(esr.clone());
                 e.first.index == v_end || e.last.index == v_end
             });
             if uses {
@@ -348,8 +348,8 @@ pub fn create_arc_join(
     let ed = get_edge_data(brep, edge_idx);
 
     // Get the face normals from the face surfaces
-    let face0_sr = shell_faces[face0_idx];
-    let face1_sr = shell_faces[face1_idx];
+    let face0_sr = shell_faces[face0_idx].clone();
+    let face1_sr = shell_faces[face1_idx].clone();
     let n0 = get_face_normal(brep, face0_sr);
     let n1 = get_face_normal(brep, face1_sr);
 
@@ -415,8 +415,8 @@ pub fn create_tangent_join(
         });
     }
 
-    let face0_sr = shell_faces[face0_idx];
-    let face1_sr = shell_faces[face1_idx];
+    let face0_sr = shell_faces[face0_idx].clone();
+    let face1_sr = shell_faces[face1_idx].clone();
     let n0 = get_face_normal(brep, face0_sr);
     let n1 = get_face_normal(brep, face1_sr);
 
@@ -611,11 +611,11 @@ pub fn compute_min_wall_thickness(brep: &rcad_kernel::BRep, distance: f64) -> f6
 
     // Compute face centroids
     let centroids: Vec<DVec3> = shell_faces.iter().map(|face_sr| {
-        let outer_edges = get_face_outer_edges(brep, *face_sr);
+        let outer_edges = get_face_outer_edges(brep, face_sr.clone());
         let mut sum = DVec3::ZERO;
         let mut count = 0;
         for (esr, _forward) in &outer_edges {
-            let ed = brep.edge(*esr);
+            let ed = brep.edge(esr.clone());
             if let Some(p) = brep.vertex_point(ed.first.index) {
                 sum += p;
                 count += 1;
@@ -837,15 +837,15 @@ pub fn offset_shell(shell: &Shell, brep: &rcad_kernel::BRep, distance: f64) -> R
 }
 
 /// Build an old-style Shell from face ShapeRefs for passing to legacy helpers.
-fn build_legacy_shell(brep: &rcad_kernel::BRep, face_refs: &[ShapeRef]) -> Shell {
+fn build_legacy_shell(brep: &rcad_kernel::BRep, face_refs: &[Shape]) -> Shell {
     Shell {
-        faces: face_refs.iter().map(|&face_sr| {
-            let fd = brep.face(face_sr);
+        faces: face_refs.iter().map(|face_sr| {
+            let fd = brep.face(face_sr.clone());
             let normal = fd.surface.as_ref()
                 .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
                 .unwrap_or_default();
             let outer_wire = {
-                let wd = brep.wire(fd.outer_wire);
+                let wd = brep.wire(fd.outer_wire.clone());
                 Wire {
                     edges: wd.edges.iter().map(|esr| {
                         WireEdge {
@@ -855,8 +855,8 @@ fn build_legacy_shell(brep: &rcad_kernel::BRep, face_refs: &[ShapeRef]) -> Shell
                     }).collect(),
                 }
             };
-            let inner_wires = fd.inner_wires.iter().map(|&iw_sr| {
-                let iwd = brep.wire(iw_sr);
+            let inner_wires = fd.inner_wires.iter().map(|iw_sr| {
+                let iwd = brep.wire(iw_sr.clone());
                 Wire {
                     edges: iwd.edges.iter().map(|esr| {
                         WireEdge {
@@ -881,19 +881,19 @@ fn build_legacy_shell(brep: &rcad_kernel::BRep, face_refs: &[ShapeRef]) -> Shell
 
 /// Helper to fix face winding and normals in a result BRep using TShape walking.
 fn fix_result_winding(result: &mut rcad_kernel::BRep) {
-    // Collect face info (ShapeRef + normal) from first solid's first shell
-    let shell_face_data: Vec<(ShapeRef, DVec3)> = {
+    // Collect face info (Shape + normal) from first solid's first shell
+    let shell_face_data: Vec<(Shape, DVec3)> = {
         let mut out = Vec::new();
         for ts in &result.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
-                if let Some(&shell_sr) = sd.shells.first() {
-                    let shd = result.shell(shell_sr);
-                    for &face_sr in &shd.faces {
-                        let fd = result.face(face_sr);
+                if let Some(shell_sr) = sd.shells.first() {
+                    let shd = result.shell(shell_sr.clone());
+                    for face_sr in &shd.faces {
+                        let fd = result.face(face_sr.clone());
                         let n = fd.surface.as_ref()
                             .map(|s| SurfaceEval::normal_at(s, 0.0, 0.0))
                             .unwrap_or_default();
-                        out.push((face_sr, n));
+                        out.push((face_sr.clone(), n));
                     }
                 }
                 break;
@@ -916,12 +916,12 @@ fn fix_result_winding(result: &mut rcad_kernel::BRep) {
     };
 
     // Phase 1: Fix winding based on signed area vs face normal
-    for &(face_sr, n) in &shell_face_data {
-        let fd = result.face(face_sr);
-        let owd = result.wire(fd.outer_wire);
+    for (face_sr, n) in &shell_face_data {
+        let fd = result.face(face_sr.clone());
+        let owd = result.wire(fd.outer_wire.clone());
         let mut verts: Vec<DVec3> = Vec::new();
         for esr in &owd.edges {
-            let ed = result.edge(*esr);
+            let ed = result.edge(esr.clone());
             let pt = if esr.orientation == Orientation::Forward {
                 result.vertex_point(ed.last.index).unwrap_or_default()
             } else {
@@ -933,7 +933,7 @@ fn fix_result_winding(result: &mut rcad_kernel::BRep) {
         let mut signed = 0.0;
         for i in 0..verts.len() {
             let j = (i + 1) % verts.len();
-            signed += verts[i].cross(verts[j]).dot(n);
+            signed += verts[i].cross(verts[j]).dot(*n);
         }
         signed *= 0.5;
         if signed >= 0.0 { continue; }
@@ -971,13 +971,13 @@ fn fix_result_winding(result: &mut rcad_kernel::BRep) {
     }
 
     // Phase 2: Fix inward-facing face normals using centered signed volume
-    for &(face_sr, _n) in &shell_face_data {
-        let fd = result.face(face_sr);
-        let owd = result.wire(fd.outer_wire);
+    for (face_sr, _n) in &shell_face_data {
+        let fd = result.face(face_sr.clone());
+        let owd = result.wire(fd.outer_wire.clone());
         if owd.edges.len() < 3 { continue; }
         let mut verts: Vec<DVec3> = Vec::new();
         for esr in &owd.edges {
-            let ed = result.edge(*esr);
+            let ed = result.edge(esr.clone());
             let pt = if esr.orientation == Orientation::Forward {
                 result.vertex_point(ed.last.index).unwrap_or_default()
             } else {
@@ -1042,7 +1042,7 @@ fn fix_result_winding(result: &mut rcad_kernel::BRep) {
 
 /// Implementation of offset_shell_with_options that can be called internally.
 fn offset_shell_with_options_impl(
-    face_refs: &[ShapeRef],
+    face_refs: &[Shape],
     brep: &rcad_kernel::BRep,
     opts: &OffsetOptions,
 ) -> Result<rcad_kernel::BRep, OffsetError> {
@@ -1066,8 +1066,8 @@ fn offset_shell_with_options_impl(
 
     // Step 1: Compute offset surfaces for each face
     let mut offset_surfaces: Vec<Option<Surface3>> = Vec::with_capacity(face_refs.len());
-    for (fi, &face_sr) in face_refs.iter().enumerate() {
-        let fd = brep.face(face_sr);
+    for (fi, face_sr) in face_refs.iter().enumerate() {
+        let fd = brep.face(face_sr.clone());
         let surf = match fd.surface.as_ref() {
             Some(s) => s,
             None => {
@@ -1082,14 +1082,14 @@ fn offset_shell_with_options_impl(
 
     // Step 2: Build edge-to-face adjacency
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, &face_sr) in face_refs.iter().enumerate() {
-        let fd = brep.face(face_sr);
-        let owd = brep.wire(fd.outer_wire);
+    for (fi, face_sr) in face_refs.iter().enumerate() {
+        let fd = brep.face(face_sr.clone());
+        let owd = brep.wire(fd.outer_wire.clone());
         for esr in &owd.edges {
             edge_to_faces.entry(esr.index).or_default().push(fi);
         }
-        for &iw_sr in &fd.inner_wires {
-            let iwd = brep.wire(iw_sr);
+        for iw_sr in &fd.inner_wires {
+            let iwd = brep.wire(iw_sr.clone());
             for esr in &iwd.edges {
                 edge_to_faces.entry(esr.index).or_default().push(fi);
             }
@@ -1120,8 +1120,8 @@ fn offset_shell_with_options_impl(
                 for pair in faces.windows(2) {
                     let fi1 = pair[0];
                     let fi2 = pair[1];
-                    let f1 = brep.face(face_refs[fi1]);
-                    let f2 = brep.face(face_refs[fi2]);
+                    let f1 = brep.face(face_refs[fi1].clone());
+                    let f2 = brep.face(face_refs[fi2].clone());
                     let s1 = match f1.surface.as_ref() { Some(s) => s, None => continue };
                     let s2 = match f2.surface.as_ref() { Some(s) => s, None => continue };
                     let d1 = get_face_distance(fi1);
@@ -1140,8 +1140,8 @@ fn offset_shell_with_options_impl(
                 // Fallback: average-normal translation
                 let avg_dist = if let Some(ref vt) = opts.variable_thickness {
                     let mut s = 0.0; let mut c = 0;
-                    for (fi, &face_sr) in face_refs.iter().enumerate() {
-                        if face_uses_vertex(brep, face_sr, vi) {
+                    for (fi, face_sr) in face_refs.iter().enumerate() {
+                        if face_uses_vertex(brep, face_sr.clone(), vi) {
                             s += vt.thickness_for_face(fi); c += 1;
                         }
                     }
@@ -1164,19 +1164,19 @@ fn offset_shell_with_options_impl(
     // Step 5: Create offset faces with offset edges
     let mut valid_face_count = 0;
 
-    for (fi, &face_sr) in face_refs.iter().enumerate() {
+    for (fi, face_sr) in face_refs.iter().enumerate() {
         let off_surf = match &offset_surfaces[fi] {
             Some(s) => s.clone(),
             None => continue,
         };
 
-        let fd = brep.face(face_sr);
-        let owd = brep.wire(fd.outer_wire);
+        let fd = brep.face(face_sr.clone());
+        let owd = brep.wire(fd.outer_wire.clone());
 
         let mut wire_edges = Vec::new();
 
         for esr in &owd.edges {
-            let ed = brep.edge(*esr);
+            let ed = brep.edge(esr.clone());
             let vs = vertex_map[ed.first.index];
             let ve = vertex_map[ed.last.index];
             let p_start = result.vertex_point(vs).unwrap_or(DVec3::ZERO);
@@ -1249,8 +1249,8 @@ pub fn offset_shell_with_options(
 
     // Step 1: Compute offset surfaces for each face
     let mut offset_surfaces: Vec<Option<Surface3>> = Vec::with_capacity(face_refs.len());
-    for (_fi, &face_sr) in face_refs.iter().enumerate() {
-        let fd = brep.face(face_sr);
+    for (_fi, face_sr) in face_refs.iter().enumerate() {
+        let fd = brep.face(face_sr.clone());
         let surf = match fd.surface.as_ref() {
             Some(s) => s,
             None => {
@@ -1266,14 +1266,14 @@ pub fn offset_shell_with_options(
 
     // Step 2: Build edge-to-face adjacency (including inner wires for faces with holes)
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, &face_sr) in face_refs.iter().enumerate() {
-        let fd = brep.face(face_sr);
-        let owd = brep.wire(fd.outer_wire);
+    for (fi, face_sr) in face_refs.iter().enumerate() {
+        let fd = brep.face(face_sr.clone());
+        let owd = brep.wire(fd.outer_wire.clone());
         for esr in &owd.edges {
             edge_to_faces.entry(esr.index).or_default().push(fi);
         }
-        for &iw_sr in &fd.inner_wires {
-            let iwd = brep.wire(iw_sr);
+        for iw_sr in &fd.inner_wires {
+            let iwd = brep.wire(iw_sr.clone());
             for esr in &iwd.edges {
                 edge_to_faces.entry(esr.index).or_default().push(fi);
             }
@@ -1323,7 +1323,7 @@ pub fn offset_shell_with_options(
         let all_planar = incident_edges.iter().all(|ei| {
             edge_to_faces.get(ei).map_or(true, |faces| {
                 faces.iter().all(|fi| {
-                    let fd = brep.face(face_refs[*fi]);
+                    let fd = brep.face(face_refs[*fi].clone());
                     fd.surface.as_ref().is_some_and(|s| matches!(s, Surface3::Plane(_)))
                 })
             })
@@ -1334,11 +1334,11 @@ pub fn offset_shell_with_options(
             let mut fi_list: Vec<usize> = Vec::new();
             let mut normal_sum = DVec3::ZERO;
             for &vi in &group_vertex_indices[gi] {
-                for (fi, &face_sr) in face_refs.iter().enumerate() {
-                    let uses = face_uses_vertex(brep, face_sr, vi);
+                for (fi, face_sr) in face_refs.iter().enumerate() {
+                    let uses = face_uses_vertex(brep, face_sr.clone(), vi);
                     if uses && !fi_list.contains(&fi) {
                         fi_list.push(fi);
-                        normal_sum += get_face_normal(brep, face_sr);
+                        normal_sum += get_face_normal(brep, face_sr.clone());
                     }
                 }
             }
@@ -1360,8 +1360,8 @@ pub fn offset_shell_with_options(
                 if efaces.len() >= 2 {
                     for pair in efaces.windows(2) {
                         let fi1 = pair[0]; let fi2 = pair[1];
-                        let f1 = brep.face(face_refs[fi1]);
-                        let f2 = brep.face(face_refs[fi2]);
+                        let f1 = brep.face(face_refs[fi1].clone());
+                        let f2 = brep.face(face_refs[fi2].clone());
                         let s1 = match f1.surface.as_ref() { Some(s) => s, None => continue };
                         let s2 = match f2.surface.as_ref() { Some(s) => s, None => continue };
                         let intersection = intersect_offset_surfaces(s1, s2, distance, distance);
@@ -1375,7 +1375,7 @@ pub fn offset_shell_with_options(
                 if !found {
                     // Single-face seam edge: project onto offset cylinder surface
                     for &fi in efaces.iter().take(2) {
-                        let fd = brep.face(face_refs[fi]);
+                        let fd = brep.face(face_refs[fi].clone());
                         let is_cylinder = fd.surface.as_ref().is_some_and(|s| matches!(s, Surface3::Cylinder(_)));
                         if !is_cylinder { continue; }
                         let orig_surf = match fd.surface.as_ref() { Some(s) => s, None => continue };
@@ -1392,8 +1392,8 @@ pub fn offset_shell_with_options(
             let cone_plane_result: Option<DVec3> = {
                 let mut all_fis: Vec<usize> = Vec::new();
                 for &vi in &group_vertex_indices[gi] {
-                    for (fi, &face_sr) in face_refs.iter().enumerate() {
-                        if face_uses_vertex(brep, face_sr, vi) && !all_fis.contains(&fi) {
+                    for (fi, face_sr) in face_refs.iter().enumerate() {
+                        if face_uses_vertex(brep, face_sr.clone(), vi) && !all_fis.contains(&fi) {
                             all_fis.push(fi);
                         }
                     }
@@ -1401,7 +1401,7 @@ pub fn offset_shell_with_options(
                 let mut cone_fi = None;
                 let mut plane_fis: Vec<usize> = Vec::new();
                 for &fi in &all_fis {
-                    let fd = brep.face(face_refs[fi]);
+                    let fd = brep.face(face_refs[fi].clone());
                     match fd.surface.as_ref() {
                         Some(Surface3::Cone(_)) => cone_fi = Some(fi),
                         Some(Surface3::Plane(_)) => plane_fis.push(fi),
@@ -1435,11 +1435,11 @@ pub fn offset_shell_with_options(
                 let mut fi_list: Vec<usize> = Vec::new();
                 let mut normal_sum = DVec3::ZERO;
                 for &vi in &group_vertex_indices[gi] {
-                    for (fi, &face_sr) in face_refs.iter().enumerate() {
-                        let uses = face_uses_vertex(brep, face_sr, vi);
+                    for (fi, face_sr) in face_refs.iter().enumerate() {
+                        let uses = face_uses_vertex(brep, face_sr.clone(), vi);
                         if uses && !fi_list.contains(&fi) {
                             fi_list.push(fi);
-                            normal_sum += get_face_normal(brep, face_sr);
+                            normal_sum += get_face_normal(brep, face_sr.clone());
                         }
                     }
                 }
@@ -1469,19 +1469,19 @@ pub fn offset_shell_with_options(
     // Step 5: Create offset faces with offset edges.
     let mut valid_face_count = 0;
 
-    for (fi, &face_sr) in face_refs.iter().enumerate() {
+    for (fi, face_sr) in face_refs.iter().enumerate() {
         let off_surf = match &offset_surfaces[fi] {
             Some(s) => s.clone(),
             None => continue,
         };
 
-        let fd = brep.face(face_sr);
-        let owd = brep.wire(fd.outer_wire);
+        let fd = brep.face(face_sr.clone());
+        let owd = brep.wire(fd.outer_wire.clone());
 
         let mut wire_edges = Vec::new();
 
         for esr in &owd.edges {
-            let ed = brep.edge(*esr);
+            let ed = brep.edge(esr.clone());
             let vs = vertex_map[ed.first.index];
             let ve = vertex_map[ed.last.index];
             let p_start = result.vertex_point(vs).unwrap_or(DVec3::ZERO);
@@ -1599,17 +1599,17 @@ pub fn offset_shell_with_options(
 
         // For offset full-cylinder faces, set uv_domain
         if let Surface3::Cylinder(cyl) = &off_surf {
-            let owd = brep.wire(fd.outer_wire);
+            let owd = brep.wire(fd.outer_wire.clone());
             let orig_seam = {
                 let mut seen = std::collections::HashSet::new();
-                owd.edges.iter().any(|esr| !seen.insert(esr.ptr_id))
+                owd.edges.iter().any(|esr| !seen.insert(esr.ptr_id()))
             };
             if orig_seam {
                 // Collect v values first (immutable borrow only)
                 let mut v_vals: Vec<f64> = Vec::new();
                 {
-                    let new_fd = result.face(ShapeRef::synthetic(fi_new));
-                    let new_owd = result.wire(new_fd.outer_wire);
+                    let new_fd = result.face(Shape::synthetic(fi_new, Orientation::Forward));
+                    let new_owd = result.wire(new_fd.outer_wire.clone());
                     for esr in &new_owd.edges {
                         if let Some(v) = result.vertex_point(esr.index) {
                             v_vals.push((v - cyl.origin).dot(cyl.axis));

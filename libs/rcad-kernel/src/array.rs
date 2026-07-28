@@ -896,9 +896,9 @@ fn append_transformed_brep(
 ) -> Result<(), PatternError> {
     use crate::geom::{transform_curve, transform_surface};
     let da = glam::DAffine3::from_mat4(*mat);
-    // Build vertex/edge index maps: old index -> new ShapeRef
-    let mut v_map: Vec<topods::ShapeRef> = Vec::new();
-    let mut e_map: Vec<topods::ShapeRef> = Vec::new();
+    // Build vertex/edge index maps: old index -> new Shape
+    let mut v_map: Vec<topods::Shape> = Vec::new();
+    let mut e_map: Vec<topods::Shape> = Vec::new();
 
     // Pass 1: copy vertices
     for ts in &source.tshapes {
@@ -912,10 +912,10 @@ fn append_transformed_brep(
     // Pass 2: copy edges
     for ts in &source.tshapes {
         if let topods::TShape::Edge(ed) = &**ts {
-            let first = *v_map.get(ed.first.index).unwrap_or(&topods::ShapeRef::NULL);
-            let last = *v_map.get(ed.last.index).unwrap_or(&topods::ShapeRef::NULL);
+            let first = v_map.get(ed.first.index).cloned().unwrap_or(topods::Shape::null());
+            let last = v_map.get(ed.last.index).cloned().unwrap_or(topods::Shape::null());
             let curve = ed.curve.as_ref().map(|c| transform_curve(c, &da));
-            let sr = target.add_tedge(curve, first, last, ed.range);
+            let sr = target.add_tedge(curve, first.clone(), last.clone(), ed.range);
             e_map.push(sr);
         }
     }
@@ -928,20 +928,20 @@ fn append_transformed_brep(
         let mut shell_refs = Vec::new();
         for sr in &sd.shells {
             if let topods::TShape::Shell(shd) = &*source.tshapes[sr.index] {
-                let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+                let mut face_refs: Vec<topods::Shape> = Vec::new();
                 for fsr in &shd.faces {
                     if let topods::TShape::Face(fd) = &*source.tshapes[fsr.index] {
                         // Outer wire
-                        let outer_edges: Vec<topods::ShapeRef> = {
+                        let outer_edges: Vec<topods::Shape> = {
                             if let topods::TShape::Wire(wd) = &*source.tshapes[fd.outer_wire.index]
                             {
                                 wd.edges
                                     .iter()
                                     .map(|esr| {
-                                        let ne = *e_map
+                                        let ne = e_map
                                             .get(esr.index)
-                                            .unwrap_or(&topods::ShapeRef::NULL);
-                                        topods::ShapeRef::synthetic_with_orientation(
+                                            .cloned().unwrap_or(topods::Shape::null());
+                                        topods::Shape::synthetic(
                                             ne.index,
                                             esr.orientation,
                                         )
@@ -956,14 +956,14 @@ fn append_transformed_brep(
                         let mut inner_wires = Vec::new();
                         for iwsr in &fd.inner_wires {
                             if let topods::TShape::Wire(iwd) = &*source.tshapes[iwsr.index] {
-                                let ies: Vec<topods::ShapeRef> = iwd
+                                let ies: Vec<topods::Shape> = iwd
                                     .edges
                                     .iter()
                                     .map(|esr| {
-                                        let ne = *e_map
+                                        let ne = e_map
                                             .get(esr.index)
-                                            .unwrap_or(&topods::ShapeRef::NULL);
-                                        topods::ShapeRef::synthetic_with_orientation(
+                                            .cloned().unwrap_or(topods::Shape::null());
+                                        topods::Shape::synthetic(
                                             ne.index,
                                             esr.orientation,
                                         )

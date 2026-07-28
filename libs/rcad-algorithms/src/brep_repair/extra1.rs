@@ -54,7 +54,7 @@ fn analyze_shared_face_pair(
  tolerance: f64,
 ) -> Option<SharedFaceInfo> {
  // Collect boundary vertices from face_a
- let verts1: Vec<usize> = wire_edge_indices(brep, face_a.outer_wire)
+ let verts1: Vec<usize> = wire_edge_indices(brep, face_a.outer_wire.clone())
   .iter()
   .flat_map(|&ei| {
    let edge = ed_opt(brep, ei)?;
@@ -64,7 +64,7 @@ fn analyze_shared_face_pair(
   .collect();
 
  // Collect boundary vertices from face_b
- let verts2: Vec<usize> = wire_edge_indices(brep, face_b.outer_wire)
+ let verts2: Vec<usize> = wire_edge_indices(brep, face_b.outer_wire.clone())
   .iter()
   .flat_map(|&ei| {
    let edge = ed_opt(brep, ei)?;
@@ -91,9 +91,9 @@ fn analyze_shared_face_pair(
 
  // Collect boundary edges
  let edges1: std::collections::HashSet<usize> =
-  wire_edge_indices(brep, face_a.outer_wire).into_iter().collect();
+  wire_edge_indices(brep, face_a.outer_wire.clone()).into_iter().collect();
  let edges2: std::collections::HashSet<usize> =
-  wire_edge_indices(brep, face_b.outer_wire).into_iter().collect();
+  wire_edge_indices(brep, face_b.outer_wire.clone()).into_iter().collect();
 
  // Find shared edges (by geometry)
  let mut shared_edges = Vec::new();
@@ -265,7 +265,7 @@ pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
 
  // Build face edges list
  for (fi, fd) in &faces {
-  let edges: Vec<usize> = wire_edge_indices(brep, fd.outer_wire);
+  let edges: Vec<usize> = wire_edge_indices(brep, fd.outer_wire.clone());
   graph.face_edges.push(edges);
  }
 
@@ -273,14 +273,14 @@ pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
  let mut edge_to_faces: std::collections::HashMap<usize, Vec<usize>> =
   std::collections::HashMap::new();
  for (fi, fd) in each_face(brep) {
-  for &ei in &wire_edge_indices(brep, fd.outer_wire) {
+  for &ei in &wire_edge_indices(brep, fd.outer_wire.clone()) {
    edge_to_faces.entry(ei).or_default().push(fi);
   }
  }
 
  // Build face adjacency via shared edges
  for (fi, fd) in each_face(brep) {
-  for &ei in &wire_edge_indices(brep, fd.outer_wire) {
+  for &ei in &wire_edge_indices(brep, fd.outer_wire.clone()) {
    if let Some(adjacent_faces) = edge_to_faces.get(&ei) {
     for &adj_fi in adjacent_faces {
      if adj_fi != fi && !graph.face_adjacency[fi].contains(&adj_fi) {
@@ -302,7 +302,7 @@ pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
  for (fi, fd) in each_face(brep) {
   let mut total_strength = 0.0;
   let mut count = 0;
-  for &ei in &wire_edge_indices(brep, fd.outer_wire) {
+  for &ei in &wire_edge_indices(brep, fd.outer_wire.clone()) {
    if ei < graph.edge_strength.len() {
     total_strength += graph.edge_strength[ei];
     count += 1;
@@ -469,7 +469,7 @@ fn compute_face_center(brep: &rcad_kernel::BRep, face_flat_idx: usize) -> Option
  let mut center = DVec3::ZERO;
  let mut count = 0;
 
- for &ei in &wire_edge_indices(brep, fd.outer_wire) {
+ for &ei in &wire_edge_indices(brep, fd.outer_wire.clone()) {
   let ed = ed_opt(brep, ei)?;
   let v = ed.first.index;
   if v < brep.vertex_count() {
@@ -502,8 +502,8 @@ fn classify_gap_type(brep: &rcad_kernel::BRep, fa: usize, fb: usize, distance: f
 
  // Check if normals are perpendicular (indicating adjacent faces)
  if normal_dot < 0.1 {
-  let edges_a = wire_edge_indices(brep, face_a.outer_wire);
-  let edges_b = wire_edge_indices(brep, face_b.outer_wire);
+  let edges_a = wire_edge_indices(brep, face_a.outer_wire.clone());
+  let edges_b = wire_edge_indices(brep, face_b.outer_wire.clone());
   for &ei_a in &edges_a {
    if let Some(ed_a) = ed_opt(brep, ei_a) {
     let pa_s = vpoint(brep, ed_a.first.index);
@@ -667,12 +667,12 @@ fn merge_gap_by_proximity(
   None => { report.errors.push("Face B not found".to_string()); return (result, report); }
  };
 
- let mut verts_a: Vec<usize> = wire_edge_indices(brep, face_a.outer_wire)
+ let mut verts_a: Vec<usize> = wire_edge_indices(brep, face_a.outer_wire.clone())
   .iter().flat_map(|&ei| { let ed = ed_opt(brep, ei)?; Some(vec![ed.first.index, ed.last.index]) })
   .flatten().collect();
  verts_a.sort(); verts_a.dedup();
 
- let mut verts_b: Vec<usize> = wire_edge_indices(brep, face_b.outer_wire)
+ let mut verts_b: Vec<usize> = wire_edge_indices(brep, face_b.outer_wire.clone())
   .iter().flat_map(|&ei| { let ed = ed_opt(brep, ei)?; Some(vec![ed.first.index, ed.last.index]) })
   .flatten().collect();
  verts_b.sort(); verts_b.dedup();
@@ -799,7 +799,7 @@ fn create_single_bridge(brep: &rcad_kernel::BRep, gap: &ConnectivityGap) -> (rca
 
  let mut closest_va: Option<usize> = None;
  let mut min_dist_a = f64::INFINITY;
- for &ei in &wire_edge_indices(brep, face_a.outer_wire) {
+ for &ei in &wire_edge_indices(brep, face_a.outer_wire.clone()) {
   if let Some(ed) = ed_opt(brep, ei) {
    for &v in &[ed.first.index, ed.last.index] {
     if v < brep.vertex_count() {
@@ -817,7 +817,7 @@ fn create_single_bridge(brep: &rcad_kernel::BRep, gap: &ConnectivityGap) -> (rca
 
  let mut closest_vb: Option<usize> = None;
  let mut min_dist_b = f64::INFINITY;
- for &ei in &wire_edge_indices(brep, face_b.outer_wire) {
+ for &ei in &wire_edge_indices(brep, face_b.outer_wire.clone()) {
   if let Some(ed) = ed_opt(brep, ei) {
    for &v in &[ed.first.index, ed.last.index] {
     if v < brep.vertex_count() {
@@ -842,14 +842,14 @@ fn create_single_bridge(brep: &rcad_kernel::BRep, gap: &ConnectivityGap) -> (rca
  if edge_exists { return (result, true); }
 
  // Create a new edge in the result brep
- let first_sr = ShapeRef {
-  ptr_id: std::sync::Arc::as_ptr(&result.tshapes[va]) as u64,
+ let first_sr = Shape {
+  data: result.tshapes[va].clone(),
   index: va,
   orientation: Orientation::Forward,
   location: 0,
  };
- let last_sr = ShapeRef {
-  ptr_id: std::sync::Arc::as_ptr(&result.tshapes[vb]) as u64,
+ let last_sr = Shape {
+  data: result.tshapes[vb].clone(),
   index: vb,
   orientation: Orientation::Forward,
   location: 0,
@@ -859,17 +859,18 @@ fn create_single_bridge(brep: &rcad_kernel::BRep, gap: &ConnectivityGap) -> (rca
  if !brep.has_solids() {
   // Minimal solid structure
   let ei = result.edge_count() - 1;
-  let edge_sr = ShapeRef {
-   ptr_id: std::sync::Arc::as_ptr(&result.tshapes[result.tshapes.len() - 1]) as u64,
-   index: result.tshapes.len() - 1,
+  let ei_idx = result.tshapes.len() - 1;
+  let edge_sr = Shape {
+   data: result.tshapes[ei_idx].clone(),
+   index: ei_idx,
    orientation: Orientation::Forward,
    location: 0,
   };
   // But the edge was already added, so edge count increased
-  // Re-get the correct ShapeRef
+  // Re-get the correct Shape
   let last_edge_idx = result.tshapes.len() - 1;
-  let actual_edge_sr = ShapeRef {
-   ptr_id: std::sync::Arc::as_ptr(&result.tshapes[last_edge_idx]) as u64,
+  let actual_edge_sr = Shape {
+   data: result.tshapes[last_edge_idx].clone(),
    index: last_edge_idx,
    orientation: Orientation::Forward,
    location: 0,
@@ -1235,11 +1236,11 @@ pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
     for fr in &shd.faces {
      if let TShape::Face(fd) = &*brep.tshapes[fr.index] {
       // Rebuild outer wire
-      let outer_edge_refs: Vec<ShapeRef> = wire_edge_indices(brep, fd.outer_wire).iter()
+      let outer_edge_refs: Vec<Shape> = wire_edge_indices(brep, fd.outer_wire.clone()).iter()
        .map(|&old_ei| {
         // Edge index hasn't changed (same number, same position)
-        ShapeRef {
-         ptr_id: std::sync::Arc::as_ptr(&result.tshapes[old_ei]) as u64,
+        Shape {
+         data: result.tshapes[old_ei].clone(),
          index: old_ei,
          orientation: Orientation::Forward,
          location: 0,
@@ -1248,10 +1249,10 @@ pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
       let outer_wire = result.add_twire(outer_edge_refs);
 
       // Rebuild inner wires
-      let inner_wires: Vec<ShapeRef> = fd.inner_wires.iter().map(|iw_ref| {
-       let inner_edge_refs: Vec<ShapeRef> = wire_edge_indices(brep, *iw_ref).iter()
-        .map(|&old_ei| ShapeRef {
-         ptr_id: std::sync::Arc::as_ptr(&result.tshapes[old_ei]) as u64,
+      let inner_wires: Vec<Shape> = fd.inner_wires.iter().map(|iw_ref| {
+       let inner_edge_refs: Vec<Shape> = wire_edge_indices(brep, iw_ref.clone()).iter()
+        .map(|&old_ei| Shape {
+         data: result.tshapes[old_ei].clone(),
          index: old_ei,
          orientation: Orientation::Forward,
          location: 0,
@@ -1285,18 +1286,19 @@ pub fn remove_degenerate_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, 
  let mut result = BRep::new();
 
  // Clone all vertices
- let mut v_map: Vec<Option<ShapeRef>> = vec![None; brep.tshapes.len()];
+ let mut v_map: Vec<Option<Shape>> = vec![None; brep.tshapes.len()];
  for (vi, vd) in each_vertex(brep) {
   v_map[vi] = Some(result.add_tvertex(vd.point));
  }
 
  // Clone all edges
- let mut e_map: Vec<Option<ShapeRef>> = vec![None; brep.tshapes.len()];
+ let mut e_map: Vec<Option<Shape>> = vec![None; brep.tshapes.len()];
  for (ei, ed) in each_edge(brep) {
   let _sr = result.add_edge_flat(ed.first.index, ed.last.index, ed.curve.clone(), ed.range);
-  e_map[ei] = Some(ShapeRef {
-   ptr_id: std::sync::Arc::as_ptr(&result.tshapes[result.tshapes.len() - 1]) as u64,
-   index: result.tshapes.len() - 1,
+  let e_idx = result.tshapes.len() - 1;
+  e_map[ei] = Some(Shape {
+   data: result.tshapes[e_idx].clone(),
+   index: e_idx,
    orientation: Orientation::Forward,
    location: 0,
   });
@@ -1310,7 +1312,7 @@ pub fn remove_degenerate_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, 
     let mut faces = Vec::new();
     for fr in &shd.faces {
      if let TShape::Face(fd) = &*brep.tshapes[fr.index] {
-      let wire_edges = wire_edge_indices(brep, fd.outer_wire);
+      let wire_edges = wire_edge_indices(brep, fd.outer_wire.clone());
       if wire_edges.len() < 3 { removed += 1; continue; }
 
       // Check for zero area via vertex positions
@@ -1325,12 +1327,12 @@ pub fn remove_degenerate_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, 
       if area2 < TOLERANCE_METRIC_SQ_NEAR_ZERO { removed += 1; continue; }
 
       // Rebuild face
-      let outer_edge_refs: Vec<ShapeRef> = wire_edges.iter()
-       .map(|&old_ei| e_map[old_ei].unwrap()).collect();
+      let outer_edge_refs: Vec<Shape> = wire_edges.iter()
+       .map(|&old_ei| e_map[old_ei].clone().unwrap()).collect();
       let outer_wire = result.add_twire(outer_edge_refs);
-      let inner_wires: Vec<ShapeRef> = fd.inner_wires.iter().map(|iw_ref| {
-       let iw_edges: Vec<ShapeRef> = wire_edge_indices(brep, *iw_ref).iter()
-        .map(|&ei| e_map[ei].unwrap()).collect();
+      let inner_wires: Vec<Shape> = fd.inner_wires.iter().map(|iw_ref| {
+       let iw_edges: Vec<Shape> = wire_edge_indices(brep, iw_ref.clone()).iter()
+        .map(|&ei| e_map[ei].clone().unwrap()).collect();
        result.add_twire(iw_edges)
       }).collect();
       faces.push(result.add_tface(
@@ -1369,11 +1371,11 @@ pub fn fix_wire_orientation(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
  let tshape_count = result.tshapes.len();
  for fi in 0..tshape_count {
   // Clone wire refs before mutably borrowing result
-  let outer_wire: Option<ShapeRef> = match &*result.tshapes[fi] {
-   TShape::Face(fd) => Some(fd.outer_wire),
+  let outer_wire: Option<Shape> = match &*result.tshapes[fi] {
+   TShape::Face(fd) => Some(fd.outer_wire.clone()),
    _ => None,
   };
-  let inner_wires: Vec<ShapeRef> = match &*result.tshapes[fi] {
+  let inner_wires: Vec<Shape> = match &*result.tshapes[fi] {
    TShape::Face(fd) => fd.inner_wires.clone(),
    _ => Vec::new(),
   };
@@ -1389,9 +1391,9 @@ pub fn fix_wire_orientation(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_k
 }
 
 /// Fix a single wire's edge orientations so the chain closes.
-fn fix_wire_topods(brep: &mut BRep, wire_ref: ShapeRef, tol2: f64) -> bool {
+fn fix_wire_topods(brep: &mut BRep, wire_ref: Shape, tol2: f64) -> bool {
  // Get the wire data
- let wire_edges: Vec<usize> = wire_edge_indices(brep, wire_ref);
+ let wire_edges: Vec<usize> = wire_edge_indices(brep, wire_ref.clone());
  if wire_edges.len() < 2 { return false; }
 
  let mut flipped = false;

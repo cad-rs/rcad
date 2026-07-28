@@ -1391,7 +1391,7 @@ impl BRepGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topods::{Orientation, ShapeRef};
+    use crate::topods::{Orientation, Shape};
     use glam::DVec3;
 
     fn unit_box() -> BRep {
@@ -1402,7 +1402,7 @@ mod tests {
     /// Build a minimal non-manifold BRep where edge 0 is shared by 3 faces.
     fn non_manifold_tripod() -> BRep {
         let mut brep = BRep::new();
-        let v: Vec<topods::ShapeRef> = vec![
+        let v: Vec<topods::Shape> = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
@@ -1415,43 +1415,43 @@ mod tests {
         let e01 = brep.add_tedge(
             None,
             v[0],
-            ShapeRef::synthetic_with_orientation(v[1].index, Orientation::Reversed),
+            Shape::synthetic(v[1].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e12 = brep.add_tedge(
             None,
             v[1],
-            ShapeRef::synthetic_with_orientation(v[2].index, Orientation::Reversed),
+            Shape::synthetic(v[2].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e20 = brep.add_tedge(
             None,
             v[2],
-            ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed),
+            Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e13 = brep.add_tedge(
             None,
             v[1],
-            ShapeRef::synthetic_with_orientation(v[3].index, Orientation::Reversed),
+            Shape::synthetic(v[3].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e30 = brep.add_tedge(
             None,
             v[3],
-            ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed),
+            Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e14 = brep.add_tedge(
             None,
             v[1],
-            ShapeRef::synthetic_with_orientation(v[4].index, Orientation::Reversed),
+            Shape::synthetic(v[4].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e40 = brep.add_tedge(
             None,
             v[4],
-            ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed),
+            Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let w0 = brep.add_twire(vec![e01, e12, e20]);

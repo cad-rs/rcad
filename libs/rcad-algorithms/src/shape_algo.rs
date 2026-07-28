@@ -16,7 +16,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
-use rcad_kernel::topods::{BRep, ShapeRef, TShape};
+use rcad_kernel::topods::{BRep, Shape, TShape};
 use std::collections::HashMap;
 
 // =============================================================================
@@ -204,13 +204,13 @@ fn collect_face_surfaces(brep: &BRep) -> Vec<&Surface3> {
 }
 
 /// Iterate face ShapeRefs for all shells in the first solid of the BRep.
-fn first_solid_face_refs(brep: &BRep) -> Vec<ShapeRef> {
+fn first_solid_face_refs(brep: &BRep) -> Vec<Shape> {
     let mut face_refs = Vec::new();
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = ts.as_ref() {
             for sh_ref in &sd.shells {
                 if let TShape::Shell(ref sh_data) = *brep.tshapes[sh_ref.index] {
-                    face_refs.extend(sh_data.faces.iter().copied());
+                    face_refs.extend(sh_data.faces.iter().cloned());
                 }
             }
             break; // Only first solid

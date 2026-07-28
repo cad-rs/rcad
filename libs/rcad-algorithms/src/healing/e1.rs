@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use rcad_kernel::topods::{TShape, ShapeRef, Orientation};
+use rcad_kernel::topods::{TShape, Shape, Orientation};
 
 impl ShapeProcessConfig {
     /// Create a preset configuration optimized for imported CAD data.
@@ -1093,13 +1093,13 @@ fn fix_small_area_faces(brep: &rcad_kernel::BRep, min_area: f64) -> (rcad_kernel
             let mut kept_faces = Vec::new();
             for face_sr in &face_refs {
                 let TShape::Face(fd) = &*result.tshapes[face_sr.index] else {
-                    kept_faces.push(*face_sr);
+                    kept_faces.push(face_sr.clone());
                     continue;
                 };
 
-                let area = estimate_face_area_from_wire(&result, fd.outer_wire);
+                let area = estimate_face_area_from_wire(&result, fd.outer_wire.clone());
                 if area >= min_area {
-                    kept_faces.push(*face_sr);
+                    kept_faces.push(face_sr.clone());
                 } else {
                     removed_count += 1;
                 }
@@ -1174,7 +1174,7 @@ fn remove_internal_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize)
 }
 
 /// Estimate face area from its wire using fan triangulation.
-fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire_sr: ShapeRef) -> f64 {
+fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire_sr: Shape) -> f64 {
     use glam::DVec3;
 
     let wd = match &*brep.tshapes[wire_sr.index] {
@@ -1249,7 +1249,7 @@ fn split_angle_operator(brep: &rcad_kernel::BRep, params: &SplitAngleOperator) -
             let mut new_face_srs = Vec::new();
             for face_sr in &face_refs {
                 let TShape::Face(fd) = &*result.tshapes[face_sr.index] else {
-                    new_face_srs.push(*face_sr);
+                    new_face_srs.push(face_sr.clone());
                     continue;
                 };
 
@@ -1293,9 +1293,9 @@ fn split_angle_operator(brep: &rcad_kernel::BRep, params: &SplitAngleOperator) -
                     if u_sectors > 1 || v_sectors > 1 {
                         split_count += 1;
                     }
-                    new_face_srs.push(*face_sr);
+                    new_face_srs.push(face_sr.clone());
                 } else {
-                    new_face_srs.push(*face_sr);
+                    new_face_srs.push(face_sr.clone());
                 }
             }
 
@@ -1685,8 +1685,8 @@ fn direct_faces_operator(brep: &rcad_kernel::BRep, params: &DirectFacesOperator)
 
     // Step 2: Collect shell-level orientation info before any mutation
     struct ShellFix {
-        shell_sr: ShapeRef,
-        faces_to_flip: Vec<(ShapeRef, ShapeRef)>, // (face_sr, outer_wire_sr)
+        shell_sr: Shape,
+        faces_to_flip: Vec<(Shape, Shape)>, // (face_sr, outer_wire_sr)
     }
 
     let mut shell_fixes: Vec<ShellFix> = Vec::new();
@@ -1710,7 +1710,7 @@ fn direct_faces_operator(brep: &rcad_kernel::BRep, params: &DirectFacesOperator)
             // Determine expected shell orientation from face normals
             let mut consistent_normals = 0usize;
             let mut inconsistent_normals = 0usize;
-            let mut potential_faces: Vec<(ShapeRef, ShapeRef)> = Vec::new();
+            let mut potential_faces: Vec<(Shape, Shape)> = Vec::new();
 
             for face_sr in &face_refs {
                 let TShape::Face(fd) = &*result.tshapes[face_sr.index] else { continue; };
@@ -1722,12 +1722,12 @@ fn direct_faces_operator(brep: &rcad_kernel::BRep, params: &DirectFacesOperator)
                     consistent_normals += 1;
                 } else if normal.length() < 0.5 && !normal.abs_diff_eq(DVec3::ZERO, 0.1) {
                     inconsistent_normals += 1;
-                    potential_faces.push((*face_sr, fd.outer_wire));
+                    potential_faces.push((face_sr.clone(), fd.outer_wire.clone()));
                 }
             }
 
             if inconsistent_normals > consistent_normals && inconsistent_normals > 0 {
-                shell_fixes.push(ShellFix { shell_sr: *shell_sr, faces_to_flip: potential_faces });
+                shell_fixes.push(ShellFix { shell_sr: shell_sr.clone(), faces_to_flip: potential_faces });
                 faces_fixed += shell_fixes.last().map_or(0, |f| f.faces_to_flip.len());
             }
         }
@@ -1830,7 +1830,7 @@ fn remove_internal_faces_operator(brep: &rcad_kernel::BRep, params: &RemoveInter
             let mut kept_faces = Vec::new();
             for (fi, face_sr) in face_refs.iter().enumerate() {
                 if !faces_to_remove.contains(&fi) {
-                    kept_faces.push(*face_sr);
+                    kept_faces.push(face_sr.clone());
                 } else {
                     total_removed += 1;
                 }
@@ -1854,14 +1854,14 @@ fn remove_internal_faces_operator(brep: &rcad_kernel::BRep, params: &RemoveInter
 }
 
 /// Identify internal faces within a single shell's face list.
-fn identify_internal_faces_in_shell(brep: &rcad_kernel::BRep, face_refs: &[ShapeRef], params: &RemoveInternalFacesOperator) -> Vec<usize> {
+fn identify_internal_faces_in_shell(brep: &rcad_kernel::BRep, face_refs: &[Shape], params: &RemoveInternalFacesOperator) -> Vec<usize> {
     let mut internal_faces = Vec::new();
 
     for (face_idx, face_sr) in face_refs.iter().enumerate() {
         let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
 
         // Check 1: Face area
-        let area = estimate_face_area_from_wire(brep, fd.outer_wire);
+        let area = estimate_face_area_from_wire(brep, fd.outer_wire.clone());
         if area < params.min_face_area {
             if !params.preserve_material_boundaries {
                 internal_faces.push(face_idx);

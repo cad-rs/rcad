@@ -500,7 +500,7 @@ fn sample_brep_points(brep: &topods::BRep) -> Vec<DVec3> {
 mod tests {
     use super::*;
     use crate::geom::Plane;
-    use crate::topods::{self, Orientation, ShapeRef};
+    use crate::topods::{self, Orientation, Shape};
 
     fn make_square_plane_brep(origin: DVec3, normal: DVec3, width: f64, height: f64) -> BRep {
         let n = normal.normalize_or_zero();
@@ -518,40 +518,40 @@ mod tests {
             origin + hw * u + hh * v,
             origin - hw * u + hh * v,
         ];
-        let verts: Vec<ShapeRef> = pts.iter().map(|&p| brep.add_tvertex(p)).collect();
+        let verts: Vec<Shape> = pts.iter().map(|&p| brep.add_tvertex(p)).collect();
 
         // 4 edges
         let e0 = brep.add_tedge(
             None,
             verts[0],
-            ShapeRef::synthetic_with_orientation(verts[1].index, Orientation::Reversed),
+            Shape::synthetic(verts[1].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e1 = brep.add_tedge(
             None,
             verts[1],
-            ShapeRef::synthetic_with_orientation(verts[2].index, Orientation::Reversed),
+            Shape::synthetic(verts[2].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e2 = brep.add_tedge(
             None,
             verts[2],
-            ShapeRef::synthetic_with_orientation(verts[3].index, Orientation::Reversed),
+            Shape::synthetic(verts[3].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e3 = brep.add_tedge(
             None,
             verts[3],
-            ShapeRef::synthetic_with_orientation(verts[0].index, Orientation::Reversed),
+            Shape::synthetic(verts[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
 
         // Wire with 4 edges
         let wire = brep.add_twire(vec![
-            ShapeRef::synthetic_with_orientation(e0.index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(e1.index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(e2.index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(e3.index, Orientation::Forward),
+            Shape::synthetic(e0.index, Orientation::Forward),
+            Shape::synthetic(e1.index, Orientation::Forward),
+            Shape::synthetic(e2.index, Orientation::Forward),
+            Shape::synthetic(e3.index, Orientation::Forward),
         ]);
 
         // Face with Plane surface
@@ -585,27 +585,27 @@ mod tests {
         let e0 = brep.add_tedge(
             None,
             v0,
-            ShapeRef::synthetic_with_orientation(v1.index, Orientation::Reversed),
+            Shape::synthetic(v1.index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e1 = brep.add_tedge(
             None,
             v1,
-            ShapeRef::synthetic_with_orientation(v2.index, Orientation::Reversed),
+            Shape::synthetic(v2.index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e2 = brep.add_tedge(
             None,
             v2,
-            ShapeRef::synthetic_with_orientation(v0.index, Orientation::Reversed),
+            Shape::synthetic(v0.index, Orientation::Reversed),
             [0.0, 1.0],
         );
 
         // Wire
         let wire = brep.add_twire(vec![
-            ShapeRef::synthetic_with_orientation(e0.index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(e1.index, Orientation::Forward),
-            ShapeRef::synthetic_with_orientation(e2.index, Orientation::Forward),
+            Shape::synthetic(e0.index, Orientation::Forward),
+            Shape::synthetic(e1.index, Orientation::Forward),
+            Shape::synthetic(e2.index, Orientation::Forward),
         ]);
 
         // Face with sphere surface

@@ -22,7 +22,7 @@ fn make_box() -> topods::BRep {
 }
 
 fn make_box_arc() -> Arc<rcad_kernel::BRep> {
-    Arc::new(rcad_kernel::BRep::from_topods(&make_box()))
+    Arc::new(make_box())
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -72,9 +72,8 @@ fn to_brep_face_count() {
     asm.add_part_at("b", Arc::clone(&box_brep), DVec3::new(3.0, 0.0, 0.0));
 
     let merged = asm.to_brep();
-    let merged_t = merged.to_topods();
     assert_eq!(
-        face_count(&merged_t),
+        face_count(&merged),
         12,
         "two boxes should have 12 faces total"
     );
@@ -128,12 +127,12 @@ fn assembly_from_parts_helper() {
     let parts = vec![
         (
             "box".to_string(),
-            rcad_kernel::BRep::from_topods(&box_brep),
+            box_brep,
             DAffine3::IDENTITY,
         ),
         (
             "sphere".to_string(),
-            rcad_kernel::BRep::from_topods(&sphere_brep),
+            sphere_brep,
             DAffine3::from_translation(DVec3::new(3.0, 0.0, 0.0)),
         ),
     ];

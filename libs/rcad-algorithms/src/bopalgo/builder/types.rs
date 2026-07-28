@@ -4,7 +4,7 @@ use crate::tolerance::*;
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::*;
-use rcad_kernel::topods::{Orientation, ShapeRef};
+use rcad_kernel::topods::{Orientation, Shape};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,20 +216,20 @@ pub(crate) struct FaceWireEdges {
 /// Source of a virtual edge segment, TopoDS variant.
 #[derive(Debug, Clone)]
 pub(crate) enum WireEdgeSourceTopoDS {
-    DsEdge(ShapeRef),
-    IntersectionCurve(ShapeRef),
+    DsEdge(Shape),
+    IntersectionCurve(Shape),
     SeamEdge,
 }
 
-/// Virtual edge using ShapeRef handles instead of usize indices.
+/// Virtual edge using Shape handles instead of usize indices.
 /// Designed to carry the same information as WireSegment but with TopoDS handles
 /// readable through BRepTool queries.
 #[derive(Debug, Clone)]
 pub(crate) struct WireSegmentTopoDS {
-    pub(crate) edge: ShapeRef,
-    pub(crate) face: ShapeRef,
-    pub(crate) start_vertex: ShapeRef,
-    pub(crate) end_vertex: ShapeRef,
+    pub(crate) edge: Shape,
+    pub(crate) face: Shape,
+    pub(crate) start_vertex: Shape,
+    pub(crate) end_vertex: Shape,
     pub(crate) source: WireEdgeSourceTopoDS,
     pub(crate) orientation: Orientation,
     pub(crate) is_closed_on_face: bool,

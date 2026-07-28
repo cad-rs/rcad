@@ -1,7 +1,7 @@
 //! Topology query helpers 鈥?analogous to OCCT `TopExp_Explorer` and
 //! `TopExp::MapShapesAndAncestors`.
 //!
-//! All functions operate on `topods::BRep` and use ShapeRef-based access.
+//! All functions operate on `topods::BRep` and use Shape-based access.
 
 use std::collections::HashSet;
 

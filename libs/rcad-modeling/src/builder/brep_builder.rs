@@ -9,15 +9,15 @@ use std::sync::Arc;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::topods;
-use rcad_kernel::topods::{Orientation, ShapeRef};
+use rcad_kernel::topods::{Orientation, Shape};
 use rcad_kernel::topology::{Face, Shell, Wire, WireEdge};
 
 use crate::builder::BuildError;
 
-/// Convert a tshape index to a `ShapeRef` (valid for vertices/edges that exist as TShapes).
-fn idx_to_shaperef(brep: &BRep, idx: usize) -> Option<ShapeRef> {
-    brep.tshapes.get(idx).map(|ts| ShapeRef {
-        ptr_id: Arc::as_ptr(ts) as u64,
+/// Convert a tshape index to a `Shape` (valid for vertices/edges that exist as TShapes).
+fn idx_to_shaperef(brep: &BRep, idx: usize) -> Option<Shape> {
+    brep.tshapes.get(idx).map(|ts| Shape {
+        data: ts.clone(),
         index: idx,
         orientation: Orientation::Forward,
         location: 0,
@@ -25,15 +25,15 @@ fn idx_to_shaperef(brep: &BRep, idx: usize) -> Option<ShapeRef> {
 }
 
 /// Build a TShape::Wire from a topology `Wire`, adding it to the BRep.
-fn birep_wire(brep: &mut BRep, wire: &Wire) -> ShapeRef {
-    let edge_refs: Vec<ShapeRef> = wire
+fn birep_wire(brep: &mut BRep, wire: &Wire) -> Shape {
+    let edge_refs: Vec<Shape> = wire
         .edges
         .iter()
         .map(|we| {
             brep.tshapes
                 .get(we.idx)
-                .map(|ts| ShapeRef {
-                    ptr_id: Arc::as_ptr(ts) as u64,
+                .map(|ts| Shape {
+                    data: ts.clone(),
                     index: we.idx,
                     orientation: if we.forward {
                         Orientation::Forward
@@ -42,7 +42,7 @@ fn birep_wire(brep: &mut BRep, wire: &Wire) -> ShapeRef {
                     },
                     location: 0,
                 })
-                .unwrap_or(ShapeRef::NULL)
+                .unwrap_or(Shape::null())
         })
         .collect();
     brep.add_twire(edge_refs)
@@ -67,8 +67,8 @@ pub fn make_edge(
     let v0_sr = brep
         .tshapes
         .get(v0)
-        .map(|ts| ShapeRef {
-            ptr_id: Arc::as_ptr(ts) as u64,
+        .map(|ts| Shape {
+            data: ts.clone(),
             index: v0,
             orientation: Orientation::Forward,
             location: 0,
@@ -77,8 +77,8 @@ pub fn make_edge(
     let v1_sr = brep
         .tshapes
         .get(v1)
-        .map(|ts| ShapeRef {
-            ptr_id: Arc::as_ptr(ts) as u64,
+        .map(|ts| Shape {
+            data: ts.clone(),
             index: v1,
             orientation: Orientation::Forward,
             location: 0,
@@ -106,7 +106,7 @@ pub fn make_face(
         return Err(BuildError::DegenerateGeometry("outer wire has no edges"));
     }
     let outer_sr = birep_wire(brep, &outer);
-    let inner_srs: Vec<ShapeRef> = inner_wires.iter().map(|w| birep_wire(brep, w)).collect();
+    let inner_srs: Vec<Shape> = inner_wires.iter().map(|w| birep_wire(brep, w)).collect();
     let sr = brep.add_tface(Some(surface), outer_sr, inner_srs, None, None, vec![], true);
     Ok(sr.index)
 }
@@ -117,16 +117,16 @@ pub fn make_face(
 /// Each face in each shell should already have been created via [`make_face`].
 /// The shells are searched by face wire structure to find the matching TShapes.
 pub fn make_solid(brep: &mut BRep, shells: Vec<Shell>) -> usize {
-    let shell_srs: Vec<ShapeRef> = shells
+    let shell_srs: Vec<Shape> = shells
         .iter()
         .map(|shell| {
-            let face_srs: Vec<ShapeRef> = shell
+            let face_srs: Vec<Shape> = shell
                 .faces
                 .iter()
                 .filter_map(|_face| {
                     // Search for the face TShape by matching wire structure.
                     // This is a best-effort lookup; in practice callers should
-                    // use higher-level operations that return ShapeRef directly.
+                    // use higher-level operations that return Shape directly.
                     brep.tshapes.iter().enumerate().find_map(|(_i, ts)| {
                         if let topods::TShape::Face(fd) = &**ts {
                             // Match by wire edge count as a heuristic

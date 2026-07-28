@@ -147,19 +147,19 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
         // Faces (reindex edge refs in wires)
         let solid_ref = brep.tshapes.iter().enumerate().find_map(|(i, ts)| {
             if matches!(&**ts, TShape::Solid(_)) {
-                Some(topods::ShapeRef::synthetic(i))
+                Some(topods::Shape::synthetic(i, topods::Orientation::Forward))
             } else {
                 None
             }
         });
         if let Some(sr) = solid_ref {
             let sd = brep.solid(sr);
-            for &shell_sr in &sd.shells {
-                let shd = brep.shell(shell_sr);
-                for &face_sr in &shd.faces {
-                    let fd = brep.face(face_sr);
+            for shell_sr in &sd.shells {
+                let shd = brep.shell(shell_sr.clone());
+                for face_sr in &shd.faces {
+                    let fd = brep.face(face_sr.clone());
 
-                    let reindex_wire = |w_sr: topods::ShapeRef| -> Wire {
+                    let reindex_wire = |w_sr: topods::Shape| -> Wire {
                         let wd = brep.wire(w_sr);
                         Wire {
                             edges: wd
@@ -174,8 +174,8 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
                     };
 
                     all_faces.push(Face {
-                        outer_wire: reindex_wire(fd.outer_wire),
-                        inner_wires: fd.inner_wires.iter().map(|&w| reindex_wire(w)).collect(),
+                        outer_wire: reindex_wire(fd.outer_wire.clone()),
+                        inner_wires: fd.inner_wires.iter().map(|w| reindex_wire(w.clone())).collect(),
                         normal: DVec3::ZERO,
                         triangles: Vec::new(),
                         sample_point: fd.sample_point,
@@ -375,25 +375,25 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
 
     let mut result = topods::BRep::new();
 
-    // Add all vertices, build flat-index → ShapeRef map
-    let mut vert_refs: Vec<topods::ShapeRef> = Vec::with_capacity(compact_vertices.len());
+    // Add all vertices, build flat-index → Shape map
+    let mut vert_refs: Vec<topods::Shape> = Vec::with_capacity(compact_vertices.len());
     for v in &compact_vertices {
         vert_refs.push(result.add_tvertex(v.point));
     }
 
     // Add all edges
-    let mut edge_refs: Vec<topods::ShapeRef> = Vec::with_capacity(compact_edges.len());
+    let mut edge_refs: Vec<topods::Shape> = Vec::with_capacity(compact_edges.len());
     for e in &compact_edges {
-        let first = vert_refs[e.start];
-        let last = vert_refs[e.end];
+        let first = vert_refs[e.start].clone();
+        let last = vert_refs[e.end].clone();
         edge_refs.push(result.add_tedge(None, first, last, [0.0, 1.0]));
     }
 
     // Add all faces (build wires, then faces)
     let mut face_refs = Vec::with_capacity(all_faces.len());
     for f in &all_faces {
-        let mut build_wire = |w: &Wire| -> topods::ShapeRef {
-            let edge_srs: Vec<topods::ShapeRef> = w
+        let mut build_wire = |w: &Wire| -> topods::Shape {
+            let edge_srs: Vec<topods::Shape> = w
                 .edges
                 .iter()
                 .map(|we| {
@@ -402,14 +402,14 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
                     } else {
                         Orientation::Reversed
                     };
-                    topods::ShapeRef::synthetic_with_orientation(edge_refs[we.idx].index, orient)
+                    topods::Shape::synthetic(edge_refs[we.idx].index, orient)
                 })
                 .collect();
             result.add_twire(edge_srs)
         };
 
         let outer_wire_sr = build_wire(&f.outer_wire);
-        let inner_wire_refs: Vec<topods::ShapeRef> = f.inner_wires.iter().map(build_wire).collect();
+        let inner_wire_refs: Vec<topods::Shape> = f.inner_wires.iter().map(build_wire).collect();
 
         let face_sr = result.add_tface(
             None,

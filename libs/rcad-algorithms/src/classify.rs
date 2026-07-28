@@ -38,14 +38,14 @@ use crate::tolerance::{
 /// ```
 pub struct SolidClassifier<'a> {
     brep: &'a topods::BRep,
-    solid_ref: topods::ShapeRef,
+    solid_ref: topods::Shape,
     state: Classification,
     performed: bool,
 }
 
 impl<'a> SolidClassifier<'a> {
     /// constructor with solid.
-    pub fn new(brep: &'a topods::BRep, solid_ref: topods::ShapeRef) -> Self {
+    pub fn new(brep: &'a topods::BRep, solid_ref: topods::Shape) -> Self {
         Self {
             brep,
             solid_ref,
@@ -57,7 +57,7 @@ impl<'a> SolidClassifier<'a> {
     /// Perform  ?classify point against the solid with tolerance.
     pub fn perform(&mut self, point: DVec3, tol: f64) {
         // Collect all face ShapeRefs from this solid
-        let face_refs = collect_solid_faces(self.brep, self.solid_ref);
+        let face_refs = collect_solid_faces(self.brep, self.solid_ref.clone());
         if face_refs.is_empty() {
             self.state = Classification::Out;
             self.performed = true;
@@ -65,7 +65,7 @@ impl<'a> SolidClassifier<'a> {
         }
 
         // 1. Check vertex/edge proximity  ?On
-        for &fr in &face_refs {
+        for fr in &face_refs {
             if let topods::TShape::Face(fd) = &*self.brep.tshapes[fr.index] {
                 // Check if point is near the face surface
                 if let Some(ref surf) = fd.surface {
@@ -82,7 +82,7 @@ impl<'a> SolidClassifier<'a> {
         // 2. Ray casting: cast ray along +X, count face intersections
         let ray_dir = DVec3::X;
         let mut intersections = 0usize;
-        for &fr in &face_refs {
+        for fr in &face_refs {
             if let topods::TShape::Face(fd) = &*self.brep.tshapes[fr.index] {
                 if let Some(ref surf) = fd.surface {
                     if let Some(t) = ray_face_intersect(point, ray_dir, surf, tol) {
@@ -126,12 +126,12 @@ impl<'a> SolidClassifier<'a> {
 }
 
 /// Collect all face ShapeRefs from a solid in a topods::BRep.
-fn collect_solid_faces(brep: &topods::BRep, solid_ref: topods::ShapeRef) -> Vec<topods::ShapeRef> {
+fn collect_solid_faces(brep: &topods::BRep, solid_ref: topods::Shape) -> Vec<topods::Shape> {
     let mut faces = Vec::new();
     if let topods::TShape::Solid(sd) = &*brep.tshapes[solid_ref.index] {
-        for &sh_ref in &sd.shells {
+        for sh_ref in &sd.shells {
             if let topods::TShape::Shell(shd) = &*brep.tshapes[sh_ref.index] {
-                faces.extend(shd.faces.iter().copied());
+                faces.extend(shd.faces.iter().cloned());
             }
         }
     }

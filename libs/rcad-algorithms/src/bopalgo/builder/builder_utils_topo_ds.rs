@@ -4,46 +4,46 @@ use super::types::{
 use crate::bopds::ds::DS;
 /// Convert Vec<WireSegment> to Vec<WireSegmentTopoDS>.
 ///
-/// Maps DS indices to ShapeRef handles so the output feeds into
+/// Maps DS indices to Shape handles so the output feeds into
 /// walk_path_extract_wires_topoDS. The DSAsBRep adaptor maps back
-/// by ShapeRef.index when queried.
-use rcad_kernel::topods::{Orientation, ShapeRef};
+/// by Shape.index when queried.
+use rcad_kernel::topods::{Orientation, Shape};
 
 /// Convert existing WireSegments to WireSegmentTopoDS for the BRepTool pipeline.
 pub(crate) fn segments_to_topo_ds(
     segments: &[WireSegment],
     _ds: &DS,
     face_idx: usize,
-    face_refs: &[ShapeRef],
-    ic_edge_map: &[Option<ShapeRef>],
+    face_refs: &[Shape],
+    ic_edge_map: &[Option<Shape>],
 ) -> Vec<WireSegmentTopoDS> {
-    let face_ref = face_refs[face_idx];
+    let face_ref = face_refs[face_idx].clone();
     let e_base = _ds.vertex_count();
     segments
         .iter()
         .map(|seg| {
             let (edge_ref, source) = match &seg.source {
                 WireEdgeSource::DsEdge(ei) => (
-                    ShapeRef::synthetic(e_base + *ei),
-                    WireEdgeSourceTopoDS::DsEdge(ShapeRef::synthetic(e_base + *ei)),
+                    Shape::synthetic(e_base + *ei, Orientation::Forward),
+                    WireEdgeSourceTopoDS::DsEdge(Shape::synthetic(e_base + *ei, Orientation::Forward)),
                 ),
                 WireEdgeSource::IntersectionCurve(ci) => {
                     if let Some(Some(edge_ref)) = ic_edge_map.get(*ci) {
                         // IC mapped to DSEdge or retained IC TEdge (A2 dedup)
                         (
-                            *edge_ref,
-                            WireEdgeSourceTopoDS::IntersectionCurve(*edge_ref),
+                            edge_ref.clone(),
+                            WireEdgeSourceTopoDS::IntersectionCurve(edge_ref.clone()),
                         )
                     } else {
                         // Fallback: should not happen
                         (
-                            ShapeRef::synthetic(0),
-                            WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::synthetic(0)),
+                            Shape::synthetic(0, Orientation::Forward),
+                            WireEdgeSourceTopoDS::IntersectionCurve(Shape::synthetic(0, Orientation::Forward)),
                         )
                     }
                 }
                 WireEdgeSource::SeamEdge => {
-                    (ShapeRef::synthetic(0), WireEdgeSourceTopoDS::SeamEdge)
+                    (Shape::synthetic(0, Orientation::Forward), WireEdgeSourceTopoDS::SeamEdge)
                 }
             };
             let orientation = match seg.orientation {
@@ -54,9 +54,9 @@ pub(crate) fn segments_to_topo_ds(
             };
             WireSegmentTopoDS {
                 edge: edge_ref,
-                face: face_ref,
-                start_vertex: ShapeRef::synthetic(seg.start_vertex),
-                end_vertex: ShapeRef::synthetic(seg.end_vertex),
+                face: face_ref.clone(),
+                start_vertex: Shape::synthetic(seg.start_vertex, Orientation::Forward),
+                end_vertex: Shape::synthetic(seg.end_vertex, Orientation::Forward),
                 source,
                 orientation,
                 is_closed_on_face: seg.is_closed_on_face,

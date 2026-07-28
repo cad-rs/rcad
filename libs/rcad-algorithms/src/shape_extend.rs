@@ -896,7 +896,7 @@ pub struct ShapeExplorer;
 
 impl ShapeExplorer {
     /// Helper to collect edge indices from a face's wires.
-    fn face_edge_indices(brep: &rcad_kernel::BRep, face_ref: topods::ShapeRef) -> Vec<usize> {
+    fn face_edge_indices(brep: &rcad_kernel::BRep, face_ref: topods::Shape) -> Vec<usize> {
         let mut indices = Vec::new();
         let fd = match brep.tshapes.get(face_ref.index) {
             Some(ts) => match &**ts {
@@ -1012,7 +1012,7 @@ impl ShapeExplorer {
         for ts in &brep.tshapes {
             if let TShape::Face(fd) = ts.as_ref() {
                 let has_edge =
-                    Self::face_edge_indices(brep, topods::ShapeRef::synthetic(fd.outer_wire.index))
+                    Self::face_edge_indices(brep, topods::Shape::synthetic(fd.outer_wire.index, topods::Orientation::Forward))
                         .contains(&edge_idx);
                 if has_edge {
                     faces.push(face_counter);

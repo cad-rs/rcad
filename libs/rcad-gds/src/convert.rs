@@ -59,8 +59,8 @@ fn polygon_to_brep_face(points: &[glam::DVec2], z_offset: f64) -> Result<BRep> {
     // Edges (line segments)
     let mut erefs = Vec::with_capacity(n_edges);
     for i in 0..n_edges {
-        let start = vrefs[i];
-        let end = vrefs[(i + 1) % n_edges];
+        let start = vrefs[i].clone();
+        let end = vrefs[(i + 1) % n_edges].clone();
         let sr = brep.add_tedge(None, start, end, [0.0, 1.0]);
         erefs.push(sr);
     }
@@ -131,7 +131,7 @@ pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) 
 }
 
 /// Merge all TShapes from `src` into `dst`.
-/// ShapeRef ptr_ids stay valid because Arc references are shared.
+/// Shape ptr_ids stay valid because Arc references are shared.
 fn merge_into(dst: &mut BRep, src: &BRep) {
     for ts in &src.tshapes {
         dst.tshapes.push(std::sync::Arc::clone(ts));

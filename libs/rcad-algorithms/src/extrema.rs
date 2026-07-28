@@ -34,8 +34,8 @@ pub struct DistShapeShape {
     shape1: Option<topods::BRep>,
     shape2: Option<topods::BRep>,
     distance: f64,
-    support1: Vec<topods::ShapeRef>,
-    support2: Vec<topods::ShapeRef>,
+    support1: Vec<topods::Shape>,
+    support2: Vec<topods::Shape>,
     pt1: DVec3,
     pt2: DVec3,
     performed: bool,
@@ -98,12 +98,12 @@ impl DistShapeShape {
     }
 
     /// SupportOnShape1 閳?the support elements on shape 1.
-    pub fn support_on_shape1(&self) -> &[topods::ShapeRef] {
+    pub fn support_on_shape1(&self) -> &[topods::Shape] {
         &self.support1
     }
 
     /// SupportOnShape2 閳?the support elements on shape 2.
-    pub fn support_on_shape2(&self) -> &[topods::ShapeRef] {
+    pub fn support_on_shape2(&self) -> &[topods::Shape] {
         &self.support2
     }
 

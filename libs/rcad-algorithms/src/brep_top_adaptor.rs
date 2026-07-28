@@ -475,8 +475,8 @@ impl<'a> WireExplorer<'a> {
         }
     }
 
-    /// Get the edge refs for a given wire ShapeRef.
-    fn get_wire_edges(&self, wire_ref: &topods::ShapeRef) -> Vec<(usize, bool)> {
+    /// Get the edge refs for a given wire Shape.
+    fn get_wire_edges(&self, wire_ref: &topods::Shape) -> Vec<(usize, bool)> {
         let Some(wts) = self.brep.tshapes.get(wire_ref.index) else {
             return Vec::new();
         };

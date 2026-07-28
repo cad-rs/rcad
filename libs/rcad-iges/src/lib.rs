@@ -26,7 +26,7 @@ use std::path::Path;
 
 use glam::DVec3;
 use rcad_kernel::geom::{BSplineCurve3, Circle3, Line3, Plane};
-use rcad_kernel::topods::{ShapeRef, TShape};
+use rcad_kernel::topods::{Shape, TShape};
 use rcad_kernel::{BRep, BSplineSurface, Curve3, Surface3};
 
 /// Errors that can occur when reading or parsing an IGES file.
@@ -612,14 +612,14 @@ impl IgesReader {
 struct IgesBrepBuilder {
     brep: BRep,
     // Maps from IGES entity pointers to RCAD indices
-    point_map: HashMap<i32, ShapeRef>, // pointer -> vertex ShapeRef
+    point_map: HashMap<i32, Shape>, // pointer -> vertex Shape
     curve_map: HashMap<i32, Curve3>,   // pointer -> 3D curve
     surface_map: HashMap<i32, Surface3>, // pointer -> surface
     // Parsed geometry cache
     points: HashMap<i32, DVec3>,
     transformations: HashMap<i32, glam::DAffine3>,
     // Accumulated face ShapeRefs for final shell/solid construction
-    face_refs: Vec<ShapeRef>,
+    face_refs: Vec<Shape>,
 }
 
 impl IgesBrepBuilder {

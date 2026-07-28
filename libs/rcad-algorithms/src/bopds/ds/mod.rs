@@ -778,11 +778,11 @@ impl DS {
                     (rep.pcurve.clone(), rep.start_param, rep.end_param),
                 );
             }
-            let first = topods::ShapeRef::synthetic(start_vertex);
-            let last = topods::ShapeRef::synthetic(end_vertex);
+            let first = topods::Shape::synthetic(start_vertex, topods::Orientation::Forward);
+            let last = topods::Shape::synthetic(end_vertex, topods::Orientation::Forward);
             use topods::tshape_flags;
             std::sync::Arc::new(topods::TShape::Edge(topods::TEdgeData {
-                my_shapes: vec![first, last],
+                my_shapes: vec![first.clone(), last.clone()],
                 flags: tshape_flags::DEFAULT,
                 curve: Some(curve),
                 first,
@@ -835,7 +835,7 @@ impl DS {
                 flags: topods::tshape_flags::DEFAULT,
                 surface: Some(surface),
                 surface_location: location,
-                outer_wire: topods::ShapeRef::NULL,
+                outer_wire: topods::Shape::null(),
                 inner_wires: Vec::new(),
                 sample_point: None,
                 uv_domain: None,
@@ -891,9 +891,9 @@ impl DS {
     ) -> usize {
         let shape_idx = self.shapes.len();
         self.shapes.push(tshape.unwrap_or_else(|| {
-            let refs: Vec<topods::ShapeRef> = sub_shapes
+            let refs: Vec<topods::Shape> = sub_shapes
                 .iter()
-                .map(|&s| topods::ShapeRef::synthetic(s))
+                .map(|&s| topods::Shape::synthetic(s, topods::Orientation::Forward))
                 .collect();
             std::sync::Arc::new(topods::TShape::Wire(topods::TWireData {
                 my_shapes: refs.clone(),
@@ -930,9 +930,9 @@ impl DS {
     ) -> usize {
         let shape_idx = self.shapes.len();
         self.shapes.push(tshape.unwrap_or_else(|| {
-            let refs: Vec<topods::ShapeRef> = sub_shapes
+            let refs: Vec<topods::Shape> = sub_shapes
                 .iter()
-                .map(|&fi| topods::ShapeRef::synthetic(fi))
+                .map(|&fi| topods::Shape::synthetic(fi, topods::Orientation::Forward))
                 .collect();
             std::sync::Arc::new(topods::TShape::Shell(topods::TShellData {
                 my_shapes: refs.clone(),
@@ -968,9 +968,9 @@ impl DS {
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let shape_idx = self.shapes.len();
-        let refs: Vec<topods::ShapeRef> = sub_shapes
+        let refs: Vec<topods::Shape> = sub_shapes
             .iter()
-            .map(|&shi| topods::ShapeRef::synthetic(shi))
+            .map(|&shi| topods::Shape::synthetic(shi, topods::Orientation::Forward))
             .collect();
         self.shapes.push(tshape.unwrap_or_else(|| {
             std::sync::Arc::new(topods::TShape::Solid(topods::TSolidData {
@@ -1009,9 +1009,9 @@ impl DS {
         tshape: Option<std::sync::Arc<topods::TShape>>,
     ) -> usize {
         let shape_idx = self.shapes.len();
-        let refs: Vec<topods::ShapeRef> = sub_shapes
+        let refs: Vec<topods::Shape> = sub_shapes
             .iter()
-            .map(|&si| topods::ShapeRef::synthetic(si))
+            .map(|&si| topods::Shape::synthetic(si, topods::Orientation::Forward))
             .collect();
         self.shapes.push(tshape.unwrap_or_else(|| {
             std::sync::Arc::new(topods::TShape::CompSolid(refs))

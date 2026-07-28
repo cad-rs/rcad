@@ -298,8 +298,8 @@ pub fn analyze_surface_continuity(
     let mut report = ContinuityReport::default();
 
     // Find the two faces
-    let mut face1_sr: Option<ShapeRef> = None;
-    let mut face2_sr: Option<ShapeRef> = None;
+    let mut face1_sr: Option<Shape> = None;
+    let mut face2_sr: Option<Shape> = None;
     let mut shell_idx1 = 0usize;
     let mut shell_idx2 = 0usize;
 
@@ -311,11 +311,11 @@ pub fn analyze_surface_continuity(
             for (shi, sh_sr) in sd.shells.iter().enumerate() {
                 if let TShape::Shell(shd) = &*brep.tshapes[sh_sr.index] {
                     if face1_sr.is_none() && face1_idx < shd.faces.len() {
-                        face1_sr = Some(shd.faces[face1_idx]);
+                        face1_sr = Some(shd.faces[face1_idx].clone());
                         shell_idx1 = shi;
                     }
                     if face2_sr.is_none() && face2_idx < shd.faces.len() {
-                        face2_sr = Some(shd.faces[face2_idx]);
+                        face2_sr = Some(shd.faces[face2_idx].clone());
                         shell_idx2 = shi;
                     }
                 }
@@ -370,8 +370,8 @@ pub fn analyze_surface_continuity(
             edge_idx,
             surface1,
             surface2,
-            f1_sr,
-            f2_sr,
+            f1_sr.clone(),
+            f2_sr.clone(),
             brep,
             tolerance,
             &mut report,
@@ -391,8 +391,8 @@ fn analyze_edge_continuity(
     edge_idx: usize,
     surface1: &Surface3,
     surface2: &Surface3,
-    face1_sr: ShapeRef,
-    face2_sr: ShapeRef,
+    face1_sr: Shape,
+    face2_sr: Shape,
     brep: &rcad_kernel::BRep,
     tolerance: f64,
     report: &mut ContinuityReport,

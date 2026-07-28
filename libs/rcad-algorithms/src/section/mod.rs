@@ -27,7 +27,7 @@ use rcad_kernel::geom::{
     SphericalSurface, Surface3, ToroidalSurface, any_perpendicular,
 };
 pub use rcad_kernel::topods;
-use rcad_kernel::topods::{BRep, ShapeRef, TShape};
+use rcad_kernel::topods::{BRep, Orientation, Shape, TShape};
 use std::f64::consts::PI;
 
 use crate::inttools::plane_cone::PlaneConicalResult;
@@ -47,13 +47,13 @@ use crate::triangulate::{TessellationParams, mesh_brep, triangulate_polygon};
 // = =  Helpers for extracting face data from topods::BRep  = = = = = = = = = =
 
 /// Iterate all Solid ShapeRefs in a BRep.
-fn iter_solid_refs(brep: &BRep) -> Vec<ShapeRef> {
+fn iter_solid_refs(brep: &BRep) -> Vec<Shape> {
     brep.tshapes
         .iter()
         .enumerate()
         .filter_map(|(i, ts)| {
             if matches!(ts.as_ref(), TShape::Solid(_)) {
-                Some(ShapeRef::synthetic(i))
+                Some(Shape::synthetic(i, Orientation::Forward))
             } else {
                 None
             }
@@ -62,33 +62,33 @@ fn iter_solid_refs(brep: &BRep) -> Vec<ShapeRef> {
 }
 
 /// Iterate all shell ShapeRefs inside a solid.
-fn iter_shell_refs(brep: &BRep, solid: ShapeRef) -> Vec<ShapeRef> {
+fn iter_shell_refs(brep: &BRep, solid: Shape) -> Vec<Shape> {
     match &*brep.tshapes[solid.index] {
-        TShape::Solid(sd) => sd.shells.iter().copied().collect(),
+        TShape::Solid(sd) => sd.shells.iter().cloned().collect(),
         _ => vec![],
     }
 }
 
 /// Iterate all face ShapeRefs inside a shell.
-fn iter_face_refs(brep: &BRep, shell: ShapeRef) -> Vec<ShapeRef> {
+fn iter_face_refs(brep: &BRep, shell: Shape) -> Vec<Shape> {
     match &*brep.tshapes[shell.index] {
-        TShape::Shell(sd) => sd.faces.iter().copied().collect(),
+        TShape::Shell(sd) => sd.faces.iter().cloned().collect(),
         _ => vec![],
     }
 }
 
-/// Get the surface of a face given its ShapeRef.
-fn face_surface_from_ref(brep: &BRep, face: ShapeRef) -> Option<&Surface3> {
+/// Get the surface of a face given its Shape.
+fn face_surface_from_ref(brep: &BRep, face: Shape) -> Option<&Surface3> {
     match &*brep.tshapes[face.index] {
         TShape::Face(fd) => fd.surface.as_ref(),
         _ => None,
     }
 }
 
-/// Extract all boundary points of a face's outer wire by walking ShapeRef chain.
-fn face_wire_points(brep: &BRep, face: ShapeRef) -> Vec<DVec3> {
+/// Extract all boundary points of a face's outer wire by walking Shape chain.
+fn face_wire_points(brep: &BRep, face: Shape) -> Vec<DVec3> {
     let outer_wire = match &*brep.tshapes[face.index] {
-        TShape::Face(fd) => fd.outer_wire,
+        TShape::Face(fd) => fd.outer_wire.clone(),
         _ => return vec![],
     };
     let edges = match &*brep.tshapes[outer_wire.index] {
@@ -101,7 +101,7 @@ fn face_wire_points(brep: &BRep, face: ShapeRef) -> Vec<DVec3> {
             TShape::Edge(ed) => {
                 // Use first vertex position (forward oriented)
                 let loc = brep.get_location(edge_sr.location);
-                let p = loc.transform_point3(brep.vertex(ed.first).point);
+                let p = loc.transform_point3(brep.vertex(ed.first.clone()).point);
                 pts.push(p);
             }
             _ => {}
@@ -112,13 +112,13 @@ fn face_wire_points(brep: &BRep, face: ShapeRef) -> Vec<DVec3> {
 
 /// Collect all face triangle vertices from a BRep's TShapes.
 /// Walks Solid → Shell → Face → wire vertices, returns Vec<[DVec3; 3]>.
-fn collect_face_triangles_tshape(brep: &BRep, face_ref: ShapeRef) -> Vec<[DVec3; 3]> {
+fn collect_face_triangles_tshape(brep: &BRep, face_ref: Shape) -> Vec<[DVec3; 3]> {
     let fd = match &*brep.tshapes[face_ref.index] {
         TShape::Face(fd) => fd,
         _ => return vec![],
     };
     // Walk outer wire edges to get boundary vertices
-    let wire_sr = fd.outer_wire;
+    let wire_sr = fd.outer_wire.clone();
     let edges = match &*brep.tshapes[wire_sr.index] {
         TShape::Wire(wd) => &wd.edges,
         _ => return vec![],
@@ -128,7 +128,7 @@ fn collect_face_triangles_tshape(brep: &BRep, face_ref: ShapeRef) -> Vec<[DVec3;
         .map(|edge_sr| match &*brep.tshapes[edge_sr.index] {
             TShape::Edge(ed) => {
                 let loc = brep.get_location(edge_sr.location);
-                loc.transform_point3(brep.vertex(ed.first).point)
+                loc.transform_point3(brep.vertex(ed.first.clone()).point)
             }
             _ => DVec3::ZERO,
         })
@@ -151,9 +151,9 @@ fn collect_face_triangles_tshape(brep: &BRep, face_ref: ShapeRef) -> Vec<[DVec3;
         .collect()
 }
 
-/// Find the global flat face index for a ShapeRef in the BRep's TShape tree.
+/// Find the global flat face index for a Shape in the BRep's TShape tree.
 /// Walks all Solid TShapes and their Shell→Face chains in order.
-fn face_flat_index(brep: &BRep, target_face: ShapeRef) -> Option<usize> {
+fn face_flat_index(brep: &BRep, target_face: Shape) -> Option<usize> {
     let mut idx = 0usize;
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = ts.as_ref() {
@@ -212,7 +212,7 @@ fn segment_plane_intersect(plane: &Plane, a: DVec3, b: DVec3) -> Option<DVec3> {
 
 /// Collect triangles for a face (pre-triangulated or fan-triangulated from wire).
 /// Uses TShape-based access for the new BRep API.
-fn face_triangles(brep: &BRep, face_ref: ShapeRef) -> Vec<[DVec3; 3]> {
+fn face_triangles(brep: &BRep, face_ref: Shape) -> Vec<[DVec3; 3]> {
     collect_face_triangles_tshape(brep, face_ref)
 }
 
@@ -226,7 +226,7 @@ pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
             for shell_sr in &sd.shells {
                 if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
                     for face_sr in &shd.faces {
-                        out.extend(collect_face_triangles_tshape(brep, *face_sr));
+                        out.extend(collect_face_triangles_tshape(brep, face_sr.clone()));
                     }
                 }
             }
@@ -435,7 +435,7 @@ struct PlanarFaceInfo {
 fn extract_planar_face_info(brep: &BRep, flat_face_idx: usize) -> Option<PlanarFaceInfo> {
     // Find the face at flat_face_idx by walking the TShape tree
     let (face_ref, _) = find_face_by_flat_index(brep, flat_face_idx)?;
-    let surface = face_surface_from_ref(brep, face_ref)?;
+    let surface = face_surface_from_ref(brep, face_ref.clone())?;
     let plane = match surface {
         Surface3::Plane(p) => *p,
         _ => return None,
@@ -464,16 +464,16 @@ fn extract_planar_face_info(brep: &BRep, flat_face_idx: usize) -> Option<PlanarF
     }
 }
 
-/// Find a face ShapeRef and its flat count by flat index (walking Solid→Shell→Face in order).
-fn find_face_by_flat_index(brep: &BRep, target: usize) -> Option<(ShapeRef, usize)> {
+/// Find a face Shape and its flat count by flat index (walking Solid→Shell→Face in order).
+fn find_face_by_flat_index(brep: &BRep, target: usize) -> Option<(Shape, usize)> {
     let mut idx = 0usize;
     for ts in &brep.tshapes {
         if let TShape::Solid(sd) = ts.as_ref() {
             for shell_sr in &sd.shells {
                 if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
-                    for &face_sr in &shd.faces {
+                    for face_sr in &shd.faces {
                         if idx == target {
-                            return Some((face_sr, idx));
+                            return Some((face_sr.clone(), idx));
                         }
                         idx += 1;
                     }
@@ -892,16 +892,16 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
     let point_tol = pair_eps.max(TOLERANCE_ABS);
 
     // Build flat face lists for both BReps (indexed by TShape tree order).
-    let a_face_list: Vec<(ShapeRef, Option<PlanarFaceInfo>)> = {
+    let a_face_list: Vec<(Shape, Option<PlanarFaceInfo>)> = {
         let mut list = Vec::new();
         let mut idx = 0usize;
         for ts in &a_tess.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
                 for shell_sr in &sd.shells {
                     if let TShape::Shell(shd) = &*a_tess.tshapes[shell_sr.index] {
-                        for &face_sr in &shd.faces {
+                        for face_sr in &shd.faces {
                             let info = extract_planar_face_info(&a_tess, idx);
-                            list.push((face_sr, info));
+                            list.push((face_sr.clone(), info));
                             idx += 1;
                         }
                     }
@@ -910,16 +910,16 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
         }
         list
     };
-    let b_face_list: Vec<(ShapeRef, Option<PlanarFaceInfo>)> = {
+    let b_face_list: Vec<(Shape, Option<PlanarFaceInfo>)> = {
         let mut list = Vec::new();
         let mut idx = 0usize;
         for ts in &b_tess.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
                 for shell_sr in &sd.shells {
                     if let TShape::Shell(shd) = &*b_tess.tshapes[shell_sr.index] {
-                        for &face_sr in &shd.faces {
+                        for face_sr in &shd.faces {
                             let info = extract_planar_face_info(&b_tess, idx);
-                            list.push((face_sr, info));
+                            list.push((face_sr.clone(), info));
                             idx += 1;
                         }
                     }
@@ -948,8 +948,8 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
 
                     if !used_analytic {
                         // Fall back to triangle-triangle intersection.
-                        let a_tris = collect_face_triangles_tshape(&a_tess, *a_face_ref);
-                        let b_tris = collect_face_triangles_tshape(&b_tess, *b_face_ref);
+                        let a_tris = collect_face_triangles_tshape(&a_tess, a_face_ref.clone());
+                        let b_tris = collect_face_triangles_tshape(&b_tess, b_face_ref.clone());
                         for ta in &a_tris {
                             for tb in &b_tris {
                                 if let Some(seg) = triangle_triangle_intersect_eps(ta, tb, pair_eps)
@@ -1315,15 +1315,15 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
     let mut curves = Vec::new();
     let mut polylines = Vec::new();
 
-    let a_face_list: Vec<(ShapeRef, Option<usize>)> = {
+    let a_face_list: Vec<(Shape, Option<usize>)> = {
         let mut list = Vec::new();
         let mut idx = 0usize;
         for ts in &brep.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
                 for shell_sr in &sd.shells {
                     if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
-                        for &face_sr in &shd.faces {
-                            list.push((face_sr, Some(idx)));
+                        for face_sr in &shd.faces {
+                            list.push((face_sr.clone(), Some(idx)));
                             idx += 1;
                         }
                     }
@@ -1338,7 +1338,7 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
         let geom_floor = face_geom_floor(brep, flat_idx);
 
         // Get the analytic surface for this face from TShape data
-        let face_surface = face_surface_from_ref(brep, *face_ref).cloned();
+        let face_surface = face_surface_from_ref(brep, face_ref.clone()).cloned();
 
         if let Some(face_surf) = face_surface {
             let intersection =
@@ -1361,7 +1361,7 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
         } else {
             // Fall back to triangle-based section for non-analytic faces
             let face_polylines =
-                section_face_by_surface_marching(brep, *face_ref, cutting_surface, geom_floor);
+                section_face_by_surface_marching(brep, face_ref.clone(), cutting_surface, geom_floor);
             for pts in &face_polylines {
                 let is_closed =
                     pts.len() > 2 && pts_close_eps(pts[0], *pts.last().unwrap(), geom_floor);
@@ -1495,7 +1495,7 @@ fn convert_surface_curve(
 /// Section a face by marching along a surface.
 fn section_face_by_surface_marching(
     brep: &BRep,
-    face_ref: ShapeRef,
+    face_ref: Shape,
     cutting_surface: &Surface3,
     geom_floor: f64,
 ) -> Vec<Vec<DVec3>> {
@@ -1649,7 +1649,7 @@ fn section_by_face_triangles(
     brep: &BRep,
     tool_brep: &BRep,
     tool_face_idx: usize,
-    cutting_face_ref: Option<ShapeRef>,
+    cutting_face_ref: Option<Shape>,
 ) -> (Vec<Vec<DVec3>>, f64) {
     let cutting_face_ref = match cutting_face_ref {
         Some(sr) => sr,
@@ -1663,14 +1663,14 @@ fn section_by_face_triangles(
     let mut merge_eps = tool_floor;
 
     // Build flat face list for brep
-    let brep_face_list: Vec<ShapeRef> = {
+    let brep_face_list: Vec<Shape> = {
         let mut list = Vec::new();
         for ts in &brep.tshapes {
             if let TShape::Solid(sd) = ts.as_ref() {
                 for shell_sr in &sd.shells {
                     if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
-                        for &face_sr in &shd.faces {
-                            list.push(face_sr);
+                        for face_sr in &shd.faces {
+                            list.push(face_sr.clone());
                         }
                     }
                 }
@@ -1679,11 +1679,11 @@ fn section_by_face_triangles(
         list
     };
 
-    for (obj_idx, &face_ref) in brep_face_list.iter().enumerate() {
+    for (obj_idx, face_ref) in brep_face_list.iter().enumerate() {
         let obj_floor = face_geom_floor(brep, obj_idx);
         merge_eps = merge_eps.max(obj_floor);
         let pair_eps = obj_floor.max(tool_floor);
-        let brep_triangles = collect_face_triangles_tshape(brep, face_ref);
+        let brep_triangles = collect_face_triangles_tshape(brep, face_ref.clone());
 
         for brep_tri in &brep_triangles {
             for cut_tri in &cutting_triangles {
