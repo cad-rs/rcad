@@ -23,9 +23,11 @@ pub mod gprop;
 pub mod top_loc;
 pub mod curvature;
 
+// OCCT CSLib package (surface normal computation)
+pub mod cs_lib;
+
 // legacy flat modules (keep during migration)
 pub mod arc_length;
-pub mod extrema;
 pub mod fit;
 pub mod math_utils;
 pub mod projection;

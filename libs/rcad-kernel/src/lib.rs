@@ -46,7 +46,7 @@ pub mod topo;
 /// Math algorithms (TKMath): arc length, curvature, distance, properties, projection, fitting, extrema.
 pub mod math;
 
-/// Geometry foundation (TKGeomBase): NURBS conversion, curve/surface extension/trimming.
+/// Geometry foundation (TKGeomBase): IntAna, Extrema, NURBS conversion, curve/surface extension/trimming.
 pub mod base;
 
 /// OCAF application framework: naming, appearance, GD&T, annotations, assembly.
@@ -125,7 +125,7 @@ pub use math::arc_length::arc_length;
 
 pub use math::curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 
-pub use math::extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
+pub use base::extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
 
 pub use math::fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};
 
