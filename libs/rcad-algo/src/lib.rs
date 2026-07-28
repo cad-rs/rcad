@@ -4,6 +4,10 @@
 
 pub mod bop;
 
+// Re-export boolean operation API at top level
+pub use crate::bop::brep_algo_api::{common, cut, fuse};
+pub use crate::bop::algo::BooleanOpType;
+
 // Re-export from rcad-kernel
 pub use rcad_kernel::base::bnd_lib;
 pub use rcad_kernel::base::extrema;
