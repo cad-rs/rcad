@@ -16,8 +16,17 @@
 //   NCollection_List      → Vec
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+/// Empty vertex data for placeholder vertices in push_edge/push_wire.
+fn empty_vertex_data() -> rcad_kernel::topods::TVertexData {
+    rcad_kernel::topods::TVertexData {
+        my_shapes: Vec::new(), flags: 0,
+        point: glam::DVec3::ZERO, tolerance: 0.0, points: Vec::new(),
+    }
+}
 use glam::DVec3;
-use rcad_kernel::topods::{self, ShapeType, TShape};
+use rcad_kernel::topods::{self, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 use crate::bop::ds::face_info::FaceInfo;
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
@@ -96,6 +105,8 @@ pub struct DS {
     pub interf_vz: Vec<InterferenceVZ>,  pub interf_ez: Vec<InterferenceEZ>,
     pub interf_fz: Vec<InterferenceFZ>,  pub interf_zz: Vec<InterferenceZZ>,
     pub interfered: HashSet<usize>,
+    // CommonBlock storage (OCCT: myMapPBCB, but stored as Vec for index-based access)
+    pub common_blocks: Vec<CommonBlock>,
 }
 
 impl DS {
@@ -114,6 +125,7 @@ impl DS {
             interf_ee: Vec::new(), interf_ef: Vec::new(), interf_ff: Vec::new(),
             interf_vz: Vec::new(), interf_ez: Vec::new(), interf_fz: Vec::new(),
             interf_zz: Vec::new(), interfered: HashSet::new(),
+            common_blocks: Vec::new(),
         }
     }
 
@@ -140,6 +152,7 @@ impl DS {
         self.interf_fz.clear();
         self.interf_zz.clear();
         self.interfered.clear();
+        self.common_blocks.clear();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -466,6 +479,31 @@ impl DS {
         lp.extend(r);
     }
 
+    /// Vertex count in source shapes.
+    pub fn vertex_count(&self) -> usize {
+        self.shapes.iter().filter(|s| s.shape_type == ShapeType::Vertex).count()
+    }
+    /// Edge count in source shapes.
+    pub fn edge_count(&self) -> usize {
+        self.shapes.iter().filter(|s| s.shape_type == ShapeType::Edge).count()
+    }
+    /// Face count in source shapes.
+    pub fn face_count(&self) -> usize {
+        self.shapes.iter().filter(|s| s.shape_type == ShapeType::Face).count()
+    }
+    /// Vertex count from shape A (first operand).
+    pub fn a_vertex_count(&self) -> usize {
+        self.shapes[..self.nb_source_shapes].iter().filter(|s| s.shape_type == ShapeType::Vertex).count()
+    }
+    /// Edge count from shape A.
+    pub fn a_edge_count(&self) -> usize {
+        self.shapes[..self.nb_source_shapes].iter().filter(|s| s.shape_type == ShapeType::Edge).count()
+    }
+    /// Face count from shape A.
+    pub fn a_face_count(&self) -> usize {
+        self.shapes[..self.nb_source_shapes].iter().filter(|s| s.shape_type == ShapeType::Face).count()
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Update* methods
     // ═══════════════════════════════════════════════════════════════════
@@ -692,6 +730,264 @@ impl DS {
     }
     fn vertex_point(&self, s: &Shape) -> Option<DVec3> {
         s.as_vertex().map(|vd| vd.point)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // BRep_Tool-style query helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Edge curve by shape index.
+    pub fn edge_curve(&self, i: usize) -> Option<rcad_kernel::geom::Curve3> {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Edge { return None; }
+            si.shape.as_edge().map(|e| e.curve.clone())
+        })
+    }
+
+    /// Edge parameter range by shape index.
+    pub fn edge_range(&self, i: usize) -> [f64; 2] {
+        self.shapes.get(i).and_then(|si| {
+            si.shape.as_edge().map(|e| e.range)
+        }).unwrap_or([0.0, 0.0])
+    }
+
+    /// Face surface by shape index.
+    pub fn face_surface(&self, i: usize) -> Option<rcad_kernel::geom::Surface3> {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Face { return None; }
+            si.shape.as_face().and_then(|f| f.surface.clone())
+        })
+    }
+
+    /// True if the edge is degenerate (start == end vertex).
+    pub fn is_edge_degenerated(&self, i: usize) -> bool {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Edge { return None; }
+            si.shape.as_edge().and_then(|e| {
+                Some((e.first.ptr_id() == e.last.ptr_id()) && (e.index < self.nb_shapes()))
+            })
+        }).unwrap_or(false)
+    }
+
+    /// True if the vertex has internal flag set.
+    pub fn vertex_is_internal(&self, i: usize) -> bool {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Vertex { return None; }
+            si.shape.as_vertex().map(|v| v.flags != 0)
+        }).unwrap_or(false)
+    }
+
+    /// Natural restriction (infinite face bounds).
+    pub fn face_natural_restriction(&self, i: usize) -> bool {
+        // Returns true if the face is bounded (has explicit wire bounds)
+        // rather than being an infinite face (no bounds = natural restriction false).
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Face { return None; }
+            Some(!si.sub_shapes.is_empty())
+        }).unwrap_or(false)
+    }
+
+    /// Push a vertex into the DS (BRep_Builder equivalent).
+    pub fn push_vertex(&mut self, pt: glam::DVec3, tol: f64) -> usize {
+        let vd = rcad_kernel::topods::TVertexData {
+            my_shapes: Vec::new(), flags: 0,
+            point: pt, tolerance: tol, points: Vec::new(),
+        };
+        let s = Shape::new(Arc::new(TShape::Vertex(vd)), 0, topods::Orientation::Forward);
+        self.append_shape(s)
+    }
+
+    /// Push an edge into the DS (BRep_Builder equivalent).
+    pub fn push_edge(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
+        first: usize, last: usize) -> usize {
+        let empty_vertex = Shape::new(
+            Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
+        );
+        let v_first = self.shapes.get(first)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+            .unwrap_or_else(|| empty_vertex.clone());
+        let v_last = self.shapes.get(last)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+            .unwrap_or(empty_vertex);
+        let ed = rcad_kernel::topods::TEdgeData {
+            curve: Some(curve.clone()), range,
+            first: v_first, last: v_last,
+            tolerance: 0.0, same_parameter: true, same_range: true,
+            degenerated: false, pcurves: HashMap::new(),
+            representations: Vec::new(), vertex_params: HashMap::new(),
+            my_shapes: Vec::new(), flags: 0,
+        };
+        let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, topods::Orientation::Forward);
+        self.append_shape(s)
+    }
+
+    /// Push a wire into the DS (BRep_Builder equivalent).
+    pub fn push_wire(&mut self, edges: Vec<(usize, topods::Orientation)>) -> usize {
+        let edge_shapes: Vec<Shape> = edges.iter().map(|&(ei, orient)| {
+            self.shapes.get(ei).map(|si| {
+                Shape::new(si.shape.data.clone(), 0, orient)
+            }).unwrap_or_else(|| {
+                Shape::new(Arc::new(TShape::Vertex(empty_vertex_data())), 0, orient)
+            })
+        }).collect();
+        let wd = rcad_kernel::topods::TWireData { edges: edge_shapes, my_shapes: Vec::new(), flags: 0 };
+        let s = Shape::new(Arc::new(TShape::Wire(wd)), 0, topods::Orientation::Forward);
+        self.append_shape(s)
+    }
+
+    /// Push a face into the DS (BRep_Builder equivalent).
+    pub fn push_face(&mut self, surface: rcad_kernel::geom::Surface3,
+        outer_wire: usize, inner_wires: Vec<usize>, natural_restriction: bool) -> usize {
+        let empty_vertex = Shape::new(
+            Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
+        );
+        let ow = self.shapes.get(outer_wire)
+            .map(|si| Shape::new(si.shape.data.clone(), 0, Orientation::Forward))
+            .unwrap_or_else(|| empty_vertex.clone());
+        let iw: Vec<Shape> = inner_wires.iter().filter_map(|&wi| {
+            self.shapes.get(wi).map(|si| Shape::new(si.shape.data.clone(), 0, Orientation::Forward))
+        }).collect();
+        let fd = rcad_kernel::topods::TFaceData {
+            surface: Some(surface.clone()),
+            outer_wire: ow, inner_wires: iw,
+            tolerance: 0.0, natural_restriction,
+            sample_point: None, uv_domain: None,
+            internal_vertices: Vec::new(),
+            surface_location: 0,
+            my_shapes: Vec::new(), flags: 0,
+        };
+        let s = Shape::new(Arc::new(TShape::Face(fd)), 0, Orientation::Forward);
+        self.append_shape(s)
+    }
+
+    /// Push a wire into the DS (BRep_Builder equivalent).
+    pub fn push_wire_edges(&mut self, edges: Vec<(usize, Orientation)>) -> usize {
+        let edge_shapes: Vec<Shape> = edges.iter().map(|&(ei, orient)| {
+            self.shapes.get(ei)
+                .map(|si| Shape::new(si.shape.data.clone(), 0, orient))
+                .unwrap_or_else(|| Shape::new(
+                    Arc::new(TShape::Vertex(empty_vertex_data())), 0, orient))
+        }).collect();
+        let wd = rcad_kernel::topods::TWireData {
+            edges: edge_shapes, my_shapes: Vec::new(), flags: 0,
+        };
+        let s = Shape::new(Arc::new(TShape::Wire(wd)), 0, Orientation::Forward);
+        self.append_shape(s)
+    }
+
+    /// Source face index for an image face.
+    pub fn source_face_idx(&self, i: usize) -> usize {
+        if i < self.nb_source_shapes { i } else { 0 }
+    }
+
+    /// Vertex tolerance by shape index.
+    pub fn vertex_tolerance_by_idx(&self, i: usize) -> f64 {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Vertex { return None; }
+            si.shape.as_vertex().map(|v| v.tolerance)
+        }).unwrap_or(0.0)
+    }
+
+    /// Vertex point by shape index (returns DVec3::ZERO if not a vertex).
+    pub fn vertex_point_by_idx(&self, i: usize) -> glam::DVec3 {
+        self.shapes.get(i).and_then(|si| {
+            if si.shape_type != ShapeType::Vertex { return None; }
+            si.shape.as_vertex().map(|v| v.point)
+        }).unwrap_or(glam::DVec3::ZERO)
+    }
+
+    /// Face count (number of shapes with type Face).
+    pub fn face_count_by_type(&self) -> usize {
+        self.shapes.iter().filter(|s| s.shape_type == ShapeType::Face).count()
+    }
+
+    /// Shape index of the fi-th face in the shapes array.
+    pub fn face_shape_idx(&self, fi: usize) -> usize {
+        let mut n = 0;
+        for i in 0..self.nb_shapes() {
+            if self.shapes[i].shape_type == ShapeType::Face {
+                if n == fi { return i; }
+                n += 1;
+            }
+        }
+        0
+    }
+
+    /// Edge shape index of the ei-th edge.
+    pub fn edge_shape_idx(&self, ei: usize) -> usize {
+        let mut n = 0;
+        for i in 0..self.nb_shapes() {
+            if self.shapes[i].shape_type == ShapeType::Edge {
+                if n == ei { return i; }
+                n += 1;
+            }
+        }
+        0
+    }
+
+    /// Vertex shape index of the vi-th vertex.
+    pub fn vertex_shape_idx(&self, vi: usize) -> usize {
+        let mut n = 0;
+        for i in 0..self.nb_shapes() {
+            if self.shapes[i].shape_type == ShapeType::Vertex {
+                if n == vi { return i; }
+                n += 1;
+            }
+        }
+        0
+    }
+
+    /// Edge start vertex DS index.
+    pub fn edge_start_vertex_ds(&self, ei: usize) -> usize {
+        self.edge_shape_idx(ei);
+        // Look up the edge shape and extract its first vertex
+        for i in 0..self.nb_shapes() {
+            if self.shapes[i].shape_type == ShapeType::Edge {
+                if let Some(ed) = self.shapes[i].shape.as_edge() {
+                    if ed.first.index < self.nb_shapes() {
+                        return ed.first.index;
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    /// Edge end vertex DS index.
+    pub fn edge_end_vertex_ds(&self, ei: usize) -> usize {
+        for i in 0..self.nb_shapes() {
+            if self.shapes[i].shape_type == ShapeType::Edge {
+                if let Some(ed) = self.shapes[i].shape.as_edge() {
+                    if ed.last.index < self.nb_shapes() {
+                        return ed.last.index;
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    /// Pave blocks for an edge (returns empty slice if none).
+    pub fn edge_pave_blocks(&self, ei: usize) -> &[SharedPB] {
+        // Use the full shape index: edges start at nb_source_shapes offsets
+        // but each edge has its pave_blocks stored in pave_blocks_pool[ei]
+        if ei < self.pave_blocks_pool.len() {
+            &self.pave_blocks_pool[ei]
+        } else {
+            &[]
+        }
+    }
+
+    /// Boundary vertices of a face (sub-shapes that are vertices).
+    pub fn face_boundary_verts(&self, fi: usize) -> Vec<usize> {
+        let si = self.face_shape_idx(fi);
+        if si < self.nb_shapes() {
+            self.shapes[si].sub_shapes.iter().filter(|&&ss| {
+                ss < self.nb_shapes() && self.shapes[ss].shape_type == ShapeType::Vertex
+            }).copied().collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 

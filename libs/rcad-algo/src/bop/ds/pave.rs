@@ -43,7 +43,14 @@ pub const NO_EDGE: usize = usize::MAX;
 // ========================================================================
 // SharedPaveBlock — Arc<RwLock<PaveBlock>> (Standard_Transient equivalent)
 // ========================================================================
-pub type SharedPB = Arc<RwLock<PaveBlock>>;
+#[derive(Debug, Clone)]
+pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
+
+impl SharedPB {
+    pub fn new(pb: PaveBlock) -> Self { SharedPB(Arc::new(RwLock::new(pb))) }
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, PaveBlock> { self.0.read().unwrap() }
+    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, PaveBlock> { self.0.write().unwrap() }
+}
 
 // ========================================================================
 // BOPDS_PaveBlock
@@ -125,6 +132,15 @@ impl PaveBlock {
         (t2 - t1).abs() > 1e-15
     }
 
+    /// OCCT: PaveBlock on a curve edge with default paves — not split (section edge).
+    pub fn new_curve_block() -> Self {
+        PaveBlock {
+            edge: NO_EDGE, original_edge: NO_EDGE,
+            pave1: Pave::new(0, 0.0), pave2: Pave::new(0, 0.0),
+            ext_paves: Vec::new(), ts1: 0.0, ts2: 0.0, common_block_idx: None,
+        }
+    }
+
     pub fn contains_parameter(&self, prm: f64, tol: f64, ind: &mut usize) -> bool {
         for pv in &self.ext_paves {
             if (pv.param - prm).abs() <= tol {
@@ -151,7 +167,7 @@ pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
         let p1 = paves[i];
         let p2 = paves[i + 1];
         if (p2.param - p1.param).abs() < 1e-15 { continue; }
-        let new_pb = SharedPB::new(RwLock::new(PaveBlock {
+        let new_pb = SharedPB::new(PaveBlock {
             edge: pb.edge,
             original_edge: pb.original_edge,
             pave1: p1,
@@ -160,7 +176,7 @@ pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
             ts1: 0.0,
             ts2: 0.0,
             common_block_idx: pb.common_block_idx,
-        }));
+        });
         lp.push(new_pb);
     }
 }

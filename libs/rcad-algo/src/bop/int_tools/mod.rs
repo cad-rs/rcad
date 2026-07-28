@@ -32,6 +32,7 @@ pub mod marching;
 pub mod parabola_intersection;
 pub mod pcurve_derive;
 pub mod plane_cone;
+pub mod prm_prm_intersection;
 pub mod plane_cylinder;
 pub mod plane_plane;
 pub mod plane_sphere;

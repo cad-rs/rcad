@@ -479,7 +479,8 @@ impl IntPatchIntersection {
         // OCCT L204-213: IntPatch_PrmPrmIntersection interpp;
         // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);
         let mut prm_prm =
-            crate::bop::algo::pave_filler::prm_prm_intersection::PrmPrmIntersection::new();
+            // PrmPrmIntersection not yet ported
+
         prm_prm.perform_main(
             s1,
             s2,
