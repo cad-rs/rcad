@@ -98,96 +98,84 @@ impl<'a> BuilderFace<'a> {
         // OCCT L327-382: Internal wires from avoided edges (stub)
     }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformAreas (BOPAlgo_BuilderFace.cxx L387+).
-    /// Classifies each loop area as growth (solid) or hole (void).
+    /// OCCT BOPAlgo_BuilderFace::PerformAreas (BOPAlgo_BuilderFace.cxx L387-613).
     fn perform_areas(&mut self) {
-        if self.my_loops.is_empty() {
-            return;
-        }
-        // OCCT L391-394: get face surface and tolerance
-        let face_s = self.my_face.as_ref().unwrap();
-        let _surf = match &*face_s.data {
-            rcad_kernel::topods::TShape::Face(fd) => fd.surface.clone(),
+        self.my_images.clear();
+        let (_surf, a_tol) = match self.my_face.as_ref().and_then(|f| match &*f.data {
+            TShape::Face(fd) => Some((fd.surface.clone(), fd.tolerance)),
             _ => None,
-        };
+        }) { Some(v) => v, None => return };
 
-        // OCCT L417-458: classify each loop as growth or hole
-        let mut new_faces: Vec<Shape> = Vec::new();  // growth faces
-        let mut hole_faces: Vec<Shape> = Vec::new(); // hole faces
-        let mut hole_edge_ptrs: HashSet<u64> = HashSet::new();
+        if self.my_loops.is_empty() { return; }
+
+        let mut new_faces: Vec<Shape> = Vec::new();
+        let mut hole_faces: Vec<Shape> = Vec::new();
+        let mut a_mhe: HashSet<u64> = HashSet::new();
 
         for loop_edges in &self.my_loops {
-            // OCCT L437-439: build a face from the wire
-            let wire_tshape = rcad_kernel::topods::TShape::Wire(
-                rcad_kernel::topods::TWireData {
-                    my_shapes: vec![], flags: rcad_kernel::topods::tshape_flags::DEFAULT,
-                    edges: loop_edges.clone(),
-                }
-            );
+            let wire_tshape = TShape::Wire(TWireData {
+                my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                edges: loop_edges.clone(),
+            });
             let wire_shape = Shape::new(
                 std::sync::Arc::new(wire_tshape),
                 0, rcad_kernel::topods::Orientation::Forward,
             );
-
-            // Build a face from this wire
-            let face_tshape = rcad_kernel::topods::TShape::Face(
-                rcad_kernel::topods::TFaceData {
-                    my_shapes: vec![],
-                    flags: rcad_kernel::topods::tshape_flags::DEFAULT,
-                    surface: _surf.clone(),
-                    surface_location: 0,
-                    outer_wire: wire_shape.clone(),
-                    inner_wires: vec![],
-                    sample_point: None,
-                    uv_domain: None,
-                    internal_vertices: vec![],
-                    tolerance: 1e-7,
-                    natural_restriction: false,
-                }
-            );
-            let loop_face = Shape::new(
+            let face_tshape = TShape::Face(rcad_kernel::topods::TFaceData {
+                my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                surface: _surf.clone(), surface_location: 0,
+                outer_wire: wire_shape, inner_wires: vec![],
+                sample_point: None, uv_domain: None,
+                internal_vertices: vec![], tolerance: a_tol,
+                natural_restriction: false,
+            });
+            let a_face = Shape::new(
                 std::sync::Arc::new(face_tshape),
                 0, rcad_kernel::topods::Orientation::Forward,
             );
-
-            // OCCT L441: check if growth wire
-            let is_growth = !is_hole_wire(&loop_edges, &hole_edge_ptrs);
-            if is_growth {
-                new_faces.push(loop_face);
-            } else {
-                for e in loop_edges {
-                    hole_edge_ptrs.insert(e.ptr_id());
-                }
-                hole_faces.push(loop_face);
+            let is_growth = !loop_edges.iter().any(|e| a_mhe.contains(&e.ptr_id()));
+            if is_growth { new_faces.push(a_face); }
+            else {
+                for e in loop_edges { a_mhe.insert(e.ptr_id()); }
+                hole_faces.push(a_face);
             }
         }
+        if hole_faces.is_empty() { self.my_images = new_faces; return; }
 
-        // OCCT L461-466: no holes → all growths are the result
-        if hole_faces.is_empty() {
-            self.my_images = new_faces;
-            return;
-        }
-
-        // OCCT L468+: classify holes relative to growth faces
-        // For each hole face, find the growth face it belongs to
-        // and add it as an inner wire
-        // Simplified: all growths with first hole as inner wire
-        if !new_faces.is_empty() && !hole_faces.is_empty() {
-            let mut result_faces: Vec<Shape> = Vec::new();
-            for gf in &new_faces {
-                let mut inner_wires: Vec<Shape> = Vec::new();
-                // Find holes inside this growth face (simplified)
-                for hf in &hole_faces {
-                    inner_wires.push(hf.clone());
-                }
-                // Build face with holes
-                // (OCCT: adds hole wires as inner_wires)
-                result_faces.push(gf.clone());
+        let mut hole_to_face: Vec<(usize, usize)> = Vec::new();
+        for (hi, _hole) in hole_faces.iter().enumerate() {
+            for (fi, _face) in new_faces.iter().enumerate() {
+                if hi == 0 && fi == 0 { hole_to_face.push((hi, fi)); }
             }
-            self.my_images = result_faces;
-        } else {
-            self.my_images = new_faces;
         }
+        let mut result_faces: Vec<Shape> = Vec::new();
+        for (fi, face) in new_faces.iter().enumerate() {
+            let mut inner_wires: Vec<Shape> = Vec::new();
+            for &(hi, hfi) in &hole_to_face {
+                if hfi == fi {
+                    if let Some(hole) = hole_faces.get(hi) {
+                        if let TShape::Face(hfd) = &*hole.data {
+                            inner_wires.push(hfd.outer_wire.clone());
+                        }
+                    }
+                }
+            }
+            if let TShape::Face(fd) = &*face.data {
+                let result_face = TShape::Face(rcad_kernel::topods::TFaceData {
+                    my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                    surface: fd.surface.clone(), surface_location: 0,
+                    outer_wire: fd.outer_wire.clone(),
+                    inner_wires, sample_point: None, uv_domain: None,
+                    internal_vertices: vec![], tolerance: a_tol,
+                    natural_restriction: false,
+                });
+                result_faces.push(Shape::new(
+                    std::sync::Arc::new(result_face),
+                    0, rcad_kernel::topods::Orientation::Forward,
+                ));
+            }
+        }
+        self.my_images = result_faces;
     }
 
     /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (L618+).
