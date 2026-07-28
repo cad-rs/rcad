@@ -487,8 +487,24 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_Builder::FillSameDomainFaces.
-    fn fill_same_domain_faces(&mut self) {}
+    /// OCCT BOPAlgo_Builder::FillSameDomainFaces (Builder_2.cxx L580-780).
+    fn fill_same_domain_faces(&mut self) {
+        let a_ffs = &self.ds.interf_ff;
+        if a_ffs.is_empty() { return; }
+        let mut to_remove: Vec<Shape> = Vec::new();
+        for ff in a_ffs {
+            let f1s = self.brep_sr(ff.f1);
+            let f2s = self.brep_sr(ff.f2);
+            if !self.my_images.contains_key(&f1s) { continue; }
+            if !self.my_images.contains_key(&f2s) { continue; }
+            if ff.tangent_faces {
+                to_remove.push(f2s);
+            }
+        }
+        for r in &to_remove {
+            self.my_images.remove(r);
+        }
+    }
 
     /// OCCT BOPAlgo_Builder::FillInternalVertices.
     fn fill_internal_vertices(&mut self) {}

@@ -608,6 +608,7 @@ pub struct DS {
     pub interf_vz: Vec<InterferenceVZ>,  pub interf_ez: Vec<InterferenceEZ>,
     pub interf_fz: Vec<InterferenceFZ>,  pub interf_zz: Vec<InterferenceZZ>,
     pub interfered: HashSet<usize>,
+    pub intersection_curves: Vec<crate::bop::int_tools::face_face::IntersectionCurve>,
     // CommonBlock storage (OCCT: myMapPBCB, but stored as Vec for index-based access)
     pub common_blocks: Vec<CommonBlock>,
 }
@@ -627,6 +628,7 @@ impl DS {
             interf_vz: Vec::new(), interf_ez: Vec::new(), interf_fz: Vec::new(),
             interf_zz: Vec::new(), interfered: HashSet::new(),
             common_blocks: Vec::new(),
+            intersection_curves: Vec::new(),
         }
     }
 

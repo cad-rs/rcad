@@ -186,9 +186,16 @@ impl<'a> PaveFiller<'a> {
                 ff.set_tolerances(1e-7, 1e-7);
                 ff.perform();
                 if !ff.has_intersection() { continue; }
+                let fcurves = ff.make_curves();
+                let mut curve_ids: Vec<usize> = Vec::new();
+                for c in fcurves {
+                    let cid = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(c);
+                    curve_ids.push(cid);
+                }
                 new_ff.push(InterferenceFF {
                     f1: i, f2: j,
-                    curves: ff.make_curves().iter().map(|c| c.tolerance as usize).collect(),
+                    curves: curve_ids,
                     points: Vec::new(),
                     tangent_faces: false,
                 });
