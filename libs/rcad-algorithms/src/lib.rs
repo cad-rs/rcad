@@ -304,8 +304,8 @@ pub use boolean::{
     BooleanAttemptDiagnostic, BooleanDiagnosticReport, BooleanFailureClass, FailureAnalyzer,
     FinalSuccessfulConfig, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
 };
-pub use crate::bop::algo_api::{BooleanOp, BooleanOptions, SectionOp};
-pub use crate::bop::algo_api::{common, cut, fuse};
+pub use crate::bop::brep_algo_api::{BooleanOp, BooleanOptions, SectionOp};
+pub use crate::bop::brep_algo_api::{common, cut, fuse};
 pub use brep_check::{
     CheckIssue,
     CheckResult,

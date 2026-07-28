@@ -1,10 +1,10 @@
-//! Pipeline stage snapshot — dump intermediate DS + result state for
+﻿//! Pipeline stage snapshot 鈥?dump intermediate DS + result state for
 //! cross-checking against OCCT.
 //!
 //! Enabled by `RCAD_DUMP_PIPELINE=1`; output goes to `RCAD_DUMP_DIR`.
 //! Grid/case labels from `RCAD_DUMP_GRID` / `RCAD_DUMP_CASE`.
 
-use crate::bop::ds::ds::DS;
+use crate::bop::ds::DS;
 use crate::bop::ds::face_info::FaceInfo;
 use rcad_kernel::topods::ShapeType;
 use serde_json::json;
@@ -35,7 +35,7 @@ impl DumpCtx {
     }
 
     /// Create a DumpCtx with a module suffix for the filename.
-    /// E.g. module="pf" → "rcad_{grid}_{case}_pf_s01_..."
+    /// E.g. module="pf" 鈫?"rcad_{grid}_{case}_pf_s01_..."
     pub fn new_with_module(grid: &str, case: &str, module: &'static str) -> Self {
         Self {
             grid: grid.to_string(),
@@ -239,7 +239,7 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         })
         .collect();
 
-    // my_images/wire_images: Phase 4 — removed from DS
+    // my_images/wire_images: Phase 4 鈥?removed from DS
     let my_images_summary: Vec<serde_json::Value> = Vec::new();
     let wire_images_summary: Vec<serde_json::Value> = Vec::new();
 

@@ -1,4 +1,4 @@
-//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
+﻿//! Point and shape classification algorithms (OCCT BRepClass3d equivalent).
 //!
 //!
 //! - `SolidClassifier` (class): classify point relative to a solid using
@@ -12,7 +12,7 @@ use rcad_kernel::topods;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::bop::ds::ds::*;
+use crate::bop::ds::*;
 use crate::bop::tools::bvh::{Aabb, Bvh};
 use crate::bop::int_tools;
 use crate::tolerance::{
@@ -1121,7 +1121,7 @@ fn ray_cast_classify_point_on_face(
             }
             if found {
                 // OCCT transition: ray_enter check.  For sphere, outward
-                // normal = (hit - center).normalize().  ray_dir·normal < 0
+                // normal = (hit - center).normalize().  ray_dir路normal < 0
                 // means entering  ?point was Out; > 0 means exiting  ?In.
                 let hit = point + ray_dir * nearest;
                 let n = (hit - s.center).normalize_or_zero();
@@ -1397,7 +1397,7 @@ pub fn classify_point_on_edge(
     }
 }
 
-/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
+/// 鉁?OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
 fn project_point_to_curve(point: DVec3, curve: &Curve3) -> (DVec3, f64) {
     let result = rcad_kernel::closest_point_on_curve(curve, point, 128);
     (result.point, result.param)
@@ -1574,7 +1574,7 @@ fn distance_to_surface(point: DVec3, surface: &Surface3) -> f64 {
 }
 
 /// Project point to surface UV coordinates.
-/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type dispatch).
+/// 鉁?OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type dispatch).
 fn project_point_to_surface_uv(point: DVec3, surface: &Surface3) -> glam::DVec2 {
     let proj = rcad_kernel::closest_point_on_surface(surface, point, 100);
     glam::DVec2::new(proj.params.0, proj.params.1)

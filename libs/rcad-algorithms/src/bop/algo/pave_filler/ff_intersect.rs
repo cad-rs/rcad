@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::bop::int_tools::int_patch_type::IntPatchIType;
 use rcad_kernel::topods::ShapeType;
 use std::collections::HashMap;
@@ -71,7 +71,7 @@ impl<'a> super::PaveFiller<'a> {
         // ====================================================================
         // Options + EE map (OCCT L327-360)
         // ====================================================================
-        // L323-324: aFFs.SetIncrement(iSize) — pre-allocate interference array
+        // L323-324: aFFs.SetIncrement(iSize) 鈥?pre-allocate interference array
         self.ds.interf_ff.reserve(i_size);
         // L327-331: bApprox, bCompC2D1, bCompC2D2, anApproxTol, bSplitCurve
         let b_approx = true;
@@ -81,7 +81,7 @@ impl<'a> super::PaveFiller<'a> {
         let b_split_curve = false;
 
         // L335-360: build aEEMap from EE interferences
-        // DataMap<BOPDS_Pair, NCollection_List<int>>  →  HashMap<(usize,usize), Vec<usize>>
+        // DataMap<BOPDS_Pair, NCollection_List<int>>  鈫? HashMap<(usize,usize), Vec<usize>>
         let mut a_ee_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for inf in &self.ds.interf_ee {
             if inf.new_vertex == usize::MAX {
@@ -121,7 +121,7 @@ impl<'a> super::PaveFiller<'a> {
                 let is_plane1 = matches!(a_surf1, Surface3::Plane(_));
                 let is_plane2 = matches!(a_surf2, Surface3::Plane(_));
 
-                // L380-391: CheckPlanes — skip parallel planes without vertex overlap
+                // L380-391: CheckPlanes 鈥?skip parallel planes without vertex overlap
                 if is_plane1 && is_plane2 {
                     let b_to_intersect = self.check_planes(n_f1, n_f2);
                     if !b_to_intersect {
@@ -199,7 +199,7 @@ impl<'a> super::PaveFiller<'a> {
                                 let vtx_tol = self.ds.vertex_tolerance(vi);
                                 if shift_dist > vtx_tol {
                                     // OCCT L474-479: shift one face
-                                    // OCCT: gp_Vec(aP1, aP2) — rcad: a_p2 - a_p1
+                                    // OCCT: gp_Vec(aP1, aP2) 鈥?rcad: a_p2 - a_p1
                                     a_found_shift_info = Some(SeamEdgeShift {
                                         shift_vector: if is_closed1 {
                                             a_p2 - a_p1
@@ -302,7 +302,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             };
 
-            // OCCT L545-553: if !IsDone || HasErrors → empty FF + warning + continue
+            // OCCT L545-553: if !IsDone || HasErrors 鈫?empty FF + warning + continue
             // Rcad: intersect_face_face already handles failure (creates empty InterfFF on failure).
             // Check equivalent: if entry has no curves, no points, and faces are not tangent
             let ff_entry = &self.ds.interf_ff[ff_idx];
@@ -310,9 +310,9 @@ impl<'a> super::PaveFiller<'a> {
             // OCCT L547-549: aFF.SetIndices(nF1,nF2); aFF.Init(0,0);
             // OCCT L551: AddIntersectionFailedWarning(aFaceFace.Face1(), aFaceFace.Face2());
             if ff_entry.curves.is_empty() && ff_entry.points.is_empty() && !ff_entry.tangent_faces {
-                // OCCT L546-553: intersection failed — record warning, skip
+                // OCCT L546-553: intersection failed 鈥?record warning, skip
                 // AddIntersectionFailedWarning (OCCT BOPAlgo_PaveFiller_2.cxx L660)
-                // Rcad: warning skipped — does not affect topology
+                // Rcad: warning skipped 鈥?does not affect topology
                 continue;
             }
 
@@ -417,7 +417,7 @@ impl<'a> super::PaveFiller<'a> {
                 .collect();
             self.ds.interf_ff[ff_idx].curves = retained_curves;
 
-            // OCCT L610-620: points already processed — store BOPDS_Point
+            // OCCT L610-620: points already processed 鈥?store BOPDS_Point
             // Rcad: points already stored in InterfFF by intersect_face_face
         }
 
@@ -433,7 +433,7 @@ impl<'a> super::PaveFiller<'a> {
             let mut aabbs = Vec::new();
             for (fi, _f) in self.ds.faces.iter().enumerate() {
                 indices.push(fi);
-                aabbs.push(crate::bop::ds::ds::face_aabb::face_aabb(self.ds, fi));
+                aabbs.push(crate::bop::ds::face_aabb(self.ds, fi));
             }
             if indices.len() >= 20 {
                 Some(crate::bop::tools::bvh::BoxTree::build(indices, aabbs))
@@ -453,7 +453,7 @@ impl<'a> super::PaveFiller<'a> {
         } else {
             let a_fcount = self.ds.a_face_count();
             let mut result = Vec::new();
-            let mut fit = crate::bop::ds::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
+            let mut fit = crate::bop::ds::PairIterator::prepare_ab(a_fcount, self.ds.face_count());
             while fit.more() {
                 let pk = fit.value();
                 result.push((pk.i1, pk.i2));
@@ -477,7 +477,7 @@ impl<'a> super::PaveFiller<'a> {
     /// - Architecture diff: OCCT uses IsPlaneFF (handles offset/trimmed);
     ///   rcad uses Surface3::Plane direct match.
 
-    /// OCCT BOPAlgo_PaveFiller_6.cxx L106-134: IsClosedFF — checks if edge is a seam edge of a face.
+    /// OCCT BOPAlgo_PaveFiller_6.cxx L106-134: IsClosedFF 鈥?checks if edge is a seam edge of a face.
     ///
     /// OCCT implementation: iterates over BRep_TEdge curve representations, finds one
     /// that is both on the given surface (IsCurveOnSurface) and on a closed surface
@@ -675,7 +675,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut int_patch = crate::bop::int_tools::int_patch_intersection::IntPatchIntersection::new();
         int_patch.perform(s_a, s_b, a_tol_ff, a_tol_ff);
         if int_patch.tangent_faces() {
-            self.ds.interf_ff.push(crate::bop::ds::ds::InterferenceFF {
+            self.ds.interf_ff.push(crate::bop::ds::InterferenceFF {
                 f1,
                 f2,
                 curves: Vec::new(),
@@ -693,7 +693,7 @@ impl<'a> super::PaveFiller<'a> {
             self.put_points_on_line(f1, f2, int_patch.line_mut(li), &work.ef_points);
         }
 
-        // OCCT L498-504: GetEFPnts → SetList passes EF points to IntPatch's PutPointsOnLine.
+        // OCCT L498-504: GetEFPnts 鈫?SetList passes EF points to IntPatch's PutPointsOnLine.
         // rcad: IntPatch skips PutPointsOnLine; EF=0 for sphere-sphere (PerformEF gap).
         // EF projection here would require EF>0. Currently EF=0, so no points to project.
 
@@ -767,7 +767,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT L576-608: points  -- filter by isPointInOnFace, append to myPnts.
-        let mut ff_point_indices: Vec<crate::bop::ds::ds::types::FFPoint> = Vec::new();
+        let mut ff_point_indices: Vec<crate::bop::ds::types::FFPoint> = Vec::new();
         for pi in 0..int_patch.nb_points() {
             let pt = int_patch.point(pi);
             let (uv_a, uv_b, f_a, f_b) = if b_reverse {
@@ -792,7 +792,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
             // FFPoint stores point data inline (OCCT BOPDS_Point). No DS vertex created yet.
-            ff_point_indices.push(crate::bop::ds::ds::types::FFPoint::new(pt.p1, uv_a, uv_b));
+            ff_point_indices.push(crate::bop::ds::types::FFPoint::new(pt.p1, uv_a, uv_b));
         }
         if std::env::var("RCAD_DBG_FF").is_ok() {
             eprintln!(
@@ -801,7 +801,7 @@ impl<'a> super::PaveFiller<'a> {
                 int_patch.nb_lines()
             );
         }
-        self.ds.interf_ff.push(crate::bop::ds::ds::InterferenceFF {
+        self.ds.interf_ff.push(crate::bop::ds::InterferenceFF {
             f1,
             f2,
             curves: ff_curve_indices,
@@ -994,7 +994,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         use crate::bop::int_tools::int_ana_quad_quad_geo::AnaResultType;
         if let AnaResultType::Same = geo.type_inter() {
-            self.ds.interf_ff.push(crate::bop::ds::ds::InterferenceFF {
+            self.ds.interf_ff.push(crate::bop::ds::InterferenceFF {
                 f1,
                 f2,
                 curves: Vec::new(),
@@ -1029,7 +1029,7 @@ impl<'a> super::PaveFiller<'a> {
             return;
         }
         let t_range = [pmin, pmax];
-        let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+        let mut curve_extra = crate::bop::ds::CurveExtra::default();
         curve_extra.tangential_tol = tol;
         // OCCT L2514: new Geom_TrimmedCurve(aGLin, pmin, pmax)
         // OCCT L2521: new Geom2d_TrimmedCurve(C2d, pmin, pmax)
@@ -1045,7 +1045,7 @@ impl<'a> super::PaveFiller<'a> {
             t_min: pmin,
             t_max: pmax,
         }));
-        let ic = crate::bop::ds::ds::IntersectionCurve {
+        let ic = crate::bop::ds::IntersectionCurve {
             curve: trimmed_curve,
             polyline: Vec::new(),
             start_vertex: usize::MAX,
@@ -1066,7 +1066,7 @@ impl<'a> super::PaveFiller<'a> {
         ic.end_vertex = ev;
         let ci = self.ds.intersection_curves.len();
         self.ds.intersection_curves.push(ic);
-        self.ds.interf_ff.push(crate::bop::ds::ds::InterferenceFF {
+        self.ds.interf_ff.push(crate::bop::ds::InterferenceFF {
             f1,
             f2,
             curves: vec![ci],
@@ -1089,7 +1089,7 @@ impl<'a> super::PaveFiller<'a> {
         f1: usize,
         f2: usize,
         line: &crate::bop::int_tools::int_patch_line::IntPatchLine,
-    ) -> Vec<crate::bop::ds::ds::IntersectionCurve> {
+    ) -> Vec<crate::bop::ds::IntersectionCurve> {
         use rcad_kernel::geom::Curve2dEval;
         use std::f64::consts::TAU;
 
@@ -1116,13 +1116,13 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        // OCCT L748-751: IntPatch_Restriction — skip LineConstructor
+        // OCCT L748-751: IntPatch_Restriction 鈥?skip LineConstructor
         if typl == crate::bop::int_tools::int_patch_type::IntPatchIType::Restriction {
             b_avoid_line_constructor = true;
         }
 
         // OCCT L755-773: LineConstructor.Perform(L)
-        // If !IsDone → return empty. If NbParts <= 0 → return empty.
+        // If !IsDone 鈫?return empty. If NbParts <= 0 鈫?return empty.
         let parts: Vec<[f64; 2]> = if !b_avoid_line_constructor {
             let p = self.line_constructor_parts(
                 &line.curve,
@@ -1184,7 +1184,7 @@ impl<'a> super::PaveFiller<'a> {
         _f1: usize,
         _f2: usize,
         line: &crate::bop::int_tools::int_patch_line::IntPatchLine,
-    ) -> Vec<crate::bop::ds::ds::IntersectionCurve> {
+    ) -> Vec<crate::bop::ds::IntersectionCurve> {
         let n = line.nb_points();
         if n < 2 {
             return Vec::new();
@@ -1198,9 +1198,9 @@ impl<'a> super::PaveFiller<'a> {
             let bs = match &bs_curve3 {
                 rcad_kernel::geom::Curve3::BSpline(b) => b.clone(),
                 _ => {
-                    let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                    let mut curve_extra = crate::bop::ds::CurveExtra::default();
                     curve_extra.tangential_tol = line.tang_tolerance;
-                    return vec![crate::bop::ds::ds::IntersectionCurve {
+                    return vec![crate::bop::ds::IntersectionCurve {
                         curve: bs_curve3.clone(),
                         polyline,
                         start_vertex: usize::MAX,
@@ -1234,9 +1234,9 @@ impl<'a> super::PaveFiller<'a> {
                     pcurve_on_b = Some(rcad_kernel::geom::Curve2d::BSpline(bs2d));
                 }
             }
-            let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+            let mut curve_extra = crate::bop::ds::CurveExtra::default();
             curve_extra.tangential_tol = line.tang_tolerance;
-            return vec![crate::bop::ds::ds::IntersectionCurve {
+            return vec![crate::bop::ds::IntersectionCurve {
                 curve: rcad_kernel::geom::Curve3::BSpline(bs),
                 polyline,
                 start_vertex: usize::MAX,
@@ -1269,7 +1269,7 @@ impl<'a> super::PaveFiller<'a> {
         typl: IntPatchIType,
         geom_tol: f64,
         tang_tolerance: f64,
-    ) -> Vec<crate::bop::ds::ds::IntersectionCurve> {
+    ) -> Vec<crate::bop::ds::IntersectionCurve> {
         use rcad_kernel::geom::Curve2dEval;
         use std::f64::consts::TAU;
 
@@ -1339,9 +1339,9 @@ impl<'a> super::PaveFiller<'a> {
                     Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
 
                 // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
-                let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                let mut curve_extra = crate::bop::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
-                result.push(crate::bop::ds::ds::IntersectionCurve {
+                result.push(crate::bop::ds::IntersectionCurve {
                     curve: trimmed_curve,
                     polyline: Vec::new(),
                     start_vertex: usize::MAX,
@@ -1389,9 +1389,9 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L875-882: if either surface is extrusion/offset/revolution,
                 // append curve with empty pcurves (= H1, H1 in OCCT) and skip Classify.
                 if is_extrusion_rev_offset(surf1) || is_extrusion_rev_offset(surf2) {
-                    let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                    let mut curve_extra = crate::bop::ds::CurveExtra::default();
                     curve_extra.tangential_tol = tang_tolerance;
-                    result.push(crate::bop::ds::ds::IntersectionCurve {
+                    result.push(crate::bop::ds::IntersectionCurve {
                         curve: curve.clone(),
                         polyline: Vec::new(),
                         start_vertex: usize::MAX,
@@ -1431,9 +1431,9 @@ impl<'a> super::PaveFiller<'a> {
 
                 // OCCT L893-896: append curve with empty pcurves (H1, H1 in OCCT).
                 // rcad note: OCCT does not compute pcurves here; keeping empty to match.
-                let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                let mut curve_extra = crate::bop::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
-                result.push(crate::bop::ds::ds::IntersectionCurve {
+                result.push(crate::bop::ds::IntersectionCurve {
                     curve: curve.clone(),
                     polyline: Vec::new(),
                     start_vertex: usize::MAX,
@@ -1456,7 +1456,7 @@ impl<'a> super::PaveFiller<'a> {
     /// - For each candidate interval:
     ///     not full-period  -- trimmed curve + BuildPCurves(with UV bounds) + vertices
     ///     full-period (aNbParts=1)  -- test 18 points around circle  -- keep/reject
-    /// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2閿滅 interval.
+    /// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2闁挎粎顕?interval.
     // OCCT L904-1095: MakeCurve for Circle/Ellipse
     fn make_analytic_periodic_curve(
         &mut self,
@@ -1468,7 +1468,7 @@ impl<'a> super::PaveFiller<'a> {
         geom_tol: f64,
         tang_tolerance: f64,
         vertices: &[crate::bop::int_tools::int_patch_line::IntPatchVertex],
-    ) -> Vec<crate::bop::ds::ds::IntersectionCurve> {
+    ) -> Vec<crate::bop::ds::IntersectionCurve> {
         if std::env::var("RCAD_DBG_MB").is_ok() {
             eprintln!(
                 "[DBG_IC] make_analytic_periodic_curve: geom_tol={:.6e} t_range={:.6} {:.6}",
@@ -1496,7 +1496,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut result = Vec::with_capacity(parts.len());
 
         for &[fprm, lprm] in &parts {
-            // OCCT L953-956: if (|fprm|>eps || |lprm-2閿滅皸>eps)  -- not full-period
+            // OCCT L953-956: if (|fprm|>eps || |lprm-2闁挎粎鐨?eps)  -- not full-period
             let is_full_period =
                 fprm.abs() <= aRealEpsilon && (lprm - aPeriod).abs() <= aRealEpsilon;
 
@@ -1512,9 +1512,9 @@ impl<'a> super::PaveFiller<'a> {
                 let trimmed_curve =
                     Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
 
-                let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                let mut curve_extra = crate::bop::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
-                result.push(crate::bop::ds::ds::IntersectionCurve {
+                result.push(crate::bop::ds::IntersectionCurve {
                     curve: trimmed_curve,
                     polyline: Vec::new(),
                     start_vertex: usize::MAX,
@@ -1527,16 +1527,16 @@ impl<'a> super::PaveFiller<'a> {
                     curve_extra,
                 });
             } else if is_full_period && aNbParts == 1 {
-                // Full-period, single part — accept full circle
+                // Full-period, single part 鈥?accept full circle
                 // OCCT L996-1042: trimmed full circle + BuildPCurves + append + break.
                 let pca = self.compute_pcurve_on_surface(curve, f1);
                 let pcb = self.compute_pcurve_on_surface(curve, f2);
                 // OCCT: no vertex creation in MakeCurve (vertices created later in caller).
                 let trimmed_curve =
                     Curve3::Trimmed(TrimmedCurve3::new(curve.clone(), fprm, lprm));
-                let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                let mut curve_extra = crate::bop::ds::CurveExtra::default();
                 curve_extra.tangential_tol = tang_tolerance;
-                result.push(crate::bop::ds::ds::IntersectionCurve {
+                result.push(crate::bop::ds::IntersectionCurve {
                     curve: trimmed_curve,
                     polyline: Vec::new(),
                     start_vertex: usize::MAX,
@@ -1570,9 +1570,9 @@ impl<'a> super::PaveFiller<'a> {
                     if in1 && in2 {
                         let pca = self.compute_pcurve_on_surface(curve, f1);
                         let pcb = self.compute_pcurve_on_surface(curve, f2);
-                        let mut curve_extra = crate::bop::ds::ds::CurveExtra::default();
+                        let mut curve_extra = crate::bop::ds::CurveExtra::default();
                         curve_extra.tangential_tol = tang_tolerance;
-                        result.push(crate::bop::ds::ds::IntersectionCurve {
+                        result.push(crate::bop::ds::IntersectionCurve {
                             curve: curve.clone(),
                             polyline: Vec::new(),
                             start_vertex: usize::MAX,
@@ -1683,7 +1683,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     /// TreatCircle (GeomInt_LineConstructor.cxx L481-560).
-    /// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2閿?,
+    /// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2闁?,
     /// creates intervals between sorted vertices, tests midpoints on both face
     /// domains.  Handles 0-crossing via PeriodicReparam + SeqFprm/SeqLprm.
     ///
@@ -1806,12 +1806,12 @@ impl<'a> super::PaveFiller<'a> {
 
         let aNbVtx = vertices.len();
         if aNbVtx == 0 {
-            // OCCT L3007-3016: GLine without vertices — place vertex at parameter 0.
+            // OCCT L3007-3016: GLine without vertices 鈥?place vertex at parameter 0.
             // Return full-period [0, 2*PI] so the circle is accepted as one part.
             return vec![[0.0, TAU]];
         }
 
-        // Build vertex array with parameters projected to [0, 2閿? (OCCT L492-495).
+        // Build vertex array with parameters projected to [0, 2闁? (OCCT L492-495).
         let mut sorted: Vec<(f64, &IntPatchVertex)> = vertices
             .iter()
             .map(|v| {
@@ -1834,7 +1834,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L500-502: sort by parameter.
         sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // OCCT L504: create last vertex at first.param + 2閿?
+        // OCCT L504: create last vertex at first.param + 2闁?
         let first_param = sorted[0].0;
         let last_param = first_param + TAU;
 
@@ -1846,7 +1846,7 @@ impl<'a> super::PaveFiller<'a> {
                 deduped.push(par);
             }
         }
-        // Add the last vertex (first.param + 2閿?, skip if duplicate of last deduped.
+        // Add the last vertex (first.param + 2闁?, skip if duplicate of last deduped.
         let last_2pi = first_param + TAU;
         if deduped.is_empty() || (last_2pi - *deduped.last().unwrap()).abs() > aTolPC {
             deduped.push(last_2pi);

@@ -31,7 +31,7 @@ use rcad_kernel::{
 };
 use std::collections::HashMap;
 
-use crate::bop::ds::ds::DS;
+use crate::bop::ds::DS;
 
 /// Types of boolean operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

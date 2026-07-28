@@ -9,8 +9,8 @@
 /// (and different faces) that lie on the same geometry.
 use std::collections::HashMap;
 
-use super::common_block::CommonBlock;
-use super::ds::DS;
+use crate::bop::ds::common_block::CommonBlock;
+use crate::bop::ds::DS;
 use crate::tolerance::*;
 
 use crate::bop::ds::pave::NO_EDGE;

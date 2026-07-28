@@ -1,4 +1,4 @@
-use crate::bop::ds::ds::DS;
+﻿use crate::bop::ds::DS;
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -54,7 +54,7 @@ pub fn point_in_planar_face(point: DVec3, plane: &Plane, face_verts: &[DVec3]) -
 }
 
 /// Same as [`point_in_planar_face`], with a 2D ray-cast margin (minimum [`TOLERANCE_ABS`]).
-/// Use the same magnitude as pave [`crate::bop::ds::ds::DS::fuzzy_tol`] for consistent V–F containment.
+/// Use the same magnitude as pave [`crate::bop::ds::DS::fuzzy_tol`] for consistent V鈥揊 containment.
 pub fn point_in_planar_face_with_tol(
     point: DVec3,
     plane: &Plane,
@@ -350,7 +350,7 @@ pub fn clip_line_to_polygon_with_tol(
         let ex = bx - ax;
         let ey = by - ay;
 
-        // line_dir × edge_dir  ?zero means parallel
+        // line_dir 脳 edge_dir  ?zero means parallel
         let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
             // when the line coincides with a polygon edge (parallel
@@ -374,7 +374,7 @@ pub fn clip_line_to_polygon_with_tol(
 
         // t where line crosses the edge's supporting line:
         //   line(t) = edge(i) + s * (edge(i+1) - edge(i))
-        //   (p[i] - origin) × edge_dir / (line_dir × edge_dir)
+        //   (p[i] - origin) 脳 edge_dir / (line_dir 脳 edge_dir)
         let t = ((ax - origin_u) * ey - (ay - origin_v) * ex) / denom;
 
         // Edge parameter s  ?check the intersection is within the segment

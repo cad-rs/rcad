@@ -1,4 +1,4 @@
-use crate::bnd_lib;
+﻿use crate::bnd_lib;
 use crate::tolerance::{CONFUSION, TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
@@ -394,7 +394,7 @@ impl EdgeEdgeIntersector {
         range1: [f64; 2],
         ei2: usize,
         range2: [f64; 2],
-        ds: &crate::bop::ds::ds::DS,
+        ds: &crate::bop::ds::DS,
     ) -> &mut Self {
         self.edge1 = ei1;
         self.edge2 = ei2;
@@ -432,7 +432,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // Perform — OCCT L185-243
+    // Perform 鈥?OCCT L185-243
     // ========================================================================
     /// Perform the intersection.
     pub fn perform(&mut self) {
@@ -467,7 +467,7 @@ impl EdgeEdgeIntersector {
         if (ct1_type <= 1 && ct2_type <= 1)
             && (matches!(self.curve1, Curve3::Line(_)) || matches!(self.curve2, Curve3::Line(_)))
         {
-            // OCCT uses BRepExtrema_DistShapeShape — approximate with closest-point
+            // OCCT uses BRepExtrema_DistShapeShape 鈥?approximate with closest-point
             let p1_mid = self
                 .curve1
                 .point_at(0.5 * (self.range1[0] + self.range1[1]));
@@ -488,7 +488,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // CheckData — OCCT (implied, not shown in header; simple validation)
+    // CheckData 鈥?OCCT (implied, not shown in header; simple validation)
     // ========================================================================
     fn check_data(&mut self) {
         if self.edge1 == usize::MAX || self.edge2 == usize::MAX {
@@ -497,7 +497,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // Prepare — OCCT L89-181
+    // Prepare 鈥?OCCT L89-181
     // ========================================================================
     fn prepare(&mut self) {
         let a_ct1 = curve_type_to_integer(&self.curve1);
@@ -567,7 +567,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // IsCoincident — OCCT L247-286
+    // IsCoincident 鈥?OCCT L247-286
     // ========================================================================
     fn is_coincident(&self) -> bool {
         const A_NB_SEG: usize = 23;
@@ -592,7 +592,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // ComputeLineLine — OCCT L902-1056
+    // ComputeLineLine 鈥?OCCT L902-1056
     // ========================================================================
     fn compute_line_line(&mut self) {
         let Curve3::Line(l1) = &self.curve1 else {
@@ -677,7 +677,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindSolutions (top-level dispatch) — OCCT L290-349
+    // FindSolutions (top-level dispatch) 鈥?OCCT L290-349
     // ========================================================================
     fn find_solutions(
         &mut self,
@@ -716,10 +716,10 @@ impl EdgeEdgeIntersector {
             return;
         }
 
-        // OCCT L320-325: closed path — CheckCoincidence
+        // OCCT L320-325: closed path 鈥?CheckCoincidence
         let i_com = self.check_coincidence(a_t11, a_t12, a_t21, a_t22, self.tol, self.res1);
         if i_com == 0 {
-            // not coincident — add whole ranges directly
+            // not coincident 鈥?add whole ranges directly
             the_ranges1.push([a_t11, a_t12]);
             the_ranges2.push([a_t21, a_t22]);
             return;
@@ -751,7 +751,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindSolutions (inner, iterative refinement) — OCCT L353-549
+    // FindSolutions (inner, iterative refinement) 鈥?OCCT L353-549
     // ========================================================================
     fn find_solutions_impl(
         &self,
@@ -919,7 +919,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindParameters — OCCT L553-671
+    // FindParameters 鈥?OCCT L553-671
     // ========================================================================
     fn find_parameters(
         &self,
@@ -1020,7 +1020,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // MergeSolutions — OCCT L675-776
+    // MergeSolutions 鈥?OCCT L675-776
     // ========================================================================
     fn merge_solutions(
         &mut self,
@@ -1103,7 +1103,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // AddSolution — OCCT L780-822
+    // AddSolution 鈥?OCCT L780-822
     // ========================================================================
     fn add_solution(&mut self, t11: f64, t12: f64, t21: f64, t22: f64, is_edge: bool) {
         let p1 = self.curve1.point_at(t11);
@@ -1127,7 +1127,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindBestSolution — OCCT L826-898
+    // FindBestSolution 鈥?OCCT L826-898
     // ========================================================================
     #[allow(unused)]
     fn find_best_solution(&self, t11: f64, t12: f64, t21: f64, t22: f64) -> (f64, f64) {
@@ -1152,7 +1152,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // CheckCoincidence — OCCT L1060-1148 (the method called from FindSolutions inner)
+    // CheckCoincidence 鈥?OCCT L1060-1148 (the method called from FindSolutions inner)
     // OCCT signature: int CheckCoincidence(aT11, aT12, aT21, aT22, theCriteria, theCurveRes1)
     // Returns: 0 = coincident (distance <= criteria), 1 = not coincident, 2 = far apart
     // ========================================================================
@@ -1165,7 +1165,7 @@ impl EdgeEdgeIntersector {
         criteria: f64,
         curve_res1: f64,
     ) -> i32 {
-        // OCCT L1068-1099: Step 1 — sample 10 points, quick rejection
+        // OCCT L1068-1099: Step 1 鈥?sample 10 points, quick rejection
         let a_nb = 10usize;
         let dt1 = (t12 - t11) / a_nb as f64;
         let mut t = t11;
@@ -1181,7 +1181,7 @@ impl EdgeEdgeIntersector {
             }
         }
 
-        // OCCT L1101-1138: Step 2 — golden-section search per segment to find MAX distance
+        // OCCT L1101-1138: Step 2 鈥?golden-section search per segment to find MAX distance
         // OCCT calls FindDistPC which does golden-section for max distance.
         // We approximate with simpler golden-section on the whole interval.
         const CF: f64 = 0.6180339887498948482045868343656;
@@ -1230,7 +1230,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // IsIntersection — OCCT L1150-1206
+    // IsIntersection 鈥?OCCT L1150-1206
     // ========================================================================
     fn is_intersection(&self, t11: f64, t12: f64, t21: f64, t22: f64) -> bool {
         let p11 = self.curve1.point_at(t11);

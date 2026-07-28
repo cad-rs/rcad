@@ -1,11 +1,11 @@
-//! Boolean operations (Union / Common / Cut) aligned with OCCT's high-level phases.
+﻿//! Boolean operations (Union / Common / Cut) aligned with OCCT's high-level phases.
 //!
 //! This module provides the PaveFiller-based boolean pipeline for all three operation types,
 //! mirroring OCCT's `BOPAlgo_BOP` / `BRepAlgoAPI_Fuse` / `BRepAlgoAPI_Common` / `BRepAlgoAPI_Cut`
 //! control flow:
 //!
 //! 1. **Prepare arguments** -- build the interference descriptor from both operands
-//!    ([`crate::bop::ds::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
+//!    ([`crate::bop::ds::DS::new`]), analogous to loading shapes into the BOP data structure.
 //! 2. **Intersection and paving** -- [`crate::bop::algo::pave_filler::PaveFiller::perform`], analogous to
 //!    `BOPAlgo_PaveFiller` (edge/face interferences, splits, pave sets).
 //! 3. **Build result** -- [`crate::bop::algo::builder::BooleanBuilder`] with the requested
@@ -32,7 +32,7 @@
 //! ## In-pipeline validation
 //!
 //! Each phase runs consistency checks before the next: operand [`BRep`] pool indices and
-//! finite coordinates, full [`crate::bop::ds::ds::DS`] internal consistency, then the same index/finite
+//! finite coordinates, full [`crate::bop::ds::DS`] internal consistency, then the same index/finite
 //! checks on the result (and again after plane recompute on the serial path). These mirror
 //! invariants the implementation is expected to maintain; they are intentionally weaker than
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
@@ -43,7 +43,7 @@ use crate::BooleanOpType;
 use crate::bop::algo::builder;
 use crate::bop::algo::pave_filler;
 use crate::bop::ds;
-use crate::bop::ds::ds::DS;
+use crate::bop::ds::DS;
 use crate::bop::ds::pave::NO_EDGE;
 use crate::bop::tools::bvh;
 use crate::bop::tools::bvh::{Aabb, Bvh};
@@ -341,7 +341,7 @@ pub fn pave_fill(
     use_bvh: bool,
     fuzzy_tol: f64,
 ) -> (
-    crate::bop::ds::ds::DS,
+    crate::bop::ds::DS,
     Vec<rcad_kernel::topods::Shape>,
     Vec<Option<rcad_kernel::topods::Shape>>,
 ) {
@@ -350,7 +350,7 @@ pub fn pave_fill(
     } else {
         (None, None)
     };
-    let mut ds = crate::bop::ds::ds::DS::new_empty();
+    let mut ds = crate::bop::ds::DS::new_empty();
     {
         let mut filler = match (&bvh_a, &bvh_b) {
             (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
@@ -405,7 +405,7 @@ pub fn boolean_op_generic(
     Ok(result)
 }
 
-// ── Union (Fuse) shortcuts ─────────────────────────────────────────────
+// 鈹€鈹€ Union (Fuse) shortcuts 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`
 pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
@@ -475,7 +475,7 @@ pub(crate) fn fuse_with_history_par_bvh(
     Ok((result_brep, hist))
 }
 
-// ── Common (Intersection) shortcuts ─────────────────────────────────────
+// 鈹€鈹€ Common (Intersection) shortcuts 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// OCCT shortcut: `BRepAlgoAPI_Common(a, b).Shape()` with history.
 pub(crate) fn common_with_history(
@@ -533,7 +533,7 @@ pub(crate) fn common_with_history_par_bvh(
     Ok((result_brep, hist))
 }
 
-// ── Cut (Difference) shortcuts ──────────────────────────────────────────
+// 鈹€鈹€ Cut (Difference) shortcuts 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// OCCT shortcut: `BRepAlgoAPI_Cut(a, b).Shape()` with history.
 pub(crate) fn cut_with_history(

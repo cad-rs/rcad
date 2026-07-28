@@ -1,13 +1,13 @@
-//! TKBO GTest translations.
+﻿//! TKBO GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKBO/GTests/
 //!
 //! Files translated in this module:
-//!   rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx  鈥?Non-copyability traits (C++ 鈫?Rust: trivially pass)
-//!   BOPAlgo_BOP_Test.cxx              鈥?Direct and two-step BOP operations
-//!   BOPAlgo_PaveFiller_Test.cxx       鈥?PaveFiller regression tests (degenerated edges)
-//!   IntTools_FaceFace_Test.cxx         鈥?Face-face intersection
-//!   rcad_kernel::BRepAlgoAPI_Common_Test.cxx       鈥?Common operation tests
+//!   rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx  閳?Non-copyability traits (C++ 閳?Rust: trivially pass)
+//!   BOPAlgo_BOP_Test.cxx              閳?Direct and two-step BOP operations
+//!   BOPAlgo_PaveFiller_Test.cxx       閳?PaveFiller regression tests (degenerated edges)
+//!   IntTools_FaceFace_Test.cxx         閳?Face-face intersection
+//!   rcad_kernel::BRepAlgoAPI_Common_Test.cxx       閳?Common operation tests
 //!
 //!
 //! NOTE: rcad_kernel::BRepAlgoAPI_Fuse_Test.cxx, rcad_kernel::BRepAlgoAPI_Cut_Test.cxx, and Cut_Test_1.cxx
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use crate::bop::algo::builder::BooleanOpType;
 use crate::bop::algo::pave_filler::PaveFiller;
-use crate::bop::ds::ds::DS;
+use crate::bop::ds::DS;
 use crate::bop::tools::bvh::Bvh;
 use crate::bool_ops_ext::make_face_half_space;
 use crate::tolerance::TOLERANCE_ABS;
@@ -33,7 +33,7 @@ const TOL: f64 = 1.0e-6;
 const SA_TOLERANCE: f64 = 5000.0;
 
 // =============================================================================
-// Helper utilities 鈥?BOPTest_Utilities equivalent
+// Helper utilities 閳?BOPTest_Utilities equivalent
 // =============================================================================
 
 fn make_unit_box() -> topods::BRep {
@@ -109,7 +109,7 @@ fn validate_result_sa(result: &rcad_kernel::BRep, expected_sa: f64) {
 }
 
 // =============================================================================
-// rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx 鈥?C++ type traits
+// rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx 閳?C++ type traits
 // =============================================================================
 
 #[cfg(test)]
@@ -131,7 +131,7 @@ mod builder_algo_tests {
 }
 
 // =============================================================================
-// BOPAlgo_BOP_Test.cxx 鈥?Direct and two-step BOP operations
+// BOPAlgo_BOP_Test.cxx 閳?Direct and two-step BOP operations
 // =============================================================================
 
 #[cfg(test)]
@@ -339,7 +339,7 @@ mod bop_algo_complex_tests {
     }
 
     /// OCCT: MultipleIntersectingPrimitives
-    /// Chain: sphere ∩ cylinder → result ∪ box
+    /// Chain: sphere 鈭?cylinder 鈫?result 鈭?box
     #[test]
     fn multiple_intersecting_primitives() {
         let sphere = make_sphere(DVec3::ZERO, 1.5);
@@ -485,7 +485,7 @@ mod pave_filler_tests {
         let cone_b = (cone).clone();
         let box_b = (box_).clone();
 
-        let result = crate::bop::algo_api::fuse(&cone_b, &box_b)
+        let result = crate::bop::brep_algo_api::fuse(&cone_b, &box_b)
             .expect("Boolean fuse of cone and box should succeed");
         assert!(get_volume(&result) > 0.0);
     }
@@ -496,7 +496,7 @@ mod pave_filler_tests {
         let box_b = (make_unit_box().clone());
 
         let result =
-            crate::bop::algo_api::fuse(&sphere_b, &box_b).expect("Boolean fuse should succeed");
+            crate::bop::brep_algo_api::fuse(&sphere_b, &box_b).expect("Boolean fuse should succeed");
         assert!(get_volume(&result) > 0.0);
     }
 
@@ -508,7 +508,7 @@ mod pave_filler_tests {
         let box_b = make_unit_box();
 
         // Use the internal PaveFiller directly (same path as boolean_op_generic)
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         {
             let mut filler = crate::bop::algo::pave_filler::PaveFiller::new(&mut ds);
             filler.configure_fuzzy(crate::tolerance::TOLERANCE_ABS);
@@ -694,15 +694,15 @@ mod bop_common_simple_tests {
         let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
 
         let result =
-            crate::bop::algo_api::common(&b1, &b2).expect("Common operation should succeed");
+            crate::bop::brep_algo_api::common(&b1, &b2).expect("Common operation should succeed");
         assert!(get_surface_area(&result) > 0.0);
     }
 }
 
 // =============================================================================
-// IntAna_QuadQuadGeo — Additional analytic intersection tests (P0)
+// IntAna_QuadQuadGeo 鈥?Additional analytic intersection tests (P0)
 //
-// IntAna_QuadQuadGeo — closed-form intersections between
+// IntAna_QuadQuadGeo 鈥?closed-form intersections between
 // quadric surfaces. Tests complement the existing plane-plane and
 // cylinder-cylinder tests above.
 // =============================================================================
@@ -714,7 +714,7 @@ mod quad_quad_geo_tests {
     use crate::bop::int_tools::int_surf_quadric::Quadric;
     use rcad_kernel::geom::*;
 
-    /// Plane through sphere center → Circle with radius = sphere radius.
+    /// Plane through sphere center 鈫?Circle with radius = sphere radius.
     #[test]
     fn plane_sphere_circle() {
         let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
@@ -737,14 +737,14 @@ mod quad_quad_geo_tests {
             "Plane through sphere center should produce Circle"
         );
         assert_eq!(qq.nb_solutions(), 1);
-        // Circle radius = sphere radius = 2.0 (center on plane → distance 0)
+        // Circle radius = sphere radius = 2.0 (center on plane 鈫?distance 0)
         assert!(
             (qq.circle().radius - 2.0).abs() < 1e-10,
             "Circle radius should match sphere radius"
         );
     }
 
-    /// Plane outside sphere → Empty.
+    /// Plane outside sphere 鈫?Empty.
     #[test]
     fn plane_sphere_empty() {
         let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z));
@@ -769,7 +769,7 @@ mod quad_quad_geo_tests {
         assert_eq!(qq.nb_solutions(), 0);
     }
 
-    /// Plane tangent to sphere → Point (single contact).
+    /// Plane tangent to sphere 鈫?Point (single contact).
     #[test]
     fn plane_sphere_tangent_point() {
         let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
@@ -793,14 +793,14 @@ mod quad_quad_geo_tests {
         );
     }
 
-    /// Plane perpendicular to cone axis, not through apex → Circle.
+    /// Plane perpendicular to cone axis, not through apex 鈫?Circle.
     #[test]
     fn plane_cone_circle() {
         let cone = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 0.0,
-            half_angle_rad: 0.5235987756, // 30°
+            half_angle_rad: 0.5235987756, // 30掳
         });
         let plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 2.0), DVec3::Z));
         let q_cone = Quadric::from_surface3(&cone).unwrap();
@@ -811,7 +811,7 @@ mod quad_quad_geo_tests {
         qq.perform_plane_cone(&q_plane, &q_cone, 1e-10, 1e-10);
 
         assert!(qq.is_done(), "Plane-cone intersection should complete");
-        // A plane perpendicular to the cone axis (not through apex) → Circle
+        // A plane perpendicular to the cone axis (not through apex) 鈫?Circle
         assert_eq!(
             qq.type_inter(),
             AnaResultType::Circle,
@@ -820,7 +820,7 @@ mod quad_quad_geo_tests {
         assert_eq!(qq.nb_solutions(), 1);
     }
 
-    /// Two identical cones with same axis → Same.
+    /// Two identical cones with same axis 鈫?Same.
     #[test]
     fn cone_cone_same() {
         let c1 = Surface3::Cone(ConicalSurface {
@@ -849,7 +849,7 @@ mod quad_quad_geo_tests {
         );
     }
 
-    /// Two cones with different axes → Hyperbola (2 solutions).
+    /// Two cones with different axes 鈫?Hyperbola (2 solutions).
     #[test]
     fn cone_cone_hyperbola() {
         let c1 = Surface3::Cone(ConicalSurface {
@@ -879,7 +879,7 @@ mod quad_quad_geo_tests {
         assert_eq!(qq.nb_solutions(), 2);
     }
 
-    /// Two overlapping spheres → Circle.
+    /// Two overlapping spheres 鈫?Circle.
     #[test]
     fn sphere_sphere_circle() {
         let s1 = Surface3::Sphere(SphericalSurface {
@@ -909,7 +909,7 @@ mod quad_quad_geo_tests {
         assert_eq!(qq.nb_solutions(), 1);
     }
 
-    /// Two non-overlapping spheres → Empty.
+    /// Two non-overlapping spheres 鈫?Empty.
     #[test]
     fn sphere_sphere_empty() {
         let s1 = Surface3::Sphere(SphericalSurface {
@@ -939,7 +939,7 @@ mod quad_quad_geo_tests {
         assert_eq!(qq.nb_solutions(), 0);
     }
 
-    /// Two identical spheres with same center → Same.
+    /// Two identical spheres with same center 鈫?Same.
     #[test]
     fn sphere_sphere_same() {
         let s = Surface3::Sphere(SphericalSurface {
@@ -964,9 +964,9 @@ mod quad_quad_geo_tests {
 }
 
 // =============================================================================
-// IntSurf_Quadric — Quadric surface tests (P1)
+// IntSurf_Quadric 鈥?Quadric surface tests (P1)
 //
-// IntSurf_Quadric_Test.cxx — ConeApexGradientRemainsFinite
+// IntSurf_Quadric_Test.cxx 鈥?ConeApexGradientRemainsFinite
 // =============================================================================
 
 #[cfg(test)]
@@ -1003,7 +1003,7 @@ mod quadric_tests {
 }
 
 // =============================================================================
-// IntTools_EdgeEdge — Pure helper function tests (edge_edge.rs)
+// IntTools_EdgeEdge 鈥?Pure helper function tests (edge_edge.rs)
 //
 // curve_type_to_integer, point_box_distance,
 // split_range_on_segments, intersect_line_line_3d
@@ -1148,7 +1148,7 @@ mod edge_edge_tools_tests {
     #[test]
     fn split_range_on_segments_small_range() {
         use crate::bop::int_tools::edge_edge::split_range_on_segments;
-        // range smaller than resolution → single segment
+        // range smaller than resolution 鈫?single segment
         let (num, segs) = split_range_on_segments(0.0, 0.01, 0.1, 5);
         assert_eq!(num, 1, "Range < resolution should produce single segment");
         assert_eq!(segs.len(), 1);
@@ -1171,10 +1171,10 @@ mod edge_edge_tools_tests {
         let result = intersect_line_line_3d(
             DVec3::ZERO,
             DVec3::X,
-            [0.0, 5.0], // line1: 0→5
+            [0.0, 5.0], // line1: 0鈫?
             DVec3::new(3.0, 0.0, 0.0),
             DVec3::X,
-            [0.0, 5.0], // line2 offset: at 3→8
+            [0.0, 5.0], // line2 offset: at 3鈫?
             1e-7,
         );
         assert!(
@@ -1221,8 +1221,8 @@ mod edge_edge_tools_tests {
     fn intersect_line_line_3d_crossing() {
         use crate::bop::int_tools::edge_edge::intersect_line_line_3d;
         // Two perpendicular lines crossing at (1,0,0)
-        // Line1: along X from 0 to 2 → (0,0,0) to (2,0,0)
-        // Line2: along Y from -1 to 1 → (1,-1,0) to (1,1,0)
+        // Line1: along X from 0 to 2 鈫?(0,0,0) to (2,0,0)
+        // Line2: along Y from -1 to 1 鈫?(1,-1,0) to (1,1,0)
         let result = intersect_line_line_3d(
             DVec3::ZERO,
             DVec3::X,
@@ -1241,12 +1241,12 @@ mod edge_edge_tools_tests {
         // Range is a tiny tolerance interval [t-a_dt, t+a_dt], not fully degenerate
         let t1_at_intersection = (r1[0] + r1[1]) * 0.5;
         let t2_at_intersection = (r2[0] + r2[1]) * 0.5;
-        // Line1 from (0,0,0) to (2,0,0), intersection at x=1 → t1=1.0
+        // Line1 from (0,0,0) to (2,0,0), intersection at x=1 鈫?t1=1.0
         assert!(
             (t1_at_intersection - 1.0).abs() < 1e-7,
             "Line1 intersection param should be ~1.0"
         );
-        // Line2 from (1,-1,0) to (1,1,0), intersection at y=0 → t2=1.0 (0+1)
+        // Line2 from (1,-1,0) to (1,1,0), intersection at y=0 鈫?t2=1.0 (0+1)
         assert!(
             (t2_at_intersection - 1.0).abs() < 1e-7,
             "Line2 intersection param should be ~1.0"
@@ -1274,7 +1274,7 @@ mod edge_edge_tools_tests {
 }
 
 // =============================================================================
-// BOPTools — Pure helper function tests (boptools/mod.rs)
+// BOPTools 鈥?Pure helper function tests (boptools/mod.rs)
 //
 // is_dirs_coinside, intermediate_point, is_on_pave,
 // is_in_range, compute_int_range, is_split_to_reverse, point_near_edge,
@@ -1314,11 +1314,11 @@ mod boptools_helpers_tests {
     fn is_dirs_coinside_with_tol_custom() {
         assert!(
             crate::bop::tools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 1.5),
-            "Orthogonal within loose tol (|X-Y|=sqrt2≈1.414 < 1.5)"
+            "Orthogonal within loose tol (|X-Y|=sqrt2鈮?.414 < 1.5)"
         );
         assert!(
             !crate::bop::tools::is_dirs_coinside_with_tol(DVec3::X, DVec3::Y, 0.5),
-            "Orthogonal outside tight tol (|X-Y|=sqrt2≈1.414 > 0.5, |2-1.414|=0.586 > 0.5)"
+            "Orthogonal outside tight tol (|X-Y|=sqrt2鈮?.414 > 0.5, |2-1.414|=0.586 > 0.5)"
         );
     }
 
@@ -1329,7 +1329,7 @@ mod boptools_helpers_tests {
 
     #[test]
     fn intermediate_point_occt_weighted() {
-        // PAR_T = 0.43213918 → result = (1-0.43213918)*0 + 0.43213918*10 = 4.3213918
+        // PAR_T = 0.43213918 鈫?result = (1-0.43213918)*0 + 0.43213918*10 = 4.3213918
         let r = crate::bop::tools::intermediate_point_occt(0.0, 10.0);
         assert!(
             (r - 4.3213918).abs() < 1e-10,
@@ -1412,7 +1412,7 @@ mod boptools_helpers_tests {
 
     #[test]
     fn compute_int_range_perpendicular() {
-        // angle = PI/2 (perpendicular) → sin=1, tan=inf → formula handles this
+        // angle = PI/2 (perpendicular) 鈫?sin=1, tan=inf 鈫?formula handles this
         let r = crate::bop::tools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_2);
         assert!(
             r.is_finite(),
@@ -1422,7 +1422,7 @@ mod boptools_helpers_tests {
 
     #[test]
     fn compute_int_range_acute() {
-        // angle = PI/3 (60°)
+        // angle = PI/3 (60掳)
         let r = crate::bop::tools::compute_int_range(1.0, 2.0, std::f64::consts::FRAC_PI_3);
         assert!(r.is_finite(), "Acute angle should produce finite range");
         assert!(r > 0.0, "Range should be positive");
@@ -1432,11 +1432,11 @@ mod boptools_helpers_tests {
     fn is_split_to_reverse_forward() {
         assert!(
             !crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::Z),
-            "Same normal → not reverse"
+            "Same normal 鈫?not reverse"
         );
         assert!(
             !crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.1, 0.99).normalize()),
-            "Slightly off normal → not reverse"
+            "Slightly off normal 鈫?not reverse"
         );
     }
 
@@ -1444,11 +1444,11 @@ mod boptools_helpers_tests {
     fn is_split_to_reverse_opposite() {
         assert!(
             crate::bop::tools::is_split_to_reverse(DVec3::Z, -DVec3::Z),
-            "Opposite → reverse"
+            "Opposite 鈫?reverse"
         );
         assert!(
             crate::bop::tools::is_split_to_reverse(DVec3::Z, DVec3::new(0.0, 0.0, -1.0)),
-            "Exact opposite → reverse"
+            "Exact opposite 鈫?reverse"
         );
     }
 
@@ -1506,7 +1506,7 @@ mod boptools_helpers_tests {
 mod ds_interf_tests {
     #[test]
     fn try_add_interf_new_pair() {
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         assert!(
             ds.try_add_interf(0, 1),
             "First insertion should return true (new pair)"
@@ -1516,7 +1516,7 @@ mod ds_interf_tests {
 
     #[test]
     fn try_add_interf_duplicate_rejected() {
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         assert!(ds.try_add_interf(0, 1), "First insertion");
         assert!(!ds.try_add_interf(0, 1), "Duplicate should be rejected");
         assert!(
@@ -1527,7 +1527,7 @@ mod ds_interf_tests {
 
     #[test]
     fn try_add_interf_multiple_pairs() {
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         assert!(ds.try_add_interf(0, 1));
         assert!(ds.try_add_interf(0, 2));
         assert!(ds.try_add_interf(1, 2));
@@ -1537,7 +1537,7 @@ mod ds_interf_tests {
 
     #[test]
     fn allocate_pave_block_returns_increasing_indices() {
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         use crate::bop::ds::pave::{Pave, PaveBlock};
         let pv1 = Pave {
             vertex_idx: 0,
@@ -1556,7 +1556,7 @@ mod ds_interf_tests {
 
     #[test]
     fn add_shape_sd_then_has_shape_sd() {
-        let mut ds = crate::bop::ds::ds::DS::new_empty();
+        let mut ds = crate::bop::ds::DS::new_empty();
         ds.add_shape_sd(0, 1);
         assert_eq!(ds.has_shape_sd(0), Some(1));
         // Independent pair
@@ -1689,7 +1689,7 @@ mod face_face_helper_tests {
     }
 }
 
-// ── Boolean pipeline stage classification tests ──────────────────────────────
+// 鈹€鈹€ Boolean pipeline stage classification tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 //
 // These tests use `build_with_history_stage_by_stage` to run the boolean
 // pipeline step by step, capturing DS + BRep counts after each stage.
@@ -1730,7 +1730,7 @@ mod stage_classification_tests {
             .build_with_history_stage_by_stage()
             .expect("stage_by_stage pipeline failed");
 
-        eprintln!("\n── {label} stage classification ──");
+        eprintln!("\n鈹€鈹€ {label} stage classification 鈹€鈹€");
         eprintln!(
             "{stage:>4} {name:<40} DS(V/E/F/PB/IC)    BRep(V/E/F/Sh/So)",
             stage = "Stg",
@@ -1740,11 +1740,11 @@ mod stage_classification_tests {
         let mut first_bad: Option<u32> = None;
         for s in &snapshots {
             let flag = if s.n_brep_faces == 0 && s.stage >= 9 {
-                " ◀ FAIL"
+                " 鈼€ FAIL"
             } else if s.n_brep_faces > 0 && s.stage >= 9 {
                 " OK"
             } else if s.n_ds_pave_blocks == 0 && s.stage >= 5 {
-                " ⚠ nPB=0"
+                " 鈿?nPB=0"
             } else {
                 ""
             };
@@ -1770,7 +1770,7 @@ mod stage_classification_tests {
                 first_bad = Some(s.stage);
             }
         }
-        eprintln!("── {label}: first bad stage = {:?} ──", first_bad);
+        eprintln!("鈹€鈹€ {label}: first bad stage = {:?} 鈹€鈹€", first_bad);
         first_bad
     }
 
@@ -1836,7 +1836,7 @@ mod stage_classification_tests {
             filler.set_run_parallel(false);
             filler.perform(&a, &b);
         };
-        eprintln!("\n── DS state after pave_fill ──");
+        eprintln!("\n鈹€鈹€ DS state after pave_fill 鈹€鈹€");
         eprintln!(
             "V={} E={} F={} IC={} PB={}",
             ds.vertex_count(),
@@ -1911,13 +1911,13 @@ mod stage_classification_tests {
 mod pave_filler_internal_tests {
     use super::*;
     use crate::bop::algo::pave_filler::build_face_shape_map;
-    use crate::bop::ds::ds::{DSEdge, DSFace, DSVertex, ShapeOrigin};
+    use crate::bop::ds::{DSEdge, DSFace, DSVertex, ShapeOrigin};
     use glam::DVec3;
     use rcad_kernel::geom::{Curve3, Surface3};
 
     /// Build a minimal DS for unit testing.
     /// - 3 vertices: v0=(0,0,0), v1=(1,0,0), v2=(1,1,0)
-    /// - 2 edges: e0=v0→v1, e1=v1→v2
+    /// - 2 edges: e0=v0鈫抳1, e1=v1鈫抳2
     /// - 1 face with boundary edges [0,1]
     fn make_minimal_ds() -> DS {
         let mut ds = DS::new_empty();
@@ -2102,7 +2102,7 @@ mod pave_filler_internal_tests {
     #[test]
     fn intersect_vertices_close_pair_joined() {
         let ds = make_vertex_test_ds();
-        // v0 and v1 are within tol → one group
+        // v0 and v1 are within tol 鈫?one group
         let blocks = crate::bop::algo::intersect_vertices(&[0, 1], &ds, 0.0);
         assert_eq!(
             blocks.len(),
@@ -2116,7 +2116,7 @@ mod pave_filler_internal_tests {
     #[test]
     fn intersect_vertices_far_pair_separate() {
         let ds = make_vertex_test_ds();
-        // v0 and v2 are far apart → two groups
+        // v0 and v2 are far apart 鈫?two groups
         let blocks = crate::bop::algo::intersect_vertices(&[0, 2], &ds, 0.0);
         assert_eq!(
             blocks.len(),
@@ -2128,7 +2128,7 @@ mod pave_filler_internal_tests {
     #[test]
     fn intersect_vertices_chain_connected() {
         let ds = make_vertex_test_ds();
-        // v2 and v3 are close → one group
+        // v2 and v3 are close 鈫?one group
         let blocks = crate::bop::algo::intersect_vertices(&[2, 3], &ds, 0.0);
         assert_eq!(blocks.len(), 1, "chain-close vertices should merge");
     }
@@ -2162,8 +2162,8 @@ mod pave_filler_internal_tests {
             },
         );
         let result = pb.update(false);
-        // a_nb = 0 (no ext_paves), a_nb <= 1 → empty result
-        assert!(result.is_empty(), "no ext_paves + theFlag=false → empty");
+        // a_nb = 0 (no ext_paves), a_nb <= 1 鈫?empty result
+        assert!(result.is_empty(), "no ext_paves + theFlag=false 鈫?empty");
     }
 
     #[test]
@@ -2184,8 +2184,8 @@ mod pave_filler_internal_tests {
             param: 1.0,
         });
         let result = pb.update(false);
-        // a_nb = 1 (one ext_pave), a_nb <= 1 → empty result
-        assert!(result.is_empty(), "one ext_pave + theFlag=false → empty");
+        // a_nb = 1 (one ext_pave), a_nb <= 1 鈫?empty result
+        assert!(result.is_empty(), "one ext_pave + theFlag=false 鈫?empty");
     }
 
     #[test]
@@ -2211,7 +2211,7 @@ mod pave_filler_internal_tests {
         });
         let result = pb.update(false);
         // a_nb = 2, produces one sub-PB: (ext1, ext2)
-        assert_eq!(result.len(), 1, "two ext_paves → one sub-PB");
+        assert_eq!(result.len(), 1, "two ext_paves 鈫?one sub-PB");
         let (v1, v2) = result[0].indices();
         assert_eq!(v1, 1, "first sub-PB start = ext_pave1");
         assert_eq!(v2, 2, "first sub-PB end = ext_pave2");
@@ -2244,7 +2244,7 @@ mod pave_filler_internal_tests {
         });
         let result = pb.update(false);
         // a_nb = 3, produces two sub-PBs: (ext1, ext2) and (ext2, ext3)
-        assert_eq!(result.len(), 2, "three ext_paves → two sub-PBs");
+        assert_eq!(result.len(), 2, "three ext_paves 鈫?two sub-PBs");
         let (v1a, v2a) = result[0].indices();
         let (v1b, v2b) = result[1].indices();
         assert_eq!(v1a, 1, "sub-PB[0] start = ext_pave1");
@@ -2278,7 +2278,7 @@ mod pave_filler_internal_tests {
         });
         let result = pb.update(true);
         // a_nb = 2 + 2 = 4, produces 3 sub-PBs: (pave1, e1), (e1, e2), (e2, pave2)
-        assert_eq!(result.len(), 3, "two ext_paves + theFlag=true → 3 sub-PBs");
+        assert_eq!(result.len(), 3, "two ext_paves + theFlag=true 鈫?3 sub-PBs");
         let (v1a, v2a) = result[0].indices();
         assert_eq!(v1a, 0, "sub-PB[0] start = pave1");
         assert_eq!(v2a, 1, "sub-PB[0] end = ext_pave1");
@@ -2306,7 +2306,7 @@ mod pave_filler_internal_tests {
         let mut ds = DS::new_empty();
         ds.add_shape_sd(5, 3);
         ds.add_shape_sd(3, 1);
-        // Direct: 5→3 and 3→1.  find_sd_partner does NOT follow chains
+        // Direct: 5鈫? and 3鈫?.  find_sd_partner does NOT follow chains
         // (OCCT HasShapeSD follows chains in the DS-level has_shape_sd,
         //  but rcad's find_sd_partner returns the direct minimum partner)
         assert_eq!(ds.has_shape_sd(5), Some(3), "v5 direct SD partner is v3");
@@ -2400,12 +2400,12 @@ mod pave_filler_internal_tests {
             vertex_idx: 7,
             param: 7.0,
         });
-        // update(false) sorts by param: ext(3), ext(7), ext(9) → 2 sub-PBs
+        // update(false) sorts by param: ext(3), ext(7), ext(9) 鈫?2 sub-PBs
         let result = pb.update(false);
         assert_eq!(
             result.len(),
             2,
-            "3 unsorted ext_paves → 2 sub-PBs after sort"
+            "3 unsorted ext_paves 鈫?2 sub-PBs after sort"
         );
         let (v1, v2) = result[0].indices();
         assert_eq!(v1, 3, "first sub-PB start = smallest param ext_pave");

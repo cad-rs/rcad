@@ -1,9 +1,9 @@
-use super::ResultBuilder;
+﻿use super::ResultBuilder;
 use super::{BooleanBuilder, SourceSide};
 use crate::bop::algo::builder::types::*;
 use crate::bop::algo::builder::wire_splitter::{EdgeInfo, build_closed_wires, world_to_uv};
 use crate::bop::algo::{Alert, GlueEnum, Report};
-use crate::bop::ds::ds::*;
+use crate::bop::ds::*;
 use crate::bop::tools::bvh::{Aabb, BoxTree};
 use crate::classify::{Classification, classify_point};
 use crate::history::{
@@ -27,8 +27,8 @@ impl<'a> BooleanBuilder<'a> {
     //   BOPAlgo_Builder.cxx L310-440
     // ====================================================================
 
-    /// ✅ OCCT-aligned: FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
-    /// Maps each SD vertex pair as myImages[source]→[target], myShapesSD, myOrigins.
+    /// 鉁?OCCT-aligned: FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
+    /// Maps each SD vertex pair as myImages[source]鈫抂target], myShapesSD, myOrigins.
     pub(super) fn fill_images_vertices(&self) {
         for &(va, vb) in self.ds.shape_sd.sd_vertices_iter() {
             if va >= vb {
@@ -52,8 +52,8 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
-    /// Maps source edges → split images via pave-block new_edge.
+    /// 鉁?OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
+    /// Maps source edges 鈫?split images via pave-block new_edge.
     /// Also handles CommonBlocks via myShapesSD.
     pub(super) fn fill_images_edges(&self) {
         let a_nb_s = self.ds.nb_source_shapes();
@@ -104,7 +104,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
+    /// 鉁?OCCT-aligned: FillImagesContainer(WIRE) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_wire(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertex_count();
         let w_base = e_base + self.ds.edge_count();
@@ -133,7 +133,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            // OCCT L235-240: no modified sub-shapes → skip (original wire is used as-is)
+            // OCCT L235-240: no modified sub-shapes 鈫?skip (original wire is used as-is)
             if !modified {
                 continue;
             }
@@ -165,7 +165,7 @@ impl<'a> BooleanBuilder<'a> {
             my_images_mut.entry(w_ref).or_default().extend(a_c_im);
         }
     }
-    /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
+    /// 鉁?OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     /// 3-step dispatcher: BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
     /// Populates T BRep with source shape TShapes first (OCCT: BuildResult adds them).
     pub(super) fn fill_images_faces(&self) {
@@ -286,7 +286,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-486).
+    /// 鉁?OCCT-aligned: PostTreat (BOPAlgo_Builder.cxx L456-486).
     pub(super) fn post_treat(&mut self) {
         // OCCT L461-475: build MapToAvoid from VERTEX/EDGE/FACE source shapes
         let a_ma: std::collections::HashSet<usize> = if self.my_non_destructive {
@@ -358,7 +358,7 @@ impl<'a> BooleanBuilder<'a> {
             let mut updates: Vec<(topods::Shape, f64, rcad_kernel::topods::ShapeType)> =
                 Vec::new();
 
-            // Phase 1: Edge → Vertex — if vertex tolerance < edge tolerance, update vertex
+            // Phase 1: Edge 鈫?Vertex 鈥?if vertex tolerance < edge tolerance, update vertex
             for (ti, ts) in t.tshapes.iter().enumerate() {
                 if let rcad_kernel::topods::TShape::Edge(ed) = &**ts {
                     let a_tol_e = ed.tolerance;
@@ -382,7 +382,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // Phase 2: Face → Edge — if edge tolerance < face tolerance, update edge
+            // Phase 2: Face 鈫?Edge 鈥?if edge tolerance < face tolerance, update edge
             for (ti, ts) in t.tshapes.iter().enumerate() {
                 if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
                     let a_tol_f = fd.tolerance;
@@ -443,11 +443,11 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-555).
-    ///   Iterates source faces — splits each along intersection curves.
+    /// 鉁?OCCT-aligned: BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-555).
+    ///   Iterates source faces 鈥?splits each along intersection curves.
     ///   For faces with IN/SC PBs: full BuilderFace::Perform.
     ///   For ON-only faces: BuildDraftFace.
-    ///   Faces with no interferences — skipped (no images).
+    ///   Faces with no interferences 鈥?skipped (no images).
     pub(super) fn build_split_faces(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         let a_nb_s = self.ds.nb_source_shapes;
         let mut face_counter = 0usize;
@@ -571,7 +571,7 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     }
-                    // OCCT L330-333: no internals and no modified → skip this face.
+                    // OCCT L330-333: no internals and no modified 鈫?skip this face.
                     if !has_internals && !has_modified {
                         continue;
                     }
@@ -605,11 +605,11 @@ impl<'a> BooleanBuilder<'a> {
                                 }
                             }
                         }
-                        continue; // OCCT L347: draft face stored → skip BuilderFace.
+                        continue; // OCCT L347: draft face stored 鈫?skip BuilderFace.
                     }
-                    // OCCT L349: BuildDraftFace returned null → fall through to BuilderFace.
+                    // OCCT L349: BuildDraftFace returned null 鈫?fall through to BuilderFace.
                 }
-                // OCCT L351 (implicit): has_internals → fall through to BuilderFace.
+                // OCCT L351 (implicit): has_internals 鈫?fall through to BuilderFace.
             }
 
             let face_sr = {
@@ -619,7 +619,7 @@ impl<'a> BooleanBuilder<'a> {
                 self.brep_sr(f_base + side_offset + sf_idx)
             };
             let mut a_le: Vec<topods::Shape> = Vec::new();
-            // OCCT L353: aMFence — fence for SEAM edge dedup.
+            // OCCT L353: aMFence 鈥?fence for SEAM edge dedup.
             let mut a_m_fence_local: std::collections::HashSet<u64> =
                 std::collections::HashSet::new();
             // TopExp_Explorer fence: process each edge TShape only once across all wires.
@@ -827,7 +827,7 @@ impl<'a> BooleanBuilder<'a> {
                     });
                 }
             }
-            // OCCT L496-500: BuildPCurveForEdgesOnPlane — speed up for planar faces.
+            // OCCT L496-500: BuildPCurveForEdgesOnPlane 鈥?speed up for planar faces.
             if !self.my_non_destructive {
                 if matches!(
                     self.ds.faces.get(fi).unwrap().surface,
@@ -855,7 +855,7 @@ impl<'a> BooleanBuilder<'a> {
                             self.ds.edge_curve(ei).unwrap(),
                             self.ds.face_surface(fi).unwrap(),
                         ) {
-                            // OCCT pattern: clone TEdgeData → insert → replace Arc.
+                            // OCCT pattern: clone TEdgeData 鈫?insert 鈫?replace Arc.
                             if let topods::TShape::Edge(ed) = &*t.tshapes[e_sr.index].clone() {
                                 let mut new_ed = ed.clone();
                                 new_ed
@@ -947,7 +947,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
+    /// 鉁?OCCT-aligned: FillInternalVertices (BOPAlgo_Builder_2.cxx L929-1008).
     pub(super) fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
         // OCCT L937-980: iterate source faces with split images.
         for (ds_fi, ds_face) in self.ds.faces.iter().enumerate() {
@@ -1046,7 +1046,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillSameDomainFaces (BOPAlgo_Builder_2.cxx L580-925).
+    /// 鉁?OCCT-aligned: FillSameDomainFaces (BOPAlgo_Builder_2.cxx L580-925).
     pub(super) fn fill_same_domain_faces(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf < 2 {
@@ -1143,7 +1143,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
         // Build result_fi_filtered from aFIVec (only result faces whose source DS face
-        // is in the FF-interfering set — matches OCCT's iteration scope)
+        // is in the FF-interfering set 鈥?matches OCCT's iteration scope)
         let mut a_fence_result: HashSet<usize> = HashSet::new();
         let mut result_fi_filtered: Vec<usize> = Vec::new();
         for &dsfi in &a_fi_vec {
@@ -1186,7 +1186,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
-                // OCCT L149-159: TopAbs_INTERNAL → add FORWARD + REVERSED
+                // OCCT L149-159: TopAbs_INTERNAL 鈫?add FORWARD + REVERSED
                 for internal in &entry.9 {
                     for &(ei, _) in internal {
                         if !result.deg_edge_indices.contains(&ei) {
@@ -1460,7 +1460,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   Iterates source shapes, filters by type, calls FillImagesContainer.
     ///   rcad: dispatches to type-specific implementations.
     /// --FillImagesContainers (Builder_1.cxx L172-193).
-    /// ✅ OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-193).
+    /// 鉁?OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-193).
     ///   OCCT: iterates source shapes, filters by theType, calls FillImagesContainer for each.
     ///   rcad: dispatches to type-specific handlers.
     pub(super) fn fill_images_container(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
@@ -1473,14 +1473,14 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainer(SHELL) (BOPAlgo_Builder_1.cxx L221-276).
+    /// 鉁?OCCT-aligned: FillImagesContainer(SHELL) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_shell(
         &self,
         result: &mut ResultBuilder,
         t: &mut topods::BRep,
     ) {
         let mut pending: Vec<(topods::Shape, Vec<topods::Shape>)> = Vec::new();
-        // Pre-build DS face → result face Shape map for fast lookup
+        // Pre-build DS face 鈫?result face Shape map for fast lookup
         let mut ds_face_to_ref: Vec<Option<topods::Shape>> = vec![None; self.ds.face_count()];
         for (rfi, fo) in result.face_origins.iter().enumerate() {
             let (origin, sfi) = match fo {
@@ -1523,7 +1523,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            // OCCT L235-240: no modification → skip
+            // OCCT L235-240: no modification 鈫?skip
             if !modified {
                 continue;
             }
@@ -1540,7 +1540,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 } else {
-                    // No splits → use original face
+                    // No splits 鈫?use original face
                     let dsfi = flat_fi.saturating_sub(
                         self.ds.vertex_count() + self.ds.edge_count() + self.ds.shape_info.iter().filter(|si| si.shape_type == rcad_kernel::topods::ShapeType::Wire && !si.is_new).count(),
                     );
@@ -1607,7 +1607,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainer(COMPSOLID) (BOPAlgo_Builder_1.cxx L221-276).
+    /// 鉁?OCCT-aligned: FillImagesContainer(COMPSOLID) (BOPAlgo_Builder_1.cxx L221-276).
     pub(super) fn fill_images_container_compsolid(
         &self,
         result: &mut ResultBuilder,
@@ -1707,8 +1707,8 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
-    ///   OCCT BOPAlgo_Builder_3.cxx L60-93: FillIn3DParts → BuildSplitSolids → FillInternalShapes.
+    /// 鉁?OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
+    ///   OCCT BOPAlgo_Builder_3.cxx L60-93: FillIn3DParts 鈫?BuildSplitSolids 鈫?FillInternalShapes.
     pub(super) fn fill_images_solids(&self, result: &mut ResultBuilder) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid {
@@ -1722,7 +1722,7 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_internal_shapes(result);
     }
 
-    /// ✅ OCCT-aligned: BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368).
+    /// 鉁?OCCT-aligned: BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368).
     /// Builds a draft solid from a source solid, replacing split faces with their images.
     pub(super) fn build_draft_solid(
         &self,
@@ -1841,7 +1841,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
+    /// 鉁?OCCT-aligned: FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
     pub(super) fn fill_in_3d_parts(
         &self,
         result: &mut ResultBuilder,
@@ -2081,7 +2081,7 @@ impl<'a> BooleanBuilder<'a> {
         assignments
     }
 
-    /// ✅ OCCT-aligned: BuildSplitSolids (BOPAlgo_Builder_3.cxx L413-618).
+    /// 鉁?OCCT-aligned: BuildSplitSolids (BOPAlgo_Builder_3.cxx L413-618).
     /// Build result solids from draft solids and IN faces.
     pub(super) fn build_split_solids(
         &self,
@@ -2095,7 +2095,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_mst: Vec<std::collections::BTreeSet<usize>> = Vec::new();
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
 
-        // Helper: result face index → DS face index
+        // Helper: result face index 鈫?DS face index
         let result_to_ds = |rfi: usize, expected_origin: ShapeOrigin| -> Option<usize> {
             let fo = result.face_origins.get(rfi)?;
             let sfi = match (expected_origin, fo) {
@@ -2139,7 +2139,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 a_mst.push(ds_set);
 
-                // OCCT L451-461: non-interfered solid → build from source DS faces.
+                // OCCT L451-461: non-interfered solid 鈫?build from source DS faces.
                 let mut sf: Vec<topods::Shape> = Vec::new();
                 let e_base = self.ds.vertex_count();
                 for &dsfi in ds_shell {
@@ -2189,11 +2189,11 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // === Phase 1a: Interfered solids — build result solid in T BRep ===
+        // === Phase 1a: Interfered solids 鈥?build result solid in T BRep ===
         // OCCT L467-518: BOPAlgo_SplitSolid with draft solid faces + IN faces.
         // rcad: build T BRep solid from OUTSIDE split images directly (BuilderSolid
         // does not support cutting).  OCCT BuildDraftSolid replaces source faces with
-        // split images — rcad does the same here by selecting OUTSIDE split images.
+        // split images 鈥?rcad does the same here by selecting OUTSIDE split images.
         for (dsi, &(si, side, _state)) in assignments.iter().enumerate() {
             let in_split = self.my_split_images_in.borrow();
             let imgs = self.my_images.borrow();
@@ -2300,8 +2300,8 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L579-617: store split results in myImages (Phase 1a already built T BRep solids).
-        // OCCT L520-531: BuilderSolid parallel execution — rcad bypasses, builds solids directly.
-        // OCCT L539-577: collect BuilderSolid areas into aSolidsIm — rcad Phase 1a stored in tmp_shells.
+        // OCCT L520-531: BuilderSolid parallel execution 鈥?rcad bypasses, builds solids directly.
+        // OCCT L539-577: collect BuilderSolid areas into aSolidsIm 鈥?rcad Phase 1a stored in tmp_shells.
         result.tmp_solids = result_solids;
 
         // OCCT BuilderSolid::PerformAreas (BuilderSolid.cxx L397-576): void detection.

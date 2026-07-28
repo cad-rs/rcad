@@ -1,18 +1,18 @@
-// BOPAlgo_PaveFiller::MakeBlocks (PaveFiller_6.cxx L650-1169).
+﻿// BOPAlgo_PaveFiller::MakeBlocks (PaveFiller_6.cxx L650-1169).
 //
 // Variable naming follows OCCT convention: aXxx = local var matching OCCT aXxx.
 // Allocator-specific logic (IncAllocator, DefaultAllocator) is omitted because
-// Rust's Vec/HashMap handle memory automatically — the structure (collection
+// Rust's Vec/HashMap handle memory automatically 鈥?the structure (collection
 // declarations outside the loop, cleared inside) is preserved for OCCT alignment.
 //
 // One notable structural difference: the rcad DS uses separate index namespaces
 // for vertices vs edges (occt_vertex_idx != occt_edge_idx), so HashMap keys
 // mixing both indices are safe as long as no index value from one namespace
-// equals an index value from the other — unlikely in practice.
+// equals an index value from the other 鈥?unlikely in practice.
 
 use super::helpers::*;
 use super::*;
-use crate::bop::ds::ds::{
+use crate::bop::ds::{
     DS, DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, ShapeOrigin,
 };
 use crate::bop::ds::pave::*;
@@ -129,7 +129,7 @@ impl<'a> super::PaveFiller<'a> {
         if n_e >= self.ds.edge_count() {
             return;
         }
-        // OCCT L630-645: iterate SubShapes() — all vertex sub-shapes of the edge
+        // OCCT L630-645: iterate SubShapes() 鈥?all vertex sub-shapes of the edge
         // including internal vertices (paves). rcad: start/end vertices + paves.
         let n_vs: Vec<usize> = {
             let mut v = vec![
@@ -409,7 +409,7 @@ impl<'a> super::PaveFiller<'a> {
                                 let a_vtgt2_n = a_vtgt2.normalize();
                                 // OCCT L2161: cos = aVTgt1.Dot(aVTgt2.Normalized())
                                 let a_cos = a_vtgt1_n.dot(a_vtgt2_n);
-                                // OCCT L2162: if (abs(aCos) >= 0.9063) — 25-degree threshold
+                                // OCCT L2162: if (abs(aCos) >= 0.9063) 鈥?25-degree threshold
                                 if a_cos.abs() >= 0.9063 {
                                     a_real_tol = a_tol_add;
                                 }
@@ -513,7 +513,7 @@ impl<'a> super::PaveFiller<'a> {
             usize,
             usize,
             Vec<usize>,
-            Vec<crate::bop::ds::ds::types::FFPoint>,
+            Vec<crate::bop::ds::types::FFPoint>,
         )> = self.ds
             .interf_ff.iter()
             .map(|ff| (ff.f1, ff.f2, ff.curves.clone(), ff.points.clone()))
@@ -526,7 +526,7 @@ impl<'a> super::PaveFiller<'a> {
         while loop_i < a_nb_ff {
             let i = loop_i;
             loop_i += 1; // increment BEFORE loop body (OCCT: ++i in for header)
-            // L729-732: UserBreak check — omitted (no progress range in rcad)
+            // L729-732: UserBreak check 鈥?omitted (no progress range in rcad)
 
             // L735: aCurInd = i < aNbFFPrev ? i : aFFToRecheck[i - aNbFFPrev];
             let a_cur_ind = if i < a_nb_ff_prev {
@@ -632,7 +632,7 @@ impl<'a> super::PaveFiller<'a> {
                     continue;
                 }
                 // L841: PutStickPavesOnCurve(aF1, aF2, aMI, aVC, j, aMVStick, aMVTol, aDMVLV)
-                // OCCT L2928-2955: RemoveUsedVertices — remove vertices already on any curve
+                // OCCT L2928-2955: RemoveUsedVertices 鈥?remove vertices already on any curve
                 let a_mv_filtered: std::collections::HashSet<usize> = {
                     let mut mv = a_mv_stick.clone();
                     for &oci in curves_of_ff {
@@ -662,7 +662,7 @@ impl<'a> super::PaveFiller<'a> {
                 if a_nb_c == 1 {
                     self.put_ef_paves_on_curve(ci, &a_mi, &a_mv_ef, &mut a_mv_tol, &mut a_dmv_lv);
                 }
-                // L848-863: aIC.HasBounds() → PutBoundPaveOnCurve
+                // L848-863: aIC.HasBounds() 鈫?PutBoundPaveOnCurve
                 let has_bounds = {
                     let ic = &self.ds.intersection_curves[ci];
                     ic.start_vertex < self.ds.vertex_count()
@@ -700,7 +700,7 @@ impl<'a> super::PaveFiller<'a> {
             // L874-895: Build PB BVH tree from aMPBOnIn
             let a_pb_tree = Self::build_pb_tree(self.ds, &a_mpb_on_in);
 
-            // L899: isToRecheck — OCCT: (aNbC > 0) && (i < aNbFFPrev)
+            // L899: isToRecheck 鈥?OCCT: (aNbC > 0) && (i < aNbFFPrev)
             // If there are any intersection curves, recheck is needed to
             // avoid missing section edges due to FF processing order.
             let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
@@ -818,7 +818,7 @@ impl<'a> super::PaveFiller<'a> {
                         continue;
                     }
 
-                    // OCCT L937-960: BRepLib::FindValidRange — check if the pave block
+                    // OCCT L937-960: BRepLib::FindValidRange 鈥?check if the pave block
                     // has a valid range outside the vertex tolerance spheres.
                     let has_valid_range = {
                         let ic = &self.ds.intersection_curves[ci];
@@ -949,7 +949,7 @@ impl<'a> super::PaveFiller<'a> {
 
                     // L1055-1094: Make section edge
                     if std::env::var("RCAD_DBG_MB").is_ok() {
-                        eprintln!("[DBG_MB]   sub-PB ({},{}) → MAKE EDGE", n_v1, n_v2);
+                        eprintln!("[DBG_MB]   sub-PB ({},{}) 鈫?MAKE EDGE", n_v1, n_v2);
                     }
                     let a_curve = &self.ds.intersection_curves[ci].curve;
                     let pca = self.ds.intersection_curves[ci].pcurve_on_a.clone();
@@ -1018,7 +1018,7 @@ impl<'a> super::PaveFiller<'a> {
                     );
                 } // for a_pb in &a_lpb
 
-                // L1097: aLPBC.RemoveFirst() — remove InitPaveBlock1
+                // L1097: aLPBC.RemoveFirst() 鈥?remove InitPaveBlock1
                 if !self.ds.intersection_curves[ci].pave_blocks.is_empty() {
                     self.ds.intersection_curves[ci].pave_blocks.remove(0);
                 }
@@ -1089,7 +1089,7 @@ impl<'a> super::PaveFiller<'a> {
             &a_verts_on_rejected_pb,
         );
 
-        // L1153-1156: if (HasErrors()) return; — omitted (no HasErrors in rcad)
+        // L1153-1156: if (HasErrors()) return; 鈥?omitted (no HasErrors in rcad)
 
         // L1158: CorrectToleranceOfSE
         self.correct_tolerance_of_se();

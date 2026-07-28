@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
@@ -9,8 +9,8 @@ use rcad_kernel::topods;
 
 use crate::bop::algo::{Alert, GlueEnum, Report};
 use crate::bop::ds::common_block::CommonBlock;
-use crate::bop::ds::ds::face_aabb;
-use crate::bop::ds::ds::{
+
+use crate::bop::ds::{
     DS, DSCurveRepOnFace, DSEdge, DSVertex, Interference, InterferenceEE, InterferenceEF,
     InterferenceFF, InterferenceVE, InterferenceVF, InterferenceVV, IntersectionCurve, ShapeOrigin,
 };
@@ -31,7 +31,7 @@ use self::helpers::*;
 // ParamParam = ts1==ts2==0 (both parametric, PrmPrmIntersection)
 
 // Re-export NearTangentType from crate::bop::ds::ds for use in this module's public types
-pub use crate::bop::ds::ds::NearTangentType;
+pub use crate::bop::ds::NearTangentType;
 
 /// Minimum total face count before BVH acceleration is used.
 /// Below this threshold, brute-force O(n ? is faster due to BVH build overhead.
@@ -298,9 +298,9 @@ fn update_existing_pave_blocks(
 
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
-    /// =myIterator (BOPAlgo_PaveFiller.hxx) — BOPDS_Iterator for pair enumeration.
+    /// =myIterator (BOPAlgo_PaveFiller.hxx) 鈥?BOPDS_Iterator for pair enumeration.
     /// Uses 'static lifetime via unsafe transmute (see config.rs for safety).
-    pub(crate) my_iterator: crate::bop::ds::ds::BOPDS_Iterator<'static>,
+    pub(crate) my_iterator: crate::bop::ds::BOPDS_Iterator<'static>,
     bvh_a: Option<&'a Bvh>,
     bvh_b: Option<&'a Bvh>,
     /// DS-based face BVH for FF pair detection. Uses DS face indices directly,
@@ -336,7 +336,7 @@ pub struct PaveFiller<'a> {
     /// =myVertsToAvoidExtension =vertices that should NOT have
     /// their tolerance extended further (near EE/EF intersection points).
     verts_to_avoid_extension: std::collections::HashSet<usize>,
-    /// =myIncreasedSS (PaveFiller.hxx L651) — sub-shapes with increased tolerance.
+    /// =myIncreasedSS (PaveFiller.hxx L651) 鈥?sub-shapes with increased tolerance.
     /// OCCT: NCollection_Map<int> on PaveFiller, NOT on DS.
     my_increased_ss: std::collections::HashSet<usize>,
     /// =myDistances =minimal edge-face distances for non-intersecting
@@ -378,7 +378,7 @@ pub(crate) fn build_face_shape_map(ds: &DS, fi: usize) -> std::collections::Hash
                 let v_end = ds.edge_end_vertex_ds(ei);
                 aMI.insert(v_start);
                 aMI.insert(v_end);
-                // OCCT: resolve SD vertices — if a boundary vertex has an SD
+                // OCCT: resolve SD vertices 鈥?if a boundary vertex has an SD
                 // partner, include it so IsSubShape checks match.
                 if let Some(n_sd) = ds.has_shape_sd(v_start) {
                     aMI.insert(n_sd);
@@ -455,7 +455,7 @@ impl<'a> PaveFiller<'a> {
             return;
         }
         // OCCT L857-879: Iterate V/E/F vs F via Iterator to find planar faces
-        use crate::bop::ds::ds::BOPDS_Iterator;
+        use crate::bop::ds::BOPDS_Iterator;
         use rcad_kernel::topods::ShapeType;
         // OCCT L858: bool bIsBasedOnPlane
         let mut a_mf: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -472,7 +472,7 @@ impl<'a> PaveFiller<'a> {
             // OCCT L868-878: iterate pairs
             for &(_n1, n_f) in pairs.iter() {
                 if n_f < self.ds.face_count()
-     // OCCT L873: IsBasedOnPlane(aF) — checks Geom_Plane with TrimmedSurface unwrap
+     // OCCT L873: IsBasedOnPlane(aF) 鈥?checks Geom_Plane with TrimmedSurface unwrap
      // rcad: Surface3 has no TrimmedSurface wrapper; locate_surface applies Location
      && matches!(self.ds.locate_surface(n_f), Surface3::Plane(_))
                 {
@@ -490,7 +490,7 @@ impl<'a> PaveFiller<'a> {
 
         // OCCT L888-901: collect edge-face pairs from planar faces' boundary topology
         // OCCT L888: BOPAlgo_VectorOfBPC aVBPC (rcad: Vec<(usize, usize)> pairs)
-        use crate::bop::ds::ds::DSCurveRepOnFace;
+        use crate::bop::ds::DSCurveRepOnFace;
         let mut a_vbpc: Vec<(usize, usize)> = Vec::new();
         // OCCT L890: for (i = 1; i <= aNbF; ++i)
         for i in 0..a_nb_f {
@@ -498,7 +498,7 @@ impl<'a> PaveFiller<'a> {
             // Architecture diff: HashSet iteration order is arbitrary (not IndexedMap order)
             let fi = *a_mf.iter().nth(i).unwrap();
             let f = self.ds.faces.get(fi).unwrap();
-            // OCCT L893: aExp.Init(aF, aType[1]) — explore EDGE sub-shapes
+            // OCCT L893: aExp.Init(aF, aType[1]) 鈥?explore EDGE sub-shapes
             // rcad: boundary_edges + inner_boundary_edges (same semantics)
             for &ei in &f.boundary_edges {
                 if ei < self.ds.edge_count() && self.ds.edge_on_face(ei, fi).is_none() {
@@ -565,12 +565,12 @@ impl<'a> PaveFiller<'a> {
         if !self.ds.faces.is_empty() {
             return;
         }
-        // OCCT L196: Clear() — reset report and state
+        // OCCT L196: Clear() 鈥?reset report and state
         self.clear();
         // OCCT L199-201: myDS = new BOPDS_DS; myDS->SetArguments(myArguments); myDS->Init(myFuzzyValue)
         let tol = fuzzy_tol.max(TOLERANCE_ABS);
         self.fuzzy_tolerance = tol;
-        // OCCT BOPDS_DS::Init: prepareVertices → prepareEdges → prepareFaces → prepareSolids
+        // OCCT BOPDS_DS::Init: prepareVertices 鈫?prepareEdges 鈫?prepareFaces 鈫?prepareSolids
         self.prepare_vertices(a, b);
         self.prepare_edges(a, b);
         self.prepare_faces(a, b);
@@ -580,7 +580,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.build_face_reps();
         self.ds.nb_source_shapes = self.ds.shape_info.len();
         self.ds.build_map_ve();
-        // OCCT L204: myContext = new IntTools_Context — rcad: resize context
+        // OCCT L204: myContext = new IntTools_Context 鈥?rcad: resize context
         if self.ds.face_count() != self.context.num_faces {
             self.context.resize(self.ds.face_count());
         }
@@ -598,33 +598,33 @@ impl<'a> PaveFiller<'a> {
         self.distances.clear();
     }
 
-    /// OCCT BOPDS_DS::prepareVertices — traverse both operands and load all shapes into DS.
+    /// OCCT BOPDS_DS::prepareVertices 鈥?traverse both operands and load all shapes into DS.
     /// Architecture diff: rcad loads all shape types in a single pass. Captures per-operand A counts
     /// between the two operand loads (matching original init() interleaving).
     fn prepare_vertices(&mut self, a: &topods::BRep, b: &topods::BRep) {
-        use crate::bop::ds::ds::topods_builder::load_vertices_from_brep;
+        use crate::bop::ds::topods_builder::load_vertices_from_brep;
         load_vertices_from_brep(&mut self.ds, a, ShapeOrigin::ShapeA);
         // Phase 3: A counts derived from shape_info, no longer stored as DS fields
         load_vertices_from_brep(&mut self.ds, b, ShapeOrigin::ShapeB);
     }
 
-    /// OCCT BOPDS_DS::prepareEdges — structural no-op (loading done in prepareVertices).
+    /// OCCT BOPDS_DS::prepareEdges 鈥?structural no-op (loading done in prepareVertices).
     fn prepare_edges(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
-        use crate::bop::ds::ds::topods_builder::load_edges_from_brep;
+        use crate::bop::ds::topods_builder::load_edges_from_brep;
         load_edges_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
         load_edges_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
     }
 
-    /// OCCT BOPDS_DS::prepareFaces — structural no-op (loading done in prepareVertices).
+    /// OCCT BOPDS_DS::prepareFaces 鈥?structural no-op (loading done in prepareVertices).
     fn prepare_faces(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
-        use crate::bop::ds::ds::topods_builder::load_faces_from_brep;
+        use crate::bop::ds::topods_builder::load_faces_from_brep;
         load_faces_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
         load_faces_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
     }
 
-    /// OCCT BOPDS_DS::prepareSolids — structural no-op (loading done in prepareVertices).
+    /// OCCT BOPDS_DS::prepareSolids 鈥?structural no-op (loading done in prepareVertices).
     fn prepare_solids(&mut self, _a: &topods::BRep, _b: &topods::BRep) {
-        use crate::bop::ds::ds::topods_builder::load_solids_from_brep;
+        use crate::bop::ds::topods_builder::load_solids_from_brep;
         load_solids_from_brep(&mut self.ds, _a, ShapeOrigin::ShapeA);
         load_solids_from_brep(&mut self.ds, _b, ShapeOrigin::ShapeB);
     }
@@ -650,7 +650,7 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // OCCT L251-366: pipeline body (Prepare → ProcessDE)
+        // OCCT L251-366: pipeline body (Prepare 鈫?ProcessDE)
         self.perform_body();
     }
 
@@ -668,9 +668,9 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // OCCT L265: myIterator->Intersect(/*...*/) → BOPDS_Iterator with BVH
+        // OCCT L265: myIterator->Intersect(/*...*/) 鈫?BOPDS_Iterator with BVH
         // rcad: prepare iterator with all cross-operand pairs (stored in my_lists)
-        use crate::bop::ds::ds::BOPDS_Iterator;
+        use crate::bop::ds::BOPDS_Iterator;
         use rcad_kernel::topods::ShapeType;
         self.my_iterator.prepare();
 
@@ -946,12 +946,12 @@ impl<'a> PaveFiller<'a> {
                         self.ds.shape_info[si].box_gap = new_gap + crate::tolerance::CONFUSION;
                     }
                 }
-                // OCCT L124: myIncreasedSS.Add(nV) — adds the original vertex
+                // OCCT L124: myIncreasedSS.Add(nV) 鈥?adds the original vertex
                 self.my_increased_ss.insert(n_v);
             }
             return n_v_new;
         }
-        // OCCT L129-159: nV is old vertex — create new SD vertex (non-destructive mode)
+        // OCCT L129-159: nV is old vertex 鈥?create new SD vertex (non-destructive mode)
         // rcad: non_destructive is always false, so this path is never reached.
         // The branch above handles all cases (is_new || has_sd || !non_destructive).
         return n_v;
@@ -1109,7 +1109,7 @@ impl<'a> PaveFiller<'a> {
                 continue;
             };
             if edge_or_vertex < self.ds.edge_count() {
-                // It's an edge — check if it's a micro edge
+                // It's an edge 鈥?check if it's a micro edge
                 let ei = edge_or_vertex;
                 let is_micro = {
                     let (sv, ev) = {
@@ -1145,7 +1145,7 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
             } else {
-                // Not an edge — pass through
+                // Not an edge 鈥?pass through
                 a_sepb_map.insert(edge_or_vertex, cpb);
             }
         }
@@ -1311,7 +1311,7 @@ impl<'a> PaveFiller<'a> {
         theDMV: &HashMap<usize, usize>,
         thePBFacesMap: &HashMap<usize, Vec<usize>>,
     ) {
-        // OCCT L1715: anEdgeLPB — map from edge index to list of PBs
+        // OCCT L1715: anEdgeLPB 鈥?map from edge index to list of PBs
         let mut an_edge_lpb: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut a_mf: HashSet<usize> = HashSet::new();
 
@@ -1362,11 +1362,11 @@ impl<'a> PaveFiller<'a> {
                             an_edge_lpb.entry(n_e).or_default().push(rp);
                         }
 
-                        // OCCT L1761: aLPBC.Remove(aItPB) — don't add to keep list
+                        // OCCT L1761: aLPBC.Remove(aItPB) 鈥?don't add to keep list
                         continue;
                     }
 
-                    // OCCT L1765-1766: normal section PB → add to both faces' pave_blocks_sc
+                    // OCCT L1765-1766: normal section PB 鈫?add to both faces' pave_blocks_sc
                     self.ds.face_info_mut(a_fi1).pave_blocks_sc.insert(pb_idx);
                     self.ds.face_info_mut(a_fi2).pave_blocks_sc.insert(pb_idx);
 
@@ -1549,7 +1549,7 @@ impl<'a> PaveFiller<'a> {
                 for &pb_idx in &on_copy {
                     if let Some(replacements) = theDME.get(&pb_idx) {
                         for &rp in replacements {
-                            // OCCT L1959: RealPaveBlock(aPB1) — in rcad the index IS the real block
+                            // OCCT L1959: RealPaveBlock(aPB1) 鈥?in rcad the index IS the real block
                             if a_mpb_fence.insert(rp) {
                                 new_on.push(rp);
                             }
@@ -1865,7 +1865,7 @@ impl<'a> PaveFiller<'a> {
             return;
         }
         //
-        // L386: aMCB — dedup set for CommonBlocks (store CB indices)
+        // L386: aMCB 鈥?dedup set for CommonBlocks (store CB indices)
         let mut a_mcb: HashSet<usize> = HashSet::new();
         //
         // ----- Phase 1 (L396-498): collect split edge tasks -----
@@ -1893,10 +1893,10 @@ impl<'a> PaveFiller<'a> {
         for ei in 0..n_edges {
             // L398-401: UserBreak check omitted in rcad (no progress range)
             //
-            // aLPB = aPBP(i) — the list of PBs for this edge (L402)
+            // aLPB = aPBP(i) 鈥?the list of PBs for this edge (L402)
             let n_e = ei;
             //
-            // L408-410: aSIE.HasFlag() → skip degenerated edges
+            // L408-410: aSIE.HasFlag() 鈫?skip degenerated edges
             if self.ds.is_edge_degenerated(n_e) {
                 continue;
             }
@@ -1932,7 +1932,7 @@ impl<'a> PaveFiller<'a> {
                 //
                 // L416-421: Check CommonBlock, dedup CBs
                 if b_cb && !a_mcb.insert(pb_cb_idx.unwrap()) {
-                    // CB already processed → skip (OCCT: aMCB.Add returns false)
+                    // CB already processed 鈫?skip (OCCT: aMCB.Add returns false)
                     continue;
                 }
                 //
@@ -1942,10 +1942,10 @@ impl<'a> PaveFiller<'a> {
                 let b_v2 = self.ds.is_new_vertex(n_v2);
                 //
                 if !b_v1 && !b_v2 {
-                    // L430: no new vertices — may avoid splitting
+                    // L430: no new vertices 鈥?may avoid splitting
                     if !self.non_destructive || !b_cb {
                         if b_cb {
-                            // L436-455: CB — find the PB whose original edge has 1 PB
+                            // L436-455: CB 鈥?find the PB whose original edge has 1 PB
                             let cb_idx = pb_cb_idx.unwrap();
                             let cb_pbs: Vec<(usize, usize)> = {
                                 let cb = &self.ds.common_blocks[cb_idx];
@@ -1972,7 +1972,7 @@ impl<'a> PaveFiller<'a> {
                             }
                             //
                             if a_found_it {
-                                // L447-456: edge has only 1 PB → no split needed
+                                // L447-456: edge has only 1 PB 鈫?no split needed
                                 b_to_split = false;
                                 // L449: aCB->SetRealPaveBlock(it.Value())
                                 // Reorder CB PBs so the matched PB is first.
@@ -1998,16 +1998,16 @@ impl<'a> PaveFiller<'a> {
                                 });
                             }
                         } else if pb_count == 1 {
-                            // L457-461: single PB, no new vertices → keep original edge
+                            // L457-461: single PB, no new vertices 鈫?keep original edge
                             b_to_split = false;
-                            // L460: aPB->SetEdge(nE) — short-lived guard for write
+                            // L460: aPB->SetEdge(nE) 鈥?short-lived guard for write
                             let orig = {
                                 let p = spb.0.read().unwrap();
                                 p.original_edge
                             };
                             spb.0.write().unwrap().new_edge = Some(orig);
                         }
-                        // L462-465: if !bToSplit → skip (continue)
+                        // L462-465: if !bToSplit 鈫?skip (continue)
                         if !b_to_split {
                             continue;
                         }
@@ -2036,7 +2036,7 @@ impl<'a> PaveFiller<'a> {
                             continue;
                         }
                     } else {
-                        // L477: use current PB's data — short-lived guard
+                        // L477: use current PB's data 鈥?short-lived guard
                         let (t1, t2) = {
                             let p = spb.0.read().unwrap();
                             p.range()
@@ -2059,7 +2059,7 @@ impl<'a> PaveFiller<'a> {
         }
         // OCCT: process intersection curve PBs (pool continuation after edges)
         // ----- Phase 1.5: Apply deferred CB tolerance updates -----
-        // (OCCT L449-454: CB edge with 1 PB — no split, just tolerance)
+        // (OCCT L449-454: CB edge with 1 PB 鈥?no split, just tolerance)
         for update in &deferred_cb_updates {
             // L450: aCB->SetEdge(nE)
             self.ds.common_blocks[update.cb_idx].set_edge(update.edge_idx);

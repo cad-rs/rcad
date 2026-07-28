@@ -1,5 +1,5 @@
-use crate::bnd_lib;
-use crate::bop::ds::ds::{
+﻿use crate::bnd_lib;
+use crate::bop::ds::{
     DS, DSCurveRepOnFace, DSEdge, Interference, IntersectionCurve, NearTangentType, ShapeOrigin,
 };
 use crate::bop::ds::pave::*;
@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 // ---- Phase 2a helpers: vertex -> curve parameter projection ----
 
-/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
+/// 鉁?OCCT-aligned: delegates to rcad_kernel::closest_point_on_curve (128 samples + analytic dispatch).
 pub(crate) fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     let result = closest_point_on_curve(curve, pt, 128);
     if result.distance <= tol {
@@ -106,7 +106,7 @@ pub(crate) fn find_nearest_valid_point(
             break;
         }
         if a_d1_mag > 0.0 {
-            // OCCT L108-137: singularity handling — double step through near-zero derivative regions
+            // OCCT L108-137: singularity handling 鈥?double step through near-zero derivative regions
             let mut step_local = step.abs();
             loop {
                 let a_p = curve.point_at(u_out);
@@ -124,7 +124,7 @@ pub(crate) fn find_nearest_valid_point(
                         u_out - step_local
                     };
                     if (is_first && new_out > end_u) || (!is_first && new_out < end_u) {
-                        // went out of range — check if end point is outside
+                        // went out of range 鈥?check if end point is outside
                         if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq {
                             return None;
                         }
@@ -470,7 +470,7 @@ pub(crate) fn put_pave_on_curve_full(
     paves
 }
 
-/// ✅ OCCT-aligned: delegates to bnd_lib::curve_bounds (OCCT GeomBndLib per-type dispatch).
+/// 鉁?OCCT-aligned: delegates to bnd_lib::curve_bounds (OCCT GeomBndLib per-type dispatch).
 pub(crate) fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = bnd_lib::curve_bounds(curve, tol);
     if bbox.is_valid() {

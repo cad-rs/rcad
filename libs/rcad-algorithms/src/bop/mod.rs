@@ -11,5 +11,5 @@
 pub mod algo;
 pub mod ds;
 pub mod tools;
-pub mod algo_api;
+pub mod brep_algo_api;
 pub mod int_tools;

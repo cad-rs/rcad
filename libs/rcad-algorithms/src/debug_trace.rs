@@ -1,4 +1,4 @@
-/// Debug tracing for Boolean alignment debugging.
+﻿/// Debug tracing for Boolean alignment debugging.
 ///
 /// Usage: enable by setting env var `RCAD_TRACE=1`.
 /// All trace output goes to stderr (eprintln!) so it is visible even when
@@ -10,7 +10,7 @@ pub fn is_enabled() -> bool {
     std::env::var("RCAD_TRACE").is_ok()
 }
 
-/// Conditional eprintln! — only prints when RCAD_TRACE=1.
+/// Conditional eprintln! 鈥?only prints when RCAD_TRACE=1.
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {
@@ -97,7 +97,7 @@ pub fn dump_result_topo(result: &rcad_kernel::BRep, label: &str) {
 }
 
 /// Print DS vertex/edge/face/interference counts.
-pub fn dump_ds(ds: &crate::bop::ds::ds::DS, label: &str) {
+pub fn dump_ds(ds: &crate::bop::ds::DS, label: &str) {
     let n_interf = ds.interf_vv.len()
         + ds.interf_ve.len()
         + ds.interf_vf.len()

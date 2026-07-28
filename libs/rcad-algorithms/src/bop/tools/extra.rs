@@ -1,5 +1,5 @@
-pub fn make_pcurve(
- ds: &mut crate::bop::ds::ds::DS,
+﻿pub fn make_pcurve(
+ ds: &mut crate::bop::ds::DS,
  ei: usize,
  fi_a: usize,
  fi_b: usize,
@@ -36,7 +36,7 @@ pub fn make_pcurve(
 
  // Store pcurve on edge's face_reps
  let pc_range = src_range.unwrap_or(t_range);
- let rep = crate::bop::ds::ds::DSCurveRepOnFace {
+ let rep = crate::bop::ds::DSCurveRepOnFace {
  face_idx: fi,
  pcurve: pc.clone().unwrap_or(rcad_kernel::geom::Curve2d::Line(
  rcad_kernel::geom::Line2d { origin: glam::DVec2::ZERO, direction: glam::DVec2::X }
@@ -54,7 +54,7 @@ pub fn make_pcurve(
 
 ///  ?IsClosed (BOPTools_AlgoTools2D_1.cxx L289-311).
 /// Checks if an edge appears twice in a face (closed seam edge on periodic surface).
-pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bop::ds::ds::DS) -> bool {
+pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bop::ds::DS) -> bool {
  // OCCT L293: BRep_Tool::IsClosed(aE, aF)  ?rcad: edge is closed when start==end
  let edge = ds.edges.get(ei).unwrap();
  if edge.start_vertex != edge.end_vertex { return false; }
@@ -78,7 +78,7 @@ pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bop::ds::ds::DS) -> 
 ///
 /// Returns 0 on success, >0 on error (mirrors OCCT error codes).
 pub fn attach_existing_pcurve(
- ds: &mut crate::bop::ds::ds::DS,
+ ds: &mut crate::bop::ds::DS,
  ei_new: usize,
  ei_old: usize,
  face_idx: usize,
@@ -142,7 +142,7 @@ pub fn attach_existing_pcurve(
  existing.pcurve = a_c2d_t;
  existing.pcurve_range = [t11, t12];
  } else {
- edge.face_reps.push(crate::bop::ds::ds::DSCurveRepOnFace {
+ edge.face_reps.push(crate::bop::ds::DSCurveRepOnFace {
  face_idx,
  pcurve: a_c2d_t,
  pcurve2: None,
@@ -171,7 +171,7 @@ pub fn attach_existing_pcurve(
 /// For a closed (seam) edge on a face, builds the second (shifted) pcurve.
 /// Returns 0 on success.
 pub fn update_closed_pcurve(
- ds: &mut crate::bop::ds::ds::DS,
+ ds: &mut crate::bop::ds::DS,
  ei_new: usize,
  ei_old: usize,
  face_idx: usize,
@@ -408,7 +408,7 @@ fn shift_curve_2d(
 /// CorrectTolerances (BOPTools_AlgoTools_1.cxx L309-317).
 /// Top-level tolerance correction: CorrectPointOnCurve -> CorrectCurveOnSurface.
 pub fn correct_tolerances(
- ds: &mut crate::bop::ds::ds::DS,
+ ds: &mut crate::bop::ds::DS,
  map_to_avoid: &std::collections::HashSet<usize>,
  max_tol: f64,
 ) {
@@ -421,7 +421,7 @@ pub fn correct_tolerances(
 /// CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx L322-344).
 /// Iterates all edges, for each calls CheckEdge (L430-517).
 pub fn correct_point_on_curve(
- ds: &mut crate::bop::ds::ds::DS,
+ ds: &mut crate::bop::ds::DS,
  map_to_avoid: &std::collections::HashSet<usize>,
  max_tol: f64,
 ) {
@@ -497,7 +497,7 @@ pub fn correct_point_on_curve(
 /// CorrectCurveOnSurface (BOPTools_AlgoTools_1.cxx L348-385).
 /// Iterates faces and their edges, corrects pcurve deviation tolerances.
 pub fn correct_curve_on_surface(
- ds: &mut crate::bop::ds::ds::DS,
+ ds: &mut crate::bop::ds::DS,
  map_to_avoid: &std::collections::HashSet<usize>,
  max_tol: f64,
 ) {
@@ -529,7 +529,7 @@ pub fn correct_curve_on_surface(
 pub fn compute_state_point_against_faces(
  point: glam::DVec3,
  solid_face_indices: &[usize],
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> crate::classify::Classification {
  crate::classify::classify_point(point, solid_face_indices, ds)
 }
@@ -548,7 +548,7 @@ pub fn is_split_to_reverse_with_warn(
 
 /// Dimensions (BOPTools_AlgoTools.hxx L546-547).
 /// Returns the min and max dimension of sub-shapes in the solid.
-pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bop::ds::ds::DS) -> (i32, i32) {
+pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bop::ds::DS) -> (i32, i32) {
  let mut d_min = 3i32;
  let mut d_max = 0i32;
  for &fi in solid_face_indices {
@@ -577,7 +577,7 @@ pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bop::ds::ds::DS) -> 
 
 /// Dimension (BOPTools_AlgoTools.hxx L550).
 /// Returns the uniform dimension of shapes in the solid. If mixed, returns -1.
-pub fn dimension(solid_face_indices: &[usize], ds: &crate::bop::ds::ds::DS) -> i32 {
+pub fn dimension(solid_face_indices: &[usize], ds: &crate::bop::ds::DS) -> i32 {
  let (d_min, d_max) = dimensions(solid_face_indices, ds);
  if d_min == d_max { d_min } else { -1 }
 }
@@ -588,7 +588,7 @@ pub fn dimension(solid_face_indices: &[usize], ds: &crate::bop::ds::ds::DS) -> i
 pub fn do_split_seam_on_face(
  ei: usize,
  face_idx: usize,
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> bool {
  if ei >= ds.edge_count() || face_idx >= ds.face_count() { return false; }
  let edge = ds.edges.get(ei).unwrap();
@@ -604,7 +604,7 @@ pub fn do_split_seam_on_face(
 /// PointOnSurface (BOPTools_AlgoTools2D.cxx L107-122).
 /// Evaluates UV parameters of an edge on a face at the given edge parameter.
 pub fn point_on_surface(
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
  ei: usize,
  face_idx: usize,
  t: f64,
@@ -648,7 +648,7 @@ pub fn get_normal_to_surface(
 /// Computes the approximate normal to a face near an edge by evaluating
 /// the surface at a point offset from the edge toward the face interior.
 pub fn get_approx_normal_to_face_on_edge(
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
  ei: usize,
  face_idx: usize,
 ) -> Option<(glam::DVec3, glam::DVec3)> {
@@ -669,12 +669,12 @@ pub fn min_step_in_2d() -> f64 {
 
 ///  ?IsEmptyShape (BOPTools_AlgoTools3D.cxx L732-788).
 /// Returns true if a shape has no geometry or is empty.
-pub fn is_empty_face(face: &crate::bop::ds::ds::DSFace) -> bool {
+pub fn is_empty_face(face: &crate::bop::ds::DSFace) -> bool {
  face.boundary_edges.is_empty()
 }
 
 ///  ?IsEmptyShape for a general DS face list.
-pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bop::ds::ds::DS) -> bool {
+pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bop::ds::DS) -> bool {
  if shape_faces.is_empty() { return true; }
  // OCCT L732-788: calls HasGeometry recursively
  // rcad: check if any face has boundary edges
@@ -696,7 +696,7 @@ pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bop::ds::ds::DS) -> boo
 pub fn is_internal_face_against_solid(
  fi: usize,
  solid_face_indices: &[usize],
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> Option<bool> {
  // OCCT L815-826: build MEF for the solid (edge ace list)
  let mut a_mef: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
@@ -776,7 +776,7 @@ pub fn is_internal_face_core(
  the_edge: usize,
  the_face1: usize,
  the_face2: usize,
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> i32 {
  // OCCT L945-966: get edge copies for both faces with proper orientation
  let a_e1_on_f1 = if the_face1 < ds.face_count() {
@@ -821,7 +821,7 @@ pub fn is_internal_face_against_list(
  the_face: usize,
  the_edge: usize,
  candidate_faces: &[usize],
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> i32 {
  let a_nb_f = candidate_faces.len();
  if a_nb_f == 2 {
@@ -855,7 +855,7 @@ pub fn is_internal_face_against_list(
 ///
 /// rcad: operates on DS edge indices + forward flags.
 /// edges: mutable list of (edge_idx, forward) pairs.
-pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop::ds::ds::DS) {
+pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop::ds::DS) {
  if edges.is_empty() { return; }
 
  // OCCT L265-272: build vertex dge map (TopExp::MapShapesAndAncestors)
@@ -941,7 +941,7 @@ pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bop
 ///  ?PointInFace (BOPTools_AlgoTools3D.cxx L906-941).
 /// Computes an arbitrary point inside a DS face (uses boundary centroid).
 pub fn point_in_face(
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
  face_idx: usize,
 ) -> Option<(glam::DVec3, glam::DVec2)> {
  let face = ds.faces.get(face_idx)?;
@@ -960,7 +960,7 @@ pub fn point_in_face(
 /// IsOpenShell (BOPTools_AlgoTools.cxx L2350-2394)  ?single-shell variant.
 pub fn is_open_shell_slice(
  shell_faces: &[usize],
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> bool {
  is_open_shell(shell_faces, ds)
 }
@@ -971,7 +971,7 @@ pub fn is_open_shell_slice(
 pub fn compute_state_face_against_solid(
  fi: usize,
  solid_face_indices: &[usize],
- ds: &crate::bop::ds::ds::DS,
+ ds: &crate::bop::ds::DS,
 ) -> crate::classify::Classification {
  // OCCT L672-686: try to find an edge of the face not on the solid boundary
  let face = ds.faces.get(fi).unwrap();

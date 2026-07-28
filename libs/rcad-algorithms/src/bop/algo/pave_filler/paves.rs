@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use rcad_kernel::topods::ShapeType;
 
 impl<'a> super::PaveFiller<'a> {
@@ -68,7 +68,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT: MakeSplitEdge(anEdgeIndex, nF);
                 self.make_split_edge(an_edge_index, n_f);
             } else if a_si_f.shape_type == rcad_kernel::topods::ShapeType::Edge {
-                // OCCT: EDGE branch — create a new degenerated edge for the vertex
+                // OCCT: EDGE branch 鈥?create a new degenerated edge for the vertex
                 // Clone edge data to avoid borrow conflict with self.ds.push_edge
                 let (a_curve, a_t_range, a_origin, a_geom_tol, a_is_geometric, a_location) = {
                     if an_edge_index < self.ds.edge_count() {
@@ -118,7 +118,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT BOPAlgo_PaveFiller_9.cxx L65-138: FillShrunkData
         // OCCT L68: myIterator->Initialize(aType1, aType2)
-        use crate::bop::ds::ds::BOPDS_Iterator;
+        use crate::bop::ds::BOPDS_Iterator;
         let ve_pairs: Vec<(usize, usize)> = {
             let mut it = BOPDS_Iterator::new(self.ds, self.fuzzy_tolerance);
             it.prepare();
@@ -128,7 +128,7 @@ impl<'a> super::PaveFiller<'a> {
         if ve_pairs.is_empty() {
             return;
         }
-        // OCCT L78: NCollection_Map<int> aMI — edge dedup set
+        // OCCT L78: NCollection_Map<int> aMI 鈥?edge dedup set
         let mut a_mi = std::collections::HashSet::new();
         // Collect all unique edges from iterator pairs
         let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
@@ -138,7 +138,7 @@ impl<'a> super::PaveFiller<'a> {
             let pair_elems = [n1, n2];
             for i in 0..2 {
                 let n_s = pair_elems[i];
-                // OCCT L89: if aType[i] != TopAbs_EDGE || !aMI.Add(nE) — only process EDGE elements
+                // OCCT L89: if aType[i] != TopAbs_EDGE || !aMI.Add(nE) 鈥?only process EDGE elements
                 let a_type_i = if i == 0 { a_type1 } else { a_type2 };
                 if a_type_i != ShapeType::Edge {
                     continue;
@@ -151,7 +151,7 @@ impl<'a> super::PaveFiller<'a> {
                 if self.ds.edge_has_flag(n_e) {
                     continue;
                 }
-                // OCCT L100: myDS->ChangePaveBlocks(nE) — mutable, triggers lazy init
+                // OCCT L100: myDS->ChangePaveBlocks(nE) 鈥?mutable, triggers lazy init
                 let a_lpb = self.ds.edge_pave_blocks_mut(n_e);
                 for pi in 0..a_lpb.len() {
                     let pb = &a_lpb[pi];
@@ -295,10 +295,10 @@ impl<'a> super::PaveFiller<'a> {
         // Find the correct sub-PB and add to its ext_paves
         let pbs = &self.ds.edge_pave_blocks_mut(ei).clone();
         if pbs.len() == 1 {
-            // Single PB — add directly (it will be split by update())
+            // Single PB 鈥?add directly (it will be split by update())
             pbs[0].0.write().unwrap().append_ext_pave(pave);
         } else {
-            // Multiple sub-PBs — find the one whose range contains this pave
+            // Multiple sub-PBs 鈥?find the one whose range contains this pave
             // OCCT: parameter ranges partition the full edge domain exactly
             for spb in pbs {
                 let r = spb.0.read().unwrap();
@@ -348,7 +348,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
 
-            // Clone old PBs — allows self.ds access while processing sub-PBs
+            // Clone old PBs 鈥?allows self.ds access while processing sub-PBs
             let old_pbs = self.ds.edge_pave_blocks_mut(n_e).clone();
             let mut new_pbs: Vec<crate::bop::ds::pave::SharedPB> = Vec::new();
 
@@ -534,7 +534,7 @@ impl<'a> super::PaveFiller<'a> {
                 continue;
             }
 
-            // OCCT L571-616: Closed case — find coinciding PBs
+            // OCCT L571-616: Closed case 鈥?find coinciding PBs
             let mut remaining: Vec<(usize, crate::bop::ds::pave::SharedPB)> = entries.clone();
             // OCCT L572: while (aLPB.Extent())
             while remaining.len() > 1 {
@@ -791,7 +791,7 @@ impl<'a> super::PaveFiller<'a> {
         let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
         let c_box = crate::bop::algo::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
         for &nV in theMVEF {
-            // OCCT L2386-2392: Put EF vertices first — no IsNewShape check
+            // OCCT L2386-2392: Put EF vertices first 鈥?no IsNewShape check
             self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2, a_mv_tol, a_dmv_lv);
         }
         for &nV in theMVOnIn {
@@ -857,7 +857,7 @@ impl<'a> super::PaveFiller<'a> {
         // assigned vertices (via PaveBlock). Only return when both exist.
         // rcad: getBoundPaves is not implemented; approximate by checking if
         // start_vertex and end_vertex exist AND the first PB references them.
-        // For now, process stick vertices regardless — FilterPavesOnCurves
+        // For now, process stick vertices regardless 鈥?FilterPavesOnCurves
         // will dedup duplicates.
         let a_mv: std::collections::HashSet<usize> = aMVStick.iter().copied().collect();
         if a_mv.is_empty() {
@@ -938,7 +938,7 @@ impl<'a> super::PaveFiller<'a> {
         if !is_bspline_or_bezier {
             return;
         }
-        // OCCT L2707-2713: RemoveUsedVertices — skip vertices already on curve
+        // OCCT L2707-2713: RemoveUsedVertices 鈥?skip vertices already on curve
         let already_used: std::collections::HashSet<usize> = {
             if let Some(pb) = self
                 .ds
@@ -1131,7 +1131,7 @@ impl<'a> super::PaveFiller<'a> {
         let mut bFirstValid = false;
         let mut aFirstDist = f64::MAX;
 
-        // ── L824-883: First endpoint check ──────────────────────────────
+        // 鈹€鈹€ L824-883: First endpoint check 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         if !precision_is_infinite(aFirst) {
             let p_first = ic.curve.point_at(aFirst);
             aFirstDist = vp.distance(p_first);
@@ -1207,7 +1207,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        // ── L886-951: Last endpoint check ───────────────────────────────
+        // 鈹€鈹€ L886-951: Last endpoint check 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         if !precision_is_infinite(aLast) {
             let p_last = ic.curve.point_at(aLast);
             let d_last = vp.distance(p_last);
@@ -1289,7 +1289,7 @@ impl<'a> super::PaveFiller<'a> {
             return true;
         }
 
-        // ── L953-992: General projection (GeomAPI_ProjectPointOnCurve) ──
+        // 鈹€鈹€ L953-992: General projection (GeomAPI_ProjectPointOnCurve) 鈹€鈹€
         use rcad_kernel::projection::closest_point_on_curve;
         let proj = closest_point_on_curve(&ic.curve, vp, 64);
         let aNbProj = if proj.distance.is_finite() { 1 } else { 0 };
@@ -1701,7 +1701,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT L792-840: assign computed pcurves to edge face_reps
-        use crate::bop::ds::ds::DSCurveRepOnFace;
+        use crate::bop::ds::DSCurveRepOnFace;
         for (ei, fi, pcurve, t0, t1) in applied_pcurves {
             self.ds.edge_face_reps_mut(ei).push(DSCurveRepOnFace {
                 face_idx: fi,
@@ -2227,7 +2227,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         // OCCT L339-352: collect all face indices
         //   (OCCT: iterate NbSourceShapes() + check ShapeType() == TopAbs_FACE;
-        //    rcad: iterate faces[] — equivalent at this stage)
+        //    rcad: iterate faces[] 鈥?equivalent at this stage)
         let mut a_lif: Vec<usize> = Vec::new();
         for n_f in 0..self.ds.face_count() {
             a_lif.push(n_f);

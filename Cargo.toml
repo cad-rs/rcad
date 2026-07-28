@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "libs/rcad-kernel",
     "libs/rcad-brep",
+    "libs/rcad-algo",
     "libs/rcad-modeling",
     "libs/rcad-algorithms",
     "libs/rcad-step",

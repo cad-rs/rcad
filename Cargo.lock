@@ -974,6 +974,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcad-algo"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "indexmap",
+ "rayon",
+ "rcad-brep",
+ "rcad-kernel",
+ "tracing",
+]
+
+[[package]]
 name = "rcad-algorithms"
 version = "0.1.0"
 dependencies = [

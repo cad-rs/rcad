@@ -1,27 +1,27 @@
-//! Geometric tolerances, adaptive context, and small predicate helpers.
+﻿//! Geometric tolerances, adaptive context, and small predicate helpers.
 //!
 //! # Roadmap
 //!
-//! Phases B–D: repository file `docs/tolerance-system-improvement-plan.md` (workspace root).
+//! Phases B鈥揇: repository file `docs/tolerance-system-improvement-plan.md` (workspace root).
 //!
-//! # Phase C — numerical IntSS floor & mesh merge
+//! # Phase C 鈥?numerical IntSS floor & mesh merge
 //!
 //! Use [`intss_geom_tol_floor`] / [`intss_geom_tol_floor_for_brep_bounds`] when passing
 //! [`geom_tol_floor`](crate::bop::int_tools::intss::intersect_surfaces_with_density_tol) without a full
 //! [`ToleranceContext`]. When fuzz / workspace is relevant, reuse [`combined_linear_tol_models`] or
-//! [`combined_linear_tol_for_faces`] — same OCCT-style `Max` semantics.
+//! [`combined_linear_tol_for_faces`] 鈥?same OCCT-style `Max` semantics.
 //!
 //! Triangle-soup chaining: [`tessellation_merge_linear_from_brep`] / [`tessellation_merge_linear_from_two_breps`].
 //! UV trim closure (phase C): scale with face UV bbox via [`uv_polyline_trim_closed_len_sq_from_uv_poly`];
 //! ceiling matches historic [`UV_POLYLINE_TRIM_LEGACY_SQ`] linear-equivalent slack.
 //!
-//! # Phase B — [`ToleranceContext`]
+//! # Phase B 鈥?[`ToleranceContext`]
 //!
 //! Use [`ToleranceContext`] to bundle scale-aware [`AdaptiveTolerance`] with an optional
 //! workspace linear band (e.g. boolean fuzzy). Pairwise BRep work tolerances use
 //! [`combined_linear_tol_for_faces`], [`combined_linear_tol_for_edges`],
 //! [`combined_linear_tol_for_vertices`], or [`combined_linear_tol_models`] (OCCT-style `max`).
-//! Point-in-solid **`classify`** folds [`DSFace::geom_tol`](crate::bop::ds::ds::DSFace) into relaxed
+//! Point-in-solid **`classify`** folds [`DSFace::geom_tol`](crate::bop::ds::DSFace) into relaxed
 //! thresholds using [`effective_linear_with_geom_tol`]. Binary **`boolean_op_with_options`** raises
 //! glue / make-connected toward [`combined_linear_tol_models`] for the paired operands (`lib.rs`).
 //!
@@ -35,8 +35,8 @@
 //! | Point / length (mesh / merge) | [`TOLERANCE_MESH_LEGACY`], [`TOLERANCE_PARAM_LEGACY`], [`UV_POLYLINE_TRIM_LEGACY_SQ`], [`UV_TRIM_CLOSED_REL_DOM`], [`uv_polyline_trim_closed_len_sq_from_uv_poly`] | Triangle merge, UV legs, legacy trim bounds; scaled UV closure (phase C) |
 //! | Point / length (slacks) | [`TOLERANCE_PLANE_DIST_RELAX`], [`TOLERANCE_COORD_SUB`], [`TOLERANCE_LINEAR_RELAX_8`] | Coplanar slack, test nudges, one-decade-relaxed linear |
 //! | Angle / direction (numeric) | [`TOLERANCE_ANG`], [`vectors_parallel`] | Parallel axes, `sin(angle)` near , cross-product magnitude in **intersection / construction** (FP noise) |
-//! | Angle (heuristic radians) | [`TOLERANCE_ANG_HEURISTIC_RAD`] | Coarse “same cone / same domain” angles in boolean-style code **not** tied to cross magnitude |
-//! | Direction dot heuristics | [`TOLERANCE_DOT_NEARLY_PARALLEL`] | Almost-parallel **unit** normals via `n1·n2` |
+//! | Angle (heuristic radians) | [`TOLERANCE_ANG_HEURISTIC_RAD`] | Coarse 鈥渟ame cone / same domain鈥?angles in boolean-style code **not** tied to cross magnitude |
+//! | Direction dot heuristics | [`TOLERANCE_DOT_NEARLY_PARALLEL`] | Almost-parallel **unit** normals via `n1路n2` |
 //! | Boolean fuzzy ladder | [`TOLERANCE_RETRY_LADDER_MID`], [`TOLERANCE_RETRY_LADDER_COARSE`], [`TOLERANCE_AREA_REL`] | Robust BOP retry enlargement steps |
 //! | Underflow / numerical guards | [`TOLERANCE_VEC_SQ_MIN`], [`TOLERANCE_LEN_SQ_DIV_SAFE`], [`TOLERANCE_FLOAT_DEDUP`] | Degenerate normalization, dedup of ladder values |
 //! | Adaptive scaling | [`AdaptiveTolerance`], [`ToleranceContext`], [`ToleranceLevel`], **`combined_linear_tol_*`**, **[`effective_linear_with_geom_tol`]**, **`intss_geom_tol_floor*`**, **`tessellation_merge_linear_*`** | Scale + workspace; pairwise `max`; classify / IntSS floors; mesh chaining |
@@ -49,7 +49,7 @@
 //! | Prefer when | New kernel-level topology invariants (rare in `rcad-algorithms`) | `inttools`, marching, analytic intersection branch tests, [`vectors_parallel`] |
 //!
 //! **Rule of thumb:** inside `rcad-algorithms`, keep using [`TOLERANCE_ANG`] / [`vectors_parallel`] unless you are intentionally matching kernel invariants and import `ANGULAR` explicitly.
-//! Third kind: [`TOLERANCE_ANG_HEURISTIC_RAD`] (~1e-6 rad) for coarse angle **differences** in param space—do not substitute for [`TOLERANCE_ANG`] on cross/sin tests.
+//! Third kind: [`TOLERANCE_ANG_HEURISTIC_RAD`] (~1e-6 rad) for coarse angle **differences** in param space鈥攄o not substitute for [`TOLERANCE_ANG`] on cross/sin tests.
 //!
 //! Files that heavily use [`TOLERANCE_ANG`] (audit when tightening angles): `inttools/*.rs` (cone/cylinder/torus/plane intersections), `int_ana.rs`, `shape_construct.rs`, `classify.rs`.
 //!
@@ -84,21 +84,21 @@ pub const TOLERANCE_ABS: f64 = 1e-7;
 /// This is intentionally **looser** than `rcad_kernel::tolerance::ANGULAR` (1e-12):
 /// the algorithms layer needs to tolerate slightly imperfect parallelism that
 /// arises from floating-point accumulation during intersection computation.
-/// Used in [`vectors_parallel`] as `cross(a,b).length_squared() < TOLERANCE_ANG²`.
+/// Used in [`vectors_parallel`] as `cross(a,b).length_squared() < TOLERANCE_ANG虏`.
 pub const TOLERANCE_ANG: f64 = 1e-9;
 
-/// Tolerance squared — avoids `sqrt` in distance checks.
+/// Tolerance squared 鈥?avoids `sqrt` in distance checks.
 pub const TOLERANCE_ABS_SQ: f64 = TOLERANCE_ABS * TOLERANCE_ABS;
 
 /// Default pair/merge epsilon for mesh / triangle-soup paths that historically used `1e-6`.
 ///
-/// Kept as `10 × TOLERANCE_ABS` so all legacy `1e-6` defaults track the kernel confusion value.
+/// Kept as `10 脳 TOLERANCE_ABS` so all legacy `1e-6` defaults track the kernel confusion value.
 pub const TOLERANCE_MESH_LEGACY: f64 = TOLERANCE_ABS * 10.0;
 
 /// Floor for chained-segment merge and similar clamps (avoid exact zero).
 pub const TOLERANCE_CLAMP_MIN: f64 = 1e-15;
 
-/// Float dedup / “same ladder value” checks in robust boolean retry (`1e-15`).
+/// Float dedup / 鈥渟ame ladder value鈥?checks in robust boolean retry (`1e-15`).
 pub const TOLERANCE_FLOAT_DEDUP: f64 = 1e-15;
 
 /// Looser float equality for coarse regression asserts (`1e-14`).
@@ -110,36 +110,36 @@ pub const TOLERANCE_FLOAT_ULTRA: f64 = 1e-18;
 /// Squared metric floor treated as vanishing in area-like heuristics (`1e-20`).
 pub const TOLERANCE_METRIC_SQ_NEAR_ZERO: f64 = TOLERANCE_FLOAT_ULTRA * 0.01;
 
-// ── Legacy numeric tiers (all derivable from `TOLERANCE_ABS` at unit scale) ─────────────────────
+// 鈹€鈹€ Legacy numeric tiers (all derivable from `TOLERANCE_ABS` at unit scale) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Parametric / UV span and linear merge heuristics that historically used `1e-6`.
 pub const TOLERANCE_PARAM_LEGACY: f64 = TOLERANCE_MESH_LEGACY;
 
 /// Legacy UV trim loop test upper bound (**squared**) used as the **ceiling** for phase-C scaling.
 ///
-/// Historically **`(Δ).length_squared() < Self`** with [`TOLERANCE_MESH_LEGACY`] numerically (**`~√Self`**
+/// Historically **`(螖).length_squared() < Self`** with [`TOLERANCE_MESH_LEGACY`] numerically (**`~鈭歋elf`**
 /// effective linear slack). Prefer [`uv_polyline_trim_closed_len_sq_from_uv_poly`] for imprint/builder trims.
 pub const UV_POLYLINE_TRIM_LEGACY_SQ: f64 = TOLERANCE_MESH_LEGACY;
 
-/// World-axis normal alignment (`|n·e|-1|`, off-diagonal) historically `1e-6`.
+/// World-axis normal alignment (`|n路e|-1|`, off-diagonal) historically `1e-6`.
 pub const TOLERANCE_AXIS_ALIGN: f64 = TOLERANCE_MESH_LEGACY;
 
 /// Merge / same-domain angle heuristic in **radians** (not [`TOLERANCE_ANG`]).
 pub const TOLERANCE_ANG_HEURISTIC_RAD: f64 = 1e-6;
 
-/// Coplanar point–plane distance slack (`1e-5`); `50 × TOLERANCE_ABS`.
+/// Coplanar point鈥損lane distance slack (`1e-5`); `50 脳 TOLERANCE_ABS`.
 pub const TOLERANCE_PLANE_DIST_RELAX: f64 = TOLERANCE_ABS * 50.0;
 
-/// Relative area / fraction comparisons (`1e-4`); `1000 × TOLERANCE_ABS`.
+/// Relative area / fraction comparisons (`1e-4`); `1000 脳 TOLERANCE_ABS`.
 pub const TOLERANCE_AREA_REL: f64 = TOLERANCE_ABS * 1000.0;
 
-/// Boolean fuzzy retry ladder mid-step (`1e-5`); `100 × TOLERANCE_ABS`.
+/// Boolean fuzzy retry ladder mid-step (`1e-5`); `100 脳 TOLERANCE_ABS`.
 pub const TOLERANCE_RETRY_LADDER_MID: f64 = TOLERANCE_ABS * 100.0;
 
 /// Boolean fuzzy retry ladder coarse step (`1e-4`); [`TOLERANCE_AREA_REL`].
 pub const TOLERANCE_RETRY_LADDER_COARSE: f64 = TOLERANCE_AREA_REL;
 
-/// Planar sliver volume threshold = factor × scale³ (historically `1e-9`).
+/// Planar sliver volume threshold = factor 脳 scale鲁 (historically `1e-9`).
 pub const TOLERANCE_VOL_CUBE_FACTOR: f64 = 1e-9;
 
 /// Extra-strict linear residual (e.g. spurious face removal), historically `1e-10`.
@@ -153,19 +153,19 @@ pub const TOLERANCE_LEN_SQ_DIV_SAFE: f64 = 1e-30;
 
 /// Ultra-tight squared-length guard for UV-space direction checks (`1e-40`).
 ///
-/// Stricter than [`TOLERANCE_LEN_SQ_DIV_SAFE`] — used when even trace
+/// Stricter than [`TOLERANCE_LEN_SQ_DIV_SAFE`] 鈥?used when even trace
 /// squared-length values near `1e-30` are still degenerate in 2D param space
 /// (e.g. UV direction calculations in wire splitting).
 pub const TOLERANCE_UV_DIR_SQ_MIN: f64 = 1e-40;
 
 /// Absolute floor for squared tangent length before treating it as zero (`1e-60`).
 ///
-/// Equivalently `TOLERANCE_LEN_SQ_DIV_SAFE²`. Used in tangent-vector underflow
+/// Equivalently `TOLERANCE_LEN_SQ_DIV_SAFE虏`. Used in tangent-vector underflow
 /// guards in edge-edge interference detection, where any floating noise below
 /// this threshold should be treated as zero.
 pub const TOLERANCE_TANGENT_SQ_ABSOLUTE_MIN: f64 = 1e-60;
 
-/// Cosine threshold for "near parallel" line-line direction check (`0.9063 ≈ cos 25°`).
+/// Cosine threshold for "near parallel" line-line direction check (`0.9063 鈮?cos 25掳`).
 ///
 /// When two edges (or their tangents) have a direction dot product at or above
 /// this value, they are considered near-parallel enough to warrant additional
@@ -175,7 +175,7 @@ pub const TOLERANCE_COS_LINE_ANGLE: f64 = 0.9063;
 /// Minimum edge / segment length floor (`1e-12`).
 pub const TOLERANCE_LEN_MIN: f64 = 1e-12;
 
-/// Tiny coordinate offset (`1e-9` = `0.01 × TOLERANCE_ABS`) for near-degenerate geometry tests.
+/// Tiny coordinate offset (`1e-9` = `0.01 脳 TOLERANCE_ABS`) for near-degenerate geometry tests.
 pub const TOLERANCE_COORD_SUB: f64 = TOLERANCE_ABS * 0.01;
 
 /// Linear epsilon one decade looser than [`TOLERANCE_ABS`] (`1e-8` at default kernel scale).
@@ -184,13 +184,13 @@ pub const TOLERANCE_LINEAR_RELAX_8: f64 = TOLERANCE_ABS * 0.1;
 /// Lower clamp for adaptive `model_scale` (`1e-10`).
 pub const TOLERANCE_MODEL_SCALE_MIN: f64 = 1e-10;
 
-/// Normals “almost parallel” dot-product bound (historically `0.999`).
+/// Normals 鈥渁lmost parallel鈥?dot-product bound (historically `0.999`).
 pub const TOLERANCE_DOT_NEARLY_PARALLEL: f64 = 0.999;
 
 /// Dimensionless factor: `tol * k` sub-epsilons (historically `1e-6` of a base tolerance).
 pub const TOLERANCE_TOL_SCALE_MICRO: f64 = 1e-6;
 
-/// Phase C UV trim closure: fractional slack **`max(|Δu|,|Δv|)` · Self** vs [`UV_POLYLINE_TRIM_LEGACY_SQ`] ceiling (`imprint`, `builder`).
+/// Phase C UV trim closure: fractional slack **`max(|螖u|,|螖v|)` 路 Self** vs [`UV_POLYLINE_TRIM_LEGACY_SQ`] ceiling (`imprint`, `builder`).
 pub const UV_TRIM_CLOSED_REL_DOM: f64 = TOLERANCE_TOL_SCALE_MICRO;
 
 /// Upper clamp in [`AdaptiveTolerance::default`] (`1e-3`).
@@ -338,10 +338,10 @@ impl AdaptiveTolerance {
 /// Scale-aware tolerances plus an optional workspace linear band (phase B).
 ///
 /// OCCT-style pairing with stored shape tolerances: use [`combined_linear_tol_for_faces`] or
-/// [`combined_linear_tol_models`] to form `max(workspace, adaptive, Tol(…))`.
+/// [`combined_linear_tol_models`] to form `max(workspace, adaptive, Tol(鈥?)`.
 #[derive(Debug, Clone, Copy)]
 pub struct ToleranceContext {
-    /// Characteristic-size–scaled tolerances.
+    /// Characteristic-size鈥搒caled tolerances.
     pub adaptive: AdaptiveTolerance,
     /// Extra linear band (e.g. user boolean fuzzy). Negative values are clamped in accessors.
     ///
@@ -393,7 +393,7 @@ impl ToleranceContext {
         self.adaptive.tolerance(level)
     }
 
-    /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
+    /// `max(adaptive_linear(level), workspace_fuzzy)` 鈥?for fuzzy-capable pipelines (booleans).
     #[inline]
     pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
         let adaptive = self.adaptive.tolerance(level);
@@ -401,7 +401,7 @@ impl ToleranceContext {
         let result = adaptive.max(wf);
         if wf > adaptive {
             debug!(
-                "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
+                "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} 鈫?{:.3e}",
                 wf, adaptive, level, result,
             );
         }
@@ -463,7 +463,7 @@ pub fn combined_linear_tol_models(
 }
 
 /// `max(base_linear, geom_tol)` for checks that consume **stored** geometric tolerance
-/// (e.g. [`crate::bop::ds::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
+/// (e.g. [`crate::bop::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
 #[inline]
 pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) -> f64 {
     if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
@@ -473,10 +473,10 @@ pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) ->
     }
 }
 
-/// Geometric tolerance **floor** for numerical surface–surface intersection (IntSS).
+/// Geometric tolerance **floor** for numerical surface鈥搒urface intersection (IntSS).
 ///
 /// Combines a caller **baseline** (adaptive / workspace linear band) with the maximum stored
-/// tolerance on participating entities — OCCT-style `max`, with at least [`TOLERANCE_ABS`] on the
+/// tolerance on participating entities 鈥?OCCT-style `max`, with at least [`TOLERANCE_ABS`] on the
 /// baseline before folding `participant_tolerance_max`.
 ///
 /// See [`intersect_surfaces_with_density_tol`](crate::bop::int_tools::intss::intersect_surfaces_with_density_tol).
@@ -526,9 +526,9 @@ pub fn tessellation_merge_linear_from_two_breps(
 }
 
 /// Squared UV distance threshold for treating trim endpoints as coincident given face UV extents
-/// **`u_extent`**, **`v_extent`** (typically `Δu`, `Δv` of the outer UV polygon bbox).
+/// **`u_extent`**, **`v_extent`** (typically `螖u`, `螖v` of the outer UV polygon bbox).
 ///
-/// Let **`ext = max(|u_extent|, |v_extent|)`**. Linear slack is **`min(√`**[`UV_POLYLINE_TRIM_LEGACY_SQ`]**, **`max([`TOLERANCE_ABS`]**, **`ext · [`UV_TRIM_CLOSED_REL_DOM`]`**))`** (then squared). That caps looseness at the historic mesh-tier analogue while tightening on modest UV domains (phase C).
+/// Let **`ext = max(|u_extent|, |v_extent|)`**. Linear slack is **`min(鈭歚**[`UV_POLYLINE_TRIM_LEGACY_SQ`]**, **`max([`TOLERANCE_ABS`]**, **`ext 路 [`UV_TRIM_CLOSED_REL_DOM`]`**))`** (then squared). That caps looseness at the historic mesh-tier analogue while tightening on modest UV domains (phase C).
 #[inline]
 pub fn uv_polyline_trim_closed_len_sq(u_extent: f64, v_extent: f64) -> f64 {
     let ext = u_extent
@@ -611,10 +611,10 @@ pub fn combined_linear_tol_for_vertices(
     base.max(ta).max(tb)
 }
 
-/// Scale the default boolean fuzzy retry ladder (`10×`, `100×`, `1000×` [`TOLERANCE_ABS`]) by
+/// Scale the default boolean fuzzy retry ladder (`10脳`, `100脳`, `1000脳` [`TOLERANCE_ABS`]) by
 /// `initial_fuzzy / TOLERANCE_ABS` (minimum scale 1).
 ///
-/// With `extra_coarse_base = Some(c)`, appends `10·c` and `100·c` (multiscale mechanical preset).
+/// With `extra_coarse_base = Some(c)`, appends `10路c` and `100路c` (multiscale mechanical preset).
 pub fn boolean_fuzzy_ladder_scaled(initial_fuzzy: f64, extra_coarse_base: Option<f64>) -> Vec<f64> {
     let scale = (initial_fuzzy / TOLERANCE_ABS).max(1.0);
     let mut out = vec![

@@ -1,4 +1,4 @@
-//! BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+﻿//! BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -7,7 +7,7 @@ pub mod box_tree;
 pub mod bvh;
 pub mod bvh_tree;
 
-use crate::bop::ds::ds::DS;
+use crate::bop::ds::DS;
 use crate::classify::Classification;
 use crate::tolerance::{
     ANGULAR, CONFUSION, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE, TOLERANCE_MESH_LEGACY,
@@ -25,12 +25,12 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
     let ei = ds.edge_count();
     let ic = &ds.intersection_curves[ci];
     ds.push_edge(
-        crate::bop::ds::ds::DSEdge { shape_idx: 0,
+        crate::bop::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve: ic.curve.clone(),
             t_range: ic.t_range,
-            origin: crate::bop::ds::ds::ShapeOrigin::ShapeA,
+            origin: crate::bop::ds::ShapeOrigin::ShapeA,
             geom_tol: ic.geom_tol,
             paves: Vec::new(),
             pave_blocks: Vec::new(),
@@ -237,7 +237,7 @@ pub fn adjust_pcurve_on_face(
 ///  ?HasCurveOnSurface (BOPTools_AlgoTools2D).
 /// OCCT checks if the edge has a pcurve for the given face's surface.
 /// rcad: check if edge has face_reps for the given face_idx.
-pub fn has_curve_on_surface(edge: &crate::bop::ds::ds::DSEdge, face_idx: usize) -> bool {
+pub fn has_curve_on_surface(edge: &crate::bop::ds::DSEdge, face_idx: usize) -> bool {
     edge.face_reps.iter().any(|r| r.face_idx == face_idx)
 }
 
@@ -253,7 +253,7 @@ pub fn orient_edge_on_face(dot_product: f64) -> bool {
 
 /// MakeEdge (BOPTools_AlgoTools).
 pub fn make_ds_edge(
-    ds: &mut crate::bop::ds::ds::DS,
+    ds: &mut crate::bop::ds::DS,
     v1: usize,
     v2: usize,
     curve: rcad_kernel::geom::Curve3,
@@ -261,12 +261,12 @@ pub fn make_ds_edge(
 ) -> usize {
     let ei = ds.edge_count();
     ds.push_edge(
-        crate::bop::ds::ds::DSEdge { shape_idx: 0,
+        crate::bop::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve,
             t_range,
-            origin: crate::bop::ds::ds::ShapeOrigin::ShapeA,
+            origin: crate::bop::ds::ShapeOrigin::ShapeA,
             geom_tol: crate::tolerance::TOLERANCE_ABS,
             paves: Vec::new(),
             pave_blocks: Vec::new(),
@@ -287,7 +287,7 @@ pub fn make_ds_edge(
     ei
 }
 /// CorrectEdgeRange (BOPTools_AlgoTools).
-pub fn correct_edge_range(ds: &mut crate::bop::ds::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
+pub fn correct_edge_range(ds: &mut crate::bop::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
     if ei < ds.edge_count() {
         let ts = t1.max(ds.edge_range(ei)[0]);
         let te = t2.min(ds.edge_range(ei)[1]);
@@ -358,7 +358,7 @@ pub fn fill_internals(
     solids: &mut [rcad_kernel::Solid],
     parts: &[(u8, usize)],
     images: &std::collections::HashMap<usize, Vec<usize>>,
-    ds: &crate::bop::ds::ds::DS,
+    ds: &crate::bop::ds::DS,
     solid_ds_faces: &[Vec<usize>],
 ) {
     // OCCT L1758-1761: early return if empty
@@ -535,8 +535,8 @@ pub fn fill_internals(
         let all_faces: Vec<usize> = a_faces.clone();
 
         // OCCT L1884-1886: MakeConnexityBlocks =group by edge connectivity
-        let mut lcb: Vec<crate::bop::ds::ds::ConnexityBlock> = Vec::new();
-        crate::bop::ds::shell_splitter::make_connexity_blocks(&all_faces, ds, &mut lcb);
+        let mut lcb: Vec<crate::bop::ds::ConnexityBlock> = Vec::new();
+        crate::bop::algo::shell_splitter::make_connexity_blocks(&all_faces, ds, &mut lcb);
 
         // OCCT L1889-1906: for each block, build shell and add to solid
         for cb in &lcb {
@@ -687,7 +687,7 @@ pub fn make_container(
 /// PointOnEdge (BOPTools_AlgoTools_2.cxx L275-280).
 ///
 /// Evaluates a point on a DS edge at the given parameter.
-pub fn point_on_edge(edge: &crate::bop::ds::ds::DSEdge, t: f64) -> glam::DVec3 {
+pub fn point_on_edge(edge: &crate::bop::ds::DSEdge, t: f64) -> glam::DVec3 {
     edge.curve.point_at(t)
 }
 
@@ -1452,7 +1452,7 @@ pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
 /// Returns the output BRep containing the created faces.
 pub fn wires_to_faces(
     wire_indices: &[usize],
-    ds: &crate::bop::ds::ds::DS,
+    ds: &crate::bop::ds::DS,
     angle_tol: f64,
 ) -> rcad_kernel::BRep {
     let mut out = rcad_kernel::BRep::new();
@@ -1660,7 +1660,7 @@ pub fn wires_to_faces(
 
 /// ComputeVV (BOPTools_AlgoTools.cxx L1742-1760).
 /// Vertex-point intersection. Returns 0 if vertex and point intersect.
-pub fn compute_vv_p(v: &crate::bop::ds::ds::DSVertex, p: glam::DVec3, tol_p: f64) -> i32 {
+pub fn compute_vv_p(v: &crate::bop::ds::DSVertex, p: glam::DVec3, tol_p: f64) -> i32 {
     let tol_sum = v.geom_tol + tol_p + crate::tolerance::TOLERANCE_ABS;
     let tol_sum2 = tol_sum * tol_sum;
     let d2 = (v.point - p).length_squared();
@@ -1670,8 +1670,8 @@ pub fn compute_vv_p(v: &crate::bop::ds::ds::DSVertex, p: glam::DVec3, tol_p: f64
 /// ComputeVV (BOPTools_AlgoTools.cxx L1764-1786).
 /// Vertex-vertex intersection with fuzz tolerance.
 pub fn compute_vv(
-    v1: &crate::bop::ds::ds::DSVertex,
-    v2: &crate::bop::ds::ds::DSVertex,
+    v1: &crate::bop::ds::DSVertex,
+    v2: &crate::bop::ds::DSVertex,
     fuzz: f64,
 ) -> i32 {
     let a_fuzz = if fuzz > crate::tolerance::TOLERANCE_ABS {
@@ -1687,10 +1687,10 @@ pub fn compute_vv(
 
 /// MakeNewVertex from point + tolerance (BOPTools_AlgoTools.cxx L96-98).
 /// Returns the new vertex DS index.
-pub fn make_new_vertex(ds: &mut crate::bop::ds::ds::DS, p: glam::DVec3, tol: f64) -> usize {
+pub fn make_new_vertex(ds: &mut crate::bop::ds::DS, p: glam::DVec3, tol: f64) -> usize {
     let vi = ds.vertex_count();
     ds.push_vertex(
-        crate::bop::ds::ds::DSVertex { shape_idx: 0,
+        crate::bop::ds::DSVertex { shape_idx: 0,
             point: p,
             geom_tol: tol,
             origin: None,
@@ -1705,16 +1705,16 @@ pub fn make_new_vertex(ds: &mut crate::bop::ds::ds::DS, p: glam::DVec3, tol: f64
 /// MakeNewVertex from two vertices (BOPTools_AlgoTools.cxx L101-103).
 /// Merges two vertices into one at their midpoint with combined tolerance.
 pub fn make_new_vertex_from_two(
-    v1: &crate::bop::ds::ds::DSVertex,
-    v2: &crate::bop::ds::ds::DSVertex,
-    ds: &mut crate::bop::ds::ds::DS,
+    v1: &crate::bop::ds::DSVertex,
+    v2: &crate::bop::ds::DSVertex,
+    ds: &mut crate::bop::ds::DS,
 ) -> usize {
     let mid = (v1.point + v2.point) * 0.5;
     let dist = (v1.point - v2.point).length();
     let tol = dist * 0.5 + v1.geom_tol.max(v2.geom_tol) + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertex_count();
     ds.push_vertex(
-        crate::bop::ds::ds::DSVertex { shape_idx: 0,
+        crate::bop::ds::DSVertex { shape_idx: 0,
             point: mid,
             geom_tol: tol,
             origin: None,
@@ -1731,8 +1731,8 @@ pub fn make_new_vertex_from_two(
 /// Returns Some((edge_index, forward)) if found.
 pub fn get_edge_on_face(
     ei: usize,
-    ds_edges: &[crate::bop::ds::ds::DSEdge],
-    face: &crate::bop::ds::ds::DSFace,
+    ds_edges: &[crate::bop::ds::DSEdge],
+    face: &crate::bop::ds::DSFace,
 ) -> Option<(usize, bool)> {
     for &be in &face.boundary_edges {
         let edge = &ds_edges[be];
@@ -1766,8 +1766,8 @@ pub fn get_edge_on_face(
 /// Returns Some(edge_index) if found.
 pub fn get_edge_off(
     ei: usize,
-    ds_edges: &[crate::bop::ds::ds::DSEdge],
-    face: &crate::bop::ds::ds::DSFace,
+    ds_edges: &[crate::bop::ds::DSEdge],
+    face: &crate::bop::ds::DSFace,
 ) -> Option<usize> {
     let e1 = &ds_edges[ei];
     for &be in &face.boundary_edges {
@@ -1793,7 +1793,7 @@ pub fn get_edge_off(
 pub fn is_hole(
     wire_edges: &[(usize, bool)], // (edge_idx, forward_in_wire)
     face_idx: usize,
-    ds: &crate::bop::ds::ds::DS,
+    ds: &crate::bop::ds::DS,
 ) -> bool {
     let mut area = 0.0;
     for &(ei, fwd) in wire_edges {
@@ -1826,7 +1826,7 @@ pub fn is_hole(
 /// Determines the relative orientation of normals of two faces near a shared edge.
 /// Returns 1 if normals point in the same direction,
 /// -1 if opposite, 0 if no shared non-closed edge found.
-pub fn sense(fi_a: usize, fi_b: usize, ds: &crate::bop::ds::ds::DS) -> i8 {
+pub fn sense(fi_a: usize, fi_b: usize, ds: &crate::bop::ds::DS) -> i8 {
     // OCCT L1210-1238: find a non-degenerate, non-closed edge shared by both faces
     let face_a = ds.faces.get(fi_a).unwrap();
     let face_b = ds.faces.get(fi_b).unwrap();
@@ -1857,7 +1857,7 @@ pub fn sense(fi_a: usize, fi_b: usize, ds: &crate::bop::ds::ds::DS) -> i8 {
 
 /// IsOpenShell (BOPTools_AlgoTools.cxx L2350-2394).
 /// Checks if a shell is open (has an edge used by only one non-INTERNAL/EXTERNAL face).
-pub fn is_open_shell(shell_faces: &[usize], ds: &crate::bop::ds::ds::DS) -> bool {
+pub fn is_open_shell(shell_faces: &[usize], ds: &crate::bop::ds::DS) -> bool {
     // OCCT L2361: build edge= ace map for the shell
     let mut edge_face_count: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
@@ -1897,7 +1897,7 @@ pub fn is_block_in_on_face(
     t_range: [f64; 2],
     face_idx: usize,
     ei: usize,
-    ds: &crate::bop::ds::ds::DS,
+    ds: &crate::bop::ds::DS,
 ) -> bool {
     let [mut f1, mut l1] = t_range;
     // OCCT L1982-1985: shrink range by 0.75% on each side
@@ -1958,7 +1958,7 @@ pub fn is_block_in_on_face(
 pub(crate) fn is_point_in_on_face(
     pt: &glam::DVec3,
     face_idx: usize,
-    ds: &crate::bop::ds::ds::DS,
+    ds: &crate::bop::ds::DS,
 ) -> bool {
     let face = ds.faces.get(face_idx).unwrap();
     match &face.surface {
@@ -1982,9 +1982,9 @@ pub(crate) fn is_point_in_on_face(
 /// Computes max distance and max parameter deviation of edge from face surface.
 /// Returns Some((max_dist, max_param)) on success.
 pub fn compute_tolerance(
-    edge: &crate::bop::ds::ds::DSEdge,
-    face: &crate::bop::ds::ds::DSFace,
-    ds: &crate::bop::ds::ds::DS,
+    edge: &crate::bop::ds::DSEdge,
+    face: &crate::bop::ds::DSFace,
+    ds: &crate::bop::ds::DS,
 ) -> Option<(f64, f64)> {
     // OCCT: BRepLib_CheckCurveOnSurface =check edge deviation from face surface
     // rcad: sample the edge curve at multiple points and compute distance to face surface
@@ -2039,7 +2039,7 @@ pub fn compute_tolerance(
 /// Updates both vertex tolerances (adds DTolerance margin) and sets edge tolerance.
 /// Returns the new edge index.
 pub fn make_edge(
-    ds: &mut crate::bop::ds::ds::DS,
+    ds: &mut crate::bop::ds::DS,
     ci: usize,
     v1: usize,
     v2: usize,
@@ -2089,7 +2089,7 @@ pub fn make_edge(
 
 /// CopyEdge (BOPTools_AlgoTools.hxx L152).
 /// Creates a copy of a DS edge (deep copy with new index).
-pub fn copy_ds_edge(ds: &mut crate::bop::ds::ds::DS, ei: usize) -> usize {
+pub fn copy_ds_edge(ds: &mut crate::bop::ds::DS, ei: usize) -> usize {
     let new_ei = ds.edge_count();
     let src = ds.edges.get(ei).unwrap().clone();
     ds.push_edge(src.clone(), None);
@@ -2100,7 +2100,7 @@ pub fn copy_ds_edge(ds: &mut crate::bop::ds::ds::DS, ei: usize) -> usize {
 /// Creates a split edge from a base edge with new vertices at specified parameters.
 /// The new edge inherits the base edge's curve and pcurves.
 pub fn make_split_edge(
-    ds: &mut crate::bop::ds::ds::DS,
+    ds: &mut crate::bop::ds::DS,
     base_ei: usize,
     v1: usize,
     p1: f64,
@@ -2122,7 +2122,7 @@ pub fn make_split_edge(
     let new_ei = ds.edge_count();
     let t_range = if p1 < p2 { [p1, p2] } else { [p2, p1] };
     ds.push_edge(
-        crate::bop::ds::ds::DSEdge { shape_idx: 0,
+        crate::bop::ds::DSEdge { shape_idx: 0,
             start_vertex: v1,
             end_vertex: v2,
             curve,
@@ -2151,7 +2151,7 @@ pub fn make_split_edge(
 /// MakeVertex (BOPTools_AlgoTools.cxx L1790-1805).
 /// Creates a vertex from a list of vertex indices. If single vertex, returns it.
 /// Otherwise computes the bounding vertex (midpoint + combined tolerance).
-pub fn make_vertex_from_list(ds: &mut crate::bop::ds::ds::DS, vertex_indices: &[usize]) -> usize {
+pub fn make_vertex_from_list(ds: &mut crate::bop::ds::DS, vertex_indices: &[usize]) -> usize {
     if vertex_indices.is_empty() {
         // OCCT returns invalid vertex for empty list
         return usize::MAX;
@@ -2180,7 +2180,7 @@ pub fn make_vertex_from_list(ds: &mut crate::bop::ds::ds::DS, vertex_indices: &[
     let tol = max_dist + max_tol + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertex_count();
     ds.push_vertex(
-        crate::bop::ds::ds::DSVertex { shape_idx: 0,
+        crate::bop::ds::DSVertex { shape_idx: 0,
             point: mid,
             geom_tol: tol,
             origin: None,
