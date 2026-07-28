@@ -559,38 +559,43 @@ impl<'a> BooleanBuilder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillIn3DParts (Builder_3.cxx L97+).
     fn fill_in_3d_parts(&mut self) {
-        let a_nb_s = self.ds.nb_source_shapes();
-        for i in 0..a_nb_s {
-            let a_si = self.ds.shape_info(i);
-            if a_si.shape_type != topods::ShapeType::Solid { continue; }
-            let solid_shape = self.brep_sr(i);
-            if let Some(imgs) = self.my_images.get(&solid_shape) {
-                for img in imgs {
-                    let fi = self.ds.index(img);
-                    if fi >= 0 {
-                        self.my_in_parts.entry(i).or_default().push(fi as usize);
+        let n = self.ds.nb_shapes();
+        for si in 0..n {
+            if self.ds.shape_info(si).shape_type != topods::ShapeType::Solid { continue; }
+            for &shi in &self.ds.shape_info(si).sub_shapes {
+                if shi >= n { continue; }
+                if self.ds.shape_info(shi).shape_type != topods::ShapeType::Shell { continue; }
+                for &fi in &self.ds.shape_info(shi).sub_shapes {
+                    if fi >= n { continue; }
+                    if self.ds.shape_info(fi).shape_type != topods::ShapeType::Face { continue; }
+                    if self.my_images.contains_key(&self.brep_sr(fi)) {
+                        self.my_in_parts.entry(si).or_default().push(fi);
                     }
                 }
             }
         }
+        eprintln!("[F3P] in_parts={}", self.my_in_parts.len());
     }
 
-    /// OCCT BOPAlgo_Builder::BuildSplitSolids (Builder_3.cxx L400+).
+    /// OCCT BOPAlgo_Builder::BuildSplitSolids (Builder_3.cxx L400-550).
     fn build_split_solids(&mut self) {
         for (&solid_idx, face_indices) in &self.my_in_parts {
             let face_shapes: Vec<Shape> = face_indices.iter()
                 .filter_map(|&fi| {
-                    let si = self.ds.shape_info(fi);
-                    if si.shape_type == topods::ShapeType::Face {
+                    if fi < self.ds.nb_shapes()
+                        && self.ds.shape_info(fi).shape_type == topods::ShapeType::Face {
                         Some(self.brep_sr(fi))
                     } else { None }
                 })
                 .collect();
             if face_shapes.is_empty() { continue; }
+            let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
+            bs.my_shapes = face_shapes;
+            bs.perform();
             let solid_src = self.brep_sr(solid_idx);
-            for fs in &face_shapes {
+            for solid_img in &bs.my_solids {
                 self.my_images.entry(solid_src.clone())
-                    .or_default().push(fs.clone());
+                    .or_default().push(solid_img.clone());
             }
         }
     }
@@ -695,6 +700,8 @@ impl<'a> BooleanBuilder<'a> {
                 })
             }
             TShape::Edge(ed) => {
+                let _ = self.push_shape_recursive(&ed.first);
+                let _ = self.push_shape_recursive(&ed.last);
                 let my_shapes = self.remap_shapes(&ed.my_shapes);
                 let first = self.remap_shape(&ed.first);
                 let last = self.remap_shape(&ed.last);
@@ -703,6 +710,7 @@ impl<'a> BooleanBuilder<'a> {
                 })
             }
             TShape::Wire(wd) => {
+                for e in &wd.edges { let _ = self.push_shape_recursive(e); }
                 let my_shapes = self.remap_shapes(&wd.my_shapes);
                 let edges = self.remap_shapes(&wd.edges);
                 TShape::Wire(TWireData {
@@ -710,6 +718,9 @@ impl<'a> BooleanBuilder<'a> {
                 })
             }
             TShape::Face(fd) => {
+                let _ = self.push_shape_recursive(&fd.outer_wire);
+                for w in &fd.inner_wires { let _ = self.push_shape_recursive(w); }
+                for v in &fd.internal_vertices { let _ = self.push_shape_recursive(v); }
                 let my_shapes = self.remap_shapes(&fd.my_shapes);
                 let outer_wire = self.remap_shape(&fd.outer_wire);
                 let inner_wires = self.remap_shapes(&fd.inner_wires);
@@ -720,6 +731,7 @@ impl<'a> BooleanBuilder<'a> {
                 })
             }
             TShape::Shell(sd) => {
+                for f in &sd.faces { let _ = self.push_shape_recursive(f); }
                 let my_shapes = self.remap_shapes(&sd.my_shapes);
                 let faces = self.remap_shapes(&sd.faces);
                 TShape::Shell(TShellData {
@@ -727,6 +739,7 @@ impl<'a> BooleanBuilder<'a> {
                 })
             }
             TShape::Solid(sd) => {
+                for s in &sd.shells { let _ = self.push_shape_recursive(s); }
                 let my_shapes = self.remap_shapes(&sd.my_shapes);
                 let shells = self.remap_shapes(&sd.shells);
                 let internal_vertices = self.remap_shapes(&sd.internal_vertices);
