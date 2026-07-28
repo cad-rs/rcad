@@ -2,7 +2,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::*;
 
-use crate::tolerance::*;
+
 
 #[derive(Debug, Clone)]
 pub enum PlaneCylinderResult {
@@ -16,15 +16,15 @@ pub enum PlaneCylinderResult {
 pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> PlaneCylinderResult {
     let cos_angle = plane.normal.dot(cyl.axis).abs();
 
-    if cos_angle < TOLERANCE_ANG {
+    if cos_angle < rcad_kernel::ANGULAR {
         // Plane parallel to cylinder axis
         let axis_to_plane = (plane.origin - cyl.origin).dot(plane.normal);
         let dist = axis_to_plane.abs();
 
-        if dist > cyl.radius + TOLERANCE_ABS {
+        if dist > cyl.radius + rcad_kernel::rcad_kernel::CONFUSION {
             return PlaneCylinderResult::NoIntersection;
         }
-        if (dist - cyl.radius).abs() < TOLERANCE_ABS {
+        if (dist - cyl.radius).abs() < rcad_kernel::rcad_kernel::CONFUSION {
             let tang_point = cyl.origin + plane.normal * axis_to_plane;
             return PlaneCylinderResult::TangentLine(Line3 {
                 origin: tang_point,
@@ -50,14 +50,14 @@ pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> Plan
         );
     }
 
-    if (cos_angle - 1.0).abs() < TOLERANCE_ANG {
-        // Plane perpendicular to cylinder axis → circle
+    if (cos_angle - 1.0).abs() < rcad_kernel::ANGULAR {
+        // Plane perpendicular to cylinder axis 鈫?circle
         let t = (plane.origin - cyl.origin).dot(cyl.axis);
         let center = cyl.origin + cyl.axis * t;
         return PlaneCylinderResult::Circle(Circle3::new(center, cyl.axis, cyl.radius));
     }
 
-    // General oblique case → ellipse
+    // General oblique case 鈫?ellipse
     let major_radius = cyl.radius / cos_angle;
     let minor_radius = cyl.radius;
 

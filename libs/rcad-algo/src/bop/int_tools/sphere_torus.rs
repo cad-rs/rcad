@@ -4,16 +4,16 @@
 //!
 //! - **On-axis**: One or two circles (sphere center on torus axis)
 //! - **Off-axis** (skew): Solved analytically by parameterizing the torus
-//!   P(u,v) and substituting into the sphere implicit equation |P - O_s|² = R_s².
-//!   At each u �?[0, 2π) this reduces to a linear-trigonometric equation in v:
+//!   P(u,v) and substituting into the sphere implicit equation |P - O_s|虏 = R_s虏.
+//!   At each u 锟?[0, 2蟺) this reduces to a linear-trigonometric equation in v:
 //!
 //!   ```text
-//!   A(u)·cos(v) + B·sin(v) + C(u) = 0
+//!   A(u)路cos(v) + B路sin(v) + C(u) = 0
 //!   ```
 //!
-//!   which is solved via the identity ρ·cos(v - v₀) + C = 0, giving at most
+//!   which is solved via the identity 蟻路cos(v - v鈧€) + C = 0, giving at most
 //!   two v values per u.  This is significantly simpler than the quartic solve
-//!   required for cylinder × torus.
+//!   required for cylinder 脳 torus.
 //!
 //! - **General**: Numerical marching fallback.
 
@@ -22,9 +22,9 @@ use std::f64::consts::TAU;
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, SphericalSurface, ToroidalSurface, any_perpendicular};
 
-use crate::tolerance::*;
 
-/// Result of sphere × torus intersection.
+
+/// Result of sphere 脳 torus intersection.
 #[derive(Debug, Clone)]
 pub enum SphereTorusResult {
     /// No intersection.
@@ -52,8 +52,8 @@ pub fn intersect_sphere_torus(
     let foot = torus.center + a * t;
     let d_perp = (sphere.center - foot).length();
 
-    // On-axis: sphere center lies on torus axis �?circles
-    if d_perp < TOLERANCE_ABS {
+    // On-axis: sphere center lies on torus axis 锟?circles
+    if d_perp < rcad_kernel::rcad_kernel::CONFUSION {
         let z_s = (sphere.center - torus.center).dot(a);
         return intersect_sphere_torus_on_axis(torus, sphere, a, z_s);
     }
@@ -70,14 +70,14 @@ pub fn intersect_sphere_torus(
 
 /// On-axis case: sphere center on torus axis.
 ///
-/// �?(documented): OCCT `IntAna_QuadQuadGeo` uses the direct
+/// 锟?(documented): OCCT `IntAna_QuadQuadGeo` uses the direct
 /// anAlpha / aBeta analytic formula for coaxial sphere-torus intersection
 /// (`BOPAlgo_PaveFiller.cxx`, spherical surface pair dispatch).  The key OCCT
 /// expressions are:
 ///
 ///   ```text
-///   anAlpha = (R_sph² - r_torus² - R_major²) / (2.0 * R_major)
-///   aBeta   = R_sph² - anAlpha²
+///   anAlpha = (R_sph虏 - r_torus虏 - R_major虏) / (2.0 * R_major)
+///   aBeta   = R_sph虏 - anAlpha虏
 ///   ```
 ///
 /// ## Derivation in the (rho, z) half-plane
@@ -171,7 +171,7 @@ pub fn intersect_sphere_torus(
 /// skew solver (intersect_skew_sphere_torus), but restricted to a single beta
 /// value per intersection circle rather than a full sweep of u.
 ///
-/// �?Current rcad implementation uses the skew (off-axis) numeric solver which
+/// 锟?Current rcad implementation uses the skew (off-axis) numeric solver which
 /// also handles on-axis correctly.  The OCCT direct formula is not used;
 /// the existing approach is functionally equivalent for current purposes.
 fn intersect_sphere_torus_on_axis(
@@ -188,24 +188,24 @@ fn intersect_sphere_torus_on_axis(
     SphereTorusResult::General
 }
 
-/// Skew (off-axis) sphere × torus intersection via torus parameterization.
+/// Skew (off-axis) sphere 脳 torus intersection via torus parameterization.
 ///
 /// Substitute the torus P(u,v) into the sphere implicit equation:
 ///
-/// |O_t + (R + r·cos(v))·(cos(u)·x + sin(u)·y) + r·sin(v)·a - O_s|² = R_s²
+/// |O_t + (R + r路cos(v))路(cos(u)路x + sin(u)路y) + r路sin(v)路a - O_s|虏 = R_s虏
 ///
 /// At each u this reduces to:
 ///
-///   A(u)·cos(v) + B·sin(v) + C(u) = 0
+///   A(u)路cos(v) + B路sin(v) + C(u) = 0
 ///
 /// where:
-///   A(u) = 2r·(R + D·x·cos(u) + D·y·sin(u))         �?coeff of cos(v)
-///   B    = 2r·(D·a)                                   �?coeff of sin(v), constant
-///   C(u) = |D|² + R² + r² + 2R·(D·x·cos(u) + D·y·sin(u)) - R_s²
+///   A(u) = 2r路(R + D路x路cos(u) + D路y路sin(u))         锟?coeff of cos(v)
+///   B    = 2r路(D路a)                                   锟?coeff of sin(v), constant
+///   C(u) = |D|虏 + R虏 + r虏 + 2R路(D路x路cos(u) + D路y路sin(u)) - R_s虏
 ///
-/// with D = O_t - O_s (torus center �?sphere center).
+/// with D = O_t - O_s (torus center 锟?sphere center).
 ///
-/// Solving ρ·cos(v - v₀) + C = 0 gives v = v₀ ± acos(-C/ρ) when |C| �?ρ.
+/// Solving 蟻路cos(v - v鈧€) + C = 0 gives v = v鈧€ 卤 acos(-C/蟻) when |C| 锟?蟻.
 pub fn intersect_skew_sphere_torus(
     sphere: &SphericalSurface,
     torus: &ToroidalSurface,
@@ -226,8 +226,8 @@ pub fn intersect_skew_sphere_torus(
     let y_dir = a.cross(x_dir).normalize();
 
     // Constants
-    let b_coeff = 2.0 * r_minor * d.dot(a); // coefficient of sin(v) �?constant in u
-    let const_part = d_sq + r_major * r_major + r_minor * r_minor - r_sph * r_sph; // |D|² + R² + r² - R_s²
+    let b_coeff = 2.0 * r_minor * d.dot(a); // coefficient of sin(v) 锟?constant in u
+    let const_part = d_sq + r_major * r_major + r_minor * r_minor - r_sph * r_sph; // |D|虏 + R虏 + r虏 - R_s虏
 
     const N_SAMPLES: usize = 128;
     let delta_u = TAU / N_SAMPLES as f64;
@@ -239,7 +239,7 @@ pub fn intersect_skew_sphere_torus(
         let u = i as f64 * delta_u;
         let (cu, su) = (u.cos(), u.sin());
 
-        // p_x(u) = d·(cos(u)·x + sin(u)·y) �?projection of d onto the
+        // p_x(u) = d路(cos(u)路x + sin(u)路y) 锟?projection of d onto the
         // torus equatorial plane in the radial direction at angle u.
         let p_x = d.dot(x_dir) * cu + d.dot(y_dir) * su;
 
@@ -250,11 +250,11 @@ pub fn intersect_skew_sphere_torus(
         let c_term = const_part + 2.0 * r_major * p_x;
 
         let rho = (a_coeff * a_coeff + b_coeff * b_coeff).sqrt();
-        if rho < TOLERANCE_CLAMP_MIN {
+        if rho < 1e-15 {
             continue; // degenerate (e.g. r_minor=0)
         }
 
-        // Check if the equation ρ·cos(v - v₀) + C = 0 has real solutions
+        // Check if the equation 蟻路cos(v - v鈧€) + C = 0 has real solutions
         let ratio = -c_term / rho;
         if ratio < -1.0 - 1e-12 || ratio > 1.0 + 1e-12 {
             continue; // no intersection at this u
@@ -267,7 +267,7 @@ pub fn intersect_skew_sphere_torus(
         let v1 = v0 + delta_v;
         let v2 = v0 - delta_v;
 
-        // Compute 3D point: P(u,v) = o_t + (r_major + r_minor·cos(v))·(cos(u)·x + sin(u)·y) + r_minor·sin(v)·a
+        // Compute 3D point: P(u,v) = o_t + (r_major + r_minor路cos(v))路(cos(u)路x + sin(u)路y) + r_minor路sin(v)路a
         let r_dir = cu * x_dir + su * y_dir;
 
         let (cv1, sv1) = (v1.cos(), v1.sin());
@@ -287,7 +287,7 @@ pub fn intersect_skew_sphere_torus(
         return vec![];
     }
 
-    // ── Branch extraction ──────────────────────────────────────────────────
+    // 鈹€鈹€ Branch extraction 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Sort by u, then v.
     samples.sort_by(|a, b| {
         a.0.partial_cmp(&b.0)
@@ -348,7 +348,7 @@ pub fn intersect_skew_sphere_torus(
         }
     }
 
-    // ── Adaptive chord-error refinement ────────────────────────────────────
+    // 鈹€鈹€ Adaptive chord-error refinement 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     const CHORD_TOL: f64 = crate::bop::int_tools::CHORD_TOLERANCE;
     const REFINE_DEPTH: usize = crate::bop::int_tools::CHORD_REFINE_DEPTH;
 
@@ -372,7 +372,7 @@ pub fn intersect_skew_sphere_torus(
                 let a_coeff = 2.0 * r_minor * (r_major + p_x);
                 let c_term = const_part + 2.0 * r_major * p_x;
                 let rho = (a_coeff * a_coeff + b_coeff * b_coeff).sqrt();
-                if rho < TOLERANCE_CLAMP_MIN {
+                if rho < 1e-15 {
                     return None;
                 }
                 let ratio = -c_term / rho;
@@ -419,7 +419,7 @@ pub fn intersect_skew_sphere_torus(
     for mut branch in refined_3d {
         while branch.len() >= 3 {
             let n = branch.len();
-            if (branch[n - 1] - branch[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (branch[n - 1] - branch[0]).length_squared() < 1e-24 {
                 branch.pop();
             } else {
                 break;
@@ -433,6 +433,6 @@ pub fn intersect_skew_sphere_torus(
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

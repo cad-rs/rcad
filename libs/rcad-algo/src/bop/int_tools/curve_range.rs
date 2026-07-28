@@ -1,6 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
-use rcad_kernel::tolerance::{CONFUSION, PCONFUSION, is_infinite_value, parametric_epsilon};
+use rcad_kernel::tolerance::{rcad_kernel::CONFUSION, PCONFUSION, is_infinite_value, parametric_epsilon};
 
 /// Curve parameter step: parameter increment needed to move `tol` distance along curve.
 ///
@@ -8,7 +8,7 @@ use rcad_kernel::tolerance::{CONFUSION, PCONFUSION, is_infinite_value, parametri
 /// (BRepLib_1.cxx L61, IntTools_ShrunkRange.cxx L162)
 ///
 /// For a curve parameterized by `t`, the step `resolution` satisfies:
-/// `|P(t + resolution) - P(t)|  ≈ tol` (first-order approximation using tangent speed).
+/// `|P(t + resolution) - P(t)|  鈮?tol` (first-order approximation using tangent speed).
 ///
 /// When the tangent speed is nearly zero (singularity), the resolution is clamped to `tol`.
 pub fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
@@ -103,7 +103,7 @@ fn find_nearest_valid_point(
     // (inverse of resolution is the maximal derivative);
     // this is actual for bezier and b-spline types only
     let a_d1_mag = if is_bspline_or_bezier(curve) {
-        // 1. / Resolution(1.) * 0.01 → max|D1| * 0.01 → squared
+        // 1. / Resolution(1.) * 0.01 鈫?max|D1| * 0.01 鈫?squared
         let max_speed = 1.0 / curve_resolution_global(curve, a_start_u, an_end_u, 1.0);
         let val = max_speed * 0.01;
         val * val
@@ -214,7 +214,7 @@ fn is_bspline_or_bezier(curve: &Curve3) -> bool {
 /// OCCT algorithm (IntTools_ShrunkRange::Perform):
 /// 1. Guard: return None if (t2 - t1) < Precision::PConfusion() (L117-120)
 /// 2. Get vertex tolerances; for each vertex:
-///    aTolV = max(aTolV, aTolE) + Precision::Confusion() (L129-142)
+///    aTolV = max(aTolV, aTolE) + Precision::rcad_kernel::CONFUSION() (L129-142)
 /// 3. Call BRepLib::FindValidRange which:
 ///    a. Computes eps = max(curve.Resolution(aTolE) * 0.1, Epsilon(aMaxPar),
 ///                          Precision::PConfusion())
@@ -223,8 +223,8 @@ fn is_bspline_or_bezier(curve: &Curve3) -> bool {
 ///    c. Returns (theFirst, theLast) with theFirst < theLast.
 /// 4. Guard: return None if (myTS2 - myTS1) < Precision::PConfusion() (L152-155)
 /// 5. Compute edge length on shrunk range (L159-170)
-/// 6. Guard: return None if length < Precision::Confusion() (L171-174)
-/// 7. Set is_splittable if length > 2*aTolE + 2*Precision::Confusion() (L184-187)
+/// 6. Guard: return None if length < Precision::rcad_kernel::CONFUSION() (L171-174)
+/// 7. Set is_splittable if length > 2*aTolE + 2*Precision::rcad_kernel::CONFUSION() (L184-187)
 ///
 /// rcad: steps 5-7 are done by the caller (ShrunkRange wrapper in shrunk_range.rs).
 ///
@@ -258,8 +258,8 @@ pub fn shrunk_range(
         return Some([t1, t2]);
     }
     // OCCT L124-142: tolerance adjustments
-    let a_tol_v1 = v1_tol.max(edge_tol) + CONFUSION;
-    let a_tol_v2 = v2_tol.max(edge_tol) + CONFUSION;
+    let a_tol_v1 = v1_tol.max(edge_tol) + rcad_kernel::CONFUSION;
+    let a_tol_v2 = v2_tol.max(edge_tol) + rcad_kernel::CONFUSION;
 
     // OCCT L144-146: compute the points at the endpoints
     let p1 = curve.point_at(t1);
@@ -329,23 +329,23 @@ pub fn shrunk_range(
         }
     };
 
-    // OCCT L250-255: check found parameters — if theFirst > theLast → overlapping
+    // OCCT L250-255: check found parameters 鈥?if theFirst > theLast 鈫?overlapping
     if ts1 > ts2 {
         return None;
     }
 
-    // OCCT L152-156: if shrunk range < PConfusion → micro-edge
+    // OCCT L152-156: if shrunk range < PConfusion 鈫?micro-edge
     if (ts2 - ts1) < PCONFUSION {
         return None;
     }
 
-    // OCCT L158-175: length computation and check — done by caller (ShrunkRange wrapper)
+    // OCCT L158-175: length computation and check 鈥?done by caller (ShrunkRange wrapper)
     Some([ts1, ts2])
 }
 
 /// OCCT BRepLib::FindValidRange (BRepLib_1.cxx L173-258), Adaptor3d_Curve overload.
 ///
-/// Find a valid (shrunk) sub-range `[theFirst, theLast]` ⊆ `[theParV1, theParV2]`
+/// Find a valid (shrunk) sub-range `[theFirst, theLast]` 鈯?`[theParV1, theParV2]`
 /// such that the curve points at theFirst and theLast are outside the tolerance
 /// spheres of their respective endpoint vertices, while staying as close as
 /// possible to the original endpoints.
@@ -361,8 +361,8 @@ pub fn shrunk_range(
 /// * `the_tol_v2` - Tolerance of the second vertex.
 ///
 /// # Returns
-/// * `Some([the_first, the_last])` — valid range with `the_first < the_last`.
-/// * `None` — no valid range exists (micro-edge or overlapping tolerance spheres).
+/// * `Some([the_first, the_last])` 鈥?valid range with `the_first < the_last`.
+/// * `None` 鈥?no valid range exists (micro-edge or overlapping tolerance spheres).
 ///
 /// OCCT: BRepLib_1.cxx L173-258
 pub fn find_valid_range(
@@ -375,7 +375,7 @@ pub fn find_valid_range(
     the_pnt_v2: DVec3,
     the_tol_v2: f64,
 ) -> Option<[f64; 2]> {
-    // OCCT L184-187: if range < PConfusion → degenerate
+    // OCCT L184-187: if range < PConfusion 鈫?degenerate
     if the_par_v2 - the_par_v1 < PCONFUSION {
         return None;
     }
@@ -411,7 +411,7 @@ pub fn find_valid_range(
             curve, the_par_v1, the_par_v2, true, the_pnt_v1, the_tol_v1, an_eps,
         ) {
             Some(val) => {
-                // OCCT L221-224: if (theParV2 - theFirst < anEps) → too close to other end
+                // OCCT L221-224: if (theParV2 - theFirst < anEps) 鈫?too close to other end
                 if the_par_v2 - val < an_eps {
                     return None;
                 }
@@ -429,7 +429,7 @@ pub fn find_valid_range(
             curve, the_par_v1, the_par_v2, false, the_pnt_v2, the_tol_v2, an_eps,
         ) {
             Some(val) => {
-                // OCCT L244-247: if (theLast - theParV1 < anEps) → too close to other end
+                // OCCT L244-247: if (theLast - theParV1 < anEps) 鈫?too close to other end
                 if val - the_par_v1 < an_eps {
                     return None;
                 }
@@ -439,7 +439,7 @@ pub fn find_valid_range(
         }
     };
 
-    // OCCT L250-255: if theFirst > theLast → overlapping tolerance spheres
+    // OCCT L250-255: if theFirst > theLast 鈫?overlapping tolerance spheres
     if the_first > the_last {
         return None;
     }

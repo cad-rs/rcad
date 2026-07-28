@@ -4,23 +4,22 @@
 //!
 //! ## Parallel axes
 //!
-//! When the two cylinder axes are parallel (cross-product length ≈ 0):
+//! When the two cylinder axes are parallel (cross-product length 鈮?0):
 //!
-//! - **Coaxial**: axes coincide → intersection is the full cylinder surface of
+//! - **Coaxial**: axes coincide 鈫?intersection is the full cylinder surface of
 //!   the smaller radius (degenerate; we return `Coaxial`).
 //! - **Offset parallel**: axes are parallel but distinct.  The gap between the
 //!   two axis lines is `d`.
-//!   - `d ≥ r1 + r2`: no intersection.
+//!   - `d 鈮?r1 + r2`: no intersection.
 //!   - `d = r1 + r2` (within tolerance): external tangent, one generator line.
-//!   - `|r1 − r2| < d < r1 + r2`: two generator lines (cross-section chords).
-//!   - `d = |r1 − r2|`: internal tangent, one generator line.
-//!   - `d < |r1 − r2|`: one cylinder inside the other, no surface intersection.
+//!   - `|r1 鈭?r2| < d < r1 + r2`: two generator lines (cross-section chords).
+//!   - `d = |r1 鈭?r2|`: internal tangent, one generator line.
+//!   - `d < |r1 鈭?r2|`: one cylinder inside the other, no surface intersection.
 //!
 //! ## Perpendicular axes (Steinmetz intersection)
 //!
 //! When the axes are perpendicular and the cross-section distance equals zero
-//! (axes actually intersect), the intersection curves are two ellipses —
-//! specifically the classic Steinmetz configuration.  We return
+//! (axes actually intersect), the intersection curves are two ellipses 鈥?//! specifically the classic Steinmetz configuration.  We return
 //! `Perpendicular(TwoEllipses(...))` for this sub-case.
 //!
 //! ## General skew axes
@@ -34,13 +33,13 @@ use rcad_kernel::geom::{Circle3, CylindricalSurface, Ellipse3, Line3, any_perpen
 use std::f64::consts::TAU;
 
 use super::pcurve_derive::refine_polyline;
-use crate::tolerance::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
+
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Analytic result of cylinder × cylinder intersection.
+/// Analytic result of cylinder 脳 cylinder intersection.
 #[derive(Debug, Clone)]
 pub enum CylinderCylinderResult {
     /// The cylinders do not intersect (disjoint or fully nested).
@@ -58,10 +57,10 @@ pub enum CylinderCylinderResult {
     /// Perpendicular intersecting axes, equal radii: two circles.
     TwoCircles(Circle3, Circle3),
     /// Perpendicular axes with non-zero offset (axes do not intersect),
-    /// but cylinders overlap (dist ≤ r1 + r2). Produces one or two
+    /// but cylinders overlap (dist 鈮?r1 + r2). Produces one or two
     /// space curves parametrized on cyl1's surface:
-    /// `P(θ) = O1 + v*A1 + R1*(cos(θ)*U1 + sin(θ)*V1)`
-    /// where `v = dz ± sqrt(R2² - (dy + R1*sin(θ-α))²)`.
+    /// `P(胃) = O1 + v*A1 + R1*(cos(胃)*U1 + sin(胃)*V1)`
+    /// where `v = dz 卤 sqrt(R2虏 - (dy + R1*sin(胃-伪))虏)`.
     PerpendicularOffsetCurves {
         cyl1: CylindricalSurface,
         cyl2: CylindricalSurface,
@@ -71,8 +70,8 @@ pub enum CylinderCylinderResult {
     /// Skew axes (non-parallel, non-perpendicular): analytic quartic solution.
     ///
     /// The two cylinders intersect in a quartic space curve.  For each cylinder
-    /// azimuth u ∈ [0, 2π) the second cylinder's equation reduces to a quadratic
-    /// in the height v, solved analytically.  Two branches (± sqrt) are returned
+    /// azimuth u 鈭?[0, 2蟺) the second cylinder's equation reduces to a quadratic
+    /// in the height v, solved analytically.  Two branches (卤 sqrt) are returned
     /// as polylines.
     SkewQuartic(Vec<Vec<DVec3>>),
     /// General case (skew axes or oblique angle not handled analytically).
@@ -80,16 +79,16 @@ pub enum CylinderCylinderResult {
     General,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main function
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the analytic intersection of `cyl1` and `cyl2`.
 pub fn intersect_cylinder_cylinder(
     cyl1: &CylindricalSurface,
     cyl2: &CylindricalSurface,
 ) -> CylinderCylinderResult {
-    intersect_cylinder_cylinder_with_eps(cyl1, cyl2, TOLERANCE_ABS, TOLERANCE_ANG)
+    intersect_cylinder_cylinder_with_eps(cyl1, cyl2, rcad_kernel::rcad_kernel::CONFUSION, rcad_kernel::ANGULAR)
 }
 
 /// Compute cylinder-cylinder intersection with additional fuzzy tolerance.
@@ -98,8 +97,8 @@ pub fn intersect_cylinder_cylinder_with_tolerance(
     cyl2: &CylindricalSurface,
     fuzzy_tol: f64,
 ) -> CylinderCylinderResult {
-    let linear_tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
-    let angular_tol = TOLERANCE_ANG + fuzzy_tol.max(0.0);
+    let linear_tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol.max(0.0);
+    let angular_tol = rcad_kernel::ANGULAR + fuzzy_tol.max(0.0);
     intersect_cylinder_cylinder_with_eps(cyl1, cyl2, linear_tol, angular_tol)
 }
 
@@ -113,33 +112,33 @@ fn intersect_cylinder_cylinder_with_eps(
     let a2 = cyl2.axis.normalize();
 
     let cross = a1.cross(a2);
-    let sin_angle = cross.length(); // |sin θ|
+    let sin_angle = cross.length(); // |sin 胃|
 
-    // ── Parallel axes ────────────────────────────────────────────────────────
+    // 鈹€鈹€ Parallel axes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     if sin_angle < angular_tol {
         return intersect_parallel_cylinders(cyl1, cyl2, a1, linear_tol);
     }
 
-    // ── Perpendicular axes ────────────────────────────────────────────────────
+    // 鈹€鈹€ Perpendicular axes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let cos_angle = a1.dot(a2).abs();
     if cos_angle < angular_tol {
         return intersect_perpendicular_cylinders(cyl1, cyl2, a1, a2, linear_tol);
     }
 
-    // ── Skew axes (analytic quartic solver) ──────────────────────────────────
-    // Parameterize cyl1, substitute into cyl2 equation → quadratic in v per u.
+    // 鈹€鈹€ Skew axes (analytic quartic solver) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Parameterize cyl1, substitute into cyl2 equation 鈫?quadratic in v per u.
     let skew_result = intersect_skew_cylinder_cylinder(cyl1, cyl2);
     if !skew_result.is_empty() {
         return CylinderCylinderResult::SkewQuartic(skew_result);
     }
 
-    // ── General / oblique (fallback to marching) ──────────────────────────────
+    // 鈹€鈹€ General / oblique (fallback to marching) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     CylinderCylinderResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Parallel axes
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn intersect_parallel_cylinders(
     cyl1: &CylindricalSurface,
@@ -206,8 +205,8 @@ fn intersect_parallel_cylinders(
     //
     // In 2D: circle1 centred at origin radius r1, circle2 centred at (d, 0)
     // radius r2.  The intersection x-coordinate:
-    //   x = (d² + r1² - r2²) / (2d)
-    //   y = ±sqrt(r1² - x²)
+    //   x = (d虏 + r1虏 - r2虏) / (2d)
+    //   y = 卤sqrt(r1虏 - x虏)
     let x = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
     let y_sq = r1 * r1 - x * x;
     if y_sq < 0.0 {
@@ -233,9 +232,9 @@ fn intersect_parallel_cylinders(
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Perpendicular intersecting axes (Steinmetz)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn intersect_perpendicular_cylinders(
     cyl1: &CylindricalSurface,
@@ -254,7 +253,7 @@ fn intersect_perpendicular_cylinders(
     let b = a1.dot(a2);
     let denom = 1.0 - b * b;
 
-    if denom.abs() < TOLERANCE_LEN_MIN {
+    if denom.abs() < 1e-12 {
         // Degenerate (should not reach here since we checked perpendicularity)
         return CylinderCylinderResult::General;
     }
@@ -274,9 +273,9 @@ fn intersect_perpendicular_cylinders(
         return CylinderCylinderResult::NoIntersection;
     }
 
-    // For the Steinmetz case the axes must actually cross (dist ≈ 0).
+    // For the Steinmetz case the axes must actually cross (dist 鈮?0).
     // For larger dist we can still handle overlapping perpendicular cylinders
-    // analytically using a θ-parametrization on cyl1's surface.
+    // analytically using a 胃-parametrization on cyl1's surface.
     if dist > linear_tol * 10.0 {
         if dist <= r1 + r2 + linear_tol {
             return CylinderCylinderResult::PerpendicularOffsetCurves {
@@ -291,22 +290,22 @@ fn intersect_perpendicular_cylinders(
     // Intersection point of the two axes
     let origin = (closest1 + closest2) * 0.5;
 
-    // Third axis = a1 × a2  (normal to both, the "viewing" direction)
+    // Third axis = a1 脳 a2  (normal to both, the "viewing" direction)
     let _a3 = a1.cross(a2).normalize();
 
     if (r1 - r2).abs() < linear_tol {
         // Equal radii: the Steinmetz intersection of two perpendicular cylinders
         // produces two ellipses, each lying in a diagonal plane.
         //
-        // Derivation: from Cyl1 eq |P × a1| = r1 and Cyl2 eq |P × a2| = r2,
-        // with a1·a2 = 0 and r1 = r2 = r, we get (P·(a1+a2))(P·(a1-a2)) = 0.
-        // So P lies in plane n1·P = 0 or n2·P = 0 where:
+        // Derivation: from Cyl1 eq |P 脳 a1| = r1 and Cyl2 eq |P 脳 a2| = r2,
+        // with a1路a2 = 0 and r1 = r2 = r, we get (P路(a1+a2))(P路(a1-a2)) = 0.
+        // So P lies in plane n1路P = 0 or n2路P = 0 where:
         //   n1 = (a1 + a2).normalize()
         //   n2 = (a1 - a2).normalize()
         //
         // In each plane, the intersection with Cyl1 is an ellipse with:
-        //   major_radius = r·√2 (along direction (a1∓a2) in the plane)
-        //   minor_radius = r   (along the direction normal×major_dir)
+        //   major_radius = r路鈭? (along direction (a1鈭揳2) in the plane)
+        //   minor_radius = r   (along the direction normal脳major_dir)
         let sqrt2 = std::f64::consts::SQRT_2;
         let n1 = (a1 + a2).normalize();
         let n2 = (a1 - a2).normalize();
@@ -331,11 +330,11 @@ fn intersect_perpendicular_cylinders(
     }
 
     // Unequal radii: the Steinmetz two-ellipse derivation only works
-    // when r1 == r2 (the difference of squares x² − z² = r1² − r2²
-    // factorises into planes n1·P = 0 and n2·P = 0).  For unequal
-    // radii the intersection curves are general space curves — not
-    // planar ellipses — but we can still use the analytic
-    // θ-parametrization of PerpendicularOffsetCurves (same formula
+    // when r1 == r2 (the difference of squares x虏 鈭?z虏 = r1虏 鈭?r2虏
+    // factorises into planes n1路P = 0 and n2路P = 0).  For unequal
+    // radii the intersection curves are general space curves 鈥?not
+    // planar ellipses 鈥?but we can still use the analytic
+    // 胃-parametrization of PerpendicularOffsetCurves (same formula
     // works for both offset and intersecting axes).
     if dist <= r1 + r2 + linear_tol {
         return CylinderCylinderResult::PerpendicularOffsetCurves {
@@ -347,39 +346,39 @@ fn intersect_perpendicular_cylinders(
     CylinderCylinderResult::NoIntersection
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Skew-axis analytic solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the intersection of two cylinders with skew (non-parallel,
 /// non-perpendicular) axes using an analytic quartic solver.
 ///
 /// # Theory
 ///
-/// Cylinder 1 parametrisation (u = azimuth [0, 2π), v = height along axis):
+/// Cylinder 1 parametrisation (u = azimuth [0, 2蟺), v = height along axis):
 ///
 /// ```text
-/// P(u,v) = O1 + v·a1 + r1·(cos(u)·x1 + sin(u)·y1)
+/// P(u,v) = O1 + v路a1 + r1路(cos(u)路x1 + sin(u)路y1)
 /// ```
 ///
 /// Cylinder 2 implicit equation (for any point P, distance from axis a2 is r2):
 ///
 /// ```text
-/// |P - O2|² - ((P - O2)·a2)² = r2²
+/// |P - O2|虏 - ((P - O2)路a2)虏 = r2虏
 /// ```
 ///
 /// Substituting P(u,v) gives F(v) = 0 where
 ///
 /// ```text
-/// a_v·v² + b_v(u)·v + c_v(u) = 0
+/// a_v路v虏 + b_v(u)路v + c_v(u) = 0
 ///
-/// a_v   = 1 - (a1·a2)²                                           (constant)
-/// b_v(u) = 2·(D0·a1) - 2·(D0·a2)·(a1·a2)
-/// c_v(u) = |D0|² - (D0·a2)² - r2²
-/// D0(u)  = O1 - O2 + r1·(cos(u)·x1 + sin(u)·y1)
+/// a_v   = 1 - (a1路a2)虏                                           (constant)
+/// b_v(u) = 2路(D0路a1) - 2路(D0路a2)路(a1路a2)
+/// c_v(u) = |D0|虏 - (D0路a2)虏 - r2虏
+/// D0(u)  = O1 - O2 + r1路(cos(u)路x1 + sin(u)路y1)
 /// ```
 ///
-/// For each u we solve the quadratic for v, giving two branches (± sqrt).
+/// For each u we solve the quadratic for v, giving two branches (卤 sqrt).
 fn intersect_skew_cylinder_cylinder(
     cyl1: &CylindricalSurface,
     cyl2: &CylindricalSurface,
@@ -395,7 +394,7 @@ fn intersect_skew_cylinder_cylinder(
     let x1 = any_perpendicular(a1);
     let y1 = a1.cross(x1).normalize();
 
-    // Constant coefficient a_v = 1 - (a1·a2)².
+    // Constant coefficient a_v = 1 - (a1路a2)虏.
     let a1_dot_a2 = a1.dot(a2);
     let a_v = 1.0 - a1_dot_a2 * a1_dot_a2;
 
@@ -411,20 +410,20 @@ fn intersect_skew_cylinder_cylinder(
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
         let (cos_u, sin_u) = (u.cos(), u.sin());
 
-        // D0(u) = (O1 - O2) + r1·(cos(u)·x1 + sin(u)·y1)
+        // D0(u) = (O1 - O2) + r1路(cos(u)路x1 + sin(u)路y1)
         let d0 = delta + r1 * (cos_u * x1 + sin_u * y1);
         let d0_a1 = d0.dot(a1);
         let d0_a2 = d0.dot(a2);
         let d0_sq = d0.length_squared();
 
-        // b_v(u) = 2·(D0·a1) - 2·(D0·a2)·(a1·a2)
+        // b_v(u) = 2路(D0路a1) - 2路(D0路a2)路(a1路a2)
         let b_v = 2.0 * d0_a1 - 2.0 * d0_a2 * a1_dot_a2;
 
-        // c_v(u) = |D0|² - (D0·a2)² - r2²
+        // c_v(u) = |D0|虏 - (D0路a2)虏 - r2虏
         let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
 
         if a_v.abs() > 1e-12 {
-            // Quadratic: a_v·v² + b_v·v + c_v = 0
+            // Quadratic: a_v路v虏 + b_v路v + c_v = 0
             let disc = b_v * b_v - 4.0 * a_v * c_v;
             if disc < 0.0 {
                 continue;
@@ -448,7 +447,7 @@ fn intersect_skew_cylinder_cylinder(
                 }
             }
         } else if b_v.abs() > 1e-12 {
-            // a_v ≈ 0 (near-parallel axes): solve linear b_v·v + c_v = 0
+            // a_v 鈮?0 (near-parallel axes): solve linear b_v路v + c_v = 0
             let v = -c_v / b_v;
             if v.is_finite() {
                 let p = cyl1.point_at(u, v);
@@ -546,7 +545,7 @@ fn intersect_skew_cylinder_cylinder(
     let dedup = |pts: &mut Vec<DVec3>| {
         while pts.len() >= 3 {
             let n = pts.len();
-            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (pts[n - 1] - pts[0]).length_squared() < 1e-24 {
                 pts.pop();
             } else {
                 break;
@@ -564,7 +563,7 @@ fn intersect_skew_cylinder_cylinder(
     if branch_minus.len() >= 2 {
         // Check the minus branch is distinct from the plus branch.
         let is_distinct = branches.is_empty()
-            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+            || (branch_minus[0] - branches[0][0]).length_squared() > 1e-24;
         if is_distinct {
             dedup(&mut branch_minus);
             if branch_minus.len() >= 2 {
@@ -576,9 +575,9 @@ fn intersect_skew_cylinder_cylinder(
     branches
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Perpendicular offset curves sampling
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Sample the perpendicular offset curves parameterization and return polylines.
 ///
@@ -586,8 +585,8 @@ fn intersect_skew_cylinder_cylinder(
 /// the intersection curve(s) can be parameterized on cyl1's surface:
 ///
 /// ```text
-/// P(θ) = O1 + v(θ)·a1 + R1·(cos(θ)·u1 + sin(θ)·v1)
-/// v(θ) = dz ± √(R2² - (R1·cos(θ) - dx)²)
+/// P(胃) = O1 + v(胃)路a1 + R1路(cos(胃)路u1 + sin(胃)路v1)
+/// v(胃) = dz 卤 鈭?R2虏 - (R1路cos(胃) - dx)虏)
 /// ```
 ///
 /// Returns two polylines (one per closed loop), each combining the + and -
@@ -614,7 +613,7 @@ pub fn sample_perpendicular_offset_curves(
     let s = (d2 - a1.dot(a2) * d1) / denom;
     let conn = (cyl1.origin + a1 * t) - (cyl2.origin + a2 * s);
     let conn_len = conn.length();
-    let u1 = if conn_len < TOLERANCE_LEN_MIN {
+    let u1 = if conn_len < 1e-12 {
         a1.cross(a2).normalize()
     } else {
         conn / conn_len
@@ -634,8 +633,8 @@ pub fn sample_perpendicular_offset_curves(
     let mut branches = Vec::new();
 
     for (t_start, t_end) in [(t_low, t_high), (TAU - t_high, TAU - t_low)] {
-        // Forward: branch = +1, θ = t_start → t_end
-        // Backward: branch = -1, θ = t_end → t_start (reversed in the loop)
+        // Forward: branch = +1, 胃 = t_start 鈫?t_end
+        // Backward: branch = -1, 胃 = t_end 鈫?t_start (reversed in the loop)
         // Combined they form a single closed curve.
         let n_pts = n_samples * 2 + 1;
         let mut pts: Vec<DVec3> = Vec::with_capacity(n_pts);
@@ -667,6 +666,6 @@ pub fn sample_perpendicular_offset_curves(
     branches
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

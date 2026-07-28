@@ -8,7 +8,7 @@ use rcad_kernel::topods;
 use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::face_info::FaceInfo;
 use crate::bop::ds::pave::{NO_EDGE, Pave, PaveBlock};
-use crate::tolerance::*;
+
 use std::collections::HashMap;
 
 /// Identifies which input shape a sub-shape came from.
@@ -274,7 +274,7 @@ pub struct DSVertex {
     /// None for vertices created at intersections.
     pub origin: Option<ShapeOrigin>,
     /// Model tolerance at this vertex (`vertex_tolerance` from source BRep when loaded;
-    /// [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) for vertices added by the DS).
+    /// [`rcad_kernel::CONFUSION`](crate::bop::tolerance::rcad_kernel::CONFUSION) for vertices added by the DS).
     pub geom_tol: f64,
     /// TopAbs_INTERNAL orientation marker.
     pub is_internal: bool,
@@ -482,7 +482,7 @@ pub struct InterferenceVF {
     pub face: usize,
     /// BOPDS_InterfVF::myU / myV (Interf.hxx L360-362).
     ///   UV coordinates of the vertex projection on the face surface.
-    ///   Stored as (f64, f64) 鈥?use u/v getters for clarity.
+    ///   Stored as (f64, f64) 闂?use u/v getters for clarity.
     pub u: f64,
     pub v: f64,
     /// BOPDS_Interf::myIndexNew (Interf.hxx L203).

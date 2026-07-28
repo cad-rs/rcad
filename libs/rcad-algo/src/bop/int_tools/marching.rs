@@ -2,7 +2,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 
-use crate::tolerance::*;
+
 
 /// A numerically sampled intersection curve.
 #[derive(Debug, Clone, Default)]
@@ -45,7 +45,7 @@ impl Default for MarchingConfig {
     fn default() -> Self {
         Self {
             step_size: 0.1,
-            min_step_size: TOLERANCE_LINEAR_ULTRA_STRICT,
+            min_step_size: 1e-10,
             // 2000 steps per direction gives max ~400 units of arc per direction
             // at default step_size=0.1, enough for most large mechanical parts.
             // Callers can reduce this for small/simple geometry.
@@ -56,17 +56,17 @@ impl Default for MarchingConfig {
             // slightly noisy tangent estimation near singularities.
             step_reduction_factor: 0.7,
             // 1e-8 matches OCCT's typical deflection tolerance for marching
-            // (fleche ≈ 0.1 * Precision::Confusion()), ensuring chord error
+            // (fleche 鈮?0.1 * Precision::rcad_kernel::CONFUSION()), ensuring chord error
             // is well below the linear tolerance.
-            deflection_tol: TOLERANCE_MESH_LEGACY * 0.01,
+            deflection_tol: rcad_kernel::APPROXIMATION * 0.01,
             multiscale_seeds: false,
         }
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // adaptive continuation marching configuration
-// ──────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 //
 // Reference: OCCT IntWalk_PWalking.hxx, IntWalk_PWalking.cxx (Perform)
 // OCCT source: `$OCCT_SRC/src/IntWalk/IntWalk_PWalking.hxx`
@@ -77,21 +77,21 @@ impl Default for MarchingConfig {
 // stepping (Task C), and inflection detection (Task D).
 //
 // OCCT line reference mapping (from IntWalk_PWalking.cxx):
-//   L200-400  — Curvature-aware step control (Perform::ParamParamPerform)
-//   L400-600  — Boundary-aware stepping (step clipping at surface bounds)
-//   L600-800  — Inflection detection (zero-curvature / tangent reversal)
-//   L1-200    — Seed point generation with Deflection + UVMaxStep
-//   L3684-3685 — Fleche step formula: step = sqrt(8 * Deflection * R)
-// ──────────────────────────────────────────────────────────────────────────────
+//   L200-400  鈥?Curvature-aware step control (Perform::ParamParamPerform)
+//   L400-600  鈥?Boundary-aware stepping (step clipping at surface bounds)
+//   L600-800  鈥?Inflection detection (zero-curvature / tangent reversal)
+//   L1-200    鈥?Seed point generation with Deflection + UVMaxStep
+//   L3684-3685 鈥?Fleche step formula: step = sqrt(8 * Deflection * R)
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// configuration for adaptive continuation marching.
 ///
 /// Mirrors the parameters used by OCCT IntWalk_PWalking:
-/// - `Deflection` — chordal error tolerance (fleche), OCCT constructor param
-/// - `UVMaxStep` — maximum step in UV space during continuation
-/// - `StepMin` — minimum step to prevent infinite refinement
-/// - `StepMax` — maximum step bound (typically UVMaxStep * 0.5)
-/// - `FlecheTol` — finer chordal deviation proportional to Deflection/10
+/// - `Deflection` 鈥?chordal error tolerance (fleche), OCCT constructor param
+/// - `UVMaxStep` 鈥?maximum step in UV space during continuation
+/// - `StepMin` 鈥?minimum step to prevent infinite refinement
+/// - `StepMax` 鈥?maximum step bound (typically UVMaxStep * 0.5)
+/// - `FlecheTol` 鈥?finer chordal deviation proportional to Deflection/10
 ///
 /// # OCCT Source Reference
 ///
@@ -108,7 +108,7 @@ impl Default for MarchingConfig {
 ///
 /// IntWalk_PWalking.cxx L600-800:
 ///   When the tangent direction reverses (dot product < 0) or the curvature
-///   drops near zero, an inflection point is suspected — the step is halved.
+///   drops near zero, an inflection point is suspected 鈥?the step is halved.
 ///
 /// # Alignment Status
 ///
@@ -121,17 +121,17 @@ pub struct MarchingConfigOCCT {
     /// Controls the maximum chord error between consecutive points.
     /// OCCT IntWalk_PWalking constructor: `Deflection`.
     pub deflection_tol: f64,
-    /// OCCT UVMaxStep — maximum step in UV parameter space.
+    /// OCCT UVMaxStep 鈥?maximum step in UV parameter space.
     /// OCCT IntWalk_PWalking::Perform: bounds the continuation step.
     /// Typical value: 0.1 (fraction of the shorter parametric side).
     pub uv_max_step: f64,
-    /// Minimum step size — prevents infinite refinement at singularities.
+    /// Minimum step size 鈥?prevents infinite refinement at singularities.
     /// When curvature suggests a step below this, the step is clamped.
     pub min_step: f64,
-    /// Maximum step size — clamp for curvature-based step estimates.
+    /// Maximum step size 鈥?clamp for curvature-based step estimates.
     /// OCCT equivalent: `UVMaxStep * 0.5` (safety factor).
     pub max_step: f64,
-    /// OCCT Fleche — finer chordal deviation for step growth decisions.
+    /// OCCT Fleche 鈥?finer chordal deviation for step growth decisions.
     /// Typically `Deflection / 10`.
     /// OCCT IntWalk_PWalking::Perform: used to detect StepTooSmall regime.
     pub fleche_tol: f64,
@@ -140,18 +140,18 @@ pub struct MarchingConfigOCCT {
 impl Default for MarchingConfigOCCT {
     fn default() -> Self {
         Self {
-            // deflection_tol ≈ 1e-6: matches TOLERANCE_MESH_LEGACY * 0.01
-            // OCCT typically uses Precision::Confusion() (1e-7) for Deflection
-            deflection_tol: TOLERANCE_MESH_LEGACY * 0.01,
-            // UVMaxStep = 0.1: covers typical parametric domains (0..1, 0..2π).
-            // OCCT sets UVMaxStep = max(min(domain_range / 20, 0.1), TOLERANCE_ABS).
+            // deflection_tol 鈮?1e-6: matches rcad_kernel::APPROXIMATION * 0.01
+            // OCCT typically uses Precision::rcad_kernel::CONFUSION() (1e-7) for Deflection
+            deflection_tol: rcad_kernel::APPROXIMATION * 0.01,
+            // UVMaxStep = 0.1: covers typical parametric domains (0..1, 0..2蟺).
+            // OCCT sets UVMaxStep = max(min(domain_range / 20, 0.1), rcad_kernel::rcad_kernel::CONFUSION).
             uv_max_step: 0.1,
             // min_step = 1e-10: prevents infinite refinement near singularities.
-            min_step: TOLERANCE_LINEAR_ULTRA_STRICT,
+            min_step: 1e-10,
             // max_step = 0.05: UVMaxStep * 0.5 as a safety factor.
             max_step: 0.05,
-            // fleche_tol ≈ 1e-7: Deflection / 10, used for step growth decision.
-            fleche_tol: TOLERANCE_MESH_LEGACY * 0.001,
+            // fleche_tol 鈮?1e-7: Deflection / 10, used for step growth decision.
+            fleche_tol: rcad_kernel::APPROXIMATION * 0.001,
         }
     }
 }
@@ -192,13 +192,13 @@ pub struct AdaptiveSampling {
 /// Reference: OCCT IntWalk_StatusDeflection.hxx
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeflectionStatus {
-    /// Step is acceptable — the point can be added to the curve.
+    /// Step is acceptable 鈥?the point can be added to the curve.
     Ok,
-    /// Step too large — chord error exceeds deflection tolerance.
+    /// Step too large 鈥?chord error exceeds deflection tolerance.
     StepTooLarge,
-    /// Step too small — chord error is well below tolerance; can grow.
+    /// Step too small 鈥?chord error is well below tolerance; can grow.
     StepTooSmall,
-    /// Tangent reversal — potential inflection point detected.
+    /// Tangent reversal 鈥?potential inflection point detected.
     Inflection,
     /// Consecutive points are nearly coincident.
     ConfusedPoint,
@@ -213,18 +213,18 @@ pub enum DeflectionStatus {
 /// # Formula
 ///
 /// For a circular arc of radius R spanning chord length d, the sagitta is:
-///   `e = R - sqrt(R² - (d/2)²)`
-/// The turning angle θ = d/R, and for small θ:
-///   `e ≈ d * θ / 8`
-/// Since `|ΔT| = |prev_tg - cur_tg| ≈ θ` (for unit tangents):
-///   `e ≈ d * |ΔT| / 8`
+///   `e = R - sqrt(R虏 - (d/2)虏)`
+/// The turning angle 胃 = d/R, and for small 胃:
+///   `e 鈮?d * 胃 / 8`
+/// Since `|螖T| = |prev_tg - cur_tg| 鈮?胃` (for unit tangents):
+///   `e 鈮?d * |螖T| / 8`
 ///
 /// Reference: OCCT IntWalk_PWalking::TestDeflection, L3684-3685
-///   `FlecheCourante = sqrt(|ΔT|² * d²) / 8`
+///   `FlecheCourante = sqrt(|螖T|虏 * d虏) / 8`
 #[inline]
 pub fn compute_fleche(prev_tangent: DVec3, cur_tangent: DVec3, chord_length: f64) -> f64 {
     let diff_len = (prev_tangent - cur_tangent).length();
-    // sqrt(|ΔT|² * d²) / 8 = |ΔT| * d / 8
+    // sqrt(|螖T|虏 * d虏) / 8 = |螖T| * d / 8
     diff_len * chord_length / 8.0
 }
 
@@ -236,27 +236,27 @@ pub fn compute_fleche(prev_tangent: DVec3, cur_tangent: DVec3, chord_length: f64
 ///
 /// # OCCT Logic (IntWalk_PWalking::TestDeflection, L3407-3916)
 ///
-/// 1. **Confused points** — If the chord is shorter than [`TOLERANCE_ABS`],
+/// 1. **Confused points** 鈥?If the chord is shorter than [`rcad_kernel::rcad_kernel::CONFUSION`],
 ///    the points are nearly coincident. Increase step.
 ///
-/// 2. **Inflection** — If the dot product of successive tangents is negative,
+/// 2. **Inflection** 鈥?If the dot product of successive tangents is negative,
 ///    the direction reversed (potential inflection point). Halve step.
 ///
 /// 3. **Fleche classification**:
-///    - `fleche <= deflection_tol * 0.5` → StepTooSmall (can increase)
-///    - `fleche > deflection_tol` → StepTooLarge (must reduce)
-///    - Otherwise → Ok (sweet spot)
+///    - `fleche <= deflection_tol * 0.5` 鈫?StepTooSmall (can increase)
+///    - `fleche > deflection_tol` 鈫?StepTooLarge (must reduce)
+///    - Otherwise 鈫?Ok (sweet spot)
 ///
 /// # Arguments
 ///
-/// * `chord_length_sq` — Squared 3D distance between the two points.
-/// * `chord_length` — 3D distance between the two points.
-/// * `prev_tangent` — Unit tangent direction at the previous point.
-/// * `cur_tangent` — Unit tangent direction at the candidate point.
-/// * `step_size` — Current step size used for this stride.
-/// * `deflection_tol` — Maximum allowed fleche (chord error).
-/// * `min_step` — Minimum step size (clamp for reductions).
-/// * `initial_step` — Initial (undamped) step size (ceiling for growth).
+/// * `chord_length_sq` 鈥?Squared 3D distance between the two points.
+/// * `chord_length` 鈥?3D distance between the two points.
+/// * `prev_tangent` 鈥?Unit tangent direction at the previous point.
+/// * `cur_tangent` 鈥?Unit tangent direction at the candidate point.
+/// * `step_size` 鈥?Current step size used for this stride.
+/// * `deflection_tol` 鈥?Maximum allowed fleche (chord error).
+/// * `min_step` 鈥?Minimum step size (clamp for reductions).
+/// * `initial_step` 鈥?Initial (undamped) step size (ceiling for growth).
 ///
 /// Returns `(status, suggested_step)`.
 #[inline]
@@ -275,16 +275,16 @@ pub fn test_deflection(
         return (DeflectionStatus::Ok, step_size);
     }
 
-    // Step 1: confused points — chord is shorter than absolute tolerance.
-    if chord_length_sq < TOLERANCE_ABS_SQ {
+    // Step 1: confused points 鈥?chord is shorter than absolute tolerance.
+    if chord_length_sq < rcad_kernel::SQUARE_CONFUSION {
         let new_step = (step_size * 1.5).min(initial_step);
         return (DeflectionStatus::ConfusedPoint, new_step);
     }
 
-    // Step 2: inflection detection — tangent direction reversal.
+    // Step 2: inflection detection 鈥?tangent direction reversal.
     let cos_between = prev_tangent.dot(cur_tangent);
     if cos_between < 0.0 {
-        // Tangent direction changed sign — potential inflection.
+        // Tangent direction changed sign 鈥?potential inflection.
         // OCCT L3461: halve all steps.
         let new_step = (step_size * 0.5).max(min_step);
         return (DeflectionStatus::Inflection, new_step);
@@ -295,23 +295,23 @@ pub fn test_deflection(
 
     // Step 4: classify fleche against deflection tolerance.
     if fleche <= deflection_tol * 0.5 {
-        // Step is too small — fleche is well below tolerance.
+        // Step is too small 鈥?fleche is well below tolerance.
         // Compute a growth ratio: we want the next step to produce
-        // fleche ≈ deflection_tol. Since fleche ∝ step² (for constant
-        // curvature), ratio ≈ sqrt(deflection_tol / fleche).
+        // fleche 鈮?deflection_tol. Since fleche 鈭?step虏 (for constant
+        // curvature), ratio 鈮?sqrt(deflection_tol / fleche).
         // OCCT L3691-3692: Ratio = 0.5 * (fleche / FlecheCourante)
         let ratio = 0.5 * (deflection_tol / fleche.max(f64::MIN_POSITIVE));
         let new_step = (step_size * ratio.clamp(1.0, 4.0)).min(initial_step);
         (DeflectionStatus::StepTooSmall, new_step)
     } else if fleche > deflection_tol {
-        // Step is too large — chord error exceeds tolerance.
+        // Step is too large 鈥?chord error exceeds tolerance.
         // OCCT L3783-3785: Ratio = fleche / FlecheCourante
         let ratio = deflection_tol / fleche;
         let new_step = (step_size * ratio).max(min_step);
         (DeflectionStatus::StepTooLarge, new_step)
     } else {
         // deflection_tol * 0.5 < fleche <= deflection_tol
-        // Step is in the sweet spot — gentle adjustment.
+        // Step is in the sweet spot 鈥?gentle adjustment.
         // OCCT L3796: Ratio = 0.75 * (fleche / FlecheCourante)
         let ratio = 0.75 * (deflection_tol / fleche.max(f64::MIN_POSITIVE));
         let new_step = (step_size * ratio.clamp(0.5, 1.5)).clamp(min_step, initial_step);
@@ -322,16 +322,16 @@ pub fn test_deflection(
 /// Compute the 3D curvature of a surface curve `r(t) = S(uv + t * dir)` at t=0.
 ///
 /// Uses central finite differences for the first and second derivatives:
-///   `r'(0) ≈ (r(h) - r(-h)) / (2h)`
-///   `r''(0) ≈ (r(h) - 2*r(0) + r(-h)) / h^2`
-///   `k = |r' × r''| / |r'|^3`
+///   `r'(0) 鈮?(r(h) - r(-h)) / (2h)`
+///   `r''(0) 鈮?(r(h) - 2*r(0) + r(-h)) / h^2`
+///   `k = |r' 脳 r''| / |r'|^3`
 ///
 /// Returns `(curvature, radius)` where `radius = 1/curvature`.
-/// When curvature is below `TOLERANCE_ABS`, returns `(0.0, INFINITY)`.
+/// When curvature is below `rcad_kernel::rcad_kernel::CONFUSION`, returns `(0.0, INFINITY)`.
 ///
 /// # Reference
 ///
-/// OCCT IntWalk_PWalking::Perform — uses surface curvature estimation at each
+/// OCCT IntWalk_PWalking::Perform 鈥?uses surface curvature estimation at each
 /// step for the fleche computation (L3684-3685).
 fn compute_curvature_along_dir(
     surf_eval: &impl Fn(DVec2) -> DVec3,
@@ -339,13 +339,13 @@ fn compute_curvature_along_dir(
     dir: DVec2,
 ) -> (f64, f64) {
     let dir_len = dir.length();
-    if dir_len < TOLERANCE_ABS {
+    if dir_len < rcad_kernel::rcad_kernel::CONFUSION {
         return (0.0, f64::INFINITY);
     }
     let step_uv = dir / dir_len;
     // Epsilon for finite differences: small enough for curvature accuracy,
     // large enough to avoid floating-point noise.
-    let h = 1e-5_f64.max(TOLERANCE_ABS * 100.0).min(1e-2);
+    let h = 1e-5_f64.max(rcad_kernel::rcad_kernel::CONFUSION * 100.0).min(1e-2);
 
     let p0 = surf_eval(uv);
     let p1 = surf_eval(uv + step_uv * h);
@@ -358,19 +358,19 @@ fn compute_curvature_along_dir(
     // First derivative (central difference).
     let r1 = (p1 - p_m1) / (2.0 * h);
     let r1_len_sq = r1.length_squared();
-    if r1_len_sq < TOLERANCE_ABS_SQ {
+    if r1_len_sq < rcad_kernel::SQUARE_CONFUSION {
         return (0.0, f64::INFINITY);
     }
 
     // Second derivative.
     let r2 = (p1 - p0 * 2.0 + p_m1) / (h * h);
 
-    // 3D space curve curvature: k = |r' × r''| / |r'|^3.
+    // 3D space curve curvature: k = |r' 脳 r''| / |r'|^3.
     let cross_len = r1.cross(r2).length();
     let r1_len = r1_len_sq.sqrt();
     let curvature = cross_len / (r1_len * r1_len * r1_len);
 
-    if curvature < TOLERANCE_ABS {
+    if curvature < rcad_kernel::rcad_kernel::CONFUSION {
         (0.0, f64::INFINITY)
     } else {
         let radius = 1.0 / curvature;
@@ -387,7 +387,7 @@ fn compute_curvature_along_dir(
 /// # Formula (OCCT L3684-3685)
 ///
 /// For a circular arc of radius R spanning chord of length h, the sagitta is:
-///   `fleche = R - sqrt(R^2 - (h/2)^2) ≈ h^2 / (8*R)`  for h << R
+///   `fleche = R - sqrt(R^2 - (h/2)^2) 鈮?h^2 / (8*R)`  for h << R
 ///
 /// Solving for h:
 ///   `h = sqrt(8 * deflection * R)`
@@ -396,12 +396,12 @@ fn compute_curvature_along_dir(
 ///
 /// # Arguments
 ///
-/// * `surf_eval` — Surface point evaluator: `(u, v) -> 3D point`.
-/// * `uv` — Current UV parameter on the surface.
-/// * `dir` — Marching direction in UV space.
-/// * `deflection` — Maximum allowed chord error (fleche tolerance).
-/// * `max_step` — Upper bound for the returned step (clamp).
-/// * `min_step` — Lower bound for the returned step (clamp).
+/// * `surf_eval` 鈥?Surface point evaluator: `(u, v) -> 3D point`.
+/// * `uv` 鈥?Current UV parameter on the surface.
+/// * `dir` 鈥?Marching direction in UV space.
+/// * `deflection` 鈥?Maximum allowed chord error (fleche tolerance).
+/// * `max_step` 鈥?Upper bound for the returned step (clamp).
+/// * `min_step` 鈥?Lower bound for the returned step (clamp).
 ///
 /// # Returns
 ///
@@ -423,13 +423,13 @@ pub fn compute_fleche_step(
     min_step: f64,
 ) -> f64 {
     // Guard: if deflection is non-positive, no curvature-based step control.
-    if deflection <= 0.0 || dir.length_squared() < TOLERANCE_ABS_SQ {
+    if deflection <= 0.0 || dir.length_squared() < rcad_kernel::SQUARE_CONFUSION {
         return max_step;
     }
 
     let (_curvature, radius) = compute_curvature_along_dir(surf_eval, uv, dir);
 
-    if !radius.is_finite() || radius < TOLERANCE_ABS {
+    if !radius.is_finite() || radius < rcad_kernel::rcad_kernel::CONFUSION {
         return max_step;
     }
 
@@ -453,10 +453,10 @@ pub fn compute_fleche_step(
 ///
 /// # Arguments
 ///
-/// * `surface` — The surface to evaluate.
-/// * `base_density` — Minimum grid density (fallback when curvature is low).
-/// * `deflection` — Chord error tolerance for step computation.
-/// * `sample_n` — Number of sample points per direction for curvature estimation.
+/// * `surface` 鈥?The surface to evaluate.
+/// * `base_density` 鈥?Minimum grid density (fallback when curvature is low).
+/// * `deflection` 鈥?Chord error tolerance for step computation.
+/// * `sample_n` 鈥?Number of sample points per direction for curvature estimation.
 ///
 /// # Reference
 ///
@@ -474,7 +474,7 @@ pub fn adaptive_sampling_density_occt(
     let dv = dom[3] - dom[2];
     let domain_size = du.max(dv).abs();
 
-    if !domain_size.is_finite() || domain_size < TOLERANCE_ABS {
+    if !domain_size.is_finite() || domain_size < rcad_kernel::rcad_kernel::CONFUSION {
         return AdaptiveSampling {
             n_u: base_density,
             n_v: base_density,
@@ -484,7 +484,7 @@ pub fn adaptive_sampling_density_occt(
 
     // OCCT UVMaxStep heuristic: maxStep = domainSize/20 as the default
     // (OCCT IntWalk_PWalking::Perform initializes step from UVMaxStep / 20).
-    let max_step_domain = (domain_size / 20.0).max(TOLERANCE_ABS);
+    let max_step_domain = (domain_size / 20.0).max(rcad_kernel::rcad_kernel::CONFUSION);
 
     // Sample curvature across the surface to find the minimum radius.
     let mut min_radius = f64::INFINITY;
@@ -507,7 +507,7 @@ pub fn adaptive_sampling_density_occt(
                 DVec2::new(1.0, -1.0),
             ] {
                 let (_curvature, radius) = compute_curvature_along_dir(&surf_fn, uv, *dir);
-                if radius.is_finite() && radius > TOLERANCE_ABS && radius < min_radius {
+                if radius.is_finite() && radius > rcad_kernel::rcad_kernel::CONFUSION && radius < min_radius {
                     min_radius = radius;
                 }
             }
@@ -523,13 +523,13 @@ pub fn adaptive_sampling_density_occt(
 
     let max_step = max_step_domain
         .min(curvature_adjusted_step)
-        .max(TOLERANCE_ABS);
+        .max(rcad_kernel::rcad_kernel::CONFUSION);
 
     // Grid density: ceil(domainRange / maxStep).
     let n_u = (du.abs() / max_step).ceil() as usize;
     let n_v = (dv.abs() / max_step).ceil() as usize;
 
-    let characteristic_length = (max_step * 5.0).min(domain_size * 0.1).max(TOLERANCE_ABS);
+    let characteristic_length = (max_step * 5.0).min(domain_size * 0.1).max(rcad_kernel::rcad_kernel::CONFUSION);
 
     AdaptiveSampling {
         n_u: n_u.max(base_density / 4).min(base_density * 4),
@@ -547,7 +547,7 @@ pub fn adaptive_sampling_density(surface: &Surface3, base_density: usize) -> Ada
     match surface {
         Surface3::Cylinder(c) => {
             // Cylinder: u = azimuth, v = height
-            // Azimuth should be proportional to circumference (2πR)
+            // Azimuth should be proportional to circumference (2蟺R)
             // Height should cover the expected range
             let circumference = std::f64::consts::TAU * c.radius;
             let n_u = (base_density as f64 * (circumference / c.radius).sqrt()).ceil() as usize;
@@ -569,7 +569,7 @@ pub fn adaptive_sampling_density(surface: &Surface3, base_density: usize) -> Ada
         }
         Surface3::Torus(t) => {
             // Torus: major radius for u, minor radius for v
-            let ratio = t.major_radius / t.minor_radius.max(TOLERANCE_LINEAR_ULTRA_STRICT);
+            let ratio = t.major_radius / t.minor_radius.max(1e-10);
             let n_u = (base_density as f64 * ratio.sqrt()).ceil() as usize;
             let n_v = base_density;
             AdaptiveSampling {
@@ -626,7 +626,7 @@ fn estimate_bspline_bbox(bs: &BSplineSurface) -> (DVec3, DVec3) {
     (min_pt, max_pt)
 }
 
-/// Coarse UV grid search (5×5 over [0,1]²) to find the closest surface sample.
+/// Coarse UV grid search (5脳5 over [0,1]虏) to find the closest surface sample.
 /// Returns (u, v) of the closest grid point.
 fn closest_uv_coarse(surface: &Surface3, point: DVec3) -> (f64, f64) {
     const N: usize = 5;
@@ -682,7 +682,7 @@ pub fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             let closest = proj.point;
             let normal = surface.normal_at(proj.params.0, proj.params.1);
             let n_len = normal.length();
-            if n_len < TOLERANCE_FLOAT_LOOSE {
+            if n_len < 1e-14 {
                 return (point - closest).length();
             }
             (point - closest).dot(normal / n_len)
@@ -690,7 +690,7 @@ pub fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
     }
 }
 
-/// Compute the gradient ∇F at a point for a surface.
+/// Compute the gradient 鈭嘑 at a point for a surface.
 fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
     match surface {
         Surface3::Plane(p) => p.normal,
@@ -699,7 +699,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             let along = v.dot(c.axis);
             let perp = v - c.axis * along;
             let perp_len = perp.length();
-            if perp_len < TOLERANCE_ABS {
+            if perp_len < rcad_kernel::rcad_kernel::CONFUSION {
                 return DVec3::ZERO;
             }
             perp / perp_len
@@ -707,7 +707,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
         Surface3::Sphere(s) => {
             let v = point - s.center;
             let len = v.length();
-            if len < TOLERANCE_ABS {
+            if len < rcad_kernel::rcad_kernel::CONFUSION {
                 return DVec3::ZERO;
             }
             v / len
@@ -718,7 +718,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             let along = v.dot(axis);
             let perp = v - axis * along;
             let perp_len = perp.length();
-            if perp_len < TOLERANCE_ABS {
+            if perp_len < rcad_kernel::rcad_kernel::CONFUSION {
                 return DVec3::ZERO;
             }
             let tan_a = c.half_angle_rad.tan();
@@ -729,13 +729,13 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             let along = v.dot(t.axis);
             let perp = v - t.axis * along;
             let perp_len = perp.length();
-            if perp_len < TOLERANCE_ABS {
+            if perp_len < rcad_kernel::rcad_kernel::CONFUSION {
                 return DVec3::ZERO;
             }
             let tube_center = t.center + perp / perp_len * t.major_radius;
             let tv = point - tube_center;
             let tv_len = tv.length();
-            if tv_len < TOLERANCE_ABS {
+            if tv_len < rcad_kernel::rcad_kernel::CONFUSION {
                 return DVec3::ZERO;
             }
             tv / tv_len
@@ -744,7 +744,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             let proj = closest_point_on_surface(surface, point, 8);
             let normal = surface.normal_at(proj.params.0, proj.params.1);
             let n_len = normal.length();
-            if n_len < TOLERANCE_FLOAT_LOOSE {
+            if n_len < 1e-14 {
                 return DVec3::ZERO;
             }
             normal / n_len
@@ -752,7 +752,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
     }
 }
 
-/// ✅ OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type + Newton).
+/// 鉁?OCCT-aligned: delegates to rcad_kernel::closest_point_on_surface (analytic per-type + Newton).
 pub fn project_onto_surface(surface: &Surface3, point: DVec3, _max_iter: usize) -> DVec3 {
     rcad_kernel::closest_point_on_surface(surface, point, 100).point
 }
@@ -767,7 +767,7 @@ pub fn project_onto_intersection_tol(
     point: DVec3,
     tol: f64,
 ) -> DVec3 {
-    let tol = tol.abs().max(TOLERANCE_LEN_MIN);
+    let tol = tol.abs().max(1e-12);
     let tol2 = tol * tol;
     let mut p = point;
     for _ in 0..50 {
@@ -779,13 +779,13 @@ pub fn project_onto_intersection_tol(
         let g1 = surface_gradient(s1, p);
         let g2 = surface_gradient(s2, p);
 
-        // Solve 2x2 system: move by λ1*g1 + λ2*g2 to satisfy both constraints
+        // Solve 2x2 system: move by 位1*g1 + 位2*g2 to satisfy both constraints
         let a11 = g1.dot(g1);
         let a12 = g1.dot(g2);
         let a22 = g2.dot(g2);
         let det = a11 * a22 - a12 * a12;
         if det.abs() < tol2 {
-            // Degenerate — just project onto each surface alternately
+            // Degenerate 鈥?just project onto each surface alternately
             p = project_onto_surface(s1, p, 5);
             p = project_onto_surface(s2, p, 5);
             continue;
@@ -797,9 +797,9 @@ pub fn project_onto_intersection_tol(
     p
 }
 
-/// Project onto the intersection using [`TOLERANCE_ABS`] as the residual target.
+/// Project onto the intersection using [`rcad_kernel::rcad_kernel::CONFUSION`] as the residual target.
 fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec3 {
-    project_onto_intersection_tol(s1, s2, point, TOLERANCE_ABS)
+    project_onto_intersection_tol(s1, s2, point, rcad_kernel::rcad_kernel::CONFUSION)
 }
 
 /// Find seed points for intersection curve marching by sampling one surface.
@@ -810,15 +810,15 @@ fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec
 ///
 /// This corresponds to OCCT's initial grid sampling phase in
 /// IntWalk_PWalking::Perform (L1-200), where the first surface is sampled on
-/// an N×N grid and the second surface's distance function is evaluated.  OCCT
+/// an N脳N grid and the second surface's distance function is evaluated.  OCCT
 /// then calls `IntWalk_PWalking::ParamParamPerform` (L200-800) for each seed
 /// to trace the full continuation curve.
 ///
 /// # OCCT Reference
 ///
 /// IntWalk_PWalking.cxx (Perform):
-///   L1-200 — Seed point generation:
-///     - Sample surface 1 on an N×N UV grid.
+///   L1-200 鈥?Seed point generation:
+///     - Sample surface 1 on an N脳N UV grid.
 ///     - Compute approximate distance to surface 2 at each sample.
 ///     - Detect sign-change edges (grid cells where opposite corners have
 ///       opposite signs) and linearly interpolate crossing points.
@@ -838,7 +838,7 @@ pub fn find_seed_points(s1: &Surface3, s2: &Surface3, sample_points: &[DVec3]) -
 
     for i in 0..values.len().saturating_sub(1) {
         if values[i] * values[i + 1] < 0.0 {
-            // Sign change — interpolate
+            // Sign change 鈥?interpolate
             let t = values[i] / (values[i] - values[i + 1]);
             let p = sample_points[i] + (sample_points[i + 1] - sample_points[i]) * t;
             let seed = project_onto_intersection(s1, s2, p);
@@ -849,7 +849,7 @@ pub fn find_seed_points(s1: &Surface3, s2: &Surface3, sample_points: &[DVec3]) -
     seeds
 }
 
-/// Like `find_seed_points` but treats `sample_points` as a `n_u × n_v` grid
+/// Like `find_seed_points` but treats `sample_points` as a `n_u 脳 n_v` grid
 /// (row-major: index = iu * n_v + iv) and checks sign changes along BOTH the
 /// u-direction and v-direction edges. This avoids missing seeds when the
 /// intersection curve runs along one of the grid directions.
@@ -857,7 +857,7 @@ pub fn find_seed_points(s1: &Surface3, s2: &Surface3, sample_points: &[DVec3]) -
 /// # OCCT Reference
 ///
 /// IntWalk_PWalking.cxx (Perform, L1-200):
-///   OCCT samples surface 1 on an N_u × N_v grid (from UVMaxStep) and tests
+///   OCCT samples surface 1 on an N_u 脳 N_v grid (from UVMaxStep) and tests
 ///   each cell edge for sign changes of the distance to surface 2.  This is
 ///   the 2D grid analog of `IntWalk_PWalking::Perform` with `UVMaxStep`
 ///   controlling the grid spacing.
@@ -1106,7 +1106,7 @@ struct MonitoredMarchResult {
 ///   This function implements the core continuation marching loop. The OCCT
 ///   algorithm proceeds as follows:
 ///
-///   L200-400 — Curvature-aware step control:
+///   L200-400 鈥?Curvature-aware step control:
 ///     OCCT computes the next step as:
 ///       h = min(UVMaxStep, sqrt(8 * Deflection * R))
 ///     where R is the minimum radius of curvature of either surface along
@@ -1114,20 +1114,20 @@ struct MonitoredMarchResult {
 ///     rcad currently uses fixed step size with the fleche-based deflection
 ///     check (`test_deflection`) as a post-hoc validation.
 ///
-///   L400-600 — Boundary-aware stepping:
+///   L400-600 鈥?Boundary-aware stepping:
 ///     OCCT projects the candidate next UV onto the surface bounds. If the
-///     next point lies outside the natural bounds (u∈[0,2π], v∈[0,1], etc.),
+///     next point lies outside the natural bounds (u鈭圼0,2蟺], v鈭圼0,1], etc.),
 ///     the step is clipped to end exactly at the boundary, and the curve is
 ///     marked as terminal.  rcad uses `bounds_check` for this purpose, but
-///     does not clip the step — it breaks entirely.
+///     does not clip the step 鈥?it breaks entirely.
 ///
-///   L600-800 — Inflection detection:
-///     When `tangent_next · tangent_prev < 0`, the curve direction reversed.
+///   L600-800 鈥?Inflection detection:
+///     When `tangent_next 路 tangent_prev < 0`, the curve direction reversed.
 ///     OCCT halves the step at inflection points and re-evaluates.
 ///     rcad detects this via `test_deflection` returning `DeflectionStatus::Inflection`
 ///     and reduces the step accordingly.
 ///
-///   L800+ — Curve termination:
+///   L800+ 鈥?Curve termination:
 ///     The march ends when:
 ///     - The step shrinks below `min_step_size` (OCCT "ArretSurPointPrecedent").
 ///     - The curve exits the surface bounds.
@@ -1158,7 +1158,7 @@ fn march_one_direction_monitored_simple(
     // Retry counter for deflection-based step reduction loops.
     let mut retry_count = 0usize;
 
-    // Closure tolerance: within 2× step_size of start is considered closed.
+    // Closure tolerance: within 2脳 step_size of start is considered closed.
     let closure_tol_sq = (step_size * 2.0) * (step_size * 2.0);
     // Track arc length to avoid infinite loops.
     let mut arc_len = 0.0_f64;
@@ -1168,8 +1168,8 @@ fn march_one_direction_monitored_simple(
         let g2 = surface_gradient(s2, current);
         let tangent = g1.cross(g2);
         let t_len = tangent.length();
-        if t_len < TOLERANCE_ABS {
-            // Tangent surfaces — the gradient cross product is zero, so the
+        if t_len < rcad_kernel::rcad_kernel::CONFUSION {
+            // Tangent surfaces 鈥?the gradient cross product is zero, so the
             // usual marching direction is undefined.  Try to recover by
             // extrapolating the last valid step direction and projecting back
             // onto the intersection.  A small offset in a known-good direction
@@ -1177,12 +1177,12 @@ fn march_one_direction_monitored_simple(
             if points.len() > 1 {
                 let last_step = current - points[points.len() - 1];
                 let step_len = last_step.length();
-                if step_len > TOLERANCE_ABS {
+                if step_len > rcad_kernel::rcad_kernel::CONFUSION {
                     let attempt_dir = last_step / step_len;
                     let next_raw = current + attempt_dir * current_step.abs();
                     let next = project_onto_intersection(s1, s2, next_raw);
                     let step_dist = (next - current).length();
-                    if step_dist < current_step.abs() * 5.0 && step_dist > TOLERANCE_ABS {
+                    if step_dist < current_step.abs() * 5.0 && step_dist > rcad_kernel::rcad_kernel::CONFUSION {
                         if !bounds_check(next) {
                             break;
                         }
@@ -1240,8 +1240,8 @@ fn march_one_direction_monitored_simple(
         let next_tangent = next_g1.cross(next_g2);
         let next_t_len = next_tangent.length();
 
-        if next_t_len > TOLERANCE_ABS
-            && last_dir.length_squared() > TOLERANCE_ABS_SQ
+        if next_t_len > rcad_kernel::rcad_kernel::CONFUSION
+            && last_dir.length_squared() > rcad_kernel::SQUARE_CONFUSION
             && deflection_tol > 0.0
         {
             let next_tg_unit = next_tangent / next_t_len;
@@ -1259,7 +1259,7 @@ fn march_one_direction_monitored_simple(
             match status {
                 DeflectionStatus::StepTooLarge | DeflectionStatus::Inflection => {
                     if current_step.abs() <= min_step_size || retry_count >= 3 {
-                        // Cannot reduce further — accept point anyway.
+                        // Cannot reduce further 鈥?accept point anyway.
                         // OCCT L3466-3472: when step falls below resolution,
                         // return ArretSurPointPrecedent (proceed with what we have).
                     } else {
@@ -1269,7 +1269,7 @@ fn march_one_direction_monitored_simple(
                     }
                 }
                 DeflectionStatus::ConfusedPoint => {
-                    // Nearly coincident — increase step and retry.
+                    // Nearly coincident 鈥?increase step and retry.
                     current_step = step_size.signum() * suggested_step;
                     retry_count += 1;
                     continue;

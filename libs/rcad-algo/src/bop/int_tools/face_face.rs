@@ -1,6 +1,6 @@
-﻿use crate::bop::ds::DS;
+use crate::bop::ds::DS;
 use crate::bop::int_tools::intss::{SurfaceCurve, SurfaceSurfaceIntersection};
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ABS_SQ};
+
 use glam::DVec3;
 use rcad_kernel::geom::CurveEval;
 use rcad_kernel::geom::*;
@@ -148,7 +148,7 @@ pub fn prepare_lines_3d(curves: &mut Vec<IntersectionCurve>, b_to_split: bool) {
             let c = &curves[i];
             let p1 = c.curve.point_at(t0);
             let p2 = c.curve.point_at(t1);
-            (p1 - p2).length_squared() < TOLERANCE_ABS_SQ
+            (p1 - p2).length_squared() < rcad_kernel::SQUARE_CONFUSION
         };
         if is_closed {
             // OCCT L214-221: for BSpline/Bezier use IntermediatePoint, else regular midpoint
@@ -210,44 +210,6 @@ pub fn correct_plane_boundaries(uv_bounds: &mut [f64; 4]) {
     uv_bounds[2] = -1e10;
     uv_bounds[3] = 1e10;
 }
-
-/// FaceFace — struct wrapper matching PaveFiller's expected API.
-pub struct FaceFace {
-    surf1: Surface3,
-    surf2: Surface3,
-    tol: f64,
-    curves: Vec<IntersectionCurve>,
-    done: bool,
-}
-
-impl FaceFace {
-    pub fn new() -> Self {
-        FaceFace {
-            surf1: Surface3::Plane(rcad_kernel::geom::Plane {
-                origin: glam::DVec3::ZERO, normal: glam::DVec3::Z,
-                u_dir: glam::DVec3::X, v_dir: glam::DVec3::Y,
-            }),
-            surf2: Surface3::Plane(rcad_kernel::geom::Plane {
-                origin: glam::DVec3::ZERO, normal: glam::DVec3::Z,
-                u_dir: glam::DVec3::X, v_dir: glam::DVec3::Y,
-            }),
-            tol: 1e-7, curves: Vec::new(), done: false,
-        }
-    }
-    pub fn set_surfaces(&mut self, s1: Surface3, s2: Surface3) { self.surf1 = s1; self.surf2 = s2; }
-    pub fn set_tolerances(&mut self, t1: f64, t2: f64) { self.tol = t1.max(t2).max(1e-7); }
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn has_intersection(&self) -> bool { !self.curves.is_empty() }
-    pub fn curves(&self) -> &[IntersectionCurve] { &self.curves }
-    pub fn make_curves(&self) -> Vec<IntersectionCurve> { self.curves.clone() }
-    pub fn points(&self) -> Vec<crate::bop::int_tools::pnt_on_2_faces::PntOn2Faces> { Vec::new() }
-    pub fn perform(&mut self) {
-        self.curves = intersect_faces(&self.surf1, &self.surf2, self.tol, self.tol);
-        self.done = true;
-    }
-}
-
-impl Default for FaceFace { fn default() -> Self { Self::new() } }
 
 /// FaceFaceIntersector 鈥?top-level dispatch.
 pub fn intersect_faces(

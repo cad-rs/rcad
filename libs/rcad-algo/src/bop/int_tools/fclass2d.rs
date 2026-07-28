@@ -1,5 +1,5 @@
-﻿use crate::bop::ds::DS;
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_LEN_SQ_DIV_SAFE};
+use crate::bop::ds::DS;
+
 /// 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
 use glam::DVec2;
 use rcad_kernel::geom::Surface3;
@@ -12,7 +12,7 @@ use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval};
 ///   In IntTools_FClass2d Init, non-linear curves get nbs *= 4 oversampling.
 pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
     let range_len = (t1 - t0).abs();
-    if range_len < TOLERANCE_LEN_SQ_DIV_SAFE {
+    if range_len < 1e-30 {
         return 2;
     }
     let nbs = match curve {
@@ -29,7 +29,7 @@ pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
         Curve2d::BSpline(bsp) => {
             // OCCT L32-48: nbs = NbKnots * Degree, scaled by range ratio
             let full_range = bsp.knots.last().unwrap_or(&1.0) - bsp.knots.first().unwrap_or(&0.0);
-            let scale = if full_range.abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            let scale = if full_range.abs() > 1e-30 {
                 range_len / full_range
             } else {
                 1.0
@@ -193,12 +193,12 @@ impl CSLibClass2d {
         umax: f64,
         vmax: f64,
     ) -> Self {
-        let range_u = if (umax - umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+        let range_u = if (umax - umin).abs() > 1e-30 {
             umax - umin
         } else {
             1.0
         };
-        let range_v = if (vmax - vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+        let range_v = if (vmax - vmin).abs() > 1e-30 {
             vmax - vmin
         } else {
             1.0
@@ -223,12 +223,12 @@ impl CSLibClass2d {
         if self.n < 3 {
             return CSLibResult::Outside;
         }
-        let ru = if (self.umax - self.umin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+        let ru = if (self.umax - self.umin).abs() > 1e-30 {
             self.umax - self.umin
         } else {
             1.0
         };
-        let rv = if (self.vmax - self.vmin).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+        let rv = if (self.vmax - self.vmin).abs() > 1e-30 {
             self.vmax - self.vmin
         } else {
             1.0
@@ -405,13 +405,9 @@ impl FClass2d {
         //   the uv_boundary provides a proper closed polygon, while edge-based sampling may
         //   produce a degenerate polygon when degenerate edges lack pcurves (sphere poles).
         if outer_pts.len() < 3 && ds.face_natural_restriction(face_idx) {
-            let uv_bnd = ds.face_uv_boundary(face_idx);
-            outer_pts = vec![
-                glam::DVec2::new(uv_bnd[0], uv_bnd[2]),
-                glam::DVec2::new(uv_bnd[1], uv_bnd[2]),
-                glam::DVec2::new(uv_bnd[1], uv_bnd[3]),
-                glam::DVec2::new(uv_bnd[0], uv_bnd[3]),
-            ];
+            if let Some(uv_bnd) = ds.face_uv_boundary(face_idx) {
+                outer_pts = uv_bnd.to_vec();
+            }
         }
         let mut fleche_u = tol_uv;
         let mut fleche_v = tol_uv;
@@ -506,8 +502,7 @@ impl FClass2d {
 
         // Inner wires (holes)
         for iw in ds.face_inner_boundary(face_idx) {
-            let iw_ref: Vec<(usize, bool)> = iw.iter().map(|&e| (e, true)).collect();
-            let iw_pts = collect_wire_uv(ds, face_idx, &iw_ref);
+            let iw_pts = collect_wire_uv(ds, face_idx, iw);
             if iw_pts.len() < 3 {
                 continue;
             }
@@ -748,7 +743,7 @@ impl FClass2d {
 
     /// Legacy compat: build from DS uv_boundary. Calls FClass2d::new internally.
     pub fn from_ds_face(ds: &DS, fi: usize) -> Self {
-        FClass2d::new(ds, fi, TOLERANCE_ABS * 100.0)
+        FClass2d::new(ds, fi, rcad_kernel::rcad_kernel::CONFUSION * 100.0)
     }
 }
 
@@ -791,7 +786,7 @@ fn chordal_deflection(pts: &[DVec2], tol_uv: f64) -> (f64, f64) {
         let c = pts[i + 1];
         let ac = c - a;
         let len2 = ac.dot(ac);
-        if len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+        if len2 < 1e-30 {
             continue;
         }
         let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);

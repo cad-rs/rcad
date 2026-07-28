@@ -7,7 +7,7 @@
 //! When both cone axes are the same line the intersection depends on the radii
 //! and half-angles:
 //!
-//! - **Same apex, same half-angle**: identical cones — `Coaxial`.
+//! - **Same apex, same half-angle**: identical cones 鈥?`Coaxial`.
 //! - **Different apex or half-angle**: the two lateral surfaces meet at a circle
 //!   perpendicular to the shared axis at the height where both radii are equal.
 //!   If no such positive-radius solution exists the intersection is at the apex
@@ -21,7 +21,7 @@
 //!
 //! ## General / skew axes
 //!
-//! For all other configurations the intersection is a curve of degree ≤ 4.
+//! For all other configurations the intersection is a curve of degree 鈮?4.
 //! We return `General` so the caller falls back to numeric marching.
 
 use glam::DVec3;
@@ -30,13 +30,13 @@ use rcad_kernel::geom::{Circle3, ConicalSurface, any_perpendicular};
 use std::f64::consts::TAU;
 
 use super::pcurve_derive::refine_polyline;
-use crate::tolerance::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
+
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Analytic result of cone × cone intersection.
+/// Analytic result of cone 脳 cone intersection.
 #[derive(Debug, Clone)]
 pub enum ConeConeResult {
     /// The cones do not intersect (lateral surfaces are disjoint).
@@ -50,17 +50,17 @@ pub enum ConeConeResult {
     /// Skew axes (non-parallel): analytic quartic solution.
     ///
     /// The two cones intersect in a quartic space curve.  For each cone azimuth
-    /// u ∈ [0, 2π) the second cone's equation reduces to a quadratic in the
-    /// slant distance v, solved analytically.  Two branches (± sqrt) are returned
+    /// u 鈭?[0, 2蟺) the second cone's equation reduces to a quadratic in the
+    /// slant distance v, solved analytically.  Two branches (卤 sqrt) are returned
     /// as polylines.
     SkewQuartic(Vec<Vec<DVec3>>),
     /// General case (skew or oblique axes).  Caller should fall back to marching.
     General,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main function
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the analytic intersection of `cone1` and `cone2`.
 pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> ConeConeResult {
@@ -70,8 +70,8 @@ pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Co
     let cross = a1.cross(a2);
     let sin_angle = cross.length();
 
-    // ── Parallel axes (including coaxial) ────────────────────────────────────
-    if sin_angle < TOLERANCE_ANG {
+    // 鈹€鈹€ Parallel axes (including coaxial) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    if sin_angle < rcad_kernel::ANGULAR {
         let result = intersect_parallel_cones(cone1, cone2, a1, a2);
         // OCCT Sec 2 (parallel-offset) is a stub returning None for now.
         if !matches!(result, ConeConeResult::General) {
@@ -83,70 +83,70 @@ pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Co
         return ConeConeResult::General;
     }
 
-    // ── OCCT Sec 3: Coincident apices (IntAna_QuadQuadGeo case 3) ──────────
+    // 鈹€鈹€ OCCT Sec 3: Coincident apices (IntAna_QuadQuadGeo case 3) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     if let Some(result) = occt_coincident_apex_cones(cone1, cone2) {
         return result;
     }
 
-    // ── OCCT Sec 4: Common generatrix (IntAna_QuadQuadGeo case 4) ──────────
+    // 鈹€鈹€ OCCT Sec 4: Common generatrix (IntAna_QuadQuadGeo case 4) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     if let Some(result) = occt_common_generatrix_cones(cone1, cone2) {
         return result;
     }
 
-    // ── Skew axes (analytic quartic solver) ──────────────────────────────────
-    // Parameterize cone1, substitute into cone2 equation → quadratic in v per u.
+    // 鈹€鈹€ Skew axes (analytic quartic solver) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Parameterize cone1, substitute into cone2 equation 鈫?quadratic in v per u.
     let skew_result = intersect_skew_cone_cone(cone1, cone2);
     if !skew_result.is_empty() {
         return ConeConeResult::SkewQuartic(skew_result);
     }
 
-    // ── General / skew (fallback to marching) ─────────────────────────────────
+    // 鈹€鈹€ General / skew (fallback to marching) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     ConeConeResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Skew-axis analytic solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the intersection of two cones with skew (non-parallel) axes using
 /// an analytic quartic solver.
 ///
 /// # Theory
 ///
-/// Cone 1 parametrisation (u = azimuth [0, 2π), v = slant distance from apex):
+/// Cone 1 parametrisation (u = azimuth [0, 2蟺), v = slant distance from apex):
 ///
 /// ```text
-/// P(u,v) = O1 + v·d1(u)
-/// d1(u) = a1 + tan(α1)·(cos(u)·x1 + sin(u)·y1)
-/// |d1|² = sec²(α1)  (constant for a given cone)
+/// P(u,v) = O1 + v路d1(u)
+/// d1(u) = a1 + tan(伪1)路(cos(u)路x1 + sin(u)路y1)
+/// |d1|虏 = sec虏(伪1)  (constant for a given cone)
 /// ```
 ///
 /// Cone 2 implicit equation (for any point P):
 ///
 /// ```text
-/// ((P - O2)·a2)² = cos²(α2)·|P - O2|²
+/// ((P - O2)路a2)虏 = cos虏(伪2)路|P - O2|虏
 /// ```
 ///
 /// Substituting P(u,v) gives F(v) = 0 where
 ///
 /// ```text
-/// a_v(u)·v² + b_v(u)·v + c_v = 0
+/// a_v(u)路v虏 + b_v(u)路v + c_v = 0
 ///
-/// a_v(u) = (d1·a2)² - cos²(α2)·|d1|²
-/// b_v(u) = 2·(Δ·a2)·(d1·a2) - 2·cos²(α2)·(Δ·d1)
-/// c_v    = (Δ·a2)² - cos²(α2)·|Δ|²                                  (constant)
-/// Δ      = O1 - O2
+/// a_v(u) = (d1路a2)虏 - cos虏(伪2)路|d1|虏
+/// b_v(u) = 2路(螖路a2)路(d1路a2) - 2路cos虏(伪2)路(螖路d1)
+/// c_v    = (螖路a2)虏 - cos虏(伪2)路|螖|虏                                  (constant)
+/// 螖      = O1 - O2
 /// ```
 ///
-/// For each u we solve the quadratic for v, giving two branches (± sqrt).
+/// For each u we solve the quadratic for v, giving two branches (卤 sqrt).
 fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Vec<Vec<DVec3>> {
     let a1 = cone1.axis.normalize();
     let a2 = cone2.axis.normalize();
     let o1 = cone1.apex_point();
     let o2 = cone2.apex_point();
     let tan1 = cone1.half_angle_rad.tan();
-    let cos2_2 = cone2.half_angle_rad.cos().powi(2); // cos²(α2)
-    let d1_sq = 1.0 + tan1 * tan1; // |d1|² = sec²(α1)
+    let cos2_2 = cone2.half_angle_rad.cos().powi(2); // cos虏(伪2)
+    let d1_sq = 1.0 + tan1 * tan1; // |d1|虏 = sec虏(伪1)
 
     // Perpendicular basis for cone1.
     let x1 = any_perpendicular(a1);
@@ -167,15 +167,15 @@ fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> V
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
         let (cos_u, sin_u) = (u.cos(), u.sin());
 
-        // d1(u) = a1 + tan(α1)·(cos(u)·x1 + sin(u)·y1)
+        // d1(u) = a1 + tan(伪1)路(cos(u)路x1 + sin(u)路y1)
         let d1 = a1 + tan1 * (cos_u * x1 + sin_u * y1);
         let d1_a2 = d1.dot(a2);
         let delta_d1 = delta.dot(d1);
 
-        // a_v(u) = (d1·a2)² - cos²(α2)·|d1|²
+        // a_v(u) = (d1路a2)虏 - cos虏(伪2)路|d1|虏
         let a_v = d1_a2 * d1_a2 - cos2_2 * d1_sq;
 
-        // b_v(u) = 2·(Δ·a2)·(d1·a2) - 2·cos²(α2)·(Δ·d1)
+        // b_v(u) = 2路(螖路a2)路(d1路a2) - 2路cos虏(伪2)路(螖路d1)
         let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
 
         if a_v.abs() > 1e-12 {
@@ -202,7 +202,7 @@ fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> V
                 }
             }
         } else if b_v.abs() > 1e-12 {
-            // a_v ≈ 0: solve linear b_v·v + c_v = 0
+            // a_v 鈮?0: solve linear b_v路v + c_v = 0
             let v = -c_v / b_v;
             if v.is_finite() {
                 let p = cone1.point_at(u, v);
@@ -297,7 +297,7 @@ fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> V
     let dedup = |pts: &mut Vec<DVec3>| {
         while pts.len() >= 3 {
             let n = pts.len();
-            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (pts[n - 1] - pts[0]).length_squared() < 1e-24 {
                 pts.pop();
             } else {
                 break;
@@ -314,7 +314,7 @@ fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> V
     }
     if branch_minus.len() >= 2 {
         let is_distinct = branches.is_empty()
-            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+            || (branch_minus[0] - branches[0][0]).length_squared() > 1e-24;
         if is_distinct {
             dedup(&mut branch_minus);
             if branch_minus.len() >= 2 {
@@ -326,9 +326,9 @@ fn intersect_skew_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> V
     branches
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Parallel axes
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn intersect_parallel_cones(
     cone1: &ConicalSurface,
@@ -352,12 +352,12 @@ fn intersect_parallel_cones(
     let tan1 = beta1.tan();
     let tan2 = beta2.tan();
 
-    // ── Coaxial ──────────────────────────────────────────────────────────────
-    if d_perp < TOLERANCE_ABS {
+    // 鈹€鈹€ Coaxial 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    if d_perp < rcad_kernel::rcad_kernel::CONFUSION {
         // Axes coincide.  The apex of cone2 may be different from cone1's apex.
 
         // Check for identical geometry (same apex, same half-angle).
-        if (apex2 - apex1).length() < TOLERANCE_ABS && (beta1 - beta2).abs() < TOLERANCE_ANG {
+        if (apex2 - apex1).length() < rcad_kernel::rcad_kernel::CONFUSION && (beta1 - beta2).abs() < rcad_kernel::ANGULAR {
             return ConeConeResult::Coaxial;
         }
 
@@ -368,18 +368,18 @@ fn intersect_parallel_cones(
         //
         // Set r1 = r2:  h*tan1 = (h - delta_along)*tan2
         //   h*(tan1 - tan2) = -delta_along * tan2
-        //   h = -delta_along * tan2 / (tan1 - tan2)        when tan1 ≠ tan2
+        //   h = -delta_along * tan2 / (tan1 - tan2)        when tan1 鈮?tan2
         //
         // When tan1 = tan2 (same opening angle):
-        //   r1 = r2 is only satisfiable if delta_along = 0 (same apex → Coaxial above)
-        //   or never (different apices → only the apex itself if a1 == a2 direction).
+        //   r1 = r2 is only satisfiable if delta_along = 0 (same apex 鈫?Coaxial above)
+        //   or never (different apices 鈫?only the apex itself if a1 == a2 direction).
 
-        if (tan1 - tan2).abs() < TOLERANCE_LEN_MIN {
+        if (tan1 - tan2).abs() < 1e-12 {
             // Equal half-angles, different apices.
             // The two cones are coaxial "nested" with the same angle.
             // For infinite cones the lateral surfaces are parallel and never
             // intersect.  However for frustums (bounded cones) the face-boundary
-            // edges still need processing by the pave-filler — return General so
+            // edges still need processing by the pave-filler 鈥?return General so
             // the numeric engine gets a chance to find intersection curves, even
             // if it also returns empty, the pave-filler still processes face-plane
             // pairs for the end caps.
@@ -389,16 +389,16 @@ fn intersect_parallel_cones(
         let h = -delta_along * tan2 / (tan1 - tan2);
 
         // h must be positive for cone1's nappe, and (h - delta_along) > 0 for cone2's nappe.
-        if h < -TOLERANCE_ABS || (h - delta_along) < -TOLERANCE_ABS {
+        if h < -rcad_kernel::rcad_kernel::CONFUSION || (h - delta_along) < -rcad_kernel::rcad_kernel::CONFUSION {
             // Check if the intersection is at a shared apex.
-            if h.abs() < TOLERANCE_ABS {
+            if h.abs() < rcad_kernel::rcad_kernel::CONFUSION {
                 return ConeConeResult::CoaxialPoint(apex1);
             }
             return ConeConeResult::NoIntersection;
         }
 
         let radius = h * tan1;
-        if radius < TOLERANCE_ABS {
+        if radius < rcad_kernel::rcad_kernel::CONFUSION {
             return ConeConeResult::CoaxialPoint(apex1 + a1 * h);
         }
 
@@ -406,17 +406,17 @@ fn intersect_parallel_cones(
         return ConeConeResult::CoaxialCircle(Circle3::new(center, a1, radius));
     }
 
-    // ── Parallel but offset ───────────────────────────────────────────────────
+    // 鈹€鈹€ Parallel but offset 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // At height h above cone1.apex: cone1 radius = h*tan1.
     // The cone2 apex is at perpendicular offset d_perp from the cone1 axis.
     // At the same height, cone2 radius = (h - delta_along)*tan2 (from cone2 apex).
     //
     // Two circles of radii r1, r2 at perpendicular distance d_perp apart can
-    // only intersect if |r1 - r2| ≤ d_perp ≤ r1 + r2.
+    // only intersect if |r1 - r2| 鈮?d_perp 鈮?r1 + r2.
     //
     // Since both radii grow with height (for positive nappes), they will
     // eventually be large enough to overlap for any finite d_perp.  So the
-    // surfaces always intersect for parallel offset cones — fall back to marching.
+    // surfaces always intersect for parallel offset cones 鈥?fall back to marching.
     //
     // Quick early exit: if both cones are very thin (small half-angles) and
     // d_perp is large, no intersection occurs near the apices but they will
@@ -424,9 +424,9 @@ fn intersect_parallel_cones(
     ConeConeResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // OCCT IntAna_QuadQuadGeo Sec 2-4: stub analytic cases (documentation only)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 // OCCT reference: IntAna_QuadQuadGeo::Perform(gp_Cone, gp_Cone) at
 //   $OCCT_SRC/src/IntAna/IntAna_QuadQuadGeo.cxx
@@ -572,9 +572,9 @@ fn occt_common_generatrix_cones(
     None
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Fuzzy-tolerance wrapper & Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute cone-cone intersection with fuzzy tolerance for near-coaxial cases.
 pub fn intersect_cone_cone_with_tolerance(
@@ -582,15 +582,15 @@ pub fn intersect_cone_cone_with_tolerance(
     cone2: &ConicalSurface,
     fuzzy_tol: f64,
 ) -> ConeConeResult {
-    let tol = TOLERANCE_ABS + fuzzy_tol;
+    let tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol;
     let a1 = cone1.axis.normalize();
     let a2 = cone2.axis.normalize();
 
     let cross = a1.cross(a2);
     let sin_angle = cross.length();
 
-    // ── Parallel axes (with fuzzy tolerance for near-coaxial detection) ────
-    if sin_angle < TOLERANCE_ANG {
+    // 鈹€鈹€ Parallel axes (with fuzzy tolerance for near-coaxial detection) 鈹€鈹€鈹€鈹€
+    if sin_angle < rcad_kernel::ANGULAR {
         let delta = cone2.apex - cone1.apex;
         let delta_along = delta.dot(a1);
         let delta_perp = delta - a1 * delta_along;
@@ -601,14 +601,14 @@ pub fn intersect_cone_cone_with_tolerance(
         let tan1 = beta1.tan();
         let tan2 = beta2.tan();
 
-        // ── Coaxial (with fuzzy tolerance) ────────────────────────────────
+        // 鈹€鈹€ Coaxial (with fuzzy tolerance) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         if d_perp < tol {
             // Check for identical geometry
-            if (cone2.apex - cone1.apex).length() < tol && (beta1 - beta2).abs() < TOLERANCE_ANG {
+            if (cone2.apex - cone1.apex).length() < tol && (beta1 - beta2).abs() < rcad_kernel::ANGULAR {
                 return ConeConeResult::Coaxial;
             }
 
-            if (tan1 - tan2).abs() < TOLERANCE_LEN_MIN {
+            if (tan1 - tan2).abs() < 1e-12 {
                 return ConeConeResult::NoIntersection;
             }
 
@@ -631,7 +631,7 @@ pub fn intersect_cone_cone_with_tolerance(
         }
     }
 
-    // ── Skew axes (analytic quartic solver) ──────────────────────────────
+    // 鈹€鈹€ Skew axes (analytic quartic solver) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let skew_result = intersect_skew_cone_cone(cone1, cone2);
     if !skew_result.is_empty() {
         return ConeConeResult::SkewQuartic(skew_result);

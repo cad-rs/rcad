@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_PaveFiller — intersection engine.
+// OCCT BOPAlgo_PaveFiller 閳?intersection engine.
 
 use crate::bop::algo::{Alert, GlueEnum, Report};
 use crate::bop::ds::{
@@ -6,7 +6,7 @@ use crate::bop::ds::{
     InterferenceVF, InterferenceEF, InterferenceFF, BOPDS_Iterator,
 };
 use crate::bop::int_tools;
-use crate::tolerance::*;
+
 use rcad_kernel::CurveEval;
 use rcad_kernel::topods::ShapeType;
 
@@ -47,7 +47,7 @@ impl<'a> PaveFiller<'a> {
 
     fn prepare(&mut self) {}
 
-    // ── VV ──
+    // 閳光偓閳光偓 VV 閳光偓閳光偓
     fn perform_vv(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_vv: Vec<InterferenceVV> = Vec::new();
@@ -71,7 +71,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.interf_vv.extend(new_vv);
     }
 
-    // ── VE ──
+    // 閳光偓閳光偓 VE 閳光偓閳光偓
     fn perform_ve(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_ve: Vec<InterferenceVE> = Vec::new();
@@ -93,7 +93,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.interf_ve.extend(new_ve);
     }
 
-    // ── EE ──
+    // 閳光偓閳光偓 EE 閳光偓閳光偓
     fn perform_ee(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_ee: Vec<InterferenceEE> = Vec::new();
@@ -124,7 +124,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.interf_ee.extend(new_ee);
     }
 
-    // ── VF ──
+    // 閳光偓閳光偓 VF 閳光偓閳光偓
     fn perform_vf(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_vf: Vec<InterferenceVF> = Vec::new();
@@ -146,7 +146,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.interf_vf.extend(new_vf);
     }
 
-    // ── EF ──
+    // 閳光偓閳光偓 EF 閳光偓閳光偓
     fn perform_ef(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_ef: Vec<InterferenceEF> = Vec::new();
@@ -171,7 +171,7 @@ impl<'a> PaveFiller<'a> {
         self.ds.interf_ef.extend(new_ef);
     }
 
-    // ── FF ──
+    // 閳光偓閳光偓 FF 閳光偓閳光偓
     fn perform_ff(&mut self) {
         let n = self.ds.nb_shapes();
         let mut new_ff: Vec<InterferenceFF> = Vec::new();

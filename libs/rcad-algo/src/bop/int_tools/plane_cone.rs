@@ -37,21 +37,21 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
     let apex_to_plane = (plane.origin - apex).dot(plane.normal);
 
     // ── Plane ⊥ axis → circle ─────────────────────────────────────────────────
-    if (cos_angle - 1.0).abs() < TOLERANCE_ANG {
-        if apex_to_plane.abs() < TOLERANCE_ABS {
+    if (cos_angle - 1.0).abs() < rcad_kernel::ANGULAR {
+        if apex_to_plane.abs() < rcad_kernel::CONFUSION {
             return PlaneConicalResult::Point(apex);
         }
         let t = apex_to_plane / axis_n.dot(plane.normal);
         let center = apex + axis_n * t;
         let radius = (t * cone.half_angle_rad.tan()).abs();
-        if radius < TOLERANCE_ABS {
+        if radius < rcad_kernel::CONFUSION {
             return PlaneConicalResult::Point(center);
         }
         return PlaneConicalResult::Circle(Circle3::new(center, cone.axis, radius));
     }
 
     // ── Plane through apex ────────────────────────────────────────────────────
-    if apex_to_plane.abs() < TOLERANCE_ABS {
+    if apex_to_plane.abs() < rcad_kernel::CONFUSION {
         let angle_between = sin_angle.atan2(cos_angle); // angle between plane NORMAL and axis
         let half = cone.half_angle_rad;
 
@@ -61,7 +61,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
         //   π/2 − angle_between > half  → plane misses cone      → Point
         let two_lines_cutoff = std::f64::consts::FRAC_PI_2 - half;
 
-        if (angle_between - two_lines_cutoff).abs() < TOLERANCE_ANG {
+        if (angle_between - two_lines_cutoff).abs() < rcad_kernel::ANGULAR {
             // Tangent: single generator line
             let dir = plane_n.cross(axis_n).normalize();
             let gen_dir = (axis_n * half.cos() + dir * half.sin()).normalize();
@@ -111,7 +111,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
     let sin_beta = cone.half_angle_rad.sin();
 
     // ── Hyperbola: σ < β ↔ cos(σ) > cos(β) ↔ sin_angle > cos_beta ──────────
-    if sin_angle > cos_beta + TOLERANCE_ANG {
+    if sin_angle > cos_beta + rcad_kernel::ANGULAR {
         return build_hyperbola(
             plane,
             cone,
@@ -124,7 +124,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
     }
 
     // ── Parabola: σ ≈ β ↔ cos(σ) ≈ cos(β) ↔ sin_angle ≈ cos_beta ───────────
-    if (sin_angle - cos_beta).abs() < TOLERANCE_ANG {
+    if (sin_angle - cos_beta).abs() < rcad_kernel::ANGULAR {
         return build_parabola(plane, cone, apex_to_plane, axis_n);
     }
 
@@ -168,7 +168,7 @@ fn build_ellipse(
     let center = apex + axis_n * t;
     let base_radius = (t * tan_beta).abs();
 
-    if base_radius < TOLERANCE_ABS {
+    if base_radius < rcad_kernel::CONFUSION {
         return PlaneConicalResult::Point(center);
     }
 
@@ -252,9 +252,9 @@ fn build_parabola(
     // For a cone with half-angle β and unit-speed cut at vertex distance d_v from apex:
     //   d_v = apex_to_plane / (gen_dir · plane_n)  (already computed above)
     // p = 2 * r_v * tan_beta where r_v = d_v * sin_beta
-    let d_v = (vertex - cone.apex_point()).length().max(TOLERANCE_ABS);
+    let d_v = (vertex - cone.apex_point()).length().max(rcad_kernel::CONFUSION);
     let r_v = d_v * cone.half_angle_rad.sin();
-    let focal_param = (2.0 * r_v * tan_beta).max(TOLERANCE_ABS);
+    let focal_param = (2.0 * r_v * tan_beta).max(rcad_kernel::CONFUSION);
 
     PlaneConicalResult::Parabola(Parabola3 {
         vertex,
@@ -319,7 +319,7 @@ fn build_hyperbola(
     // Derived from the vertices at x=0: V1=(0, z1·tanβ, z1), V2=(0, -z2·tanβ, z2)
     // where z1,2 = d/(sinσ ∓ cosσ·tanβ).
     let k_val = sin_angle * sin_angle * tan_beta * tan_beta - cos_angle * cos_angle;
-    if k_val <= TOLERANCE_ABS * TOLERANCE_ABS {
+    if k_val <= rcad_kernel::CONFUSION * rcad_kernel::CONFUSION {
         return PlaneConicalResult::NoIntersection;
     }
     let a = d * tan_beta / k_val;
@@ -329,12 +329,12 @@ fn build_hyperbola(
     }
     let b = a * e_sq_minus_1.sqrt();
 
-    if a < TOLERANCE_ABS {
+    if a < rcad_kernel::CONFUSION {
         return PlaneConicalResult::Point(center);
     }
 
     // Ensure b > 0 (may be tiny for near-axis planes)
-    let b = b.max(TOLERANCE_ABS);
+    let b = b.max(rcad_kernel::CONFUSION);
 
     PlaneConicalResult::Hyperbola(Hyperbola3 {
         center,

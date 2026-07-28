@@ -8,7 +8,7 @@
 //! circles at axial heights where the sphere's cross-section radius equals
 //! the cone's radius at that height. Solve:
 //!
-//!   r_sphere(z) = sqrt(R² - (z - z_c)²)
+//!   r_sphere(z) = sqrt(R虏 - (z - z_c)虏)
 //!   r_cone(z) = r_ref + (z - z_ref) * tan(half_angle)
 //!
 //! The intersection points satisfy r_sphere(z) = r_cone(z), which leads to
@@ -23,11 +23,11 @@ use glam::DVec3;
 use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Circle3, ConicalSurface, SphericalSurface};
 
-use crate::tolerance::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
+
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Analytic result of sphere x cone intersection.
 #[derive(Debug, Clone)]
@@ -46,9 +46,9 @@ pub enum SphereConeResult {
     General,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main function
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the analytic intersection of `sphere` and `cone`.
 pub fn intersect_sphere_cone(sphere: &SphericalSurface, cone: &ConicalSurface) -> SphereConeResult {
@@ -64,7 +64,7 @@ pub fn intersect_sphere_cone_with_tolerance(
     cone: &ConicalSurface,
     fuzzy_tol: f64,
 ) -> SphereConeResult {
-    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
+    let tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol.max(0.0);
     let axis = cone.axis_dir();
     let apex = cone.apex_point();
 
@@ -74,24 +74,24 @@ pub fn intersect_sphere_cone_with_tolerance(
     let foot = apex + axis * z_c;
     let d_perp = (sphere.center - foot).length();
 
-    // ── Axis-aligned case: sphere center on cone axis ───────────────────────────
+    // 鈹€鈹€ Axis-aligned case: sphere center on cone axis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     if d_perp < tol * 10.0 {
         return intersect_sphere_cone_on_axis(sphere, cone, z_c, tol);
     }
 
-    // ── Off-axis: try θ-parameterized solver ──────────────────────────────
+    // 鈹€鈹€ Off-axis: try 胃-parameterized solver 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let result = intersect_sphere_cone_off_axis(sphere, cone);
     if !matches!(result, SphereConeResult::General) {
         return result;
     }
 
-    // ── General case: numerical fallback ───────────────────────────────────────
+    // 鈹€鈹€ General case: numerical fallback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     SphereConeResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Axis-aligned case
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn intersect_sphere_cone_on_axis(
     sphere: &SphericalSurface,
@@ -107,13 +107,13 @@ fn intersect_sphere_cone_on_axis(
 
     // Cone radius at axial distance z from apex: r_cone(z) = r_ref + z * tan_half
     // Sphere cross-section radius at axial distance z from sphere center:
-    //   r_sphere(z) = sqrt(big_r² - (z - z_c)²)  when |z - z_c| <= big_r
+    //   r_sphere(z) = sqrt(big_r虏 - (z - z_c)虏)  when |z - z_c| <= big_r
     //
     // Intersection: r_sphere(z) = r_cone(z)
     // Let u = z - z_c (offset from sphere center along axis)
-    //   sqrt(big_r² - u²) = r_ref + (z_c + u) * tan_half
+    //   sqrt(big_r虏 - u虏) = r_ref + (z_c + u) * tan_half
     // Square both sides:
-    //   big_r² - u² = (r_ref + z_c * tan_half + u * tan_half)²
+    //   big_r虏 - u虏 = (r_ref + z_c * tan_half + u * tan_half)虏
     // This is a quartic in u. We solve by sampling and bisection.
 
     // Sampling range: u in [-big_r, +big_r]
@@ -213,21 +213,21 @@ fn intersect_sphere_cone_on_axis(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Off-axis θ-parameterized solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Off-axis 胃-parameterized solver
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Off-axis sphere-cone intersection using a θ-parameterized quadratic solver.
+/// Off-axis sphere-cone intersection using a 胃-parameterized quadratic solver.
 ///
-/// Parameterizes the cone by θ (angle around axis) and s (axial distance from
-/// true apex).  For each θ, solves `A·s² + B(θ)·s + D = 0` where the sphere
-/// constraint |P(θ,s) �?C|² = R² gives:
+/// Parameterizes the cone by 胃 (angle around axis) and s (axial distance from
+/// true apex).  For each 胃, solves `A路s虏 + B(胃)路s + D = 0` where the sphere
+/// constraint |P(胃,s) 锟?C|虏 = R虏 gives:
 ///
 /// | Term | Expression |
 /// |------|------------|
-/// | A    | `1 + tan²(β)` (constant, �?1) |
-/// | B(θ) | `�?·(Cz + tan(β)·(Cx·cos(θ) + Cy·sin(θ)))` |
-/// | D    | `|C_local|² �?R²` (constant) |
+/// | A    | `1 + tan虏(尾)` (constant, 锟?1) |
+/// | B(胃) | `锟?路(Cz + tan(尾)路(Cx路cos(胃) + Cy路sin(胃)))` |
+/// | D    | `|C_local|虏 锟?R虏` (constant) |
 ///
 /// Returns [`SphereConeResult::Polyline`] with one or more branches.
 fn intersect_sphere_cone_off_axis(
@@ -241,11 +241,11 @@ fn intersect_sphere_cone_off_axis(
     }
     let apex_true = cone.apex_point();
     let sphere_r = sphere.radius;
-    if sphere_r < TOLERANCE_ABS {
+    if sphere_r < rcad_kernel::rcad_kernel::CONFUSION {
         return SphereConeResult::General;
     }
 
-    // Local basis: u, v �?axis
+    // Local basis: u, v 锟?axis
     let u = any_perpendicular(axis);
     let v = axis.cross(u).normalize();
 
@@ -257,7 +257,7 @@ fn intersect_sphere_cone_off_axis(
     let local_sq = cl.length_squared();
 
     // Constant coefficients
-    let a_coef = 1.0 + tan_beta * tan_beta; // A �?1
+    let a_coef = 1.0 + tan_beta * tan_beta; // A 锟?1
     let d_coef = local_sq - sphere_r * sphere_r;
 
     const N_THETA: usize = 256;
@@ -280,42 +280,42 @@ fn intersect_sphere_cone_off_axis(
         let sqrt_delta = delta.sqrt();
         // Stable quadratic: "far" root via standard formula, "near" root via Vieta
         let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-        let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
+        let s_near = if s_far.abs() > 1e-15 {
             d_coef / (a_coef * s_far)
         } else {
-            // s_far �?0 (D �?0, near-tangent case), compute directly
+            // s_far 锟?0 (D 锟?0, near-tangent case), compute directly
             (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
         };
 
-        // Order so that s_lower �?s_upper
+        // Order so that s_lower 锟?s_upper
         let (s_lower, s_upper) = if s_far <= s_near {
             (s_far, s_near)
         } else {
             (s_near, s_far)
         };
 
-        // Eval 3D point at given s on the θ ray
+        // Eval 3D point at given s on the 胃 ray
         let pt_at_s = |s: f64| -> DVec3 {
             let radial = s * tan_beta;
             apex_true + axis * s + radial * (u * cos_t + v * sin_t)
         };
 
-        // Lower branch �?closer to apex
+        // Lower branch 锟?closer to apex
         if s_lower >= 0.0 {
             lower_branch.push(Some((theta, pt_at_s(s_lower))));
         } else {
             lower_branch.push(None);
         }
 
-        // Upper branch �?further from apex (skip if coincident with lower)
-        if s_upper >= 0.0 && (s_upper - s_lower).abs() > TOLERANCE_ABS * 0.1 {
+        // Upper branch 锟?further from apex (skip if coincident with lower)
+        if s_upper >= 0.0 && (s_upper - s_lower).abs() > rcad_kernel::rcad_kernel::CONFUSION * 0.1 {
             upper_branch.push(Some((theta, pt_at_s(s_upper))));
         } else {
             upper_branch.push(None);
         }
     }
 
-    // Extract contiguous valid runs from a branch array, handling θ=0/2π wrap.
+    // Extract contiguous valid runs from a branch array, handling 胃=0/2蟺 wrap.
     let extract_runs = |branch: &[Option<(f64, DVec3)>]| -> Vec<Vec<(f64, DVec3)>> {
         let n = branch.len();
         // Find first gap so we can rotate to avoid wrap issues
@@ -341,7 +341,7 @@ fn intersect_sphere_cone_off_axis(
             curves.push(current);
         }
 
-        // Fix θ monotonicity in runs that wrap the θ=0/2π boundary
+        // Fix 胃 monotonicity in runs that wrap the 胃=0/2蟺 boundary
         // (rotation may place TAU before 0 in a single run)
         for curve in &mut curves {
             for j in 1..curve.len() {
@@ -360,11 +360,11 @@ fn intersect_sphere_cone_off_axis(
     let lower_param_branches = extract_runs(&lower_branch);
     let upper_param_branches = extract_runs(&upper_branch);
 
-    // ── Adaptive chord-error refinement ────────────────────────────────────
+    // 鈹€鈹€ Adaptive chord-error refinement 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     const CHORD_TOL: f64 = crate::bop::int_tools::CHORD_TOLERANCE;
     const REFINE_DEPTH: usize = crate::bop::int_tools::CHORD_REFINE_DEPTH;
 
-    // Lower-branch eval: recompute 3D point at any θ, picking the near-apex root
+    // Lower-branch eval: recompute 3D point at any 胃, picking the near-apex root
     let lower_eval = {
         move |theta: f64| -> Option<DVec3> {
             let (cos_t, sin_t) = (theta.cos(), theta.sin());
@@ -375,7 +375,7 @@ fn intersect_sphere_cone_off_axis(
             }
             let sqrt_delta = delta.sqrt();
             let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-            let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
+            let s_near = if s_far.abs() > 1e-15 {
                 d_coef / (a_coef * s_far)
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
@@ -393,7 +393,7 @@ fn intersect_sphere_cone_off_axis(
         }
     };
 
-    // Upper-branch eval: recompute 3D point at any θ, picking the far-from-apex root
+    // Upper-branch eval: recompute 3D point at any 胃, picking the far-from-apex root
     let upper_eval = {
         move |theta: f64| -> Option<DVec3> {
             let (cos_t, sin_t) = (theta.cos(), theta.sin());
@@ -404,7 +404,7 @@ fn intersect_sphere_cone_off_axis(
             }
             let sqrt_delta = delta.sqrt();
             let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
-            let s_near = if s_far.abs() > TOLERANCE_CLAMP_MIN {
+            let s_near = if s_far.abs() > 1e-15 {
                 d_coef / (a_coef * s_far)
             } else {
                 (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
@@ -414,7 +414,7 @@ fn intersect_sphere_cone_off_axis(
             } else {
                 (s_near, s_far)
             };
-            if s_upper < 0.0 || (s_upper - s_lower).abs() <= TOLERANCE_ABS * 0.1 {
+            if s_upper < 0.0 || (s_upper - s_lower).abs() <= rcad_kernel::rcad_kernel::CONFUSION * 0.1 {
                 return None;
             }
             let radial = s_upper * tan_beta;
@@ -452,11 +452,11 @@ fn intersect_sphere_cone_off_axis(
         }
     }
 
-    // Closed-curve check: drop duplicate endpoint for runs where first �?last
+    // Closed-curve check: drop duplicate endpoint for runs where first 锟?last
     for branch in &mut result {
         if branch.len() >= 3 {
             let d = (branch[0] - branch[branch.len() - 1]).length();
-            if d < TOLERANCE_ABS * 10.0 {
+            if d < rcad_kernel::rcad_kernel::CONFUSION * 10.0 {
                 branch.pop();
             }
         }
@@ -472,6 +472,6 @@ fn intersect_sphere_cone_off_axis(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

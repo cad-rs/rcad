@@ -1,5 +1,5 @@
-﻿use crate::bnd_lib;
-use crate::tolerance::{CONFUSION, TOLERANCE_ABS, TOLERANCE_CLAMP_MIN, TOLERANCE_LEN_SQ_DIV_SAFE};
+
+
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
@@ -154,8 +154,8 @@ pub fn curve_resolution_edge(curve: &Curve3, res_coeff: f64, r3d: f64) -> f64 {
 /// For circles: 1/(2*radius). For ellipses: 1/major_radius.
 pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
     match curve {
-        Curve3::Circle(c) => 1.0 / (2.0 * c.radius.max(TOLERANCE_LEN_SQ_DIV_SAFE)),
-        Curve3::Ellipse(e) => 1.0 / e.major_radius.max(TOLERANCE_LEN_SQ_DIV_SAFE),
+        Curve3::Circle(c) => 1.0 / (2.0 * c.radius.max(1e-30)),
+        Curve3::Ellipse(e) => 1.0 / e.major_radius.max(1e-30),
         _ => {
             // OCCT: sample 30 points, find min dt/dist ratio
             let nb_p = 30;
@@ -169,7 +169,7 @@ pub fn resolution_coeff(curve: &Curve3, t_range: [f64; 2]) -> f64 {
                 t += dt;
                 let p2 = curve.point_at(t);
                 let dist = (p1 - p2).length();
-                if dist > TOLERANCE_LEN_SQ_DIV_SAFE {
+                if dist > 1e-30 {
                     let k = dt / dist;
                     if k < k_min {
                         k_min = k;
@@ -197,7 +197,7 @@ pub fn curve_deflection(curve: &Curve3, t_range: [f64; 2]) -> f64 {
         let v2 = curve.tangent_at(t);
         let len1 = v1.length_squared();
         let len2 = v2.length_squared();
-        if len1 > TOLERANCE_LEN_SQ_DIV_SAFE && len2 > TOLERANCE_LEN_SQ_DIV_SAFE {
+        if len1 > 1e-30 && len2 > 1e-30 {
             let d1 = v1 / len1.sqrt();
             let d2 = v2 / len2.sqrt();
             defl += d1.dot(d2).acos();
@@ -259,7 +259,7 @@ pub fn intersect_line_line_3d(
     // Non-coincident lines: find intersection point
     let cross = d1.cross(d2);
     let cross_len2 = cross.length_squared();
-    if cross_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+    if cross_len2 < 1e-30 {
         return None;
     }
     let o1o2 = l2_origin - l1_origin;
@@ -273,7 +273,7 @@ pub fn intersect_line_line_3d(
     let b = d1.dot(o1o2);
     let c = d2.dot(o1o2);
     let denom = 1.0 - a * a;
-    if denom.abs() < TOLERANCE_CLAMP_MIN {
+    if denom.abs() < 1e-15 {
         return None;
     }
     let t1 = (b - a * c) / denom;
@@ -432,7 +432,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // Perform 鈥?OCCT L185-243
+    // Perform 閳?OCCT L185-243
     // ========================================================================
     /// Perform the intersection.
     pub fn perform(&mut self) {
@@ -467,7 +467,7 @@ impl EdgeEdgeIntersector {
         if (ct1_type <= 1 && ct2_type <= 1)
             && (matches!(self.curve1, Curve3::Line(_)) || matches!(self.curve2, Curve3::Line(_)))
         {
-            // OCCT uses BRepExtrema_DistShapeShape 鈥?approximate with closest-point
+            // OCCT uses BRepExtrema_DistShapeShape 閳?approximate with closest-point
             let p1_mid = self
                 .curve1
                 .point_at(0.5 * (self.range1[0] + self.range1[1]));
@@ -488,7 +488,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // CheckData 鈥?OCCT (implied, not shown in header; simple validation)
+    // CheckData 閳?OCCT (implied, not shown in header; simple validation)
     // ========================================================================
     fn check_data(&mut self) {
         if self.edge1 == usize::MAX || self.edge2 == usize::MAX {
@@ -497,7 +497,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // Prepare 鈥?OCCT L89-181
+    // Prepare 閳?OCCT L89-181
     // ========================================================================
     fn prepare(&mut self) {
         let a_ct1 = curve_type_to_integer(&self.curve1);
@@ -516,7 +516,7 @@ impl EdgeEdgeIntersector {
         let mut i_ct2 = a_ct2;
         if i_ct1 == i_ct2 && i_ct1 != 0 {
             let a_c2 = curve_deflection(&self.curve2, self.range2);
-            let a_c1 = if a_c2 > CONFUSION {
+            let a_c1 = if a_c2 > rcad_kernel::rcad_kernel::CONFUSION {
                 curve_deflection(&self.curve1, self.range1)
             } else {
                 1.0
@@ -537,12 +537,12 @@ impl EdgeEdgeIntersector {
 
         // OCCT L149-152: set tolerances from actual edge data
         // OCCT: myTol1 = myCurve1.Tolerance() + myFuzzyValue / 2.
-        //        myCurve1.Tolerance() always >= Precision::Confusion() (~1e-7)
+        //        myCurve1.Tolerance() always >= Precision::rcad_kernel::rcad_kernel::CONFUSION() (~1e-7)
         // rcad: edge_tol1 from set_edges(), fuzzy_value from set_fuzzy_value()
-        //        edge_tol may be 0 for constructed geometry, so floor at TOLERANCE_ABS
+        //        edge_tol may be 0 for constructed geometry, so floor at rcad_kernel::rcad_kernel::rcad_kernel::CONFUSION
         let a_tol_add = self.fuzzy_value / 2.0;
-        self.tol1 = self.edge_tol1.max(crate::tolerance::TOLERANCE_ABS) + a_tol_add;
-        self.tol2 = self.edge_tol2.max(crate::tolerance::TOLERANCE_ABS) + a_tol_add;
+        self.tol1 = self.edge_tol1.max(crate::tolerance::rcad_kernel::rcad_kernel::rcad_kernel::CONFUSION) + a_tol_add;
+        self.tol2 = self.edge_tol2.max(crate::tolerance::rcad_kernel::rcad_kernel::rcad_kernel::CONFUSION) + a_tol_add;
         self.tol = self.tol1 + self.tol2;
 
         // OCCT L154-180: compute resolution coefficients and resolutions
@@ -567,7 +567,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // IsCoincident 鈥?OCCT L247-286
+    // IsCoincident 閳?OCCT L247-286
     // ========================================================================
     fn is_coincident(&self) -> bool {
         const A_NB_SEG: usize = 23;
@@ -592,7 +592,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // ComputeLineLine 鈥?OCCT L902-1056
+    // ComputeLineLine 閳?OCCT L902-1056
     // ========================================================================
     fn compute_line_line(&mut self) {
         let Curve3::Line(l1) = &self.curve1 else {
@@ -648,11 +648,11 @@ impl EdgeEdgeIntersector {
         // OCCT L996-1055: find exact intersection
         let cross = d1.cross(d2);
         let cross_len2 = cross.length_squared();
-        if cross_len2 < TOLERANCE_LEN_SQ_DIV_SAFE {
+        if cross_len2 < 1e-30 {
             return;
         }
         let denom = 1.0 - (d1.dot(d2)).powi(2);
-        if denom.abs() < TOLERANCE_CLAMP_MIN {
+        if denom.abs() < 1e-15 {
             return;
         }
         let o1o2 = l2.origin - l1.origin;
@@ -677,7 +677,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindSolutions (top-level dispatch) 鈥?OCCT L290-349
+    // FindSolutions (top-level dispatch) 閳?OCCT L290-349
     // ========================================================================
     fn find_solutions(
         &mut self,
@@ -716,10 +716,10 @@ impl EdgeEdgeIntersector {
             return;
         }
 
-        // OCCT L320-325: closed path 鈥?CheckCoincidence
+        // OCCT L320-325: closed path 閳?CheckCoincidence
         let i_com = self.check_coincidence(a_t11, a_t12, a_t21, a_t22, self.tol, self.res1);
         if i_com == 0 {
-            // not coincident 鈥?add whole ranges directly
+            // not coincident 閳?add whole ranges directly
             the_ranges1.push([a_t11, a_t12]);
             the_ranges2.push([a_t21, a_t22]);
             return;
@@ -751,7 +751,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindSolutions (inner, iterative refinement) 鈥?OCCT L353-549
+    // FindSolutions (inner, iterative refinement) 閳?OCCT L353-549
     // ========================================================================
     fn find_solutions_impl(
         &self,
@@ -919,7 +919,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindParameters 鈥?OCCT L553-671
+    // FindParameters 閳?OCCT L553-671
     // ========================================================================
     fn find_parameters(
         &self,
@@ -993,7 +993,7 @@ impl EdgeEdgeIntersector {
 
             // OCCT L627-670: golden-section refinement
             let a_t = if side == 0 { t1 } else { t2 };
-            if (a_tb - a_t).abs() > TOLERANCE_LEN_SQ_DIV_SAFE {
+            if (a_tb - a_t).abs() > 1e-30 {
                 let mut t_in = a_tb;
                 let mut t_out = a_tb - a_c * a_dt;
                 let mut diff = t_in - t_out;
@@ -1020,7 +1020,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // MergeSolutions 鈥?OCCT L675-776
+    // MergeSolutions 閳?OCCT L675-776
     // ========================================================================
     fn merge_solutions(
         &mut self,
@@ -1103,7 +1103,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // AddSolution 鈥?OCCT L780-822
+    // AddSolution 閳?OCCT L780-822
     // ========================================================================
     fn add_solution(&mut self, t11: f64, t12: f64, t21: f64, t22: f64, is_edge: bool) {
         let p1 = self.curve1.point_at(t11);
@@ -1127,7 +1127,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // FindBestSolution 鈥?OCCT L826-898
+    // FindBestSolution 閳?OCCT L826-898
     // ========================================================================
     #[allow(unused)]
     fn find_best_solution(&self, t11: f64, t12: f64, t21: f64, t22: f64) -> (f64, f64) {
@@ -1152,7 +1152,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // CheckCoincidence 鈥?OCCT L1060-1148 (the method called from FindSolutions inner)
+    // CheckCoincidence 閳?OCCT L1060-1148 (the method called from FindSolutions inner)
     // OCCT signature: int CheckCoincidence(aT11, aT12, aT21, aT22, theCriteria, theCurveRes1)
     // Returns: 0 = coincident (distance <= criteria), 1 = not coincident, 2 = far apart
     // ========================================================================
@@ -1165,7 +1165,7 @@ impl EdgeEdgeIntersector {
         criteria: f64,
         curve_res1: f64,
     ) -> i32 {
-        // OCCT L1068-1099: Step 1 鈥?sample 10 points, quick rejection
+        // OCCT L1068-1099: Step 1 閳?sample 10 points, quick rejection
         let a_nb = 10usize;
         let dt1 = (t12 - t11) / a_nb as f64;
         let mut t = t11;
@@ -1181,7 +1181,7 @@ impl EdgeEdgeIntersector {
             }
         }
 
-        // OCCT L1101-1138: Step 2 鈥?golden-section search per segment to find MAX distance
+        // OCCT L1101-1138: Step 2 閳?golden-section search per segment to find MAX distance
         // OCCT calls FindDistPC which does golden-section for max distance.
         // We approximate with simpler golden-section on the whole interval.
         const CF: f64 = 0.6180339887498948482045868343656;
@@ -1230,7 +1230,7 @@ impl EdgeEdgeIntersector {
     }
 
     // ========================================================================
-    // IsIntersection 鈥?OCCT L1150-1206
+    // IsIntersection 閳?OCCT L1150-1206
     // ========================================================================
     fn is_intersection(&self, t11: f64, t12: f64, t21: f64, t22: f64) -> bool {
         let p11 = self.curve1.point_at(t11);
@@ -1273,10 +1273,10 @@ impl EdgeEdgeIntersector {
             let len_v21 = v21.length_squared();
             let len_v22 = v22.length_squared();
 
-            if len_v11 > TOLERANCE_CLAMP_MIN
-                && len_v12 > TOLERANCE_CLAMP_MIN
-                && len_v21 > TOLERANCE_CLAMP_MIN
-                && len_v22 > TOLERANCE_CLAMP_MIN
+            if len_v11 > 1e-15
+                && len_v12 > 1e-15
+                && len_v21 > 1e-15
+                && len_v22 > 1e-15
             {
                 let a1 = if b11_21 && b12_22 {
                     (v11.normalize().dot(v21.normalize())).acos()
@@ -1321,8 +1321,8 @@ impl Default for EdgeEdgeIntersector {
 /// 1:1 from IntTools_EdgeEdge::BndBuildBox (cxx L1410-1419).
 /// Compute axis-aligned bounding box for a curve segment (delegates to bnd_lib).
 pub(crate) fn compute_curve_aabb(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
-    let bbox = crate::bop::curve_bounds(curve);
-    (bbox.0, bbox.1)
+    let bbox = bnd_lib::curve_bounds_optimal(curve, t1, t2, tol);
+    (bbox.min, bbox.max)
 }
 
 /// Point-in-axis-aligned-bounding-box check.
@@ -1370,8 +1370,8 @@ fn box_is_z_thin(b: (DVec3, DVec3), tol: f64) -> bool {
 /// Builds an axis-aligned bounding box for a curve segment.
 /// In OCCT this wraps BndLib_Add3dCurve::Add. In rcad, delegates to bnd_lib.
 pub fn bnd_build_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> (DVec3, DVec3) {
-    let bbox = crate::bop::curve_bounds(curve);
-    (bbox.0, bbox.1)
+    let bbox = bnd_lib::curve_bounds_optimal(curve, t1, t2, tol);
+    (bbox.min, bbox.max)
 }
 
 /// 1:1 from IntTools_EdgeEdge::DistPC first overload (cxx L1332-1362).

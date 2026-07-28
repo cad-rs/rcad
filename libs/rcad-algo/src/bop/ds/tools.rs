@@ -1,4 +1,4 @@
-// BOPAlgo_Tools 鈥?CommonBlock merging and tolerance computation.
+// BOPAlgo_Tools 闂?CommonBlock merging and tolerance computation.
 //
 // OCCT: BOPAlgo_Tools.cxx L107-356
 // Operates on BOPDS_DS to group geometrically coincident PaveBlocks.
@@ -8,8 +8,8 @@ use rcad_kernel::geom::{Curve3, CurveEval};
 use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::pave::{NO_EDGE, Pave, PaveBlock, SharedPB};
 use crate::bop::ds::DS;
-use crate::tolerance::*;
-/// BOPAlgo_Tools::PerformCommonBlocks 鈥?group PBs with same (v1,v2) into CommonBlocks.
+
+/// BOPAlgo_Tools::PerformCommonBlocks 闂?group PBs with same (v1,v2) into CommonBlocks.
 pub fn perform_common_blocks(ds: &mut DS) {
     // Collect all PBs from the per-edge pool.
     let mut all_pbs: Vec<(usize, usize, SharedPB)> = Vec::new();
@@ -67,15 +67,15 @@ pub fn perform_common_blocks(ds: &mut DS) {
         }
     }
 }
-/// BOPAlgo_Tools::ComputeToleranceOfCB 鈥?compute combined tolerance for a CommonBlock.
+/// BOPAlgo_Tools::ComputeToleranceOfCB 闂?compute combined tolerance for a CommonBlock.
 fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(usize, usize)]) -> f64 {
-    let mut tol_max = TOLERANCE_ABS;
+    let mut tol_max = rcad_kernel::CONFUSION;
     for &(pb_idx, _) in pb_list {
         if pb_idx >= ds.common_blocks.len() { continue; }
         // Use PaveBlock data to estimate tolerance from edge geometry.
         if let Some(curve) = ds.edge_curve(pb_idx) {
             let is_line = matches!(curve, Curve3::Line(_));
-            let base = if is_line { TOLERANCE_ABS } else { TOLERANCE_ABS * 10.0 };
+            let base = if is_line { rcad_kernel::CONFUSION } else { rcad_kernel::CONFUSION * 10.0 };
             tol_max = tol_max.max(base);
         }
     }

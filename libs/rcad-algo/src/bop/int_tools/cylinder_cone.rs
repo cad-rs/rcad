@@ -9,8 +9,8 @@
 //! cylinder radius (one per nappe of the infinite double cone):
 //!
 //! ```text
-//! r_cone(h) = (h − h_apex) · tan(β)  where h_apex is the height of the apex
-//! r_cone(h) = r_cyl  →  h = h_apex ± r_cyl / tan(β)
+//! r_cone(h) = (h 鈭?h_apex) 路 tan(尾)  where h_apex is the height of the apex
+//! r_cone(h) = r_cyl  鈫? h = h_apex 卤 r_cyl / tan(尾)
 //! ```
 //!
 //! Returns [`CoaxialCircle`](CylinderConeResult::CoaxialCircle) if only one
@@ -22,7 +22,7 @@
 //!
 //! ## Parallel axes (non-coaxial)
 //!
-//! When the axes are parallel but distinct (cross-product ≈ 0), the
+//! When the axes are parallel but distinct (cross-product 鈮?0), the
 //! cylinder-cone intersection is a quartic curve in general.  We perform a
 //! radial distance test to detect obvious non-intersections and fall back to
 //! marching otherwise.
@@ -38,13 +38,13 @@ use rcad_kernel::geom::{Circle3, ConicalSurface, CylindricalSurface, any_perpend
 use std::f64::consts::TAU;
 
 use super::pcurve_derive::refine_polyline;
-use crate::tolerance::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
+
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Analytic result of cylinder × cone intersection.
+/// Analytic result of cylinder 脳 cone intersection.
 #[derive(Debug, Clone)]
 pub enum CylinderConeResult {
     /// The surfaces do not intersect.
@@ -68,8 +68,8 @@ pub enum CylinderConeResult {
     /// Skew axes (non-parallel, non-coaxial): analytic quartic solution.
     ///
     /// The cylinder and cone intersect in a quartic space curve.  For each
-    /// cylinder azimuth u ∈ [0, 2π) the cone equation reduces to a quadratic
-    /// in the cylinder height v, solved analytically.  Two branches (± sqrt)
+    /// cylinder azimuth u 鈭?[0, 2蟺) the cone equation reduces to a quadratic
+    /// in the cylinder height v, solved analytically.  Two branches (卤 sqrt)
     /// are returned as polylines.
     ///
     /// Used when the axes are skew (neither parallel nor coincident), avoiding
@@ -77,9 +77,9 @@ pub enum CylinderConeResult {
     SkewQuartic(Vec<Vec<DVec3>>),
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main function
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the analytic intersection of `cyl` and `cone`.
 pub fn intersect_cylinder_cone(
@@ -90,14 +90,14 @@ pub fn intersect_cylinder_cone(
     let a_cone = cone.axis.normalize();
 
     let cross = a_cyl.cross(a_cone);
-    let sin_angle = cross.length(); // |sin θ| between the two axes
+    let sin_angle = cross.length(); // |sin 胃| between the two axes
 
-    // ── Parallel axes (including coaxial) ────────────────────────────────────
-    if sin_angle < TOLERANCE_ANG {
+    // 鈹€鈹€ Parallel axes (including coaxial) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    if sin_angle < rcad_kernel::ANGULAR {
         return intersect_parallel_cylinder_cone(cyl, cone, a_cyl, a_cone);
     }
 
-    // ── Skew axes ──────────────────────────────────────────────────────────
+    // 鈹€鈹€ Skew axes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Try analytic quartic solver first; fall back to numeric marching if it
     // produces no result (e.g. surfaces barely graze each other).
 
@@ -109,9 +109,9 @@ pub fn intersect_cylinder_cone(
     CylinderConeResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Parallel (and coaxial) axes
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn intersect_parallel_cylinder_cone(
     cyl: &CylindricalSurface,
@@ -136,11 +136,11 @@ fn intersect_parallel_cylinder_cone(
     let delta_perp = delta - a_cyl * delta.dot(a_cyl);
     let d_perp = delta_perp.length();
 
-    // ── Coaxial ──────────────────────────────────────────────────────────────
-    if d_perp < TOLERANCE_ABS {
+    // 鈹€鈹€ Coaxial 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    if d_perp < rcad_kernel::rcad_kernel::CONFUSION {
         let h_apex = (apex - cyl.origin).dot(a_cyl);
 
-        if tan_beta.abs() < TOLERANCE_FLOAT_LOOSE {
+        if tan_beta.abs() < 1e-14 {
             // Degenerate cone (half_angle = 0), no lateral surface.
             return CylinderConeResult::NoIntersection;
         }
@@ -156,10 +156,10 @@ fn intersect_parallel_cylinder_cone(
         let mut first: Option<Circle3> = None;
         let mut second: Option<Circle3> = None;
 
-        if h_upper > h_apex + TOLERANCE_ABS {
+        if h_upper > h_apex + rcad_kernel::rcad_kernel::CONFUSION {
             first = Some(Circle3::new(cyl.origin + a_cyl * h_upper, a_cyl, r_cyl));
         }
-        if h_lower < h_apex - TOLERANCE_ABS {
+        if h_lower < h_apex - rcad_kernel::rcad_kernel::CONFUSION {
             second = Some(Circle3::new(cyl.origin + a_cyl * h_lower, a_cyl, r_cyl));
         }
 
@@ -171,13 +171,13 @@ fn intersect_parallel_cylinder_cone(
         };
     }
 
-    // ── Parallel but offset axes ──────────────────────────────────────────────
-    // At each axial height h the cone has radius r_cone(h) = |h - h_apex|·tan(β).
+    // 鈹€鈹€ Parallel but offset axes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // At each axial height h the cone has radius r_cone(h) = |h - h_apex|路tan(尾).
     // The cylinder cross-section is a circle of radius r_cyl centred at a
     // perpendicular offset d_perp from the cone axis.  Intersection reduces to
     // a circle-circle test in the plane perpendicular to the axes, which is
     // solved analytically via axial sweep.
-    if d_perp < TOLERANCE_ABS {
+    if d_perp < rcad_kernel::rcad_kernel::CONFUSION {
         // Should not reach here (coaxial case above), but guard against
         // numerical near-zero.
         return CylinderConeResult::NoIntersection;
@@ -185,22 +185,22 @@ fn intersect_parallel_cylinder_cone(
     return intersect_parallel_offset_cylinder_cone(cyl, cone, a_cyl, d_perp, delta_perp);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Parallel-offset axial sweep
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the intersection of a cylinder and a cone with parallel but
 /// non-coaxial axes via axial sweep.
 ///
 /// At each height `h` along the common axis direction `a`, the cone
-/// cross-section is a circle of radius `r_cone(h) = |h - h_apex|·tan(β)`
+/// cross-section is a circle of radius `r_cone(h) = |h - h_apex|路tan(尾)`
 /// centred on the cone axis, and the cylinder cross-section is a circle of
 /// radius `r_cyl` centred on the cylinder axis.  The two axes are separated
 /// by perpendicular distance `d_perp` (vector `delta_perp` from cylinder axis
 /// to cone apex in the perpendicular plane).
 ///
 /// The intersection exists when the two circles overlap:
-///   `|r_cyl - r_cone(h)| ≤ d_perp ≤ r_cyl + r_cone(h)`
+///   `|r_cyl - r_cone(h)| 鈮?d_perp 鈮?r_cyl + r_cone(h)`
 ///
 /// Both the upper nappe (`h > h_apex`) and lower nappe (`h < h_apex`) are
 /// swept; each nappe may produce 0, 1, or 2 branches.
@@ -213,7 +213,7 @@ fn intersect_parallel_offset_cylinder_cone(
 ) -> CylinderConeResult {
     let r_cyl = cyl.radius;
     let tan_beta = cone.half_angle_rad.tan();
-    if tan_beta.abs() < TOLERANCE_FLOAT_LOOSE {
+    if tan_beta.abs() < 1e-14 {
         return CylinderConeResult::NoIntersection;
     }
 
@@ -225,7 +225,7 @@ fn intersect_parallel_offset_cylinder_cone(
     let d_sum = d_perp + r_cyl;
 
     // Perpendicular basis: u points from cylinder axis toward cone axis,
-    // v = a × u completes the right-handed frame.
+    // v = a 脳 u completes the right-handed frame.
     let u = delta_perp / d_perp;
     let v = a.cross(u).normalize_or_zero();
 
@@ -243,7 +243,7 @@ fn intersect_parallel_offset_cylinder_cone(
             (h_max, h_min)
         };
 
-        if h_hi - h_lo <= TOLERANCE_ABS * 10.0 {
+        if h_hi - h_lo <= rcad_kernel::rcad_kernel::CONFUSION * 10.0 {
             continue; // degenerately narrow intersection band
         }
 
@@ -257,13 +257,13 @@ fn intersect_parallel_offset_cylinder_cone(
 
             let center = cyl.origin + a * h;
 
-            // cos(φ) where φ is the angle on the cylinder cross-section circle
-            // from the u-direction.  Derived from |P(h,φ) - P_cone(h)|² = r_cone².
+            // cos(蠁) where 蠁 is the angle on the cylinder cross-section circle
+            // from the u-direction.  Derived from |P(h,蠁) - P_cone(h)|虏 = r_cone虏.
             let numer = r_cyl * r_cyl + d_perp * d_perp - r_cone * r_cone;
             let denom = 2.0 * r_cyl * d_perp;
             let cos_phi = (numer / denom).clamp(-1.0, 1.0);
 
-            if cos_phi.abs() >= 1.0 - TOLERANCE_ANG {
+            if cos_phi.abs() >= 1.0 - rcad_kernel::ANGULAR {
                 // Tangent: both branches meet at the same point.
                 let pt = center + r_cyl * u * cos_phi;
                 branch_plus.push(pt);
@@ -284,7 +284,7 @@ fn intersect_parallel_offset_cylinder_cone(
         let dedup = |pts: &mut Vec<DVec3>| {
             while pts.len() >= 3 {
                 let n = pts.len();
-                if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                if (pts[n - 1] - pts[0]).length_squared() < 1e-24 {
                     pts.pop();
                 } else {
                     break;
@@ -313,39 +313,39 @@ fn intersect_parallel_offset_cylinder_cone(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Skew-axis analytic solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the intersection of a cylinder and cone with skew (non-parallel)
 /// axes using an analytic quartic solver.
 ///
 /// # Theory
 ///
-/// Cylinder parametrization (u = azimuth [0, 2π), v = height along axis):
+/// Cylinder parametrization (u = azimuth [0, 2蟺), v = height along axis):
 ///
 /// ```text
-/// P(u,v) = O_cyl + v·a_cyl + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// P(u,v) = O_cyl + v路a_cyl + r_cyl路(cos(u)路x_cyl + sin(u)路y_cyl)
 /// ```
 ///
 /// The cone surface satisfies:
 ///
 /// ```text
-/// |P - O_cone|²·cos²(α) = ((P - O_cone)·a_cone)²
+/// |P - O_cone|虏路cos虏(伪) = ((P - O_cone)路a_cone)虏
 /// ```
 ///
 /// Substituting P(u,v) gives F(v) = 0 where
 ///
 /// ```text
-/// a_v·v² + b_v(u)·v + c_v(u) = 0
+/// a_v路v虏 + b_v(u)路v + c_v(u) = 0
 ///
-/// a_v   = (a_cyl·a_cone)² - cos²(α)                          (constant)
-/// b_v(u) = 2·(D0·a_cone)·(a_cyl·a_cone) - 2·cos²(α)·(D0·a_cyl)
-/// c_v(u) = (D0·a_cone)² - cos²(α)·|D0|²
-/// D0(u)  = O_cyl - O_cone + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// a_v   = (a_cyl路a_cone)虏 - cos虏(伪)                          (constant)
+/// b_v(u) = 2路(D0路a_cone)路(a_cyl路a_cone) - 2路cos虏(伪)路(D0路a_cyl)
+/// c_v(u) = (D0路a_cone)虏 - cos虏(伪)路|D0|虏
+/// D0(u)  = O_cyl - O_cone + r_cyl路(cos(u)路x_cyl + sin(u)路y_cyl)
 /// ```
 ///
-/// For each u, we solve the quadratic for v, giving two branches (± sqrt).
+/// For each u, we solve the quadratic for v, giving two branches (卤 sqrt).
 fn intersect_skew_cylinder_cone(
     cyl: &CylindricalSurface,
     cone: &ConicalSurface,
@@ -356,19 +356,19 @@ fn intersect_skew_cylinder_cone(
     let o_cone = cone.apex_point();
     let r_cyl = cyl.radius;
     let cos_alpha = cone.half_angle_rad.cos();
-    let cos2 = cos_alpha * cos_alpha; // cos²(α)
+    let cos2 = cos_alpha * cos_alpha; // cos虏(伪)
 
     // Perpendicular basis for cylinder (must match CylindricalSurface::point_at).
     let x_cyl = any_perpendicular(a_cyl);
     let y_cyl = a_cyl.cross(x_cyl).normalize();
 
-    // Constant coefficient a_v = (a_cyl·a_cone)² - cos²(α).
+    // Constant coefficient a_v = (a_cyl路a_cone)虏 - cos虏(伪).
     let a_dot = a_cyl.dot(a_cone);
     let a_v = a_dot * a_dot - cos2;
 
     // Pre-computed constants for b_v and c_v.
-    let a_dot2 = 2.0 * a_dot; // 2·(a_cyl·a_cone)
-    let two_cos2 = 2.0 * cos2; // 2·cos²(α)
+    let a_dot2 = 2.0 * a_dot; // 2路(a_cyl路a_cone)
+    let two_cos2 = 2.0 * cos2; // 2路cos虏(伪)
 
     let delta_o = o_cyl - o_cone; // O_cyl - O_cone
 
@@ -382,21 +382,21 @@ fn intersect_skew_cylinder_cone(
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
         let (cos_u, sin_u) = (u.cos(), u.sin());
 
-        // D0(u) = (O_cyl - O_cone) + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+        // D0(u) = (O_cyl - O_cone) + r_cyl路(cos(u)路x_cyl + sin(u)路y_cyl)
         let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
 
-        let d0_a = d0.dot(a_cone); // D0·a_cone
-        let d0_cyl = d0.dot(a_cyl); // D0·a_cyl
-        let d0_sq = d0.length_squared(); // |D0|²
+        let d0_a = d0.dot(a_cone); // D0路a_cone
+        let d0_cyl = d0.dot(a_cyl); // D0路a_cyl
+        let d0_sq = d0.length_squared(); // |D0|虏
 
-        // b_v(u) = 2·(D0·a_cone)·(a_cyl·a_cone) - 2·cos²(α)·(D0·a_cyl)
+        // b_v(u) = 2路(D0路a_cone)路(a_cyl路a_cone) - 2路cos虏(伪)路(D0路a_cyl)
         let b_v = a_dot2 * d0_a - two_cos2 * d0_cyl;
 
-        // c_v(u) = (D0·a_cone)² - cos²(α)·|D0|²
+        // c_v(u) = (D0路a_cone)虏 - cos虏(伪)路|D0|虏
         let c_v = d0_a * d0_a - cos2 * d0_sq;
 
         if a_v.abs() > 1e-12 {
-            // Quadratic: a_v·v² + b_v·v + c_v = 0
+            // Quadratic: a_v路v虏 + b_v路v + c_v = 0
             let disc = b_v * b_v - 4.0 * a_v * c_v;
 
             if disc < 0.0 {
@@ -424,7 +424,7 @@ fn intersect_skew_cylinder_cone(
                 }
             }
         } else if b_v.abs() > 1e-12 {
-            // Near-degenerate a_v ≈ 0: solve linear b_v·v + c_v = 0
+            // Near-degenerate a_v 鈮?0: solve linear b_v路v + c_v = 0
             let v = -c_v / b_v;
             if v.is_finite() {
                 let p = cyl.point_at(u, v);
@@ -522,7 +522,7 @@ fn intersect_skew_cylinder_cone(
     let dedup = |pts: &mut Vec<DVec3>| {
         while pts.len() >= 3 {
             let n = pts.len();
-            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (pts[n - 1] - pts[0]).length_squared() < 1e-24 {
                 pts.pop();
             } else {
                 break;
@@ -540,9 +540,9 @@ fn intersect_skew_cylinder_cone(
     if branch_minus.len() >= 2 {
         // Check the minus branch is distinct from the plus branch by comparing
         // their first points. If they're nearly the same, the branches collapsed
-        // (tangent intersection) — keep only one.
+        // (tangent intersection) 鈥?keep only one.
         let is_distinct = branches.is_empty()
-            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+            || (branch_minus[0] - branches[0][0]).length_squared() > 1e-24;
         if is_distinct {
             dedup(&mut branch_minus);
             if branch_minus.len() >= 2 {
@@ -554,6 +554,6 @@ fn intersect_skew_cylinder_cone(
     branches
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

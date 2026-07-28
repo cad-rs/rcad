@@ -13,9 +13,9 @@ use glam::DVec3;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Circle3, CylindricalSurface, ToroidalSurface, any_perpendicular};
 
-use crate::tolerance::*;
 
-/// Result of cylinder × torus intersection.
+
+/// Result of cylinder 脳 torus intersection.
 #[derive(Debug, Clone)]
 pub enum CylinderTorusResult {
     /// No intersection.
@@ -25,7 +25,7 @@ pub enum CylinderTorusResult {
     /// Two circles (coaxial case).
     TwoCircles(Circle3, Circle3),
     /// Skew/quartic intersection: one or more polyline branches sampled on the
-    /// cylinder parameterization.  For each cylinder azimuth u �?[0, 2π), solve
+    /// cylinder parameterization.  For each cylinder azimuth u 锟?[0, 2蟺), solve
     /// the quartic equation in v derived from the torus implicit equation.
     SkewQuartic(Vec<Vec<DVec3>>),
     /// Complex intersection, fall back to numerical marching.
@@ -40,13 +40,13 @@ pub fn intersect_cylinder_torus(
     intersect_cylinder_torus_with_tolerance(cylinder, torus, 0.0)
 }
 
-/// Cylinder × torus intersection with fuzzy tolerance.
+/// Cylinder 脳 torus intersection with fuzzy tolerance.
 pub fn intersect_cylinder_torus_with_tolerance(
     cylinder: &CylindricalSurface,
     torus: &ToroidalSurface,
     fuzzy_tol: f64,
 ) -> CylinderTorusResult {
-    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
+    let tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol.max(0.0);
 
     let a_cyl = cylinder.axis.normalize();
     let a_tor = torus.axis.normalize();
@@ -60,7 +60,7 @@ pub fn intersect_cylinder_torus_with_tolerance(
     let d_perp = (delta - a_tor * delta.dot(a_tor)).length();
 
     // Coaxial: same axis line
-    if sin_angle < TOLERANCE_ANG && d_perp < tol {
+    if sin_angle < rcad_kernel::ANGULAR && d_perp < tol {
         return intersect_cylinder_torus_coaxial(cylinder, torus, tol);
     }
 
@@ -74,22 +74,22 @@ pub fn intersect_cylinder_torus_with_tolerance(
     CylinderTorusResult::General
 }
 
-/// Solve a₄·x�?+ a₃·x³ + a₂·x² + a₁·x + a₀ = 0, return sorted real roots.
+/// Solve a鈧劼穢锟?+ a鈧兟穢鲁 + a鈧偮穢虏 + a鈧伮穢 + a鈧€ = 0, return sorted real roots.
 fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    if a4.abs() < TOLERANCE_CLAMP_MIN {
+    if a4.abs() < 1e-15 {
         return solve_cubic_real(a3, a2, a1, a0);
     }
 
-    // Normalize to monic: x�?+ b·x³ + c·x² + d·x + e = 0
+    // Normalize to monic: x锟?+ b路x鲁 + c路x虏 + d路x + e = 0
     let (b, c, d, e) = (a3 / a4, a2 / a4, a1 / a4, a0 / a4);
 
-    // Depress: x = y - b/4 �?y�?+ p·y² + q·y + r = 0
+    // Depress: x = y - b/4 锟?y锟?+ p路y虏 + q路y + r = 0
     let bb = b * b;
     let p = c - 3.0 * bb / 8.0;
     let q = d - b * c / 2.0 + b * bb / 8.0;
     let r = e - b * d / 4.0 + bb * c / 16.0 - 3.0 * bb * bb / 256.0;
 
-    // Handle special: depressed quartic is biquadratic (q �?0)
+    // Handle special: depressed quartic is biquadratic (q 锟?0)
     if q.abs() < 1e-14 {
         let mut roots = Vec::new();
         let y2_roots = solve_quadratic_real(1.0, p, r);
@@ -108,7 +108,7 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
         return roots;
     }
 
-    // Resolvent cubic: m³ + 2p·m² + (p² - 4r)·m - q² = 0
+    // Resolvent cubic: m鲁 + 2p路m虏 + (p虏 - 4r)路m - q虏 = 0
     let m_roots = solve_cubic_real(1.0, 2.0 * p, p * p - 4.0 * r, -q * q);
     let m = m_roots
         .into_iter()
@@ -120,16 +120,16 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 
     // If all resolvent roots are negative, we can still proceed with
     // complex arithmetic, but for practical CAD purposes this means the
-    // quartic has 0 or 4 complex roots �?no real solutions.
+    // quartic has 0 or 4 complex roots 锟?no real solutions.
     if m < 0.0 {
         return Vec::new();
     }
 
     let sqrt_m = m.sqrt();
 
-    // Factor: y�?+ p·y² + q·y + r = (y² + A·y + B)(y² - A·y + C)
+    // Factor: y锟?+ p路y虏 + q路y + r = (y虏 + A路y + B)(y虏 - A路y + C)
     // where A = sqrt_m, B + C = p + m, C - B = q / sqrt_m
-    let (b_val, c_val) = if sqrt_m > TOLERANCE_CLAMP_MIN {
+    let (b_val, c_val) = if sqrt_m > 1e-15 {
         let half_q_over_sqrt_m = 0.5 * q / sqrt_m;
         (
             0.5 * (p + m) - half_q_over_sqrt_m,
@@ -141,7 +141,7 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 
     let mut roots = Vec::new();
 
-    // y² + sqrt_m·y + b_val = 0
+    // y虏 + sqrt_m路y + b_val = 0
     let d1 = sqrt_m * sqrt_m - 4.0 * b_val;
     if d1 >= 0.0 {
         let sd = d1.sqrt();
@@ -149,7 +149,7 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
         roots.push((-sqrt_m - sd) / 2.0);
     }
 
-    // y² - sqrt_m·y + c_val = 0
+    // y虏 - sqrt_m路y + c_val = 0
     let d2 = sqrt_m * sqrt_m - 4.0 * c_val;
     if d2 >= 0.0 {
         let sd = d2.sqrt();
@@ -166,22 +166,22 @@ fn solve_quartic_real(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     roots
 }
 
-/// Solve a₃·x³ + a₂·x² + a₁·x + a₀ = 0, return sorted real roots.
+/// Solve a鈧兟穢鲁 + a鈧偮穢虏 + a鈧伮穢 + a鈧€ = 0, return sorted real roots.
 fn solve_cubic_real(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    if a3.abs() < TOLERANCE_CLAMP_MIN {
+    if a3.abs() < 1e-15 {
         return solve_quadratic_real(a2, a1, a0);
     }
 
-    // Normalize: x³ + p·x² + q·x + r = 0
+    // Normalize: x鲁 + p路x虏 + q路x + r = 0
     let (p, q, r) = (a2 / a3, a1 / a3, a0 / a3);
 
-    // Depress: x = t - p/3 �?t³ + a·t + b = 0
+    // Depress: x = t - p/3 锟?t鲁 + a路t + b = 0
     let pp = p * p;
     let a = q - pp / 3.0;
     let b = 2.0 * p * pp / 27.0 - p * q / 3.0 + r;
 
-    if a.abs() < TOLERANCE_CLAMP_MIN {
-        // t³ = -b
+    if a.abs() < 1e-15 {
+        // t鲁 = -b
         return vec![b.signum() * (-b).abs().powf(1.0 / 3.0) - p / 3.0];
     }
 
@@ -193,8 +193,8 @@ fn solve_cubic_real(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
         let u = (-b / 2.0 + sqrt_d).cbrt();
         let v = (-b / 2.0 - sqrt_d).cbrt();
         vec![u + v - p / 3.0]
-    } else if disc.abs() < TOLERANCE_CLAMP_MIN {
-        // Multiple real roots (discriminant �?0)
+    } else if disc.abs() < 1e-15 {
+        // Multiple real roots (discriminant 锟?0)
         let u = (-b / 2.0).cbrt();
         let t1 = 2.0 * u;
         let t2 = -u;
@@ -217,10 +217,10 @@ fn solve_cubic_real(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     }
 }
 
-/// Solve a₂·x² + a₁·x + a₀ = 0, return sorted real roots.
+/// Solve a鈧偮穢虏 + a鈧伮穢 + a鈧€ = 0, return sorted real roots.
 fn solve_quadratic_real(a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    if a2.abs() < TOLERANCE_CLAMP_MIN {
-        if a1.abs() < TOLERANCE_CLAMP_MIN {
+    if a2.abs() < 1e-15 {
+        if a1.abs() < 1e-15 {
             return Vec::new();
         }
         return vec![-a0 / a1];
@@ -230,7 +230,7 @@ fn solve_quadratic_real(a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     if disc < 0.0 {
         return Vec::new();
     }
-    if disc.abs() < TOLERANCE_CLAMP_MIN {
+    if disc.abs() < 1e-15 {
         return vec![-a1 / (2.0 * a2)];
     }
     let sd = disc.sqrt();
@@ -239,7 +239,7 @@ fn solve_quadratic_real(a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     vec![x1.min(x2), x1.max(x2)]
 }
 
-/// Newton-iteration fallback to find one real root of a₃·x³ + a₂·x² + a₁·x + a₀.
+/// Newton-iteration fallback to find one real root of a鈧兟穢鲁 + a鈧偮穢虏 + a鈧伮穢 + a鈧€.
 fn newton_root(a3: f64, a2: f64, a1: f64, a0: f64) -> f64 {
     let f = |x: f64| -> (f64, f64) {
         let fx = ((a3 * x + a2) * x + a1) * x + a0;
@@ -251,7 +251,7 @@ fn newton_root(a3: f64, a2: f64, a1: f64, a0: f64) -> f64 {
         let mut x = start;
         for _ in 0..32 {
             let (fx, dfx) = f(x);
-            if dfx.abs() < TOLERANCE_CLAMP_MIN {
+            if dfx.abs() < 1e-15 {
                 break;
             }
             let step = fx / dfx;
@@ -267,9 +267,9 @@ fn newton_root(a3: f64, a2: f64, a1: f64, a0: f64) -> f64 {
     0.0
 }
 
-/// Skew (non-coaxial, non-parallel) cylinder × torus intersection via quartic
+/// Skew (non-coaxial, non-parallel) cylinder 脳 torus intersection via quartic
 /// solver.  Parameterize the cylinder as P(u,v), substitute into the torus
-/// implicit equation (x²+y²+z²-R²-r²)² = 4R²(r²-z²), obtaining a quartic in v
+/// implicit equation (x虏+y虏+z虏-R虏-r虏)虏 = 4R虏(r虏-z虏), obtaining a quartic in v
 /// at each u.  Solve via Ferrari's method, extract branches.
 fn intersect_skew_cylinder_torus(
     cyl: &CylindricalSurface,
@@ -285,7 +285,7 @@ fn intersect_skew_cylinder_torus(
     let r_major_sq = r_major * r_major;
     let r_minor_sq = r_minor * r_minor;
     let r_sum_sq = r_major_sq + r_minor_sq;
-    let r_diff_sq = r_major_sq - r_minor_sq; // R² - r²
+    let r_diff_sq = r_major_sq - r_minor_sq; // R虏 - r虏
 
     // Perpendicular basis for cylinder radial direction
     let x_dir = any_perpendicular(a);
@@ -293,7 +293,7 @@ fn intersect_skew_cylinder_torus(
 
     // Constants for the quartic coefficients
     let o_sq = o.length_squared();
-    let d1 = a.dot(a_tor); // a·a_tor �?constant
+    let d1 = a.dot(a_tor); // a路a_tor 锟?constant
     let d1_sq = d1 * d1;
     let o_dot_a = o.dot(a);
     let o_dot_a_tor = o.dot(a_tor);
@@ -309,17 +309,17 @@ fn intersect_skew_cylinder_torus(
         // Radial direction on cylinder at this u
         let r_dir = cu * x_dir + su * y_dir;
 
-        // C�?u) = a·O + ρ·(a·r_dir)
+        // C锟?u) = a路O + 蟻路(a路r_dir)
         let c1 = o_dot_a + rho * a.dot(r_dir);
 
-        // C₀(u) = |O|² + ρ² + 2ρ·O·r_dir
+        // C鈧€(u) = |O|虏 + 蟻虏 + 2蟻路O路r_dir
         let c0 = o_sq + rho * rho + 2.0 * rho * o.dot(r_dir);
 
-        // D�?= a·a_tor (constant)
-        // D₀(u) = O·a_tor + ρ·(r_dir·a_tor)
+        // D锟?= a路a_tor (constant)
+        // D鈧€(u) = O路a_tor + 蟻路(r_dir路a_tor)
         let d0 = o_dot_a_tor + rho * r_dir.dot(a_tor);
 
-        // Quartic: v�?+ a₃·v³ + a₂·v² + a₁·v + a₀ = 0
+        // Quartic: v锟?+ a鈧兟穠鲁 + a鈧偮穠虏 + a鈧伮穠 + a鈧€ = 0
         let a3 = 4.0 * c1;
         let a2 = 4.0 * c1 * c1 + 2.0 * c0 - 2.0 * r_sum_sq + 4.0 * r_major_sq * d1_sq;
         let a1 = 4.0 * c1 * c0 - 4.0 * r_sum_sq * c1 + 8.0 * r_major_sq * d1 * d0;
@@ -376,7 +376,7 @@ fn intersect_skew_cylinder_torus(
             // more than u-values, so a u-based threshold is meaningless.
             let v_threshold = if cur_pts.len() >= 2 {
                 let v_range = cur_pts.last().unwrap().0 - cur_pts[0].0;
-                (v_range / cur_pts.len() as f64) * 2.5 // 2.5× typical gap
+                (v_range / cur_pts.len() as f64) * 2.5 // 2.5脳 typical gap
             } else {
                 (TAU / N_SAMPLES as f64) * 20.0 // fallback: generous bound
             };
@@ -410,7 +410,7 @@ fn intersect_skew_cylinder_torus(
         }
     }
 
-    // ── Adaptive chord-error refinement ────────────────────────────────────
+    // 鈹€鈹€ Adaptive chord-error refinement 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     const CHORD_TOL: f64 = crate::bop::int_tools::CHORD_TOLERANCE;
     const REFINE_DEPTH: usize = crate::bop::int_tools::CHORD_REFINE_DEPTH;
 
@@ -475,7 +475,7 @@ fn intersect_skew_cylinder_torus(
     for mut branch in refined_3d {
         while branch.len() >= 3 {
             let n = branch.len();
-            if (branch[n - 1] - branch[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (branch[n - 1] - branch[0]).length_squared() < 1e-24 {
                 branch.pop();
             } else {
                 break;

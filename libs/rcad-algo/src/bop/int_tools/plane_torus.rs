@@ -13,7 +13,7 @@ use glam::DVec3;
 use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Circle3, Plane, ToroidalSurface};
 
-use crate::tolerance::*;
+
 
 /// Result of plane x torus intersection.
 #[derive(Debug, Clone)]
@@ -25,8 +25,8 @@ pub enum PlaneTorusResult {
     /// Two circles (perpendicular case).
     TwoCircles(Circle3, Circle3),
     /// Skew plane intersection: one or more polyline branches sampled on the
-    /// torus parameterization.  For each torus azimuth u ∈ [0, 2π), solve the
-    /// plane constraint cos(v)·B(u) + sin(v)·C = D(u) for the tube angle v.
+    /// torus parameterization.  For each torus azimuth u 鈭?[0, 2蟺), solve the
+    /// plane constraint cos(v)路B(u) + sin(v)路C = D(u) for the tube angle v.
     SkewPolyline(Vec<Vec<DVec3>>),
     /// Complex intersection, fall back to numerical marching.
     General,
@@ -43,7 +43,7 @@ pub fn intersect_plane_torus_with_tolerance(
     torus: &ToroidalSurface,
     fuzzy_tol: f64,
 ) -> PlaneTorusResult {
-    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
+    let tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol.max(0.0);
 
     // Normalize plane normal and torus axis
     let n = plane.normal.normalize();
@@ -52,13 +52,13 @@ pub fn intersect_plane_torus_with_tolerance(
     // Check if plane is perpendicular to torus axis
     let dot_na = n.dot(a).abs();
 
-    if dot_na > 1.0 - TOLERANCE_ANG {
+    if dot_na > 1.0 - rcad_kernel::ANGULAR {
         // Plane perpendicular to axis: circular cross-section
         return intersect_plane_torus_perpendicular(plane, torus, tol);
     }
 
     // Check if plane is parallel to torus axis
-    if dot_na < TOLERANCE_ANG {
+    if dot_na < rcad_kernel::ANGULAR {
         // Plane parallel to axis: may produce two circles
         return intersect_plane_torus_parallel(plane, torus, tol);
     }
@@ -150,7 +150,7 @@ fn intersect_plane_torus_parallel(
         let in_plane_perp = n.cross(a);
         let perp_len = in_plane_perp.length();
 
-        if perp_len < TOLERANCE_ANG {
+        if perp_len < rcad_kernel::ANGULAR {
             // Degenerate case: plane normal is parallel to torus axis
             // This shouldn't happen in the parallel case
             return PlaneTorusResult::General;
@@ -159,7 +159,7 @@ fn intersect_plane_torus_parallel(
         let dir_perp = in_plane_perp / perp_len;
 
         // Calculate the distance along the perpendicular direction to the tube center
-        // intersection points. From d² + z² = R², we get z = ±√(R² - d²)
+        // intersection points. From d虏 + z虏 = R虏, we get z = 卤鈭?R虏 - d虏)
         let d_sq = d * d;
         let r_sq = torus.major_radius * torus.major_radius;
         let z_dist_sq = r_sq - d_sq;
@@ -172,7 +172,7 @@ fn intersect_plane_torus_parallel(
         let z_dist = z_dist_sq.max(0.0).sqrt();
 
         // The two circle centers are at:
-        // center = torus_center + d * dir_to_plane ± z_dist * dir_perp
+        // center = torus_center + d * dir_to_plane 卤 z_dist * dir_perp
         let base_center = torus.center + signed_dist * n;
 
         let center1 = base_center + z_dist * dir_perp;
@@ -196,27 +196,27 @@ fn intersect_plane_torus_parallel(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Skew plane analytic solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the intersection of a skew plane with a torus using a u-parameterized
 /// analytic solver on the torus surface.
 ///
-/// For each torus azimuth u ∈ [0, 2π), the tube cross-section circle intersects
+/// For each torus azimuth u 鈭?[0, 2蟺), the tube cross-section circle intersects
 /// the plane in 0, 1, or 2 points.  Solve the plane constraint:
 ///
 /// ```text
-/// cos(v)·B(u) + sin(v)·C = D(u)
+/// cos(v)路B(u) + sin(v)路C = D(u)
 /// ```
 ///
 /// where B(u) and D(u) depend on u, and C is constant.  The solution is:
 ///
 /// ```text
-/// v = atan2(C, B(u)) ± acos(D(u) / sqrt(B(u)² + C²))
+/// v = atan2(C, B(u)) 卤 acos(D(u) / sqrt(B(u)虏 + C虏))
 /// ```
 ///
-/// Returns polylines for the ± branches, each clipped to contiguous θ-ranges.
+/// Returns polylines for the 卤 branches, each clipped to contiguous 胃-ranges.
 pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec<Vec<DVec3>> {
     use std::f64::consts::TAU;
     let n = plane.normal.normalize();
@@ -234,18 +234,18 @@ pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec
     let ny = n.dot(y);
     let nz = n.dot(a);
 
-    // If the plane is nearly parallel to the torus axis, nz ≈ 0 → the parallel
+    // If the plane is nearly parallel to the torus axis, nz 鈮?0 鈫?the parallel
     // case handler should already have caught this.
     if nz.abs() < 1e-12 {
         return vec![];
     }
 
-    // Plane distance from origin: d = plane.origin · n (since plane is
-    // defined by points P where (P - plane.origin)·n = 0, equivalently P·n = d)
+    // Plane distance from origin: d = plane.origin 路 n (since plane is
+    // defined by points P where (P - plane.origin)路n = 0, equivalently P路n = d)
     let d = plane.origin.dot(n);
 
     // Constant terms
-    let a_cn = torus_center.dot(n); // center·n
+    let a_cn = torus_center.dot(n); // center路n
 
     const N_SAMPLES: usize = 128;
     let mut branch_plus: Vec<(f64, Option<DVec3>)> = Vec::with_capacity(N_SAMPLES + 1);
@@ -255,13 +255,13 @@ pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
         let (cu, su) = (u.cos(), u.sin());
 
-        // B(u) = cos(u)·nx + sin(u)·ny
+        // B(u) = cos(u)路nx + sin(u)路ny
         let bu = cu * nx + su * ny;
 
-        // D(u) = (d - a_cn - R·B(u)) / r
+        // D(u) = (d - a_cn - R路B(u)) / r
         let du = (d - a_cn - r_major * bu) / r_minor;
 
-        // m = sqrt(B(u)² + nz²)
+        // m = sqrt(B(u)虏 + nz虏)
         let m = (bu * bu + nz * nz).sqrt();
 
         if du.abs() > m {
@@ -311,7 +311,7 @@ pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec
     let mut raw_branches = extract_runs(&branch_plus);
     raw_branches.extend(extract_runs(&branch_minus));
 
-    // ── Adaptive chord-error refinement ────────────────────────────────────
+    // 鈹€鈹€ Adaptive chord-error refinement 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     const CHORD_TOL: f64 = crate::bop::int_tools::CHORD_TOLERANCE;
     const REFINE_DEPTH: usize = crate::bop::int_tools::CHORD_REFINE_DEPTH;
 
@@ -337,7 +337,7 @@ pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec
             let tube_center_f = torus_center + r_major * radial_f;
             let p_plus = tube_center_f
                 + r_minor * ((v0_f + acos_f).cos() * radial_f + (v0_f + acos_f).sin() * a);
-            let use_plus = (p_first - p_plus).length_squared() < TOLERANCE_VEC_SQ_MIN;
+            let use_plus = (p_first - p_plus).length_squared() < 1e-24;
 
             let _pts_for_eval = branch.clone();
             let eval_fn = move |u_mid: f64| -> Option<DVec3> {
@@ -376,7 +376,7 @@ pub fn intersect_plane_torus_skew(plane: &Plane, torus: &ToroidalSurface) -> Vec
     for branch in &mut result {
         if branch.len() >= 3 {
             let d = (branch[0] - branch[branch.len() - 1]).length();
-            if d < TOLERANCE_ABS * 10.0 {
+            if d < rcad_kernel::rcad_kernel::CONFUSION * 10.0 {
                 branch.pop();
             }
         }

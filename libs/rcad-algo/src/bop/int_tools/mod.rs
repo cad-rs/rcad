@@ -1,5 +1,4 @@
 //! OCCT IntTools — geometric intersection algorithms.
-//! Depends only on rcad-kernel (geometry types) and rcad-brep.
 
 pub const CHORD_TOLERANCE: f64 = 1e-7;
 pub const CHORD_REFINE_DEPTH: usize = 8;

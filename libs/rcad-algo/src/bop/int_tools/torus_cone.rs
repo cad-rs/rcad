@@ -9,7 +9,7 @@
 //! the torus tube circle (in the rho-z half-plane) intersects the cone line.
 //!
 //! In the (rho, z) half-plane:
-//! - Torus tube: (rho - R)² + z² = r²  (circle centered at (R, 0))
+//! - Torus tube: (rho - R)虏 + z虏 = r虏  (circle centered at (R, 0))
 //! - Cone: rho = (z - z_apex) * tan(half_angle)  (line from apex)
 //!
 //! Substituting gives a quadratic equation in z.
@@ -20,11 +20,11 @@
 //! substituting into the torus implicit equation:
 //!
 //! ```text
-//! (|P|² + R² - r²)² = 4R²(|P|² - (P·a_tor)²)
+//! (|P|虏 + R虏 - r虏)虏 = 4R虏(|P|虏 - (P路a_tor)虏)
 //! ```
 //!
 //! The cone P(u,v) is linear in v (slant distance), so the substitution
-//! yields a monic quartic in v at each azimuth u ∈ [0, 2π). Solved via
+//! yields a monic quartic in v at each azimuth u 鈭?[0, 2蟺). Solved via
 //! Ferrari's method (same approach as cylinder-torus).
 //!
 //! ## General case
@@ -38,11 +38,11 @@ use glam::DVec3;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Circle3, ConicalSurface, ToroidalSurface, any_perpendicular};
 
-use crate::tolerance::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
+
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Analytic result of torus x cone intersection.
 #[derive(Debug, Clone)]
@@ -62,9 +62,9 @@ pub enum TorusConeResult {
     General,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main function
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the analytic intersection of `torus` and `cone`.
 pub fn intersect_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> TorusConeResult {
@@ -80,7 +80,7 @@ pub fn intersect_torus_cone_with_tolerance(
     cone: &ConicalSurface,
     fuzzy_tol: f64,
 ) -> TorusConeResult {
-    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
+    let tol = rcad_kernel::rcad_kernel::CONFUSION + fuzzy_tol.max(0.0);
 
     let t_axis = torus.axis.normalize();
     let c_axis = cone.axis_dir();
@@ -93,12 +93,12 @@ pub fn intersect_torus_cone_with_tolerance(
     let foot = torus.center + t_axis * t;
     let d_apex = (apex - foot).length();
 
-    // ── Coaxial: same axis line ───────────────────────────────────────────────
-    if sin_angle < TOLERANCE_ANG && d_apex < tol {
+    // 鈹€鈹€ Coaxial: same axis line 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    if sin_angle < rcad_kernel::ANGULAR && d_apex < tol {
         return intersect_torus_cone_coaxial(torus, cone, t_axis);
     }
 
-    // ── Skew (non-coaxial, non-parallel): try analytic quartic solver ────────
+    // 鈹€鈹€ Skew (non-coaxial, non-parallel): try analytic quartic solver 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Parameterize the cone and substitute into the torus implicit.
     // Returns polyline branches when the quartic has real roots.
     let skew_result = intersect_skew_torus_cone(torus, cone);
@@ -106,13 +106,13 @@ pub fn intersect_torus_cone_with_tolerance(
         return TorusConeResult::SkewQuartic(skew_result);
     }
 
-    // ── General case: numerical fallback ─────────────────────────────────────
+    // 鈹€鈹€ General case: numerical fallback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     TorusConeResult::General
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Coaxial case
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[allow(non_snake_case)]
 fn intersect_torus_cone_coaxial(
@@ -137,7 +137,7 @@ fn intersect_torus_cone_coaxial(
     let z_apex = (apex - torus.center).dot(axis);
 
     // In the (rho, z) half-plane:
-    // Torus tube: (rho - R)² + z² = r²   (tube center at (R, 0))
+    // Torus tube: (rho - R)虏 + z虏 = r虏   (tube center at (R, 0))
     // Cone: rho = r_ref + sigma * (z - z_apex) * ta
     //
     // Let's set up the equation:
@@ -145,14 +145,14 @@ fn intersect_torus_cone_coaxial(
     // rho_cone(z) = r_ref + a_cone * (z - z_apex)
     //
     // Substitute into torus equation:
-    // (r_ref + a_cone*(z - z_apex) - R)² + z² = r²
+    // (r_ref + a_cone*(z - z_apex) - R)虏 + z虏 = r虏
     //
     // Let A = a_cone, B = r_ref - R - A*z_apex
     // Then rho_cone = A*z + B
     //
-    // (A*z + B - R)² + z² = r²
-    // A²*z² + 2*A*(B-R)*z + (B-R)² + z² = r²
-    // (A² + 1)*z² + 2*A*(B-R)*z + (B-R)² - r² = 0
+    // (A*z + B - R)虏 + z虏 = r虏
+    // A虏*z虏 + 2*A*(B-R)*z + (B-R)虏 + z虏 = r虏
+    // (A虏 + 1)*z虏 + 2*A*(B-R)*z + (B-R)虏 - r虏 = 0
 
     let A = sigma * ta;
     let B = r_ref - A * z_apex;
@@ -164,16 +164,16 @@ fn intersect_torus_cone_coaxial(
 
     let disc = b_q * b_q - 4.0 * a_q * c_q;
 
-    if disc < -TOLERANCE_ABS {
+    if disc < -rcad_kernel::rcad_kernel::CONFUSION {
         return TorusConeResult::NoIntersection;
     }
 
-    if disc.abs() < TOLERANCE_ABS {
+    if disc.abs() < rcad_kernel::rcad_kernel::CONFUSION {
         // Tangent: one solution
         let z = -b_q / (2.0 * a_q);
         let rho = A * z + B;
 
-        if rho < TOLERANCE_ABS {
+        if rho < rcad_kernel::rcad_kernel::CONFUSION {
             return TorusConeResult::NoIntersection;
         }
 
@@ -190,7 +190,7 @@ fn intersect_torus_cone_coaxial(
 
     for z in [z1, z2] {
         let rho = A * z + B;
-        if rho > TOLERANCE_ABS {
+        if rho > rcad_kernel::rcad_kernel::CONFUSION {
             let center = torus.center + axis * z;
             circles.push(Circle3::new(center, axis, rho));
         }
@@ -204,40 +204,40 @@ fn intersect_torus_cone_coaxial(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Skew (non-coaxial) case — analytic quartic solver
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Skew (non-coaxial) case 鈥?analytic quartic solver
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Skew torus × cone intersection via cone-parameterized quartic solver.
+/// Skew torus 脳 cone intersection via cone-parameterized quartic solver.
 ///
 /// Parameterize the cone surface P(u,v) and substitute into the torus implicit
-/// equation.  At each cone azimuth u ∈ [0, 2π) the equation becomes a monic
+/// equation.  At each cone azimuth u 鈭?[0, 2蟺) the equation becomes a monic
 /// quartic in v (slant distance).  Solve via Ferrari's method and extract
 /// polyline branches by proximity clustering across consecutive u values.
 ///
 /// # Cone parameterization
 ///
 /// ```text
-/// P(u,v) = apex + v·cos(α)·a_cone + (r_ref + v·sin(α))·r_dir(u)
+/// P(u,v) = apex + v路cos(伪)路a_cone + (r_ref + v路sin(伪))路r_dir(u)
 ///
-/// where   r_dir(u) = cos(u)·x_cone + sin(u)·y_cone
+/// where   r_dir(u) = cos(u)路x_cone + sin(u)路y_cone
 /// ```
 ///
-/// This is linear in v: P(u,v) = B0(u) + v·B1(u).
+/// This is linear in v: P(u,v) = B0(u) + v路B1(u).
 ///
 /// # Torus implicit equation
 ///
 /// ```text
-/// (|P|² + R² - r²)² = 4R²(|P|² - (P·a_tor)²)
+/// (|P|虏 + R虏 - r虏)虏 = 4R虏(|P|虏 - (P路a_tor)虏)
 /// ```
 ///
 /// Substituting P(u,v) and grouping by powers of v gives a monic quartic:
-///   v⁴ + a₃(u)·v³ + a₂(u)·v² + a₁(u)·v + a₀(u) = 0
+///   v鈦?+ a鈧?u)路v鲁 + a鈧?u)路v虏 + a鈧?u)路v + a鈧€(u) = 0
 ///
 /// The coefficients are derived from:
 /// ```
-/// |P|² = S0(u) + v·S1(u) + v²     (since |B1|² = 1 for the cone)
-/// P·a_tor = T0(u) + v·T1(u)
+/// |P|虏 = S0(u) + v路S1(u) + v虏     (since |B1|虏 = 1 for the cone)
+/// P路a_tor = T0(u) + v路T1(u)
 /// ```
 fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> Vec<Vec<DVec3>> {
     let a_tor = torus.axis.normalize();
@@ -251,8 +251,8 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
     let r_minor = torus.minor_radius;
     let r_major_sq = r_major * r_major;
     let r_minor_sq = r_minor * r_minor;
-    let c_sq = r_major_sq - r_minor_sq; // R² - r²
-    let c_sq_sq = c_sq * c_sq; // (R² - r²)²
+    let c_sq = r_major_sq - r_minor_sq; // R虏 - r虏
+    let c_sq_sq = c_sq * c_sq; // (R虏 - r虏)虏
 
     let k_sin = cone.half_angle_rad.sin();
     let k_cos = cone.half_angle_rad.cos();
@@ -261,11 +261,11 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
     let x_cone = any_perpendicular(a_cone);
     let y_cone = a_cone.cross(x_cone).normalize();
 
-    // ── Pre-computed constants (independent of u) ──────────────────────────
+    // 鈹€鈹€ Pre-computed constants (independent of u) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let apex_sq = o.length_squared();
     let a_dot_at = a_cone.dot(a_tor);
-    let apex_o_at = o.dot(a_tor); // apex · a_tor
-    let apex_o_ac = o.dot(a_cone); // apex · a_cone
+    let apex_o_at = o.dot(a_tor); // apex 路 a_tor
+    let apex_o_ac = o.dot(a_cone); // apex 路 a_cone
 
     // Components of apex-in-torus-frame and a_tor in the cone's perpendicular plane
     let ox = o.dot(x_cone);
@@ -274,9 +274,9 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
     let cy = a_tor.dot(y_cone);
 
     // Constant (u-independent) part of S1:
-    //   S1 = 2·(k_cos·apex_o_ac + k_sin·(apex_r + r_ref))
-    //       = 2·k_cos·apex_o_ac + 2·k_sin·r_ref + 2·k_sin·apex_r
-    //   The u-dependent part is 2·k_sin·apex_r.
+    //   S1 = 2路(k_cos路apex_o_ac + k_sin路(apex_r + r_ref))
+    //       = 2路k_cos路apex_o_ac + 2路k_sin路r_ref + 2路k_sin路apex_r
+    //   The u-dependent part is 2路k_sin路apex_r.
     let s1_const = 2.0 * (k_cos * apex_o_ac + k_sin * r_ref);
 
     const N_SAMPLES: usize = 128;
@@ -286,24 +286,24 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
         let (cu, su) = (u.cos(), u.sin());
 
-        // r_dir(u) = cos(u)·x_cone + sin(u)·y_cone
-        let apex_r = ox * cu + oy * su; // apex · r_dir(u)
-        let at_r = cx * cu + cy * su; // a_tor · r_dir(u)
+        // r_dir(u) = cos(u)路x_cone + sin(u)路y_cone
+        let apex_r = ox * cu + oy * su; // apex 路 r_dir(u)
+        let at_r = cx * cu + cy * su; // a_tor 路 r_dir(u)
 
-        // ── Compute quartic coefficients ───────────────────────────────────
-        // S0 = |B0|² = |o|² + r_ref² + 2·r_ref·(o·r_dir)
+        // 鈹€鈹€ Compute quartic coefficients 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // S0 = |B0|虏 = |o|虏 + r_ref虏 + 2路r_ref路(o路r_dir)
         let s0 = apex_sq + r_ref * r_ref + 2.0 * r_ref * apex_r;
 
-        // S1 = 2·B0·B1 = 2·(k_cos·apex_o_ac + k_sin·(apex_r + r_ref))
+        // S1 = 2路B0路B1 = 2路(k_cos路apex_o_ac + k_sin路(apex_r + r_ref))
         let s1 = s1_const + 2.0 * k_sin * apex_r;
 
-        // T0 = B0·a_tor = apex_o_at + r_ref·(r_dir·a_tor)
+        // T0 = B0路a_tor = apex_o_at + r_ref路(r_dir路a_tor)
         let t0 = apex_o_at + r_ref * at_r;
 
-        // T1 = B1·a_tor = k_cos·(a_cone·a_tor) + k_sin·(r_dir·a_tor)
+        // T1 = B1路a_tor = k_cos路(a_cone路a_tor) + k_sin路(r_dir路a_tor)
         let t1 = k_cos * a_dot_at + k_sin * at_r;
 
-        // Monic quartic: v⁴ + a₃·v³ + a₂·v² + a₁·v + a₀ = 0
+        // Monic quartic: v鈦?+ a鈧兟穠鲁 + a鈧偮穠虏 + a鈧伮穠 + a鈧€ = 0
         let a3 = 2.0 * s1;
         let a2 =
             2.0 * s0 - 2.0 * r_major_sq - 2.0 * r_minor_sq + s1 * s1 + 4.0 * r_major_sq * t1 * t1;
@@ -327,7 +327,7 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
         return vec![];
     }
 
-    // ── Branch extraction ──────────────────────────────────────────────────
+    // 鈹€鈹€ Branch extraction 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Sort by u, then v.
     samples.sort_by(|a, b| {
         a.0.partial_cmp(&b.0)
@@ -393,7 +393,7 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
         }
     }
 
-    // ── Adaptive chord-error refinement ────────────────────────────────────
+    // 鈹€鈹€ Adaptive chord-error refinement 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     const CHORD_TOL: f64 = crate::bop::int_tools::CHORD_TOLERANCE;
     const REFINE_DEPTH: usize = crate::bop::int_tools::CHORD_REFINE_DEPTH;
 
@@ -463,7 +463,7 @@ fn intersect_skew_torus_cone(torus: &ToroidalSurface, cone: &ConicalSurface) -> 
     for mut branch in refined_3d {
         while branch.len() >= 3 {
             let n = branch.len();
-            if (branch[n - 1] - branch[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+            if (branch[n - 1] - branch[0]).length_squared() < 1e-24 {
                 branch.pop();
             } else {
                 break;

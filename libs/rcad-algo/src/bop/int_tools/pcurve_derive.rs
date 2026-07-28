@@ -1,11 +1,11 @@
-﻿//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
+//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
 //! intersection results.
 //!
 //! Each function takes a 3D intersection curve together with surface geometry
 //! and returns the exact [`Curve2d`] that represents that intersection in the
 //! surface's (u, v) parameter domain.
 
-use crate::tolerance::*;
+
 use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
@@ -38,7 +38,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
         .normalize()
         .dot(plane.normal.normalize())
         .abs();
-    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
+    if (normal_dot - 1.0).abs() < rcad_kernel::APPROXIMATION {
         // Circle lies in the plane 鈫?analytic Circle2d.
         // Project the 3D circle's center and axes onto the plane's (u, v) domain.
         let diff = circle.center - plane.origin;
@@ -73,7 +73,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            let dir = if d.length_squared() > 1e-24 {
                 d.normalize()
             } else {
                 DVec2::X
@@ -106,7 +106,7 @@ pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
     let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
 
     let major_proj = DVec2::new(ellipse.major_dir.dot(u_axis), ellipse.major_dir.dot(v_axis));
-    let major_dir_2d = if major_proj.length() > TOLERANCE_LEN_MIN {
+    let major_dir_2d = if major_proj.length() > 1e-12 {
         major_proj.normalize()
     } else {
         DVec2::X
@@ -132,7 +132,7 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
     let origin_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
 
     let dir_2d = DVec2::new(line.direction.dot(u_axis), line.direction.dot(v_axis));
-    let direction_2d = if dir_2d.length() > TOLERANCE_LEN_MIN {
+    let direction_2d = if dir_2d.length() > 1e-12 {
         dir_2d.normalize()
     } else {
         DVec2::X
@@ -281,7 +281,7 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
     let axis = cyl.axis.normalize_or_zero();
     let normal_dot = circle.normal.normalize().dot(axis).abs();
     // OCCT ProjLib_Cylinder.cxx L122-156: perp circle 鈫?Line2d with U offset and direction sign
-    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
+    if (normal_dot - 1.0).abs() < rcad_kernel::APPROXIMATION {
         let h = (circle.center - cyl.origin).dot(axis);
         // Compute U offset: angular position of circle's X-axis on cylinder
         let ux = any_perpendicular(circle.normal).normalize();
@@ -342,7 +342,7 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            let dir = if d.length_squared() > 1e-24 {
                 d.normalize()
             } else {
                 DVec2::X
@@ -448,7 +448,7 @@ pub fn ellipse_pcurve_on_cylinder(ellipse: &Ellipse3, cyl: &CylindricalSurface) 
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            let dir = if d.length_squared() > 1e-24 {
                 d.normalize()
             } else {
                 DVec2::X
@@ -513,7 +513,7 @@ fn sampled_curve_pcurve_on_cone(
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            let dir = if d.length_squared() > 1e-24 {
                 d.normalize()
             } else {
                 DVec2::X
@@ -549,7 +549,7 @@ fn sampled_curve_pcurve_on_cone(
 pub fn circle_pcurve_on_cone(circle: &Circle3, cone: &ConicalSurface) -> Curve2d {
     let axis = cone.axis_dir();
     let normal_dot = circle.normal.normalize().dot(axis).abs();
-    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
+    if (normal_dot - 1.0).abs() < rcad_kernel::APPROXIMATION {
         let slant = cone.slant_from_axial((circle.center - cone.apex).dot(axis));
         return Curve2d::Line(Line2d {
             origin: DVec2::new(0.0, slant),
@@ -569,7 +569,7 @@ pub fn line_pcurve_on_cone(line: &Line3, cone: &ConicalSurface) -> Curve2d {
     let du = (uv1.x - uv0.x)
         .abs()
         .min((uv1.x - uv0.x + std::f64::consts::TAU).abs());
-    if du < TOLERANCE_MESH_LEGACY {
+    if du < rcad_kernel::APPROXIMATION {
         let dir_v = if uv1.y >= uv0.y { 1.0 } else { -1.0 };
         return Curve2d::Line(Line2d {
             origin: uv0,
@@ -670,7 +670,7 @@ pub fn fallback_pcurve_by_projection(
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            let dir = if d.length_squared() > 1e-24 {
                 d.normalize()
             } else {
                 DVec2::X
@@ -832,7 +832,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 ///
 /// Samples each C0-interval at NPoints (OCCT uses 23 per interval) and
 /// verifies every sample lies within the UV bounds (plus a relative
-/// tolerance of 1% of span, minimum `TOLERANCE_ABS`).
+/// tolerance of 1% of span, minimum `rcad_kernel::rcad_kernel::CONFUSION`).
 ///
 /// For periodic surfaces, shifts the UV bounds by whole periods so the
 /// midpoint of the pcurve falls within the shifted domain.  This matches
@@ -854,11 +854,11 @@ pub fn check_pcurve_in_face(
     const N_POINTS: usize = 23;
 
     let [umin, umax, vmin, vmax] = uv_bounds;
-    let tol_u = ((umax - umin) * 0.01).max(TOLERANCE_ABS);
-    let tol_v = ((vmax - vmin) * 0.01).max(TOLERANCE_ABS);
+    let tol_u = ((umax - umin) * 0.01).max(rcad_kernel::rcad_kernel::CONFUSION);
+    let tol_v = ((vmax - vmin) * 0.01).max(rcad_kernel::rcad_kernel::CONFUSION);
 
     let [t0, t1] = t_range;
-    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < 1e-12 {
         return true; // degenerate range 鈥?skip
     }
 
@@ -965,14 +965,14 @@ fn segments_intersect_2d_open(p1: DVec2, p2: DVec2, p3: DVec2, p4: DVec2) -> boo
     let d1 = p2 - p1;
     let d2 = p4 - p3;
     let cross = d1.perp_dot(d2);
-    if cross.abs() < TOLERANCE_LEN_MIN {
+    if cross.abs() < 1e-12 {
         return false; // parallel
     }
     let dp = p3 - p1;
     let t = dp.perp_dot(d2) / cross;
     let u = dp.perp_dot(d1) / cross;
     // Open interval (0, 1) 鈥?endpoints are shared vertices
-    t > TOLERANCE_ABS && t < 1.0 - TOLERANCE_ABS && u > TOLERANCE_ABS && u < 1.0 - TOLERANCE_ABS
+    t > rcad_kernel::rcad_kernel::CONFUSION && t < 1.0 - rcad_kernel::rcad_kernel::CONFUSION && u > rcad_kernel::rcad_kernel::CONFUSION && u < 1.0 - rcad_kernel::rcad_kernel::CONFUSION
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -995,7 +995,7 @@ pub fn compute_max_deviation_3d_to_pcurve(
     t_range: [f64; 2],
 ) -> f64 {
     let [t0, t1] = t_range;
-    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < 1e-12 {
         return 0.0;
     }
     let f = |t: f64| {
@@ -1025,7 +1025,7 @@ pub fn compute_max_deviation_from_surface(
     t_range: [f64; 2],
 ) -> f64 {
     let [t0, t1] = t_range;
-    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < 1e-12 {
         return 0.0;
     }
     // Divide into 11 segments (OCCT uses aNbS = 11)
@@ -1126,7 +1126,7 @@ fn split_closed_curve(
     let is_closed = {
         let p0 = curve_3d.point_at(t0);
         let p1 = curve_3d.point_at(t1);
-        (p1 - p0).length_squared() < TOLERANCE_ABS_SQ
+        (p1 - p0).length_squared() < rcad_kernel::SQUARE_CONFUSION
     };
     if !is_closed {
         return None;
@@ -1334,7 +1334,7 @@ where
     while result.len() >= 3 {
         let n = result.len();
         let d = (result[n - 1].1 - result[0].1).length_squared();
-        if d < TOLERANCE_VEC_SQ_MIN {
+        if d < 1e-24 {
             result.pop();
         } else {
             break;
@@ -1347,7 +1347,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tolerance::TOLERANCE_ABS_SQ;
+    
     use glam::{DVec2, DVec3};
     use rcad_kernel::geom::{Circle3, Curve2d, Curve3, CurveEval, Line2d, Line3};
     use std::f64::consts::TAU;
@@ -1406,6 +1406,6 @@ mod tests {
         let c = Curve3::Circle(Circle3::new(DVec3::Z, DVec3::Z, 1.0));
         let p0 = c.point_at(0.0);
         let p1 = c.point_at(TAU);
-        assert!((p1 - p0).length_squared() < TOLERANCE_ABS_SQ);
+        assert!((p1 - p0).length_squared() < rcad_kernel::SQUARE_CONFUSION);
     }
 }

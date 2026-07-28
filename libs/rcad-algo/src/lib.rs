@@ -3,7 +3,6 @@
 //! Depends only on rcad-kernel (TKMath + TKGeomBase) and rcad-brep (TKBRep).
 
 pub mod bop;
-pub mod tolerance;
 
 // Re-export from rcad-kernel
 pub use rcad_kernel::base::bnd_lib;

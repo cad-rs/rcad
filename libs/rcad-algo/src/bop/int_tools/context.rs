@@ -1,4 +1,4 @@
-﻿use super::fclass2d::{FClass2d, State};
+use super::fclass2d::{FClass2d, State};
 use crate::bop::ds::DS;
 /// 閴?IntTools_Context 閳?shared computation context with caches.
 ///   OCCT IntTools_Context.hxx caches: FClass2d, ProjPS, ProjPC, ProjPT,
@@ -165,7 +165,7 @@ impl Context {
             return None;
         }
         let surf = ds.face_surface(face_idx).unwrap();
-        let proj = closest_point_on_surface(&surf, p, 16);
+        let proj = closest_point_on_surface(surf, p, 16);
         if proj.distance.is_finite() {
             self.proj_ps_latest[face_idx] = Some(proj);
             let cached = self.proj_ps_latest[face_idx].as_ref().unwrap();
@@ -207,7 +207,7 @@ impl Context {
     ///   DegeneratedEdge (-1): edge is degenerated
     ///   NotGeometric (-2): edge has no 3D curve
     ///   ProjectionFailed (-3): projection algorithm could not find any point
-    ///   DistanceTooLarge (-4): distance > tolV + tolE + max(fuzz, Precision::Confusion())
+    ///   DistanceTooLarge (-4): distance > tolV + tolE + max(fuzz, Precision::rcad_kernel::CONFUSION())
     /// Tolerance in the success case = distance + edge_tolerance (matching OCCT).
     ///
     /// OCCT source lines 499-542:
@@ -229,7 +229,7 @@ impl Context {
     ///   aDist = aProjector.LowerDistance();
     ///   aTolV   = BRep_Tool::Tolerance(theV);
     ///   aTolE   = BRep_Tool::Tolerance(theE);
-    ///   aTolSum = aTolV + aTolE + std::max(theFuzz, Precision::Confusion());
+    ///   aTolSum = aTolV + aTolE + std::max(theFuzz, Precision::rcad_kernel::CONFUSION());
     ///   theTol = aDist + aTolE;
     ///   theT   = aProjector.LowerDistanceParameter();
     ///   std::cerr << "[OCCT_VE] pt=" << theT << " V=(" << aP.X() << ","
@@ -247,7 +247,7 @@ impl Context {
         ei: usize,
         fuzz: f64,
     ) -> Result<VeResult, VeError> {
-        use crate::tolerance::CONFUSION;
+        
         // L505-508: OCCT BRep_Tool::Degenerated
         if ds.is_edge_degenerated(ei) {
             return Err(VeError::DegeneratedEdge);
@@ -263,9 +263,9 @@ impl Context {
         // L528: aDist = aProjector.LowerDistance()
         let dist = proj.2;
         // L530-532: aTolV, aTolE, aTolSum
-        let tol_v = ds.vertex_tolerance_by_idx(vi);
+        let tol_v = ds.vertex_tolerance(vi);
         let tol_e = ds.edge_tolerance(ei);
-        let tol_sum = tol_v + tol_e + fuzz.max(CONFUSION);
+        let tol_sum = tol_v + tol_e + fuzz.max(rcad_kernel::CONFUSION);
         // L534: theTol = aDist + aTolE
         let new_tol = dist + tol_e;
         // L535: theT = aProjector.LowerDistanceParameter()
@@ -291,7 +291,7 @@ impl Context {
     /// or Err(PeError) with OCCT error code:
     ///   NotGeometric (-2): edge has no 3D curve
     ///   ProjectionFailed (-3): projection + endpoint checks all failed
-    ///   DistanceTooLarge (-4): distance > tolP + tolE + Precision::Confusion()
+    ///   DistanceTooLarge (-4): distance > tolP + tolE + Precision::rcad_kernel::CONFUSION()
     pub fn compute_pe(
         &mut self,
         ds: &DS,
@@ -299,14 +299,14 @@ impl Context {
         tol_p: f64,
         ei: usize,
     ) -> Result<PeResult, PeError> {
-        use crate::tolerance::CONFUSION;
+        
         if !ds.edge_is_geometric(ei) {
             return Err(PeError::NotGeometric);
         }
         let proj = self.proj_pc(ds, ei, p).ok_or(PeError::ProjectionFailed)?;
         let dist = proj.2;
         let tol_e = ds.edge_tolerance(ei);
-        let tol_sum = tol_p + tol_e + CONFUSION;
+        let tol_sum = tol_p + tol_e + rcad_kernel::CONFUSION;
         let param = proj.0;
         // OCCT L461-467: if projection found, check distance
         if dist <= tol_sum {
@@ -317,7 +317,7 @@ impl Context {
         }
         // OCCT L469-493: projection found but too far 閳?fallback: check endpoint vertices
         // (when the point is beyond the curve's range, nearest endpoint may be within tol)
-        let _ei_shape = ds.edge_shape_idx(ei);
+        let edge = ds.edges.get(ei).unwrap();
         let sv = ds.edge_start_vertex_ds(ei);
         let ev = ds.edge_end_vertex_ds(ei);
         let mut best_dist = f64::MAX;
@@ -326,8 +326,8 @@ impl Context {
             if vi < ds.vertex_count() {
                 let vp = ds.vertex_point(vi);
                 let d = p.distance(vp);
-                let v_tol = ds.vertex_tolerance_by_idx(vi);
-                if d < best_dist && d < tol_p + v_tol + CONFUSION {
+                let v_tol = ds.vertex_tolerance(vi);
+                if d < best_dist && d < tol_p + v_tol + rcad_kernel::CONFUSION {
                     best_dist = d;
                     best_param = if vi == sv {
                         ds.edge_range(ei)[0]
@@ -357,15 +357,15 @@ impl Context {
         fi: usize,
         fuzz: f64,
     ) -> Result<VfResult, VfError> {
-        use crate::tolerance::CONFUSION;
+        
         let p = ds.vertex_point(vi);
         // OCCT L558-562: ProjPS + Perform
         let proj = self.proj_ps(ds, fi, p).ok_or(VfError::ProjectionFailed)?;
         let (uv, _pt_3d, dist) = proj;
         // OCCT L571-576: tolerance sum
-        let tol_v = ds.vertex_tolerance_by_idx(vi);
+        let tol_v = ds.vertex_tolerance(vi);
         let tol_f = ds.face_tolerance(fi);
-        let tol_sum = tol_v + tol_f + fuzz.max(CONFUSION);
+        let tol_sum = tol_v + tol_f + fuzz.max(rcad_kernel::CONFUSION);
         // OCCT L575: theTol = aDist + aTolF
         let new_tol = dist + tol_f;
         // OCCT L581-582: if distance too large
@@ -415,7 +415,7 @@ impl Context {
             self.num_faces
         );
         if self.surface_cache[face_idx].is_none() {
-            self.surface_cache[face_idx] = Some(ds.face_surface(face_idx).unwrap());
+            self.surface_cache[face_idx] = Some(ds.face_surface(face_idx).cloned().unwrap());
         }
         self.surface_cache[face_idx].as_ref().unwrap()
     }
@@ -450,7 +450,7 @@ impl Context {
         .and_then(|s| s.as_ref()) else {
             return false;
         };
-        let proj = closest_point_on_surface(&surf, p, 16);
+        let proj = closest_point_on_surface(surf, p, 16);
         if !proj.distance.is_finite() || proj.distance >= tol {
             return false;
         }
@@ -507,26 +507,26 @@ impl Context {
 mod tests {
     use super::*;
     use crate::bop::ds::topods_builder::new_from_topods;
-    use crate::tolerance::TOLERANCE_ABS;
+    
 
     /// Helper: create a DS with a unit box.
     fn unit_box_ds() -> DS {
         let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("make_box_brep failed");
-        new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), TOLERANCE_ABS)
+        new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), rcad_kernel::rcad_kernel::CONFUSION)
     }
 
     /// Helper: create a DS with a unit sphere.
     fn sphere_ds() -> DS {
         let brep =
             rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).expect("make_sphere_brep failed");
-        new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), TOLERANCE_ABS)
+        new_from_topods(&brep, &rcad_kernel::topods::BRep::new(), rcad_kernel::rcad_kernel::CONFUSION)
     }
 
     #[test]
     fn fclass2d_cache_reuses_classifier() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let ptr1 = ctx.fclass2d(&ds, 0) as *const _;
         let ptr2 = ctx.fclass2d(&ds, 0) as *const _;
         assert_eq!(ptr1, ptr2);
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn surface_adaptor_returns_surface() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let surf = ctx.surface_adaptor(&ds, 0);
         match surf {
             rcad_kernel::geom::Surface3::Plane(_) => {}
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn uv_bounds_positive() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let b = ctx.uv_bounds(&ds, 0);
         assert!(b[1] > b[0]);
         assert!(b[3] > b[2]);
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn state_point_face_center_is_not_out() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let state = ctx.state_point_face(&ds, 0, DVec2::new(0.5, 0.5));
         assert_ne!(state, State::Out, "center of face should be In or On");
     }
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn state_point_face_outside() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let state = ctx.state_point_face(&ds, 0, DVec2::new(-1.0, -1.0));
         // Accept either Out or In (In when FClass2d has no polygon)
         // The important thing is no panic
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn is_point_in_face_3d_on_surface() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         ctx.surface_adaptor(&ds, 0);
         // Point (0.5, 0.5, 0.0) on the bottom face surface
         let result = ctx.is_point_in_face_3d(&ds, 0, DVec3::new(0.5, 0.5, 0.0), 1e-4);
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn is_valid_point_for_faces_on_both() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         ctx.surface_adaptor(&ds, 0);
         ctx.surface_adaptor(&ds, 1);
         let on_face0 = ctx.is_valid_point_for_face(&ds, DVec3::new(0.5, 0.5, 0.0), 0, 1e-4);
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn is_infinite_face_plane() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         ctx.surface_adaptor(&ds, 0);
         assert!(ctx.is_infinite_face(0));
     }
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn is_infinite_face_sphere() {
         let ds = sphere_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         ctx.surface_adaptor(&ds, 0);
         assert!(ctx.is_infinite_face(0));
     }
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn compute_ve_vertex_on_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         // Edge 0: from (0,0,0) to (1,0,0). Vertex 0 is at (0,0,0).
         let result = ctx.compute_ve(&ds, 0, 0, 0.0);
         assert!(
@@ -648,8 +648,8 @@ mod tests {
             &mut b,
             glam::DAffine3::from_rotation_z(45.0_f64.to_radians()),
         );
-        let ds = new_from_topods(&a, &b, TOLERANCE_ABS);
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let ds = new_from_topods(&a, &b, rcad_kernel::rcad_kernel::CONFUSION);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let cap_edge = (0..ds.a_edge_count())
             .find(|&edge_idx| {
                 matches!(
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn compute_ve_vertex_off_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         // Edge 0 is at z=0, vertex at (100, 0, 100) 閳?far away
         // We need a vertex that exists 閳?vertex 5 is at (1,0,1)
         // and edge 3 is on bottom face at z=0 from (0,1,0) to (0,0,0)
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn compute_pe_point_on_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         // Edge 0: line from (0,0,0) to (1,0,0). Point (0.5, 0, 0) is on it.
         let result = ctx.compute_pe(&ds, DVec3::new(0.5, 0.0, 0.0), 1e-6, 0);
         assert!(result.is_ok(), "point on edge should succeed: {:?}", result);
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn compute_pe_point_off_edge() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let _ = ctx.compute_pe(&ds, DVec3::new(100.0, 100.0, 100.0), 1e-6, 0);
         // Just verify no panic
     }
@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn compute_vf_vertex_on_face() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         // Vertex 0 is (0,0,0) which should be on/an edge of face 0
         // Use vertex 4 (1,0,0) on face 4 (one of the side faces)
         let result = ctx.compute_vf(&ds, 4, 0, 0.0);
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn project_point_on_edge_midpoint() {
         let ds = unit_box_ds();
-        let mut ctx = Context::new(ds.face_count(), TOLERANCE_ABS);
+        let mut ctx = Context::new(ds.face_count(), rcad_kernel::rcad_kernel::CONFUSION);
         let param = ctx.project_point_on_edge(&ds, DVec3::new(0.5, 0.0, 0.0), 0);
         assert!(param.is_some(), "should project onto edge");
         if let Some(t) = param {

@@ -1,7 +1,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::*;
 
-use crate::tolerance::*;
+
 
 #[derive(Debug, Clone)]
 pub enum PlanePlaneResult {

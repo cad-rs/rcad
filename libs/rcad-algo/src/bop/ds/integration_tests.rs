@@ -8,22 +8,22 @@
 //! Problem discovered 2026-07-21: The stage_ref tests asserted rcad's own
 //! measured values, NOT verified OCCT reference data. Comments saying
 //! "OCCT ref:" were aspirational annotations, not confirmed values.
-//! These fake assertions have been deleted — what remains is honest.
+//! These fake assertions have been deleted 闁?what remains is honest.
 
 use crate::bop::ds::DS;
 use crate::bop::ds::types::*;
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::tools::bvh::Bvh;
-use crate::tolerance::TOLERANCE_ABS;
+
 use glam::DVec3;
 use rcad_kernel::topods::{self, TShape};
 
-/// Sphere (psphere r=1) 鈥?OCCT: 1 face, 4 vertices, 3 edges (seam+degenerated).
+/// Sphere (psphere r=1) 闂?OCCT: 1 face, 4 vertices, 3 edges (seam+degenerated).
 fn make_unit_sphere() -> topods::BRep {
     rcad_modeling::make_sphere_brep(DVec3::ZERO, 1.0).expect("Unit sphere creation failed")
 }
 
-/// Box (1x1x1) 鈥?OCCT: 6 faces, 8 vertices, 12 edges.
+/// Box (1x1x1) 闂?OCCT: 6 faces, 8 vertices, 12 edges.
 fn make_unit_box() -> topods::BRep {
     rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
         .expect("Unit box creation failed")
@@ -37,7 +37,7 @@ fn box_at(origin: DVec3, dx: f64, dy: f64, dz: f64) -> topods::BRep {
 /// Run PaveFiller up to a specific stage, return the DS.
 /// Uses RCAD_STOP_AFTER env var to stop PaveFiller::perform() early.
 fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
-    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut ds = DS::new_from_topods(a, b, rcad_kernel::CONFUSION);
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
     {
@@ -51,7 +51,7 @@ fn pave_fill_stage(a: &topods::BRep, b: &topods::BRep, stage: &str) -> DS {
 
 /// Run PaveFiller on two BReps, return the filled DS.
 fn pave_fill_two(a: &topods::BRep, b: &topods::BRep) -> (DS, topods::BRep) {
-    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut ds = DS::new_from_topods(a, b, rcad_kernel::CONFUSION);
     let brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
@@ -65,7 +65,7 @@ fn pave_fill_two(a: &topods::BRep, b: &topods::BRep) -> (DS, topods::BRep) {
 
 /// Run full fuse on two BReps, return the result BRep.
 fn fuse(a: &topods::BRep, b: &topods::BRep) -> topods::BRep {
-    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut ds = DS::new_from_topods(a, b, rcad_kernel::CONFUSION);
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
     let brep = topods::BRep::new();
@@ -130,14 +130,14 @@ fn count_surfaces(brep: &topods::BRep) -> (usize, usize) {
 #[test]
 fn ds_load_sphere_face_count() {
     let brep = make_unit_sphere();
-    let ds = DS::new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&brep, &topods::BRep::new(), rcad_kernel::CONFUSION);
     assert_eq!(ds.faces.len(), 1, "sphere has 1 face");
 }
 
 #[test]
 fn ds_load_sphere_surface_type() {
     let brep = make_unit_sphere();
-    let ds = DS::new_from_topods(&brep, &topods::BRep::new(), TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&brep, &topods::BRep::new(), rcad_kernel::CONFUSION);
     match &ds.faces[0].surface {
         rcad_kernel::geom::Surface3::Sphere(_) => {}
         _ => panic!("sphere face should be SphericalSurface"),
@@ -152,7 +152,7 @@ fn ds_load_sphere_surface_type() {
 fn ds_load_sphere_and_box_face_count() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
     assert_eq!(ds.faces.len(), 7, "sphere(1) + box(6) = 7 faces");
     assert!(ds.vertices.len() >= 8, ">=8 vertices (box has 8)");
     assert!(
@@ -165,7 +165,7 @@ fn ds_load_sphere_and_box_face_count() {
 fn ds_load_sphere_and_box_origin_flags() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
     let a_count = ds
         .faces
         .iter()
@@ -199,8 +199,7 @@ fn sphere_box() -> (topods::BRep, topods::BRep) {
     (make_unit_sphere(), make_unit_box())
 }
 
-// 鈹€鈹€ Stage: Init 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: Init 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
 #[test]
 fn stage_init_loaded_shapes() {
     let (b1, b2) = overlapping_boxes();
@@ -237,8 +236,7 @@ fn stage_init_uv_boundaries_exist() {
     }
 }
 
-// 鈹€鈹€ Stage: Prepare 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: Prepare 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
 #[test]
 fn stage_prepare_has_shapes() {
     let sphere = make_unit_sphere();
@@ -256,17 +254,16 @@ fn stage_prepare_has_shapes() {
     );
 }
 
-// 鈹€鈹€ Stage: PerformVV 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformVV 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_vv_has_interferences() {
-    // Two identical boxes: dedup at DS level removes B verts 鈫?no VV pairs remain.
+    // Two identical boxes: dedup at DS level removes B verts 闂?no VV pairs remain.
     // This is CORRECT (rcad dedup pre-empts OCCT's VV processing).
     let b1 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformVV");
     // OCCT ref: interf_vv=8
-    eprintln!("VV: coincident boxes 鈫?{} VV", ds.interf_vv.len());
+    eprintln!("VV: coincident boxes 闂?{} VV", ds.interf_vv.len());
 }
 
 #[test]
@@ -274,7 +271,7 @@ fn stage_vv_non_intersecting_empty() {
     let b1 = box_at(DVec3::new(-5.0, -5.0, -5.0), 1.0, 1.0, 1.0);
     let b2 = box_at(DVec3::new(5.0, 5.0, 5.0), 1.0, 1.0, 1.0);
     let ds = pave_fill_stage(&b1, &b2, "after_PerformVV");
-    // far-separated boxes 鈫?no VV interferences (shapes[8] is now correctly a Vertex)
+    // far-separated boxes 闂?no VV interferences (shapes[8] is now correctly a Vertex)
     assert!(
         ds.interf_vv.is_empty(),
         "VV: non-intersecting boxes -> 0 VV (got {})",
@@ -282,8 +279,7 @@ fn stage_vv_non_intersecting_empty() {
     );
 }
 
-// 鈹€鈹€ Stage: PerformVE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformVE 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_ve_has_paves() {
     let (b1, b2) = overlapping_boxes();
@@ -309,8 +305,7 @@ fn stage_ve_has_paves() {
     );
 }
 
-// 鈹€鈹€ Stage: PerformEE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformEE 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_ee_has_interferences() {
     let (b1, b2) = overlapping_boxes();
@@ -318,7 +313,7 @@ fn stage_ee_has_interferences() {
     // Overlapping boxes: edges intersect -> EE interferences
     if ds.interf_ee.is_empty() {
         // Not all overlapping box configs produce EE (may go through FF instead)
-        // This is informational 鈥?don't fail, but warn
+        // This is informational 闂?don't fail, but warn
         eprintln!("EE: overlaps may not produce EE interferences (handled by FF)");
     } else {
         for ee in &ds.interf_ee {
@@ -341,8 +336,7 @@ fn stage_ee_non_intersecting_empty() {
     );
 }
 
-// 鈹€鈹€ Stage: PerformVF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformVF 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_vf_consistent() {
     let (sphere, bx) = sphere_box();
@@ -353,8 +347,7 @@ fn stage_vf_consistent() {
     }
 }
 
-// 鈹€鈹€ Stage: PerformEF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformEF 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_ef_consistent() {
     let (sphere, bx) = sphere_box();
@@ -386,10 +379,9 @@ fn stage_ef_non_intersecting_empty() {
     );
 }
 
-// 鈹€鈹€ Stage: RepeatIntersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-// (no RCAD_STOP_AFTER hook 鈥?runs automatically inside PerformEF block)
-// 鈹€鈹€ Stage: ForceInterfEE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: RepeatIntersection 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
+// (no RCAD_STOP_AFTER hook 闂?runs automatically inside PerformEF block)
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: ForceInterfEE 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_force_ee_consistent() {
     let (sphere, bx) = sphere_box();
@@ -413,8 +405,7 @@ fn stage_force_ee_consistent() {
     }
 }
 
-// 鈹€鈹€ Stage: ForceInterfEF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: ForceInterfEF 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_force_ef_consistent() {
     let (sphere, bx) = sphere_box();
@@ -432,8 +423,7 @@ fn stage_force_ef_consistent() {
     }
 }
 
-// 鈹€鈹€ Stage: PerformFF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: PerformFF 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_ff_has_intersection_curves_for_overlap() {
     let (sphere, bx) = sphere_box();
@@ -493,7 +483,7 @@ fn stage_ff_ics_have_start_end_vertices() {
     }
 }
 
-// 鈹€鈹€ Stage: MakeSplitEdges 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: MakeSplitEdges 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
 
 #[test]
 fn stage_make_split_edges_creates_edges() {
@@ -537,7 +527,7 @@ fn stage_make_split_edges_pbs_consistent() {
     }
 }
 
-// 鈹€鈹€ Stage: MakeBlocks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: MakeBlocks 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
 
 #[test]
 fn stage_make_blocks_creates_pave_blocks() {
@@ -546,7 +536,7 @@ fn stage_make_blocks_creates_pave_blocks() {
     // MakeBlocks runs without panic. PB registration is a known gap (V=6 bug).
     let any_pbs = (0..ds.edges.len()).any(|ei| !ds.edge_pave_blocks(ei).is_empty());
     if !any_pbs {
-        eprintln!("MakeBlocks: warning 鈥?no edges have PBs (known V=6 bug)");
+        eprintln!("MakeBlocks: warning 闂?no edges have PBs (known V=6 bug)");
     }
 }
 
@@ -554,7 +544,7 @@ fn stage_make_blocks_creates_pave_blocks() {
 fn stage_make_blocks_creates_section_edge_refs() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_MakeBlocks");
-    // Section edges exist 鈥?at least one IC produced section edges
+    // Section edges exist 闂?at least one IC produced section edges
     let total_se_refs: usize = ds.section_edge_refs.iter().map(|v| v.len()).sum();
     if total_se_refs == 0 {
         eprintln!("MakeBlocks: no section edge refs (0 total)");
@@ -616,8 +606,7 @@ fn stage_make_blocks_pave_block_indices_valid() {
     }
 }
 
-// 鈹€鈹€ Stage: MakePCurves 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: MakePCurves 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
 #[test]
 fn stage_make_pcurves_completes() {
     let (sphere, bx) = sphere_box();
@@ -653,13 +642,12 @@ fn stage_make_pcurves_section_edges_have_pcurves() {
     }
 }
 
-// 鈹€鈹€ Stage: ProcessDE 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: ProcessDE 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
 #[test]
 fn stage_process_de_consistent() {
     let (sphere, bx) = sphere_box();
     let ds = pave_fill_stage(&sphere, &bx, "after_ProcessDE");
-    // ProcessDE handles degenerate edges 鈥?check arrays consistent
+    // ProcessDE handles degenerate edges 闂?check arrays consistent
     assert_eq!(
         ds.edges.len(),
         ds.edges.len(),
@@ -685,8 +673,7 @@ fn stage_process_de_consistent() {
     }
 }
 
-// 鈹€鈹€ Stage: Full pipeline (no stop) invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-
+// 闂佸啿鍘滈崑鎾绘煃閸忓浜?Stage: Full pipeline (no stop) invariants 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
 #[test]
 fn stage_full_pipeline_consistent() {
     let (sphere, bx) = sphere_box();
@@ -729,7 +716,7 @@ fn stage_full_pipeline_consistent() {
 }
 
 // =========================================================================
-// Tests: PaveFiller 鈥?sphere-box intersection
+// Tests: PaveFiller 闂?sphere-box intersection
 // =========================================================================
 
 #[test]
@@ -751,14 +738,14 @@ fn pavefill_sphere_box_has_intersections() {
     );
 
     // Known issue: pave_blocks_sc is empty despite IC curves existing.
-    // This is the root cause of the V=6 bug 鈥?MakeBlocks not registering SC PBs.
+    // This is the root cause of the V=6 bug 闂?MakeBlocks not registering SC PBs.
     // Tracked in: fuse_sphere_box_ref_topology
     if ds
         .faces
         .iter()
         .all(|f| f.face_info.pave_blocks_sc.is_empty())
     {
-        // Don't fail 鈥?this is a known issue documented in the ignored test below.
+        // Don't fail 闂?this is a known issue documented in the ignored test below.
         // When fixed, this condition should become false.
         return;
     }
@@ -794,7 +781,7 @@ fn pavefill_non_intersecting_boxes_no_ics() {
         "non-intersecting boxes: 0 IC curves"
     );
     // OCCT registers empty FF interferences for parallel/far plane pairs
-    // (CheckPlanes=false 鈫?Init(0,0)).  Ensure none have actual curves.
+    // (CheckPlanes=false 闂?Init(0,0)).  Ensure none have actual curves.
     assert!(
         ds.interf_ff.iter().all(|ff| ff.curves.is_empty()),
         "non-intersecting boxes: no FF curves"
@@ -802,7 +789,7 @@ fn pavefill_non_intersecting_boxes_no_ics() {
 }
 
 // =========================================================================
-// Tests: Full boolean pipeline 鈥?OCCT reference topology
+// Tests: Full boolean pipeline 闂?OCCT reference topology
 // =========================================================================
 
 /// OCCT ref bfuse_simple A1: V=8, E=15, F=7 (1 sphere + 6 plane).
@@ -824,7 +811,7 @@ fn fuse_sphere_box_ref_topology() {
     assert_eq!(n_plane, 6, "6 planar faces");
 }
 
-/// Two overlapping boxes at origin 鈥?should fuse into a single solid.
+/// Two overlapping boxes at origin 闂?should fuse into a single solid.
 /// Known issue: BuildResult splits non-touching boxes into separate solids.
 #[test]
 #[ignore = "rcad: overlapping boxes produce 2 solids instead of 1 (BuildResult/BuildBOP issue)"]
@@ -851,7 +838,7 @@ fn shape_info_populated_for_source_shapes() {
     // After loading sphere + box, shape_info must cover all source shapes.
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     // nb_source_shapes = total shape_info entries from source loading
     assert!(
@@ -887,13 +874,13 @@ fn shape_info_populated_for_source_shapes() {
             _ => {}
         }
     }
-    // Box has 8 vertices, sphere face has boundary vertices 鈥?at least 8 total
+    // Box has 8 vertices, sphere face has boundary vertices 闂?at least 8 total
     assert!(
         n_vertex >= 8,
         "shape_info: >=8 Vertex entries, got {}",
         n_vertex
     );
-    // Box has 12 edges, sphere seam edge(s) 鈥?at least 12
+    // Box has 12 edges, sphere seam edge(s) 闂?at least 12
     assert!(
         n_edge >= 12,
         "shape_info: >=12 Edge entries, got {}",
@@ -920,15 +907,15 @@ fn shape_info_populated_for_source_shapes() {
 #[test]
 fn shape_info_sub_shapes_form_hierarchy() {
     // Each shape_info entry lists its sub-shapes via shapes[] indices.
-    // Verify that parent鈫抍hild links are consistent.
+    // Verify that parent闂佹剚鍋呮俊绲焛ld links are consistent.
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     // For each face in shape_info, its sub_shapes should be valid shape_info indices
     // Note: rcad stores Edge indices as face sub_shapes (not Wires like OCCT).
-    // OCCT hierarchy: Face 鈫?Wire 鈫?Edge 鈫?Vertex
-    // rcad hierarchy: Face 鈫?Edge 鈫?Vertex (wire level is skipped in shape_info)
+    // OCCT hierarchy: Face 闂?Wire 闂?Edge 闂?Vertex
+    // rcad hierarchy: Face 闂?Edge 闂?Vertex (wire level is skipped in shape_info)
     // This is a known divergence from OCCT's BOPDS_ShapeInfo.
     let face_info: Vec<(usize, Vec<usize>)> = ds
         .shape_info
@@ -997,7 +984,7 @@ fn shape_info_sub_shapes_form_hierarchy() {
 fn shape_info_edge_flag_detects_degenerated_edges() {
     // Sphere has a degenerated seam edge. Its shape_info flag should be set.
     let sphere = make_unit_sphere();
-    let ds = DS::new_from_topods(&sphere, &topods::BRep::new(), TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &topods::BRep::new(), rcad_kernel::CONFUSION);
 
     // Find edges with start_vertex == end_vertex (degenerated)
     let degen_edges: Vec<usize> = ds
@@ -1039,7 +1026,7 @@ fn shape_info_edge_flag_detects_degenerated_edges() {
 fn shape_info_is_new_for_source_vertices_is_false() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     // All source-loaded vertices must have is_new == false
     for vi in 0..ds.vertices.len() {
@@ -1056,7 +1043,7 @@ fn shape_info_is_new_for_source_vertices_is_false() {
 fn shape_info_rank_matches_origin() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     // ShapeA (sphere) vertices should have rank 0
     let sphere_verts: Vec<usize> = (0..ds.vertices.len())
@@ -1094,7 +1081,7 @@ fn shape_info_flag_reference_consistency() {
     // For edges, reference should point back to the edge index.
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     for ei in 0..ds.edges.len() {
         let si = ds
@@ -1130,19 +1117,19 @@ fn shape_info_flag_reference_consistency() {
 fn shape_info_box_is_out_works() {
     let sphere = make_unit_sphere();
     let bx = make_unit_box();
-    let ds = DS::new_from_topods(&sphere, &bx, TOLERANCE_ABS);
+    let ds = DS::new_from_topods(&sphere, &bx, rcad_kernel::CONFUSION);
 
     // BoxIsOut between two different shape_info entries: should not panic
     if ds.shape_info.len() >= 2 {
         // Two shape_info entries with box data
         let si_a = &ds.shape_info[0];
         let si_b = &ds.shape_info[ds.shape_info.len() - 1];
-        // Just call it 鈥?should not panic
+        // Just call it 闂?should not panic
         let _result = si_a.box_is_out(si_b);
     }
 }
 
-/// Debug output helper — prints DS stage metrics without assertions.
+/// Debug output helper 闁?prints DS stage metrics without assertions.
 /// All stage_ref tests use this until real OCCT reference data is available.
 fn dbg_stage(ds: &DS, stage_name: &str) {
     eprintln!(
@@ -1181,7 +1168,7 @@ fn dbg_stage(ds: &DS, stage_name: &str) {
 
 /// Assert DS counts against OCCT reference data (from pipeline dump).
 /// nV_min allows for sphere vertex count difference (OCCT=3, rcad=4).
-/// All other fields assert exact equality — any deviation is a real gap.
+/// All other fields assert exact equality 闁?any deviation is a real gap.
 fn check_stage_occt(
     ds: &DS,
     stage_name: &str,
@@ -1284,7 +1271,7 @@ fn pavefiller_coincident_boxes_common_blocks() {
     );
 }
 
-/// Two non-intersecting boxes 鈥?fuse should produce 2 separate solids.
+/// Two non-intersecting boxes 闂?fuse should produce 2 separate solids.
 /// Known issue: BuildResult builds a single compound solid for all faces.
 #[test]
 #[ignore = "rcad: non-intersecting boxes produce 1 solid instead of 2 (BuildResult/BuildBOP issue)"]
@@ -1307,7 +1294,7 @@ fn make_cone_fn(base_radius: f64, height: f64) -> topods::BRep {
 }
 
 /// Stage ref: plane_plane (box x box)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_plane_plane() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
@@ -1374,7 +1361,7 @@ fn pavefiller_stage_ref_plane_sphere() {
     let ds = pave_fill_stage(&a, &b, "after_PerformEF");
     check_stage_occt(&ds, "EF", 10, 15, 7, 0, 1, 0, 0, 0);
 
-    // FF: nIC=3, rcad=4 — ALIGNMENT GAP (extra intersection curve)
+    // FF: nIC=3, rcad=4 闁?ALIGNMENT GAP (extra intersection curve)
     let ds = pave_fill_stage(&a, &b, "after_PerformFF");
     check_stage_occt(&ds, "FF", 10, 15, 7, 0, 1, 0, 0, 6);
 
@@ -1394,7 +1381,7 @@ fn pavefiller_stage_ref_plane_cylinder() {
 }
 /// Stage ref: plane_cone (box x pcone)
 /// OCCT reference: bopsurf_pairs P2 (Box(2x2x2) n Cone(R1=1, R2=0, H=2)).
-/// GAP: rcad nIC=0 vs OCCT nIC=1 — intersection not detected.
+/// GAP: rcad nIC=0 vs OCCT nIC=1 闁?intersection not detected.
 #[test]
 fn pavefiller_stage_ref_plane_cone() {
     let a = box_at(DVec3::splat(-1.0), 2.0, 2.0, 2.0);
@@ -1404,7 +1391,7 @@ fn pavefiller_stage_ref_plane_cone() {
 }
 /// Stage ref: cylinder_cylinder (pcylinder x pcylinder)
 /// OCCT reference: bopsurf_pairs C1 (Cyl(R=1,H=3) n Cyl(R=1,H=3) rotated 90Y).
-/// GAP: rcad nIC=0 vs OCCT nIC=7 after FF — intersection not detected.
+/// GAP: rcad nIC=0 vs OCCT nIC=7 after FF 闁?intersection not detected.
 #[test]
 fn pavefiller_stage_ref_cylinder_cylinder() {
     let a = make_cyl(1.0, 3.0);
@@ -1418,7 +1405,7 @@ fn pavefiller_stage_ref_cylinder_cylinder() {
 }
 /// Stage ref: cylinder_sphere (pcylinder x psphere)
 /// OCCT reference: bopsurf_pairs C2 (Cyl(R=0.8,H=3) n Sphere(R=1.5)).
-/// GAP: rcad nIC=0 vs OCCT nIC=1 after FF — intersection not detected.
+/// GAP: rcad nIC=0 vs OCCT nIC=1 after FF 闁?intersection not detected.
 #[test]
 fn pavefiller_stage_ref_cylinder_sphere() {
     let a = make_cyl(0.8, 3.0);
@@ -1428,7 +1415,7 @@ fn pavefiller_stage_ref_cylinder_sphere() {
 }
 /// Stage ref: cylinder_torus (pcylinder x ptorus)
 /// OCCT reference: bopsurf_pairs C3 (Cyl(R=1,H=5) n Torus(R=3,r=1)).
-/// GAP: rcad FF=0 vs OCCT FF=2 — no torus-cylinder intersection.
+/// GAP: rcad FF=0 vs OCCT FF=2 闁?no torus-cylinder intersection.
 #[test]
 fn pavefiller_stage_ref_cylinder_torus() {
     let a = make_cyl(1.0, 5.0);
@@ -1511,7 +1498,7 @@ fn pavefiller_stage_ref_cone_cone() {
 }
 /// Stage ref: sphere_sphere (psphere x psphere)
 /// OCCT reference: bopsurf_pairs S1 (Sphere(R=2) n Sphere(R=2) at X=1).
-/// GAP: rcad nIC=0 vs OCCT nIC=2 after FF — sphere-sphere intersection not detected.
+/// GAP: rcad nIC=0 vs OCCT nIC=2 after FF 闁?sphere-sphere intersection not detected.
 #[test]
 fn pavefiller_stage_ref_sphere_sphere() {
     let a = rcad_modeling::make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
@@ -1521,11 +1508,11 @@ fn pavefiller_stage_ref_sphere_sphere() {
 }
 
 // =========================================================================
-// Additional stage ref tests — comprehensive geometric type coverage
+// Additional stage ref tests 闁?comprehensive geometric type coverage
 // =========================================================================
 
 /// Stage ref: plane_torus (box x torus)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_plane_torus() {
     let a = box_at(DVec3::new(-3.0, -1.5, -1.5), 6.0, 3.0, 3.0);
@@ -1537,7 +1524,7 @@ fn pavefiller_stage_ref_plane_torus() {
 }
 
 /// Stage ref: cylinder_cone (pcylinder x cone)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_cylinder_cone() {
     let a = make_cyl(1.0, 3.0);
@@ -1549,7 +1536,7 @@ fn pavefiller_stage_ref_cylinder_cone() {
 }
 
 /// Stage ref: cone_sphere (cone x sphere)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_cone_sphere() {
     let a = make_cone_fn(1.5, 2.0);
@@ -1561,7 +1548,7 @@ fn pavefiller_stage_ref_cone_sphere() {
 }
 
 /// Stage ref: cone_torus (cone x torus)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_cone_torus() {
     let a = make_cone_fn(1.5, 3.0);
@@ -1574,7 +1561,7 @@ fn pavefiller_stage_ref_cone_torus() {
 }
 
 /// Stage ref: sphere_torus (sphere x torus)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_sphere_torus() {
     let a = rcad_modeling::make_sphere_brep(DVec3::new(-1.0, 0.0, 0.0), 1.5).unwrap();
@@ -1586,7 +1573,7 @@ fn pavefiller_stage_ref_sphere_torus() {
 }
 
 /// Stage ref: torus_torus (torus x torus)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_torus_torus() {
     let a =
@@ -1601,7 +1588,7 @@ fn pavefiller_stage_ref_torus_torus() {
 }
 
 /// Stage ref: box_box_offset (two overlapping boxes offset)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_offset() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
@@ -1613,7 +1600,7 @@ fn pavefiller_stage_ref_box_box_offset() {
 }
 
 /// Stage ref: box_box_tangent (two boxes touching at a face)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_tangent() {
     let a = box_at(DVec3::ZERO, 2.0, 2.0, 2.0);
@@ -1625,7 +1612,7 @@ fn pavefiller_stage_ref_box_box_tangent() {
 }
 
 /// Stage ref: box_box_contained (one box inside another)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_contained() {
     let a = box_at(DVec3::ZERO, 3.0, 3.0, 3.0);
@@ -1637,7 +1624,7 @@ fn pavefiller_stage_ref_box_box_contained() {
 }
 
 /// Stage ref: box_box_disjoint (two separated boxes)
-/// Debug output only — see file header for status.
+/// Debug output only 闁?see file header for status.
 #[test]
 fn pavefiller_stage_ref_box_box_disjoint() {
     let a = box_at(DVec3::ZERO, 1.0, 1.0, 1.0);
@@ -1660,7 +1647,7 @@ fn builder_stages(
     use_glue: bool,
 ) -> Result<Vec<crate::bop::algo::builder::StageSnapshot>, crate::bop::algo::builder::BooleanError> {
     // 1. PaveFiller
-    let mut ds = DS::new_from_topods(a, b, TOLERANCE_ABS);
+    let mut ds = DS::new_from_topods(a, b, rcad_kernel::CONFUSION);
     let brep = topods::BRep::new();
     let bvh_a = Bvh::build(a);
     let bvh_b = Bvh::build(b);
@@ -1668,7 +1655,7 @@ fn builder_stages(
         let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.set_run_parallel(false);
         if use_glue {
-            filler.configure_glue(true, TOLERANCE_ABS);
+            filler.configure_glue(true, rcad_kernel::CONFUSION);
         }
         filler.perform(a, b);
     }
@@ -1681,7 +1668,7 @@ fn builder_stages(
 
 /// Builder stage diagnostic: bfuse_simple A1 (sphere + box).
 /// Prints rcad stage snapshots for manual inspection.
-/// No assertions — see fuse_sphere_box_ref_topology for real OCCT topology check.
+/// No assertions 闁?see fuse_sphere_box_ref_topology for real OCCT topology check.
 #[test]
 fn builder_diagnostic_bfuse_simple_a1() {
     let a = make_unit_sphere();
