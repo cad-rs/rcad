@@ -517,7 +517,8 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     /// Builds split solids: FillIn3DParts -> BuildSplitSolids -> FillInternalShapes.
     fn fill_images_solids(&mut self) {
-        let a_nb_s = self.ds.nb_source_shapes();
+        // OCCT L62-73: check all DS shapes for SOLID type
+        let a_nb_s = self.ds.nb_shapes();
         let mut has_solid = false;
         for i in 0..a_nb_s {
             if self.ds.shape_info(i).shape_type == topods::ShapeType::Solid {
