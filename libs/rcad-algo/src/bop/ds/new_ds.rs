@@ -712,6 +712,13 @@ impl DS {
         })
     }
 
+    /// Face tolerance by shape index.
+    pub fn face_tolerance(&self, i: usize) -> f64 {
+        self.shapes.get(i).and_then(|si| {
+            si.shape.as_face().map(|f| f.tolerance)
+        }).unwrap_or(0.0)
+    }
+
     /// Edge tolerance by shape index.
     pub fn edge_tolerance(&self, i: usize) -> f64 {
         self.shapes.get(i).and_then(|si| {
@@ -862,6 +869,9 @@ impl DS {
             si.shape.as_vertex().map(|v| v.tolerance)
         }).unwrap_or(0.0)
     }
+
+    /// Vertex point (alias for vertex_point_by_idx).
+    pub fn vertex_point(&self, i: usize) -> glam::DVec3 { self.vertex_point_by_idx(i) }
 
     /// Vertex point by shape index (returns DVec3::ZERO if not a vertex).
     pub fn vertex_point_by_idx(&self, i: usize) -> glam::DVec3 {

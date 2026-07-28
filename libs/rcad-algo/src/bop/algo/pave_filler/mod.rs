@@ -105,10 +105,9 @@ impl<'a> PaveFiller<'a> {
                 if self.ds.shapes[j].shape_type != ShapeType::Edge { continue; }
                 let Some(c2) = self.ds.edge_curve(j).cloned() else { continue; };
                 let r2 = self.ds.edge_range(j);
-                let mut ee = int_tools::edge_edge::EdgeEdge::new();
-                ee.set_curves(c1.clone(), c2.clone());
-                ee.set_ranges(r1, r2);
-                ee.set_tolerances(1e-7, 1e-7);
+                let mut ee = int_tools::edge_edge::EdgeEdgeIntersector::new();
+                ee.set_edges(i, r1, j, r2, self.ds);
+                ee.set_fuzzy_value(1e-7);
                 ee.perform();
                 if !ee.is_done() || ee.common_parts().is_empty() { continue; }
                 for cp in ee.common_parts() {
