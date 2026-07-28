@@ -4,7 +4,6 @@
 
 pub mod bop;
 pub mod tolerance;
-pub mod bnd_box;
 
 // Re-export from rcad-kernel
 pub use rcad_kernel::base::bnd_lib;

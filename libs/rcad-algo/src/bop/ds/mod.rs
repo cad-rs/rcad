@@ -22,7 +22,7 @@ pub use types::{
 
 /// Compute face AABB from DS shape info — TODO: align with new DS data model.
 #[allow(dead_code)]
-pub fn face_aabb(ds: &DS, fi: usize) -> crate::bop::tools::bvh::Aabb {
+pub fn face_aabb(ds: &DS, fi: usize) -> crate::bop::tools::bvh::BndBox {
     let _ = (ds, fi);
-    crate::bop::tools::bvh::Aabb::empty()
+    rcad_kernel::math::bnd::BndBox::new()
 }
