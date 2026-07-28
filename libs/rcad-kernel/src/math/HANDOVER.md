@@ -3,75 +3,63 @@
 ## 一句话提示词（在新 session 中直接使用）
 
 ```
-继续 rcad-kernel TKGeomBase 补全：创建 base/gc/（从 geom/ 提取 GC_MakeCircle/MakeLine/MakePlane 等构造算法）和 base/intana2d/（2D 解析求交），使模块对齐 OCCT TKGeomBase 的 GC 和 IntAna2d 包。
+继续 rcad 布尔管线形式对齐：从 `BOPAlgo_Builder::PerformInternal1` 顶层开始，逐层递归对齐 OCCT TKBO 源码到 rcad `build_with_history`。当前已对齐到 `fill_images_edges` / `fill_images_faces` 层。使用 OCCT 8.0 源码在 `C:\Users\lilu\works\OCCT\src\ModelingAlgorithms\TKBO\`。编译：`cargo check -p rcad-algorithms`。
 ```
 
-## TKMath 状态（FoundationClasses — 已全部对齐）
+## TKMath 状态（FoundationClasses — 全部对齐）
 
 `rcad-kernel/src/math/` 所有 OCCT TKMath 包全覆盖：
 
+| 模块 | OCCT 包 |
+|------|---------|
+| `bnd/` | Bnd (BndBox 数据) |
+| `bspl` | BSplCLib + BSplSLib |
+| `bvh/` | BVH |
+| `cs_lib` | CSLib |
+| `el/` | ElCLib + ElSLib |
+| `math_poly` | MathPoly |
+| `plib` | PLib |
+| `poly/` | Poly |
+| `top_loc` | TopLoc |
+| `root/` | MathRoot |
+| `opt/` | MathOpt |
+| `lin/` | MathLin |
+| `integ/` | MathInteg |
+| `sys/` | MathSys |
+| `curvature` | LProp 曲率 |
+| `arc_length` | 弧长（委托 base::gcpnts） |
+
+## TKGeomBase 状态（ModelingData — 100% 全部对齐）
+
+`rcad-kernel/src/base/` 所有 OCCT TKGeomBase 包全覆盖：
+
 | 模块 | OCCT 包 | 说明 |
 |------|---------|------|
-| `bnd/` | Bnd | BndBox struct + curve/surface bbox |
-| `bspl` | BSplCLib + BSplSLib | de_boor, bspline_tangent, find_knot_span |
-| `bvh/` | BVH | Bvh struct (SAH, ray_cast, candidate_pairs) |
-| `convert/` | Convert | sphere/cylinder/plane → BSpline |
-| `cs_lib` | CSLib | Surface normal computation (derivatives, singular-case rescue) |
-| `el/` | ElCLib + ElSLib | elementary curve/surface analytic eval |
-| `gcpnts/` | GCPnts | arc_length (AbscissaPoint) |
-| `gprop/` | GProp | surface_area, volume, inertia, plate |
-| `math_poly` | MathPoly | solve_linear~quartic, laguerre_roots |
-| `plib` | PLib | de_casteljau, eval_polynomial, power→Bezier |
-| `poly/` | Poly | Triangulation, Connect (mesh data) |
-| `top_loc` | TopLoc | TopLoc struct with chaining |
-| `root/` | MathRoot | newton_raphson, bisection, trig_roots |
-| `opt/` | MathOpt | BFGS, FRPR, NewtonMin, Powell, etc. |
-| `lin/` | MathLin | SVD, Gauss, Crout, eigenvalues |
-| `integ/` | MathInteg | simpson, gaussian_quadrature |
-| `sys/` | MathSys | newton_2d, newton_3d |
-| `curvature` | LProp | principal_curvatures, gaussian/mean |
+| `gc/` | GC + GCE2d + gce | MakeCircle/MakeLine/MakePlane 等构造算法 |
+| `int_ana.rs` | IntAna | 3D 解析求交（线/平面/柱/球/锥/环） |
+| `int_ana2d/` | IntAna2d | 2D 解析求交（线/圆/二次曲线） |
+| `geom_lib/` | GeomLib | Tool, IsPlanarSurface, CheckCurveOnSurface |
+| `geom_lprop/` | GeomLProp | CLProps(曲线局部), SLProps(曲面局部) |
+| `proj_lib/` | ProjLib | 投影器（平面/柱/球/锥/环） |
+| `geom_proj_lib/` | GeomProjLib | 高层投影 + 采样回退 |
+| `geom_api/` | GeomAPI | project, interpolate, extrema, IntCS, IntSS |
+| `convert/` | GeomConvert | 解析→BSpline + 反向(BSpline→解析/Bezier) |
+| `geom2d_convert/` | Geom2dConvert | 2D BSpline↔Bezier + 组合/逼近 |
+| `bnd_lib/` | BndLib | curve_bounding_box + surface_bounding_box |
+| `geom_bnd_lib/` | GeomBndLib | AddCurve/AddSurface 到 BndBox |
+| `gcpnts/` | GCPnts | 弧长取点 |
+| `cpnts/` | CPnts | 均匀取点 |
+| `gprop/` | GProp | 表面积/体积/惯性矩/板 |
+| `extrema.rs` | Extrema | ExtPC/ExtPS/ExtCC + GenLocateExtPS |
+| `lprop/` | LProp | 曲率极值/拐点分析 |
+| `geom_tools/` | GeomTools | Dump 曲线/曲面/2D曲线 |
+| `hermit/` | Hermit | Hermite 插值曲线 |
+| `approx/` | Approx+AppCont+AppDef+AppParCurves | 曲线/曲面逼近 + 多线并行逼近 |
 
-## TKGeomBase 状态（ModelingData — 补全中）
+## 对齐原则
 
-`rcad-kernel/src/base/`：
+布尔管线全面对齐期间，所有底层模块**优先采用 OCCT 形式对齐**。布尔管线全部通过后，可逐步转换为 Rust 惯用 API。详见 `AGENTS.md`「后续重构指导」。
 
-| 模块 | OCCT 包 | 说明 | 优先级 |
-|------|---------|------|--------|
-| `int_ana` | IntAna | 3D 解析求交（线/平面/柱/球/锥/环） | ✅ 已对齐 |
-| `extrema` | Extrema | 点-曲/点-面/曲-曲极值 | ✅ 已对齐 |
-| `geom_api/` | GeomAPI | 投影/插值/Extrema 高层封装 | ✅ 已对齐 |
-| `extend/` | — | 曲线/曲面延伸 | ⚠️ 局部 |
-| `geom/` | — | 几何类型 + SurfaceEval | ✅ 基础 |
-| — | **GC** | **几何构造（MakeCircle/MakeLine/MakePlane 等）** | **🔴 待建** |
-| — | **IntAna2d** | **2D 解析求交** | **🔴 待建** |
-| — | **ProjLib/GeomProjLib** | **曲线-曲面投影** | **🟡 部分** |
-| — | **Approx/AppParCurves** | **拟合/逼近** | **🟡 部分** |
-| — | **GeomLib** | **几何工具函数** | **🟡 部分** |
-| — | GCPnts | 曲线上取点 | ✅ math/gcpnts/ |
-| — | GeomConvert | 几何转换 | ✅ math/convert/ |
-| — | GProp | 全局属性 | ✅ math/gprop/ |
-| — | LProp | 局部属性 | ✅ math/curvature |
-| — | BndLib/GeomBndLib | 包围盒 | ✅ math/bnd/ |
-| — | CPnts, AdvApp2Var, AppCont, Hermit, FEmTool, GeomTools, GC2d, gce | 其他 | ⬜ 低优先级 |
+## 当前 git
 
-## 下阶段启动建议
-
-### 推荐：GC（几何构造）
-
-OCCT `GC` 包提供 `GC_MakeCircle`、`GC_MakeLine`、`GC_MakePlane`、`GC_MakeSegment` 等。目前 rcad 的这些功能散落在 `geom/` 模块或 Example 代码中。迁移方式：
-
-1. 创建 `base/gc.rs`（或 `base/gc/` 目录）
-2. 从 OCCT `GC_MakeXxx.hxx` 翻译：MakeCircle（圆心+法向+半径/三点/两点）、MakeLine（点+方向/两点）、MakePlane（点+法向/三点）等
-3. 搜刮 rcad 现有代码中重复的构造逻辑，统一到 GC 模块
-
-### 次选：IntAna2d
-
-OCCT `IntAna2d` 提供 2D 解析求交（线-线、线-圆、圆-圆、线-椭圆、椭圆-椭圆等）。`rcad-algorithms/src/inttools/` 中已有一些 2D 求交逻辑可提取。
-
-### 更高优先级？
-
-如果布尔对齐方向需要更精确的曲线-曲面投影，优先做 **ProjLib**（`base/proj_lib.rs`），从 `base/geom_api/project.rs` 的 `make_pcurve_on_surface` 提取。
-
-## 当前 git 状态
-
-在 `rcad` 子模块的 `main` 分支，最新提交在 `60e5e6fb`。Parent repo submodule 指针未更新。
+在 `rcad` 子模块的 `main` 分支。最新提交包含 TKGeomBase 全部 23 个包的完对齐。
