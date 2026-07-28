@@ -7,6 +7,15 @@
 //! void (uninitialized), infinite in one or more directions, or finite.
 //! A gap value is added to both sides of every interval when querying bounds.
 //!
+//! # OCCT layering note
+//!
+//! In OCCT, `Bnd_Box` (the data structure) lives in TKMath while `BndLib`
+//! (algorithms that add `Geom_*` curves/surfaces to a `Bnd_Box`) lives in
+//! TKGeomBase.  The functions `curve_bounding_box` and `surface_bounding_box`
+//! below correspond to `BndLib_Add3dCurve` and `BndLib_AddSurface`.
+//! We merge them here for convenience — the single crate avoids OCCT's
+//! build-system complexity.
+//!
 //! OCCT src: FoundationClasses/TKMath/Bnd/Bnd_Box.cxx
 
 use crate::geom::Curve3;

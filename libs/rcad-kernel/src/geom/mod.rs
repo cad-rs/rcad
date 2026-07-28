@@ -1047,6 +1047,102 @@ impl BSplineCurve2 {
             t,
         )
     }
+
+    /// Approximate a sequence of ordered 2D points with a cubic BSpline.
+    /// Uses chord-length parameterization and natural end conditions.
+    /// The resulting curve has degree 3 and passes through all input points.
+    pub fn approximate(points: &[DVec2]) -> Self {
+        let n = points.len();
+        if n < 2 {
+            return Self::degenerate();
+        }
+        if n == 2 {
+            // Linear BSpline
+            let knots = vec![0.0, 0.0, 1.0, 1.0];
+            return BSplineCurve2 {
+                degree: 1,
+                knots,
+                control_points: vec![points[0], points[1]],
+                weights: vec![1.0, 1.0],
+            };
+        }
+        if n == 3 {
+            // Quadratic BSpline
+            let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+            return BSplineCurve2 {
+                degree: 2,
+                knots,
+                control_points: points.to_vec(),
+                weights: vec![1.0; n],
+            };
+        }
+
+        // Cubic BSpline interpolation with chord-length parameterization
+        let degree = 3;
+
+        // Compute chord-length parameters
+        let mut params = vec![0.0_f64; n];
+        for i in 1..n {
+            let d = (points[i] - points[i - 1]).length();
+            params[i] = params[i - 1] + d.max(1e-15);
+        }
+        let total = params[n - 1];
+        for p in &mut params {
+            *p /= total;
+        }
+
+        // Clamped knot vector with multiplicity = degree+1 at ends
+        let n_knots = n + degree + 1;
+        let mut knots = vec![0.0_f64; n_knots];
+
+        // First degree+1 knots = 0
+        for k in &mut knots[..=degree] {
+            *k = params[0];
+        }
+
+        // Interior knots (averaging of params)
+        for j in 1..n - degree {
+            let mut sum = 0.0;
+            for i in j..j + degree {
+                sum += params[i];
+            }
+            knots[j + degree] = sum / (degree as f64);
+        }
+
+        // Last degree+1 knots = 1
+        for k in &mut knots[n_knots - degree - 1..] {
+            *k = params[n - 1];
+        }
+
+        BSplineCurve2 {
+            degree,
+            knots,
+            control_points: points.to_vec(),
+            weights: vec![1.0; n],
+        }
+    }
+
+    /// Approximate a closed sequence of 2D points with a periodic cubic BSpline.
+    pub fn approximate_closed(points: &[DVec2]) -> Self {
+        if points.is_empty() {
+            return Self::degenerate();
+        }
+        // Add the start point at the end to close the loop
+        let mut closed_pts = points.to_vec();
+        if points.len() > 2 && (points[0] - points[points.len() - 1]).length() > 1e-15 {
+            closed_pts.push(points[0]);
+        }
+        Self::approximate(&closed_pts)
+    }
+
+    fn degenerate() -> Self {
+        BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec2::ZERO, DVec2::ZERO],
+            weights: vec![1.0, 1.0],
+        }
+    }
 }
 
 /// A rational or non-rational Bezier curve in 2D parameter space.

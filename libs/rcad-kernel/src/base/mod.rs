@@ -1,4 +1,9 @@
 pub mod extend;
+pub mod gc;
 pub mod geom_api;
+pub mod geom_lib;
+pub mod geom_lprop;
 pub mod int_ana;
+pub mod int_ana2d;
 pub mod extrema;
+pub mod proj_lib;
