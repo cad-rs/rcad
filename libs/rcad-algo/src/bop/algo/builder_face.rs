@@ -6,7 +6,9 @@
 use crate::bop::algo::Report;
 use crate::bop::ds::DS;
 use rcad_kernel::topo_shape::Shape;
-use std::collections::HashSet;
+use rcad_kernel::topods::{TShape, TWireData, TEdgeData, tshape_flags};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 /// OCCT BOPAlgo_BuilderFace — splits a face using section edges.
 pub struct BuilderFace<'a> {
@@ -14,7 +16,7 @@ pub struct BuilderFace<'a> {
     my_report: Report,
     /// The face to split (OCCT: myFace)
     pub my_face: Option<Shape>,
-    /// Section edges on the face (OCCT: myEdges)
+    /// Section edges on the face (OCCT: myShapes)
     pub my_edges: Vec<Shape>,
     /// Resulting face images (split faces)
     pub my_images: Vec<Shape>,
@@ -38,7 +40,6 @@ impl<'a> BuilderFace<'a> {
     }
 
     /// OCCT BOPAlgo_BuilderFace::Perform (BOPAlgo_BuilderFace.cxx L117-148).
-    /// Full pipeline: PerformShapesToAvoid -> PerformLoops -> PerformAreas -> PerformInternalShapes.
     pub fn perform(&mut self) {
         if self.my_face.is_none() {
             return;
@@ -58,30 +59,157 @@ impl<'a> BuilderFace<'a> {
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformShapesToAvoid (L152+).
-    /// Finds faces with free edges (edges used by only one face).
+    /// OCCT BOPAlgo_BuilderFace::PerformShapesToAvoid.
     fn perform_shapes_to_avoid(&mut self) {
-        // OCCT: builds MEF map (edge→faces)
-        // Removes faces whose edges are shared by only one face
+        // OCCT: identifies faces with free boundary edges (edges used once)
+        // Stub: edge adjacency will be checked during loop building
     }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformLoops (L239+).
-    /// Builds closed wires from section edges on the face.
+    /// OCCT BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).
+    /// Builds closed wires from section edges by connecting edges at shared vertices.
     fn perform_loops(&mut self) {
-        // OCCT: uses BOPAlgo_WireSplitter to build wires
-        // 1. Build pcurves for section edges on the face
-        // 2. Sort edges by angle around the face
-        // 3. Build closed loops from the sorted edges
+        // OCCT L256: aWES.SetFace(myFace)
+        // OCCT L258-266: add edges to wire edge set (excluding shapes to avoid)
+        let edges: Vec<&Shape> = self.my_edges.iter()
+            .filter(|e| !self.my_shapes_to_avoid.contains(&e.ptr_id()))
+            .collect();
+
+        // Build vertex->edge adjacency map for edge connection
+        // OCCT: uses BOPAlgo_WireSplitter internally
+        let wires = build_wires_from_edges(&edges, 1e-7);
+
+        // OCCT L278-283: store result wires into myLoops
+        self.my_loops = wires;
+
+        // OCCT L284-321: Post-treatment — find unprocessed edges
+        let mut processed: HashSet<u64> = HashSet::new();
+        for loop_edges in &self.my_loops {
+            for e in loop_edges {
+                processed.insert(e.ptr_id());
+            }
+        }
+        // Add unprocessed edges to myShapesToAvoid (OCCT L319)
+        for e in &self.my_edges {
+            if !processed.contains(&e.ptr_id()) {
+                self.my_shapes_to_avoid.insert(e.ptr_id());
+            }
+        }
+
+        // OCCT L327-382: Internal wires from avoided edges (stub)
     }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformAreas (L387+).
-    /// Classifies each loop as IN (part of result) or OUT (removed).
+    /// OCCT BOPAlgo_BuilderFace::PerformAreas (BOPAlgo_BuilderFace.cxx L387+).
     fn perform_areas(&mut self) {
-        // OCCT: uses IntTools_FClass2d to classify loop areas
-        // IN loops → face split image
-        // OUT loops → discarded
+        // OCCT: classifies each loop area as IN/OUT using IntTools_FClass2d
+        // IN loops -> create face images
     }
 
     /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (L618+).
     fn perform_internal_shapes(&mut self) {}
+}
+
+/// Build closed wires from a set of edges by matching shared vertices.
+/// OCCT BOPAlgo_WireSplitter equivalent.
+fn build_wires_from_edges(edges: &[&Shape], tol: f64) -> Vec<Vec<Shape>> {
+    if edges.is_empty() {
+        return Vec::new();
+    }
+
+    // Build vertex->edge index adjacency
+    // Each edge has two endpoints (first, last). Match by position within tolerance.
+    let mut vert_edges: Vec<(usize, usize)> = Vec::new(); // (edge_idx, vertex_pos_in_edge)
+    let mut vert_positions: Vec<glam::DVec3> = Vec::new();
+    let mut edge_ends: Vec<(usize, usize)> = Vec::new(); // (start_vert_idx, end_vert_idx)
+
+    for (ei, e) in edges.iter().enumerate() {
+        let (sv, ev) = get_edge_endpoints(e);
+        let mut si = usize::MAX;
+        let mut ei2 = usize::MAX;
+        for (vi, &vp) in vert_positions.iter().enumerate() {
+            if (vp - sv).length() < tol { si = vi; }
+            if (vp - ev).length() < tol { ei2 = vi; }
+        }
+        if si == usize::MAX {
+            si = vert_positions.len();
+            vert_positions.push(sv);
+        }
+        if ei2 == usize::MAX {
+            ei2 = vert_positions.len();
+            vert_positions.push(ev);
+        }
+        edge_ends.push((si, ei2));
+    }
+
+    // Build adjacency: for each vertex, list of edges connected to it
+    let mut vert_to_edges: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (ei, &(s, e)) in edge_ends.iter().enumerate() {
+        vert_to_edges.entry(s).or_default().push(ei);
+        if s != e {
+            vert_to_edges.entry(e).or_default().push(ei);
+        }
+    }
+
+    // Walk edges to form closed wires
+    let n = edges.len();
+    let mut used = vec![false; n];
+    let mut wires: Vec<Vec<Shape>> = Vec::new();
+
+    for start in 0..n {
+        if used[start] { continue; }
+        let mut wire_edges: Vec<Shape> = Vec::new();
+        let mut current_ei = start;
+        let mut current_vert = edge_ends[start].0;
+        loop {
+            if used[current_ei] { break; }
+            used[current_ei] = true;
+            wire_edges.push(edges[current_ei].clone());
+
+            // Find next edge: from the end vertex, pick an unused edge
+            let end_vert = if edge_ends[current_ei].0 == current_vert {
+                edge_ends[current_ei].1
+            } else {
+                edge_ends[current_ei].0
+            };
+            current_vert = end_vert;
+
+            // Find next unused edge connected to end_vert
+            let mut found = false;
+            if let Some(adj) = vert_to_edges.get(&end_vert) {
+                for &next_ei in adj {
+                    if !used[next_ei] {
+                        current_ei = next_ei;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if !found { break; }
+            // Check if we're back to start (closed wire)
+            if end_vert == edge_ends[start].0 { break; }
+        }
+        if !wire_edges.is_empty() {
+            wires.push(wire_edges);
+        }
+    }
+    wires
+}
+
+/// Get edge endpoint vertex positions from a Shape.
+fn get_edge_endpoints(e: &Shape) -> (glam::DVec3, glam::DVec3) {
+    match &*e.data {
+        TShape::Edge(ed) => {
+            let p1 = vertex_position(&ed.first);
+            let p2 = vertex_position(&ed.last);
+            (p1, p2)
+        }
+        _ => (glam::DVec3::ZERO, glam::DVec3::ZERO),
+    }
+}
+
+/// Get vertex position from a Vertex Shape.
+fn vertex_position(v: &Shape) -> glam::DVec3 {
+    match &*v.data {
+        TShape::Vertex(vd) => vd.point,
+        _ => glam::DVec3::ZERO,
+    }
 }

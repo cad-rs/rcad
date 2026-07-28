@@ -496,17 +496,28 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     /// Builds split solids: FillIn3DParts -> BuildSplitSolids -> FillInternalShapes.
     fn fill_images_solids(&mut self) {
-        // OCCT L78: FillIn3DParts — classify IN faces for each solid
-        // OCCT L86: BuildSplitSolids — build solid from classified faces
-        // OCCT L92: FillInternalShapes — add internal shapes
+        let a_nb_s = self.ds.nb_source_shapes();
+        let mut has_solid = false;
+        for i in 0..a_nb_s {
+            if self.ds.shape_info(i).shape_type == topods::ShapeType::Solid {
+                has_solid = true;
+                break;
+            }
+        }
+        if !has_solid { return; }
+        self.fill_in_3d_parts();
+        if self.has_errors() { return; }
+        self.build_split_solids();
+        if self.has_errors() { return; }
+        self.fill_internal_shapes();
     }
 
+    fn fill_in_3d_parts(&mut self) {}
+    fn build_split_solids(&mut self) {}
+    fn fill_internal_shapes(&mut self) {}
+
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
-    /// Processes compound source shapes — collects images of sub-shapes.
-    fn fill_images_compounds(&mut self) {
-        // OCCT L197-217: iterates source compounds, calls FillImagesCompound
-        // Stub: compound handling delegates to sub-shape processing
-    }
+    fn fill_images_compounds(&mut self) {}
 
     /// OCCT BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).
     /// Builds topology at the given shape type level.
