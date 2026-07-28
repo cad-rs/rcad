@@ -1176,6 +1176,12 @@ pub fn any_perpendicular(v: DVec3) -> DVec3 {
     perp.normalize_or_zero()
 }
 
+/// OCCT-aligned: 90° counter-clockwise rotation in 2D (gp_Dir2d::Rotated).
+/// Equivalent to cross product with (0, 0, 1) in 2D homogeneous form.
+pub fn turn_2d(v: DVec2) -> DVec2 {
+    DVec2::new(-v.y, v.x)
+}
+
 fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
     let axis = axis.normalize_or_zero();
     let mut x_axis = ref_dir - axis * ref_dir.dot(axis);
@@ -1317,6 +1323,210 @@ pub trait Curve2dEval {
     /// OCCT-aligned: ReversedParameter(t) — parameter of the same point in reverse.
     fn reversed_parameter(&self, t: f64) -> f64 {
         t
+    }
+}
+
+/// OCCT-aligned: `Geom_Conic` intermediate abstract class.
+///
+/// Groups all conic curves (Circle, Ellipse, Hyperbola, Parabola) with their
+/// shared geometric properties: position frame, eccentricity, and local axes.
+///
+/// In OCCT boolean algorithms this grouping is used for dynamic type checks
+/// like `IsKind(STANDARD_TYPE(Geom_Conic))` before calling conic-specific
+/// methods such as `XAxis()` / `YAxis()`.
+pub trait ConicEval: CurveEval {
+    /// The reference point of the conic:
+    ///   Circle/Ellipse/Hyperbola → center
+    ///   Parabola → vertex
+    fn position(&self) -> DVec3;
+
+    /// The normal of the conic's plane (gp_Ax2::Direction).
+    fn normal(&self) -> DVec3;
+
+    /// OCCT-aligned: eccentricity of the conic.
+    ///   Circle → 0
+    ///   Ellipse → sqrt(1 - (b/a)²)  (0 < e < 1)
+    ///   Hyperbola → sqrt(1 + (b/a)²) (e > 1)
+    ///   Parabola → 1
+    fn eccentricity(&self) -> f64;
+
+    /// OCCT-aligned: XAxis() — the local X direction (major axis for Circle/Ellipse).
+    fn x_axis(&self) -> DVec3;
+
+    /// OCCT-aligned: YAxis() — the local Y direction (minor axis for Circle/Ellipse).
+    fn y_axis(&self) -> DVec3;
+}
+
+/// OCCT-aligned: `Geom_BoundedCurve` intermediate abstract class.
+///
+/// Groups bounded curves (BSpline, Bezier) that always have a finite domain.
+/// All `BoundedCurve` types have `default_domain()` returning finite values.
+pub trait BoundedCurveEval: CurveEval {
+    /// The degree of the underlying polynomial/rational representation.
+    fn degree(&self) -> usize;
+}
+
+// --- ConicEval implementations ---
+
+impl ConicEval for Circle3 {
+    fn position(&self) -> DVec3 { self.center }
+    fn normal(&self) -> DVec3 { self.normal }
+    fn eccentricity(&self) -> f64 { 0.0 }
+    fn x_axis(&self) -> DVec3 { self.x_dir }
+    fn y_axis(&self) -> DVec3 { self.y_dir }
+}
+
+impl ConicEval for Ellipse3 {
+    fn position(&self) -> DVec3 { self.center }
+    fn normal(&self) -> DVec3 { self.normal }
+    fn eccentricity(&self) -> f64 {
+        let a = self.major_radius;
+        let b = self.minor_radius;
+        if a.abs() < 1e-15 { 1.0 } else { (1.0 - (b * b) / (a * a)).sqrt() }
+    }
+    fn x_axis(&self) -> DVec3 { self.major_dir }
+    fn y_axis(&self) -> DVec3 { self.normal.cross(self.major_dir).normalize_or_zero() }
+}
+
+impl ConicEval for Hyperbola3 {
+    fn position(&self) -> DVec3 { self.center }
+    fn normal(&self) -> DVec3 { self.normal }
+    fn eccentricity(&self) -> f64 {
+        let a = self.semi_major;
+        let b = self.semi_minor;
+        if a.abs() < 1e-15 { 1.0 } else { (1.0 + (b * b) / (a * a)).sqrt() }
+    }
+    fn x_axis(&self) -> DVec3 { self.major_dir }
+    fn y_axis(&self) -> DVec3 { self.normal.cross(self.major_dir).normalize_or_zero() }
+}
+
+impl ConicEval for Parabola3 {
+    fn position(&self) -> DVec3 { self.vertex }
+    fn normal(&self) -> DVec3 { self.normal }
+    fn eccentricity(&self) -> f64 { 1.0 }
+    fn x_axis(&self) -> DVec3 { self.axis_dir }
+    fn y_axis(&self) -> DVec3 { self.axis_dir.cross(self.normal).normalize_or_zero() }
+}
+
+// --- Curve3 type-group accessors (OCCT-aligned IsKind / DownCast equivalents) ---
+
+impl Curve3 {
+    /// Returns `true` if this curve is a conic (OCCT: `IsKind(Geom_Conic)`).
+    pub fn is_conic(&self) -> bool {
+        matches!(self, Curve3::Circle(_) | Curve3::Ellipse(_) | Curve3::Hyperbola(_) | Curve3::Parabola(_))
+    }
+
+    /// Returns `true` if this curve is bounded (OCCT: `IsKind(Geom_BoundedCurve)`).
+    pub fn is_bounded(&self) -> bool {
+        matches!(self, Curve3::BSpline(_) | Curve3::Bezier(_))
+    }
+
+    /// OCCT-aligned: downcast to conic trait object.
+    pub fn as_conic(&self) -> Option<&dyn ConicEval> {
+        match self {
+            Curve3::Circle(c) => Some(c as &dyn ConicEval),
+            Curve3::Ellipse(c) => Some(c as &dyn ConicEval),
+            Curve3::Hyperbola(c) => Some(c as &dyn ConicEval),
+            Curve3::Parabola(c) => Some(c as &dyn ConicEval),
+            _ => None,
+        }
+    }
+}
+
+/// OCCT-aligned: `Geom2d_Conic` intermediate abstract class.
+///
+/// Groups 2D conic curves (Circle, Ellipse, Hyperbola, Parabola).
+pub trait Conic2dEval: Curve2dEval {
+    /// Center or vertex position.
+    fn position(&self) -> DVec2;
+    /// OCCT-aligned: eccentricity.
+    fn eccentricity(&self) -> f64;
+    /// Local X-axis direction (major axis for Circle/Ellipse).
+    fn x_axis(&self) -> DVec2;
+    /// Local Y-axis direction (minor axis for Circle/Ellipse).
+    fn y_axis(&self) -> DVec2;
+}
+
+/// OCCT-aligned: `Geom2d_BoundedCurve` intermediate abstract class.
+pub trait BoundedCurve2dEval: Curve2dEval {
+    fn degree(&self) -> usize;
+}
+
+// --- Conic2dEval implementations ---
+
+impl Conic2dEval for Circle2d {
+    fn position(&self) -> DVec2 { self.center }
+    fn eccentricity(&self) -> f64 { 0.0 }
+    fn x_axis(&self) -> DVec2 { self.x_dir }
+    fn y_axis(&self) -> DVec2 { self.y_dir }
+}
+
+impl Conic2dEval for Ellipse2d {
+    fn position(&self) -> DVec2 { self.center }
+    fn eccentricity(&self) -> f64 {
+        let a = self.major_radius;
+        let b = self.minor_radius;
+        if a.abs() < 1e-15 { 1.0 } else { (1.0 - (b * b) / (a * a)).sqrt() }
+    }
+    fn x_axis(&self) -> DVec2 { self.major_dir }
+    fn y_axis(&self) -> DVec2 { turn_2d(self.major_dir) }
+}
+
+impl Conic2dEval for Parabola2d {
+    fn position(&self) -> DVec2 { self.origin }
+    fn eccentricity(&self) -> f64 { 1.0 }
+    fn x_axis(&self) -> DVec2 { self.axis_dir }
+    fn y_axis(&self) -> DVec2 { DVec2::new(-self.axis_dir.y, self.axis_dir.x) }
+}
+
+impl Conic2dEval for Hyperbola2d {
+    fn position(&self) -> DVec2 { self.center }
+    fn eccentricity(&self) -> f64 {
+        let a = self.semi_major;
+        let b = self.semi_minor;
+        if a.abs() < 1e-15 { 1.0 } else { (1.0 + (b * b) / (a * a)).sqrt() }
+    }
+    fn x_axis(&self) -> DVec2 { self.major_dir }
+    fn y_axis(&self) -> DVec2 { turn_2d(self.major_dir) }
+}
+
+// --- BoundedCurve2dEval implementations ---
+
+impl BoundedCurve2dEval for BSplineCurve2 {
+    fn degree(&self) -> usize { self.degree }
+}
+
+impl BoundedCurve2dEval for BezierCurve2 {
+    fn degree(&self) -> usize {
+        self.control_points.len().saturating_sub(1)
+    }
+}
+
+// --- Curve2d type-group accessors (OCCT-aligned IsKind / DownCast equivalents) ---
+
+impl Curve2d {
+    /// Returns `true` if this curve is a conic (OCCT: `IsKind(Geom2d_Conic)`).
+    pub fn is_conic(&self) -> bool {
+        matches!(
+            self,
+            Curve2d::Circle(_) | Curve2d::Ellipse(_) | Curve2d::Hyperbola(_) | Curve2d::Parabola(_)
+        )
+    }
+
+    /// Returns `true` if this curve is bounded (OCCT: `IsKind(Geom2d_BoundedCurve)`).
+    pub fn is_bounded(&self) -> bool {
+        matches!(self, Curve2d::BSpline(_) | Curve2d::Bezier(_))
+    }
+
+    /// OCCT-aligned: downcast to 2D conic trait object.
+    pub fn as_conic(&self) -> Option<&dyn Conic2dEval> {
+        match self {
+            Curve2d::Circle(c) => Some(c as &dyn Conic2dEval),
+            Curve2d::Ellipse(c) => Some(c as &dyn Conic2dEval),
+            Curve2d::Hyperbola(c) => Some(c as &dyn Conic2dEval),
+            Curve2d::Parabola(c) => Some(c as &dyn Conic2dEval),
+            _ => None,
+        }
     }
 }
 
@@ -2044,6 +2254,144 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.derivatives(u, v),
             Surface3::Offset(s) => s.derivatives(u, v),
             Surface3::Trimmed(s) => s.derivatives(u, v),
+        }
+    }
+}
+
+/// OCCT-aligned: `Geom_ElementarySurface` intermediate abstract class.
+///
+/// Groups analytic surfaces (Plane, Cylinder, Sphere, Cone, Torus, Ellipsoid)
+/// with shared access to position, axis, and local frame — corresponding to
+/// OCCT's `gp_Ax3` / `gp_Ax2` members stored in each elementary surface.
+pub trait ElementarySurfaceEval: SurfaceEval {
+    /// Origin of the local coordinate system (gp_Ax3::Location).
+    fn position(&self) -> DVec3;
+    /// Normal / axis direction (gp_Ax3::Direction).
+    fn axis_dir(&self) -> DVec3;
+    /// U-direction (gp_Ax3::XDirection).
+    fn x_axis(&self) -> DVec3;
+    /// V-direction (gp_Ax3::YDirection).
+    fn y_axis(&self) -> DVec3;
+}
+
+/// OCCT-aligned: `Geom_BoundedSurface` intermediate abstract class.
+///
+/// Groups bounded surfaces (BSpline, Bezier) whose domain is always finite.
+pub trait BoundedSurfaceEval: SurfaceEval {
+    fn degree_u(&self) -> usize;
+    fn degree_v(&self) -> usize;
+}
+
+/// OCCT-aligned: `Geom_SweptSurface` intermediate abstract class.
+///
+/// Groups swept surfaces (LinearExtrusion, Revolution) that share a profile curve.
+pub trait SweptSurfaceEval: SurfaceEval {
+    fn profile(&self) -> &Curve3;
+}
+
+// --- BoundedSurfaceEval implementations ---
+
+impl BoundedSurfaceEval for BSplineSurface {
+    fn degree_u(&self) -> usize { self.degree_u }
+    fn degree_v(&self) -> usize { self.degree_v }
+}
+
+impl BoundedSurfaceEval for BezierSurface {
+    fn degree_u(&self) -> usize {
+        self.control_points.len().saturating_sub(1)
+    }
+    fn degree_v(&self) -> usize {
+        self.control_points.first().map_or(0, |r| r.len().saturating_sub(1))
+    }
+}
+
+// --- SweptSurfaceEval implementations ---
+
+impl SweptSurfaceEval for LinearExtrusionSurface {
+    fn profile(&self) -> &Curve3 { &self.profile }
+}
+
+impl SweptSurfaceEval for RevolutionSurface {
+    fn profile(&self) -> &Curve3 { &self.profile }
+}
+
+// --- ElementarySurfaceEval implementations ---
+
+impl ElementarySurfaceEval for Plane {
+    fn position(&self) -> DVec3 { self.origin }
+    fn axis_dir(&self) -> DVec3 { self.normal }
+    fn x_axis(&self) -> DVec3 { self.u_dir }
+    fn y_axis(&self) -> DVec3 { self.v_dir }
+}
+
+impl ElementarySurfaceEval for CylindricalSurface {
+    fn position(&self) -> DVec3 { self.origin }
+    fn axis_dir(&self) -> DVec3 { self.axis }
+    fn x_axis(&self) -> DVec3 { self.ref_dir.normalize_or_zero() }
+    fn y_axis(&self) -> DVec3 { self.axis.cross(self.ref_dir).normalize_or_zero() }
+}
+
+impl ElementarySurfaceEval for SphericalSurface {
+    fn position(&self) -> DVec3 { self.center }
+    fn axis_dir(&self) -> DVec3 { self.axis }
+    fn x_axis(&self) -> DVec3 { self.ref_dir.normalize_or_zero() }
+    fn y_axis(&self) -> DVec3 { self.axis.cross(self.ref_dir).normalize_or_zero() }
+}
+
+impl ElementarySurfaceEval for ConicalSurface {
+    fn position(&self) -> DVec3 { self.apex_point() }
+    fn axis_dir(&self) -> DVec3 { self.axis_dir() }
+    fn x_axis(&self) -> DVec3 { any_perpendicular(self.axis_dir()) }
+    fn y_axis(&self) -> DVec3 { self.axis_dir().cross(any_perpendicular(self.axis_dir())).normalize_or_zero() }
+}
+
+impl ElementarySurfaceEval for ToroidalSurface {
+    fn position(&self) -> DVec3 { self.center }
+    fn axis_dir(&self) -> DVec3 { self.axis }
+    fn x_axis(&self) -> DVec3 { any_perpendicular(self.axis) }
+    fn y_axis(&self) -> DVec3 { self.axis.cross(any_perpendicular(self.axis)).normalize_or_zero() }
+}
+
+// --- Surface3 type-group accessors ---
+
+impl Surface3 {
+    /// Returns `true` if this surface is an elementary surface
+    /// (OCCT: `IsKind(Geom_ElementarySurface)`).
+    pub fn is_elementary(&self) -> bool {
+        matches!(
+            self,
+            Surface3::Plane(_)
+                | Surface3::Cylinder(_)
+                | Surface3::Sphere(_)
+                | Surface3::Cone(_)
+                | Surface3::Torus(_)
+        )
+    }
+
+    /// Returns `true` if this surface is bounded
+    /// (OCCT: `IsKind(Geom_BoundedSurface)`).
+    pub fn is_bounded(&self) -> bool {
+        matches!(self, Surface3::BSpline(_) | Surface3::Bezier(_))
+    }
+
+    /// OCCT-aligned: downcast to elementary surface trait object.
+    pub fn as_elementary(&self) -> Option<&dyn ElementarySurfaceEval> {
+        match self {
+            Surface3::Plane(s) => Some(s as &dyn ElementarySurfaceEval),
+            Surface3::Cylinder(s) => Some(s as &dyn ElementarySurfaceEval),
+            Surface3::Sphere(s) => Some(s as &dyn ElementarySurfaceEval),
+            Surface3::Cone(s) => Some(s as &dyn ElementarySurfaceEval),
+            Surface3::Torus(s) => Some(s as &dyn ElementarySurfaceEval),
+            _ => None,
+        }
+    }
+
+    /// OCCT-aligned: downcast to bounded surface trait object.
+    pub fn as_bounded(&self) -> Option<&dyn BoundedSurfaceEval> {
+        match self {
+            Surface3::BSpline(s) => Some(s as &dyn BoundedSurfaceEval),
+            Surface3::Bezier(s) => Some(s as &dyn BoundedSurfaceEval),
+            _ => None,
         }
     }
 }
