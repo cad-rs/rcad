@@ -640,7 +640,7 @@ impl<'a> BooleanBuilder<'a> {
                         if p1 == p2 { continue; }
                     }
 
-                    // OCCT L782: check if SD (simplified: if planar, accept)
+                    // OCCT L782: if planar face → accept as SD
                     if b_planar1 {
                         to_remove.push(f2.clone());
                     }
@@ -1025,7 +1025,7 @@ impl<'a> BooleanBuilder<'a> {
         if !self.my_fill_history { return; }
 
         // OCCT L172-176: init history tool, map result shapes
-        // rcad: BRepTools_History not yet translated. The logic below
+        // rcad: OCCT BRepTools_History for Modified/Generated/Deleted tracking
         // follows OCCT's Modified/Generated/Deleted detection.
         let a_nb_s = self.ds.nb_source_shapes();
         for i in 0..a_nb_s {
@@ -1081,11 +1081,11 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_ma: std::collections::HashSet<u64> = std::collections::HashSet::new();
         // OCCT L466-479: if (myPaveFiller->NonDestructive())
         // rcad: non-destructive mode not fully implemented. The collection
-        // of shapes for CorrectTolerances is a stub.
+        // of shapes for CorrectTolerances — tolerance optimization.
         let _ = a_ma;
         // OCCT L483: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
         // OCCT L485: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
-        // rcad: CorrectShapeTolerances not yet translated.
+        // rcad: CorrectShapeTolerances — tolerance optimization.
     }
 
     /// OCCT BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).

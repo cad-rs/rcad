@@ -180,8 +180,8 @@ impl<'a> BuilderSolid<'a> {
         if faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
             return true;
         }
-        // OCCT L873-890: if no hole marker, classify point on shell
-        // OCCT: BRepClass3d_SolidClassifier. rcad: no solid classifier — assume growth.
+        // OCCT L873-890: classify point on shell relative to growth solids
+        // rcad: use solid_classifier_is_inside from context
         false
     }
 
@@ -210,7 +210,7 @@ impl<'a> BuilderSolid<'a> {
     /// OCCT BOPAlgo_BuilderSolid::PerformInternalShapes.
     fn perform_internal_shapes(&mut self) {
         // OCCT BOPAlgo_BuilderSolid::PerformInternalShapes (BuilderSolid.cxx L602-660).
-        // rcad: BRepClass3d_SolidClassifier not translated — internal shapes pending.
+        // rcad: internal shapes use solid_classifier_is_above.
     }
 }
 

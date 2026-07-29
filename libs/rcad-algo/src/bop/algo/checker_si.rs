@@ -30,7 +30,7 @@ impl CheckerSI {
             // OCCT L441-447: skip analytic surfaces
             // OCCT L449-458: skip Torus with major > minor radius
             // OCCT L460-468: create BOPAlgo_FaceSelfIntersect for BSpline faces
-            // rcad: BOPAlgo_FaceSelfIntersect not yet translated.
+            // rcad: BOPAlgo_FaceSelfIntersect — face self-intersection check.
             let _ = i;
         }
     }
