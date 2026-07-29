@@ -1110,10 +1110,14 @@ impl DS {
             if self.shapes[i].shape_type != ShapeType::Vertex { continue; }
             let shape = self.shapes[i].shape.clone();
             let vt = self.vertex_tolerance(&shape);
+            // OCCT: Bnd_Box& aBox = aSIDS.ChangeBox();
+            //       aBox.Add(BRep_Tool::Pnt(aV));       ← point (zero-size)
+            //       aBox.SetGap(Tolerance(aV) + tol);   ← gap = vt + tol
             self.shapes[i].box_gap = vt + tol;
             if let Some(pt) = self.vertex_point_on_shape(&shape) {
-                self.shapes[i].box_min = Some(pt - DVec3::splat(vt));
-                self.shapes[i].box_max = Some(pt + DVec3::splat(vt));
+                // point box: min == max == point
+                self.shapes[i].box_min = Some(pt);
+                self.shapes[i].box_max = Some(pt);
             }
         }
     }
