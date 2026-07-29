@@ -1632,23 +1632,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         n_vsd = n_vx;
         if self.ds.has_shape_sd(n_v, &mut n_vx) { n_vsd = n_vx; }
 
-        // OCCT L864-867: ComputeVE via context
-        // const TopoDS_Vertex& aV = *(TopoDS_Vertex*)&myDS->Shape(nVx);
-        // const TopoDS_Edge&   aE = *(TopoDS_Edge*)&myDS->Shape(nE);
-        // iFlag = myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue);
-        let v_pt = self.ds.vertex_point_by_idx(n_vx);
-        let curve = match self.ds.edge_curve(n_e) { Some(c) => c.clone(), None => return false };
-        let (a_t_val, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
-        let a_dist = (proj - v_pt).length();
-        let v_tol = self.ds.vertex_tolerance_by_idx(n_vx);
-        let e_tol = self.ds.edge_tolerance(n_e);
-        a_tol_v_new = a_dist.max(v_tol);
+        // OCCT L864-867: iFlag = myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue);
+        // OCCT: on non-degenerated, geometric edge, projects V onto E and returns 0/1/-4.
+        let (i_flag, a_t_val, a_tol_v_new_val) =
+            self.my_context.compute_ve(n_vx, n_e, self.ds, self.my_fuzzy_value);
+        if i_flag == -1 || i_flag == -2 || i_flag == -3 { return false; }
         // OCCT L868: if (iFlag == 0 || iFlag == -4)
-        let i_flag = if a_dist <= v_tol + e_tol + self.my_fuzzy_value {
-            if a_dist <= self.my_fuzzy_value { 0 } else { -4 }
-        } else { 1 };
         if i_flag != 0 && i_flag != -4 { return false; }
         a_t = a_t_val;
+        a_tol_v_new = a_tol_v_new_val;
 
         // OCCT L870: BOPDS_Pave aPave;
         // OCCT L873-874: aVEs.SetIncrement(10);
