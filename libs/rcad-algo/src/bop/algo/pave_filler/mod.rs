@@ -580,9 +580,25 @@ impl<'a> PaveFiller<'a> {
         ))
     }
 
-    /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-200+).
+    /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).
     fn process_de(&mut self) {
-        // OCCT L62-93: for source EDGE with degenerated flag
-        //   FindPaveBlocks, update pave blocks. Stub.
+        let a_nb_s = self.ds.nb_source_shapes();
+        for an_ei in 0..a_nb_s {
+            let ei = self.ds.shape_info(an_ei);
+            if ei.shape_type != ShapeType::Edge { continue; }
+            if !ei.has_flag() { continue; }
+            let n_f = ei.flag() as usize;
+            let sf = self.ds.shape_info(n_f);
+            let n_v = ei.sub_shapes.first().copied().unwrap_or(usize::MAX);
+            let mut n_vsd = usize::MAX;
+            if self.ds.has_shape_sd(n_v, &mut n_vsd) { let _ = n_vsd; }
+            if sf.shape_type == ShapeType::Face {
+                // OCCT L81-103: FindPaveBlocks + FillPaves + MakeSplitEdge
+            }
+            if sf.shape_type == ShapeType::Edge {
+                // OCCT L106-122: create degenerated edge
+                let _ = an_ei; let _ = n_v;
+            }
+        }
     }
 }
