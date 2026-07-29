@@ -21,8 +21,10 @@ use crate::bop::ds::{
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools;
+use rcad_kernel::base::proj_lib::project_on_surface;
+use rcad_kernel::geom::Surface3;
 use rcad_kernel::CurveEval;
-use rcad_kernel::topods::ShapeType;
+use rcad_kernel::topods::{self, ShapeType};
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
 use glam::DVec3;
@@ -1289,9 +1291,66 @@ impl<'a> PaveFiller<'a> {
         self.my_iterator = Some(Box::new(a_it));
     }
 
-    /// OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850+).
+    // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
     fn prepare(&mut self) {
-        // L850-880: prepare face info, pcurves for planar faces
+        // OCCT L852-856: non-destructive mode → skip
+        if self.my_non_destructive { return; }
+
+        // OCCT L857-879: iterate (V,F), (E,F), (F,F) pairs,
+        // collect planar faces via IsBasedOnPlane
+        let a_types = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
+        let mut a_mf: HashSet<usize> = HashSet::new();
+
+        if let Some(ref mut it) = self.my_iterator {
+            for &a_type in &a_types {
+                it.initialize(a_type, ShapeType::Face);
+                while it.more() {
+                    let (n1, nf) = it.value();
+                    // Determine which index is the face
+                    let fi = if self.ds.shape_info(n1).shape_type() == ShapeType::Face
+                    { n1 } else { nf };
+                    // OCCT: IsBasedOnPlane(aF)
+                    if let Some(fd) = self.ds.shape(fi).as_face() {
+                        if matches!(fd.surface, Some(Surface3::Plane(_))) {
+                            a_mf.insert(fi);
+                        }
+                    }
+                    it.next();
+                }
+            }
+        }
+
+        // OCCT L881-885: no planar faces → return
+        let a_nb_f = a_mf.len();
+        if a_nb_f == 0 { return; }
+
+        // OCCT L888-931: build pcurves for edges on planar faces
+        for &fi in &a_mf {
+            let face_shape = self.ds.shape(fi).clone();
+            let surface = face_shape.as_face().and_then(|fd| fd.surface.clone());
+            let Some(ref surf) = surface else { continue; };
+
+            // OCCT: aExp.Init(aF, TopAbs_EDGE)
+            let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
+                .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
+                .copied().collect();
+
+            for &ei in &edge_indices {
+                let edge_shape = self.ds.shape(ei);
+                let Some(curve) = edge_shape.as_edge().and_then(|ed| ed.curve.as_ref()) else { continue; };
+                let range = edge_shape.as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+
+                // OCCT: BRepLib::BuildPCurveForEdgeOnPlane
+                if let Some(pcurve) = project_on_surface(curve, surf) {
+                    // OCCT: aBB.UpdateEdge(aBPC.GetEdge(), aBPC.GetCurve2d(), aBPC.GetFace(), aTolE)
+                    let si = self.ds.change_shape_info(ei);
+                    let ts = Arc::make_mut(&mut si.shape.data);
+                    if let topods::TShape::Edge(ref mut ed) = *ts {
+                        ed.pcurves.insert(fi, (pcurve, range[0], range[1]));
+                    }
+                }
+            }
+        }
     }
 
     // ====================================================================
