@@ -1267,12 +1267,10 @@ impl<'a> PaveFiller<'a> {
     // OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
     fn init(&mut self) {
         // OCCT L178-182: check arguments non-empty
-        if self.my_arguments.is_empty() {
-            self.my_report.add_alert(Alert::TooFewArguments);
-            return;
-        }
-        // OCCT L185-193: check for null shapes (Rust Shape has no null state;
-        // skip OCCT's null check since it's enforced by the type system)
+        // rcad: PaveFiller gets arguments through DS, not through its own
+        // my_arguments field (Rust structural difference). Skip the check
+        // since the DS already has arguments set by the caller.
+        // OCCT L185-193: check for null shapes — Rust Shape type prevents null.
         // OCCT L196: Clear
         self.my_report.clear();
         self.my_increased_ss.clear();

@@ -17,14 +17,18 @@ pub struct BOPDS_Iterator<'a> {
     current_pos: usize,
 }
 
-/// Maps (ShapeType, ShapeType) to list index (OCCT: BOPDS_Iterator.cxx L59-68).
+/// Maps (ShapeType, ShapeType) to list index (OCCT: BOPDS_Tools::TypeToInteger).
+/// Handles both orderings: (Vertex, Edge) and (Edge, Vertex) both map to VE (1).
 fn type_to_integer(t1: ShapeType, t2: ShapeType) -> usize {
     match (t1, t2) {
         (ShapeType::Vertex, ShapeType::Vertex) => 0, // VV
-        (ShapeType::Vertex, ShapeType::Edge) => 1,   // VE
+        (ShapeType::Vertex, ShapeType::Edge)
+        | (ShapeType::Edge, ShapeType::Vertex) => 1, // VE + EV
         (ShapeType::Edge, ShapeType::Edge) => 2,     // EE
-        (ShapeType::Vertex, ShapeType::Face) => 3,   // VF
-        (ShapeType::Edge, ShapeType::Face) => 4,     // EF
+        (ShapeType::Vertex, ShapeType::Face)
+        | (ShapeType::Face, ShapeType::Vertex) => 3, // VF + FV
+        (ShapeType::Edge, ShapeType::Face)
+        | (ShapeType::Face, ShapeType::Edge) => 4,   // EF + FE
         (ShapeType::Face, ShapeType::Face) => 5,     // FF
         _ => 0,
     }
@@ -100,10 +104,10 @@ impl<'a> BOPDS_Iterator<'a> {
     // rcad: brute-force AABB + same range-based filtering (equivalent for correctness).
     fn intersect(&mut self) {
         let a_nb = self.ds.nb_source_shapes();
-        // OCCT L279-284: Add shapes with BRep to BVH
-        // OCCT L291: Build BVH
-        // OCCT L294-298: Select pairs via BVH + Sort
-        // rcad: brute-force iterates shapes grouped by range (same cross-range logic)
+        // OCCT L279-284: Add shapes with BRep (VERTEX|EDGE|FACE) to BVH
+        let is_brep = |st: ShapeType| -> bool {
+            matches!(st, ShapeType::Vertex | ShapeType::Edge | ShapeType::Face)
+        };
 
         let a_nb_r = self.ds.nb_ranges();
         // OCCT L306-358: for each range, pair with shapes from OTHER ranges
@@ -112,21 +116,20 @@ impl<'a> BOPDS_Iterator<'a> {
             for i in a_range.first..=a_range.last {
                 if i >= a_nb { break; }
                 let si1 = &self.ds.shapes[i];
-                if !si1.is_interfering() { continue; } // OCCT L282: HasBRep
+                if !is_brep(si1.shape_type) { continue; } // OCCT L282: HasBRep
                 let a_type1 = si1.shape_type;
-                // OCCT L332-333: type ordering for sub-shape check
-                let i_type1 = a_type1 as isize;
 
                 for j in (i + 1)..a_nb {
                     if a_range.contains(j) { continue; } // OCCT L320-324: skip same-range
                     let si2 = &self.ds.shapes[j];
-                    if !si2.is_interfering() { continue; } // OCCT L282: HasBRep
+                    if !is_brep(si2.shape_type) { continue; } // OCCT L282: HasBRep
                     let a_type2 = si2.shape_type;
-                    let i_type2 = a_type2 as isize;
 
                     // OCCT L336-340: avoid interfering shape with its sub-shapes
-                    if (i_type1 < i_type2 && si1.has_sub_shape(j))
-                        || (i_type1 > i_type2 && si2.has_sub_shape(i))
+                    // OCCT uses TypeToInteger(aType) ordering: VERTEX(7)>EDGE(6)>FACE(4)
+                    // rcad ShapeType discriminant: Vertex(0)<Edge(1)<Face(3) — same relative order
+                    if (a_type1 as isize > a_type2 as isize && si1.has_sub_shape(j))
+                        || (a_type2 as isize > a_type1 as isize && si2.has_sub_shape(i))
                     {
                         continue;
                     }
