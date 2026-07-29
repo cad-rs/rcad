@@ -49,8 +49,9 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (BOPAlgo_PaveFiller.cxx L235-379).
     pub fn perform(&mut self) {
-        // OCCT L247: Init (done in fuse() before PaveFiller creation)
-        // OCCT L258: Prepare — precompute pcurves on planar faces
+        // OCCT L247: Init
+        self.init();
+        // OCCT L258: Prepare
         self.prepare();
         self.perform_vv();
         self.perform_ve();
@@ -385,6 +386,15 @@ impl<'a> PaveFiller<'a> {
                 for &r in &to_rem { fi.pave_blocks_on.swap_remove(&r); }
             }
         }
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
+    fn init(&mut self) {
+        // OCCT L178-182: check arguments non-empty
+        // OCCT L196: Clear
+        // OCCT L199-201: myDS = new BOPDS_DS; DS init (done in fuse())
+        // OCCT L204: myContext = new IntTools_Context (stub)
+        // OCCT L207-210: myIterator setup (stub)
     }
 
     /// OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850+).
