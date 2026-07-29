@@ -703,56 +703,123 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_internal_shapes();
     }
 
-    /// OCCT BOPAlgo_Builder::FillIn3DParts (Builder_3.cxx L97+).
+    /// OCCT BOPAlgo_Builder::FillIn3DParts (Builder_3.cxx L97-263).
+    /// Collects all faces and classifies them as IN or OUT relative to each solid.
     fn fill_in_3d_parts(&mut self) {
-        let n = self.ds.nb_shapes();
-        for si in 0..n {
-            if self.ds.shape_info(si).shape_type != topods::ShapeType::Solid { continue; }
-            for &shi in &self.ds.shape_info(si).sub_shapes {
-                if shi >= n { continue; }
-                if self.ds.shape_info(shi).shape_type != topods::ShapeType::Shell { continue; }
-                for &fi in &self.ds.shape_info(shi).sub_shapes {
-                    if fi >= n { continue; }
-                    if self.ds.shape_info(fi).shape_type != topods::ShapeType::Face { continue; }
-                    let f_shape = self.brep_sr(fi);
-                    if self.my_images.contains_key(&f_shape) {
-                        let s_shape = self.brep_sr(si);
-                        self.my_in_parts.entry(s_shape).or_default().push(f_shape);
+        // OCCT L116-150: collect all faces (source + images)
+        let a_nb_s = self.ds.nb_source_shapes();
+        let mut a_lfaces: Vec<Shape> = Vec::new();
+        let mut a_mfence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != topods::ShapeType::Face { continue; }
+            let a_s = self.brep_sr(i);
+            // OCCT L131-148: check for images
+            if let Some(imgs) = self.my_images.get(&a_s) {
+                for s_im in imgs {
+                    if a_mfence.insert(s_im.ptr_id()) {
+                        a_lfaces.push(s_im.clone());
                     }
                 }
+            } else {
+                if a_mfence.insert(a_s.ptr_id()) {
+                    a_lfaces.push(a_s);
+                }
+            }
+        }
+        if a_lfaces.is_empty() { return; }
+
+        // OCCT L154-195: collect all solids
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != topods::ShapeType::Solid { continue; }
+            let a_solid = self.brep_sr(i);
+
+            // OCCT L197-261: classify each face against each solid
+            let mut a_l_in_faces: Vec<Shape> = Vec::new();
+            for a_f in &a_lfaces {
+                // Compute face centroid for classification
+                let centroid = Self::face_centroid(a_f);
+                // OCCT L201: BOPAlgo_Tools::ClassifyFaces → uses point-in-solid test
+                if self.my_context.solid_classifier_is_inside(self.ds, i, centroid) {
+                    a_l_in_faces.push(a_f.clone());
+                }
+            }
+            if !a_l_in_faces.is_empty() {
+                self.my_in_parts.entry(a_solid).or_default().append(&mut a_l_in_faces);
             }
         }
         eprintln!("[F3P] in_parts={}", self.my_in_parts.len());
     }
 
+    /// Compute face centroid from its bounding vertices.
+    fn face_centroid(face: &Shape) -> DVec3 {
+        match &*face.data {
+            TShape::Face(fd) => {
+                let mut pts: Vec<DVec3> = Vec::new();
+                if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                    for e in &wd.edges {
+                        if let TShape::Edge(ed) = &*e.data {
+                            if let TShape::Vertex(vd) = &*ed.first.data {
+                                pts.push(vd.point);
+                            }
+                            if let TShape::Vertex(vd) = &*ed.last.data {
+                                pts.push(vd.point);
+                            }
+                        }
+                    }
+                }
+                if pts.is_empty() { return DVec3::ZERO; }
+                pts.iter().sum::<DVec3>() / pts.len() as f64
+            }
+            _ => DVec3::ZERO,
+        }
+    }
+
     /// OCCT BOPAlgo_Builder::BuildSplitSolids (Builder_3.cxx L400-550).
     fn build_split_solids(&mut self) {
-        let in_parts: Vec<(Shape, Vec<Shape>)> = self.my_in_parts.iter()
-            .map(|(k, v)| (k.clone(), v.clone())).collect();
-        for (solid_src, face_shapes) in &in_parts {
-            if face_shapes.is_empty() { continue; }
-            // OCCT L491-511: combine original solid faces + IN faces
-            let mut all_faces: Vec<Shape> = Vec::new();
-            // Add original solid's faces
+        // OCCT L413-461: collect all source solids and their IN faces
+        let a_nb_s = self.ds.nb_source_shapes();
+        let mut a_mfence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut all_faces: Vec<Shape> = Vec::new();
+        let mut solid_src_list: Vec<Shape> = Vec::new();
+
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != topods::ShapeType::Solid { continue; }
+            let solid_src = self.brep_sr(i);
+            if !a_mfence.insert(solid_src.ptr_id()) { continue; }
+            solid_src_list.push(solid_src.clone());
+
+            // Collect original solid's faces
             for ss in self.shape_sub_shapes(&solid_src) {
                 if ss.shape_type() == topods::ShapeType::Shell {
                     for f in self.shape_sub_shapes(&ss) {
                         if f.shape_type() == topods::ShapeType::Face {
-                            all_faces.push(f.clone());
+                            all_faces.push(f);
                         }
                     }
                 }
             }
-            // Add IN faces (OCCT L502-511: both orientations)
-            for f in face_shapes {
-                all_faces.push(f.clone());
-                let mut f_rev = f.clone();
-                f_rev.orientation = topods::Orientation::Reversed;
-                all_faces.push(f_rev);
+            // Add IN faces (both orientations, OCCT L502-511)
+            if let Some(in_faces) = self.my_in_parts.get(&solid_src) {
+                for f in in_faces {
+                    all_faces.push(f.clone());
+                    let mut f_rev = f.clone();
+                    f_rev.orientation = topods::Orientation::Reversed;
+                    all_faces.push(f_rev);
+                }
             }
-            let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
-            bs.my_shapes = all_faces;
-            bs.perform();
+        }
+
+        if all_faces.is_empty() { return; }
+
+        // Build solids from combined face set (OCCT: BOPAlgo_SplitSolid per source solid)
+        let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
+        bs.my_shapes = all_faces;
+        bs.perform();
+        // Assign result solids to each source solid's images
+        for solid_src in &solid_src_list {
             for solid_img in &bs.my_solids {
                 self.my_images.entry(solid_src.clone())
                     .or_default().push(solid_img.clone());

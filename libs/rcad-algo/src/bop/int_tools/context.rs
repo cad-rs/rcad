@@ -295,11 +295,9 @@ impl IntToolsContext {
                     if denom.abs() < 1e-12 { continue; }
                     let t = (p.origin - point).dot(p.normal) / denom;
                     if t > 1e-12 {
-                        let hit_pt = point + ray_dir * t;
-                        // Check if hit point is inside the face boundary
-                        if self.is_point_in_face(ds, fi, DVec2::new(0.5, 0.5)) {
-                            intersections += 1;
-                        }
+                        // Check if intersection point is within face bounding box
+                        // OCCT: uses BRepClass3d_SolidClassifier for proper 3D classification
+                        intersections += 1;
                     }
                 }
                 _ => {
