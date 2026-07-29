@@ -930,12 +930,26 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // VF — OCCT BOPAlgo_PaveFiller_5.cxx L409-471
     // ====================================================================
+    // OCCT BOPAlgo_PaveFiller::PerformVF (PaveFiller_4.cxx L139-399).
+    // rcad: simplified — skips FaceInfo/TreatVerticesEE/complex projection.
     fn perform_vf(&mut self) {
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Vertex, ShapeType::Face).to_vec()
         } else {
             return;
         };
+        if pairs.is_empty() { return; }
+
+        // OCCT L147-160: GlueFull mode — init FaceInfo and return
+        if self.my_glue == GlueEnum::GlueFull {
+            for &(n_v, n_f) in &pairs {
+                if !self.ds.shapes[n_v].has_sub_shape(n_f) {
+                    self.ds.change_face_info(n_f);
+                }
+            }
+            return;
+        }
+
         let mut new_vf: Vec<InterferenceVF> = Vec::new();
         for &(i, j) in &pairs {
             let pt = self.ds.vertex_point_by_idx(i);
