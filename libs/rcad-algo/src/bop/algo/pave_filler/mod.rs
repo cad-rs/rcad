@@ -49,18 +49,19 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (BOPAlgo_PaveFiller.cxx L235-379).
     pub fn perform(&mut self) {
-        // OCCT L247: Init
-        // OCCT L258: Prepare
-        self.perform_vv();                                                      // L265
-        self.perform_ve();                                                      // L272
-        self.update_pave_blocks_with_sd_vertices();                             // L279
-        self.perform_ee();                                                      // L281
-        self.update_pave_blocks_with_sd_vertices();                             // L287
-        self.perform_vf();                                                      // L289
-        self.update_pave_blocks_with_sd_vertices();                             // L295
-        self.perform_ef();                                                      // L297
-        self.update_pave_blocks_with_sd_vertices();                             // L303
-        self.update_interfs_with_sd_vertices();                                 // L303
+        // OCCT L247: Init (done in fuse() before PaveFiller creation)
+        // OCCT L258: Prepare — precompute pcurves on planar faces
+        self.prepare();
+        self.perform_vv();
+        self.perform_ve();
+        self.update_pave_blocks_with_sd_vertices();
+        self.perform_ee();
+        self.update_pave_blocks_with_sd_vertices();
+        self.perform_vf();
+        self.update_pave_blocks_with_sd_vertices();
+        self.perform_ef();
+        self.update_pave_blocks_with_sd_vertices();
+        self.update_interfs_with_sd_vertices();
         // OCCT L307: RepeatIntersection
         // OCCT L315: ForceInterfEE
         // OCCT L323: ForceInterfEF
@@ -384,6 +385,11 @@ impl<'a> PaveFiller<'a> {
                 for &r in &to_rem { fi.pave_blocks_on.swap_remove(&r); }
             }
         }
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850+).
+    fn prepare(&mut self) {
+        // OCCT: precompute pcurves on planar face edges. Stub.
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
