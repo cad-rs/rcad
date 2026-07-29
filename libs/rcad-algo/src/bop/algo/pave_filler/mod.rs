@@ -47,6 +47,7 @@ impl<'a> PaveFiller<'a> {
     pub fn set_fuzzy_value(&mut self, v: f64) { self.my_fuzzy_value = v; }
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
     pub fn report(&self) -> &Report { &self.my_report }
+    pub fn ds(&self) -> &DS { self.ds }
 
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (BOPAlgo_PaveFiller.cxx L235-379).
     pub fn perform(&mut self) {

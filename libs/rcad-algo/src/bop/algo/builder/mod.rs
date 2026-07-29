@@ -78,12 +78,16 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// OCCT: BOPAlgo_Builder is constructed with a PaveFiller reference.
     /// rcad: PaveFiller runs before Builder; only the DS is passed.
-    pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
+    /// OCCT BOPAlgo_BOP::PerformInternal1 L425-429:
+    ///   myPaveFiller = &theFiller; myDS = myPaveFiller->PDS();
+    ///   myFuzzyValue = myPaveFiller->FuzzyValue();
+    /// rcad: PaveFiller dropped before Builder, DS+fuzzy passed explicitly.
+    pub fn new(ds: &'a DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
         BooleanBuilder {
             ds,
             my_report: Report::new(),
             my_run_parallel: false,
-            my_fuzzy_value: 1e-7,
+            my_fuzzy_value: fuzzy_value,
             my_shape: None,
             my_fill_history: false,
             my_operation: op,

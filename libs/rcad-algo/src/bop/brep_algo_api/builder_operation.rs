@@ -145,9 +145,9 @@ impl BuilderOperation {
         // Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut filler = PaveFiller::new(&mut ds);
         filler.perform();
-
-        // Build result
-        let mut builder = BooleanBuilder::new(&ds, self.op_type);
+        let fuzz = filler.fuzzy_value();
+        drop(filler);
+        let mut builder = BooleanBuilder::new(&ds, self.op_type, fuzz);
         match builder.build() {
             Ok(brep) => {
                 self.result = Some(brep);
