@@ -83,3 +83,38 @@ fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(usize, usize)]) -> f64 {
     let _ = ds; // placeholder for future surface-based tolerance computation
     tol_max
 }
+/// OCCT BOPTools_AlgoTools::ComputeTolerance — deviation of edge pcurve on face.
+///
+/// OCCT BOPTools_AlgoTools_1.cxx L1093-1111.
+/// Samples the edge's 3D curve at N points, evaluates pcurve->surface->point,
+/// computes max distance between 3D curve point and surface point.
+/// Returns (max_distance, max_parameter) or None if edge lacks pcurve.
+pub fn compute_tolerance_curve_on_surface(
+    ds: &DS,
+    edge_idx: usize,
+    face_idx: usize,
+) -> Option<(f64, f64)> {
+    let curve = ds.edge_curve(edge_idx)?.clone();
+    let range = ds.edge_range(edge_idx);
+    let surf = ds.face_surface(face_idx)?;
+    let shape = &ds.shapes[edge_idx].shape;
+    let pcurve_info = shape.as_edge()?.pcurves.get(&face_idx)?.clone();
+    let (pcurve, _f, _l) = pcurve_info;
+    use rcad_kernel::geom::{Curve2dEval, SurfaceEval};
+    let n = 23usize;
+    let dt = (range[1] - range[0]) / n as f64;
+    let mut max_dist = 0.0f64;
+    let mut max_par = range[0];
+    for i in 0..=n {
+        let t = range[0] + i as f64 * dt;
+        let p3d = curve.point_at(t);
+        let uv = pcurve.point_at(t);
+        let p_surf = surf.point_at(uv.x, uv.y);
+        let d = (p3d - p_surf).length();
+        if d > max_dist {
+            max_dist = d;
+            max_par = t;
+        }
+    }
+    Some((max_dist, max_par))
+}
