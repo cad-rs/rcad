@@ -8,11 +8,10 @@ use crate::bop::ds::DS;
 use crate::bop::algo::shell_splitter::make_connexity_blocks_from_shapes;
 use crate::bop::int_tools::context::IntToolsContext;
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{
-    TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags,
-};
+use rcad_kernel::topods::{self, ShapeType, TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags};
 use std::collections::{HashSet, HashMap, VecDeque};
 use std::sync::Arc;
+use glam::DVec3;
 
 /// OCCT BOPAlgo_BuilderSolid — builds solids from a set of faces.
 pub struct BuilderSolid<'a> {
@@ -175,14 +174,46 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT BOPAlgo_BuilderSolid::IsGrowthShell (BuilderSolid.cxx L864+).
     /// Checks if shell is a growth (outer) shell or a hole (inner) shell.
-    fn is_hole_shell(&self, faces: &[Shape], hole_face_ptrs: &HashSet<u64>) -> bool {
+    fn is_hole_shell(&self, _faces: &[Shape], hole_face_ptrs: &HashSet<u64>) -> bool {
         // OCCT L870: if any face matches hole face marker, it's a hole
-        if faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
+        if _faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
             return true;
         }
         // OCCT L873-890: classify point on shell relative to growth solids
-        // rcad: use solid_classifier_is_inside from context
+        // rcad: shell is a hole if its faces' centroid is IN a growth solid
+        if _faces.is_empty() { return false; }
+        // Compute centroid of first face (OCCT: uses point on face)
+        let centroid = Self::face_centroid(&_faces[0]);
+        // Check against each source solid via context
+        let a_nb_s = self.ds.nb_source_shapes();
+        for i in 0..a_nb_s {
+            if self.ds.shape_info(i).shape_type != ShapeType::Solid { continue; }
+            let state = self.my_context.solid_classifier_perform(
+                self.ds, i, centroid, 1e-7);
+            if state == 3 { // IN → this shell is inside a solid → hole
+                return true;
+            }
+        }
         false
+    }
+
+    /// Compute face centroid from its outer wire vertices.
+    fn face_centroid(face: &Shape) -> DVec3 {
+        match &*face.data {
+            TShape::Face(fd) => {
+                let mut pts: Vec<DVec3> = Vec::new();
+                if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                    for e in &wd.edges {
+                        if let TShape::Edge(ed) = &*e.data {
+                            if let TShape::Vertex(vd) = &*ed.first.data { pts.push(vd.point); }
+                            if let TShape::Vertex(vd) = &*ed.last.data { pts.push(vd.point); }
+                        }
+                    }
+                }
+                if pts.is_empty() { DVec3::ZERO } else { pts.iter().sum::<DVec3>() / pts.len() as f64 }
+            }
+            _ => DVec3::ZERO,
+        }
     }
 
     /// Build a Shell TShape from a set of faces.
