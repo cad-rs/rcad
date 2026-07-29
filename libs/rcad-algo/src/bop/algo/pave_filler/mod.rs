@@ -493,23 +493,11 @@ impl<'a> PaveFiller<'a> {
 
             // OCCT L324-332: run intersection for each unique (nVSD, nE) pair
             for ((n_vsd, _n_e), orig_verts) in &a_dmvsd {
-                // OCCT: BOPAlgo_VertexEdge solver would do actual intersection
-                // rcad: project vertex onto edge curve inline
-                let v_pt = self.ds.vertex_point_by_idx(*n_vsd);
-                let v_tol = self.ds.vertex_tolerance_by_idx(*n_vsd);
-                let curve = match self.ds.edge_curve(n_e) {
-                    Some(c) => c.clone(),
-                    None => continue,
-                };
-
-                let (a_t, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
-                let a_dist = (proj - v_pt).length();
-                // OCCT: ComputeVE uses aTolV + aTolE + myFuzzyValue
-                let e_tol = self.ds.edge_tolerance(n_e);
-                let a_tol_v_new = a_dist.max(v_tol);
-                if a_dist > v_tol + e_tol + self.my_fuzzy_value {
-                    continue;
-                }
+                // OCCT: myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue)
+                let (i_flag, a_t, a_tol_v_new) =
+                    self.my_context.compute_ve(*n_vsd, n_e, self.ds, self.my_fuzzy_value);
+                if i_flag == -1 || i_flag == -2 || i_flag == -3 { continue; }
+                if i_flag != 0 && i_flag != -4 { continue; }
 
                 // OCCT L368: UpdateVertex(nV, aTolVNew)
                 self.update_vertex(*n_vsd, a_tol_v_new);
