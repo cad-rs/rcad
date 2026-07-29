@@ -1159,19 +1159,25 @@ impl DS {
     }
 
     // OCCT BOPDS_DS.cxx L1614-1692
+    // OCCT BOPDS_DS.cxx L1614-1692
     fn prepare_edges(&mut self, tol: f64) -> usize {
         let mut an_edge_count = 0;
         for an_edge_index in 0..self.nb_source_shapes {
+            // OCCT L1620: BOPDS_ShapeInfo& anEdgeInfo = ChangeShapeInfo(anEdgeIndex);
+            // rcad: self.shapes[i] access — Rust borrow checker prevents
+            // holding &mut ShapeInfo and &ShapeInfo simultaneously.
             if self.shapes[an_edge_index].shape_type != ShapeType::Edge { continue; }
             an_edge_count += 1;
 
-            // OCCT L1627-1628: edge tolerance & degenerated
+            // OCCT L1627: const TopoDS_Edge& anEdge = TopoDS::Edge(anEdgeInfo.Shape());
             let shape = self.shapes[an_edge_index].shape.clone();
+            // OCCT L1628: const double anEdgeTolerance = BRep_Tool::Tolerance(anEdge);
             let an_edge_tolerance = shape.as_edge().map_or(0.0, |ed| ed.tolerance);
             let is_degenerated = shape.as_edge().map_or(false, |ed| ed.degenerated);
 
-            // OCCT L1630-1675: non-degenerated edge → handle infinite curves
+            // OCCT L1630: if (!BRep_Tool::Degenerated(anEdge))
             if !is_degenerated {
+                // OCCT L1636: NCollection_List<int>& aVertexIndices = anEdgeInfo.ChangeSubShapes();
                 let a_forward_edge_curve_opt =
                     shape.as_edge().and_then(|ed| ed.curve.as_ref().map(|c| c.clone()));
                 let a_range_opt = shape.as_edge().map(|ed| ed.range);
@@ -1180,7 +1186,6 @@ impl DS {
                 {
                     let (a_curve_start, a_curve_end) = (a_range[0], a_range[1]);
                     let mut new_vtx_indices: Vec<usize> = Vec::new();
-
                     if is_negative_infinite_value(a_curve_start) {
                         let a_point = a_forward_edge_curve.point_at(a_curve_start);
                         let a_vertex = Shape::new(
@@ -1212,16 +1217,14 @@ impl DS {
                     self.shapes[an_edge_index].sub_shapes.extend(new_vtx_indices);
                 }
             } else {
-                // OCCT L1673-1675: degenerated edge → set flag
                 self.shapes[an_edge_index].flag = an_edge_index as i64;
             }
 
-            // OCCT L1677-1688: Compute edge bounding box
-            // OCCT L1678-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox)
-            let (mut mn, mut mx) =
+            // OCCT L1677: Bnd_Box& anEdgeBoundBox = anEdgeInfo.ChangeBox();
+            // OCCT L1678-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox);
+            let (mut an_edge_bx_min, mut an_edge_bx_max) =
                 if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
                     if let Some([cmn, cmx]) = curve_bounding_box(curve) {
-                        // OCCT BRepBndLib: B.Enlarge(edge_tolerance)
                         (cmn - DVec3::splat(an_edge_tolerance),
                          cmx + DVec3::splat(an_edge_tolerance))
                     } else {
@@ -1231,18 +1234,18 @@ impl DS {
                     (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
                 };
 
-            // OCCT L1681-1686: Add vertex bounding boxes
+            // OCCT L1681-1686: add vertex bounding boxes
             for &vi in &self.shapes[an_edge_index].sub_shapes {
                 if let (Some(bmin), Some(bmax)) = (self.shapes[vi].box_min, self.shapes[vi].box_max) {
-                    mn = mn.min(bmin);
-                    mx = mx.max(bmax);
+                    an_edge_bx_min = an_edge_bx_min.min(bmin);
+                    an_edge_bx_max = an_edge_bx_max.max(bmax);
                 }
             }
 
-            if mn.x.is_finite() {
-                self.shapes[an_edge_index].box_min = Some(mn);
-                self.shapes[an_edge_index].box_max = Some(mx);
-                // OCCT L1688: SetGap(existing_gap + tol)
+            // OCCT L1688: SetGap(existing_gap + tol)
+            if an_edge_bx_min.x.is_finite() {
+                self.shapes[an_edge_index].box_min = Some(an_edge_bx_min);
+                self.shapes[an_edge_index].box_max = Some(an_edge_bx_max);
                 self.shapes[an_edge_index].box_gap += tol;
             }
         }
