@@ -6,6 +6,7 @@
 //! | AlgoTools2D        | BOPTools_AlgoTools2D    |
 //! | AlgoTools3D        | BOPTools_AlgoTools3D    |
 
+pub mod algo_tools;
 pub mod box_tree;
 pub mod bvh;
 
