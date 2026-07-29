@@ -1097,31 +1097,23 @@ impl<'a> BooleanBuilder<'a> {
     fn build_result(&mut self, the_type: topods::ShapeType) {
         // OCCT L133: fence map
         let mut a_m_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        // OCCT L136-167: iterate myArguments (top-level operand shapes)
-        let args = if !self.my_arguments.is_empty() {
-            self.my_arguments.clone()
-        } else {
-            // Fallback: use DS arguments
-            self.ds.arguments.clone()
-        };
-        for a_s in &args {
-            // OCCT L140-142: filter by shape type
-            if a_s.shape_type() != the_type {
-                continue;
-            }
+        // OCCT L136-167: iterate all source shapes of given type
+        // rcad: iterate DS source shapes (equivalent to TopExp_Explorer over arguments)
+        let a_nb_s = self.ds.nb_source_shapes();
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != the_type { continue; }
+            let a_s = self.brep_sr(i);
             // OCCT L145-152: check for images
-            let p_ls_im = self.my_images.get(a_s).cloned();
-            if let Some(imgs) = p_ls_im {
-                // OCCT L156-164: add images
+            if let Some(imgs) = self.my_images.get(&a_s).cloned() {
                 for a_s_im in &imgs {
                     if a_m_fence.insert(a_s_im.ptr_id()) {
                         self.add_shape_to_result(a_s_im);
                     }
                 }
             } else {
-                // OCCT L148-151: no images — add self
                 if a_m_fence.insert(a_s.ptr_id()) {
-                    self.add_shape_to_result(a_s);
+                    self.add_shape_to_result(&a_s);
                 }
             }
         }

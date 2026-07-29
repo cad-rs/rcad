@@ -775,12 +775,10 @@ impl DS {
     }
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
         if !self.has_pave_blocks(i) {
-            if self.shapes[i].sub_shapes.is_empty() {
-                let p0 = Pave { vertex_idx: 0, param: 0.0 };
-                let spb = SharedPB::new(PaveBlock::new(i, p0, p0));
-                self.pave_blocks_pool.push(vec![spb]);
-                self.shapes[i].reference = (self.pave_blocks_pool.len() - 1) as i64;
-            }
+            let p0 = Pave { vertex_idx: 0, param: 0.0 };
+            let spb = SharedPB::new(PaveBlock::new(i, p0, p0));
+            self.pave_blocks_pool.push(vec![spb]);
+            self.shapes[i].reference = (self.pave_blocks_pool.len() - 1) as i64;
         }
         &mut self.pave_blocks_pool[self.shapes[i].reference as usize]
     }

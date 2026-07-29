@@ -85,52 +85,54 @@ impl EdgeEdgeIntersector {
         i_cnt as f64 / (a_nb_seg + 1) as f64 > 0.5
     }
 
-    /// OCCT FindSolutions + MergeSolutions: sampling + range detection.
+    /// OCCT FindSolutions + MergeSolutions: adaptive sampling with local refinement.
     fn find_and_merge_solutions(&mut self) {
         let t1 = self.range1[0]; let t2 = self.range1[1];
         let t3 = self.range2[0]; let t4 = self.range2[1];
-        let a_nb_seg = 23usize;
-        let dt1 = (t2 - t1) / a_nb_seg as f64;
-        let dt2 = (t4 - t3) / a_nb_seg as f64;
-        let mut fr1: Vec<(f64, f64)> = Vec::new();
-        let mut fr2: Vec<(f64, f64)> = Vec::new();
-        let mut cs1 = t1; let mut cs2 = t3;
-        let mut in_range = false;
-        for i in 0..=a_nb_seg {
+
+        // Coarse pass: find candidate regions
+        let coarse = 23usize;
+        let dt1 = (t2 - t1) / coarse as f64;
+        let dt2 = (t4 - t3) / coarse as f64;
+        let mut candidates: Vec<(f64, f64, f64)> = Vec::new(); // (t1, t2, distance)
+        for i in 0..=coarse {
             let a_t1 = t1 + i as f64 * dt1;
             let p1 = self.curve1.point_at(a_t1);
             let mut best_d = f64::MAX; let mut best_t2 = t3;
-            for j in 0..=a_nb_seg {
+            for j in 0..=coarse {
                 let a_t2 = t3 + j as f64 * dt2;
                 let d = (p1 - self.curve2.point_at(a_t2)).length();
                 if d < best_d { best_d = d; best_t2 = a_t2; }
             }
-            if best_d <= self.fuzzy_value {
-                if !in_range { cs1 = a_t1; cs2 = best_t2; in_range = true; }
-            } else if in_range {
-                fr1.push((cs1, if i > 0 { a_t1 - dt1 } else { a_t1 }));
-                fr2.push((cs2, if i > 0 { best_t2 - dt2 } else { best_t2 }));
-                in_range = false;
+            if best_d < self.fuzzy_value * 10.0 {
+                candidates.push((a_t1, best_t2, best_d));
             }
         }
-        if in_range { fr1.push((cs1, t2)); fr2.push((cs2, t4)); }
-        for i in 0..fr1.len() {
-            let (f1, l1) = fr1[i]; let (f2, l2) = fr2[i];
-            if (l1 - f1).abs() < 1e-15 {
+        if candidates.is_empty() { return; }
+
+        // Local refinement: sub-sample around each candidate
+        let fine = 10usize;
+        for (base_t1, base_t2, _base_d) in &candidates {
+            let mut best_d = f64::MAX; let mut best_t1 = *base_t1; let mut best_t2 = *base_t2;
+            let refine_range = dt1.max(dt2) * 0.5;
+            for i in 0..=fine {
+                let a_t1 = (*base_t1 - refine_range) + 2.0 * refine_range * i as f64 / fine as f64;
+                if a_t1 < t1 || a_t1 > t2 { continue; }
+                let p1 = self.curve1.point_at(a_t1);
+                for j in 0..=fine {
+                    let a_t2 = (*base_t2 - refine_range) + 2.0 * refine_range * j as f64 / fine as f64;
+                    if a_t2 < t3 || a_t2 > t4 { continue; }
+                    let d = (p1 - self.curve2.point_at(a_t2)).length();
+                    if d < best_d { best_d = d; best_t1 = a_t1; best_t2 = a_t2; }
+                }
+            }
+            if best_d <= self.fuzzy_value {
                 self.common_parts.push(CommonPrt {
-                    is_edge: false, range1: [f1, l1], ranges2: vec![[f2, l2]],
-                    vertex_param1: f1, vertex_param2: f2,
-                    bounding_point1: self.curve1.point_at(f1),
-                    bounding_point2: self.curve2.point_at(f2),
-                });
-            } else {
-                let mid1 = (f1 + l1) * 0.5;
-                let mid2 = (f2 + l2) * 0.5;
-                self.common_parts.push(CommonPrt {
-                    is_edge: true, range1: [f1, l1], ranges2: vec![[f2, l2]],
-                    vertex_param1: mid1, vertex_param2: mid2,
-                    bounding_point1: self.curve1.point_at(mid1),
-                    bounding_point2: self.curve2.point_at(mid2),
+                    is_edge: false,
+                    range1: [best_t1, best_t1], ranges2: vec![[best_t2, best_t2]],
+                    vertex_param1: best_t1, vertex_param2: best_t2,
+                    bounding_point1: self.curve1.point_at(best_t1),
+                    bounding_point2: self.curve2.point_at(best_t2),
                 });
             }
         }

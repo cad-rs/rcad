@@ -156,6 +156,7 @@ impl<'a> BooleanOp<'a> {
         let fuzz = filler.fuzzy_value();
         drop(filler);
         let mut builder = BooleanBuilder::new(&ds, self.op_type, fuzz);
+        builder.my_arguments = ds.arguments.clone();
         match builder.build() {
             Ok(brep) => {
                 self.result = Some(brep);
