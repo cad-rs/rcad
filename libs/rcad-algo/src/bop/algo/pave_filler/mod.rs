@@ -83,6 +83,7 @@ impl<'a> PaveFiller<'a> {
         self.update_pave_blocks_with_sd_vertices();
         self.make_blocks();
         if self.has_errors() { return; }
+        self.check_self_interference();
         self.update_interfs_with_sd_vertices();
         self.ds.release_pave_blocks();
         self.refine_face_info_on();
@@ -414,6 +415,7 @@ impl<'a> PaveFiller<'a> {
     fn repeat_intersection(&mut self) {}
     fn force_interf_ee(&mut self) {}
     fn force_interf_ef(&mut self) {}
+    fn check_self_interference(&mut self) {}
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
     fn make_split_edges(&mut self) {
