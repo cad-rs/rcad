@@ -13,6 +13,7 @@ use crate::bop::ds::DS;
 use rcad_kernel::topods;
 use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::topo_shape::Shape;
+use std::sync::Arc;
 
 /// A reference to a sub-shape in a rcad_kernel::BRep, analogous to OCCT TopoDS_Shape.
 ///
@@ -139,8 +140,12 @@ impl BuilderOperation {
         let a = &self.shape_a;
         let b = &self.shape_b;
 
-        // Build BOPDS_DS (data structure) from the two shapes
-        let mut ds = self.build_ds(a, b);
+        // Build BOPDS_DS (data structure) — OCCT: arguments are TopoDS_Solid/Shell directly
+        let arg_a = Self::root_shape(a, 0);
+        let arg_b = Self::root_shape(b, 1);
+        let mut ds = DS::new();
+        ds.set_arguments(vec![arg_a, arg_b]);
+        ds.init(self.tolerance);
 
         // Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut filler = PaveFiller::new(&mut ds);
@@ -161,29 +166,21 @@ impl BuilderOperation {
         }
     }
 
-    /// Build DS from two BReps.
-    fn build_ds(&self, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> DS {
-        let arg1 = Shape::new(
-            std::sync::Arc::new(TShape::Compound(
-                a.tshapes.iter().map(|ts| {
-                    Shape::new(ts.clone(), 0, Orientation::Forward)
-                }).collect()
-            )),
-            0, Orientation::Forward,
-        );
-        let arg2 = Shape::new(
-            std::sync::Arc::new(TShape::Compound(
-                b.tshapes.iter().map(|ts| {
-                    Shape::new(ts.clone(), 0, Orientation::Forward)
-                }).collect()
-            )),
-            1, Orientation::Forward,
-        );
-
-        let mut ds = DS::new();
-        ds.set_arguments(vec![arg1, arg2]);
-        ds.init(self.tolerance);
-        ds
+    /// OCCT BOPAlgo_Algo::Prepare — extract root Solid/Shell from a BRep.
+    fn root_shape(brep: &rcad_kernel::BRep, location: u32) -> Shape {
+        for (i, ts) in brep.tshapes.iter().enumerate().rev() {
+            match &**ts {
+                TShape::Solid(_) | TShape::Shell(_) => {
+                    return Shape::from_parts(ts.clone(), i, location, Orientation::Forward);
+                }
+                _ => {}
+            }
+        }
+        // Fallback: should not happen for valid BReps
+        Shape::new(Arc::new(TShape::Compound(
+            brep.tshapes.iter().enumerate()
+                .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, Orientation::Forward)).collect()
+        )), location, Orientation::Forward)
     }
 
     /// Get the result shape.

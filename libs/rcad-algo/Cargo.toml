@@ -12,3 +12,7 @@ glam.workspace = true
 indexmap.workspace = true
 rayon = "1"
 tracing = "0.1"
+
+[dev-dependencies]
+rcad-modeling = { path = "../rcad-modeling" }
+rcad-brep = { path = "../rcad-brep" }

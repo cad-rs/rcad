@@ -126,23 +126,20 @@ impl<'a> BooleanOp<'a> {
         self.result = None;
         self.err = None;
 
-        // Build argument shapes from the two BReps
-        let arg1 = Shape::new(
-            std::sync::Arc::new(TShape::Compound(
-                self.shape1.tshapes.iter().map(|ts| {
-                    Shape::new(ts.clone(), 0, Orientation::Forward)
-                }).collect()
-            )),
-            0, Orientation::Forward,
-        );
-        let arg2 = Shape::new(
-            std::sync::Arc::new(TShape::Compound(
-                self.shape2.tshapes.iter().map(|ts| {
-                    Shape::new(ts.clone(), 0, Orientation::Forward)
-                }).collect()
-            )),
-            1, Orientation::Forward,
-        );
+        // OCCT-aligned: pass root Solid/Shell directly (no Compound wrapper)
+        fn root(brep: &topods::BRep, location: u32) -> Shape {
+            for (i, ts) in brep.tshapes.iter().enumerate().rev() {
+                match &**ts {
+                    TShape::Solid(_) | TShape::Shell(_) => {
+                        return Shape::from_parts(ts.clone(), i, location, Orientation::Forward);
+                    }
+                    _ => {}
+                }
+            }
+            panic!("no root Solid/Shell in BRep");
+        }
+        let arg1 = root(&self.shape1, 0);
+        let arg2 = root(&self.shape2, 1);
 
         // Build DS (BOPDS_DS)
         let mut ds = DS::new();

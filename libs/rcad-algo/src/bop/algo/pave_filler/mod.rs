@@ -70,6 +70,8 @@ pub struct PaveFiller<'a> {
     my_fpb_done: HashMap<usize, HashSet<u64>>, // BOPAlgo_PaveFiller::myFPBDone (L650)
     my_increased_ss: HashSet<usize>,   // BOPAlgo_PaveFiller::myIncreasedSS (L651)
     my_verts_to_avoid_extension: HashSet<usize>, // BOPAlgo_PaveFiller::myVertsToAvoidExtension (L652)
+    // Debug/testing: stop after a specific stage.
+    pub stop_after: Option<&'static str>,
 }
 
 impl<'a> PaveFiller<'a> {
@@ -90,6 +92,7 @@ impl<'a> PaveFiller<'a> {
             my_fpb_done: HashMap::new(),
             my_increased_ss: HashSet::new(),
             my_verts_to_avoid_extension: HashSet::new(),
+            stop_after: None,
         }
     }
     pub fn set_arguments(&mut self, args: Vec<Shape>) {
@@ -105,44 +108,62 @@ impl<'a> PaveFiller<'a> {
     pub fn report(&self) -> &Report { &self.my_report }
     pub fn ds(&self) -> &DS { self.ds }
 
+    /// If stop_after matches stage, return true (caller should return).
+    fn check_stop(&self, stage: &'static str) -> bool {
+        self.stop_after.map_or(false, |s| s == stage)
+    }
+
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (BOPAlgo_PaveFiller.cxx L235-379).
     pub fn perform(&mut self) {
         // OCCT L247: Init
         self.init();
         if self.has_errors() { return; }
+        if self.check_stop("after_Init") { return; }
         // OCCT L258: Prepare
         self.prepare();
         if self.has_errors() { return; }
+        if self.check_stop("after_Prepare") { return; }
         self.perform_vv();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformVV") { return; }
         self.perform_ve();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformVE") { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_ee();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformEE") { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_vf();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformVF") { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_ef();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformEF") { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.update_interfs_with_sd_vertices();
         self.repeat_intersection();
         if self.has_errors() { return; }
+        if self.check_stop("after_RepeatIntersection") { return; }
         self.force_interf_ee();
         if self.has_errors() { return; }
+        if self.check_stop("after_ForceInterfEE") { return; }
         self.force_interf_ef();
         if self.has_errors() { return; }
+        if self.check_stop("after_ForceInterfEF") { return; }
         self.perform_ff();
         if self.has_errors() { return; }
+        if self.check_stop("after_PerformFF") { return; }
         self.update_blocks_with_shared_vertices();
         self.refine_face_info_in();
         self.make_split_edges();
         if self.has_errors() { return; }
+        if self.check_stop("after_MakeSplitEdges") { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.make_blocks();
         if self.has_errors() { return; }
+        if self.check_stop("after_MakeBlocks") { return; }
         self.check_self_interference();
         self.update_interfs_with_sd_vertices();
         self.ds.release_pave_blocks();
@@ -150,8 +171,10 @@ impl<'a> PaveFiller<'a> {
         self.remove_micro_edges();
         self.make_pcurves();
         if self.has_errors() { return; }
+        if self.check_stop("after_MakePCurves") { return; }
         self.process_de();
         if self.has_errors() { return; }
+        if self.check_stop("after_ProcessDE") { return; }
     }
 
     // ====================================================================
@@ -1176,10 +1199,8 @@ impl<'a> PaveFiller<'a> {
 
         // L422: myIterator->IntersectExt(anExtraInterfMap);
         // OCCT expands the pair lists to include the extra vertices.
-        // rcad: create temporary iterator and expand its pair lists.
-        {
-            let mut a_it = BOPDS_Iterator::new(self.ds, self.my_fuzzy_value);
-            a_it.intersect_ext(&an_extra);
+        if let Some(it) = &mut self.my_iterator {
+            it.intersect_ext(&an_extra);
         }
 
         // L426-430: PerformVV(aPS.Next());
@@ -1231,12 +1252,12 @@ impl<'a> PaveFiller<'a> {
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
         // L1026-1028: NCollection_IndexedDataMap<BOPDS_Pair, List<PaveBlock>> aPBMap
-        // rcad: HashMap keyed by (v_min, v_max), value = Vec<(edge_idx, local_pb_idx)>
-        let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
+        // rcad: HashMap keyed by (v_min, v_max), value = Vec<SharedPB>
+        let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<SharedPB>> =
             std::collections::HashMap::new();
         // L1030: Fence map of pave blocks
-        // rcad: HashSet of (edge_idx, local_pb_idx) — no safe pointer to use
-        let mut a_mpb_fence: std::collections::HashSet<(usize, usize)> =
+        // rcad: HashSet of PB pointer
+        let mut a_mpb_fence: std::collections::HashSet<u64> =
             std::collections::HashSet::new();
 
         for i in 0..a_nb_s {
@@ -1257,24 +1278,25 @@ impl<'a> PaveFiller<'a> {
             // L1056-1079: iterate PBs of this edge
             let ei = i;
             let a_lpb = self.ds.edge_pave_blocks(ei);
-            for local_i in 0..a_lpb.len() {
-                // L1060-1061: get real PaveBlock — rcad: no CommonBlock indirection here
-                let a_pbr_key = (ei, local_i);
+            for a_pb in a_lpb {
+                // L1060-1061: RealPaveBlock — resolve through CommonBlock
+                let a_pbr = self.ds.real_pave_block(a_pb);
                 // L1062-1065: fence map — skip if already processed
-                if !a_mpb_fence.insert(a_pbr_key) {
+                let ptr = std::sync::Arc::as_ptr(&a_pbr.0) as u64;
+                if !a_mpb_fence.insert(ptr) {
                     continue;
                 }
 
                 // L1068-1069: get vertex indices
                 let (n_v1, n_v2) = {
-                    let pbr = a_lpb[local_i].0.read().unwrap();
+                    let pbr = a_pbr.0.read().unwrap();
                     (pbr.pave1.vertex_idx, pbr.pave2.vertex_idx)
                 };
 
                 // L1072-1078: add PB to map keyed by vertex pair
                 // OCCT: BOPDS_Pair aPair(nV1, nV2);
                 let a_pair = if n_v1 <= n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-                a_pb_map.entry(a_pair).or_default().push(a_pbr_key);
+                a_pb_map.entry(a_pair).or_default().push(a_pbr.clone());
             }
         }
 
@@ -1289,13 +1311,11 @@ impl<'a> PaveFiller<'a> {
         // L1090-1225: Prepare pairs for intersection
         // L1091: BOPAlgo_VectorOfEdgeEdge aVEdgeEdge;
         struct EEPair {
-            ei1: usize,
-            pb1_local: usize,
+            a_pb1: SharedPB,
+            a_pb2: SharedPB,
             n_e1: usize,
-            pb1_range: (f64, f64),
-            ei2: usize,
-            pb2_local: usize,
             n_e2: usize,
+            pb1_range: (f64, f64),
             pb2_range: (f64, f64),
             fuzzy_value: f64,
         }
@@ -1324,9 +1344,8 @@ impl<'a> PaveFiller<'a> {
 
             // L1121-1224: iterate all unique pairs from the list
             for p1_idx in 0..a_lpb.len() {
-                let (ei1, pb1_local) = a_lpb[p1_idx];
+                let a_pb1 = a_lpb[p1_idx].clone();
                 // L1125-1126: get CommonBlock status
-                let a_pb1 = self.ds.edge_pave_blocks(ei1)[pb1_local].clone();
                 let cb1_idx = self.ds.common_block(&a_pb1);
                 let (n_e1, i_r1) = {
                     let pbr = a_pb1.0.read().unwrap();
@@ -1360,8 +1379,7 @@ impl<'a> PaveFiller<'a> {
 
                 // L1141 onwards: iterate second PB for each pair
                 for p2_idx in (p1_idx + 1)..a_lpb.len() {
-                    let (ei2, pb2_local) = a_lpb[p2_idx];
-                    let a_pb2 = self.ds.edge_pave_blocks(ei2)[pb2_local].clone();
+                    let a_pb2 = a_lpb[p2_idx].clone();
                     let cb2_idx = self.ds.common_block(&a_pb2);
                     let (n_e2, i_r2) = {
                         let pbr = a_pb2.0.read().unwrap();
@@ -1424,9 +1442,10 @@ impl<'a> PaveFiller<'a> {
                         self.my_fuzzy_value
                     };
                     edge_edge_pairs.push(EEPair {
-                        ei1, pb1_local, n_e1,
+                        a_pb1: a_pb1.clone(),
+                        a_pb2: a_pb2.clone(),
+                        n_e1, n_e2,
                         pb1_range: (a_t11, a_t12),
-                        ei2, pb2_local, n_e2,
                         pb2_range: (a_t21, a_t22),
                         fuzzy_value: fuzzy_val,
                     });
@@ -1449,8 +1468,8 @@ impl<'a> PaveFiller<'a> {
 
         for pair in &edge_edge_pairs {
             // L1264-1290: intersect edges
-            let pb1 = self.ds.edge_pave_blocks(pair.ei1)[pair.pb1_local].clone();
-            let pb2 = self.ds.edge_pave_blocks(pair.ei2)[pair.pb2_local].clone();
+            let pb1 = pair.a_pb1.clone();
+            let pb2 = pair.a_pb2.clone();
 
             let c1 = self.ds.edge_curve(pair.n_e1).cloned();
             let c2 = self.ds.edge_curve(pair.n_e2).cloned();
@@ -1512,11 +1531,112 @@ impl<'a> PaveFiller<'a> {
             cb_pairs.push((pb1, pb2));
         }
 
-        // L1332: BOPAlgo_Tools::PerformCommonBlocks(aMPBLPB, anAlloc, myDS)
-        // OCCT creates a CommonBlock for each unique pair in the map.
-        // rcad: create a CommonBlock for each collected PB pair.
-        for (pb1, pb2) in &cb_pairs {
-            self.ds.add_common_block(&[pb1.clone(), pb2.clone()]);
+        // L1312-1332: BOPAlgo_Tools::PerformCommonBlocks(aMPBLPB, anAlloc, myDS)
+        // OCCT builds a connection graph via FillMap and expands through existing
+        // CommonBlocks, then groups all connected PBs into merged CommonBlocks.
+        // rcad: collect all PBs, expanding from existing CommonBlocks, then
+        // create a merged CommonBlock for each connected group.
+        {
+            // OCCT: NCollection_IndexedDataMap<PB, List<PB>> aMPBLPB
+            // rcad: adjacency list for PB groups via pointer identity
+            type PBKey = u64;
+            let mut adj: std::collections::HashMap<PBKey, std::collections::HashSet<PBKey>> =
+                std::collections::HashMap::new();
+
+            // Helper to get or create adjacency entry
+            let mut add_edge = |a: PBKey, b: PBKey| {
+                adj.entry(a).or_default().insert(b);
+                adj.entry(b).or_default().insert(a);
+            };
+
+            // OCCT L1312-1327: expand through existing CommonBlocks
+            for (pb1, pb2) in &cb_pairs {
+                let pbs = [pb1.clone(), pb2.clone()];
+                for pb in &pbs {
+                    let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+                    // If this PB is in a CommonBlock, connect it to ALL PBs in that CB
+                    let cb_idx = pb.0.read().unwrap().common_block_idx;
+                    if let Some(cb_idx) = cb_idx {
+                        if cb_idx < self.ds.common_blocks.len() {
+                            for &(pool_idx, _face_idx) in self.ds.common_blocks[cb_idx].pave_blocks() {
+                                if pool_idx < self.ds.pave_blocks_pool.len() {
+                                    for pool_pb in &self.ds.pave_blocks_pool[pool_idx] {
+                                        let other_ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
+                                        if other_ptr != ptr {
+                                            add_edge(ptr, other_ptr);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // OCCT L1329: FillMap(aPB[0], aPB[1])
+                let ptr1 = std::sync::Arc::as_ptr(&pb1.0) as u64;
+                let ptr2 = std::sync::Arc::as_ptr(&pb2.0) as u64;
+                if ptr1 != ptr2 {
+                    add_edge(ptr1, ptr2);
+                }
+            }
+
+            // OCCT L122-123: MakeBlocks — group connected PBs via graph traversal
+            let mut visited: std::collections::HashSet<PBKey> = std::collections::HashSet::new();
+            let mut groups: Vec<Vec<SharedPB>> = Vec::new();
+
+            // Build PB lookup: ptr → SharedPB
+            let mut ptr_to_pb: std::collections::HashMap<PBKey, SharedPB> = std::collections::HashMap::new();
+            for (pb1, pb2) in &cb_pairs {
+                for pb in [pb1.clone(), pb2.clone()] {
+                    let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+                    ptr_to_pb.entry(ptr).or_insert(pb);
+                }
+            }
+            // Also add PBs from existing CommonBlocks
+            for (pb1, pb2) in &cb_pairs {
+                for pb in [pb1, pb2] {
+                    let cb_idx = pb.0.read().unwrap().common_block_idx;
+                    if let Some(cb_idx) = cb_idx {
+                        if cb_idx < self.ds.common_blocks.len() {
+                            for &(pool_idx, _) in self.ds.common_blocks[cb_idx].pave_blocks() {
+                                if pool_idx < self.ds.pave_blocks_pool.len() {
+                                    for pool_pb in &self.ds.pave_blocks_pool[pool_idx] {
+                                        let ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
+                                        ptr_to_pb.entry(ptr).or_insert(pool_pb.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // DFS to find connected groups
+            for &start in adj.keys() {
+                if visited.contains(&start) { continue; }
+                let mut group: Vec<SharedPB> = Vec::new();
+                let mut stack = vec![start];
+                while let Some(node) = stack.pop() {
+                    if !visited.insert(node) { continue; }
+                    if let Some(pb) = ptr_to_pb.get(&node) {
+                        group.push(pb.clone());
+                    }
+                    if let Some(neighbors) = adj.get(&node) {
+                        for &n in neighbors {
+                            if !visited.contains(&n) {
+                                stack.push(n);
+                            }
+                        }
+                    }
+                }
+                if group.len() >= 2 {
+                    groups.push(group);
+                }
+            }
+
+            // OCCT L130-185: create CommonBlock for each group
+            for group in &groups {
+                self.ds.add_common_block(group);
+            }
         }
     }
 
@@ -1583,7 +1703,7 @@ impl<'a> PaveFiller<'a> {
 
         // L882-1107: For each face, find overlapping PBs and check
         let a_nb_s = self.ds.nb_source_shapes();
-        let mut ef_pairs: Vec<(usize, usize)> = Vec::new();
+        let mut ef_pairs: Vec<(usize, usize, usize)> = Vec::new();
 
         for n_f in 0..a_nb_s {
             if self.ds.shapes[n_f].shape_type != ShapeType::Face {
@@ -1736,15 +1856,20 @@ impl<'a> PaveFiller<'a> {
                 } else { continue; };
 
                 // OCCT L1038-1051: angle between face-to-edge vector and edge tangent
-                // OCCT: aVFNorm(aPOnS, aPOnE) — vector from projected midpoint to edge midpoint
+                // OCCT: if (aSurfAdaptor.GetType() != GeomAbs_Plane || aBAC.GetType() != GeomAbs_Line)
+                // rcad: skip angle check when face is Plane AND edge is Line
                 let mut b_use_add_tol = true;
                 {
-                    let a_vf_norm = mid_pt - proj_pt;
-                    if a_vf_norm.length_squared() > 1e-7 {
-                        // OCCT L1046-1047: if (|aCos| > 0.4226) bUseAddTol = false
-                        let a_cos = a_vf_norm.normalize().dot(v_etgt.normalize()).abs();
-                        if a_cos > 0.4226 {
-                            b_use_add_tol = false;
+                    let surf_is_plane = self.ds.face_surface(n_f).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Plane(_)));
+                    let curve_is_line = matches!(curve, rcad_kernel::geom::Curve3::Line(_));
+                    if !(surf_is_plane && curve_is_line) {
+                        let a_vf_norm = mid_pt - proj_pt;
+                        if a_vf_norm.length_squared() > 1e-7 {
+                            // OCCT L1046-1047: if (|aCos| > 0.4226) bUseAddTol = false
+                            let a_cos = a_vf_norm.normalize().dot(v_etgt.normalize()).abs();
+                            if a_cos > 0.4226 {
+                                b_use_add_tol = false;
+                            }
                         }
                     }
                 }
@@ -1762,15 +1887,47 @@ impl<'a> PaveFiller<'a> {
                             }
                         }
                     }
+                    // OCCT L1077-1084: subtract edge and face tolerance
+                    if a_tol_add_ef > 0.0 {
+                        let tol_e = self.ds.edge_tolerance(n_e_actual);
+                        let tol_f = self.ds.face_tolerance(n_f);
+                        a_tol_add_ef -= (tol_e + tol_f);
+                        if a_tol_add_ef < 0.0 {
+                            a_tol_add_ef = 0.0;
+                        }
+                    }
                 }
 
-                // OCCT L1086-1092: bIntersect = aTolAdd > 0
-                if a_tol_add_ef <= 0.0 {
+                // OCCT L1087-1092: bIntersect = aTolAdd > 0, with myFPBDone fallback
+                let mut b_intersect = a_tol_add_ef > 0.0;
+                if !b_intersect {
+                    if let Some(pmpb) = self.my_fpb_done.get(&n_f) {
+                        let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
+                        b_intersect = !pmpb.contains(&ptr);
+                    } else {
+                        b_intersect = true;
+                    }
+                }
+                if !b_intersect {
                     continue;
                 }
 
-                // L1094-1106: add pair
-                ef_pairs.push((n_e_actual, n_f));
+                // L1094-1106: add pair with pool index
+                let pb_pool_idx = {
+                    let ptr = std::sync::Arc::as_ptr(&a_pb.0);
+                    let mut found = usize::MAX;
+                    for (pi, pool) in self.ds.pave_blocks_pool.iter().enumerate() {
+                        for spb in pool {
+                            if std::sync::Arc::as_ptr(&spb.0) == ptr {
+                                found = pi;
+                                break;
+                            }
+                        }
+                        if found != usize::MAX { break; }
+                    }
+                    found
+                };
+                ef_pairs.push((n_e_actual, n_f, pb_pool_idx));
             }
         }
 
@@ -1785,7 +1942,11 @@ impl<'a> PaveFiller<'a> {
         // distance check are accepted directly.
 
         // L1141-1192: Analyze results — OCCT filters for TopAbs_EDGE type.
-        for &(n_e, n_f) in &ef_pairs {
+        // OCCT L1194-1197: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
+        // rcad: map PB→face indices for CommonBlock creation
+        let mut a_mpbli: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+
+        for &(n_e, n_f, pb_pool_idx) in &ef_pairs {
             if the_add_interf {
                 // L1175-1181: BOPDS_InterfEF aEF = aEFs.Appended();
                 let curve = match self.ds.edge_curve(n_e) {
@@ -1807,15 +1968,55 @@ impl<'a> PaveFiller<'a> {
             }
 
             // L1184-1186: myDS->ChangeFaceInfo(nF).ChangePaveBlocksIn().Add(aPB);
-            // rcad: PB pool-index lookup from ef_pairs not stored — requires
-            // extending ef_pairs to carry the local pool index.
+            if pb_pool_idx < self.ds.pave_blocks_pool.len() {
+                self.ds.change_face_info(n_f).pave_blocks_in.insert(pb_pool_idx);
+                // Record PB→face mapping for CommonBlock creation
+                for pb in &self.ds.pave_blocks_pool[pb_pool_idx] {
+                    let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+                    a_mpbli.entry(ptr).or_default().push(n_f);
+                }
+            }
         }
 
         // L1194-1198: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
-        // rcad: add_common_block on DS exists and is used by ForceInterfEE.
-        // Here, the collected PB→face mappings needed for the map are not
-        // propagated through ef_pairs. Extending ef_pairs to carry pool indices
-        // would enable CommonBlock creation.
+        // Create CommonBlocks for each PB→face association (OCCT overload 2)
+        for (ptr, faces) in &a_mpbli {
+            // Find the SharedPB from its pointer
+            let mut pb_found: Option<SharedPB> = None;
+            'outer: for pool in &self.ds.pave_blocks_pool {
+                for spb in pool {
+                    if std::sync::Arc::as_ptr(&spb.0) as u64 == *ptr {
+                        pb_found = Some(spb.clone());
+                        break 'outer;
+                    }
+                }
+            }
+            if let Some(pb) = pb_found {
+                // Check if PB is already in a CommonBlock → reuse (OCCT L206-208)
+                let cb_idx = pb.0.read().unwrap().common_block_idx;
+                if let Some(cb_idx) = cb_idx {
+                    if cb_idx < self.ds.common_blocks.len() {
+                        self.ds.common_blocks[cb_idx].append_faces(faces);
+                    }
+                } else {
+                    // Create new CommonBlock with PB and set faces (OCCT L211-214, 238)
+                    // add_common_block creates CB with pool_idx, need to set faces
+                    let pi = self.ds.pave_blocks_pool.iter().position(|pool| {
+                        pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == *ptr)
+                    }).unwrap_or(usize::MAX);
+                    if pi != usize::MAX {
+                        let mut a_cb = crate::bop::ds::common_block::CommonBlock::new();
+                        a_cb.add_pave_block(pi, 0); // OCCT: AddPaveBlock(aPB), face_idx is 0 placeholder
+                        for &f in faces {
+                            a_cb.add_face(f);
+                        }
+                        // Set common_block_idx on the PB
+                        pb.0.write().unwrap().common_block_idx = Some(self.ds.common_blocks.len());
+                        self.ds.common_blocks.push(a_cb);
+                    }
+                }
+            }
+        }
     }
 
     // ====================================================================
