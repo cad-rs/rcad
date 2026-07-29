@@ -1,12 +1,11 @@
 // OCCT TKTopAlgo — Topological Algorithms.
 //
 // OCCT: TKTopAlgo toolkit — topological algorithms belonging
-// to TKTopAlgo layer: BRepClass3d, BRepExtrema, BRepBndLib, etc.
-// Does NOT include BRepAdaptor (that's in TKBRep → rcad-brep).
+// to TKTopAlgo layer: BRepClass3d, BRepClass, BRepExtrema, BRepBndLib, etc.
 
-pub mod bnd_lib;
-pub mod class3d;
-pub mod class_face_explorer;
-pub mod extrema;
-pub mod int_curve_surface;
-pub mod lib;
+pub mod brep_bnd_lib;       // BRepBndLib
+pub mod brep_class;         // BRepClass (FaceExplorer, Edge, FClassifier)
+pub mod brep_class3d;       // BRepClass3d
+pub mod brep_extrema;       // BRepExtrema
+pub mod brep_int_curve_surface; // BRepIntCurveSurface
+pub mod brep_lib;           // BRepLib

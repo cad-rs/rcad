@@ -2,7 +2,7 @@
 // 3D intersection of a line segment with a face.
 
 use glam::DVec3;
-use crate::topalgo::int_curve_surface::inter::TransitionOnCurve;
+use crate::topalgo::brep_int_curve_surface::inter::TransitionOnCurve;
 
 /// OCCT BRepClass3d_Intersector3d — intersects a line segment with a face.
 pub struct Intersector3d {
@@ -30,7 +30,7 @@ impl Intersector3d {
     /// OCCT: Perform(L, Prm, Tol, F) — intersect line L with face F.
     ///
     /// OCCT L29-146: uses IntCurveSurface_HInter + BRepClass_FaceClassifier.
-    /// rcad: delegates to IntCurvesFace_Intersector (topalgo::int_curve_surface)
+    /// rcad: delegates to IntCurvesFace_Intersector (topalgo::brep_int_curve_surface)
     /// which uses rcad-kernel::IntCS for curve-surface intersection.
     pub fn perform(&mut self, line_origin: DVec3, line_dir: DVec3,
                    _prm: f64, _tol: f64,
@@ -41,8 +41,8 @@ impl Intersector3d {
             rcad_kernel::geom::Line3 { origin: line_origin, direction: line_dir });
 
         // OCCT: BRepIntCurveSurface_Inter intersects curve with face
-        // rcad: use BRepIntCurveSurface_Inter via topalgo::int_curve_surface::inter
-        let mut brep_inter = crate::topalgo::int_curve_surface::inter::Inter::new();
+        // rcad: use BRepIntCurveSurface_Inter via topalgo::brep_int_curve_surface::inter
+        let mut brep_inter = crate::topalgo::brep_int_curve_surface::inter::Inter::new();
         // rcad: use Init + Init curve approach
         let (_u_min, _u_max, _v_min, _v_max) = (0.0, 1.0, 0.0, 1.0);
         brep_inter.init_curve(&line_curve, face_surface, 0.0, 1.0, 0.0, 1.0);
