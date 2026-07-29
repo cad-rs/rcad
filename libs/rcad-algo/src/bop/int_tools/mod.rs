@@ -9,3 +9,4 @@ pub mod pnt_on_2_faces;
 pub mod edge_edge;
 pub mod edge_face;
 pub mod face_face;
+pub mod context;

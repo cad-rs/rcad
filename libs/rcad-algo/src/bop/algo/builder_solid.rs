@@ -6,6 +6,7 @@
 use crate::bop::algo::Report;
 use crate::bop::ds::DS;
 use crate::bop::algo::shell_splitter::make_connexity_blocks_from_shapes;
+use crate::bop::int_tools::context::IntToolsContext;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{
     TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags,
@@ -17,14 +18,14 @@ use std::sync::Arc;
 pub struct BuilderSolid<'a> {
     ds: &'a DS,
     my_report: Report,
-    /// Input faces (OCCT: myShapes)
-    pub my_shapes: Vec<Shape>,
-    /// Resulting solids
-    pub my_solids: Vec<Shape>,
-    /// Faces with free edges (OCCT: myShapesToAvoid)
-    my_shapes_to_avoid: HashSet<u64>,
-    /// Connected shells (OCCT: myLoops)
-    my_loops: Vec<Vec<Shape>>,
+    // BOPAlgo_Algo (inherited)
+    my_run_parallel: bool,
+    my_context: IntToolsContext,         // OCCT: myContext
+    // BOPAlgo_BuilderSolid
+    pub my_shapes: Vec<Shape>,          // OCCT: myShapes
+    pub my_solids: Vec<Shape>,          // OCCT: mySolids
+    my_shapes_to_avoid: HashSet<u64>,   // OCCT: myShapesToAvoid
+    my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
 }
 
 impl<'a> BuilderSolid<'a> {
@@ -32,6 +33,8 @@ impl<'a> BuilderSolid<'a> {
         BuilderSolid {
             ds,
             my_report: Report::new(),
+            my_run_parallel: false,
+            my_context: IntToolsContext::new(),
             my_shapes: Vec::new(),
             my_solids: Vec::new(),
             my_shapes_to_avoid: HashSet::new(),
@@ -59,21 +62,33 @@ impl<'a> BuilderSolid<'a> {
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
-    /// OCCT BOPAlgo_BuilderSolid::PerformShapesToAvoid (L129+).
+    /// OCCT BOPAlgo_BuilderSolid::PerformShapesToAvoid (BuilderSolid.cxx L129-220).
     fn perform_shapes_to_avoid(&mut self) {
-        let mut edge_to_faces: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (fi, face) in self.my_shapes.iter().enumerate() {
-            for eptr in face_edge_ptrs(face) {
-                edge_to_faces.entry(eptr).or_default().push(fi);
+        // OCCT L138: myShapesToAvoid.Clear()
+        self.my_shapes_to_avoid.clear();
+        // OCCT L142-218: iterative — remove faces with free edges, repeat
+        loop {
+            // OCCT L151-158: build edge→[faces] map for non-avoided faces
+            let mut a_mef: HashMap<u64, Vec<usize>> = HashMap::new();
+            for (fi, face) in self.my_shapes.iter().enumerate() {
+                if self.my_shapes_to_avoid.contains(&face.ptr_id()) { continue; }
+                for eptr in face_edge_ptrs(face) {
+                    a_mef.entry(eptr).or_default().push(fi);
+                }
             }
-        }
-        for (fi, face) in self.my_shapes.iter().enumerate() {
-            let has_free = face_edge_ptrs(face).iter().any(|eptr| {
-                edge_to_faces.get(eptr).map_or(true, |v| v.len() == 1)
-            });
-            if has_free {
-                self.my_shapes_to_avoid.insert(face.ptr_id());
+            // OCCT L162-180: find faces with edges used only once
+            let mut b_found = false;
+            for face in &self.my_shapes {
+                if self.my_shapes_to_avoid.contains(&face.ptr_id()) { continue; }
+                let has_free = face_edge_ptrs(face).iter().any(|eptr| {
+                    a_mef.get(eptr).map_or(true, |v| v.len() == 1)
+                });
+                if has_free {
+                    self.my_shapes_to_avoid.insert(face.ptr_id());
+                    b_found = true;
+                }
             }
+            if !b_found { break; }
         }
     }
 
@@ -158,24 +173,16 @@ impl<'a> BuilderSolid<'a> {
         self.my_solids = new_solids;
     }
 
-    /// OCCT IsGrowthShell / IsHole — check if a shell is a hole.
+    /// OCCT BOPAlgo_BuilderSolid::IsGrowthShell (BuilderSolid.cxx L864+).
+    /// Checks if shell is a growth (outer) shell or a hole (inner) shell.
     fn is_hole_shell(&self, faces: &[Shape], hole_face_ptrs: &HashSet<u64>) -> bool {
-        // OCCT L422: check if any face matches hole face marker
+        // OCCT L870: if any face matches hole face marker, it's a hole
         if faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
             return true;
         }
-        // OCCT L425-426: check if shell bounds empty space
-        // Simplified: a shell is a hole if it has free boundary edges
-        let mut edge_count: HashMap<u64, usize> = HashMap::new();
-        for face in faces {
-            for eptr in face_edge_ptrs(face) {
-                *edge_count.entry(eptr).or_default() += 1;
-            }
-        }
-        let free_edge_ratio = if edge_count.is_empty() { 0.0 } else {
-            edge_count.values().filter(|&&c| c == 1).count() as f64 / edge_count.len() as f64
-        };
-        free_edge_ratio > 0.3
+        // OCCT L873-890: if no hole marker, classify point on shell
+        // OCCT: BRepClass3d_SolidClassifier. rcad: no solid classifier — assume growth.
+        false
     }
 
     /// Build a Shell TShape from a set of faces.
@@ -202,7 +209,8 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT BOPAlgo_BuilderSolid::PerformInternalShapes.
     fn perform_internal_shapes(&mut self) {
-        // OCCT: adds internal shells. Stub.
+        // OCCT BOPAlgo_BuilderSolid::PerformInternalShapes (BuilderSolid.cxx L602-660).
+        // rcad: BRepClass3d_SolidClassifier not translated — internal shapes pending.
     }
 }
 

@@ -802,6 +802,29 @@ impl DS {
     pub fn real_pave_block<'a>(&self, pb: &'a SharedPB) -> &'a SharedPB { pb }
     pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool { self.common_block(pb).is_some() }
 
+    /// OCCT BOPDS_DS::AddCommonBlock.
+    /// Creates a new CommonBlock containing `the_pbs` and associates all PBs with it.
+    pub fn add_common_block(&mut self, the_pbs: &[SharedPB]) -> usize {
+        let mut a_cb = CommonBlock::new();
+        for pb in the_pbs {
+            let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+            let pool_idx = self.pave_blocks_pool.iter().position(|pool| {
+                pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == ptr)
+            }).unwrap_or(usize::MAX);
+            if pool_idx != usize::MAX {
+                a_cb.add_pave_block(pool_idx, 0); // face_idx = 0 placeholder
+                pb.0.write().unwrap().common_block_idx = Some(self.common_blocks.len());
+            }
+        }
+        let cb_idx = self.common_blocks.len();
+        self.common_blocks.push(a_cb);
+        for pb in the_pbs {
+            let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+            self.map_pb_cb.insert(ptr, cb_idx);
+        }
+        cb_idx
+    }
+
     // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?    // Face info pool
     // ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ￠︽ュ?
     pub fn face_info_pool(&self) -> &[FaceInfo] { &self.face_info_pool }

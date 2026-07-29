@@ -55,6 +55,18 @@ pub enum Alert {
     BOPNotSet,
     EmptyShape,
     IntersectionFailed(usize, usize),
+    /// BOPAlgo_AlertSelfInterferingShape ?vertex/edge from same argument
+    /// with unexpected interference.
+    SelfInterferingShape(Vec<usize>),
+    /// BOPAlgo_AlertAcquiredSelfIntersection ?acquired self-intersection
+    /// detected during CheckSelfInterference.
+    AcquiredSelfIntersection(Vec<usize>),
+    /// BOPAlgo_AlertTooSmallEdge ?edge range too small for splitting.
+    TooSmallEdge(usize),
+    /// BOPAlgo_AlertNotSplittableEdge (stub).
+    NotSplittableEdge(usize),
+    /// BOPAlgo_AlertBadPositioning (stub).
+    BadPositioning(Vec<usize>),
 }
 
 // ===
@@ -69,6 +81,7 @@ impl Report {
     pub fn new() -> Self { Report { alerts: Vec::new(), has_errors: false } }
     pub fn add_alert(&mut self, a: Alert) { self.alerts.push(a); }
     pub fn add_error(&mut self, a: Alert) { self.alerts.push(a); self.has_errors = true; }
+    pub fn add_warning(&mut self, a: Alert) { self.alerts.push(a); }
     pub fn has_errors(&self) -> bool { self.has_errors }
     pub fn errors(&self) -> &[Alert] { &self.alerts }
     pub fn clear(&mut self) { self.alerts.clear(); self.has_errors = false; }
