@@ -1505,12 +1505,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L128-137: Perform + AnalyzeShrunkData (serial)
         for sr in &mut a_vsd {
             sr.perform(&self.ds);
-            self.analyze_shrunk_data(sr.pave_block(), sr);
+            let n_e = { let r = sr.pave_block().0.read().unwrap(); r.original_edge };
+            let a_e_range = self.ds.shapes[n_e].shape.as_edge()
+                .map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+            self.analyze_shrunk_data(sr.pave_block(), sr, n_e, a_e_range);
         }
     }
 
-    /// OCCT BOPAlgo_PaveFiller::FillShrunkData(handle<PaveBlock>&) (PaveFiller_3.cxx L727-762).
-    fn fill_shrunk_data_pb(&self, the_pb: &SharedPB) {
+    // OCCT BOPAlgo_PaveFiller::FillShrunkData(handle<PaveBlock>&) (PaveFiller_3.cxx L727-762).
+    fn fill_shrunk_data_pb(&mut self, the_pb: &SharedPB) {
         let (n_v1, n_v2) = {
             let pbr = the_pb.0.read().unwrap();
             (pbr.pave1.vertex_idx, pbr.pave2.vertex_idx)
@@ -1522,21 +1525,58 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         };
         if n_e >= self.ds.nb_shapes() { return; }
         let (a_t1, a_t2) = { let pbr = the_pb.0.read().unwrap(); pbr.range() };
-        // OCCT: IntTools_ShrunkRange aSR; aSR.SetData(aE, aT1, aT2, aV1, aV2);
-        //       aSR.Perform(); AnalyzeShrunkData(thePB, aSR);
         let mut sr = ShrunkRange::new(the_pb, n_v1, n_v2, a_t1, a_t2);
         sr.perform(&self.ds);
-        self.analyze_shrunk_data(the_pb, &sr);
+        let a_e_range = self.ds.shapes[n_e].shape.as_edge()
+            .map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+        self.analyze_shrunk_data(the_pb, &sr, n_e, a_e_range);
     }
 
     /// OCCT BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
-    fn analyze_shrunk_data(&self, the_pb: &SharedPB, the_sr: &ShrunkRange) {
-        let (a_ts1, a_ts2) = the_sr.shrunk_range();
+    // OCCT BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).
+    fn analyze_shrunk_data(
+        &mut self, the_pb: &SharedPB, the_sr: &ShrunkRange,
+        n_e: usize, a_e_range: [f64; 2], // edge index + full curve range (from fill_shrunk_data)
+    ) {
+        // OCCT L770-771: bool bWholeEdge = false; TopoDS_Shape aWarnShape;
+        let mut b_whole_edge = false;
+
+        // OCCT L773: if (!theSR.IsDone() || !theSR.IsSplittable())
         if !the_sr.is_done() || !the_sr.is_splittable() {
-            let mut pbr = the_pb.0.write().unwrap();
-            pbr.set_shrunk_data(a_ts1, a_ts2, false);
-            return;
+            // OCCT L776-777: BRep_Tool::Range(edge, aEFirst, aELast); thePB->Range(aPBFirst, aPBLast);
+            let (a_e_first, a_e_last) = (a_e_range[0], a_e_range[1]);
+            let (a_pb_first, a_pb_last) = { let r = the_pb.0.read().unwrap(); r.range() };
+            // OCCT L778: bWholeEdge = aPBFirst <= aEFirst && aPBLast >= aELast;
+            b_whole_edge = a_pb_first <= a_e_first && a_pb_last >= a_e_last;
+
+            // OCCT L779-791: warning shape — rcad skips compound build (no TopoDS)
+
+            // OCCT L793-807: if (!theSR.IsDone())
+            if !the_sr.is_done() {
+                // OCCT L797-801: AddWarning (TooSmallEdge or BadPositioning)
+                if b_whole_edge {
+                    self.my_report.add_warning(Alert::TooSmallEdge(n_e));
+                } else {
+                    self.my_report.add_warning(Alert::BadPositioning(vec![n_e]));
+                }
+                // OCCT L804-806: thePB->SetShrunkData(aTS1, aTS2, Bnd_Box(), false);
+                let (a_ts1, a_ts2) = the_sr.shrunk_range();
+                let mut pbr = the_pb.0.write().unwrap();
+                pbr.set_shrunk_data(a_ts1, a_ts2, false);
+                return;
+            }
+            // OCCT L809-816: AddWarning (NotSplittableEdge or BadPositioning)
+            if b_whole_edge {
+                self.my_report.add_warning(Alert::NotSplittableEdge(n_e));
+            } else {
+                self.my_report.add_warning(Alert::BadPositioning(vec![n_e]));
+            }
         }
+
+        // OCCT L819-823: set shrunk data with box + fuzzy/2 gap
+        let (a_ts1, a_ts2) = the_sr.shrunk_range();
+        // OCCT: Bnd_Box aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
+        // rcad: PaveBlock::set_shrunk_data doesn't take BndBox — structural diff.
         let mut pbr = the_pb.0.write().unwrap();
         pbr.set_shrunk_data(a_ts1, a_ts2, the_sr.is_splittable());
     }
