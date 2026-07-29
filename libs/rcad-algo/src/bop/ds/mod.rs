@@ -816,20 +816,9 @@ impl DS {
         };
         let v1_brep_idx = self.shapes[v1_ds_idx].shape.index;
         let v2_brep_idx = self.shapes[v2_ds_idx].shape.index;
-        let p1 = ed.vertex_params.get(&v1_brep_idx).copied();
-        let p2 = ed.vertex_params.get(&v2_brep_idx).copied();
-        if p1.is_some() && p2.is_some() { return (p1.unwrap(), p2.unwrap()); }
-        // OCCT BRep_Tool::Parameter computes vertex param from curve.
-        // rcad: fallback — compute by projecting vertex onto curve.
-        if let Some(curve) = &ed.curve {
-            let v1_pt = self.vertex_point_by_idx(v1_ds_idx);
-            let v2_pt = self.vertex_point_by_idx(v2_ds_idx);
-            let rng = ed.range;
-            let t1 = find_closest_param_on_curve(curve, v1_pt, rng[0], rng[1]);
-            let t2 = find_closest_param_on_curve(curve, v2_pt, rng[0], rng[1]);
-            return (t1, t2);
-        }
-        (0.0, 0.0)
+        // OCCT: BRep_Tool::Parameter reads stored param (set during edge construction).
+        (ed.vertex_params.get(&v1_brep_idx).copied().unwrap_or(0.0),
+         ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
     }
 
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Common block map
@@ -1808,18 +1797,6 @@ fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
 }
 
 impl Default for DS { fn default() -> Self { Self::new() } }
-
-// OCCT BRep_Tool::Parameter — compute vertex param on curve by projection.
-fn find_closest_param_on_curve(curve: &rcad_kernel::geom::Curve3, pt: DVec3, u1: f64, u2: f64) -> f64 {
-    use rcad_kernel::CurveEval;
-    let mut best_t = u1;
-    let mut best_dist = (curve.point_at(u1) - pt).length_squared();
-    for &t in &[u2, (u1 + u2) * 0.5] {
-        let d = (curve.point_at(t) - pt).length_squared();
-        if d < best_dist { best_dist = d; best_t = t; }
-    }
-    best_t
-}
 
 
 

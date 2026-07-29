@@ -320,6 +320,27 @@ impl BRep {
             return sr.clone();
         }
         let index = self.tshapes.len();
+        // OCCT: BRep_Tool::Parameter stores vertex→param mapping on edge creation.
+        // Compute by matching vertex positions to curve range endpoints.
+        let vertex_params = {
+            let mut vp = HashMap::new();
+            if let Some(ref c) = curve {
+                use crate::geom::CurveEval;
+                let p0 = c.point_at(range[0]);
+                let p1 = c.point_at(range[1]);
+                if let Some(vd) = first.as_vertex() {
+                    let d0 = (p0 - vd.point).length_squared();
+                    let d1 = (p1 - vd.point).length_squared();
+                    vp.insert(first.index, if d0 <= d1 { range[0] } else { range[1] });
+                }
+                if let Some(vd) = last.as_vertex() {
+                    let d0 = (p0 - vd.point).length_squared();
+                    let d1 = (p1 - vd.point).length_squared();
+                    vp.insert(last.index, if d0 <= d1 { range[0] } else { range[1] });
+                }
+            }
+            vp
+        };
         let tshape = Arc::new(TShape::Edge(TEdgeData {
             my_shapes: vec![first.clone(), last.clone()],
             flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
@@ -330,7 +351,7 @@ impl BRep {
             degenerated: false,
             pcurves: HashMap::new(),
             representations: Vec::new(),
-            vertex_params: HashMap::new(),
+            vertex_params,
             tolerance: CONFUSION,
             same_parameter: true,
             same_range: true,
