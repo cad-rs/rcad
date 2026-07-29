@@ -741,7 +741,8 @@ impl<'a> BooleanBuilder<'a> {
                 // Compute face centroid for classification
                 let centroid = Self::face_centroid(a_f);
                 // OCCT L201: BOPAlgo_Tools::ClassifyFaces → uses point-in-solid test
-                if self.my_context.solid_classifier_is_inside(self.ds, i, centroid) {
+                let state = self.my_context.solid_classifier_perform(self.ds, i, centroid, 1e-7);
+                if state == 3 { // IN
                     a_l_in_faces.push(a_f.clone());
                 }
             }
