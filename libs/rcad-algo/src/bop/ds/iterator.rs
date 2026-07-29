@@ -96,29 +96,44 @@ impl<'a> BOPDS_Iterator<'a> {
     }
 
     // OCCT BOPDS_Iterator::Intersect (BOPDS_Iterator.cxx L270-359).
-    // Enumerates pairs of shapes with overlapping bounding boxes.
-    // OCCT uses BVH (BOPTools_BoxTree); rcad uses brute-force AABB check.
+    // OCCT: BVH-based pair selection + range-based cross-argument pairing.
+    // rcad: brute-force AABB + same range-based filtering (equivalent for correctness).
     fn intersect(&mut self) {
-        let n = self.ds.nb_source_shapes();
-        let t_combos = [
-            (ShapeType::Vertex, ShapeType::Vertex),
-            (ShapeType::Vertex, ShapeType::Edge),
-            (ShapeType::Edge, ShapeType::Edge),
-            (ShapeType::Vertex, ShapeType::Face),
-            (ShapeType::Edge, ShapeType::Face),
-            (ShapeType::Face, ShapeType::Face),
-        ];
-        for &(t1, t2) in &t_combos {
-            let idx = type_to_integer(t1, t2);
-            let list = &mut self.my_lists[idx];
-            for i in 0..n {
-                if self.ds.shapes[i].shape_type != t1 { continue; }
+        let a_nb = self.ds.nb_source_shapes();
+        // OCCT L279-284: Add shapes with BRep to BVH
+        // OCCT L291: Build BVH
+        // OCCT L294-298: Select pairs via BVH + Sort
+        // rcad: brute-force iterates shapes grouped by range (same cross-range logic)
+
+        let a_nb_r = self.ds.nb_ranges();
+        // OCCT L306-358: for each range, pair with shapes from OTHER ranges
+        for i_r in 0..a_nb_r {
+            let a_range = self.ds.range(i_r).clone();
+            for i in a_range.first..=a_range.last {
+                if i >= a_nb { break; }
                 let si1 = &self.ds.shapes[i];
-                for j in (i + 1)..n {
-                    if self.ds.shapes[j].shape_type != t2 { continue; }
+                if !si1.is_interfering() { continue; } // OCCT L282: HasBRep
+                let a_type1 = si1.shape_type;
+                // OCCT L332-333: type ordering for sub-shape check
+                let i_type1 = a_type1 as isize;
+
+                for j in (i + 1)..a_nb {
+                    if a_range.contains(j) { continue; } // OCCT L320-324: skip same-range
                     let si2 = &self.ds.shapes[j];
+                    if !si2.is_interfering() { continue; } // OCCT L282: HasBRep
+                    let a_type2 = si2.shape_type;
+                    let i_type2 = a_type2 as isize;
+
+                    // OCCT L336-340: avoid interfering shape with its sub-shapes
+                    if (i_type1 < i_type2 && si1.has_sub_shape(j))
+                        || (i_type1 > i_type2 && si2.has_sub_shape(i))
+                    {
+                        continue;
+                    }
+
                     if boxes_overlap(si1, si2, self.fuzzy_tol) {
-                        list.push((i, j));
+                        let i_x = type_to_integer(a_type1, a_type2);
+                        self.my_lists[i_x].push((i.min(j), i.max(j)));
                     }
                 }
             }
@@ -155,13 +170,18 @@ impl<'a> BOPDS_Iterator<'a> {
         }
     }
 
+    // OCCT BOPDS_Iterator::Initialize (BOPDS_Iterator.cxx L192-208).
     pub fn initialize(&mut self, t1: ShapeType, t2: ShapeType) {
-        let idx = type_to_integer(t1, t2);
-        self.current_list = if idx < self.my_lists.len() {
-            self.my_lists[idx].clone()
+        self.my_length = 0;
+        let i_x = type_to_integer(t1, t2);
+        if i_x < self.my_lists.len() {
+            // OCCT L202: stable_sort for deterministic iteration order
+            self.my_lists[i_x].sort();
+            self.current_list = self.my_lists[i_x].clone();
+            self.my_length = self.current_list.len();
         } else {
-            Vec::new()
-        };
+            self.current_list = Vec::new();
+        }
         self.current_pos = 0;
     }
     pub fn more(&self) -> bool { self.current_pos < self.current_list.len() }
