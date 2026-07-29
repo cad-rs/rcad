@@ -122,47 +122,42 @@ impl<'a> BOPDS_Iterator<'a> {
         // OCCT L279-284: Add shapes with BRep to BVH
         // OCCT L291: Build BVH
         // OCCT L294-298: Select pairs via BVH + Sort
-        // rcad: brute-force AABB + range-based filtering (same cross-range logic)
+        // rcad: brute-force AABB + range-filter (same semantics)
 
-        // OCCT BOPDS_Tools::HasBRep: VERTEX|EDGE|FACE
         let has_brep = |st: ShapeType| -> bool {
             matches!(st, ShapeType::Vertex | ShapeType::Edge | ShapeType::Face)
         };
 
-        let a_nb_r = self.ds.nb_ranges();
-        // OCCT L306-358: for each range, pair with shapes from OTHER ranges
-        for i_r in 0..a_nb_r {
-            let a_range = self.ds.range(i_r).clone();
-            for i in a_range.first..=a_range.last {
-                if i >= a_nb { break; }
-                let si1 = &self.ds.shapes[i];
-                if !has_brep(si1.shape_type) { continue; } // OCCT L282: HasBRep
-                let a_type1 = si1.shape_type;
-                // OCCT L332: iType1 = BOPDS_Tools::TypeToInteger(aType1)
-                let i_type1 = type_to_integer_single(a_type1);
+        // OCCT L306-358: iterate all (i,j) pairs, skip same-range.
+        // OCCT's BVH produces all pairs; then each range consumes those where
+        // ID1 is in this range and ID2 is in a different range.
+        // rcad: iterate i<j globally, skip if same range.
+        for i in 0..a_nb {
+            let si1 = &self.ds.shapes[i];
+            if !has_brep(si1.shape_type) { continue; }
+            let a_type1 = si1.shape_type;
+            let i_type1 = type_to_integer_single(a_type1);
+            let r1 = self.ds.rank(i);
 
-                for j in (i + 1)..a_nb {
-                    if a_range.contains(j) { continue; } // OCCT L320-324: skip same-range
-                    let si2 = &self.ds.shapes[j];
-                    if !has_brep(si2.shape_type) { continue; } // OCCT L282: HasBRep
-                    let a_type2 = si2.shape_type;
-                    // OCCT L333: iType2 = BOPDS_Tools::TypeToInteger(aType2)
-                    let i_type2 = type_to_integer_single(a_type2);
+            for j in (i + 1)..a_nb {
+                let si2 = &self.ds.shapes[j];
+                if !has_brep(si2.shape_type) { continue; }
+                let a_type2 = si2.shape_type;
+                let i_type2 = type_to_integer_single(a_type2);
 
-                    // OCCT L336-340: avoid interfering shape with its sub-shapes
-                    if ((i_type1 < i_type2) && si1.has_sub_shape(j))
-                        || ((i_type1 > i_type2) && si2.has_sub_shape(i))
-                    {
-                        continue;
-                    }
+                // OCCT L320-324: skip if both are from the same argument range
+                if r1 >= 0 && r1 == self.ds.rank(j) { continue; }
 
-                    // OCCT L344-352: optional OBB check — skipped (theCheckOBB=false)
+                // OCCT L336-340: avoid interfering shape with its sub-shapes
+                if ((i_type1 < i_type2) && si1.has_sub_shape(j))
+                    || ((i_type1 > i_type2) && si2.has_sub_shape(i))
+                {
+                    continue;
+                }
 
-                    if boxes_overlap(si1, si2, self.fuzzy_tol) {
-                        // OCCT L354-356: myLists(iX).Append(BOPDS_Pair(min(ID1,ID2), max(ID1,ID2)))
-                        let i_x = type_to_integer(a_type1, a_type2);
-                        self.my_lists[i_x].push((i.min(j), i.max(j)));
-                    }
+                if boxes_overlap(si1, si2, self.fuzzy_tol) {
+                    let i_x = type_to_integer(a_type1, a_type2);
+                    self.my_lists[i_x].push((i.min(j), i.max(j)));
                 }
             }
         }
