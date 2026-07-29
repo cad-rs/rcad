@@ -235,7 +235,6 @@ impl<'a> PaveFiller<'a> {
         if a_size == 0 {
             return;
         }
-
         // OCCT L58-59: NCollection_DynamicArray<BOPDS_InterfVV>& aVVs = myDS->InterfVV();
         //              aVVs.SetIncrement(aSize);
         self.ds.interf_vv.reserve(a_size);
