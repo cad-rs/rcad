@@ -119,7 +119,7 @@ impl<'a> PaveFiller<'a> {
             ds,
             my_report: Report::new(),
             my_run_parallel: false,
-            my_fuzzy_value: rcad_kernel::CONFUSION, // OCCT: Precision::Confusion()
+            my_fuzzy_value: 0.0,
             my_iterator: None,
             my_context: IntToolsContext::new(),
             my_glue: GlueEnum::GlueOff,
