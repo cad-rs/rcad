@@ -51,34 +51,45 @@ impl<'a> PaveFiller<'a> {
     pub fn perform(&mut self) {
         // OCCT L247: Init
         self.init();
+        if self.has_errors() { return; }
         // OCCT L258: Prepare
         self.prepare();
+        if self.has_errors() { return; }
         self.perform_vv();
+        if self.has_errors() { return; }
         self.perform_ve();
+        if self.has_errors() { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_ee();
+        if self.has_errors() { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_vf();
+        if self.has_errors() { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.perform_ef();
+        if self.has_errors() { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.update_interfs_with_sd_vertices();
         // OCCT L307: RepeatIntersection
         // OCCT L315: ForceInterfEE
         // OCCT L323: ForceInterfEF
-        self.perform_ff();                                                      // L331
-        self.update_blocks_with_shared_vertices();                              // L338
-        self.refine_face_info_in();                                             // L340
-        self.make_split_edges();                                                // L342
-        self.update_pave_blocks_with_sd_vertices();                             // L349
-        self.make_blocks();                                                     // L351
-        // OCCT L358: CheckSelfInterference
-        self.update_interfs_with_sd_vertices();                                 // L360
-        self.ds.release_pave_blocks();                                          // L361
-        self.refine_face_info_on();                                             // L362
-        self.remove_micro_edges();                                              // L364
-        self.make_pcurves();                                                    // L366
-        self.process_de();                                                      // L373
+        self.perform_ff();
+        if self.has_errors() { return; }
+        self.update_blocks_with_shared_vertices();
+        self.refine_face_info_in();
+        self.make_split_edges();
+        if self.has_errors() { return; }
+        self.update_pave_blocks_with_sd_vertices();
+        self.make_blocks();
+        if self.has_errors() { return; }
+        self.update_interfs_with_sd_vertices();
+        self.ds.release_pave_blocks();
+        self.refine_face_info_on();
+        self.remove_micro_edges();
+        self.make_pcurves();
+        if self.has_errors() { return; }
+        self.process_de();
+        if self.has_errors() { return; }
     }
 
     // ====================================================================
