@@ -530,11 +530,33 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_Builder::FillInternalVertices.
-    /// OCCT: FillInternalVertices (Builder_2.cxx L780+).
+    /// OCCT BOPAlgo_Builder::FillInternalVertices (Builder_2.cxx L929+).
     fn fill_internal_vertices(&mut self) {
-        // OCCT: adds alone vertices from FaceInfo as internal vertices
-        // Stub: internal vertex handling
+        let n = self.ds.nb_source_shapes();
+        for i in 0..n {
+            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face { continue; }
+            let fs = self.brep_sr(i);
+            if !self.my_images.contains_key(&fs) { continue; }
+            if !self.ds.has_face_info(i) { continue; }
+            let v_pts: Vec<glam::DVec3> = self.ds.face_info(i).vertices_in.iter()
+                .map(|&vi| self.ds.vertex_point_by_idx(vi)).collect();
+            if v_pts.is_empty() { continue; }
+            if let Some(imgs) = self.my_images.get_mut(&fs) {
+                for pt in &v_pts {
+                    for img in imgs.iter_mut() {
+                        let ts = Arc::make_mut(&mut img.data);
+                        if let TShape::Face(fd) = ts {
+                            fd.internal_vertices.push(Shape::new(
+                                Arc::new(TShape::Vertex(rcad_kernel::topods::TVertexData {
+                                    my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                                    point: *pt, tolerance: 1e-7, points: vec![],
+                                })), 0, topods::Orientation::Forward,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
