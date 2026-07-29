@@ -21,6 +21,7 @@ use crate::bop::ds::{
 use crate::bop::int_tools;
 use rcad_kernel::CurveEval;
 use rcad_kernel::topods::ShapeType;
+use std::sync::Arc;
 
 pub struct PaveFiller<'a> {
     ds: &'a mut DS,
@@ -524,8 +525,59 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
     fn make_pcurves(&mut self) {
-        // OCCT L604-606: for each FaceInfo, build pcurves on PaveBlocksIn/On
-        // Stub: pcurve computation needs kernel surface projection
+        let n_fi = self.ds.face_info_pool.len();
+        for fi_idx in 0..n_fi {
+            let fi = self.ds.face_info_pool[fi_idx].clone();
+            let n_f1 = fi.index();
+            let f1_s = self.ds.shape(n_f1).clone();
+            let surf = match &*f1_s.data {
+                rcad_kernel::topods::TShape::Face(fd) => fd.surface.clone(),
+                _ => continue,
+            };
+            let Some(ref surf) = surf else { continue; };
+            // Collect edge indices from PaveBlocks
+            let mut edges: Vec<usize> = Vec::new();
+            for &pb_idx in fi.pave_blocks_in.iter().chain(fi.pave_blocks_on.iter()) {
+                if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
+                for pb in &self.ds.pave_blocks_pool[pb_idx] {
+                    let n_e = pb.0.read().unwrap().edge;
+                    if n_e < self.ds.nb_shapes() { edges.push(n_e); }
+                }
+            }
+            // Compute and store pcurves
+            for &n_e in &edges {
+                if let Some(curve) = self.ds.edge_curve(n_e) {
+                    let range = self.ds.edge_range(n_e);
+                    if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
+                        let mut si = self.ds.change_shape_info(n_e);
+                        let ts = Arc::make_mut(&mut si.shape.data);
+                        if let rcad_kernel::topods::TShape::Edge(ed) = ts {
+                            ed.pcurves.insert(n_f1, (pc, range[0], range[1]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Compute a 2D pcurve by projecting a 3D curve onto a surface.
+    fn pcurve_2d(curve: &rcad_kernel::geom::Curve3,
+                 surf: &rcad_kernel::geom::Surface3,
+                 range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
+        use rcad_kernel::geom::SurfaceEval;
+        let n = 23usize;
+        let dt = (range[1] - range[0]) / n as f64;
+        let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let t = range[0] + i as f64 * dt;
+            let p3d = curve.point_at(t);
+            let (u, _) = crate::bop::closest_point_on_surface(surf, p3d);
+            uv.push(u);
+        }
+        if uv.len() < 2 { return None; }
+        Some(rcad_kernel::geom::Curve2d::BSpline(
+            rcad_kernel::geom::BSplineCurve2::approximate(&uv)
+        ))
     }
 
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-200+).
