@@ -731,8 +731,27 @@ impl<'a> BooleanBuilder<'a> {
             .map(|(k, v)| (k.clone(), v.clone())).collect();
         for (solid_src, face_shapes) in &in_parts {
             if face_shapes.is_empty() { continue; }
+            // OCCT L491-511: combine original solid faces + IN faces
+            let mut all_faces: Vec<Shape> = Vec::new();
+            // Add original solid's faces
+            for ss in self.shape_sub_shapes(&solid_src) {
+                if ss.shape_type() == topods::ShapeType::Shell {
+                    for f in self.shape_sub_shapes(&ss) {
+                        if f.shape_type() == topods::ShapeType::Face {
+                            all_faces.push(f.clone());
+                        }
+                    }
+                }
+            }
+            // Add IN faces (OCCT L502-511: both orientations)
+            for f in face_shapes {
+                all_faces.push(f.clone());
+                let mut f_rev = f.clone();
+                f_rev.orientation = topods::Orientation::Reversed;
+                all_faces.push(f_rev);
+            }
             let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
-            bs.my_shapes = face_shapes.clone();
+            bs.my_shapes = all_faces;
             bs.perform();
             for solid_img in &bs.my_solids {
                 self.my_images.entry(solid_src.clone())
