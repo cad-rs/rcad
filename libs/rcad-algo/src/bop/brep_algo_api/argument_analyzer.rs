@@ -2,13 +2,14 @@
 //
 // OCCT BOPAlgo_ArgumentAnalyzer.cxx L1-1015 / .hxx.
 
+use crate::bop::algo::checker_si::CheckerSI;
+use crate::bop::ds::DS;
+use rcad_kernel::topods::ShapeType;
+use rcad_kernel::topo_shape::Shape;
+
 /// OCCT BOPAlgo_ArgumentAnalyzer — checks shape validity for Boolean Ops.
-///
-/// rcad: some test bodies simplified where OCCT infrastructure is missing
-/// (CheckerSI, BuilderFace, DistShapeShape). Control flow and structure
-/// match OCCT 1:1.
 pub struct ArgumentAnalyzer {
-    my_shape1: usize, // shape index placeholder
+    my_shape1: usize,
     my_shape2: usize,
     my_stop_on_first: bool,
     my_operation: i32,
@@ -84,158 +85,100 @@ impl ArgumentAnalyzer {
     pub fn continuity_mode(&mut self) -> &mut bool { &mut self.my_continuity_mode }
     pub fn curve_on_surface_mode(&mut self) -> &mut bool { &mut self.my_curve_on_surface_mode }
 
-    /// OCCT Perform() L130-257 — run all enabled checks.
+    /// OCCT Perform() L130-257.
     pub fn perform(&mut self) {
         self.my_result.clear();
-        self.prepare(); // L142
-
-        if self.my_argument_type_mode { self.test_types(); } // L146
-        if self.my_self_inter_mode {   // L155
-            self.test_self_interferences();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_small_edge_mode && self.should_run() { // L165
-            self.test_small_edge();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_rebuild_face_mode && self.should_run() { // L178
-            self.test_rebuild_face();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_tangent_mode && self.should_run() { // L191
-            self.test_tangent();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_merge_vertex_mode && self.should_run() { // L205
-            self.test_merge_vertex();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_merge_edge_mode && self.should_run() { // L218
-            self.test_merge_edge();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_continuity_mode && self.should_run() { // L231
-            self.test_continuity();
-            if self.has_errors_or_stop() { return; }
-        }
-        if self.my_curve_on_surface_mode && self.should_run() { // L243
-            self.test_curve_on_surface();
-        }
+        self.prepare();                                              // L142
+        if self.my_argument_type_mode       { self.test_types(); }
+        if self.my_self_inter_mode          { self.test_self_interferences(); if self.should_stop() { return; } }
+        if self.my_small_edge_mode          { self.test_small_edge(); if self.should_stop() { return; } }
+        if self.my_rebuild_face_mode        { self.test_rebuild_face(); if self.should_stop() { return; } }
+        if self.my_tangent_mode             { self.test_tangent(); if self.should_stop() { return; } }
+        if self.my_merge_vertex_mode        { self.test_merge_vertex(); if self.should_stop() { return; } }
+        if self.my_merge_edge_mode          { self.test_merge_edge(); if self.should_stop() { return; } }
+        if self.my_continuity_mode          { self.test_continuity(); if self.should_stop() { return; } }
+        if self.my_curve_on_surface_mode    { self.test_curve_on_surface(); }
     }
 
     pub fn has_faulty(&self) -> bool { !self.my_result.is_empty() }
     pub fn get_check_result(&self) -> &[CheckResult] { &self.my_result }
 
-    // ── Prepare L115-126 ────────────────────────────────────────────
     fn prepare(&mut self) {
-        // OCCT: BOPTools_AlgoTools3D::IsEmptyShape for each non-null shape.
-        // rcad: shape emptiness checks not yet implemented.
+        // OCCT L115-126: BOPTools_AlgoTools3D::IsEmptyShape
+        // rcad: not yet implemented.
     }
 
-    // ── TestTypes L275-352 ──────────────────────────────────────────
     fn test_types(&mut self) {
+        // OCCT L275-352: shape type checks against operation
         let is_s1 = self.my_shape1 == usize::MAX;
         let is_s2 = self.my_shape2 == usize::MAX;
-
-        if is_s1 && is_s2 {
-            // L279-285: both null → BadType
-            self.push_result(CheckStatus::BadType);
-            return;
-        }
-
+        if is_s1 && is_s2 { self.push(CheckStatus::BadType); return; }
         if (is_s1 && !is_s2) || (!is_s1 && is_s2) {
-            // L288-301: single shape, check if empty or unknown operation
-            let b_is_empty = if is_s1 { self.my_empty2 } else { self.my_empty1 };
-            if b_is_empty || self.my_operation == 0 {
-                self.push_result(CheckStatus::BadType);
-            }
+            let empty = if is_s1 { self.my_empty2 } else { self.my_empty1 };
+            if empty || self.my_operation == 0 { self.push(CheckStatus::BadType); }
             return;
         }
-
-        // L304-351: two shapes
-        if self.my_empty1 || self.my_empty2 {
-            self.push_result(CheckStatus::BadType);
-            return;
-        }
-
-        // L330-350: operation-specific dimension checks
-        if self.my_operation != 0 && self.my_operation != 1 {
-            // OCCT BOPAlgo_FUSE=2, BOPAlgo_CUT=3, BOPAlgo_CUT21=4
-            // BOPTools_AlgoTools::Dimensions returns [minDim, maxDim]
-            // rcad: dimension queries not yet implemented.
-        }
+        if self.my_empty1 || self.my_empty2 { self.push(CheckStatus::BadType); return; }
+        // L330: operation-specific dimension checks (requires BOPTools_AlgoTools::Dimensions)
     }
 
-    // ── TestSelfInterferences L356-445 ──────────────────────────────
     fn test_self_interferences(&mut self) {
-        // OCCT: uses BOPAlgo_CheckerSI on each non-empty shape
-        // iterates result DS interferences, adds SelfIntersect results.
-        // rcad: CheckerSI not yet implemented.
-        for _shape_idx in 0..2 {
-            // placeholder for CheckerSI loop
+        // OCCT L356-445: run CheckerSI, iterate interferences
+        for ii in 0..2 {
+            let shape = if ii == 0 { self.my_shape1 } else { self.my_shape2 };
+            if shape == usize::MAX { continue; }
+            let mut ds = DS::new();
+            ds.set_arguments(vec![Shape::synthetic(shape, rcad_kernel::topods::Orientation::Forward)]);
+            ds.init(1e-7);
+            let mut checker = CheckerSI::new();
+            checker.perform(&mut ds);
+            // OCCT L390-426: iterate ds.Interferences(), add SelfIntersect results
+            let a_it: Vec<_> = ds.interf_tb.iter().copied().collect();
+            for (n1, n2) in &a_it {
+                if ds.is_new_shape(*n1) || ds.is_new_shape(*n2) { continue; }
+                self.push(CheckStatus::SelfIntersect);
+                if self.should_stop() { return; }
+            }
+            // OCCT L428-443: if checker has errors, add OperationAborted
         }
     }
 
-    // ── TestSmallEdge L449-567 ──────────────────────────────────────
     fn test_small_edge(&mut self) {
-        // OCCT: iterates edges via TopExp_Explorer, checks IsMicroEdge.
-        // For SECTION operation, also checks if edge vertices lie on other shape.
-        // rcad: edge iteration not yet wired.
+        // OCCT L449-567: iterate edges, check IsMicroEdge
+        // rcad: requires TopExp_Explorer equivalent and IsMicroEdge
     }
 
-    // ── TestRebuildFace L571-672 ────────────────────────────────────
     fn test_rebuild_face(&mut self) {
-        if self.my_operation == 5 || self.my_operation == 0 { return; } // SECTION/UNKNOWN
-        // OCCT: iterates faces, builds face from its edges via BOPAlgo_BuilderFace,
-        // checks that number of resulting areas == 1 and edge count matches.
-        // rcad: BuilderFace not yet available.
+        if self.my_operation == 5 || self.my_operation == 0 { return; }
+        // OCCT L571-672: iterate faces, run BOPAlgo_BuilderFace,
+        // verify exactly 1 area with matching edge count
+        // rcad: requires face iteration from DS
     }
 
-    // ── TestTangent L676-679 ────────────────────────────────────────
-    fn test_tangent(&mut self) {
-        // OCCT: not implemented (empty body)
-    }
+    fn test_tangent(&mut self) { /* OCCT: not implemented */ }
 
-    // ── TestMergeSubShapes L683-878 ─────────────────────────────────
-    fn test_merge_sub_shapes(&mut self, the_type: u8) {
-        // OCCT: iterates sub-shapes of given type on both shapes,
-        // checks for duplicates (VERTEX: distance vs tolerance sum;
-        // EDGE: IntTools_EdgeEdge for TopAbs_EDGE coincidence;
-        // FACE: not implemented in OCCT).
+    fn test_merge_sub_shapes(&mut self, _the_type: u8) {
+        // OCCT L683-878: compare sub-shapes between two shapes
         if self.my_shape1 == usize::MAX || self.my_shape2 == usize::MAX { return; }
         if self.my_empty1 || self.my_empty2 { return; }
-        // rcad: sub-shape iteration and per-type comparison not yet wired.
+        // rcad: sub-shape iteration and comparison not yet wired
     }
 
     fn test_merge_vertex(&mut self) { self.test_merge_sub_shapes(0); }
     fn test_merge_edge(&mut self) { self.test_merge_sub_shapes(1); }
 
-    // ── TestContinuity L896-958 ────────────────────────────────────
     fn test_continuity(&mut self) {
-        // OCCT: iterates edges/faces, checks GeomAbs_C0 continuity
-        // via curve->Continuity() / surface->Continuity().
-        // rcad: continuity queries not yet available on curve/surface types.
+        // OCCT L896-958: check C0 edges/faces
+        // rcad: continuity query not yet on curve/surface types
     }
 
-    // ── TestCurveOnSurface L962-1015 ────────────────────────────────
     fn test_curve_on_surface(&mut self) {
-        // OCCT: iterates face edges, calls BOPTools_AlgoTools::ComputeTolerance.
-        // If deviation > edge tolerance, reports InvalidCurveOnSurface.
-        // rcad: ComputeTolerance not yet available.
+        // OCCT L962-1015: ComputeTolerance for face/edge pairs
+        // rcad: not yet implemented
     }
 
-    // ── Helpers ────────────────────────────────────────────────────
-    fn push_result(&mut self, status: CheckStatus) {
-        self.my_result.push(CheckResult { check_status: status });
-    }
-
-    fn has_errors_or_stop(&self) -> bool {
-        self.my_stop_on_first && !self.my_result.is_empty()
-    }
-
-    fn should_run(&self) -> bool {
-        self.my_result.is_empty() || !self.my_stop_on_first
-    }
+    fn push(&mut self, s: CheckStatus) { self.my_result.push(CheckResult { check_status: s }); }
+    fn should_stop(&self) -> bool { self.my_stop_on_first && !self.my_result.is_empty() }
 }
 
 impl Default for ArgumentAnalyzer {
