@@ -1264,31 +1264,36 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
+    // OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
     fn init(&mut self) {
         // OCCT L178-182: check arguments non-empty
+        if self.my_arguments.is_empty() {
+            self.my_report.add_alert(Alert::TooFewArguments);
+            return;
+        }
+        // OCCT L185-193: check for null shapes (Rust Shape has no null state;
+        // skip OCCT's null check since it's enforced by the type system)
         // OCCT L196: Clear
         self.my_report.clear();
-        self.my_context.clear();
         self.my_increased_ss.clear();
         self.my_verts_to_avoid_extension.clear();
         self.my_fpb_done.clear();
+        self.my_context = IntToolsContext::new();
         // OCCT L199-201: myDS = new BOPDS_DS; DS init (done in fuse())
         // OCCT L204: myContext = new IntTools_Context
-        self.my_context = IntToolsContext::new();
         // OCCT L207-210: myIterator = new BOPDS_Iterator
         // rcad: use raw pointer to access self.ds without triggering reborrow.
-        // The DS lives as long as the PaveFiller, so &'static is safe here.
         let ds_field = unsafe { std::ptr::addr_of_mut!((*self).ds) };
         let ds_ref: &'a mut DS = unsafe { &mut *ds_field };
         let ds_shared: &'a DS = &*ds_ref;
         let ds_static: &'static DS = unsafe { std::mem::transmute(ds_shared) };
-        // OCCT L207-210: myIterator = new BOPDS_Iterator
         let mut a_it = BOPDS_Iterator::new(ds_static, self.my_fuzzy_value);
-        a_it.set_run_parallel(self.my_run_parallel); // OCCT L208: SetRunParallel
+        a_it.set_run_parallel(self.my_run_parallel); // OCCT L208
         // OCCT L210: myIterator->Prepare(myContext, myUseOBB, myFuzzyValue)
         a_it.prepare(Some(&self.my_context), false, self.my_fuzzy_value);
         self.my_iterator = Some(Box::new(a_it));
+        // OCCT L213: SetNonDestructive — respects existing flag
+        // (set_non_destructive must be called before init to take effect)
     }
 
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
