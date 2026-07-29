@@ -2,8 +2,8 @@
 // Provides an algorithm to classify a point in a solid.
 // Inherits from BRepClass3d_SClassifier.
 
-use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
-use crate::topalgo::brep_class3d::s_classifier::SClassifier;
+use crate::topalgo::class3d::solid_explorer::SolidExplorer;
+use crate::topalgo::class3d::s_classifier::SClassifier;
 use rcad_kernel::topo_shape::Shape;
 use glam::DVec3;
 

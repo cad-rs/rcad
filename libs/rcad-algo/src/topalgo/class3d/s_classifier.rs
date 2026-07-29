@@ -1,7 +1,7 @@
 // OCCT BRepClass3d_SClassifier (BRepClass3d_SClassifier.hxx / .cxx)
 // Base class for solid classification via ray casting.
 
-use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
+use crate::topalgo::class3d::solid_explorer::SolidExplorer;
 use glam::DVec3;
 
 /// OCCT BRepClass3d_SClassifier — base classification algorithm.
