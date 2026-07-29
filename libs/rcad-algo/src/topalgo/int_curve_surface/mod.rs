@@ -1,6 +1,5 @@
-// OCCT IntCurvesFace — Intersection of curves with faces (TKTopAlgo).
+// OCCT BRepIntCurveSurface — Intersection of a curve with a shaped(face/shell/solid).
 //
-// OCCT ref: TKTopAlgo/IntCurvesFace/IntCurvesFace_Intersector
-//           TKGeomAlgo/IntCurveSurface/IntCurveSurface_HInter (via rcad-kernel::IntCS)
+// OCCT ref: TKTopAlgo/BRepIntCurveSurface/BRepIntCurveSurface_Inter
 
-pub mod intersector;
+pub mod inter;

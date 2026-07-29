@@ -2,7 +2,7 @@
 // 3D intersection of a line segment with a face.
 
 use glam::DVec3;
-use crate::topalgo::int_curve_surface::intersector::TransitionOnCurve;
+use crate::topalgo::int_curve_surface::inter::TransitionOnCurve;
 
 /// OCCT BRepClass3d_Intersector3d — intersects a line segment with a face.
 pub struct Intersector3d {
@@ -40,22 +40,24 @@ impl Intersector3d {
         let line_curve = rcad_kernel::geom::Curve3::Line(
             rcad_kernel::geom::Line3 { origin: line_origin, direction: line_dir });
 
-        // OCCT: IntCurvesFace_Intersector intersects curve with face surface
-        // rcad: use IntCurvesFace_Intersector via topalgo module
-        let mut cf_intersector = crate::topalgo::int_curve_surface::intersector::Intersector::new();
-        cf_intersector.perform(
-            &line_curve, face_surface,
-            0.0, 1.0, 0.0, 1.0, // default UV bounds
-            false, false, 0.0, 0.0);
-
-        self.done = cf_intersector.is_done();
-        self.has_a_point = cf_intersector.has_a_point();
-        self.u = cf_intersector.u_parameter();
-        self.v = cf_intersector.v_parameter();
-        self.w = cf_intersector.w_parameter();
-        self.point = cf_intersector.pnt();
-        self.transition = cf_intersector.transition();
-        self.state = cf_intersector.state();
+        // OCCT: BRepIntCurveSurface_Inter intersects curve with face
+        // rcad: use BRepIntCurveSurface_Inter via topalgo::int_curve_surface::inter
+        let mut brep_inter = crate::topalgo::int_curve_surface::inter::Inter::new();
+        // rcad: use Init + Init curve approach
+        let (_u_min, _u_max, _v_min, _v_max) = (0.0, 1.0, 0.0, 1.0);
+        brep_inter.init_curve(&line_curve, face_surface, 0.0, 1.0, 0.0, 1.0);
+        // Process first intersection point
+        if brep_inter.more() {
+            brep_inter.next();
+            self.has_a_point = true;
+            self.u = brep_inter.current_u();
+            self.v = brep_inter.current_v();
+            self.w = brep_inter.current_w();
+            self.point = brep_inter.current_point();
+            self.transition = brep_inter.current_transition();
+            self.state = 1; // IN
+        }
+        self.done = true;
         self.face_idx = face_idx;
     }
 
