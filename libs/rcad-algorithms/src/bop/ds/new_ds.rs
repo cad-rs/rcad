@@ -1,4 +1,4 @@
-﻿// OCCT BOPDS_DS 1:1 translation.
+// OCCT BOPDS_DS 1:1 translation.
 // TopoDS_Shape -> Shape (Arc<TShape> + Location + Orientation).
 
 use std::collections::{HashMap, HashSet};

@@ -35,8 +35,13 @@ fn empty_vertex_data() -> rcad_kernel::topods::TVertexData {
 }
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve3};
-use rcad_kernel::topods::{self, Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
+use rcad_kernel::base::bnd_lib::surface_bounding_box;
+use rcad_kernel::curve_bounding_box;
+use rcad_kernel::CurveEval;
+use rcad_kernel::topology;
+use rcad_kernel::{is_negative_infinite_value, is_positive_infinite_value};
 use crate::bop::ds::face_info::FaceInfo;
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::ds::common_block::CommonBlock;
@@ -666,7 +671,8 @@ impl DS {
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Init
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
     /// BOPDS_DS::Init ?builds shape index, ranges, and bounding boxes.
-    pub fn init(&mut self, _fuzz: f64) {
+    // OCCT BOPDS_DS.cxx L285-324
+    pub fn init(&mut self, fuzz: f64) {
         if self.arguments.is_empty() { return; }
         let args = self.arguments.clone();
         let mut i1 = 0usize;
@@ -679,13 +685,18 @@ impl DS {
             i1 = i2 + 1;
         }
         self.nb_source_shapes = self.nb_shapes();
-        // Init_shape with correct indices now set by build_ds
-        let tol = 1e-7 * 0.5;
+        // OCCT L312: max(theFuzz, Precision::Confusion()) * 0.5
+        let tol = fuzz.max(1e-7) * 0.5;
+        // OCCT L313-316: prepare
         self.prepare_vertices(tol);
-        self.prepare_edges(tol);
-        self.prepare_faces(tol);
+        let an_edge_count = self.prepare_edges(tol);
+        let a_face_count  = self.prepare_faces(tol);
         self.prepare_solids();
+        // OCCT L319: buildVertexEdgeMap
         self.build_vertex_edge_map();
+        // OCCT L322-323: prepare pools
+        self.pave_blocks_pool.reserve(an_edge_count);
+        self.face_info_pool.reserve(a_face_count);
     }
 
     /// OCCT BOPDS_DS::InitShape — add sub-shapes recursively.
@@ -1130,92 +1141,243 @@ impl DS {
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Helpers ?DS internal
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
     /// Prepare vertex shape info: compute bounding boxes from geometry.
-    fn prepare_vertices(&mut self, tol: f64) {
-        for i in 0..self.nb_source_shapes {
-            if self.shapes[i].shape_type != ShapeType::Vertex { continue; }
-            let shape = self.shapes[i].shape.clone();
-            let vt = self.vertex_tolerance(&shape);
-            // OCCT: Bnd_Box& aBox = aSIDS.ChangeBox();
-            //       aBox.Add(BRep_Tool::Pnt(aV));       ← point (zero-size)
-            //       aBox.SetGap(Tolerance(aV) + tol);   ← gap = vt + tol
-            self.shapes[i].box_gap = vt + tol;
-            if let Some(pt) = self.vertex_point_on_shape(&shape) {
-                // point box: min == max == point
-                self.shapes[i].box_min = Some(pt);
-                self.shapes[i].box_max = Some(pt);
+    // OCCT BOPDS_DS.cxx L1589-1610
+    fn prepare_vertices(&mut self, tol: f64) -> usize {
+        let mut a_vertex_count = 0;
+        for a_vertex_index in 0..self.nb_source_shapes {
+            if self.shapes[a_vertex_index].shape_type != ShapeType::Vertex { continue; }
+            a_vertex_count += 1;
+            // OCCT L1603-1606: SetGap(Tolerance + tol) + Add(point) → degenerate box [pt, pt]
+            let vt = self.vertex_tolerance(&self.shapes[a_vertex_index].shape);
+            self.shapes[a_vertex_index].box_gap = vt + tol;
+            if let Some(pt) = self.vertex_point_on_shape(&self.shapes[a_vertex_index].shape) {
+                self.shapes[a_vertex_index].box_min = Some(pt);
+                self.shapes[a_vertex_index].box_max = Some(pt);
             }
         }
+        a_vertex_count
     }
 
-    /// Prepare edge shape info: propagate bounding boxes from child vertices.
-    fn prepare_edges(&mut self, tol: f64) {
-        for i in 0..self.nb_source_shapes {
-            if self.shapes[i].shape_type != ShapeType::Edge { continue; }
-            let mut mn = DVec3::splat(f64::INFINITY);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &vi in &self.shapes[i].sub_shapes {
+    // OCCT BOPDS_DS.cxx L1614-1692
+    fn prepare_edges(&mut self, tol: f64) -> usize {
+        let mut an_edge_count = 0;
+        for an_edge_index in 0..self.nb_source_shapes {
+            if self.shapes[an_edge_index].shape_type != ShapeType::Edge { continue; }
+            an_edge_count += 1;
+
+            // OCCT L1627-1628: edge tolerance & degenerated
+            let shape = self.shapes[an_edge_index].shape.clone();
+            let an_edge_tolerance = shape.as_edge().map_or(0.0, |ed| ed.tolerance);
+            let is_degenerated = shape.as_edge().map_or(false, |ed| ed.degenerated);
+
+            // OCCT L1630-1675: non-degenerated edge → handle infinite curves
+            if !is_degenerated {
+                let a_forward_edge_curve_opt =
+                    shape.as_edge().and_then(|ed| ed.curve.as_ref().map(|c| c.clone()));
+                let a_range_opt = shape.as_edge().map(|ed| ed.range);
+                if let (Some(ref a_forward_edge_curve), Some(a_range)) =
+                    (a_forward_edge_curve_opt.as_ref(), a_range_opt)
+                {
+                    let (a_curve_start, a_curve_end) = (a_range[0], a_range[1]);
+                    let mut new_vtx_indices: Vec<usize> = Vec::new();
+
+                    if is_negative_infinite_value(a_curve_start) {
+                        let a_point = a_forward_edge_curve.point_at(a_curve_start);
+                        let a_vertex = Shape::new(
+                            Arc::new(TShape::Vertex(TVertexData {
+                                my_shapes: Vec::new(), flags: 0,
+                                point: a_point, tolerance: an_edge_tolerance,
+                                points: Vec::new(),
+                            })),
+                            0, Orientation::Forward,
+                        );
+                        let vi = self.append_shape(a_vertex);
+                        self.shapes[vi].flag = 1;
+                        new_vtx_indices.push(vi);
+                    }
+                    if is_positive_infinite_value(a_curve_end) {
+                        let a_point = a_forward_edge_curve.point_at(a_curve_end);
+                        let a_vertex = Shape::new(
+                            Arc::new(TShape::Vertex(TVertexData {
+                                my_shapes: Vec::new(), flags: 0,
+                                point: a_point, tolerance: an_edge_tolerance,
+                                points: Vec::new(),
+                            })),
+                            0, Orientation::Forward,
+                        );
+                        let vi = self.append_shape(a_vertex);
+                        self.shapes[vi].flag = 1;
+                        new_vtx_indices.push(vi);
+                    }
+                    self.shapes[an_edge_index].sub_shapes.extend(new_vtx_indices);
+                }
+            } else {
+                // OCCT L1673-1675: degenerated edge → set flag
+                self.shapes[an_edge_index].flag = an_edge_index as i64;
+            }
+
+            // OCCT L1677-1688: Compute edge bounding box
+            // OCCT L1678-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox)
+            let (mut mn, mut mx) =
+                if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
+                    if let Some([cmn, cmx]) = curve_bounding_box(curve) {
+                        // OCCT BRepBndLib: B.Enlarge(edge_tolerance)
+                        (cmn - DVec3::splat(an_edge_tolerance),
+                         cmx + DVec3::splat(an_edge_tolerance))
+                    } else {
+                        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
+                    }
+                } else {
+                    (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
+                };
+
+            // OCCT L1681-1686: Add vertex bounding boxes
+            for &vi in &self.shapes[an_edge_index].sub_shapes {
                 if let (Some(bmin), Some(bmax)) = (self.shapes[vi].box_min, self.shapes[vi].box_max) {
-                    mn = mn.min(bmin); mx = mx.max(bmax);
+                    mn = mn.min(bmin);
+                    mx = mx.max(bmax);
                 }
             }
+
             if mn.x.is_finite() {
-                self.shapes[i].box_min = Some(mn);
-                self.shapes[i].box_max = Some(mx);
-                self.shapes[i].box_gap = tol;
+                self.shapes[an_edge_index].box_min = Some(mn);
+                self.shapes[an_edge_index].box_max = Some(mx);
+                // OCCT L1688: SetGap(existing_gap + tol)
+                self.shapes[an_edge_index].box_gap += tol;
             }
         }
+        an_edge_count
     }
 
-    /// Prepare face shape info: flatten wire sub-shapes into edge/vertex list, compute AABB.
-    fn prepare_faces(&mut self, tol: f64) {
-        for fi in 0..self.nb_source_shapes {
-            if self.shapes[fi].shape_type != ShapeType::Face { continue; }
-            let mut ns: HashSet<usize> = HashSet::new();
-            for &wi in &self.shapes[fi].sub_shapes.clone() {
+    // OCCT BOPDS_DS.cxx L1696-1779
+    fn prepare_faces(&mut self, tol: f64) -> usize {
+        let mut a_face_count = 0;
+        for a_face_index in 0..self.nb_source_shapes {
+            if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
+            a_face_count += 1;
+
+            let mut a_new_sub_shape_indices = HashSet::new();
+            let shape = self.shapes[a_face_index].shape.clone();
+
+            // OCCT L1715-1717: BRepBndLib::Add(aFace, aFaceBoundBox)
+            let face_tolerance = shape.as_face().map_or(0.0, |fd| fd.tolerance);
+            let (mut mn, mut mx) =
+                if let Some(surface) = shape.as_face().and_then(|fd| fd.surface.as_ref()) {
+                    let mut verts: Vec<topology::Vertex> = Vec::new();
+                    for &wi in &self.shapes[a_face_index].sub_shapes {
+                        if wi >= self.nb_shapes() { continue; }
+                        for &ei in &self.shapes[wi].sub_shapes {
+                            if ei >= self.nb_shapes() { continue; }
+                            if self.shapes[ei].shape_type == ShapeType::Edge {
+                                for &vi in &self.shapes[ei].sub_shapes {
+                                    if vi < self.nb_shapes() {
+                                        if let Some(pt) = self.vertex_point_on_shape(&self.shapes[vi].shape) {
+                                            verts.push(topology::Vertex { point: pt });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some([cmn, cmx]) = surface_bounding_box(surface, &verts) {
+                        (cmn - DVec3::splat(face_tolerance),
+                         cmx + DVec3::splat(face_tolerance))
+                    } else {
+                        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
+                    }
+                } else {
+                    (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
+                };
+
+            // OCCT L1725-1752: iterate wires → edges
+            for &wi in &self.shapes[a_face_index].sub_shapes.clone() {
                 if wi >= self.nb_shapes() { continue; }
                 for &ei in &self.shapes[wi].sub_shapes.clone() {
                     if ei >= self.nb_shapes() { continue; }
-                    if self.shapes[ei].shape_type == ShapeType::Edge {
-                        ns.insert(ei);
-                        for &vi in &self.shapes[ei].sub_shapes {
-                            if vi < self.nb_shapes() { ns.insert(vi); }
+                    if self.shapes[ei].shape_type != ShapeType::Edge { continue; }
+
+                    // OCCT L1729-1732: Add edge bounding box to face box
+                    if let (Some(bmin), Some(bmax)) = (self.shapes[ei].box_min, self.shapes[ei].box_max) {
+                        mn = mn.min(bmin); mx = mx.max(bmax);
+                    }
+
+                    // OCCT L1742-1746: Mark degenerated edges
+                    if self.shapes[ei].shape.as_edge().map_or(false, |ed| ed.degenerated) {
+                        self.shapes[ei].flag = a_face_index as i64;
+                    }
+
+                    // OCCT L1735 + L1748-1752: Add edge + vertices to map
+                    a_new_sub_shape_indices.insert(ei);
+                    for &vi in &self.shapes[ei].sub_shapes {
+                        if vi < self.nb_shapes() {
+                            a_new_sub_shape_indices.insert(vi);
                         }
                     }
                 }
             }
-            self.shapes[fi].sub_shapes = ns.into_iter().collect();
-            let mut mn = DVec3::splat(f64::INFINITY);
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &ss in &self.shapes[fi].sub_shapes {
-                if let (Some(bmin), Some(bmax)) = (self.shapes[ss].box_min, self.shapes[ss].box_max) {
-                    mn = mn.min(bmin); mx = mx.max(bmax);
+
+            // OCCT L1756-1764: Add standalone face vertices (TopoDS_Iterator)
+            if let Some(fd) = shape.as_face() {
+                for iv in &fd.internal_vertices {
+                    let pk = (iv.ptr_id(), iv.location);
+                    if let Some(&i) = self.map_shape_index.get(&pk) {
+                        a_new_sub_shape_indices.insert(i);
+                    }
                 }
             }
+
+            // OCCT L1767-1773: Replace wire indices with edge+vertex indices
+            self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
+
             if mn.x.is_finite() {
-                self.shapes[fi].box_min = Some(mn);
-                self.shapes[fi].box_max = Some(mx);
-                self.shapes[fi].box_gap += tol;
+                self.shapes[a_face_index].box_min = Some(mn);
+                self.shapes[a_face_index].box_max = Some(mx);
+                // OCCT L1775: SetGap(existing_gap + tol)
+                self.shapes[a_face_index].box_gap += tol;
             }
         }
+        a_face_count
     }
 
-    /// Prepare solid shape info: flatten sub-shapes (shellce鈧琩gertex).
-    fn prepare_solids(&mut self) {
-        if self.arguments.len() != 1 { return; }
-        for si in 0..self.nb_source_shapes {
-            if self.shapes[si].shape_type != ShapeType::Solid { continue; }
-            let mut ns: HashSet<usize> = HashSet::new();
-            for &shi in &self.shapes[si].sub_shapes.clone() {
-                if shi >= self.nb_shapes() { continue; }
-                if self.shapes[shi].shape_type != ShapeType::Shell { continue; }
-                for &fi in &self.shapes[shi].sub_shapes {
-                    if fi >= self.nb_shapes() { continue; }
-                    ns.insert(fi);
-                    for &ei in &self.shapes[fi].sub_shapes { ns.insert(ei); }
+    // OCCT BOPDS_DS.cxx L1783-1852
+    fn prepare_solids(&mut self) -> usize {
+        // OCCT L1789-1792: check mode — only single argument
+        if self.arguments.len() != 1 { return 0; }
+        let mut a_solid_count = 0;
+        for a_solid_index in 0..self.nb_source_shapes {
+            if self.shapes[a_solid_index].shape_type != ShapeType::Solid { continue; }
+            a_solid_count += 1;
+
+            // OCCT L1807-1808: BuildBndBoxSolid
+            let mut a_solid_bound_box =
+                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY), 0.0);
+            self.build_bnd_box_solid(a_solid_index, &mut a_solid_bound_box, false);
+            if a_solid_bound_box.0.x.is_finite() {
+                self.shapes[a_solid_index].box_min = Some(a_solid_bound_box.0);
+                self.shapes[a_solid_index].box_max = Some(a_solid_bound_box.1);
+            }
+
+            // OCCT L1803-1804: map of sub-shape indices
+            let mut a_new_sub_shape_indices = HashSet::new();
+
+            // OCCT L1814-1839: iterate shells → faces → edges
+            for &a_shell_index in &self.shapes[a_solid_index].sub_shapes.clone() {
+                if a_shell_index >= self.nb_shapes() { continue; }
+                if self.shapes[a_shell_index].shape_type != ShapeType::Shell { continue; }
+                for &a_face_index in &self.shapes[a_shell_index].sub_shapes {
+                    if a_face_index >= self.nb_shapes() { continue; }
+                    if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
+                    a_new_sub_shape_indices.insert(a_face_index);
+                    for &an_edge_index in &self.shapes[a_face_index].sub_shapes {
+                        a_new_sub_shape_indices.insert(an_edge_index);
+                    }
                 }
             }
-            self.shapes[si].sub_shapes = ns.into_iter().collect();
+
+            // OCCT L1841-1848: replace shell indices with face+edge indices
+            self.shapes[a_solid_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
         }
+        a_solid_count
     }
 
     fn build_vertex_edge_map(&mut self) {
