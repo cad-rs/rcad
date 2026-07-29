@@ -17,7 +17,6 @@
 //! | `fuse()` / `common()` / `cut()` | convenience wrapper (no OCCT equivalent) |
 
 pub mod argument_analyzer;
-pub mod builder_operation;
 pub mod section;
 
 use rcad_kernel::topods;
