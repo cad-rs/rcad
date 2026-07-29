@@ -1,14 +1,18 @@
 // OCCT BOPDS_Iterator — BVH-based pair enumeration.
 // OCCT ref: BOPDS_Iterator.hxx / BOPDS_Iterator.cxx
 use crate::bop::ds::DS;
+use crate::bop::int_tools::context::IntToolsContext;
 use rcad_kernel::topods::ShapeType;
 use std::collections::HashSet;
 
 /// BOPDS_Iterator — iterates pairs of interfering shapes.
+/// OCCT ref: BOPDS_Iterator.hxx
 pub struct BOPDS_Iterator<'a> {
     ds: &'a DS,
     fuzzy_tol: f64,
     my_lists: Vec<Vec<(usize, usize)>>,
+    my_length: usize, // OCCT: myLength — expected number of interfering pairs
+    my_run_parallel: bool, // OCCT: myRunParallel
     current_list: Vec<(usize, usize)>,
     current_pos: usize,
 }
@@ -56,17 +60,46 @@ impl<'a> BOPDS_Iterator<'a> {
         BOPDS_Iterator {
             ds, fuzzy_tol,
             my_lists,
+            my_length: 0,
+            my_run_parallel: false,
             current_list: Vec::new(),
             current_pos: 0,
         }
     }
 
-    /// OCCT BOPDS_Iterator::Prepare (BOPDS_Iterator.cxx L125-180).
-    /// Populates pair lists by checking AABB overlap between all shape type pairs.
-    pub fn prepare(&mut self) {
-        let n = self.ds.nb_shapes();
-        // OCCT: iterates all pairs of shape types using BVH + box tests.
-        // rcad: brute-force AABB overlap check between shape type pairs.
+    // OCCT BOPDS_Iterator.cxx L167-188: ExpectedLength, BlockLength
+    pub fn expected_length(&self) -> usize { self.my_length }
+    pub fn block_length(&self) -> usize {
+        let a_nb_iis = self.my_length;
+        let a_cf_predict = 0.5;
+        if a_nb_iis <= 1 { return 1; }
+        (a_cf_predict * a_nb_iis as f64) as usize
+    }
+
+    // OCCT: SetRunParallel / RunParallel
+    pub fn set_run_parallel(&mut self, flag: bool) { self.my_run_parallel = flag; }
+    pub fn run_parallel(&self) -> bool { self.my_run_parallel }
+
+    // OCCT BOPDS_Iterator.hxx L107: NbExtInterfs
+    pub fn nb_ext_interfs() -> usize { 4 }
+
+    // OCCT BOPDS_Iterator::Prepare (BOPDS_Iterator.cxx L247-265).
+    // Calls Intersect to populate pair lists by checking AABB overlap.
+    pub fn prepare(&mut self, _ctx: Option<&IntToolsContext>, _check_obb: bool, _fuzzy: f64) {
+        let a_nb_interf_types = DS::nb_interf_types();
+        self.my_length = 0;
+        for i in 0..a_nb_interf_types {
+            self.my_lists[i].clear();
+        }
+        if self.ds.nb_shapes() == 0 { return; }
+        self.intersect();
+    }
+
+    // OCCT BOPDS_Iterator::Intersect (BOPDS_Iterator.cxx L270-359).
+    // Enumerates pairs of shapes with overlapping bounding boxes.
+    // OCCT uses BVH (BOPTools_BoxTree); rcad uses brute-force AABB check.
+    fn intersect(&mut self) {
+        let n = self.ds.nb_source_shapes();
         let t_combos = [
             (ShapeType::Vertex, ShapeType::Vertex),
             (ShapeType::Vertex, ShapeType::Edge),

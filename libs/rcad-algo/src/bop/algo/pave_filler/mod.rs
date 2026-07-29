@@ -1281,8 +1281,11 @@ impl<'a> PaveFiller<'a> {
         let ds_ref: &'a mut DS = unsafe { &mut *ds_field };
         let ds_shared: &'a DS = &*ds_ref;
         let ds_static: &'static DS = unsafe { std::mem::transmute(ds_shared) };
+        // OCCT L207-210: myIterator = new BOPDS_Iterator
         let mut a_it = BOPDS_Iterator::new(ds_static, self.my_fuzzy_value);
-        a_it.prepare();
+        a_it.set_run_parallel(self.my_run_parallel); // OCCT L208: SetRunParallel
+        // OCCT L210: myIterator->Prepare(myContext, myUseOBB, myFuzzyValue)
+        a_it.prepare(Some(&self.my_context), false, self.my_fuzzy_value);
         self.my_iterator = Some(Box::new(a_it));
     }
 
