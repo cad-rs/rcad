@@ -47,24 +47,13 @@ fn type_to_integer(t1: ShapeType, t2: ShapeType) -> usize {
 }
 
 /// Returns true if bounding boxes of two shapes overlap (with gap tolerance).
+/// OCCT: Bnd_Box::IsOut (Bnd_Box.cxx L889-966).
 fn boxes_overlap(si1: &crate::bop::ds::ShapeInfo, si2: &crate::bop::ds::ShapeInfo, gap: f64) -> bool {
-    use rcad_kernel::math::bnd::BndBox;
-    let b1 = match (si1.box_min, si1.box_max) {
-        (Some(min), Some(max)) => {
-            let mut b = BndBox::from_corners(min.x, min.y, min.z, max.x, max.y, max.z);
-            b.set_gap(si1.box_gap + gap);
-            b
-        }
-        _ => return true,
-    };
-    let b2 = match (si2.box_min, si2.box_max) {
-        (Some(min), Some(max)) => {
-            let mut b = BndBox::from_corners(min.x, min.y, min.z, max.x, max.y, max.z);
-            b.set_gap(si2.box_gap + gap);
-            b
-        }
-        _ => return true,
-    };
+    if si1.bbox.is_void() || si2.bbox.is_void() { return true; }
+    let mut b1 = si1.bbox.clone();
+    let mut b2 = si2.bbox.clone();
+    b1.set_gap(b1.get_gap() + gap);
+    b2.set_gap(b2.get_gap() + gap);
     !b1.is_out_box(&b2)
 }
 

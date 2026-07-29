@@ -39,6 +39,7 @@ use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
 use rcad_kernel::curve_bounding_box;
+use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::CurveEval;
 use rcad_kernel::topology;
 use rcad_kernel::{is_negative_infinite_value, is_positive_infinite_value};
@@ -564,9 +565,7 @@ impl IndexRange {
 pub struct ShapeInfo {
     pub shape: Shape,
     pub shape_type: ShapeType,
-    pub box_min: Option<DVec3>,
-    pub box_max: Option<DVec3>,
-    pub box_gap: f64,
+    pub bbox: BndBox, // OCCT: Bnd_Box myBox
     pub sub_shapes: Vec<usize>,
     pub reference: i64,
     pub flag: i64,
@@ -754,7 +753,7 @@ impl DS {
         let st = s.shape_type();
         self.shapes.push(ShapeInfo {
             shape: s, shape_type: st,
-            box_min: None, box_max: None, box_gap: 0.0,
+            bbox: BndBox::new(),
             sub_shapes: Vec::new(), reference: -1, flag: -1,
         });
         let idx = self.shapes.len() - 1;
@@ -1128,7 +1127,7 @@ impl DS {
                         the_box.2 = the_box.2.max(b.2);
                     }
                 }
-                if self.shapes[fi].box_min.is_none() {
+                if self.shapes[fi].bbox.is_void() {
                     // open face ?solid is unbounded
                     the_box.0 = DVec3::splat(f64::NEG_INFINITY);
                     the_box.1 = DVec3::splat(f64::INFINITY);
@@ -1149,10 +1148,9 @@ impl DS {
             a_vertex_count += 1;
             // OCCT L1603-1606: SetGap(Tolerance + tol) + Add(point) → degenerate box [pt, pt]
             let vt = self.vertex_tolerance(&self.shapes[a_vertex_index].shape);
-            self.shapes[a_vertex_index].box_gap = vt + tol;
             if let Some(pt) = self.vertex_point_on_shape(&self.shapes[a_vertex_index].shape) {
-                self.shapes[a_vertex_index].box_min = Some(pt);
-                self.shapes[a_vertex_index].box_max = Some(pt);
+                self.shapes[a_vertex_index].bbox = BndBox::from_point(pt);
+                self.shapes[a_vertex_index].bbox.set_gap(vt + tol);
             }
         }
         a_vertex_count
@@ -1235,18 +1233,21 @@ impl DS {
                 };
 
             // OCCT L1681-1686: add vertex bounding boxes
-            for &vi in &self.shapes[an_edge_index].sub_shapes {
-                if let (Some(bmin), Some(bmax)) = (self.shapes[vi].box_min, self.shapes[vi].box_max) {
-                    an_edge_bx_min = an_edge_bx_min.min(bmin);
-                    an_edge_bx_max = an_edge_bx_max.max(bmax);
+            let sub_shapes = self.shapes[an_edge_index].sub_shapes.clone();
+            for &vi in &sub_shapes {
+                if !self.shapes[vi].bbox.is_void() {
+                    an_edge_bx_min = an_edge_bx_min.min(self.shapes[vi].bbox.raw_min());
+                    an_edge_bx_max = an_edge_bx_max.max(self.shapes[vi].bbox.raw_max());
                 }
             }
 
             // OCCT L1688: SetGap(existing_gap + tol)
             if an_edge_bx_min.x.is_finite() {
-                self.shapes[an_edge_index].box_min = Some(an_edge_bx_min);
-                self.shapes[an_edge_index].box_max = Some(an_edge_bx_max);
-                self.shapes[an_edge_index].box_gap += tol;
+                self.shapes[an_edge_index].bbox = BndBox::from_corners(
+                    an_edge_bx_min.x, an_edge_bx_min.y, an_edge_bx_min.z,
+                    an_edge_bx_max.x, an_edge_bx_max.y, an_edge_bx_max.z);
+                let cur_gap = self.shapes[an_edge_index].bbox.get_gap();
+                self.shapes[an_edge_index].bbox.set_gap(cur_gap + tol);
             }
         }
         an_edge_count
@@ -1293,15 +1294,18 @@ impl DS {
                 };
 
             // OCCT L1725-1752: iterate wires → edges
-            for &wi in &self.shapes[a_face_index].sub_shapes.clone() {
+            let wire_indices = self.shapes[a_face_index].sub_shapes.clone();
+            for &wi in &wire_indices {
                 if wi >= self.nb_shapes() { continue; }
-                for &ei in &self.shapes[wi].sub_shapes.clone() {
+                let edge_indices = self.shapes[wi].sub_shapes.clone();
+                for &ei in &edge_indices {
                     if ei >= self.nb_shapes() { continue; }
                     if self.shapes[ei].shape_type != ShapeType::Edge { continue; }
 
                     // OCCT L1729-1732: Add edge bounding box to face box
-                    if let (Some(bmin), Some(bmax)) = (self.shapes[ei].box_min, self.shapes[ei].box_max) {
-                        mn = mn.min(bmin); mx = mx.max(bmax);
+                    if !self.shapes[ei].bbox.is_void() {
+                        mn = mn.min(self.shapes[ei].bbox.raw_min());
+                        mx = mx.max(self.shapes[ei].bbox.raw_max());
                     }
 
                     // OCCT L1742-1746: Mark degenerated edges
@@ -1333,10 +1337,11 @@ impl DS {
             self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
 
             if mn.x.is_finite() {
-                self.shapes[a_face_index].box_min = Some(mn);
-                self.shapes[a_face_index].box_max = Some(mx);
+                self.shapes[a_face_index].bbox = BndBox::from_corners(
+                    mn.x, mn.y, mn.z, mx.x, mx.y, mx.z);
                 // OCCT L1775: SetGap(existing_gap + tol)
-                self.shapes[a_face_index].box_gap += tol;
+                let cur_gap = self.shapes[a_face_index].bbox.get_gap();
+                self.shapes[a_face_index].bbox.set_gap(cur_gap + tol);
             }
         }
         a_face_count
@@ -1356,8 +1361,9 @@ impl DS {
                 (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY), 0.0);
             self.build_bnd_box_solid(a_solid_index, &mut a_solid_bound_box, false);
             if a_solid_bound_box.0.x.is_finite() {
-                self.shapes[a_solid_index].box_min = Some(a_solid_bound_box.0);
-                self.shapes[a_solid_index].box_max = Some(a_solid_bound_box.1);
+                self.shapes[a_solid_index].bbox = BndBox::from_corners(
+                    a_solid_bound_box.0.x, a_solid_bound_box.0.y, a_solid_bound_box.0.z,
+                    a_solid_bound_box.1.x, a_solid_bound_box.1.y, a_solid_bound_box.1.z);
             }
 
             // OCCT L1803-1804: map of sub-shape indices
@@ -1395,8 +1401,9 @@ impl DS {
     }
 
     fn build_bnd_box(&mut self, i: usize) -> Option<(DVec3, DVec3, f64)> {
-        if let (Some(mn), Some(mx)) = (self.shapes[i].box_min, self.shapes[i].box_max) {
-            return Some((mn, mx, self.shapes[i].box_gap));
+        if !self.shapes[i].bbox.is_void() {
+            let g = self.shapes[i].bbox.get_gap();
+            return Some((self.shapes[i].bbox.raw_min(), self.shapes[i].bbox.raw_max(), g));
         }
         match self.shapes[i].shape_type {
             ShapeType::Vertex => {
@@ -1406,9 +1413,9 @@ impl DS {
                 if let Some(pt) = p {
                     let tol = t.max(1e-10);
                     let b = (pt - DVec3::splat(tol), pt + DVec3::splat(tol), tol);
-                    self.shapes[i].box_min = Some(b.0);
-                    self.shapes[i].box_max = Some(b.1);
-                    self.shapes[i].box_gap = b.2;
+                    self.shapes[i].bbox = BndBox::from_corners(
+                        b.0.x, b.0.y, b.0.z, b.1.x, b.1.y, b.1.z);
+                    self.shapes[i].bbox.set_gap(b.2);
                     Some(b)
                 } else { None }
             }
@@ -1424,9 +1431,9 @@ impl DS {
                     }
                 }
                 if mn.x.is_finite() {
-                    self.shapes[i].box_min = Some(mn);
-                    self.shapes[i].box_max = Some(mx);
-                    self.shapes[i].box_gap = gap;
+                    self.shapes[i].bbox = BndBox::from_corners(
+                        mn.x, mn.y, mn.z, mx.x, mx.y, mx.z);
+                    self.shapes[i].bbox.set_gap(gap);
                     Some((mn, mx, gap))
                 } else { None }
             }

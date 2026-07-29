@@ -22,6 +22,7 @@ use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools;
 use rcad_kernel::base::proj_lib::project_on_surface;
+use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::CurveEval;
 use rcad_kernel::topods::{self, ShapeType};
@@ -348,9 +349,8 @@ impl<'a> PaveFiller<'a> {
         {
             let vt = max_tol + rcad_kernel::CONFUSION;
             let si = self.ds.change_shape_info(n_v);
-            si.box_gap = vt;
-            si.box_min = Some(centroid);  // point box: min == max
-            si.box_max = Some(centroid);
+            si.bbox = BndBox::from_point(centroid);
+            si.bbox.set_gap(vt);
         }
 
         // OCCT L186-191: get InterfVV array, pre-allocate if theAddInterfs
@@ -1794,9 +1794,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             if let rcad_kernel::topods::TShape::Vertex(vd) = &mut *Arc::make_mut(&mut si.shape.data) {
                 vd.tolerance = tol_new;
                 // OCCT L120-123: update bounding box (point+gap)
-                si.box_gap = tol_new + rcad_kernel::CONFUSION;
-                si.box_min = Some(vd.point);
-                si.box_max = Some(vd.point);
+                si.bbox = BndBox::from_point(vd.point);
+                si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
             }
             self.my_increased_ss.insert(n_v);
         }
