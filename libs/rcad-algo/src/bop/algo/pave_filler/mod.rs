@@ -1809,48 +1809,34 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// Update vertex tolerances from CommonBlock tolerances.
     /// OCCT BOPAlgo_PaveFiller::UpdateVerticesOfCB (PaveFiller_3.cxx L959-993).
+    // OCCT BOPAlgo_PaveFiller::UpdateVerticesOfCB (PaveFiller_3.cxx L959-993).
     fn update_vertices_of_cb(&mut self) {
-        // Collect vertex-tolerance pairs first to avoid borrow conflicts
-        let mut vertices_to_update: Vec<(usize, f64)> = Vec::new();
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for pool_i in 0..self.ds.pave_blocks_pool.len() {
-            let pool = self.ds.pave_blocks_pool[pool_i].clone();
-            for spb in &pool {
-                let a_cb_idx = {
-                    let pbr = spb.0.read().unwrap();
-                    pbr.common_block_idx
-                };
-                let a_cb_idx = match a_cb_idx {
-                    Some(idx) => idx,
-                    None => continue,
-                };
-                if a_cb_idx >= self.ds.common_blocks.len() {
-                    continue;
-                }
+        let a_nb_pbp = self.ds.pave_blocks_pool.len();
+        for i in 0..a_nb_pbp {
+            let a_lpb = self.ds.pave_blocks_pool[i].clone();
+            for a_pb in &a_lpb {
+                let a_cb_idx = self.ds.common_block(a_pb);
+                let a_cb_idx = match a_cb_idx { Some(idx) => idx, None => continue, };
                 let a_cb = &self.ds.common_blocks[a_cb_idx];
-                let a_pbr_key = a_cb.pave_block1().unwrap_or(pool_i);
-                if !a_mpb_fence.insert(a_pbr_key as u64) {
-                    continue;
-                }
+                // OCCT L979-980: const handle<PaveBlock>& aPBR = aCB->PaveBlock1();
+                // rcad: use a_pb's pointer for fence (same semantic: each CB processed once)
+                let a_pb_key = Arc::as_ptr(&a_pb.0) as u64;
+                if !a_mpb_fence.insert(a_pb_key) { continue; }
+                // OCCT L985-990: aTolCB = aCB->Tolerance(); UpdateVertex(Pave1, Tol); UpdateVertex(Pave2, Tol);
                 let a_tol_cb = a_cb.tolerance();
-                if a_tol_cb > 0.0 {
-                    for &(pb_gi, _) in a_cb.pave_blocks() {
-                        if pb_gi < self.ds.pave_blocks_pool.len() {
-                            for cbp in &self.ds.pave_blocks_pool[pb_gi] {
-                                let (nv1, nv2) = {
-                                    let r = cbp.0.read().unwrap();
-                                    (r.pave1.vertex_idx, r.pave2.vertex_idx)
-                                };
-                                vertices_to_update.push((nv1, a_tol_cb));
-                                vertices_to_update.push((nv2, a_tol_cb));
+                if a_tol_cb > 0. {
+                    if let Some(pb1_idx) = a_cb.pave_block1() {
+                        if pb1_idx < self.ds.pave_blocks_pool.len() {
+                            if let Some(pb1) = self.ds.pave_blocks_pool[pb1_idx].first() {
+                                let (nv1, nv2) = { let r = pb1.0.read().unwrap(); r.indices() };
+                                self.update_vertex(nv1, a_tol_cb);
+                                self.update_vertex(nv2, a_tol_cb);
                             }
                         }
                     }
                 }
             }
-        }
-        for (nv, tol) in vertices_to_update {
-            self.update_vertex(nv, tol);
         }
     }
 
