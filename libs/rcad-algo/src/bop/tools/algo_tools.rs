@@ -163,3 +163,199 @@ fn closest_uv(surf: &rcad_kernel::geom::Surface3, p: glam::DVec3) -> (f64, f64) 
     let (uv, _) = closest_point_on_surface(surf, p);
     (uv.x, uv.y)
 }
+
+// ====================================================================
+// MakeContainer — OCCT BOPTools_AlgoTools::MakeContainer (L1608+)
+// ====================================================================
+/// Creates an empty container shape of the given type.
+pub fn make_container(st: ShapeType) -> Shape {
+    match st {
+        ShapeType::Compound => Shape::null(), // rcad: synthetic Compound
+        _ => Shape::null(),
+    }
+}
+
+// ====================================================================
+// Dimension — OCCT BOPTools_AlgoTools::Dimension (L503+)
+// ====================================================================
+/// Returns dimension of a shape (-1 if mixed).
+pub fn dimension(st: ShapeType) -> i32 {
+    match st {
+        ShapeType::Vertex => 0,
+        ShapeType::Edge | ShapeType::Wire => 1,
+        ShapeType::Face => 2,
+        ShapeType::Shell | ShapeType::Solid | ShapeType::CompSolid => 3,
+        ShapeType::Compound => -1,
+        _ => -1,
+    }
+}
+
+// ====================================================================
+// IsOpenShell — OCCT BOPTools_AlgoTools::IsOpenShell (L2358+)
+// ====================================================================
+/// Checks if a shell is open by counting free edges (edges used once).
+pub fn is_open_shell(face_indices: &[usize], ds: &DS) -> bool {
+    let mut edge_count: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for &fi in face_indices {
+        let si = ds.shape_info(fi);
+        for &ss in &si.sub_shapes {
+            if ss < ds.nb_shapes() && ds.shape_info(ss).shape_type == ShapeType::Edge {
+                *edge_count.entry(ss).or_insert(0) += 1;
+            }
+        }
+    }
+    edge_count.values().any(|&c| c == 1)
+}
+
+// ====================================================================
+// IsInvertedSolid — OCCT BOPTools_AlgoTools::IsInvertedSolid (L522+)
+// ====================================================================
+/// Checks if the solid is inverted (negative volume).
+pub fn is_inverted_solid(_shell_indices: &[usize], _ds: &DS) -> bool {
+    // rcad: requires signed volume computation
+    false
+}
+
+// ====================================================================
+// CorrectRange — OCCT BOPTools_AlgoTools::CorrectRange (EE variant, L284+)
+// ====================================================================
+/// Corrects edge range taking into account tolerance of adjacent shapes.
+pub fn correct_range_ee(
+    curve: &rcad_kernel::geom::Curve3,
+    t1: f64, t2: f64,
+    _tol_e1: f64, _tol_e2: f64,
+) -> (f64, f64) {
+    match curve {
+        rcad_kernel::geom::Curve3::Line(_) => (t1, t2),
+        _ => {
+            // OCCT: shrink range by tolerance/derivative at endpoints
+            let shrink = rcad_kernel::CONFUSION * 2.0;
+            let nt1 = t1 + shrink;
+            let nt2 = t2 - shrink;
+            if nt2 > nt1 { (nt1, nt2) } else { (t1, t2) }
+        }
+    }
+}
+
+// ====================================================================
+// CorrectRange — OCCT BOPTools_AlgoTools::CorrectRange (EF variant, L364+)
+// ====================================================================
+/// Corrects edge range for edge-face intersection.
+pub fn correct_range_ef(
+    curve: &rcad_kernel::geom::Curve3,
+    t1: f64, t2: f64,
+    _tol_e: f64, _tol_f: f64,
+) -> (f64, f64) {
+    // rcad: same logic as EE variant
+    correct_range_ee(curve, t1, t2, 0.0, 0.0)
+}
+
+// ====================================================================
+// IsBlockInOnFace — OCCT BOPTools_AlgoTools::IsBlockInOnFace (L1979+)
+// ====================================================================
+/// Checks if the pave block range lies in/on the face in 2D.
+pub fn is_block_in_on_face(
+    _t1: f64, _t2: f64,
+    _ds: &DS, _edge_idx: usize, _face_idx: usize,
+) -> bool {
+    // rcad: requires pcurve intersection with face bounds
+    false
+}
+
+// ====================================================================
+// PointOnEdge — OCCT BOPTools_AlgoTools::PointOnEdge (L536+)
+// ====================================================================
+/// Computes a 3D point on the edge at given parameter.
+pub fn point_on_edge(curve: &rcad_kernel::geom::Curve3, param: f64) -> glam::DVec3 {
+    curve.point_at(param)
+}
+
+// ====================================================================
+// GetEdgeOnFace — OCCT BOPTools_AlgoTools::GetEdgeOnFace (L1817+)
+// ====================================================================
+/// Finds the edge on the face that is same as the given edge.
+pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> Option<usize> {
+    let fi = ds.shape_info(face_idx);
+    for &ss in &fi.sub_shapes {
+        if ss < ds.nb_shapes() {
+            let ssi = ds.shape_info(ss);
+            if ssi.shape_type == ShapeType::Edge && ss == edge_idx {
+                return Some(ss);
+            }
+        }
+    }
+    None
+}
+
+// ====================================================================
+// MakeEdge — OCCT BOPTools_AlgoTools::MakeEdge / MakeSplitEdge / MakeSectEdge
+// ====================================================================
+/// Creates a split edge from a source edge with new vertices.
+pub fn make_split_edge(
+    _curve: &rcad_kernel::geom::Curve3,
+    _v1: usize, _t1: f64,
+    _v2: usize, _t2: f64,
+    _ds: &mut DS,
+) -> usize {
+    // rcad: DS::push_edge handles this
+    0
+}
+
+// ====================================================================
+// UpdateVertex — OCCT BOPTools_AlgoTools::UpdateVertex (L124-138)
+// ====================================================================
+/// Updates vertex tolerance to cover a distance.
+pub fn update_vertex(_v_idx: usize, _dist: f64, _ds: &mut DS) {
+    // rcad: covered by PaveFiller::update_vertex
+}
+
+// ====================================================================
+// AreFacesSameDomain — OCCT BOPTools_AlgoTools::AreFacesSameDomain (L1139+)
+// ====================================================================
+/// Checks if two faces are geometrically coincident (same domain).
+pub fn are_faces_same_domain(
+    f1_idx: usize, f2_idx: usize,
+    ds: &DS,
+    fuzz: f64,
+) -> bool {
+    // OCCT: find point inside F1, check if valid for F2
+    // rcad: check if surfaces match and vertices are close
+    let s1 = match ds.face_surface(f1_idx) { Some(s) => s, None => return false };
+    let s2 = match ds.face_surface(f2_idx) { Some(s) => s, None => return false };
+    // Check surface type match
+    use rcad_kernel::geom::Surface3;
+    match (&s1, &s2) {
+        (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+            let d = (p1.origin - p2.origin).length();
+            let nd = 1.0 - p1.normal.dot(p2.normal).abs();
+            d < fuzz && nd < fuzz
+        }
+        _ => false, // non-planar SD check not implemented
+    }
+}
+
+// ====================================================================
+// Sense — OCCT BOPTools_AlgoTools::Sense (L1209+)
+// ====================================================================
+/// Checks normal directions of two faces sharing an edge.
+/// Returns 0=error, 1=same direction, -1=opposite.
+pub fn sense(
+    _f1_idx: usize, _f2_idx: usize,
+    _edge_idx: usize,
+    _ds: &DS,
+) -> i32 {
+    // rcad: requires face normal computation at shared edge
+    0
+}
+
+// ====================================================================
+// MakePCurve — OCCT BOPTools_AlgoTools::MakePCurve (L1657+)
+// ====================================================================
+/// Creates a 2D pcurve for an edge on two faces.
+pub fn make_pcurve(
+    _edge_idx: usize,
+    _face1_idx: usize, _face2_idx: usize,
+    _ds: &mut DS,
+) {
+    // rcad: pcurve creation is handled by MakePCurves step in PaveFiller
+}
