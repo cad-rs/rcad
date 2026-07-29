@@ -473,33 +473,30 @@ impl<'a> BooleanBuilder<'a> {
             if !self.ds.has_face_info(i) {
                 continue;
             }
-            // OCCT L281-287: get FaceInfo — PaveBlocksIn/On/Sc, AloneVertices
+            // OCCT L275-279: Check HasFaceInfo
+            if !self.ds.has_face_info(i) { continue; }
             let a_fi = self.ds.face_info(i).clone();
-            let a_nb_pb_in = a_fi.pave_blocks_in.len();
-            let a_nb_pb_on = a_fi.pave_blocks_on.len();
-            let a_nb_pb_sc = a_fi.pave_blocks_sc.len();
-            let a_nb_av = a_fi.vertices_in.len();
-            // OCCT L293-296: skip if no IN/ON/SC edges and no alone vertices
-            if a_nb_pb_in == 0 && a_nb_pb_on == 0 && a_nb_pb_sc == 0 && a_nb_av == 0 {
-                continue;
-            }
-            // OCCT L298-310: if no IN and no SC edges → check wire modifications
-            if a_nb_pb_in == 0 && a_nb_pb_sc == 0 {
-                let face_s = self.brep_sr(i);
-                let sub_shapes = self.shape_sub_shapes(&face_s);
-                let has_modified_wires = sub_shapes.iter().any(|ss| {
-                    self.my_images.contains_key(ss)
-                });
-                if !has_modified_wires && a_nb_av == 0 {
-                    continue;
-                }
-            }
-            // OCCT: Create BuilderFace, process face
+            let has_sc = !a_fi.pave_blocks_sc.is_empty();
+            let has_in = !a_fi.pave_blocks_in.is_empty();
+            let has_av = !a_fi.vertices_in.is_empty();
+            if !has_sc && !has_in && !has_av { continue; }
+            // OCCT: section edges from PaveBlocksSc
+            let section_edges: Vec<Shape> = a_fi.pave_blocks_sc.iter()
+                .filter_map(|&pb_idx| {
+                    if pb_idx >= self.ds.pave_blocks_pool.len() { return None; }
+                    let ei = self.ds.pave_blocks_pool[pb_idx].first()
+                        .and_then(|pb| {
+                            let e = pb.0.read().unwrap().edge;
+                            if e < self.ds.nb_shapes() { Some(e) } else { None }
+                        })?;
+                    Some(self.brep_sr(ei))
+                })
+                .collect();
+            if section_edges.is_empty() { continue; }
             let face_s = self.brep_sr(i);
-            let sub_edges = self.shape_sub_shapes(&face_s);
             let mut bf = BuilderFace::new(self.ds);
             bf.my_face = Some(face_s.clone());
-            bf.my_edges = sub_edges;
+            bf.my_edges = section_edges;
             bf.perform();
             if !bf.my_images.is_empty() {
                 for img in &bf.my_images {
