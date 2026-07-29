@@ -1467,55 +1467,42 @@ impl<'a> PaveFiller<'a> {
 // FillShrunkData — OCCT BOPAlgo_PaveFiller_9.cxx L65-138
 // ====================================================================
 
-/// OCCT BOPAlgo_PaveFiller::FillShrunkData (PaveFiller_9.cxx L65-138).
-fn fill_shrunk_data(&mut self, t1: ShapeType, t2: ShapeType) {
+// OCCT BOPAlgo_PaveFiller::FillShrunkData (PaveFiller_9.cxx L65-138).
+fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L68: myIterator->Initialize(aType1, aType2)
-        // rcad: initialize then copy pairs (borrow checker)
         let my_iterator = match &mut self.my_iterator {
             Some(it) => it,
             None => return,
         };
-        my_iterator.initialize(t1, t2);
-        let pairs: Vec<(usize, usize)> = my_iterator.pairs(t1, t2).to_vec();
-        if pairs.is_empty() { return; }
+        my_iterator.initialize(a_type1, a_type2);
+        let i_size = my_iterator.pairs(a_type1, a_type2).len();
+        if i_size == 0 { return; }
 
-        // OCCT L78: NCollection_Map<int> aMI;
+        // OCCT L75-80: locals
         let mut a_mi: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // OCCT L80: TopAbs_ShapeEnum aType[2] = {aType1, aType2};
-        let a_type = [t1, t2];
-
-        // OCCT L82-126: iterate pairs, find edges needing shrunk data
-        let mut edge_indices: Vec<usize> = Vec::new();
-
-        for &(ns0, ns1) in &pairs {
-            // OCCT L84: myIterator->Value(nS[0], nS[1]);
-            let ns = [ns0, ns1];
-            // OCCT L86-92: for (i = 0; i < 2; ++i) { if (aType[i]!=EDGE || !aMI.Add(nE)) continue; }
-            for i in 0..2 {
-                let n_e = ns[i];
-                if a_type[i] != ShapeType::Edge || !a_mi.insert(n_e) { continue; }
-                // OCCT L94-98: if (aSIE.HasFlag()) continue;
-                if self.ds.shapes[n_e].has_flag() { continue; }
-                edge_indices.push(n_e);
-            }
-        }
-
-        // OCCT L82-126: collect ShrunkRange objects for each edge PB
+        let a_type = [a_type1, a_type2];
         let mut a_vsd: Vec<ShrunkRange> = Vec::new();
-        for &n_e in &edge_indices {
-            // OCCT: ChangePaveBlocks creates PB container if absent,
-            // then iterates existing PBs. If none exist, no PBs processed.
-            let a_lpb = self.ds.change_pave_blocks(n_e);
-            for a_pb in a_lpb {
-                let pbr = a_pb.0.read().unwrap();
-                if pbr.has_shrunk_data() { continue; }
-                let (n_v1, n_v2) = pbr.indices();
-                let (a_t1, a_t2) = pbr.range();
-                drop(pbr);
-                a_vsd.push(ShrunkRange::new(a_pb, n_v1, n_v2, a_t1, a_t2));
+
+        // OCCT L82-126: iterate pairs
+        let pairs: Vec<(usize, usize)> = my_iterator.pairs(a_type1, a_type2).to_vec();
+        for &(ns0, ns1) in &pairs {
+            let n_s = [ns0, ns1];
+            for i in 0..2 {
+                let n_e = n_s[i];
+                if a_type[i] != ShapeType::Edge || !a_mi.insert(n_e) { continue; }
+                if self.ds.shapes[n_e].has_flag() { continue; }
+                let a_lpb = self.ds.change_pave_blocks(n_e);
+                for a_pb in a_lpb {
+                    let pbr = a_pb.0.read().unwrap();
+                    if pbr.has_shrunk_data() { continue; }
+                    let (n_v1, n_v2) = pbr.indices();
+                    let (a_t1, a_t2) = pbr.range();
+                    drop(pbr);
+                    a_vsd.push(ShrunkRange::new(a_pb, n_v1, n_v2, a_t1, a_t2));
+                }
             }
         }
-        // OCCT L128-137: Perform + AnalyzeShrunkData (serial; myRunParallel=false)
+        // OCCT L128-137: Perform + AnalyzeShrunkData (serial)
         for sr in &mut a_vsd {
             sr.perform(&self.ds);
             self.analyze_shrunk_data(sr.pave_block(), sr);
