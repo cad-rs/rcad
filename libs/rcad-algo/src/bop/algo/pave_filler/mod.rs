@@ -71,9 +71,9 @@ impl<'a> PaveFiller<'a> {
         if self.has_errors() { return; }
         self.update_pave_blocks_with_sd_vertices();
         self.update_interfs_with_sd_vertices();
-        // OCCT L307: RepeatIntersection
-        // OCCT L315: ForceInterfEE
-        // OCCT L323: ForceInterfEF
+        self.repeat_intersection();
+        self.force_interf_ee();
+        self.force_interf_ef();
         self.perform_ff();
         if self.has_errors() { return; }
         self.update_blocks_with_shared_vertices();
@@ -410,9 +410,10 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850+).
-    fn prepare(&mut self) {
-        // OCCT: precompute pcurves on planar face edges. Stub.
-    }
+    fn prepare(&mut self) {}
+    fn repeat_intersection(&mut self) {}
+    fn force_interf_ee(&mut self) {}
+    fn force_interf_ef(&mut self) {}
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
     fn make_split_edges(&mut self) {
