@@ -261,13 +261,14 @@ impl IntToolsContext {
     }
 
     /// OCCT BRepClass3d_SolidClassifier (BRepClass3d_SolidClassifier.hxx / .cxx).
-    /// Classifies points relative to a solid. Uses ray casting with face intersection.
+    /// Classifies points relative to a solid. Uses ray casting with parity counting.
+    /// OCCT L171-191: Perform(P, Tol) → checks bounding box, then classifies.
+    /// OCCT L203+: BRepClass3d_SClassifier::Perform → ray casting with transition tracking.
     pub fn solid_classifier_perform(&self, ds: &DS, solid_idx: usize, point: DVec3, _tol: f64) -> u8 {
-        // OCCT L171-191: Perform(P, Tol)
-        // 1. Collect all faces of the solid
+        // Collect all faces of the solid
         let mut face_indices: Vec<usize> = Vec::new();
         let si = ds.shape_info(solid_idx);
-        if si.shape_type != rcad_kernel::topods::ShapeType::Solid { return 2; } // OUT
+        if si.shape_type != rcad_kernel::topods::ShapeType::Solid { return 2; }
         for &shi in &si.sub_shapes {
             if shi >= ds.nb_shapes() { continue; }
             let sh_info = ds.shape_info(shi);
@@ -278,46 +279,26 @@ impl IntToolsContext {
                 }
             }
         }
-        if face_indices.is_empty() { return 3; } // UNKNOWN
+        if face_indices.is_empty() { return 3; }
 
-        // OCCT: BRepClass3d_SClassifier::Perform (L203+)
-        // Ray casting: shoot ray in +X direction, count intersections with front faces
-        // OCCT uses IntCurvesFace_Intersector for precise ray-face intersection.
-        // rcad: simplified — ray-plane intersection + face bounding box check.
+        // OCCT: shot a ray, count front-face intersections → odd=IN, even=OUT
         let ray_dir = DVec3::X;
-        let mut first_intersection = f64::MAX;
-        let mut first_state: i32 = 0; // 0=OUT, 1=IN
+        let mut intersections = 0usize;
         for &fi in &face_indices {
             let surf = match ds.face_surface(fi) {
                 Some(s) => s,
                 None => continue,
             };
-            match surf {
-                rcad_kernel::geom::Surface3::Plane(p) => {
-                    let denom = ray_dir.dot(p.normal);
-                    if denom.abs() < 1e-12 { continue; }
-                    let t = (p.origin - point).dot(p.normal) / denom;
-                    if t > 1e-12 {
-                        // OCCT: check transition type to determine IN/OUT
-                        // rcad: denom > 0 → ray hits front face → OUT→IN transition
-                        let state = if denom > 0.0 { 1 } else { 0 };
-                        if t < first_intersection {
-                            first_intersection = t;
-                            first_state = state;
-                        }
-                    }
+            if let rcad_kernel::geom::Surface3::Plane(p) = surf {
+                let denom = ray_dir.dot(p.normal);
+                if denom.abs() < 1e-12 { continue; }
+                let t = (p.origin - point).dot(p.normal) / denom;
+                if t > 1e-12 && denom < 0.0 { // front face (entering solid)
+                    intersections += 1;
                 }
-                _ => continue,
             }
         }
-        // OCCT: if no intersection → OUT; if first transition is IN→OUT → IN; else OUT
-        if first_intersection >= f64::MAX || first_intersection <= 1e-12 {
-            return 2; // OUT
-        }
-        if first_state == 1 {
-            return 3; // IN (OCCT: myState=3)
-        }
-        2 // OUT
+        if intersections % 2 == 1 { 3 } else { 2 } // IN=3, OUT=2
     }
 
     /// OCCT IntTools_Context::UVBounds (IntTools_Context.cxx L220).
