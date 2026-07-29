@@ -15,14 +15,17 @@ pub fn classify_point(_point: DVec3, _face_indices: &[usize], _ds: &ds::DS) -> d
     ds::Classification::Out
 }
 
-/// 3D curve projection wrapper — routes through topalgo.
+/// 3D curve projection wrapper — GeomAPI_ProjectPointOnCurve (TKGeomBase → rcad-kernel).
 pub fn closest_point_on_curve(curve: &Curve3, query: DVec3) -> (f64, DVec3) {
-    crate::topalgo::adaptor::project_point_on_curve(curve, query)
+    let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, query, 128);
+    (proj.param, proj.point)
 }
 
-/// 3D surface projection wrapper — routes through topalgo.
+/// 3D surface projection wrapper — GeomAPI_ProjectPointOnSurf (TKGeomBase → rcad-kernel).
 pub fn closest_point_on_surface(surface: &Surface3, point: DVec3) -> (DVec2, DVec3) {
-    crate::topalgo::adaptor::project_point_on_surface(surface, point)
+    let proj = rcad_kernel::base::geom_api::project::closest_point_on_surface_near(
+        surface, point, 64.0, 1e-7);
+    (glam::DVec2::new(proj.params.0, proj.params.1), proj.point)
 }
 
 /// Curve bounding box (delegates to rcad-kernel BndLib, no tolerance param).

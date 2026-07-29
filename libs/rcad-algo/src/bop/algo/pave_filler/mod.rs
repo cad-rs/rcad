@@ -21,7 +21,6 @@ use crate::bop::ds::{
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools;
-use crate::topalgo::adaptor::CurveAdaptor;
 use rcad_kernel::CurveEval;
 use rcad_kernel::topods::ShapeType;
 use std::collections::{HashSet, HashMap};
