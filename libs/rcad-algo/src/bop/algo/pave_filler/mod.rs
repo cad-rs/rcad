@@ -502,9 +502,10 @@ impl<'a> PaveFiller<'a> {
 
                 let (a_t, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
                 let a_dist = (proj - v_pt).length();
-                // OCCT: tolerance check with vertex new tolerance computation
+                // OCCT: ComputeVE uses aTolV + aTolE + myFuzzyValue
+                let e_tol = self.ds.edge_tolerance(n_e);
                 let a_tol_v_new = a_dist.max(v_tol);
-                if a_dist > v_tol + self.my_fuzzy_value {
+                if a_dist > v_tol + e_tol + self.my_fuzzy_value {
                     continue;
                 }
 
@@ -1514,8 +1515,9 @@ fn fill_shrunk_data(&mut self, t1: ShapeType, t2: ShapeType) {
         let curve = match self.ds.edge_curve(n_e) { Some(c) => c.clone(), None => return false };
         let (a_t, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
         let a_dist = (proj - v_pt).length();
+        let e_tol = self.ds.edge_tolerance(n_e);
         let a_tol_v_new = a_dist.max(v_tol);
-        if a_dist > v_tol + self.my_fuzzy_value { return false; }
+        if a_dist > v_tol + e_tol + self.my_fuzzy_value { return false; }
         // OCCT L876-878: add VE interference (always, not gated)
         self.ds.interf_ve.push(InterferenceVE {
             vertex: n_v, edge: n_e, param: a_t, index_new: 0,
