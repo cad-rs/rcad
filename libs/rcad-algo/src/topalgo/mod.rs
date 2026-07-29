@@ -5,4 +5,4 @@
 // Does NOT include BRepAdaptor (that's in TKBRep → rcad-brep).
 
 pub mod class3d;
-pub mod int_curves_face;
+pub mod int_curve_surface;
