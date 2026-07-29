@@ -17,6 +17,7 @@ pub struct EdgeEdgeIntersector {
     curve1: Curve3, curve2: Curve3,
     range1: [f64; 2], range2: [f64; 2],
     common_parts: Vec<CommonPrt>, done: bool,
+    fuzzy_value: f64,
 }
 impl EdgeEdgeIntersector {
     pub fn new() -> Self {
@@ -25,6 +26,7 @@ impl EdgeEdgeIntersector {
             curve2: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
             range1: [0.0, 1.0], range2: [0.0, 1.0],
             common_parts: Vec::new(), done: false,
+            fuzzy_value: 1e-7,
         }
     }
     pub fn set_edges(&mut self, ei1: usize, r1: [f64; 2], ei2: usize, r2: [f64; 2], ds: &crate::bop::ds::DS) -> &mut Self {
@@ -32,7 +34,9 @@ impl EdgeEdgeIntersector {
         if let Some(c) = ds.edge_curve(ei2) { self.curve2 = c.clone(); }
         self.range1 = r1; self.range2 = r2; self
     }
-    pub fn set_fuzzy_value(&mut self, _f: f64) {}
+    pub fn set_fuzzy_value(&mut self, f: f64) {
+        self.fuzzy_value = f;
+    }
     pub fn perform(&mut self) {
         self.common_parts.clear();
         let n_samples = 64usize;

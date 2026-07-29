@@ -120,4 +120,6 @@ fn collect_wire_edge_ptrs(wire: &Shape, out: &mut Vec<u64>) {
 }
 
 /// Build connexity blocks from connected faces (kept for compatibility).
-pub fn make_connexity_blocks(_faces: &[usize], _ds: &DS, _out: &mut Vec<Vec<usize>>) {}
+pub fn make_connexity_blocks(_faces: &[usize], _ds: &DS, _out: &mut Vec<Vec<usize>>) {
+    // OCCT compatibility wrapper — use make_connexity_blocks_from_shapes
+}

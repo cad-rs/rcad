@@ -997,7 +997,9 @@ impl DS {
         w.pave1.vertex_idx = self.get_same_domain_index(w.pave1.vertex_idx as isize) as usize;
         w.pave2.vertex_idx = self.get_same_domain_index(w.pave2.vertex_idx as isize) as usize;
     }
-    pub fn update_common_block_with_sd_vertices(&self, _cb: &CommonBlock) {}
+    pub fn update_common_block_with_sd_vertices(&self, _cb: &CommonBlock) {
+        // OCCT BOPDS_DS::UpdateCommonBlockWithSDVertices
+    }
 
     pub fn init_pave_blocks_for_vertex(&mut self, v: usize) {
         let e: Vec<usize> = self.map_ve.get(&v).cloned().unwrap_or_default();
