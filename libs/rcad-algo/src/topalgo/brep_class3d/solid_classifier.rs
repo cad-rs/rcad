@@ -12,9 +12,9 @@ pub struct SolidClassifier {
     // BRepClass3d_SClassifier base
     pub my_state: u8,          // 0=unknown, 1=faulty, 2=ON, 3=IN, 4=OUT
     // BRepClass3d_SolidClassifier own
-    a_solid_loaded: bool,
-    explorer: SolidExplorer,
-    is_a_hole_in_space: bool,
+    pub a_solid_loaded: bool,
+    pub explorer: SolidExplorer,
+    pub is_a_hole_in_space: bool,
 }
 
 impl SolidClassifier {

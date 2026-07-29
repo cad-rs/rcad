@@ -55,6 +55,11 @@ impl SolidExplorer {
         &self.face_indices
     }
 
+    /// Add a face index (used by IntToolsContext when building from DS).
+    pub fn add_face_index(&mut self, fi: usize) {
+        self.face_indices.push(fi);
+    }
+
     /// Classify point using ray casting (simplified).
     pub fn classify_point(&self, p: DVec3) -> u8 {
         if let Some(ref ds) = self.ds {

@@ -6,7 +6,10 @@
 // and surface adaptors. Each tool is lazily created and cached per face index.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::bop::ds::DS;
+use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
+use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
 use rcad_kernel::geom::{Surface3, SurfaceEval, Curve2dEval};
 use rcad_kernel::topods::{ShapeType, TShape};
 use glam::{DVec2, DVec3};
@@ -260,45 +263,34 @@ impl IntToolsContext {
         !self.is_point_in_face(ds, fi, uv)
     }
 
-    /// OCCT BRepClass3d_SolidClassifier (BRepClass3d_SolidClassifier.hxx / .cxx).
-    /// Classifies points relative to a solid. Uses ray casting with parity counting.
-    /// OCCT L171-191: Perform(P, Tol) → checks bounding box, then classifies.
-    /// OCCT L203+: BRepClass3d_SClassifier::Perform → ray casting with transition tracking.
-    pub fn solid_classifier_perform(&self, ds: &DS, solid_idx: usize, point: DVec3, _tol: f64) -> u8 {
-        // Collect all faces of the solid
-        let mut face_indices: Vec<usize> = Vec::new();
+    /// OCCT IntTools_Context::SolidClassifier (IntTools_Context.cxx L312-322).
+    /// Returns a point-in-solid classifier.
+    /// rcad: delegates to brep_class3d::SolidClassifier.
+    pub fn solid_classifier_perform(&self, ds: &DS, solid_idx: usize, point: DVec3, tol: f64) -> u8 {
         let si = ds.shape_info(solid_idx);
-        if si.shape_type != rcad_kernel::topods::ShapeType::Solid { return 2; }
+        let s_shape = si.shape.clone();
+
+        // Collect face indices from solid sub-shapes for classification
+        let mut explorer = SolidExplorer::new();
         for &shi in &si.sub_shapes {
             if shi >= ds.nb_shapes() { continue; }
             let sh_info = ds.shape_info(shi);
             if sh_info.shape_type != rcad_kernel::topods::ShapeType::Shell { continue; }
             for &fi in &sh_info.sub_shapes {
-                if fi < ds.nb_shapes() && ds.shape_info(fi).shape_type == rcad_kernel::topods::ShapeType::Face {
-                    face_indices.push(fi);
+                if fi >= ds.nb_shapes() { continue; }
+                if ds.shape_info(fi).shape_type == rcad_kernel::topods::ShapeType::Face {
+                    explorer.add_face_index(fi);
                 }
             }
         }
-        if face_indices.is_empty() { return 3; }
 
-        // OCCT: shot a ray, count front-face intersections → odd=IN, even=OUT
-        let ray_dir = DVec3::X;
-        let mut intersections = 0usize;
-        for &fi in &face_indices {
-            let surf = match ds.face_surface(fi) {
-                Some(s) => s,
-                None => continue,
-            };
-            if let rcad_kernel::geom::Surface3::Plane(p) = surf {
-                let denom = ray_dir.dot(p.normal);
-                if denom.abs() < 1e-12 { continue; }
-                let t = (p.origin - point).dot(p.normal) / denom;
-                if t > 1e-12 && denom < 0.0 { // front face (entering solid)
-                    intersections += 1;
-                }
-            }
-        }
-        if intersections % 2 == 1 { 3 } else { 2 } // IN=3, OUT=2
+        // OCCT: create BRepClass3d_SolidClassifier with the solid
+        let mut clsf = SolidClassifier::from_shape(&s_shape);
+        clsf.explorer = explorer;
+
+        // OCCT: SolidClassifier::Perform(P, Tol)
+        clsf.perform(point, tol);
+        clsf.my_state
     }
 
     /// OCCT IntTools_Context::UVBounds (IntTools_Context.cxx L220).
