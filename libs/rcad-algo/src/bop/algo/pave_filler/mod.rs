@@ -524,13 +524,13 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
     fn make_pcurves(&mut self) {
-        // OCCT: for each FaceInfo, build pcurves on PaveBlocksIn/On
-        // Stub: pcurve computation
+        // OCCT L604-606: for each FaceInfo, build pcurves on PaveBlocksIn/On
+        // Stub: pcurve computation needs kernel surface projection
     }
 
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-200+).
     fn process_de(&mut self) {
-        // OCCT: process degenerated edges via FindPaveBlocks
-        // Stub: degenerated edge handling
+        // OCCT L62-93: for source EDGE with degenerated flag
+        //   FindPaveBlocks, update pave blocks. Stub.
     }
 }
