@@ -622,23 +622,23 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
     fn fill_internal_shapes(&mut self) {
-        // OCCT: adds internal vertices/edges to solids. Stub.
+        // OCCT: adds internal vertices/edges. Stub.
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
     fn fill_images_compounds(&mut self) {
-        // OCCT: iterates source compounds, calls FillImagesCompound. Stub.
+        // OCCT: for each source compound, FillImagesCompound. Stub.
     }
 
     /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
     fn prepare_history(&mut self) {
         if !self.my_fill_history { return; }
-        // OCCT: iterate source shapes, check images → Modified/Generated/Deleted
+        // OCCT: for each source shape, check images → Modified/Generated/Deleted
     }
 
     /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461+).
     fn post_treat(&mut self) {
-        // OCCT: non-destructive mode, history fill. Stub.
+        // OCCT: non-destructive mode. Stub.
     }
 
     /// OCCT BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168).
