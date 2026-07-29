@@ -1438,7 +1438,9 @@ fn fill_shrunk_data(&mut self, t1: ShapeType, t2: ShapeType) {
         // OCCT L82-126: collect ShrunkRange objects for each edge PB
         let mut a_vsd: Vec<ShrunkRange> = Vec::new();
         for &n_e in &edge_indices {
-            let a_lpb = self.ds.edge_pave_blocks(n_e);
+            // OCCT: ChangePaveBlocks creates PB container if absent,
+            // then iterates existing PBs. If none exist, no PBs processed.
+            let a_lpb = self.ds.change_pave_blocks(n_e);
             for a_pb in a_lpb {
                 let pbr = a_pb.0.read().unwrap();
                 if pbr.has_shrunk_data() { continue; }
@@ -1546,7 +1548,7 @@ fn fill_shrunk_data(&mut self, t1: ShapeType, t2: ShapeType) {
     fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, _the_add_interfs: bool) {
         for &n_e in the_medges {
             if n_e >= self.ds.nb_shapes() { continue; }
-            let a_lpb = self.ds.edge_pave_blocks(n_e);
+            let a_lpb = self.ds.change_pave_blocks(n_e);
             if a_lpb.is_empty() { continue; }
             let old_pbs: Vec<SharedPB> = a_lpb.to_vec();
             for pb in &old_pbs {
@@ -2237,7 +2239,7 @@ fn fill_shrunk_data(&mut self, t1: ShapeType, t2: ShapeType) {
             }
 
             // L814-821: iterate PBs
-            let a_lpb = self.ds.edge_pave_blocks(n_e);
+            let a_lpb = self.ds.change_pave_blocks(n_e);
             for local_i in 0..a_lpb.len() {
                 // OCCT L819: aMPB.Add(aPBR) where aPBR = myDS->RealPaveBlock(aPB)
                 // rcad: no RealPaveBlock indirection, use (n_e, local_i) as key

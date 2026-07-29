@@ -777,12 +777,37 @@ impl DS {
     }
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
         if !self.has_pave_blocks(i) {
-            let p0 = Pave { vertex_idx: 0, param: 0.0 };
-            let spb = SharedPB::new(PaveBlock::new(i, p0, p0));
+            let spb = if self.shapes[i].shape_type == ShapeType::Edge
+                && self.shapes[i].sub_shapes.len() >= 2
+            {
+                let n_v1 = self.shapes[i].sub_shapes[0];
+                let n_v2 = self.shapes[i].sub_shapes[1];
+                let (p1, p2) = self.edge_vertex_params(i, n_v1, n_v2);
+                let pb = PaveBlock::new(i,
+                    Pave { vertex_idx: n_v1, param: p1 },
+                    Pave { vertex_idx: n_v2, param: p2 },
+                );
+                SharedPB::new(pb)
+            } else {
+                let p0 = Pave { vertex_idx: 0, param: 0.0 };
+                SharedPB::new(PaveBlock::new(i, p0, p0))
+            };
             self.pave_blocks_pool.push(vec![spb]);
             self.shapes[i].reference = (self.pave_blocks_pool.len() - 1) as i64;
         }
         &mut self.pave_blocks_pool[self.shapes[i].reference as usize]
+    }
+
+    /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
+    fn edge_vertex_params(&self, edge_idx: usize, v1_ds_idx: usize, v2_ds_idx: usize) -> (f64, f64) {
+        let ed = match self.shapes[edge_idx].shape.as_edge() {
+            Some(e) => e,
+            None => return (0.0, 0.0),
+        };
+        let v1_brep_idx = self.shapes[v1_ds_idx].shape.index;
+        let v2_brep_idx = self.shapes[v2_ds_idx].shape.index;
+        (ed.vertex_params.get(&v1_brep_idx).copied().unwrap_or(0.0),
+         ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
     }
 
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Common block map
