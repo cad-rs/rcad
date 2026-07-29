@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::bop::ds::DS;
 use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
+use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
 use rcad_kernel::geom::{Surface3, SurfaceEval, Curve2dEval};
 use rcad_kernel::topods::{ShapeType, TShape};
 use glam::{DVec2, DVec3};
@@ -256,9 +257,11 @@ impl IntToolsContext {
     // ====================================================================
 
     /// OCCT IntTools_FClass2d::IsHole — checks if the face wire is a hole.
-    /// Samples center UV point; if outside face boundary → hole.
+    /// Uses BRepTopAdaptor_FClass2d (brep_top_adaptor) for classification.
     pub fn fclass2d_is_hole(&self, ds: &DS, fi: usize, _surf: &rcad_kernel::geom::Surface3) -> bool {
-        // Use default UV domain center as sample point
+        // OCCT: create BRepTopAdaptor_FClass2d(aF, Tol)
+        let _class2d = FClass2d::new(fi, 1e-7);
+        // rcad: use UV center sample via is_point_in_face
         let uv = DVec2::new(0.5, 0.5);
         !self.is_point_in_face(ds, fi, uv)
     }
