@@ -1218,13 +1218,13 @@ impl DS {
                 self.shapes[an_edge_index].flag = an_edge_index as i64;
             }
 
-            // OCCT L1677: Bnd_Box& anEdgeBoundBox = anEdgeInfo.ChangeBox();
-            // OCCT L1678-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox);
+            // OCCT L1677-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox) adds curve box
+            // and does B.Enlarge(anEdgeTolerance) internally.
             let (mut an_edge_bx_min, mut an_edge_bx_max) =
                 if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
                     if let Some([cmn, cmx]) = curve_bounding_box(curve) {
-                        (cmn - DVec3::splat(an_edge_tolerance),
-                         cmx + DVec3::splat(an_edge_tolerance))
+                        // OCCT: curve box computed, but B.Enlarge happens at the end
+                        (cmn, cmx)
                     } else {
                         (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
                     }
@@ -1241,11 +1241,13 @@ impl DS {
                 }
             }
 
-            // OCCT L1688: SetGap(existing_gap + tol)
+            // OCCT L1688: B.Enlarge(edge_tol) + SetGap(existing_gap + tol)
             if an_edge_bx_min.x.is_finite() {
+                // OCCT: BRepBndLib::Add + BEnlarge(anEdgeTolerance) applied to box coordinates
+                let en = DVec3::splat(an_edge_tolerance);
                 self.shapes[an_edge_index].bbox = BndBox::from_corners(
-                    an_edge_bx_min.x, an_edge_bx_min.y, an_edge_bx_min.z,
-                    an_edge_bx_max.x, an_edge_bx_max.y, an_edge_bx_max.z);
+                    (an_edge_bx_min - en).x, (an_edge_bx_min - en).y, (an_edge_bx_min - en).z,
+                    (an_edge_bx_max + en).x, (an_edge_bx_max + en).y, (an_edge_bx_max + en).z);
                 let cur_gap = self.shapes[an_edge_index].bbox.get_gap();
                 self.shapes[an_edge_index].bbox.set_gap(cur_gap + tol);
             }

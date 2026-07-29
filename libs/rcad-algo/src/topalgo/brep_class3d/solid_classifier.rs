@@ -39,7 +39,7 @@ impl SolidClassifier {
 
     /// Constructor from a Shape.
     pub fn from_shape(s: &Shape) -> Self {
-        let mut clsf = SolidClassifier {
+        let clsf = SolidClassifier {
             my_state: 0,
             a_solid_loaded: true,
             explorer: SolidExplorer::from_shape(s),
@@ -50,7 +50,7 @@ impl SolidClassifier {
 
     /// Constructor to classify the point P with tolerance Tol on the solid S.
     pub fn from_shape_point(s: &Shape, p: DVec3, tol: f64) -> Self {
-        let mut clsf = SolidClassifier {
+        let clsf = SolidClassifier {
             my_state: 0,
             a_solid_loaded: true,
             explorer: SolidExplorer::from_shape(s),
