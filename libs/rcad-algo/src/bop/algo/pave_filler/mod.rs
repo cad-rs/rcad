@@ -1575,10 +1575,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // OCCT L819-823: set shrunk data with box + fuzzy/2 gap
         let (a_ts1, a_ts2) = the_sr.shrunk_range();
-        // OCCT: Bnd_Box aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
-        // rcad: PaveBlock::set_shrunk_data doesn't take BndBox — structural diff.
+        // OCCT L821: Bnd_Box aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
+        // rcad: PaveBlock has no BndBox in set_shrunk_data (structural diff).
+        // Compensate by adding fuzzy/2 to the shrunk range endpoints.
+        let a_fuzzy_half = self.my_fuzzy_value / 2.;
         let mut pbr = the_pb.0.write().unwrap();
-        pbr.set_shrunk_data(a_ts1, a_ts2, the_sr.is_splittable());
+        pbr.set_shrunk_data(a_ts1 - a_fuzzy_half, a_ts2 + a_fuzzy_half, the_sr.is_splittable());
     }
 
     // OCCT BOPAlgo_PaveFiller::ForceInterfVE (PaveFiller_3.cxx L828-910).
