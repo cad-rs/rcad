@@ -982,6 +982,7 @@ dependencies = [
  "rayon",
  "rcad-brep",
  "rcad-kernel",
+ "rcad-modeling",
  "tracing",
 ]
 
