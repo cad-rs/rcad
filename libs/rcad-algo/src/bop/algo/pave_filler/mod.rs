@@ -1581,55 +1581,89 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         pbr.set_shrunk_data(a_ts1, a_ts2, the_sr.is_splittable());
     }
 
-    /// OCCT BOPAlgo_PaveFiller::ForceInterfVE (PaveFiller_3.cxx L828-910).
+    // OCCT BOPAlgo_PaveFiller::ForceInterfVE (PaveFiller_3.cxx L828-910).
     fn force_interf_ve(
         &mut self,
         n_v: usize,
         a_pb: &SharedPB,
         the_m_edges: &mut std::collections::HashSet<usize>,
     ) -> bool {
-        let n_e = a_pb.0.read().unwrap().original_edge;
-        // OCCT L837-841: if (aSIE.HasSubShape(nV)) return true;
+        // OCCT L832-833: int nE, nVx, nVSD, iFlag; double aT, aTolVNew;
+        let n_e: usize;
+        let mut n_vx: usize;
+        let mut n_vsd: usize = usize::MAX;
+        let (mut a_t, mut a_tol_v_new): (f64, f64) = (0.0, 0.0);
+
+        // OCCT L835: nE = aPB->OriginalEdge()
+        n_e = a_pb.0.read().unwrap().original_edge;
+        // OCCT L837: const BOPDS_ShapeInfo& aSIE = myDS->ShapeInfo(nE);
+        // rcad: inline self.ds.shapes[n_e]
+
+        // OCCT L838-841: if (aSIE.HasSubShape(nV)) return true;
         if self.ds.shapes[n_e].has_sub_shape(n_v) { return true; }
         // OCCT L843-846: if (myDS->HasInterf(nV, nE)) return true;
         if self.ds.has_interf(n_v, n_e) { return true; }
-        // OCCT L848-851: if (HasInterfShapeSubShapes(nV, nE)) return true;
+        // OCCT L848-851: if (myDS->HasInterfShapeSubShapes(nV, nE)) return true;
         if self.ds.has_interf_shape_sub_shapes(n_v, n_e, true) { return true; }
-        // OCCT L853-856: if PB endpoints contain nV → return true
+        // OCCT L853-856: if (aPB->Pave1().Index() == nV || aPB->Pave2().Index() == nV) return true;
         {
             let r = a_pb.0.read().unwrap();
             if r.pave1.vertex_idx == n_v || r.pave2.vertex_idx == n_v { return true; }
         }
-        // OCCT L858-862: resolve SD
-        let mut n_vx = n_v;
-        if self.ds.has_shape_sd(n_v, &mut n_vx) { /* n_vx set to SD */ }
-        // OCCT L864-867: ComputeVE
+
+        // OCCT L858-862: nVx = nV; if (myDS->HasShapeSD(nV, nVSD)) nVx = nVSD;
+        n_vx = n_v;
+        n_vsd = n_vx;
+        if self.ds.has_shape_sd(n_v, &mut n_vx) { n_vsd = n_vx; }
+
+        // OCCT L864-867: ComputeVE via context
+        // const TopoDS_Vertex& aV = *(TopoDS_Vertex*)&myDS->Shape(nVx);
+        // const TopoDS_Edge&   aE = *(TopoDS_Edge*)&myDS->Shape(nE);
+        // iFlag = myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue);
         let v_pt = self.ds.vertex_point_by_idx(n_vx);
-        let v_tol = self.ds.vertex_tolerance_by_idx(n_vx);
         let curve = match self.ds.edge_curve(n_e) { Some(c) => c.clone(), None => return false };
-        let (a_t, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
+        let (a_t_val, proj) = crate::bop::closest_point_on_curve(&curve, v_pt);
         let a_dist = (proj - v_pt).length();
+        let v_tol = self.ds.vertex_tolerance_by_idx(n_vx);
         let e_tol = self.ds.edge_tolerance(n_e);
-        let a_tol_v_new = a_dist.max(v_tol);
-        if a_dist > v_tol + e_tol + self.my_fuzzy_value { return false; }
-        // OCCT L876-878: add VE interference (always, not gated)
+        a_tol_v_new = a_dist.max(v_tol);
+        // OCCT L868: if (iFlag == 0 || iFlag == -4)
+        let i_flag = if a_dist <= v_tol + e_tol + self.my_fuzzy_value {
+            if a_dist <= self.my_fuzzy_value { 0 } else { -4 }
+        } else { 1 };
+        if i_flag != 0 && i_flag != -4 { return false; }
+        a_t = a_t_val;
+
+        // OCCT L870: BOPDS_Pave aPave;
+        // OCCT L873-874: aVEs.SetIncrement(10);
+        // rcad: Vec auto-extends
+
+        // OCCT L876-878: 1 — BOPDS_InterfVE& aVE = aVEs.Appended();
+        //                aVE.SetIndices(nV, nE); aVE.SetParameter(aT);
         self.ds.interf_ve.push(InterferenceVE {
             vertex: n_v, edge: n_e, param: a_t, index_new: 0,
         });
-        // OCCT L880: myDS->AddInterf(nV, nE) — called separately
+
+        // OCCT L880: 2 — myDS->AddInterf(nV, nE);
         self.ds.add_interf(n_v, n_e);
-        // OCCT L883: nVx = UpdateVertex(nV, aTolVNew)
+
+        // OCCT L883: 3 — nVx = UpdateVertex(nV, aTolVNew);
         let n_vx_new = self.update_vertex(n_v, a_tol_v_new);
-        // OCCT L885-888: if (IsNewShape(nVx)) → SetIndexNew
+
+        // OCCT L885-888: 4 — if (myDS->IsNewShape(nVx)) aVE.SetIndexNew(nVx);
         if self.ds.is_new_shape(n_vx_new) {
             if let Some(last) = self.ds.interf_ve.last_mut() { last.index_new = n_vx_new; }
         }
-        // OCCT L889-892: append ext pave
+
+        // OCCT L889-892: 5 — aPave.SetIndex(nVx); aPave.SetParameter(aT); aPB->AppendExtPave(aPave);
         a_pb.0.write().unwrap().ext_paves.push(Pave { vertex_idx: n_vx_new, param: a_t });
-        // OCCT L894: theMEdges.Add(nE)
+
+        // OCCT L894: theMEdges.Add(nE);
         the_m_edges.insert(n_e);
+
         // OCCT L896-906: self-interference warning
-        if self.ds.rank(n_v) >= 0 && self.ds.rank(n_v) == self.ds.rank(n_e) {
+        let i_rv = self.ds.rank(n_v);
+        if i_rv >= 0 && i_rv == self.ds.rank(n_e) {
             self.my_report.add_warning(Alert::SelfInterferingShape(vec![n_v, n_e]));
         }
         true
