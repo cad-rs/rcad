@@ -3,6 +3,7 @@
 // BOPDS_Pave.hxx      ?vertex-on-edge parametric point
 // BOPDS_PaveBlock.hxx ?edge segment between two paves
 
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use rcad_kernel::math::bnd::BndBox;
 
@@ -68,6 +69,7 @@ pub struct PaveBlock {
     pub ts2: f64,               // myTS2 ?shrunk range end
     pub shrunk_bnd_box: BndBox, // myBndBox (OCCT Bnd_Box)
     pub common_block_idx: Option<usize>, // rcad: link to common block (OCCT uses DataMap)
+    ext_fence: HashSet<usize>,  // OCCT: myMFence — prevents duplicate ext pave vertex indices
     has_shrunk_data: bool,      // OCCT: myHasShrunkData
     splittable_from_shrunk: bool, // OCCT: myIsSplittable — set by SetShrunkData
 }
@@ -84,6 +86,7 @@ impl PaveBlock {
             ts2: 0.0,
             common_block_idx: None,
             shrunk_bnd_box: BndBox::new(),
+            ext_fence: HashSet::new(),
             has_shrunk_data: false,
             splittable_from_shrunk: true,
         }
@@ -117,15 +120,58 @@ impl PaveBlock {
             && self.pave2.vertex_idx == other.pave2.vertex_idx
     }
 
-    // -- ExtPaves --
+    // -- ExtPaves (OCCT: myMFence prevents duplicate indices) --
     pub fn is_to_update(&self) -> bool { !self.ext_paves.is_empty() }
-    pub fn append_ext_pave(&mut self, p: Pave) { self.ext_paves.push(p); }
+    pub fn append_ext_pave(&mut self, p: Pave) {
+        if self.ext_fence.insert(p.vertex_idx) {
+            self.ext_paves.push(p);
+        }
+    }
     pub fn append_ext_pave1(&mut self, p: Pave) { self.ext_paves.push(p); }
     pub fn remove_ext_pave(&mut self, vert_num: usize) {
         self.ext_paves.retain(|p| p.vertex_idx != vert_num);
     }
     pub fn ext_paves(&self) -> &[Pave] { &self.ext_paves }
     pub fn change_ext_paves(&mut self) -> &mut Vec<Pave> { &mut self.ext_paves }
+
+    // OCCT BOPDS_PaveBlock::Update (BOPDS_PaveBlock.cxx L249-308).
+    // Splits this PB at ext_paves into sub-PBs. theFlag=false (default): only ext_paves.
+    // When theFlag=true, endpoint paves are also included in the sorted list.
+    pub fn update(&mut self, the_lpb: &mut Vec<SharedPB>, the_flag: bool) {
+        let mut a_nb = self.ext_paves.len();
+        if the_flag { a_nb += 2; }
+        // OCCT L263-268: if (aNb <= 1) { Clear(); return; }
+        if a_nb <= 1 {
+            self.ext_paves.clear();
+            self.ext_fence.clear();
+            return;
+        }
+        // OCCT L270: NCollection_Array1<BOPDS_Pave> pPaves(1, aNb);
+        // OCCT L272-288: collect paves (endpoints if flag, then ext_paves)
+        let mut p_paves: Vec<Pave> = Vec::with_capacity(a_nb);
+        if the_flag {
+            p_paves.push(self.pave1.clone());
+            p_paves.push(self.pave2.clone());
+        }
+        p_paves.extend(self.ext_paves.drain(..));
+        self.ext_paves.clear();
+        self.ext_fence.clear();
+        // OCCT L291: std::sort(pPaves.begin(), pPaves.end());
+        p_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
+        // OCCT L293-308: create sub-PBs from consecutive pave pairs
+        let mut a_pave1: Option<Pave> = None;
+        for a_pave in p_paves {
+            if a_pave1.is_none() {
+                a_pave1 = Some(a_pave);
+                continue;
+            }
+            let a_pave2 = a_pave;
+            let mut a_pb = PaveBlock::new(self.edge, a_pave1.take().unwrap(), a_pave2);
+            a_pb.original_edge = self.original_edge;
+            the_lpb.push(SharedPB::new(a_pb));
+            a_pave1 = Some(a_pave2);
+        }
+    }
 
     // -- ShrunkData (OCCT BOPDS_PaveBlock::SetShrunkData) --
     // OCCT: void SetShrunkData(double theTS1, double theTS2, const Bnd_Box& theBndBox, bool theIsSplittable)
@@ -154,7 +200,7 @@ impl PaveBlock {
             edge: NO_EDGE, original_edge: NO_EDGE,
             pave1: Pave::new(0, 0.0), pave2: Pave::new(0, 0.0),
             ext_paves: Vec::new(), ts1: 0.0, ts2: 0.0, common_block_idx: None,
-            shrunk_bnd_box: BndBox::new(),
+            shrunk_bnd_box: BndBox::new(), ext_fence: HashSet::new(),
             has_shrunk_data: false, splittable_from_shrunk: true,
         }
     }
@@ -195,6 +241,7 @@ pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
             ts2: 0.0,
             common_block_idx: pb.common_block_idx,
             shrunk_bnd_box: BndBox::new(),
+            ext_fence: HashSet::new(),
             has_shrunk_data: false,
             splittable_from_shrunk: true,
         });
