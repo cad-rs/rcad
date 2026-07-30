@@ -74,9 +74,9 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
     filler.perform(&a_ps);
     let fuzz = filler.fuzzy_value();
-    let ds = filler.into_ds();
-    let mut builder = BooleanBuilder::new(&ds, op_type, fuzz);
-    builder.my_arguments = ds.arguments.clone();
+    // builder borrows the DS from filler; both live in the same scope
+    let mut builder = BooleanBuilder::new(filler.ds(), op_type, fuzz);
+    builder.my_arguments = filler.ds().arguments.clone();
     match builder.build() {
         Ok(brep) => {
             let root = brep.tshapes.iter().enumerate().rev()

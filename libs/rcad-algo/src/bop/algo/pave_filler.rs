@@ -164,8 +164,6 @@ impl PaveFiller {
         }
     }
 
-    /// Extract the owned DS, consuming the PaveFiller.
-    pub fn into_ds(self) -> DS { self.ds }
     pub fn set_arguments(&mut self, args: Vec<Shape>) {
         self.my_arguments = args;
     }
