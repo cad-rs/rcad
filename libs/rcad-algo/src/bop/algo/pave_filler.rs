@@ -2118,76 +2118,90 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::SplitPaveBlocks (PaveFiller_2.cxx L449-560).
     /// Splits PBs with ext paves into sub-PBs. Each ext pave becomes a split point.
-    fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, _the_add_interfs: bool) {
-        // OCCT L455-457: NCollection_IndexedDataMap for CommonBlocks
+    fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, the_add_interfs: bool) {
+        // OCCT L453: Fence map to avoid unification of the same vertices twice
+        let mut a_mpairs: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        // OCCT L455-457: Map to treat the Common Blocks
         let mut a_mcb_new_pb: std::collections::HashMap<usize, Vec<SharedPB>> = std::collections::HashMap::new();
+        // OCCT L460: Map of vertices to init pave blocks for them
+        let mut a_m_vertices_to_init_pb: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &n_e in the_medges {
             if n_e >= self.ds.nb_shapes() { continue; }
             self.ds.init_pave_blocks(n_e);
-            // OCCT L432-527: for each edge, split PBs with ext_paves
             let old_pbs: Vec<SharedPB> = {
                 let a_lpb = self.ds.change_pave_blocks(n_e);
                 if a_lpb.is_empty() { continue; }
                 a_lpb.to_vec()
             };
-            let mut any_split = false;
             for pb in &old_pbs {
                 // OCCT L443-447: if (!aPB->IsToUpdate()) { aItLPB.Next(); continue; }
                 if !pb.0.read().unwrap().is_to_update() { continue; }
-                // OCCT L479: const handle<BOPDS_CommonBlock>& aCB = myDS->CommonBlock(aPB);
+                // OCCT L479: myDS->CommonBlock(aPB)
                 let a_cb = self.ds.common_block(pb);
-                // OCCT L483: aPB->Update(aLPBN, false) — creates sub-PBs from ext_paves only
+                // OCCT L483: aPB->Update(aLPBN, false)
                 let mut a_lpbn: Vec<SharedPB> = Vec::new();
                 {
                     let mut pbw = pb.0.write().unwrap();
                     pbw.update(&mut a_lpbn, false);
                 }
-                // OCCT L487-553: for each new sub-PB, FillShrunkData + check validity
                 let mut valid_new_pbs: Vec<SharedPB> = Vec::new();
                 for a_pbn in &a_lpbn {
-                    // OCCT L461: myDS->UpdatePaveBlockWithSDVertices(aPBN);
-                    // OCCT L462: FillShrunkData(aPBN);
+                    // OCCT L461: myDS->UpdatePaveBlockWithSDVertices(aPBN)
+                    self.ds.update_pave_block_with_sd_vertices(a_pbn);
+                    // OCCT L462: FillShrunkData(aPBN)
                     let (sv1, sv2, st1, st2) = { let r = a_pbn.0.read().unwrap(); let (v1, v2) = r.indices(); let (t1, t2) = r.range(); (v1, v2, t1, t2) };
                     let mut sr = ShrunkRange::new(a_pbn, sv1, sv2, st1, st2);
                     sr.perform(&self.ds);
                     let a_e_range = self.ds.shapes[n_e].shape.as_edge()
                         .map(|ed| ed.range).unwrap_or([0.0, 0.0]);
                     self.analyze_shrunk_data(a_pbn, &sr, n_e, a_e_range);
-                    // OCCT L464: bool bHasValidRange = aPBN->HasShrunkData();
+                    // OCCT L464: bool bHasValidRange = aPBN->HasShrunkData()
                     let b_has_valid_range = { let r = a_pbn.0.read().unwrap(); r.has_shrunk_data() };
-                    // OCCT L468: bool bCheckDist = (bHasValidRange && !aPBN->IsSplittable());
+                    // OCCT L468: bool bCheckDist = (bHasValidRange && !aPBN->IsSplittable())
                     let b_check_dist = b_has_valid_range && !a_pbn.0.read().unwrap().is_splittable();
-                    // OCCT L469-508: if (!bHasValidRange || bCheckDist) { ... continue; }
+                    // OCCT L469-508: if (!bHasValidRange || bCheckDist) { ... MakeSDVertices; continue; }
                     if !b_has_valid_range || b_check_dist {
                         let (n_v1, n_v2) = { let r = a_pbn.0.read().unwrap(); r.indices() };
                         if n_v1 == n_v2 { continue; }
                         if b_check_dist {
                             let a_dist_vv = (self.ds.vertex_point_by_idx(n_v1) - self.ds.vertex_point_by_idx(n_v2)).length();
                             if a_dist_vv <= self.my_fuzzy_value.max(rcad_kernel::CONFUSION) {
-                                continue;
+                                // vertices interfering -> no valid range
+                                // fall through to MakeSDVertices
+                            } else {
+                                if !b_has_valid_range { continue; }
                             }
                         }
-                        if !b_has_valid_range { continue; }
+                        // OCCT L491-506: MakeSDVertices
+                        if !b_has_valid_range {
+                            let a_pair = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+                            if a_mpairs.insert(a_pair) {
+                                let a_lv = vec![n_v1, n_v2];
+                                self.make_sd_vertices_vv(&a_lv, the_add_interfs);
+                                a_m_vertices_to_init_pb.insert(n_v1);
+                                a_m_vertices_to_init_pb.insert(n_v2);
+                            }
+                        }
+                        continue;
                     }
-                    // OCCT L511: aLPB.Append(aPBN);
+                    // OCCT L511: aLPB.Append(aPBN)
                     valid_new_pbs.push(a_pbn.clone());
-                    // OCCT L513-523: handle CommonBlock for new sub-PB
+                    // OCCT L513-523: CommonBlock handling
                     if let Some(cb) = a_cb {
                         a_mcb_new_pb.entry(cb).or_default().push(a_pbn.clone());
                     }
                 }
-                // OCCT L525-526: aLPB.Remove(aItLPB) — replace old PBs
+                // OCCT L525-526: aLPB.Remove(aItLPB)
                 if !valid_new_pbs.is_empty() {
                     let a_lpb = self.ds.change_pave_blocks(n_e);
                     a_lpb.clear();
                     for new_pb in valid_new_pbs {
                         a_lpb.push(new_pb);
                     }
-                    any_split = true;
                 }
             }
         }
-        // OCCT L530-560: Make Common Blocks for grouped sub-PBs
+        // OCCT L530-560: Make Common Blocks
         for (_cb_key, pbs) in &a_mcb_new_pb {
             if pbs.len() < 2 { continue; }
             let mut a_minds: std::collections::HashMap<(usize, usize), Vec<SharedPB>> = std::collections::HashMap::new();
@@ -2200,6 +2214,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if group.len() < 2 { continue; }
                 self.ds.add_common_block(group);
             }
+        }
+        // Init PBs for new SD vertices
+        for &v in &a_m_vertices_to_init_pb {
+            self.ds.init_pave_blocks_for_vertex(v);
         }
     }
 
