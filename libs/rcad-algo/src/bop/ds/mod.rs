@@ -1280,6 +1280,31 @@ impl DS {
                 }
             }
 
+            // OCCT BRepBndLib::Add uses the edge's parameter range to compute the
+            // bounding box of the curve SUBRANGE, not the full analytic curve.
+            // For partial curves (e.g. sphere seam: half-circle [0,π]), the full
+            // circle's analytic box is flat in the normal direction, but the arc
+            // spans the full sphere diameter. Sample the curve at range endpoints
+            // and key interior points to capture the true extent.
+            if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
+                if let Some(range) = shape.as_edge().map(|ed| ed.range) {
+                    use rcad_kernel::CurveEval;
+                    // Sample at range endpoints + 3 interior points
+                    let n_samples = 5;
+                    for i in 0..=n_samples {
+                        let t = range[0] + (range[1] - range[0]) * (i as f64) / (n_samples as f64);
+                        let pt = curve.point_at(t);
+                        if an_edge_bx_min.x.is_finite() {
+                            an_edge_bx_min = an_edge_bx_min.min(pt);
+                            an_edge_bx_max = an_edge_bx_max.max(pt);
+                        } else {
+                            an_edge_bx_min = pt;
+                            an_edge_bx_max = pt;
+                        }
+                    }
+                }
+            }
+
             // OCCT L1688: B.Enlarge(edge_tol) + SetGap(existing_gap + tol)
             if an_edge_bx_min.x.is_finite() {
                 // OCCT: BRepBndLib::Add + BEnlarge(anEdgeTolerance) applied to box coordinates
