@@ -28,7 +28,7 @@ pub mod section_attribute;
 pub use check_result::{CheckResult, CheckStatus};
 
 // Re-export shared types
-pub use builder::{BooleanBuilder, BooleanError};
+pub use builder::{Builder, BooleanError};
 
 // ===
 // BOPAlgo_Report ?collects alerts during algorithm execution

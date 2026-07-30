@@ -42,7 +42,7 @@ pub enum BooleanError {
 /// - BOPAlgo_BuilderShape (myShape, myFillHistory)
 /// - BOPAlgo_BOP (myOperation, myDims)
 /// - BOPAlgo_Builder (myDS, myContext, myImages, etc.)
-pub struct BooleanBuilder {
+pub struct Builder {
     // ── BOPAlgo_Options (inherited) ─────────────────────────────
     pub(crate) my_report: Report,          // BOPAlgo_Algo::myReport
     pub(crate) my_run_parallel: bool,      // BOPAlgo_Algo::myRunParallel
@@ -70,8 +70,8 @@ pub struct BooleanBuilder {
     pub(crate) shape_remap: HashMap<u64, usize>,
 }
 
-impl BooleanBuilder {
-    /// Create a new BooleanBuilder with an owned DS.
+impl Builder {
+    /// Create a new Builder with an owned DS.
     ///
     /// OCCT: BOPAlgo_Builder is constructed with a PaveFiller reference.
     /// rcad: PaveFiller runs before Builder; only the DS is passed.
@@ -79,7 +79,7 @@ impl BooleanBuilder {
     ///   myPaveFiller = &theFiller; myDS = myPaveFiller->PDS();
     ///   myFuzzyValue = myPaveFiller->FuzzyValue();
     pub fn new(ds: DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
-        BooleanBuilder {
+        Builder {
             ds,
             my_report: Report::new(),
             my_run_parallel: false,

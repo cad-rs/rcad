@@ -1,5 +1,5 @@
 use rcad_kernel::topo_shape::Shape;
-use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
+use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
@@ -75,7 +75,7 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     filler.perform(&a_ps);
     let fuzz = filler.fuzzy_value();
     // builder borrows the DS from filler; both live in the same scope
-    let mut builder = BooleanBuilder::new(filler.take_ds(), op_type, fuzz);
+    let mut builder = Builder::new(filler.take_ds(), op_type, fuzz);
     builder.my_arguments = builder.ds.arguments.clone();
     match builder.build() {
         Ok(brep) => {
