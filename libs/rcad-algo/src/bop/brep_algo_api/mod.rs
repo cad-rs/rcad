@@ -11,7 +11,6 @@
 //!   ├─ BRepAlgoAPI_Defeaturing    → DefeaturingOp
 //!   └─ BRepAlgoAPI_Splitter       → SplitterOp
 
-pub mod argument_analyzer;
 
 use std::collections::HashSet;
 use rcad_kernel::topo_shape::Shape;
