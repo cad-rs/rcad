@@ -71,6 +71,7 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     ds.set_arguments(algo.arguments.clone());
     ds.init(algo.fuzzy_value.max(1e-7));
     let mut filler = PaveFiller::new(&mut ds);
+    filler.set_arguments(algo.arguments.clone());
     filler.set_fuzzy_value(algo.fuzzy_value);
     let a_prog = NoopProgress;
     let a_ps = ProgressScope::new(&a_prog, "intersect", 100);

@@ -1326,20 +1326,26 @@ impl<'a> PaveFiller<'a> {
     }
 
     // OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
-    fn init(&mut self, _the_range: &ProgressScope) {
-        // OCCT L178-182: check arguments non-empty
-        // rcad: PaveFiller gets arguments through DS, not through its own
-        // my_arguments field (Rust structural difference). Skip the check
-        // since the DS already has arguments set by the caller.
+    fn init(&mut self, the_range: &ProgressScope) {
+        // OCCT L178-182: Check arguments non-empty
+        if self.my_arguments.is_empty() && self.ds.nb_source_shapes() == 0 {
+            self.my_report.add_error(Alert::TooFewArguments);
+            return;
+        }
+        // OCCT L184: Message_ProgressScope aPS(theRange, "Initialization of Intersection algorithm", 1);
+        let _a_ps = the_range.sub_scope("Initialization of Intersection algorithm", 1);
         // OCCT L185-193: check for null shapes — Rust Shape type prevents null.
         // OCCT L196: Clear
-        self.my_report.clear();
-        self.my_increased_ss.clear();
-        self.my_verts_to_avoid_extension.clear();
-        self.my_fpb_done.clear();
-        self.my_context = IntToolsContext::new();
-        // OCCT L199-201: myDS = new BOPDS_DS; DS init (done in fuse())
+        self.clear();
+        // OCCT L199-201: myDS = new BOPDS_DS;
+        //   myDS->SetArguments(myArguments);
+        //   myDS->Init(myFuzzyValue);
+        if !self.my_arguments.is_empty() {
+            self.ds.set_arguments(self.my_arguments.clone());
+        }
+        self.ds.init(self.my_fuzzy_value.max(1e-7));
         // OCCT L204: myContext = new IntTools_Context
+        self.my_context = IntToolsContext::new();
         // OCCT L207-210: myIterator = new BOPDS_Iterator
         // rcad: use raw pointer to access self.ds without triggering reborrow.
         let ds_field = unsafe { std::ptr::addr_of_mut!((*self).ds) };
