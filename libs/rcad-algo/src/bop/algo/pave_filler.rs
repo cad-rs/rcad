@@ -1387,17 +1387,7 @@ impl PaveFiller {
         }
         // OCCT L47-55: iterate myArguments, check aS.Locked()
         for arg in &self.my_arguments {
-            let flags = match &*arg.data {
-                topods::TShape::Vertex(v) => v.flags,
-                topods::TShape::Edge(e) => e.flags,
-                topods::TShape::Wire(w) => w.flags,
-                topods::TShape::Face(f) => f.flags,
-                topods::TShape::Shell(s) => s.flags,
-                topods::TShape::Solid(s) => s.flags,
-                topods::TShape::CompSolid(_) => 0,
-                topods::TShape::Compound(_) => 0,
-            };
-            if flags & topods::tshape_flags::LOCKED != 0 {
+            if arg.data.locked() {
                 self.my_non_destructive = true;
                 return;
             }

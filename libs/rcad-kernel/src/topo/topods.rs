@@ -2287,6 +2287,21 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
 // ---------------------------------------------------------------------------
 
 impl TShape {
+    /// OCCT TopoDS_TShape::Locked — returns true if the LOCKED flag is set.
+    pub fn locked(&self) -> bool {
+        let flags = match self {
+            TShape::Vertex(v) => v.flags,
+            TShape::Edge(e) => e.flags,
+            TShape::Wire(w) => w.flags,
+            TShape::Face(f) => f.flags,
+            TShape::Shell(s) => s.flags,
+            TShape::Solid(s) => s.flags,
+            TShape::CompSolid(_) => 0,
+            TShape::Compound(_) => 0,
+        };
+        flags & tshape_flags::LOCKED != 0
+    }
+
     pub fn shape_type(&self) -> ShapeType {
         match self {
             TShape::Vertex(_) => ShapeType::Vertex,
