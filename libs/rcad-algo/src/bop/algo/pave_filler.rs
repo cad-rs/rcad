@@ -355,8 +355,7 @@ impl PaveFiller {
         if a_size == 0 {
             return;
         }
-        // OCCT L58-59: aVVs = myDS->InterfVV(); aVVs.SetIncrement(aSize);
-        // rcad: Vec::reserve ≡ OCCT SetIncrement
+        // OCCT L58-59: aVVs.SetIncrement(aSize) → Vec::reserve
         self.ds.interf_vv.reserve(a_size);
 
         // OCCT L62-63: NCollection_IndexedDataMap<int, NCollection_List<int>> aMILI(100, aAllocator);
@@ -567,8 +566,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L253-257: aVEs = myDS->InterfVE(); if (theAddInterfs) aVEs.SetIncrement(aNbVE);
-        // rcad: Vec::reserve ≡ OCCT SetIncrement
+        // OCCT L253-257: aVEs.SetIncrement(aNbVE) → Vec::reserve
         if the_add_interfs {
             self.ds.interf_ve.reserve(a_nb_ve);
         }
@@ -692,8 +690,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L178-179: aEEs = myDS->InterfEE(); aEEs.SetIncrement(iSize);
-        // rcad: Vec::reserve ≡ OCCT SetIncrement
+        // OCCT L178-179: aEEs.SetIncrement(iSize) → Vec::reserve
         self.ds.interf_ee.reserve(i_size);
 
         let mut new_ee: Vec<InterferenceEE> = Vec::new();
