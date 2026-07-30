@@ -11,45 +11,53 @@ use rcad_kernel::BRep;
 use rcad_kernel::CurveEval;
 
 pub struct MakeCylinder {
-    radius: f64,
-    height: f64,
-    center: DVec3,
-    axis: DVec3,
+    radius: f64, height: f64,
+    x_axis: DVec3, y_axis: DVec3, z_axis: DVec3,
+    origin: DVec3,
 }
 
 impl MakeCylinder {
     pub fn new(r: f64, h: f64) -> Self {
-        MakeCylinder { radius: r.abs(), height: h.abs(), center: DVec3::ZERO, axis: DVec3::Z }
+        MakeCylinder { radius: r.abs(), height: h.abs(),
+            x_axis: DVec3::X, y_axis: DVec3::Y, z_axis: DVec3::Z, origin: DVec3::ZERO }
+    }
+    /// OCCT: MakeCylinder(Axes, R, H) — Axes.Location=center, Axes.Direction=Z, Axes.XDirection=X.
+    pub fn new_with_axes(origin: DVec3, axis: DVec3, ref_dir: DVec3, r: f64, h: f64) -> Self {
+        let za = axis.normalize();
+        let xa_rej = ref_dir - za * ref_dir.dot(za);
+        let xa = if xa_rej.length_squared() < 1e-12 { DVec3::X } else { xa_rej.normalize() };
+        let ya = za.cross(xa).normalize();
+        MakeCylinder { radius: r.abs(), height: h.abs(),
+            x_axis: xa, y_axis: ya, z_axis: za, origin }
+    }
+    fn local(&self, x: f64, y: f64, z: f64) -> DVec3 {
+        self.origin + self.x_axis * x + self.y_axis * y + self.z_axis * z
     }
 
     pub fn build(&self) -> Result<BRep, crate::BuildError> {
         let r = self.radius;
         let h = self.height;
-        let o = self.center;
+        let o = self.origin;
         let rev = |sr: Shape| Shape { orientation: Orientation::Reversed, ..sr };
 
         let mut t = BRep::new();
-        // 2 vertices: seam endpoints at (R, 0, 0) and (R, 0, H)
-        let bot_v = t.add_tvertex(o + DVec3::new(r, 0.0, 0.0));
-        let top_v = t.add_tvertex(o + DVec3::new(r, 0.0, h));
+        let bot_v = t.add_tvertex(self.local(r, 0.0, 0.0));
+        let top_v = t.add_tvertex(self.local(r, 0.0, h));
 
-        // 3 edges
-        let bot_circle = Circle3::new(o, DVec3::Z, r);
-        let top_circle = Circle3::new(o + DVec3::new(0.0, 0.0, h), DVec3::Z, r);
-        let seam_line = Line3::new(o + DVec3::new(r, 0.0, 0.0), DVec3::new(0.0, 0.0, h));
+        let bot_circle = Circle3::new(o, self.z_axis, r);
+        let top_circle = Circle3::new(self.local(0.0, 0.0, h), self.z_axis, r);
+        let seam_line = Line3::new(self.local(r, 0.0, 0.0), self.z_axis * h);
 
         let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), bot_v.clone(), [0.0, std::f64::consts::TAU]);
         let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), top_v.clone(), [0.0, std::f64::consts::TAU]);
         let e_seam = t.add_tedge(Some(Curve3::Line(seam_line)), bot_v.clone(), top_v.clone(), [0.0, h]);
 
-        // 3 faces: lateral, bottom, top
         let lateral_surf = Surface3::Cylinder(CylindricalSurface {
-            origin: o, axis: DVec3::Z, radius: r, ref_dir: DVec3::X,
+            origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis,
         });
-        let bot_plane = Surface3::Plane(Plane::new(o, -DVec3::Z));
-        let top_plane = Surface3::Plane(Plane::new(o + DVec3::Z * h, DVec3::Z));
+        let bot_plane = Surface3::Plane(Plane::new(o, -self.z_axis));
+        let top_plane = Surface3::Plane(Plane::new(self.local(0.0, 0.0, h), self.z_axis));
 
-        // Wires: lateral wire = seam + rev(bot) + rev(seam) + top
         let lat_wire = t.add_twire(vec![e_seam.clone(), rev(e_bot.clone()), rev(e_seam.clone()), e_top.clone()]);
         let bot_wire = t.add_twire(vec![e_bot]);
         let top_wire = t.add_twire(vec![rev(e_top)]);
@@ -68,11 +76,7 @@ pub fn cylinder_brep(
     center: DVec3, axis: DVec3, ref_dir: DVec3,
     radius: f64, height: f64,
 ) -> Result<BRep, crate::BuildError> {
-    // TODO: handle non-Z axis via transform
-    let mut c = MakeCylinder::new(radius, height);
-    c.center = center;
-    // build, then transform
-    c.build()
+    MakeCylinder::new_with_axes(center, axis, ref_dir, radius, height).build()
 }
 
 pub fn make_cylinder_brep(

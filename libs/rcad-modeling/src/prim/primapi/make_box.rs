@@ -37,8 +37,12 @@ impl MakeBox {
     }
     /// OCCT: MakeBox(gp_Ax2, dx, dy, dz)
     pub fn new_with_axes(origin: DVec3, x_dir: DVec3, y_dir: DVec3, dx: f64, dy: f64, dz: f64) -> Self {
+        // OCCT: gp_Ax2(origin, Z, X) → axes computed from X and Y.
+        // Matches old builder's basis_from_x_y: x_axis = normalize(x_dir),
+        // y_axis = normalize(reject(y_dir from x_dir)), z_axis = x_axis × y_axis.
         let xa = x_dir.normalize();
-        let ya = y_dir.normalize();
+        let ya_rej = y_dir - xa * y_dir.dot(xa);
+        let ya = if ya_rej.length_squared() < 1e-12 { DVec3::Z } else { ya_rej.normalize() };
         let za = xa.cross(ya).normalize();
         let pp = pmin(origin, dx, dy, dz);
         MakeBox { pmin: pp, dx: dx.abs(), dy: dy.abs(), dz: dz.abs(),
