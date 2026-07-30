@@ -384,14 +384,9 @@ impl PaveFiller {
             let v2_tol = self.ds.vertex_tolerance_by_idx(n2sd);
             let v2_pnt = self.ds.vertex_point_by_idx(n2sd);
 
-            // OCCT L90-93: const TopoDS_Vertex& aV1 = ... aV2 = ...
-            //                iFlag = BOPTools_AlgoTools::ComputeVV(aV1, aV2, myFuzzyValue);
-            // OCCT ComputeVV body: aDist = aP1.Distance(aP2);
-            //   aTol = Max(aTol1, aTol2); aTol = Max(aTol, theFuzzyValue);
-            //   if (aDist <= aTol) return 0; else return 1;
-            let a_dist = (v1_pnt - v2_pnt).length();
-            let a_tol = v1_tol.max(v2_tol).max(self.my_fuzzy_value);
-            let i_flag = if a_dist <= a_tol { 0 } else { 1 };
+            // OCCT L94: iFlag = BOPTools_AlgoTools::ComputeVV(aV1, aV2, myFuzzyValue);
+            let i_flag = crate::bop::tools::algo_tools::compute_vv(
+                v1_tol, v1_pnt, v2_tol, v2_pnt, self.my_fuzzy_value);
 
             // OCCT L94-97: if (!iFlag) { FillMap(n1, n2, aMILI, aAllocator); }
             if i_flag == 0 {
