@@ -552,15 +552,15 @@ pub fn make_conical_frustum_brep(
     let v_bottom = d_bottom / cos_ha;
     let v_top = (d_bottom + height) / cos_ha;
 
-    let bottom_pt = DVec3::new(rb, 0.0, 0.0);
-    let top_pt = DVec3::new(rt, height, 0.0);
+    let bottom_pt = DVec3::new(rb, 0.0, 0.0) + center;
+    let top_pt = DVec3::new(rt, height, 0.0) + center;
 
     let mut t = topods::BRep::new();
     let v0 = t.add_tvertex(bottom_pt);
     let v1 = t.add_tvertex(top_pt);
 
-    let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0), -DVec3::Y, rb));
-    let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, height, 0.0), DVec3::Y, rt));
+    let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0) + center, -DVec3::Y, rb));
+    let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, height, 0.0) + center, DVec3::Y, rt));
     let seam_dir = (top_pt - bottom_pt).normalize();
     let seam_curve = Curve3::Line(Line3 {
         origin: bottom_pt,
@@ -572,15 +572,15 @@ pub fn make_conical_frustum_brep(
     let e2 = t.add_tedge(Some(seam_curve), v0, v1, [0.0, seam_len]);
 
     // Surfaces
-    let apex = DVec3::new(0.0, -d_bottom, 0.0);
+    let apex = DVec3::new(0.0, -d_bottom, 0.0) + center;
     let cone_surf = Surface3::Cone(geom::ConicalSurface {
         apex,
         axis: DVec3::Y,
         radius: 0.0,
         half_angle_rad: half_angle,
     });
-    let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 0.0), -DVec3::Y));
-    let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, height, 0.0), DVec3::Y));
+    let bottom_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 0.0) + center, -DVec3::Y));
+    let top_plane = Surface3::Plane(Plane::new(DVec3::new(0.0, height, 0.0) + center, DVec3::Y));
 
     let rev = |sr: rcad_kernel::topods::Shape| rcad_kernel::topods::Shape {
         orientation: Orientation::Reversed,
@@ -593,7 +593,7 @@ pub fn make_conical_frustum_brep(
         Some(cone_surf),
         w0,
         vec![],
-        Some(DVec3::new(0.0, 0.0, rb)),
+        Some(DVec3::new(0.0, 0.0, rb) + center),
         None,
         vec![],
         true,
@@ -604,7 +604,7 @@ pub fn make_conical_frustum_brep(
         Some(bottom_plane),
         w1,
         vec![],
-        Some(DVec3::new(0.0, 0.0, 0.0)),
+        Some(DVec3::new(0.0, 0.0, 0.0) + center),
         None,
         vec![],
         false,
@@ -615,7 +615,7 @@ pub fn make_conical_frustum_brep(
         Some(top_plane),
         w2,
         vec![],
-        Some(DVec3::new(0.0, height, 0.0)),
+        Some(DVec3::new(0.0, height, 0.0) + center),
         None,
         vec![],
         false,
