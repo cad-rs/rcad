@@ -143,6 +143,20 @@ impl<'a> PaveFiller<'a> {
     pub fn set_arguments(&mut self, args: Vec<Shape>) {
         self.my_arguments = args;
     }
+
+    /// OCCT BOPAlgo_PaveFiller::Clear (PaveFiller.cxx L136-141).
+    /// Clears internal state (iterator, data maps).
+    pub fn clear(&mut self) {
+        // OCCT L137: BOPAlgo_Algo::Clear() — clears report
+        self.my_report.clear();
+        // OCCT L138-139: delete myIterator; myIterator = nullptr;
+        self.my_iterator = None;
+        // OCCT L141: myIncreasedSS.Clear();
+        self.my_increased_ss.clear();
+        self.my_verts_to_avoid_extension.clear();
+        self.my_fpb_done.clear();
+        // Note: myDS is borrowed (not owned), so not deleted.
+    }
     pub fn set_glue(&mut self, enable: bool, tolerance: f64) {
         self.my_glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
         self.my_fuzzy_value = tolerance;
