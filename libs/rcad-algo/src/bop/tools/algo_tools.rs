@@ -21,14 +21,22 @@ pub fn d_tolerance() -> f64 { 1e-12 }
 /// Returns 0 if vertex intersects the point (distance <= tolerance sum).
 pub fn compute_vv_vertex_point(v_tol: f64, v_pnt: glam::DVec3,
                                 p_pnt: glam::DVec3, p_tol: f64) -> i32 {
-    if (v_pnt - p_pnt).length() <= v_tol + p_tol { 0 } else { 1 }
+    // OCCT: aTolSum = aTolV1 + aTolP2 + Precision::Confusion()
+    let a_tol_sum = v_tol + p_tol + rcad_kernel::CONFUSION;
+    let a_d2 = (v_pnt - p_pnt).length_squared();
+    if a_d2 > a_tol_sum * a_tol_sum { 1 } else { 0 }
 }
 
 /// Intersects two vertices. Returns 0 if they interfere.
 pub fn compute_vv(v1_tol: f64, v1_pnt: glam::DVec3,
                   v2_tol: f64, v2_pnt: glam::DVec3, fuzz: f64) -> i32 {
-    let tol = v1_tol.max(v2_tol).max(fuzz);
-    if (v1_pnt - v2_pnt).length() <= tol { 0 } else { 1 }
+    // OCCT: aFuzz1 = max(aFuzz, Precision::Confusion())
+    let a_fuzz1 = fuzz.max(rcad_kernel::CONFUSION);
+    // OCCT: aTolSum = aTolV1 + aTolV2 + aFuzz1; aTolSum2 = aTolSum * aTolSum
+    let a_tol_sum = v1_tol + v2_tol + a_fuzz1;
+    // OCCT: aD2 = aP1.SquareDistance(aP2); if (aD2 > aTolSum2) return 1
+    let a_d2 = (v1_pnt - v2_pnt).length_squared();
+    if a_d2 > a_tol_sum * a_tol_sum { 1 } else { 0 }
 }
 
 // ====================================================================
