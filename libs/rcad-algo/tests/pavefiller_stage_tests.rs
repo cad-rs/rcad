@@ -1177,8 +1177,11 @@ fn pf_stage_cylinder_x_cone_rotated_translated() {
         .expect("cylinder a");
 
     // Construct shape B (CONE) — at position ROTATED+TRANSLATED
+    let rad_b = 30.0_f64.to_radians();
     let b = make_cone_brep(
-        DVec3::new(0.2, 0.2, 0.0), DVec3::Z, DVec3::X, 1.0, 0.5, 2.0)
+        DVec3::new(0.2, 0.2, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 0.5, 2.0)
         .expect("cone b");
 
     // OCCT reference stages
@@ -2766,8 +2769,11 @@ fn pf_stage_cylinder_x_cylinder_rotated_translated() {
         .expect("cylinder a");
 
     // Construct shape B (CYLINDER) — at position ROTATED+TRANSLATED
+    let rad_b = 30.0_f64.to_radians();
     let b = make_cylinder_brep(
-        DVec3::new(0.2, 0.2, 0.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+        DVec3::new(0.2, 0.2, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 2.0)
         .expect("cylinder b");
 
     // OCCT reference stages
@@ -3031,8 +3037,11 @@ fn pf_stage_cylinder_x_cylinder_rotated() {
         .expect("cylinder a");
 
     // Construct shape B (CYLINDER) — at position ROTATED
+    let rad_b = 45.0_f64.to_radians();
     let b = make_cylinder_brep(
-        DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+        DVec3::new(0.0, 0.0, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 2.0)
         .expect("cylinder b");
 
     // OCCT reference stages
@@ -3296,8 +3305,11 @@ fn pf_stage_box_x_cone_rotated_translated() {
         .expect("box a");
 
     // Construct shape B (CONE) — at position ROTATED+TRANSLATED
+    let rad_b = 30.0_f64.to_radians();
     let b = make_cone_brep(
-        DVec3::new(0.2, 0.2, 0.0), DVec3::Z, DVec3::X, 1.0, 0.5, 2.0)
+        DVec3::new(0.2, 0.2, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 0.5, 2.0)
         .expect("cone b");
 
     // OCCT reference stages
@@ -4620,8 +4632,11 @@ fn pf_stage_cone_x_cone_rotated_translated() {
         .expect("cone a");
 
     // Construct shape B (CONE) — at position ROTATED+TRANSLATED
+    let rad_b = 30.0_f64.to_radians();
     let b = make_cone_brep(
-        DVec3::new(0.2, 0.2, 0.0), DVec3::Z, DVec3::X, 1.0, 0.5, 2.0)
+        DVec3::new(0.2, 0.2, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 0.5, 2.0)
         .expect("cone b");
 
     // OCCT reference stages
@@ -4885,8 +4900,11 @@ fn pf_stage_box_x_cylinder_rotated_translated() {
         .expect("box a");
 
     // Construct shape B (CYLINDER) — at position ROTATED+TRANSLATED
+    let rad_b = 30.0_f64.to_radians();
     let b = make_cylinder_brep(
-        DVec3::new(0.2, 0.2, 0.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+        DVec3::new(0.2, 0.2, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 2.0)
         .expect("cylinder b");
 
     // OCCT reference stages
@@ -6213,8 +6231,11 @@ fn pf_stage_box_x_cylinder_rotated() {
         .expect("box a");
 
     // Construct shape B (CYLINDER) — at position ROTATED
+    let rad_b = 45.0_f64.to_radians();
     let b = make_cylinder_brep(
-        DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+        DVec3::new(0.0, 0.0, 0.0), DVec3::Z,
+        DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
+        1.0, 2.0)
         .expect("cylinder b");
 
     // OCCT reference stages
