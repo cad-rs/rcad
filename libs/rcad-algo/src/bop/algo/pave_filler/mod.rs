@@ -54,6 +54,17 @@ impl Default for SectionAttribute {
     }
 }
 
+/// OCCT BOPAlgo_PaveFiller::EdgeRangeDistance — distance from an edge range to a face.
+#[derive(Debug, Clone)]
+struct EdgeRangeDistance {
+    first: f64,
+    last: f64,
+    distance: f64,
+}
+impl EdgeRangeDistance {
+    fn new(first: f64, last: f64, distance: f64) -> Self { Self { first, last, distance } }
+}
+
 /// OCCT BOPAlgo_ShrunkRange (PaveFiller_9.cxx L35-57) / IntTools_ShrunkRange.
 struct ShrunkRange {
     pb: SharedPB,
@@ -112,7 +123,9 @@ pub struct PaveFiller<'a> {
     my_fpb_done: HashMap<usize, HashSet<u64>>, // BOPAlgo_PaveFiller::myFPBDone (L650)
     my_increased_ss: HashSet<usize>,   // BOPAlgo_PaveFiller::myIncreasedSS (L651)
     my_verts_to_avoid_extension: HashSet<usize>, // BOPAlgo_PaveFiller::myVertsToAvoidExtension (L652)
-    // Debug/testing: stop after a specific stage.
+    // OCCT L657-659: NCollection_DataMap<BOPDS_Pair, List<EdgeRangeDistance>> myDistances
+    // rcad: HashMap keyed by (edge1, edge2) pair
+    my_distances: HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
     pub stop_after: Option<&'static str>,
 }
 
@@ -134,6 +147,7 @@ impl<'a> PaveFiller<'a> {
             my_fpb_done: HashMap::new(),
             my_increased_ss: HashSet::new(),
             my_verts_to_avoid_extension: HashSet::new(),
+            my_distances: HashMap::new(),
             stop_after: None,
         }
     }

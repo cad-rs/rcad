@@ -1,18 +1,4 @@
-//! OCCT BRepAlgoAPI — 1:1 high-level boolean operations.
-//!
-//! BRepAlgoAPI_Algo                → AlgoBase (实体基类)
-//! BRepAlgoAPI_BuilderShape        → BuilderShapeBase
-//! BRepAlgoAPI_BuilderAlgo         → BuilderAlgo
-//! BRepAlgoAPI_BooleanOperation    → BooleanOperation
-//!   ├─ BRepAlgoAPI_Fuse           → FuseOp
-//!   ├─ BRepAlgoAPI_Common         → CommonOp
-//!   ├─ BRepAlgoAPI_Cut            → CutOp
-//!   ├─ BRepAlgoAPI_Section        → SectionOp
-//!   ├─ BRepAlgoAPI_Defeaturing    → DefeaturingOp
-//!   └─ BRepAlgoAPI_Splitter       → SplitterOp
-
 use rcad_kernel::topo_shape::Shape;
-
 use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
