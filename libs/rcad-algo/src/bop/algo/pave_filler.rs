@@ -1413,8 +1413,7 @@ impl PaveFiller {
                     let fi = if self.ds.shape_info(n1).shape_type() == ShapeType::Face
                     { n1 } else { nf };
                     // OCCT: IsBasedOnPlane(aF)
-                    let a_shape = self.ds.shape(fi);
-                    if crate::bop::tools::algo_tools::is_based_on_plane(a_shape) {
+                    if self.ds.shape(fi).is_based_on_plane() {
                         a_mf.insert(fi);
                     }
                     it.next();
