@@ -14,6 +14,7 @@
 //   -> RefineFaceInfoOn -> RemoveMicroEdges -> MakePCurves -> ProcessDE
 
 use crate::bop::algo::{Alert, GlueEnum, Report};
+use rcad_kernel::core::message::ProgressScope;
 use crate::bop::ds::{
     DS, InterferenceVV, InterferenceVE, InterferenceEE,
     InterferenceVF, InterferenceEF, InterferenceFF, BOPDS_Iterator,
@@ -157,66 +158,108 @@ impl<'a> PaveFiller<'a> {
         self.stop_after.map_or(false, |s| s == stage)
     }
 
-    /// OCCT BOPAlgo_PaveFiller::PerformInternal (BOPAlgo_PaveFiller.cxx L235-379).
-    pub fn perform(&mut self) {
-        // OCCT L247: Init
-        self.init();
+    /// OCCT BOPAlgo_PaveFiller::Perform (PaveFiller.cxx L218-232).
+    pub fn perform(&mut self, the_range: &ProgressScope) {
+        self.perform_internal(the_range);
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::PerformInternal (PaveFiller.cxx L235-379).
+    pub(crate) fn perform_internal(&mut self, the_range: &ProgressScope) {
+        // OCCT L239-244: Message_ProgressScope aPS(theRange, "Performing intersection of shapes", 100)
+        let a_ps = the_range.sub_scope("Performing intersection of shapes", 100);
+
+        // OCCT L247: Init(aPS.Next(5));
+        self.init(&a_ps.sub_scope("Init", 5));
         if self.has_errors() { return; }
         if self.check_stop("after_Init") { return; }
-        // OCCT L258: Prepare
-        self.prepare();
+
+        // OCCT L258: Prepare(aPS.Next(aSteps.GetStep(PIOperation_Prepare)));
+        self.prepare(&a_ps.sub_scope("Prepare", 10));
         if self.has_errors() { return; }
         if self.check_stop("after_Prepare") { return; }
-        self.perform_vv();
+
+        // OCCT: PerformVV(aPS.Next(...))
+        self.perform_vv(&a_ps.sub_scope("Perform VV", 8));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformVV") { return; }
-        self.perform_ve();
+
+        // OCCT: PerformVE(aPS.Next(...))
+        self.perform_ve(&a_ps.sub_scope("Perform VE", 8));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformVE") { return; }
+
         self.update_pave_blocks_with_sd_vertices();
-        self.perform_ee();
+
+        // OCCT: PerformEE(aPS.Next(...))
+        self.perform_ee(&a_ps.sub_scope("Perform EE", 10));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEE") { return; }
+
         self.update_pave_blocks_with_sd_vertices();
-        self.perform_vf();
+
+        // OCCT: PerformVF(aPS.Next(...))
+        self.perform_vf(&a_ps.sub_scope("Perform VF", 5));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformVF") { return; }
+
         self.update_pave_blocks_with_sd_vertices();
-        self.perform_ef();
+
+        // OCCT: PerformEF(aPS.Next(...))
+        self.perform_ef(&a_ps.sub_scope("Perform EF", 10));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEF") { return; }
+
         self.update_pave_blocks_with_sd_vertices();
         self.update_interfs_with_sd_vertices();
-        self.repeat_intersection();
+
+        // OCCT: RepeatIntersection(aPS.Next(...))
+        self.repeat_intersection(&a_ps.sub_scope("Repeat intersection", 5));
         if self.has_errors() { return; }
         if self.check_stop("after_RepeatIntersection") { return; }
-        self.force_interf_ee();
+
+        // OCCT: ForceInterfEE(aPS.Next(...))
+        self.force_interf_ee(&a_ps.sub_scope("Force EE", 3));
         if self.has_errors() { return; }
         if self.check_stop("after_ForceInterfEE") { return; }
-        self.force_interf_ef();
+
+        // OCCT: ForceInterfEF(aPS.Next(...))
+        self.force_interf_ef(&a_ps.sub_scope("Force EF", 3));
         if self.has_errors() { return; }
         if self.check_stop("after_ForceInterfEF") { return; }
-        self.perform_ff();
+
+        // OCCT: PerformFF(aPS.Next(...))
+        self.perform_ff(&a_ps.sub_scope("Perform FF", 12));
         if self.has_errors() { return; }
         if self.check_stop("after_PerformFF") { return; }
+
         self.update_blocks_with_shared_vertices();
         self.refine_face_info_in();
-        self.make_split_edges();
+
+        // OCCT: MakeSplitEdges(aPS.Next(...))
+        self.make_split_edges(&a_ps.sub_scope("Make split edges", 6));
         if self.has_errors() { return; }
         if self.check_stop("after_MakeSplitEdges") { return; }
+
         self.update_pave_blocks_with_sd_vertices();
-        self.make_blocks();
+
+        // OCCT: MakeBlocks(aPS.Next(...))
+        self.make_blocks(&a_ps.sub_scope("Make blocks", 6));
         if self.has_errors() { return; }
         if self.check_stop("after_MakeBlocks") { return; }
+
         self.check_self_interference();
         self.update_interfs_with_sd_vertices();
         self.ds.release_pave_blocks();
         self.refine_face_info_on();
         self.remove_micro_edges();
-        self.make_pcurves();
+
+        // OCCT: MakePCurves(aPS.Next(...))
+        self.make_pcurves(&a_ps.sub_scope("Make pcurves", 5));
         if self.has_errors() { return; }
         if self.check_stop("after_MakePCurves") { return; }
-        self.process_de();
+
+        // OCCT: ProcessDE(aPS.Next(...))
+        self.process_de(&a_ps.sub_scope("Process DE", 4));
         if self.has_errors() { return; }
         if self.check_stop("after_ProcessDE") { return; }
     }
@@ -224,7 +267,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // VV — OCCT BOPAlgo_PaveFiller_1.cxx L45-132
     // ====================================================================
-    fn perform_vv(&mut self) {
+    fn perform_vv(&mut self, _the_range: &ProgressScope) {
         // OCCT L47-48: int n1, n2, iFlag, aSize; handle<Allocator> aAllocator
         // OCCT L50: myIterator->Initialize(TopAbs_VERTEX, TopAbs_VERTEX)
         // rcad: initialize() then copy pair list. Rust borrow checker prevents
@@ -391,7 +434,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // VE — OCCT BOPAlgo_PaveFiller_2.cxx L171-238
     // ====================================================================
-    fn perform_ve(&mut self) {
+    fn perform_ve(&mut self, _the_range: &ProgressScope) {
         // OCCT L173: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE)
         self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Edge);
 
@@ -560,7 +603,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // EE — OCCT BOPAlgo_PaveFiller.cxx L279-286 + PaveFiller_5.cxx L145-590
     // ====================================================================
-    fn perform_ee(&mut self) {
+    fn perform_ee(&mut self, _the_range: &ProgressScope) {
         // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
         self.fill_shrunk_data(ShapeType::Edge, ShapeType::Edge);
 
@@ -922,7 +965,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // OCCT BOPAlgo_PaveFiller::PerformVF (PaveFiller_4.cxx L139-399).
     // rcad: simplified — skips FaceInfo/TreatVerticesEE/complex projection.
-    fn perform_vf(&mut self) {
+    fn perform_vf(&mut self, _the_range: &ProgressScope) {
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Vertex, ShapeType::Face).to_vec()
         } else {
@@ -959,7 +1002,7 @@ impl<'a> PaveFiller<'a> {
     // EF — OCCT BOPAlgo_PaveFiller_5.cxx L165-580
     // ====================================================================
     /// OCCT BOPAlgo_PaveFiller::PerformEF (PaveFiller_5.cxx L165-580).
-    fn perform_ef(&mut self) {
+    fn perform_ef(&mut self, _the_range: &ProgressScope) {
         // OCCT L167: FillShrunkData(TopAbs_EDGE, TopAbs_FACE)
         self.fill_shrunk_data(ShapeType::Edge, ShapeType::Face);
 
@@ -1094,7 +1137,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // FF — OCCT BOPAlgo_PaveFiller_6.cxx L285-end
     // ====================================================================
-    fn perform_ff(&mut self) {
+    fn perform_ff(&mut self, _the_range: &ProgressScope) {
         // OCCT L285-290: myIterator->Initialize(FACE, FACE)
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Face, ShapeType::Face).to_vec()
@@ -1269,7 +1312,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     // OCCT BOPAlgo_PaveFiller::Init (PaveFiller.cxx L176-214).
-    fn init(&mut self) {
+    fn init(&mut self, _the_range: &ProgressScope) {
         // OCCT L178-182: check arguments non-empty
         // rcad: PaveFiller gets arguments through DS, not through its own
         // my_arguments field (Rust structural difference). Skip the check
@@ -1299,7 +1342,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
-    fn prepare(&mut self) {
+    fn prepare(&mut self, _the_range: &ProgressScope) {
         // OCCT L852-856: non-destructive mode → skip
         if self.my_non_destructive { return; }
 
@@ -1842,7 +1885,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Re-run VV/VE/VF intersections for vertices whose tolerance was increased.
     /// OCCT BOPAlgo_PaveFiller::RepeatIntersection (PaveFiller.cxx L383-448).
-    fn repeat_intersection(&mut self) {
+    fn repeat_intersection(&mut self, _the_range: &ProgressScope) {
         // L385-386: NCollection_Map<int> anExtraInterfMap;
         let mut an_extra = HashSet::new();
         // L387: const int aNbS = myDS->NbSourceShapes();
@@ -1881,19 +1924,21 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
 
         // L426-430: PerformVV(aPS.Next());
-        self.perform_vv();
+        // L431-445: PerformVE, PerformVF also use aPS.Next()
+        let a_ps = _the_range.sub_scope("Repeat intersection", 3);
+        self.perform_vv(&a_ps.sub_scope("VV", 1));
         if self.has_errors() { return; }
         // L431: UpdatePaveBlocksWithSDVertices();
         self.update_pave_blocks_with_sd_vertices();
 
         // L433-438: PerformVE(aPS.Next());
-        self.perform_ve();
+        self.perform_ve(&a_ps.sub_scope("VE", 1));
         if self.has_errors() { return; }
         // L438: UpdatePaveBlocksWithSDVertices();
         self.update_pave_blocks_with_sd_vertices();
 
         // L440-444: PerformVF(aPS.Next());
-        self.perform_vf();
+        self.perform_vf(&a_ps.sub_scope("VF", 1));
         if self.has_errors() { return; }
 
         // L446-447: UpdatePaveBlocksWithSDVertices(); UpdateInterfsWithSDVertices();
@@ -1906,7 +1951,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Force additional EE intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEE (PaveFiller_3.cxx L997-1333).
-    fn force_interf_ee(&mut self) {
+    fn force_interf_ee(&mut self, _the_range: &ProgressScope) {
         // L999-1003: comment — now that vertices are increased/unified,
         // find additional common blocks among edge pairs with same bounding vertices.
 
@@ -2322,7 +2367,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Force additional EF intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEF (PaveFiller_5.cxx L772-827).
-    fn force_interf_ef(&mut self) {
+    fn force_interf_ef(&mut self, _the_range: &ProgressScope) {
         // L774-775: Message_ProgressScope aPS(theRange, nullptr, 1);
         // L776-778: if (!myIsPrimary) return;
         if !self.my_is_primary {
@@ -2848,7 +2893,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
-    fn make_split_edges(&mut self) {
+    fn make_split_edges(&mut self, _the_range: &ProgressScope) {
         // OCCT L392: UpdateCommonBlocksWithSDVertices
         for cb in &self.ds.common_blocks {
             self.ds.update_common_block_with_sd_vertices(cb);
@@ -2901,7 +2946,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-1020).
-    fn make_blocks(&mut self) {
+    fn make_blocks(&mut self, _the_range: &ProgressScope) {
         // OCCT L652-655: glue off check
         if self.my_glue != GlueEnum::GlueOff { return; }
         // OCCT L657-663: get FF interferences
@@ -3018,7 +3063,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
-    fn make_pcurves(&mut self) {
+    fn make_pcurves(&mut self, _the_range: &ProgressScope) {
         // OCCT L592-595: check avoid flags
         // OCCT L606-700: 1. Process face info — IN and ON PBs
         let a_nb_fi = self.ds.face_info_pool.len();
@@ -3133,7 +3178,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).
-    fn process_de(&mut self) {
+    fn process_de(&mut self, _the_range: &ProgressScope) {
         // L62-63: for (int anEdgeIndex = 0; anEdgeIndex < myDS->NbSourceShapes(); ++anEdgeIndex)
         let a_nb_s = self.ds.nb_source_shapes();
         for an_ei in 0..a_nb_s {

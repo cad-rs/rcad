@@ -2,6 +2,7 @@ use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
+use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 
 // ── BRepAlgoAPI_Algo ─────────────────────────────────────────────────────
 // OCCT: IsDone(), Error(), Warn() — pure interface
@@ -71,7 +72,9 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     ds.init(algo.fuzzy_value.max(1e-7));
     let mut filler = PaveFiller::new(&mut ds);
     filler.set_fuzzy_value(algo.fuzzy_value);
-    filler.perform();
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
     let fuzz = filler.fuzzy_value();
     drop(filler);
     let mut builder = BooleanBuilder::new(&ds, op_type, fuzz);

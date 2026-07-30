@@ -2,6 +2,7 @@
 // OCCT BOPAlgo_CheckerSI.cxx L152-220
 use crate::bop::ds::DS;
 use crate::bop::algo::pave_filler::PaveFiller;
+use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::ShapeType;
 
 pub struct CheckerSI {
@@ -15,7 +16,9 @@ impl CheckerSI {
         // OCCT L166: BOPAlgo_PaveFiller::Perform
         let mut pf = PaveFiller::new(ds);
         pf.set_arguments(Vec::new());
-        pf.perform();
+        let a_prog = NoopProgress;
+        let a_ps = ProgressScope::new(&a_prog, "self-interface", 100);
+        pf.perform_internal(&a_ps);
         // OCCT L172: CheckFaceSelfIntersection
         self.check_face_self_intersection(ds);
     }

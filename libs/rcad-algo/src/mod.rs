@@ -28,6 +28,7 @@ use crate::bop::ds::DS;
 use crate::bop::tools::bvh::Bvh;
 use crate::bool_ops_ext::make_face_half_space;
 use crate::tolerance::TOLERANCE_ABS;
+use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 
 const TOL: f64 = 1.0e-6;
 const SA_TOLERANCE: f64 = 5000.0;
@@ -177,7 +178,9 @@ mod bop_algo_direct_tests {
         {
             let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
-            filler.perform(&b1, &b2);
+            let a_prog = NoopProgress;
+            let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+            filler.perform(&a_ps);
         }
         let n_pb: usize = ds
             .intersection_curves
@@ -272,7 +275,9 @@ mod bop_algo_two_step_tests {
         {
             let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
-            filler.perform(a, b);
+            let a_prog = NoopProgress;
+            let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+            filler.perform(&a_ps);
         }
         let mut builder = crate::bop::algo::builder::BooleanBuilder::with_brep(
             &ds,
@@ -512,7 +517,9 @@ mod pave_filler_tests {
         {
             let mut filler = crate::bop::algo::pave_filler::PaveFiller::new(&mut ds);
             filler.configure_fuzzy(crate::tolerance::TOLERANCE_ABS);
-            filler.perform(&sphere, &box_b);
+            let a_prog = NoopProgress;
+            let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+            filler.perform(&a_ps);
         }
 
         let n_v = ds.vertex_count();
@@ -1716,7 +1723,9 @@ mod stage_classification_tests {
         {
             let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
-            filler.perform(a, b);
+            let a_prog = NoopProgress;
+            let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+            filler.perform(&a_ps);
         }
         let mut builder = crate::bop::algo::builder::BooleanBuilder::with_brep(
             &ds,
@@ -1834,7 +1843,9 @@ mod stage_classification_tests {
         {
             let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
             filler.set_run_parallel(false);
-            filler.perform(&a, &b);
+            let a_prog = NoopProgress;
+            let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+            filler.perform(&a_ps);
         };
         eprintln!("\n鈹€鈹€ DS state after pave_fill 鈹€鈹€");
         eprintln!(

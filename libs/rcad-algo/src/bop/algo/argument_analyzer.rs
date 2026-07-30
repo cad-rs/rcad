@@ -2,6 +2,7 @@
 //
 // OCCT BOPAlgo_ArgumentAnalyzer.cxx L1-1015 / .hxx.
 
+use crate::bop::algo::check_result::{CheckResult, CheckStatus};
 use crate::bop::algo::checker_si::CheckerSI;
 use crate::bop::ds::DS;
 use rcad_kernel::topods::{self, Orientation, TShape, ShapeType};
@@ -25,26 +26,6 @@ pub struct ArgumentAnalyzer {
     my_empty1: bool,
     my_empty2: bool,
     my_result: Vec<CheckResult>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CheckResult {
-    pub check_status: CheckStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckStatus {
-    BadType,
-    SelfIntersect,
-    TooSmallEdge,
-    NonRecoverableFace,
-    IncompatibilityOfVertex,
-    IncompatibilityOfEdge,
-    IncompatibilityOfFace,
-    GeomAbsC0,
-    InvalidCurveOnSurface,
-    OperationAborted,
-    CheckUnknown,
 }
 
 impl ArgumentAnalyzer {
