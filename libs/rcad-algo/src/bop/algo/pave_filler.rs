@@ -837,21 +837,11 @@ impl PaveFiller {
                                     continue;
                                 }
 
-                                // OCCT L419-420: MakeNewVertex from edge-edge intersection
-                                // rcad: compute new vertex at intersection of edge1 at aT1, edge2 at aT2
-                                let (vnew_pt, vnew_tol) = {
-                                    let p_e1 = {
-                                        let c = self.ds.edge_curve(n_e1).cloned();
-                                        c.map(|c| c.point_at(a_t1)).unwrap_or(cp.bounding_point1)
-                                    };
-                                    let p_e2 = {
-                                        let c = self.ds.edge_curve(n_e2).cloned();
-                                        c.map(|c| c.point_at(a_t2)).unwrap_or(cp.bounding_point1)
-                                    };
-                                    let mid = (p_e1 + p_e2) * 0.5;
-                                    let d = (p_e1 - p_e2).length();
-                                    (mid, d.max(rcad_kernel::CONFUSION))
-                                };
+                                // OCCT L419-420: BOPTools_AlgoTools::MakeNewVertex(aE1, aT1, aE2, aT2, aVnew)
+                                let p_e1 = self.ds.edge_curve(n_e1).map(|c| c.point_at(a_t1)).unwrap_or(cp.bounding_point1);
+                                let p_e2 = self.ds.edge_curve(n_e2).map(|c| c.point_at(a_t2)).unwrap_or(cp.bounding_point1);
+                                let (vnew_pt, vnew_tol) = crate::bop::tools::algo_tools::make_new_vertex(
+                                    p_e1, self.my_fuzzy_value, p_e2, self.my_fuzzy_value);
 
                                 // OCCT L405-417: ForceInterfVE for vertices on pave boundaries
                                 let n_v_arr = [n_v11, n_v12, n_v21, n_v22];
