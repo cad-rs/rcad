@@ -5,7 +5,7 @@
 //!
 //! This file retains only the `BvhNode` enum used by `box_tree.rs`.
 
-use crate::bop::tools::bvh::Aabb;
+use crate::bop::tools::box_tree::Aabb;
 
 /// BVH node (internal or leaf).
 #[derive(Debug, Clone)]

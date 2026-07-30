@@ -10,9 +10,26 @@
 //! - BOPTools_BoxPairSelector   = self_pairs() method
 //! - BOPTools_BoxSelector       = query_aabb()
 
-use crate::bop::tools::bvh::{Aabb, BndBox};
 use crate::bop::tools::bvh_tree::BvhNode;
 use glam::DVec3;
+
+/// Axis-aligned bounding box for BVH node culling (OCCT Bnd_Box equivalent).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Aabb {
+    pub min: DVec3,
+    pub max: DVec3,
+    pub gap: f64,
+}
+
+impl Aabb {
+    pub fn empty() -> Self { Self { min: DVec3::splat(f64::INFINITY), max: DVec3::splat(f64::NEG_INFINITY), gap: 0.0 } }
+    pub fn center(&self) -> DVec3 { (self.min + self.max) * 0.5 }
+    pub fn intersects(&self, other: &Aabb) -> bool {
+        self.min.x - self.gap <= other.max.x + other.gap && self.max.x + self.gap >= other.min.x - other.gap
+            && self.min.y - self.gap <= other.max.y + other.gap && self.max.y + self.gap >= other.min.y - other.gap
+            && self.min.z - self.gap <= other.max.z + other.gap && self.max.z + self.gap >= other.min.z - other.gap
+    }
+}
 
 // ── Morton code LUT (OCCT BVH_RadixSorter.hxx L34-63) ──
 const MORTON_LUT: [u32; 256] = [
