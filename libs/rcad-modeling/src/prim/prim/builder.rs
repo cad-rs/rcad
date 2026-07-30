@@ -78,26 +78,38 @@ impl<'a> PrimBuilder<'a> {
     }
 
     // OCCT L99: AddEdgeVertex — add vertex to edge with parameter
-    pub fn add_edge_vertex(&mut self, e: &Shape, v: &Shape, p: f64, _direct: bool) {
+    // OCCT: first vertex added with direct=true goes to myPave1 (first),
+    //       second vertex with direct=false goes to myPave2 (last).
+    pub fn add_edge_vertex(&mut self, e: &Shape, v: &Shape, p: f64, direct: bool) {
         let ts = &mut self.brep.tshapes[e.index];
         if let TShape::Edge(ref mut ed) = *Arc::make_mut(ts) {
             ed.vertex_params.insert(v.index, p);
             ed.my_shapes.push(v.clone());
+            // OCCT BRep_Builder::Add(Edge, Vertex) — add vertex to edge's sub-shapes.
+            // The first vertex added becomes the "first" vertex, the last becomes "last".
+            // rcad sub_shapes_of reads ed.first and ed.last for edge→vertex chain.
+            if ed.first.index == usize::MAX {
+                ed.first = v.clone();
+            } else {
+                ed.last = v.clone();
+            }
         }
     }
 
-    // OCCT L121: AddWireEdge
-    pub fn add_wire_edge(&mut self, w: &Shape, e: &Shape, _direct: bool) {
+    // OCCT L121: AddWireEdge — returns updated wire Shape
+    pub fn add_wire_edge(&mut self, w: &Shape, e: &Shape, _direct: bool) -> Shape {
         let orientation = if _direct { Orientation::Forward } else { Orientation::Reversed };
         let e_ref = Shape { data: e.data.clone(), index: e.index, orientation, location: e.location };
         let ts = &mut self.brep.tshapes[w.index];
         if let TShape::Wire(ref mut wd) = *Arc::make_mut(ts) {
             wd.edges.push(e_ref);
         }
+        Shape { data: self.brep.tshapes[w.index].clone(), index: w.index,
+            orientation: w.orientation, location: w.location }
     }
 
-    // OCCT L124: AddFaceWire
-    pub fn add_face_wire(&mut self, f: &mut Shape, w: &Shape) {
+    // OCCT L124: AddFaceWire — returns updated face Shape (Arc::make_mut may detach)
+    pub fn add_face_wire(&mut self, f: &Shape, w: &Shape) -> Shape {
         let ts = &mut self.brep.tshapes[f.index];
         if let TShape::Face(ref mut fd) = *Arc::make_mut(ts) {
             if fd.outer_wire.index == usize::MAX {
@@ -106,13 +118,17 @@ impl<'a> PrimBuilder<'a> {
                 fd.inner_wires.push(w.clone());
             }
         }
+        Shape { data: self.brep.tshapes[f.index].clone(), index: f.index,
+            orientation: f.orientation, location: f.location }
     }
 
-    // OCCT L127: AddShellFace
-    pub fn add_shell_face(&mut self, sh: &mut Shape, f: &Shape) {
+    // OCCT L127: AddShellFace — returns updated shell Shape
+    pub fn add_shell_face(&mut self, sh: &Shape, f: &Shape) -> Shape {
         let ts = &mut self.brep.tshapes[sh.index];
         if let TShape::Shell(ref mut sd) = *Arc::make_mut(ts) {
             sd.faces.push(f.clone());
         }
+        Shape { data: self.brep.tshapes[sh.index].clone(), index: sh.index,
+            orientation: sh.orientation, location: sh.location }
     }
 }

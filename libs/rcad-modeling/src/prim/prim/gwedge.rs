@@ -51,13 +51,17 @@ pub struct GWedge<'a> {
 }
 
 impl<'a> GWedge<'a> {
-    /// Initialize for a box (all Z2=X2 match Z/X, no taper).
+    /// Initialize for a box at origin (all Z2=X2 match Z/X, no taper).
     pub fn new_box(builder: PrimBuilder<'a>, dx: f64, dy: f64, dz: f64) -> Self {
+        Self::new_box_at(builder, DVec3::ZERO, dx, dy, dz)
+    }
+    /// Initialize for a box at given origin.
+    pub fn new_box_at(builder: PrimBuilder<'a>, origin: DVec3, dx: f64, dy: f64, dz: f64) -> Self {
         fn none8<T>() -> [Option<T>; 8] { [None, None, None, None, None, None, None, None] }
         fn none12<T>() -> [Option<T>; 12] { [None, None, None, None, None, None, None, None, None, None, None, None] }
         fn none6<T>() -> [Option<T>; 6] { [None, None, None, None, None, None] }
         GWedge {
-            builder, origin: DVec3::ZERO,
+            builder, origin,
             xmin: 0.0, xmax: dx, ymin: 0.0, ymax: dy, zmin: 0.0, zmax: dz,
             z2min: 0.0, z2max: dz, x2min: 0.0, x2max: dx,
             my_infinite: [false; NBFACES],
@@ -90,7 +94,7 @@ impl<'a> GWedge<'a> {
             1 => if i % 2 == 0 { -DVec3::Y } else { DVec3::Y },
             _ => if i % 2 == 0 { -DVec3::Z } else { DVec3::Z },
         };
-        Plane::new(DVec3::new(x, y, z), normal)
+        Plane::new(self.origin + DVec3::new(x, y, z), normal)
     }
 
     fn point(&self, d1: Dir, d2: Dir, d3: Dir) -> DVec3 {
@@ -157,7 +161,7 @@ impl<'a> GWedge<'a> {
         if !self.edges_built[i] {
             let (pt, dir) = self.line(d1, d2);
             let line = Line3::new(pt, dir);
-            let e = self.builder.make_edge_line(&line);
+            let mut e = self.builder.make_edge_line(&line);
             // Add endpoint vertices (OCCT: AddEdgeVertex)
             let (dd_low, dd_high) = match i / 4 {
                 0 => (Dir::ZMin, Dir::ZMax),
@@ -168,6 +172,9 @@ impl<'a> GWedge<'a> {
             let v_high = self.vertex(d1, d2, dd_high);
             self.builder.add_edge_vertex(&e, &v_low, 0.0, true);
             self.builder.add_edge_vertex(&e, &v_high, 0.0, false);
+            // Re-read edge from BRep (Arc::make_mut may have detached data)
+            e = Shape { data: self.builder.brep.tshapes[e.index].clone(), index: e.index,
+                orientation: e.orientation, location: e.location };
             // For degenerate wedges, share edges
             if self.z2max == self.z2min {
                 if i == 6 { self.edges[7] = Some(e.clone()); self.edges_built[7] = true; }
@@ -186,15 +193,15 @@ impl<'a> GWedge<'a> {
                 1 => (Dir::XMin, Dir::ZMax, Dir::XMax, Dir::ZMin),
                 _ => (Dir::YMin, Dir::XMax, Dir::YMax, Dir::XMin),
             };
-            let w = self.builder.make_wire();
+            let mut w = self.builder.make_wire();
             let e4 = if self.has_edge(d, dd4) { Some(self.edge(d, dd4)) } else { None };
             let e3 = if self.has_edge(d, dd3) { Some(self.edge(d, dd3)) } else { None };
             let e2 = if self.has_edge(d, dd2) { Some(self.edge(d, dd2)) } else { None };
             let e1 = if self.has_edge(d, dd1) { Some(self.edge(d, dd1)) } else { None };
-            if let Some(ref e) = e4 { self.builder.add_wire_edge(&w, e, false); }
-            if let Some(ref e) = e3 { self.builder.add_wire_edge(&w, e, false); }
-            if let Some(ref e) = e2 { self.builder.add_wire_edge(&w, e, true); }
-            if let Some(ref e) = e1 { self.builder.add_wire_edge(&w, e, true); }
+            if let Some(ref e) = e4 { w = self.builder.add_wire_edge(&w, e, false); }
+            if let Some(ref e) = e3 { w = self.builder.add_wire_edge(&w, e, false); }
+            if let Some(ref e) = e2 { w = self.builder.add_wire_edge(&w, e, true); }
+            if let Some(ref e) = e1 { w = self.builder.add_wire_edge(&w, e, true); }
             self.wires[i] = Some(w);
             self.wires_built[i] = true;
         }
@@ -208,7 +215,7 @@ impl<'a> GWedge<'a> {
             let mut f = self.builder.make_face_plane(&p);
             if self.has_face(d) {
                 let w = self.wire(d);
-                self.builder.add_face_wire(&mut f, &w);
+                f = self.builder.add_face_wire(&f, &w);
             }
             if i % 2 == 0 { self.builder.reverse_face(&mut f); }
             self.faces[i] = Some(f);
@@ -222,7 +229,7 @@ impl<'a> GWedge<'a> {
         for d in &[Dir::XMin, Dir::XMax, Dir::YMin, Dir::YMax, Dir::ZMin, Dir::ZMax] {
             if self.has_face(*d) {
                 let f = self.face(*d);
-                self.builder.add_shell_face(&mut shell, &f);
+                shell = self.builder.add_shell_face(&shell, &f);
             }
         }
         shell
