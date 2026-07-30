@@ -140,28 +140,8 @@ macro_rules! def_bool_op {
 
 def_bool_op!(FuseOp, Union);
 def_bool_op!(CommonOp, Intersection);
-def_bool_op!(CutOp, Difference);
-
-// ── BRepAlgoAPI_Section ──────────────────────────────────────────────────
-pub struct SectionOp { pub algo: BuilderAlgo }
-impl SectionOp {
-    pub fn new() -> Self { Self { algo: BuilderAlgo::new() } }
-    pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
-        let mut s = Self::new(); s.algo.arguments = vec![s1, s2]; s
-    }
-    pub fn build(&mut self) {
-        self.algo.bs.result = None; self.algo.bs.err = None;
-        match run_build(&self.algo, BooleanOpType::Intersection) {
-            Ok(s) => self.algo.bs.result = Some(s),
-            Err(e) => self.algo.bs.err = Some(e),
-        }
-    }
-    pub fn shape(&self) -> &Shape { self.algo.bs.shape() }
-}
-impl Algo for SectionOp {
-    fn is_done(&self) -> bool { self.algo.bs.is_done() }
-    fn error(&self) -> Option<&BooleanError> { self.algo.bs.error() }
-}
+def_bool_op!(CutOp, Cut);
+def_bool_op!(SectionOp, Section);
 
 // ── BRepAlgoAPI_Defeaturing ─────────────────────────────────────────────
 pub struct DefeaturingOp {
@@ -208,4 +188,7 @@ pub fn cut(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
     let mut op = CutOp::from_shapes(a, b);
     op.build();
     if op.is_done() { Ok(op.shape().clone()) } else { Err(op.algo.bs.err.take().unwrap_or(BooleanError::InvalidResult("cut failed"))) }
+}
+pub fn cut21(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
+    cut(b, a) // swap args → b - a
 }

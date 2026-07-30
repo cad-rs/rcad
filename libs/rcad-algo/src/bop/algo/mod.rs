@@ -37,7 +37,8 @@ impl Default for GlueEnum { fn default() -> Self { GlueEnum::GlueOff } }
 pub enum BooleanOpType {
     Union,
     Intersection,
-    Difference,
+    Cut,
+    Section,
 }
 
 // ===
