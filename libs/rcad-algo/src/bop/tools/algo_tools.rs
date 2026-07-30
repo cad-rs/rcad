@@ -339,6 +339,11 @@ pub fn are_faces_same_domain(
 // ====================================================================
 /// Checks normal directions of two faces sharing an edge.
 /// Returns 0=error, 1=same direction, -1=opposite.
+/// OCCT BOPTools_AlgoTools::IsBasedOnPlane — true if face surface is a plane.
+pub fn is_based_on_plane(face: &Shape) -> bool {
+    face.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Plane(_)))
+}
+
 pub fn sense(
     _f1_idx: usize, _f2_idx: usize,
     _edge_idx: usize,
