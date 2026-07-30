@@ -1381,13 +1381,27 @@ impl PaveFiller {
 
     // OCCT BOPAlgo_PaveFiller::SetNonDestructive (PaveFiller_10.cxx L41-59).
     // Checks if any argument shape is locked; if so, enables non-destructive mode.
-    // rcad: shapes do not have a Locked() flag, so this is a no-op.
     fn set_non_destructive(&mut self) {
         if !self.my_is_primary || self.my_non_destructive {
             return;
         }
-        // OCCT: iterate myArguments, check aS.Locked()
-        // rcad: no Locked() flag on shapes — keeps myNonDestructive unchanged.
+        // OCCT L47-55: iterate myArguments, check aS.Locked()
+        for arg in &self.my_arguments {
+            let flags = match &*arg.data {
+                topods::TShape::Vertex(v) => v.flags,
+                topods::TShape::Edge(e) => e.flags,
+                topods::TShape::Wire(w) => w.flags,
+                topods::TShape::Face(f) => f.flags,
+                topods::TShape::Shell(s) => s.flags,
+                topods::TShape::Solid(s) => s.flags,
+                topods::TShape::CompSolid(_) => 0,
+                topods::TShape::Compound(_) => 0,
+            };
+            if flags & topods::tshape_flags::LOCKED != 0 {
+                self.my_non_destructive = true;
+                return;
+            }
+        }
     }
 
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
