@@ -93,15 +93,15 @@ impl ShrunkRange {
     }
 }
 
-pub struct PaveFiller<'a> {
+pub struct PaveFiller {
     // ── BOPAlgo_Algo base (inherited) ──────────────────────────────
     my_report: Report,                 // BOPAlgo_Algo::myReport
     my_run_parallel: bool,             // BOPAlgo_Algo::myRunParallel
     my_fuzzy_value: f64,               // BOPAlgo_Algo::myFuzzyValue
     // ── BOPAlgo_PaveFiller members ────────────────────────────────
     // OCCT BOPAlgo_PaveFiller.hxx L639-652:
-    ds: &'a mut DS,                    // L640: myDS
-    my_iterator: Option<Box<BOPDS_Iterator<'a>>>, // L641: myIterator
+    ds: DS,                            // L640: myDS (owned, OCCT: heap-allocated)
+    my_iterator: Option<Box<BOPDS_Iterator>>, // L641: myIterator
     my_context: IntToolsContext,        // BOPAlgo_PaveFiller::myContext (L642)
     my_glue: GlueEnum,                 // BOPAlgo_PaveFiller::myGlue (L647)
     my_section_attribute: SectionAttribute, // BOPAlgo_PaveFiller::mySectionAttribute (L643)
@@ -118,8 +118,31 @@ pub struct PaveFiller<'a> {
     pub stop_after: Option<&'static str>,
 }
 
-impl<'a> PaveFiller<'a> {
-    pub fn new(ds: &'a mut DS) -> Self {
+impl PaveFiller {
+    pub fn new() -> Self {
+        PaveFiller {
+            ds: DS::new(),
+            my_report: Report::new(),
+            my_run_parallel: false,
+            my_fuzzy_value: 0.0,
+            my_iterator: None,
+            my_context: IntToolsContext::new(),
+            my_glue: GlueEnum::GlueOff,
+            my_section_attribute: SectionAttribute::default(),
+            my_non_destructive: false,
+            my_is_primary: true,
+            my_avoid_build_pcurve: false,
+            my_arguments: Vec::new(),
+            my_fpb_done: HashMap::new(),
+            my_increased_ss: HashSet::new(),
+            my_verts_to_avoid_extension: HashSet::new(),
+            my_distances: HashMap::new(),
+            stop_after: None,
+        }
+    }
+
+    /// Create with a pre-configured owned DS.
+    pub fn new_with_ds(ds: DS) -> Self {
         PaveFiller {
             ds,
             my_report: Report::new(),
@@ -140,6 +163,9 @@ impl<'a> PaveFiller<'a> {
             stop_after: None,
         }
     }
+
+    /// Extract the owned DS, consuming the PaveFiller.
+    pub fn into_ds(self) -> DS { self.ds }
     pub fn set_arguments(&mut self, args: Vec<Shape>) {
         self.my_arguments = args;
     }
@@ -163,7 +189,7 @@ impl<'a> PaveFiller<'a> {
     pub fn set_fuzzy_value(&mut self, v: f64) { self.my_fuzzy_value = v; }
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
     pub fn report(&self) -> &Report { &self.my_report }
-    pub fn ds(&self) -> &DS { self.ds }
+    pub fn ds(&self) -> &DS { &self.ds }
 
     /// If stop_after matches stage, return true (caller should return).
     fn check_stop(&self, stage: &'static str) -> bool {
@@ -552,7 +578,7 @@ impl<'a> PaveFiller<'a> {
             for ((n_vsd, _n_e), orig_verts) in &a_dmvsd {
                 // OCCT: myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue)
                 let (i_flag, a_t, a_tol_v_new) =
-                    self.my_context.compute_ve(*n_vsd, n_e, self.ds, self.my_fuzzy_value);
+                    self.my_context.compute_ve(*n_vsd, n_e, &self.ds, self.my_fuzzy_value);
                 if i_flag == -1 || i_flag == -2 || i_flag == -3 { continue; }
                 if i_flag != 0 && i_flag != -4 { continue; }
 
@@ -693,7 +719,7 @@ impl<'a> PaveFiller<'a> {
 
                     // OCCT L254-264: create EdgeEdge, intersect
                     let mut ee = int_tools::edge_edge::EdgeEdgeIntersector::new();
-                    ee.set_edges(n_e1, [t11, t12], n_e2, [t21, t22], self.ds);
+                    ee.set_edges(n_e1, [t11, t12], n_e2, [t21, t22], &self.ds);
                     ee.set_fuzzy_value(self.my_fuzzy_value);
                     ee.perform();
 
@@ -1116,7 +1142,7 @@ impl<'a> PaveFiller<'a> {
                     // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
                     // rcad: CorrectRange adjusts range endpoints by face tolerance / |derivative|
                     let a_corrected_range = Self::correct_range(
-                        n_e, n_f, self.ds, a_ts1, a_ts2);
+                        n_e, n_f, &self.ds, a_ts1, a_ts2);
                     // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
                     // OCCT L299-305: myFPBDone.Bound(nF, Map<PaveBlock>)->Add(aPB)
                     // rcad: CorrectRange translated above. myFPBDone is a fence map
@@ -1346,14 +1372,10 @@ impl<'a> PaveFiller<'a> {
         // OCCT L204: myContext = new IntTools_Context
         self.my_context = IntToolsContext::new();
         // OCCT L207-210: myIterator = new BOPDS_Iterator
-        // SAFETY: self.ds is &'a mut DS, valid for 'a. The borrow checker
-        // cannot reborrow with lifetime 'a through &mut self, so we use a
-        // raw-pointer cast to recover the known lifetime.
-        let ds_ref: &'a DS = unsafe { &*(self.ds as *const DS) };
-        let mut a_it = BOPDS_Iterator::new(ds_ref, self.my_fuzzy_value);
+        let mut a_it = BOPDS_Iterator::new(self.my_fuzzy_value);
         a_it.set_run_parallel(self.my_run_parallel); // OCCT L208
         // OCCT L210: myIterator->Prepare(myContext, myUseOBB, myFuzzyValue)
-        a_it.prepare(Some(&self.my_context), false, self.my_fuzzy_value);
+        a_it.prepare(&self.ds, Some(&self.my_context), false, self.my_fuzzy_value);
         self.my_iterator = Some(Box::new(a_it));
         // OCCT L213: SetNonDestructive — respects existing flag
         // (set_non_destructive must be called before init to take effect)
@@ -1686,7 +1708,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L864-867: iFlag = myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue);
         // OCCT: on non-degenerated, geometric edge, projects V onto E and returns 0/1/-4.
         let (i_flag, a_t_val, a_tol_v_new_val) =
-            self.my_context.compute_ve(n_vx, n_e, self.ds, self.my_fuzzy_value);
+            self.my_context.compute_ve(n_vx, n_e, &self.ds, self.my_fuzzy_value);
         if i_flag == -1 || i_flag == -2 || i_flag == -3 { return false; }
         // OCCT L868: if (iFlag == 0 || iFlag == -4)
         if i_flag != 0 && i_flag != -4 { return false; }
@@ -1938,7 +1960,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // L422: myIterator->IntersectExt(anExtraInterfMap);
         // OCCT expands the pair lists to include the extra vertices.
         if let Some(it) = &mut self.my_iterator {
-            it.intersect_ext(&an_extra);
+            it.intersect_ext(&self.ds, &an_extra);
         }
 
         // L426-430: PerformVV(aPS.Next());
@@ -2219,7 +2241,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             };
 
             let mut ee = crate::bop::int_tools::edge_edge::EdgeEdgeIntersector::new();
-            ee.set_edges(pair.n_e1, [pair.pb1_range.0, pair.pb1_range.1], pair.n_e2, [pair.pb2_range.0, pair.pb2_range.1], self.ds);
+            ee.set_edges(pair.n_e1, [pair.pb1_range.0, pair.pb1_range.1], pair.n_e2, [pair.pb2_range.0, pair.pb2_range.1], &self.ds);
             // OCCT L1216-1222: SetFuzzyValue with the pair-specific tolerance
             ee.set_fuzzy_value(pair.fuzzy_value);
             ee.perform();
@@ -2589,7 +2611,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         continue;
                     }
                     // OCCT L1033-1035: if (!myContext->IsPointInFace(aF, gp_Pnt2d(U,V))) continue;
-                    if !self.my_context.is_point_in_face(self.ds, n_f, uv) {
+                    if !self.my_context.is_point_in_face(&self.ds, n_f, uv) {
                         continue;
                     }
                     (uv, proj_pt)

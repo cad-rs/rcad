@@ -67,17 +67,14 @@ impl Algo for BuilderAlgo {
 // ── BooleanOperation — base for Fuse/Common/Cut/Section ────────────────
 fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, BooleanError> {
     if algo.arguments.len() < 2 { return Err(BooleanError::TooFewArguments); }
-    let mut ds = DS::new();
-    ds.set_arguments(algo.arguments.clone());
-    ds.init(algo.fuzzy_value.max(1e-7));
-    let mut filler = PaveFiller::new(&mut ds);
+    let mut filler = PaveFiller::new();
     filler.set_arguments(algo.arguments.clone());
     filler.set_fuzzy_value(algo.fuzzy_value);
     let a_prog = NoopProgress;
     let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
     filler.perform(&a_ps);
     let fuzz = filler.fuzzy_value();
-    drop(filler);
+    let ds = filler.into_ds();
     let mut builder = BooleanBuilder::new(&ds, op_type, fuzz);
     builder.my_arguments = ds.arguments.clone();
     match builder.build() {

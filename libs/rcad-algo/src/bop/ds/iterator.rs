@@ -7,8 +7,7 @@ use std::collections::HashSet;
 
 /// BOPDS_Iterator — iterates pairs of interfering shapes.
 /// OCCT ref: BOPDS_Iterator.hxx
-pub struct BOPDS_Iterator<'a> {
-    ds: &'a DS,
+pub struct BOPDS_Iterator {
     fuzzy_tol: f64,
     my_lists: Vec<Vec<(usize, usize)>>,
     my_ext_lists: Vec<Vec<(usize, usize)>>, // OCCT: myExtLists
@@ -57,8 +56,8 @@ fn boxes_overlap(si1: &crate::bop::ds::ShapeInfo, si2: &crate::bop::ds::ShapeInf
     !b1.is_out_box(&b2)
 }
 
-impl<'a> BOPDS_Iterator<'a> {
-    pub fn new(ds: &'a DS, fuzzy_tol: f64) -> Self {
+impl BOPDS_Iterator {
+    pub fn new(fuzzy_tol: f64) -> Self {
         let n = 10;
         let mut my_lists = Vec::with_capacity(n);
         for _ in 0..n { my_lists.push(Vec::new()); }
@@ -66,7 +65,7 @@ impl<'a> BOPDS_Iterator<'a> {
         let mut my_ext_lists = Vec::with_capacity(n_ext);
         for _ in 0..n_ext { my_ext_lists.push(Vec::new()); }
         BOPDS_Iterator {
-            ds, fuzzy_tol,
+            fuzzy_tol,
             my_lists,
             my_ext_lists,
             my_length: 0,
@@ -94,20 +93,20 @@ impl<'a> BOPDS_Iterator<'a> {
     pub fn nb_ext_interfs() -> usize { 4 }
 
     // OCCT BOPDS_Iterator::Prepare (BOPDS_Iterator.cxx L247-265).
-    pub fn prepare(&mut self, _ctx: Option<&IntToolsContext>, _check_obb: bool, _fuzzy: f64) {
+    pub fn prepare(&mut self, ds: &DS, _ctx: Option<&IntToolsContext>, _check_obb: bool, _fuzzy: f64) {
         let a_nb_interf_types = DS::nb_interf_types();
         self.my_length = 0;
         self.my_use_ext = false;
         for i in 0..a_nb_interf_types {
             self.my_lists[i].clear();
         }
-        if self.ds.nb_shapes() == 0 { return; }
-        self.intersect();
+        if ds.nb_shapes() == 0 { return; }
+        self.intersect(ds);
     }
 
     // OCCT BOPDS_Iterator::Intersect (BOPDS_Iterator.cxx L270-359).
-    fn intersect(&mut self) {
-        let a_nb = self.ds.nb_source_shapes();
+    fn intersect(&mut self, ds: &DS) {
+        let a_nb = ds.nb_source_shapes();
         // OCCT L279-284: Add shapes with BRep to BVH
         // OCCT L291: Build BVH
         // OCCT L294-298: Select pairs via BVH + Sort
@@ -122,20 +121,20 @@ impl<'a> BOPDS_Iterator<'a> {
         // ID1 is in this range and ID2 is in a different range.
         // rcad: iterate i<j globally, skip if same range.
         for i in 0..a_nb {
-            let si1 = &self.ds.shapes[i];
+            let si1 = &ds.shapes[i];
             if !has_brep(si1.shape_type) { continue; }
             let a_type1 = si1.shape_type;
             let i_type1 = type_to_integer_single(a_type1);
-            let r1 = self.ds.rank(i);
+            let r1 = ds.rank(i);
 
             for j in (i + 1)..a_nb {
-                let si2 = &self.ds.shapes[j];
+                let si2 = &ds.shapes[j];
                 if !has_brep(si2.shape_type) { continue; }
                 let a_type2 = si2.shape_type;
                 let i_type2 = type_to_integer_single(a_type2);
 
                 // OCCT L320-324: skip if both are from the same argument range
-                if r1 >= 0 && r1 == self.ds.rank(j) { continue; }
+                if r1 >= 0 && r1 == ds.rank(j) { continue; }
 
                 // OCCT L336-340: avoid interfering shape with its sub-shapes
                 if ((i_type1 < i_type2) && si1.has_sub_shape(j))
@@ -153,9 +152,9 @@ impl<'a> BOPDS_Iterator<'a> {
     }
 
     // OCCT BOPDS_Iterator::IntersectExt (BOPDS_Iterator.cxx L363-463).
-    pub fn intersect_ext(&mut self, the_indices: &HashSet<usize>) {
-        if self.ds.nb_shapes() == 0 { return; }
-        let a_nb = self.ds.nb_source_shapes();
+    pub fn intersect_ext(&mut self, ds: &DS, the_indices: &HashSet<usize>) {
+        if ds.nb_shapes() == 0 { return; }
+        let a_nb = ds.nb_source_shapes();
 
         // rcad: brute-force equivalent of BVH with increased boxes for map indices.
         // OCCT builds a BVH tree + TSR selectors; we iterate pairs directly.
@@ -165,20 +164,20 @@ impl<'a> BOPDS_Iterator<'a> {
 
         // For each vertex in the map, pair with all other shapes
         for &i in the_indices {
-            let si = &self.ds.shapes[i];
+            let si = &ds.shapes[i];
             if si.shape_type != ShapeType::Vertex { continue; } // OCCT only adds VERTEX to map
-            let i_rank_i = self.ds.rank(i);
+            let i_rank_i = ds.rank(i);
             // OCCT L386-397: get SD vertex box (with increased tolerance)
             let mut n_vsd = i;
-            self.ds.has_shape_sd(i, &mut n_vsd);
-            let si_sd = &self.ds.shapes[n_vsd];
+            ds.has_shape_sd(i, &mut n_vsd);
+            let si_sd = &ds.shapes[n_vsd];
             let i_ti = type_to_integer_single(si_sd.shape_type);
 
             for j in 0..a_nb {
                 if j == i { continue; }
-                let sj = &self.ds.shapes[j];
+                let sj = &ds.shapes[j];
                 // OCCT L435: if (iRankI == iRankJ) continue;
-                let i_rank_j = self.ds.rank(j);
+                let i_rank_j = ds.rank(j);
                 if i_rank_i >= 0 && i_rank_i == i_rank_j { continue; }
 
                 // OCCT L440-448: sub-shape check

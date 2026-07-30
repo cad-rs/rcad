@@ -14,8 +14,9 @@ impl CheckerSI {
     pub fn perform(&mut self, ds: &mut DS) {
         // OCCT L158-162: check exactly 1 argument
         // OCCT L166: BOPAlgo_PaveFiller::Perform
-        let mut pf = PaveFiller::new(ds);
-        pf.set_arguments(Vec::new());
+        let mut pf = PaveFiller::new();
+        // Copy arguments from the caller's DS into the owned DS
+        pf.set_arguments(ds.arguments.clone());
         let a_prog = NoopProgress;
         let a_ps = ProgressScope::new(&a_prog, "self-interface", 100);
         pf.perform_internal(&a_ps);
