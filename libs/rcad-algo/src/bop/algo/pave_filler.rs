@@ -153,8 +153,6 @@ impl<'a> PaveFiller<'a> {
         self.my_iterator = None;
         // OCCT L141: myIncreasedSS.Clear();
         self.my_increased_ss.clear();
-        self.my_verts_to_avoid_extension.clear();
-        self.my_fpb_done.clear();
         // Note: myDS is borrowed (not owned), so not deleted.
     }
     pub fn set_glue(&mut self, enable: bool, tolerance: f64) {
