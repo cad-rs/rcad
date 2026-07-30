@@ -1462,25 +1462,32 @@ impl PaveFiller {
         if a_nb_f == 0 { return; }
 
         // OCCT L888-931: build pcurves for edges on planar faces via BOPAlgo_BPC
+        // Phase 1 (L889-899): collect edge-face pairs into BPC vector
         let mut a_vbpc: Vec<BOPAlgo_BPC> = Vec::new();
         for &fi in &a_mf {
-            // OCCT L889-897: for each edge of the face, create BPC
             let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
                 .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
                 .copied().collect();
             for &ei in &edge_indices {
                 let mut a_bpc = BOPAlgo_BPC::new(ei, fi);
-                // OCCT L897-904: BPC.Perform() — builds pcurve
-                a_bpc.perform(&self.ds);
-                if a_bpc.is_to_update() {
-                    // OCCT L907-925: UpdateEdge with pcurve
-                    let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
-                    if let Some(pc) = a_bpc.pcurve().cloned() {
-                        let si = self.ds.change_shape_info(ei);
-                        let ts = Arc::make_mut(&mut si.shape.data);
-                        if let topods::TShape::Edge(ref mut ed) = *ts {
-                            ed.pcurves.insert(fi, (pc, range[0], range[1]));
-                        }
+                a_vbpc.push(a_bpc);
+            }
+        }
+        // Phase 2 (L903-909): perform all BPCs (OCCT: BOPTools_Parallel::Perform)
+        for bpc in &mut a_vbpc {
+            bpc.perform(&self.ds);
+        }
+        // Phase 3 (L916-930): update edges with computed pcurves
+        for bpc in &a_vbpc {
+            if bpc.is_to_update() {
+                let ei = bpc.edge_idx();
+                let fi = bpc.face_idx();
+                let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+                if let Some(pc) = bpc.pcurve().cloned() {
+                    let si = self.ds.change_shape_info(ei);
+                    let ts = Arc::make_mut(&mut si.shape.data);
+                    if let topods::TShape::Edge(ref mut ed) = *ts {
+                        ed.pcurves.insert(fi, (pc, range[0], range[1]));
                     }
                 }
             }
