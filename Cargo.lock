@@ -1031,7 +1031,6 @@ name = "rcad-modeling"
 version = "0.1.0"
 dependencies = [
  "glam",
- "rcad-algorithms",
  "rcad-kernel",
 ]
 

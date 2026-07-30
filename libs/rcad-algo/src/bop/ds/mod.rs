@@ -773,6 +773,7 @@ impl DS {
     pub fn pave_blocks_pool(&self) -> &[Vec<SharedPB>] { &self.pave_blocks_pool }
     pub fn change_pave_blocks_pool(&mut self) -> &mut Vec<Vec<SharedPB>> { &mut self.pave_blocks_pool }
     pub fn has_pave_blocks(&self, i: usize) -> bool { self.shapes[i].has_reference() }
+    /// OCCT: myPaveBlocksMap(theIndex) — pave blocks of edge by shape index.
     pub fn pave_blocks(&self, i: usize) -> &[SharedPB] {
         if self.has_pave_blocks(i) {
             &self.pave_blocks_pool[self.shapes[i].reference as usize]
@@ -1102,11 +1103,37 @@ impl DS {
         }
     }
 
+    // OCCT BOPDS_DS::IsValidShrunkData (BOPDS_DS.cxx L1547-1585).
+    // Compares the distances from the bounds of the shrunk range to the vertices
+    // with the tolerance values of vertices.
     pub fn is_valid_shrunk_data(&self, pb: &PaveBlock) -> bool {
         if !pb.has_shrunk_data() { return false; }
-        let (_ts1, _ts2, _) = pb.shrunk_data();
+        let (ts1, ts2, _) = pb.shrunk_data();
+        let a_parameter = [ts1, ts2];
         let (v1i, v2i) = pb.indices();
+        let a_vertex_index = [v1i, v2i];
         if v1i >= self.nb_shapes() || v2i >= self.nb_shapes() { return false; }
+
+        // OCCT L1565-1567: BRepAdaptor_Curve on edge + epsilon = edge tolerance * 0.01
+        let n_e = pb.original_edge;
+        let curve = match self.edge_curve(n_e) {
+            Some(c) => c,
+            None => return false,
+        };
+        let an_epsilon = self.edge_tolerance(n_e) * 0.01;
+
+        for i in 0..2 {
+            // OCCT L1571-1572: aTol = BRep_Tool::Tolerance(aVertex) + Precision::Confusion()
+            let a_vertex_point = self.vertex_point_by_idx(a_vertex_index[i]);
+            let a_tol = self.vertex_tolerance_by_idx(a_vertex_index[i]) + rcad_kernel::CONFUSION;
+            // OCCT L1577: gp_Pnt aPointOnEdge = aCurveAdaptor.Value(aParameter[i]);
+            let a_point_on_edge = curve.point_at(a_parameter[i]);
+            // OCCT L1579: if (aTol - aVertexPoint.Distance(aPointOnEdge) > anEpsilon) return false;
+            let a_dist = a_vertex_point.distance(a_point_on_edge);
+            if a_tol - a_dist > an_epsilon {
+                return false;
+            }
+        }
         true
     }
 
@@ -1236,12 +1263,20 @@ impl DS {
                     (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
                 };
 
-            // OCCT L1681-1686: add vertex bounding boxes
+            // OCCT L1681-1686: anEdgeBoundBox.Add(aVertexInfo.Box())
+            // OCCT Add(Box) adds the full box INCLUDING the vertex tolerance gap.
             let sub_shapes = self.shapes[an_edge_index].sub_shapes.clone();
             for &vi in &sub_shapes {
                 if !self.shapes[vi].bbox.is_void() {
-                    an_edge_bx_min = an_edge_bx_min.min(self.shapes[vi].bbox.raw_min());
-                    an_edge_bx_max = an_edge_bx_max.max(self.shapes[vi].bbox.raw_max());
+                    if let Some((vxmn, vymn, vzmn, vxmx, vymx, vzmx)) = self.shapes[vi].bbox.get() {
+                        if an_edge_bx_min.x.is_finite() {
+                            an_edge_bx_min = an_edge_bx_min.min(DVec3::new(vxmn, vymn, vzmn));
+                            an_edge_bx_max = an_edge_bx_max.max(DVec3::new(vxmx, vymx, vzmx));
+                        } else {
+                            an_edge_bx_min = DVec3::new(vxmn, vymn, vzmn);
+                            an_edge_bx_max = DVec3::new(vxmx, vymx, vzmx);
+                        }
+                    }
                 }
             }
 
@@ -1703,15 +1738,9 @@ impl DS {
         0
     }
 
-    /// Pave blocks for an edge (returns empty slice if none).
+    /// Same as pave_blocks — OCCT: myPaveBlocksMap(theIndex)
     pub fn edge_pave_blocks(&self, ei: usize) -> &[SharedPB] {
-        // Use the full shape index: edges start at nb_source_shapes offsets
-        // but each edge has its pave_blocks stored in pave_blocks_pool[ei]
-        if ei < self.pave_blocks_pool.len() {
-            &self.pave_blocks_pool[ei]
-        } else {
-            &[]
-        }
+        self.pave_blocks(ei)
     }
 
     /// True if the edge is a geometric (non-degenerate) edge.

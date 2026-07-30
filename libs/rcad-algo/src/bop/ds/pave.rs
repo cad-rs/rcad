@@ -4,6 +4,7 @@
 // BOPDS_PaveBlock.hxx ?edge segment between two paves
 
 use std::sync::{Arc, RwLock};
+use rcad_kernel::math::bnd::BndBox;
 
 // ===
 // BOPDS_Pave
@@ -65,7 +66,10 @@ pub struct PaveBlock {
     pub ext_paves: Vec<Pave>,   // myExtPaves (NCollection_List)
     pub ts1: f64,               // myTS1 ?shrunk range start
     pub ts2: f64,               // myTS2 ?shrunk range end
+    pub shrunk_bnd_box: BndBox, // myBndBox (OCCT Bnd_Box)
     pub common_block_idx: Option<usize>, // rcad: link to common block (OCCT uses DataMap)
+    has_shrunk_data: bool,      // OCCT: myHasShrunkData
+    splittable_from_shrunk: bool, // OCCT: myIsSplittable — set by SetShrunkData
 }
 
 impl PaveBlock {
@@ -79,6 +83,9 @@ impl PaveBlock {
             ts1: 0.0,
             ts2: 0.0,
             common_block_idx: None,
+            shrunk_bnd_box: BndBox::new(),
+            has_shrunk_data: false,
+            splittable_from_shrunk: true,
         }
     }
 
@@ -120,16 +127,25 @@ impl PaveBlock {
     pub fn ext_paves(&self) -> &[Pave] { &self.ext_paves }
     pub fn change_ext_paves(&mut self) -> &mut Vec<Pave> { &mut self.ext_paves }
 
-    // -- ShrunkData --
-    pub fn set_shrunk_data(&mut self, ts1: f64, ts2: f64, _is_splittable: bool) {
+    // -- ShrunkData (OCCT BOPDS_PaveBlock::SetShrunkData) --
+    // OCCT: void SetShrunkData(double theTS1, double theTS2, const Bnd_Box& theBndBox, bool theIsSplittable)
+    pub fn set_shrunk_data(&mut self, ts1: f64, ts2: f64, the_bnd_box: BndBox, is_splittable: bool) {
         self.ts1 = ts1;
         self.ts2 = ts2;
+        self.shrunk_bnd_box = the_bnd_box;
+        self.has_shrunk_data = true;
+        self.splittable_from_shrunk = is_splittable;
     }
-    pub fn shrunk_data(&self) -> (f64, f64, bool) { (self.ts1, self.ts2, self.is_splittable()) }
-    pub fn has_shrunk_data(&self) -> bool { self.ts1 != 0.0 || self.ts2 != 0.0 }
+    pub fn shrunk_data(&self) -> (f64, f64, bool) { (self.ts1, self.ts2, self.splittable_from_shrunk) }
+    pub fn shrunk_bnd_box(&self) -> &BndBox { &self.shrunk_bnd_box }
+    pub fn has_shrunk_data(&self) -> bool { self.has_shrunk_data }
     pub fn is_splittable(&self) -> bool {
-        let (t1, t2) = self.range();
-        (t2 - t1).abs() > 1e-15
+        if self.has_shrunk_data {
+            self.splittable_from_shrunk
+        } else {
+            // OCCT default: TRUE before any shrunk data is set
+            true
+        }
     }
 
     /// OCCT: PaveBlock on a curve edge with default paves ?not split (section edge).
@@ -138,6 +154,8 @@ impl PaveBlock {
             edge: NO_EDGE, original_edge: NO_EDGE,
             pave1: Pave::new(0, 0.0), pave2: Pave::new(0, 0.0),
             ext_paves: Vec::new(), ts1: 0.0, ts2: 0.0, common_block_idx: None,
+            shrunk_bnd_box: BndBox::new(),
+            has_shrunk_data: false, splittable_from_shrunk: true,
         }
     }
 
@@ -176,6 +194,9 @@ pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
             ts1: 0.0,
             ts2: 0.0,
             common_block_idx: pb.common_block_idx,
+            shrunk_bnd_box: BndBox::new(),
+            has_shrunk_data: false,
+            splittable_from_shrunk: true,
         });
         lp.push(new_pb);
     }

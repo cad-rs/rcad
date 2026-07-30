@@ -154,8 +154,7 @@ impl IntToolsContext {
     // ComputeVE — OCCT IntTools_Context::ComputeVE (IntTools_Context.cxx L499-545)
     // ====================================================================
 
-    // OCCT IntTools_Context::ComputeVE (IntTools_Context.cxx L499-545).
-    // Returns 0=ON, -4=ON at endpoint, 1=OFF, -1=degenerated edge, -2=non-geometric, -3=no projection.
+    // OCCT IntTools_Context::ComputeVE (IntTools_Context.cxx L499-542).
     pub fn compute_ve(
         &mut self,
         n_vx: usize, n_e: usize,
@@ -166,33 +165,29 @@ impl IntToolsContext {
         if ds.shapes[n_e].shape.as_edge().map_or(true, |ed| ed.degenerated) {
             return (-1, 0.0, 0.0);
         }
-        // OCCT L509-512: non-geometric edge check
+        // OCCT L509-512: non-geometric edge check — BRep_Tool::IsGeometric
         if ds.shapes[n_e].shape.as_edge().and_then(|ed| ed.curve.as_ref()).is_none() {
             return (-2, 0.0, 0.0);
         }
-        // OCCT L517: vertex point
+        // OCCT L517: vertex point — BRep_Tool::Pnt(theV)
         let a_p = ds.vertex_point_by_idx(n_vx);
-        // OCCT L519-521: ProjPC — project onto edge curve
+        // OCCT L519-521: GeomAPI_ProjectPointOnCurve& aProjector = ProjPC(theE);
         let curve = match ds.edge_curve(n_e) { Some(c) => c.clone(), None => return (-3, 0.0, 0.0) };
+        // OCCT L520: aProjector.Perform(aP);
         let (a_t, a_proj) = crate::bop::closest_point_on_curve(&curve, a_p);
-        // OCCT L522-526: no projection points
+        // OCCT L522-526: if (!aProjector.NbPoints()) return -3;
         let a_dist = (a_proj - a_p).length();
-        // OCCT L530-532: tolerance computation
+        // OCCT L530-532: tolerance sum
         let a_tol_v = ds.vertex_tolerance_by_idx(n_vx);
         let a_tol_e = ds.edge_tolerance(n_e);
-        let a_tol_sum = a_tol_v + a_tol_e + the_fuzz.max(1e-7);
-        // OCCT L534: theTol = aDist + aTolE
+        let a_tol_sum = a_tol_v + a_tol_e + the_fuzz.max(rcad_kernel::CONFUSION);
+        // OCCT L534: theTol = aDist + aTolE;
         let a_tol = a_dist + a_tol_e;
-        // OCCT L537-538: if (aDist > aTolSum) return 1;
+        // OCCT L537-538: if (aDist > aTolSum) return -4;
         if a_dist > a_tol_sum {
-            return (1, a_t, a_tol);
-        }
-        // OCCT L540: if (aDist <= Precision::Confusion()) return -4;
-        // rcad Precision::Confusion() = 1e-7
-        if a_dist <= 1e-7 {
             return (-4, a_t, a_tol);
         }
-        // OCCT L543: return 0;
+        // OCCT L542: return 0;
         (0, a_t, a_tol)
     }
 

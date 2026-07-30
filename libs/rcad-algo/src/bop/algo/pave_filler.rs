@@ -26,7 +26,7 @@ use rcad_kernel::base::proj_lib::project_on_surface;
 use crate::bop::tools::algo_tools;
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::geom::Surface3;
-use rcad_kernel::CurveEval;
+use rcad_kernel::{Curve3, CurveEval};
 use rcad_kernel::topods::{self, ShapeType};
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
@@ -91,7 +91,7 @@ impl BOPAlgo_BPC {
     }
 }
 
-/// OCCT BOPAlgo_ShrunkRange (PaveFiller_9.cxx L35-57) / IntTools_ShrunkRange.
+/// OCCT IntTools_ShrunkRange (IntTools_ShrunkRange.cxx L25-191).
 struct ShrunkRange {
     pb: SharedPB,
     n_v1: usize,
@@ -102,6 +102,8 @@ struct ShrunkRange {
     my_ts1: f64,
     my_ts2: f64,
     is_splittable: bool,
+    my_bnd_box: BndBox,
+    my_length: f64,
 }
 
 impl ShrunkRange {
@@ -109,25 +111,332 @@ impl ShrunkRange {
         ShrunkRange {
             pb: pb.clone(), n_v1, n_v2, a_t1, a_t2,
             done: false, my_ts1: a_t1, my_ts2: a_t2, is_splittable: false,
+            my_bnd_box: BndBox::new(), my_length: 0.0,
         }
     }
     fn is_done(&self) -> bool { self.done }
     fn is_splittable(&self) -> bool { self.is_splittable }
     fn shrunk_range(&self) -> (f64, f64) { (self.my_ts1, self.my_ts2) }
     fn pave_block(&self) -> &SharedPB { &self.pb }
+    fn bnd_box(&self) -> &BndBox { &self.my_bnd_box }
+
+    // OCCT IntTools_ShrunkRange::Perform (IntTools_ShrunkRange.cxx L107-191)
     fn perform(&mut self, ds: &DS) {
-        let tol_v1 = ds.vertex_tolerance_by_idx(self.n_v1);
-        let tol_v2 = ds.vertex_tolerance_by_idx(self.n_v2);
+        self.done = false;
+        self.is_splittable = false;
+        // OCCT L113-114: default tolerances
+        let a_dtol = rcad_kernel::CONFUSION;    // Precision::Confusion()
+        let a_pdtol = rcad_kernel::PCONFUSION;  // Precision::PConfusion()
+        // OCCT L117-120: check minimum range
+        if self.a_t2 - self.a_t1 < a_pdtol {
+            return;
+        }
+        // OCCT L122-127: read edge/vertex data from DS (replaces TopoDS)
         let n_e = { let r = self.pb.0.read().unwrap(); r.original_edge };
-        let curve = match ds.edge_curve(n_e) { Some(c) => c.clone(), None => { self.done = false; return; } };
-        let dt = 1e-5;
-        let d1 = (curve.point_at(self.a_t1 + dt) - curve.point_at(self.a_t1)).length().max(1e-12);
-        let d2 = (curve.point_at(self.a_t2) - curve.point_at(self.a_t2 - dt)).length().max(1e-12);
-        self.my_ts1 = (self.a_t1 + tol_v1 / d1 * dt).min(self.a_t2).max(self.a_t1);
-        self.my_ts2 = (self.a_t2 - tol_v2 / d2 * dt).min(self.a_t2).max(self.a_t1);
-        self.is_splittable = (self.my_ts2 - self.my_ts1).abs() > 1e-15;
+        let curve = match ds.edge_curve(n_e) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let a_p1 = ds.vertex_point_by_idx(self.n_v1);
+        let a_p2 = ds.vertex_point_by_idx(self.n_v2);
+        let a_tol_e = ds.edge_tolerance(n_e);
+        let mut a_tol_v1 = ds.vertex_tolerance_by_idx(self.n_v1);
+        let mut a_tol_v2 = ds.vertex_tolerance_by_idx(self.n_v2);
+        // OCCT L129-137: clamp vertex tolerances to edge tolerance + add Confusion
+        if a_tol_v1 < a_tol_e {
+            a_tol_v1 = a_tol_e;
+        }
+        if a_tol_v2 < a_tol_e {
+            a_tol_v2 = a_tol_e;
+        }
+        a_tol_v1 += a_dtol;
+        a_tol_v2 += a_dtol;
+        // OCCT L146-151: compute shrunk range via FindValidRange
+        if !self.find_valid_range(&curve, a_tol_e, a_p1, a_tol_v1, a_p2, a_tol_v2) {
+            return;
+        }
+        if self.my_ts2 - self.my_ts1 < a_pdtol {
+            return;
+        }
+        // OCCT L158-175: compute edge length on shrunk range
+        // OCCT L162: double aPTolE = aBAC.Resolution(aTolE);
+        let mut a_ptol_e = shrunk_range_resolution(&curve, self.my_ts1, self.my_ts2, a_tol_e);
+        // OCCT L165: double aPTolEMin = (myT2 - myT1) / 100.;
+        let a_ptol_e_min = (self.a_t2 - self.a_t1) * 0.01;
+        if a_ptol_e > a_ptol_e_min {
+            a_ptol_e = a_ptol_e_min;
+        }
+        self.my_length = shrunk_range_arc_length(&curve, self.my_ts1, self.my_ts2, a_ptol_e);
+        if self.my_length < a_dtol {
+            return;
+        }
         self.done = true;
+        // OCCT L184-187: check splittable
+        if self.my_length > (2.0 * a_tol_e + 2.0 * a_dtol) {
+            self.is_splittable = true;
+        }
+        // OCCT L190: BndLib_Add3dCurve::Add(aBAC, myTS1, myTS2, aTolE + aDTol, myBndBox)
+        self.my_bnd_box = shrunk_range_bnd_box(&curve, self.my_ts1, self.my_ts2, a_tol_e + a_dtol);
     }
+
+    // OCCT BRepLib::FindValidRange (BRepLib_1.cxx L173-258).
+    // Returns theFirst = self.my_ts1, theLast = self.my_ts2.
+    fn find_valid_range(
+        &mut self,
+        curve: &Curve3,
+        a_tol_e: f64,
+        a_pnt_v1: DVec3,
+        a_tol_v1: f64,
+        a_pnt_v2: DVec3,
+        a_tol_v2: f64,
+    ) -> bool {
+        // OCCT L184: if (theParV2 - theParV1 < Precision::PConfusion()) return false;
+        if self.a_t2 - self.a_t1 < rcad_kernel::PCONFUSION {
+            return false;
+        }
+        // OCCT L189: bool isInfParV1, isInfParV2
+        let is_inf_par_v1 = rcad_kernel::is_infinite_value(self.a_t1);
+        let is_inf_par_v2 = rcad_kernel::is_infinite_value(self.a_t2);
+        // OCCT L191-199: aMaxPar
+        let mut a_max_par = 0.0;
+        if !is_inf_par_v1 {
+            a_max_par = self.a_t1.abs();
+        }
+        if !is_inf_par_v2 {
+            a_max_par = a_max_par.max(self.a_t2.abs());
+        }
+        // OCCT L201-202: anEps
+        let an_eps = (shrunk_range_resolution(curve, self.a_t1, self.a_t2, a_tol_e) * 0.1)
+            .max(epsilon(a_max_par))
+            .max(rcad_kernel::PCONFUSION);
+        // OCCT L204-225: first endpoint
+        if is_inf_par_v1 {
+            self.my_ts1 = self.a_t1;
+        } else {
+            if !find_nearest_valid_point(
+                curve, self.a_t1, self.a_t2, true,
+                a_pnt_v1, a_tol_v1, an_eps,
+                &mut self.my_ts1,
+            ) {
+                return false;
+            }
+            if self.a_t2 - self.my_ts1 < an_eps {
+                return false;
+            }
+        }
+        // OCCT L227-248: second endpoint
+        if is_inf_par_v2 {
+            self.my_ts2 = self.a_t2;
+        } else {
+            if !find_nearest_valid_point(
+                curve, self.a_t1, self.a_t2, false,
+                a_pnt_v2, a_tol_v2, an_eps,
+                &mut self.my_ts2,
+            ) {
+                return false;
+            }
+            if self.my_ts2 - self.a_t1 < an_eps {
+                return false;
+            }
+        }
+        // OCCT L250-255: check ordering
+        if self.my_ts1 > self.my_ts2 {
+            return false;
+        }
+        true
+    }
+}
+
+// OCCT Epsilon(double) — BRepLib_1.cxx L26 — machine-epsilon scaled by value.
+fn epsilon(par: f64) -> f64 {
+    let eps = 1.1102230246251565e-15; // DBL_EPSILON in double precision
+    par.abs() * eps
+}
+
+// OCCT theCurve.Resolution(theTol) — parametric step for given 3D tolerance.
+// Approximated by sampling derivative magnitude on the sub-range [t1, t2].
+fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
+    let n_samples = 100;
+    let dt = (t2 - t1) / n_samples as f64;
+    if dt <= 0.0 { return 1e-3; }
+    let mut max_speed = 1e-12;
+    for i in 0..=n_samples {
+        let t = t1 + dt * i as f64;
+        let d = curve.derivative_at(t);
+        let speed = d.length();
+        if speed > max_speed { max_speed = speed; }
+    }
+    (tol / max_speed).max(rcad_kernel::PCONFUSION)
+}
+
+// OCCT GCPnts_AbscissaPoint::Length — adaptive arc length.
+// Simplified: Simpson integration with tolerance-based subdivision.
+fn shrunk_range_arc_length(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
+    if (t2 - t1).abs() < 1e-15 { return 0.0; }
+    // Simple adaptive Simpson
+    fn simpson_step(curve: &Curve3, a: f64, b: f64, fa: f64, fb: f64, fm: f64, tol: f64) -> f64 {
+        let m = (a + b) * 0.5;
+        let h = (b - a) * 0.5;
+        let fm1 = curve.derivative_at(a + h * 0.5).length();
+        let fm2 = curve.derivative_at(m + h * 0.5).length();
+        let s1 = h / 3.0 * (fa + 4.0 * fm + fb);
+        let s2 = h / 6.0 * (fa + 4.0 * fm1 + 2.0 * fm + 4.0 * fm2 + fb);
+        if (s2 - s1).abs() < tol {
+            s2
+        } else {
+            let left = simpson_step(curve, a, m, fa, fm, fm1, tol * 0.5);
+            let right = simpson_step(curve, m, b, fm, fb, fm2, tol * 0.5);
+            left + right
+        }
+    }
+    let fa = curve.derivative_at(t1).length();
+    let fb = curve.derivative_at(t2).length();
+    let fm = curve.derivative_at((t1 + t2) * 0.5).length();
+    simpson_step(curve, t1, t2, fa, fb, fm, tol)
+}
+
+// OCCT BndLib_Add3dCurve::Add — build bounding box for curve subrange.
+fn shrunk_range_bnd_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BndBox {
+    let n_samples = 100;
+    let dt = (t2 - t1) / n_samples as f64;
+    if dt <= 0.0 {
+        let p = curve.point_at(t1);
+        let mut b = BndBox::from_point(p);
+        b.set_gap(tol);
+        return b;
+    }
+    let mut b = BndBox::new();
+    let mut first = true;
+    for i in 0..=n_samples {
+        let t = t1 + dt * i as f64;
+        let p = curve.point_at(t);
+        if first {
+            // BndBox from_point has no void flag and uses the point
+            b = BndBox::from_point(p);
+            first = false;
+        } else {
+            b.add_point(p);
+        }
+    }
+    b.set_gap(tol);
+    b
+}
+
+// OCCT BRepLib::findNearestValidPoint (BRepLib_1.cxx L31-168).
+// Walk from one endpoint until the curve exits the vertex tolerance sphere,
+// then binary search for the precise boundary.
+fn find_nearest_valid_point(
+    curve: &Curve3,
+    the_first: f64,
+    the_last: f64,
+    is_first: bool,
+    the_vert_pnt: DVec3,
+    the_tol: f64,
+    the_eps: f64,
+    the_par: &mut f64,
+) -> bool {
+    // OCCT L42-47: start from the appropriate end
+    let (a_start_u, an_end_u) = if is_first {
+        (the_first, the_last)
+    } else {
+        (the_last, the_first)
+    };
+    // OCCT L48-54: check that the needed end is inside the sphere
+    let a_p = curve.point_at(a_start_u);
+    let a_sq_tol = the_tol * the_tol;
+    if a_p.distance_squared(the_vert_pnt) > a_sq_tol {
+        return false; // vertex does not cover this end of the curve
+    }
+    // OCCT L58-65: general step = Resolution(theTol) * 1.01
+    let mut a_step = shrunk_range_resolution(curve, a_start_u, an_end_u, the_tol) * 1.01;
+    if a_step < the_eps {
+        a_step = the_eps;
+    }
+    // OCCT L66-82: aD1Mag for Bezier/BSpline singularity acceleration
+    let a_d1_mag = match curve {
+        Curve3::BSpline(..) | Curve3::Bezier(..) => {
+            // OCCT: 1. / theCurve.Resolution(1.) * 0.01, squared
+            let r = shrunk_range_resolution(curve, a_start_u, an_end_u, 1.0);
+            let v = 1.0 / r * 0.01;
+            v * v
+        }
+        Curve3::Offset(off) => {
+            // OCCT unwraps offset once to check base curve type
+            match &*off.basis {
+                Curve3::BSpline(..) | Curve3::Bezier(..) => {
+                    let r = shrunk_range_resolution(curve, a_start_u, an_end_u, 1.0);
+                    let v = 1.0 / r * 0.01;
+                    v * v
+                }
+                _ => 0.0,
+            }
+        }
+        _ => 0.0,
+    };
+    // OCCT L83-86: reverse step direction when walking from second vertex
+    if !is_first {
+        a_step = -a_step;
+    }
+    // OCCT L87-147: walk until out of sphere
+    let mut is_out = false;
+    let mut an_u_in = a_start_u;
+    let mut an_u_out = an_u_in;
+    while !is_out {
+        an_u_in = an_u_out;
+        an_u_out += a_step;
+        // OCCT L94-107: check bounds
+        if (is_first && an_u_out > an_end_u) || (!is_first && an_u_out < an_end_u) {
+            let a_p_end = curve.point_at(an_end_u);
+            is_out = a_p_end.distance_squared(the_vert_pnt) > a_sq_tol;
+            if !is_out {
+                return false; // all range inside sphere
+            }
+            an_u_out = an_end_u;
+            break;
+        }
+        // OCCT L108-137: handle BSpline/Bezier derivative singularity
+        if a_d1_mag > 0.0 {
+            let mut a_step_local = a_step;
+            loop {
+                let a_d1 = curve.derivative_at(an_u_out);
+                let a_p_check = curve.point_at(an_u_out);
+                is_out = a_p_check.distance_squared(the_vert_pnt) > a_sq_tol;
+                if !is_out && a_d1.length_squared() < a_d1_mag {
+                    a_step_local *= 2.0;
+                    an_u_out += a_step_local;
+                    if (is_first && an_u_out < an_end_u) || (!is_first && an_u_out > an_end_u) {
+                        continue; // still in range
+                    }
+                    // out of range, check endpoint
+                    an_u_out = an_end_u;
+                    let a_p_end = curve.point_at(an_u_out);
+                    is_out = a_p_end.distance_squared(the_vert_pnt) > a_sq_tol;
+                    if !is_out {
+                        return false;
+                    }
+                }
+                break;
+            }
+        } else {
+            let a_p_check = curve.point_at(an_u_out);
+            is_out = a_p_check.distance_squared(the_vert_pnt) > a_sq_tol;
+        }
+    }
+    // OCCT L149-168: precise solution with binary search
+    let mut a_delta = (an_u_out - an_u_in).abs();
+    while a_delta > the_eps {
+        let a_mid_u = (an_u_in + an_u_out) * 0.5;
+        let a_p_mid = curve.point_at(a_mid_u);
+        is_out = a_p_mid.distance_squared(the_vert_pnt) > a_sq_tol;
+        if is_out {
+            an_u_out = a_mid_u;
+        } else {
+            an_u_in = a_mid_u;
+        }
+        a_delta = (an_u_out - an_u_in).abs();
+    }
+    *the_par = (an_u_in + an_u_out) * 0.5;
+    true
 }
 
 pub struct PaveFiller {
@@ -608,8 +917,8 @@ impl PaveFiller {
                 // OCCT: myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue)
                 let (i_flag, a_t, a_tol_v_new) =
                     self.my_context.compute_ve(*n_vsd, n_e, &self.ds, self.my_fuzzy_value);
-                if i_flag == -1 || i_flag == -2 || i_flag == -3 { continue; }
-                if i_flag != 0 && i_flag != -4 { continue; }
+                // OCCT L352: if (Flag() != 0) { if (HasErrors()) AddWarning; continue; }
+                if i_flag != 0 { continue; }
 
                 // OCCT L368: UpdateVertex(nV, aTolVNew)
                 self.update_vertex(*n_vsd, a_tol_v_new);
@@ -1625,14 +1934,26 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let n_e = n_s[i];
                 if a_type[i] != ShapeType::Edge || !a_mi.insert(n_e) { continue; }
                 if self.ds.shapes[n_e].has_flag() { continue; }
-                self.ds.init_pave_blocks(n_e);
-                let a_lpb = self.ds.change_pave_blocks(n_e);
-                for a_pb in a_lpb {
-                    let pbr = a_pb.0.read().unwrap();
-                    if pbr.has_shrunk_data() { continue; }
-                    let (n_v1, n_v2) = pbr.indices();
-                    let (a_t1, a_t2) = pbr.range();
-                    drop(pbr);
+                // OCCT L100: NCollection_List<handle<PaveBlock>>& aLPB = myDS->ChangePaveBlocks(nE);
+                // rcad: clone PBs for borrow-safe DS access inside loop
+                let a_lpb: Vec<SharedPB> = {
+                    self.ds.init_pave_blocks(n_e);
+                    let pb_list = self.ds.change_pave_blocks(n_e);
+                    pb_list.iter().map(|pb| pb.clone()).collect()
+                };
+                for a_pb in &a_lpb {
+                    // OCCT L105: if (aPB->HasShrunkData() && myDS->IsValidShrunkData(aPB)) continue;
+                    let (n_v1, n_v2, a_t1, a_t2, skip) = {
+                        let pbr = a_pb.0.read().unwrap();
+                        if pbr.has_shrunk_data() && self.ds.is_valid_shrunk_data(&*pbr) {
+                            (0, 0, 0.0, 0.0, true)
+                        } else {
+                            let (v1, v2) = pbr.indices();
+                            let (t1, t2) = pbr.range();
+                            (v1, v2, t1, t2, false)
+                        }
+                    };
+                    if skip { continue; }
                     a_vsd.push(ShrunkRange::new(a_pb, n_v1, n_v2, a_t1, a_t2));
                 }
             }
@@ -1697,7 +2018,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // OCCT L804-806: thePB->SetShrunkData(aTS1, aTS2, Bnd_Box(), false);
                 let (a_ts1, a_ts2) = the_sr.shrunk_range();
                 let mut pbr = the_pb.0.write().unwrap();
-                pbr.set_shrunk_data(a_ts1, a_ts2, false);
+                pbr.set_shrunk_data(a_ts1, a_ts2, BndBox::new(), false);
                 return;
             }
             // OCCT L809-816: AddWarning (NotSplittableEdge or BadPositioning)
@@ -1711,11 +2032,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L819-823: set shrunk data with box + fuzzy/2 gap
         let (a_ts1, a_ts2) = the_sr.shrunk_range();
         // OCCT L821: Bnd_Box aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
-        // rcad: PaveBlock has no BndBox in set_shrunk_data (structural diff).
-        // Compensate by adding fuzzy/2 to the shrunk range endpoints.
-        let a_fuzzy_half = self.my_fuzzy_value / 2.;
+        let mut a_box = BndBox::new();
+        a_box.set_gap(self.my_fuzzy_value / 2.);
         let mut pbr = the_pb.0.write().unwrap();
-        pbr.set_shrunk_data(a_ts1 - a_fuzzy_half, a_ts2 + a_fuzzy_half, the_sr.is_splittable());
+        pbr.set_shrunk_data(a_ts1, a_ts2, a_box, the_sr.is_splittable());
     }
 
     // OCCT BOPAlgo_PaveFiller::ForceInterfVE (PaveFiller_3.cxx L828-910).

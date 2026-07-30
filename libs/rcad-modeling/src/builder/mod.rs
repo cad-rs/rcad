@@ -12,7 +12,6 @@ mod solid;
 mod surface;
 pub mod wire_ops;
 
-pub use brep_builder::*;
 pub use curve::*;
 pub use fillet::{CornerBlendHistory, FilletHistory, MultiFilletHistory, SafeFilletResult};
 pub use fillet::{
