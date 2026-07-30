@@ -279,7 +279,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // VV — OCCT BOPAlgo_PaveFiller_1.cxx L45-132
     // ====================================================================
-    fn perform_vv(&mut self, _the_range: &ProgressScope) {
+    fn perform_vv(&mut self, the_range: &ProgressScope) {
         // OCCT L47-48: int n1, n2, iFlag, aSize; handle<Allocator> aAllocator
         // OCCT L50: myIterator->Initialize(TopAbs_VERTEX, TopAbs_VERTEX)
         // rcad: initialize() then copy pair list. Rust borrow checker prevents
@@ -446,7 +446,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // VE — OCCT BOPAlgo_PaveFiller_2.cxx L171-238
     // ====================================================================
-    fn perform_ve(&mut self, _the_range: &ProgressScope) {
+    fn perform_ve(&mut self, the_range: &ProgressScope) {
         // OCCT L173: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE)
         self.fill_shrunk_data(ShapeType::Vertex, ShapeType::Edge);
 
@@ -615,7 +615,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // EE — OCCT BOPAlgo_PaveFiller.cxx L279-286 + PaveFiller_5.cxx L145-590
     // ====================================================================
-    fn perform_ee(&mut self, _the_range: &ProgressScope) {
+    fn perform_ee(&mut self, the_range: &ProgressScope) {
         // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
         self.fill_shrunk_data(ShapeType::Edge, ShapeType::Edge);
 
@@ -977,7 +977,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // OCCT BOPAlgo_PaveFiller::PerformVF (PaveFiller_4.cxx L139-399).
     // rcad: simplified — skips FaceInfo/TreatVerticesEE/complex projection.
-    fn perform_vf(&mut self, _the_range: &ProgressScope) {
+    fn perform_vf(&mut self, the_range: &ProgressScope) {
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Vertex, ShapeType::Face).to_vec()
         } else {
@@ -1014,7 +1014,7 @@ impl<'a> PaveFiller<'a> {
     // EF — OCCT BOPAlgo_PaveFiller_5.cxx L165-580
     // ====================================================================
     /// OCCT BOPAlgo_PaveFiller::PerformEF (PaveFiller_5.cxx L165-580).
-    fn perform_ef(&mut self, _the_range: &ProgressScope) {
+    fn perform_ef(&mut self, the_range: &ProgressScope) {
         // OCCT L167: FillShrunkData(TopAbs_EDGE, TopAbs_FACE)
         self.fill_shrunk_data(ShapeType::Edge, ShapeType::Face);
 
@@ -1149,7 +1149,7 @@ impl<'a> PaveFiller<'a> {
     // ====================================================================
     // FF — OCCT BOPAlgo_PaveFiller_6.cxx L285-end
     // ====================================================================
-    fn perform_ff(&mut self, _the_range: &ProgressScope) {
+    fn perform_ff(&mut self, the_range: &ProgressScope) {
         // OCCT L285-290: myIterator->Initialize(FACE, FACE)
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Face, ShapeType::Face).to_vec()
@@ -1331,6 +1331,7 @@ impl<'a> PaveFiller<'a> {
             return;
         }
         // OCCT L184: Message_ProgressScope aPS(theRange, "Initialization of Intersection algorithm", 1);
+        // rcad: aPS covers the null-shape-check loop (1 step), skipped here (Rust Shape prevents null).
         let _a_ps = the_range.sub_scope("Initialization of Intersection algorithm", 1);
         // OCCT L185-193: check for null shapes — Rust Shape type prevents null.
         // OCCT L196: Clear
@@ -1341,16 +1342,15 @@ impl<'a> PaveFiller<'a> {
         if !self.my_arguments.is_empty() {
             self.ds.set_arguments(self.my_arguments.clone());
         }
-        self.ds.init(self.my_fuzzy_value.max(1e-7));
+        self.ds.init(self.my_fuzzy_value);
         // OCCT L204: myContext = new IntTools_Context
         self.my_context = IntToolsContext::new();
         // OCCT L207-210: myIterator = new BOPDS_Iterator
-        // rcad: use raw pointer to access self.ds without triggering reborrow.
-        let ds_field = unsafe { std::ptr::addr_of_mut!((*self).ds) };
-        let ds_ref: &'a mut DS = unsafe { &mut *ds_field };
-        let ds_shared: &'a DS = &*ds_ref;
-        let ds_static: &'static DS = unsafe { std::mem::transmute(ds_shared) };
-        let mut a_it = BOPDS_Iterator::new(ds_static, self.my_fuzzy_value);
+        // SAFETY: self.ds is &'a mut DS, valid for 'a. The borrow checker
+        // cannot reborrow with lifetime 'a through &mut self, so we use a
+        // raw-pointer cast to recover the known lifetime.
+        let ds_ref: &'a DS = unsafe { &*(self.ds as *const DS) };
+        let mut a_it = BOPDS_Iterator::new(ds_ref, self.my_fuzzy_value);
         a_it.set_run_parallel(self.my_run_parallel); // OCCT L208
         // OCCT L210: myIterator->Prepare(myContext, myUseOBB, myFuzzyValue)
         a_it.prepare(Some(&self.my_context), false, self.my_fuzzy_value);
@@ -1360,7 +1360,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
-    fn prepare(&mut self, _the_range: &ProgressScope) {
+    fn prepare(&mut self, the_range: &ProgressScope) {
         // OCCT L852-856: non-destructive mode → skip
         if self.my_non_destructive { return; }
 
@@ -1903,7 +1903,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Re-run VV/VE/VF intersections for vertices whose tolerance was increased.
     /// OCCT BOPAlgo_PaveFiller::RepeatIntersection (PaveFiller.cxx L383-448).
-    fn repeat_intersection(&mut self, _the_range: &ProgressScope) {
+    fn repeat_intersection(&mut self, the_range: &ProgressScope) {
         // L385-386: NCollection_Map<int> anExtraInterfMap;
         let mut an_extra = HashSet::new();
         // L387: const int aNbS = myDS->NbSourceShapes();
@@ -1943,7 +1943,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // L426-430: PerformVV(aPS.Next());
         // L431-445: PerformVE, PerformVF also use aPS.Next()
-        let a_ps = _the_range.sub_scope("Repeat intersection", 3);
+        let a_ps = the_range.sub_scope("Repeat intersection", 3);
         self.perform_vv(&a_ps.sub_scope("VV", 1));
         if self.has_errors() { return; }
         // L431: UpdatePaveBlocksWithSDVertices();
@@ -1969,7 +1969,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Force additional EE intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEE (PaveFiller_3.cxx L997-1333).
-    fn force_interf_ee(&mut self, _the_range: &ProgressScope) {
+    fn force_interf_ee(&mut self, the_range: &ProgressScope) {
         // L999-1003: comment — now that vertices are increased/unified,
         // find additional common blocks among edge pairs with same bounding vertices.
 
@@ -2385,7 +2385,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // ====================================================================
     /// Force additional EF intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEF (PaveFiller_5.cxx L772-827).
-    fn force_interf_ef(&mut self, _the_range: &ProgressScope) {
+    fn force_interf_ef(&mut self, the_range: &ProgressScope) {
         // L774-775: Message_ProgressScope aPS(theRange, nullptr, 1);
         // L776-778: if (!myIsPrimary) return;
         if !self.my_is_primary {
@@ -2911,7 +2911,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeSplitEdges (_7.cxx L371-548).
-    fn make_split_edges(&mut self, _the_range: &ProgressScope) {
+    fn make_split_edges(&mut self, the_range: &ProgressScope) {
         // OCCT L392: UpdateCommonBlocksWithSDVertices
         for cb in &self.ds.common_blocks {
             self.ds.update_common_block_with_sd_vertices(cb);
@@ -2964,7 +2964,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-1020).
-    fn make_blocks(&mut self, _the_range: &ProgressScope) {
+    fn make_blocks(&mut self, the_range: &ProgressScope) {
         // OCCT L652-655: glue off check
         if self.my_glue != GlueEnum::GlueOff { return; }
         // OCCT L657-663: get FF interferences
@@ -3081,7 +3081,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
-    fn make_pcurves(&mut self, _the_range: &ProgressScope) {
+    fn make_pcurves(&mut self, the_range: &ProgressScope) {
         // OCCT L592-595: check avoid flags
         // OCCT L606-700: 1. Process face info — IN and ON PBs
         let a_nb_fi = self.ds.face_info_pool.len();
@@ -3196,7 +3196,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).
-    fn process_de(&mut self, _the_range: &ProgressScope) {
+    fn process_de(&mut self, the_range: &ProgressScope) {
         // L62-63: for (int anEdgeIndex = 0; anEdgeIndex < myDS->NbSourceShapes(); ++anEdgeIndex)
         let a_nb_s = self.ds.nb_source_shapes();
         for an_ei in 0..a_nb_s {
