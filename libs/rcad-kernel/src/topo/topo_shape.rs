@@ -114,11 +114,6 @@ impl Shape {
     pub fn as_face(&self) -> Option<&TFaceData> {
         if let TShape::Face(ref fd) = *self.data { Some(fd) } else { None }
     }
-
-    /// OCCT BOPTools_AlgoTools::IsBasedOnPlane — true if face surface is a plane.
-    pub fn is_based_on_plane(&self) -> bool {
-        self.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, crate::geom::Surface3::Plane(_)))
-    }
     pub fn as_shell(&self) -> Option<&TShellData> {
         if let TShape::Shell(ref sd) = *self.data { Some(sd) } else { None }
     }

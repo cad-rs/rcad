@@ -1413,7 +1413,7 @@ impl PaveFiller {
                     let fi = if self.ds.shape_info(n1).shape_type() == ShapeType::Face
                     { n1 } else { nf };
                     // OCCT: IsBasedOnPlane(aF)
-                    if self.ds.shape(fi).is_based_on_plane() {
+                    if is_based_on_plane(self.ds.shape(fi)) {
                         a_mf.insert(fi);
                     }
                     it.next();
@@ -3408,4 +3408,10 @@ fn make_blocks(
             the_blocks.push(block);
         }
     }
+}
+
+// OCCT BOPAlgo_PaveFiller_7.cxx L62/L936 — file-local static helper.
+fn is_based_on_plane(face: &Shape) -> bool {
+    // OCCT L937-951: BRep_Tool::Surface(aF, aLoc) → downcast to Plane
+    face.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, Surface3::Plane(_)))
 }
