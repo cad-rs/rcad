@@ -42,7 +42,7 @@ pub enum BooleanError {
 /// - BOPAlgo_BuilderShape (myShape, myFillHistory)
 /// - BOPAlgo_BOP (myOperation, myDims)
 /// - BOPAlgo_Builder (myDS, myContext, myImages, etc.)
-pub struct BooleanBuilder<'a> {
+pub struct BooleanBuilder {
     // ── BOPAlgo_Options (inherited) ─────────────────────────────
     pub(crate) my_report: Report,          // BOPAlgo_Algo::myReport
     pub(crate) my_run_parallel: bool,      // BOPAlgo_Algo::myRunParallel
@@ -53,7 +53,7 @@ pub struct BooleanBuilder<'a> {
     // ── BOPAlgo_BOP (inherited) ────────────────────────────────
     pub(crate) my_operation: BooleanOpType, // BOPAlgo_BOP::myOperation
     // ── BOPAlgo_Builder.hxx L492-505 ───────────────────────────
-    pub(crate) ds: &'a DS,                 // L496: myDS
+    pub(crate) ds: DS,                     // L496: myDS (owned)
     pub(crate) my_context: IntToolsContext, // L497: myContext
     pub(crate) my_arguments: Vec<Shape>,   // L492: myArguments
     pub(crate) my_map_fence: HashSet<u64>, // L494: myMapFence
@@ -70,16 +70,15 @@ pub struct BooleanBuilder<'a> {
     pub(crate) shape_remap: HashMap<u64, usize>,
 }
 
-impl<'a> BooleanBuilder<'a> {
-    /// Create a new BooleanBuilder referencing a DS.
+impl BooleanBuilder {
+    /// Create a new BooleanBuilder with an owned DS.
     ///
     /// OCCT: BOPAlgo_Builder is constructed with a PaveFiller reference.
     /// rcad: PaveFiller runs before Builder; only the DS is passed.
     /// OCCT BOPAlgo_BOP::PerformInternal1 L425-429:
     ///   myPaveFiller = &theFiller; myDS = myPaveFiller->PDS();
     ///   myFuzzyValue = myPaveFiller->FuzzyValue();
-    /// rcad: PaveFiller dropped before Builder, DS+fuzzy passed explicitly.
-    pub fn new(ds: &'a DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
+    pub fn new(ds: DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
         BooleanBuilder {
             ds,
             my_report: Report::new(),
@@ -511,7 +510,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             if section_edges.is_empty() { continue; }
             let face_s = self.brep_sr(i);
-            let mut bf = BuilderFace::new(self.ds);
+            let mut bf = BuilderFace::new(&self.ds);
             bf.my_face = Some(face_s.clone());
             bf.my_face_index = Some(i);
             bf.my_edges = section_edges;
@@ -741,7 +740,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Compute face centroid for classification
                 let centroid = Self::face_centroid(a_f);
                 // OCCT L201: BOPAlgo_Tools::ClassifyFaces → uses point-in-solid test
-                let state = self.my_context.solid_classifier_perform(self.ds, i, centroid, 1e-7);
+                let state = self.my_context.solid_classifier_perform(&self.ds, i, centroid, 1e-7);
                 if state == 3 { // IN
                     a_l_in_faces.push(a_f.clone());
                 }
@@ -816,7 +815,7 @@ impl<'a> BooleanBuilder<'a> {
         if all_faces.is_empty() { return; }
 
         // Build solids from combined face set (OCCT: BOPAlgo_SplitSolid per source solid)
-        let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
+        let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
         bs.my_shapes = all_faces;
         bs.perform();
         // Assign result solids to each source solid's images

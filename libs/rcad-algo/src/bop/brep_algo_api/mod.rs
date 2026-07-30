@@ -75,8 +75,8 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     filler.perform(&a_ps);
     let fuzz = filler.fuzzy_value();
     // builder borrows the DS from filler; both live in the same scope
-    let mut builder = BooleanBuilder::new(filler.ds(), op_type, fuzz);
-    builder.my_arguments = filler.ds().arguments.clone();
+    let mut builder = BooleanBuilder::new(filler.take_ds(), op_type, fuzz);
+    builder.my_arguments = builder.ds.arguments.clone();
     match builder.build() {
         Ok(brep) => {
             let root = brep.tshapes.iter().enumerate().rev()
