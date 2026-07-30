@@ -2119,6 +2119,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// OCCT BOPAlgo_PaveFiller::SplitPaveBlocks (PaveFiller_2.cxx L449-560).
     /// Splits PBs with ext paves into sub-PBs. Each ext pave becomes a split point.
     fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, _the_add_interfs: bool) {
+        // OCCT L455-457: NCollection_IndexedDataMap for CommonBlocks
+        let mut a_mcb_new_pb: std::collections::HashMap<usize, Vec<SharedPB>> = std::collections::HashMap::new();
         for &n_e in the_medges {
             if n_e >= self.ds.nb_shapes() { continue; }
             self.ds.init_pave_blocks(n_e);
@@ -2128,18 +2130,20 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if a_lpb.is_empty() { continue; }
                 a_lpb.to_vec()
             };
-            let mut valid_new_pbs: Vec<SharedPB> = Vec::new();
             let mut any_split = false;
             for pb in &old_pbs {
                 // OCCT L443-447: if (!aPB->IsToUpdate()) { aItLPB.Next(); continue; }
                 if !pb.0.read().unwrap().is_to_update() { continue; }
-                // OCCT L451-453: aPB->Update(aLPBN, false) — creates sub-PBs from ext_paves only
+                // OCCT L479: const handle<BOPDS_CommonBlock>& aCB = myDS->CommonBlock(aPB);
+                let a_cb = self.ds.common_block(pb);
+                // OCCT L483: aPB->Update(aLPBN, false) — creates sub-PBs from ext_paves only
                 let mut a_lpbn: Vec<SharedPB> = Vec::new();
                 {
                     let mut pbw = pb.0.write().unwrap();
                     pbw.update(&mut a_lpbn, false);
                 }
-                // OCCT L455-508: for each new sub-PB, FillShrunkData + check validity
+                // OCCT L487-553: for each new sub-PB, FillShrunkData + check validity
+                let mut valid_new_pbs: Vec<SharedPB> = Vec::new();
                 for a_pbn in &a_lpbn {
                     // OCCT L461: myDS->UpdatePaveBlockWithSDVertices(aPBN);
                     // OCCT L462: FillShrunkData(aPBN);
@@ -2160,7 +2164,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         if b_check_dist {
                             let a_dist_vv = (self.ds.vertex_point_by_idx(n_v1) - self.ds.vertex_point_by_idx(n_v2)).length();
                             if a_dist_vv <= self.my_fuzzy_value.max(rcad_kernel::CONFUSION) {
-                                // vertices interfering → skip the sub-PB
                                 continue;
                             }
                         }
@@ -2168,16 +2171,34 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     }
                     // OCCT L511: aLPB.Append(aPBN);
                     valid_new_pbs.push(a_pbn.clone());
+                    // OCCT L513-523: handle CommonBlock for new sub-PB
+                    if let Some(cb) = a_cb {
+                        a_mcb_new_pb.entry(cb).or_default().push(a_pbn.clone());
+                    }
                 }
-                any_split = true;
+                // OCCT L525-526: aLPB.Remove(aItLPB) — replace old PBs
+                if !valid_new_pbs.is_empty() {
+                    let a_lpb = self.ds.change_pave_blocks(n_e);
+                    a_lpb.clear();
+                    for new_pb in valid_new_pbs {
+                        a_lpb.push(new_pb);
+                    }
+                    any_split = true;
+                }
             }
-            // OCCT L525-526: aLPB.Remove(aItLPB) — replace old PBs with valid new sub-PBs
-            if any_split && !valid_new_pbs.is_empty() {
-                let a_lpb = self.ds.change_pave_blocks(n_e);
-                a_lpb.clear();
-                for new_pb in valid_new_pbs {
-                    a_lpb.push(new_pb);
-                }
+        }
+        // OCCT L530-560: Make Common Blocks for grouped sub-PBs
+        for (_cb_key, pbs) in &a_mcb_new_pb {
+            if pbs.len() < 2 { continue; }
+            let mut a_minds: std::collections::HashMap<(usize, usize), Vec<SharedPB>> = std::collections::HashMap::new();
+            for pb in pbs {
+                let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
+                let key = if v1 < v2 { (v1, v2) } else { (v2, v1) };
+                a_minds.entry(key).or_default().push(pb.clone());
+            }
+            for (_pair, group) in &a_minds {
+                if group.len() < 2 { continue; }
+                self.ds.add_common_block(group);
             }
         }
     }
