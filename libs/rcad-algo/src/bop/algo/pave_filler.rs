@@ -369,6 +369,7 @@ impl PaveFiller {
 
         // 1. Map V/LV (OCCT L69-98)
         for &(n1, n2) in &pairs {
+            if the_range.user_break() { return; }
             // OCCT L77-81: if already interfering, connect and continue
             if self.ds.has_interf(n1, n2) {
                 algo_tools::fill_map(n1, n2, &mut a_mili);
@@ -402,12 +403,14 @@ impl PaveFiller {
 
         // OCCT L104-113: MakeSDVertices for each block
         for a_li in &a_mblocks {
+            if the_range.user_break() { return; }
             self.make_sd_vertices_vv(a_li, true);
         }
 
         // OCCT L115-127: InitPaveBlocksForVertex for each SD key
         let sd_keys: Vec<usize> = self.ds.shapes_sd.keys().copied().collect();
         for &n1 in &sd_keys {
+            if the_range.user_break() { return; }
             self.ds.init_pave_blocks_for_vertex(n1);
         }
     }
@@ -523,6 +526,7 @@ impl PaveFiller {
 
         // OCCT L186-235: iterate pairs
         for &(n_v, n_e) in &pairs {
+            if the_range.user_break() { return; }
             // OCCT L195-199: if (aSIE.HasSubShape(nV)) continue;
             if self.ds.shapes[n_e].has_sub_shape(n_v) { continue; }
             // OCCT L201-204: if (aSIE.HasFlag()) continue;
@@ -1979,6 +1983,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // L388: Message_ProgressScope aPS(theRange, "Repeat intersection", 3);
         // L389-414: for (int i = 0; i < aNbS; ++i)
         for i in 0..a_nb_s {
+            if the_range.user_break() { return; }
             // L391-395: if ShapeType != VERTEX, continue
             if self.ds.shapes[i].shape_type != ShapeType::Vertex {
                 continue;
@@ -2048,6 +2053,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         //   if VERTEX && HasInterf(i) -> InitPaveBlocksForVertex(i)
         let a_nb_s = self.ds.nb_source_shapes();
         for i in 0..a_nb_s {
+            if the_range.user_break() { return; }
             if self.ds.shapes[i].shape_type != ShapeType::Vertex {
                 continue;
             }
@@ -2070,6 +2076,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             std::collections::HashSet::new();
 
         for i in 0..a_nb_s {
+            if the_range.user_break() { return; }
             // L1034-1038: only edges
             if self.ds.shapes[i].shape_type != ShapeType::Edge {
                 continue;
