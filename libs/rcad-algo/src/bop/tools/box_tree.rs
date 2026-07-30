@@ -1,19 +1,17 @@
 //! BVH for DS entity pair culling — OCCT BOPTools_BoxTree / BOPTools_BoxSelector.
 //!
-//! Uses LBVH (Linear BVH) builder via Morton codes + radix sort,
-//! matching OCCT BVH_LinearBuilder + BVH_RadixSorter.
-//!
 //! OCCT correspondence:
 //! - BOPTools_BoxTree           = BoxTree (this file)
+//! - BVH_TreeBase               = BvhTreeBase (bvh_tree.rs)
 //! - BVH_LinearBuilder          = build() method
 //! - BVH_RadixSorter            = morton sort inside build()
 //! - BOPTools_BoxPairSelector   = self_pairs() method
 //! - BOPTools_BoxSelector       = query_aabb()
 
-use crate::bop::tools::bvh_tree::BvhNode;
+use crate::bop::tools::bvh_tree::BvhTreeBase;
 use glam::DVec3;
 
-/// Axis-aligned bounding box for BVH node culling (OCCT Bnd_Box equivalent).
+/// Input bounding box used during BVH build (OCCT Bnd_Box equivalent).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Aabb {
     pub min: DVec3,
@@ -64,27 +62,18 @@ const MORTON_LUT: [u32; 256] = [
     0x249240, 0x249241, 0x249248, 0x249249,
 ];
 
-/// encode 10-bit xyz → 30-bit morton code (OCCT BVH_RadixSorter.hxx L70-81)
 fn encode_morton(vx: u32, vy: u32, vz: u32) -> u32 {
     (MORTON_LUT[(vx & 0xFF) as usize] | (MORTON_LUT[((vx >> 8) & 0x03) as usize] << 24))
-        | ((MORTON_LUT[(vy & 0xFF) as usize] | (MORTON_LUT[((vy >> 8) & 0x03) as usize] << 24))
-            << 1)
-        | ((MORTON_LUT[(vz & 0xFF) as usize] | (MORTON_LUT[((vz >> 8) & 0x03) as usize] << 24))
-            << 2)
+        | ((MORTON_LUT[(vy & 0xFF) as usize] | (MORTON_LUT[((vy >> 8) & 0x03) as usize] << 24)) << 1)
+        | ((MORTON_LUT[(vz & 0xFF) as usize] | (MORTON_LUT[((vz >> 8) & 0x03) as usize] << 24)) << 2)
 }
 
-/// MSD radix sort on 30-bit morton codes (OCCT BVH::RadixSorter L218-227)
 fn radix_sort_msd(links: &mut [(u32, usize)], start: usize, end: usize, digit: i32) {
-    if end - start <= 4 || digit < 0 {
-        return;
-    }
+    if end - start <= 4 || digit < 0 { return; }
     let bit = 1u32 << (digit as u32);
     let mut split = start;
     for i in start..end {
-        if links[i].0 & bit == 0 {
-            links.swap(i, split);
-            split += 1;
-        }
+        if links[i].0 & bit == 0 { links.swap(i, split); split += 1; }
     }
     if split > start && split < end {
         radix_sort_msd(links, start, split, digit - 1);
@@ -95,20 +84,13 @@ fn radix_sort_msd(links: &mut [(u32, usize)], start: usize, end: usize, digit: i
 }
 
 fn emit_hierarchy(
-    links: &[(u32, usize)],
-    start: usize,
-    end: usize,
-    nodes: &mut Vec<BvhNode>,
-    next_slot: &mut usize,
+    links: &[(u32, usize)], start: usize, end: usize,
+    nodes: &mut Vec<(i32, i32, i32, i32)>, // (isOuter, startPrim, endPrim, level)
+    next_slot: &mut usize, depth: i32,
 ) -> usize {
     if end - start <= 4 {
-        let idx = *next_slot;
-        *next_slot += 1;
-        nodes.push(BvhNode::Leaf {
-            aabb: Aabb::empty(),
-            start,
-            end,
-        });
+        let idx = *next_slot; *next_slot += 1;
+        nodes.push((0, start as i32, (end - 1) as i32, depth));
         return idx;
     }
     let first = links[start].0;
@@ -119,92 +101,35 @@ fn emit_hierarchy(
         None => (start + end) / 2,
         Some(bit) => {
             let mask = 1u32 << bit;
-            let mut lo = start;
-            let mut hi = end;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                if links[mid].0 & mask == 0 {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
+            let mut lo = start; let mut hi = end;
+            while lo < hi { let mid = (lo + hi) / 2; if links[mid].0 & mask == 0 { lo = mid + 1; } else { hi = mid; } }
             lo
         }
     };
     if split == start || split == end {
-        return emit_hierarchy(links, start, end, nodes, next_slot);
+        return emit_hierarchy(links, start, end, nodes, next_slot, depth);
     }
-    let idx = *next_slot;
-    *next_slot += 1;
-    nodes.push(BvhNode::Internal {
-        aabb: Aabb::empty(),
-        left: 0,
-        right: 0,
-    });
-    let left_child = emit_hierarchy(links, start, split, nodes, next_slot);
-    let right_child = emit_hierarchy(links, split, end, nodes, next_slot);
-    match &mut nodes[idx] {
-        BvhNode::Internal { left, right, .. } => {
-            *left = left_child;
-            *right = right_child;
-        }
-        _ => unreachable!(),
-    }
+    let idx = *next_slot; *next_slot += 1;
+    nodes.push((0, 0, 0, depth)); // inner node, filled after children
+    let left_child = emit_hierarchy(links, start, split, nodes, next_slot, depth + 1);
+    let right_child = emit_hierarchy(links, split, end, nodes, next_slot, depth + 1);
+    // Store children in inner nodes: left = 2*idx+1, right = 2*idx+2
+    // (no explicit child fields needed — heap layout)
     idx
 }
 
-fn update_bounds(node: usize, nodes: &mut [BvhNode], aabbs: &[Aabb]) {
-    let (child_left, child_right) = match &nodes[node] {
-        BvhNode::Internal { left, right, .. } => (*left, *right),
-        _ => (usize::MAX, usize::MAX),
-    };
-    if child_left == usize::MAX {
-        let (start, end) = match &nodes[node] {
-            BvhNode::Leaf { start, end, .. } => (*start, *end),
-            _ => unreachable!(),
-        };
-        let mut mn = aabbs[start].min;
-        let mut mx = aabbs[start].max;
-        let mut gap = aabbs[start].gap;
-        for i in (start + 1)..end {
-            mn = mn.min(aabbs[i].min);
-            mx = mx.max(aabbs[i].max);
-            if aabbs[i].gap > gap { gap = aabbs[i].gap; }
-        }
-        match &mut nodes[node] {
-            BvhNode::Leaf { aabb, .. } => { *aabb = Aabb { min: mn, max: mx, gap }; }
-            _ => unreachable!(),
-        }
-        return;
-    }
-    update_bounds(child_left, nodes, aabbs);
-    update_bounds(child_right, nodes, aabbs);
-    let lbb = &nodes[child_left];
-    let rbb = &nodes[child_right];
-    let mn = lbb.aabb().min.min(rbb.aabb().min);
-    let mx = lbb.aabb().max.max(rbb.aabb().max);
-    let gap = lbb.aabb().gap.max(rbb.aabb().gap);
-    match &mut nodes[node] {
-        BvhNode::Internal { aabb, .. } => { *aabb = Aabb { min: mn, max: mx, gap }; }
-        _ => unreachable!(),
-    }
-}
-
-/// BVH for DS entity pair culling — OCCT BOPTools_BoxTree.
+/// OCCT BOPTools_BoxSet / BOPTools_BoxTree — BVH with AABB array + LinearBuilder.
 pub struct BoxTree {
-    nodes: Vec<BvhNode>,
-    indices: Vec<usize>,
-    aabbs: Vec<Aabb>,
+    pub(crate) tree: BvhTreeBase,
+    pub(crate) indices: Vec<usize>,
+    pub(crate) aabbs: Vec<Aabb>,
 }
 
 impl BoxTree {
-    /// LBVH builder — OCCT BVH_LinearBuilder::Build + BVH_RadixSorter::Perform
+    /// LBVH builder — OCCT BVH_LinearBuilder + BVH_RadixSorter.
     pub fn build(indices: Vec<usize>, aabbs: Vec<Aabb>) -> Self {
         let n = indices.len();
-        if n == 0 {
-            return Self { nodes: Vec::new(), indices, aabbs };
-        }
+        if n == 0 { return Self { tree: BvhTreeBase::new(), indices, aabbs }; }
 
         // Scene AABB
         let mut scene_min = aabbs[0].min;
@@ -228,7 +153,6 @@ impl BoxTree {
             links.push((encode_morton(vx, vy, vz), i));
         }
 
-        // Radix sort
         radix_sort_msd(&mut links, 0, n, 29);
 
         // Reorder
@@ -239,148 +163,196 @@ impl BoxTree {
             sorted_abb.push(aabbs[orig_i]);
         }
 
-        // Emit hierarchy
-        let mut nodes: Vec<BvhNode> = Vec::new();
+        // Emit hierarchy: vec of (isOuter, startPrim, endPrim, level)
+        let mut raw_nodes: Vec<(i32, i32, i32, i32)> = Vec::new();
         let mut next_slot = 0usize;
-        emit_hierarchy(&links, 0, n, &mut nodes, &mut next_slot);
+        emit_hierarchy(&links, 0, n, &mut raw_nodes, &mut next_slot, 0);
 
-        // Compute AABBs
-        for i in 0..nodes.len() {
-            update_bounds(i, &mut nodes, &sorted_abb);
+        // Compute node AABBs (post-order) and push to BvhTreeBase
+        let mut tree = BvhTreeBase::new();
+        // First pass: create nodes with empty AABBs
+        for i in 0..raw_nodes.len() {
+            let (is_outer, sp, ep, level) = raw_nodes[i];
+            tree.push_node(is_outer != 0, sp, ep, level, DVec3::ZERO, DVec3::ZERO);
         }
+        // Second pass: compute AABBs bottom-up
+        Self::compute_bounds(0, &raw_nodes, &sorted_abb, &mut tree);
 
-        Self { nodes, indices: sorted_idx, aabbs: sorted_abb }
+        Self { tree, indices: sorted_idx, aabbs: sorted_abb }
     }
 
-    /// Self-pair query — OCCT BOPTools_PairSelector SetSame(true)
+    fn compute_bounds(node: usize, raw: &[(i32, i32, i32, i32)], aabbs: &[Aabb], tree: &mut BvhTreeBase) {
+        let (is_outer, sp, ep, _level) = raw[node];
+        if is_outer != 0 {
+            // Leaf: compute AABB from element boxes
+            let mut mn = aabbs[sp as usize].min;
+            let mut mx = aabbs[sp as usize].max;
+            for i in (sp as usize + 1)..=ep as usize {
+                mn = mn.min(aabbs[i].min);
+                mx = mx.max(aabbs[i].max);
+            }
+            tree.min_points[node] = mn;
+            tree.max_points[node] = mx;
+            return;
+        }
+        let left = BvhTreeBase::left_child(node);
+        let right = BvhTreeBase::right_child(node);
+        if left < tree.length() { Self::compute_bounds(left, raw, aabbs, tree); }
+        if right < tree.length() { Self::compute_bounds(right, raw, aabbs, tree); }
+        let mn = if left < tree.length() { tree.min_points[left].min(tree.min_points.get(right).copied().unwrap_or(DVec3::splat(f64::INFINITY))) } else { DVec3::splat(f64::INFINITY) };
+        let mx = if left < tree.length() { tree.max_points[left].max(tree.max_points.get(right).copied().unwrap_or(DVec3::splat(f64::NEG_INFINITY))) } else { DVec3::splat(f64::NEG_INFINITY) };
+        tree.min_points[node] = mn;
+        tree.max_points[node] = mx;
+    }
+
+    /// Self-pair query — OCCT BOPTools_PairSelector with same BVH sets.
     pub fn self_pairs(&self) -> Vec<(usize, usize)> {
         PairSelector::select(self)
     }
 
-    /// Dual-tree pair query — OCCT BOPTools_PairSelector
+    /// Dual-tree pair query — OCCT BOPTools_PairSelector.
     pub fn candidate_pairs(bvh_a: &BoxTree, bvh_b: &BoxTree) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
-        if bvh_a.nodes.is_empty() || bvh_b.nodes.is_empty() { return pairs; }
-        Self::candidate_pairs_node(bvh_a, 0, bvh_b, 0, &mut pairs);
+        if bvh_a.tree.is_empty() || bvh_b.tree.is_empty() { return pairs; }
+        Self::cross_pairs(bvh_a, 0, bvh_b, 0, &mut pairs);
         pairs
     }
 
-    fn candidate_pairs_node(
-        bvh_a: &BoxTree, na: usize,
-        bvh_b: &BoxTree, nb: usize,
-        pairs: &mut Vec<(usize, usize)>,
-    ) {
-        if !bvh_a.nodes[na].aabb().intersects(bvh_b.nodes[nb].aabb()) { return; }
-        match (&bvh_a.nodes[na], &bvh_b.nodes[nb]) {
-            (BvhNode::Leaf { start: sa, end: ea, .. }, BvhNode::Leaf { start: sb, end: eb, .. }) => {
-                for i in *sa..*ea {
-                    for j in *sb..*eb {
-                        if bvh_a.aabbs[i].intersects(&bvh_b.aabbs[j]) {
-                            pairs.push((bvh_a.indices[i], bvh_b.indices[j]));
-                        }
+    fn cross_pairs(bvh_a: &BoxTree, na: usize, bvh_b: &BoxTree, nb: usize, pairs: &mut Vec<(usize, usize)>) {
+        if !Self::aabb_overlap(
+            bvh_a.tree.min_point(na), bvh_a.tree.max_point(na),
+            bvh_b.tree.min_point(nb), bvh_b.tree.max_point(nb),
+        ) { return; }
+
+        let a_is_leaf = bvh_a.tree.is_outer(na);
+        let b_is_leaf = bvh_b.tree.is_outer(nb);
+
+        if a_is_leaf && b_is_leaf {
+            let sa = bvh_a.tree.beg_primitive(na) as usize;
+            let ea = bvh_a.tree.end_primitive(na) as usize;
+            let sb = bvh_b.tree.beg_primitive(nb) as usize;
+            let eb = bvh_b.tree.end_primitive(nb) as usize;
+            for i in sa..=ea {
+                for j in sb..=eb {
+                    if bvh_a.aabbs[i].intersects(&bvh_b.aabbs[j]) {
+                        pairs.push((bvh_a.indices[i], bvh_b.indices[j]));
                     }
                 }
             }
-            (BvhNode::Internal { left: la, right: ra, .. }, _) => {
-                Self::candidate_pairs_node(bvh_a, *la, bvh_b, nb, pairs);
-                Self::candidate_pairs_node(bvh_a, *ra, bvh_b, nb, pairs);
-            }
-            (_, BvhNode::Internal { left: lb, right: rb, .. }) => {
-                Self::candidate_pairs_node(bvh_a, na, bvh_b, *lb, pairs);
-                Self::candidate_pairs_node(bvh_a, na, bvh_b, *rb, pairs);
-            }
+            return;
+        }
+
+        if !a_is_leaf {
+            let la = BvhTreeBase::left_child(na);
+            let ra = BvhTreeBase::right_child(na);
+            if la < bvh_a.tree.length() { Self::cross_pairs(bvh_a, la, bvh_b, nb, pairs); }
+            if ra < bvh_a.tree.length() { Self::cross_pairs(bvh_a, ra, bvh_b, nb, pairs); }
+        } else {
+            let lb = BvhTreeBase::left_child(nb);
+            let rb = BvhTreeBase::right_child(nb);
+            if lb < bvh_b.tree.length() { Self::cross_pairs(bvh_a, na, bvh_b, lb, pairs); }
+            if rb < bvh_b.tree.length() { Self::cross_pairs(bvh_a, na, bvh_b, rb, pairs); }
         }
     }
 
-    /// Query all items whose AABB overlaps the query AABB.
-    pub fn query_aabb(&self, query: &Aabb) -> Vec<usize> {
+    /// Query all items whose AABB overlaps the query AABB — OCCT BOPTools_BoxSelector.
+    pub fn query_aabb(&self, query_min: &DVec3, query_max: &DVec3) -> Vec<usize> {
         let mut res = Vec::new();
-        if self.nodes.is_empty() { return res; }
-        self.query_aabb_node(0, query, &mut res);
+        if self.tree.is_empty() { return res; }
+        self.query_node(0, query_min, query_max, &mut res);
         res
     }
 
-    fn query_aabb_node(&self, node: usize, query: &Aabb, res: &mut Vec<usize>) {
-        if !self.nodes[node].aabb().intersects(query) { return; }
-        match &self.nodes[node] {
-            BvhNode::Leaf { start, end, .. } => {
-                for i in *start..*end {
-                    if self.aabbs[i].intersects(query) {
-                        res.push(self.indices[i]);
-                    }
-                }
+    fn query_node(&self, node: usize, qmin: &DVec3, qmax: &DVec3, res: &mut Vec<usize>) {
+        if !Self::aabb_overlap(self.tree.min_point(node), self.tree.max_point(node), qmin, qmax) { return; }
+        if self.tree.is_outer(node) {
+            let s = self.tree.beg_primitive(node) as usize;
+            let e = self.tree.end_primitive(node) as usize;
+            for i in s..=e {
+                let a = &self.aabbs[i];
+                if a.min.x <= qmax.x && a.max.x >= qmin.x
+                    && a.min.y <= qmax.y && a.max.y >= qmin.y
+                    && a.min.z <= qmax.z && a.max.z >= qmin.z
+                { res.push(self.indices[i]); }
             }
-            BvhNode::Internal { left, right, .. } => {
-                self.query_aabb_node(*left, query, res);
-                self.query_aabb_node(*right, query, res);
-            }
+            return;
         }
+        let l = BvhTreeBase::left_child(node);
+        let r = BvhTreeBase::right_child(node);
+        if l < self.tree.length() { self.query_node(l, qmin, qmax, res); }
+        if r < self.tree.length() { self.query_node(r, qmin, qmax, res); }
+    }
+
+    fn aabb_overlap(min1: &DVec3, max1: &DVec3, min2: &DVec3, max2: &DVec3) -> bool {
+        min1.x <= max2.x && max1.x >= min2.x
+            && min1.y <= max2.y && max1.y >= min2.y
+            && min1.z <= max2.z && max1.z >= min2.z
     }
 }
 
-// ── OCCT BOPTools_PairSelector (L25-108) ──
+// ── OCCT BOPTools_PairSelector — self-pair traversal ──
 struct PairSelector;
 
 impl PairSelector {
     fn select(tree: &BoxTree) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
-        if tree.nodes.is_empty() { return pairs; }
+        if tree.tree.is_empty() { return pairs; }
         Self::self_query(tree, 0, &mut pairs);
         pairs
     }
 
     fn self_query(tree: &BoxTree, node: usize, pairs: &mut Vec<(usize, usize)>) {
-        match &tree.nodes[node] {
-            BvhNode::Leaf { start, end, .. } => {
-                for i in *start..*end {
-                    for j in (i + 1)..*end {
-                        if !Self::reject_element(tree, tree, i, j, true) {
-                            Self::accept(tree, tree, i, j, pairs);
-                        }
+        if tree.tree.is_outer(node) {
+            let s = tree.tree.beg_primitive(node) as usize;
+            let e = tree.tree.end_primitive(node) as usize;
+            for i in s..=e {
+                for j in (i + 1)..=e {
+                    if tree.aabbs[i].intersects(&tree.aabbs[j]) {
+                        pairs.push((tree.indices[i], tree.indices[j]));
                     }
                 }
             }
-            BvhNode::Internal { left, right, .. } => {
-                Self::self_query(tree, *left, pairs);
-                Self::self_query(tree, *right, pairs);
-                Self::cross(tree, *left, *right, pairs);
-            }
+            return;
         }
+        let l = BvhTreeBase::left_child(node);
+        let r = BvhTreeBase::right_child(node);
+        if l < tree.tree.length() { Self::self_query(tree, l, pairs); }
+        if r < tree.tree.length() { Self::self_query(tree, r, pairs); }
+        Self::cross_nodes(tree, l, r, pairs);
     }
 
-    fn cross(tree: &BoxTree, na: usize, nb: usize, pairs: &mut Vec<(usize, usize)>) {
-        if Self::reject_node(&tree.nodes[na], &tree.nodes[nb]) { return; }
-        match (&tree.nodes[na], &tree.nodes[nb]) {
-            (BvhNode::Leaf { start: sa, end: ea, .. }, BvhNode::Leaf { start: sb, end: eb, .. }) => {
-                for i in *sa..*ea {
-                    for j in *sb..*eb {
-                        if !Self::reject_element(tree, tree, i, j, true) {
-                            Self::accept(tree, tree, i, j, pairs);
-                        }
+    fn cross_nodes(tree: &BoxTree, na: usize, nb: usize, pairs: &mut Vec<(usize, usize)>) {
+        if na >= tree.tree.length() || nb >= tree.tree.length() { return; }
+        if !BoxTree::aabb_overlap(
+            tree.tree.min_point(na), tree.tree.max_point(na),
+            tree.tree.min_point(nb), tree.tree.max_point(nb),
+        ) { return; }
+
+        let a_leaf = tree.tree.is_outer(na);
+        let b_leaf = tree.tree.is_outer(nb);
+
+        if a_leaf && b_leaf {
+            let sa = tree.tree.beg_primitive(na) as usize;
+            let ea = tree.tree.end_primitive(na) as usize;
+            let sb = tree.tree.beg_primitive(nb) as usize;
+            let eb = tree.tree.end_primitive(nb) as usize;
+            for i in sa..=ea {
+                for j in sb..=eb {
+                    if i >= j { continue; }
+                    if tree.aabbs[i].intersects(&tree.aabbs[j]) {
+                        pairs.push((tree.indices[i], tree.indices[j]));
                     }
                 }
             }
-            (BvhNode::Internal { left: la, right: ra, .. }, _) => {
-                Self::cross(tree, *la, nb, pairs);
-                Self::cross(tree, *ra, nb, pairs);
-            }
-            (_, BvhNode::Internal { left: lb, right: rb, .. }) => {
-                Self::cross(tree, na, *lb, pairs);
-                Self::cross(tree, na, *rb, pairs);
-            }
+            return;
         }
-    }
 
-    fn reject_node(na: &BvhNode, nb: &BvhNode) -> bool {
-        !na.aabb().intersects(nb.aabb())
-    }
-
-    fn reject_element(tree_a: &BoxTree, tree_b: &BoxTree, ia: usize, ib: usize, same: bool) -> bool {
-        if same && ia >= ib { return true; }
-        !tree_a.aabbs[ia].intersects(&tree_b.aabbs[ib])
-    }
-
-    fn accept(tree_a: &BoxTree, tree_b: &BoxTree, ia: usize, ib: usize, pairs: &mut Vec<(usize, usize)>) {
-        pairs.push((tree_a.indices[ia], tree_b.indices[ib]));
+        if !a_leaf {
+            Self::cross_nodes(tree, BvhTreeBase::left_child(na), nb, pairs);
+            Self::cross_nodes(tree, BvhTreeBase::right_child(na), nb, pairs);
+        } else {
+            Self::cross_nodes(tree, na, BvhTreeBase::left_child(nb), pairs);
+            Self::cross_nodes(tree, na, BvhTreeBase::right_child(nb), pairs);
+        }
     }
 }
