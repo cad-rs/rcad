@@ -5151,7 +5151,7 @@ fn pf_stage_box_x_box_rotated_translated() {
     // Construct shape B (BOX) — at position ROTATED+TRANSLATED
     let rad_b = 30.0_f64.to_radians();
     let b = make_box_brep(
-        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(0.2, 0.2, 0.0),  // OCCT: rotated 30deg around Z + translated (0.2, 0.2, 0)
         DVec3::X * rad_b.cos() - DVec3::Y * rad_b.sin(),
         DVec3::X * rad_b.sin() + DVec3::Y * rad_b.cos(),
         1.0, 1.0, 1.0)
