@@ -47,6 +47,14 @@ pub fn make_new_vertex_point(p: glam::DVec3, tol: f64) -> (glam::DVec3, f64) {
     (p, tol)
 }
 
+/// OCCT BOPTools_AlgoTools::MakeVertex — centroid + max tolerance from a list of vertices.
+/// rcad: takes slice of (point, tolerance) pairs.
+pub fn make_vertex(vertices: &[(glam::DVec3, f64)]) -> (glam::DVec3, f64) {
+    let centroid = vertices.iter().map(|(p, _)| *p).sum::<glam::DVec3>() / vertices.len() as f64;
+    let max_tol = vertices.iter().map(|(_, t)| *t).fold(0.0_f64, f64::max);
+    (centroid, max_tol)
+}
+
 // ====================================================================
 // IsMicroEdge — OCCT BOPTools_AlgoTools::IsMicroEdge (L2075+)
 // ====================================================================
@@ -358,4 +366,57 @@ pub fn make_pcurve(
     _ds: &mut DS,
 ) {
     // rcad: pcurve creation is handled by MakePCurves step in PaveFiller
+}
+
+// ====================================================================
+// BOPAlgo_Tools::FillMap — graph edge connection (BOPAlgo_Tools.cxx L38-48)
+// ====================================================================
+/// OCCT BOPAlgo_Tools::FillMap(int, int, IndexedDataMap<int, List<int>>).
+/// Adds bidirectional connection between two nodes in an adjacency map.
+pub fn fill_map(n1: usize, n2: usize, the_map: &mut std::collections::HashMap<usize, Vec<usize>>) {
+    the_map.entry(n1).or_default().push(n2);
+    the_map.entry(n2).or_default().push(n1);
+}
+
+// ====================================================================
+// IntTools_Tools::IsOnPave1 — parameter on range boundary (L168+)
+// ====================================================================
+/// OCCT IntTools_Tools::IsOnPave1 — checks if parameter is at range boundary within tolerance.
+pub fn is_on_pave_1(t: f64, r_first: f64, r_last: f64, tol: f64) -> bool {
+    (t - r_first).abs() <= tol || (t - r_last).abs() <= tol
+}
+
+// ====================================================================
+// BOPAlgo_Tools::MakeBlocks — connected components from graph (L121+)
+// ====================================================================
+/// OCCT BOPAlgo_Tools::MakeBlocks(IndexedDataMap<int, List<int>>, List<List<int>>).
+/// Finds connected components in a vertex connection graph.
+pub fn make_blocks(
+    the_map: &std::collections::HashMap<usize, Vec<usize>>,
+    the_blocks: &mut Vec<Vec<usize>>,
+) {
+    let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (&start, _) in the_map {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut block: Vec<usize> = Vec::new();
+        let mut stack = vec![start];
+        while let Some(node) = stack.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            block.push(node);
+            if let Some(neighbors) = the_map.get(&node) {
+                for &n in neighbors {
+                    if !visited.contains(&n) {
+                        stack.push(n);
+                    }
+                }
+            }
+        }
+        if block.len() >= 2 {
+            the_blocks.push(block);
+        }
+    }
 }

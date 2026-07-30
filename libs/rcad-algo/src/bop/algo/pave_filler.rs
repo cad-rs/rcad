@@ -23,6 +23,7 @@ use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools;
 use rcad_kernel::base::proj_lib::project_on_surface;
+use crate::bop::tools::algo_tools;
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::CurveEval;
@@ -368,7 +369,7 @@ impl PaveFiller {
         for &(n1, n2) in &pairs {
             // OCCT L77-81: if already interfering, connect and continue
             if self.ds.has_interf(n1, n2) {
-                fill_map(n1, n2, &mut a_mili);
+                algo_tools::fill_map(n1, n2, &mut a_mili);
                 continue;
             }
 
@@ -390,12 +391,12 @@ impl PaveFiller {
 
             // OCCT L94-97: if (!iFlag) { FillMap(n1, n2, aMILI, aAllocator); }
             if i_flag == 0 {
-                fill_map(n1, n2, &mut a_mili);
+                algo_tools::fill_map(n1, n2, &mut a_mili);
             }
         }
 
         // OCCT L101: BOPAlgo_Tools::MakeBlocks(aMILI, aMBlocks, aAllocator);
-        make_blocks(&a_mili, &mut a_mblocks);
+        algo_tools::make_blocks(&a_mili, &mut a_mblocks);
 
         // OCCT L104-113: MakeSDVertices for each block
         for a_li in &a_mblocks {
@@ -434,11 +435,7 @@ impl PaveFiller {
         }
 
         // OCCT L162: BOPTools_AlgoTools::MakeVertex(aLV, aVn);
-        // Computes centroid + bounding tolerance via BRepLib::BoundingVertex.
-        // rcad: compute centroid and max tolerance from collected points
-        // (Rust lacks BRepLib; for coincident vertices this gives equivalent result)
-        let centroid = a_lv_points.iter().map(|(p, _)| *p).sum::<DVec3>() / a_lv_points.len() as f64;
-        let max_tol = a_lv_points.iter().map(|(_, t)| *t).fold(0.0_f64, f64::max);
+        let (centroid, max_tol) = crate::bop::tools::algo_tools::make_vertex(&a_lv_points);
 
         // OCCT L163-180: if (nSD != -1) update existing SD else create new
         let n_v;
@@ -809,14 +806,14 @@ impl PaveFiller {
 
                                 // OCCT: IsOnPave checks for 4 region boundaries
                                 let mut b_is_on_pave = [
-                                    is_on_pave_1(a_t1, a_r11_first, a_r11_last, a_tol)
-                                        || is_on_pave_1(a_r11_first, a_cr1.0, a_cr1.1, a_tol),
-                                    is_on_pave_1(a_t1, a_r12_first, a_r12_last, a_tol)
-                                        || is_on_pave_1(a_r12_last, a_cr1.0, a_cr1.1, a_tol),
-                                    is_on_pave_1(a_t2, a_r21_first, a_r21_last, a_tol)
-                                        || is_on_pave_1(a_r21_first, a_cr2.0, a_cr2.1, a_tol),
-                                    is_on_pave_1(a_t2, a_r22_first, a_r22_last, a_tol)
-                                        || is_on_pave_1(a_r22_last, a_cr2.0, a_cr2.1, a_tol),
+                                    algo_tools::is_on_pave_1(a_t1, a_r11_first, a_r11_last, a_tol)
+                                        || algo_tools::is_on_pave_1(a_r11_first, a_cr1.0, a_cr1.1, a_tol),
+                                    algo_tools::is_on_pave_1(a_t1, a_r12_first, a_r12_last, a_tol)
+                                        || algo_tools::is_on_pave_1(a_r12_last, a_cr1.0, a_cr1.1, a_tol),
+                                    algo_tools::is_on_pave_1(a_t2, a_r21_first, a_r21_last, a_tol)
+                                        || algo_tools::is_on_pave_1(a_r21_first, a_cr2.0, a_cr2.1, a_tol),
+                                    algo_tools::is_on_pave_1(a_t2, a_r22_first, a_r22_last, a_tol)
+                                        || algo_tools::is_on_pave_1(a_r22_last, a_cr2.0, a_cr2.1, a_tol),
                                 ];
 
                                 // OCCT L396-403: if intersection is on existing paves on both edges, skip
@@ -1158,9 +1155,15 @@ impl PaveFiller {
                     }
 
                     // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
-                    // rcad: CorrectRange adjusts range endpoints by face tolerance / |derivative|
-                    let a_corrected_range = Self::correct_range(
-                        n_e, n_f, &self.ds, a_ts1, a_ts2);
+                    // rcad: extract curve + tolerances, call algo_tools version
+                    let a_curve = self.ds.edge_curve(n_e);
+                    let a_tol_e = self.ds.edge_tolerance(n_e);
+                    let a_tol_f = self.ds.face_tolerance(n_f);
+                    let a_corrected_range = match a_curve {
+                        Some(curve) => crate::bop::tools::algo_tools::correct_range_ef(
+                            curve, a_ts1, a_ts2, a_tol_e, a_tol_f),
+                        None => (a_ts1, a_ts2),
+                    };
                     // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
                     // OCCT L299-305: myFPBDone.Bound(nF, Map<PaveBlock>)->Add(aPB)
                     // rcad: CorrectRange translated above. myFPBDone is a fence map
@@ -3200,39 +3203,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L702-850: 2. Process section edges
     }
 
-    /// OCCT BOPTools_AlgoTools::CorrectRange (edge-face variant, AlgoTools_2.cxx L364-420).
-    /// Adjusts edge range by face tolerance for non-linear curves.
-    fn correct_range(n_e: usize, n_f: usize, ds: &DS, a_tf: f64, a_tl: f64) -> (f64, f64) {
-        let curve = match ds.edge_curve(n_e) {
-            Some(c) => c.clone(),
-            None => return (a_tf, a_tl),
-        };
-        // OCCT L383-384: if Line → no correction
-        if matches!(curve, rcad_kernel::geom::Curve3::Line(_)) {
-            return (a_tf, a_tl);
-        }
-        let a_tol_f = ds.vertex_tolerance_by_idx(n_f).max(1e-7);
-        let dt = 1e-7;
-        let mut new_first = a_tf;
-        let mut new_last = a_tl;
-        for i in 0..2 {
-            let t = if i == 0 { a_tf } else { a_tl };
-            let p = curve.point_at(t);
-            let p_dt = curve.point_at(t + if i == 0 { dt } else { -dt });
-            let der_mag = (p_dt - p).length().max(1e-12);
-            let a_res = a_tol_f / der_mag;
-            if i == 0 {
-                new_first = a_tf + a_res;
-            } else {
-                new_last = a_tl - a_res;
-            }
-        }
-        if new_last > new_first + 1e-12 {
-            (new_first, new_last)
-        } else {
-            (a_tf, a_tl)
-        }
-    }
 
     /// Compute a 2D pcurve by projecting a 3D curve onto a surface.
     fn pcurve_2d(curve: &rcad_kernel::geom::Curve3,
@@ -3395,48 +3365,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
 /// Add edge between two vertices in the connection graph.
 /// OCCT BOPAlgo_Tools::FillMap(int, int, IndexedDataMap<int, List<int>>)
-fn fill_map(n1: usize, n2: usize, the_map: &mut std::collections::HashMap<usize, Vec<usize>>) {
-    the_map.entry(n1).or_default().push(n2);
-    the_map.entry(n2).or_default().push(n1);
-}
-
-/// Check if a parameter is near a range boundary within tolerance.
-/// OCCT IntTools_Tools::IsOnPave1 (parameter, range) variant.
-fn is_on_pave_1(t: f64, r_first: f64, r_last: f64, tol: f64) -> bool {
-    (t - r_first).abs() <= tol || (t - r_last).abs() <= tol
-}
-
-/// Find connected components in a vertex connection graph.
-/// OCCT BOPAlgo_Tools::MakeBlocks(IndexedDataMap<int, List<int>>, List<List<int>>)
-fn make_blocks(
-    the_map: &std::collections::HashMap<usize, Vec<usize>>,
-    the_blocks: &mut Vec<Vec<usize>>,
-) {
-    let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for (&start, _) in the_map {
-        if visited.contains(&start) {
-            continue;
-        }
-        let mut block: Vec<usize> = Vec::new();
-        let mut stack = vec![start];
-        while let Some(node) = stack.pop() {
-            if !visited.insert(node) {
-                continue;
-            }
-            block.push(node);
-            if let Some(neighbors) = the_map.get(&node) {
-                for &n in neighbors {
-                    if !visited.contains(&n) {
-                        stack.push(n);
-                    }
-                }
-            }
-        }
-        if block.len() >= 2 {
-            the_blocks.push(block);
-        }
-    }
-}
+// fill_map, is_on_pave_1, make_blocks moved to algo_tools
 
 // OCCT BOPAlgo_PaveFiller_7.cxx L62/L936 — file-local static helper.
 fn is_based_on_plane(face: &Shape) -> bool {
