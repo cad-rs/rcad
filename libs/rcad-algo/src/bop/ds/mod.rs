@@ -793,6 +793,7 @@ impl DS {
                 let n_v1 = self.shapes[i].sub_shapes[0];
                 let n_v2 = self.shapes[i].sub_shapes[1];
                 let (p1, p2) = self.edge_vertex_params(i, n_v1, n_v2);
+                eprintln!("[DBG] change_pb edge={} nv1={} nv2={} p1={} p2={}", i, n_v1, n_v2, p1, p2);
                 let pb = PaveBlock::new(i,
                     Pave { vertex_idx: n_v1, param: p1 },
                     Pave { vertex_idx: n_v2, param: p2 },
@@ -817,8 +818,11 @@ impl DS {
         let v1_brep_idx = self.shapes[v1_ds_idx].shape.index;
         let v2_brep_idx = self.shapes[v2_ds_idx].shape.index;
         // OCCT: BRep_Tool::Parameter reads stored param (set during edge construction).
-        (ed.vertex_params.get(&v1_brep_idx).copied().unwrap_or(0.0),
-         ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
+        let p1v = ed.vertex_params.get(&v1_brep_idx).copied();
+        let p2v = ed.vertex_params.get(&v2_brep_idx).copied();
+        eprintln!("[DBG] edge_vertex_params edge={} v1_idx={} v2_idx={} p1={:?} p2={:?}",
+            edge_idx, v1_brep_idx, v2_brep_idx, p1v, p2v);
+        (p1v.unwrap_or(0.0), p2v.unwrap_or(0.0))
     }
 
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Common block map
