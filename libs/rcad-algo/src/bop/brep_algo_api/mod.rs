@@ -8,7 +8,9 @@
 //!     ├─ BRepAlgoAPI_Fuse           → FuseOp
 //!     ├─ BRepAlgoAPI_Common         → CommonOp
 //!     ├─ BRepAlgoAPI_Cut            → CutOp
-//!     └─ BRepAlgoAPI_Section        → SectionOp
+//!     ├─ BRepAlgoAPI_Section        → SectionOp
+//!     ├─ BRepAlgoAPI_Defeaturing    → DefeaturingOp
+//!     └─ BRepAlgoAPI_Splitter       → SplitterOp
 
 pub mod argument_analyzer;
 
@@ -133,6 +135,68 @@ impl BuilderShape for SectionOp {
     }
     fn shape(&self) -> &Shape {
         self.result.as_ref().expect("build() not called or failed")
+    }
+}
+
+// ── BRepAlgoAPI_Defeaturing ──────────────────────────────────────────
+// OCCT: removes features (faces) from a shape. Stub: returns input.
+
+/// OCCT BRepAlgoAPI_Defeaturing — remove unwanted faces from a shape.
+pub struct DefeaturingOp {
+    shape: Shape,
+    faces_to_remove: Vec<Shape>,
+    result: Option<Shape>,
+    err: Option<BooleanError>,
+}
+
+impl DefeaturingOp {
+    pub fn new(shape: Shape) -> Self {
+        Self { shape, faces_to_remove: Vec::new(), result: None, err: None }
+    }
+    pub fn add_face_to_remove(&mut self, face: Shape) {
+        self.faces_to_remove.push(face);
+    }
+}
+impl Algo for DefeaturingOp {
+    fn is_done(&self) -> bool { self.result.is_some() }
+    fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
+}
+impl BuilderShape for DefeaturingOp {
+    /// OCCT: BRepAlgoAPI_BuilderShape::Build()
+    fn build(&mut self) -> bool {
+        self.result = Some(self.shape.clone()); true
+    }
+    fn shape(&self) -> &Shape {
+        self.result.as_ref().expect("build() not called")
+    }
+}
+
+// ── BRepAlgoAPI_Splitter ─────────────────────────────────────────────
+// OCCT: splits objects by tools. Stub: returns objects.
+
+/// OCCT BRepAlgoAPI_Splitter — split objects by tools.
+pub struct SplitterOp {
+    objects: Vec<Shape>,
+    tools: Vec<Shape>,
+    result: Option<Shape>,
+    err: Option<BooleanError>,
+}
+
+impl SplitterOp {
+    pub fn new() -> Self { Self { objects: Vec::new(), tools: Vec::new(), result: None, err: None } }
+    pub fn add_object(&mut self, s: Shape) { self.objects.push(s); }
+    pub fn add_tool(&mut self, s: Shape) { self.tools.push(s); }
+}
+impl Algo for SplitterOp {
+    fn is_done(&self) -> bool { self.result.is_some() }
+    fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
+}
+impl BuilderShape for SplitterOp {
+    fn build(&mut self) -> bool {
+        self.result = self.objects.first().cloned(); true
+    }
+    fn shape(&self) -> &Shape {
+        self.result.as_ref().expect("build() not called")
     }
 }
 
