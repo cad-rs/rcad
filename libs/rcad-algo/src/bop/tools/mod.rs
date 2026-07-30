@@ -9,6 +9,7 @@
 pub mod algo_tools;
 pub mod box_tree;
 pub mod bvh;
+pub(crate) mod bvh_tree;
 
 use crate::bop::ds::DS;
 use crate::bop::ds::Classification;
