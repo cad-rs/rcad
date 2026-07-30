@@ -189,14 +189,6 @@ impl PaveFiller {
     pub fn report(&self) -> &Report { &self.my_report }
     pub fn ds(&self) -> &DS { &self.ds }
 
-    /// Move the DS out of the PaveFiller (for transfer to BooleanBuilder).
-    /// After this call the filler should not be used for further work.
-    pub fn take_ds(&mut self) -> DS {
-        std::mem::replace(&mut self.ds, DS::new())
-    }
-
-    pub fn report_mut(&mut self) -> &mut Report { &mut self.my_report }
-
     /// If stop_after matches stage, return true (caller should return).
     fn check_stop(&self, stage: &'static str) -> bool {
         self.stop_after.map_or(false, |s| s == stage)
