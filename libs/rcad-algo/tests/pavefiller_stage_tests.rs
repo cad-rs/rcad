@@ -8,7 +8,6 @@ use rcad_algo::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{self, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
-use rcad_modeling::{make_box_brep, make_sphere_brep, make_cylinder_brep, make_cone_brep};
 use std::sync::Arc;
 
 /// Stage counts expected from OCCT reference.

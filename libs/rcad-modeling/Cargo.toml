@@ -10,4 +10,3 @@ rcad-kernel = { path = "../rcad-kernel" }
 glam.workspace = true
 
 [dev-dependencies]
-rcad-algorithms = { path = "../rcad-algorithms" }
