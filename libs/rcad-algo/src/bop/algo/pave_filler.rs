@@ -356,8 +356,8 @@ impl PaveFiller {
         if a_size == 0 {
             return;
         }
-        // OCCT L58-59: aVVs.SetIncrement(aSize) → Vec::reserve
-        self.ds.interf_vv.reserve(a_size);
+        // OCCT L58-59: aVVs.SetIncrement(aSize) — Rust Vec auto-grows
+
 
         // OCCT L62-63: NCollection_IndexedDataMap<int, NCollection_List<int>> aMILI(100, aAllocator);
         //             NCollection_List<NCollection_List<int>> aMBlocks(aAllocator);
@@ -558,10 +558,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L253-257: aVEs.SetIncrement(aNbVE) → Vec::reserve
-        if the_add_interfs {
-            self.ds.interf_ve.reserve(a_nb_ve);
-        }
+        // OCCT L253-257: aVEs.SetIncrement(aNbVE) — Rust Vec auto-grows
 
         // OCCT L260-265: aVVE, aDMVSD declarations
         // OCCT L267-322: build solver objects
@@ -682,8 +679,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L178-179: aEEs.SetIncrement(iSize) → Vec::reserve
-        self.ds.interf_ee.reserve(i_size);
+        // OCCT L178-179: aEEs.SetIncrement(iSize) — Rust Vec auto-grows
 
         let mut new_ee: Vec<InterferenceEE> = Vec::new();
         let mut cb_pairs: Vec<(SharedPB, SharedPB)> = Vec::new();
@@ -1387,7 +1383,7 @@ impl PaveFiller {
         //   myDS->SetArguments(myArguments);
         //   myDS->Init(myFuzzyValue);
         if !self.my_arguments.is_empty() {
-            self.ds.set_arguments(self.my_arguments.clone());
+            self.ds.set_arguments(std::mem::take(&mut self.my_arguments));
         }
         self.ds.init(self.my_fuzzy_value);
         // OCCT L204: myContext = new IntTools_Context

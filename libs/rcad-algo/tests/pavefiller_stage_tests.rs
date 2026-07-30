@@ -5,6 +5,7 @@
 use glam::{DVec3, DAffine3};
 use rcad_algo::bop::algo::pave_filler::PaveFiller;
 use rcad_algo::bop::ds::DS;
+use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{self, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 use rcad_modeling::{make_box_brep, make_sphere_brep, make_cylinder_brep, make_cone_brep};
@@ -29,23 +30,17 @@ struct StageExpect {
     interf_FF: usize,
 }
 
-/// Build DS from two BReps — extract root Solid/Shell (OCCT-aligned).
-fn build_ds(a: &topods::BRep, b: &topods::BRep) -> DS {
-    fn root(brep: &topods::BRep, location: u32) -> Shape {
-        for (i, ts) in brep.tshapes.iter().enumerate().rev() {
-            match &**ts {
-                TShape::Solid(_) | TShape::Shell(_) => {
-                    return Shape::from_parts(ts.clone(), i, location, Orientation::Forward);
-                }
-                _ => {}
+/// Extract root Solid/Shell from a BRep for passing as argument.
+fn root_shape(brep: &topods::BRep, location: u32) -> Shape {
+    for (i, ts) in brep.tshapes.iter().enumerate().rev() {
+        match &**ts {
+            TShape::Solid(_) | TShape::Shell(_) => {
+                return Shape::from_parts(ts.clone(), i, location, Orientation::Forward);
             }
+            _ => {}
         }
-        panic!("no root Solid/Shell in BRep");
     }
-    let mut ds = DS::new();
-    ds.set_arguments(vec![root(a, 0), root(b, 1)]);
-    ds.init(1e-7);
-    ds
+    panic!("no root Solid/Shell in BRep");
 }
 
 /// Run PaveFiller stage-by-stage and check against OCCT reference.
@@ -54,16 +49,14 @@ fn check_pf_stages(
     label: &str, stages: &[StageExpect],
 ) {
     for s in stages {
-        let ds = {
-            let mut ds = build_ds(a, b);
-            {
-                let mut filler = PaveFiller::new(&mut ds);
-                filler.stop_after = Some(s.stage_name);
-                filler.perform();
-            }
-            ds
-        };
+        let mut filler = PaveFiller::new();
+        filler.set_arguments(vec![root_shape(a, 0), root_shape(b, 1)]);
+        filler.stop_after = Some(s.stage_name);
+        let a_prog = NoopProgress;
+        let a_ps = ProgressScope::new(&a_prog, "test", 100);
+        filler.perform(&a_ps);
 
+        let ds = filler.ds();
         let n_src = ds.nb_source_shapes;
         let nV = ds.shapes.iter().filter(|si| si.shape_type == ShapeType::Vertex).count();
         let nE = ds.shapes.iter().filter(|si| si.shape_type == ShapeType::Edge).count();
