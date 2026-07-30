@@ -2333,6 +2333,12 @@ impl TShape {
         }
     }
 }
+impl ShapeType {
+    /// OCCT BOPDS_Tools::HasBRep — true for Vertex/Edge/Face (shapes with geometric data).
+    pub fn has_brep(&self) -> bool {
+        matches!(self, ShapeType::Vertex | ShapeType::Edge | ShapeType::Face)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tests

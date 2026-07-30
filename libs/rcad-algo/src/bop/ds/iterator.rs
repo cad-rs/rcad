@@ -2,6 +2,7 @@
 // OCCT ref: BOPDS_Iterator.hxx / BOPDS_Iterator.cxx
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::bop::tools::box_tree::{Aabb, BoxTree};
 use rcad_kernel::topods::ShapeType;
 use std::collections::HashSet;
 
@@ -107,46 +108,72 @@ impl BOPDS_Iterator {
     // OCCT BOPDS_Iterator::Intersect (BOPDS_Iterator.cxx L270-359).
     fn intersect(&mut self, ds: &DS) {
         let a_nb = ds.nb_source_shapes();
-        // OCCT L279-284: Add shapes with BRep to BVH
-        // OCCT L291: Build BVH
-        // OCCT L294-298: Select pairs via BVH + Sort
-        // rcad: brute-force AABB + range-filter (same semantics)
 
-        let has_brep = |st: ShapeType| -> bool {
-            matches!(st, ShapeType::Vertex | ShapeType::Edge | ShapeType::Face)
-        };
-
-        // OCCT L306-358: iterate all (i,j) pairs, skip same-range.
-        // OCCT's BVH produces all pairs; then each range consumes those where
-        // ID1 is in this range and ID2 is in a different range.
-        // rcad: iterate i<j globally, skip if same range.
+        // OCCT L279-284: Prepare BVH — add shapes with BRep
+        let mut a_box_indices: Vec<usize> = Vec::new();
+        let mut a_box_aabbs: Vec<Aabb> = Vec::new();
         for i in 0..a_nb {
-            let si1 = &ds.shapes[i];
-            if !has_brep(si1.shape_type) { continue; }
-            let a_type1 = si1.shape_type;
-            let i_type1 = type_to_integer_single(a_type1);
-            let r1 = ds.rank(i);
+            // OCCT L282: const BOPDS_ShapeInfo& aSI = myDS->ShapeInfo(i);
+            let a_si = &ds.shapes[i];
+            // OCCT L283: if (!aSI.HasBRep()) continue;
+            if !a_si.shape_type.has_brep() { continue; }
+            // OCCT L284: aBoxTree.Add(i, Bnd_Tools::Bnd2BVH(aSI.Box()));
+            if let Some((x_min, y_min, z_min, x_max, y_max, z_max)) = a_si.bbox.get() {
+                a_box_indices.push(i);
+                a_box_aabbs.push(Aabb {
+                    min: glam::DVec3::new(x_min, y_min, z_min),
+                    max: glam::DVec3::new(x_max, y_max, z_max),
+                    gap: a_si.bbox.get_gap(),
+                });
+            }
+        }
 
-            for j in (i + 1)..a_nb {
-                let si2 = &ds.shapes[j];
-                if !has_brep(si2.shape_type) { continue; }
-                let a_type2 = si2.shape_type;
+        // OCCT L291: aBoxTree.Build();
+        let a_box_tree = BoxTree::build(a_box_indices, a_box_aabbs);
+
+        // OCCT L294-298: BOPTools_BoxPairSelector with same BVH sets
+        // OCCT: aPairSelector.SetBVHSets(&aBoxTree, &aBoxTree); SetSame(true);
+        // OCCT: aPairSelector.Select(); aPairSelector.Sort();
+        let a_pairs = a_box_tree.self_pairs();
+        let a_nb_pairs = a_pairs.len();
+
+        // OCCT L306-358: iterate selected pairs by ranges
+        let mut i_pair = 0;
+        let a_nb_r = ds.nb_ranges();
+        for i_r in 0..a_nb_r {
+            // OCCT L309: const BOPDS_IndexRange& aRange = myDS->Range(iR);
+            let a_range = ds.range(i_r);
+            // OCCT L310: for (; iPair < aNbPairs; ++iPair)
+            while i_pair < a_nb_pairs {
+                let (id1, id2) = a_pairs[i_pair];
+                // OCCT L313: if (!aRange.Contains(aPair.ID1)) break;
+                if !a_range.contains(id1) { break; }
+                // OCCT L317: if (aRange.Contains(aPair.ID2)) continue;
+                if a_range.contains(id2) { i_pair += 1; continue; }
+
+                // OCCT L326: const BOPDS_ShapeInfo& aSI1 = myDS->ShapeInfo(aPair.ID1);
+                let a_si1 = &ds.shapes[id1];
+                let a_si2 = &ds.shapes[id2];
+                let a_type1 = a_si1.shape_type;
+                let a_type2 = a_si2.shape_type;
+                let i_type1 = type_to_integer_single(a_type1);
                 let i_type2 = type_to_integer_single(a_type2);
 
-                // OCCT L320-324: skip if both are from the same argument range
-                if r1 >= 0 && r1 == ds.rank(j) { continue; }
-
-                // OCCT L336-340: avoid interfering shape with its sub-shapes
-                if ((i_type1 < i_type2) && si1.has_sub_shape(j))
-                    || ((i_type1 > i_type2) && si2.has_sub_shape(i))
+                // OCCT L336-340: sub-shape self-interference check
+                if ((i_type1 < i_type2) && a_si1.has_sub_shape(id2))
+                    || ((i_type1 > i_type2) && a_si2.has_sub_shape(id1))
                 {
+                    i_pair += 1;
                     continue;
                 }
 
-                if boxes_overlap(si1, si2, self.fuzzy_tol) {
-                    let i_x = type_to_integer(a_type1, a_type2);
-                    self.my_lists[i_x].push((i.min(j), i.max(j)));
-                }
+                // OCCT L346-348: OBB check — skipped (theCheckOBB=false)
+
+                // OCCT L352: int iX = BOPDS_Tools::TypeToInteger(aType1, aType2);
+                let i_x = type_to_integer(a_type1, a_type2);
+                // OCCT L353: myLists(iX).Append(BOPDS_Pair(min, max));
+                self.my_lists[i_x].push((id1.min(id2), id1.max(id2)));
+                i_pair += 1;
             }
         }
     }
