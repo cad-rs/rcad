@@ -1376,7 +1376,18 @@ impl PaveFiller {
         a_it.prepare(&self.ds, Some(&self.my_context), false, self.my_fuzzy_value);
         self.my_iterator = Some(Box::new(a_it));
         // OCCT L213: SetNonDestructive — respects existing flag
-        // (set_non_destructive must be called before init to take effect)
+        self.set_non_destructive();
+    }
+
+    // OCCT BOPAlgo_PaveFiller::SetNonDestructive (PaveFiller_10.cxx L41-59).
+    // Checks if any argument shape is locked; if so, enables non-destructive mode.
+    // rcad: shapes do not have a Locked() flag, so this is a no-op.
+    fn set_non_destructive(&mut self) {
+        if !self.my_is_primary || self.my_non_destructive {
+            return;
+        }
+        // OCCT: iterate myArguments, check aS.Locked()
+        // rcad: no Locked() flag on shapes — keeps myNonDestructive unchanged.
     }
 
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
