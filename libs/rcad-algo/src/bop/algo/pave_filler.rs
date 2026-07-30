@@ -54,6 +54,42 @@ impl EdgeRangeDistance {
     fn new(first: f64, last: f64, distance: f64) -> Self { Self { first, last, distance } }
 }
 
+/// OCCT BOPAlgo_BPC (PaveFiller_7.cxx L320-365) — builds pcurve for edge on planar face.
+struct BOPAlgo_BPC {
+    edge_idx: usize,
+    face_idx: usize,
+    pcurve: Option<rcad_kernel::geom::Curve2d>,
+    to_update: bool,
+}
+
+impl BOPAlgo_BPC {
+    fn new(edge_idx: usize, face_idx: usize) -> Self {
+        BOPAlgo_BPC { edge_idx, face_idx, pcurve: None, to_update: false }
+    }
+    fn edge_idx(&self) -> usize { self.edge_idx }
+    fn face_idx(&self) -> usize { self.face_idx }
+    fn pcurve(&self) -> Option<&rcad_kernel::geom::Curve2d> { self.pcurve.as_ref() }
+    fn is_to_update(&self) -> bool { self.to_update }
+    /// OCCT BOPAlgo_BPC::Perform — calls BRepLib::BuildPCurveForEdgeOnPlane.
+    /// rcad: project edge curve onto planar surface.
+    fn perform(&mut self, ds: &DS) {
+        let edge_shape = ds.shape(self.edge_idx);
+        let face_shape = ds.shape(self.face_idx);
+        let face_surf = face_shape.as_face().and_then(|fd| fd.surface.as_ref());
+        let edge_curve = edge_shape.as_edge().and_then(|ed| ed.curve.as_ref());
+        match (edge_curve, face_surf) {
+            (Some(curve), Some(surf)) => {
+                // OCCT: BRepLib::BuildPCurveForEdgeOnPlane(myE, myF, myCurve, myToUpdate)
+                if let Some(pc) = project_on_surface(curve, surf) {
+                    self.pcurve = Some(pc);
+                    self.to_update = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// OCCT BOPAlgo_ShrunkRange (PaveFiller_9.cxx L35-57) / IntTools_ShrunkRange.
 struct ShrunkRange {
     pb: SharedPB,
@@ -1425,29 +1461,26 @@ impl PaveFiller {
         let a_nb_f = a_mf.len();
         if a_nb_f == 0 { return; }
 
-        // OCCT L888-931: build pcurves for edges on planar faces
+        // OCCT L888-931: build pcurves for edges on planar faces via BOPAlgo_BPC
+        let mut a_vbpc: Vec<BOPAlgo_BPC> = Vec::new();
         for &fi in &a_mf {
-            let face_shape = self.ds.shape(fi).clone();
-            let surface = face_shape.as_face().and_then(|fd| fd.surface.clone());
-            let Some(ref surf) = surface else { continue; };
-
-            // OCCT: aExp.Init(aF, TopAbs_EDGE)
+            // OCCT L889-897: for each edge of the face, create BPC
             let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
                 .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
                 .copied().collect();
-
             for &ei in &edge_indices {
-                let edge_shape = self.ds.shape(ei);
-                let Some(curve) = edge_shape.as_edge().and_then(|ed| ed.curve.as_ref()) else { continue; };
-                let range = edge_shape.as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
-
-                // OCCT: BRepLib::BuildPCurveForEdgeOnPlane
-                if let Some(pcurve) = project_on_surface(curve, surf) {
-                    // OCCT: aBB.UpdateEdge(aBPC.GetEdge(), aBPC.GetCurve2d(), aBPC.GetFace(), aTolE)
-                    let si = self.ds.change_shape_info(ei);
-                    let ts = Arc::make_mut(&mut si.shape.data);
-                    if let topods::TShape::Edge(ref mut ed) = *ts {
-                        ed.pcurves.insert(fi, (pcurve, range[0], range[1]));
+                let mut a_bpc = BOPAlgo_BPC::new(ei, fi);
+                // OCCT L897-904: BPC.Perform() — builds pcurve
+                a_bpc.perform(&self.ds);
+                if a_bpc.is_to_update() {
+                    // OCCT L907-925: UpdateEdge with pcurve
+                    let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+                    if let Some(pc) = a_bpc.pcurve().cloned() {
+                        let si = self.ds.change_shape_info(ei);
+                        let ts = Arc::make_mut(&mut si.shape.data);
+                        if let topods::TShape::Edge(ref mut ed) = *ts {
+                            ed.pcurves.insert(fi, (pc, range[0], range[1]));
+                        }
                     }
                 }
             }
