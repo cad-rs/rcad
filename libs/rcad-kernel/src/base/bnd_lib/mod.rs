@@ -21,6 +21,8 @@ pub fn curve_bounding_box(curve: &Curve3) -> Option<[DVec3; 2]> {
                 c.radius * (1.0 - n.y * n.y).sqrt(),
                 c.radius * (1.0 - n.z * n.z).sqrt(),
             );
+            // For circles with zero extent in some direction, the box is flat.
+            // The edge range may provide additional bounds (handled in prepare_edges).
             Some([c.center - extent, c.center + extent])
         }
         Curve3::Ellipse(e) => {
@@ -33,6 +35,7 @@ pub fn curve_bounding_box(curve: &Curve3) -> Option<[DVec3; 2]> {
             );
             Some([e.center - extent, e.center + extent])
         }
+        Curve3::Line(_) => None,
         Curve3::BSpline(b) => {
             let (mut mn, mut mx) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
             for &p in &b.control_points { mn = mn.min(p); mx = mx.max(p); }

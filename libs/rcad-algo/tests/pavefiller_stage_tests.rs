@@ -92,6 +92,20 @@ fn check_pf_stages(
         assert_eq!(nEE, s.interf_EE, "{} [{}] EE", label, s.stage_name);
         assert_eq!(nEF, s.interf_EF, "{} [{}] EF", label, s.stage_name);
         assert_eq!(nFF, s.interf_FF, "{} [{}] FF", label, s.stage_name);
+
+        // Sanity: all source edges must have finite (non-void) bounding boxes
+        for i in 0..ds.nb_source_shapes {
+            if ds.shapes[i].shape_type == ShapeType::Edge {
+                let bbox = &ds.shapes[i].bbox;
+                assert!(!bbox.is_void(), "{} [{}] edge {} has void bbox", label, s.stage_name, i);
+                if let Some((xmn, ymn, zmn, xmx, ymx, zmx)) = bbox.get() {
+                    assert!(xmn.is_finite() && xmx.is_finite(), "{} [{}] edge {} bbox x not finite", label, s.stage_name, i);
+                    assert!(ymn.is_finite() && ymx.is_finite(), "{} [{}] edge {} bbox y not finite", label, s.stage_name, i);
+                    assert!(zmn.is_finite() && zmx.is_finite(), "{} [{}] edge {} bbox z not finite", label, s.stage_name, i);
+                    assert!(xmx >= xmn && ymx >= ymn && zmx >= zmn, "{} [{}] edge {} bbox inverted", label, s.stage_name, i);
+                }
+            }
+        }
     }
 }
 

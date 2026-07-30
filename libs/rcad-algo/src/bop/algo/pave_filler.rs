@@ -935,23 +935,21 @@ impl PaveFiller {
                 }
                 let Some(target_pb) = found_pb else { continue; };
 
-                // OCCT L390-393: create new pave on found PB
+                // OCCT L390-393: aPB->AppendExtPave(aPave)
                 {
                     let mut pbw = target_pb.0.write().unwrap();
-                    pbw.ext_paves.push(Pave {
-                        vertex_idx: n_vx,
-                        param: a_t,
-                    });
+                    pbw.append_ext_pave(Pave { vertex_idx: n_vx, param: a_t });
                 }
 
                 // OCCT L396-419: add VE interference for EACH original vertex
                 // OCCT: aVEs.Appended() always called, then AddInterf separately
                 if the_add_interfs {
-                    let resolved_is_new = self.ds.is_new_shape(*n_vsd);
-                    for &n_vx in orig_verts {
+                    // OCCT L412: if (myDS->IsNewShape(nVx)) — nVx from UpdateVertex, not loop var!
+                    let resolved_is_new = self.ds.is_new_shape(n_vx);
+                    for &n_vx_old in orig_verts {
                         // OCCT L406-408: aVE = aVEs.Appended(); SetIndices; SetParameter
                         let mut ve = InterferenceVE {
-                            vertex: n_vx,
+                            vertex: n_vx_old,
                             edge: n_e,
                             param: a_t,
                             index_new: 0,
@@ -962,7 +960,7 @@ impl PaveFiller {
                         }
                         self.ds.interf_ve.push(ve);
                         // OCCT L410: myDS->AddInterf(nVOld, nE) — called unconditionally
-                        self.ds.add_interf(n_vx, n_e);
+                        self.ds.add_interf(n_vx_old, n_e);
                     }
                 }
 
