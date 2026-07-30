@@ -42,7 +42,7 @@ pub enum BooleanError {
 /// - BOPAlgo_BuilderShape (myShape, myFillHistory)
 /// - BOPAlgo_BOP (myOperation, myDims)
 /// - BOPAlgo_Builder (myDS, myContext, myImages, etc.)
-pub struct Builder {
+pub struct Builder<'a> {
     // ── BOPAlgo_Options (inherited) ─────────────────────────────
     pub(crate) my_report: Report,          // BOPAlgo_Algo::myReport
     pub(crate) my_run_parallel: bool,      // BOPAlgo_Algo::myRunParallel
@@ -53,7 +53,7 @@ pub struct Builder {
     // ── BOPAlgo_BOP (inherited) ────────────────────────────────
     pub(crate) my_operation: BooleanOpType, // BOPAlgo_BOP::myOperation
     // ── BOPAlgo_Builder.hxx L492-505 ───────────────────────────
-    pub(crate) ds: DS,                     // L496: myDS (owned)
+    pub(crate) ds: &'a DS,                 // L496: myDS (borrowed from PaveFiller)
     pub(crate) my_context: IntToolsContext, // L497: myContext
     pub(crate) my_arguments: Vec<Shape>,   // L492: myArguments
     pub(crate) my_map_fence: HashSet<u64>, // L494: myMapFence
@@ -70,15 +70,14 @@ pub struct Builder {
     pub(crate) shape_remap: HashMap<u64, usize>,
 }
 
-impl Builder {
-    /// Create a new Builder with an owned DS.
+impl<'a> Builder<'a> {
+    /// Create a new Builder borrowing a DS from PaveFiller.
     ///
     /// OCCT: BOPAlgo_Builder is constructed with a PaveFiller reference.
-    /// rcad: PaveFiller runs before Builder; only the DS is passed.
     /// OCCT BOPAlgo_BOP::PerformInternal1 L425-429:
     ///   myPaveFiller = &theFiller; myDS = myPaveFiller->PDS();
     ///   myFuzzyValue = myPaveFiller->FuzzyValue();
-    pub fn new(ds: DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
+    pub fn new(ds: &'a DS, op: BooleanOpType, fuzzy_value: f64) -> Self {
         Builder {
             ds,
             my_report: Report::new(),
