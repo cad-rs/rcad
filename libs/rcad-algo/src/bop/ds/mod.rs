@@ -780,27 +780,12 @@ impl DS {
             &[]
         }
     }
+    /// OCCT BOPDS_DS::ChangePaveBlocks — returns mutable ref to existing pave blocks.
+    /// OCCT assumes InitPaveBlocks was called first. rcad: panics if not initialized.
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
-        if !self.has_pave_blocks(i) {
-            let spb = if self.shapes[i].shape_type == ShapeType::Edge
-                && self.shapes[i].sub_shapes.len() >= 2
-            {
-                let n_v1 = self.shapes[i].sub_shapes[0];
-                let n_v2 = self.shapes[i].sub_shapes[1];
-                let (p1, p2) = self.edge_vertex_params(i, n_v1, n_v2);
-                let pb = PaveBlock::new(i,
-                    Pave { vertex_idx: n_v1, param: p1 },
-                    Pave { vertex_idx: n_v2, param: p2 },
-                );
-                SharedPB::new(pb)
-            } else {
-                let p0 = Pave { vertex_idx: 0, param: 0.0 };
-                SharedPB::new(PaveBlock::new(i, p0, p0))
-            };
-            self.pave_blocks_pool.push(vec![spb]);
-            self.shapes[i].reference = (self.pave_blocks_pool.len() - 1) as i64;
-        }
-        &mut self.pave_blocks_pool[self.shapes[i].reference as usize]
+        let idx = self.shapes[i].reference;
+        assert!(idx >= 0, "change_pave_blocks({}): not initialized, call init_pave_blocks first", i);
+        &mut self.pave_blocks_pool[idx as usize]
     }
 
     /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
@@ -1070,9 +1055,26 @@ impl DS {
     }
 
     /// OCCT BOPDS_DS::InitPaveBlocks — creates initial pave block for an edge.
-    /// rcad: delegates to change_pave_blocks which lazily creates on first access.
+    /// Must be called before ChangePaveBlocks (OCCT: Init → Change sequence).
     pub fn init_pave_blocks(&mut self, edge_idx: usize) {
-        self.change_pave_blocks(edge_idx);
+        if self.has_pave_blocks(edge_idx) { return; }
+        let spb = if self.shapes[edge_idx].shape_type == ShapeType::Edge
+            && self.shapes[edge_idx].sub_shapes.len() >= 2
+        {
+            let n_v1 = self.shapes[edge_idx].sub_shapes[0];
+            let n_v2 = self.shapes[edge_idx].sub_shapes[1];
+            let (p1, p2) = self.edge_vertex_params(edge_idx, n_v1, n_v2);
+            let pb = PaveBlock::new(edge_idx,
+                Pave { vertex_idx: n_v1, param: p1 },
+                Pave { vertex_idx: n_v2, param: p2 },
+            );
+            SharedPB::new(pb)
+        } else {
+            let p0 = Pave { vertex_idx: 0, param: 0.0 };
+            SharedPB::new(PaveBlock::new(edge_idx, p0, p0))
+        };
+        self.pave_blocks_pool.push(vec![spb]);
+        self.shapes[edge_idx].reference = (self.pave_blocks_pool.len() - 1) as i64;
     }
 
     pub fn init_pave_blocks_for_vertex(&mut self, v: usize) {

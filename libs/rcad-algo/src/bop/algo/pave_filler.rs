@@ -1628,6 +1628,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let n_e = n_s[i];
                 if a_type[i] != ShapeType::Edge || !a_mi.insert(n_e) { continue; }
                 if self.ds.shapes[n_e].has_flag() { continue; }
+                self.ds.init_pave_blocks(n_e);
                 let a_lpb = self.ds.change_pave_blocks(n_e);
                 for a_pb in a_lpb {
                     let pbr = a_pb.0.read().unwrap();
@@ -1805,6 +1806,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, _the_add_interfs: bool) {
         for &n_e in the_medges {
             if n_e >= self.ds.nb_shapes() { continue; }
+            self.ds.init_pave_blocks(n_e);
             let a_lpb = self.ds.change_pave_blocks(n_e);
             if a_lpb.is_empty() { continue; }
             let old_pbs: Vec<SharedPB> = a_lpb.to_vec();
@@ -2483,6 +2485,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
 
             // L814-821: iterate PBs
+            self.ds.init_pave_blocks(n_e);
             let a_lpb = self.ds.change_pave_blocks(n_e);
             for local_i in 0..a_lpb.len() {
                 // OCCT L819: aMPB.Add(aPBR) where aPBR = myDS->RealPaveBlock(aPB)
@@ -3391,6 +3394,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 self.ds.append_shape(s);
                 let n_en = self.ds.nb_shapes() - 1;
                 // L121-123: aPBD->SetEdge(nEn)
+                self.ds.init_pave_blocks(an_ei);
                 let a_lpbd = self.ds.change_pave_blocks(an_ei);
                 if let Some(a_pbd) = a_lpbd.first().cloned() {
                     a_pbd.0.write().unwrap().edge = n_en;
