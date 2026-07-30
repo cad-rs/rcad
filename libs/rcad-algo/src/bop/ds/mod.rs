@@ -1074,9 +1074,15 @@ impl DS {
         // OCCT BOPDS_DS::UpdateCommonBlockWithSDVertices
     }
 
+    /// OCCT BOPDS_DS::InitPaveBlocks — creates initial pave block for an edge.
+    /// rcad: delegates to change_pave_blocks which lazily creates on first access.
+    pub fn init_pave_blocks(&mut self, edge_idx: usize) {
+        self.change_pave_blocks(edge_idx);
+    }
+
     pub fn init_pave_blocks_for_vertex(&mut self, v: usize) {
         let e: Vec<usize> = self.map_ve.get(&v).cloned().unwrap_or_default();
-        for &ei in &e { self.change_pave_blocks(ei); }
+        for &ei in &e { self.init_pave_blocks(ei); }
     }
 
     pub fn release_pave_blocks(&mut self) {
