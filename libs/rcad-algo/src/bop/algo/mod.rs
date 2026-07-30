@@ -8,13 +8,16 @@
 //! | builder_solid   | BOPAlgo_BuilderSolid    | Solid building                  |
 //! | shell_splitter  | BOPAlgo_ShellSplitter   | Shell partitioning              |
 //! | checker_si      | BOPAlgo_CheckerSI       | Self-interference check         |
+//! | section_attribute | BOPAlgo_SectionAttribute | Section parameters            |
 
 pub mod pave_filler;
 pub mod builder;
+pub mod builder_area;
 pub mod builder_face;
 pub mod builder_solid;
 pub mod shell_splitter;
 pub mod checker_si;
+pub mod section_attribute;
 
 // Re-export shared types
 pub use builder::{BooleanBuilder, BooleanError};

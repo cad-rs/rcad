@@ -40,19 +40,7 @@ struct CoupleOfPBs {
     index: usize, // new vertex index (iV)
 }
 
-/// OCCT BOPAlgo_SectionAttribute (BOPAlgo_SectionAttribute.hxx).
-/// Section attributes for boolean operations (method, tolerance, etc.).
-#[derive(Debug, Clone)]
-struct SectionAttribute {
-    method: i32,
-    section_tolerance: f64,
-}
-
-impl Default for SectionAttribute {
-    fn default() -> Self {
-        SectionAttribute { method: 0, section_tolerance: 1e-7 }
-    }
-}
+use crate::bop::algo::section_attribute::SectionAttribute;
 
 /// OCCT BOPAlgo_PaveFiller::EdgeRangeDistance — distance from an edge range to a face.
 #[derive(Debug, Clone)]
