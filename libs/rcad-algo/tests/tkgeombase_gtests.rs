@@ -6,9 +6,9 @@
 //! Hermit, CompCurveToBSplineCurve, ProjLib_Cone.
 
 use rcad_algo::extrema::*;
-use rcad_algo::geom_convert::*;
-use rcad_algo::int_ana::*;
-use rcad_algo::tkgeombase_algo::*;
+use rcad_kernel::nurbs_convert::*;
+use rcad_kernel::base::int_ana::*;
+
 use glam::DVec3;
 use rcad_kernel::geom::*;
 

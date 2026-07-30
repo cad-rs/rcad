@@ -398,25 +398,17 @@ mod logspiral_tests {
 #[cfg(test)]
 mod api_intercurve_tests {
     use super::*;
-    use rcad_algo::geom2d_api::intersect_curves2d;
+    use rcad_kernel::base::int_ana2d::AnaIntersection2d;
 
     #[test]
     fn line_line_intersect_origin() {
-        // Vertical and horizontal lines cross at the origin
-        let l1 = Curve2d::Line(Line2d {
-            origin: Point2::new(-10.0, 0.0),
-            direction: Vec2::X,
-        });
-        let l2 = Curve2d::Line(Line2d {
-            origin: Point2::new(0.0, -10.0),
-            direction: Vec2::Y,
-        });
-        let pts = intersect_curves2d(&l1, &l2, 1e-7);
-        if pts.is_empty() {
-            // intersect_curves2d is sample-based — may miss crossing. Skip.
-            return;
-        }
-        let d = pts[0].point.distance(Point2::new(0.0, 0.0));
+        let l1 = Line2d { origin: Point2::new(-10.0, 0.0), direction: Vec2::X };
+        let l2 = Line2d { origin: Point2::new(0.0, -10.0), direction: Vec2::Y };
+        let mut inter = AnaIntersection2d::new();
+        inter.perform_lin_lin(&l1, &l2);
+        assert!(inter.is_done());
+        assert!(!inter.is_empty());
+        let d = inter.point(0).value().distance(Point2::new(0.0, 0.0));
         assert!(d < 1e-6, "intersection at origin, got dist {d}");
     }
 }
