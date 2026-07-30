@@ -1,7 +1,6 @@
 //! Integration tests for `rcad-modeling` primitive builders and sweep operations.
 
 use glam::{DVec2, DVec3};
-use rcad_algorithms::{total_surface_area_topods, total_volume_topods};
 use rcad_kernel::topods;
 use rcad_kernel::topods::TShape;
 use rcad_modeling::{
@@ -86,17 +85,17 @@ fn conical_frustum_builds_solid() {
     let expected_sa = lat_sa + cap_bot + cap_top;
     let expected_vol = std::f64::consts::PI * h / 3.0 * (rb * rb + rt * rt + rb * rt);
 
-    let tol_sa = 1.0; // tessellation discretisation error (~0.06% of expected SA for this size)
+    let tol_sa = 1.0;
+    let a_sa = rcad_kernel::surface_area(&brep);
     assert!(
-        (total_surface_area_topods(&brep) - expected_sa).abs() < tol_sa,
-        "frustum SA: expected {expected_sa}, got {}",
-        total_surface_area_topods(&brep)
+        (a_sa - expected_sa).abs() < tol_sa,
+        "frustum SA: expected {expected_sa}, got {a_sa}"
     );
-    let tol_vol = 0.5; // tessellation discretisation error
+    let tol_vol = 0.5;
+    let a_vol = rcad_kernel::volume(&brep);
     assert!(
-        (total_volume_topods(&brep) - expected_vol).abs() < tol_vol,
-        "frustum volume: expected {expected_vol}, got {}",
-        total_volume_topods(&brep)
+        (a_vol - expected_vol).abs() < tol_vol,
+        "frustum volume: expected {expected_vol}, got {a_vol}"
     );
 }
 
