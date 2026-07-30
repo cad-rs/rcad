@@ -45,24 +45,26 @@ impl<'a> PrimBuilder<'a> {
         Shape { data: self.brep.tshapes[idx].clone(), index: idx, orientation: Orientation::Forward, location: 0 }
     }
 
-    // OCCT L66: MakeEdge from line
+    // OCCT L66: MakeEdge from line — creates edge WITHOUT vertices
+    // OCCT vertices are added later via AddEdgeVertex.
     pub fn make_edge_line(&mut self, l: &Line3) -> Shape {
         let curve = Curve3::Line(l.clone());
         let p1 = curve.point_at(0.0);
         let p2 = curve.point_at(1.0);
-        // OCCT creates edge with the line but NO vertices yet (vertices added via AddEdgeVertex)
-        // rcad add_tedge needs first/last vertices. Create placeholder vertices.
-        let v1_idx = self.brep.tshapes.len();
-        self.brep.tshapes.push(Arc::new(TShape::Vertex(topods::TVertexData {
-            my_shapes: vec![], flags: 0, point: p1, tolerance: 1e-7, points: vec![],
-        })));
-        let v2_idx = self.brep.tshapes.len();
-        self.brep.tshapes.push(Arc::new(TShape::Vertex(topods::TVertexData {
-            my_shapes: vec![], flags: 0, point: p2, tolerance: 1e-7, points: vec![],
-        })));
-        let v1 = Shape { data: self.brep.tshapes[v1_idx].clone(), index: v1_idx, orientation: Orientation::Forward, location: 0 };
-        let v2 = Shape { data: self.brep.tshapes[v2_idx].clone(), index: v2_idx, orientation: Orientation::Forward, location: 0 };
-        self.brep.add_tedge(Some(curve), v1, v2, [0.0, (p2 - p1).length()])
+        let range_len = (p2 - p1).length();
+        // Directly create an edge TShape without vertices (add_tedge requires them)
+        let null_shape = Shape { data: Arc::new(TShape::Vertex(topods::TVertexData {
+            my_shapes: vec![], flags: 0, point: DVec3::ZERO, tolerance: 0.0, points: vec![],
+        })), index: usize::MAX, orientation: Orientation::Forward, location: 0 };
+        let index = self.brep.tshapes.len();
+        let ts = Arc::new(TShape::Edge(topods::TEdgeData {
+            curve: Some(curve), tolerance: 1e-7, range: [0.0, range_len], degenerated: false,
+            pcurves: Default::default(), first: null_shape.clone(), last: null_shape,
+            my_shapes: vec![], flags: 0, representations: vec![],
+            vertex_params: Default::default(), same_parameter: true, same_range: true,
+        }));
+        self.brep.tshapes.push(ts);
+        Shape { data: self.brep.tshapes[index].clone(), index, orientation: Orientation::Forward, location: 0 }
     }
 
     // OCCT L91: MakeVertex

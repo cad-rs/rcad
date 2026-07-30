@@ -5,7 +5,7 @@
 
 use glam::DVec3;
 use crate::prim::prim::builder::PrimBuilder;
-use rcad_kernel::geom::{Line3, Plane, Surface3};
+use rcad_kernel::geom::{Line3, Plane};
 use rcad_kernel::topods::Shape;
 
 pub use self::Dir::*;
@@ -34,6 +34,7 @@ fn nd3(d1: Dir, d2: Dir, d3: Dir) -> usize { VAL[nd(d1)] + VAL[nd(d2)] + VAL[nd(
 
 pub struct GWedge<'a> {
     pub builder: PrimBuilder<'a>,
+    origin: DVec3,
     xmin: f64, xmax: f64, ymin: f64, ymax: f64,
     zmin: f64, zmax: f64, z2min: f64, z2max: f64,
     x2min: f64, x2max: f64,
@@ -56,7 +57,7 @@ impl<'a> GWedge<'a> {
         fn none12<T>() -> [Option<T>; 12] { [None, None, None, None, None, None, None, None, None, None, None, None] }
         fn none6<T>() -> [Option<T>; 6] { [None, None, None, None, None, None] }
         GWedge {
-            builder,
+            builder, origin: DVec3::ZERO,
             xmin: 0.0, xmax: dx, ymin: 0.0, ymax: dy, zmin: 0.0, zmax: dz,
             z2min: 0.0, z2max: dz, x2min: 0.0, x2max: dx,
             my_infinite: [false; NBFACES],
@@ -104,7 +105,7 @@ impl<'a> GWedge<'a> {
             6 => (self.x2max, self.ymax, self.z2min),
             _ => (self.x2max, self.ymax, self.z2max),
         };
-        DVec3::new(x, y, z)
+        self.origin + DVec3::new(x, y, z)
     }
 
     fn has_vertex(&self, d1: Dir, d2: Dir, d3: Dir) -> bool {
@@ -185,7 +186,7 @@ impl<'a> GWedge<'a> {
                 1 => (Dir::XMin, Dir::ZMax, Dir::XMax, Dir::ZMin),
                 _ => (Dir::YMin, Dir::XMax, Dir::YMax, Dir::XMin),
             };
-            let mut w = self.builder.make_wire();
+            let w = self.builder.make_wire();
             let e4 = if self.has_edge(d, dd4) { Some(self.edge(d, dd4)) } else { None };
             let e3 = if self.has_edge(d, dd3) { Some(self.edge(d, dd3)) } else { None };
             let e2 = if self.has_edge(d, dd2) { Some(self.edge(d, dd2)) } else { None };
