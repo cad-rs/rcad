@@ -618,8 +618,8 @@ pub struct DS {
 }
 
 impl DS {
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Construction / initialisation
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Construction / initialisation
+    // ================================================================
     pub fn new() -> Self {
         DS {
             arguments: Vec::new(), nb_source_shapes: 0, ranges: Vec::new(),
@@ -662,13 +662,13 @@ impl DS {
         self.common_blocks.clear();
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Arguments
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Arguments
+    // ================================================================
     pub fn set_arguments(&mut self, a: Vec<Shape>) { self.arguments = a; }
     pub fn arguments(&self) -> &[Shape] { &self.arguments }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Init
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Init
+    // ================================================================
     /// BOPDS_DS::Init ?builds shape index, ranges, and bounding boxes.
     // OCCT BOPDS_DS.cxx L285-324
     pub fn init(&mut self, fuzz: f64) {
@@ -719,8 +719,8 @@ impl DS {
         }
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Queries ?shape count, range, rank
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Queries ?shape count, range, rank
+    // ================================================================
     pub fn nb_shapes(&self) -> usize { self.shapes.len() }
     pub fn nb_source_shapes(&self) -> usize { self.nb_source_shapes }
     pub fn nb_ranges(&self) -> usize { self.ranges.len() }
@@ -736,9 +736,7 @@ impl DS {
 
     pub fn is_new_shape(&self, i: usize) -> bool { i >= self.nb_source_shapes }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Append
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
-    /// Append with pre-built ShapeInfo.
+     /// Append with pre-built ShapeInfo.
     pub fn append(&mut self, si: ShapeInfo) -> usize {
         let pk = (si.shape.ptr_id(), si.shape.location);
         self.shapes.push(si);
@@ -761,8 +759,6 @@ impl DS {
         idx
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Shape info access
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
     pub fn shape_info(&self, i: usize) -> &ShapeInfo { &self.shapes[i] }
     pub fn change_shape_info(&mut self, i: usize) -> &mut ShapeInfo { &mut self.shapes[i] }
     pub fn shape(&self, i: usize) -> &Shape { &self.shapes[i].shape }
@@ -773,8 +769,7 @@ impl DS {
         }
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Pave blocks pool
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // Pave blocks pool
     pub fn pave_blocks_pool(&self) -> &[Vec<SharedPB>] { &self.pave_blocks_pool }
     pub fn change_pave_blocks_pool(&mut self) -> &mut Vec<Vec<SharedPB>> { &mut self.pave_blocks_pool }
     pub fn has_pave_blocks(&self, i: usize) -> bool { self.shapes[i].has_reference() }
@@ -821,8 +816,8 @@ impl DS {
          ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Common block map
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Common block map
+    // ================================================================
     pub fn is_common_block(&self, pb: &SharedPB) -> bool {
         let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
         self.map_pb_cb.contains_key(&ptr)
@@ -875,8 +870,8 @@ impl DS {
         cb_idx
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Face info pool
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Face info pool
+    // ================================================================
     pub fn face_info_pool(&self) -> &[FaceInfo] { &self.face_info_pool }
     pub fn change_face_info_pool(&mut self) -> &mut Vec<FaceInfo> { &mut self.face_info_pool }
     pub fn has_face_info(&self, i: usize) -> bool { self.shapes[i].has_reference() }
@@ -917,8 +912,8 @@ impl DS {
         drop(pfi);
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Same-domain shapes
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Same-domain shapes
+    // ================================================================
     pub fn shapes_sd(&mut self) -> &mut HashMap<usize, usize> { &mut self.shapes_sd }
     pub fn add_shape_sd(&mut self, i: usize, sd: usize) {
         if i != sd { self.shapes_sd.insert(i, sd); }
@@ -940,8 +935,8 @@ impl DS {
         r
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Interferences ?typed accessors
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Interferences ?typed accessors
+    // ================================================================
     pub fn interf_vv(&mut self) -> &mut Vec<InterferenceVV> { &mut self.interf_vv }
     pub fn interf_ve(&mut self) -> &mut Vec<InterferenceVE> { &mut self.interf_ve }
     pub fn interf_vf(&mut self) -> &mut Vec<InterferenceVF> { &mut self.interf_vf }
@@ -989,8 +984,8 @@ impl DS {
 
     pub fn interferences(&self) -> &HashSet<(usize, usize)> { &self.interf_tb }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Dump
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Dump
+    // ================================================================
     pub fn dump(&self) -> String {
         let mut s = String::new();
         s.push_str(" *** DS ***\n");
@@ -1010,8 +1005,8 @@ impl DS {
         s
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Sub-shape / topology queries
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Sub-shape / topology queries
+    // ================================================================
     pub fn is_sub_shape(&self, c: usize, p: usize) -> bool {
         self.shapes[p].sub_shapes.iter().any(|&s| s == c)
     }
@@ -1058,8 +1053,8 @@ impl DS {
         self.shapes[..self.nb_source_shapes].iter().filter(|s| s.shape_type == ShapeType::Face).count()
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Update* methods
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Update* methods
+    // ================================================================
     pub fn update_pave_blocks_with_sd_vertices(&mut self) {
         for list in self.pave_blocks_pool.clone() {
             for pb in &list { self.update_pave_block_with_sd_vertices(pb); }
@@ -1113,8 +1108,8 @@ impl DS {
         true
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // BuildBndBoxSolid ?compute solid bounding box from sub-shapes
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // BuildBndBoxSolid ?compute solid bounding box from sub-shapes
+    // ================================================================
     pub fn build_bnd_box_solid(&mut self, idx: usize, the_box: &mut (DVec3, DVec3, f64), _ci: bool) {
         let subs: Vec<usize> = self.shapes[idx].sub_shapes.clone();
         let mut faces: Vec<usize> = Vec::new();
@@ -1144,8 +1139,8 @@ impl DS {
         }
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Helpers ?DS internal
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // Helpers ?DS internal
+    // ================================================================
     /// Prepare vertex shape info: compute bounding boxes from geometry.
     // OCCT BOPDS_DS.cxx L1589-1610
     fn prepare_vertices(&mut self, tol: f64) -> usize {
@@ -1456,8 +1451,8 @@ impl DS {
         s.as_vertex().map(|vd| vd.point)
     }
 
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // BRep_Tool-style query helpers
-    // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?
+    // ================================================================    // BRep_Tool-style query helpers
+    // ================================================================
     /// Edge curve by shape index.
     pub fn edge_curve(&self, i: usize) -> Option<&rcad_kernel::geom::Curve3> {
         self.shapes.get(i).and_then(|si| {
