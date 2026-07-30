@@ -1010,7 +1010,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// OCCT-aligned: set a single flag on a shape.
     pub fn set_flag(&mut self, r: Shape, flag: u16, on: bool) {
-        let arc = Arc::get_mut(&mut self.tshapes[r.index]).expect("set_flag: Arc still shared");
+        let arc = Arc::make_mut(&mut self.tshapes[r.index]);
         let flags = match arc {
             TShape::Vertex(vd) => &mut vd.flags,
             TShape::Edge(ed) => &mut ed.flags,
@@ -1084,7 +1084,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate a vertex's data (panics if vertex index is out of range or Arc is shared).
     pub fn vertex_mut(&mut self, r: Shape) -> &mut TVertexData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("vertex_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Vertex(v) => v,
             _ => panic!("vertex_mut: Shape {} is not a Vertex", r.index),
         }
@@ -1092,7 +1092,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate an edge's data.
     pub fn edge_mut(&mut self, r: Shape) -> &mut TEdgeData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("edge_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Edge(e) => e,
             _ => panic!("edge_mut: Shape {} is not an Edge", r.index),
         }
@@ -1100,7 +1100,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate a wire's data.
     pub fn wire_mut(&mut self, r: Shape) -> &mut TWireData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("wire_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Wire(w) => w,
             _ => panic!("wire_mut: Shape {} is not a Wire", r.index),
         }
@@ -1108,7 +1108,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate a face's data.
     pub fn face_mut(&mut self, r: Shape) -> &mut TFaceData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("face_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Face(f) => f,
             _ => panic!("face_mut: Shape {} is not a Face", r.index),
         }
@@ -1116,7 +1116,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate a shell's data.
     pub fn shell_mut(&mut self, r: Shape) -> &mut TShellData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("shell_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Shell(s) => s,
             _ => panic!("shell_mut: Shape {} is not a Shell", r.index),
         }
@@ -1124,7 +1124,7 @@ pub fn nb_faces(&self) -> usize {
 
     /// Mutate a solid's data.
     pub fn solid_mut(&mut self, r: Shape) -> &mut TSolidData {
-        match Arc::get_mut(&mut self.tshapes[r.index]).expect("solid_mut: Arc still shared") {
+        match Arc::make_mut(&mut self.tshapes[r.index]) {
             TShape::Solid(s) => s,
             _ => panic!("solid_mut: Shape {} is not a Solid", r.index),
         }
@@ -2158,8 +2158,7 @@ impl BRepBuilder {
 
     /// Add a shape to an existing compound.
     pub fn add_to_compound(&self, brep: &mut BRep, compound: Shape, shape: Shape) {
-        let ts = Arc::get_mut(&mut brep.tshapes[compound.index])
-            .expect("add_to_compound: unique ownership required");
+        let ts = Arc::make_mut(&mut brep.tshapes[compound.index]);
         match ts {
             TShape::Compound(shapes) => shapes.push(shape),
             _ => panic!("add_to_compound: shape is not a Compound"),
