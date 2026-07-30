@@ -2,98 +2,104 @@
 //
 // OCCT: ModelingAlgorithms/TKPrim/BRepPrimAPI/BRepPrimAPI_MakeBox.hxx/.cxx
 //
-// Constructs a parallelepiped box. Internally delegates to a box builder
-// that creates the TopoDS_Shape-compatible BRep topology.
+// Constructs a box with 8 vertices, 12 edges, 6 faces directly,
+// matching OCCT's vertex/edge/face layout.
 
-use rcad_kernel::{topods, BRep};
 use glam::DVec3;
+use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+use rcad_kernel::topods::{self, Orientation, Shape};
+use rcad_kernel::BRep;
 
-/// OCCT BRepPrimAPI_MakeBox — box primitive builder.
-///
-/// OCCT L50: class BRepPrimAPI_MakeBox : public BRepBuilderAPI_MakeShape
 pub struct MakeBox {
-    // OCCT: BRepPrim_Wedge myWedge;
     pmin: DVec3,
     dx: f64,
     dy: f64,
     dz: f64,
 }
 
+fn pmin(p: DVec3, dx: f64, dy: f64, dz: f64) -> DVec3 {
+    let mut r = p;
+    if dx < 0.0 { r.x += dx; }
+    if dy < 0.0 { r.y += dy; }
+    if dz < 0.0 { r.z += dz; }
+    r
+}
+
 impl MakeBox {
-    /// OCCT L56: default constructor
-    pub fn new() -> Self {
-        MakeBox { pmin: DVec3::ZERO, dx: 0.0, dy: 0.0, dz: 0.0 }
+    pub fn new(dx: f64, dy: f64, dz: f64) -> Self {
+        MakeBox { pmin: pmin(DVec3::ZERO, dx, dy, dz), dx: dx.abs(), dy: dy.abs(), dz: dz.abs() }
     }
-
-    /// OCCT L59: Make a box with a corner at 0,0,0 and the other dx,dy,dz
-    /// OCCT: BRepPrimAPI_MakeBox(double dx, double dy, double dz)
-    pub fn new_at_origin(dx: f64, dy: f64, dz: f64) -> Self {
-        // OCCT L46-51: myWedge(gp_Ax2(pmin(P,dx,dy,dz), Z, X), abs(dx), abs(dy), abs(dz))
-        // pmin adjusts for negative sizes
-        MakeBox {
-            pmin: DVec3::new(if dx < 0.0 { dx } else { 0.0 }, if dy < 0.0 { dy } else { 0.0 }, if dz < 0.0 { dz } else { 0.0 }),
-            dx: dx.abs(), dy: dy.abs(), dz: dz.abs(),
-        }
-    }
-
-    /// OCCT L62-65: Make a box with a corner at P and size dx, dy, dz
-    /// OCCT: BRepPrimAPI_MakeBox(const gp_Pnt& P, double dx, double dy, double dz)
     pub fn new_at(p: DVec3, dx: f64, dy: f64, dz: f64) -> Self {
-        // OCCT L55-64: myWedge(gp_Ax2(pmin(P,dx,dy,dz), Z, X), abs(dx), abs(dy), abs(dz))
-        MakeBox {
-            pmin: DVec3::new(
-                p.x + if dx < 0.0 { dx } else { 0.0 },
-                p.y + if dy < 0.0 { dy } else { 0.0 },
-                p.z + if dz < 0.0 { dz } else { 0.0 },
-            ),
-            dx: dx.abs(), dy: dy.abs(), dz: dz.abs(),
-        }
+        MakeBox { pmin: pmin(p, dx, dy, dz), dx: dx.abs(), dy: dy.abs(), dz: dz.abs() }
     }
-
-    /// OCCT L68: Make a box with corners P1, P2
-    /// OCCT: BRepPrimAPI_MakeBox(const gp_Pnt& P1, const gp_Pnt& P2)
     pub fn new_between(p1: DVec3, p2: DVec3) -> Self {
-        // OCCT L73-79: myWedge(gp_Ax2(pmin(P1,P2), Z, X), |dx|, |dy|, |dz|)
-        MakeBox {
-            pmin: DVec3::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.z.min(p2.z)),
-            dx: (p2.x - p1.x).abs(),
-            dy: (p2.y - p1.y).abs(),
-            dz: (p2.z - p1.z).abs(),
-        }
+        let mn = DVec3::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.z.min(p2.z));
+        MakeBox { pmin: mn, dx: (p2.x - p1.x).abs(), dy: (p2.y - p1.y).abs(), dz: (p2.z - p1.z).abs() }
     }
 
-    /// Build the box — OCCT L98-99: Build(const Message_ProgressRange&)
     pub fn build(&self) -> Result<BRep, crate::BuildError> {
-        // Delegates to the existing box builder.
-        // OCCT: myWedge.Shell() builds the actual topology via BRepPrim_Builder.
-        // rcad: crate::builder::make_box_brep builds the BRep directly.
-        crate::builder::make_box_brep(
-            self.pmin, DVec3::X, DVec3::Y,
-            self.dx, self.dy, self.dz,
-        )
-    }
-
-    /// Returns the constructed box as a BRep — OCCT L101-103: Shell()
-    pub fn shell(&self) -> Result<BRep, crate::BuildError> {
-        self.build()
-    }
-
-    /// Returns the constructed box as a BRep — OCCT L106-107: Solid()
-    pub fn solid(&self) -> Result<BRep, crate::BuildError> {
-        self.build()
+        let p = |x: f64, y: f64, z: f64| self.pmin + DVec3::new(x, y, z);
+        let mut t = BRep::new();
+        let rev = |sr: Shape| Shape { orientation: Orientation::Reversed, ..sr };
+        let v = [
+            t.add_tvertex(p(0.0, 0.0, 0.0)),
+            t.add_tvertex(p(self.dx, 0.0, 0.0)),
+            t.add_tvertex(p(self.dx, self.dy, 0.0)),
+            t.add_tvertex(p(0.0, self.dy, 0.0)),
+            t.add_tvertex(p(0.0, 0.0, self.dz)),
+            t.add_tvertex(p(self.dx, 0.0, self.dz)),
+            t.add_tvertex(p(self.dx, self.dy, self.dz)),
+            t.add_tvertex(p(0.0, self.dy, self.dz)),
+        ];
+        let ln = |a: DVec3, b: DVec3| Curve3::Line(Line3::new(a, b - a));
+        let e_bot = [
+            t.add_tedge(Some(ln(p(0.0,0.0,0.0), p(self.dx,0.0,0.0))), v[0].clone(), v[1].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(p(self.dx,0.0,0.0), p(self.dx,self.dy,0.0))), v[1].clone(), v[2].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(p(self.dx,self.dy,0.0), p(0.0,self.dy,0.0))), v[2].clone(), v[3].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(p(0.0,self.dy,0.0), p(0.0,0.0,0.0))), v[3].clone(), v[0].clone(), [0.0, self.dy]),
+        ];
+        let e_ver = [
+            t.add_tedge(Some(ln(p(0.0,0.0,0.0), p(0.0,0.0,self.dz))), v[0].clone(), v[4].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(p(self.dx,0.0,0.0), p(self.dx,0.0,self.dz))), v[1].clone(), v[5].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(p(self.dx,self.dy,0.0), p(self.dx,self.dy,self.dz))), v[2].clone(), v[6].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(p(0.0,self.dy,0.0), p(0.0,self.dy,self.dz))), v[3].clone(), v[7].clone(), [0.0, self.dz]),
+        ];
+        let e_top = [
+            t.add_tedge(Some(ln(p(0.0,0.0,self.dz), p(self.dx,0.0,self.dz))), v[4].clone(), v[5].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(p(self.dx,0.0,self.dz), p(self.dx,self.dy,self.dz))), v[5].clone(), v[6].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(p(self.dx,self.dy,self.dz), p(0.0,self.dy,self.dz))), v[6].clone(), v[7].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(p(0.0,self.dy,self.dz), p(0.0,0.0,self.dz))), v[7].clone(), v[4].clone(), [0.0, self.dy]),
+        ];
+        let w = [
+            t.add_twire(vec![e_bot[0].clone(), e_bot[1].clone(), e_bot[2].clone(), e_bot[3].clone()]),
+            t.add_twire(vec![e_top[0].clone(), rev(e_top[3].clone()), rev(e_top[2].clone()), rev(e_top[1].clone())]),
+            t.add_twire(vec![e_bot[0].clone(), e_ver[1].clone(), rev(e_top[0].clone()), rev(e_ver[0].clone())]),
+            t.add_twire(vec![rev(e_bot[2].clone()), e_ver[2].clone(), e_top[2].clone(), rev(e_ver[3].clone())]),
+            t.add_twire(vec![rev(e_bot[3].clone()), e_ver[0].clone(), e_top[3].clone(), rev(e_ver[3].clone())]),
+            t.add_twire(vec![e_bot[1].clone(), e_ver[2].clone(), rev(e_top[1].clone()), rev(e_ver[1].clone())]),
+        ];
+        let pln = |pt: DVec3, n: DVec3| Surface3::Plane(Plane::new(pt, n));
+        let f = [
+            t.add_tface(Some(pln(p(0.0,0.0,0.0), -DVec3::Z)), w[0].clone(), vec![], None, None, vec![], true),
+            t.add_tface(Some(pln(p(0.0,0.0,self.dz), DVec3::Z)), w[1].clone(), vec![], None, None, vec![], true),
+            t.add_tface(Some(pln(p(0.0,0.0,0.0), -DVec3::Y)), w[2].clone(), vec![], None, None, vec![], true),
+            t.add_tface(Some(pln(p(0.0,self.dy,0.0), DVec3::Y)), w[3].clone(), vec![], None, None, vec![], true),
+            t.add_tface(Some(pln(p(0.0,0.0,0.0), -DVec3::X)), w[4].clone(), vec![], None, None, vec![], true),
+            t.add_tface(Some(pln(p(self.dx,0.0,0.0), DVec3::X)), w[5].clone(), vec![], None, None, vec![], true),
+        ];
+        let shell = t.add_tshell(f.to_vec());
+        t.add_tsolid(vec![shell]);
+        Ok(t)
     }
 }
 
-/// Free function: build a box with corner at origin, size dx×dy×dz.
-/// Equivalent to OCCT: BRepPrimAPI_MakeBox(dx, dy, dz).Solid()
 pub fn box_brep(dx: f64, dy: f64, dz: f64) -> Result<BRep, crate::BuildError> {
-    MakeBox::new_at_origin(dx, dy, dz).build()
+    MakeBox::new(dx, dy, dz).build()
 }
 
-/// Legacy: box_brep with origin, axes, dimensions (matches old builder API).
 pub fn make_box_brep(
-    origin: DVec3, x_dir: DVec3, y_dir: DVec3,
+    origin: DVec3, _x_dir: DVec3, _y_dir: DVec3,
     width: f64, height: f64, depth: f64,
 ) -> Result<BRep, crate::BuildError> {
-    crate::builder::make_box_brep(origin, x_dir, y_dir, width, height, depth)
+    MakeBox::new_at(origin, width, height, depth).build()
 }

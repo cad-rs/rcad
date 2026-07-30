@@ -1,9 +1,13 @@
 // OCCT BRepPrimAPI_MakeSphere 1:1 translation.
-//
-// OCCT: ModelingAlgorithms/TKPrim/BRepPrimAPI/BRepPrimAPI_MakeSphere.hxx/.cxx
+// Sphere at origin, radius R. 2 vertices (north/south pole), 3 edges
+// (north degenerate, seam, south degenerate), 1 face.
 
-use rcad_kernel::BRep;
 use glam::DVec3;
+use rcad_kernel::geom::{Circle3, Curve3, SphericalSurface, Surface3};
+use rcad_kernel::topods::{self, Orientation, Shape};
+use rcad_kernel::BRep;
+
+const TAU: f64 = std::f64::consts::TAU;
 
 pub struct MakeSphere {
     radius: f64,
@@ -11,20 +15,34 @@ pub struct MakeSphere {
 }
 
 impl MakeSphere {
-    /// OCCT: MakeSphere(R)
     pub fn new(r: f64) -> Self {
         MakeSphere { radius: r.abs(), center: DVec3::ZERO }
     }
-
     pub fn build(&self) -> Result<BRep, crate::BuildError> {
-        crate::builder::sphere_brep(self.center, self.radius)
+        let r = self.radius;
+        let c = self.center;
+        let rev = |sr: Shape| Shape { orientation: Orientation::Reversed, ..sr };
+        let mut t = BRep::new();
+        let north = t.add_tvertex(c + DVec3::Z * r);
+        let south = t.add_tvertex(c - DVec3::Z * r);
+        let seam = Circle3::new(c, DVec3::X, r);
+        let pi = std::f64::consts::PI;
+        let e_top = t.add_tedge(None, north.clone(), north.clone(), [0.0, pi * r]);
+        let e_seam = t.add_tedge(Some(Curve3::Circle(seam)), north.clone(), south.clone(), [0.0, pi]);
+        let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
+        let wire = t.add_twire(vec![e_top, e_seam.clone(), e_bot, rev(e_seam)]);
+        let surf = Surface3::Sphere(SphericalSurface::new(c, DVec3::Y, r));
+        let face = t.add_tface(Some(surf), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true);
+        let shell = t.add_tshell(vec![face]);
+        t.add_tsolid(vec![shell]);
+        Ok(t)
     }
-    pub fn shell(&self) -> Result<BRep, crate::BuildError> { self.build() }
-    pub fn solid(&self) -> Result<BRep, crate::BuildError> { self.build() }
 }
 
 pub fn sphere_brep(center: DVec3, radius: f64) -> Result<BRep, crate::BuildError> {
-    crate::builder::sphere_brep(center, radius)
+    let mut s = MakeSphere::new(radius);
+    s.center = center;
+    s.build()
 }
 
 pub fn make_sphere_brep(center: DVec3, radius: f64) -> Result<BRep, crate::BuildError> {
