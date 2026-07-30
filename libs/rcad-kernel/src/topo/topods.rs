@@ -2302,6 +2302,24 @@ impl TShape {
         flags & tshape_flags::LOCKED != 0
     }
 
+    /// OCCT TopoDS_TShape::Locked(theFlag) — sets or clears the LOCKED flag.
+    pub fn set_locked(&mut self, the_flag: bool) {
+        let flags = match self {
+            TShape::Vertex(v) => &mut v.flags,
+            TShape::Edge(e) => &mut e.flags,
+            TShape::Wire(w) => &mut w.flags,
+            TShape::Face(f) => &mut f.flags,
+            TShape::Shell(s) => &mut s.flags,
+            TShape::Solid(s) => &mut s.flags,
+            TShape::CompSolid(_) | TShape::Compound(_) => return,
+        };
+        if the_flag {
+            *flags |= tshape_flags::LOCKED;
+        } else {
+            *flags &= !tshape_flags::LOCKED;
+        }
+    }
+
     pub fn shape_type(&self) -> ShapeType {
         match self {
             TShape::Vertex(_) => ShapeType::Vertex,
