@@ -793,7 +793,6 @@ impl DS {
                 let n_v1 = self.shapes[i].sub_shapes[0];
                 let n_v2 = self.shapes[i].sub_shapes[1];
                 let (p1, p2) = self.edge_vertex_params(i, n_v1, n_v2);
-                eprintln!("[DBG] change_pb edge={} nv1={} nv2={} p1={} p2={}", i, n_v1, n_v2, p1, p2);
                 let pb = PaveBlock::new(i,
                     Pave { vertex_idx: n_v1, param: p1 },
                     Pave { vertex_idx: n_v2, param: p2 },
@@ -818,11 +817,8 @@ impl DS {
         let v1_brep_idx = self.shapes[v1_ds_idx].shape.index;
         let v2_brep_idx = self.shapes[v2_ds_idx].shape.index;
         // OCCT: BRep_Tool::Parameter reads stored param (set during edge construction).
-        let p1v = ed.vertex_params.get(&v1_brep_idx).copied();
-        let p2v = ed.vertex_params.get(&v2_brep_idx).copied();
-        eprintln!("[DBG] edge_vertex_params edge={} v1_idx={} v2_idx={} p1={:?} p2={:?}",
-            edge_idx, v1_brep_idx, v2_brep_idx, p1v, p2v);
-        (p1v.unwrap_or(0.0), p2v.unwrap_or(0.0))
+        (ed.vertex_params.get(&v1_brep_idx).copied().unwrap_or(0.0),
+         ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
     }
 
     // 銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉ワ繝锔姐儱锟狅附銉?    // Common block map
@@ -1757,46 +1753,21 @@ impl DS {
 // Free function: extract sub-shapes of a Shape (TopExp_Explorer equivalent)
 // ===
 fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
+    // Preserve original BRep index so edge_vertex_params can look up vertex_params.
+    let cp = |sr: &Shape| Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
     match &*s.data {
         TShape::Vertex(_) => vec![],
-        TShape::Edge(ed) => {
-            let d = Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation);
-            let d2 = Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation);
-            vec![d, d2]
-        }
-        TShape::Wire(wd) => {
-            wd.edges.iter().map(|sr| {
-                Shape::new(sr.data.clone(), sr.location, sr.orientation)
-            }).collect()
-        }
+        TShape::Edge(ed) => vec![cp(&ed.first), cp(&ed.last)],
+        TShape::Wire(wd) => wd.edges.iter().map(cp).collect(),
         TShape::Face(fd) => {
-            let mut v = vec![Shape::new(fd.outer_wire.data.clone(),
-                fd.outer_wire.location, fd.outer_wire.orientation)];
-            v.extend(fd.inner_wires.iter().map(|w| {
-                Shape::new(w.data.clone(), w.location, w.orientation)
-            }));
+            let mut v = vec![cp(&fd.outer_wire)];
+            v.extend(fd.inner_wires.iter().map(cp));
             v
         }
-        TShape::Shell(sd) => {
-            sd.faces.iter().map(|sr| {
-                Shape::new(sr.data.clone(), sr.location, sr.orientation)
-            }).collect()
-        }
-        TShape::Solid(sd) => {
-            sd.shells.iter().map(|sr| {
-                Shape::new(sr.data.clone(), sr.location, sr.orientation)
-            }).collect()
-        }
-        TShape::CompSolid(cd) => {
-            cd.iter().map(|sr| {
-                Shape::new(sr.data.clone(), sr.location, sr.orientation)
-            }).collect()
-        }
-        TShape::Compound(cd) => {
-            cd.iter().map(|sr| {
-                Shape::new(sr.data.clone(), sr.location, sr.orientation)
-            }).collect()
-        }
+        TShape::Shell(sd) => sd.faces.iter().map(cp).collect(),
+        TShape::Solid(sd) => sd.shells.iter().map(cp).collect(),
+        TShape::CompSolid(cd) => cd.iter().map(cp).collect(),
+        TShape::Compound(cd) => cd.iter().map(cp).collect(),
     }
 }
 

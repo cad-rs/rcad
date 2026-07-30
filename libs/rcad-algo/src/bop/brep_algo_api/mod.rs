@@ -2,7 +2,7 @@
 //!
 //! Fuse (Union), Common (Intersection), Cut (Difference), Section
 //! with `build`/`shape`/`is_done`/`error` pattern.
-//! Uses `topods::BRep` for input/output.
+//! Uses `Shape` for input/output (OCCT: TopoDS_Shape).
 //!
 //! ## OCCT mapping
 //!
@@ -20,7 +20,6 @@ pub mod argument_analyzer;
 pub mod section;
 
 use rcad_kernel::topods;
-use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
@@ -89,19 +88,18 @@ impl BooleanOptions {
 /// `BRepAlgoAPI_BuilderShape`.
 ///
 /// After `build()`, call `shape()` for the result or `error()` on failure.
-pub struct BooleanOp<'a> {
-    shape1: &'a topods::BRep,
-    shape2: &'a topods::BRep,
+pub struct BooleanOp {
+    shape1: Shape,
+    shape2: Shape,
     op_type: BooleanOpType,
     options: BooleanOptions,
-    result: Option<topods::BRep>,
+    result: Option<Shape>,
     err: Option<BooleanError>,
 }
 
-impl<'a> BooleanOp<'a> {
-    /// Constructor matching `BRepAlgoAPI_Fuse(a, b)` / `Common` / `Cut`,
-    /// with `BooleanOpType` selecting the operation type.
-    pub fn new(op: BooleanOpType, shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
+impl<'a> BooleanOp {
+    /// OCCT: BRepAlgoAPI_Fuse(const TopoDS_Shape& theS1, const TopoDS_Shape& theS2)
+    pub fn new(op: BooleanOpType, shape1: Shape, shape2: Shape) -> Self {
         Self {
             shape1,
             shape2,
@@ -112,62 +110,43 @@ impl<'a> BooleanOp<'a> {
         }
     }
 
-    /// `BOPAlgo_Options::SetFuzzyValue` etc.
     pub fn set_options(&mut self, options: BooleanOptions) {
         self.options = options;
     }
 
-    /// `BRepAlgoAPI_BuilderShape::Build()`.
-    ///
-    /// Pipeline: DS -> PaveFiller -> BooleanBuilder.
-    /// Mirrors OCCT `BOPAlgo_BOP::Perform` -> `BOPAlgo_Builder::PerformInternal1` flow.
+    /// OCCT: BRepAlgoAPI_BuilderShape::Build()
     pub fn build(&mut self) -> bool {
         self.result = None;
         self.err = None;
 
-        // OCCT-aligned: pass root Solid/Shell directly (no Compound wrapper)
-        fn root(brep: &topods::BRep, location: u32) -> Shape {
-            for (i, ts) in brep.tshapes.iter().enumerate().rev() {
-                match &**ts {
-                    TShape::Solid(_) | TShape::Shell(_) => {
-                        return Shape::from_parts(ts.clone(), i, location, Orientation::Forward);
-                    }
-                    _ => {}
-                }
-            }
-            panic!("no root Solid/Shell in BRep");
-        }
-        let arg1 = root(&self.shape1, 0);
-        let arg2 = root(&self.shape2, 1);
-
-        // Build DS (BOPDS_DS)
+        let arg1 = self.shape1.clone();
+        let arg2 = self.shape2.clone();
         let mut ds = DS::new();
         ds.set_arguments(vec![arg1, arg2]);
         ds.init(self.options.fuzzy_value.max(1e-7));
 
-        // Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut filler = PaveFiller::new(&mut ds);
         filler.perform();
-        // OCCT L425-429: setup from PaveFiller
         let fuzz = filler.fuzzy_value();
         drop(filler);
         let mut builder = BooleanBuilder::new(&ds, self.op_type, fuzz);
         builder.my_arguments = ds.arguments.clone();
+        // OCCT L330-332: BRepAlgoAPI_BuilderShape::Shape() returns TopoDS_Shape
         match builder.build() {
             Ok(brep) => {
-                self.result = Some(brep);
-                true
+                // Extract root shape from result BRep (OCCT: builder generates TopoDS_Shape directly)
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_) | topods::TShape::Shell(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, topods::Orientation::Forward));
+                self.result = root;
+                self.result.is_some()
             }
-            Err(_) => {
-                self.err = Some(BooleanError::InvalidOperation);
-                false
-            }
+            Err(_) => { self.err = Some(BooleanError::InvalidOperation); false }
         }
     }
 
-    /// `BRepAlgoAPI_BuilderShape::Shape()`.
-    /// Returns the result shape. Panics if `build()` not called or failed.
-    pub fn shape(&self) -> &topods::BRep {
+    /// OCCT: BRepAlgoAPI_BuilderShape::Shape()
+    pub fn shape(&self) -> &Shape {
         self.result.as_ref().expect("build() not called or failed")
     }
 
@@ -185,42 +164,25 @@ impl<'a> BooleanOp<'a> {
 /// Section operation — computes intersection curves between two shapes.
 ///
 /// Corresponds to `BRepAlgoAPI_Section`.
-pub struct SectionOp<'a> {
-    shape1: &'a topods::BRep,
-    shape2: &'a topods::BRep,
-    result: Option<topods::BRep>,
-    err: Option<BooleanError>,
+/// OCCT: BRepAlgoAPI_Section(const TopoDS_Shape& theS1, const TopoDS_Shape& theS2)
+pub struct SectionOp {
+    shape1: Shape,
+    shape2: Shape,
+    result: Option<Shape>,
 }
 
-impl<'a> SectionOp<'a> {
-    /// `BRepAlgoAPI_Section(a, b)` constructor.
-    pub fn new(shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
-        Self {
-            shape1,
-            shape2,
-            result: None,
-            err: None,
-        }
+impl SectionOp {
+    pub fn new(shape1: Shape, shape2: Shape) -> Self {
+        Self { shape1, shape2, result: None }
     }
-
-    /// `BRepAlgoAPI_Section::Build()`.
-    /// Stub: does not compute actual section curves.
+    /// OCCT: BRepAlgoAPI_Section::Build() — stub.
     pub fn build(&mut self) -> bool {
-        self.result = None;
-        self.err = None;
-        self.result = Some(self.shape1.clone());
-        true
+        self.result = self.shape1.clone().into(); true
     }
-
-    /// `BRepAlgoAPI_Section::Shape()`.
-    pub fn shape(&self) -> &topods::BRep {
+    pub fn shape(&self) -> &Shape {
         self.result.as_ref().expect("build() not called or failed")
     }
-
-    /// `BRepAlgoAPI_Algo::IsDone()`.
-    pub fn is_done(&self) -> bool {
-        self.result.is_some()
-    }
+    pub fn is_done(&self) -> bool { self.result.is_some() }
 }
 
 // --- Convenience functions ---
@@ -229,35 +191,23 @@ impl<'a> SectionOp<'a> {
 /// Fuse (Union): combine two shapes into one.
 ///
 /// OCCT-equivalent: `BRepAlgoAPI_Fuse(a, b).Shape()`
-pub fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
+/// OCCT: BRepAlgoAPI_Fuse(a, b).Shape()
+pub fn fuse(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Union, a, b);
-    if op.build() {
-        Ok(op.shape().clone())
-    } else {
-        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
-    }
+    if op.build() { Ok(op.shape().clone()) }
+    else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
 }
 
-/// Common (Intersection): the shared volume of two shapes.
-///
-/// OCCT-equivalent: `BRepAlgoAPI_Common(a, b).Shape()`
-pub fn common(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
+/// OCCT: BRepAlgoAPI_Common(a, b).Shape()
+pub fn common(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Intersection, a, b);
-    if op.build() {
-        Ok(op.shape().clone())
-    } else {
-        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
-    }
+    if op.build() { Ok(op.shape().clone()) }
+    else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
 }
 
-/// Cut (Difference): subtract shape b from shape a.
-///
-/// OCCT-equivalent: `BRepAlgoAPI_Cut(a, b).Shape()`
-pub fn cut(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
+/// OCCT: BRepAlgoAPI_Cut(a, b).Shape()
+pub fn cut(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
     let mut op = BooleanOp::new(BooleanOpType::Difference, a, b);
-    if op.build() {
-        Ok(op.shape().clone())
-    } else {
-        Err(op.err.unwrap_or(BooleanError::InvalidOperation))
-    }
+    if op.build() { Ok(op.shape().clone()) }
+    else { Err(op.err.unwrap_or(BooleanError::InvalidOperation)) }
 }
