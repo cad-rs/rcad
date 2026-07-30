@@ -1,51 +1,93 @@
-//! OCCT BRepAlgoAPI — high-level boolean operations.
+//! OCCT BRepAlgoAPI — 1:1 high-level boolean operations.
 //!
-//! 1:1 mapping:
-//!   BRepAlgoAPI_Algo                → Algo (IsDone / Error / Warn)
-//!   BRepAlgoAPI_BuilderShape        → BuilderShape (Build / Shape)
-//!   BRepAlgoAPI_BuilderAlgo         → BuilderAlgo (arguments, glue, history)
-//!   BRepAlgoAPI_BooleanOperation    → BooleanOperation (common impl)
-//!     ├─ BRepAlgoAPI_Fuse           → FuseOp
-//!     ├─ BRepAlgoAPI_Common         → CommonOp
-//!     ├─ BRepAlgoAPI_Cut            → CutOp
-//!     ├─ BRepAlgoAPI_Section        → SectionOp
-//!     ├─ BRepAlgoAPI_Defeaturing    → DefeaturingOp
-//!     └─ BRepAlgoAPI_Splitter       → SplitterOp
+//! BRepAlgoAPI_Algo                → Algo trait
+//! BRepAlgoAPI_BuilderShape        → BuilderShape trait
+//! BRepAlgoAPI_BuilderAlgo         → BuilderAlgo trait
+//! BRepAlgoAPI_BooleanOperation    → BooleanOperation (impl)
+//!   ├─ BRepAlgoAPI_Fuse           → FuseOp
+//!   ├─ BRepAlgoAPI_Common         → CommonOp
+//!   ├─ BRepAlgoAPI_Cut            → CutOp
+//!   ├─ BRepAlgoAPI_Section        → SectionOp
+//!   ├─ BRepAlgoAPI_Defeaturing    → DefeaturingOp
+//!   └─ BRepAlgoAPI_Splitter       → SplitterOp
 
 pub mod argument_analyzer;
 
+use std::collections::HashSet;
 use rcad_kernel::topo_shape::Shape;
-
 use crate::bop::algo::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
 
 // ── BRepAlgoAPI_Algo ─────────────────────────────────────────────────────
-// OCCT: IsDone(), Error(), Warn(), UserBreak(), UserProgress()
-
-/// OCCT BRepAlgoAPI_Algo — base algorithm class.
 pub trait Algo {
     fn is_done(&self) -> bool;
     fn error(&self) -> Option<&BooleanError>;
+    fn has_warnings(&self) -> bool { false }
 }
 
 // ── BRepAlgoAPI_BuilderShape ─────────────────────────────────────────────
-// OCCT: Build(), Shape()
-
-/// OCCT BRepAlgoAPI_BuilderShape — build + result shape.
 pub trait BuilderShape: Algo {
-    fn build(&mut self) -> bool;
+    fn build(&mut self);
     fn shape(&self) -> &Shape;
 }
 
-// ── BRepAlgoAPI_BooleanOperation — shared implementation ─────────────────
-// OCCT: constructor, Build pipeline, Shape. Used by FuseOp/CommonOp/CutOp/SectionOp.
+// ── BRepAlgoAPI_BuilderAlgo options ──────────────────────────────────────
+#[derive(Clone)]
+pub struct BuilderAlgoOptions {
+    pub arguments: Vec<Shape>,
+    pub run_parallel: bool,
+    pub fuzzy_value: f64,
+    pub non_destructive: bool,
+    pub glue: i32, // GlueOff=0, GlueShift=1, GlueFull=2
+    pub check_inverted: bool,
+    pub use_bvh: bool,
+}
 
-fn run_pipeline(shape1: &Shape, shape2: &Shape, op_type: BooleanOpType, fuzzy: f64) -> Result<Shape, BooleanError> {
+impl Default for BuilderAlgoOptions {
+    fn default() -> Self {
+        Self {
+            arguments: Vec::new(),
+            run_parallel: false,
+            fuzzy_value: 0.0,
+            non_destructive: false,
+            glue: 0,
+            check_inverted: true,
+            use_bvh: false,
+        }
+    }
+}
+
+impl BuilderAlgoOptions {
+    // OCCT BOPAlgo_Options
+    pub fn set_run_parallel(&mut self, b: bool) { self.run_parallel = b; }
+    pub fn run_parallel(&self) -> bool { self.run_parallel }
+    pub fn set_fuzzy_value(&mut self, v: f64) { self.fuzzy_value = v; }
+    pub fn fuzzy_value(&self) -> f64 { self.fuzzy_value }
+
+    // OCCT BRepAlgoAPI_BuilderAlgo
+    pub fn set_arguments(&mut self, args: Vec<Shape>) { self.arguments = args; }
+    pub fn arguments(&self) -> &[Shape] { &self.arguments }
+    pub fn set_non_destructive(&mut self, b: bool) { self.non_destructive = b; }
+    pub fn non_destructive(&self) -> bool { self.non_destructive }
+    pub fn set_glue(&mut self, g: i32) { self.glue = g; }
+    pub fn glue(&self) -> i32 { self.glue }
+    pub fn set_check_inverted(&mut self, b: bool) { self.check_inverted = b; }
+    pub fn check_inverted(&self) -> bool { self.check_inverted }
+}
+
+// ── BooleanOperation base implementation ────────────────────────────────
+// Shared Build pipeline for Fuse/Common/Cut/Section.
+
+fn run_build(opts: &BuilderAlgoOptions, op_type: BooleanOpType) -> Result<Shape, BooleanError> {
+    if opts.arguments.len() < 2 {
+        return Err(BooleanError::TooFewArguments);
+    }
     let mut ds = DS::new();
-    ds.set_arguments(vec![shape1.clone(), shape2.clone()]);
-    ds.init(fuzzy.max(1e-7));
+    ds.set_arguments(opts.arguments.clone());
+    ds.init(opts.fuzzy_value.max(1e-7));
     let mut filler = PaveFiller::new(&mut ds);
+    filler.set_fuzzy_value(opts.fuzzy_value);
     filler.perform();
     let fuzz = filler.fuzzy_value();
     drop(filler);
@@ -56,68 +98,76 @@ fn run_pipeline(shape1: &Shape, shape2: &Shape, op_type: BooleanOpType, fuzzy: f
             let root = brep.tshapes.iter().enumerate().rev()
                 .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_) | rcad_kernel::topods::TShape::Shell(_)))
                 .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
-            root.ok_or(BooleanError::InvalidOperation)
+            root.ok_or(BooleanError::InvalidResult("no root shape"))
         }
-        Err(_) => Err(BooleanError::InvalidOperation),
+        Err(_) => Err(BooleanError::InvalidResult("builder failed")),
     }
 }
 
-macro_rules! impl_bool_op {
+// ── Macro: generate FuseOp / CommonOp / CutOp ───────────────────────────
+macro_rules! def_bool_op {
     ($name:ident, $op:ident) => {
         pub struct $name {
-            shape1: Shape,
-            shape2: Shape,
+            opts: BuilderAlgoOptions,
             result: Option<Shape>,
             err: Option<BooleanError>,
-            fuzzy: f64,
         }
         impl $name {
-            /// OCCT: $name(const TopoDS_Shape& S1, const TopoDS_Shape& S2, PerformNow = true)
-            pub fn new(shape1: Shape, shape2: Shape) -> Self {
-                Self { shape1, shape2, result: None, err: None, fuzzy: 0.0 }
+            // OCCT: $name() — empty constructor
+            pub fn new() -> Self { Self { opts: BuilderAlgoOptions::default(), result: None, err: None } }
+            // OCCT: $name(const TopoDS_Shape& S1, const TopoDS_Shape& S2, PerformNow = true)
+            pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
+                let mut s = Self::new();
+                s.opts.arguments = vec![s1, s2];
+                s
             }
-            pub fn set_fuzzy(&mut self, v: f64) { self.fuzzy = v; }
+
+            // BOPAlgo_Options
+            pub fn set_run_parallel(&mut self, b: bool) { self.opts.set_run_parallel(b); }
+            pub fn run_parallel(&self) -> bool { self.opts.run_parallel() }
+            pub fn set_fuzzy_value(&mut self, v: f64) { self.opts.set_fuzzy_value(v); }
+            pub fn fuzzy_value(&self) -> f64 { self.opts.fuzzy_value() }
+
+            // BRepAlgoAPI_BuilderAlgo
+            pub fn set_arguments(&mut self, args: Vec<Shape>) { self.opts.set_arguments(args); }
+            pub fn arguments(&self) -> &[Shape] { self.opts.arguments() }
+            pub fn set_non_destructive(&mut self, b: bool) { self.opts.set_non_destructive(b); }
+            pub fn non_destructive(&self) -> bool { self.opts.non_destructive() }
+            pub fn set_glue(&mut self, g: i32) { self.opts.set_glue(g); }
+            pub fn glue(&self) -> i32 { self.opts.glue() }
+            pub fn set_check_inverted(&mut self, b: bool) { self.opts.set_check_inverted(b); }
+            pub fn check_inverted(&self) -> bool { self.opts.check_inverted() }
         }
         impl Algo for $name {
             fn is_done(&self) -> bool { self.result.is_some() }
             fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
         }
         impl BuilderShape for $name {
-            /// OCCT: BRepAlgoAPI_BuilderShape::Build()
-            fn build(&mut self) -> bool {
-                self.result = None; self.err = None;
-                match run_pipeline(&self.shape1, &self.shape2, BooleanOpType::$op, self.fuzzy) {
-                    Ok(s) => { self.result = Some(s); true }
-                    Err(e) => { self.err = Some(e); false }
+            fn build(&mut self) { self.result = None; self.err = None;
+                match run_build(&self.opts, BooleanOpType::$op) {
+                    Ok(s) => self.result = Some(s),
+                    Err(e) => self.err = Some(e),
                 }
             }
-            /// OCCT: BRepAlgoAPI_BuilderShape::Shape()
-            fn shape(&self) -> &Shape {
-                self.result.as_ref().expect("build() not called or failed")
-            }
+            fn shape(&self) -> &Shape { self.result.as_ref().expect("build() not called or failed") }
         }
     };
 }
 
-impl_bool_op!(FuseOp, Union);
-impl_bool_op!(CommonOp, Intersection);
-impl_bool_op!(CutOp, Difference);
+def_bool_op!(FuseOp, Union);
+def_bool_op!(CommonOp, Intersection);
+def_bool_op!(CutOp, Difference);
 
 // ── BRepAlgoAPI_Section ──────────────────────────────────────────────────
-// OCCT has additional overloads for plane + surface.
-
-/// OCCT BRepAlgoAPI_Section — section curves between shapes.
 pub struct SectionOp {
-    shape1: Shape,
-    shape2: Shape,
+    opts: BuilderAlgoOptions,
     result: Option<Shape>,
     err: Option<BooleanError>,
 }
-
 impl SectionOp {
-    /// OCCT: BRepAlgoAPI_Section(const TopoDS_Shape& S1, const TopoDS_Shape& S2, PerformNow = true)
-    pub fn new(shape1: Shape, shape2: Shape) -> Self {
-        Self { shape1, shape2, result: None, err: None }
+    pub fn new() -> Self { Self { opts: BuilderAlgoOptions::default(), result: None, err: None } }
+    pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
+        let mut s = Self::new(); s.opts.arguments = vec![s1, s2]; s
     }
 }
 impl Algo for SectionOp {
@@ -125,97 +175,73 @@ impl Algo for SectionOp {
     fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
 }
 impl BuilderShape for SectionOp {
-    fn build(&mut self) -> bool {
-        self.result = None; self.err = None;
-        // OCCT: Section uses BOPAlgo_SECTION operation
-        match run_pipeline(&self.shape1, &self.shape2, BooleanOpType::Intersection, 0.0) {
-            Ok(s) => { self.result = Some(s); true }
-            Err(e) => { self.err = Some(e); false }
+    fn build(&mut self) { self.result = None; self.err = None;
+        match run_build(&self.opts, BooleanOpType::Intersection) {
+            Ok(s) => self.result = Some(s),
+            Err(e) => self.err = Some(e),
         }
     }
-    fn shape(&self) -> &Shape {
-        self.result.as_ref().expect("build() not called or failed")
-    }
+    fn shape(&self) -> &Shape { self.result.as_ref().expect("build() not called or failed") }
 }
 
-// ── BRepAlgoAPI_Defeaturing ──────────────────────────────────────────
-// OCCT: removes features (faces) from a shape. Stub: returns input.
-
-/// OCCT BRepAlgoAPI_Defeaturing — remove unwanted faces from a shape.
+// ── BRepAlgoAPI_Defeaturing ─────────────────────────────────────────────
 pub struct DefeaturingOp {
-    shape: Shape,
+    opts: BuilderAlgoOptions,
     faces_to_remove: Vec<Shape>,
     result: Option<Shape>,
     err: Option<BooleanError>,
 }
-
 impl DefeaturingOp {
-    pub fn new(shape: Shape) -> Self {
-        Self { shape, faces_to_remove: Vec::new(), result: None, err: None }
-    }
-    pub fn add_face_to_remove(&mut self, face: Shape) {
-        self.faces_to_remove.push(face);
-    }
+    pub fn new() -> Self { Self { opts: BuilderAlgoOptions::default(), faces_to_remove: Vec::new(), result: None, err: None } }
+    pub fn set_arguments(&mut self, args: Vec<Shape>) { self.opts.set_arguments(args); }
+    pub fn add_face_to_remove(&mut self, f: Shape) { self.faces_to_remove.push(f); }
+    pub fn set_run_parallel(&mut self, b: bool) { self.opts.set_run_parallel(b); }
+    pub fn set_fuzzy_value(&mut self, v: f64) { self.opts.set_fuzzy_value(v); }
 }
 impl Algo for DefeaturingOp {
     fn is_done(&self) -> bool { self.result.is_some() }
     fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
 }
 impl BuilderShape for DefeaturingOp {
-    /// OCCT: BRepAlgoAPI_BuilderShape::Build()
-    fn build(&mut self) -> bool {
-        self.result = Some(self.shape.clone()); true
-    }
-    fn shape(&self) -> &Shape {
-        self.result.as_ref().expect("build() not called")
-    }
+    fn build(&mut self) { self.result = self.opts.arguments.first().cloned(); }
+    fn shape(&self) -> &Shape { self.result.as_ref().expect("build() not called") }
 }
 
-// ── BRepAlgoAPI_Splitter ─────────────────────────────────────────────
-// OCCT: splits objects by tools. Stub: returns objects.
-
-/// OCCT BRepAlgoAPI_Splitter — split objects by tools.
+// ── BRepAlgoAPI_Splitter ────────────────────────────────────────────────
 pub struct SplitterOp {
-    objects: Vec<Shape>,
-    tools: Vec<Shape>,
+    opts: BuilderAlgoOptions,
     result: Option<Shape>,
     err: Option<BooleanError>,
 }
-
 impl SplitterOp {
-    pub fn new() -> Self { Self { objects: Vec::new(), tools: Vec::new(), result: None, err: None } }
-    pub fn add_object(&mut self, s: Shape) { self.objects.push(s); }
-    pub fn add_tool(&mut self, s: Shape) { self.tools.push(s); }
+    pub fn new() -> Self { Self { opts: BuilderAlgoOptions::default(), result: None, err: None } }
+    pub fn add_object(&mut self, s: Shape) { self.opts.arguments.push(s); }
+    pub fn add_tool(&mut self, s: Shape) { self.opts.arguments.push(s); }
+    pub fn set_run_parallel(&mut self, b: bool) { self.opts.set_run_parallel(b); }
+    pub fn set_fuzzy_value(&mut self, v: f64) { self.opts.set_fuzzy_value(v); }
 }
 impl Algo for SplitterOp {
     fn is_done(&self) -> bool { self.result.is_some() }
     fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
 }
 impl BuilderShape for SplitterOp {
-    fn build(&mut self) -> bool {
-        self.result = self.objects.first().cloned(); true
-    }
-    fn shape(&self) -> &Shape {
-        self.result.as_ref().expect("build() not called")
-    }
+    fn build(&mut self) { self.result = self.opts.arguments.first().cloned(); }
+    fn shape(&self) -> &Shape { self.result.as_ref().expect("build() not called") }
 }
 
-// ── Convenience free functions (no direct OCCT equivalent) ───────────────
-
+// ── Convenience free functions ───────────────────────────────────────────
 pub fn fuse(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
-    let mut op = FuseOp::new(a, b);
-    if op.build() { Ok(op.shape().clone()) }
-    else { Err(op.err.take().unwrap_or(BooleanError::InvalidOperation)) }
+    let mut op = FuseOp::from_shapes(a, b);
+    op.build();
+    if op.is_done() { Ok(op.shape().clone()) } else { Err(op.err.take().unwrap_or(BooleanError::InvalidResult("builder failed"))) }
 }
-
 pub fn common(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
-    let mut op = CommonOp::new(a, b);
-    if op.build() { Ok(op.shape().clone()) }
-    else { Err(op.err.take().unwrap_or(BooleanError::InvalidOperation)) }
+    let mut op = CommonOp::from_shapes(a, b);
+    op.build();
+    if op.is_done() { Ok(op.shape().clone()) } else { Err(op.err.take().unwrap_or(BooleanError::InvalidResult("builder failed"))) }
 }
-
 pub fn cut(a: Shape, b: Shape) -> Result<Shape, BooleanError> {
-    let mut op = CutOp::new(a, b);
-    if op.build() { Ok(op.shape().clone()) }
-    else { Err(op.err.take().unwrap_or(BooleanError::InvalidOperation)) }
+    let mut op = CutOp::from_shapes(a, b);
+    op.build();
+    if op.is_done() { Ok(op.shape().clone()) } else { Err(op.err.take().unwrap_or(BooleanError::InvalidResult("builder failed"))) }
 }
