@@ -33,9 +33,9 @@ use crate::tolerance::*;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::geom::{
-    BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, ConicalSurface, Curve3,
-    CurveEval, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
-    ToroidalSurface, TrimmedCurve3, TrimmedSurface, any_perpendicular,
+    any_perpendicular, BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3,
+    ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
+    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3, TrimmedSurface,
 };
 
 // =============================================================================
@@ -267,6 +267,7 @@ fn remove_degenerate_bspline_sections(curve: &BSplineCurve3, tol: f64) -> Option
         knots: new_knots,
         control_points: new_ctrl,
         weights: new_weights,
+        is_periodic: false,
     })
 }
 
@@ -481,6 +482,7 @@ fn reverse_bspline_curve(curve: &BSplineCurve3) -> BSplineCurve3 {
         knots: new_knots,
         control_points: new_ctrl,
         weights: new_weights,
+        is_periodic: false,
     }
 }
 
@@ -717,6 +719,7 @@ fn transform_bspline_curve(curve: &BSplineCurve3, transform: DAffine3) -> BSplin
             .map(|&p| transform.transform_point3(p))
             .collect(),
         weights: curve.weights.clone(),
+        is_periodic: false,
     }
 }
 

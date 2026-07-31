@@ -338,7 +338,8 @@ fn try_remove_knot(
         knots: build_clamped_knots(new_n_ctrl, curve.degree),
         control_points: new_ctrl_pts,
         weights: new_weights,
-    };
+        is_periodic: false,
+};
 
     // Check deviation
     let mut max_dev: f64 = 0.0;
@@ -424,7 +425,8 @@ fn fit_curve_to_points(
         knots,
         control_points,
         weights,
-    };
+        is_periodic: false,
+};
 
     // Compute max deviation
     let mut max_dev: f64 = 0.0;
@@ -1053,7 +1055,8 @@ pub fn curve_to_bspline_from_edge(
                 knots: vec![0.0, 0.0, 1.0, 1.0],
                 control_points: vec![p0, p1],
                 weights: vec![1.0, 1.0],
-            }
+                is_periodic: false,
+}
         }
         Curve3::Circle(c) => circle_to_bspline(c),
         Curve3::Ellipse(e) => ellipse_to_bspline(e),
@@ -1091,7 +1094,8 @@ fn fallback_bspline_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> BSplineC
         knots: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![p0, p1],
         weights: vec![1.0, 1.0],
-    }
+        is_periodic: false,
+}
 }
 
 /// Convert all geometry in a rcad_kernel::BRep to BSpline representation.

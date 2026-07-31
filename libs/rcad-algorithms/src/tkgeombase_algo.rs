@@ -284,6 +284,7 @@ fn increase_degree_bspline3(c: &BSplineCurve3, new_deg: usize) -> BSplineCurve3 
         knots: new_knots,
         control_points: new_poles,
         weights: new_weights,
+        is_periodic: false,
     }
 }
 
@@ -326,6 +327,7 @@ fn reverse_bspline3(c: &BSplineCurve3) -> BSplineCurve3 {
         knots,
         control_points: poles,
         weights,
+        is_periodic: false,
     }
 }
 
@@ -514,6 +516,7 @@ pub fn concat_bsplines(
         knots: noeuds,
         control_points: poles,
         weights,
+        is_periodic: false,
     })
 }
 

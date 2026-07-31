@@ -350,6 +350,7 @@ pub fn construct_bspline_curve(
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::X],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
     }
 
@@ -371,6 +372,7 @@ pub fn construct_bspline_curve(
         knots: normalized_knots,
         control_points: control_points.to_vec(),
         weights,
+        is_periodic: false,
     }
 }
 
@@ -744,7 +746,7 @@ pub fn build_plate_surface(profiles: &[Vec<DVec3>]) -> Option<Surface3> {
 
     // Knot vectors: clamped cubic (degree 3)
     let n_u_knots = n_pts + 4; // degree 3 + n_pts - 1 + degree 3 + 1?? Actually for clamped deg 3: n = n_pts poles, m = n+4 knots
-    // For a degree-3 surface with n_poles_u = n_pts, we need n_pts + 4 knots (clamped)
+                               // For a degree-3 surface with n_poles_u = n_pts, we need n_pts + 4 knots (clamped)
     let knots_u = build_clamped_knots(n_pts, 3);
     let knots_v = build_clamped_knots(n_profiles, 3);
 

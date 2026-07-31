@@ -317,7 +317,7 @@ mod tests {
         let e = brep.add_tedge(
             None,
             v0,
-            topods::Shape::synthetic_with_orientation(v1.index, topods::Orientation::Reversed),
+            topods::Shape::synthetic(v1.index, topods::Orientation::Reversed),
             [0.0, 1.0],
         );
         // Edge is at tshapes[2] (after 2 vertices). TopoEntityRef::Edge(i) uses tshapes index.

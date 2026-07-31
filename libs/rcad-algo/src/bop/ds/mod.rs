@@ -39,6 +39,7 @@ use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
 use rcad_kernel::curve_bounding_box;
+use rcad_kernel::curve_bounding_box_range;
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::CurveEval;
 use rcad_kernel::topology;
@@ -1255,12 +1256,24 @@ impl DS {
                 self.shapes[an_edge_index].flag = an_edge_index as i64;
             }
 
-            // OCCT L1677-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox) adds curve box
-            // and does B.Enlarge(anEdgeTolerance) internally.
+            // OCCT L1677-1679: BRepBndLib::Add(anEdge, anEdgeBoundBox) adds curve box.
+            // BRepBndLib::Add → BndLib_Add3dCurve::Add(BC, Tol, B)
+            //   → GeomBndLib_Curve(C).Add(U1, U2, Tol, B)
+            //   → per-type dispatch (each Box applies Enlarge(Tol) internally):
+            //       Circle   → GeomBndLib_Circle::Box(gp_Circ, U1, U2, Tol)
+            //       Ellipse  → GeomBndLib_Ellipse::Box(gp_Elips, U1, U2, Tol)
+            //       Line     → GeomBndLib_Line::Box(gp_Lin, U1, U2, Tol)
+            //       BSpline  → GeomBndLib_BSplineCurve::Box(U1, U2, Tol)
+            //       Bezier   → GeomBndLib_BezierCurve::Box(U1, U2, Tol)
+            //       Other    → GeomBndLib_OtherCurve::Box(U1, U2, Tol) (33pt sampling)
             let (mut an_edge_bx_min, mut an_edge_bx_max) =
-                if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
-                    if let Some([cmn, cmx]) = curve_bounding_box(curve) {
-                        // OCCT: curve box computed, but B.Enlarge happens at the end
+                if let (Some(curve), Some(range)) = (
+                    shape.as_edge().and_then(|ed| ed.curve.as_ref()),
+                    shape.as_edge().map(|ed| ed.range),
+                ) {
+                    if let Some([cmn, cmx]) = curve_bounding_box_range(
+                        curve, range[0], range[1], an_edge_tolerance,
+                    ) {
                         (cmn, cmx)
                     } else {
                         (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
@@ -1286,38 +1299,13 @@ impl DS {
                 }
             }
 
-            // OCCT BRepBndLib::Add uses the edge's parameter range to compute the
-            // bounding box of the curve SUBRANGE, not the full analytic curve.
-            // For partial curves (e.g. sphere seam: half-circle [0,π]), the full
-            // circle's analytic box is flat in the normal direction, but the arc
-            // spans the full sphere diameter. Sample the curve at range endpoints
-            // and key interior points to capture the true extent.
-            if let Some(curve) = shape.as_edge().and_then(|ed| ed.curve.as_ref()) {
-                if let Some(range) = shape.as_edge().map(|ed| ed.range) {
-                    use rcad_kernel::CurveEval;
-                    // Sample at range endpoints + 3 interior points
-                    let n_samples = 5;
-                    for i in 0..=n_samples {
-                        let t = range[0] + (range[1] - range[0]) * (i as f64) / (n_samples as f64);
-                        let pt = curve.point_at(t);
-                        if an_edge_bx_min.x.is_finite() {
-                            an_edge_bx_min = an_edge_bx_min.min(pt);
-                            an_edge_bx_max = an_edge_bx_max.max(pt);
-                        } else {
-                            an_edge_bx_min = pt;
-                            an_edge_bx_max = pt;
-                        }
-                    }
-                }
-            }
-
-            // OCCT L1688: B.Enlarge(edge_tol) + SetGap(existing_gap + tol)
+            // OCCT L1688: SetGap(existing_gap + tol).
+            // NOTE: no outer Enlarge here — the curve box already applied
+            // Enlarge(anEdgeTolerance) inside GeomBndLib_*::Box, matching OCCT.
             if an_edge_bx_min.x.is_finite() {
-                // OCCT: BRepBndLib::Add + BEnlarge(anEdgeTolerance) applied to box coordinates
-                let en = DVec3::splat(an_edge_tolerance);
                 self.shapes[an_edge_index].bbox = BndBox::from_corners(
-                    (an_edge_bx_min - en).x, (an_edge_bx_min - en).y, (an_edge_bx_min - en).z,
-                    (an_edge_bx_max + en).x, (an_edge_bx_max + en).y, (an_edge_bx_max + en).z);
+                    an_edge_bx_min.x, an_edge_bx_min.y, an_edge_bx_min.z,
+                    an_edge_bx_max.x, an_edge_bx_max.y, an_edge_bx_max.z);
                 let cur_gap = self.shapes[an_edge_index].bbox.get_gap();
                 self.shapes[an_edge_index].bbox.set_gap(cur_gap + tol);
             }

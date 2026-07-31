@@ -29,9 +29,9 @@ use std::f64::consts::PI;
 
 use rcad_kernel::fit::interpolate_points;
 use rcad_kernel::geom::{
-    BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3, BezierSurface,
-    Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3, any_perpendicular,
+    any_perpendicular, BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3,
+    BezierSurface, Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3,
+    Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface, TrimmedCurve3,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +134,7 @@ pub fn line_to_bspline(line: &Line3, _degree: usize) -> BSplineCurve3 {
         knots: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![p0, p1],
         weights: vec![1.0, 1.0],
+        is_periodic: false,
     }
 }
 
@@ -185,6 +186,7 @@ pub fn circle_to_bspline(circle: &Circle3, _degree: usize) -> BSplineCurve3 {
         knots,
         control_points: pts.to_vec(),
         weights: weights.to_vec(),
+        is_periodic: false,
     }
 }
 
@@ -227,6 +229,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3, _degree: usize) -> BSplineCurve3 {
         knots,
         control_points: pts.to_vec(),
         weights: weights.to_vec(),
+        is_periodic: false,
     }
 }
 
@@ -290,6 +293,7 @@ fn bezier_to_bspline(bezier: &BezierCurve3) -> BSplineCurve3 {
         knots,
         control_points: bezier.control_points.clone(),
         weights: bezier.weights.clone(),
+        is_periodic: false,
     }
 }
 
@@ -324,6 +328,7 @@ pub fn approx_curve_to_bspline(curve: &Curve3, _tol: f64, _max_degree: usize) ->
         knots: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![pts[0], *pts.last().unwrap()],
         weights: vec![1.0, 1.0],
+        is_periodic: false,
     })
 }
 
@@ -823,6 +828,7 @@ fn build_uniform_knots(n_ctrl: usize, degree: usize) -> Vec<f64> {
 ///     knots: vec![0.0, 0.0, 0.5, 1.0, 1.0],
 ///     control_points: vec![DVec3::ZERO, DVec3::X, DVec3::new(2.0, 0.0, 0.0)],
 ///     weights: vec![1.0, 1.0, 1.0],
+///     is_periodic: false,
 /// };
 ///
 /// let beziers = bspline_to_bezier(&spline);
@@ -989,6 +995,7 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
             knots: spline.knots_u.clone(),
             control_points: col_pts,
             weights: col_w,
+            is_periodic: false,
         };
 
         let beziers = bspline_to_bezier(&col_curve);
@@ -1025,6 +1032,7 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
                 knots: spline.knots_v.clone(),
                 control_points: row_pts,
                 weights: row_w,
+                is_periodic: false,
             };
 
             v_beziers[i] = bspline_to_bezier(&row_curve);
@@ -1273,6 +1281,7 @@ mod geom_convert_approx_tests {
             knots: vec![0.0, 0.0, 0.5, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::X, DVec3::new(2.0, 0.0, 0.0)],
             weights: vec![1.0, 1.0, 1.0],
+            is_periodic: false,
         };
         let beziers = bspline_to_bezier(&spline);
         assert_eq!(beziers.len(), 2, "should produce 2 bezier segments");

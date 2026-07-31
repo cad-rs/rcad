@@ -141,6 +141,13 @@ pub struct BSplineCurve3 {
     pub control_points: Vec<DVec3>,
     /// Homogeneous weights; 1.0 for non-rational.
     pub weights: Vec<f64>,
+    /// OCCT Geom_BSplineCurve::IsPeriodic() — true for a periodic (unclamped)
+    /// B-spline whose first/last knot multiplicity equals the degree and whose
+    /// poles wrap with the period. When true, the effective parameter range is
+    /// [knots[degree], knots[n-degree-1]] and evaluations wrap across the seam.
+    /// OCCT: Geom_BSplineCurve.hxx myPeriodic / IsPeriodic().
+    #[serde(default)]
+    pub is_periodic: bool,
 }
 
 impl BSplineCurve3 {
@@ -1668,6 +1675,7 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
                 .map(|&p| loc.transform_point3(p))
                 .collect(),
             weights: bs.weights.clone(),
+            is_periodic: false,
         }),
         other => other.clone(),
     }

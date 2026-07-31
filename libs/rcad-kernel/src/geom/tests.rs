@@ -69,7 +69,8 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::new(1.0, 2.0, 3.0), DVec3::new(4.0, 8.0, 15.0)],
             weights: vec![1.0, 1.0],
-        };
+        is_periodic: false,
+};
 
         let derivative = curve.derivative_at(0.4);
 
@@ -247,7 +248,8 @@ mod eval_tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::X],
             weights: vec![1.0, 1.0],
-        };
+        is_periodic: false,
+};
         let p0 = c.point_at(0.0);
         let p1 = c.point_at(1.0);
         let pmid = c.point_at(0.5);
@@ -264,7 +266,8 @@ mod eval_tests {
             knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::X],
             weights: vec![1.0, 1.0, 1.0],
-        };
+        is_periodic: false,
+};
         let p0 = c.point_at(0.0);
         let p1 = c.point_at(1.0);
         assert!((p0 - DVec3::ZERO).length() < 1e-10);
@@ -564,7 +567,8 @@ mod eval_tests {
             knots,
             control_points: pts,
             weights: wts,
-        };
+        is_periodic: false,
+};
         let tan0 = c.tangent_at(0.1);
         assert!(
             (tan0 - DVec3::X).length() < 1e-10,
@@ -683,7 +687,8 @@ mod eval_tests {
                 DVec3::new(10.0, 0.0, 0.0),
             ],
             weights: vec![1.0; 5],
-        };
+        is_periodic: false,
+};
         // Point at t=0 should be first control point
         assert!((c.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
         // Point at t=1 should be last control point
@@ -1199,7 +1204,8 @@ mod eval_tests {
     fn bspline3_eval_at_knots() {
         let c = BSplineCurve3 {
             degree: 2,
-            knots: vec![0.0, 0.0, 0.0, 0.3, 0.7, 1.0, 1.0, 1.0],
+            // 4 poles, degree 2 -> 7 knots (clamped).
+            knots: vec![0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0],
             control_points: vec![
                 DVec3::new(0.0, 0.0, 0.0),
                 DVec3::new(3.0, 5.0, 0.0),
@@ -1207,6 +1213,7 @@ mod eval_tests {
                 DVec3::new(9.0, 0.0, 0.0),
             ],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         // Endpoints
         assert!((c.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
@@ -1220,7 +1227,8 @@ mod eval_tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::new(1.0, 2.0, 3.0), DVec3::new(4.0, 5.0, 6.0)],
             weights: vec![1.0, 1.0],
-        };
+        is_periodic: false,
+};
         assert!((c.point_at(0.0) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-10);
         assert!((c.point_at(1.0) - DVec3::new(4.0, 5.0, 6.0)).length() < 1e-10);
         assert!((c.point_at(0.5) - DVec3::new(2.5, 3.5, 4.5)).length() < 1e-10);

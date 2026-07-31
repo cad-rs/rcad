@@ -97,6 +97,7 @@ pub fn trim_curve(curve: &BSplineCurve3, t0: f64, t1: f64) -> BSplineCurve3 {
         knots: new_knots,
         control_points: new_ctrl,
         weights: new_weights,
+        is_periodic: false,
     }
 }
 
@@ -172,6 +173,7 @@ fn insert_knot_once(curve: &BSplineCurve3, t: f64) -> BSplineCurve3 {
         knots: new_knots,
         control_points: new_ctrl,
         weights: new_w,
+        is_periodic: false,
     }
 }
 
@@ -274,6 +276,7 @@ pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3
         knots: norm_knots,
         control_points: new_ctrl,
         weights: new_w,
+        is_periodic: false,
     }
 }
 
@@ -333,6 +336,7 @@ pub fn insert_knot_u_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
             knots: surface.knots_u.clone(),
             control_points: (0..n_u).map(|i| surface.control_points[i][j]).collect(),
             weights: (0..n_u).map(|i| surface.weights[i][j]).collect(),
+            is_periodic: false,
         };
         let new_c = insert_knot_once(&curve, t);
         if j == 0 {
@@ -368,6 +372,7 @@ pub fn insert_knot_v_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
             knots: surface.knots_v.clone(),
             control_points: (0..n_v).map(|j| surface.control_points[i][j]).collect(),
             weights: (0..n_v).map(|j| surface.weights[i][j]).collect(),
+            is_periodic: false,
         };
         let new_c = insert_knot_once(&curve, t);
         if i == 0 {
@@ -624,6 +629,7 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
             knots: seg_knots,
             control_points: seg_ctrl,
             weights: seg_weights,
+            is_periodic: false,
         });
     }
     segments
@@ -833,6 +839,7 @@ pub fn bspline_split_at_knots(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
                     knots: seg_knots,
                     control_points: c.control_points[seg_start..=end].to_vec(),
                     weights: c.weights[seg_start..=end].to_vec(),
+                    is_periodic: false,
                 });
             }
             seg_start = i;
@@ -854,6 +861,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![p0, p1],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         }
     }
 
@@ -925,8 +933,8 @@ mod tests {
 
     #[test]
     fn refine_isoparametric_spans_preserves_bilinear_geometry() {
-        use crate::geom::{Plane, SurfaceEval};
         use crate::base::convert::plane_to_bspline_domain;
+        use crate::geom::{Plane, SurfaceEval};
         let pl = Plane::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z);
         let s0 = plane_to_bspline_domain(&pl, 0.0, 1.0, 0.0, 1.0);
         let s1 = refine_bspline_surface_isoparametric_spans(&s0, 5, 5);

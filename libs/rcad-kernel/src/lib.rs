@@ -286,6 +286,17 @@ pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
     base::bnd_lib::curve_bounding_box(curve)
 }
 
+/// Range-aware bounding box for a curve over [u1, u2] with tolerance `tol`.
+/// OCCT GeomBndLib_Curve::Box(U1, U2, Tol). Delegates to base::bnd_lib.
+pub fn curve_bounding_box_range(
+    curve: &geom::Curve3,
+    u1: f64,
+    u2: f64,
+    tol: f64,
+) -> Option<[DVec3; 2]> {
+    base::bnd_lib::curve_bounding_box_range(curve, u1, u2, tol)
+}
+
 /// Conservative bounding-box contribution from an analytic surface.
 /// OCCT Bnd_Box for surfaces. Delegates to base::bnd_lib.
 pub fn surface_bounding_box(

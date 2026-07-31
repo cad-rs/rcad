@@ -1416,48 +1416,48 @@ mod tests {
         .collect();
         let e01 = brep.add_tedge(
             None,
-            v[0],
+            v[0].clone(),
             Shape::synthetic(v[1].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e12 = brep.add_tedge(
             None,
-            v[1],
+            v[1].clone(),
             Shape::synthetic(v[2].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e20 = brep.add_tedge(
             None,
-            v[2],
+            v[2].clone(),
             Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e13 = brep.add_tedge(
             None,
-            v[1],
+            v[1].clone(),
             Shape::synthetic(v[3].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e30 = brep.add_tedge(
             None,
-            v[3],
+            v[3].clone(),
             Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e14 = brep.add_tedge(
             None,
-            v[1],
+            v[1].clone(),
             Shape::synthetic(v[4].index, Orientation::Reversed),
             [0.0, 1.0],
         );
         let e40 = brep.add_tedge(
             None,
-            v[4],
+            v[4].clone(),
             Shape::synthetic(v[0].index, Orientation::Reversed),
             [0.0, 1.0],
         );
-        let w0 = brep.add_twire(vec![e01, e12, e20]);
-        let w1 = brep.add_twire(vec![e01, e13, e30]);
+        let w0 = brep.add_twire(vec![e01.clone(), e12, e20]);
+        let w1 = brep.add_twire(vec![e01.clone(), e13, e30]);
         let w2 = brep.add_twire(vec![e01, e14, e40]);
         let f0 = brep.add_tface(None, w0, vec![], None, None, vec![], true);
         let f1 = brep.add_tface(None, w1, vec![], None, None, vec![], true);

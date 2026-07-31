@@ -118,6 +118,7 @@ impl BSplineApproxInterp {
             knots,
             control_points: ctrl,
             weights: vec![1.0; ncp],
+            is_periodic: false,
         };
 
         self.max_error = 0.0;

@@ -471,6 +471,7 @@ pub fn make_arc_of_parabola(parabola: &Parabola3, alpha1: f64, alpha2: f64) -> R
 mod tests {
     use super::*;
     use crate::geom::CurveEval;
+    use glam::DVec3;
 
     #[test]
     fn test_make_circle_basic() {

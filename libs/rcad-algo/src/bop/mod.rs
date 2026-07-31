@@ -37,8 +37,9 @@ pub fn curve_bounds(curve: &Curve3) -> (DVec3, DVec3) {
 }
 
 /// Curve bounding box with range (delegates to rcad-kernel BndLib).
-pub fn curve_bounds_with_range(curve: &Curve3, _first: f64, _last: f64) -> (DVec3, DVec3) {
-    match rcad_kernel::base::bnd_lib::curve_bounding_box(curve) {
+/// OCCT: BndLib_Add3dCurve::Add(BC, Tol, B) → GeomBndLib_Curve(C).Add(U1, U2, Tol, B).
+pub fn curve_bounds_with_range(curve: &Curve3, first: f64, last: f64) -> (DVec3, DVec3) {
+    match rcad_kernel::base::bnd_lib::curve_bounding_box_range(curve, first, last, 0.0) {
         Some([min, max]) => (min, max),
         None => (DVec3::ZERO, DVec3::ZERO),
     }

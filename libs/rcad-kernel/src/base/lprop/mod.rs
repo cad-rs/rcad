@@ -59,6 +59,7 @@ pub fn curve_analysis_2d(curve: &Curve2d) -> LPropResult {
 mod tests {
     use super::*;
     use crate::geom::*;
+    use glam::DVec2;
     #[test]
     fn test_line_has_no_inflections() {
         let line = Curve2d::Line(Line2d::new(DVec2::ZERO, DVec2::X));

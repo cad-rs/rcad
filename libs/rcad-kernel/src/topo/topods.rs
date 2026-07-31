@@ -2358,7 +2358,7 @@ mod tests {
 
     #[test]
     fn test_shape_ref_construction() {
-        let r = Shape::synthetic(5);
+        let r = Shape::synthetic(5, Orientation::Forward);
         assert_eq!(r.index, 5);
         assert_eq!(r.orientation, Orientation::Forward);
 
@@ -2379,7 +2379,7 @@ mod tests {
         let v = brep.add_tvertex(DVec3::new(1.0, 2.0, 3.0));
         assert_eq!(brep.tshapes.len(), 1);
         assert_eq!(v.index, 0);
-        assert_eq!(brep.vertex(v).point, DVec3::new(1.0, 2.0, 3.0));
+        assert_eq!(brep.vertex(v.clone()).point, DVec3::new(1.0, 2.0, 3.0));
     }
 
     #[test]
@@ -2397,11 +2397,13 @@ mod tests {
         let mut brep = BRep::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
+        let v0_idx = v0.index;
+        let v1_idx = v1.index;
         let e = brep.add_tedge(None, v0, v1, [0.0, 1.0]);
         assert_eq!(brep.tshapes.len(), 3);
-        let ed = brep.edge(e);
-        assert_eq!(ed.first.clone().index, v0.index);
-        assert_eq!(ed.last.clone().index, v1.index);
+        let ed = brep.edge(e.clone());
+        assert_eq!(ed.first.clone().index, v0_idx);
+        assert_eq!(ed.last.clone().index, v1_idx);
     }
 
     #[test]
@@ -2411,17 +2413,18 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         let v2 = brep.add_tvertex(DVec3::new(1.0, 1.0, 0.0));
+        let v1_idx = v1.index;
 
-        let e0 = brep.add_tedge(None, v0, v1, [0.0, 1.0]);
+        let e0 = brep.add_tedge(None, v0, v1.clone(), [0.0, 1.0]);
         let e1 = brep.add_tedge(None, v1, v2, [0.0, 1.0]);
 
         // Both edges reference v1 at index 1
-        assert_eq!(brep.edge(e0).last.index, v1.index);
-        assert_eq!(brep.edge(e1).first.index, v1.index);
+        assert_eq!(brep.edge(e0.clone()).last.index, v1_idx);
+        assert_eq!(brep.edge(e1.clone()).first.index, v1_idx);
         // Same TShape identity (v1)
         assert!(Arc::ptr_eq(
-            &brep.tshapes[brep.edge(e0).last.index],
-            &brep.tshapes[brep.edge(e1).first.index]
+            &brep.tshapes[brep.edge(e0.clone()).last.index],
+            &brep.tshapes[brep.edge(e1.clone()).first.index]
         ));
     }
 
@@ -2431,12 +2434,12 @@ mod tests {
         let v = (0..4)
             .map(|i| brep.add_tvertex(DVec3::new(i as f64, 0.0, 0.0)))
             .collect::<Vec<_>>();
-        let e0 = brep.add_tedge(None, v[0], v[1], [0.0, 1.0]);
-        let e1 = brep.add_tedge(None, v[1], v[2], [0.0, 1.0]);
-        let e2 = brep.add_tedge(None, v[2], v[3], [0.0, 1.0]);
+        let e0 = brep.add_tedge(None, v[0].clone(), v[1].clone(), [0.0, 1.0]);
+        let e1 = brep.add_tedge(None, v[1].clone(), v[2].clone(), [0.0, 1.0]);
+        let e2 = brep.add_tedge(None, v[2].clone(), v[3].clone(), [0.0, 1.0]);
         let wire = brep.add_twire(vec![e0, e1, e2]);
         let face = brep.add_tface(None, wire, vec![], None, None, vec![], true);
-        let fd = brep.face(face);
+        let fd = brep.face(face.clone());
         assert_eq!(brep.tshapes.len(), 9); // 4V + 3E + 1W + 1F
         assert!(fd.inner_wires.is_empty());
         assert!(fd.sample_point.is_none());
@@ -2448,7 +2451,7 @@ mod tests {
         let v = brep.add_tvertex(DVec3::ZERO);
         assert_eq!(brep.tshapes[v.index].shape_type(), ShapeType::Vertex);
 
-        let e = brep.add_tedge(None, v, v, [0.0, 1.0]);
+        let e = brep.add_tedge(None, v.clone(), v, [0.0, 1.0]);
         assert_eq!(brep.tshapes[e.index].shape_type(), ShapeType::Edge);
 
         let w = brep.add_twire(vec![e]);
@@ -2476,7 +2479,7 @@ mod tests {
             Shape::synthetic(v1.index, Orientation::Reversed),
             [0.0, 1.0],
         );
-        let ed = brep.edge(e);
+        let ed = brep.edge(e.clone());
         assert_eq!(ed.last.clone().orientation, Orientation::Reversed);
     }
 
@@ -2485,7 +2488,7 @@ mod tests {
         let mut brep = BRep::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let _v1 = brep.add_tvertex(DVec3::X);
-        let e = brep.add_tedge(None, v0, v0, [0.0, 1.0]);
+        let e = brep.add_tedge(None, v0.clone(), v0, [0.0, 1.0]);
 
         let cloned = brep.clone();
         // Same TShape identity in clone (Arc::ptr_eq across clone)
@@ -2500,16 +2503,19 @@ mod tests {
     fn test_serde_roundtrip() {
         let mut brep = BRep::new();
         let v = brep.add_tvertex(DVec3::new(1.0, 2.0, 3.0));
-        let e = brep.add_tedge(None, v, v, [0.0, 1.0]);
+        let e = brep.add_tedge(None, v.clone(), v, [0.0, 1.0]);
 
         let json = serde_json::to_string(&brep).unwrap();
         let restored: BRep = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.tshapes.len(), 2);
         assert_eq!(
-            restored.vertex(Shape::synthetic(0)).point,
+            restored.vertex(Shape::synthetic(0, Orientation::Forward)).point,
             DVec3::new(1.0, 2.0, 3.0)
         );
-        assert_eq!(restored.edge(Shape::synthetic(1)).range, [0.0, 1.0]);
+        assert_eq!(
+            restored.edge(Shape::synthetic(1, Orientation::Forward)).range,
+            [0.0, 1.0]
+        );
     }
 
     #[test]
@@ -2524,14 +2530,16 @@ mod tests {
         let v = (0..4)
             .map(|i| brep.add_tvertex(DVec3::new(i as f64, 0.0, 0.0)))
             .collect::<Vec<_>>();
-        let e0 = brep.add_tedge(None, v[0], v[1], [0.0, 1.0]);
+        let e0 = brep.add_tedge(None, v[0].clone(), v[1].clone(), [0.0, 1.0]);
+        let e0_idx = e0.index;
 
         // Wire with forward edge
         let wire_fwd = brep.add_twire(vec![e0]);
         assert_eq!(brep.tshapes[wire_fwd.index].shape_type(), ShapeType::Wire);
 
         // Wire with reversed edge
-        let e0_rev = Shape::synthetic(e0.index, Orientation::Reversed);
+        let e0_rev = Shape::synthetic(e0_idx, Orientation::Reversed);
+        let e0_rev_idx = e0_rev.index;
         let wire_rev = brep.add_twire(vec![e0_rev]);
         if let TShape::Wire(ref wd) = *brep.tshapes[wire_rev.index] {
             assert_eq!(wd.edges[0].orientation, Orientation::Reversed);
@@ -2541,8 +2549,8 @@ mod tests {
 
         // Same TShape for the edge, different orientation on the reference
         assert!(Arc::ptr_eq(
-            &brep.tshapes[e0.index],
-            &brep.tshapes[e0_rev.index]
+            &brep.tshapes[e0_idx],
+            &brep.tshapes[e0_rev_idx]
         ));
     }
 
@@ -2582,7 +2590,7 @@ mod tests {
         let w = brep.add_twire(vec![]);
         // default (no explicit nr) �?true via add_tface with natural_restriction=true
         let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
-        let fd = brep.face(f);
+        let fd = brep.face(f.clone());
         assert!(fd.natural_restriction);
     }
 
@@ -2592,7 +2600,7 @@ mod tests {
         let v = brep.add_tvertex(DVec3::ZERO);
         let w = brep.add_twire(vec![]);
         let f = brep.add_tface(None, w, vec![], None, None, vec![], false);
-        let fd = brep.face(f);
+        let fd = brep.face(f.clone());
         assert!(!fd.natural_restriction);
     }
 
@@ -2617,9 +2625,9 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
-        assert_eq!(brep.edge(e).range, [0.0, 1.0]);
-        bld.set_edge_range(&mut brep, e, 0.5, 2.5);
-        assert_eq!(brep.edge(e).range, [0.5, 2.5]);
+        assert_eq!(brep.edge(e.clone()).range, [0.0, 1.0]);
+        bld.set_edge_range(&mut brep, e.clone(), 0.5, 2.5);
+        assert_eq!(brep.edge(e.clone()).range, [0.5, 2.5]);
     }
 
     #[test]
@@ -2629,11 +2637,11 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
-        assert!(brep.edge(e).same_parameter); // default is true in add_tedge
-        bld.set_edge_same_parameter(&mut brep, e, false);
-        assert!(!brep.edge(e).same_parameter);
-        bld.set_edge_same_parameter(&mut brep, e, true);
-        assert!(brep.edge(e).same_parameter);
+        assert!(brep.edge(e.clone()).same_parameter); // default is true in add_tedge
+        bld.set_edge_same_parameter(&mut brep, e.clone(), false);
+        assert!(!brep.edge(e.clone()).same_parameter);
+        bld.set_edge_same_parameter(&mut brep, e.clone(), true);
+        assert!(brep.edge(e.clone()).same_parameter);
     }
 
     #[test]
@@ -2643,9 +2651,9 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
-        assert!(brep.edge(e).same_range); // default is true in add_tedge
-        bld.set_edge_same_range(&mut brep, e, false);
-        assert!(!brep.edge(e).same_range);
+        assert!(brep.edge(e.clone()).same_range); // default is true in add_tedge
+        bld.set_edge_same_range(&mut brep, e.clone(), false);
+        assert!(!brep.edge(e.clone()).same_range);
     }
 
     #[test]
@@ -2654,9 +2662,9 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let w = brep.add_twire(vec![]);
         let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
-        assert!(brep.face(f).natural_restriction);
-        bld.set_face_natural_restriction(&mut brep, f, false);
-        assert!(!brep.face(f).natural_restriction);
+        assert!(brep.face(f.clone()).natural_restriction);
+        bld.set_face_natural_restriction(&mut brep, f.clone(), false);
+        assert!(!brep.face(f.clone()).natural_restriction);
     }
 
     #[test]
@@ -2665,11 +2673,11 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let w = brep.add_twire(vec![]);
         let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
-        assert!((brep.face(f).tolerance - 0.0).abs() < 1e-15);
-        bld.update_face_tolerance(&mut brep, f, 1.5);
-        assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
-        bld.update_face_tolerance(&mut brep, f, 0.5); // smaller �?max keeps 1.5
-        assert!((brep.face(f).tolerance - 1.5).abs() < 1e-15);
+        assert!((brep.face(f.clone()).tolerance - 0.0).abs() < 1e-15);
+        bld.update_face_tolerance(&mut brep, f.clone(), 1.5);
+        assert!((brep.face(f.clone()).tolerance - 1.5).abs() < 1e-15);
+        bld.update_face_tolerance(&mut brep, f.clone(), 0.5); // smaller max keeps 1.5
+        assert!((brep.face(f.clone()).tolerance - 1.5).abs() < 1e-15);
     }
 
     #[test]
@@ -2677,10 +2685,10 @@ mod tests {
         let mut brep = BRep::new();
         let mut bld = BRepBuilder::new();
         let v = brep.add_tvertex(DVec3::ZERO);
-        assert_eq!(brep.vertex(v).point, DVec3::ZERO);
-        bld.update_vertex_point(&mut brep, v, DVec3::new(5.0, 0.0, 0.0), 0.1);
-        assert_eq!(brep.vertex(v).point, DVec3::new(5.0, 0.0, 0.0));
-        assert!((brep.vertex(v).tolerance - 0.1).abs() < 1e-15);
+        assert_eq!(brep.vertex(v.clone()).point, DVec3::ZERO);
+        bld.update_vertex_point(&mut brep, v.clone(), DVec3::new(5.0, 0.0, 0.0), 0.1);
+        assert_eq!(brep.vertex(v.clone()).point, DVec3::new(5.0, 0.0, 0.0));
+        assert!((brep.vertex(v.clone()).tolerance - 0.1).abs() < 1e-15);
     }
 
     #[test]
@@ -2690,10 +2698,10 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
-        let wire = bld.build_wire(&mut brep, vec![e]);
-        assert_eq!(brep.wire(wire).edges.len(), 1);
-        bld.remove_from_wire(&mut brep, wire, e);
-        assert!(brep.wire(wire).edges.is_empty());
+        let wire = bld.build_wire(&mut brep, vec![e.clone()]);
+        assert_eq!(brep.wire(wire.clone()).edges.len(), 1);
+        bld.remove_from_wire(&mut brep, wire.clone(), e);
+        assert!(brep.wire(wire.clone()).edges.is_empty());
     }
 
     #[test]
@@ -2702,10 +2710,10 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let outer = brep.add_twire(vec![]);
         let inner = brep.add_twire(vec![]);
-        let f = brep.add_tface(None, outer, vec![inner], None, None, vec![], true);
-        assert_eq!(brep.face(f).inner_wires.len(), 1);
-        bld.remove_from_face(&mut brep, f, inner);
-        assert!(brep.face(f).inner_wires.is_empty());
+        let f = brep.add_tface(None, outer, vec![inner.clone()], None, None, vec![], true);
+        assert_eq!(brep.face(f.clone()).inner_wires.len(), 1);
+        bld.remove_from_face(&mut brep, f.clone(), inner);
+        assert!(brep.face(f.clone()).inner_wires.is_empty());
     }
 
     #[test]
@@ -2715,10 +2723,10 @@ mod tests {
         let w = brep.add_twire(vec![]);
         let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
         let shell = bld.make_shell(&mut brep);
-        bld.add_to_shell(&mut brep, shell, f);
-        assert_eq!(brep.shell(shell).faces.len(), 1);
-        bld.remove_from_shell(&mut brep, shell, f);
-        assert!(brep.shell(shell).faces.is_empty());
+        bld.add_to_shell(&mut brep, shell.clone(), f.clone());
+        assert_eq!(brep.shell(shell.clone()).faces.len(), 1);
+        bld.remove_from_shell(&mut brep, shell.clone(), f.clone());
+        assert!(brep.shell(shell.clone()).faces.is_empty());
     }
 
     #[test]
@@ -2738,10 +2746,10 @@ mod tests {
         let v3 = brep.add_tvertex(DVec3::new(1.0, 1.0, 0.0));
         let e_out = bld.add_edge(&mut brep, None, v2, v3, [0.0, 1.0]);
 
-        assert!(brep.edge(e_out).curve.is_none());
-        bld.transfert_edge_curve(&mut brep, e_in, e_out);
+        assert!(brep.edge(e_out.clone()).curve.is_none());
+        bld.transfert_edge_curve(&mut brep, e_in, e_out.clone());
         assert!(
-            brep.edge(e_out).curve.is_some(),
+            brep.edge(e_out.clone()).curve.is_some(),
             "Curve should be transferred"
         );
     }
@@ -2752,16 +2760,16 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        let e = bld.add_edge(&mut brep, None, v0, v1, [0.0, 1.0]);
-        bld.set_vertex_param(&mut brep, e, v0, 0.5);
-        assert_eq!(brep.edge(e).vertex_params.get(&v0.index), Some(&0.5));
+        let e = bld.add_edge(&mut brep, None, v0.clone(), v1.clone(), [0.0, 1.0]);
+        bld.set_vertex_param(&mut brep, e.clone(), v0.clone(), 0.5);
+        assert_eq!(brep.edge(e.clone()).vertex_params.get(&v0.index), Some(&0.5));
 
-        // Transfer from v0 on e �?v_new on a new edge
+        // Transfer from v0 on e to v_new on a new edge
         let v_new = brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
-        let e_new = bld.add_edge(&mut brep, None, v_new, v1, [0.0, 1.0]);
-        assert!(brep.edge(e_new).vertex_params.get(&v_new.index).is_none());
-        bld.transfert_vertex_param(&mut brep, e, v0, e_new, v_new);
-        assert_eq!(brep.edge(e_new).vertex_params.get(&v_new.index), Some(&0.5));
+        let e_new = bld.add_edge(&mut brep, None, v_new.clone(), v1.clone(), [0.0, 1.0]);
+        assert!(brep.edge(e_new.clone()).vertex_params.get(&v_new.index).is_none());
+        bld.transfert_vertex_param(&mut brep, e.clone(), v0.clone(), e_new.clone(), v_new.clone());
+        assert_eq!(brep.edge(e_new.clone()).vertex_params.get(&v_new.index), Some(&0.5));
     }
 
     #[test]
@@ -2775,12 +2783,12 @@ mod tests {
             direction: DVec3::X,
         });
         let e = bld.add_edge(&mut brep, Some(curve), v0, v1, [0.0, 1.0]);
-        assert!(!brep.edge(e).degenerated);
-        assert!(brep.edge(e).curve.is_some());
-        bld.set_edge_degenerated_with_clear(&mut brep, e, true);
-        assert!(brep.edge(e).degenerated);
+        assert!(!brep.edge(e.clone()).degenerated);
+        assert!(brep.edge(e.clone()).curve.is_some());
+        bld.set_edge_degenerated_with_clear(&mut brep, e.clone(), true);
+        assert!(brep.edge(e.clone()).degenerated);
         assert!(
-            brep.edge(e).curve.is_none(),
+            brep.edge(e.clone()).curve.is_none(),
             "3D curve should be cleared when setting degenerated"
         );
     }

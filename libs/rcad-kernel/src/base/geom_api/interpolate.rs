@@ -92,6 +92,7 @@ pub fn interpolate_points(pts: &[DVec3]) -> Result<BSplineCurve3, FitError> {
         knots,
         control_points: ctrl,
         weights: vec![1.0; n],
+        is_periodic: false,
     })
 }
 
@@ -197,6 +198,7 @@ pub fn approximate_points(pts: &[DVec3], n_ctrl: usize) -> Result<BSplineCurve3,
         knots,
         control_points,
         weights: vec![1.0; n_ctrl],
+        is_periodic: false,
     })
 }
 

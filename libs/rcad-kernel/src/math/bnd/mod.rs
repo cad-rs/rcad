@@ -451,7 +451,7 @@ mod tests {
     fn curve_circle_bounding_box() {
         use crate::geom::{Circle3, Curve3};
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 2.0));
-        let bb = super::curve_bounding_box(&c).unwrap();
+        let bb = crate::curve_bounding_box(&c).unwrap();
         assert!((bb[0].x + 2.0).abs() < 1e-12);
         assert!((bb[1].x - 2.0).abs() < 1e-12);
         assert!((bb[0].z).abs() < 1e-12); // circle in XY plane

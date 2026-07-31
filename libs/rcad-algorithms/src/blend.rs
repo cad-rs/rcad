@@ -41,12 +41,13 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
-    CurveEval, SurfaceEval, any_perpendicular,
+    any_perpendicular,
     geom::{
         BSplineCurve3, BSplineSurface, Curve3, CylindricalSurface, Line3, Plane, RuledSurface,
         SphericalSurface, Surface3, ToroidalSurface,
     },
     topods::{self, TShape},
+    CurveEval, SurfaceEval,
 };
 use std::sync::Arc;
 
@@ -1281,6 +1282,7 @@ fn interpolate_curve_through_points(points: &[DVec3], tol: f64) -> Result<Curve3
         knots,
         control_points: points.to_vec(),
         weights,
+        is_periodic: false,
     }))
 }
 

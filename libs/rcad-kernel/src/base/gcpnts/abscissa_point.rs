@@ -210,6 +210,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(3.0, 4.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         });
         let l = arc_length(&c, 0.0, 1.0).abs();
         assert!(approx_eq(l, 5.0, 1e-3), "bspline line segment length {l}");

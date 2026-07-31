@@ -99,6 +99,7 @@ pub fn approx_curve_to_bspline(curve: &Curve2d, tol: f64) -> Option<BSplineCurve
 mod tests {
     use super::*;
     use crate::geom::*;
+    use glam::DVec2;
 
     #[test]
     fn test_approx_curve() {
