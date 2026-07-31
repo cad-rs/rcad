@@ -100,8 +100,10 @@ impl EdgeEdgeIntersector {
                 return;
             }
         }
-        // 3.3 Line + analytical fast rejection (OCCT L217-233, DistShapeShape).
-        // rcad: box distance fast rejection for line + conic.
+        // 3.3 Line + analytical fast rejection (OCCT L217-233).
+        // OCCT computes BRepExtrema_DistShapeShape(myEdge1, myEdge2, MIN) and
+        // returns if d > 1.1*myTol. rcad has no DistShapeShape, so use a box
+        // distance fast rejection (conservative: boxes disjoint ⇒ curves far).
         if (type_to_integer(&self.curve1) == 0 || type_to_integer(&self.curve2) == 0)
             && type_to_integer(&self.curve1) <= 2 && type_to_integer(&self.curve2) <= 2
         {
@@ -121,6 +123,13 @@ impl EdgeEdgeIntersector {
 
     /// OCCT IntTools_EdgeEdge::Prepare (L246-330).
     fn prepare(&mut self) {
+        // OCCT L250-257: if the range is (0,0), use the curve's domain
+        if self.range1[0] == 0.0 && self.range1[1] == 0.0 {
+            self.range1 = self.curve1.default_domain();
+        }
+        if self.range2[0] == 0.0 && self.range2[1] == 0.0 {
+            self.range2 = self.curve2.default_domain();
+        }
         let a_ct1 = type_to_integer(&self.curve1);
         let a_ct2 = type_to_integer(&self.curve2);
         let mut i_ct1 = a_ct1;
@@ -187,12 +196,13 @@ impl EdgeEdgeIntersector {
         let a_segments2 = split_range_on_segments(a_t21, a_t22, self.my_res2, a_nb2);
         let a_nb1 = a_segments1.len();
         let a_nb2 = a_segments2.len();
-        let a_b2 = bnd_build_box(&self.curve2, a_t21, a_t22, self.my_tol2);
+        // OCCT L336-346: for each segment pair rebuild both boxes and recurse.
         for i in 0..a_nb1 {
             let a_r1 = a_segments1[i];
             let a_b1 = bnd_build_box(&self.curve1, a_r1[0], a_r1[1], self.my_tol1);
             for j in 0..a_nb2 {
                 let a_r2 = a_segments2[j];
+                let a_b2 = bnd_build_box(&self.curve2, a_r2[0], a_r2[1], self.my_tol2);
                 self.find_solutions_rec(a_r1, &a_b1, a_r2, &a_b2, the_ranges1, the_ranges2, 0);
             }
         }
@@ -351,35 +361,39 @@ impl EdgeEdgeIntersector {
     /// OCCT IntTools_EdgeEdge::AddSolution (L780-822).
     fn add_solution(&mut self, a_t11: f64, a_t12: f64, a_t21: f64, a_t22: f64, the_type: TopAbs) {
         let is_edge = the_type == TopAbs::EDGE;
+        // OCCT L789-802: edge/range order follows mySwap.
+        let (mut r1, mut r2) = ([a_t11, a_t12], [a_t21, a_t22]);
+        if self.my_swap {
+            std::mem::swap(&mut r1, &mut r2);
+        }
         let mut cp = CommonPrt {
             is_edge,
-            range1: [a_t11, a_t12],
-            ranges2: vec![[a_t21, a_t22]],
+            range1: r1,
+            ranges2: vec![r2],
             vertex_param1: a_t11,
             vertex_param2: a_t21,
             bounding_point1: self.curve1.point_at((a_t11 + a_t12) * 0.5),
             bounding_point2: self.curve2.point_at((a_t21 + a_t22) * 0.5),
         };
         if !is_edge {
+            // OCCT L804-819: best solution, then swap the vertex parameters.
             let (a_t1, a_t2) = find_best_solution(
                 &self.curve1, &self.curve2, self.my_res_coeff1, self.my_tol, self.my_p_tol1,
                 a_t11, a_t12, a_t21, a_t22);
-            cp.vertex_param1 = a_t1;
-            cp.vertex_param2 = a_t2;
-            cp.range1 = [a_t1, a_t1];
-            cp.ranges2 = vec![[a_t2, a_t2]];
-            cp.bounding_point1 = self.curve1.point_at(a_t1);
-            cp.bounding_point2 = self.curve2.point_at(a_t2);
-        }
-        if self.my_swap {
-            std::mem::swap(&mut cp.vertex_param1, &mut cp.vertex_param2);
-            std::mem::swap(&mut cp.bounding_point1, &mut cp.bounding_point2);
+            let (v1, v2) = if self.my_swap { (a_t2, a_t1) } else { (a_t1, a_t2) };
+            cp.vertex_param1 = v1;
+            cp.vertex_param2 = v2;
+            cp.bounding_point1 = self.curve1.point_at(v1);
+            cp.bounding_point2 = self.curve2.point_at(v2);
         }
         self.common_parts.push(cp);
     }
 
-    /// OCCT IntTools_EdgeEdge::IsCoincident (L247-285): 24pt sampling.
+    /// OCCT IntTools_EdgeEdge::IsCoincident (L247-285).
+    /// OCCT projects each of 24 points of curve1 onto curve2 (GeomAPI) and
+    /// counts those closer than myTol. rcad samples curve2 (no GeomAPI).
     fn is_coincident(&self) -> bool {
+        let a_tresh = 0.5;
         let a_nb_seg = 23usize;
         let t11 = self.range1[0]; let t12 = self.range1[1];
         let t21 = self.range2[0]; let t22 = self.range2[1];
@@ -388,60 +402,112 @@ impl EdgeEdgeIntersector {
         for i in 0..=a_nb_seg {
             let a_t1 = t11 + i as f64 * dt;
             let p1 = self.curve1.point_at(a_t1);
-            let mut best_d = f64::MAX;
-            for j in 0..=a_nb_seg {
-                let a_t2 = t21 + (t22 - t21) * j as f64 / a_nb_seg as f64;
-                let d = (p1 - self.curve2.point_at(a_t2)).length();
-                if d < best_d { best_d = d; }
+            if let Some((a_d, _)) = project_on_range(&self.curve2, p1, t21, t22) {
+                if a_d < self.my_tol { i_cnt += 1; }
             }
-            if best_d < self.fuzzy_value { i_cnt += 1; }
         }
-        i_cnt as f64 / (a_nb_seg + 1) as f64 > 0.5
+        let a_coeff = i_cnt as f64 / (a_nb_seg + 1) as f64;
+        a_coeff > a_tresh
     }
 
-    /// OCCT IntTools_EdgeEdge::ComputeLineLine (L902+).
+    /// OCCT IntTools_EdgeEdge::ComputeLineLine (L902-1058).
     fn compute_line_line(&mut self) {
         let (l1, l2) = match (&self.curve1, &self.curve2) {
-            (Curve3::Line(l1), Curve3::Line(l2)) => (l1, l2),
+            (Curve3::Line(l1), Curve3::Line(l2)) => (*l1, *l2),
             _ => return,
         };
-        let o1 = l1.origin; let d1 = l1.direction;
-        let o2 = l2.origin; let d2 = l2.direction;
-        let r = o2 - o1;
-        let d1xd2 = d1.cross(d2);
-        let denom = d1xd2.length_squared();
-        if denom < 1e-30 {
-            let dist = r.cross(d1).length() / d1.length().max(1e-30);
-            if dist <= self.fuzzy_value {
-                let s1 = self.range2[0]; let s2 = self.range2[1];
-                let d1_sq = d1.length_squared().max(1e-30);
-                let proj_s1 = (r.dot(d1) + s1 * d2.dot(d1)) / d1_sq;
-                let proj_s2 = (r.dot(d1) + s2 * d2.dot(d1)) / d1_sq;
-                let ov_start = self.range1[0].max(proj_s1.min(proj_s2));
-                let ov_end = self.range1[1].min(proj_s1.max(proj_s2));
-                if ov_end > ov_start + 1e-12 {
-                    self.common_parts.push(CommonPrt {
-                        is_edge: true, range1: [ov_start, ov_end],
-                        ranges2: vec![[s1, s2]],
-                        vertex_param1: ov_start, vertex_param2: s1,
-                        bounding_point1: self.curve1.point_at(ov_start),
-                        bounding_point2: self.curve2.point_at(s1),
-                    });
-                }
+        let a_tol = self.my_tol * self.my_tol;
+        let a_d1 = l1.direction.normalize();
+        let a_d2 = l2.direction.normalize();
+        let an_angle = a_d1.dot(a_d2).clamp(-1.0, 1.0).acos();
+        let mut is_coincide = an_angle < PRECISION_ANGULAR;
+        if is_coincide {
+            if point_to_line_dist_sq(l2.origin, &l1) > a_tol {
+                return;
             }
+        }
+        let (a_t11, a_t12, a_t21, a_t22) = (self.range1[0], self.range1[1], self.range2[0], self.range2[1]);
+        let a_p11 = l1.point_at(a_t11);
+        let a_p12 = l1.point_at(a_t12);
+        if !is_coincide {
+            let mut o2 = l2.origin;
+            if !rcad_kernel::is_infinite_value(a_t21) && !rcad_kernel::is_infinite_value(a_t22) {
+                o2 = l2.point_at((a_t21 + a_t22) * 0.5);
+            }
+            let a_vec1 = (a_p11 - o2).cross(a_d2);
+            let a_vec2 = (a_p12 - o2).cross(a_d2);
+            let a_sq_dist1 = a_vec1.length_squared();
+            let a_sq_dist2 = a_vec2.length_squared();
+            is_coincide = a_sq_dist1 <= a_tol && a_sq_dist2 <= a_tol;
+            if !is_coincide && a_vec1.dot(a_vec2) > 0.0 {
+                // the lines do not intersect
+                return;
+            }
+        }
+        if is_coincide {
+            // OCCT L956-994: coincident lines — project endpoints onto line2.
+            let mut t21 = (a_p11 - l2.origin).dot(a_d2);
+            let mut t22 = (a_p12 - l2.origin).dot(a_d2);
+            if (t21 > a_t22 && t22 > a_t22) || (t21 < a_t21 && t22 < a_t21) {
+                // projections are out of range
+                return;
+            }
+            if t21 > t22 {
+                std::mem::swap(&mut t21, &mut t22);
+            }
+            let (r1, r2) = if t21 >= a_t21 {
+                if t22 <= a_t22 {
+                    ([a_t11, a_t12], [t21, t22])
+                } else {
+                    ([a_t11, a_t12 - (t22 - a_t22)], [t21, a_t22])
+                }
+            } else {
+                ([a_t11 + (a_t21 - t21), a_t12], [a_t21, t22])
+            };
+            self.common_parts.push(CommonPrt {
+                is_edge: true, range1: r1, ranges2: vec![r2],
+                vertex_param1: (r1[0] + r1[1]) * 0.5,
+                vertex_param2: (r2[0] + r2[1]) * 0.5,
+                bounding_point1: self.curve1.point_at((r1[0] + r1[1]) * 0.5),
+                bounding_point2: self.curve2.point_at((r2[0] + r2[1]) * 0.5),
+            });
             return;
         }
-        let t = r.cross(d2).dot(d1xd2) / denom;
-        let s = r.cross(d1).dot(d1xd2) / denom;
-        if t >= self.range1[0] - 1e-12 && t <= self.range1[1] + 1e-12
-            && s >= self.range2[0] - 1e-12 && s <= self.range2[1] + 1e-12 {
-            let p = o1 + d1 * t;
-            self.common_parts.push(CommonPrt {
-                is_edge: false, range1: [t, t], ranges2: vec![[s, s]],
-                vertex_param1: t, vertex_param2: s,
-                bounding_point1: p, bounding_point2: p,
-            });
+        // OCCT L996-1055: non-coincident lines.
+        let o1o2 = l2.origin - l1.origin;
+        let a_cross = a_d1.cross(a_d2);
+        let a_dist_ll = o1o2.dot(a_cross.normalize());
+        if a_dist_ll.abs() > self.my_tol {
+            return;
         }
+        // OCCT L1004-1016: shared-vertex fast check is covered by the PaveFiller's
+        // pave-block bounds (bExpressCompute) in the EE loop.
+        let a_sq_sin = a_cross.length_squared();
+        let a_t2 = (a_d1 * o1o2.dot(a_d1) - o1o2).dot(a_d2) / a_sq_sin;
+        if a_t2 < a_t21 || a_t2 > a_t22 {
+            return;
+        }
+        let a_p2 = l2.point_at(a_t2);
+        let a_t1 = (a_p2 - l1.origin).dot(a_d1);
+        if a_t1 < a_t11 || a_t1 > a_t12 {
+            return;
+        }
+        let a_p1 = l1.point_at(a_t1);
+        if a_p1.distance_squared(a_p2) > a_tol {
+            return;
+        }
+        // OCCT L1046-1051: tolerance ranges around the intersection
+        let a_dt1 = compute_int_range(self.my_tol1, self.my_tol2, an_angle);
+        let a_dt2 = compute_int_range(self.my_tol2, self.my_tol1, an_angle);
+        self.common_parts.push(CommonPrt {
+            is_edge: false,
+            range1: [a_t1 - a_dt1, a_t1 + a_dt1],
+            ranges2: vec![[a_t2 - a_dt2, a_t2 + a_dt2]],
+            vertex_param1: a_t1,
+            vertex_param2: a_t2,
+            bounding_point1: a_p1,
+            bounding_point2: a_p2,
+        });
     }
 
     pub fn is_done(&self) -> bool { self.done }
@@ -512,6 +578,32 @@ fn box_square_extent(a_b: &BndBox) -> f64 {
     }
 }
 
+/// OCCT Precision::Angular() — angular precision (rcad_kernel::precision::ANGULAR).
+const PRECISION_ANGULAR: f64 = rcad_kernel::precision::ANGULAR;
+
+/// Square distance from a point to a line.
+fn point_to_line_dist_sq(p: DVec3, l: &rcad_kernel::geom::Line3) -> f64 {
+    let dir = l.direction.normalize();
+    let v = p - l.origin;
+    (v - dir * v.dot(dir)).length_squared()
+}
+
+/// OCCT IntTools_Tools::ComputeIntRange (IntTools_Tools.cxx L783-).
+fn compute_int_range(the_tol1: f64, the_tol2: f64, the_angle: f64) -> f64 {
+    if (std::f64::consts::FRAC_PI_2 - the_angle).abs() < PRECISION_ANGULAR {
+        the_tol2
+    } else {
+        let an_angle = if the_angle > std::f64::consts::FRAC_PI_2 {
+            std::f64::consts::PI - the_angle
+        } else {
+            the_angle
+        };
+        let a1 = the_tol1 * (std::f64::consts::FRAC_PI_2 - an_angle).tan();
+        let a2 = the_tol2 / an_angle.sin();
+        a1 + a2
+    }
+}
+
 /// OCCT SplitRangeOnSegments (L1366-1406).
 fn split_range_on_segments(a_t1: f64, a_t2: f64, the_resolution: f64, the_nb_seg: i32) -> Vec<[f64; 2]> {
     let a_diff = a_t2 - a_t1;
@@ -538,6 +630,9 @@ fn split_range_on_segments(a_t1: f64, a_t2: f64, the_resolution: f64, the_nb_seg
 }
 
 /// OCCT ResolutionCoeff (L1486-1557).
+/// rcad adaptation: OCCT returns 0 for Bezier/BSpline (the default case) and
+/// relies on the curve's own Resolution; rcad has no per-curve Resolution, so
+/// the sampling branch below also serves Bezier/BSpline.
 fn resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
     let a_curve = the_bac;
     match a_curve {
@@ -564,6 +659,9 @@ fn resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
 }
 
 /// OCCT Resolution (L1561-1607).
+/// rcad adaptation: OCCT dispatches Bezier/BSpline to the curve's own
+/// Resolution(r3d) method (exact); rcad has no per-curve resolution, so those
+/// fall through to res_coeff * r3d (sampling-based approximation).
 fn resolution(the_curve: &Curve3, the_res_coeff: f64, the_r3d: f64) -> f64 {
     match the_curve {
         Curve3::Line(_) => the_r3d,
@@ -689,6 +787,9 @@ fn find_parameters(
 }
 
 /// OCCT GeomAPI_ProjectPointOnCurve — project a point onto a curve within [t1, t2].
+/// rcad adaptation: OCCT's GeomAPI_ProjectPointOnCurve solves the exact closest
+/// point for every curve type. rcad has no such API, so this uses the analytic
+/// projection for Line/Circle and sampling+refine for the general case.
 fn project_on_range(curve: &Curve3, point: DVec3, t1: f64, t2: f64) -> Option<(f64, f64)> {
     if let Curve3::Line(l) = curve {
         let dir_sq = l.direction.dot(l.direction);
@@ -900,7 +1001,7 @@ fn is_intersection(
         let a_v12 = the_c1.tangent_at(a_t12);
         let a_v21 = the_c2.tangent_at(a_t21);
         let a_v22 = the_c2.tangent_at(a_t22);
-        let vv = |v: DVec3| v.length_squared() > 1e-24;
+        let vv = |v: DVec3| v.length_squared() > rcad_kernel::precision::SQUARE_CONFUSION;
         if vv(a_v11) && vv(a_v12) && vv(a_v21) && vv(a_v22) {
             if b_small_11_21 && b_small_12_22 {
                 an_angle1 = a_v11.normalize().dot(a_v21.normalize()).clamp(-1.0, 1.0).acos();
