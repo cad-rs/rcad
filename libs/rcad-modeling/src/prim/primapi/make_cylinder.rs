@@ -44,8 +44,12 @@ impl MakeCylinder {
         let bot_v = t.add_tvertex(self.local(r, 0.0, 0.0));
         let top_v = t.add_tvertex(self.local(r, 0.0, h));
 
-        let bot_circle = Circle3::new(o, self.z_axis, r);
-        let top_circle = Circle3::new(self.local(0.0, 0.0, h), self.z_axis, r);
+        // OCCT BRepPrim_OneAxis::TopEdge/BottomEdge build the cap circles with
+        // gp_Circ(gp_Ax2(P, Axes.Direction, Axes.XDirection), R) — the reference
+        // direction is the cylinder's X axis, so the seam vertex (at x_axis*r)
+        // lies at parameter 0.
+        let bot_circle = Circle3::new_with_ref_dir(o, self.z_axis, r, self.x_axis);
+        let top_circle = Circle3::new_with_ref_dir(self.local(0.0, 0.0, h), self.z_axis, r, self.x_axis);
         let seam_line = Line3::new(self.local(r, 0.0, 0.0), self.z_axis * h);
 
         let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), bot_v.clone(), [0.0, std::f64::consts::TAU]);

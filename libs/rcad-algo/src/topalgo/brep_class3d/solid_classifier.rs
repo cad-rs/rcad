@@ -109,6 +109,9 @@ impl SolidClassifier {
         // 3. Ray casting: shoot ray in +X, count front-face intersections
         // OCCT uses IntCurvesFace_Intersector for precise ray-face intersection.
         // rcad: simplified ray-plane intersection for planar faces.
+        // The face orientation flips the effective surface normal (a reversed
+        // face bounds the solid on the opposite side of its surface), matching
+        // IntCurvesFace_Intersector's treatment of TopAbs_REVERSED faces.
         let ray_dir = DVec3::X;
         let mut intersections = 0usize;
         for &fi in &face_indices {
@@ -116,10 +119,20 @@ impl SolidClassifier {
                 Some(s) => s,
                 None => continue,
             };
+            let face_ori = self
+                .explorer
+                .ds
+                .as_ref()
+                .map(|ds| ds.shape_info(fi).shape.orientation);
             if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
-                let denom = ray_dir.dot(pl.normal);
+                let normal = if face_ori == Some(rcad_kernel::topods::Orientation::Reversed) {
+                    -pl.normal
+                } else {
+                    pl.normal
+                };
+                let denom = ray_dir.dot(normal);
                 if denom.abs() < 1e-12 { continue; }
-                let t = (pl.origin - p).dot(pl.normal) / denom;
+                let t = (pl.origin - p).dot(normal) / denom;
                 if t > tol && denom < 0.0 { // front face (entering solid)
                     intersections += 1;
                 }

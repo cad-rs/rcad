@@ -125,8 +125,20 @@ impl BOPDS_Iterator {
                     || ((i_type1 > i_type2) && a_si2.has_sub_shape(id1)) { i_pair += 1; continue; }
                 // L352: int iX = BOPDS_Tools::TypeToInteger(aType1, aType2);
                 let i_x = type_to_integer(a_type1, a_type2);
-                // L353: myLists(iX).Append(BOPDS_Pair(min, max));
-                self.my_lists[i_x].push((id1.min(id2), id1.max(id2)));
+                // L353: myLists(iX).Append(BOPDS_Pair(min, max)).
+                // OCCT BOPDS_Iterator::Value() (BOPDS_Iterator.cxx L226-243) then
+                // returns the pair with the HIGHER shape type first (vertex before
+                // edge before face). Store in that Value() order so that callers
+                // (FillShrunkData, PerformVF/EF) see (type1, type2) ordering,
+                // exactly as OCCT's myIterator->Value(nS[0], nS[1]) does.
+                let (i_1, i_2) = if i_type1 == i_type2 {
+                    (id1.min(id2), id1.max(id2))
+                } else if i_type1 > i_type2 {
+                    (id1, id2)
+                } else {
+                    (id2, id1)
+                };
+                self.my_lists[i_x].push((i_1, i_2));
                 i_pair += 1;
             }
         }
@@ -152,7 +164,14 @@ impl BOPDS_Iterator {
                 if ((i_ti < i_tj) && si_sd.has_sub_shape(j))
                     || ((i_ti > i_tj) && sj.has_sub_shape(i)) { continue; }
                 if boxes_overlap(si_sd, sj, self.fuzzy_tol) {
-                    let a_pair = if i < j { (i, j) } else { (j, i) };
+                    // Same Value() ordering as Intersect: higher type first.
+                    let a_pair = if i_ti == i_tj {
+                        if i < j { (i, j) } else { (j, i) }
+                    } else if i_ti > i_tj {
+                        (i, j)
+                    } else {
+                        (j, i)
+                    };
                     if a_mp_fence.insert(a_pair) {
                         let i_x = type_to_integer(si_sd.shape_type, sj.shape_type);
                         if i_x < Self::nb_ext_interfs() { self.my_ext_lists[i_x].push(a_pair); }

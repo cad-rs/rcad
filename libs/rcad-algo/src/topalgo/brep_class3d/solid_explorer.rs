@@ -61,6 +61,9 @@ impl SolidExplorer {
     }
 
     /// Classify point using ray casting (simplified).
+    /// OCCT IntCurvesFace_Intersector: the face's orientation flips the
+    /// effective surface normal (a reversed face bounds the solid on the
+    /// opposite side of its surface).
     pub fn classify_point(&self, p: DVec3) -> u8 {
         if let Some(ref ds) = self.ds {
             let mut intersections = 0usize;
@@ -69,11 +72,17 @@ impl SolidExplorer {
                     Some(s) => s,
                     None => continue,
                 };
+                let face_ori = ds.shape_info(fi).shape.orientation;
                 if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
+                    let normal = if face_ori == rcad_kernel::topods::Orientation::Reversed {
+                        -pl.normal
+                    } else {
+                        pl.normal
+                    };
                     let ray_dir = DVec3::X;
-                    let denom = ray_dir.dot(pl.normal);
+                    let denom = ray_dir.dot(normal);
                     if denom.abs() < 1e-12 { continue; }
-                    let t = (pl.origin - p).dot(pl.normal) / denom;
+                    let t = (pl.origin - p).dot(normal) / denom;
                     if t > 1e-7 && denom < 0.0 {
                         intersections += 1;
                     }

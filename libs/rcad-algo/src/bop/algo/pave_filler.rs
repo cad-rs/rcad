@@ -825,6 +825,11 @@ impl PaveFiller {
         my_iterator.initialize(ShapeType::Vertex, ShapeType::Edge);
         let pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Vertex, ShapeType::Edge).to_vec();
         let i_size = pairs.len();
+        for &(a, b) in &pairs {
+            let (v, e) = if self.ds.shapes[a].shape_type == ShapeType::Vertex { (a, b) } else { (b, a) };
+            let p = self.ds.vertex_point_by_idx(v);
+            eprintln!("[DBGVE] pair ({},{}) V({:.3},{:.3},{:.3}) E{}", a, b, p.x, p.y, p.z, e);
+        }
         if i_size == 0 {
             return;
         }
@@ -2146,11 +2151,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if !pb.0.read().unwrap().is_to_update() { continue; }
                 // OCCT L479: myDS->CommonBlock(aPB)
                 let a_cb = self.ds.common_block(pb);
-                // OCCT L483: aPB->Update(aLPBN, false)
+                // OCCT L483: aPB->Update(aLPBN) — theFlag defaults to TRUE
+                // (BOPDS_PaveBlock.hxx L136-137), so the endpoint paves are
+                // included and an edge with one intersection ext pave splits
+                // into two sub-pave-blocks.
                 let mut a_lpbn: Vec<SharedPB> = Vec::new();
                 {
                     let mut pbw = pb.0.write().unwrap();
-                    pbw.update(&mut a_lpbn, false);
+                    pbw.update(&mut a_lpbn, true);
                 }
                 let mut valid_new_pbs: Vec<SharedPB> = Vec::new();
                 for a_pbn in &a_lpbn {

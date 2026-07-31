@@ -1,6 +1,19 @@
-// OCCT BRepPrimAPI_MakeCone 1:1 translation.
-// Cone with axis Z, apex at z=H, base at z=0.
-// 2 vertices, 3 edges, 2 faces (lateral, bottom).
+// OCCT BRepPrimAPI_MakeCone / BRepPrim_Cone / BRepPrim_OneAxis 1:1 translation.
+// OCCT ref: BRepPrim_Cone.cxx (SetParameters, SetMeridian),
+//           BRepPrim_OneAxis.cxx (TopFace L448-484, BottomFace L488-525,
+//                                 LateralFace, TopWire L726-756, BottomWire L757-782,
+//                                 HasTop L293-310).
+// Cone with axis Z, base at z=0, top at z=H.
+// 2 vertices, 3 edges.
+// 3 faces (lateral, bottom, top) when both radii are non-zero (frustum);
+// 2 faces (lateral, bottom) when the top radius is zero (pointed cone),
+// mirroring OCCT BRepPrim_OneAxis::HasTop().
+//
+// The faces follow OCCT exactly: the bottom and top cap planes carry the +Z
+// normal (BRepPrim_OneAxis::BottomFace/TopFace make the plane from the Axes),
+// and the bottom face is REVERSED (ReverseFace). The wires use the same edge
+// orientations as OCCT: LateralWire = [rev(TopEdge), EndEdge, BottomEdge,
+// rev(StartEdge)], BottomWire = [rev(BottomEdge)], TopWire = [TopEdge].
 // Supports local coordinate system (gp_Ax2).
 
 use glam::DVec3;
@@ -36,8 +49,11 @@ impl MakeCone {
         let mut t = BRep::new();
         let bot_v = t.add_tvertex(self.local(self.r1, 0.0, 0.0));
         let top_v = t.add_tvertex(self.local(self.r2, 0.0, self.h));
-        let bot_circle = Circle3::new(self.origin, self.z_axis, self.r1);
-        let top_circle = Circle3::new(self.local(0.0, 0.0, self.h), self.z_axis, self.r2);
+        // OCCT BRepPrim_OneAxis::TopEdge/BottomEdge: cap circles use
+        // Axes().XDirection() as the reference, so the seam vertex lies at
+        // parameter 0 (same convention as the cylinder).
+        let bot_circle = Circle3::new_with_ref_dir(self.origin, self.z_axis, self.r1, self.x_axis);
+        let top_circle = Circle3::new_with_ref_dir(self.local(0.0, 0.0, self.h), self.z_axis, self.r2, self.x_axis);
         let seam_dir = self.x_axis * (self.r2 - self.r1) + self.z_axis * self.h;
         let seam = Line3::new(self.local(self.r1, 0.0, 0.0), seam_dir);
         let seam_len = ((self.r2 - self.r1).powi(2) + self.h * self.h).sqrt();
@@ -48,12 +64,32 @@ impl MakeCone {
             apex: self.origin, axis: self.z_axis, radius: self.r1,
             half_angle_rad: (self.r2 - self.r1).atan2(self.h),
         });
-        let bot_plane = Surface3::Plane(Plane::new(self.origin, -self.z_axis));
-        let lat_wire = t.add_twire(vec![e_seam.clone(), rev(e_bot.clone()), rev(e_seam.clone()), e_top.clone()]);
-        let bot_wire = t.add_twire(vec![e_bot]);
+        // OCCT BottomFace/TopFace planes carry the +Z normal (the face
+        // orientation flag carries the direction, not the plane normal).
+        let bot_plane = Surface3::Plane(Plane::new(self.origin, self.z_axis));
+        let top_plane = Surface3::Plane(Plane::new(self.local(0.0, 0.0, self.h), self.z_axis));
+        // OCCT LateralWire (BRepPrim_OneAxis.cxx L660-684):
+        //   [rev(TopEdge), EndEdge, BottomEdge, rev(StartEdge)]
+        let lat_wire = t.add_twire(vec![rev(e_top.clone()), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
+        // OCCT BottomWire (L757-782): [rev(BottomEdge)]
+        let bot_wire = t.add_twire(vec![rev(e_bot)]);
+        // OCCT TopWire (L726-756): [TopEdge]
+        let top_wire = t.add_twire(vec![e_top]);
         let f_lat = t.add_tface(Some(lat_surf), lat_wire, vec![], None, None, vec![], true);
-        let f_bot = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
-        let shell = t.add_tshell(vec![f_lat, f_bot]);
+        let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
+        // OCCT BRepPrim_OneAxis::BottomFace (L501-503): ReverseFace.
+        let f_bot = rev(f_bot_fwd);
+        let mut shell_faces = vec![f_lat, f_bot];
+        // OCCT BRepPrim_OneAxis::HasTop() (BRepPrim_OneAxis.cxx L293-310):
+        // the top face exists only when !VMaxInfinite && !MeridianClosed &&
+        // !MeridianOnAxis(myVMax). For the cone the meridian at VMax is at
+        // distance R2 from the axis, so HasTop() == (R2 != 0). The top face
+        // (OCCT TopFace L448-484) is a plane at z=H with +Z normal.
+        if self.r2 > 1e-12 {
+            let f_top = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
+            shell_faces.push(f_top);
+        }
+        let shell = t.add_tshell(shell_faces);
         t.add_tsolid(vec![shell]);
         Ok(t)
     }

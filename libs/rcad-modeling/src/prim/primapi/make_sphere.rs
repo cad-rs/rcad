@@ -30,10 +30,17 @@ impl MakeSphere {
         let mut t = BRep::new();
         let north = t.add_tvertex(self.local(0.0, 0.0, r));
         let south = t.add_tvertex(self.local(0.0, 0.0, -r));
-        let seam = Circle3::new(c, self.x_axis, r);
+        // OCCT BRepPrim_Sphere::SetMeridian (BRepPrim_Sphere.cxx L71-85):
+        // meridian circle axis = -YDirection, x_dir = XDirection. The seam edge
+        // is the arc [3*PI/2, 5*PI/2], i.e. from the south pole through +X to
+        // the north pole, lying in the XZ plane.
+        let seam = Circle3::new(c, -self.y_axis, r);
         let pi = std::f64::consts::PI;
         let e_top = t.add_tedge(None, north.clone(), north.clone(), [0.0, pi * r]);
-        let e_seam = t.add_tedge(Some(Curve3::Circle(seam)), north.clone(), south.clone(), [0.0, pi]);
+        let e_seam = t.add_tedge(
+            Some(Curve3::Circle(seam)),
+            north.clone(), south.clone(),
+            [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
         let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
         let wire = t.add_twire(vec![e_top, e_seam.clone(), e_bot, rev(e_seam)]);
         let surf = Surface3::Sphere(SphericalSurface::new(c, self.y_axis, r));

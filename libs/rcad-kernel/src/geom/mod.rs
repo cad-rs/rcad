@@ -105,6 +105,28 @@ impl Circle3 {
         (axis_dist * axis_dist + radial_diff * radial_diff).sqrt()
     }
 
+    /// OCCT gp_Circ(gp_Ax2(P, N, X)) — construct a circle with an explicit
+    /// reference direction for the local frame (x_dir = ref_dir projected onto
+    /// the circle plane). Mirrors BRepPrim_OneAxis::TopEdge/BottomEdge which
+    /// build the cap circles with Axes().XDirection() as the reference.
+    pub fn new_with_ref_dir(center: Point3, normal: Vec3, radius: f64, ref_dir: Vec3) -> Self {
+        let normal = normal.normalize_or_zero();
+        let ref_rej = ref_dir - normal * ref_dir.dot(normal);
+        let x_dir = if ref_rej.length_squared() < 1e-12 {
+            stable_x_dir(normal)
+        } else {
+            ref_rej.normalize()
+        };
+        let y_dir = normal.cross(x_dir).normalize();
+        Self {
+            center,
+            normal,
+            x_dir,
+            y_dir,
+            radius,
+        }
+    }
+
     pub fn rotate_frame(&mut self, angle: f64) {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
