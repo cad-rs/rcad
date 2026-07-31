@@ -40,6 +40,9 @@ struct CoupleOfPBs {
     index_interf: usize,
     tolerance: f64,
     index: usize, // new vertex index (iV)
+    point: DVec3, // intersection point (used to fuse close new vertices)
+    param1: f64,  // parameter of the intersection on pb1's edge
+    param2: f64,  // parameter of the intersection on pb2's edge
 }
 
 use crate::bop::algo::section_attribute::SectionAttribute;
@@ -1107,11 +1110,6 @@ impl PaveFiller {
                                     continue;
                                 }
 
-                                if a_nb_cprts > 1 && i_cp > 0 {
-                                    // OCCT L373-383: only process VERTEX parts
-                                    // when there are multiple common parts
-                                    continue;
-                                }
                                 let a_t1 = cp.vertex_param1;
                                 let a_t2 = cp.vertex_param2;
 
@@ -1267,6 +1265,9 @@ impl PaveFiller {
                                     index_interf: idx_interf,
                                     tolerance: a_tol_vnew,
                                     index: usize::MAX,
+                                    point: vnew_pt,
+                                    param1: a_t1,
+                                    param2: a_t2,
                                 });
 
                                 new_ee.push(InterferenceEE {
@@ -1817,16 +1818,12 @@ impl PaveFiller {
     /// Fuse close new vertices into groups.
     /// OCCT BOPAlgo_PaveFiller::TreatNewVertices (PaveFiller_3.cxx L692-723).
     fn treat_new_vertices(&self, the_mvcpb: &[CoupleOfPBs]) -> Vec<(DVec3, f64, Vec<usize>)> {
-        // OCCT L700-706: collect vertex points and tolerances
+        // OCCT L700-706: collect vertex points and tolerances.
+        // The fused vertex is the EE/EF INTERSECTION point (the new vertex),
+        // not the pave block endpoints.
         let mut verts: Vec<(DVec3, f64, usize)> = Vec::new(); // (point, tol, index)
         for (i, cpb) in the_mvcpb.iter().enumerate() {
-            let (p1, _p2) = {
-                let r1 = cpb.pb1.0.read().unwrap();
-                let r2 = cpb.pb2.0.read().unwrap();
-                (r1.pave1, r2.pave1)
-            };
-            // Get vertex position from DS
-            let pt = self.ds.vertex_point_by_idx(p1.vertex_idx);
+            let pt = cpb.point;
             verts.push((pt, cpb.tolerance, i));
         }
         // OCCT L710: BOPAlgo_Tools::IntersectVertices — fuse by proximity
@@ -1895,25 +1892,30 @@ impl PaveFiller {
         }
 
         // OCCT L655-685: build PB→[vertices] map and call IntersectVE
-        // rcad: add new vertices as ext paves on the PBs
+        // (which computes each new vertex's parameter on the PB edge and adds
+        // it as an ext pave, then splits the pave blocks). rcad: add the ext
+        // paves at the intersection parameters, then split the affected edges.
+        let mut split_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for cpb in the_mvcpb {
             let n_v = match cpb_to_new_vertex.get(&cpb.index_interf) {
                 Some(v) => *v,
                 None => continue,
             };
-            let (p1_param, p2_param) = {
-                let r1 = cpb.pb1.0.read().unwrap();
-                let r2 = cpb.pb2.0.read().unwrap();
-                (r1.pave1.param, r2.pave1.param)
-            };
+            let n_e1 = cpb.pb1.0.read().unwrap().original_edge;
+            let n_e2 = cpb.pb2.0.read().unwrap().original_edge;
             {
                 let mut w1 = cpb.pb1.0.write().unwrap();
-                w1.ext_paves.push(Pave { vertex_idx: n_v, param: p1_param });
+                w1.ext_paves.push(Pave { vertex_idx: n_v, param: cpb.param1 });
             }
             {
                 let mut w2 = cpb.pb2.0.write().unwrap();
-                w2.ext_paves.push(Pave { vertex_idx: n_v, param: p2_param });
+                w2.ext_paves.push(Pave { vertex_idx: n_v, param: cpb.param2 });
             }
+            split_edges.insert(n_e1);
+            split_edges.insert(n_e2);
+        }
+        if !split_edges.is_empty() {
+            self.split_pave_blocks(&split_edges, true);
         }
     }
 

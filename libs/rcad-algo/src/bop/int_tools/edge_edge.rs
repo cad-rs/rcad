@@ -2,6 +2,8 @@
 // OCCT IntTools_EdgeEdge.cxx / .lxx
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
+use rcad_kernel::math::bnd::BndBox;
+use rcad_kernel::curve_bounding_box_range;
 
 #[derive(Debug, Clone)]
 pub struct CommonPrt {
@@ -85,56 +87,99 @@ impl EdgeEdgeIntersector {
         i_cnt as f64 / (a_nb_seg + 1) as f64 > 0.5
     }
 
-    /// OCCT FindSolutions + MergeSolutions: adaptive sampling with local refinement.
+    /// OCCT IntTools_EdgeEdge::FindSolutions + MergeSolutions.
+    ///
+    /// rcad: dense sampling of the distance function with local-minimum
+    /// refinement, equivalent to OCCT's box-based subdivision but robust for
+    /// closed curves (circles) whose endpoints lie inside the opposite box.
+    /// Each local minimum of |curve1(t1) - curve2(t2)| is refined to a
+    /// vertex common part when the distance falls within the fuzzy value.
     fn find_and_merge_solutions(&mut self) {
-        let t1 = self.range1[0]; let t2 = self.range1[1];
-        let t3 = self.range2[0]; let t4 = self.range2[1];
+        let a_tol = self.fuzzy_value;
+        let (t1, t2) = (self.range1[0], self.range1[1]);
+        let (t3, t4) = (self.range2[0], self.range2[1]);
+        let (dt1, dt2) = ((t2 - t1) / 128.0, (t4 - t3) / 128.0);
 
-        // Coarse pass: find candidate regions
-        let coarse = 23usize;
-        let dt1 = (t2 - t1) / coarse as f64;
-        let dt2 = (t4 - t3) / coarse as f64;
-        let mut candidates: Vec<(f64, f64, f64)> = Vec::new(); // (t1, t2, distance)
-        for i in 0..=coarse {
+        // Sample distance(t1) = min over t2 of |c1(t1) - c2(t2)|.
+        let mut d_at: Vec<(f64, f64)> = Vec::with_capacity(129); // (t1, d)
+        for i in 0..=128 {
             let a_t1 = t1 + i as f64 * dt1;
             let p1 = self.curve1.point_at(a_t1);
-            let mut best_d = f64::MAX; let mut best_t2 = t3;
-            for j in 0..=coarse {
+            let mut best_d = f64::MAX;
+            for j in 0..=128 {
                 let a_t2 = t3 + j as f64 * dt2;
                 let d = (p1 - self.curve2.point_at(a_t2)).length();
-                if d < best_d { best_d = d; best_t2 = a_t2; }
+                if d < best_d { best_d = d; }
             }
-            if best_d < self.fuzzy_value * 10.0 {
-                candidates.push((a_t1, best_t2, best_d));
+            d_at.push((a_t1, best_d));
+        }
+
+        // Find local minima of the distance function (no threshold — the dip
+        // near a crossing may be far from the fuzzy tolerance at coarse scale;
+        // the refinement below converges it to the exact minimum).
+        let mut candidates: Vec<(f64, f64)> = Vec::new(); // (t1, best_t2)
+        for i in 1..d_at.len() - 1 {
+            let (a_t, d) = d_at[i];
+            if d <= d_at[i - 1].1 && d <= d_at[i + 1].1 {
+                let p1 = self.curve1.point_at(a_t);
+                let mut best_t2 = t3;
+                let mut best_d = f64::MAX;
+                for j in 0..=128 {
+                    let a_t2 = t3 + j as f64 * dt2;
+                    let dd = (p1 - self.curve2.point_at(a_t2)).length();
+                    if dd < best_d { best_d = dd; best_t2 = a_t2; }
+                }
+                candidates.push((a_t, best_t2));
             }
         }
-        if candidates.is_empty() { return; }
 
-        // Local refinement: sub-sample around each candidate
-        let fine = 10usize;
-        for (base_t1, base_t2, _base_d) in &candidates {
-            let mut best_d = f64::MAX; let mut best_t1 = *base_t1; let mut best_t2 = *base_t2;
-            let refine_range = dt1.max(dt2) * 0.5;
-            for i in 0..=fine {
-                let a_t1 = (*base_t1 - refine_range) + 2.0 * refine_range * i as f64 / fine as f64;
-                if a_t1 < t1 || a_t1 > t2 { continue; }
-                let p1 = self.curve1.point_at(a_t1);
-                for j in 0..=fine {
-                    let a_t2 = (*base_t2 - refine_range) + 2.0 * refine_range * j as f64 / fine as f64;
-                    if a_t2 < t3 || a_t2 > t4 { continue; }
-                    let d = (p1 - self.curve2.point_at(a_t2)).length();
-                    if d < best_d { best_d = d; best_t1 = a_t1; best_t2 = a_t2; }
+        // Deduplicate nearby candidates and refine each to the exact minimum
+        // via an adaptive shrinking window (converges to the fuzzy tolerance).
+        let mut refined: Vec<(f64, f64, f64)> = Vec::new();
+        let mut win = (dt1.max(dt2)) * 2.0;
+        let steps = 8usize;
+        for (mut best_t1, mut best_t2) in candidates {
+            let mut best_d = (self.curve1.point_at(best_t1) - self.curve2.point_at(best_t2)).length();
+            let mut w = win;
+            for _ in 0..40 {
+                let mut improved = false;
+                for i in 0..=steps {
+                    let a_t1 = (best_t1 - w + 2.0 * w * i as f64 / steps as f64).clamp(t1, t2);
+                    let p1 = self.curve1.point_at(a_t1);
+                    for j in 0..=steps {
+                        let a_t2 = (best_t2 - w + 2.0 * w * j as f64 / steps as f64).clamp(t3, t4);
+                        let d = (p1 - self.curve2.point_at(a_t2)).length();
+                        if d < best_d {
+                            best_d = d; best_t1 = a_t1; best_t2 = a_t2; improved = true;
+                        }
+                    }
+                }
+                if best_d <= a_tol {
+                    break;
+                }
+                if !improved { w *= 0.5; }
+                w *= 0.5;
+            }
+            if best_d <= a_tol {
+                // Dedup: skip if very close to an already-refined solution.
+                if refined.iter().all(|&(rt1, rt2, _)| {
+                    (rt1 - best_t1).abs() > dt1.max(dt2)
+                        || (rt2 - best_t2).abs() > dt1.max(dt2)
+                }) {
+                    refined.push((best_t1, best_t2, best_d));
                 }
             }
-            if best_d <= self.fuzzy_value {
-                self.common_parts.push(CommonPrt {
-                    is_edge: false,
-                    range1: [best_t1, best_t1], ranges2: vec![[best_t2, best_t2]],
-                    vertex_param1: best_t1, vertex_param2: best_t2,
-                    bounding_point1: self.curve1.point_at(best_t1),
-                    bounding_point2: self.curve2.point_at(best_t2),
-                });
-            }
+        }
+
+        for (a_t1, a_t2, _) in refined {
+            let p1 = self.curve1.point_at(a_t1);
+            let p2 = self.curve2.point_at(a_t2);
+            self.common_parts.push(CommonPrt {
+                is_edge: false,
+                range1: [a_t1, a_t1], ranges2: vec![[a_t2, a_t2]],
+                vertex_param1: a_t1, vertex_param2: a_t2,
+                bounding_point1: p1, bounding_point2: p2,
+            });
         }
     }
 
@@ -186,3 +231,4 @@ impl EdgeEdgeIntersector {
     pub fn is_done(&self) -> bool { self.done }
     pub fn common_parts(&self) -> &[CommonPrt] { &self.common_parts }
 }
+
