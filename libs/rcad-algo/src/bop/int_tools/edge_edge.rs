@@ -165,32 +165,17 @@ impl EdgeEdgeIntersector {
                 return;
             }
         }
-        // 3.3 Line + analytical fast rejection (OCCT L217-233).
+        // 3.3 Fast rejection for line + analytical curve (OCCT L217-233).
         // OCCT computes BRepExtrema_DistShapeShape(myEdge1, myEdge2, MIN) and
-        // returns if d > 1.1*myTol. rcad: for line+circle use the exact
-        // distance (dist(line, center) - r); other conics fall back to the
-        // (conservative) box overlap. The full Extrema_ExtCC for all conics is
-        // a separate translation.
+        // returns if d > 1.1*myTol.
         if (type_to_integer(&self.curve1) == 0 || type_to_integer(&self.curve2) == 0)
             && type_to_integer(&self.curve1) <= 2 && type_to_integer(&self.curve2) <= 2
         {
-            let (line_curve, conic_curve) = if type_to_integer(&self.curve1) == 0 {
-                (&self.curve1, &self.curve2)
-            } else {
-                (&self.curve2, &self.curve1)
-            };
-            if let (Curve3::Line(l), Curve3::Circle(c)) = (line_curve, conic_curve) {
-                // Exact line-circle distance: max(0, dist(line, center) - r).
-                let d = point_to_line_dist_sq(c.center, l).sqrt();
-                if d - c.radius > 1.1 * self.my_tol {
-                    return;
-                }
-            } else {
-                let b1 = bnd_build_box(&self.curve1, self.range1[0], self.range1[1], self.my_tol1);
-                let b2 = bnd_build_box(&self.curve2, self.range2[0], self.range2[1], self.my_tol2);
-                if b1.is_out_box(&b2) {
-                    return;
-                }
+            let d = crate::topalgo::brep_extrema::dist_shape_shape::min_distance_edge_segments(
+                &self.curve1, self.range1[0], self.range1[1],
+                &self.curve2, self.range2[0], self.range2[1]);
+            if d > 1.1 * self.my_tol {
+                return;
             }
         }
         // 4. FindSolutions + MergeSolutions

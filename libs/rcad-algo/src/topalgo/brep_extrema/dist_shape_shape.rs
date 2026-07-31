@@ -1,64 +1,83 @@
-// OCCT BRepExtrema_DistShapeShape (BRepExtrema_DistShapeShape.hxx / .cxx)
-// Computes the minimum distance between two shapes.
+// OCCT BRepExtrema_DistShapeShape (BRepExtrema_DistShapeShape.cxx) — 1:1
+// translation of the edge-edge MIN case, as used by IntTools_EdgeEdge::Perform()
+// (BOPAlgo_PaveFiller fast rejection: "if (d > 1.1 * myTol) return;").
 //
-// OCCT L224: used by IntTools_EdgeEdge::Perform() to quickly check
-// if a line and an analytic curve are far apart.
-// rcad: delegates to rcad-kernel::base::extrema.
+// OCCT computes the minimum distance between two edges as the minimum over:
+//   - the curve-curve interior extrema clipped to the ranges
+//     (Extrema_ExtCC -> Extrema_ExtElC for line-conic; OCCT L177-317,
+//      L832-901 PrepareResults),
+//   - the edge vertex sub-shapes (vertex-edge and vertex-vertex distances,
+//     OCCT DistanceSS / DistShapeShape Perform).
+//
+// rcad: the boolean DS represents an edge as Curve3 + parameter range, so the
+// edge-edge distance is a function of two curve segments.
 
-use rcad_kernel::base::extrema;
+use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
+use rcad_kernel::base::extrema::{ext_cc_line_conic, line_line_extrema};
 use rcad_kernel::geom::{Curve3, CurveEval};
-use rcad_kernel::topo_shape::Shape;
 
-/// OCCT BRepExtrema_DistShapeShape — minimum distance between two shapes.
-pub struct DistShapeShape {
-    done: bool,
-    value: f64,
-}
+/// OCCT BRepExtrema_DistShapeShape(edge1, edge2, Extrema_ExtFlag_MIN).Value()
+/// for the edge-edge case: the exact minimum 3D distance between the curve
+/// segment [t1, t2] of `c1` and [u1, u2] of `c2`.
+pub fn min_distance_edge_segments(
+    c1: &Curve3,
+    t1: f64,
+    t2: f64,
+    c2: &Curve3,
+    u1: f64,
+    u2: f64,
+) -> f64 {
+    let mut best = f64::INFINITY;
 
-impl DistShapeShape {
-    /// Constructor with two shapes.
-    /// OCCT: BRepExtrema_DistShapeShape(S1, S2, Extrema_ExtFlag_MIN)
-    pub fn new(s1: &Shape, s2: &Shape, _ext_flag: i32) -> Self {
-        let val = Self::compute_min_dist(s1, s2);
-        DistShapeShape { done: true, value: val }
-    }
-
-    pub fn is_done(&self) -> bool { self.done }
-    pub fn value(&self) -> f64 { self.value }
-
-    /// Compute minimum distance between two shapes by sampling edge curves.
-    fn compute_min_dist(s1: &Shape, s2: &Shape) -> f64 {
-        let pts1 = Self::sample_shape(s1);
-        let pts2 = Self::sample_shape(s2);
-        if pts1.is_empty() || pts2.is_empty() { return f64::MAX; }
-        let mut min_d = f64::MAX;
-        for &p1 in &pts1 {
-            for &p2 in &pts2 {
-                let d = (p1 - p2).length();
-                if d < min_d { min_d = d; }
-            }
-        }
-        min_d
-    }
-
-    /// Sample points from a shape's edges.
-    fn sample_shape(s: &Shape) -> Vec<glam::DVec3> {
-        let mut pts = Vec::new();
-        match &*s.data {
-            rcad_kernel::topods::TShape::Edge(ed) => {
-                if let Some(c) = &ed.curve {
-                    let n = 8usize;
-                    let (f, l) = (ed.range[0], ed.range[1]);
-                    for i in 0..=n {
-                        pts.push(c.point_at(f + (l - f) * i as f64 / n as f64));
-                    }
+    // OCCT Extrema_ExtCC dispatch (L247-294): line-conic handled analytically
+    // by Extrema_ExtElC. Normalize so a Line comes first.
+    let (line, conic, lt1, lt2, cu1, cu2) = match (c1, c2) {
+        (Curve3::Line(l), c2) => (l, c2, t1, t2, u1, u2),
+        (c1, Curve3::Line(l)) => (l, c1, u1, u2, t1, t2),
+        (Curve3::Line(a), Curve3::Line(b)) => {
+            // Line-Line (OCCT ExtElC L268-357): interior closest pair + vertices.
+            for (d, tp, up) in line_line_extrema(a, b) {
+                if tp >= t1 - f64::EPSILON && tp <= t2 + f64::EPSILON
+                    && up >= u1 - f64::EPSILON && up <= u2 + f64::EPSILON
+                {
+                    best = best.min(d);
                 }
             }
-            _ => {
-                // For non-edge shapes, recurse into sub-shapes
-                // rcad: skip — DistShapeShape primarily used for edge-edge
+            for &te in &[t1, t2] {
+                best = best.min(closest_point_on_curve_range(c2, a.point_at(te), u1, u2, 64).distance);
             }
+            for &ue in &[u1, u2] {
+                best = best.min(closest_point_on_curve_range(c1, b.point_at(ue), t1, t2, 64).distance);
+            }
+            return best;
         }
-        pts
+        // Both non-line: not reachable from the IntTools_EdgeEdge fast-reject
+        // (its condition guarantees one curve is a Line). Fall back to the
+        // sampling curve-curve extrema.
+        _ => return rcad_kernel::base::extrema::extrema_curve_curve(c1, c2, 64).min_distance(),
+    };
+
+    // OCCT Extrema_ExtCC for line-conic: interior extrema in range + corners.
+    let cc = ext_cc_line_conic(line, lt1, lt2, conic, cu1, cu2);
+    for (d, _, _) in &cc.interior {
+        best = best.min(*d);
     }
+    // OCCT TrimmedSquareDistances (mydist11/12/21/22, L375-393).
+    best = best.min(cc.corners.dist11.sqrt());
+    best = best.min(cc.corners.dist12.sqrt());
+    best = best.min(cc.corners.dist21.sqrt());
+    best = best.min(cc.corners.dist22.sqrt());
+
+    // OCCT vertex sub-shapes of the edges: endpoint of one edge to the other
+    // edge's curve (ExtPC / ExtPElC).
+    for &te in &[lt1, lt2] {
+        let p = line.point_at(te);
+        best = best.min(closest_point_on_curve_range(conic, p, cu1, cu2, 64).distance);
+    }
+    for &ue in &[cu1, cu2] {
+        let p = conic.point_at(ue);
+        best = best.min(closest_point_on_curve_range(&Curve3::Line(*line), p, lt1, lt2, 64).distance);
+    }
+
+    best
 }
