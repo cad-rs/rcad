@@ -1546,13 +1546,13 @@ impl DS {
         })
     }
 
-    /// True if the edge is degenerate (start == end vertex).
+    /// True if the edge is degenerate (its 3D curve collapses to a point).
+    /// OCCT BRep_Tool::Degenerated — NOT the same as a closed edge (a circle's
+    /// first/last vertices are the same shape but the edge is not degenerate).
     pub fn is_edge_degenerated(&self, i: usize) -> bool {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().and_then(|e| {
-                Some(e.first.ptr_id() == e.last.ptr_id())
-            })
+            si.shape.as_edge().map(|e| e.degenerated)
         }).unwrap_or(false)
     }
 
@@ -1727,21 +1727,33 @@ impl DS {
         0
     }
 
+    /// DS index of a vertex Shape, by pointer identity (OCCT TopoDS::IsSame —
+    /// the vertex is shared iff the two edges reference the same TShape).
+    fn vertex_ds_index(&self, v: &Shape) -> usize {
+        let pid = v.ptr_id();
+        for (i, si) in self.shapes.iter().enumerate() {
+            if si.shape_type == ShapeType::Vertex && si.shape.ptr_id() == pid {
+                return i;
+            }
+        }
+        usize::MAX
+    }
+
     /// Edge start vertex DS index, by edge shape index (same convention as
     /// edge_curve / edge_tolerance / edge_pave_blocks).
     pub fn edge_start_vertex_ds(&self, ei: usize) -> usize {
         self.shapes.get(ei).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().map(|ed| ed.first.index)
-        }).unwrap_or(0)
+            si.shape.as_edge().map(|ed| self.vertex_ds_index(&ed.first))
+        }).unwrap_or(usize::MAX)
     }
 
     /// Edge end vertex DS index, by edge shape index.
     pub fn edge_end_vertex_ds(&self, ei: usize) -> usize {
         self.shapes.get(ei).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().map(|ed| ed.last.index)
-        }).unwrap_or(0)
+            si.shape.as_edge().map(|ed| self.vertex_ds_index(&ed.last))
+        }).unwrap_or(usize::MAX)
     }
 
     /// Same as pave_blocks — OCCT: myPaveBlocksMap(theIndex)

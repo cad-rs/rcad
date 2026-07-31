@@ -1090,10 +1090,14 @@ impl PaveFiller {
 
                     // OCCT L355-553: process each common part
                     for (i_cp, cp) in a_cparts.iter().enumerate() {
-                        let a_type = if cp.range1[0] >= cp.range1[1] {
-                            ShapeType::Vertex  // VERTEX-type intersection
+                        // OCCT aCP.Type() — set by IntTools_EdgeEdge::AddSolution /
+                        // ComputeLineLine. (The old range-span heuristic misclassified
+                        // line-line VERTEX parts as EDGE because their Range1 is the
+                        // tolerance band [aT-dt, aT+dt], not a collapsed range.)
+                        let a_type = if cp.is_edge {
+                            ShapeType::Edge
                         } else {
-                            ShapeType::Edge    // EDGE-type (coincident)
+                            ShapeType::Vertex
                         };
 
                         match a_type {
