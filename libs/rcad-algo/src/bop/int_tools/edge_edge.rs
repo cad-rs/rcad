@@ -106,26 +106,30 @@ impl EdgeEdgeIntersector {
         }
         // 3.3 Line + analytical fast rejection (OCCT L217-233).
         // OCCT computes BRepExtrema_DistShapeShape(myEdge1, myEdge2, MIN) and
-        // returns if d > 1.1*myTol. rcad has no curve-curve extrema, so sample
-        // the line and project onto the conic (closest_point_on_curve_range).
+        // returns if d > 1.1*myTol. rcad: for line+circle use the exact
+        // distance (dist(line, center) - r); other conics fall back to the
+        // (conservative) box overlap. The full Extrema_ExtCC for all conics is
+        // a separate translation.
         if (type_to_integer(&self.curve1) == 0 || type_to_integer(&self.curve2) == 0)
             && type_to_integer(&self.curve1) <= 2 && type_to_integer(&self.curve2) <= 2
         {
-            let (line_curve, line_range, conic_curve, conic_range) = if type_to_integer(&self.curve1) == 0 {
-                (&self.curve1, self.range1, &self.curve2, self.range2)
+            let (line_curve, conic_curve) = if type_to_integer(&self.curve1) == 0 {
+                (&self.curve1, &self.curve2)
             } else {
-                (&self.curve2, self.range2, &self.curve1, self.range1)
+                (&self.curve2, &self.curve1)
             };
-            let n = 11usize;
-            let dt = (line_range[1] - line_range[0]) / n as f64;
-            let mut min_d = f64::MAX;
-            for i in 0..=n {
-                let p = line_curve.point_at(line_range[0] + i as f64 * dt);
-                let proj = closest_point_on_curve_range(conic_curve, p, conic_range[0], conic_range[1], 64);
-                if proj.distance < min_d { min_d = proj.distance; }
-            }
-            if min_d > 1.1 * self.my_tol {
-                return;
+            if let (Curve3::Line(l), Curve3::Circle(c)) = (line_curve, conic_curve) {
+                // Exact line-circle distance: max(0, dist(line, center) - r).
+                let d = point_to_line_dist_sq(c.center, l).sqrt();
+                if d - c.radius > 1.1 * self.my_tol {
+                    return;
+                }
+            } else {
+                let b1 = bnd_build_box(&self.curve1, self.range1[0], self.range1[1], self.my_tol1);
+                let b2 = bnd_build_box(&self.curve2, self.range2[0], self.range2[1], self.my_tol2);
+                if b1.is_out_box(&b2) {
+                    return;
+                }
             }
         }
         // 4. FindSolutions + MergeSolutions
@@ -645,9 +649,8 @@ fn split_range_on_segments(a_t1: f64, a_t2: f64, the_resolution: f64, the_nb_seg
 }
 
 /// OCCT ResolutionCoeff (L1486-1557).
-/// rcad adaptation: OCCT returns 0 for Bezier/BSpline (the default case) and
-/// relies on the curve's own Resolution; rcad has no per-curve Resolution, so
-/// the sampling branch below also serves Bezier/BSpline.
+/// OCCT: Bezier/BSpline fall through to the switch default (coeff = 0); their
+/// Resolution is computed by the curve's own method (translated below).
 fn resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
     let a_curve = the_bac;
     match a_curve {
@@ -660,6 +663,8 @@ fn resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
             Curve3::Ellipse(e) => 1.0 / (oc.offset_distance + e.major_radius),
             _ => sampling_resolution_coeff(the_bac, the_range),
         },
+        // OCCT L1577-1580: Geom_BezierCurve/BSplineCurve handle Resolution
+        Curve3::Bezier(_) | Curve3::BSpline(_) => 0.0,
         _ => sampling_resolution_coeff(the_bac, the_range),
     }
 }
@@ -684,9 +689,6 @@ fn sampling_resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
 }
 
 /// OCCT Resolution (L1561-1607).
-/// rcad adaptation: OCCT dispatches Bezier/BSpline to the curve's own
-/// Resolution(r3d) method (exact); rcad has no per-curve resolution, so those
-/// fall through to res_coeff * r3d (sampling-based approximation).
 fn resolution(the_curve: &Curve3, the_res_coeff: f64, the_r3d: f64) -> f64 {
     match the_curve {
         Curve3::Line(_) => the_r3d,
@@ -703,8 +705,87 @@ fn resolution(the_curve: &Curve3, the_res_coeff: f64, the_r3d: f64) -> f64 {
             }
             _ => the_res_coeff * the_r3d,
         },
+        // OCCT Geom_BezierCurve::Resolution / Geom_BSplineCurve::Resolution:
+        // UTolerance = theR3D * myMaxDerivInv, where myMaxDerivInv comes from
+        // BSplCLib::Resolution (max derivative of the control polygon).
+        Curve3::Bezier(b) => {
+            let d = b.control_points.len().saturating_sub(1);
+            let mut flat_knots = Vec::with_capacity(2 * (d + 1));
+            flat_knots.extend(std::iter::repeat(0.0).take(d + 1));
+            flat_knots.extend(std::iter::repeat(1.0).take(d + 1));
+            let weights = if b.weights.len() == b.control_points.len() { Some(&b.weights[..]) } else { None };
+            let md = bsplclib_resolution_3d(&b.control_points, weights, &flat_knots, d);
+            if md > 1e-30 { the_r3d / md } else { the_r3d }
+        }
+        Curve3::BSpline(bs) => {
+            let weights = if bs.weights.len() == bs.control_points.len() { Some(&bs.weights[..]) } else { None };
+            let md = bsplclib_resolution_3d(&bs.control_points, weights, &bs.knots, bs.degree);
+            if md > 1e-30 { the_r3d / md } else { the_r3d }
+        }
         _ => the_res_coeff * the_r3d,
     }
+}
+
+/// OCCT BSplCLib::Resolution (BSplCLib.cxx L4316+) — 3D branch.
+/// Computes the maximum first-derivative magnitude over the curve using the
+/// control polygon: for each knot span, |ΔP| / Δknot summed over components
+/// (rational: divided by the minimum weight). Returns max_derivative.
+fn bsplclib_resolution_3d(
+    poles: &[DVec3],
+    weights: Option<&[f64]>,
+    flat_knots: &[f64],
+    degree: usize,
+) -> f64 {
+    let deg1 = degree + 1;
+    let deg2 = 2 * degree + 1;
+    let num_poles = flat_knots.len().saturating_sub(deg1);
+    let mut max_derivative = 0.0f64;
+    if let Some(wg) = weights {
+        // OCCT rational branch (L4327-4470)
+        let mut min_weights = wg[0];
+        for w in wg.iter().take(poles.len()) {
+            if *w < min_weights { min_weights = *w; }
+        }
+        for ii in 1..num_poles {
+            let ii_index = ii % poles.len();
+            let ii_minus = (ii - 1) % poles.len();
+            let p_ii = poles[ii_index];
+            let p_im = poles[ii_minus];
+            let wg_ii = wg[ii_index];
+            let wg_im = wg[ii_minus];
+            let inverse = 1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
+            let lower = ii.saturating_sub(deg1);
+            let upper = (deg2 + ii).min(num_poles);
+            for jj in lower..upper {
+                let jj_index = jj % poles.len();
+                let p_jj = poles[jj_index];
+                let mut value = 0.0;
+                for k in 0..3 {
+                    let factor = ((p_jj[k] - p_ii[k]) * wg_ii - (p_jj[k] - p_im[k]) * wg_im).abs();
+                    value += factor;
+                }
+                value *= inverse;
+                if max_derivative < value { max_derivative = value; }
+            }
+        }
+        if min_weights > 1e-30 { max_derivative /= min_weights; }
+    } else {
+        // OCCT polynomial branch (L4440-4495)
+        for ii in 1..num_poles {
+            let ii_index = ii % poles.len();
+            let ii_minus = (ii - 1) % poles.len();
+            let p_ii = poles[ii_index];
+            let p_im = poles[ii_minus];
+            let inverse = 1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
+            let mut value = 0.0;
+            for k in 0..3 {
+                value += (p_ii[k] - p_im[k]).abs();
+            }
+            value *= inverse;
+            if max_derivative < value { max_derivative = value; }
+        }
+    }
+    max_derivative
 }
 
 /// OCCT CurveDeflection (L1611-1638).
