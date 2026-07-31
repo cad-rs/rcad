@@ -14,6 +14,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::curve_bounding_box_range;
+use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 
 /// OCCT IntTools_CommonPrt — a common part of two edges.
 #[derive(Debug, Clone)]
@@ -44,10 +45,13 @@ pub struct EdgeEdgeIntersector {
     my_swap: bool,
 }
 
-// OCCT TypeToInteger (IntTools_EdgeEdge.cxx L1456-1482)
+// OCCT TypeToInteger (IntTools_EdgeEdge.cxx L1456-1482).
+// GeomAbs_CurveType: Line=0, Hyperbola/Parabola=1, Circle/Ellipse=2,
+//                    Bezier/BSpline=3, other=4.
 fn type_to_integer(the_c_type: &Curve3) -> i32 {
     match the_c_type {
         Curve3::Line(_) => 0,
+        Curve3::Hyperbola(_) | Curve3::Parabola(_) => 1,
         Curve3::Circle(_) | Curve3::Ellipse(_) => 2,
         Curve3::BSpline(_) | Curve3::Bezier(_) => 3,
         _ => 4,
@@ -102,14 +106,25 @@ impl EdgeEdgeIntersector {
         }
         // 3.3 Line + analytical fast rejection (OCCT L217-233).
         // OCCT computes BRepExtrema_DistShapeShape(myEdge1, myEdge2, MIN) and
-        // returns if d > 1.1*myTol. rcad has no DistShapeShape, so use a box
-        // distance fast rejection (conservative: boxes disjoint ⇒ curves far).
+        // returns if d > 1.1*myTol. rcad has no curve-curve extrema, so sample
+        // the line and project onto the conic (closest_point_on_curve_range).
         if (type_to_integer(&self.curve1) == 0 || type_to_integer(&self.curve2) == 0)
             && type_to_integer(&self.curve1) <= 2 && type_to_integer(&self.curve2) <= 2
         {
-            let b1 = bnd_build_box(&self.curve1, self.range1[0], self.range1[1], self.my_tol1);
-            let b2 = bnd_build_box(&self.curve2, self.range2[0], self.range2[1], self.my_tol2);
-            if b1.is_out_box(&b2) {
+            let (line_curve, line_range, conic_curve, conic_range) = if type_to_integer(&self.curve1) == 0 {
+                (&self.curve1, self.range1, &self.curve2, self.range2)
+            } else {
+                (&self.curve2, self.range2, &self.curve1, self.range1)
+            };
+            let n = 11usize;
+            let dt = (line_range[1] - line_range[0]) / n as f64;
+            let mut min_d = f64::MAX;
+            for i in 0..=n {
+                let p = line_curve.point_at(line_range[0] + i as f64 * dt);
+                let proj = closest_point_on_curve_range(conic_curve, p, conic_range[0], conic_range[1], 64);
+                if proj.distance < min_d { min_d = proj.distance; }
+            }
+            if min_d > 1.1 * self.my_tol {
                 return;
             }
         }
@@ -638,24 +653,34 @@ fn resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
     match a_curve {
         Curve3::Circle(c) => 1.0 / (2.0 * c.radius),
         Curve3::Ellipse(e) => 1.0 / e.major_radius,
-        _ => {
-            // OCCT L1522-1550: sample-based for Hyperbola/Parabola/Other
-            let a_nb_p = 30usize;
-            let a_dt = (the_range[1] - the_range[0]) / a_nb_p as f64;
-            let mut a_t = the_range[0];
-            let mut a_p1 = the_bac.point_at(the_range[0]);
-            let mut k_min = 10.0f64;
-            for _ in 1..=a_nb_p {
-                a_t += a_dt;
-                let a_p2 = the_bac.point_at(a_t);
-                let a_dist = a_p1.distance(a_p2);
-                let k = a_dt / a_dist.max(1e-12);
-                if k < k_min { k_min = k; }
-                a_p1 = a_p2;
-            }
-            k_min
-        }
+        // OCCT L1501-1520: offset curve uses the basis curve's type
+        Curve3::Offset(oc) => match &*oc.basis {
+            Curve3::Line(_) => 0.0,
+            Curve3::Circle(c) => 1.0 / (2.0 * (oc.offset_distance + c.radius)),
+            Curve3::Ellipse(e) => 1.0 / (oc.offset_distance + e.major_radius),
+            _ => sampling_resolution_coeff(the_bac, the_range),
+        },
+        _ => sampling_resolution_coeff(the_bac, the_range),
     }
+}
+
+/// OCCT L1522-1550: sample-based coefficient for Hyperbola/Parabola/Other
+/// (and offset curves with a non-conic basis).
+fn sampling_resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
+    let a_nb_p = 30usize;
+    let a_dt = (the_range[1] - the_range[0]) / a_nb_p as f64;
+    let mut a_t = the_range[0];
+    let mut a_p1 = the_bac.point_at(the_range[0]);
+    let mut k_min = 10.0f64;
+    for _ in 1..=a_nb_p {
+        a_t += a_dt;
+        let a_p2 = the_bac.point_at(a_t);
+        let a_dist = a_p1.distance(a_p2);
+        let k = a_dt / a_dist.max(1e-12);
+        if k < k_min { k_min = k; }
+        a_p1 = a_p2;
+    }
+    k_min
 }
 
 /// OCCT Resolution (L1561-1607).
@@ -669,6 +694,15 @@ fn resolution(the_curve: &Curve3, the_res_coeff: f64, the_r3d: f64) -> f64 {
             let a_dt = the_res_coeff * the_r3d;
             if a_dt <= 1.0 { 2.0 * a_dt.asin() } else { 2.0 * std::f64::consts::PI }
         }
+        // OCCT L1584-1598: offset curve follows its basis curve type
+        Curve3::Offset(oc) => match &*oc.basis {
+            Curve3::Line(_) => the_r3d,
+            Curve3::Circle(_) => {
+                let a_dt = the_res_coeff * the_r3d;
+                if a_dt <= 1.0 { 2.0 * a_dt.asin() } else { 2.0 * std::f64::consts::PI }
+            }
+            _ => the_res_coeff * the_r3d,
+        },
         _ => the_res_coeff * the_r3d,
     }
 }
@@ -683,7 +717,8 @@ fn curve_deflection(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
     for _ in 1..=a_nb_p {
         a_t += a_dt;
         let a_v2 = the_bac.tangent_at(a_t);
-        if a_v1.length_squared() > 1e-24 && a_v2.length_squared() > 1e-24 {
+        // OCCT L1629: aV1.Magnitude() > gp::Resolution() (1e-15)
+        if a_v1.length() > 1e-15 && a_v2.length() > 1e-15 {
             let a_d1 = a_v1.normalize();
             let a_d2 = a_v2.normalize();
             a_defl += a_d1.dot(a_d2).clamp(-1.0, 1.0).acos();
@@ -787,63 +822,11 @@ fn find_parameters(
 }
 
 /// OCCT GeomAPI_ProjectPointOnCurve — project a point onto a curve within [t1, t2].
-/// rcad adaptation: OCCT's GeomAPI_ProjectPointOnCurve solves the exact closest
-/// point for every curve type. rcad has no such API, so this uses the analytic
-/// projection for Line/Circle and sampling+refine for the general case.
+/// Uses the rcad OCCT-aligned `closest_point_on_curve_range` (Extrema_ExtPElC
+/// analytic for Line/Circle/Hyperbola/Parabola, sampling+Newton otherwise).
 fn project_on_range(curve: &Curve3, point: DVec3, t1: f64, t2: f64) -> Option<(f64, f64)> {
-    if let Curve3::Line(l) = curve {
-        let dir_sq = l.direction.dot(l.direction);
-        if dir_sq > 1e-24 {
-            let t = ((point - l.origin).dot(l.direction) / dir_sq).clamp(t1, t2);
-            let p = l.origin + l.direction * t;
-            return Some(((p - point).length(), t));
-        }
-    }
-    if let Curve3::Circle(c) = curve {
-        let r = c.radius;
-        let center = c.center;
-        let d = point - center;
-        let radial = d - c.normal * d.dot(c.normal);
-        let radial_len = radial.length();
-        if radial_len > 1e-30 {
-            let proj = center + radial * (r / radial_len);
-            let p_rel = proj - center;
-            let mut ang = p_rel.dot(c.x_dir).atan2(p_rel.dot(c.y_dir));
-            if ang < 0.0 { ang += std::f64::consts::TAU; }
-            let ta = t1.rem_euclid(std::f64::consts::TAU);
-            let tb = if t2 > t1 { t2 } else { t2 + std::f64::consts::TAU };
-            let mut ang_wrap = ang;
-            if ang_wrap < ta { ang_wrap += std::f64::consts::TAU; }
-            if ang_wrap >= ta && ang_wrap <= tb {
-                return Some((proj.distance(point), ang_wrap));
-            }
-            let d1 = (curve.point_at(t1) - point).length();
-            let d2 = (curve.point_at(t2) - point).length();
-            if d1 <= d2 { return Some((d1, t1)); } else { return Some((d2, t2)); }
-        }
-    }
-    // General curve: sample + local refine within [t1, t2].
-    let n = 64usize;
-    let dt = (t2 - t1) / n as f64;
-    let mut best_t = t1;
-    let mut best_d = f64::MAX;
-    for i in 0..=n {
-        let t = t1 + dt * i as f64;
-        let d = (curve.point_at(t) - point).length();
-        if d < best_d { best_d = d; best_t = t; }
-    }
-    let mut w = dt * 2.0;
-    for _ in 0..12 {
-        let mut improved = false;
-        for i in 0..=8 {
-            let t = (best_t - w + 2.0 * w * i as f64 / 8.0).clamp(t1, t2);
-            let d = (curve.point_at(t) - point).length();
-            if d < best_d { best_d = d; best_t = t; improved = true; }
-        }
-        if !improved { break; }
-        w *= 0.5;
-    }
-    Some((best_d, best_t))
+    let proj = closest_point_on_curve_range(curve, point, t1, t2, 64);
+    Some((proj.distance, proj.param))
 }
 
 /// OCCT DistPC (L1332-1362).
