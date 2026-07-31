@@ -34,6 +34,10 @@ pub struct EdgeEdgeIntersector {
     curve1: Curve3, curve2: Curve3,
     range1: [f64; 2], range2: [f64; 2],
     edge1_tol: f64, edge2_tol: f64,
+    // DS vertex indices of the two edges (used for the OCCT shared-vertex
+    // fast check in ComputeLineLine L1004-1016).
+    edge1_v1: usize, edge1_v2: usize,
+    edge2_v1: usize, edge2_v2: usize,
     common_parts: Vec<CommonPrt>, done: bool,
     fuzzy_value: f64,
     quick_coincidence_check: bool,
@@ -65,8 +69,10 @@ impl EdgeEdgeIntersector {
             curve2: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
             range1: [0.0, 1.0], range2: [0.0, 1.0],
             edge1_tol: 1e-7, edge2_tol: 1e-7,
+            edge1_v1: usize::MAX, edge1_v2: usize::MAX,
+            edge2_v1: usize::MAX, edge2_v2: usize::MAX,
             common_parts: Vec::new(), done: false,
-            fuzzy_value: 1e-7,
+            fuzzy_value: rcad_kernel::precision::CONFUSION,
             quick_coincidence_check: false,
             my_tol1: 0.0, my_tol2: 0.0, my_tol: 0.0,
             my_res1: 0.0, my_res2: 0.0,
@@ -81,15 +87,23 @@ impl EdgeEdgeIntersector {
         if let Some(c) = ds.edge_curve(ei2) { self.curve2 = c.clone(); }
         self.edge1_tol = ds.edge_tolerance(ei1);
         self.edge2_tol = ds.edge_tolerance(ei2);
+        self.edge1_v1 = ds.edge_start_vertex_ds(ei1);
+        self.edge1_v2 = ds.edge_end_vertex_ds(ei1);
+        self.edge2_v1 = ds.edge_start_vertex_ds(ei2);
+        self.edge2_v2 = ds.edge_end_vertex_ds(ei2);
         self.range1 = r1; self.range2 = r2; self
     }
-    pub fn set_fuzzy_value(&mut self, f: f64) { self.fuzzy_value = f.max(1e-7); }
+    // OCCT SetFuzzyValue: myFuzzyValue = max(theFuzz, Precision::Confusion())
+    pub fn set_fuzzy_value(&mut self, f: f64) { self.fuzzy_value = f.max(rcad_kernel::precision::CONFUSION); }
 
     /// OCCT IntTools_EdgeEdge::Perform (L185-243).
     pub fn perform(&mut self) {
         // 1. Check data (rcad: edges/curves are set via set_edges; skip CheckData)
         // 2. Prepare
         self.prepare();
+        // OCCT IsDone() = (myErrorStatus == 0). rcad has no CheckData error path,
+        // so every normal completion of Perform leaves the intersector done.
+        self.done = true;
         // 3.1 Check Line/Line case
         if type_to_integer(&self.curve1) == 0 && type_to_integer(&self.curve2) == 0 {
             self.compute_line_line();
@@ -137,7 +151,6 @@ impl EdgeEdgeIntersector {
         let mut a_ranges2 = Vec::new();
         let b_split2 = self.find_solutions(&mut a_ranges1, &mut a_ranges2);
         self.merge_solutions(&a_ranges1, &a_ranges2, b_split2);
-        self.done = true;
     }
 
     /// OCCT IntTools_EdgeEdge::Prepare (L246-330).
@@ -156,7 +169,8 @@ impl EdgeEdgeIntersector {
         // OCCT L274-284: same type (non-line) — deflection-based ordering
         if i_ct1 == i_ct2 && i_ct1 != 0 {
             let a_c2 = curve_deflection(&self.curve2, self.range2);
-            let a_c1 = if a_c2 > 1e-7 { curve_deflection(&self.curve1, self.range1) } else { 1.0 };
+            // Precision::Confusion()
+            let a_c1 = if a_c2 > rcad_kernel::precision::CONFUSION { curve_deflection(&self.curve1, self.range1) } else { 1.0 };
             if a_c1 < a_c2 { i_ct1 -= 1; }
         }
         // OCCT L286-299: swap so curve1 has the higher type
@@ -199,7 +213,7 @@ impl EdgeEdgeIntersector {
         if !b_is_closed2 {
             let a_b1 = bnd_build_box(&self.curve1, a_t11, a_t12, self.my_tol1);
             let a_b2 = bnd_build_box(&self.curve2, a_t21, a_t22, self.my_tol2);
-            self.find_solutions_rec([a_t11, a_t12], &a_b1, [a_t21, a_t22], &a_b2, the_ranges1, the_ranges2, 0);
+            self.find_solutions_rec([a_t11, a_t12], &a_b1, [a_t21, a_t22], &a_b2, the_ranges1, the_ranges2);
             return false;
         }
         // OCCT L322-326: coincident closed curve — whole ranges are a common part
@@ -222,7 +236,7 @@ impl EdgeEdgeIntersector {
             for j in 0..a_nb2 {
                 let a_r2 = a_segments2[j];
                 let a_b2 = bnd_build_box(&self.curve2, a_r2[0], a_r2[1], self.my_tol2);
-                self.find_solutions_rec(a_r1, &a_b1, a_r2, &a_b2, the_ranges1, the_ranges2, 0);
+                self.find_solutions_rec(a_r1, &a_b1, a_r2, &a_b2, the_ranges1, the_ranges2);
             }
         }
         a_nb2 > 1
@@ -234,7 +248,6 @@ impl EdgeEdgeIntersector {
         the_r1: [f64; 2], the_box1: &BndBox,
         the_r2: [f64; 2], the_box2: &BndBox,
         the_ranges1: &mut Vec<[f64; 2]>, the_ranges2: &mut Vec<[f64; 2]>,
-        _depth: usize,
     ) {
         let (mut a_t11, mut a_t12) = (the_r1[0], the_r1[1]);
         let (mut a_t21, mut a_t22) = (the_r2[0], the_r2[1]);
@@ -315,7 +328,7 @@ impl EdgeEdgeIntersector {
             let a_r1 = a_segments1[i];
             let a_b1 = bnd_build_box(&self.curve1, a_r1[0], a_r1[1], self.my_tol1);
             if !a_b1.is_out_box(&a_b2) && (a_nb1 == 1 || box_square_extent(&a_b1) < a_b1_sq_extent) {
-                self.find_solutions_rec(a_r1, &a_b1, a_r2, &a_b2, the_ranges1, the_ranges2, _depth + 1);
+                self.find_solutions_rec(a_r1, &a_b1, a_r2, &a_b2, the_ranges1, the_ranges2);
             }
         }
     }
@@ -409,8 +422,8 @@ impl EdgeEdgeIntersector {
     }
 
     /// OCCT IntTools_EdgeEdge::IsCoincident (L247-285).
-    /// OCCT projects each of 24 points of curve1 onto curve2 (GeomAPI) and
-    /// counts those closer than myTol. rcad samples curve2 (no GeomAPI).
+    /// Projects 24 points of curve1 onto curve2 (GeomAPI_ProjectPointOnCurve
+    /// on [aT21, aT22]) and counts those closer than myTol.
     fn is_coincident(&self) -> bool {
         let a_tresh = 0.5;
         let a_nb_seg = 23usize;
@@ -499,8 +512,13 @@ impl EdgeEdgeIntersector {
         if a_dist_ll.abs() > self.my_tol {
             return;
         }
-        // OCCT L1004-1016: shared-vertex fast check is covered by the PaveFiller's
-        // pave-block bounds (bExpressCompute) in the EE loop.
+        // OCCT L1004-1016: fast check that no intersection needs to be added
+        // when the edges share a vertex (TopoDS_Iterator over each edge, IsSame).
+        if self.edge1_v1 == self.edge2_v1 || self.edge1_v1 == self.edge2_v2
+            || self.edge1_v2 == self.edge2_v1 || self.edge1_v2 == self.edge2_v2
+        {
+            return;
+        }
         let a_sq_sin = a_cross.length_squared();
         let a_t2 = (a_d1 * o1o2.dot(a_d1) - o1o2).dot(a_d2) / a_sq_sin;
         if a_t2 < a_t21 || a_t2 > a_t22 {
@@ -543,11 +561,12 @@ enum TopAbs {
 // === OCCT IntTools_EdgeEdge static helpers ===
 
 /// OCCT BndBuildBox (L1410-1419): BndLib_Add3dCurve box for a curve range + tol.
+/// OCCT: BndLib_Add3dCurve::Add enlarges the corners by theTol (GeomBndLib
+/// Enlarge); NO separate gap is set. The gap is added later in FindParameters
+/// (aCBx.SetGap(aCBx.GetGap() + theTol)).
 fn bnd_build_box(curve: &Curve3, a_t1: f64, a_t2: f64, the_tol: f64) -> BndBox {
     if let Some([mn, mx]) = curve_bounding_box_range(curve, a_t1, a_t2, the_tol) {
-        let mut b = BndBox::from_corners(mn.x, mn.y, mn.z, mx.x, mx.y, mx.z);
-        b.set_gap(b.get_gap() + the_tol);
-        b
+        BndBox::from_corners(mn.x, mn.y, mn.z, mx.x, mx.y, mx.z)
     } else {
         BndBox::new()
     }
@@ -575,9 +594,9 @@ fn point_box_distance(a_b: &BndBox, a_p: DVec3) -> f64 {
     }
 }
 
-/// OCCT Bnd_Box::IsIn (point inside the box).
+/// OCCT Bnd_Box::IsIn (point inside the box) — mirrors !aB.IsOut(aP) with gap.
 fn point_in_box(a_b: &BndBox, a_p: DVec3) -> bool {
-    point_box_distance(a_b, a_p) <= 1e-12
+    !a_b.is_out_point(a_p)
 }
 
 /// OCCT Bnd_Box::IsXThin/IsYThin/IsZThin — raw corner extents within tolerance.
@@ -605,6 +624,21 @@ fn point_to_line_dist_sq(p: DVec3, l: &rcad_kernel::geom::Line3) -> f64 {
     let dir = l.direction.normalize();
     let v = p - l.origin;
     (v - dir * v.dot(dir)).length_squared()
+}
+
+/// OCCT Standard Epsilon(x) (Standard_Real.hxx L242-246): the gap between
+/// x and the next representable double towards RealLast() (= DBL_MAX).
+/// The input here is always non-negative (abs of a parameter).
+fn standard_epsilon(the_value: f64) -> f64 {
+    if the_value == 0.0 {
+        // nextafter(0., RealLast()) — the smallest positive double
+        f64::from_bits(1)
+    } else if the_value.is_infinite() {
+        0.0
+    } else {
+        let next = f64::from_bits(the_value.to_bits() + 1);
+        next - the_value
+    }
 }
 
 /// OCCT IntTools_Tools::ComputeIntRange (IntTools_Tools.cxx L783-).
@@ -681,7 +715,7 @@ fn sampling_resolution_coeff(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
         a_t += a_dt;
         let a_p2 = the_bac.point_at(a_t);
         let a_dist = a_p1.distance(a_p2);
-        let k = a_dt / a_dist.max(1e-12);
+        let k = a_dt / a_dist;
         if k < k_min { k_min = k; }
         a_p1 = a_p2;
     }
@@ -715,15 +749,25 @@ fn resolution(the_curve: &Curve3, the_res_coeff: f64, the_r3d: f64) -> f64 {
             flat_knots.extend(std::iter::repeat(1.0).take(d + 1));
             let weights = if b.weights.len() == b.control_points.len() { Some(&b.weights[..]) } else { None };
             let md = bsplclib_resolution_3d(&b.control_points, weights, &flat_knots, d);
-            if md > 1e-30 { the_r3d / md } else { the_r3d }
+            resolution_from_max_deriv(the_r3d, md, d)
         }
         Curve3::BSpline(bs) => {
             let weights = if bs.weights.len() == bs.control_points.len() { Some(&bs.weights[..]) } else { None };
             let md = bsplclib_resolution_3d(&bs.control_points, weights, &bs.knots, bs.degree);
-            if md > 1e-30 { the_r3d / md } else { the_r3d }
+            resolution_from_max_deriv(the_r3d, md, bs.degree)
         }
         _ => the_res_coeff * the_r3d,
     }
+}
+
+/// OCCT BSplCLib::Resolution (L4811-4819): the max first-derivative is scaled
+/// by the degree, then UTolerance = Tolerance3D / max_derivative (or
+/// Tolerance3D / RealSmall() if the derivative is negligible). Geom_*Curve::Resolution
+/// then yields UTolerance = theR3D * myMaxDerivInv, hence theR3D / (max_deriv * Degree).
+fn resolution_from_max_deriv(the_r3d: f64, max_deriv: f64, degree: usize) -> f64 {
+    let md = max_deriv * degree as f64;
+    // RealSmall() = DBL_MIN = f64::MIN_POSITIVE
+    if md > f64::MIN_POSITIVE { the_r3d / md } else { the_r3d / f64::MIN_POSITIVE }
 }
 
 /// OCCT BSplCLib::Resolution (BSplCLib.cxx L4316+) — 3D branch.
@@ -794,10 +838,11 @@ fn curve_deflection(the_bac: &Curve3, the_range: [f64; 2]) -> f64 {
     let a_dt = (the_range[1] - the_range[0]) / a_nb_p as f64;
     let mut a_t = the_range[0];
     let mut a_defl = 0.0f64;
-    let mut a_v1 = the_bac.tangent_at(the_range[0]);
+    // OCCT L1624-1628: D1 returns the raw derivative (not normalized).
+    let mut a_v1 = the_bac.derivative_at(the_range[0]);
     for _ in 1..=a_nb_p {
         a_t += a_dt;
-        let a_v2 = the_bac.tangent_at(a_t);
+        let a_v2 = the_bac.derivative_at(a_t);
         // OCCT L1629: aV1.Magnitude() > gp::Resolution() (1e-15)
         if a_v1.length() > 1e-15 && a_v2.length() > 1e-15 {
             let a_d1 = a_v1.normalize();
@@ -814,7 +859,7 @@ fn is_closed(the_curve: &Curve3, a_t1: f64, a_t2: f64, the_tol: f64, the_res: f6
     if (a_t1 - a_t2).abs() < the_res { return false; }
     let a_p1 = the_curve.point_at(a_t1);
     let a_p2 = the_curve.point_at(a_t2);
-    a_p1.distance(a_p2) <= the_tol
+    a_p1.distance(a_p2) < the_tol
 }
 
 /// OCCT IntTools_EdgeEdge::FindParameters (L553-671).
@@ -836,7 +881,7 @@ fn find_parameters(
     let mut b_ret = false;
     for i in 0..2 {
         let mut a_tb = if i == 0 { a_t1 } else { a_t2 };
-        let a_t = if i == 0 { a_t2 } else { tb1 };
+        let mut a_t = if i == 0 { a_t2 } else { tb1 };
         let a_c: f64 = if i == 0 { 1.0 } else { -1.0 };
         let mut a_dt = the_res;
         let mut a_dist_p = 0.0f64;
@@ -878,7 +923,9 @@ fn find_parameters(
                 a_dt = a_t2 - tb1;
             }
         }
-        // OCCT L639-660: golden-section bisection
+        // OCCT L639: reset aT to the input endpoint for the boundary check
+        a_t = if i == 0 { a_t1 } else { a_t2 };
+        // OCCT L640-660: golden-section bisection
         if a_tb != a_t {
             let mut a_t_in = a_tb;
             let mut a_t_out = a_tb - a_c * a_dt;
@@ -896,7 +943,6 @@ fn find_parameters(
         }
         if i == 0 { tb1 = a_tb; } else { tb2 = a_tb; }
     }
-    if tb2 < tb1 { return false; }
     *a_tb1 = tb1;
     *a_tb2 = tb2;
     true
@@ -970,7 +1016,7 @@ fn find_dist_pc(
     if i_err != 0 { return i_err; }
     i_err = dist_pc_max(the_c1, a_xl, the_criteria, the_proj_pc, &mut a_yl, &mut a_t2l, a_dmax, a_t1max, a_t2max, i_c);
     if i_err != 0 { return i_err; }
-    let an_eps = the_eps.max(a_a.abs().max(a_b.abs()) * 1e-14);
+    let an_eps = the_eps.max(standard_epsilon(a_a.abs().max(a_b.abs())) * 10.0);
     loop {
         if i_c as f64 * (a_yp - a_yl) > 0.0 {
             a_a = a_xl;
@@ -1013,9 +1059,9 @@ fn check_coincidence(
     let mut i_err = 0i32;
     for i in 1..a_nb1 {
         let (a_t1a, a_t1b) = (a_ranges[i][0], a_ranges[i][1]);
-        let mut a_d = 0.0;
-        let mut a_t2 = 0.0;
-        i_err = dist_pc_max(the_c1, a_t1b, the_criteria, &mut the_proj_pc, &mut a_d, &mut a_t2, &mut a_dmax, &mut a_t1max, &mut a_t2max, 1);
+        // OCCT L1174: DistPC(aT1B, ..., aDmax, aT2max) — the 6-arg overload
+        // (no aT1max tracking); aDmax/aT2max are plain outputs here.
+        i_err = dist_pc(the_c1, a_t1b, the_criteria, &mut the_proj_pc, &mut a_dmax, &mut a_t2max, 1);
         if i_err != 0 { return i_err; }
     }
     // if the ranges are fewer than requested, no deep evaluation needed
@@ -1061,10 +1107,12 @@ fn is_intersection(
         if a_coef == 1.0 { return true; }
         let an_angle_criteria = 5e-3f64;
         let (mut an_angle1, mut an_angle2) = (0.0f64, 0.0f64);
-        let a_v11 = the_c1.tangent_at(a_t11);
-        let a_v12 = the_c1.tangent_at(a_t12);
-        let a_v21 = the_c2.tangent_at(a_t21);
-        let a_v22 = the_c2.tangent_at(a_t22);
+        // OCCT L1089-1092: D1 gives the raw derivative (not normalized), used for
+        // the SquareConfusion() degeneracy guard below.
+        let a_v11 = the_c1.derivative_at(a_t11);
+        let a_v12 = the_c1.derivative_at(a_t12);
+        let a_v21 = the_c2.derivative_at(a_t21);
+        let a_v22 = the_c2.derivative_at(a_t22);
         let vv = |v: DVec3| v.length_squared() > rcad_kernel::precision::SQUARE_CONFUSION;
         if vv(a_v11) && vv(a_v12) && vv(a_v21) && vv(a_v22) {
             if b_small_11_21 && b_small_12_22 {
