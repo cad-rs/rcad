@@ -753,8 +753,10 @@ impl AnaIntersection2d {
         let x2_coeff = quad_mul(x0, x1, x2, x0, x1, x2);
         let y2_coeff = quad_mul(y0, y1, y2, y0, y1, y2);
         let xy_coeff = quad_mul(x0, x1, x2, y0, y1, y2);
-        let x_coeff = [x0, x1, x2, 0.0, 0.0];
-        let y_coeff = [y0, y1, y2, 0.0, 0.0];
+        // After multiplying F(X_num/denom, Y_num/denom) by denom², the linear
+        // terms become X_num*denom and Y_num*denom (not just X_num/Y_num).
+        let x_coeff = quad_mul(x0, x1, x2, 1.0, 0.0, 1.0);
+        let y_coeff = quad_mul(y0, y1, y2, 1.0, 0.0, 1.0);
 
         // Constant term F → F*(1+u²)² = F*(1 + 2u² + u⁴)
         let f_const = [f, 0.0, 2.0 * f, 0.0, f];
@@ -769,6 +771,10 @@ impl AnaIntersection2d {
                 + 2.0 * e * y_coeff[i]
                 + f_const[i];
         }
+
+        // Reverse to descending degree order (highest first) to match the
+        // solvers below (solve_quadratic_raw / solve_quartic_raw).
+        coeff.reverse();
 
         // Normalize: drop leading zeros
         let mut start = 0;
@@ -1488,7 +1494,8 @@ mod tests {
     #[test]
     fn test_intersection_circle_circle() {
         let c1 = Circle2d::new(DVec2::ZERO, 5.0);
-        let c2 = Circle2d::new(DVec2::new(1.0, 0.0), 4.0);
+        // d = 3, |5 - 4| = 1 < 3 < 9 = 5 + 4 → two intersection points
+        let c2 = Circle2d::new(DVec2::new(3.0, 0.0), 4.0);
         let mut inter = AnaIntersection2d::new();
         inter.perform_circ_circ(&c1, &c2);
         assert!(inter.is_done());

@@ -93,9 +93,10 @@ pub fn normal_from_derivatives(
 /// - `d2u`, `d2v`, `d2uv` — Second partial derivatives (d²S/du², d²S/dv², d²S/dudv).
 /// - `sin_tol` — Sine tolerance for parallelism checks.
 ///
-/// Returns `(Some(normal), NormalStatus::Defined)` on success,
-/// `(None, NormalStatus::Undefined)` if no normal can be determined,
-/// or `(Some(approx), NormalStatus::Singular)` for an uncertain estimate.
+/// Returns `(Some(normal), NormalStatus::Singular)` when a rescue direction
+/// is found, `(None, NormalStatus::Undefined)` when no normal can be
+/// determined, or `(None, NormalStatus::Singular)` when the solution is
+/// ambiguous (OCCT InfinityOfSolutions).
 ///
 /// OCCT-aligned: CSLib::Normal(D1U, D1V, D2U, D2V, D2UV, SinTol, Done, Status, Normal)
 pub fn normal_from_derivatives_with_hessian(
@@ -106,61 +107,40 @@ pub fn normal_from_derivatives_with_hessian(
     d2uv: DVec3,
     sin_tol: f64,
 ) -> (Option<DVec3>, NormalStatus) {
-    // First try the basic first-derivative check
-    let len_u_sq = d1u.length_squared();
-    let len_v_sq = d1v.length_squared();
+    // OCCT CSLib.cxx: Normal(D1U, D1V, D2U, D2V, D2UV, SinTol, Done, Status, Normal).
+    // dN/du = D2U ^ D1V + D1U ^ D2UV,  dN/dv = D2UV ^ D1V + D1U ^ D2V.
+    let d1nu = d2u.cross(d1v) + d1u.cross(d2uv);
+    let d1nv = d2uv.cross(d1v) + d1u.cross(d2v);
 
-    if len_u_sq > 1e-30 && len_v_sq > 1e-30 {
-        let cross = d1u.cross(d1v);
-        let cross_len_sq = cross.length_squared();
-        let sin_angle_sq = cross_len_sq / (len_u_sq * len_v_sq);
-        if sin_angle_sq >= sin_tol * sin_tol {
-            // Non-degenerate — normal first derivatives suffice
-            return (
-                Some(cross / cross_len_sq.sqrt()),
-                NormalStatus::Defined,
-            );
-        }
+    let l_d1nu = d1nu.length_squared();
+    let l_d1nv = d1nv.length_squared();
+
+    let eps = f64::EPSILON; // OCCT RealEpsilon()
+
+    if l_d1nu <= eps && l_d1nv <= eps {
+        return (None, NormalStatus::Undefined); // D1NIsNull, Done=false
+    }
+    if l_d1nu < eps {
+        return (Some(d1nv.normalize_or_zero()), NormalStatus::Singular); // D1NuIsNull
+    }
+    if l_d1nv < eps {
+        return (Some(d1nu.normalize_or_zero()), NormalStatus::Singular); // D1NvIsNull
+    }
+    if (l_d1nv / l_d1nu) <= eps {
+        return (None, NormalStatus::Undefined); // D1NvNuRatioIsNull, Done=false
+    }
+    if (l_d1nu / l_d1nv) <= eps {
+        return (None, NormalStatus::Undefined); // D1NuNvRatioIsNull, Done=false
     }
 
-    // At this point D1U || D1V or one is zero.
-    // Compute dN/du = D2U × D1V + D1U × D2UV
-    //         dN/dv = D2UV × D1V + D1U × D2V
-    // where N = D1U × D1V (non-normalized normal).
-    let dndu = d2u.cross(d1v) + d1u.cross(d2uv);
-    let dndv = d2uv.cross(d1v) + d1u.cross(d2v);
+    let d1n_cross = d1nu.cross(d1nv);
+    let sin2 = d1n_cross.length_squared() / (l_d1nu * l_d1nv);
 
-    // Look for a non-zero combination: find du, dv on unit circle
-    // that maximises |dndu*du + dndv*dv|².
-    // This is the largest eigenvalue of the 2×2 Gram matrix G.
-    let g11 = dndu.length_squared();
-    let g22 = dndv.length_squared();
-    let g12 = dndu.dot(dndv);
-    let trace = g11 + g22;
-    let det = g11 * g22 - g12 * g12;
-
-    let lambda_max = (trace + (trace * trace - 4.0 * det).max(0.0).sqrt()) / 2.0;
-
-    if lambda_max < sin_tol * sin_tol {
-        // All derivatives vanish — truly singular
-        return (None, NormalStatus::Undefined);
-    }
-
-    // Eigenvector corresponding to lambda_max gives the direction
-    // (du, dv) on the unit circle that maximises the normal magnitude.
-    let n_dir = if g12.abs() > 1e-30 && (lambda_max - g11).abs() > 1e-10 {
-        let du = 1.0;
-        let dv = (lambda_max - g11) / g12;
-        let len = (du * du + dv * dv).sqrt();
-        (dndu * (du / len) + dndv * (dv / len)).normalize()
-    } else if g11 > g22 {
-        dndu.normalize()
+    if sin2 < sin_tol * sin_tol {
+        (Some(d1nu.normalize_or_zero()), NormalStatus::Singular) // D1NuIsParallelD1Nv
     } else {
-        dndv.normalize()
-    };
-
-    // The direction may be approximate — mark as Singular
-    (Some(n_dir), NormalStatus::Singular)
+        (None, NormalStatus::Singular) // InfinityOfSolutions, Done=false
+    }
 }
 
 // =============================================================================
@@ -279,17 +259,21 @@ mod tests {
 
     #[test]
     fn normal_hessian_rescue_singular() {
-        // Simulate a singular point where D1U and D1V vanish,
-        // but D2UV provides a normal direction.
-        let d1u = DVec3::ZERO;
-        let d1v = DVec3::ZERO;
+        // Singular point: D1U and D1V are parallel (not independent) so the
+        // first-derivative normal vanishes; D2UV = Y rescues it.
+        // OCCT CSLib::Normal: dN/du = D2U ^ D1V + D1U ^ D2UV = X ^ Y = Z,
+        // so the approximate normal should be near Z.
+        let d1u = DVec3::X;
+        let d1v = DVec3::X; // parallel
         let d2u = DVec3::ZERO;
         let d2v = DVec3::ZERO;
-        let d2uv = DVec3::Z; // d²S/dudv = Z → normal should be near Z
-        let (n, status) = normal_from_derivatives_with_hessian(
+        let d2uv = DVec3::Y; // d²S/dudv = Y
+        let (n, _status) = normal_from_derivatives_with_hessian(
             d1u, d1v, d2u, d2v, d2uv, 1e-9,
         );
         assert!(n.is_some(), "expected approximate normal at singular point");
+        let dir = n.unwrap();
+        assert!((dir - DVec3::Z).length() < 1e-6, "normal should be near Z, got {dir:?}");
     }
 
     #[test]

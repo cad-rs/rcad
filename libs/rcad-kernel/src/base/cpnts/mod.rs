@@ -14,12 +14,19 @@ use crate::geom::{Curve3, CurveEval};
 /// OCCT: `CPnts_UniformDeflection` / `CPnts_AbscissaPoint`.
 pub fn uniform_points(curve: &Curve3, n: usize) -> Vec<(f64, DVec3)> {
     let dom = curve.default_domain();
-    if !dom[0].is_finite() || !dom[1].is_finite() || n < 2 {
+    if n < 2 {
         return vec![];
     }
+    // For unbounded curves (e.g. Line), fall back to a finite range so
+    // sampling is well-defined. Matches approx_curve behavior.
+    let (t_min, t_max) = if !dom[0].is_finite() || !dom[1].is_finite() {
+        (-10.0, 10.0)
+    } else {
+        (dom[0], dom[1])
+    };
     let mut pts = Vec::with_capacity(n);
     for i in 0..n {
-        let t = dom[0] + (dom[1] - dom[0]) * (i as f64) / ((n - 1) as f64);
+        let t = t_min + (t_max - t_min) * (i as f64) / ((n - 1) as f64);
         pts.push((t, curve.point_at(t)));
     }
     pts

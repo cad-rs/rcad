@@ -107,19 +107,21 @@ pub fn binomial(n: usize, k: usize) -> f64 {
 }
 
 /// Convert power basis coefficients to Bezier control points (1D).
-/// OCCT: PLib::Coefficients → power → Bezier.
+/// OCCT: `PLib::CoefficientsPoles` (dim = 1).
 /// Input: power coefficients [a₀, a₁, ..., aₙ] for Σ aᵢ·tⁱ on t∈[0,1].
 /// Output: Bezier control points [c₀, ..., cₙ] for Σ cᵢ·Bⁿᵢ(t).
+///
+/// Uses the identity `t^j = Σ_{i=j..n} (C(i,j)/C(n,j)) · Bⁿᵢ(t)`, giving
+/// `c_i = Σ_{j=0..i} a_j · C(i,j)/C(n,j)`.
 pub fn power_to_bezier(coeffs: &[f64]) -> Vec<f64> {
     let n = coeffs.len() - 1;
     let mut bez = vec![0.0; n + 1];
     for i in 0..=n {
         let mut sum = 0.0;
-        for j in i..=n {
-            let s = binomial(j, i) as f64;
-            sum += s * coeffs[j];
+        for j in 0..=i {
+            sum += coeffs[j] * binomial(i, j) / binomial(n, j);
         }
-        bez[i] = sum / binomial(n, i);
+        bez[i] = sum;
     }
     bez
 }

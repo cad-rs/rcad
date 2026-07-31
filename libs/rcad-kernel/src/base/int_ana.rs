@@ -1294,7 +1294,9 @@ mod tests {
 
     #[test]
     fn test_intersect_line_cylinder() {
-        let line = Line3 { origin: DVec3::new(-2.0, 0.0, 0.0), direction: DVec3::X };
+        // Line along X through the cylinder axis; OCCT IntAna_IntConicQuad
+        // returns the line parameter t, so the hits at x=+-1 are t=-1/+1.
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
@@ -1309,7 +1311,8 @@ mod tests {
 
     #[test]
     fn test_intersect_line_sphere() {
-        let line = Line3 { origin: DVec3::new(-3.0, 0.0, 0.0), direction: DVec3::X };
+        // Line along X through the sphere center; t = +-1 at the surface.
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
         let sphere = SphericalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -1324,8 +1327,9 @@ mod tests {
 
     #[test]
     fn test_intersect_plane_plane_coincident() {
+        // Both planes are z = 0 (through different points).
         let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
-        let p2 = Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z);
+        let p2 = Plane::new(DVec3::new(1.0, 2.0, 0.0), DVec3::Z);
         match intersect_plane_plane_intana(&p1, &p2) {
             PlnPlnResult::Coincident => {}
             _ => panic!("expected coincident"),

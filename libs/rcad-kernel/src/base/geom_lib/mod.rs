@@ -469,13 +469,13 @@ impl CheckCurveOnSurface {
     /// Samples the curve and finds the maximum 3D deviation.
     pub fn perform(&mut self, curve_3d: &Curve3, curve_2d: &crate::geom::Curve2d, surface: &Surface3) {
         let domain = curve_3d.default_domain();
-        let t_min = domain[0];
-        let t_max = domain[1];
-
-        if !t_min.is_finite() || !t_max.is_finite() {
-            self.error_status = 2;
-            return;
-        }
+        // For unbounded curves (e.g. Line), fall back to a finite range so
+        // sampling is well-defined.
+        let (t_min, t_max) = if !domain[0].is_finite() || !domain[1].is_finite() {
+            (-1e6, 1e6)
+        } else {
+            (domain[0], domain[1])
+        };
 
         let range = t_max - t_min;
         if range < self.tol_range {

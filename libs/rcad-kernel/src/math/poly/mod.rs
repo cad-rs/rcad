@@ -97,21 +97,23 @@ impl Connect {
             }
         }
 
-        // Triangle → triangle adjacency via shared edge (opposite vertex)
+        // Triangle → triangle adjacency via shared edge.
+        // OCCT Poly_Connect slot i = edge (node[i], node[(i+1)%3]).
         let mut tri_neighbors: Vec<[isize; 3]> = vec![[-1, -1, -1]; nt];
         for ti in 0..nt {
-            if let Some([a, b, c]) = tri.triangle(ti) {
-                let edges = [(a, b, 2), (b, c, 0), (c, a, 1)];
-                for &(v0, v1, opp) in &edges {
-                    if tri_neighbors[ti][opp] != -1 { continue; }
-                    // Search for triangle sharing edge (v0, v1) in reverse order
+            if let Some(nodes) = tri.triangle(ti) {
+                for i in 0..3 {
+                    if tri_neighbors[ti][i] != -1 { continue; }
+                    let v0 = nodes[i];
+                    let v1 = nodes[(i + 1) % 3];
+                    // Search for triangle sharing edge (v0, v1) in either order
                     for &nj in &node_tri[v0] {
                         if nj == ti { continue; }
                         if let Some([na, nb, nc]) = tri.triangle(nj) {
                             if (na == v1 && nb == v0) || (nb == v1 && nc == v0) || (nc == v1 && na == v0)
                                 || (na == v0 && nb == v1) || (nb == v0 && nc == v1) || (nc == v0 && na == v1)
                             {
-                                tri_neighbors[ti][opp] = nj as isize;
+                                tri_neighbors[ti][i] = nj as isize;
                                 break;
                             }
                         }

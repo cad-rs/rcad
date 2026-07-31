@@ -413,10 +413,17 @@ pub fn from_si(value: f64, unit: &str) -> Option<f64> {
 
 /// OCCT: `Units::Convert(value, from_unit, to_unit)`.
 /// Convert between two arbitrary units.
+///
+/// Returns `None` when either unit is unknown or the two units belong to
+/// different quantities (dimension mismatch) — OCCT `Units_Measurement::Convert`
+/// refuses such a conversion.
 pub fn convert(value: f64, from_unit: &str, to_unit: &str) -> Option<f64> {
     let dict = dictionary_of_units();
     let from = dict.find_unit(from_unit)?;
     let to = dict.find_unit(to_unit)?;
+    if from.quantity_name != to.quantity_name {
+        return None;
+    }
     Some(value * from.factor / to.factor)
 }
 
@@ -691,7 +698,7 @@ mod tests {
     #[test]
     fn test_ls_to_si() {
         // MDTV default: length unit = mm
-        assert!((ls_to_si_value(1000.0, "Length").unwrap() - 1.0).abs() < 1e-12);
+        assert!((ls_to_si(1000.0, "Length").unwrap() - 1.0).abs() < 1e-12);
     }
 
     #[test]

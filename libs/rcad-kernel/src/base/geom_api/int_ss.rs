@@ -53,24 +53,32 @@ impl IntSS {
     pub fn perform(&mut self, s1: &Surface3, s2: &Surface3, _tol: f64) {
         self.lines.clear();
 
-        let dom1 = s1.default_domain();
-        let dom2 = s2.default_domain();
-
-        let (u1_min, u1_max, v1_min, v1_max) = (dom1[0], dom1[1], dom1[2], dom1[3]);
-        let (u2_min, u2_max, v2_min, v2_max) = (dom2[0], dom2[1], dom2[2], dom2[3]);
-
-        if !u1_min.is_finite() || !u2_min.is_finite() {
-            self.done = true;
-            return;
-        }
-
         // Strategy: for analytic surface pairs, use ProjLib-style projection.
-        // For general pairs, use sampling-based approach.
+        // Analytic surfaces (e.g. Plane) have unbounded default domains, so this
+        // dispatch happens first, before any domain handling below.
         if let Some(curves) = intersect_analytic_pair(s1, s2) {
             self.lines = curves;
             self.done = true;
             return;
         }
+
+        let dom1 = s1.default_domain();
+        let dom2 = s2.default_domain();
+
+        // For unbounded surfaces (e.g. Plane), fall back to a finite range so
+        // the sampling grid below is well-defined.
+        let (u1_min, u1_max, v1_min, v1_max) =
+            if dom1[0].is_finite() && dom1[1].is_finite() && dom1[2].is_finite() && dom1[3].is_finite() {
+                (dom1[0], dom1[1], dom1[2], dom1[3])
+            } else {
+                (-1e6, 1e6, -1e6, 1e6)
+            };
+        let (u2_min, u2_max, v2_min, v2_max) =
+            if dom2[0].is_finite() && dom2[1].is_finite() && dom2[2].is_finite() && dom2[3].is_finite() {
+                (dom2[0], dom2[1], dom2[2], dom2[3])
+            } else {
+                (-1e6, 1e6, -1e6, 1e6)
+            };
 
         // General case: sample S2 at grid points, find proximity to S1
         const N_U: usize = 20;
@@ -107,7 +115,10 @@ impl IntSS {
             if cluster.len() < 3 {
                 continue;
             }
-            let pts_3d: Vec<DVec3> = cluster.iter().map(|&(u1, v1, _, _)| s1.point_at(u1, v1)).collect();
+            let pts_3d: Vec<DVec3> = cluster
+                .iter()
+                .map(|&(u1, v1, _, _)| s1.point_at(u1, v1))
+                .collect();
             let curve = fit_bspline(&pts_3d);
             self.lines.push(curve);
         }
@@ -133,7 +144,10 @@ impl IntSS {
     ///
     /// OCCT: `Line(Index)`.
     pub fn line(&self, index: usize) -> &Curve3 {
-        assert!(index >= 1 && index <= self.lines.len(), "IntSS: index out of range");
+        assert!(
+            index >= 1 && index <= self.lines.len(),
+            "IntSS: index out of range"
+        );
         &self.lines[index - 1]
     }
 }
@@ -151,35 +165,30 @@ fn intersect_analytic_pair(s1: &Surface3, s2: &Surface3) -> Option<Vec<Curve3>> 
             // Plane-plane intersection: line
             use crate::base::int_ana::intersect_plane_plane_intana;
             match intersect_plane_plane_intana(p1, p2) {
-                crate::base::int_ana::PlnPlnResult::Line(l) => {
-                    Some(vec![Curve3::Line(l)])
-                }
+                crate::base::int_ana::PlnPlnResult::Line(l) => Some(vec![Curve3::Line(l)]),
                 _ => Some(vec![]),
             }
         }
-        (Surface3::Plane(pl), Surface3::Cylinder(cy)) |
-        (Surface3::Cylinder(cy), Surface3::Plane(pl)) => {
+        (Surface3::Plane(pl), Surface3::Cylinder(cy))
+        | (Surface3::Cylinder(cy), Surface3::Plane(pl)) => {
             use crate::base::int_ana::intersect_plane_cylinder_intana;
             match intersect_plane_cylinder_intana(pl, cy) {
                 crate::base::int_ana::PlnCylResult::Circle(c) => Some(vec![Curve3::Circle(c)]),
                 crate::base::int_ana::PlnCylResult::Ellipse(e) => Some(vec![Curve3::Ellipse(e)]),
-                crate::base::int_ana::PlnCylResult::TangentLine(l) |
-                crate::base::int_ana::PlnCylResult::TwoLines(l, _) => {
-                    Some(vec![Curve3::Line(l)])
-                }
+                crate::base::int_ana::PlnCylResult::TangentLine(l)
+                | crate::base::int_ana::PlnCylResult::TwoLines(l, _) => Some(vec![Curve3::Line(l)]),
                 _ => Some(vec![]),
             }
         }
-        (Surface3::Plane(pl), Surface3::Sphere(sp)) |
-        (Surface3::Sphere(sp), Surface3::Plane(pl)) => {
+        (Surface3::Plane(pl), Surface3::Sphere(sp))
+        | (Surface3::Sphere(sp), Surface3::Plane(pl)) => {
             use crate::base::int_ana::intersect_plane_sphere_intana;
             match intersect_plane_sphere_intana(pl, sp) {
                 crate::base::int_ana::PlnSphResult::Circle(c) => Some(vec![Curve3::Circle(c)]),
                 _ => Some(vec![]),
             }
         }
-        (Surface3::Plane(pl), Surface3::Cone(co)) |
-        (Surface3::Cone(co), Surface3::Plane(pl)) => {
+        (Surface3::Plane(pl), Surface3::Cone(co)) | (Surface3::Cone(co), Surface3::Plane(pl)) => {
             use crate::base::int_ana::intersect_plane_cone_intana;
             match intersect_plane_cone_intana(pl, co) {
                 crate::base::int_ana::PlnConResult::Circle(c) => Some(vec![Curve3::Circle(c)]),
@@ -289,6 +298,7 @@ fn fit_bspline(pts: &[DVec3]) -> Curve3 {
         knots,
         control_points: pts.to_vec(),
         weights: vec![],
+        is_periodic: false,
     })
 }
 

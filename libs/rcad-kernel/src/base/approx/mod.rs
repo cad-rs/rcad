@@ -5,8 +5,8 @@
 //! Approximates curves and surfaces to BSpline within a given tolerance.
 //! Also provides multi-line parallel approximation (AppParCurves).
 
-use glam::DVec3;
 use crate::geom::{BSplineCurve3, BSplineSurface, Curve3, CurveEval, Surface3, SurfaceEval};
+use glam::DVec3;
 
 const TOL: f64 = 1e-7;
 
@@ -17,9 +17,14 @@ pub fn approx_curve(curve: &Curve3, tol: f64) -> Option<BSplineCurve3> {
     let dom = curve.default_domain();
     let t_min = dom[0];
     let t_max = dom[1];
-    if !t_min.is_finite() || !t_max.is_finite() {
-        return None;
-    }
+    // For unbounded curves (e.g. Line, Parabola), fall back to a finite
+    // range so sampling is well-defined. Matches rcad-algorithms
+    // approx_curve_to_bspline behavior.
+    let (t_min, t_max) = if !t_min.is_finite() || !t_max.is_finite() {
+        (-10.0, 10.0)
+    } else {
+        (t_min, t_max)
+    };
     let range = t_max - t_min;
     if range < tol {
         return None;
@@ -93,6 +98,7 @@ pub fn approx_curve(curve: &Curve3, tol: f64) -> Option<BSplineCurve3> {
         knots,
         control_points: pts.iter().map(|&(_, p)| p).collect(),
         weights: vec![],
+        is_periodic: false,
     })
 }
 
@@ -202,14 +208,16 @@ pub fn parallel_approximation(curves: &[Vec<DVec3>], degree: usize) -> Option<Ve
         *k = 1.0;
     }
 
-    let result: Vec<BSplineCurve3> = curves.iter().map(|pts| {
-        BSplineCurve3 {
+    let result: Vec<BSplineCurve3> = curves
+        .iter()
+        .map(|pts| BSplineCurve3 {
             degree,
             knots: knots.clone(),
             control_points: pts.clone(),
             weights: vec![],
-        }
-    }).collect();
+            is_periodic: false,
+        })
+        .collect();
 
     Some(result)
 }

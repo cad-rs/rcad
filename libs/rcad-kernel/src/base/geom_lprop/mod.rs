@@ -669,7 +669,9 @@ mod tests {
             radius: 1.0,
             ref_dir: DVec3::X,
         });
-        let mut props = SLProps::new(&sphere, 0.0, 0.0, 2, 1e-12);
+        // Evaluate at the equator (v = pi/2): the parametrization degenerates
+        // at the poles (Pu = 0) where curvature is undefined (matching OCCT).
+        let mut props = SLProps::new(&sphere, 0.0, std::f64::consts::FRAC_PI_2, 2, 1e-12);
         let gc = props.gaussian_curvature();
         assert!((gc - 1.0).abs() < 1e-7); // Unit sphere: K = 1
     }

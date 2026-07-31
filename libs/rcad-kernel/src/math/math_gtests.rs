@@ -832,17 +832,17 @@ mod poly_eval_tests {
 
     #[test]
     fn poly_constant() {
-        assert!((crate::math::math_utils::poly_eval(&[5.0], 10.0) - 5.0).abs() < TOL);
+        assert!((crate::math::math_poly::poly_eval(&[5.0], 10.0) - 5.0).abs() < TOL);
     }
 
     #[test]
     fn poly_linear() {
-        assert!((crate::math::math_utils::poly_eval(&[3.0, 2.0], 4.0) - 11.0).abs() < TOL);
+        assert!((crate::math::math_poly::poly_eval(&[3.0, 2.0], 4.0) - 11.0).abs() < TOL);
     }
 
     #[test]
     fn poly_quadratic() {
-        assert!((crate::math::math_utils::poly_eval(&[1.0, 2.0, 1.0], 3.0) - 16.0).abs() < TOL);
+        assert!((crate::math::math_poly::poly_eval(&[1.0, 2.0, 1.0], 3.0) - 16.0).abs() < TOL);
     }
 }
 

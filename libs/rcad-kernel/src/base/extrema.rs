@@ -1087,6 +1087,13 @@ pub(crate) fn numeric_surface_projection(
     n_samples: usize,
 ) -> SurfaceProjection {
     let [u0, u1, v0, v1] = surface.default_domain();
+    // For unbounded surfaces (e.g. Plane, whose default domain is
+    // [-inf,inf]x[-inf,inf]), fall back to a finite range so grid sampling and
+    // Newton clamping are well-defined. Matches curve_domain below.
+    let u0 = if u0.is_finite() { u0 } else { -1e6 };
+    let u1 = if u1.is_finite() { u1 } else { 1e6 };
+    let v0 = if v0.is_finite() { v0 } else { -1e6 };
+    let v1 = if v1.is_finite() { v1 } else { 1e6 };
 
     let is_bspline = matches!(surface, Surface3::BSpline(_));
     let mut nu = if is_bspline { 44usize } else { 32usize }.max(n_samples);

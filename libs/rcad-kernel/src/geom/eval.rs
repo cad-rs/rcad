@@ -691,6 +691,25 @@ impl SurfaceEval for SphericalSurface {
         let dpv = self.radius * (cv * radial - sv * self.axis);
         (p, dpu, dpv)
     }
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        // OCCT Geom_SphericalSurface::D2. In the basis (X, Y, A) with
+        // radial = cos(u)X + sin(u)Y:
+        //   Puu = R sin(v)(-cos(u)X - sin(u)Y)
+        //   Puv = R cos(v)(-sin(u)X + cos(u)Y)
+        //   Pvv = -(P - center)
+        let x_ax = self.ref_dir.normalize();
+        let y_ax = self.axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let (sv, cv) = v.sin_cos();
+        let radial = cu * x_ax + su * y_ax;
+        let p = self.center + self.radius * (sv * radial + cv * self.axis);
+        let dpu = self.radius * sv * (-su * x_ax + cu * y_ax);
+        let dpv = self.radius * (cv * radial - sv * self.axis);
+        let d2u = self.radius * sv * (-cu * x_ax - su * y_ax);
+        let duv = self.radius * cv * (-su * x_ax + cu * y_ax);
+        let d2v = -(p - self.center);
+        (p, dpu, dpv, d2u, duv, d2v)
+    }
     fn is_u_closed(&self) -> bool {
         true
     }

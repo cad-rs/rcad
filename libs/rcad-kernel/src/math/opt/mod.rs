@@ -360,50 +360,89 @@ pub fn golden_section_max<F: Fn(f64) -> f64>(f: F, a: f64, b: f64, tol: f64) -> 
 // =============================================================================
 
 /// Minimize a 1D function using Brent's method. OCCT `math_BrentMinimum`.
+///
+/// `a` and `b` are the bracket endpoints; the initial guess is their midpoint.
+/// OCCT-aligned: `math_BrentMinimum::Perform(F, Ax, Bx, Cx)` with the bracketing
+/// triplet `(a, (a+b)/2, b)`.
 pub fn brent_minimize(f: impl Fn(f64) -> f64, a: f64, b: f64, tol: f64) -> f64 {
-    let (mut lo, mut hi) = if a < b { (a, b) } else { (b, a) };
-    let (mut x, mut w, mut v) = ((a + b) / 2.0, (a + b) / 2.0, (a + b) / 2.0);
-    let (mut fx, mut fw, mut fv) = (f(x), f(x), f(x));
-    let (mut d, mut e) = (0.0f64, 0.0f64);
-    for _ in 0..100 {
-        let mid = (lo + hi) / 2.0;
-        let tol1 = tol * x.abs() + 1e-12;
+    // OCCT math_BrentMinimum.cxx: CGOLD = 0.5 * (3 - sqrt(5)).
+    const CGOLD: f64 = 0.3819660;
+    // OCCT: EPSZ = 1e-12, NbIterations = 100.
+    const EPSZ: f64 = 1e-12;
+    const ITERMAX: usize = 100;
+
+    let (ax, cx) = if a < b { (a, b) } else { (b, a) };
+    let (mut lo, mut hi) = if ax < cx { (ax, cx) } else { (cx, ax) };
+    let bx = (ax + cx) * 0.5;
+    let (mut x, mut w, mut v) = (bx, bx, bx);
+    let fx0 = f(x);
+    let (mut fx, mut fw, mut fv) = (fx0, fx0, fx0);
+    let (mut e, mut d) = (0.0f64, f64::MAX); // OCCT: d = RealLast()
+
+    for _ in 1..=ITERMAX {
+        let xm = 0.5 * (lo + hi);
+        let tol1 = tol * x.abs() + EPSZ;
         let tol2 = 2.0 * tol1;
-        if (x - mid).abs() <= tol2 - (hi - lo) / 2.0 {
+        // OCCT IsSolutionReached: x <= 2*tol1 + a && x >= b - 2*tol1.
+        if x <= tol2 + lo && x >= hi - tol2 {
             return x;
         }
-        let mut use_para = false;
-        let mut u = 0.0;
         if e.abs() > tol1 {
             let r = (x - w) * (fx - fv);
-            let qq = (x - v) * (fx - fw);
-            let p = (x - v) * qq - (x - w) * r;
-            let q = 2.0 * (qq - r);
-            if q.abs() > tol1 {
-                u = x - p / q;
-                if u > lo + tol1 && u < hi - tol1 && (u - x).abs() < e {
-                    use_para = true;
+            let q = (x - v) * (fx - fw);
+            let p = (x - v) * q - (x - w) * r;
+            let mut q2 = 2.0 * (q - r);
+            let mut p2 = p;
+            if q2 > 0.0 {
+                p2 = -p2;
+            }
+            q2 = q2.abs();
+            let etemp = e;
+            e = d;
+            if p2.abs() >= (0.5 * q2 * etemp).abs() || p2 <= q2 * (lo - x) || p2 >= q2 * (hi - x)
+            {
+                e = if x >= xm { lo - x } else { hi - x };
+                d = CGOLD * e;
+            } else {
+                d = p2 / q2;
+                let u = x + d;
+                if u - lo < tol2 || hi - u < tol2 {
+                    d = tol1.copysign(xm - x);
                 }
             }
+        } else {
+            e = if x >= xm { lo - x } else { hi - x };
+            d = CGOLD * e;
         }
-        if !use_para {
-            u = if x >= mid { x - PHI * (x - lo) } else { x + PHI * (hi - x) };
-            e = d;
-            d = u - x;
-        }
+        let u = if d.abs() >= tol1 { x + d } else { x + tol1.copysign(d) };
         let fu = f(u);
         if fu <= fx {
-            if u >= x { lo = x; } else { hi = x; }
-            v = w; fv = fw;
-            w = x; fw = fx;
-            x = u; fx = fu;
+            if u >= x {
+                lo = x;
+            } else {
+                hi = x;
+            }
+            // SHFT(v, w, x, u) and SHFT(fv, fw, fx, fu).
+            v = w;
+            w = x;
+            x = u;
+            fv = fw;
+            fw = fx;
+            fx = fu;
         } else {
-            if u >= x { hi = u; } else { lo = u; }
+            if u < x {
+                lo = u;
+            } else {
+                hi = u;
+            }
             if fu <= fw || w == x {
-                v = w; fv = fw;
-                w = u; fw = fu;
+                v = w;
+                w = u;
+                fv = fw;
+                fw = fu;
             } else if fu <= fv || v == x || v == w {
-                v = u; fv = fu;
+                v = u;
+                fv = fu;
             }
         }
     }
@@ -476,7 +515,8 @@ pub fn pso_minimize(
     n_particles: usize, max_iter: usize, tol: f64,
 ) -> Vec<f64> {
     let n = lower.len();
-    let mut rng = fastrand::Rng::new();
+    // OCCT math_PSO uses math_BullardGenerator with default seed 1 (deterministic).
+    let mut rng = fastrand::Rng::with_seed(1);
     let mut positions = Vec::with_capacity(n_particles);
     let mut velocities = Vec::with_capacity(n_particles);
     let mut pbest = Vec::with_capacity(n_particles);

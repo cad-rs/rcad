@@ -34,11 +34,11 @@
 use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
-use crate::math::fit::interpolate_points;
 use crate::geom::{
     BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, Curve3, CurveEval,
     CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
 };
+use crate::math::fit::interpolate_points;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve conversions
@@ -84,6 +84,7 @@ pub fn line_to_bspline_range(line: &Line3, t0: f64, t1: f64) -> BSplineCurve3 {
         knots: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![p0, p1],
         weights: vec![1.0, 1.0],
+        is_periodic: false,
     }
 }
 
@@ -145,6 +146,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3) -> BSplineCurve3 {
         knots,
         control_points: pts.to_vec(),
         weights: weights.to_vec(),
+        is_periodic: false,
     }
 }
 
@@ -164,6 +166,7 @@ pub fn bezier_curve_to_bspline(bezier: &BezierCurve3) -> BSplineCurve3 {
         knots,
         control_points: bezier.control_points.clone(),
         weights: bezier.weights.clone(),
+        is_periodic: false,
     }
 }
 
@@ -189,6 +192,7 @@ fn sample_curve_to_bspline(curve: &Curve3, n: usize) -> BSplineCurve3 {
         knots: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![pts[0], *pts.last().expect("pts has n>=2 points")],
         weights: vec![1.0, 1.0],
+        is_periodic: false,
     })
 }
 
@@ -261,16 +265,25 @@ pub fn cylinder_to_bspline_range(cyl: &CylindricalSurface, v0: f64, v1: f64) -> 
 
     // Shift all control points along the axis for the v1 row
     let dv = (v1 - v0) * cyl.axis;
-    let pts_v1: Vec<DVec3> = c0.control_points.iter().map(|p| *p + dv).collect();
 
     // degree_v = 1, knots_v = [0,0,1,1]
+    // control_points layout is [u][v] (see BSplineSurface::point_at), so each
+    // u-column holds the two v-values (height v0 and v1).
+    let n_u = c0.control_points.len();
+    let control_points: Vec<Vec<DVec3>> = (0..n_u)
+        .map(|ui| vec![c0.control_points[ui], c0.control_points[ui] + dv])
+        .collect();
+    let weights: Vec<Vec<f64>> = (0..n_u)
+        .map(|ui| vec![c0.weights[ui], c0.weights[ui]])
+        .collect();
+
     BSplineSurface {
         degree_u: c0.degree,
         degree_v: 1,
         knots_u: c0.knots.clone(),
         knots_v: vec![0.0, 0.0, 1.0, 1.0],
-        control_points: vec![c0.control_points.clone(), pts_v1],
-        weights: vec![c0.weights.clone(), c0.weights.clone()],
+        control_points,
+        weights,
     }
 }
 
@@ -554,8 +567,11 @@ pub fn curve_to_analytic_curve(curve: &Curve3, tol: f64) -> Option<Curve3> {
             None
         }
         // Already analytic
-        Curve3::Line(_) | Curve3::Circle(_) | Curve3::Ellipse(_)
-        | Curve3::Hyperbola(_) | Curve3::Parabola(_) => None,
+        Curve3::Line(_)
+        | Curve3::Circle(_)
+        | Curve3::Ellipse(_)
+        | Curve3::Hyperbola(_)
+        | Curve3::Parabola(_) => None,
         _ => None,
     }
 }
@@ -703,7 +719,8 @@ fn compute_ellipse_from_curve(curve: &Curve3, tol: f64, c1: f64, c2: f64) -> Opt
 
     if q2 > 0.0 && q1 * q3 < 0.0 {
         // OCCT: ellipse
-        let (center_2d, main_axis_2d, rmin, rmax) = conic_definition(af, bf, cf, df, ef, true, false)?;
+        let (center_2d, main_axis_2d, rmin, rmax) =
+            conic_definition(af, bf, cf, df, ef, true, false)?;
 
         if rmax - rmin < 1e-7 {
             // OCCT: it's really a circle — return None so compute_circle handles it
@@ -736,7 +753,9 @@ fn compute_ellipse_from_curve(curve: &Curve3, tol: f64, c1: f64, c2: f64) -> Opt
             let param = theta; // crude approximation; OCCT uses ElCLib::Parameter
             let on_ellipse = ellipse.center
                 + ellipse.major_dir * ellipse.major_radius * param.cos()
-                + ellipse.normal.cross(ellipse.major_dir).normalize_or_zero() * ellipse.minor_radius * param.sin();
+                + ellipse.normal.cross(ellipse.major_dir).normalize_or_zero()
+                    * ellipse.minor_radius
+                    * param.sin();
 
             let dist = (pt - on_ellipse).length();
             if dist > tol {
@@ -815,7 +834,13 @@ fn solve_5x5_linear(a: &[[f64; 5]; 5], b: &[f64; 5]) -> Option<[f64; 5]> {
 /// OCCT ConicDefinition: determine center, axes, and radii from conic coefficients.
 /// Conic: a*x² + 2*b*x*y + c*y² + 2*d*x + 2*e*y + f = 0
 fn conic_definition(
-    a: f64, b1: f64, c: f64, d1: f64, e1: f64, _is_parab: bool, _is_ellip: bool,
+    a: f64,
+    b1: f64,
+    c: f64,
+    d1: f64,
+    e1: f64,
+    _is_parab: bool,
+    _is_ellip: bool,
 ) -> Option<(DVec2, DVec2, f64, f64)> {
     let b = b1 / 2.0;
     let d = d1 / 2.0;
@@ -866,7 +891,11 @@ fn conic_definition(
 
     let rmin = term1_val.sqrt();
     let rmax = term2_val.sqrt();
-    let (xax, yax) = if rmax >= rmin { (cost, sint) } else { (sint, cost) };
+    let (xax, yax) = if rmax >= rmin {
+        (cost, sint)
+    } else {
+        (sint, cost)
+    };
 
     Some((
         DVec2::new(xcen, ycen),
@@ -1007,13 +1036,17 @@ pub fn bspline_surface_to_analytic(bspline: &BSplineSurface, tol: f64) -> Option
     // --- 3. Classify based on iso-curve types ---
     if u_is_circle && v_is_circle {
         // OCCT: aToroidSphere = true — try sphere then torus
-        return try_sphere_torus(bspline, &u_result, &v_result, u_mid, v_mid, u_min, u_max, v_min, v_max, tol);
+        return try_sphere_torus(
+            bspline, &u_result, &v_result, u_mid, v_mid, u_min, u_max, v_min, v_max, tol,
+        );
     }
 
     if (u_is_line && v_is_circle) || (u_is_circle && v_is_line) {
         // OCCT: aCylinderConus = true — try cylinder then cone
         let v_case = u_is_line && v_is_circle;
-        return try_cylinder_cone(bspline, &u_result, &v_result, v_case, u_min, u_max, v_min, v_max, tol);
+        return try_cylinder_cone(
+            bspline, &u_result, &v_result, v_case, u_min, u_max, v_min, v_max, tol,
+        );
     }
 
     None
@@ -1050,6 +1083,7 @@ fn bspline_from_point_list(pts: &[DVec3]) -> BSplineCurve3 {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: pts.to_vec(),
             weights: vec![],
+            is_periodic: false,
         };
     }
 
@@ -1086,6 +1120,7 @@ fn bspline_from_point_list(pts: &[DVec3]) -> BSplineCurve3 {
         knots,
         control_points: pts.to_vec(),
         weights: vec![],
+        is_periodic: false,
     }
 }
 
@@ -1096,9 +1131,12 @@ fn try_sphere_torus(
     bspline: &BSplineSurface,
     u_result: &Option<Curve3>,
     v_result: &Option<Curve3>,
-    u_mid: f64, v_mid: f64,
-    u_min: f64, u_max: f64,
-    v_min: f64, v_max: f64,
+    u_mid: f64,
+    v_mid: f64,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
     tol: f64,
 ) -> Option<Surface3> {
     // OCCT: extract the circle from the iso-curve result
@@ -1124,16 +1162,28 @@ fn try_sphere_torus(
     let iso2 = curve_to_analytic_curve(&Curve3::BSpline(iso2_crv), tol);
 
     // Check they're circles with matching radius (OCCT: lines 560-575)
-    let r1 = match &iso1 { Some(Curve3::Circle(c)) => c.radius, _ => return None };
-    let r2 = match &iso2 { Some(Curve3::Circle(c)) => c.radius, _ => return None };
+    let r1 = match &iso1 {
+        Some(Curve3::Circle(c)) => c.radius,
+        _ => return None,
+    };
+    let r2 = match &iso2 {
+        Some(Curve3::Circle(c)) => c.radius,
+        _ => return None,
+    };
     if (r - r1).abs() > tol || (r - r2).abs() > tol {
         return None;
     }
 
     // Get centers (OCCT: lines 578-600)
     let c1 = circle.center;
-    let c2 = iso1.and_then(|c| match c { Curve3::Circle(cc) => Some(cc.center), _ => None })?;
-    let c3 = iso2.and_then(|c| match c { Curve3::Circle(cc) => Some(cc.center), _ => None })?;
+    let c2 = iso1.and_then(|c| match c {
+        Curve3::Circle(cc) => Some(cc.center),
+        _ => None,
+    })?;
+    let c3 = iso2.and_then(|c| match c {
+        Curve3::Circle(cc) => Some(cc.center),
+        _ => None,
+    })?;
 
     let d0 = (c1 - c2).length();
     let d1 = (c1 - c3).length();
@@ -1171,12 +1221,18 @@ fn try_cylinder_cone(
     u_result: &Option<Curve3>,
     v_result: &Option<Curve3>,
     v_case: bool,
-    u_min: f64, u_max: f64,
-    v_min: f64, v_max: f64,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
     tol: f64,
 ) -> Option<Surface3> {
     // OCCT lines 127-195
-    let (param1, param2) = if v_case { (u_min, u_max) } else { (v_min, v_max) };
+    let (param1, param2) = if v_case {
+        (u_min, u_max)
+    } else {
+        (v_min, v_max)
+    };
 
     // Get boundary iso-curves in the circular direction
     let iso_min_pts = if v_case {
@@ -1223,12 +1279,9 @@ fn try_cylinder_cone(
         }
         // Use the radial direction from the circle
         let radial = mid_circle.x_dir;
-        return Some(Surface3::Cylinder(crate::geom::CylindricalSurface::new_with_ref_dir(
-            p_min,
-            axis_dir,
-            r_mid,
-            radial,
-        )));
+        return Some(Surface3::Cylinder(
+            crate::geom::CylindricalSurface::new_with_ref_dir(p_min, axis_dir, r_mid, radial),
+        ));
     }
 
     // OCCT lines 202+: cone check — linearly varying radii
@@ -1337,6 +1390,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::X],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         let bs_conv = curve_to_bspline(&Curve3::BSpline(bs_orig.clone()), 16);
         assert_eq!(bs_conv.degree, bs_orig.degree);

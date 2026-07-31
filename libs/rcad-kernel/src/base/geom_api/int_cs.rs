@@ -72,13 +72,14 @@ impl IntCS {
         self.seg_params.clear();
 
         let dom = curve.default_domain();
-        let t_min = dom[0];
-        let t_max = dom[1];
-
-        if !t_min.is_finite() || !t_max.is_finite() {
-            self.done = true;
-            return;
-        }
+        // For unbounded curves (e.g. Line), fall back to a finite range so
+        // sampling and Newton clamping are well-defined. Matches curve_domain
+        // in base::extrema.
+        let (t_min, t_max) = if !dom[0].is_finite() || !dom[1].is_finite() {
+            (-1e6, 1e6)
+        } else {
+            (dom[0], dom[1])
+        };
 
         let range = t_max - t_min;
         if range < TOL {
@@ -87,6 +88,15 @@ impl IntCS {
         }
 
         let surf_dom = surface.default_domain();
+        // For unbounded surfaces (e.g. Plane), fall back to a finite range so
+        // ExtPS / signed-distance evaluation are well-defined.
+        let (sf_u0, sf_u1, sf_v0, sf_v1) =
+            if !surf_dom[0].is_finite() || !surf_dom[1].is_finite() || !surf_dom[2].is_finite() || !surf_dom[3].is_finite()
+            {
+                (-1e6, 1e6, -1e6, 1e6)
+            } else {
+                (surf_dom[0], surf_dom[1], surf_dom[2], surf_dom[3])
+            };
 
         // 1. Sample the curve coarse grid
         const N_SAMPLES: usize = 101;
@@ -95,7 +105,7 @@ impl IntCS {
         for i in 0..=N_SAMPLES {
             let t = t_min + range * (i as f64) / (N_SAMPLES as f64);
             let p3d = curve.point_at(t);
-            let dist = signed_distance_to_surface(p3d, surface, surf_dom[0], surf_dom[1], surf_dom[2], surf_dom[3]);
+            let dist = signed_distance_to_surface(p3d, surface, sf_u0, sf_u1, sf_v0, sf_v1);
             dists.push((t, dist));
         }
 
@@ -124,7 +134,7 @@ impl IntCS {
 
         // 3. Newton refinement at each seed
         for &t0 in &seeds {
-            if let Some(pt) = refine_intersection(curve, surface, t0, t_min, t_max, surf_dom[0], surf_dom[1], surf_dom[2], surf_dom[3]) {
+            if let Some(pt) = refine_intersection(curve, surface, t0, t_min, t_max, sf_u0, sf_u1, sf_v0, sf_v1) {
                 // Deduplicate against already-found points
                 let is_dup = self.points.iter().any(|existing| {
                     (existing.point - pt.point).length() < TOL * 10.0
