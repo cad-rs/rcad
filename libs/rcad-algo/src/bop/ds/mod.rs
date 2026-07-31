@@ -1064,7 +1064,15 @@ impl DS {
         {
             let n_v1 = self.shapes[edge_idx].sub_shapes[0];
             let n_v2 = self.shapes[edge_idx].sub_shapes[1];
-            let (p1, p2) = self.edge_vertex_params(edge_idx, n_v1, n_v2);
+            // OCCT: for closed edges (v1==v2, like circles), use edge curve range
+            // as PB range to ensure non-zero length and splittable PB.
+            let (p1, p2): (f64, f64) = if n_v1 == n_v2 {
+                self.shapes[edge_idx].shape.as_edge()
+                    .map(|ed| (ed.range[0], ed.range[1]))
+                    .unwrap_or((0.0, 0.0))
+            } else {
+                self.edge_vertex_params(edge_idx, n_v1, n_v2)
+            };
             let pb = PaveBlock::new(edge_idx,
                 Pave { vertex_idx: n_v1, param: p1 },
                 Pave { vertex_idx: n_v2, param: p2 },
