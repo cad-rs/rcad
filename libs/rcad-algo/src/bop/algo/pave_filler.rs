@@ -834,7 +834,14 @@ impl PaveFiller {
             std::collections::HashMap::new();
 
         // OCCT L186-235: iterate pairs
-        for &(n_v, n_e) in &pairs {
+        for &(a, b) in &pairs {
+            // OCCT myIterator->Value(nV, nE) returns (vertex, edge) in correct order.
+            // rcad pairs() returns (min, max) — identify Vertex/Edge by shape type.
+            let (n_v, n_e) = if self.ds.shapes[a].shape_type == ShapeType::Vertex {
+                (a, b)
+            } else {
+                (b, a)
+            };
             if the_range.user_break() { return; }
             // OCCT L195-199: if (aSIE.HasSubShape(nV)) continue;
             if self.ds.shapes[n_e].has_sub_shape(n_v) { continue; }
@@ -843,7 +850,8 @@ impl PaveFiller {
             // OCCT L206-209: if (myDS->HasInterf(nV, nE)) continue;
             if self.ds.has_interf(n_v, n_e) { continue; }
             // OCCT L211-214: if (myDS->HasInterfShapeSubShapes(nV, nE)) continue;
-            if self.ds.has_interf_shape_sub_shapes(n_v, n_e, true) { continue; }
+            // OCCT default third param is false (all sub-shapes must interfere).
+            if self.ds.has_interf_shape_sub_shapes(n_v, n_e, false) { continue; }
 
             // OCCT L216-220: const List<...>& aLPB = myDS->PaveBlocks(nE);
             let a_lpb: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e).to_vec();

@@ -701,7 +701,7 @@ impl DS {
     /// OCCT BOPDS_DS::InitShape — add sub-shapes recursively.
     fn init_shape(&mut self, idx: usize, s: &Shape) {
         self.shapes[idx].shape_type = s.shape_type();
-        let mut exist: HashSet<usize> = self.shapes[idx].sub_shapes.iter().copied().collect();
+        // OCCT: no dedup — closed edges need duplicate vertex entries.
         let children = sub_shapes_of(s);
         for child in children {
             let pk = (child.ptr_id(), child.location);
@@ -713,9 +713,7 @@ impl DS {
                     ci
                 }
             };
-            if exist.insert(ci) {
-                self.shapes[idx].sub_shapes.push(ci);
-            }
+            self.shapes[idx].sub_shapes.push(ci);
         }
     }
 
