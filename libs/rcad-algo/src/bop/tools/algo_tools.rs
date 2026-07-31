@@ -389,8 +389,14 @@ pub fn fill_map(n1: usize, n2: usize, the_map: &mut std::collections::HashMap<us
 // ====================================================================
 // IntTools_Tools::IsOnPave1 — parameter on range boundary (L168+)
 // ====================================================================
-/// OCCT IntTools_Tools::IsOnPave1 — checks if parameter is at range boundary within tolerance.
+/// OCCT IntTools_Tools::IsOnPave1 (IntTools_Tools.cxx L627-646).
+/// Returns true if aTR is inside [First, Last], or within aTolerance of a boundary.
 pub fn is_on_pave_1(t: f64, r_first: f64, r_last: f64, tol: f64) -> bool {
+    // OCCT L636-640: inside-range check first
+    if t >= r_first && t <= r_last {
+        return true;
+    }
+    // OCCT L642-644: distance to range boundaries within tolerance
     (t - r_first).abs() <= tol || (t - r_last).abs() <= tol
 }
 

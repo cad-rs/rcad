@@ -41,8 +41,6 @@ struct CoupleOfPBs {
     tolerance: f64,
     index: usize, // new vertex index (iV)
     point: DVec3, // intersection point (used to fuse close new vertices)
-    param1: f64,  // parameter of the intersection on pb1's edge
-    param2: f64,  // parameter of the intersection on pb2's edge
 }
 
 use crate::bop::algo::section_attribute::SectionAttribute;
@@ -984,9 +982,9 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L388-394: SplitPaveBlocks for modified edges
+        // OCCT L420-424: SplitPaveBlocks(aMEdges, theAddInterfs)
         if !a_m_edges.is_empty() {
-            self.split_pave_blocks(&a_m_edges, true);
+            self.split_pave_blocks(&a_m_edges, the_add_interfs);
         }
     }
 
@@ -1038,7 +1036,7 @@ impl PaveFiller {
             }
 
             // L212-265: iterate PB1 × PB2
-            let mut pb_box_cache: std::collections::HashMap<u64, (DVec3, DVec3, f64)> =
+            let mut pb_box_cache: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
                 std::collections::HashMap::new();
 
             for p1 in &a_lpb1 {
@@ -1149,23 +1147,8 @@ impl PaveFiller {
                                     || (b_is_on_pave[1] && b_is_on_pave[2])
                                     || (b_is_on_pave[1] && b_is_on_pave[3])
                                 {
-                                    // OCCT L406-417: ForceInterfVE for vertex on pave
-                                    let n_v = [n_v11, n_v12, n_v21, n_v22];
-                                    for j in 0..4 {
-                                        if b_is_on_pave[j] {
-                                            // rcad: vertex already on edge via existing data,
-                                            // just ensure it's connected in interference
-                                            self.ds.add_interf(n_v[j], if j < 2 { n_e1 } else { n_e2 });
-                                        }
-                                    }
                                     continue;
                                 }
-
-                                // OCCT L419-420: BOPTools_AlgoTools::MakeNewVertex(aE1, aT1, aE2, aT2, aVnew)
-                                let p_e1 = self.ds.edge_curve(n_e1).map(|c| c.point_at(a_t1)).unwrap_or(cp.bounding_point1);
-                                let p_e2 = self.ds.edge_curve(n_e2).map(|c| c.point_at(a_t2)).unwrap_or(cp.bounding_point1);
-                                let (vnew_pt, vnew_tol) = crate::bop::tools::algo_tools::make_new_vertex(
-                                    p_e1, self.my_fuzzy_value, p_e2, self.my_fuzzy_value);
 
                                 // OCCT L405-417: ForceInterfVE for vertices on pave boundaries
                                 let n_v_arr = [n_v11, n_v12, n_v21, n_v22];
@@ -1182,15 +1165,13 @@ impl PaveFiller {
                                     }
                                 }
 
-                                // OCCT L419: BOPTools_AlgoTools::MakeNewVertex(aE1, aT1, aE2, aT2, aVnew)
-                                let vnew_pt = {
-                                    let p_e1 = self.ds.edge_curve(n_e1).map(|c| c.point_at(a_t1));
-                                    let p_e2 = self.ds.edge_curve(n_e2).map(|c| c.point_at(a_t2));
-                                    match (p_e1, p_e2) {
-                                        (Some(p1), Some(p2)) => (p1 + p2) * 0.5,
-                                        _ => cp.bounding_point1,
-                                    }
-                                };
+                                // OCCT L419-420: MakeNewVertex(aE1, aT1, aE2, aT2, aVnew); aPnew = Pnt(aVnew)
+                                // OCCT (BOPTools_AlgoTools_2.cxx L224-250): point = midpoint of the two
+                                // curve points at aT1/aT2, tolerance = max(edgeTol1, edgeTol2) + 0.5*dist.
+                                let p_e1 = self.ds.edge_curve(n_e1).map(|c| c.point_at(a_t1)).unwrap_or(cp.bounding_point1);
+                                let p_e2 = self.ds.edge_curve(n_e2).map(|c| c.point_at(a_t2)).unwrap_or(cp.bounding_point1);
+                                let (vnew_pt, vnew_tol) = crate::bop::tools::algo_tools::make_new_vertex(
+                                    p_e1, self.ds.edge_tolerance(n_e1), p_e2, self.ds.edge_tolerance(n_e2));
 
                                 // OCCT L422-451: isVExists check
                                 if is_v_exists {
@@ -1271,8 +1252,6 @@ impl PaveFiller {
                                     tolerance: a_tol_vnew,
                                     index: usize::MAX,
                                     point: vnew_pt,
-                                    param1: a_t1,
-                                    param2: a_t2,
                                 });
 
                                 new_ee.push(InterferenceEE {
@@ -1320,15 +1299,54 @@ impl PaveFiller {
         self.ds.interf_ee.extend(new_ee);
 
         // OCCT L561: PerformCommonBlocks
-        for (pb1, pb2) in &cb_pairs {
-            self.ds.add_common_block(&[pb1.clone(), pb2.clone()]);
+        // OCCT BOPAlgo_Tools::FillMap(aPB1, aPB2, aMPBLPB) fills a bidirectional
+        // adjacency map (key -> list of connected PBs), then MakeBlocks groups
+        // connected PBs into one Common Block per connected component.
+        if !cb_pairs.is_empty() {
+            let mut a_mpblpb: std::collections::HashMap<u64, (SharedPB, Vec<u64>)> =
+                std::collections::HashMap::new();
+            for (pb1, pb2) in &cb_pairs {
+                let k1 = std::sync::Arc::as_ptr(&pb1.0) as u64;
+                let k2 = std::sync::Arc::as_ptr(&pb2.0) as u64;
+                a_mpblpb.entry(k1).or_insert_with(|| (pb1.clone(), Vec::new())).1.push(k2);
+                a_mpblpb.entry(k2).or_insert_with(|| (pb2.clone(), Vec::new())).1.push(k1);
+            }
+            // OCCT MakeBlocks (BOPAlgo_Tools.hxx L46-80): connected components
+            let mut a_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            for (&n, _) in &a_mpblpb {
+                if a_fence.contains(&n) {
+                    continue;
+                }
+                let mut a_block: Vec<SharedPB> = Vec::new();
+                let mut a_stack: Vec<u64> = vec![n];
+                while let Some(n1) = a_stack.pop() {
+                    if !a_fence.insert(n1) {
+                        continue;
+                    }
+                    if let Some((pb, a_linked)) = a_mpblpb.get(&n1) {
+                        a_block.push(pb.clone());
+                        for &n2 in a_linked {
+                            if !a_fence.contains(&n2) {
+                                a_stack.push(n2);
+                            }
+                        }
+                    }
+                }
+                // OCCT L134-137: if (aNbPB < 2) continue;
+                if a_block.len() >= 2 {
+                    self.ds.add_common_block(&a_block);
+                }
+            }
         }
         // OCCT L563: UpdateVerticesOfCB
         self.update_vertices_of_cb();
 
-        // OCCT L565-589: PerformNewVertices + SplitPaveBlocks
+        // OCCT L565-569: PerformNewVertices(aMVCPB, ...); if (HasErrors()) return;
         if !mvcpb.is_empty() {
             self.perform_new_vertices(&mvcpb, true);
+            if self.has_errors() {
+                return;
+            }
             // OCCT L571-583: remove mvcpb edges from aMEdges
             for cpb in &mvcpb {
                 let (n_e1, n_e2) = (cpb.pb1.0.read().unwrap().original_edge,
@@ -1438,7 +1456,7 @@ impl PaveFiller {
                 continue;
             }
 
-            let mut pb_box_cache: std::collections::HashMap<u64, (DVec3, DVec3, f64)> =
+            let mut pb_box_cache: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
                 std::collections::HashMap::new();
 
             // OCCT L248-306: iterate PBs of this edge
@@ -1876,7 +1894,12 @@ impl PaveFiller {
         // Maps each CPB's index_interf → new DS vertex index
         let mut cpb_to_new_vertex: HashMap<usize, usize> = HashMap::new();
         for (_i, (avg_pt, group_tol, member_indices)) in groups.iter().enumerate() {
-            let n_v = self.ds.push_vertex(*avg_pt, *group_tol + a_tol_add);
+            // OCCT L631-639: vertex tolerance = group max tolerance (MakeVertex aNTol);
+            // box = Add(Pnt(aV)); SetGap(Tolerance(aV) + aTolAdd).
+            let n_v = self.ds.push_vertex(*avg_pt, *group_tol);
+            let si = self.ds.change_shape_info(n_v);
+            si.bbox = rcad_kernel::math::bnd::BndBox::from_point(*avg_pt);
+            si.bbox.set_gap(*group_tol + a_tol_add);
 
             for &cpb_idx in member_indices {
                 if cpb_idx < the_mvcpb.len() {
@@ -1896,32 +1919,27 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L655-685: build PB→[vertices] map and call IntersectVE
-        // (which computes each new vertex's parameter on the PB edge and adds
-        // it as an ext pave, then splits the pave blocks). rcad: add the ext
-        // paves at the intersection parameters, then split the affected edges.
-        let mut split_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT L655-685: build PB→[vertices] map aMPBLI
+        let mut a_mpbli: HashMap<u64, (SharedPB, Vec<usize>)> = HashMap::new();
         for cpb in the_mvcpb {
             let n_v = match cpb_to_new_vertex.get(&cpb.index_interf) {
                 Some(v) => *v,
                 None => continue,
             };
-            let n_e1 = cpb.pb1.0.read().unwrap().original_edge;
-            let n_e2 = cpb.pb2.0.read().unwrap().original_edge;
-            {
-                let mut w1 = cpb.pb1.0.write().unwrap();
-                w1.ext_paves.push(Pave { vertex_idx: n_v, param: cpb.param1 });
+            // OCCT L670-678: aPB[] = {aPB1, aPB2}; append iV to the PB's vertex list
+            let pbs = [&cpb.pb1, &cpb.pb2];
+            for &a_pb in &pbs {
+                let pb_ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
+                let entry = a_mpbli.entry(pb_ptr).or_insert_with(|| (a_pb.clone(), Vec::new()));
+                entry.1.push(n_v);
+                // OCCT L680-683: if (aPB[0] == aPB[1]) break;
+                if std::sync::Arc::ptr_eq(&cpb.pb1.0, &cpb.pb2.0) {
+                    break;
+                }
             }
-            {
-                let mut w2 = cpb.pb2.0.write().unwrap();
-                w2.ext_paves.push(Pave { vertex_idx: n_v, param: cpb.param2 });
-            }
-            split_edges.insert(n_e1);
-            split_edges.insert(n_e2);
         }
-        if !split_edges.is_empty() {
-            self.split_pave_blocks(&split_edges, true);
-        }
+        // OCCT L687: IntersectVE(aMPBLI, aPS.Next(), false)
+        self.intersect_ve(&a_mpbli, false);
     }
 
 // ====================================================================
@@ -2254,7 +2272,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         &self,
         _the_e: usize,
         the_pb: &SharedPB,
-        the_pb_box: &mut std::collections::HashMap<u64, (DVec3, DVec3, f64)>,
+        the_pb_box: &mut std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox>,
         the_first: &mut f64,
         the_last: &mut f64,
         the_s_first: &mut f64,
@@ -2263,8 +2281,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     ) -> bool {
         let pbr = the_pb.0.read().unwrap();
         (*the_first, *the_last) = pbr.range();
-        // OCCT L925-929: check range validity
-        if (*the_last - *the_first).abs() <= 1e-12 {
+        // OCCT L923-929: bool bValid = theLast - theFirst > Precision::PConfusion();
+        if *the_last - *the_first <= rcad_kernel::PCONFUSION {
             return false;
         }
         // OCCT L932-937: check shrunk data
@@ -2280,25 +2298,20 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         *the_s_last = *the_last;
         // OCCT L942-952: check map, then build bounding box
         let pb_ptr = std::sync::Arc::as_ptr(&the_pb.0) as u64;
-        if let Some(&(min, max, gap)) = the_pb_box.get(&pb_ptr) {
-            *the_box = rcad_kernel::math::bnd::BndBox::from_corners(min.x, min.y, min.z, max.x, max.y, max.z);
-            the_box.set_gap(gap);
+        if let Some(bb) = the_pb_box.get(&pb_ptr) {
+            *the_box = bb.clone();
         } else {
             let curve = self.ds.edge_curve(pbr.original_edge);
-            let box_data = if let Some(c) = curve {
-                let p1 = c.point_at(*the_s_first);
-                let p2 = c.point_at(*the_s_last);
-                let min = p1.min(p2);
-                let max = p1.max(p2);
-                (min, max, 0.0)
+            let bb = if let Some(c) = curve {
+                // OCCT L949-951: aTol = BRep_Tool::Tolerance(theE) + Precision::Confusion();
+                // BndLib_Add3dCurve::Add(aBAC, theSFirst, theSLast, aTol, theBox);
+                let a_tol = self.ds.edge_tolerance(pbr.original_edge) + rcad_kernel::CONFUSION;
+                shrunk_range_bnd_box(&c, *the_s_first, *the_s_last, a_tol)
             } else {
                 return false;
             };
-            *the_box = rcad_kernel::math::bnd::BndBox::from_corners(
-                box_data.0.x, box_data.0.y, box_data.0.z,
-                box_data.1.x, box_data.1.y, box_data.1.z,
-            );
-            the_pb_box.insert(pb_ptr, box_data);
+            *the_box = bb.clone();
+            the_pb_box.insert(pb_ptr, bb);
         }
         true
     }

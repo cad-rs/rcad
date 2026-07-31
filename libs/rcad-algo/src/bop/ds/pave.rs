@@ -88,7 +88,7 @@ impl PaveBlock {
             shrunk_bnd_box: BndBox::new(),
             ext_fence: HashSet::new(),
             has_shrunk_data: false,
-            splittable_from_shrunk: true,
+            splittable_from_shrunk: false,
         }
     }
 
@@ -185,13 +185,9 @@ impl PaveBlock {
     pub fn shrunk_data(&self) -> (f64, f64, bool) { (self.ts1, self.ts2, self.splittable_from_shrunk) }
     pub fn shrunk_bnd_box(&self) -> &BndBox { &self.shrunk_bnd_box }
     pub fn has_shrunk_data(&self) -> bool { self.has_shrunk_data }
+    // OCCT BOPDS_PaveBlock::IsSplittable — returns myIsSplittable (default false).
     pub fn is_splittable(&self) -> bool {
-        if self.has_shrunk_data {
-            self.splittable_from_shrunk
-        } else {
-            // OCCT default: TRUE before any shrunk data is set
-            true
-        }
+        self.splittable_from_shrunk
     }
 
     /// OCCT: PaveBlock on a curve edge with default paves ?not split (section edge).
@@ -243,7 +239,7 @@ pub fn update_pave_block(pb: &PaveBlock, lp: &mut Vec<SharedPB>, flag: bool) {
             shrunk_bnd_box: BndBox::new(),
             ext_fence: HashSet::new(),
             has_shrunk_data: false,
-            splittable_from_shrunk: true,
+            splittable_from_shrunk: false,
         });
         lp.push(new_pb);
     }
