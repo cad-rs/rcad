@@ -1066,11 +1066,12 @@ impl PaveFiller {
                     // L252: bExpressCompute = PB1 and PB2 have same bounding vertices
                     let (n_v11, n_v12) = { let r = p1.0.read().unwrap(); r.indices() };
                     let (n_v21, n_v22) = { let r = p2.0.read().unwrap(); r.indices() };
-                    let _b_express = (n_v11 == n_v21 && n_v12 == n_v22)
+                    let b_express = (n_v11 == n_v21 && n_v12 == n_v22)
                                  || (n_v12 == n_v21 && n_v11 == n_v22);
 
                     // OCCT L254-264: create EdgeEdge, intersect
                     let mut ee = int_tools::edge_edge::EdgeEdgeIntersector::new();
+                    ee.use_quick_coincidence_check(b_express);
                     ee.set_edges(n_e1, [t11, t12], n_e2, [t21, t22], &self.ds);
                     ee.set_fuzzy_value(self.my_fuzzy_value);
                     ee.perform();
