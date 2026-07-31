@@ -2043,8 +2043,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L819-823: set shrunk data with box + fuzzy/2 gap
         let (a_ts1, a_ts2) = the_sr.shrunk_range();
         // OCCT L821: Bnd_Box aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.);
-        let mut a_box = BndBox::new();
-        a_box.set_gap(self.my_fuzzy_value / 2.);
+        let mut a_box = the_sr.bnd_box().clone();
+        a_box.set_gap(a_box.get_gap() + self.my_fuzzy_value / 2.);
         let mut pbr = the_pb.0.write().unwrap();
         pbr.set_shrunk_data(a_ts1, a_ts2, a_box, the_sr.is_splittable());
     }
@@ -2264,9 +2264,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if pbr.has_shrunk_data() {
             *the_s_first = pbr.ts1;
             *the_s_last = pbr.ts2;
-            // OCCT: aBox = theSR.BndBox(); aBox.SetGap(aBox.GetGap() + myFuzzyValue / 2.)
-            // rcad: BndBox from shrunk data uses OCCT PaveFiller_3.cxx L821-822
-            *the_box = rcad_kernel::math::bnd::BndBox::new();
+            // OCCT L937: aBox = theSR.BndBox() (with the fuzzy/2 gap added in
+            // SetShrunkData), carried on the pave block.
+            *the_box = pbr.shrunk_bnd_box.clone();
             return true;
         }
         *the_s_first = *the_first;
