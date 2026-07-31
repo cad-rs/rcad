@@ -1727,22 +1727,21 @@ impl DS {
         0
     }
 
-    /// Edge start vertex DS index of the ei-th edge.
+    /// Edge start vertex DS index, by edge shape index (same convention as
+    /// edge_curve / edge_tolerance / edge_pave_blocks).
     pub fn edge_start_vertex_ds(&self, ei: usize) -> usize {
-        let si = self.edge_shape_idx(ei);
-        match self.shapes[si].shape.as_edge() {
-            Some(ed) => ed.first.index,
-            None => 0,
-        }
+        self.shapes.get(ei).and_then(|si| {
+            if si.shape_type != ShapeType::Edge { return None; }
+            si.shape.as_edge().map(|ed| ed.first.index)
+        }).unwrap_or(0)
     }
 
-    /// Edge end vertex DS index of the ei-th edge.
+    /// Edge end vertex DS index, by edge shape index.
     pub fn edge_end_vertex_ds(&self, ei: usize) -> usize {
-        let si = self.edge_shape_idx(ei);
-        match self.shapes[si].shape.as_edge() {
-            Some(ed) => ed.last.index,
-            None => 0,
-        }
+        self.shapes.get(ei).and_then(|si| {
+            if si.shape_type != ShapeType::Edge { return None; }
+            si.shape.as_edge().map(|ed| ed.last.index)
+        }).unwrap_or(0)
     }
 
     /// Same as pave_blocks — OCCT: myPaveBlocksMap(theIndex)

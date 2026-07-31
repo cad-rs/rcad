@@ -38,7 +38,13 @@ pub struct EdgeEdgeIntersector {
     // fast check in ComputeLineLine L1004-1016).
     edge1_v1: usize, edge1_v2: usize,
     edge2_v1: usize, edge2_v2: usize,
-    common_parts: Vec<CommonPrt>, done: bool,
+    // OCCT CheckData (L189-208): edge shape indices + validity captured at
+    // set_edges time; error_status mirrors OCCT myErrorStatus (IsDone()).
+    edge1_shape: usize, edge2_shape: usize,
+    edge1_degenerated: bool, edge2_degenerated: bool,
+    edge1_geometric: bool, edge2_geometric: bool,
+    error_status: i32,
+    common_parts: Vec<CommonPrt>,
     fuzzy_value: f64,
     quick_coincidence_check: bool,
     // Prepared members (set in Prepare)
@@ -71,7 +77,11 @@ impl EdgeEdgeIntersector {
             edge1_tol: 1e-7, edge2_tol: 1e-7,
             edge1_v1: usize::MAX, edge1_v2: usize::MAX,
             edge2_v1: usize::MAX, edge2_v2: usize::MAX,
-            common_parts: Vec::new(), done: false,
+            edge1_shape: usize::MAX, edge2_shape: usize::MAX,
+            edge1_degenerated: false, edge2_degenerated: false,
+            edge1_geometric: false, edge2_geometric: false,
+            error_status: 0,
+            common_parts: Vec::new(),
             fuzzy_value: rcad_kernel::precision::CONFUSION,
             quick_coincidence_check: false,
             my_tol1: 0.0, my_tol2: 0.0, my_tol: 0.0,
@@ -83,6 +93,13 @@ impl EdgeEdgeIntersector {
     }
     pub fn use_quick_coincidence_check(&mut self, b: bool) { self.quick_coincidence_check = b; }
     pub fn set_edges(&mut self, ei1: usize, r1: [f64; 2], ei2: usize, r2: [f64; 2], ds: &crate::bop::ds::DS) -> &mut Self {
+        // OCCT CheckData inputs (L189-208): null/degenerated/geometric.
+        self.edge1_shape = ei1;
+        self.edge2_shape = ei2;
+        self.edge1_degenerated = ds.is_edge_degenerated(ei1);
+        self.edge2_degenerated = ds.is_edge_degenerated(ei2);
+        self.edge1_geometric = ds.edge_curve(ei1).is_some();
+        self.edge2_geometric = ds.edge_curve(ei2).is_some();
         if let Some(c) = ds.edge_curve(ei1) { self.curve1 = c.clone(); }
         if let Some(c) = ds.edge_curve(ei2) { self.curve2 = c.clone(); }
         self.edge1_tol = ds.edge_tolerance(ei1);
@@ -96,14 +113,34 @@ impl EdgeEdgeIntersector {
     // OCCT SetFuzzyValue: myFuzzyValue = max(theFuzz, Precision::Confusion())
     pub fn set_fuzzy_value(&mut self, f: f64) { self.fuzzy_value = f.max(rcad_kernel::precision::CONFUSION); }
 
+    /// OCCT IntTools_EdgeEdge::CheckData (L189-208).
+    fn check_data(&mut self) {
+        // L191-195: null edges
+        if self.edge1_shape == usize::MAX || self.edge2_shape == usize::MAX {
+            self.error_status = 1;
+            return;
+        }
+        // L197-201: degenerated edges
+        if self.edge1_degenerated || self.edge2_degenerated {
+            self.error_status = 2;
+            return;
+        }
+        // L203-207: not geometric edges
+        if !self.edge1_geometric || !self.edge2_geometric {
+            self.error_status = 3;
+            return;
+        }
+    }
+
     /// OCCT IntTools_EdgeEdge::Perform (L185-243).
     pub fn perform(&mut self) {
-        // 1. Check data (rcad: edges/curves are set via set_edges; skip CheckData)
+        // 1. Check data
+        self.check_data();
+        if self.error_status != 0 {
+            return;
+        }
         // 2. Prepare
         self.prepare();
-        // OCCT IsDone() = (myErrorStatus == 0). rcad has no CheckData error path,
-        // so every normal completion of Perform leaves the intersector done.
-        self.done = true;
         // 3.1 Check Line/Line case
         if type_to_integer(&self.curve1) == 0 && type_to_integer(&self.curve2) == 0 {
             self.compute_line_line();
@@ -547,7 +584,8 @@ impl EdgeEdgeIntersector {
         });
     }
 
-    pub fn is_done(&self) -> bool { self.done }
+    // OCCT IsDone() (L182-185): return (myErrorStatus == 0)
+    pub fn is_done(&self) -> bool { self.error_status == 0 }
     pub fn common_parts(&self) -> &[CommonPrt] { &self.common_parts }
 }
 
