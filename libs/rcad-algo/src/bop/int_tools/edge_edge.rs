@@ -16,14 +16,24 @@ use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::curve_bounding_box_range;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 
-/// OCCT IntTools_CommonPrt — a common part of two edges.
+/// OCCT IntTools_CommonPrt (IntTools_CommonPrt.hxx) — a common part of two edges.
 #[derive(Debug, Clone)]
 pub struct CommonPrt {
+    // OCCT myType (TopAbs_VERTEX / TopAbs_EDGE)
     pub is_edge: bool,
+    // OCCT myEdge1 / myEdge2 — DS edge shape indices of the two original edges.
+    pub edge1: usize,
+    pub edge2: usize,
+    // OCCT myRange1 / myRanges2
     pub range1: [f64; 2],
     pub ranges2: Vec<[f64; 2]>,
+    // OCCT myVertPar1 / myVertPar2
     pub vertex_param1: f64,
     pub vertex_param2: f64,
+    // OCCT myAllNullFlag
+    pub all_null_flag: bool,
+    // OCCT myPnt1 / myPnt2 (BoundingPoints). OCCT declares these but never sets
+    // them in 8.0.0; rcad populates them for the PaveFiller caller.
     pub bounding_point1: DVec3,
     pub bounding_point2: DVec3,
 }
@@ -437,10 +447,16 @@ impl EdgeEdgeIntersector {
         }
         let mut cp = CommonPrt {
             is_edge,
+            // OCCT L789-802: the mySwap branch restores the original edge order
+            // (SetEdge1(myEdge2)/SetEdge2(myEdge1) after Prepare swapped them),
+            // so Edge1/Edge2 are always the original pair.
+            edge1: self.edge1_shape,
+            edge2: self.edge2_shape,
             range1: r1,
             ranges2: vec![r2],
             vertex_param1: a_t11,
             vertex_param2: a_t21,
+            all_null_flag: false,
             bounding_point1: self.curve1.point_at((a_t11 + a_t12) * 0.5),
             bounding_point2: self.curve2.point_at((a_t21 + a_t22) * 0.5),
         };
@@ -534,7 +550,13 @@ impl EdgeEdgeIntersector {
                 ([a_t11 + (a_t21 - t21), a_t12], [a_t21, t22])
             };
             self.common_parts.push(CommonPrt {
-                is_edge: true, range1: r1, ranges2: vec![r2],
+                // OCCT L952-954: SetEdge1(myEdge1)/SetEdge2(myEdge2)
+                is_edge: true,
+                edge1: self.edge1_shape,
+                edge2: self.edge2_shape,
+                range1: r1, ranges2: vec![r2],
+                // OCCT L977: SetAllNullFlag(true)
+                all_null_flag: true,
                 vertex_param1: (r1[0] + r1[1]) * 0.5,
                 vertex_param2: (r2[0] + r2[1]) * 0.5,
                 bounding_point1: self.curve1.point_at((r1[0] + r1[1]) * 0.5),
@@ -574,9 +596,13 @@ impl EdgeEdgeIntersector {
         let a_dt1 = compute_int_range(self.my_tol1, self.my_tol2, an_angle);
         let a_dt2 = compute_int_range(self.my_tol2, self.my_tol1, an_angle);
         self.common_parts.push(CommonPrt {
+            // OCCT L952-954: SetEdge1(myEdge1)/SetEdge2(myEdge2)
             is_edge: false,
+            edge1: self.edge1_shape,
+            edge2: self.edge2_shape,
             range1: [a_t1 - a_dt1, a_t1 + a_dt1],
             ranges2: vec![[a_t2 - a_dt2, a_t2 + a_dt2]],
+            all_null_flag: false,
             vertex_param1: a_t1,
             vertex_param2: a_t2,
             bounding_point1: a_p1,
