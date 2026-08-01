@@ -6,8 +6,10 @@
 // line relative to a restriction arc on a surface (mirrors IntRes2d; rcad
 // reuses crate::topalgo::int_res2d::{Transition, TypeTrans, Situation}).
 
+pub mod line_on_2s;
 pub mod quadric;
 
+pub use line_on_2s::LineOn2S;
 pub use quadric::{Quadric, QuadricType};
 
 use glam::{DVec2, DVec3};
@@ -48,6 +50,11 @@ impl PntOn2S {
             self.u2 = u;
             self.v2 = v;
         }
+    }
+
+    /// OCCT SetValue(Pt) — set only the 3D point.
+    pub fn set_value_pt(&mut self, pt: DVec3) {
+        self.pt = pt;
     }
 
     /// OCCT Value() — the 3D point.
