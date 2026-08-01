@@ -13,3 +13,4 @@ pub mod context;
 pub mod bean_face_intersector;
 pub mod curve_range;
 pub mod curve_surface;
+pub mod int_patch;

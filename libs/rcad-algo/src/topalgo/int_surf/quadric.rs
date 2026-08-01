@@ -185,9 +185,93 @@ impl Quadric {
         }
     }
 
+    /// Build from any rcad Surface3. Returns None for non-quadric surfaces.
+    pub fn from_surface3(surf: &rcad_kernel::geom::Surface3) -> Option<Self> {
+        match surf {
+            rcad_kernel::geom::Surface3::Plane(p) => Some(Self::from_plane(p)),
+            rcad_kernel::geom::Surface3::Cylinder(c) => Some(Self::from_cylinder(c)),
+            rcad_kernel::geom::Surface3::Sphere(s) => Some(Self::from_sphere(s)),
+            rcad_kernel::geom::Surface3::Cone(c) => Some(Self::from_cone(c)),
+            rcad_kernel::geom::Surface3::Torus(t) => Some(Self::from_torus(t)),
+            _ => None,
+        }
+    }
+
     /// OCCT TypeQuadric().
     pub fn type_quadric(&self) -> QuadricType {
         self.typ
+    }
+
+    // === Accessors used by IntAna_QuadQuadGeo / IntPatch_ImpImpIntersection ===
+
+    /// OCCT IntSurf_Quadric::TypeQuadric — alias of type_quadric.
+    pub fn surface_type(&self) -> QuadricType {
+        self.typ
+    }
+
+    /// OCCT ax3.Location().
+    pub fn location(&self) -> DVec3 {
+        self.loc
+    }
+
+    /// OCCT ax3.XDirection().
+    pub fn x_dir(&self) -> DVec3 {
+        self.x_dir
+    }
+
+    /// OCCT ax3.YDirection().
+    pub fn y_dir(&self) -> DVec3 {
+        self.y_dir
+    }
+
+    /// OCCT ax3.Direction().
+    pub fn z_dir(&self) -> DVec3 {
+        self.z_dir
+    }
+
+    /// OCCT lin.Direction() — axis line direction (quadrics); plane uses normal.
+    pub fn axis_dir(&self) -> DVec3 {
+        match self.typ {
+            QuadricType::Plane => self.z_dir,
+            _ => self.lin_dir,
+        }
+    }
+
+    /// OCCT lin.Location() — axis line origin (quadrics); plane uses location.
+    pub fn axis_loc(&self) -> DVec3 {
+        match self.typ {
+            QuadricType::Plane => self.loc,
+            _ => self.lin_origin,
+        }
+    }
+
+    /// OCCT ax3.Direct().
+    pub fn ax3_direct(&self) -> bool {
+        self.ax3_direct
+    }
+
+    /// OCCT prm1 — radius for Cylinder/Sphere, RefRadius for Cone, MajorRadius for Torus.
+    pub fn radius(&self) -> f64 {
+        self.prm1
+    }
+    pub fn ref_radius(&self) -> f64 {
+        self.prm1
+    }
+    pub fn major_radius(&self) -> f64 {
+        self.prm1
+    }
+
+    /// OCCT prm2 — SemiAngle for Cone, MinorRadius for Torus.
+    pub fn semi_angle(&self) -> f64 {
+        self.prm2
+    }
+    pub fn minor_radius(&self) -> f64 {
+        self.prm2
+    }
+
+    /// OCCT P.Coefficients(A, B, C, D) — plane coefficients.
+    pub fn plane_coeffs(&self) -> (f64, f64, f64, f64) {
+        (self.prm1, self.prm2, self.prm3, self.prm4)
     }
 
     /// OCCT Plane() (IntSurf_Quadric.lxx L27-30) — reconstruct the plane.

@@ -5,7 +5,7 @@
 // and ClassifyLin2d), Plane-Sphere, with the general IntPatch path to follow.
 
 use rcad_kernel::geom::{
-    Curve2d, Curve3, Line2d, Line3, Plane, Surface3, CurveEval, SurfaceEval,
+    Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, CurveEval, SurfaceEval,
 };
 use glam::{DVec2, DVec3};
 
@@ -533,12 +533,56 @@ impl FaceFace {
                 self.done = true;
             }
             _ => {
-                // TODO: translate IntPatch_Intersection for the remaining
-                // analytic pairs (Plane-Cylinder/Cone, Cylinder-*, Sphere-*,
-                // Cone-*). Returns no curves until then.
+                // OCCT IntTools_FaceFace::Perform L441-474: for the remaining
+                // analytic pairs route through IntPatch_Intersection
+                // (-> IntPatch_ImpImpIntersection -> IntAna_QuadQuadGeo).
+                self.intersect_int_patch(&s1, &s2, tol);
                 self.done = true;
             }
         }
+    }
+
+    /// OCCT IntTools_FaceFace::Perform L523-531: myIntersector.Perform(...).
+    ///
+    /// Runs IntPatch_Intersection on the two surfaces and converts the
+    /// produced IntPatch lines into rcad IntersectionCurves. The lines are
+    /// the full analytic intersection curves (untrimmed); domain clipping
+    /// happens in MakeCurve (IntTools_FaceFace.cxx L695-1846), which is the
+    /// PaveFiller's responsibility downstream.
+    fn intersect_int_patch(&mut self, s1: &Surface3, s2: &Surface3, tol: f64) {
+        let mut inter =
+            crate::bop::int_tools::int_patch::IntPatchIntersection::new();
+        inter.perform(s1, s2, tol, tol);
+        if inter.tangent_faces() {
+            self.tangent_faces = true;
+            self.curves.clear();
+            return;
+        }
+        if inter.is_empty() {
+            self.curves.clear();
+            return;
+        }
+        let mut curves = Vec::new();
+        for l in inter.sequence_of_line() {
+            let (c3d, tr) = match &l.curve {
+                Curve3::Line(_) | Curve3::Parabola(_) | Curve3::Hyperbola(_) => {
+                    (l.curve.clone(), l.t_range)
+                }
+                Curve3::Circle(_) | Curve3::Ellipse(_) => {
+                    (l.curve.clone(), [0.0, std::f64::consts::TAU])
+                }
+                _ => (l.curve.clone(), l.t_range),
+            };
+            curves.push(IntersectionCurve {
+                curve: c3d,
+                t_range: tr,
+                pcurve1: l.pcurve1.clone(),
+                pcurve2: l.pcurve2.clone(),
+                tolerance: l.tolerance,
+                tang_tolerance: l.tang_tolerance,
+            });
+        }
+        self.curves = curves;
     }
 
     /// OCCT: Plane-Sphere intersection — circle.
