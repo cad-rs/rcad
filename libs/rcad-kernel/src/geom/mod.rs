@@ -357,20 +357,36 @@ pub struct Plane {
 impl Plane {
     /// OCCT-aligned: construct from origin and normal.
     /// Equivalent to `gp_Pln(gp_Pnt, gp_Dir)` which internally creates
-    /// a `gp_Ax3` with the following X direction computation:
-    /// 1. Use X (1,0,0) as the reference direction
-    /// 2. If |N·X| ≥ 1 - Precision::Angular() (N parallel to X), use Z (0,0,1) instead
-    /// 3. u_dir = (ref - N * (N · ref)).normalize()
-    /// 4. v_dir = N × u_dir
+    /// a `gp_Ax3(P, V)` whose X direction is the unit vector perpendicular
+    /// to V having a zero in the coordinate of the smallest |component| of V
+    /// (gp_Ax3.cxx L29-80):
+    ///   1. A,B,C = V.X,V.Y,V.Z; Aabs,Babs,Cabs = |A|,|B|,|C|
+    ///   2. If |B| is smallest:  D = |A|>|C| ? (-C,0,A) : (C,0,-A)
+    ///   3. elif |A| is smallest: D = |B|>|C| ? (0,-C,B) : (0,C,-B)
+    ///   4. else:                 D = |A|>|B| ? (-B,A,0) : (B,-A,0)
+    ///   5. u_dir = D.normalize(); v_dir = N × u_dir
     pub fn new(origin: DVec3, normal: DVec3) -> Self {
         let normal = normal.normalize_or_zero();
-        // OCCT-aligned: gp_Ax3 reference direction selection
-        let ref_dir = if normal.x.abs() > 1.0 - 1e-12 {
-            DVec3::Z
+        let (a, b, c) = (normal.x, normal.y, normal.z);
+        let (aabs, babs, cabs) = (a.abs(), b.abs(), c.abs());
+        let d = if babs <= aabs && babs <= cabs {
+            if aabs > cabs {
+                DVec3::new(-c, 0.0, a)
+            } else {
+                DVec3::new(c, 0.0, -a)
+            }
+        } else if aabs <= babs && aabs <= cabs {
+            if babs > cabs {
+                DVec3::new(0.0, -c, b)
+            } else {
+                DVec3::new(0.0, c, -b)
+            }
+        } else if aabs > babs {
+            DVec3::new(-b, a, 0.0)
         } else {
-            DVec3::X
+            DVec3::new(b, -a, 0.0)
         };
-        let u_dir = (ref_dir - normal * ref_dir.dot(normal)).normalize_or_zero();
+        let u_dir = d.normalize_or_zero();
         let v_dir = normal.cross(u_dir).normalize_or_zero();
         Plane {
             origin,

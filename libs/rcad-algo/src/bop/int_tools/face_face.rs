@@ -198,11 +198,12 @@ fn elclib_lin2d_parameter(line: &Line2d, p: DVec2) -> f64 {
     (p - line.origin).dot(line.direction)
 }
 
-/// OCCT INTER (IntTools_FaceFace.cxx L2563-2569).
+/// OCCT INTER (IntTools_FaceFace.cxx L2563-2569) — the 1:1 translation.
 fn inter(d1: f64, d2: f64, tol: f64) -> bool {
     (d1 > tol && d2 < -tol)
         || (d1 < -tol && d2 > tol)
         || ((d1 <= tol && d1 >= -tol) && (d2 > tol || d2 < -tol))
+        || ((d2 <= tol && d2 >= -tol) && (d1 > tol || d1 < -tol))
 }
 
 /// OCCT COINC (IntTools_FaceFace.cxx L2570-2571).
