@@ -1646,7 +1646,13 @@ impl PaveFiller {
         // OCCT: aVEdgeFace — collected (edge, face, pb, range, shrunk, express)
         struct EFCandidate {
             n_e: usize, n_f: usize, pb: SharedPB,
-            range: (f64, f64), shrunk: (f64, f64),
+            // OCCT: aEdgeFace.SetRange(aPBRange) — CorrectRange'd PB range used
+            // as the BeanFaceIntersector parameters.
+            range: (f64, f64),
+            // OCCT: the raw PB range (aPB->Range) re-read in the processing loop
+            // for aR1=(aT1,aTS1) / aR2=(aTS2,aT2).
+            raw_range: (f64, f64),
+            shrunk: (f64, f64),
             express: bool, tol_e: f64, tol_f: f64,
         }
         let mut a_v_edge_face: Vec<EFCandidate> = Vec::new();
@@ -1720,7 +1726,8 @@ impl PaveFiller {
                     std::sync::Arc::as_ptr(&a_pb.0) as u64);
                 a_v_edge_face.push(EFCandidate {
                     n_e, n_f, pb: a_pb.clone(),
-                    range: a_corrected_range, shrunk: a_corrected_ts,
+                    range: a_corrected_range, raw_range: (a_t1, a_t2),
+                    shrunk: a_corrected_ts,
                     express: b_express, tol_e: a_tol_e, tol_f: a_tol_f,
                 });
             }
@@ -1730,7 +1737,7 @@ impl PaveFiller {
         for cand in &a_v_edge_face {
             let a_nb_cprts;
             let (i_flag, common_parts, min_dist) = self.my_context.compute_ef(
-                cand.n_e, cand.n_f, cand.range.0, cand.range.1, &self.ds, self.my_fuzzy_value);
+                cand.n_e, cand.n_f, cand.range.0, cand.range.1, cand.express, &self.ds, self.my_fuzzy_value);
             a_nb_cprts = common_parts.len();
             if std::env::var("RCAD_EE_DEBUG").is_ok() {
                 eprintln!("[EF-DBG] cand e={}(r{}) f={}(r{}) range=[{:.4},{:.4}] ncp={} min={:.3e}", cand.n_e, self.ds.rank(cand.n_e), cand.n_f, self.ds.rank(cand.n_f), cand.range.0, cand.range.1, a_nb_cprts, min_dist);
@@ -1747,7 +1754,9 @@ impl PaveFiller {
                 continue;
             }
             let a_pb = &cand.pb;
-            let (a_t1, a_t2) = cand.range;
+            // OCCT L380: aPB->Range(aT1, aT2) — the raw PB range (not the
+            // CorrectRange'd one used for the intersection).
+            let (a_t1, a_t2) = cand.raw_range;
             let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
             let b_is_pb_splittable = { let r = a_pb.0.read().unwrap(); r.is_splittable() };
             let (mut a_ts1, mut a_ts2) = cand.shrunk;
@@ -1787,7 +1796,7 @@ impl PaveFiller {
                     });
                     if !b_v0 || !b_v1_ {
                         self.ds.add_interf(cand.n_e, cand.n_f);
-                        continue;
+                        break;
                     }
                     self.ds.add_interf(cand.n_e, cand.n_f);
                     // OCCT L564: BOPAlgo_Tools::FillMap(aPB, nF, aMPBLI)
@@ -1824,7 +1833,7 @@ impl PaveFiller {
                             a_mi_efc.insert(cand.n_f);
                             let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
                             a_mpbli.entry(ptr).or_insert_with(|| (a_pb.clone(), Vec::new())).1.push(cand.n_f);
-                            continue;
+                            break;
                         }
                     }
                     // OCCT L442-445

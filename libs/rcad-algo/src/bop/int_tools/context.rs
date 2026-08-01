@@ -205,15 +205,27 @@ impl IntToolsContext {
 
     pub fn compute_ef(
         &mut self, n_e: usize, n_f: usize, a_t1: f64, a_t2: f64,
-        ds: &DS, the_fuzz: f64,
+        express: bool, ds: &DS, the_fuzz: f64,
     ) -> (i32, Vec<(f64, f64, bool)>, f64) {
-        // OCCT IntTools_EdgeFace::Perform (EdgeFace.cxx L529-549): myCriteria
-        let a_fuzz = the_fuzz / 2.0;
-        let a_tol_e = ds.edge_tolerance(n_e) + a_fuzz;
-        let a_tol_f = ds.face_tolerance(n_f) + a_fuzz;
-        let a_criteria = a_tol_e + a_tol_f;
         let curve = match ds.edge_curve(n_e) { Some(c) => c.clone(), None => return (-1, vec![], f64::MAX) };
         let surf = match ds.face_surface(n_f) { Some(s) => s, None => return (-1, vec![], f64::MAX) };
+        // OCCT IntTools_EdgeFace::Perform (EdgeFace.cxx L528-549): myCriteria
+        //   aFuzz = myFuzzyValue/2; aTolF = Tol(face)+aFuzz; aTolE = Tol(edge)+aFuzz
+        //   BSpline/Bezier: diff1>100||diff2>100 -> max(aTolE,aTolF), else 1.5*aTolE+aTolF
+        let a_fuzz = the_fuzz / 2.0;
+        let a_tol_f = ds.face_tolerance(n_f) + a_fuzz;
+        let a_tol_e = ds.edge_tolerance(n_e) + a_fuzz;
+        let a_criteria = if matches!(curve, Curve3::BSpline(_) | Curve3::Bezier(_)) {
+            let diff1 = a_tol_e / a_tol_f;
+            let diff2 = a_tol_f / a_tol_e;
+            if diff1 > 100.0 || diff2 > 100.0 {
+                a_tol_e.max(a_tol_f)
+            } else {
+                1.5 * a_tol_e + a_tol_f
+            }
+        } else {
+            a_tol_e + a_tol_f
+        };
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
             let ct = match &curve {
                 Curve3::Line(_) => "Line", Curve3::Circle(_) => "Circle", Curve3::Ellipse(_) => "Ellipse",
@@ -226,6 +238,16 @@ impl IntToolsContext {
             eprintln!("[EF-DBG] compute_ef e={}({}) f={}({}) curve={} surf={} edgerange=[{:.4},{:.4}]", n_e, ds.rank(n_e), n_f, ds.rank(n_f), ct, st,
                 ds.shapes[n_e].shape.as_edge().map(|ed| ed.range[0]).unwrap_or(0.0),
                 ds.shapes[n_e].shape.as_edge().map(|ed| ed.range[1]).unwrap_or(0.0));
+        }
+
+        // OCCT EdgeFace L553-563: Quick coincidence check (myQuickCoincidenceCheck).
+        // If the edge's PB vertices are both already on the face, check whether the
+        // whole edge lies on the face; if so, emit a single full-range EDGE common
+        // part and skip the BeanFaceIntersector entirely.
+        if express {
+            if self.is_coincident_ef(ds, n_f, &curve, &surf, a_t1, a_t2, a_criteria) {
+                return (0, vec![(a_t1, a_t2, true)], f64::MAX);
+            }
         }
 
         // OCCT IntTools_EdgeFace L551: myS = myContext->SurfaceAdaptor(myFace)
@@ -262,43 +284,106 @@ impl IntToolsContext {
         let mut common_parts: Vec<(f64, f64, bool)> = Vec::new();
         for range in bfi.result() {
             let (rf, rl) = (range.first(), range.last());
+            // OCCT EdgeFace L586: IsProjectable(IntermediatePoint(aRange)) =
+            //   IntTools_Context::IsValidPointForFace(aPC, aF, myCriteria):
+            //   project; if (Umin > aTol) return false; IsPointInOnFace(aP2D).
+            //   Range merging happens inside BeanFaceIntersector (L352-378).
             let t_mid = (rf + rl) * 0.5;
             let p_mid = curve.point_at(t_mid);
-            let (uv, _) = crate::bop::closest_point_on_surface(&surf, p_mid);
-            // OCCT IntTools_EdgeFace L595-608: MakeType first, then IsProjectable.
+            let (a_dist, a_u, a_v) = {
+                let proj = self.proj_ps(ds, n_f);
+                proj.perform(p_mid);
+                if proj.nb_points() > 0 {
+                    let (u, v) = proj.lower_distance_parameters();
+                    (proj.lower_distance(), u, v)
+                } else {
+                    (f64::MAX, 0.0, 0.0)
+                }
+            };
+            // OCCT L595-608: MakeType runs after the projection filter, per common part.
             let (_, _, is_edge) = make_type_ef(&curve, rf, rl, a_t1, a_t2, a_criteria);
-            let in_face = self.is_point_in_face(ds, n_f, uv);
+            let in_face = a_dist <= a_criteria
+                && self.is_point_in_on_face(ds, n_f, glam::DVec2::new(a_u, a_v));
             if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                eprintln!("[EF-DBG]   range=[{:.5},{:.5}] mid={:.5} uv=({:.4},{:.4}) inFace={} ty={}", rf, rl, t_mid, uv.x, uv.y, in_face, if is_edge { "E" } else { "V" });
+                eprintln!("[EF-DBG]   range=[{:.5},{:.5}] mid={:.5} uv=({:.4},{:.4}) dist={:.3e} inFace={} ty={}", rf, rl, t_mid, a_u, a_v, a_dist, in_face, if is_edge { "E" } else { "V" });
             }
             if !in_face {
                 continue;
             }
             common_parts.push((rf, rl, is_edge));
         }
-        // Merge adjacent ranges (OCCT IntTools_BeanFaceIntersector::Perform L352-378
-        // merges consecutive ranges whose gap is within PConfusion).
-        if !common_parts.is_empty() {
-            common_parts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            let mut merged: Vec<(f64, f64, bool)> = Vec::new();
-            let curve_res = curve_res_ef(&curve, a_criteria);
-            for (s, e, ty) in common_parts {
-                if let Some(last) = merged.last_mut() {
-                    if s <= last.1 + curve_res {
-                        last.1 = last.1.max(e);
-                        last.2 = last.2 || ty;
-                        continue;
-                    }
-                }
-                merged.push((s, e, ty));
-            }
-            common_parts = merged;
-        }
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
             eprintln!("[EF-DBG] compute_ef e={} f={} r=[{:.4},{:.4}] kept={:?}", n_e, n_f, a_t1, a_t2,
                 common_parts.iter().map(|&(s, e, ty)| format!("[{:.5},{:.5}]{}", s, e, if ty { "E" } else { "V" })).collect::<Vec<_>>());
         }
         (0, common_parts, min_dist)
+    }
+
+    /// OCCT IntTools_EdgeFace::IsCoincident (IntTools_EdgeFace.cxx L62-163).
+    /// Quick coincidence check used when both PB vertices are already known to
+    /// be on the face. Samples aNbSeg+1 points along the (boundary-shifted)
+    /// edge range; if enough of them are within myCriteria of the face surface
+    /// and classify as In/On (not Out), the edge is coincident with the face.
+    fn is_coincident_ef(&mut self, ds: &DS, n_f: usize, curve: &Curve3, surf: &Surface3,
+                        a_t1: f64, a_t2: f64, a_criteria: f64) -> bool {
+        let a_nb_seg: usize = if matches!(curve, Curve3::Line(_)) && matches!(surf, Surface3::Plane(_)) {
+            2 // Line/Plane: check only three points
+        } else {
+            23
+        };
+        // OCCT: aTreshIdxF = RealToInt((aNbSeg+1)*0.25), aTreshIdxL = RealToInt((aNbSeg+1)*0.75)
+        let a_tresh_idx_f = ((a_nb_seg as f64 + 1.0) * 0.25).round() as usize;
+        let a_tresh_idx_l = ((a_nb_seg as f64 + 1.0) * 0.75).round() as usize;
+        // Shift the sample range in from the boundaries by 1% to avoid projection
+        // on the surface boundary (OCCT L86-90).
+        let a_bnd_shift = 0.01 * (a_t2 - a_t1);
+        let a_t1 = a_t1 + a_bnd_shift;
+        let a_t2 = a_t2 - a_bnd_shift;
+        let d_t = (a_t2 - a_t1) / a_nb_seg as f64;
+        let mut is_classified = false;
+        let mut i_cnt: usize = 0;
+        let class2d = FClass2d::new(ds, n_f, Self::classifier_tol(ds, n_f));
+        for i in 0..=a_nb_seg {
+            let a_t = a_t1 + (i as f64) * d_t;
+            let a_p = curve.point_at(a_t);
+            let (a_d, a_u, a_v) = {
+                let proj = self.proj_ps(ds, n_f);
+                proj.perform(a_p);
+                if proj.nb_points() > 0 {
+                    let (u, v) = proj.lower_distance_parameters();
+                    (proj.lower_distance(), u, v)
+                } else {
+                    (f64::MAX, 0.0, 0.0)
+                }
+            };
+            if a_d == f64::MAX {
+                // OCCT L101-104: !aProjector.IsDone() -> continue
+                continue;
+            }
+            if a_d > a_criteria {
+                if a_d > 100.0 * a_criteria {
+                    return false;
+                }
+                continue;
+            }
+            i_cnt += 1;
+            // Only the begin, end and middle points are classified
+            if ((0 < i) && (i < a_tresh_idx_f)) || ((a_tresh_idx_l < i) && (i < a_nb_seg)) {
+                continue;
+            }
+            if is_classified && (i != a_nb_seg) {
+                continue;
+            }
+            let state = class2d.perform(ds, glam::DVec2::new(a_u, a_v), true);
+            if state == State::Out {
+                return false;
+            }
+            if i != 0 {
+                is_classified = true;
+            }
+        }
+        let a_coeff = i_cnt as f64 / (a_nb_seg as f64 + 1.0);
+        a_coeff > 0.5
     }
 
     /// OCCT IntTools_BeanFaceIntersector::ComputeLinePlane (L820-906).

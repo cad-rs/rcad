@@ -891,6 +891,24 @@ impl DS {
             let pi = self.face_info_pool.len();
             self.face_info_pool.push(FaceInfo::default());
             self.shapes[i].reference = pi as i64;
+            // OCCT BOPDS_DS::InitFaceInfo (BOPDS_DS.cxx L738-747): InitFaceInfoIn +
+            // UpdateFaceInfoOn. Note: only the direct VERTEX sub-shapes go into
+            // VerticesIn here (OCCT InitFaceInfoIn L751-769); the boundary-edge
+            // PBs populate VerticesOn/PaveBlocksOn via FaceInfoOn.
+            self.face_info_pool[pi].set_index(i);
+            let sub_shapes = self.shapes[i].sub_shapes.clone();
+            for sub in sub_shapes {
+                if sub >= self.nb_shapes() {
+                    continue;
+                }
+                if self.shapes[sub].shape_type == ShapeType::Vertex {
+                    let sd = self.get_same_domain_index(sub as isize);
+                    if sd >= 0 {
+                        self.face_info_pool[pi].vertices_in.insert(sd as usize);
+                    }
+                }
+            }
+            self.update_face_info_on(i);
         }
         &mut self.face_info_pool[self.shapes[i].reference as usize]
     }
@@ -942,9 +960,56 @@ impl DS {
         }
     }
     pub fn update_face_info_on(&mut self, the_index: usize) {
+        // OCCT BOPDS_DS::UpdateFaceInfoOn (BOPDS_DS.cxx L792-807) + FaceInfoOn (L811-833):
+        //   for each boundary edge, add its PBs' endpoint vertices to VerticesOn and the
+        //   PBs to PaveBlocksOn; for each boundary vertex, add its same-domain index.
+        if self.shapes[the_index].reference < 0 {
+            return;
+        }
+        let sub_shapes = self.shapes[the_index].sub_shapes.clone();
+        let mut pb_marks: Vec<usize> = Vec::new();
+        let mut vertex_marks: Vec<usize> = Vec::new();
+        for &si in &sub_shapes {
+            if si >= self.nb_shapes() {
+                continue;
+            }
+            match self.shapes[si].shape_type {
+                ShapeType::Edge => {
+                    let pbs = self.edge_pave_blocks(si).to_vec();
+                    for pb in &pbs {
+                        // OCCT FaceInfoOn: VerticesOn gets the ORIGINAL PB's endpoints;
+                        // PaveBlocksOn gets the REAL pave block (resolved through the
+                        // common block), so a coincident edge's PB is found there.
+                        let (n_v1, n_v2) = { let r = pb.0.read().unwrap(); r.indices() };
+                        vertex_marks.push(n_v1);
+                        vertex_marks.push(n_v2);
+                        let pbr = self.real_pave_block(pb);
+                        let pptr = std::sync::Arc::as_ptr(&pbr.0) as u64;
+                        if let Some(pidx) = self.pave_blocks_pool.iter().position(|pool| {
+                            pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == pptr)
+                        }) {
+                            pb_marks.push(pidx);
+                        }
+                    }
+                }
+                ShapeType::Vertex => {
+                    let sd = self.get_same_domain_index(si as isize);
+                    if sd >= 0 {
+                        vertex_marks.push(sd as usize);
+                    }
+                }
+                _ => {}
+            }
+        }
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_on.clear();
-        drop(pfi);
+        pfi.vertices_on.clear();
+        for &idx in &pb_marks {
+            pfi.pave_blocks_on.insert(idx);
+        }
+        for &v in &vertex_marks {
+            pfi.vertices_on.insert(v);
+        }
     }
 
     // ================================================================    // Same-domain shapes
