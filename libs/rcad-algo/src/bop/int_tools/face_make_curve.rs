@@ -164,8 +164,19 @@ fn collect_face_boundary_vertices(
     is_face1: bool,
     out: &mut Vec<IntPatchVertex>,
 ) {
-    let n_sample = 32usize;
-    let boundary = if let Surface3::Plane(pl) = surf {
+    // OCCT Adaptor3d_TopolTool domain boundary: the UV rectangle of the surface.
+    // For a closed surface (sphere/torus) the DS boundary edges are unreliable
+    // (the sphere's DS seam lies in the wrong plane), so walk the UV domain.
+    // For other surfaces the DS boundary edges match the TopolTool domain.
+    let is_closed = matches!(surf, Surface3::Sphere(_) | Surface3::Torus(_));
+    let closed_polylines = if is_closed {
+        surface_uv_domain_boundary(surf, uv, 128)
+    } else {
+        Vec::new()
+    };
+    let boundary: Vec<(Curve3, [f64; 2])> = if is_closed {
+        Vec::new()
+    } else if let Surface3::Plane(pl) = surf {
         plane_uv_edges(pl, uv)
     } else {
         ds.face_boundary_edges(fi)
@@ -201,16 +212,54 @@ fn collect_face_boundary_vertices(
             v2,
         });
     };
+    // Closed-surface UV domain edges walked as point polylines.
+    for pts in &closed_polylines {
+        let n = pts.len();
+        if n < 2 {
+            continue;
+        }
+        let d0 = other_quad.distance(pts[0]);
+        let d1 = other_quad.distance(pts[n - 1]);
+        if d0.abs() <= tol * 10.0 + 1e-6 {
+            try_add_vertex(pts[0]);
+        }
+        if d1.abs() <= tol * 10.0 + 1e-6 {
+            try_add_vertex(pts[n - 1]);
+        }
+        let mut prev_d = d0;
+        for k in 1..n {
+            let p = pts[k];
+            let d = other_quad.distance(p);
+            let prev_d_k = prev_d;
+            prev_d = d;
+            if prev_d_k * d <= 0.0 && prev_d_k.abs() > 1e-14 {
+                let mut lo = 0.0f64;
+                let mut hi = 1.0f64;
+                let mut d_lo = prev_d_k;
+                for _ in 0..50 {
+                    let mid = (lo + hi) * 0.5;
+                    let pm = pts[k - 1] + (pts[k] - pts[k - 1]) * mid;
+                    let d_mid = other_quad.distance(pm);
+                    if d_lo * d_mid <= 0.0 {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                        d_lo = d_mid;
+                    }
+                }
+                try_add_vertex(pts[k - 1] + (pts[k] - pts[k - 1]) * ((lo + hi) * 0.5));
+            }
+        }
+    }
+    // Analytic boundary edges (plane rect / DS edges) for other surfaces.
     for (e_curve, [t0, t1]) in boundary {
         let span = t1 - t0;
         if !span.is_finite() || span == 0.0 {
             continue;
         }
+        let n_sample = 32usize;
         let d0 = other_quad.distance(e_curve.point_at(t0));
         let d1 = other_quad.distance(e_curve.point_at(t1));
-        // Endpoint crossings: the sign-flip sampling below misses a crossing
-        // that lies exactly on an edge endpoint (d==0 there), which OCCT's
-        // boundary walk includes (e.g. the cylinder seam endpoint at z=0).
         if d0.abs() <= tol * 10.0 + 1e-6 {
             try_add_vertex(e_curve.point_at(t0));
         }
@@ -222,12 +271,9 @@ fn collect_face_boundary_vertices(
             let t = t0 + span * (k as f64 / n_sample as f64);
             let p = e_curve.point_at(t);
             let d = other_quad.distance(p);
-            // Update prev_d BEFORE the flip handling so that the rejection
-            // `continue`s below do not leave it stale at d0.
             let prev_d_k = prev_d;
             prev_d = d;
             if prev_d_k * d <= 0.0 && prev_d_k.abs() > 1e-14 {
-                // Bisection between the previous and current edge parameters.
                 let mut lo = t0 + span * ((k as f64 - 1.0) / n_sample as f64);
                 let mut hi = t;
                 let mut d_lo = prev_d_k;
@@ -245,6 +291,51 @@ fn collect_face_boundary_vertices(
             }
         }
     }
+}
+
+/// OCCT Adaptor3d_TopolTool domain boundary of a surface: the four UV rectangle
+/// edges [UMin,UMax]x[VMin,VMax] sampled as 3D point polylines on the surface.
+/// Degenerate edges (a sphere pole, a zero-length edge) are skipped.
+fn surface_uv_domain_boundary(surf: &Surface3, uv: [f64; 4], n: usize) -> Vec<Vec<DVec3>> {
+    use rcad_kernel::geom::SurfaceEval;
+    let (u_lo, u_hi) = if uv[0] <= uv[1] { (uv[0], uv[1]) } else { (uv[1], uv[0]) };
+    let (v_lo, v_hi) = if uv[2] <= uv[3] { (uv[2], uv[3]) } else { (uv[3], uv[2]) };
+    let mut out = Vec::new();
+    // U = UMin and U = UMax edges (V varies).
+    if u_lo.is_finite() {
+        let mut p = Vec::with_capacity(n);
+        for k in 0..n {
+            let v = v_lo + (v_hi - v_lo) * (k as f64 / (n - 1) as f64);
+            p.push(surf.point_at(u_lo, v));
+        }
+        out.push(p);
+    }
+    if u_hi.is_finite() && (u_hi - u_lo).abs() > 0.0 {
+        let mut p = Vec::with_capacity(n);
+        for k in 0..n {
+            let v = v_lo + (v_hi - v_lo) * (k as f64 / (n - 1) as f64);
+            p.push(surf.point_at(u_hi, v));
+        }
+        out.push(p);
+    }
+    // V = VMin and V = VMax edges (U varies).
+    if v_lo.is_finite() {
+        let mut p = Vec::with_capacity(n);
+        for k in 0..n {
+            let u = u_lo + (u_hi - u_lo) * (k as f64 / (n - 1) as f64);
+            p.push(surf.point_at(u, v_lo));
+        }
+        out.push(p);
+    }
+    if v_hi.is_finite() && (v_hi - v_lo).abs() > 0.0 {
+        let mut p = Vec::with_capacity(n);
+        for k in 0..n {
+            let u = u_lo + (u_hi - u_lo) * (k as f64 / (n - 1) as f64);
+            p.push(surf.point_at(u, v_hi));
+        }
+        out.push(p);
+    }
+    out
 }
 
 /// Walk a WLine polyline and place an IntPatchVertex wherever the polyline
