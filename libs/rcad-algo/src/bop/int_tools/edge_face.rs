@@ -11,6 +11,23 @@ pub fn intersect_line_plane(line: &rcad_kernel::geom::Line3, t_range: [f64; 2], 
     if t < t_range[0] - rcad_kernel::CONFUSION || t > t_range[1] + rcad_kernel::CONFUSION { return None; }
     Some(EdgeFaceHit { point: line.origin + line.direction * t, edge_param: t })
 }
+
+/// Same as [`intersect_line_plane`] with explicit edge-parameter margin
+/// `param_tol` (minimum CONFUSION). Parallel/near-parallel denominator
+/// threshold stays strict at CONFUSION.
+pub fn intersect_line_plane_with_tol(
+    line: &rcad_kernel::geom::Line3,
+    t_range: [f64; 2],
+    plane: &rcad_kernel::geom::Plane,
+    param_tol: f64,
+) -> Option<EdgeFaceHit> {
+    let ptol = param_tol.max(rcad_kernel::CONFUSION);
+    let denom = line.direction.dot(plane.normal);
+    if denom.abs() < rcad_kernel::CONFUSION { return None; }
+    let t = (plane.origin - line.origin).dot(plane.normal) / denom;
+    if t < t_range[0] - ptol || t > t_range[1] + ptol { return None; }
+    Some(EdgeFaceHit { point: line.origin + line.direction * t, edge_param: t })
+}
 pub fn plane_local_basis(plane: &rcad_kernel::geom::Plane) -> (DVec3, DVec3) {
     let n = plane.normal;
     let ref_dir = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };

@@ -10,7 +10,8 @@
 //! This is the low-level math module; higher-level GeomAPI wrappers live in
 //! base::geom_api.
 
-use crate::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval};
+use glam::DVec2;
 use glam::DVec3;
 
 // =============================================================================
@@ -275,6 +276,185 @@ impl ExtPC {
                 let ddp = curve.derivative2_at(t);
                 let df = dp.dot(dp) + d.dot(ddp);
                 df
+            } else {
+                speed_sq
+            };
+            if d2.abs() < 1e-30 {
+                break;
+            }
+            let dt = -f / d2;
+            t = (t + dt).clamp(t_min, t_max);
+            if dt.abs() < self.tol {
+                break;
+            }
+        }
+        t
+    }
+}
+
+// ============================================================================
+// Extrema_ExtPC2d — Point-to-Curve extremum (2D)
+// ============================================================================
+
+/// Point on a 2D curve at an extremum distance (OCCT `Extrema_POnCurv2d`).
+#[derive(Debug, Clone)]
+pub struct POnCurve2d {
+    /// Parameter on the curve.
+    pub param: f64,
+    /// Point on the curve.
+    pub point: DVec2,
+}
+
+/// OCCT-aligned: computes the extremum distances between a 2D point and a 2D
+/// curve. Mirrors `Extrema_ExtPC2d` =
+/// `Extrema_GGExtPC<Adaptor2d_Curve2d, Extrema_Curve2dTool, ...>` (used by
+/// BRepClass_Intersector::CheckOn).
+pub struct ExtPC2d {
+    done: bool,
+    points: Vec<POnCurve2d>,
+    sq_dists: Vec<f64>,
+    tol: f64,
+}
+
+impl ExtPC2d {
+    /// Constructor: compute all extrema between `point` and `curve` on
+    /// `[uinf, usup]`.
+    ///
+    /// OCCT: `Extrema_ExtPC2d(gp_Pnt2d, Adaptor2d_Curve2d)`.
+    pub fn new(point: DVec2, curve: &Curve2d, tol: f64, uinf: f64, usup: f64) -> Self {
+        let mut ext = ExtPC2d {
+            done: false,
+            points: Vec::new(),
+            sq_dists: Vec::new(),
+            tol: tol.max(1e-12),
+        };
+        ext.perform(point, curve, uinf, usup);
+        ext
+    }
+
+    /// Compute the extrema.
+    pub fn perform(&mut self, point: DVec2, curve: &Curve2d, uinf: f64, usup: f64) {
+        self.points.clear();
+        self.sq_dists.clear();
+
+        // Analytic path for line (elementary-curve case).
+        if let Curve2d::Line(l) = curve {
+            let (pts, sqs) = self.ext_pelc_line2d(point, l, uinf, usup);
+            self.points = pts;
+            self.sq_dists = sqs;
+            self.done = true;
+            return;
+        }
+
+        // General path: coarse grid + Newton refinement.
+        let (t_min, t_max) = (uinf.max(f64::NEG_INFINITY), usup.min(f64::INFINITY));
+        if !t_min.is_finite() || !t_max.is_finite() || (t_max - t_min).abs() < self.tol {
+            self.done = true;
+            return;
+        }
+
+        const N_GRID: usize = 51;
+        let mut candidates: Vec<(f64, f64)> = Vec::new(); // (t, dist²)
+        for i in 0..=N_GRID {
+            let t = t_min + (t_max - t_min) * (i as f64) / (N_GRID as f64);
+            let p = curve.point_at(t);
+            let d2 = (p - point).length_squared();
+            // Keep local minima.
+            if (i == 0 || d2 <= candidates.last().map(|&(_, ld)| ld).unwrap_or(f64::INFINITY))
+                && (i == N_GRID || {
+                    let next_t = t_min + (t_max - t_min) * ((i + 1) as f64) / (N_GRID as f64);
+                    let next_p = curve.point_at(next_t);
+                    let next_d2 = (next_p - point).length_squared();
+                    d2 <= next_d2
+                })
+            {
+                candidates.push((t, d2));
+            }
+        }
+        candidates.dedup_by(|a, b| (a.0 - b.0).abs() < (t_max - t_min) / (N_GRID as f64) * 0.5);
+
+        for &(t0, _) in &candidates {
+            let t = self.newton_refine_curve2d(point, curve, t0, t_min, t_max);
+            let p = curve.point_at(t);
+            let d2 = (p - point).length_squared();
+            let is_dup = self.points.iter().any(|existing| {
+                let dt = (existing.param - t).abs();
+                let dp = (existing.point - p).length();
+                dt < self.tol && dp < self.tol * 10.0
+            });
+            if !is_dup {
+                self.points.push(POnCurve2d { param: t, point: p });
+                self.sq_dists.push(d2);
+            }
+        }
+
+        // Sort by distance.
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| self.sq_dists[a].partial_cmp(&self.sq_dists[b]).unwrap());
+        self.points = indices.iter().map(|&i| self.points[i].clone()).collect();
+        self.sq_dists = indices.iter().map(|&i| self.sq_dists[i]).collect();
+
+        self.done = true;
+    }
+
+    /// OCCT: `IsDone()`.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT: `NbExt()`.
+    pub fn nb_ext(&self) -> usize {
+        self.points.len()
+    }
+
+    /// OCCT: `SquareDistance(N)` — 1-indexed.
+    pub fn square_distance(&self, n: usize) -> f64 {
+        assert!(n >= 1 && n <= self.sq_dists.len(), "ExtPC2d: index out of range");
+        self.sq_dists[n - 1]
+    }
+
+    /// OCCT: `Point(N)` — returns the point on curve. 1-indexed.
+    pub fn point(&self, n: usize) -> &POnCurve2d {
+        assert!(n >= 1 && n <= self.points.len(), "ExtPC2d: index out of range");
+        &self.points[n - 1]
+    }
+
+    fn ext_pelc_line2d(
+        &self,
+        point: DVec2,
+        line: &Line2d,
+        uinf: f64,
+        usup: f64,
+    ) -> (Vec<POnCurve2d>, Vec<f64>) {
+        // Project point onto the infinite line: t = (p - o)·d.
+        let t = (point - line.origin).dot(line.direction);
+        let t_clamped = t.clamp(uinf, usup);
+        let p = line.origin + t_clamped * line.direction;
+        let d2 = (p - point).length_squared();
+        (vec![POnCurve2d { param: t_clamped, point: p }], vec![d2])
+    }
+
+    fn newton_refine_curve2d(
+        &self,
+        point: DVec2,
+        curve: &Curve2d,
+        t0: f64,
+        t_min: f64,
+        t_max: f64,
+    ) -> f64 {
+        let mut t = t0.clamp(t_min, t_max);
+        for _ in 0..20 {
+            let p = curve.point_at(t);
+            let dp = curve.derivative_at(t);
+            let d = p - point;
+            let f = d.dot(dp);
+            let speed_sq = dp.length_squared();
+            if speed_sq < 1e-30 || f.abs() < self.tol {
+                break;
+            }
+            let d2 = if speed_sq > 1e-30 {
+                let ddp = curve.derivative2_at(t);
+                dp.dot(dp) + d.dot(ddp)
             } else {
                 speed_sq
             };

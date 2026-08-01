@@ -7,7 +7,7 @@
 
 use glam::{DVec2, DVec3};
 
-use crate::geom::{Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
+use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 
 /// Status of a local property computation.
 ///
@@ -224,6 +224,210 @@ impl<'a> CLProps<'a> {
         }
         let n = self.normal()?;
         Some(self.pnt + n / curv)
+    }
+}
+
+// ============================================================================
+// GeomLProp_CLProps2d — Curve Local Properties (2D)
+// ============================================================================
+
+/// Computes local properties of a 2D curve at a parameter value: point,
+/// first/second derivatives, tangent, curvature, normal.
+///
+/// OCCT: `GeomLProp_CLProps2d` (GeomLProp_CLProps.hxx — the 2D instantiation
+/// of `GeomLProp_CLPropsBase`; formulas in LProp_CurveUtils.hxx):
+/// - curvature = |D1 × D2| / |D1|³ (2D cross magnitude)
+/// - normal = D2·|D1|² − D1·(D1·D2), normalized
+pub struct ClProps2d<'a> {
+    curve: &'a Curve2d,
+    u: f64,
+    der_order: i32,
+    /// Continuity index (4 = unknown).
+    cn: i32,
+    lin_tol: f64,
+    pnt: DVec2,
+    deriv: [DVec2; 3],
+    curvature: f64,
+    tangent_status: LPropStatus,
+    significant_first_derivative_order: i32,
+}
+
+impl<'a> ClProps2d<'a> {
+    /// OCCT: `GeomLProp_CLProps2d(C, N, Resolution)`.
+    pub fn new(curve: &'a Curve2d, n: i32, resolution: f64) -> Self {
+        assert!(n >= 0 && n <= 3, "ClProps2d: N must be 0, 1, 2, or 3");
+        ClProps2d {
+            curve,
+            u: f64::NAN,
+            der_order: n,
+            cn: 4,
+            lin_tol: if resolution <= 0.0 { TOL_LIN } else { resolution },
+            pnt: DVec2::ZERO,
+            deriv: [DVec2::ZERO, DVec2::ZERO, DVec2::ZERO],
+            curvature: 0.0,
+            tangent_status: LPropStatus::Undecided,
+            significant_first_derivative_order: 0,
+        }
+    }
+
+    /// OCCT: `GeomLProp_CLProps2d(C, U, N, Resolution)`.
+    pub fn with_param(curve: &'a Curve2d, u: f64, n: i32, resolution: f64) -> Self {
+        let mut props = ClProps2d::new(curve, n, resolution);
+        props.set_parameter(u);
+        props
+    }
+
+    /// OCCT: `SetParameter(U)`.
+    pub fn set_parameter(&mut self, u: f64) {
+        self.u = u;
+        self.pnt = self.curve.point_at(u);
+        if self.der_order >= 1 {
+            self.deriv[0] = self.curve.derivative_at(u);
+        }
+        if self.der_order >= 2 {
+            self.deriv[1] = self.curve.derivative2_at(u);
+        }
+        if self.der_order >= 3 {
+            // 2D third derivative not exposed by Curve2dEval; finite difference.
+            let h = 1e-4;
+            self.deriv[2] = (self.curve.derivative2_at(u + h) - self.curve.derivative2_at(u - h))
+                / (2.0 * h);
+        }
+        self.tangent_status = LPropStatus::Undecided;
+    }
+
+    /// OCCT: `Value()`.
+    pub fn value(&self) -> DVec2 {
+        self.pnt
+    }
+
+    /// OCCT: `D1()`.
+    pub fn d1(&mut self) -> DVec2 {
+        if self.der_order >= 1 && self.deriv[0] == DVec2::ZERO {
+            self.deriv[0] = self.curve.derivative_at(self.u);
+        }
+        self.deriv[0]
+    }
+
+    /// OCCT: `D2()`.
+    pub fn d2(&mut self) -> DVec2 {
+        if self.der_order >= 2 && self.deriv[1] == DVec2::ZERO {
+            self.deriv[1] = self.curve.derivative2_at(self.u);
+        }
+        self.deriv[1]
+    }
+
+    /// OCCT: `IsTangentDefined()`.
+    pub fn is_tangent_defined(&mut self) -> bool {
+        if self.tangent_status != LPropStatus::Undecided {
+            return self.tangent_status == LPropStatus::Defined;
+        }
+        let d1 = self.d1();
+        if d1.length_squared() > self.lin_tol * self.lin_tol {
+            self.tangent_status = LPropStatus::Defined;
+            self.significant_first_derivative_order = 1;
+            return true;
+        }
+        if self.der_order < 2 {
+            self.tangent_status = LPropStatus::Zero;
+            return false;
+        }
+        let d2 = self.d2();
+        if d2.length_squared() > self.lin_tol * self.lin_tol {
+            self.tangent_status = LPropStatus::Defined;
+            self.significant_first_derivative_order = 2;
+            return true;
+        }
+        if self.der_order < 3 {
+            self.tangent_status = LPropStatus::Zero;
+            return false;
+        }
+        let d3 = self.d3();
+        if d3.length_squared() > self.lin_tol * self.lin_tol {
+            self.tangent_status = LPropStatus::Defined;
+            self.significant_first_derivative_order = 3;
+            return true;
+        }
+        self.tangent_status = LPropStatus::Zero;
+        false
+    }
+
+    /// OCCT: `D3()`.
+    pub fn d3(&mut self) -> DVec2 {
+        if self.der_order >= 3 && self.deriv[2] == DVec2::ZERO {
+            let h = 1e-4;
+            self.deriv[2] = (self.curve.derivative2_at(self.u + h)
+                - self.curve.derivative2_at(self.u - h))
+                / (2.0 * h);
+        }
+        self.deriv[2]
+    }
+
+    /// OCCT: `Tangent(D)`.
+    pub fn tangent(&mut self) -> Option<DVec2> {
+        if !self.is_tangent_defined() {
+            return None;
+        }
+        let idx = (self.significant_first_derivative_order - 1) as usize;
+        let mut d = self.deriv[idx];
+        if self.significant_first_derivative_order > 1 {
+            // OCCT LProp_CurveUtils::ComputeTangent — sign correction using
+            // the chord near the point (the tangent of a curve whose first
+            // significant derivative is of higher order).
+            let dom = self.curve.default_domain();
+            let (inf, sup) = (dom[0], dom[1]);
+            let a_du = if sup.is_infinite() || inf.is_infinite() {
+                0.0
+            } else {
+                sup - inf
+            };
+            let delta = (a_du * 1.0e-3).max(1.0e-7);
+            let other_u = if self.u - inf < delta { self.u + delta } else { self.u - delta };
+            let p1 = self.curve.point_at(self.u.min(other_u));
+            let p2 = self.curve.point_at(self.u.max(other_u));
+            let chord = p2 - p1;
+            if d.dot(chord) < 0.0 {
+                d = -d;
+            }
+        }
+        Some(d.normalize_or_zero())
+    }
+
+    /// OCCT: `Curvature()`. Returns |D1 × D2| / |D1|³.
+    pub fn curvature(&mut self) -> f64 {
+        if !self.is_tangent_defined() {
+            return 0.0;
+        }
+        let d1 = self.d1();
+        let d2 = self.d2();
+        let a_dd1 = d1.length_squared();
+        let a_dd2 = d2.length_squared();
+        if a_dd2 <= self.lin_tol * self.lin_tol {
+            return 0.0;
+        }
+        let a_n = (d1.x * d2.y - d1.y * d2.x).powi(2); // CrossSquareMagnitude
+        let a_t = a_n / a_dd1 / a_dd2;
+        if a_t <= self.lin_tol * self.lin_tol {
+            return 0.0;
+        }
+        self.curvature = a_n.sqrt() / a_dd1 / a_dd1.sqrt();
+        self.curvature
+    }
+
+    /// OCCT: `Normal(N)` — D2·|D1|² − D1·(D1·D2), normalized.
+    pub fn normal(&mut self) -> Option<DVec2> {
+        let curv = self.curvature();
+        if curv.abs() <= self.lin_tol {
+            return None;
+        }
+        let d1 = self.d1();
+        let d2 = self.d2();
+        let n = d2 * d1.length_squared() - d1 * d1.dot(d2);
+        let len = n.length();
+        if len < self.lin_tol {
+            return None;
+        }
+        Some(n / len)
     }
 }
 

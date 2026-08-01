@@ -10,3 +10,6 @@ pub mod brep_extrema;       // BRepExtrema
 pub mod brep_int_curve_surface; // BRepIntCurveSurface
 pub mod brep_lib;           // BRepLib
 pub mod brep_top_adaptor;   // BRepTopAdaptor (FClass2d, TopolTool)
+pub mod gcpnts;             // GCPnts (QuasiUniformDeflection)
+pub mod int_res2d;          // IntRes2d (2D intersection data types)
+pub mod top_trans;          // TopTrans (CurveTransition)

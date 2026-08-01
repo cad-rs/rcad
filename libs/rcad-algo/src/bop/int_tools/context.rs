@@ -267,9 +267,6 @@ impl IntToolsContext {
             let (uv, _) = crate::bop::closest_point_on_surface(&surf, p_mid);
             // OCCT IntTools_EdgeFace L595-608: MakeType first, then IsProjectable.
             let (_, _, is_edge) = make_type_ef(&curve, rf, rl, a_t1, a_t2, a_criteria);
-            // OCCT IsValidPointForFace uses IsPointInOnFace (ON included), but the
-            // rcad polygon classifier must exclude ON-boundary points (like OCCT's
-            // FClass2d does for the box×box coplanar edges) — keep IsPointInFace.
             let in_face = self.is_point_in_face(ds, n_f, uv);
             if std::env::var("RCAD_EE_DEBUG").is_ok() {
                 eprintln!("[EF-DBG]   range=[{:.5},{:.5}] mid={:.5} uv=({:.4},{:.4}) inFace={} ty={}", rf, rl, t_mid, uv.x, uv.y, in_face, if is_edge { "E" } else { "V" });

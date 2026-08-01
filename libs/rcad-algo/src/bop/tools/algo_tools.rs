@@ -42,11 +42,16 @@ pub fn compute_vv(v1_tol: f64, v1_pnt: glam::DVec3,
 // ====================================================================
 // MakeNewVertex — OCCT BOPTools_AlgoTools::MakeNewVertex (2arg)
 // ====================================================================
-/// Creates a vertex at the midpoint of two vertices with combined tolerance.
+/// OCCT BOPTools_AlgoTools::MakeNewVertex(aP1, aP2, aTol1, aTol2, aVnew):
+/// midpoint of the two points; tolerance = max(aTol1, aTol2, 0.5 * aDist).
 pub fn make_new_vertex(v1_pnt: glam::DVec3, v1_tol: f64,
                        v2_pnt: glam::DVec3, v2_tol: f64) -> (glam::DVec3, f64) {
     let mid = (v1_pnt + v2_pnt) * 0.5;
-    let tol = (mid - v1_pnt).length() + v1_tol.max(v2_tol);
+    let a_d = v1_pnt.distance(v2_pnt);
+    let mut tol = v1_tol.max(v2_tol);
+    if tol < a_d * 0.5 {
+        tol = a_d * 0.5;
+    }
     (mid, tol)
 }
 
@@ -254,16 +259,54 @@ pub fn correct_range_ee(
 }
 
 // ====================================================================
-// CorrectRange — OCCT BOPTools_AlgoTools::CorrectRange (EF variant, L364+)
+// CorrectRange — OCCT BOPTools_AlgoTools::CorrectRange (EF variant, L364-434)
 // ====================================================================
-/// Corrects edge range for edge-face intersection.
+/// Corrects the edge range for edge-face intersection.
+/// OCCT (BOPTools_AlgoTools_2.cxx L364-434):
+///   aTolF = BRep_Tool::Tolerance(aF); aRes = aTolF;
+///   spline: aRes /= |D1| at the endpoint (or aBC.Resolution(aRes));
+///   other:  aRes = aBC.Resolution(aRes);
+///   first += aRes; last -= aRes; reset to aSR if the range < PConfusion.
+/// (Note: unlike the EE variant, this does NOT early-return for lines.)
 pub fn correct_range_ef(
     curve: &rcad_kernel::geom::Curve3,
     t1: f64, t2: f64,
-    _tol_e: f64, _tol_f: f64,
+    _tol_e: f64, tol_f: f64,
 ) -> (f64, f64) {
-    // rcad: same logic as EE variant
-    correct_range_ee(curve, t1, t2, 0.0, 0.0)
+    let d_t = rcad_kernel::PCONFUSION;
+    let mut nt1 = t1;
+    let mut nt2 = t2;
+    for i in 0..2 {
+        let par = if i == 0 { t1 } else { t2 };
+        let mut a_res = tol_f;
+        let a_mgn = curve.tangent_at(par).length();
+        if a_mgn > 1e-12 {
+            a_res = a_res / a_mgn;
+        } else {
+            a_res = curve_resolution_ef(curve, par, a_res);
+        }
+        if i == 0 {
+            nt1 = t1 + a_res;
+        } else {
+            nt2 = t2 - a_res;
+        }
+        if (nt2 - nt1) < d_t {
+            nt1 = t1;
+            nt2 = t2;
+        }
+    }
+    (nt1, nt2)
+}
+
+/// OCCT Adaptor3d_Curve::Resolution(tol) = tol / |dP/dt| (with tol fallback
+/// when the tangent speed is degenerate).
+fn curve_resolution_ef(curve: &rcad_kernel::geom::Curve3, t: f64, tol: f64) -> f64 {
+    let speed = curve.tangent_at(t).length();
+    if speed < 1e-15 {
+        tol
+    } else {
+        tol / speed
+    }
 }
 
 // ====================================================================
@@ -384,6 +427,17 @@ pub fn make_pcurve(
 pub fn fill_map(n1: usize, n2: usize, the_map: &mut std::collections::HashMap<usize, Vec<usize>>) {
     the_map.entry(n1).or_default().push(n2);
     the_map.entry(n2).or_default().push(n1);
+}
+
+/// OCCT IntTools_Tools::IsInRange (IntTools_Tools.cxx L650-666).
+/// Returns true if either endpoint of the range (r2_first, r2_last) lies
+/// within the reference range (r1_first, r1_last) expanded by aTol:
+///   aTRef1 -= tol; aTRef2 += tol;
+///   bIsIn = (aT1 >= aTRef1 && aT1 <= aTRef2) || (aT2 >= aTRef1 && aT2 <= aTRef2);
+pub fn is_in_range(r1_first: f64, r1_last: f64, r2_first: f64, r2_last: f64, tol: f64) -> bool {
+    let t_ref1 = r1_first - tol;
+    let t_ref2 = r1_last + tol;
+    (r2_first >= t_ref1 && r2_first <= t_ref2) || (r2_last >= t_ref1 && r2_last <= t_ref2)
 }
 
 // ====================================================================

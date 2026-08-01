@@ -174,6 +174,12 @@ impl EdgeEdgeIntersector {
             let d = crate::topalgo::brep_extrema::dist_shape_shape::min_distance_edge_segments(
                 &self.curve1, self.range1[0], self.range1[1],
                 &self.curve2, self.range2[0], self.range2[1]);
+            if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                eprintln!("[EE-DBG] fast-reject c1={:?} r1={:?} c2={:?} r2={:?} d={:.12} myTol={:.12} reject={}",
+                    type_to_integer(&self.curve1), self.range1,
+                    type_to_integer(&self.curve2), self.range2,
+                    d, self.my_tol, d > 1.1 * self.my_tol);
+            }
             if d > 1.1 * self.my_tol {
                 return;
             }

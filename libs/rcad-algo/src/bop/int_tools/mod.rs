@@ -10,3 +10,6 @@ pub mod edge_edge;
 pub mod edge_face;
 pub mod face_face;
 pub mod context;
+pub mod bean_face_intersector;
+pub mod curve_range;
+pub mod curve_surface;

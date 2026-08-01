@@ -37,6 +37,29 @@ pub fn closest_point_on_curve_range(
 ) -> CurveProjection {
     let mut result = closest_point_on_curve(curve, query, n_samples);
     if result.param < t0 || result.param > t1 {
+        // OCCT GeomAPI_ProjectPointOnCurve::Init(curve, f, l) projects onto the
+        // trimmed periodic curve: the parameter is wrapped by the period to stay
+        // inside [f, l] (Extrema_ExtPC on a circle/ellipse considers u +/- k*Tau).
+        // Clamping to an endpoint would be wrong for e.g. an arc [3*PI/2, 5*PI/2]
+        // whose interior point projects to a raw parameter near 0.
+        let period = match curve {
+            Curve3::Circle(_) | Curve3::Ellipse(_) => Some(std::f64::consts::TAU),
+            _ => None,
+        };
+        if let Some(p) = period {
+            let k = ((t0 - result.param) / p).floor();
+            for offset in [k, k + 1.0] {
+                let u = result.param + offset * p;
+                if u >= t0 - 1e-12 && u <= t1 + 1e-12 {
+                    let pt = curve.point_at(u);
+                    return CurveProjection {
+                        point: pt,
+                        param: u,
+                        distance: (pt - query).length(),
+                    };
+                }
+            }
+        }
         let (t_min, t_max) = if t0 <= t1 { (t0, t1) } else { (t1, t0) };
         let t_clamped = if result.param < t_min { t_min } else { t_max };
         let pt = curve.point_at(t_clamped);
