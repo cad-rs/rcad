@@ -1006,19 +1006,25 @@ impl FClass2d {
                 | Some(rcad_kernel::geom::Surface3::Cone(_))
                 | Some(rcad_kernel::geom::Surface3::Torus(_))
         );
-        if periodic && (u1 - u0) > 1e-9 {
+        // On the seam (u at the domain boundary): ON → outside for
+        // IsPointInFace, inside for IsPointInOnFace. This u-domain cut is the
+        // seam of a surface of revolution (cylinder / cone / torus: a generator
+        // line at u=0/2*PI). The sphere is different: rcad make_sphere builds
+        // the seam as the meridian circle in the XZ plane at v = PI/2 (equator)
+        // in the sphere's (u, v) with axis = Y, so the sphere's u-domain cut is
+        // a parametrization seam, NOT the face boundary — the u check is
+        // skipped for spheres (the v = mid check below handles the real seam).
+        let is_sphere = matches!(surf, Some(rcad_kernel::geom::Surface3::Sphere(_)));
+        if periodic && (u1 - u0) > 1e-9 && !is_sphere {
             let period = u1 - u0;
             u = u0 + (u - u0) - period * ((u - u0) / period).floor();
-            // On the seam (u at the domain boundary): ON → outside for
-            // IsPointInFace, inside for IsPointInOnFace.
             let seam_tol = 1e-6;
             if (u - u0).abs() < seam_tol || (u - u1).abs() < seam_tol {
                 return State::On;
             }
         }
-        // rcad make_sphere builds the seam as the meridian circle in the XZ
-        // plane at v = PI/2 (equator) in the sphere's (u, v) with axis = Y.
-        if matches!(surf, Some(rcad_kernel::geom::Surface3::Sphere(_))) {
+        // Sphere seam: the meridian circle in the XZ plane at v = PI/2.
+        if is_sphere {
             let mid_v = (v0 + v1) * 0.5;
             if (v - mid_v).abs() < 1e-6 {
                 return State::On;
