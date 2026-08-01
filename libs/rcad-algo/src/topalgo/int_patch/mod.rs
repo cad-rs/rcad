@@ -2,6 +2,7 @@
 //
 // IntPatch_Point: a point of the intersection of two patches, with the
 // transition relative to the restriction arcs / vertices of both surfaces.
+// IntPatch_IType / IntPatch_Line: the abstract intersection line types.
 //
 // rcad data-model notes:
 // - OCCT arcS1/arcS2 (Handle(Adaptor2d_Curve2d)) and vS1/vS2
@@ -9,6 +10,12 @@
 //   domains. rcad stores optional indices that the caller resolves against
 //   its domain representation (0 = none).
 // - IntSurf_Transition maps to crate::topalgo::int_res2d::Transition.
+
+pub mod i_type;
+pub mod line;
+
+pub use i_type::IntPatchIType;
+pub use line::IntPatchLine;
 
 use glam::DVec3;
 
