@@ -1864,6 +1864,67 @@ impl DS {
         }
     }
 
+    /// OCCT BRep_Tool::UVBounds — the face's actual UV bounds computed by
+    /// sampling the boundary edges' pcurves. rcad faces build pcurves
+    /// incrementally (MakePCurves runs after VF/EF/FF), so the boundary edges'
+    /// 3D curves are projected onto the face surface instead (each sample point
+    /// is on the surface, so projection recovers the UV parameter).
+    pub fn face_actual_uv_bounds(&self, fi: usize) -> [f64; 4] {
+        let Some(surf) = self.face_surface(fi) else {
+            return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY];
+        };
+        let face_data = match &*self.shapes[fi].shape.data {
+            TShape::Face(fd) => fd,
+            _ => return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY],
+        };
+        let mut umin = f64::INFINITY;
+        let mut umax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut vmax = f64::NEG_INFINITY;
+        let wire_shapes: Vec<Shape> = std::iter::once(face_data.outer_wire.clone())
+            .chain(face_data.inner_wires.iter().cloned())
+            .collect();
+        let mut any = false;
+        for ws in &wire_shapes {
+            let Some(&wi) = self.map_shape_index.get(&(ws.ptr_id(), ws.location)) else { continue };
+            if wi >= self.nb_shapes() || self.shapes[wi].shape_type != ShapeType::Wire {
+                continue;
+            }
+            let wire_edge_shapes = match &*self.shapes[wi].shape.data {
+                TShape::Wire(w) => w.edges.clone(),
+                _ => Vec::new(),
+            };
+            for eshape in &wire_edge_shapes {
+                let Some(&ei) = self.map_shape_index.get(&(eshape.ptr_id(), eshape.location)) else { continue };
+                if ei >= self.nb_shapes() {
+                    continue;
+                }
+                let edge_data = match &*self.shapes[ei].shape.data {
+                    TShape::Edge(ed) => ed,
+                    _ => continue,
+                };
+                let Some(c3d) = edge_data.curve.clone() else { continue };
+                let t0 = edge_data.range[0];
+                let t1 = edge_data.range[1];
+                const NS: usize = 8;
+                for k in 0..=NS {
+                    let t = t0 + (t1 - t0) * (k as f64 / NS as f64);
+                    let p = c3d.point_at(t);
+                    let (uv, _) = crate::bop::closest_point_on_surface(&surf, p);
+                    umin = umin.min(uv.x);
+                    umax = umax.max(uv.x);
+                    vmin = vmin.min(uv.y);
+                    vmax = vmax.max(uv.y);
+                    any = true;
+                }
+            }
+        }
+        if !any {
+            return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY];
+        }
+        [umin, umax, vmin, vmax]
+    }
+
     /// Inner boundary of a face (wire inner loops).
     pub fn face_inner_boundary(&self, _fi: usize) -> Vec<Vec<usize>> {
         Vec::new()

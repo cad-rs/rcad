@@ -2069,11 +2069,25 @@ impl PaveFiller {
         for &(i, j) in &pairs {
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
+            let uv1 = self.ds.face_actual_uv_bounds(i);
+            let uv2 = self.ds.face_actual_uv_bounds(j);
             let mut ff = int_tools::face_face::FaceFace::new();
             ff.set_surfaces(s1.clone(), s2.clone());
-            ff.set_tolerances(1e-7, 1e-7);
+            ff.set_uv_bounds(uv1, uv2);
+            ff.set_tolerances(self.ds.face_tolerance(i), self.ds.face_tolerance(j));
+            ff.set_fuzzy_value(self.my_fuzzy_value);
             ff.perform();
-            if !ff.has_intersection() { continue; }
+            let tangent_faces = ff.tangent_faces();
+            if !ff.has_intersection() {
+                // OCCT: empty FF interference is still added for the pair
+                new_ff.push(InterferenceFF {
+                    f1: i, f2: j,
+                    curves: Vec::new(),
+                    points: Vec::new(),
+                    tangent_faces,
+                });
+                continue;
+            }
             let curves = ff.make_curves();
             let mut curve_ids: Vec<usize> = Vec::new();
             for c in curves {
@@ -2085,7 +2099,7 @@ impl PaveFiller {
                 f1: i, f2: j,
                 curves: curve_ids,
                 points: Vec::new(),
-                tangent_faces: false,
+                tangent_faces,
             });
             self.ds.add_interf(i, j);
         }
