@@ -161,9 +161,12 @@ impl EdgeEval {
                 // edge has a 2D Location), while Start sits at u=0. rcad's DS
                 // has no 2D edge Locations, so the End (Reversed) image is
                 // reconstructed by shifting u by one period. A seam edge is a
-                // line on a U-periodic surface of revolution.
+                // line on a U-periodic surface of revolution, or the meridian
+                // circle of a sphere (BRepPrim_Sphere::SetMeridian — the arc
+                // in the XZ plane).
                 let is_u_per = surface_periodic(surf).0;
-                let is_seam = matches!(c3d, Curve3::Line(_));
+                let is_seam = matches!(c3d, Curve3::Line(_))
+                    || (matches!(c3d, Curve3::Circle(_)) && matches!(surf, Surface3::Sphere(_)));
                 let mut u_out = uv.x;
                 if is_u_per && is_seam && *ori == Orientation::Reversed {
                     u_out += std::f64::consts::TAU;
