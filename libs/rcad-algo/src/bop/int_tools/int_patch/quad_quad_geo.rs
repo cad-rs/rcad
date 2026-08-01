@@ -10,7 +10,9 @@
 
 use crate::topalgo::int_surf::quadric::Quadric;
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, Curve3, Ellipse3, Hyperbola3, Line3, Parabola3};
+use rcad_kernel::geom::{Circle3, Curve3, Ellipse3, Hyperbola3, Line3, Parabola3, Plane};
+
+use super::int_quad_quad::any_perpendicular_axis;
 
 /// OCCT Precision-based clamping minimum (IntAna_QuadQuadGeo InitTolerances).
 const TOLERANCE_CLAMP_MIN: f64 = 1e-15;
@@ -158,42 +160,83 @@ impl QuadQuadGeo {
         }
     }
 
+    /// OCCT IntAna_QuadQuadGeo::Circle(1) — gp_Circ(DirToAx2(pt1, dir1), param1).
+    /// The circle normal is `dir1`; the X/Y frame is re-derived perpendicular to
+    /// it by OCCT's DirToAx2 (IntAna_QuadQuadGeo.cxx L237-257).  (Previously the
+    /// normal was mapped from `dir3`, which is wrong — dir3 is a plane-normal
+    /// scratch slot, not the conic normal.)
     pub fn circle(&self) -> Circle3 {
+        let normal = self.dir1.normalize_or_zero();
+        let x = normal.x;
+        let y = normal.y;
+        let z = normal.z;
+        let ax = x.abs();
+        let ay = y.abs();
+        let az = z.abs();
+        let v = if ax == 0.0 || (ax < ay && ax < az) {
+            DVec3::new(0.0, -z, y)
+        } else if ay == 0.0 || (ay < ax && ay < az) {
+            DVec3::new(-z, 0.0, x)
+        } else {
+            DVec3::new(-y, x, 0.0)
+        };
+        let x_dir = v.normalize_or_zero();
+        let y_dir = normal.cross(x_dir).normalize_or_zero();
         Circle3 {
             center: self.pt1,
-            normal: self.dir3,
-            x_dir: self.dir1,
-            y_dir: self.dir2,
+            normal,
+            x_dir,
+            y_dir,
             radius: self.param1,
         }
     }
 
+    /// OCCT IntAna_QuadQuadGeo::Ellipse(1) — gp_Elips(gp_Ax2(pt1, dir1, dir2),
+    /// R1, R2) with R1 = max(param1, param1bis), R2 = min(param1, param1bis).
     pub fn ellipse(&self) -> Ellipse3 {
+        let normal = self.dir1.normalize_or_zero();
+        let raw = self.dir2 - normal * self.dir2.dot(normal);
+        let major_dir = raw.normalize_or_zero();
+        let (major, minor) = if self.param1 >= self.param1bis {
+            (self.param1, self.param1bis)
+        } else {
+            (self.param1bis, self.param1)
+        };
         Ellipse3 {
             center: self.pt1,
-            normal: self.dir3,
-            major_dir: self.dir1,
-            major_radius: self.param1,
-            minor_radius: self.param2,
+            normal,
+            major_dir,
+            major_radius: major,
+            minor_radius: minor,
         }
     }
 
+    /// OCCT IntAna_QuadQuadGeo::Parabola(1) — gp_Parab(gp_Ax2(pt1, dir1, dir2),
+    /// param1).
     pub fn parabola(&self) -> Parabola3 {
+        let normal = self.dir1.normalize_or_zero();
+        let raw = self.dir2 - normal * self.dir2.dot(normal);
+        let axis_dir = raw.normalize_or_zero();
         Parabola3 {
             vertex: self.pt1,
-            normal: self.dir3,
-            axis_dir: self.dir1,
+            normal,
+            axis_dir,
             focal_param: self.param1,
         }
     }
 
+    /// OCCT IntAna_QuadQuadGeo::Hyperbola(1) — gp_Hypr(gp_Ax2(pt1, dir1, dir2),
+    /// param1, param1bis).
     pub fn hyperbola(&self) -> Hyperbola3 {
+        let normal = self.dir1.normalize_or_zero();
+        let raw = self.dir2 - normal * self.dir2.dot(normal);
+        let major_dir = raw.normalize_or_zero();
         Hyperbola3 {
             center: self.pt1,
-            normal: self.dir3,
-            major_dir: self.dir1,
+            normal,
+            major_dir,
             semi_major: self.param1,
-            semi_minor: self.param2,
+            semi_minor: self.param1bis,
         }
     }
 
@@ -856,7 +899,16 @@ impl QuadQuadGeo {
         let apex2 = c2.axis_loc();
         let a_da1a2 = apex1.distance_squared(apex2);
         let cross = a1.cross(a2);
-        let is_same_axis = cross.length() <= self.my_epsilon_axes_para;
+        // OCCT AxeOperator::Same() = Parallel() && (Distance() < 1e-14) — the
+        // axes must be BOTH parallel AND coincident.  Offset-parallel axes
+        // (distance > 0) fall through to the parallel-plane or NoGeom branch.
+        let parallel = cross.length() <= self.my_epsilon_axes_para;
+        let dist_between = if parallel {
+            (apex2 - apex1).cross(a1).length() / a1.length().max(1e-300)
+        } else {
+            f64::INFINITY
+        };
+        let is_same_axis = parallel && dist_between <= 1e-14;
         if is_same_axis {
             // OCCT L1478-1521: same axis
             let d = (apex2 - apex1).dot(a1);
@@ -888,6 +940,82 @@ impl QuadQuadGeo {
                 self.dir1 = a1;
                 self.nbint = 1;
                 self.typeres = AnaResultType::Circle;
+            }
+        } else if (tg1 - tg2).abs() < self.my_epsilon_angle_cone && parallel {
+            // OCCT L1524-1605 (case 2): parallel axes with (nearly) equal
+            // semi-angles.  The intersection of the two cones lies in a plane;
+            // intersect that plane with cone 1.
+            let dist_a1a2 = dist_between;
+            let da1 = a1;
+            let geom_apex1 = c1.axis_loc() - da1 * (c1.radius() / tg1.abs().max(1e-300));
+            let geom_apex2 = c2.axis_loc() - da1 * (c2.radius() / tg2.abs().max(1e-300));
+            let o1o2 = geom_apex2 - geom_apex1;
+            let o1o2n = o1o2.normalize_or_zero();
+            let o1o2_da1 = da1.dot(o1o2n);
+            let o1_proj_a2 = o1o2n - o1o2_da1 * da1;
+            let db1 = o1_proj_a2.normalize_or_zero();
+            let y_o1o2 = o1o2.dot(da1);
+            let abs_tg1 = tg1.abs();
+            let x2 = (dist_a1a2 / abs_tg1.max(1e-300) - y_o1o2) * 0.5;
+            let x1 = x2 + y_o1o2;
+            let p1 = geom_apex1 + x1 * (da1 + abs_tg1 * db1);
+            let m_o1o2 = (geom_apex1 + geom_apex2) * 0.5;
+            let p1_m_o1o2 = m_o1o2 - p1;
+            let da1_x_db1 = da1.cross(db1);
+            let ortho_pln = da1_x_db1.cross(p1_m_o1o2.normalize_or_zero()).normalize_or_zero();
+            let pln = rcad_kernel::geom::Plane {
+                origin: p1,
+                normal: ortho_pln,
+                u_dir: any_perpendicular_axis(ortho_pln),
+                v_dir: ortho_pln.cross(any_perpendicular_axis(ortho_pln)).normalize_or_zero(),
+            };
+            let mut inter_quad_pln = QuadQuadGeo::new();
+            inter_quad_pln.perform_plane_cone(&Quadric::from_plane(&pln), c1, self.my_epsilon_angle_cone, tol);
+            if inter_quad_pln.is_done() {
+                match inter_quad_pln.type_inter() {
+                    AnaResultType::Ellipse => {
+                        self.typeres = AnaResultType::Ellipse;
+                        self.pt1 = inter_quad_pln.pt1;
+                        self.dir1 = inter_quad_pln.dir1;
+                        self.dir2 = inter_quad_pln.dir2;
+                        self.param1 = inter_quad_pln.param1;
+                        self.param1bis = inter_quad_pln.param1bis;
+                        self.nbint = 1;
+                    }
+                    AnaResultType::Circle => {
+                        self.typeres = AnaResultType::Circle;
+                        self.pt1 = inter_quad_pln.pt1;
+                        self.dir1 = inter_quad_pln.dir1;
+                        self.dir2 = inter_quad_pln.dir2;
+                        self.param1 = inter_quad_pln.param1;
+                        self.nbint = 1;
+                    }
+                    AnaResultType::Hyperbola => {
+                        self.typeres = AnaResultType::Hyperbola;
+                        self.pt1 = inter_quad_pln.pt1;
+                        self.pt2 = inter_quad_pln.pt2;
+                        self.dir1 = inter_quad_pln.dir1;
+                        self.dir2 = inter_quad_pln.dir2;
+                        self.param1 = inter_quad_pln.param1;
+                        self.param2 = inter_quad_pln.param2;
+                        self.param1bis = inter_quad_pln.param1bis;
+                        self.param2bis = inter_quad_pln.param2bis;
+                        self.nbint = 2;
+                    }
+                    AnaResultType::Line => {
+                        self.typeres = AnaResultType::Line;
+                        self.pt1 = inter_quad_pln.pt1;
+                        self.pt2 = inter_quad_pln.pt2;
+                        self.dir1 = inter_quad_pln.dir1;
+                        self.dir2 = inter_quad_pln.dir2;
+                        self.nbint = 2;
+                    }
+                    _ => {
+                        self.typeres = AnaResultType::NoGeometricSolution;
+                    }
+                }
+            } else {
+                self.typeres = AnaResultType::NoGeometricSolution;
             }
         } else {
             self.typeres = AnaResultType::NoGeometricSolution;

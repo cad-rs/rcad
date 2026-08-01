@@ -34,7 +34,7 @@ fn empty_vertex_data() -> rcad_kernel::topods::TVertexData {
     }
 }
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve3};
+use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
 use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
@@ -1907,11 +1907,39 @@ impl DS {
 
     /// Boundary edges of a face.
     pub fn face_boundary_edges(&self, fi: usize) -> Vec<usize> {
-        let si = self.face_shape_idx(fi);
-        if si >= self.nb_shapes() { return vec![]; }
-        self.shapes[si].sub_shapes.iter().filter(|&&ss| {
-            ss < self.nb_shapes() && self.shapes[ss].shape_type == ShapeType::Edge
-        }).copied().collect()
+        // `fi` is a flat shape index (like face_surface).  The face's sub_shapes
+        // are its wires; each wire stores its ordered edges as TShape::Wire::edges
+        // (Shape refs mapped via map_shape_index).
+        if fi >= self.nb_shapes() || self.shapes[fi].shape_type != ShapeType::Face {
+            return vec![];
+        }
+        let mut out = Vec::new();
+        for &ss in &self.shapes[fi].sub_shapes {
+            if ss >= self.nb_shapes() {
+                continue;
+            }
+            match self.shapes[ss].shape_type {
+                ShapeType::Edge => out.push(ss),
+                ShapeType::Wire => {
+                    if let TShape::Wire(w) = &*self.shapes[ss].shape.data {
+                        for eshape in &w.edges {
+                            if let Some(&e) = self
+                                .map_shape_index
+                                .get(&(eshape.ptr_id(), eshape.location))
+                            {
+                                if e < self.nb_shapes()
+                                    && self.shapes[e].shape_type == ShapeType::Edge
+                                {
+                                    out.push(e);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// UV boundary of a face.
@@ -1942,6 +1970,22 @@ impl DS {
             TShape::Face(fd) => fd,
             _ => return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY],
         };
+        // OCCT IntTools_Context::UVBounds L1029-1040: for a natural-restriction
+        // face BRepAdaptor_Surface returns the surface natural domain, NOT the
+        // boundary-sampled rect.  Sampling the boundary of a closed face (e.g. a
+        // sphere's seam) yields a degenerate V range and breaks the FF domain
+        // classification.
+        //
+        // rcad note: the rcad primitives mark the lateral cylinder face as
+        // natural-restriction even though it is trimmed by its caps, so the
+        // override is restricted to genuinely closed surfaces (sphere/torus),
+        // whose boundary never restricts the UV domain.
+        if face_data.natural_restriction
+            && matches!(surf, Surface3::Sphere(_) | Surface3::Torus(_))
+        {
+            use rcad_kernel::geom::SurfaceEval;
+            return surf.default_domain();
+        }
         let mut umin = f64::INFINITY;
         let mut umax = f64::NEG_INFINITY;
         let mut vmin = f64::INFINITY;

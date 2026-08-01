@@ -9,6 +9,83 @@ use rcad_kernel::geom::{
 };
 use glam::{DVec2, DVec3};
 
+use super::face_make_curve;
+use crate::bop::int_tools::int_patch::IntPatchLine;
+
+/// OCCT IntTools_FaceFace::CorrectPlaneBoundaries (L3126-3144) +
+/// CorrectSurfaceBoundaries (L2050-2150): the FF domain of a face is not its
+/// exact UV rectangle but a slightly enlarged one — a plane is expanded by 10%
+/// of each parameter range, a quadric by the tolerance in the non-periodic
+/// directions (periodic directions are clamped to the natural domain).  OCCT
+/// uses this enlarged domain for BOTH the IntPatch boundary-vertex collection
+/// (PutPointsOnLine walks the TopolTool boundary = the enlarged rectangle) and
+/// the LineConstructor domain classification.
+pub fn correct_ff_uv(surf: &Surface3, uv: [f64; 4], tol: f64) -> [f64; 4] {
+    let mut out = uv;
+    match surf {
+        Surface3::Plane(_) => {
+            // OCCT CorrectPlaneBoundaries: dU = 0.1 * (aUmax - aUmin).
+            if out[0].is_finite() && out[1].is_finite() {
+                let du = 0.1 * (out[1] - out[0]);
+                out[0] -= du;
+                out[1] += du;
+            }
+            if out[2].is_finite() && out[3].is_finite() {
+                let dv = 0.1 * (out[3] - out[2]);
+                out[2] -= dv;
+                out[3] += dv;
+            }
+        }
+        _ => {
+            use rcad_kernel::geom::SurfaceEval;
+            let d = surf.default_domain();
+            let isuperiodic = surf.is_u_periodic();
+            let isvperiodic = surf.is_v_periodic();
+            // OCCT: enlarge for Bezier/BSpline/Extrusion/Revolution/Cylinder.
+            let enlarge = matches!(
+                surf,
+                Surface3::Cylinder(_)
+                    | Surface3::BSpline(_)
+                    | Surface3::Bezier(_)
+                    | Surface3::LinearExtrusion(_)
+                    | Surface3::Revolution(_)
+            );
+            let snap = |cur: f64, lo: f64, hi: f64| {
+                if cur.is_finite() && (cur - lo) > tol {
+                    cur - tol
+                } else {
+                    lo
+                }
+            };
+            let snap_hi = |cur: f64, lo: f64, hi: f64| {
+                if cur.is_finite() && (hi - cur) > tol {
+                    cur + tol
+                } else {
+                    hi
+                }
+            };
+            if !isuperiodic && enlarge {
+                out[0] = snap(out[0], d[0], d[1]);
+                out[1] = snap_hi(out[1], d[0], d[1]);
+            }
+            if !isvperiodic && enlarge {
+                out[2] = snap(out[2], d[2], d[3]);
+                out[3] = snap_hi(out[3], d[2], d[3]);
+            }
+            // Periodic directions are clamped to the natural domain.
+            if isuperiodic {
+                out[0] = d[0];
+                out[1] = d[1];
+            }
+            if isvperiodic {
+                out[2] = d[2];
+                out[3] = d[3];
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone)]
 pub struct IntersectionCurve {
     pub curve: Curve3,
@@ -438,6 +515,11 @@ pub struct FaceFace {
     tol2: f64,
     fuzzy: f64,
     curves: Vec<IntersectionCurve>,
+    /// Raw IntPatch lines before MakeCurve domain clipping (OCCT myIntersector lines).
+    lines: Vec<IntPatchLine>,
+    /// Face indices in the DS (used for FClass2d domain classification in MakeCurve).
+    face1: usize,
+    face2: usize,
     done: bool,
     tangent_faces: bool,
 }
@@ -463,6 +545,9 @@ impl FaceFace {
             tol2: 1e-7,
             fuzzy: rcad_kernel::CONFUSION,
             curves: Vec::new(),
+            lines: Vec::new(),
+            face1: 0,
+            face2: 0,
             done: false,
             tangent_faces: false,
         }
@@ -487,6 +572,12 @@ impl FaceFace {
         self.fuzzy = fuzz.max(rcad_kernel::CONFUSION);
     }
 
+    /// Face indices in the DS, used for FClass2d domain classification in MakeCurve.
+    pub fn set_face_indices(&mut self, f1: usize, f2: usize) {
+        self.face1 = f1;
+        self.face2 = f2;
+    }
+
     pub fn is_done(&self) -> bool {
         self.done
     }
@@ -504,8 +595,9 @@ impl FaceFace {
     }
 
     /// OCCT IntTools_FaceFace::Perform — compute intersection.
-    pub fn perform(&mut self) {
+    pub fn perform(&mut self, ds: &crate::bop::ds::DS) {
         self.curves.clear();
+        self.lines.clear();
         self.tangent_faces = false;
         let s1 = self.surf1.clone();
         let s2 = self.surf2.clone();
@@ -515,10 +607,24 @@ impl FaceFace {
         let tol = tol_f1 + tol_f2;
         let tol_tang = tol;
 
+        // OCCT loads the surface adaptors with corrected UV bounds ONLY for the
+        // non-plane-plane branches (plane-plane keeps the raw UV rectangle):
+        //   plane x quadric / quadric x plane: CorrectPlaneBoundaries on the
+        //     plane (10% expansion), CorrectSurfaceBoundaries on the quadric.
+        //   quadric x quadric: CorrectSurfaceBoundaries on both.
+        let is_pln_pln = matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_)));
+        let (uv1, uv2) = if is_pln_pln {
+            (self.uv1, self.uv2)
+        } else {
+            let c1 = correct_ff_uv(&s1, self.uv1, tol * 2.0);
+            let c2 = correct_ff_uv(&s2, self.uv2, tol * 2.0);
+            (c1, c2)
+        };
+
         match (&s1, &s2) {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
                 let (done, tangent, curves) =
-                    perform_planes(p1, self.uv1, p2, self.uv2, tol_f1, tol_f2, tol_tang);
+                    perform_planes(p1, uv1, p2, uv2, tol_f1, tol_f2, tol_tang);
                 if !done {
                     self.done = false;
                     return;
@@ -530,6 +636,19 @@ impl FaceFace {
             (Surface3::Plane(p), Surface3::Sphere(s))
             | (Surface3::Sphere(s), Surface3::Plane(p)) => {
                 self.intersect_plane_sphere(p, s);
+                // OCCT IntTools_FaceFace::MakeCurve: clip the raw circle to the
+                // two faces' domains.
+                self.curves = face_make_curve::make_curves(
+                    ds,
+                    self.face1,
+                    self.face2,
+                    &s1,
+                    uv1,
+                    &s2,
+                    uv2,
+                    tol,
+                    &self.lines,
+                );
                 self.done = true;
             }
             _ => {
@@ -537,6 +656,19 @@ impl FaceFace {
                 // analytic pairs route through IntPatch_Intersection
                 // (-> IntPatch_ImpImpIntersection -> IntAna_QuadQuadGeo).
                 self.intersect_int_patch(&s1, &s2, tol);
+                // OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip the raw
+                // analytic lines to the two faces' domains.
+                self.curves = face_make_curve::make_curves(
+                    ds,
+                    self.face1,
+                    self.face2,
+                    &s1,
+                    uv1,
+                    &s2,
+                    uv2,
+                    tol,
+                    &self.lines,
+                );
                 self.done = true;
             }
         }
@@ -556,33 +688,17 @@ impl FaceFace {
         if inter.tangent_faces() {
             self.tangent_faces = true;
             self.curves.clear();
+            self.lines.clear();
             return;
         }
         if inter.is_empty() {
             self.curves.clear();
+            self.lines.clear();
             return;
         }
-        let mut curves = Vec::new();
-        for l in inter.sequence_of_line() {
-            let (c3d, tr) = match &l.curve {
-                Curve3::Line(_) | Curve3::Parabola(_) | Curve3::Hyperbola(_) => {
-                    (l.curve.clone(), l.t_range)
-                }
-                Curve3::Circle(_) | Curve3::Ellipse(_) => {
-                    (l.curve.clone(), [0.0, std::f64::consts::TAU])
-                }
-                _ => (l.curve.clone(), l.t_range),
-            };
-            curves.push(IntersectionCurve {
-                curve: c3d,
-                t_range: tr,
-                pcurve1: l.pcurve1.clone(),
-                pcurve2: l.pcurve2.clone(),
-                tolerance: l.tolerance,
-                tang_tolerance: l.tang_tolerance,
-            });
-        }
-        self.curves = curves;
+        // Keep the raw IntPatch lines; MakeCurve (face_make_curve::make_curves)
+        // clips them to the face UV domains.
+        self.lines = inter.sequence_of_line().to_vec();
     }
 
     /// OCCT: Plane-Sphere intersection — circle.
@@ -616,14 +732,13 @@ impl FaceFace {
             y_dir: v_dir,
             radius,
         };
-        self.curves.push(IntersectionCurve {
-            curve: Curve3::Circle(circle),
-            t_range: [0.0, std::f64::consts::TAU],
-            pcurve1: None,
-            pcurve2: None,
-            tolerance: 1e-7,
-            tang_tolerance: 1e-7,
-        });
+        // Emit as a raw IntPatch Circle line; MakeCurve clips it to the two
+        // faces' UV domains.
+        self.lines.push(IntPatchLine::analytic(
+            crate::bop::int_tools::int_patch::IntPatchIType::Circle,
+            Curve3::Circle(circle),
+            [0.0, std::f64::consts::TAU],
+        ));
     }
 }
 

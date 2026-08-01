@@ -14,6 +14,7 @@
 //! - OCCT `IntPatch_Point` maps to `IntPatchPoint { p1, p2, u1, v1, u2, v2 }`.
 
 pub mod imp_imp_intersection;
+pub mod int_quad_quad;
 pub mod intersection;
 pub mod quad_quad_geo;
 

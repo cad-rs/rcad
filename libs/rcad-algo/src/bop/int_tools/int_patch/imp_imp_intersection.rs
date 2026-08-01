@@ -8,6 +8,7 @@
 use super::GeomAbsSurfaceType;
 use super::{AnaResultType, IntPatchLine, IntPatchPoint, IntPatchIType, QuadQuadGeo, WLineType};
 use crate::topalgo::int_surf::quadric::Quadric;
+use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3};
 
 /// OCCT IntPatch_ImpImpIntersection.hxx L35-49: IntStatus
@@ -134,15 +135,15 @@ impl ImpImpIntersection {
             // OCCT L2626-2677: case 22 Cylinder/Cylinder (aBox1,aBox2,a2DTol)
             22 => self.int_cycy(&q1, &q2, tol_tang),
             // OCCT L2679-2687: case 23/32 Cylinder/Cone
-            23 | 32 => self.int_cyco(&q1, &q2, tol_tang, b_reverse),
+            23 | 32 => self.int_cyco(&q1, &q2, s1, s2, tol_tang, b_reverse),
             // OCCT L2689-2697: case 24/42 Cylinder/Sphere
-            24 | 42 => self.int_cysp(&q1, &q2, tol_tang, b_reverse),
+            24 | 42 => self.int_cysp(&q1, &q2, s1, s2, tol_tang, b_reverse),
             // OCCT L2699-2707: case 25/52 Cylinder/Torus
             25 | 52 => self.int_cyto(&q1, &q2, tol_tang, b_reverse),
             // OCCT L2709-2716: case 33 Cone/Cone
-            33 => self.int_coco(&q1, &q2, tol_tang),
+            33 => self.int_coco(&q1, &q2, s1, s2, tol_tang),
             // OCCT L2718-2726: case 34/43 Cone/Sphere
-            34 | 43 => self.int_cosp(&q1, &q2, tol_tang, b_reverse),
+            34 | 43 => self.int_cosp(&q1, &q2, s1, s2, tol_tang, b_reverse),
             // OCCT L2728-2735: case 35/53 Cone/Torus
             35 | 53 => self.int_coto(&q1, &q2, tol_tang, b_reverse),
             // OCCT L2737-2744: case 44 Sphere/Sphere
@@ -676,18 +677,28 @@ impl ImpImpIntersection {
         }
     }
 
-    fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
+    fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (cyl, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_cylinder_cone(cyl, cone, tol);
+        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
+            && self.int_quad_quad_fallback(s1, s2, b_reverse)
+        {
+            return;
+        }
         self.post_process_geo(&geo, tol);
     }
 
-    fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
+    fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         // perform_cylinder_sphere expects (cylinder, sphere)
         let (cyl, sph) = if b_reverse { (q2, q1) } else { (q1, q2) };
         geo.perform_cylinder_sphere(cyl, sph, tol);
+        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
+            && self.int_quad_quad_fallback(s1, s2, b_reverse)
+        {
+            return;
+        }
         self.post_process_geo(&geo, tol);
     }
 
@@ -698,17 +709,93 @@ impl ImpImpIntersection {
         self.post_process_geo(&geo, tol);
     }
 
-    fn int_coco(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
+    fn int_coco(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64) {
         let mut geo = QuadQuadGeo::new();
         geo.perform_cone_cone(q1, q2, tol);
+        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
+            && self.int_quad_quad_fallback(s1, s2, false)
+        {
+            return;
+        }
         self.post_process_geo(&geo, tol);
     }
 
-    fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
+    fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
         let mut geo = QuadQuadGeo::new();
         let (sph, con) = if b_reverse { (q1, q2) } else { (q2, q1) };
         geo.perform_sphere_cone(sph, con, tol);
+        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
+            && self.int_quad_quad_fallback(s1, s2, b_reverse)
+        {
+            return;
+        }
         self.post_process_geo(&geo, tol);
+    }
+
+    /// OCCT IntCySp/IntCyCo/IntCoCo/IntCoSp L8263/L8465/L9022/L9349: when
+    /// IntAna_QuadQuadGeo returns IntAna_NoGeometricSolution, fall back to
+    /// IntAna_IntQuadQuad (the general cylinder/cone-quadric intersection).
+    /// Returns true when the fallback ran (empty result is also a valid result).
+    fn int_quad_quad_fallback(&mut self, s1: &Surface3, s2: &Surface3, b_reverse: bool) -> bool {
+        // The explicit surface is the cylinder or cone.
+        let (explicit, other) = if b_reverse { (s2, s1) } else { (s1, s2) };
+        let Some(other_quad) = super::int_quad_quad::IntAnaQuadric::from_surface3(other) else {
+            return false;
+        };
+        let mut iqq = super::int_quad_quad::IntQuadQuad::new();
+        match explicit {
+            Surface3::Cylinder(cyl) => iqq.perform_cylinder(cyl, &other_quad),
+            Surface3::Cone(con) => iqq.perform_cone(con, &other_quad),
+            _ => return false,
+        }
+        if !iqq.is_done() || iqq.nb_curves() == 0 {
+            if iqq.is_done() && iqq.nb_curves() == 0 {
+                // No curves is a valid result (Empty).
+                self.empt = true;
+                self.my_done = IntStatus::OK;
+                return true;
+            }
+            return false;
+        }
+        // Convert each IntAnaCurve to an IntPatch WLine (sampled polyline).
+        // Each sample carries the UV on both surfaces (for the LineConstructor
+        // boundary-crossing detection downstream).
+        for i in 0..iqq.nb_curves() {
+            let Some(curve) = iqq.curve(i) else { continue };
+            let pts = curve.sample(64);
+            if pts.is_empty() {
+                continue;
+            }
+            let wline_pnts = pts
+                .iter()
+                .map(|p| {
+                    let (u1, v1) = surf_uv(s1, *p);
+                    let (u2, v2) = surf_uv(s2, *p);
+                    crate::bop::int_tools::int_patch::WLinePnt {
+                        p3d: *p, u1, v1, u2, v2,
+                    }
+                })
+                .collect();
+            self.slin.push(IntPatchLine {
+                line_type: IntPatchIType::Walking,
+                curve: Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin: pts[0],
+                    direction: if pts.len() > 1 { (pts[1] - pts[0]).normalize_or_zero() } else { DVec3::X },
+                }),
+                t_range: [0.0, 1.0],
+                pcurve1: None,
+                pcurve2: None,
+                tolerance: 1e-7,
+                tang_tolerance: 1e-7,
+                wline_pnts,
+                is_purging_allowed: false,
+                wl_type: WLineType::ImpImp,
+                vertices: Vec::new(),
+            });
+        }
+        self.empt = false;
+        self.my_done = IntStatus::OK;
+        true
     }
 
     fn int_coto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
@@ -847,3 +934,31 @@ fn quad_type_index(q: &Quadric) -> i32 {
 
 /// Virtual tolerance angle used in Place/Cylinder dispatch
 const TOL_ANG: f64 = 1e-8;
+
+/// Analytic UV inversion of a 3D point on a surface (ElSLib::Parameters).
+fn surf_uv(surf: &Surface3, p: DVec3) -> (f64, f64) {
+    use rcad_kernel::geom::SurfaceEval;
+    match surf {
+        Surface3::Plane(pl) => {
+            let d = p - pl.origin;
+            (d.dot(pl.u_dir), d.dot(pl.v_dir))
+        }
+        Surface3::Cylinder(c) => {
+            let uv = c.world_to_uv(p);
+            (uv.x, uv.y)
+        }
+        Surface3::Sphere(s) => {
+            let uv = s.world_to_uv(p);
+            (uv.x, uv.y)
+        }
+        Surface3::Cone(c) => {
+            let uv = c.world_to_uv(p);
+            (uv.x, uv.y)
+        }
+        Surface3::Torus(t) => {
+            let uv = t.world_to_uv(p);
+            (uv.x, uv.y)
+        }
+        _ => (0.0, 0.0),
+    }
+}

@@ -1928,24 +1928,20 @@ impl PaveFiller {
         }
 
         // OCCT L576-578: post treatment
+        // OCCT BOPAlgo_Tools::PerformCommonBlocks (2nd overload, L191-244):
+        //   one CommonBlock per section PaveBlock, reusing the existing CB if the
+        //   PB already belongs to one; append the PB's face list.
         if !a_mpbli.is_empty() {
-            let mut a_mblocks: Vec<Vec<SharedPB>> = Vec::new();
-            let pb_list: Vec<SharedPB> = a_mpbli.values().map(|(pb, _)| pb.clone()).collect();
-            let mut a_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-            for pb in &pb_list {
-                let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
-                if !a_fence.insert(ptr) { continue; }
-                let mut a_block: Vec<SharedPB> = vec![pb.clone()];
-                a_block.extend(a_mpbli.values().filter(|(p, _)| {
-                    let pp = std::sync::Arc::as_ptr(&p.0) as u64;
-                    a_fence.insert(pp)
-                }).map(|(p, _)| p.clone()));
-                a_mblocks.push(a_block);
-            }
-            for block in &a_mblocks {
-                if block.len() >= 2 {
-                    self.ds.add_common_block(block);
-                }
+            let pending: Vec<(SharedPB, Vec<usize>)> = a_mpbli.values().cloned().collect();
+            for (pb, faces) in &pending {
+                // OCCT L206-213: reuse existing CB or create a single-PB CB
+                let existing = pb.0.read().unwrap().common_block_idx;
+                let cb_idx = match existing {
+                    Some(idx) => idx,
+                    None => self.ds.add_common_block(std::slice::from_ref(pb)),
+                };
+                // OCCT L216-238: append new faces (dedup inside append_faces)
+                self.ds.common_blocks[cb_idx].append_faces(faces);
             }
         }
         self.update_vertices_of_cb();
@@ -2083,9 +2079,10 @@ impl PaveFiller {
             let mut ff = int_tools::face_face::FaceFace::new();
             ff.set_surfaces(s1.clone(), s2.clone());
             ff.set_uv_bounds(uv1, uv2);
+            ff.set_face_indices(i, j);
             ff.set_tolerances(self.ds.face_tolerance(i), self.ds.face_tolerance(j));
             ff.set_fuzzy_value(self.my_fuzzy_value);
-            ff.perform();
+            ff.perform(&self.ds);
             let tangent_faces = ff.tangent_faces();
             if !ff.has_intersection() {
                 // OCCT: empty FF interference is still added for the pair
@@ -3946,6 +3943,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if a_nb_pbp == 0 { return; }
         // OCCT L386: aMCB fence for CommonBlocks
         let mut a_mcb: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let ms_debug = std::env::var("RCAD_MS_DEBUG").is_ok();
+        let nb_src = self.ds.nb_source_shapes();
         for i in 0..a_nb_pbp {
             let a_lpb = self.ds.pave_blocks_pool[i].clone();
             for a_pb in &a_lpb {
@@ -3953,34 +3952,92 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let pb = a_pb.0.read().unwrap();
                 let n_e = pb.original_edge;
                 if n_e >= self.ds.nb_shapes() {
+                    if ms_debug { eprintln!("[RCADMS] SKIP-OOB edge={} nshapes={}", n_e, self.ds.nb_shapes()); }
                     drop(pb); continue;
                 }
                 if self.ds.shapes[n_e].has_flag() {
+                    if ms_debug { eprintln!("[RCADMS] SKIP-FLAG edge={}", n_e); }
                     drop(pb); continue;
                 }
                 // OCCT L416-421: skip if already processed via CB fence
                 if let Some(cb_idx) = pb.common_block_idx {
                     if !a_mcb.insert(cb_idx) {
+                        if ms_debug { eprintln!("[RCADMS] SKIP-CB-FENCE edge={} cb={}", n_e, cb_idx); }
                         drop(pb); continue;
                     }
                 }
                 let n_v1 = pb.pave1.vertex_idx;
                 let n_v2 = pb.pave2.vertex_idx;
-                let b_v1 = n_v1 >= self.ds.nb_source_shapes();
-                let b_v2 = n_v2 >= self.ds.nb_source_shapes();
-                // OCCT L429-450: check if split is needed
-                if !b_v1 && !b_v2 {
-                    // OCCT L432-450: CB handling for non-destructive mode
-                    drop(pb); continue;
-                }
+                let b_v1 = n_v1 >= nb_src;
+                let b_v2 = n_v2 >= nb_src;
+                let cb_f = pb.common_block_idx;
                 let a_t1 = pb.pave1.param;
                 let a_t2 = pb.pave2.param;
+                if ms_debug {
+                    eprintln!("[RCADMS] CAND edge={} v1={} v2={} newV1={} newV2={} CB={} lpbExtent={}",
+                        n_e, n_v1, n_v2, b_v1, b_v2, cb_f.is_some(), a_lpb.len());
+                }
+                // OCCT L429-450: check if it is necessary to make the split of the edge
+                let mut b_to_split = true;
+                let mut set_edge_n = usize::MAX; // OCCT L460: aPB->SetEdge(nE)
+                if !b_v1 && !b_v2 {
+                    // OCCT L432: if (!myNonDestructive || !bCB)
+                    if !self.my_non_destructive || cb_f.is_none() {
+                        let mut it_found = false;
+                        let mut found_e = usize::MAX;
+                        if let Some(cb_idx) = cb_f {
+                            // OCCT L436-445: find the edge with these vertices in the
+                            //   common block whose PaveBlocks extent == 1
+                            let cb_pbs: Vec<SharedPB> = {
+                                let cb = &self.ds.common_blocks[cb_idx];
+                                let mut v = Vec::new();
+                                for &(pool_idx, _) in cb.pave_blocks() {
+                                    if pool_idx < self.ds.pave_blocks_pool.len() {
+                                        v.extend(self.ds.pave_blocks_pool[pool_idx].iter().cloned());
+                                    }
+                                }
+                                v
+                            };
+                            for pbx in &cb_pbs {
+                                let e = pbx.0.read().unwrap().original_edge;
+                                if self.ds.pave_blocks(e).len() == 1 {
+                                    it_found = true;
+                                    found_e = e;
+                                    break;
+                                }
+                            }
+                        }
+                        if it_found {
+                            // OCCT L446-455: the pave block is found — no split.
+                            //   aCB->SetRealPaveBlock(it.Value()); aCB->SetEdge(nE);
+                            //   ComputeToleranceOfCB + UpdateEdgeTolerance (rcad: tolerance stub).
+                            b_to_split = false;
+                            if let Some(cb_idx) = cb_f {
+                                self.ds.common_blocks[cb_idx].set_edge(found_e);
+                            }
+                        } else if cb_f.is_none() && a_lpb.len() == 1 {
+                            // OCCT L457-461: no common block, single-PB edge — no split
+                            b_to_split = false;
+                            set_edge_n = n_e;
+                        }
+                    }
+                }
                 drop(pb);
+                if !b_to_split {
+                    if set_edge_n != usize::MAX {
+                        // OCCT L460: aPB->SetEdge(nE)
+                        a_pb.0.write().unwrap().edge = set_edge_n;
+                    }
+                    if ms_debug { eprintln!("[RCADMS] NOSPLIT edge={} v1={} v2={}", n_e, n_v1, n_v2); }
+                    continue;
+                }
+                if ms_debug { eprintln!("[RCADMS] SPLIT edge={} v1={} v2={}", n_e, n_v1, n_v2); }
                 // OCCT L465-515: create new split edge
                 if let Some(curve) = self.ds.edge_curve(n_e) {
                     let new_ei = self.ds.push_edge(curve.clone(), [a_t1, a_t2], n_v1, n_v2);
                     let mut pbw = a_pb.0.write().unwrap();
                     pbw.edge = new_ei;
+                    if ms_debug { eprintln!("[RCADMS] NEWEDGE nSp={} origEdge={} p1={} p2={}", new_ei, n_e, n_v1, n_v2); }
                 }
             }
         }
