@@ -1,9 +1,14 @@
 // OCCT IntSurf (TKGeomAlgo) — support classes for surface intersection.
 //
 // IntSurf_PntOn2S: a 3D point with its parameters on two surfaces.
+// IntSurf_Quadric: an implicit (analytic) surface in a unified form.
 // IntSurf_Transition / TypeTrans / Situation: transition of an intersection
 // line relative to a restriction arc on a surface (mirrors IntRes2d; rcad
 // reuses crate::topalgo::int_res2d::{Transition, TypeTrans, Situation}).
+
+pub mod quadric;
+
+pub use quadric::{Quadric, QuadricType};
 
 use glam::{DVec2, DVec3};
 
