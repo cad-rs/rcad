@@ -62,7 +62,12 @@ impl MakeCylinder {
         let bot_plane = Surface3::Plane(Plane::new(o, -self.z_axis));
         let top_plane = Surface3::Plane(Plane::new(self.local(0.0, 0.0, h), self.z_axis));
 
-        let lat_wire = t.add_twire(vec![e_seam.clone(), rev(e_bot.clone()), rev(e_seam.clone()), e_top.clone()]);
+        // OCCT BRepPrim_OneAxis::LateralWire: [TopEdge(fwd), EndEdge(rev),
+        // BottomEdge(rev), StartEdge(fwd)]. The seam (VEdge) appears twice —
+        // the End instance at the periodic image u=2*PI, the Start at u=0.
+        // This order makes the lateral wire a connected closed loop and the
+        // FClass2d uv polygon a simple rectangle.
+        let lat_wire = t.add_twire(vec![e_top.clone(), rev(e_seam.clone()), rev(e_bot.clone()), e_seam.clone()]);
         let bot_wire = t.add_twire(vec![e_bot]);
         let top_wire = t.add_twire(vec![rev(e_top)]);
 

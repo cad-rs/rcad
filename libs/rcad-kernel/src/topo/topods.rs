@@ -341,6 +341,10 @@ impl BRep {
             }
             vp
         };
+        // OCCT BRep_Tool::Degenerated: an edge whose two vertices coincide and
+        // which carries no geometric curve (e.g. the sphere apex edges) is
+        // degenerated. The DS then skips it in FillShrunkData (no pave blocks).
+        let is_degenerated = curve.is_none() && first.ptr_id() == last.ptr_id();
         let tshape = Arc::new(TShape::Edge(TEdgeData {
             my_shapes: vec![first.clone(), last.clone()],
             flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
@@ -348,7 +352,7 @@ impl BRep {
             first,
             last,
             range,
-            degenerated: false,
+            degenerated: is_degenerated,
             pcurves: HashMap::new(),
             representations: Vec::new(),
             vertex_params,
@@ -418,7 +422,9 @@ impl BRep {
             sample_point,
             uv_domain,
             internal_vertices,
-            tolerance: 0.0,
+            // OCCT BRep_Tool::Tolerance(face) — a standard BRep face carries the
+            // Precision::Confusion() tolerance (1e-7), not zero.
+            tolerance: CONFUSION,
             natural_restriction,
         }));
 
@@ -624,7 +630,9 @@ impl BRep {
             sample_point,
             uv_domain,
             internal_vertices,
-            tolerance: 0.0,
+            // OCCT BRep_Tool::Tolerance(face) — a standard BRep face carries the
+            // Precision::Confusion() tolerance (1e-7), not zero.
+            tolerance: CONFUSION,
             natural_restriction,
         }));
 

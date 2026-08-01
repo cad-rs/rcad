@@ -684,6 +684,23 @@ impl DS {
             self.ranges.push(IndexRange::new(i1, i2));
             i1 = i2 + 1;
         }
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            for i in 0..self.nb_shapes() {
+                if self.shapes[i].shape_type == ShapeType::Face {
+                    let surf = self.shapes[i].shape.as_face().and_then(|f| f.surface.clone());
+                    let surf_desc = match &surf {
+                        Some(rcad_kernel::geom::Surface3::Plane(p)) => format!("Plane n=({:.1},{:.1},{:.1})", p.normal.x, p.normal.y, p.normal.z),
+                        Some(other) => format!("{:?}", std::mem::discriminant(other)),
+                        None => "None".to_string(),
+                    };
+                    let wires: Vec<String> = self.shapes[i].sub_shapes.iter().map(|&w| {
+                        let edges: Vec<String> = self.shapes.get(w).map(|ws| ws.sub_shapes.iter().map(|&e| e.to_string()).collect()).unwrap_or_default();
+                        format!("w{}:{}", w, edges.join(","))
+                    }).collect();
+                    eprintln!("[DS-FACE] shape {} surf={} wires=[{}]", i, surf_desc, wires.join(" "));
+                }
+            }
+        }
         self.nb_source_shapes = self.nb_shapes();
         // OCCT L312: max(theFuzz, Precision::Confusion()) * 0.5
         let tol = fuzz.max(1e-7) * 0.5;
@@ -877,18 +894,51 @@ impl DS {
         }
         &mut self.face_info_pool[self.shapes[i].reference as usize]
     }
+    /// OCCT BOPDS_DS::UpdateFaceInfoIn (BOPDS_DS.cxx L773-791) + FaceInfoIn
+    /// (L811-833): rebuild the face's PaveBlocksIn/VerticesIn from its boundary
+    /// sub-shapes — for each boundary edge, add its pave blocks and their
+    /// endpoint vertices; for each boundary vertex, add its same-domain index.
     pub fn update_face_info_in(&mut self, the_index: usize) {
-        let has_interf: Vec<bool> = (0..self.nb_shapes()).map(|i| {
-            i < self.nb_shapes() && self.shapes[i].shape_type == ShapeType::Vertex
-                && (self.interf_tb.contains(&(the_index, i)) || self.interf_tb.contains(&(i, the_index)))
-        }).collect();
+        if self.shapes[the_index].reference < 0 {
+            return;
+        }
+        let sub_shapes = self.shapes[the_index].sub_shapes.clone();
+        let mut pool_idx_marks: Vec<usize> = Vec::new();
+        let mut vertex_marks: Vec<usize> = Vec::new();
+        for &si in &sub_shapes {
+            if si >= self.nb_shapes() {
+                continue;
+            }
+            match self.shapes[si].shape_type {
+                ShapeType::Edge => {
+                    let pbs = self.edge_pave_blocks(si).to_vec();
+                    if !pbs.is_empty() && self.shapes[si].reference >= 0 {
+                        pool_idx_marks.push(self.shapes[si].reference as usize);
+                    }
+                    for pb in &pbs {
+                        let pbr = self.real_pave_block(pb);
+                        let (n_v1, n_v2) = { let r = pbr.0.read().unwrap(); r.indices() };
+                        vertex_marks.push(n_v1);
+                        vertex_marks.push(n_v2);
+                    }
+                }
+                ShapeType::Vertex => {
+                    let sd = self.get_same_domain_index(si as isize);
+                    if sd >= 0 {
+                        vertex_marks.push(sd as usize);
+                    }
+                }
+                _ => {}
+            }
+        }
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_in.clear();
-        for i in 0..has_interf.len() {
-            if i == the_index { continue; }
-            if has_interf[i] && !pfi.vertices_on.contains(&i) {
-                pfi.vertices_in.insert(i);
-            }
+        pfi.vertices_in.clear();
+        for idx in pool_idx_marks {
+            pfi.pave_blocks_in.insert(idx);
+        }
+        for v in vertex_marks {
+            pfi.vertices_in.insert(v);
         }
     }
     pub fn update_face_info_on(&mut self, the_index: usize) {
@@ -909,12 +959,22 @@ impl DS {
         while let Some(&n) = p { *sd = n; f = true; p = self.shapes_sd.get(&n); }
         f
     }
+    /// OCCT BOPDS_DS::GetSameDomainIndex (BOPDS_DS.cxx L1244-1253): follows the
+    /// same-domain chain unconditionally (myShapesSD.Seek until null), regardless
+    /// of whether the SD index is smaller or larger than the query index. The
+    /// SD vertex is usually a newly appended vertex (higher index), so resolving
+    /// only downward (as the previous guard did) failed to unify vertices.
     pub fn get_same_domain_index(&self, i: isize) -> isize {
         let mut r = i;
+        let mut guard = 0;
         loop {
             match self.shapes_sd.get(&(r as usize)) {
-                Some(&n) if (n as isize) < r => r = n as isize,
-                _ => break,
+                Some(&n) => {
+                    r = n as isize;
+                    guard += 1;
+                    if guard > 1000 { break; }
+                }
+                None => break,
             }
         }
         r
@@ -1041,6 +1101,9 @@ impl DS {
     // ================================================================    // Update* methods
     // ================================================================
     pub fn update_pave_blocks_with_sd_vertices(&mut self) {
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            eprintln!("[EE-DBG] update_sd: shapes_sd={:?}", self.shapes_sd);
+        }
         for list in self.pave_blocks_pool.clone() {
             for pb in &list { self.update_pave_block_with_sd_vertices(pb); }
         }
@@ -1061,17 +1124,28 @@ impl DS {
         let spb = if self.shapes[edge_idx].shape_type == ShapeType::Edge
             && self.shapes[edge_idx].sub_shapes.len() >= 2
         {
-            let n_v1 = self.shapes[edge_idx].sub_shapes[0];
-            let n_v2 = self.shapes[edge_idx].sub_shapes[1];
-            // OCCT: for closed edges (v1==v2, like circles), use edge curve range
-            // as PB range to ensure non-zero length and splittable PB.
-            let (p1, p2): (f64, f64) = if n_v1 == n_v2 {
+            let mut n_v1 = self.shapes[edge_idx].sub_shapes[0];
+            let mut n_v2 = self.shapes[edge_idx].sub_shapes[1];
+            // OCCT BOPDS_DS::InitPaveBlocks (BOPDS_DS.cxx L437-485) appends each
+            // vertex pave in edge order, then BOPDS_PaveBlock::Update (L291)
+            // std::sorts the paves by parameter and creates one PB per consecutive
+            // pair. For a closed edge (single shared vertex, e.g. a full circle)
+            // the two paves are at range[0] and range[1]. For an open edge whose
+            // vertex order is reversed relative to its curve (e.g. the sphere
+            // seam, whose vertices are (north, south) but whose curve runs
+            // south -> north), the geometric vertex parameters are sorted to keep
+            // the PB range increasing, mirroring the std::sort.
+            let (mut p1, mut p2): (f64, f64) = if n_v1 == n_v2 {
                 self.shapes[edge_idx].shape.as_edge()
                     .map(|ed| (ed.range[0], ed.range[1]))
                     .unwrap_or((0.0, 0.0))
             } else {
                 self.edge_vertex_params(edge_idx, n_v1, n_v2)
             };
+            if p1 > p2 {
+                std::mem::swap(&mut p1, &mut p2);
+                std::mem::swap(&mut n_v1, &mut n_v2);
+            }
             let pb = PaveBlock::new(edge_idx,
                 Pave { vertex_idx: n_v1, param: p1 },
                 Pave { vertex_idx: n_v2, param: p2 },
@@ -1777,8 +1851,17 @@ impl DS {
 
     /// UV boundary of a face.
     pub fn face_uv_boundary(&self, fi: usize) -> [f64; 4] {
-        // Default UV bounds if not available
-        [0.0, 1.0, 0.0, 1.0]
+        // OCCT BRepAdaptor_Surface(aF) — the face surface's natural UV bounds
+        // (Geom_Surface::FirstUParameter/LastUParameter/FirstVParameter/
+        // LastVParameter). A Geom_Plane is unbounded, a Geom_Sphere is
+        // [0,2*PI]x[-PI/2,PI/2], a Geom_Cylinder is [0,2*PI]x(-INF,+INF).
+        use rcad_kernel::geom::SurfaceEval;
+        if let Some(surf) = self.face_surface(fi) {
+            let d = surf.default_domain();
+            [d[0], d[1], d[2], d[3]]
+        } else {
+            [0.0, 1.0, 0.0, 1.0]
+        }
     }
 
     /// Inner boundary of a face (wire inner loops).

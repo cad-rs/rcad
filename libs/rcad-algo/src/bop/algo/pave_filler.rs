@@ -856,8 +856,8 @@ impl PaveFiller {
             // OCCT L206-209: if (myDS->HasInterf(nV, nE)) continue;
             if self.ds.has_interf(n_v, n_e) { continue; }
             // OCCT L211-214: if (myDS->HasInterfShapeSubShapes(nV, nE)) continue;
-            // OCCT default third param is false (all sub-shapes must interfere).
-            if self.ds.has_interf_shape_sub_shapes(n_v, n_e, false) { continue; }
+            // OCCT default third param is true (any sub-shape interferes).
+            if self.ds.has_interf_shape_sub_shapes(n_v, n_e, true) { continue; }
 
             // OCCT L216-220: const List<...>& aLPB = myDS->PaveBlocks(nE);
             let a_lpb: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e).to_vec();
@@ -931,6 +931,9 @@ impl PaveFiller {
                 // OCCT: myContext->ComputeVE(aV, aE, aT, aTolVNew, myFuzzyValue)
                 let (i_flag, a_t, a_tol_v_new) =
                     self.my_context.compute_ve(*n_vsd, n_e, &self.ds, self.my_fuzzy_value);
+                if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                    eprintln!("[EE-DBG] intersect_ve edge={} v={} flag={} t={:.9} tol={:.6}", n_e, *n_vsd, i_flag, a_t, a_tol_v_new);
+                }
                 // OCCT L352: if (Flag() != 0) { if (HasErrors()) AddWarning; continue; }
                 if i_flag != 0 { continue; }
 
@@ -992,6 +995,9 @@ impl PaveFiller {
     // EE — OCCT BOPAlgo_PaveFiller.cxx L279-286 + PaveFiller_5.cxx L145-590
     // ====================================================================
     fn perform_ee(&mut self, the_range: &ProgressScope) {
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            eprintln!("[EE-DBG] === perform_ee START stop_after={:?}", self.stop_after);
+        }
         if the_range.user_break() { return; }
         // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
         self.fill_shrunk_data(ShapeType::Edge, ShapeType::Edge);
@@ -1022,7 +1028,33 @@ impl PaveFiller {
         // OCCT L181-267: iterate pairs
         // rcad: copy pairs (borrow checker)
         let ee_pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Edge, ShapeType::Edge).to_vec();
+        let ee_debug = std::env::var("RCAD_EE_DEBUG").is_ok();
         for &(n_e1, n_e2) in &ee_pairs {
+            if ee_debug {
+                let tn = |c: Option<&rcad_kernel::geom::Curve3>| -> &'static str {
+                    match c { Some(rcad_kernel::geom::Curve3::Line(_)) => "Line",
+                        Some(rcad_kernel::geom::Curve3::Circle(_)) => "Circle",
+                        Some(rcad_kernel::geom::Curve3::Ellipse(_)) => "Ellipse",
+                        Some(rcad_kernel::geom::Curve3::BSpline(_)) => "BSpline",
+                        Some(rcad_kernel::geom::Curve3::Bezier(_)) => "Bezier",
+                        Some(rcad_kernel::geom::Curve3::Hyperbola(_)) => "Hyperbola",
+                        Some(rcad_kernel::geom::Curve3::Parabola(_)) => "Parabola",
+                        _ => "Other" }
+                };
+                let ep = |ei: usize| -> (DVec3, DVec3) {
+                    let c = self.ds.edge_curve(ei);
+                    let r = self.ds.shapes[ei].shape.as_edge().map(|e| e.range).unwrap_or([0.0,0.0]);
+                    match c { Some(c) => (c.point_at(r[0]), c.point_at(r[1])), None => (DVec3::ZERO, DVec3::ZERO) }
+                };
+                let (a0, a1) = ep(n_e1);
+                let (b0, b1) = ep(n_e2);
+                eprintln!("[EE-DBG] pair ({},{}) flag={}/{} t1={} t2={} e1:[({:.3},{:.3},{:.3})->({:.3},{:.3},{:.3})] e2:[({:.3},{:.3},{:.3})->({:.3},{:.3},{:.3})]",
+                    n_e1, n_e2,
+                    self.ds.shapes[n_e1].has_flag(), self.ds.shapes[n_e2].has_flag(),
+                    tn(self.ds.edge_curve(n_e1)), tn(self.ds.edge_curve(n_e2)),
+                    a0.x, a0.y, a0.z, a1.x, a1.y, a1.z,
+                    b0.x, b0.y, b0.z, b1.x, b1.y, b1.z);
+            }
             // L189-196: skip degenerated edges
             if self.ds.shapes[n_e1].has_flag() || self.ds.shapes[n_e2].has_flag() {
                 continue;
@@ -1032,6 +1064,9 @@ impl PaveFiller {
             let a_lpb1: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e1).to_vec();
             let a_lpb2: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e2).to_vec();
             if a_lpb1.is_empty() || a_lpb2.is_empty() {
+                if ee_debug {
+                    eprintln!("[EE-DBG] pair ({},{}) empty-pbs lpb1={} lpb2={}", n_e1, n_e2, a_lpb1.len(), a_lpb2.len());
+                }
                 continue;
             }
 
@@ -1045,6 +1080,9 @@ impl PaveFiller {
                 let mut bb1 = rcad_kernel::math::bnd::BndBox::new();
                 if !self.get_pb_box(n_e1, p1, &mut pb_box_cache,
                     &mut t11, &mut t12, &mut ts11, &mut ts12, &mut bb1) {
+                    if ee_debug {
+                        eprintln!("[EE-DBG] pair ({},{}) pb1-getpb false", n_e1, n_e2);
+                    }
                     continue;
                 }
 
@@ -1053,11 +1091,18 @@ impl PaveFiller {
                     let mut bb2 = rcad_kernel::math::bnd::BndBox::new();
                     if !self.get_pb_box(n_e2, p2, &mut pb_box_cache,
                         &mut t21, &mut t22, &mut ts21, &mut ts22, &mut bb2) {
+                        if ee_debug {
+                            eprintln!("[EE-DBG] pair ({},{}) pb2-getpb false", n_e1, n_e2);
+                        }
                         continue;
                     }
 
                     // L245-248: box overlap check
                     if bb1.is_out_box(&bb2) {
+                        if ee_debug {
+                            eprintln!("[EE-DBG] pair ({},{}) box-out t1=[{:.3},{:.3}] ts=[{:.3},{:.3}] bb1={:?} bb2={:?}",
+                                n_e1, n_e2, t11, t12, ts11, ts12, bb1.raw_min(), bb2.raw_min());
+                        }
                         continue;
                     }
 
@@ -1067,12 +1112,22 @@ impl PaveFiller {
                     let b_express = (n_v11 == n_v21 && n_v12 == n_v22)
                                  || (n_v12 == n_v21 && n_v11 == n_v22);
 
+                    if ee_debug {
+                        eprintln!("[EE-DBG] pair ({},{}) creating ee b_express={} t1=[{:.6},{:.6}] t2=[{:.6},{:.6}]", n_e1, n_e2, b_express, t11, t12, t21, t22);
+                    }
+
                     // OCCT L254-264: create EdgeEdge, intersect
                     let mut ee = int_tools::edge_edge::EdgeEdgeIntersector::new();
                     ee.use_quick_coincidence_check(b_express);
                     ee.set_edges(n_e1, [t11, t12], n_e2, [t21, t22], &self.ds);
                     ee.set_fuzzy_value(self.my_fuzzy_value);
+                    if ee_debug {
+                        eprintln!("[EE-DBG] pair ({},{}) before perform", n_e1, n_e2);
+                    }
                     ee.perform();
+                    if ee_debug {
+                        eprintln!("[EE-DBG] pair ({},{}) after perform done={} ncp={}", n_e1, n_e2, ee.is_done(), ee.common_parts().len());
+                    }
 
                     if !ee.is_done() {
                         self.my_report.add_warning(
@@ -1110,6 +1165,9 @@ impl PaveFiller {
                                     r.is_splittable()
                                 };
                                 if !b_is_pb_splittable1 || !b_is_pb_splittable2 {
+                                    if ee_debug {
+                                        eprintln!("[EE-DBG] pair ({},{}) FILTER not-splittable {}/{}", n_e1, n_e2, b_is_pb_splittable1, b_is_pb_splittable2);
+                                    }
                                     continue;
                                 }
 
@@ -1147,6 +1205,13 @@ impl PaveFiller {
                                     || (b_is_on_pave[1] && b_is_on_pave[2])
                                     || (b_is_on_pave[1] && b_is_on_pave[3])
                                 {
+                                    if ee_debug {
+                                        eprintln!("[EE-DBG] pair ({},{}) FILTER on-pave-both {:?} t1={:.6} t2={:.6} cr1=[{:.6},{:.6}] cr2=[{:.6},{:.6}] r11=[{:.6},{:.6}] r12=[{:.6},{:.6}] r21=[{:.6},{:.6}] r22=[{:.6},{:.6}] t11={:.6} ts11={:.6} t12={:.6} ts12={:.6} t21={:.6} ts21={:.6} t22={:.6} ts22={:.6}",
+                                            n_e1, n_e2, b_is_on_pave, a_t1, a_t2, a_cr1.0, a_cr1.1, a_cr2.0, a_cr2.1,
+                                            a_r11_first, a_r11_last, a_r12_first, a_r12_last,
+                                            a_r21_first, a_r21_last, a_r22_first, a_r22_last,
+                                            t11, ts11, t12, ts12, t21, ts21, t22, ts22);
+                                    }
                                     continue;
                                 }
 
@@ -1182,6 +1247,9 @@ impl PaveFiller {
                                         .map(|c| c.point_at(a_t2)).unwrap_or(vnew_pt);
                                     // OCCT L432: if (aPOnE1.Distance(aPOnE2) > Precision::Intersection()) continue;
                                     if (a_p_on_e1 - a_p_on_e2).length() > rcad_kernel::precision::INTERSECTION {
+                                        if ee_debug {
+                                            eprintln!("[EE-DBG] pair ({},{}) FILTER isVExists-far {:.9}", n_e1, n_e2, (a_p_on_e1 - a_p_on_e2).length());
+                                        }
                                         continue;
                                     }
                                     // OCCT L440-451: update each vertex where bIsOnPave[j] is true
@@ -1238,12 +1306,18 @@ impl PaveFiller {
                                     }
                                 }
                                 if skip_new_vertex {
+                                    if ee_debug {
+                                        eprintln!("[EE-DBG] pair ({},{}) FILTER close-to-shared-vertex", n_e1, n_e2);
+                                    }
                                     continue;
                                 }
 
                                 // OCCT L513-518: add InterfEE
                                 // OCCT: aEEs.Appended() pushes directly to DS; iX = aEEs.Length()-1
                                 // rcad: new_ee collects locally; absolute index = ee_base + new_ee.len()
+                                if ee_debug {
+                                    eprintln!("[EE-DBG] pair ({},{}) VERTEX-EE add t1={:.6} t2={:.6}", n_e1, n_e2, a_t1, a_t2);
+                                }
                                 let idx_interf = ee_base + new_ee.len();
                                 mvcpb.push(CoupleOfPBs {
                                     pb1: p1.clone(),
@@ -1273,6 +1347,17 @@ impl PaveFiller {
                                     // OCCT L535-539: HasSameBounds check
                                     let b_has_same_bounds = (n_v11 == n_v21 && n_v12 == n_v22)
                                                          || (n_v12 == n_v21 && n_v11 == n_v22);
+                                    if ee_debug {
+                                        let vp = |v: usize| {
+                                            if v < self.ds.nb_shapes() {
+                                                let p = self.ds.vertex_point_by_idx(v);
+                                                format!("({:.3},{:.3},{:.3})", p.x, p.y, p.z)
+                                            } else { "?".to_string() }
+                                        };
+                                        eprintln!("[EE-DBG] pair ({},{}) EDGE-case ncp={} samebounds={} nv=({},{},{},{}) pts=[{},{},{},{}]",
+                                            n_e1, n_e2, a_nb_cprts, b_has_same_bounds, n_v11, n_v12, n_v21, n_v22,
+                                            vp(n_v11), vp(n_v12), vp(n_v21), vp(n_v22));
+                                    }
                                     if b_has_same_bounds {
                                         // OCCT L542-547: add InterfEE with common part
                                         new_ee.push(InterferenceEE {
@@ -1359,6 +1444,21 @@ impl PaveFiller {
         if !a_m_edges.is_empty() {
             self.split_pave_blocks(&a_m_edges, false);
         }
+
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            for (i, si) in self.ds.shapes.iter().enumerate() {
+                if si.shape_type == ShapeType::Edge {
+                    let pbs = self.ds.edge_pave_blocks(i);
+                    if !pbs.is_empty() {
+                        eprintln!("[EE-DBG] edge {} pbs={} :", i, pbs.len());
+                        for pb in pbs {
+                            let r = pb.0.read().unwrap();
+                            eprintln!("  [EE-DBG]   pb range=[{:.6},{:.6}] v1={} v2={}", r.range().0, r.range().1, r.pave1.vertex_idx, r.pave2.vertex_idx);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ====================================================================
@@ -1368,36 +1468,143 @@ impl PaveFiller {
     // rcad: simplified — skips FaceInfo/TreatVerticesEE/complex projection.
     fn perform_vf(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
-        let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
-            it.pairs(ShapeType::Vertex, ShapeType::Face).to_vec()
-        } else {
-            return;
+        // OCCT L141-142: myIterator->Initialize(VERTEX, FACE); iSize = ExpectedLength()
+        let my_iterator = match &mut self.my_iterator {
+            Some(it) => it,
+            None => return,
         };
-        if pairs.is_empty() { return; }
+        my_iterator.initialize(ShapeType::Vertex, ShapeType::Face);
+        let i_size = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).len();
 
         // OCCT L147-160: GlueFull mode — init FaceInfo and return
         if self.my_glue == GlueEnum::GlueFull {
+            let pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
             for &(n_v, n_f) in &pairs {
-                if !self.ds.shapes[n_v].has_sub_shape(n_f) {
+                let (n_v, n_f) = if self.ds.shapes[n_v].shape_type == ShapeType::Vertex { (n_v, n_f) } else { (n_f, n_v) };
+                if !self.ds.is_sub_shape(n_v, n_f) {
                     self.ds.change_face_info(n_f);
                 }
             }
             return;
         }
 
-        let mut new_vf: Vec<InterferenceVF> = Vec::new();
-        for &(i, j) in &pairs {
-            let pt = self.ds.vertex_point_by_idx(i);
-            let v_tol = self.ds.vertex_tolerance_by_idx(i);
-            let Some(surf) = self.ds.face_surface(j) else { continue; };
-            let (uv, proj) = crate::bop::closest_point_on_surface(&surf, pt);
-            let dist = (proj - pt).length();
-            if dist <= v_tol + 1e-7 {
-                new_vf.push(InterferenceVF { vertex: i, face: j, u: uv.x, v: uv.y, index_new: None });
-                self.ds.add_interf(i, j);
+        // OCCT L163-169: if (!iSize) { aVFs.SetIncrement(10); TreatVerticesEE(); return; }
+        if i_size == 0 {
+            self.treat_vertices_ee();
+            return;
+        }
+
+        // OCCT L176-180: aMVFPairs — avoid repeated intersection of the same
+        // (SD vertex, face) pair; map value = original vertices in the group.
+        let mut a_mvf_pairs: std::collections::HashMap<(usize, usize), Vec<usize>> =
+            std::collections::HashMap::new();
+        let pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
+        for &(n0, n1) in &pairs {
+            let (n_v, n_f) = if self.ds.shapes[n0].shape_type == ShapeType::Vertex { (n0, n1) } else { (n1, n0) };
+            // OCCT L189-191: if (myDS->IsSubShape(nV, nF)) continue;
+            if self.ds.is_sub_shape(n_v, n_f) { continue; }
+            // OCCT L194-197: if (myDS->HasInterf(nV, nF)) continue;
+            if self.ds.has_interf(n_v, n_f) { continue; }
+            // OCCT L199: myDS->ChangeFaceInfo(nF);
+            self.ds.change_face_info(n_f);
+            // OCCT L200-203: if (myDS->HasInterfShapeSubShapes(nV, nF)) continue;
+            if self.ds.has_interf_shape_sub_shapes(n_v, n_f, true) { continue; }
+            // OCCT L205-209: nVx = (HasShapeSD(nV, nVSD)) ? nVSD : nV
+            let mut n_vx = n_v;
+            self.ds.has_shape_sd(n_v, &mut n_vx);
+            // OCCT L211-220: dedup by (nVx, nF)
+            let a_vf_pair = (n_vx, n_f);
+            if let Some(entry) = a_mvf_pairs.get_mut(&a_vf_pair) {
+                entry.push(n_v);
+                continue;
+            }
+            a_mvf_pairs.entry(a_vf_pair).or_default().push(n_v);
+        }
+
+        // OCCT L249-298: process each unique (nVx, nF) pair
+        let a_vf_pairs: Vec<((usize, usize), Vec<usize>)> = a_mvf_pairs.into_iter().collect();
+        for ((n_vx, n_f), verts) in &a_vf_pairs {
+            if the_range.user_break() { return; }
+            // OCCT L257-266: BOPAlgo_VertexFace::Perform → myContext->ComputeVF
+            let (i_flag, a_u, a_v, a_tol_v_new) =
+                self.my_context.compute_vf(*n_vx, *n_f, &self.ds, self.my_fuzzy_value);
+            if i_flag != 0 { continue; }
+
+            let mut n_vx_cur = *n_vx;
+            for &n_v in verts {
+                // 1
+                let mut a_vf = InterferenceVF { vertex: n_v, face: *n_f, u: a_u, v: a_v, index_new: None };
+                // 2
+                self.ds.add_interf(n_v, *n_f);
+                // 3 nVx = UpdateVertex(nV, aTolVNew)
+                n_vx_cur = self.update_vertex(n_v, a_tol_v_new);
+                // 4 if (IsNewShape(nVx)) aVF.SetIndexNew(nVx)
+                if self.ds.is_new_shape(n_vx_cur) {
+                    a_vf.index_new = Some(n_vx_cur);
+                }
+                self.ds.interf_vf.push(a_vf);
+            }
+            // 5 update FaceInfo vertices_in
+            self.ds.change_face_info(*n_f).vertices_in.insert(n_vx_cur);
+        }
+
+        // OCCT L300: TreatVerticesEE()
+        let n_vf_before = self.ds.interf_vf.len();
+        self.treat_vertices_ee();
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            eprintln!("[EE-DBG] perform_vf: main added {} VF, treat_vertices_ee added {}", n_vf_before, self.ds.interf_vf.len() - n_vf_before);
+        }
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::TreatVerticesEE (PaveFiller_4.cxx L305-390).
+    /// For each new vertex created by EE intersections, check if it lies on a
+    /// source face (verticesOn) and, if so, add the VF interference.
+    fn treat_vertices_ee(&mut self) {
+        // OCCT L321-331: collect EE interferences' new vertices (IndexNew)
+        let mut a_liv: Vec<usize> = Vec::new();
+        let mut a_mi: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for a_ee in &self.ds.interf_ee {
+            if a_ee.new_vertex != usize::MAX {
+                if a_mi.insert(a_ee.new_vertex) {
+                    a_liv.push(a_ee.new_vertex);
+                }
             }
         }
-        self.ds.interf_vf.extend(new_vf);
+        if a_liv.is_empty() { return; }
+
+        // OCCT L339-352: collect all source faces
+        let mut a_lif: Vec<usize> = Vec::new();
+        let a_nb_s = self.ds.nb_source_shapes;
+        for n_f in 0..a_nb_s {
+            if self.ds.shapes[n_f].shape_type == ShapeType::Face {
+                a_lif.push(n_f);
+            }
+        }
+        if a_lif.is_empty() { return; }
+
+        // OCCT L356-389: for each (face, EE-vertex) pair, if the vertex is not
+        // already ON the face, compute VF.
+        for &n_f in &a_lif {
+            for &n_v in &a_liv {
+                let contains = {
+                    let a_fi = self.ds.face_info(n_f);
+                    a_fi.vertices_on.contains(&n_v)
+                };
+                if contains { continue; }
+                let (i_flag, a_t1, a_t2, _dummy) =
+                    self.my_context.compute_vf(n_v, n_f, &self.ds, self.my_fuzzy_value);
+                if i_flag == 0 {
+                    // 1
+                    self.ds.interf_vf.push(InterferenceVF {
+                        vertex: n_v, face: n_f, u: a_t1, v: a_t2, index_new: None,
+                    });
+                    // 2
+                    self.ds.add_interf(n_v, n_f);
+                    // 3
+                    self.ds.change_face_info(n_f).vertices_in.insert(n_v);
+                }
+            }
+        }
     }
 
     // ====================================================================
@@ -1429,117 +1636,419 @@ impl PaveFiller {
             return;
         }
 
-        let mut new_ef: Vec<InterferenceEF> = Vec::new();
-        let mut mvcpb: Vec<CoupleOfPBs> = Vec::new();
+        // OCCT L194-217: locals
+        let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mvcpb: Vec<CoupleOfPBs> = Vec::new();
+        let mut a_mpbli: std::collections::HashMap<u64, (SharedPB, Vec<usize>)> =
+            std::collections::HashMap::new();
+        let mut a_dmpb_box: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
+            std::collections::HashMap::new();
+        // OCCT: aVEdgeFace — collected (edge, face, pb, range, shrunk, express)
+        struct EFCandidate {
+            n_e: usize, n_f: usize, pb: SharedPB,
+            range: (f64, f64), shrunk: (f64, f64),
+            express: bool, tol_e: f64, tol_f: f64,
+        }
+        let mut a_v_edge_face: Vec<EFCandidate> = Vec::new();
 
-        // OCCT L219-307: iterate EF pairs
-        for &(n_e, n_f) in &pairs {
+        // OCCT L219-307: loop 1 — collect candidates
+        for &(n0, n1) in &pairs {
+            let (n_e, n_f) = if self.ds.shapes[n0].shape_type == ShapeType::Edge { (n0, n1) } else { (n1, n0) };
             // OCCT L227-231: skip degenerated edges
             if self.ds.shapes[n_e].has_flag() {
                 continue;
             }
-
-            // OCCT L233-237: face box
-            let a_box_f = rcad_kernel::math::bnd::BndBox::new();
-            let _ = a_box_f;
-
-            // OCCT L237-241: FaceInfo → PaveBlocksOn, VerticesIn, VerticesOn
+            // OCCT L237-241: FaceInfo
             let a_fi = self.ds.face_info(n_f);
             let a_mpbf = a_fi.pave_blocks_on.clone();
             let a_mv_in = a_fi.vertices_in.clone();
             let a_mv_on = a_fi.vertices_on.clone();
             drop(a_fi);
-
-            // OCCT L246: get PB list for this edge
+            let a_tol_e = self.ds.edge_tolerance(n_e);
+            let a_tol_f = self.ds.face_tolerance(n_f);
+            // OCCT L246: PB list
             let a_lpb: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e).to_vec();
             if a_lpb.is_empty() {
                 continue;
             }
-
-            let mut pb_box_cache: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
-                std::collections::HashMap::new();
-
-            // OCCT L248-306: iterate PBs of this edge
             for a_pb in &a_lpb {
-                // OCCT L257-260: skip if PB already in face's PaveBlocksOn
-                let is_on_face = {
-                    let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
-                    // Check if this PB's pool index is in a_mpbf
-                    self.ds.pave_blocks_pool.iter().enumerate().any(|(pi, pool)| {
-                        a_mpbf.contains(&pi) && pool.iter().any(|spb|
-                            std::sync::Arc::as_ptr(&spb.0) as u64 == ptr)
+                // OCCT L256-260: RealPaveBlock + skip if in face's PaveBlocksOn
+                let a_pbr = self.ds.real_pave_block(a_pb);
+                let pbr_ptr = std::sync::Arc::as_ptr(&a_pbr.0) as u64;
+                let is_on_face = a_mpbf.iter().any(|&pi| {
+                    self.ds.pave_blocks_pool.get(pi).map_or(false, |pool| {
+                        pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == pbr_ptr)
                     })
-                };
+                });
+                if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                    eprintln!("[EF-DBG]   cand e={} f={} pb={} onFace={} mpbf_len={}", n_e, n_f, pbr_ptr, is_on_face, a_mpbf.len());
+                }
                 if is_on_face {
                     continue;
                 }
-
-                // OCCT L262-270: GetPBBox + box overlap with face
+                // OCCT L262-266: GetPBBox
                 let (mut a_t1, mut a_t2, mut a_ts1, mut a_ts2) = (0.0, 0.0, 0.0, 0.0);
                 let mut a_bb_e = rcad_kernel::math::bnd::BndBox::new();
-                if !self.get_pb_box(n_e, a_pb, &mut pb_box_cache,
+                if !self.get_pb_box(n_e, a_pb, &mut a_dmpb_box,
                     &mut a_t1, &mut a_t2, &mut a_ts1, &mut a_ts2, &mut a_bb_e) {
                     continue;
                 }
-
-                // OCCT L273-276: check vertices
+                // OCCT L268-271: box overlap
+                let a_bb_f = self.ds.shapes[n_f].bbox.clone();
+                if a_bb_f.is_out_box(&a_bb_e) {
+                    continue;
+                }
+                // OCCT L273-276: bExpressCompute
                 let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
                 let b_v1 = a_mv_in.contains(&n_v1) || a_mv_on.contains(&n_v1);
                 let b_v2 = a_mv_in.contains(&n_v2) || a_mv_on.contains(&n_v2);
-                let _b_express = b_v1 && b_v2;
-
-                // OCCT L278-305: pair data collection
-                // rcad: project midpoint onto face surface as proximity check
-                let curve = match self.ds.edge_curve(n_e) {
-                    Some(c) => c.clone(),
-                    None => continue,
+                let b_express = b_v1 && b_v2;
+                // OCCT L289-297: CorrectRange for shrunk and PB range
+                let curve = self.ds.edge_curve(n_e);
+                let a_corrected_ts = match &curve {
+                    Some(c) => crate::bop::tools::algo_tools::correct_range_ef(
+                        c, a_ts1, a_ts2, a_tol_e, a_tol_f),
+                    None => (a_ts1, a_ts2),
                 };
-                let mid_t = (a_t1 + a_t2) * 0.5;
-                let mid_pt = curve.point_at(mid_t);
+                let a_corrected_range = match &curve {
+                    Some(c) => crate::bop::tools::algo_tools::correct_range_ef(
+                        c, a_t1, a_t2, a_tol_e, a_tol_f),
+                    None => (a_t1, a_t2),
+                };
+                // OCCT L299-305: myFPBDone
+                self.my_fpb_done.entry(n_f).or_default().insert(
+                    std::sync::Arc::as_ptr(&a_pb.0) as u64);
+                a_v_edge_face.push(EFCandidate {
+                    n_e, n_f, pb: a_pb.clone(),
+                    range: a_corrected_range, shrunk: a_corrected_ts,
+                    express: b_express, tol_e: a_tol_e, tol_f: a_tol_f,
+                });
+            }
+        }
 
-                if let Some(surf) = self.ds.face_surface(n_f) {
-                    let (uv, proj_pt) = crate::bop::closest_point_on_surface(&surf, mid_pt);
-                    let dist = (proj_pt - mid_pt).length();
-                    if dist > 1e-6 {
-                        continue; // too far from face
+        // OCCT L324-571: loop 2 — compute and process common parts
+        for cand in &a_v_edge_face {
+            let a_nb_cprts;
+            let (i_flag, common_parts, min_dist) = self.my_context.compute_ef(
+                cand.n_e, cand.n_f, cand.range.0, cand.range.1, &self.ds, self.my_fuzzy_value);
+            a_nb_cprts = common_parts.len();
+            if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                eprintln!("[EF-DBG] cand e={}(r{}) f={}(r{}) range=[{:.4},{:.4}] ncp={} min={:.3e}", cand.n_e, self.ds.rank(cand.n_e), cand.n_f, self.ds.rank(cand.n_f), cand.range.0, cand.range.1, a_nb_cprts, min_dist);
+            }
+            if i_flag != 0 {
+                continue;
+            }
+            if a_nb_cprts == 0 {
+                // OCCT L348-361: record minimal distance if no common part
+                if min_dist < f64::MAX && min_dist > cand.tol_e + cand.tol_f {
+                    self.my_distances.entry((cand.n_e, cand.n_f)).or_default().push(
+                        EdgeRangeDistance::new(cand.range.0, cand.range.1, min_dist));
+                }
+                continue;
+            }
+            let a_pb = &cand.pb;
+            let (a_t1, a_t2) = cand.range;
+            let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
+            let b_is_pb_splittable = { let r = a_pb.0.read().unwrap(); r.is_splittable() };
+            let (mut a_ts1, mut a_ts2) = cand.shrunk;
+            // OCCT L373-380: VERTEX type → ReduceIntersectionRange
+            if !common_parts.is_empty() && !common_parts[0].2 {
+                self.reduce_intersection_range(n_v1, n_v2, cand.n_e, cand.n_f, &mut a_ts1, &mut a_ts2);
+            }
+            let a_r1 = (a_t1, a_ts1);
+            let a_r2 = (a_ts2, a_t2);
+            let a_fi = self.ds.face_info(cand.n_f);
+            let a_mif_on = a_fi.vertices_on.clone();
+            let a_mif_in = a_fi.vertices_in.clone();
+            drop(a_fi);
+            // OCCT L388-394: bLinePlane
+            let b_line_plane = {
+                let c = self.ds.edge_curve(cand.n_e);
+                let s = self.ds.face_surface(cand.n_f);
+                matches!(c, Some(rcad_kernel::geom::Curve3::Line(_)))
+                    && matches!(s, Some(rcad_kernel::geom::Surface3::Plane(_)))
+            };
+
+            for &(r1_first, r1_last, is_edge) in &common_parts {
+                if is_edge {
+                    // OCCT L545-565: EDGE case
+                    a_mi_efc.insert(cand.n_f);
+                    let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
+                    let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
+                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                        eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}]", cand.n_e, cand.n_f, r1_first, r1_last);
                     }
-
-                    // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
-                    // rcad: extract curve + tolerances, call algo_tools version
-                    let a_curve = self.ds.edge_curve(n_e);
-                    let a_tol_e = self.ds.edge_tolerance(n_e);
-                    let a_tol_f = self.ds.face_tolerance(n_f);
-                    let a_corrected_range = match a_curve {
-                        Some(curve) => crate::bop::tools::algo_tools::correct_range_ef(
-                            curve, a_ts1, a_ts2, a_tol_e, a_tol_f),
-                        None => (a_ts1, a_ts2),
-                    };
-                    // OCCT L289-292: BOPTools_AlgoTools::CorrectRange(aE, aF, aSR, anewSR)
-                    // OCCT L299-305: myFPBDone.Bound(nF, Map<PaveBlock>)->Add(aPB)
-                    // rcad: CorrectRange translated above. myFPBDone is a fence map
-                    // for processed EF pairs (OCCT data map).
-
-                    // Add EF interference
-                    let _ = a_corrected_range;
-                    new_ef.push(InterferenceEF {
-                        edge: n_e, face: n_f,
-                        point: mid_pt,
-                        edge_param: mid_t,
+                    self.ds.interf_ef.push(InterferenceEF {
+                        edge: cand.n_e, face: cand.n_f,
+                        point: self.ds.edge_curve(cand.n_e)
+                            .map(|c| c.point_at((r1_first + r1_last) * 0.5)).unwrap_or(glam::DVec3::ZERO),
+                        edge_param: (r1_first + r1_last) * 0.5,
                         new_vertex: usize::MAX,
                     });
-                    self.ds.add_interf(n_e, n_f);
-                    let _ = uv;
+                    if !b_v0 || !b_v1_ {
+                        self.ds.add_interf(cand.n_e, cand.n_f);
+                        continue;
+                    }
+                    self.ds.add_interf(cand.n_e, cand.n_f);
+                    // OCCT L564: BOPAlgo_Tools::FillMap(aPB, nF, aMPBLI)
+                    let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
+                    a_mpbli.entry(ptr).or_insert_with(|| (a_pb.clone(), Vec::new())).1.push(cand.n_f);
+                } else {
+                    // OCCT L406-543: VERTEX case
+                    let a_t = (r1_first + r1_last) * 0.5;
+                    // OCCT L412: IntTools_Tools::VertexParameter(aCPart, aT) = 0.5*(Range1 first+last)
+                    // OCCT L413: BOPTools_AlgoTools::MakeNewVertex(aE, aT, aF, aVnew)
+                    //   (BOPTools_AlgoTools_2.cxx L254-271): aPnt = PointOnEdge(aE, aT);
+                    //   aMaxTol = Tol(aE) + Tol(aF) + DTolerance() (=1e-12)
+                    let a_pnew = self.ds.edge_curve(cand.n_e)
+                        .map(|c| c.point_at(a_t)).unwrap_or(glam::DVec3::ZERO);
+                    let mut a_tol_vnew = cand.tol_e + cand.tol_f + 1e-12;
+                    // OCCT L415-419: IsInRange
+                    let a_tol_to_decide = 5e-8;
+                    let b_is_on_pave_0 = crate::bop::tools::algo_tools::is_in_range(
+                        a_r1.0, a_r1.1, r1_first, r1_last, a_tol_to_decide);
+                    let b_is_on_pave_1 = crate::bop::tools::algo_tools::is_in_range(
+                        a_r2.0, a_r2.1, r1_first, r1_last, a_tol_to_decide);
+                    // OCCT L421-440
+                    if (b_is_on_pave_0 && b_is_on_pave_1)
+                        || (b_line_plane && (b_is_on_pave_0 || b_is_on_pave_1))
+                    {
+                        let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
+                        let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
+                        if b_v0 && b_v1_ {
+                            self.ds.interf_ef.push(InterferenceEF {
+                                edge: cand.n_e, face: cand.n_f,
+                                point: a_pnew, edge_param: a_t, new_vertex: usize::MAX,
+                            });
+                            self.ds.add_interf(cand.n_e, cand.n_f);
+                            a_mi_efc.insert(cand.n_f);
+                            let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
+                            a_mpbli.entry(ptr).or_insert_with(|| (a_pb.clone(), Vec::new())).1.push(cand.n_f);
+                            continue;
+                        }
+                    }
+                    // OCCT L442-445
+                    if !b_is_pb_splittable {
+                        continue;
+                    }
+                    // OCCT L447-457: ForceInterfVF for on-pave vertices
+                    let mut b_is_on_pave = [b_is_on_pave_0, b_is_on_pave_1];
+                    let n_vs = [n_v1, n_v2];
+                    for j in 0..2 {
+                        if b_is_on_pave[j] {
+                            let b_vj = self.check_face_paves(n_vs[j], &a_mif_on, &a_mif_in);
+                            if !b_vj {
+                                b_is_on_pave[j] = self.force_interf_vf(n_vs[j], cand.n_f);
+                            }
+                        }
+                    }
+                    if b_is_on_pave[0] || b_is_on_pave[1] {
+                        // OCCT L459-503: check real intersection
+                        let a_min_dist_ef = {
+                            let proj = self.my_context.proj_ps(&self.ds, cand.n_f);
+                            proj.perform(a_pnew);
+                            if proj.nb_points() > 0 { proj.lower_distance() } else { f64::MAX }
+                        };
+                        let has_real_intersection = a_min_dist_ef < rcad_kernel::precision::INTERSECTION;
+                        if !has_real_intersection {
+                            continue;
+                        }
+                        for j in 0..2 {
+                            if b_is_on_pave[j] {
+                                let a_p = self.ds.vertex_point_by_idx(n_vs[j]);
+                                let a_dist_pp = (a_pnew - a_p).length();
+                                let a_tol = self.ds.vertex_tolerance_by_idx(n_vs[j]);
+                                let mut a_max_dist = 1e4 * a_tol;
+                                if a_tol < 0.01 {
+                                    a_max_dist = a_max_dist.min(0.1);
+                                }
+                                if a_dist_pp < a_max_dist {
+                                    self.update_vertex(n_vs[j], a_dist_pp);
+                                    self.my_verts_to_avoid_extension.insert(n_vs[j]);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    // OCCT L505-508: CheckFacePaves(aVnew, aMIFOn)
+                    if self.check_face_paves_vertex(a_pnew, a_tol_vnew, &a_mif_on) {
+                        continue;
+                    }
+                    // OCCT L510-519: tolerance boost
+                    a_tol_vnew = a_tol_vnew.max(cand.tol_e).max(cand.tol_f);
+                    if b_line_plane {
+                        a_tol_vnew = a_tol_vnew.max((r1_last - r1_first) / 2.0);
+                    }
+                    // OCCT L523-526: myContext->IsPointInFace(aPnew, aF, aTolVnew)
+                    // (IntTools_Context.cxx L613-636): project, require
+                    // LowerDistance() < aTolVnew, then 2D IsPointInFace (ON excluded).
+                    let proj = self.my_context.proj_ps(&self.ds, cand.n_f);
+                    proj.perform(a_pnew);
+                    let a_dist = proj.lower_distance();
+                    let (a_u, a_v) = proj.lower_distance_parameters();
+                    let in_face = proj.nb_points() > 0
+                        && a_dist < a_tol_vnew
+                        && self.my_context.is_point_in_face(&self.ds, cand.n_f, glam::DVec2::new(a_u, a_v));
+                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                        eprintln!("[EF-DBG] VERTEX case e={} f={} t={:.4} uv=({:.4},{:.4}) dist={:.3e} inFace={} splittable={}", cand.n_e, cand.n_f, a_t, a_u, a_v, a_dist, in_face, b_is_pb_splittable);
+                    }
+                    if !in_face {
+                        continue;
+                    }
+                    // OCCT L528-542: add InterfEF
+                    a_mi_efc.insert(cand.n_f);
+                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                        eprintln!("[EF-DBG] VERTEX-EF e={} f={} t={:.4}", cand.n_e, cand.n_f, a_t);
+                    }
+                    let idx_interf = self.ds.interf_ef.len();
+                    self.ds.interf_ef.push(InterferenceEF {
+                        edge: cand.n_e, face: cand.n_f,
+                        point: a_pnew, edge_param: a_t, new_vertex: usize::MAX,
+                    });
+                    self.ds.add_interf(cand.n_e, cand.n_f);
+                    a_mvcpb.push(CoupleOfPBs {
+                        pb1: a_pb.clone(),
+                        pb2: a_pb.clone(),
+                        index_interf: idx_interf,
+                        tolerance: a_tol_vnew,
+                        index: usize::MAX,
+                        point: a_pnew,
+                    });
                 }
             }
         }
 
-        self.ds.interf_ef.extend(new_ef);
+        // OCCT L576-578: post treatment
+        if !a_mpbli.is_empty() {
+            let mut a_mblocks: Vec<Vec<SharedPB>> = Vec::new();
+            let pb_list: Vec<SharedPB> = a_mpbli.values().map(|(pb, _)| pb.clone()).collect();
+            let mut a_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            for pb in &pb_list {
+                let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+                if !a_fence.insert(ptr) { continue; }
+                let mut a_block: Vec<SharedPB> = vec![pb.clone()];
+                a_block.extend(a_mpbli.values().filter(|(p, _)| {
+                    let pp = std::sync::Arc::as_ptr(&p.0) as u64;
+                    a_fence.insert(pp)
+                }).map(|(p, _)| p.clone()));
+                a_mblocks.push(a_block);
+            }
+            for block in &a_mblocks {
+                if block.len() >= 2 {
+                    self.ds.add_common_block(block);
+                }
+            }
+        }
+        self.update_vertices_of_cb();
+        if !a_mvcpb.is_empty() {
+            self.perform_new_vertices(&a_mvcpb, false);
+            if self.has_errors() {
+                return;
+            }
+        }
+        // OCCT L585: Update FaceInfoIn for all faces having EF common parts
+        for &n_f in &a_mi_efc {
+            self.ds.update_face_info_in(n_f);
+        }
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            for (i, si) in self.ds.shapes.iter().enumerate() {
+                if si.shape_type == ShapeType::Edge {
+                    let pbs = self.ds.edge_pave_blocks(i);
+                    if !pbs.is_empty() {
+                        let desc: Vec<String> = pbs.iter().map(|pb| {
+                            let r = pb.0.read().unwrap();
+                            format!("[{:.3},{:.3}]", r.range().0, r.range().1)
+                        }).collect();
+                        eprintln!("[EF-DBG] edge {} deg={} flag={} pbs={} {}", i, self.ds.is_edge_degenerated(i), self.ds.shapes[i].has_flag(), pbs.len(), desc.join(" "));
+                    }
+                }
+            }
+        }
+    }
 
-        // OCCT L309-580: BOPTools_Parallel::Perform(aVEdgeFace, myContext)
-        // rcad: serial midpoint-projection check used instead of parallel EdgeFace.
-        // OCCT L565-589: PerformNewVertices for EF results.
-        if !mvcpb.is_empty() {
-            self.perform_new_vertices(&mvcpb, false);
+    /// OCCT BOPAlgo_PaveFiller::CheckFacePaves (PaveFiller_5.cxx L596-601).
+    fn check_face_paves(&self, n_vx: usize, a_mif_on: &indexmap::IndexSet<usize>, a_mif_in: &indexmap::IndexSet<usize>) -> bool {
+        a_mif_on.contains(&n_vx) || a_mif_in.contains(&n_vx)
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::CheckFacePaves(TopoDS_Vertex, Map) (L605-627).
+    /// The new vertex's tolerance is aTolVnew (from MakeNewVertex), matching
+    /// OCCT's BOPTools_AlgoTools::ComputeVV(aVnew, aV) which uses both tolerances.
+    fn check_face_paves_vertex(&self, a_vnew: glam::DVec3, a_tol_vnew: f64, a_mif: &indexmap::IndexSet<usize>) -> bool {
+        for &n_v in a_mif {
+            let a_p = self.ds.vertex_point_by_idx(n_v);
+            let a_tol = self.ds.vertex_tolerance_by_idx(n_v);
+            let i_flag = crate::bop::tools::algo_tools::compute_vv_vertex_point(a_tol, a_p, a_vnew, a_tol_vnew);
+            if i_flag == 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::ForceInterfVF (PaveFiller_5.cxx L631-680).
+    fn force_interf_vf(&mut self, n_v: usize, n_f: usize) -> bool {
+        let (i_flag, a_u, a_v, a_tol_v_new) = self.my_context.compute_vf(n_v, n_f, &self.ds, self.my_fuzzy_value);
+        if i_flag == 0 || i_flag == -2 {
+            let mut a_vf = InterferenceVF { vertex: n_v, face: n_f, u: a_u, v: a_v, index_new: None };
+            self.ds.add_interf(n_v, n_f);
+            let n_vx = self.update_vertex(n_v, a_tol_v_new);
+            if self.ds.is_new_shape(n_vx) {
+                a_vf.index_new = Some(n_vx);
+            }
+            self.ds.interf_vf.push(a_vf);
+            self.ds.change_face_info(n_f).vertices_in.insert(n_vx);
+            return true;
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::ReduceIntersectionRange (PaveFiller_5.cxx L685-768).
+    fn reduce_intersection_range(
+        &self, n_v1: usize, n_v2: usize, n_e: usize, n_f: usize,
+        a_ts1: &mut f64, a_ts2: &mut f64,
+    ) {
+        if !self.ds.is_new_shape(n_v1) && !self.ds.is_new_shape(n_v2) {
+            return;
+        }
+        if !self.ds.has_interf_shape_sub_shapes(n_e, n_f, true) {
+            return;
+        }
+        let a_nb_ees = self.ds.interf_ee.len();
+        if a_nb_ees == 0 {
+            return;
+        }
+        // face's edges
+        let mut a_mfe: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let a_li = self.ds.shapes[n_f].sub_shapes.clone();
+        for n_e1 in a_li {
+            if n_e1 < self.ds.nb_shapes() && self.ds.shapes[n_e1].shape_type == ShapeType::Edge {
+                a_mfe.insert(n_e1);
+            }
+        }
+        for a_ee in &self.ds.interf_ee {
+            if a_ee.new_vertex == usize::MAX {
+                continue;
+            }
+            let n_v = a_ee.new_vertex;
+            if n_v != n_v1 && n_v != n_v2 {
+                continue;
+            }
+            let (n_e1, n_e2) = (a_ee.e1, a_ee.e2);
+            if ((n_e != n_e1) && (n_e != n_e2)) || (!a_mfe.contains(&n_e1) && !a_mfe.contains(&n_e2)) {
+                continue;
+            }
+            let a_crange = if n_e == n_e1 { a_ee.range1 } else { a_ee.range2 };
+            let (a_tr1, a_tr2) = (a_crange[0], a_crange[1]);
+            if n_v == n_v1 {
+                if *a_ts1 < a_tr2 {
+                    *a_ts1 = a_tr2;
+                }
+            } else {
+                if *a_ts2 > a_tr1 {
+                    *a_ts2 = a_tr1;
+                }
+            }
         }
     }
 
@@ -1863,7 +2372,9 @@ impl PaveFiller {
             for j in (i + 1)..verts.len() {
                 if assigned[j] { continue; }
                 let (pj, tj, ij) = verts[j];
-                if (pi - pj).length() <= ti.max(tj) + self.my_fuzzy_value {
+                // OCCT BOPAlgo_Tools::IntersectVertices (L1094-1098):
+                // aTolSum = aTolV1 + aTolV2 + myFuzzyValue.
+                if (pi - pj).length() <= ti + tj + self.my_fuzzy_value {
                     group_pts.push(pj);
                     group_tol = group_tol.max(tj);
                     group_indices.push(ij);
@@ -2283,6 +2794,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         (*the_first, *the_last) = pbr.range();
         // OCCT L923-929: bool bValid = theLast - theFirst > Precision::PConfusion();
         if *the_last - *the_first <= rcad_kernel::PCONFUSION {
+            if std::env::var("RCAD_EE_DEBUG").is_ok() {
+                eprintln!("[EE-DBG] getpb false edge={} pb range=[{:.12},{:.12}] len={:.3e} shrunk={}", pbr.original_edge, *the_first, *the_last, *the_last - *the_first, pbr.has_shrunk_data());
+            }
             return false;
         }
         // OCCT L932-937: check shrunk data
