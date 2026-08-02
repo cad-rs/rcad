@@ -49,7 +49,7 @@ impl PntOn2S {
 /// OCCT IntPatch_Point (a subset needed by ALineToWLine): a point on the line
 /// with its UV on both surfaces, its parameter on the line, tolerance and the
 /// "multiple" flag.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PatchPoint {
     pub pnt: PntOn2S,
     pub param_on_line: f64,
@@ -58,6 +58,11 @@ pub struct PatchPoint {
     /// True when the point lies on the domain of surface 1 / surface 2.
     pub on_dom_s1: bool,
     pub on_dom_s2: bool,
+    /// 2D arc on surface 1 / surface 2 this point lies on (SetArc / ArcOnS1/S2).
+    pub arc_on_s1: Option<rcad_kernel::geom::Curve2d>,
+    pub arc_on_s2: Option<rcad_kernel::geom::Curve2d>,
+    pub param_on_arc1: f64,
+    pub param_on_arc2: f64,
 }
 
 impl PatchPoint {
@@ -75,10 +80,30 @@ impl PatchPoint {
             multiple: false,
             on_dom_s1: true,
             on_dom_s2: true,
+            arc_on_s1: None,
+            arc_on_s2: None,
+            param_on_arc1: 0.0,
+            param_on_arc2: 0.0,
         }
     }
     pub fn set_value(&mut self, pnt: PntOn2S) {
         self.pnt = pnt;
+    }
+}
+
+/// OCCT IntPatch_Point::SetArc(OnFirst, A, Param, TLine, TArc) — set the arc
+/// reference of the point on one of the two surfaces.
+impl PatchPoint {
+    pub fn set_arc(&mut self, on_first: bool, arc: rcad_kernel::geom::Curve2d, param: f64) {
+        if on_first {
+            self.arc_on_s1 = Some(arc);
+            self.param_on_arc1 = param;
+            self.on_dom_s1 = true;
+        } else {
+            self.arc_on_s2 = Some(arc);
+            self.param_on_arc2 = param;
+            self.on_dom_s2 = true;
+        }
     }
 }
 

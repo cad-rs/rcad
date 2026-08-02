@@ -468,7 +468,7 @@ impl ALineToWLine {
                 .collect();
 
             for v in a_seq_vertex.iter() {
-                let mut a_vtx = *v;
+                let mut a_vtx = v.clone();
                 if a_vtx.param_on_line == -1.0 {
                     a_vtx.param_on_line = wline_pnts.len() as f64;
                 }
@@ -487,7 +487,7 @@ impl ALineToWLine {
             // vertex with parameter -1 (closed curve) is set to the last point.
             let mut wline_verts: Vec<super::IntPatchVertex> = Vec::new();
             for v in a_seq_vertex.iter() {
-                let mut a_vtx = *v;
+                let mut a_vtx = v.clone();
                 if a_vtx.param_on_line == -1.0 {
                     a_vtx.param_on_line = wline_pnts.len() as f64;
                 }
@@ -498,6 +498,7 @@ impl ALineToWLine {
                     v1: a_vtx.pnt.v1,
                     u2: a_vtx.pnt.u2,
                     v2: a_vtx.pnt.v2,
+                    ..Default::default()
                 });
             }
 
@@ -522,6 +523,12 @@ impl ALineToWLine {
                     wl_type: WLineType::ImpImp,
                     vertices: wline_verts,
                     a_curve: None,
+                    arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                 };
                 the_lines.push(line);
             }

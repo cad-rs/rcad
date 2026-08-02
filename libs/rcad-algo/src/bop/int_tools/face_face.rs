@@ -655,7 +655,7 @@ impl FaceFace {
                 // OCCT IntTools_FaceFace::Perform L441-474: for the remaining
                 // analytic pairs route through IntPatch_Intersection
                 // (-> IntPatch_ImpImpIntersection -> IntAna_QuadQuadGeo).
-                self.intersect_int_patch(&s1, &s2, tol);
+                self.intersect_int_patch(&s1, &s2, uv1, uv2, tol);
                 // OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip the raw
                 // analytic lines to the two faces' domains.
                 self.curves = face_make_curve::make_curves(
@@ -681,10 +681,17 @@ impl FaceFace {
     /// the full analytic intersection curves (untrimmed); domain clipping
     /// happens in MakeCurve (IntTools_FaceFace.cxx L695-1846), which is the
     /// PaveFiller's responsibility downstream.
-    fn intersect_int_patch(&mut self, s1: &Surface3, s2: &Surface3, tol: f64) {
+    fn intersect_int_patch(
+        &mut self,
+        s1: &Surface3,
+        s2: &Surface3,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        tol: f64,
+    ) {
         let mut inter =
             crate::bop::int_tools::int_patch::IntPatchIntersection::new();
-        inter.perform(s1, s2, tol, tol);
+        inter.perform(s1, s2, uv1, uv2, tol, tol);
         if inter.tangent_faces() {
             self.tangent_faces = true;
             self.curves.clear();

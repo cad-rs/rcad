@@ -34,6 +34,8 @@ pub struct ImpImpIntersection {
     oppo: bool,
     spnt: Vec<IntPatchPoint>,
     slin: Vec<IntPatchLine>,
+    /// OCCT L2536: SameSurf — the two surfaces are coincident.
+    same_surf: bool,
 }
 
 impl ImpImpIntersection {
@@ -45,6 +47,7 @@ impl ImpImpIntersection {
             oppo: false,
             spnt: Vec::new(),
             slin: Vec::new(),
+            same_surf: false,
         }
     }
 
@@ -81,9 +84,18 @@ impl ImpImpIntersection {
 
     // =====================================================================
     // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, theIsReqToKeepRLine)
-    // rcad: Surface3 instead of Adaptor3d_Surface. No TopolTool.
+    // rcad: Surface3 instead of Adaptor3d_Surface; the UV domains D1/D2 (the
+    // corrected FF UV rectangles) replace the TopolTool.
     // =====================================================================
-    pub fn perform(&mut self, s1: &Surface3, s2: &Surface3, tol_arc: f64, tol_tang: f64) {
+    pub fn perform(
+        &mut self,
+        s1: &Surface3,
+        s2: &Surface3,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        tol_arc: f64,
+        tol_tang: f64,
+    ) {
         // OCCT L2525-2533: myDone=Fail, spnt/slin clear, empt/tgte/oppo init
         self.my_done = IntStatus::Fail;
         self.spnt.clear();
@@ -91,6 +103,7 @@ impl ImpImpIntersection {
         self.empt = true;
         self.tgte = false;
         self.oppo = false;
+        self.same_surf = false;
 
         // OCCT L2529: isPostProcessingRequired = true
         // OCCT L2535-2546: all1, all2, SameSurf, multpoint, nosolonS1, nosolonS2
@@ -105,8 +118,8 @@ impl ImpImpIntersection {
             return;
         };
         // OCCT L2555: typs1, typs2 — surface type enums (rcad: inferred from Quadric)
-        let _typs1 = q1.surface_type();
-        let _typs2 = q2.surface_type();
+        let typs1 = q1.surface_type();
+        let typs2 = q2.surface_type();
         // OCCT L2553: bool bEmpty = false
         let mut b_empty = false;
 
@@ -167,9 +180,143 @@ impl ImpImpIntersection {
         }
 
         // OCCT L2782-2934: isPostProcessingRequired block
-        // OCCT: solrst.Perform(AFunc, D1/D2, TolArc, TolTang) — boundary intersection
-        //       PutPointsOnLine, ProcessSegments, ProcessRLine
-        //       Boundary clipping is done upstream in IntPatch_Intersection.
+        let same_surf = self.same_surf;
+        let mut all1 = false;
+        let mut all2 = false;
+        let mut multpoint = false;
+        let mut nosolon_s1 = false;
+        let mut nosolon_s2 = false;
+        let mut edg1: Vec<super::so_on_bounds::Segment> = Vec::new();
+        let mut edg2: Vec<super::so_on_bounds::Segment> = Vec::new();
+        let mut pnt1: Vec<super::so_on_bounds::PathPoint> = Vec::new();
+        let mut pnt2: Vec<super::so_on_bounds::PathPoint> = Vec::new();
+
+        let mut a_func = super::so_on_bounds::ArcFunction::new();
+        let mut solrst = super::so_on_bounds::SOnBounds::new();
+
+        if !same_surf {
+            // OCCT L2786-2787: AFunc.SetQuadric(quad2); AFunc.Set(S1);
+            a_func.set_quadric(q2.clone());
+            a_func.set_surface(s1.clone());
+            // OCCT L2789: solrst.Perform(AFunc, D1, TolArc, TolTang);
+            let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
+            solrst.perform(&mut a_func, &mut d1, tol_arc, tol_tang, false);
+            if !solrst.is_done() {
+                return;
+            }
+            // OCCT L2795-2798: AllArcSolution && typs1 == typs2 -> all1 = true
+            if solrst.all_arc_solution() && typs1 == typs2 {
+                all1 = true;
+            }
+            let nbpt = solrst.nb_points();
+            let nbseg = solrst.nb_segments();
+            for i in 1..=nbpt {
+                let a_pt = solrst.point(i).clone();
+                pnt1.push(a_pt);
+            }
+            for i in 1..=nbseg {
+                let a_segm = solrst.segment(i).clone();
+                edg1.push(a_segm);
+            }
+            nosolon_s1 = (nbpt == 0) && (nbseg == 0);
+            if nosolon_s1 && all1 {
+                // case of a face without restrictions.
+                all1 = false;
+            }
+        } else {
+            nosolon_s1 = true;
+        }
+
+        if !same_surf {
+            // OCCT L2825-2826: AFunc.SetQuadric(quad1); AFunc.Set(S2);
+            a_func.set_quadric(q1.clone());
+            a_func.set_surface(s2.clone());
+            // OCCT L2828: solrst.Perform(AFunc, D2, TolArc, TolTang);
+            let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
+            solrst.perform(&mut a_func, &mut d2, tol_arc, tol_tang, false);
+            if !solrst.is_done() {
+                return;
+            }
+            if solrst.all_arc_solution() && typs1 == typs2 {
+                all2 = true;
+            }
+            let nbpt = solrst.nb_points();
+            let nbseg = solrst.nb_segments();
+            for i in 1..=nbpt {
+                let a_pt = solrst.point(i).clone();
+                pnt2.push(a_pt);
+            }
+            for i in 1..=nbseg {
+                let a_segm = solrst.segment(i).clone();
+                edg2.push(a_segm);
+            }
+            nosolon_s2 = (nbpt == 0) && (nbseg == 0);
+            if nosolon_s2 && all2 {
+                // case of a face without restrictions.
+                all2 = false;
+            }
+        } else {
+            nosolon_s2 = true;
+        }
+
+        if same_surf || (all1 && all2) {
+            // faces "paralleles" parfaites
+            self.empt = false;
+            self.tgte = true;
+            self.slin.clear();
+            self.spnt.clear();
+
+            let ptreference;
+            match typs1 {
+                crate::topalgo::int_surf::quadric::QuadricType::Plane => {
+                    ptreference = q1.location();
+                }
+                crate::topalgo::int_surf::quadric::QuadricType::Cylinder => {
+                    ptreference = q1.value(0.0, 0.0);
+                }
+                crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+                    ptreference = q1.value(std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_4);
+                }
+                crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+                    ptreference = q1.value(0.0, 10.0);
+                }
+                crate::topalgo::int_surf::quadric::QuadricType::Torus => {
+                    ptreference = q1.value(0.0, 0.0);
+                }
+                _ => {
+                    ptreference = DVec3::ZERO;
+                }
+            }
+
+            self.oppo = q1.normale(ptreference).dot(q2.normale(ptreference)) < 0.0;
+            self.my_done = IntStatus::OK;
+            return;
+        }
+
+        if !nosolon_s1 || !nosolon_s2 {
+            self.empt = false;
+            // OCCT L2910: PutPointsOnLine(S1, S2, pnt1, slin, true, D1, quad1, quad2, multpoint, TolArc);
+            super::restriction::put_points_on_line(
+                s1, s2, &pnt1, &mut self.slin, true, &q1, &q2, multpoint, tol_arc,
+            );
+            // OCCT L2912: PutPointsOnLine(S1, S2, pnt2, slin, false, D2, quad2, quad1, multpoint, TolArc);
+            super::restriction::put_points_on_line(
+                s1, s2, &pnt2, &mut self.slin, false, &q2, &q1, multpoint, tol_arc,
+            );
+
+            if !edg1.is_empty() {
+                super::restriction::process_segments(&edg1, &mut self.slin, &q1, &q2, true, tol_arc);
+            }
+            if !edg2.is_empty() {
+                super::restriction::process_segments(&edg2, &mut self.slin, &q1, &q2, false, tol_arc);
+            }
+            if !edg1.is_empty() || !edg2.is_empty() {
+                // OCCT L2927: ProcessRLine(slin, quad1, quad2, TolArc, theIsReqToKeepRLine);
+                super::restriction::process_r_line(&mut self.slin, &q1, &q2, tol_arc, false);
+            }
+        } else {
+            self.empt = self.slin.is_empty() && self.spnt.is_empty();
+        }
 
         // OCCT L2936-2995: ComputeVertexParameters for each line
         for i in 0..self.slin.len() {
@@ -281,6 +428,12 @@ impl ImpImpIntersection {
                 is_purging_allowed: false,
                 wl_type: WLineType::Unknown,
                 vertices: Vec::new(),
+arc_on_s1: None,
+                arc_on_s2: None,
+                trans1: None,
+                trans2: None,
+                first_point: None,
+                last_point: None,
                 a_curve: None,
             });
         }
@@ -299,7 +452,8 @@ impl ImpImpIntersection {
         }
         match geo.type_inter() {
             AnaResultType::Same => {
-                self.empt = false;
+                                self.same_surf = true;
+self.empt = false;
                 self.tgte = true;
                 self.my_done = IntStatus::OK;
             }
@@ -317,6 +471,12 @@ impl ImpImpIntersection {
                         is_purging_allowed: false,
                         wl_type: WLineType::Unknown,
                         vertices: Vec::new(),
+arc_on_s1: None,
+                        arc_on_s2: None,
+                        trans1: None,
+                        trans2: None,
+                        first_point: None,
+                        last_point: None,
                         a_curve: None,
                     });
                 }
@@ -440,6 +600,12 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+arc_on_s1: None,
+                        arc_on_s2: None,
+                        trans1: None,
+                        trans2: None,
+                        first_point: None,
+                        last_point: None,
                         a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
@@ -461,6 +627,12 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                     a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
@@ -481,6 +653,12 @@ impl ImpImpIntersection {
                     curve: Curve3::Ellipse(e),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                     a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
@@ -517,6 +695,12 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+arc_on_s1: None,
+                        arc_on_s2: None,
+                        trans1: None,
+                        trans2: None,
+                        first_point: None,
+                        last_point: None,
                         a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
@@ -574,6 +758,12 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                     a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
@@ -606,6 +796,12 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+arc_on_s1: None,
+                        arc_on_s2: None,
+                        trans1: None,
+                        trans2: None,
+                        first_point: None,
+                        last_point: None,
                         a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
@@ -639,7 +835,8 @@ impl ImpImpIntersection {
         }
         match geo.type_inter() {
             AnaResultType::Same => {
-                self.empt = false;
+                                self.same_surf = true;
+self.empt = false;
                 self.tgte = true;
                 self.my_done = IntStatus::OK;
             }
@@ -658,6 +855,12 @@ impl ImpImpIntersection {
                         is_purging_allowed: false,
                         wl_type: WLineType::Unknown,
                         vertices: Vec::new(),
+arc_on_s1: None,
+                        arc_on_s2: None,
+                        trans1: None,
+                        trans2: None,
+                        first_point: None,
+                        last_point: None,
                         a_curve: None,
                     });
                 }
@@ -678,6 +881,12 @@ impl ImpImpIntersection {
                     is_purging_allowed: false,
                     wl_type: WLineType::Unknown,
                     vertices: Vec::new(),
+arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                     a_curve: None,
                 });
                 self.empt = false;
@@ -820,6 +1029,12 @@ impl ImpImpIntersection {
                 is_purging_allowed: false,
                 wl_type: WLineType::ImpImp,
                 vertices: Vec::new(),
+arc_on_s1: None,
+                arc_on_s2: None,
+                trans1: None,
+                trans2: None,
+                first_point: None,
+                last_point: None,
                 a_curve: Some(curve),
             });
         }
@@ -842,7 +1057,8 @@ impl ImpImpIntersection {
         }
         match geo.type_inter() {
             AnaResultType::Same => {
-                self.empt = false;
+                                self.same_surf = true;
+self.empt = false;
                 self.tgte = true;
                 self.my_done = IntStatus::OK;
             }
@@ -860,6 +1076,12 @@ impl ImpImpIntersection {
                     is_purging_allowed: false,
                     wl_type: WLineType::Unknown,
                     vertices: Vec::new(),
+arc_on_s1: None,
+                    arc_on_s2: None,
+                    trans1: None,
+                    trans2: None,
+                    first_point: None,
+                    last_point: None,
                     a_curve: None,
                 });
                 self.empt = false;
@@ -938,6 +1160,12 @@ impl ImpImpIntersection {
                 curve: c,
                 t_range,
                 vertices: Vec::new(),
+arc_on_s1: None,
+                arc_on_s2: None,
+                trans1: None,
+                trans2: None,
+                first_point: None,
+                last_point: None,
                 a_curve: None,
                 pcurve1: None,
                 pcurve2: None,
@@ -991,7 +1219,7 @@ fn process_bounds(
             let aligold_vertices = slin[j].a_curve.as_ref().map(|c| c.vertices.clone()).unwrap_or_default();
             let mut k = 0usize;
             while k < aligold_vertices.len() {
-                let mut ptsol = aligold_vertices[k];
+                let mut ptsol = aligold_vertices[k].clone();
                 if !*procf {
                     let d = ptf.distance(ptsol.pnt.p);
                     if d <= tol {
@@ -1001,7 +1229,7 @@ fn process_bounds(
                             ptsol.multiple = true;
                         }
                         ptsol.param_on_line = first;
-                        alig.vertices.push(ptsol);
+                        alig.vertices.push(ptsol.clone());
                         *procf = true;
                     }
                 }
@@ -1014,7 +1242,7 @@ fn process_bounds(
                             ptsol.multiple = true;
                         }
                         ptsol.param_on_line = last;
-                        alig.vertices.push(ptsol);
+                        alig.vertices.push(ptsol.clone());
                         *procl = true;
                     }
                 }
@@ -1045,6 +1273,10 @@ fn process_bounds(
             multiple: false,
             on_dom_s1: true,
             on_dom_s2: true,
+            arc_on_s1: None,
+            arc_on_s2: None,
+            param_on_arc1: 0.0,
+            param_on_arc2: 0.0,
         }
     };
 
@@ -1054,7 +1286,7 @@ fn process_bounds(
             ptsol.multiple = true;
             *multpoint = true;
             ptsol.param_on_line = first;
-            alig.vertices.push(ptsol);
+            alig.vertices.push(ptsol.clone());
             ptsol.param_on_line = last;
             alig.vertices.push(ptsol);
         } else {

@@ -906,7 +906,7 @@ impl IntAnaCurve {
         self.vertices.iter().map(|v| v.param_on_line).collect()
     }
     pub fn vertex_at(&self, i: usize) -> crate::bop::int_tools::int_patch::special_points::PatchPoint {
-        self.vertices[i]
+        self.vertices[i].clone()
     }
 
     /// OCCT IntAna_Curve::InternalUVValue (L279-374).
@@ -998,6 +998,83 @@ impl IntAnaCurve {
             }
         }
         out
+    }
+
+    /// OCCT IntAna_Curve::FindParameter (IntAna_Curve.cxx L434-531).
+    /// Projects P to the ALine, returning the list of parameters as a result
+    /// of the projection.
+    pub fn find_parameter(&self, p: DVec3) -> Vec<f64> {
+        const A_PI_PI: f64 = std::f64::consts::TAU;
+        const AN_EPS_ANG: f64 = 1.0e-8;
+        const INTERNAL_PRECISION: f64 = 1.0e-8;
+        let a_sq_tol_precision = rcad_kernel::precision::SQUARE_CONFUSION;
+
+        let mut a_theta = 0.0;
+        match self.surf_type {
+            IntAnaCurveType::Cylinder => {
+                // ElSLib::CylinderParameters(Ax3, RCyl, theP, aTheta, aZ).
+                let v = p - self.cyl_origin;
+                a_theta = v.y.atan2(v.x);
+                let _ = self.cyl_y;
+            }
+            IntAnaCurveType::Cone => {
+                let v = p - self.con_apex;
+                a_theta = v.y.atan2(v.x);
+            }
+            _ => return Vec::new(),
+        }
+        if !self.take_z_positive {
+            // OCCT: aTheta computed via ElSLib already accounts the frame; keep.
+        }
+
+        if !self.take_z_positive && (self.domain_inf > a_theta)
+            && ((self.domain_inf - a_theta) <= AN_EPS_ANG)
+        {
+            a_theta = self.domain_inf;
+        } else if self.take_z_positive && (a_theta > self.domain_sup)
+            && ((a_theta - self.domain_sup) <= AN_EPS_ANG)
+        {
+            a_theta = self.domain_sup;
+        }
+
+        if a_theta < self.domain_inf {
+            a_theta += A_PI_PI;
+        } else if a_theta > self.domain_sup {
+            a_theta -= A_PI_PI;
+        }
+
+        const A_MAX_PAR: usize = 5;
+        let mut a_params = [self.domain_inf, self.domain_sup, a_theta,
+                            if self.two_curves { self.domain_sup + self.domain_sup - a_theta } else { f64::MAX },
+                            if self.two_curves { self.domain_sup + self.domain_sup - self.domain_inf } else { f64::MAX }];
+        a_params[0..A_MAX_PAR - 1].sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut result = Vec::new();
+        for i in 0..A_MAX_PAR {
+            if a_params[i] > self.my_last_parameter {
+                break;
+            }
+            if a_params[i] < self.my_first_parameter {
+                continue;
+            }
+            if i > 0 && (a_params[i] - a_params[i - 1]) < rcad_kernel::precision::PCONFUSION {
+                continue;
+            }
+            let Some((u, v, _, _, _, _)) = self.internal_uv_value(a_params[i]) else { continue };
+            let a_p = self.internal_value(u, v);
+            let mut a_sq_tol;
+            if a_params[i] == a_theta
+                || (self.two_curves && a_params[i] == self.domain_sup + self.domain_sup - a_theta)
+            {
+                a_sq_tol = INTERNAL_PRECISION;
+            } else {
+                a_sq_tol = a_sq_tol_precision;
+            }
+            if a_p.distance_squared(p) < a_sq_tol {
+                result.push(a_params[i]);
+            }
+        }
+        result
     }
 
     /// OCCT IntAna_Curve::D1u (L397-431).

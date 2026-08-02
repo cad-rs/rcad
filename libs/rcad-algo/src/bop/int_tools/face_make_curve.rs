@@ -210,6 +210,7 @@ fn collect_face_boundary_vertices(
             v1,
             u2,
             v2,
+            ..Default::default()
         });
     };
     // Closed-surface UV domain edges walked as point polylines.
@@ -380,6 +381,7 @@ fn collect_wline_uv_crossings(
                     v1: v1o,
                     u2: u2o,
                     v2: v2o,
+                    ..Default::default()
                 });
             }
         }
