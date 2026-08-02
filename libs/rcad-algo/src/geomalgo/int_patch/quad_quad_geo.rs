@@ -728,13 +728,25 @@ impl QuadQuadGeo {
                 }
             }
         }
-        if self.typeres == AnaResultType::Ellipse && self.param1.abs() > 1.0E9 {
-            self.done = false;
-            return;
+        // OCCT L925-950: reject too-extreme ellipses/hyperbolas (fall back to
+        // the biparametric method).
+        if self.typeres == AnaResultType::Ellipse && self.nbint >= 1 {
+            if self.param1.abs() > 1.0E9 || self.param1bis.abs() > 1.0E9 {
+                self.done = false;
+                return;
+            }
         }
-        if self.typeres == AnaResultType::Hyperbola && self.param1.abs() > 2.0E6 {
-            self.done = false;
-            return;
+        if self.typeres == AnaResultType::Hyperbola && self.nbint >= 2 {
+            if self.param2.abs() > 2.0E6 || self.param2bis.abs() > 2.0E6 {
+                self.done = false;
+                return;
+            }
+        }
+        if self.typeres == AnaResultType::Hyperbola && self.nbint >= 1 {
+            if self.param1.abs() > 2.0E6 || self.param1bis.abs() > 2.0E6 {
+                self.done = false;
+                return;
+            }
         }
         self.done = true;
     }
