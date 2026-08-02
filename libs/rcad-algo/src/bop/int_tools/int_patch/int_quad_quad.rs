@@ -897,6 +897,24 @@ impl IntAnaCurve {
         [self.my_first_parameter, self.my_last_parameter]
     }
 
+    /// OCCT IntAna_Curve::SetDomain (IntAna_Curve.cxx) — restrict the curve to
+    /// [theFirst, theLast].
+    pub fn set_domain(&mut self, the_first: f64, the_last: f64) {
+        self.my_first_parameter = the_first;
+        self.my_last_parameter = the_last;
+    }
+
+    /// OCCT IntAna_Curve::IsFirstOpen (IntAna_Curve.hxx L89) — the domain is
+    /// bounded (firstbounded=true) by default in the IntXX flow.
+    pub fn is_first_open(&self) -> bool {
+        !self.my_first_parameter.is_finite()
+    }
+
+    /// OCCT IntAna_Curve::IsLastOpen (IntAna_Curve.hxx L92).
+    pub fn is_last_open(&self) -> bool {
+        !self.my_last_parameter.is_finite()
+    }
+
     // OCCT IntPatch_ALine vertex access (the ALine wraps this IntAna_Curve and
     // carries IntPatch_Point vertices added by ProcessBounds).
     pub fn has_vertices(&self) -> bool {

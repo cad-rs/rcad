@@ -1199,7 +1199,7 @@ fn quad_type_index(q: &Quadric) -> i32 {
 /// vertices.  When an endpoint coincides (within theTol) with a vertex of a
 /// previously stored ALine, that vertex is reused (marked multiple) instead of
 /// creating a new one.
-fn process_bounds(
+pub(crate) fn process_bounds(
     alig: &mut super::int_quad_quad::IntAnaCurve,
     slin: &[IntPatchLine],
     quad1: &Quadric,

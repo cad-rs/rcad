@@ -611,6 +611,172 @@ fn transition_from_scalar(qwe: f64) -> (TypeTrans, TypeTrans) {
     }
 }
 
+/// Reconstruct a Surface3 from a Quadric.
+fn quadric_to_surface3(quad: &Quadric) -> rcad_kernel::geom::Surface3 {
+    use crate::topalgo::int_surf::quadric::QuadricType;
+    match quad.type_quadric() {
+        QuadricType::Plane => rcad_kernel::geom::Surface3::Plane(quad.plane()),
+        QuadricType::Cylinder => rcad_kernel::geom::Surface3::Cylinder(quad.cylinder()),
+        QuadricType::Sphere => rcad_kernel::geom::Surface3::Sphere(quad.sphere()),
+        QuadricType::Cone => rcad_kernel::geom::Surface3::Cone(quad.cone()),
+        QuadricType::Torus => rcad_kernel::geom::Surface3::Torus(quad.torus()),
+        QuadricType::Other => rcad_kernel::geom::Surface3::Plane(quad.plane()),
+    }
+}
+
+/// Build an IntPatch_ALine (IntPatchLine with a_curve + transitions) from an
+/// IntAna_Curve.
+fn aline(
+    curvsol: super::int_quad_quad::IntAnaCurve,
+    tang: bool,
+    t1: TypeTrans,
+    t2: TypeTrans,
+) -> IntPatchLine {
+    let d = curvsol.domain();
+    let mut line = IntPatchLine::analytic(
+        IntPatchIType::Analytic,
+        Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        }),
+        [d[0], d[1]],
+    );
+    line.a_curve = Some(curvsol);
+    line.trans1 = Some(Transition::new_in_out(tang, t1));
+    line.trans2 = Some(Transition::new_in_out(tang, t2));
+    line
+}
+
+/// Shared NoGeometricSolution fallback (IntCySp L8263-8362, IntCyCo L8465-8593,
+/// IntCoCo L9022-9139, IntCoSp L9349-9461): run IntAna_IntQuadQuad; append its
+/// points to spnt and its curves as ALine (with transitions + ProcessBounds).
+#[allow(clippy::too_many_arguments)]
+fn int_quad_quad_fallback(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    explicit: &rcad_kernel::geom::Surface3,
+    other: &Quadric,
+    tol: f64,
+    empty: &mut bool,
+    multpoint: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+    use_explore_curve: bool,
+) -> bool {
+    let other_surf = quadric_to_surface3(other);
+    let Some(other_quad) = super::int_quad_quad::IntAnaQuadric::from_surface3(&other_surf) else {
+        return false;
+    };
+    let mut anaint = super::int_quad_quad::IntQuadQuad::new();
+    match explicit {
+        rcad_kernel::geom::Surface3::Cylinder(c) => {
+            anaint.perform_cylinder(c, &other_quad);
+        }
+        rcad_kernel::geom::Surface3::Cone(c) => {
+            anaint.perform_cone(c, &other_quad);
+        }
+        _ => return false,
+    }
+    if !anaint.is_done() {
+        return false;
+    }
+    if anaint.nb_points() == 0 && anaint.nb_curves() == 0 {
+        *empty = true;
+        return true;
+    }
+    // Points.
+    let nb_pnt = anaint.nb_points();
+    for i in 1..=nb_pnt {
+        let psol = anaint.point(i);
+        let (u1, v1) = quad1.parameters(psol);
+        let (u2, v2) = quad2.parameters(psol);
+        spnt.push(IntPatchPoint {
+            p1: psol,
+            p2: psol,
+            u1,
+            v1,
+            u2,
+            v2,
+            tolerance: tol,
+        });
+    }
+    // Curves.
+    let nb_curv = anaint.nb_curves();
+    for i in 0..nb_curv {
+        let mut curvsol = anaint.curve(i).unwrap().clone();
+        let d = curvsol.domain();
+        let (first, last) = (d[0], d[1]);
+        let firstp = !curvsol.is_first_open();
+        let lastp = !curvsol.is_last_open();
+        let ptf = if firstp { curvsol.value(first).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
+        let ptl = if lastp { curvsol.value(last).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
+        // Find a parameter where the tangent is valid.
+        let mut para = last;
+        let mut kount = 1;
+        let mut tgfound = false;
+        let mut ptvalid = DVec3::ZERO;
+        let mut tgvalid = DVec3::ZERO;
+        while !tgfound {
+            para = (1.123 * first + para) / 2.123;
+            match curvsol.d1u(para) {
+                Some((pv, tv)) => {
+                    ptvalid = pv;
+                    tgvalid = tv;
+                    tgfound = tv.length_squared() >= 1e-14;
+                }
+                None => {
+                    tgfound = false;
+                }
+            }
+            if !tgfound {
+                kount += 1;
+                tgfound = kount > 5;
+            }
+        }
+        let (trans1, trans2);
+        let mut kept = false;
+        if kount <= 5 {
+            let qwe = tgvalid.dot(quad2.normale(ptvalid).cross(quad1.normale(ptvalid)));
+            (trans1, trans2) = if qwe > 1.0e-9 {
+                (TypeTrans::Out, TypeTrans::In)
+            } else if qwe < -1.0e-9 {
+                (TypeTrans::In, TypeTrans::Out)
+            } else {
+                (TypeTrans::Undecided, TypeTrans::Undecided)
+            };
+            kept = true;
+        } else {
+            ptvalid = curvsol.value(para).unwrap_or(DVec3::ZERO);
+            (trans1, trans2) = (TypeTrans::Undecided, TypeTrans::Undecided);
+            kept = true;
+        }
+        if kept {
+            let mut alig = aline(curvsol.clone(), false, trans1, trans2);
+            let mut n_firstp = !firstp;
+            let mut n_lastp = !lastp;
+            if let Some(ac) = alig.a_curve.as_mut() {
+                super::imp_imp_intersection::process_bounds(
+                    ac,
+                    slin,
+                    quad1,
+                    quad2,
+                    &mut n_firstp,
+                    ptf,
+                    first,
+                    &mut n_lastp,
+                    ptl,
+                    last,
+                    multpoint,
+                    tol,
+                );
+            }
+            let _ = use_explore_curve;
+            slin.push(alig);
+        }
+    }
+    true
+}
+
 /// Add an IntPatch_Point (as PatchPoint vertex) to a GLine/ALine.
 fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint) {
     if line.line_type == IntPatchIType::Analytic {
