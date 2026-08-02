@@ -108,12 +108,13 @@ impl QuadQuadGeo {
 
     /// OCCT L254: InitTolerances
     pub fn init_tolerances(&mut self) {
-        self.my_epsilon_distance = 1e-10;
-        self.my_epsilon_angle_cone = 1e-12;
-        self.my_epsilon_mini_circle_radius = TOLERANCE_CLAMP_MIN;
-        self.my_epsilon_cylinder_delta_radius = 1e-10;
-        self.my_epsilon_cylinder_delta_distance = 1e-10;
-        self.my_epsilon_axes_para = 1e-10;
+        // OCCT IntAna_QuadQuadGeo::InitTolerances (IntAna_QuadQuadGeo.cxx L351-358).
+        self.my_epsilon_distance = 1.0e-14;
+        self.my_epsilon_angle_cone = rcad_kernel::precision::ANGULAR; // Precision::Angular()
+        self.my_epsilon_mini_circle_radius = 0.01 * rcad_kernel::CONFUSION; // 0.01 * Precision::Confusion()
+        self.my_epsilon_cylinder_delta_radius = 1.0e-13;
+        self.my_epsilon_cylinder_delta_distance = rcad_kernel::CONFUSION; // Precision::Confusion()
+        self.my_epsilon_axes_para = rcad_kernel::precision::ANGULAR; // Precision::Angular()
     }
 
     // ---- Accessors (OCCT L214-250) ----
@@ -777,7 +778,7 @@ impl QuadQuadGeo {
                 self.typeres = AnaResultType::Empty;
                 return;
             }
-            if (r1pr2 - dist) <= 1e-15 {
+            if (r1pr2 - dist) <= f64::MIN_POSITIVE {
                 self.typeres = AnaResultType::Line;
                 self.nbint = 1;
                 self.dir1 = dir_cyl;
@@ -1027,7 +1028,7 @@ impl QuadQuadGeo {
                 v_dir: ortho_pln.cross(any_perpendicular_axis(ortho_pln)).normalize_or_zero(),
             };
             let mut inter_quad_pln = QuadQuadGeo::new();
-            inter_quad_pln.perform_plane_cone(&Quadric::from_plane(&pln), c1, self.my_epsilon_angle_cone, tol);
+            inter_quad_pln.perform_plane_cone(&Quadric::from_plane(&pln), c1, tol, tol);
             if inter_quad_pln.is_done() {
                 match inter_quad_pln.type_inter() {
                     AnaResultType::Ellipse => {
