@@ -18,7 +18,7 @@
 
 use crate::bop::ds::DS;
 use crate::bop::int_tools::face_face::IntersectionCurve;
-use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WLinePnt};
+use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WLinePnt, WLineType};
 use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
@@ -637,21 +637,14 @@ fn collect_wline_uv_crossings(
         if let Some(prev_in_val) = prev_in {
             if in_now != prev_in_val {
                 // The curve crossed the face domain boundary between k-1 and k.
-                let t = (k as f64) / ((n - 1) as f64);
-                let mut p = wpts[k].p3d;
-                if k > 0 {
-                    let a = wpts[k - 1].p3d;
-                    let b = wpts[k].p3d;
-                    // midpoint as the crossing approximation
-                    p = (a + b) * 0.5;
-                }
-                let (u1o, v1o, u2o, v2o) = if is_face1 {
-                    let p3 = wpts[k].p3d;
-                    let (u2, v2) = surf_uv_other(&p3);
-                    (u, v, u2, v2)
-                } else {
-                    (wpts[k].u1, wpts[k].v1, u, v)
-                };
+                // OCCT WLine vertices carry integer point indices; rcad records
+                // the fractional index of the crossing (midpoint of points k-1/k).
+                let t = k as f64 - 0.5;
+                let a = wpts[k - 1];
+                let b = wpts[k];
+                let p = (a.p3d + b.p3d) * 0.5;
+                let (u1o, v1o) = ((a.u1 + b.u1) * 0.5, (a.v1 + b.v1) * 0.5);
+                let (u2o, v2o) = ((a.u2 + b.u2) * 0.5, (a.v2 + b.v2) * 0.5);
                 out.push(IntPatchVertex {
                     param_on_line: t,
                     p3d: p,
@@ -667,32 +660,41 @@ fn collect_wline_uv_crossings(
     }
 }
 
-/// Interpolate a WLine polyline at a normalized parameter in [0, 1].
+/// Interpolate a WLine polyline at a parameter in point-index space [0, n-1].
 fn wline_point_at(line: &IntPatchLine, param: f64) -> DVec3 {
+    wline_point(line, param).p3d
+}
+
+/// Interpolate a WLine polyline at a parameter in point-index space [0, n-1]
+/// and return the full point (3D + UV on both surfaces).
+fn wline_point(line: &IntPatchLine, param: f64) -> WLinePnt {
     let wpts = &line.wline_pnts;
     let n = wpts.len();
     if n == 0 {
-        return DVec3::ZERO;
+        return WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 };
     }
     if n == 1 {
-        return wpts[0].p3d;
+        return wpts[0];
     }
-    let x = param.clamp(0.0, 1.0) * (n - 1) as f64;
+    let x = param.clamp(0.0, (n - 1) as f64);
     let i = x.floor() as usize;
     let j = (i + 1).min(n - 1);
     let f = x - i as f64;
-    wpts[i].p3d + (wpts[j].p3d - wpts[i].p3d) * f
+    let a = &wpts[i];
+    let b = &wpts[j];
+    WLinePnt {
+        p3d: a.p3d + (b.p3d - a.p3d) * f,
+        u1: a.u1 + (b.u1 - a.u1) * f,
+        v1: a.v1 + (b.v1 - a.v1) * f,
+        u2: a.u2 + (b.u2 - a.u2) * f,
+        v2: a.v2 + (b.v2 - a.v2) * f,
+    }
 }
 
 /// Classify a WLine point on a surface using its precomputed UV.
 fn in_uv_rect_adjusted(surf: &Surface3, rect: [f64; 4], _p3d: DVec3, u: f64, v: f64) -> bool {
     let adj = adjust_periodic_uv(surf, DVec2::new(u, v), rect);
     in_uv_rect(adj, rect, 0.0)
-}
-
-/// UV of a 3D point on the "other" surface for the crossing vertex record.
-fn surf_uv_other(p: &DVec3) -> (f64, f64) {
-    (0.0, 0.0)
 }
 
 /// The 4 boundary edges of a plane face's UV rectangle, as 3D lines.  OCCT
@@ -736,6 +738,11 @@ fn line_constructor_parts(
     if line.line_type == IntPatchIType::Circle || line.line_type == IntPatchIType::Ellipse {
         return treat_circle_parts(surf1, uv1, surf2, uv2, _tol, line);
     }
+    // OCCT L152-328: the WLine has its own path (vertices carry integer point
+    // indices).
+    if line.is_wline() {
+        return line_constructor_wline_parts(surf1, uv1, surf2, uv2, line);
+    }
     // OCCT L118: constexpr double Tol = Precision::PConfusion() * 35.0;
     let a_tol = PCONFUSION * 35.0;
     let mut result: Vec<[f64; 2]> = Vec::new();
@@ -748,11 +755,7 @@ fn line_constructor_parts(
         if (firstp - lastp).abs() > PCONFUSION {
             intrvtested = true;
             let pmid = (firstp + lastp) * 0.5;
-            let p3d = if line.is_wline() {
-                wline_point_at(line, pmid)
-            } else {
-                line.curve.point_at(pmid)
-            };
+            let p3d = line.curve.point_at(pmid);
             if !p3d.is_finite() {
                 continue;
             }
@@ -767,6 +770,83 @@ fn line_constructor_parts(
         }
     }
     // OCCT L376-382: if no interval tested, keep the full range a priori.
+    if !intrvtested {
+        result.push(line.t_range);
+    }
+    result
+}
+
+/// OCCT GeomInt_LineConstructor WLine path (L152-328).  WLine vertices carry
+/// integer point indices; consecutive pairs are classified on the stored UVs.
+fn line_constructor_wline_parts(
+    surf1: &Surface3,
+    uv1: [f64; 4],
+    surf2: &Surface3,
+    uv2: [f64; 4],
+    line: &IntPatchLine,
+) -> Vec<[f64; 2]> {
+    let mut result: Vec<[f64; 2]> = Vec::new();
+    let nbvtx = line.vertices.len();
+    let mut intrvtested = false;
+    for i in 0..nbvtx.saturating_sub(1) {
+        let firstp = line.vertices[i].param_on_line;
+        let lastp = line.vertices[i + 1].param_on_line;
+        // OCCT L162: if (firstp != lastp).
+        if (firstp - lastp).abs() > PCONFUSION {
+            if (lastp - firstp) > 1.0 {
+                // OCCT L164-179: non-adjacent vertices — classify the midpoint
+                // polyline point (same-parameter UV on both surfaces).
+                intrvtested = true;
+                let pmid = (firstp + lastp) * 0.5;
+                let p = wline_point(line, pmid);
+                let in1 = in_uv_rect_adjusted(surf1, uv1, p.p3d, p.u1, p.v1);
+                if in1 {
+                    let in2 = in_uv_rect_adjusted(surf2, uv2, p.p3d, p.u2, p.v2);
+                    if in2 {
+                        result.push([firstp, lastp]);
+                    }
+                }
+            } else if line.wl_type == WLineType::ImpPrm {
+                // OCCT L183-225: the implicit-parametric intersector does not
+                // respect the quadric domain; classify the interpolated midpoint
+                // of the two endpoint points.
+                intrvtested = true;
+                let pf = wline_point(line, firstp);
+                let pl = wline_point(line, lastp);
+                let mu1 = 0.5 * (pf.u1 + pl.u1);
+                let mv1 = 0.5 * (pf.v1 + pl.v1);
+                let mu2 = 0.5 * (pf.u2 + pl.u2);
+                let mv2 = 0.5 * (pf.v2 + pl.v2);
+                let pmid = 0.5 * (pf.p3d + pl.p3d);
+                let in1 = in_uv_rect_adjusted(surf1, uv1, pmid, mu1, mv1);
+                if in1 {
+                    let in2 = in_uv_rect_adjusted(surf2, uv2, pmid, mu2, mv2);
+                    if in2 {
+                        result.push([firstp, lastp]);
+                    }
+                }
+            } else {
+                // OCCT L226-252: both endpoint points must be inside both domains.
+                let pf = wline_point(line, firstp);
+                let in1 = in_uv_rect_adjusted(surf1, uv1, pf.p3d, pf.u1, pf.v1);
+                if in1 {
+                    let in2 = in_uv_rect_adjusted(surf2, uv2, pf.p3d, pf.u2, pf.v2);
+                    if in2 {
+                        let pl = wline_point(line, lastp);
+                        let in3 = in_uv_rect_adjusted(surf1, uv1, pl.p3d, pl.u1, pl.v1);
+                        if in3 {
+                            let in4 = in_uv_rect_adjusted(surf2, uv2, pl.p3d, pl.u2, pl.v2);
+                            if in4 {
+                                result.push([firstp, lastp]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // OCCT L257-326: the bCond merging applies to Plane x (Extrusion/Revolution)
+    // faces only — not reachable in the analytic FF stage.
     if !intrvtested {
         result.push(line.t_range);
     }
