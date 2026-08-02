@@ -23,7 +23,8 @@ use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::geom::{
-    Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval,
+    BSplineCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane,
+    Surface3, SurfaceEval,
 };
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 
@@ -1052,14 +1053,16 @@ fn make_part_curve(
             }
         }
         IntPatchIType::Walking => {
-            // OCCT MakeCurve L1175-1739 (IntPatch_Walking): the WLine is split
-            // by LineConstructor parts; each part becomes one curve.  rcad keeps
-            // the sampled polyline in wline_pnts and emits one curve per part.
+            // OCCT MakeCurve L1175-1222 (IntPatch_Walking): each LineConstructor
+            // part becomes one curve built from the WLine polyline points
+            // (GeomInt_IntSS::MakeBSpline).  rcad builds a degree-1 BSpline
+            // (the polyline itself) over the part range.
             if lprm <= fprm + 1e-12 {
                 return None;
             }
+            let curve = wline_part_bspline(line, fprm, lprm).unwrap_or_else(|| curve.clone());
             Some(IntersectionCurve {
-                curve: curve.clone(),
+                curve,
                 t_range: [fprm, lprm],
                 pcurve1: None,
                 pcurve2: None,
@@ -1069,6 +1072,40 @@ fn make_part_curve(
         }
         _ => None,
     }
+}
+
+/// OCCT GeomInt_IntSS::MakeBSpline (GeomInt_IntSS.cxx) — build the 3D curve of
+/// a WLine part from the polyline points.  rcad emits a degree-1 (piecewise
+/// linear) BSpline through the points of the part, parameterized on the part
+/// range [fprm, lprm] (point-index space).
+fn wline_part_bspline(line: &IntPatchLine, fprm: f64, lprm: f64) -> Option<Curve3> {
+    let wpts = &line.wline_pnts;
+    let n = wpts.len();
+    if n < 2 {
+        return None;
+    }
+    let i0 = fprm.floor().max(0.0) as usize;
+    let i1 = lprm.ceil().min((n - 1) as f64) as usize;
+    if i1 <= i0 {
+        return None;
+    }
+    let ctrl: Vec<DVec3> = wpts[i0..=i1].iter().map(|p| p.p3d).collect();
+    let m = ctrl.len();
+    let mut knots = Vec::with_capacity(m + 2);
+    knots.push(fprm);
+    knots.push(fprm);
+    for j in 1..m - 1 {
+        knots.push(i0 as f64 + j as f64);
+    }
+    knots.push(lprm);
+    knots.push(lprm);
+    Some(Curve3::BSpline(BSplineCurve3 {
+        degree: 1,
+        knots,
+        control_points: ctrl,
+        weights: vec![],
+        is_periodic: false,
+    }))
 }
 
 /// OCCT GeomInt_LineConstructor::Parameters (L820-862) + Classify.  Analytic UV
