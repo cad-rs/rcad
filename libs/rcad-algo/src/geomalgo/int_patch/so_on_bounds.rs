@@ -1364,7 +1364,11 @@ pub fn curve_on_surface(
             let z = c.axis.normalize_or_zero();
             let x = rcad_kernel::geom::any_perpendicular(z).normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
-            let apex = c.apex_point();
+            // The rcad cone parameterization measures V from the reference
+            // circle at `self.apex` (ConicalSurface::point_at), so the 3D image
+            // of a V=const arc is centered at `self.apex + v*cos(half)*z`, NOT
+            // at the true apex point.
+            let apex = c.apex;
             let semi = c.half_angle_rad;
             let _ = y;
             if arc_along_u {
