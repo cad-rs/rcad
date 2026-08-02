@@ -700,81 +700,893 @@ fn int_quad_quad_fallback(
             tolerance: tol,
         });
     }
-    // Curves.
+    // Curves.  IntCyCo uses ExploreCurve to split each curve at the cone apex.
     let nb_curv = anaint.nb_curves();
     for i in 0..nb_curv {
-        let mut curvsol = anaint.curve(i).unwrap().clone();
-        let d = curvsol.domain();
-        let (first, last) = (d[0], d[1]);
-        let firstp = !curvsol.is_first_open();
-        let lastp = !curvsol.is_last_open();
-        let ptf = if firstp { curvsol.value(first).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
-        let ptl = if lastp { curvsol.value(last).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
-        // Find a parameter where the tangent is valid.
-        let mut para = last;
-        let mut kount = 1;
-        let mut tgfound = false;
-        let mut ptvalid = DVec3::ZERO;
-        let mut tgvalid = DVec3::ZERO;
-        while !tgfound {
-            para = (1.123 * first + para) / 2.123;
-            match curvsol.d1u(para) {
-                Some((pv, tv)) => {
-                    ptvalid = pv;
-                    tgvalid = tv;
-                    tgfound = tv.length_squared() >= 1e-14;
+        let base_curve = anaint.curve(i).unwrap().clone();
+        let mut curves: Vec<super::int_quad_quad::IntAnaCurve> = Vec::new();
+        if use_explore_curve {
+            let cone = if let rcad_kernel::geom::Surface3::Cone(c) = explicit {
+                *c
+            } else {
+                return false;
+            };
+            explore_curve(&cone, &base_curve, 10.0 * tol, &mut curves);
+        } else {
+            curves.push(base_curve);
+        }
+        for curvsol in curves {
+            let d = curvsol.domain();
+            let (first, last) = (d[0], d[1]);
+            let firstp = !curvsol.is_first_open();
+            let lastp = !curvsol.is_last_open();
+            let ptf = if firstp { curvsol.value(first).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
+            let ptl = if lastp { curvsol.value(last).unwrap_or(DVec3::ZERO) } else { DVec3::ZERO };
+            // Find a parameter where the tangent is valid.
+            let mut para = last;
+            let mut kount = 1;
+            let mut tgfound = false;
+            let mut ptvalid = DVec3::ZERO;
+            let mut tgvalid = DVec3::ZERO;
+            while !tgfound {
+                para = (1.123 * first + para) / 2.123;
+                match curvsol.d1u(para) {
+                    Some((pv, tv)) => {
+                        ptvalid = pv;
+                        tgvalid = tv;
+                        tgfound = tv.length_squared() >= 1e-14;
+                    }
+                    None => {
+                        tgfound = false;
+                    }
                 }
-                None => {
-                    tgfound = false;
+                if !tgfound {
+                    kount += 1;
+                    tgfound = kount > 5;
                 }
             }
-            if !tgfound {
-                kount += 1;
-                tgfound = kount > 5;
+            let (trans1, trans2);
+            let mut kept = false;
+            if kount <= 5 {
+                let qwe = tgvalid.dot(quad2.normale(ptvalid).cross(quad1.normale(ptvalid)));
+                (trans1, trans2) = if qwe > 1.0e-9 {
+                    (TypeTrans::Out, TypeTrans::In)
+                } else if qwe < -1.0e-9 {
+                    (TypeTrans::In, TypeTrans::Out)
+                } else {
+                    (TypeTrans::Undecided, TypeTrans::Undecided)
+                };
+                kept = true;
+            } else {
+                ptvalid = curvsol.value(para).unwrap_or(DVec3::ZERO);
+                (trans1, trans2) = (TypeTrans::Undecided, TypeTrans::Undecided);
+                kept = true;
+            }
+            if kept {
+                let mut alig = aline(curvsol.clone(), false, trans1, trans2);
+                let mut n_firstp = !firstp;
+                let mut n_lastp = !lastp;
+                if let Some(ac) = alig.a_curve.as_mut() {
+                    super::imp_imp_intersection::process_bounds(
+                        ac,
+                        slin,
+                        quad1,
+                        quad2,
+                        &mut n_firstp,
+                        ptf,
+                        first,
+                        &mut n_lastp,
+                        ptl,
+                        last,
+                        multpoint,
+                        tol,
+                    );
+                }
+                slin.push(alig);
             }
         }
-        let (trans1, trans2);
-        let mut kept = false;
-        if kount <= 5 {
-            let qwe = tgvalid.dot(quad2.normale(ptvalid).cross(quad1.normale(ptvalid)));
-            (trans1, trans2) = if qwe > 1.0e-9 {
+    }
+    true
+}
+
+/// OCCT IntSpSp (L9473-9554) — Sphere/Sphere.
+#[allow(clippy::too_many_arguments)]
+pub fn int_spsp(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol: f64,
+    empty: &mut bool,
+    same: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+) -> bool {
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_sphere_sphere(quad1, quad2, tol);
+    if !inter.is_done() {
+        return false;
+    }
+    let typint = inter.type_inter();
+    *empty = false;
+    *same = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *empty = true;
+        }
+        AnaResultType::Same => {
+            *same = true;
+        }
+        AnaResultType::Point => {
+            let psol = inter.point(1);
+            let (u1, v1) = quad1.parameters(psol);
+            let (u2, v2) = quad2.parameters(psol);
+            spnt.push(IntPatchPoint {
+                p1: psol,
+                p2: psol,
+                u1,
+                v1,
+                u2,
+                v2,
+                tolerance: tol,
+            });
+        }
+        AnaResultType::Circle => {
+            let cirsol = inter.circle();
+            let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+            let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+            let (t1, t2) = transition_from_scalar(qwe);
+            slin.push(gline_circle(cirsol, false, t1, t2));
+        }
+        _ => {
+            return false;
+        }
+    }
+    true
+}
+
+/// OCCT TreatResultTorus (L9648-9714) — shared torus result handling.
+fn treat_result_torus(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    inter: &QuadQuadGeo,
+    b_empty: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+) -> bool {
+    let b_ret = inter.is_done();
+    if !b_ret {
+        return b_ret;
+    }
+    let typint = inter.type_inter();
+    let nb_sol = inter.nb_solutions();
+    *b_empty = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *b_empty = true;
+        }
+        AnaResultType::Circle => {
+            for i in 1..=nb_sol {
+                let mut a_c = inter.circle_n(i as i32);
+                // OCCT: AdjustToSeam(Torus1, aC) when both quadrics are tori.
+                if quad1.type_quadric() == quad2.type_quadric() {
+                    ecl::adjust_to_seam_quadric(&mut a_c, quad1.axis_loc(), quad1.z_dir(), quad1.x_dir());
+                }
+                let (ptref, tgt) = ecl::circle_d1(&a_c, 0.0);
+                let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+                let (t1, t2) = transition_from_scalar(qwe);
+                slin.push(gline_circle(a_c, false, t1, t2));
+            }
+        }
+        _ => {
+            return false;
+        }
+    }
+    b_ret
+}
+
+/// OCCT IntCyTo (L9564-9578) — Cylinder/Torus (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_cyto(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol_tang: f64,
+    b_reversed: bool,
+    b_empty: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+) -> bool {
+    let (a_cyl, a_torus) = if b_reversed { (quad2, quad1) } else { (quad1, quad2) };
+    let _ = (a_cyl, a_torus);
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_cylinder_torus(quad1, quad2, tol_tang);
+    treat_result_torus(quad1, quad2, &inter, b_empty, slin)
+}
+
+/// OCCT IntCoTo (L9582-9596) — Cone/Torus (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_coto(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol_tang: f64,
+    b_reversed: bool,
+    b_empty: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+) -> bool {
+    let _ = (b_reversed, quad1, quad2);
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_cone_torus(quad1, quad2, tol_tang);
+    treat_result_torus(quad1, quad2, &inter, b_empty, slin)
+}
+
+/// OCCT IntSpTo (L9600-9614) — Sphere/Torus (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_spto(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol_tang: f64,
+    b_reversed: bool,
+    b_empty: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+) -> bool {
+    let _ = (b_reversed, quad1, quad2);
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_sphere_torus(quad1, quad2, tol_tang);
+    treat_result_torus(quad1, quad2, &inter, b_empty, slin)
+}
+
+/// OCCT IntToTo (L9618-9644) — Torus/Torus.
+#[allow(clippy::too_many_arguments)]
+pub fn int_toto(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol_tang: f64,
+    b_same_surf: &mut bool,
+    b_empty: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+) -> bool {
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_torus_torus(quad1, quad2, tol_tang);
+    let mut b_ret = inter.is_done();
+    if b_ret {
+        if inter.type_inter() == AnaResultType::Same {
+            *b_empty = false;
+            *b_same_surf = true;
+        } else {
+            b_ret = treat_result_torus(quad1, quad2, &inter, b_empty, slin);
+        }
+    }
+    b_ret
+}
+
+/// OCCT IntCySp (L8107-8370) — Cylinder/Sphere (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_cysp(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol: f64,
+    reversed: bool,
+    empty: &mut bool,
+    multpoint: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+) -> bool {
+    let (cy, sp) = if !reversed { (quad1, quad2) } else { (quad2, quad1) };
+
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_cylinder_sphere(cy, sp, tol);
+    if !inter.is_done() {
+        return false;
+    }
+    let typint = inter.type_inter();
+    let nb_sol = inter.nb_solutions();
+    *empty = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *empty = true;
+        }
+        AnaResultType::Point => {
+            let psol = inter.point(1);
+            let (u1, v1) = quad1.parameters(psol);
+            let (u2, v2) = quad2.parameters(psol);
+            spnt.push(IntPatchPoint {
+                p1: psol,
+                p2: psol,
+                u1,
+                v1,
+                u2,
+                v2,
+                tolerance: tol,
+            });
+        }
+        AnaResultType::Circle => {
+            let cirsol = inter.circle();
+            let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+            if nb_sol == 1 {
+                // Tangent circle: use Situation transitions.
+                let test_curvature = ptref - sp.sphere().center;
+                let (normcyl, normsp) = if !reversed {
+                    (quad1.normale(ptref), quad2.normale(ptref))
+                } else {
+                    (quad2.normale(ptref), quad1.normale(ptref))
+                };
+                let (situcyl, situsp) = if normcyl.dot(test_curvature) > 0.0 {
+                    let s = if normsp.dot(normcyl) > 0.0 { Situation::Inside } else { Situation::Outside };
+                    (s, Situation::Outside)
+                } else {
+                    let s = if normsp.dot(normcyl) > 0.0 { Situation::Outside } else { Situation::Inside };
+                    (s, Situation::Inside)
+                };
+                let glig = if !reversed {
+                    gline_circle_touch(cirsol, true, situcyl, situsp)
+                } else {
+                    gline_circle_touch(cirsol, true, situsp, situcyl)
+                };
+                slin.push(glig);
+            } else {
+                // Two circles: TypeTrans transitions.
+                let qwe1 = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+                let (t1, t2) = if qwe1 > 0.0 {
+                    (TypeTrans::Out, TypeTrans::In)
+                } else {
+                    (TypeTrans::In, TypeTrans::Out)
+                };
+                slin.push(gline_circle(cirsol, false, t1, t2));
+                let cirsol2 = inter.circle_n(2);
+                let (ptref2, tgt2) = ecl::circle_d1(&cirsol2, 0.0);
+                let qwe2 = tgt2.dot(quad2.normale(ptref2).cross(quad1.normale(ptref2)));
+                let (t1, t2) = transition_from_scalar_1e7(qwe2);
+                slin.push(gline_circle(cirsol2, false, t1, t2));
+            }
+        }
+        AnaResultType::NoGeometricSolution => {
+            // OCCT: IntAna_IntQuadQuad(Cy, Sp).  rcad: IntQuadQuad with the
+            // cylinder as the explicit surface, the other as the quadric.
+            return int_quad_quad_fallback(
+                quad1,
+                quad2,
+                &rcad_kernel::geom::Surface3::Cylinder(cy.cylinder()),
+                sp,
+                tol,
+                empty,
+                multpoint,
+                slin,
+                spnt,
+                false,
+            );
+        }
+        _ => {
+            return false;
+        }
+    }
+    true
+}
+
+/// OCCT IntCoSp (L9179-9470) — Cone/Sphere (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_cosp(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol: f64,
+    reversed: bool,
+    empty: &mut bool,
+    multpoint: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+) -> bool {
+    let (co, sp) = if !reversed { (quad1, quad2) } else { (quad2, quad1) };
+    let _ = (co, sp);
+
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_sphere_cone(sp, co, tol);
+    if !inter.is_done() {
+        return false;
+    }
+    let typint = inter.type_inter();
+    let nb_sol = inter.nb_solutions();
+    *empty = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *empty = true;
+        }
+        AnaResultType::Point => {
+            let apex = co.cone().apex_point();
+            let paramapex = ecl::line_parameter_of_axis(co.cone().apex, co.cone().axis_dir(), apex);
+            for i in 1..=nb_sol {
+                let ptcontact = inter.point(i as i32);
+                let param = ecl::line_parameter_of_axis(co.cone().apex, co.cone().axis_dir(), ptcontact);
+                let (u1, v1) = quad1.parameters(ptcontact);
+                let (u2, v2) = quad2.parameters(ptcontact);
+                if apex.distance(ptcontact) <= tol {
+                    spnt.push(IntPatchPoint {
+                        p1: ptcontact,
+                        p2: ptcontact,
+                        u1,
+                        v1,
+                        u2,
+                        v2,
+                        tolerance: tol,
+                    });
+                } else if param >= paramapex {
+                    spnt.push(IntPatchPoint {
+                        p1: ptcontact,
+                        p2: ptcontact,
+                        u1,
+                        v1,
+                        u2,
+                        v2,
+                        tolerance: tol,
+                    });
+                }
+            }
+        }
+        AnaResultType::Circle => {
+            for i in 1..=nb_sol {
+                let cirsol = inter.circle_n(i as i32);
+                let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+                let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+                let (t1, t2) = transition_from_scalar(qwe);
+                slin.push(gline_circle(cirsol, false, t1, t2));
+            }
+        }
+        AnaResultType::PointAndCircle => {
+            let apex = co.cone().apex_point();
+            let paramapex = ecl::line_parameter_of_axis(co.cone().apex, co.cone().axis_dir(), apex);
+            // The point is necessarily the apex.
+            let (u1, v1) = quad1.parameters(apex);
+            let (u2, v2) = quad2.parameters(apex);
+            spnt.push(IntPatchPoint {
+                p1: apex,
+                p2: apex,
+                u1,
+                v1,
+                u2,
+                v2,
+                tolerance: tol,
+            });
+            let mut cirsol = inter.circle();
+            let param = ecl::line_parameter_of_axis(co.cone().apex, co.cone().axis_dir(), cirsol.center);
+            let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+            let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+            let (t1, t2) = if param >= paramapex {
+                if qwe > rcad_kernel::precision::PCONFUSION {
+                    (TypeTrans::Out, TypeTrans::In)
+                } else if qwe < -rcad_kernel::precision::PCONFUSION {
+                    (TypeTrans::In, TypeTrans::Out)
+                } else {
+                    (TypeTrans::Undecided, TypeTrans::Undecided)
+                }
+            } else if qwe < -rcad_kernel::precision::PCONFUSION {
                 (TypeTrans::Out, TypeTrans::In)
-            } else if qwe < -1.0e-9 {
+            } else if qwe > rcad_kernel::precision::PCONFUSION {
                 (TypeTrans::In, TypeTrans::Out)
             } else {
                 (TypeTrans::Undecided, TypeTrans::Undecided)
             };
-            kept = true;
-        } else {
-            ptvalid = curvsol.value(para).unwrap_or(DVec3::ZERO);
-            (trans1, trans2) = (TypeTrans::Undecided, TypeTrans::Undecided);
-            kept = true;
+            slin.push(gline_circle(cirsol, false, t1, t2));
         }
-        if kept {
-            let mut alig = aline(curvsol.clone(), false, trans1, trans2);
-            let mut n_firstp = !firstp;
-            let mut n_lastp = !lastp;
-            if let Some(ac) = alig.a_curve.as_mut() {
-                super::imp_imp_intersection::process_bounds(
-                    ac,
-                    slin,
-                    quad1,
-                    quad2,
-                    &mut n_firstp,
-                    ptf,
-                    first,
-                    &mut n_lastp,
-                    ptl,
-                    last,
-                    multpoint,
-                    tol,
-                );
-            }
-            let _ = use_explore_curve;
-            slin.push(alig);
+        AnaResultType::NoGeometricSolution => {
+            return int_quad_quad_fallback(
+                quad1,
+                quad2,
+                &rcad_kernel::geom::Surface3::Cone(co.cone()),
+                sp,
+                tol,
+                empty,
+                multpoint,
+                slin,
+                spnt,
+                false,
+            );
+        }
+        _ => {
+            return false;
         }
     }
     true
+}
+
+/// OCCT IntCoCo (L8679-9175) — Cone/Cone.
+#[allow(clippy::too_many_arguments)]
+pub fn int_coco(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol: f64,
+    empty: &mut bool,
+    same: &mut bool,
+    multpoint: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+) -> bool {
+    let co1 = quad1.cone();
+    let co2 = quad2.cone();
+    let apex1 = co1.apex_point();
+    let apex2 = co2.apex_point();
+
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_cone_cone(quad1, quad2, tol);
+    if !inter.is_done() {
+        return false;
+    }
+    let typint = inter.type_inter();
+    let nb_sol = inter.nb_solutions();
+    *empty = false;
+    *same = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *empty = true;
+        }
+        AnaResultType::Same => {
+            *same = true;
+        }
+        AnaResultType::Line => {
+            let (mut trans1, mut trans2) = (TypeTrans::In, TypeTrans::Out);
+            if nb_sol == 1 {
+                // Tangency line.
+                let linsol = inter.line(1);
+                let para = ecl::line_parameter(&linsol, apex1);
+                let ptbid = ecl::line_value(&linsol, para + 5.0);
+                let (u1, v1) = quad1.parameters(apex1);
+                let (u2, v2) = quad2.parameters(apex1);
+                let mut a_ptsol = make_point(apex1, tol, false, quad1, quad2);
+                a_ptsol.param_on_line = para;
+                let (mut u1, mut v1, mut u2, mut v2) = (u1, v1, u2, v2);
+                let _ = (&mut u1, &mut v1, &mut u2, &mut v2);
+                let norm_c1 = quad1.normale(ptbid);
+                let norm_c2 = quad2.normale(ptbid);
+                let a_dot = norm_c1.dot(norm_c2);
+                let (mut situ_c1, mut situ_c2) = if a_dot < 0.0 {
+                    (Situation::Outside, Situation::Outside)
+                } else {
+                    // Use distance from ptbid to each cone axis.
+                    let a_l_ax1 = Line3 { origin: apex1, direction: co1.axis_dir() };
+                    let a_l_ax2 = Line3 { origin: apex2, direction: co2.axis_dir() };
+                    let a_r1 = point_line_distance(ptbid, &a_l_ax1);
+                    let a_r2 = point_line_distance(ptbid, &a_l_ax2);
+                    if a_r1 > a_r2 {
+                        (Situation::Outside, Situation::Inside)
+                    } else {
+                        (Situation::Inside, Situation::Outside)
+                    }
+                };
+                // 1
+                let mut glig = gline_line_touch(linsol, true, situ_c1, situ_c2);
+                add_vertex_int(&mut glig, a_ptsol.clone());
+                glig.first_point = Some(glig.vertices.len());
+                slin.push(glig);
+                // 2
+                let mut linsol_r = linsol;
+                linsol_r.direction = -linsol_r.direction;
+                let para_r = ecl::line_parameter(&linsol_r, apex1);
+                a_ptsol.param_on_line = para_r;
+                std::mem::swap(&mut situ_c1, &mut situ_c2);
+                let mut glig2 = gline_line_touch(linsol_r, true, situ_c2, situ_c1);
+                add_vertex_int(&mut glig2, a_ptsol.clone());
+                glig2.first_point = Some(glig2.vertices.len());
+                slin.push(glig2);
+            } else if nb_sol == 2 {
+                for i in 1..=2 {
+                    let linsol = inter.line(i as i32);
+                    let para = ecl::line_parameter(&linsol, apex1);
+                    let ptbid = ecl::line_value(&linsol, para + 5.0);
+                    let (u1, v1) = quad1.parameters(apex1);
+                    let (u2, v2) = quad2.parameters(apex1);
+                    let _ = (u1, v1, u2, v2);
+                    trans1 = TypeTrans::In;
+                    trans2 = TypeTrans::Out;
+                    if linsol.direction.dot(quad2.normale(ptbid).cross(quad1.normale(ptbid))) > 0.0 {
+                        trans1 = TypeTrans::Out;
+                        trans2 = TypeTrans::In;
+                    }
+                    *multpoint = true;
+                    let mut a_ptsol = make_point(apex1, tol, false, quad1, quad2);
+                    a_ptsol.param_on_line = para;
+                    a_ptsol.multiple = true;
+                    // 1,3
+                    let mut glig = gline_line(linsol, false, trans1, trans2);
+                    add_vertex_int(&mut glig, a_ptsol.clone());
+                    glig.first_point = Some(glig.vertices.len());
+                    slin.push(glig);
+                    // 2,4
+                    let mut linsol_r = linsol;
+                    linsol_r.direction = -linsol_r.direction;
+                    let para_r = ecl::line_parameter(&linsol_r, apex1);
+                    a_ptsol.param_on_line = para_r;
+                    let mut glig2 = gline_line(linsol_r, false, trans1, trans2);
+                    add_vertex_int(&mut glig2, a_ptsol.clone());
+                    glig2.first_point = Some(glig2.vertices.len());
+                    slin.push(glig2);
+                }
+            }
+        }
+        AnaResultType::Point => {
+            let paramapex1 = ecl::line_parameter_of_axis(co1.apex, co1.axis_dir(), apex1);
+            let paramapex2 = ecl::line_parameter_of_axis(co2.apex, co2.axis_dir(), apex2);
+            for i in 1..=nb_sol {
+                let ptcontact = inter.point(i as i32);
+                let param1 = ecl::line_parameter_of_axis(co1.apex, co1.axis_dir(), ptcontact);
+                let param2 = ecl::line_parameter_of_axis(co2.apex, co2.axis_dir(), ptcontact);
+                let (u1, v1) = quad1.parameters(ptcontact);
+                let (u2, v2) = quad2.parameters(ptcontact);
+                if apex1.distance(ptcontact) <= tol && apex2.distance(ptcontact) <= tol {
+                    spnt.push(IntPatchPoint {
+                        p1: ptcontact,
+                        p2: ptcontact,
+                        u1,
+                        v1,
+                        u2,
+                        v2,
+                        tolerance: tol,
+                    });
+                } else if param1 >= paramapex1 && param2 >= paramapex2 {
+                    spnt.push(IntPatchPoint {
+                        p1: ptcontact,
+                        p2: ptcontact,
+                        u1,
+                        v1,
+                        u2,
+                        v2,
+                        tolerance: tol,
+                    });
+                }
+            }
+        }
+        AnaResultType::Circle => {
+            for i in 1..=nb_sol {
+                let cirsol = inter.circle_n(i as i32);
+                let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+                let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+                let (t1, t2) = transition_from_scalar(qwe);
+                let mut glig = gline_circle(cirsol, false, t1, t2);
+                if inter.has_common_gen() {
+                    let a_p_char = inter.p_char();
+                    let (u1, v1) = quad1.parameters(a_p_char);
+                    let (u2, v2) = quad2.parameters(a_p_char);
+                    let mut a_ptsol = make_point(a_p_char, tol, false, quad1, quad2);
+                    let _ = (u1, v1, u2, v2);
+                    a_ptsol.param_on_line = 0.0;
+                    add_vertex_int(&mut glig, a_ptsol);
+                }
+                slin.push(glig);
+            }
+        }
+        AnaResultType::Ellipse => {
+            let elipsol = inter.ellipse();
+            let (ptref, tgt) = ecl::ellipse_d1(&elipsol, 0.0);
+            let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+            let (t1, t2) = transition_from_scalar(qwe);
+            let mut glig = gline_ellipse(elipsol, false, t1, t2);
+            if inter.has_common_gen() {
+                let a_p_char = inter.p_char();
+                let mut a_ptsol = make_point(a_p_char, tol, false, quad1, quad2);
+                a_ptsol.param_on_line = 0.0;
+                add_vertex_int(&mut glig, a_ptsol);
+            }
+            slin.push(glig);
+        }
+        AnaResultType::Hyperbola => {
+            for i in 1..=2 {
+                let hyprsol = inter.hyperbola_n(i as i32);
+                let tophypr = hyprsol.center + hyprsol.semi_major * hyprsol.major_dir.normalize_or_zero();
+                let major = hyprsol.major_dir.normalize_or_zero();
+                let normal = hyprsol.normal.normalize_or_zero();
+                let tgttop = normal.cross(major).normalize_or_zero();
+                let qwe = tgttop.dot(quad2.normale(tophypr).cross(quad1.normale(tophypr)));
+                let (t1, t2) = transition_from_scalar(qwe);
+                let mut glig = gline_hyperbola(hyprsol, false, t1, t2);
+                if inter.has_common_gen() {
+                    let a_p_char = inter.p_char();
+                    let mut a_ptsol = make_point(a_p_char, tol, false, quad1, quad2);
+                    a_ptsol.param_on_line = 0.0;
+                    add_vertex_int(&mut glig, a_ptsol);
+                }
+                slin.push(glig);
+            }
+        }
+        AnaResultType::Parabola => {
+            let parabsol = inter.parabola();
+            let tgt_orig = parabsol.normal.normalize_or_zero()
+                .cross(parabsol.axis_dir.normalize_or_zero())
+                .normalize_or_zero();
+            let ptran = tgt_orig
+                .dot(quad2.normale(parabsol.vertex).cross(quad1.normale(parabsol.vertex)));
+            let (t1, t2) = transition_from_scalar(ptran);
+            let mut glig = gline_parabola(parabsol, false, t1, t2);
+            if inter.has_common_gen() {
+                let a_p_char = inter.p_char();
+                let mut a_ptsol = make_point(a_p_char, tol, false, quad1, quad2);
+                a_ptsol.param_on_line = 0.0;
+                add_vertex_int(&mut glig, a_ptsol);
+            }
+            slin.push(glig);
+        }
+        AnaResultType::NoGeometricSolution => {
+            let ok = int_quad_quad_fallback(
+                quad1,
+                quad2,
+                &rcad_kernel::geom::Surface3::Cone(co1),
+                quad2,
+                tol,
+                empty,
+                multpoint,
+                slin,
+                spnt,
+                false,
+            );
+            if !ok {
+                return false;
+            }
+        }
+        _ => {
+            return false;
+        }
+    }
+
+    // OCCT L9147-9172: common generatrix through the apexes.
+    if inter.has_common_gen() {
+        let a_p_char = inter.p_char();
+        let linsol = Line3 {
+            origin: apex1,
+            direction: (apex2 - apex1).normalize_or_zero(),
+        };
+        let mut glig = gline_line(linsol, true, TypeTrans::Undecided, TypeTrans::Undecided);
+        let (u1, v1) = quad1.parameters(a_p_char);
+        let (u2, v2) = quad2.parameters(a_p_char);
+        let mut a_ptsol = make_point(a_p_char, tol, false, quad1, quad2);
+        let _ = (u1, v1, u2, v2);
+        let para = ecl::line_parameter(&linsol, a_p_char);
+        a_ptsol.param_on_line = para;
+        add_vertex_int(&mut glig, a_ptsol);
+        slin.push(glig);
+    }
+    true
+}
+
+/// OCCT: distance from a point to an infinite line (gce_MakeLin proximity).
+fn point_line_distance(p: DVec3, l: &Line3) -> f64 {
+    let d = p - l.origin;
+    let proj = d.dot(l.direction.normalize_or_zero());
+    (d - l.direction.normalize_or_zero() * proj).length()
+}
+
+/// OCCT IntCyCo (L8374-8602) — Cylinder/Cone (and reverse).
+#[allow(clippy::too_many_arguments)]
+pub fn int_cyco(
+    quad1: &Quadric,
+    quad2: &Quadric,
+    tol: f64,
+    reversed: bool,
+    empty: &mut bool,
+    multpoint: &mut bool,
+    slin: &mut Vec<IntPatchLine>,
+    spnt: &mut Vec<IntPatchPoint>,
+) -> bool {
+    let (cy, co) = if !reversed { (quad1, quad2) } else { (quad2, quad1) };
+    let _ = (cy, co);
+
+    let mut inter = QuadQuadGeo::new();
+    inter.perform_cylinder_cone(quad1, quad2, tol);
+    if !inter.is_done() {
+        return false;
+    }
+    let typint = inter.type_inter();
+    let nb_sol = inter.nb_solutions();
+    *empty = false;
+
+    match typint {
+        AnaResultType::Empty => {
+            *empty = true;
+        }
+        AnaResultType::Point => {
+            let psol = inter.point(1);
+            let (u1, v1) = quad1.parameters(psol);
+            let (u2, v2) = quad2.parameters(psol);
+            spnt.push(IntPatchPoint {
+                p1: psol,
+                p2: psol,
+                u1,
+                v1,
+                u2,
+                v2,
+                tolerance: tol,
+            });
+        }
+        AnaResultType::Circle => {
+            for j in 1..=2 {
+                let cirsol = inter.circle_n(j as i32);
+                let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
+                let qwe = tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref)));
+                let (t1, t2) = transition_from_scalar(qwe);
+                slin.push(gline_circle(cirsol, false, t1, t2));
+            }
+        }
+        AnaResultType::NoGeometricSolution => {
+            // OCCT L8465-8593: IntAna_IntQuadQuad(Cy, Co) with ExploreCurve
+            // splitting each curve at the cone apex.
+            return int_quad_quad_fallback(
+                quad1,
+                quad2,
+                &rcad_kernel::geom::Surface3::Cylinder(cy.cylinder()),
+                co,
+                tol,
+                empty,
+                multpoint,
+                slin,
+                spnt,
+                true,
+            );
+        }
+        _ => {
+            return false;
+        }
+    }
+    true
+}
+
+/// OCCT ExploreCurve (L8608-8675) — split theCrv at the cone apex points.
+fn explore_curve(
+    the_co: &rcad_kernel::geom::ConicalSurface,
+    the_crv: &super::int_quad_quad::IntAnaCurve,
+    the_tol: f64,
+    the_lc: &mut Vec<super::int_quad_quad::IntAnaCurve>,
+) -> bool {
+    let a_sq_tol = the_tol * the_tol;
+    let a_papx = the_co.apex_point();
+    let d0 = the_crv.domain();
+    let (mut a_t1, a_t2) = (d0[0], d0[1]);
+
+    the_lc.clear();
+    let a_l_params = the_crv.find_parameter(a_papx);
+    if a_l_params.is_empty() {
+        the_lc.push(the_crv.clone());
+        return false;
+    }
+
+    for &a_prm in &a_l_params {
+        let mut a_prm = a_prm;
+        if a_prm - a_t1 < rcad_kernel::precision::PCONFUSION {
+            continue;
+        }
+        let mut is_last = false;
+        if a_t2 - a_prm < rcad_kernel::precision::PCONFUSION {
+            a_prm = a_t2;
+            is_last = true;
+        }
+        let a_p = the_crv.value(a_prm).unwrap_or(DVec3::ZERO);
+        let a_sq_d = a_p.distance_squared(a_papx);
+        if a_sq_d < a_sq_tol {
+            let mut a_c1 = the_crv.clone();
+            a_c1.set_domain(a_t1, a_prm);
+            a_t1 = a_prm;
+            the_lc.push(a_c1);
+        }
+        if is_last {
+            break;
+        }
+    }
+
+    if the_lc.is_empty() {
+        the_lc.push(the_crv.clone());
+        return false;
+    }
+    if a_t2 - a_t1 > rcad_kernel::precision::PCONFUSION {
+        let mut a_c1 = the_crv.clone();
+        a_c1.set_domain(a_t1, a_t2);
+        the_lc.push(a_c1);
+    }
+    true
+}
+
+/// OCCT: qwe > 1e-7 -> Out/In, < -1e-7 -> In/Out, else Undecided (IntCySp L8243).
+fn transition_from_scalar_1e7(qwe: f64) -> (TypeTrans, TypeTrans) {
+    if qwe > 1.0e-7 {
+        (TypeTrans::Out, TypeTrans::In)
+    } else if qwe < -1.0e-7 {
+        (TypeTrans::In, TypeTrans::Out)
+    } else {
+        (TypeTrans::Undecided, TypeTrans::Undecided)
+    }
 }
 
 /// Add an IntPatch_Point (as PatchPoint vertex) to a GLine/ALine.
