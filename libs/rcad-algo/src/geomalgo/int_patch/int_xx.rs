@@ -1267,7 +1267,8 @@ pub fn int_coco(
                 linsol_r.direction = -linsol_r.direction;
                 let para_r = ecl::line_parameter(&linsol_r, apex1);
                 a_ptsol.param_on_line = para_r;
-                std::mem::swap(&mut situ_c1, &mut situ_c2);
+                // OCCT L8778-8785: the reversed tangency line carries the
+                // situations swapped (situC2, situC1).
                 let mut glig2 = gline_line_touch(linsol_r, true, situ_c2, situ_c1);
                 add_vertex_int(&mut glig2, a_ptsol.clone());
                 glig2.first_point = Some(glig2.vertices.len());
