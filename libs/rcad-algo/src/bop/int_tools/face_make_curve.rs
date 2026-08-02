@@ -52,10 +52,14 @@ pub fn make_curves(
             out.extend(make_restriction_curves(surf1, uv1, surf2, uv2, tol, &line));
             continue;
         }
-        // OCCT PutPointsOnLine: project the surface-boundary crossings onto the
-        // line -> IntPatch_Point vertices.  The boundary is the TopolTool domain
-        // (the CorrectPlaneBoundaries-enlarged UV rectangle for plane faces).
-        put_points_on_line(ds, f1, f2, surf1, uv1, surf2, uv2, tol, &mut line);
+        // OCCT MakeCurve uses the IntPatch_Point vertices already placed on the
+        // line by IntPatch_ImpImpIntersection::Perform (PutPointsOnLine walks the
+        // TopolTool boundary = the corrected FF UV rectangle).  For a WLine the
+        // vertices come from the walking process; rcad places them via the UV-rect
+        // crossings.  For GLine/ALine the vertices are kept as produced.
+        if line.is_wline() {
+            put_points_on_line(ds, f1, f2, surf1, uv1, surf2, uv2, tol, &mut line);
+        }
         // OCCT GeomInt_LineConstructor::Perform -> valid parameter intervals.
         let parts = line_constructor_parts(surf1, uv1, surf2, uv2, tol, &line);
         // OCCT MakeCurve L776-1846: one curve per part.
@@ -705,13 +709,14 @@ fn treat_circle_parts(
 ) -> Vec<[f64; 2]> {
     let two_pi = std::f64::consts::TAU;
     let curve = &line.curve;
-    // OCCT L679-681: RejectMicroCircle.
+    // OCCT GeomInt_LineConstructor::RejectMicroCircle (L895-915): reject when
+    // the radius is below the LineConstructor Tol (PConfusion() * 35.0).
     let radius = match curve {
         Curve3::Circle(c) => c.radius,
         Curve3::Ellipse(e) => e.major_radius,
         _ => 0.0,
     };
-    if radius > 0.0 && radius < CONFUSION {
+    if radius < PCONFUSION * 35.0 {
         return Vec::new();
     }
     // OCCT IntPatch_ImpImpIntersection L2997-3052: a Circle/Ellipse GLine

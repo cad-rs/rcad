@@ -6,7 +6,9 @@
 //! by converting to IntSurf_Quadric and dispatching to IntAna_QuadQuadGeo.
 
 use super::GeomAbsSurfaceType;
-use super::{AnaResultType, IntPatchLine, IntPatchPoint, IntPatchIType, QuadQuadGeo, WLineType};
+use super::{
+    AnaResultType, IntPatchIType, IntPatchLine, IntPatchPoint, IntPatchVertex, QuadQuadGeo, WLineType,
+};
 use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3};
@@ -106,9 +108,9 @@ impl ImpImpIntersection {
         self.same_surf = false;
 
         // OCCT L2529: isPostProcessingRequired = true
-        // OCCT L2535-2546: all1, all2, SameSurf, multpoint, nosolonS1, nosolonS2
-        //   edg1, edg2, pnt1, pnt2 — IntPatch_TheSOnBounds (needs TopolTool)
-        let _is_post_processing_required = true;
+        let mut is_post_processing_required = true;
+        // OCCT L2538: multpoint = false
+        let mut multpoint = false;
 
         // OCCT L2548-2556: SetQuad — convert Surface3 to Quadric + type index
         let Some(q1) = Quadric::from_surface3(s1) else {
@@ -155,11 +157,23 @@ impl ImpImpIntersection {
                 b_empty = self.empt;
             }
             // OCCT L2596-2604: case 13/31 Plane/Cone
-            13 | 31 => self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            13 | 31 => {
+                self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse);
+                // OCCT L2602: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2606-2614: case 14/41 Plane/Sphere
-            14 | 41 => self.int_psp(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            14 | 41 => {
+                self.int_psp(&q1, &q2, TOL_ANG, tol_tang, b_reverse);
+                // OCCT L2612: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2616-2624: case 15/51 Plane/Torus
-            15 | 51 => self.int_pto(&q1, &q2, tol_tang, b_reverse),
+            15 | 51 => {
+                self.int_pto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2622: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2626-2677: case 22 Cylinder/Cylinder (aBox1,aBox2,a2DTol)
             22 => {
                 // OCCT L2649-2652: a2DTol = min(1e-4, min(S1->UResolution(TolTang),
@@ -167,26 +181,69 @@ impl ImpImpIntersection {
                 let a_2d_tol = 1.0e-4_f64
                     .min(rcad_kernel::topo::topods::u_resolution_for_surface(s1, tol_tang))
                     .min(rcad_kernel::topo::topods::u_resolution_for_surface(s2, tol_tang));
-                self.int_cycy(&q1, &q2, tol_tang, uv1, uv2, a_2d_tol);
+                // OCCT L2657-2658: myDone = IntCyCy(...); if Fail return.
+                self.int_cycy(&q1, &q2, tol_tang, uv1, uv2, a_2d_tol, &mut multpoint);
+                if self.my_done == IntStatus::Fail {
+                    return;
+                }
+                // OCCT L2665: bEmpty = empt
+                b_empty = self.empt;
+                // OCCT L2666-2674: no geometric solution (numeric WLine path)
+                // -> skip the post-processing.
+                if !self.slin.is_empty() && self.slin[0].is_wline() {
+                    is_post_processing_required = false;
+                }
             }
             // OCCT L2679-2687: case 23/32 Cylinder/Cone
-            23 | 32 => self.int_cyco(&q1, &q2, s1, s2, tol_tang, b_reverse),
+            23 | 32 => {
+                self.int_cyco(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2685: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2689-2697: case 24/42 Cylinder/Sphere
-            24 | 42 => self.int_cysp(&q1, &q2, s1, s2, tol_tang, b_reverse),
+            24 | 42 => {
+                self.int_cysp(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2695: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2699-2707: case 25/52 Cylinder/Torus
-            25 | 52 => self.int_cyto(&q1, &q2, tol_tang, b_reverse),
+            25 | 52 => {
+                self.int_cyto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2705: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2709-2716: case 33 Cone/Cone
-            33 => self.int_coco(&q1, &q2, s1, s2, tol_tang),
+            33 => {
+                self.int_coco(&q1, &q2, s1, s2, tol_tang);
+                // OCCT L2714: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2718-2726: case 34/43 Cone/Sphere
-            34 | 43 => self.int_cosp(&q1, &q2, s1, s2, tol_tang, b_reverse),
+            34 | 43 => {
+                self.int_cosp(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2724: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2728-2735: case 35/53 Cone/Torus
             35 | 53 => self.int_coto(&q1, &q2, tol_tang, b_reverse),
             // OCCT L2737-2744: case 44 Sphere/Sphere
-            44 => self.int_spsp(&q1, &q2, tol_tang),
+            44 => {
+                self.int_spsp(&q1, &q2, tol_tang);
+                // OCCT L2742: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2746-2754: case 45/54 Sphere/Torus
-            45 | 54 => self.int_spto(&q1, &q2, tol_tang, b_reverse),
+            45 | 54 => {
+                self.int_spto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2752: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2756-2763: case 55 Torus/Torus
-            55 => self.int_toto(&q1, &q2, tol_tang),
+            55 => {
+                self.int_toto(&q1, &q2, tol_tang);
+                // OCCT L2761: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2765-2768: default throw ConstructionError
             _ => {
                 return;
@@ -202,10 +259,10 @@ impl ImpImpIntersection {
         }
 
         // OCCT L2782-2934: isPostProcessingRequired block
+        if is_post_processing_required {
         let same_surf = self.same_surf;
         let mut all1 = false;
         let mut all2 = false;
-        let mut multpoint = false;
         let mut nosolon_s1 = false;
         let mut nosolon_s2 = false;
         let mut edg1: Vec<super::so_on_bounds::Segment> = Vec::new();
@@ -339,12 +396,37 @@ impl ImpImpIntersection {
         } else {
             self.empt = self.slin.is_empty() && self.spnt.is_empty();
         }
+        }
 
-        // OCCT L2936-2995: ComputeVertexParameters for each line
-        for i in 0..self.slin.len() {
-            // OCCT L2976-2995: ComputeVertexParameters(TolArc) for GLine/ALine/RLine
-            //       Vertex parameters are computed in MakeCurve (upstream).
-            let _ = i;
+        // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine.
+        // Sorts the vertices by parameter on line and removes coincident
+        // duplicates (IntPatch_GLine::ComputeVertexParameters L421-).  RLine
+        // vertices keep their insertion order (the RLine method is a no-op);
+        // ALine lines are converted to WLine upstream.
+        for line in self.slin.iter_mut() {
+            let is_gline = matches!(
+                line.line_type,
+                IntPatchIType::Line
+                    | IntPatchIType::Circle
+                    | IntPatchIType::Ellipse
+                    | IntPatchIType::Parabola
+                    | IntPatchIType::Hyperbola
+            );
+            if !is_gline {
+                continue;
+            }
+            line.vertices
+                .sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
+            let a_tol_pc = 1000.0 * rcad_kernel::precision::PCONFUSION;
+            let mut dedup: Vec<IntPatchVertex> = Vec::with_capacity(line.vertices.len());
+            for v in std::mem::take(&mut line.vertices) {
+                if dedup.is_empty()
+                    || (v.param_on_line - dedup.last().unwrap().param_on_line).abs() > a_tol_pc
+                {
+                    dedup.push(v);
+                }
+            }
+            line.vertices = dedup;
         }
 
         // OCCT L2997-3040+: additional vertex placement for circles without vertices
@@ -795,8 +877,8 @@ arc_on_s1: None,
         uv1: [f64; 4],
         uv2: [f64; 4],
         tol_2d: f64,
+        multpoint: &mut bool,
     ) {
-        let mut multpoint = false;
         self.my_done = super::int_cycy::int_cycy(
             q1,
             q2,
@@ -806,7 +888,7 @@ arc_on_s1: None,
             uv2,
             &mut self.empt,
             &mut self.same_surf,
-            &mut multpoint,
+            multpoint,
             &mut self.slin,
             &mut self.spnt,
         );

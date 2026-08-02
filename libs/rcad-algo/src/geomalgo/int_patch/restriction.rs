@@ -424,8 +424,9 @@ fn elclib_hyperbola_parameter(h: &rcad_kernel::geom::Hyperbola3, _pt: DVec3) -> 
     h.default_domain()[0]
 }
 
-/// OCCT IntersectionWithAnArc (L...): intersects the ALine with the boundary
-/// arc in 2D (projection of the ALine on the quadric's parameter domain).
+/// OCCT IntersectionWithAnArc (L127-314): coarse parameter search over the
+/// ALine domain followed by a Newton iteration that matches the ALine UV
+/// against the boundary arc parameter.
 #[allow(clippy::too_many_arguments)]
 fn intersection_with_an_arc(
     psurf: &mut DVec3,
@@ -434,39 +435,147 @@ fn intersection_with_an_arc(
     the_arc: &Curve2d,
     the_parameter_on_arc: &mut f64,
     the_point_on_arc: &mut DVec3,
-    _quad_surf1: &Quadric,
-    _lower: f64,
-    _upper: f64,
+    quad_surf: &Quadric,
+    u0alin: f64,
+    u1alin: f64,
 ) -> bool {
-    // rcad: OCCT uses a 2D projection + IntAna_IntConicQuad of the ALine's
-    // pcurve against the restriction arc.  The ALine is represented only as a
-    // 3D curve in rcad (a_curve), so the analytic 2D intersection is replaced
-    // by a parameter search: evaluate the ALine over its domain and find the
-    // parameter whose 3D point is closest to the current point.
-    let d = alin.domain();
-    let (first, last) = (d[0], d[1]);
-    let n = 64usize;
-    let mut best_t = first;
-    let mut best_d = f64::MAX;
-    let mut t = first;
-    let step = (last - first) / (n as f64);
-    for _ in 0..=n {
-        if let Some(p3d) = alin.value(t) {
-            let dd = p3d.distance_squared(*psurf);
-            if dd < best_d {
-                best_d = dd;
-                best_t = t;
+    // OCCT L142: dtheta = (u1alin - u0alin) * 0.01.
+    let dtheta = (u1alin - u0alin) * 0.01;
+    // OCCT L143-147: du = 1e-9; if (du >= dtheta) du = dtheta / 2.
+    let mut du = 0.000000001;
+    if du >= dtheta {
+        du = dtheta / 2.0;
+    }
+    let mut distmin = f64::MAX;
+    let mut thetamin = 0.0;
+    let mut theparameteronarc = *the_parameter_on_arc;
+
+    // OCCT L153-162: coarse search of the point of the ALine closest to PSurf.
+    let mut _theta = u0alin + dtheta;
+    while _theta <= u1alin - dtheta {
+        let p = alin.value(_theta).unwrap_or(DVec3::ZERO);
+        let d = p.distance(*psurf);
+        if d < distmin {
+            thetamin = _theta;
+            distmin = d;
+        }
+        _theta += dtheta;
+    }
+
+    // OCCT L164-176: initial distance.
+    let mut bestpara = 0.0;
+    let mut besttheta = 0.0;
+    let mut bestdist = 0.0;
+    let mut distinit = 0.0;
+    {
+        let pp0 = alin.value(thetamin).unwrap_or(DVec3::ZERO);
+        let (ua0, va0) = quad_surf.parameters(pp0);
+        let p2d = the_arc.point_at(theparameteronarc);
+        let pa_pr = DVec2::new(ua0 - p2d.x, va0 - p2d.y);
+        distinit = pa_pr.length();
+    }
+    let mut theta = thetamin;
+    // OCCT L179-182.
+    let mut nbiter = 0;
+    let drmax = (the_arc.default_domain()[1] - the_arc.default_domain()[0]) * 0.05;
+    let damax = (u1alin - u0alin) * 0.05;
+    bestdist = f64::MAX;
+
+    loop {
+        let pp0 = alin.value(theta).unwrap_or(DVec3::ZERO);
+        let pp1 = alin.value(theta + du).unwrap_or(DVec3::ZERO);
+        let (ua0, va0) = quad_surf.parameters(pp0);
+        let (ua1, va1) = quad_surf.parameters(pp1);
+        let d1a = DVec2::new((ua1 - ua0) / du, (va1 - va0) / du);
+        let p2d = the_arc.point_at(theparameteronarc);
+        let d2d = the_arc.derivative_at(theparameteronarc);
+        let pa_pr = DVec2::new(ua0 - p2d.x, va0 - p2d.y);
+
+        let pbd = pa_pr.length();
+        if bestdist > pbd {
+            bestdist = pbd;
+            bestpara = theparameteronarc;
+            besttheta = theta;
+        }
+
+        let d1a = DVec2::new(-d1a.x, -d1a.y);
+        let d = d1a.x * d2d.y - d1a.y * d2d.x;
+        let mut da = (-pa_pr.x) * d2d.y - (-pa_pr.y) * d2d.x;
+        let mut dr = d1a.x * (-pa_pr.y) - d1a.y * (-pa_pr.x);
+        if d.abs() > 1e-15 {
+            da /= d;
+            dr /= d;
+        } else {
+            // OCCT L223-248: fallback when the Jacobian is null.
+            if pa_pr.x.abs() > pa_pr.y.abs() {
+                let mut xx = pa_pr.x;
+                xx *= 0.5;
+                if d1a.x != 0.0 {
+                    da = -xx / d1a.x;
+                }
+                if d2d.x != 0.0 {
+                    dr = -xx / d2d.x;
+                }
+            } else {
+                let mut yy = pa_pr.y;
+                yy *= 0.5;
+                if d1a.y != 0.0 {
+                    da = -yy / d1a.y;
+                }
+                if d2d.y != 0.0 {
+                    dr = -yy / d2d.y;
+                }
             }
         }
-        t += step;
+
+        // OCCT L253-268: clamp the increments.
+        if da < -damax {
+            da = -damax;
+        } else if da > damax {
+            da = damax;
+        }
+        if dr < -drmax {
+            dr = -drmax;
+        } else if dr > drmax {
+            dr = drmax;
+        }
+
+        // OCCT L270-279: converged.
+        if da.abs() < 1e-10 && dr.abs() < 1e-10 {
+            *para = theta;
+            *psurf = alin.value(*para).unwrap_or(DVec3::ZERO);
+            *the_parameter_on_arc = theparameteronarc;
+            *the_point_on_arc = alin.value(*para).unwrap_or(DVec3::ZERO);
+            return true;
+        }
+        // OCCT L282-299: step.
+        theta += da;
+        theparameteronarc += dr;
+        let arc_dom = the_arc.default_domain();
+        if theparameteronarc > arc_dom[1] {
+            theparameteronarc = arc_dom[1];
+        }
+        if theparameteronarc < arc_dom[0] {
+            theparameteronarc = arc_dom[0];
+        }
+        if theta < u0alin {
+            theta = u0alin;
+        }
+        if theta > u1alin - du {
+            theta = u1alin - du - du;
+        }
+        nbiter += 1;
+        if nbiter >= 20 {
+            break;
+        }
     }
-    *para = best_t;
-    if let Some(p3d) = alin.value(best_t) {
-        let p2d = the_arc.point_at(best_t);
-        *the_point_on_arc = p3d;
-        *the_parameter_on_arc = best_t;
-        *psurf = p3d;
-        let _ = p2d;
+
+    // OCCT L303-311: fall back to the best sample found.
+    if bestdist < distinit {
+        *para = besttheta;
+        *psurf = alin.value(*para).unwrap_or(DVec3::ZERO);
+        *the_parameter_on_arc = bestpara;
+        *the_point_on_arc = alin.value(*para).unwrap_or(DVec3::ZERO);
         return true;
     }
     false
@@ -636,10 +745,11 @@ fn multiple_point(
                                     {
                                         let oarc = otherpt.arc().clone();
                                         let oparam = otherpt.parameter();
-                                        let op2d = oarc.point_at(oparam);
+                                        // OCCT L868-869: Vtgrst uses the outer
+                                        // d1u/d1v (surface derivatives at the
+                                        // current point) with the other arc's d2d.
                                         let od2d = oarc.derivative_at(oparam);
-                                        let (_optbid, od1u, od1v) = quad_surf.d1(op2d.x, op2d.y);
-                                        let ov_tgrst = od2d.x * od1u + od2d.y * od1v;
+                                        let ov_tgrst = od2d.x * d1u + od2d.y * d1v;
                                         let mut otransline = Transition::new();
                                         let mut otransarc = Transition::new();
                                         if normale.length_squared() < 1e-16 {
@@ -696,23 +806,19 @@ fn point_on_second_dom(
     let currentpointonrst = &listpnt[index - 1];
     let mut retvalue = true;
     let nbpnt = listpnt.len();
-    let _the_type = lin.line_type;
-    let nbvtx = nb_vertex(lin);
-    let mut goon = false;
 
+    // OCCT L962-963, L1069-1076: nbvtx is re-read after each iteration because
+    // the k-loop may AddVertex to the same line.
     let mut jj = 1usize;
-    let mut found = false;
+    let mut nbvtx = nb_vertex(lin);
     while jj <= nbvtx {
         let mut intpt = vertex_of(lin, jj);
-        let on_dom_s2 = intpt.on_dom_s2;
-        if (!on_dom_s2) {
+        if !intpt.on_dom_s2 {
             if currentpointonrst.value().distance(intpt.p3d) <= intpt.tolerance {
+                // OCCT L977: Retvalue = false (a vertex of the second domain
+                // already matches; the caller must not place a new one).
                 retvalue = false;
-                if !currentpointonrst.is_new() {
-                    goon = true;
-                } else {
-                    goon = false;
-                }
+                let goon = !currentpointonrst.is_new();
                 let currentarc = currentpointonrst.arc().clone();
                 let currentparameter = currentpointonrst.parameter();
                 let p2d = currentarc.point_at(currentparameter);
@@ -729,10 +835,9 @@ fn point_on_second_dom(
                 }
                 intpt.set_arc(false, currentarc, currentparameter);
                 intpt.tolerance = the_toler;
-                let _ = (transline, transarc, goon, currentpointonrst);
+                let _ = (transline, transarc);
                 replace_vertex(lin, jj, intpt.clone());
                 done[index - 1] = 1;
-                found = true;
 
                 if goon {
                     for k in index..nbpnt {
@@ -747,10 +852,10 @@ fn point_on_second_dom(
                                 {
                                     let oarc = otherpt.arc().clone();
                                     let oparam = otherpt.parameter();
-                                    let op2d = oarc.point_at(oparam);
+                                    // OCCT L1030-1031: Vtgrst uses the outer
+                                    // d1u/d1v with the other arc's d2d.
                                     let od2d = oarc.derivative_at(oparam);
-                                    let (_optbid, od1u, od1v) = quad_surf.d1(op2d.x, op2d.y);
-                                    let ov_tgrst = od2d.x * od1u + od2d.y * od1v;
+                                    let ov_tgrst = od2d.x * d1u + od2d.y * d1v;
                                     let mut otransline = Transition::new();
                                     let mut otransarc = Transition::new();
                                     if normale.length_squared() < 1e-16 {
@@ -771,22 +876,17 @@ fn point_on_second_dom(
                                     let _ = (otransline, otransarc);
                                     add_vertex(lin, ointpt);
                                     done[k] = 1;
-                                    found = true;
                                 }
                             }
                         }
                     }
                 }
-                jj = nbvtx + 1;
             }
         }
-        if !found {
-            jj += 1;
-        }
+        jj += 1;
+        nbvtx = nb_vertex(lin);
     }
 
-    retvalue = true;
-    let _ = (done, index);
     retvalue
 }
 
@@ -891,7 +991,7 @@ pub fn put_points_on_line(
                         &mut a_l_params,
                         &mut v_tgt_int,
                         &mut linenumber,
-                        0,
+                        indiceline + 1,
                         &currentarc,
                         &mut param_on_arc,
                         &mut pointonarc,
@@ -960,6 +1060,55 @@ pub fn put_points_on_line(
                             }
 
                             done[i] = 1;
+
+                            // OCCT L666-712: the same solpnt is placed on the
+                            // other path points that share the current point's
+                            // domain vertex.
+                            if goon && !currentpointonrst.is_new() {
+                                let vtx = currentpointonrst.vertex();
+                                for k in (i + 1)..nbpnt {
+                                    if done[k] != 1 {
+                                        let otherpt = &listpnt[k];
+                                        if !otherpt.is_new() {
+                                            let vtxbis = otherpt.vertex();
+                                            if (vtxbis.u - vtx.u).abs()
+                                                <= rcad_kernel::precision::CONFUSION
+                                                && (vtxbis.v - vtx.v).abs()
+                                                    <= rcad_kernel::precision::CONFUSION
+                                            {
+                                                // OCCT L681-698: reuse solpnt, only
+                                                // the arc changes (d1u/d1v from the
+                                                // current point).
+                                                solpnt.set_tolerance(tolarc);
+                                                let karc = otherpt.arc().clone();
+                                                let kparam = otherpt.parameter();
+                                                let kd2d = karc.derivative_at(kparam);
+                                                let k_v_tgrst = kd2d.x * d1u + kd2d.y * d1v;
+                                                let mut ktransline = Transition::new();
+                                                let mut ktransarc = Transition::new();
+                                                if normale.length_squared() < 1e-16 {
+                                                    ktransline
+                                                        .set_value_in_out(true, TypeTrans::Undecided);
+                                                    ktransarc
+                                                        .set_value_in_out(true, TypeTrans::Undecided);
+                                                } else {
+                                                    make_transition(
+                                                        v_tgt_int,
+                                                        k_v_tgrst,
+                                                        normale,
+                                                        &mut ktransline,
+                                                        &mut ktransarc,
+                                                    );
+                                                }
+                                                let _ = (ktransline, ktransarc);
+                                                solpnt.set_arc(on_first, karc, kparam);
+                                                add_vertex(&mut slin[linenumber], solpnt.clone());
+                                                done[k] = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else {
                         done[i] = 1;
@@ -1257,7 +1406,10 @@ pub fn process_segments(
             let (u2, v2) = quad2.parameters(pstartf.value());
             ptvtx.set_parameters(u1, v1, u2, v2);
             ptvtx.set_parameter(paramf);
-            let _ = (ptvtx.clone(), paraml);
+            // OCCT L1853-1859: set the arc when the point is on a domain vertex.
+            if !pstartf.is_new() {
+                ptvtx.set_arc(on_first, pstartf.arc().clone(), pstartf.parameter());
+            }
             add_vertex(&mut rline, ptvtx.clone());
             rline.set_first_point(rline.vertices.len());
         }
@@ -1269,6 +1421,10 @@ pub fn process_segments(
             let (u2, v2) = quad2.parameters(pstartl.value());
             ptvtx.set_parameters(u1, v1, u2, v2);
             ptvtx.set_parameter(paraml);
+            // OCCT L1871-1877: set the arc when the point is on a domain vertex.
+            if !pstartl.is_new() {
+                ptvtx.set_arc(on_first, pstartl.arc().clone(), pstartl.parameter());
+            }
             add_vertex(&mut rline, ptvtx.clone());
             rline.set_last_point(rline.vertices.len());
         }
@@ -1276,7 +1432,10 @@ pub fn process_segments(
     }
 }
 
-/// OCCT SquareDistance (L1897-1931) — distance from a GLine to a point.
+/// OCCT SquareDistance (L1897-1931) — distance from a GLine to a point.  For
+/// the Line/Circle types the analytic quadric distance is used; for the other
+/// curve types (Ellipse/Parabola/Hyperbola) OCCT runs Extrema_ExtPC (rcad:
+/// base::extrema::ExtPC) over the curve's parameter range.
 fn square_distance_gline(line: &IntPatchLine, p: DVec3) -> f64 {
     match &line.curve {
         Curve3::Line(l) => {
@@ -1291,7 +1450,20 @@ fn square_distance_gline(line: &IntPatchLine, p: DVec3) -> f64 {
             let pp = c.center + radial.normalize_or_zero() * c.radius;
             pp.distance_squared(p)
         }
-        _ => f64::MAX,
+        _ => {
+            // OCCT IsRLineGood L1978-1983: anExtr is initialized with the
+            // GLine curve's FirstParameter/LastParameter.
+            let d = line.curve.default_domain();
+            let ext = rcad_kernel::base::extrema::ExtPC::new(p, &line.curve, 1e-7, d[0], d[1]);
+            if !ext.is_done() || ext.nb_ext() == 0 {
+                return f64::MAX;
+            }
+            let mut sq = ext.square_distance(1);
+            for i in 2..=ext.nb_ext() {
+                sq = sq.min(ext.square_distance(i));
+            }
+            sq
+        }
     }
 }
 
@@ -1325,14 +1497,33 @@ fn is_r_line_good(
         let a_pmid;
         if rline.is_arc_on_s1() {
             let an_ac2d = rline.arc_on_s1().unwrap();
-            let a_dom = an_ac2d.default_domain();
-            let (a_par_f, a_par_l) = (a_dom[0], a_dom[1]);
+            // OCCT uses the bounded arc parameters (anAC2d->FirstParameter()/
+            // LastParameter()); the rcad FF arcs are unbounded 2D lines, so the
+            // range is taken from the RLine first/last points instead.
+            let a_par_f = if rline.has_first_point() {
+                rline.first_point().parameter_on_line()
+            } else {
+                an_ac2d.default_domain()[0]
+            };
+            let a_par_l = if rline.has_last_point() {
+                rline.last_point().parameter_on_line()
+            } else {
+                an_ac2d.default_domain()[1]
+            };
             let a_p2d = an_ac2d.point_at(0.5 * (a_par_f + a_par_l));
             a_pmid = quad1.value(a_p2d.x, a_p2d.y);
         } else {
             let an_ac2d = rline.arc_on_s2().unwrap();
-            let a_dom = an_ac2d.default_domain();
-            let (a_par_f, a_par_l) = (a_dom[0], a_dom[1]);
+            let a_par_f = if rline.has_first_point() {
+                rline.first_point().parameter_on_line()
+            } else {
+                an_ac2d.default_domain()[0]
+            };
+            let a_par_l = if rline.has_last_point() {
+                rline.last_point().parameter_on_line()
+            } else {
+                an_ac2d.default_domain()[1]
+            };
             let a_p2d = an_ac2d.point_at(0.5 * (a_par_f + a_par_l));
             a_pmid = quad2.value(a_p2d.x, a_p2d.y);
         }
@@ -1433,7 +1624,8 @@ pub fn process_r_line(
                                     ptvtx.parameters_on_s2()
                                 };
                                 let p2d_input = DVec2::new(u, v);
-                                let (proj_ok, paramproj, p2d_proj) = project_2d(&arcref, p2d_input);
+                                let (proj_ok, paramproj, p2d_proj) =
+                                    project_2d(&arcref, p2d_input, paramf, paraml);
                                 if proj_ok {
                                     let ptproj = if on_first {
                                         quad1.value(p2d_proj.x, p2d_proj.y)
@@ -1561,34 +1753,25 @@ pub fn process_r_line(
 }
 
 /// OCCT IntPatch_HInterTool::Project (IntPatch_HInterTool.cxx L271-304) —
-/// projects a 2D point onto the arc (line here).
-fn project_2d(c: &Curve2d, p: DVec2) -> (bool, f64, DVec2) {
-    let eps_x = 1.0e-8;
-    let nbu = 20;
-    let tol = 1.0e-5;
-    let mut best_param = 0.0;
-    let mut best_pt = p;
-    let mut best_dist2 = f64::MAX;
-    // Uniform sampling over the arc domain (a line) + refine.
-    let d = c.default_domain();
-    let (t0, t1) = (d[0], d[1]);
-    if !t0.is_finite() || !t1.is_finite() {
+/// projects a 2D point onto the arc.  OCCT runs Extrema_EPCOfExtPC2d (a generic
+/// point-to-2D-curve extrema solver with Nbu=20, epsX=1e-8, Tol=1e-5) on the
+/// arc's bounded parameter range; rcad uses the ExtPC2d translation
+/// (Extrema_ExtPC2d) which returns the closest point on the arc over
+/// [u_inf, u_sup].
+fn project_2d(c: &Curve2d, p: DVec2, u_inf: f64, u_sup: f64) -> (bool, f64, DVec2) {
+    const TOL: f64 = 1.0e-5; // IntPatch_HInterTool::Project Tol
+    let ext = rcad_kernel::base::extrema::ExtPC2d::new(p, c, TOL, u_inf, u_sup);
+    if !ext.is_done() || ext.nb_ext() == 0 {
         return (false, 0.0, p);
     }
-    for i in 0..=nbu {
-        let t = t0 + (t1 - t0) * (i as f64 / nbu as f64);
-        let q = c.point_at(t);
-        let d2 = q.distance_squared(p);
-        if d2 < best_dist2 {
-            best_dist2 = d2;
-            best_param = t;
-            best_pt = q;
+    let mut indexmin = 1usize;
+    let mut dist2 = ext.square_distance(1);
+    for i in 2..=ext.nb_ext() {
+        if ext.square_distance(i) < dist2 {
+            indexmin = i;
+            dist2 = ext.square_distance(i);
         }
     }
-    let _ = (eps_x, tol);
-    if best_dist2 >= f64::MAX {
-        (false, 0.0, p)
-    } else {
-        (true, best_param, best_pt)
-    }
+    let pnt = ext.point(indexmin);
+    (true, pnt.param, pnt.point)
 }
