@@ -708,7 +708,12 @@ fn int_quad_quad_fallback(
         let base_curve = anaint.curve(i).unwrap().clone();
         let mut curves: Vec<super::int_quad_quad::IntAnaCurve> = Vec::new();
         if use_explore_curve {
-            let cone = if let rcad_kernel::geom::Surface3::Cone(c) = explicit {
+            // OCCT IntCyCo NoGeometricSolution (L8512): ExploreCurve(Co, aC, ...)
+            // splits at the CONE apex.  The cone is the other quadric here (the
+            // explicit surface may be the cylinder).
+            let cone = if let rcad_kernel::geom::Surface3::Cone(c) = other_surf {
+                c
+            } else if let rcad_kernel::geom::Surface3::Cone(c) = explicit {
                 *c
             } else {
                 return false;
