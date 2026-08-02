@@ -55,14 +55,9 @@ pub fn make_curves(
             out.extend(make_restriction_curves(surf1, uv1, surf2, uv2, tol, &line));
             continue;
         }
-        // OCCT MakeCurve uses the IntPatch_Point vertices already placed on the
-        // line by IntPatch_ImpImpIntersection::Perform (PutPointsOnLine walks the
-        // TopolTool boundary = the corrected FF UV rectangle).  For a WLine the
-        // vertices come from the walking process; rcad places them via the UV-rect
-        // crossings.  For GLine/ALine the vertices are kept as produced.
-        if line.is_wline() {
-            put_points_on_line(ds, f1, f2, surf1, uv1, surf2, uv2, tol, &mut line);
-        }
+        // OCCT IntTools_FaceFace::MakeCurve: the IntPatch line vertices (placed
+        // by IntPatch_ImpImpIntersection::Perform / the walking process) are used
+        // as-is; no additional UV-crossing placement is done for a WLine.
         // OCCT GeomInt_LineConstructor::Perform -> valid parameter intervals.
         let parts = line_constructor_parts(surf1, uv1, surf2, uv2, tol, &line);
         // OCCT MakeCurve L776-1846: one curve per part.
