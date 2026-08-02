@@ -27,6 +27,17 @@ pub fn find_knot_span(degree: usize, knots: &[f64], t: f64) -> usize {
 // BSplCLib — curve evaluation
 // ══════════════════════════════════════════════════════════════════════════
 
+/// OCCT BSplCLib: weight accessor — a NULL weight array (non-rational curve)
+/// is treated as all weights equal to 1.0.
+#[inline]
+fn wgt(weights: &[f64], i: usize) -> f64 {
+    if weights.is_empty() {
+        1.0
+    } else {
+        weights[i]
+    }
+}
+
 /// Cox-De Boor evaluation of a rational BSpline curve (3D).
 /// OCCT: BSplCLib::Eval.
 pub fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
@@ -37,8 +48,9 @@ pub fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], 
     let mut w = vec![0.0f64; degree + 1];
     for j in 0..=degree {
         let idx = k - degree + j;
-        r[j] = points[idx] * weights[idx];
-        w[j] = weights[idx];
+        let wgt_j = wgt(weights, idx);
+        r[j] = points[idx] * wgt_j;
+        w[j] = wgt_j;
     }
     for level in 1..=degree {
         for j in 0..=(degree - level) {
@@ -62,8 +74,9 @@ pub fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64
     let mut w = vec![0.0f64; degree + 1];
     for j in 0..=degree {
         let idx = k - degree + j;
-        r[j] = points[idx] * weights[idx];
-        w[j] = weights[idx];
+        let wgt_j = wgt(weights, idx);
+        r[j] = points[idx] * wgt_j;
+        w[j] = wgt_j;
     }
     for level in 1..=degree {
         for j in 0..=(degree - level) {
@@ -88,7 +101,7 @@ pub fn de_boor_homo(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f
     for j in 0..=degree {
         let idx = k - degree + j;
         let p = points[idx];
-        let w = weights[idx];
+        let w = wgt(weights, idx);
         r[j] = [p.x * w, p.y * w, p.z * w, w];
     }
     for level in 1..=degree {
@@ -113,7 +126,7 @@ pub fn de_boor_homo_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: 
     for j in 0..=degree {
         let idx = k - degree + j;
         let p = points[idx];
-        let w = weights[idx];
+        let w = wgt(weights, idx);
         r[j] = [p.x * w, p.y * w, w];
     }
     for level in 1..=degree {
@@ -144,8 +157,10 @@ pub fn bspline_tangent(degree: usize, knots: &[f64], points: &[DVec3], weights: 
             a_prime.push(DVec3::ZERO);
         } else {
             let s = p / denom;
-            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
-            w_prime[i] = s * (weights[i + 1] - weights[i]);
+            let w_im1 = wgt(weights, i + 1);
+            let w_i = wgt(weights, i);
+            a_prime.push(s * (w_im1 * points[i + 1] - w_i * points[i]));
+            w_prime[i] = s * (w_im1 - w_i);
         }
     }
     let deriv_knots = &knots[1..knots.len() - 1];
@@ -181,8 +196,10 @@ pub fn bspline_tangent_2d(degree: usize, knots: &[f64], points: &[DVec2], weight
             a_prime.push(DVec2::ZERO);
         } else {
             let s = p / denom;
-            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
-            w_prime[i] = s * (weights[i + 1] - weights[i]);
+            let w_im1 = wgt(weights, i + 1);
+            let w_i = wgt(weights, i);
+            a_prime.push(s * (w_im1 * points[i + 1] - w_i * points[i]));
+            w_prime[i] = s * (w_im1 - w_i);
         }
     }
     let deriv_knots = &knots[1..knots.len() - 1];

@@ -12,76 +12,71 @@ use glam::{DVec2, DVec3};
 use super::face_make_curve;
 use crate::geomalgo::int_patch::IntPatchLine;
 
-/// OCCT IntTools_FaceFace::CorrectPlaneBoundaries (L3126-3144) +
-/// CorrectSurfaceBoundaries (L2050-2150): the FF domain of a face is not its
-/// exact UV rectangle but a slightly enlarged one — a plane is expanded by 10%
-/// of each parameter range, a quadric by the tolerance in the non-periodic
-/// directions (periodic directions are clamped to the natural domain).  OCCT
-/// uses this enlarged domain for BOTH the IntPatch boundary-vertex collection
-/// (PutPointsOnLine walks the TopolTool boundary = the enlarged rectangle) and
-/// the LineConstructor domain classification.
-pub fn correct_ff_uv(surf: &Surface3, uv: [f64; 4], tol: f64) -> [f64; 4] {
+/// OCCT IntTools_FaceFace::CorrectPlaneBoundaries (IntTools_FaceFace.cxx L3093-3111):
+///   expand a plane UV rectangle by 10% of each parameter range.
+pub fn correct_plane_boundaries(uv: [f64; 4]) -> [f64; 4] {
     let mut out = uv;
-    match surf {
-        Surface3::Plane(_) => {
-            // OCCT CorrectPlaneBoundaries: dU = 0.1 * (aUmax - aUmin).
-            if out[0].is_finite() && out[1].is_finite() {
-                let du = 0.1 * (out[1] - out[0]);
-                out[0] -= du;
-                out[1] += du;
-            }
-            if out[2].is_finite() && out[3].is_finite() {
-                let dv = 0.1 * (out[3] - out[2]);
-                out[2] -= dv;
-                out[3] += dv;
-            }
+    if out[0].is_finite() && out[1].is_finite() {
+        let du = 0.1 * (out[1] - out[0]);
+        out[0] -= du;
+        out[1] += du;
+    }
+    if out[2].is_finite() && out[3].is_finite() {
+        let dv = 0.1 * (out[3] - out[2]);
+        out[2] -= dv;
+        out[3] += dv;
+    }
+    out
+}
+
+/// OCCT IntTools_FaceFace::CorrectSurfaceBoundaries (IntTools_FaceFace.cxx L2017-2150):
+///   enlarge a non-plane surface UV rectangle by the tolerance in the
+///   non-periodic directions (periodic directions are clamped to the natural
+///   domain).  A plane is not in the `enlarge` set, so this is a no-op for it.
+pub fn correct_surface_boundaries(surf: &Surface3, uv: [f64; 4], tol: f64) -> [f64; 4] {
+    use rcad_kernel::geom::SurfaceEval;
+    let mut out = uv;
+    let d = surf.default_domain();
+    let isuperiodic = surf.is_u_periodic();
+    let isvperiodic = surf.is_v_periodic();
+    // OCCT: enlarge for Bezier/BSpline/Extrusion/Revolution/Cylinder.
+    let enlarge = matches!(
+        surf,
+        Surface3::Cylinder(_)
+            | Surface3::BSpline(_)
+            | Surface3::Bezier(_)
+            | Surface3::LinearExtrusion(_)
+            | Surface3::Revolution(_)
+    );
+    let snap = |cur: f64, lo: f64, hi: f64| {
+        if cur.is_finite() && (cur - lo) > tol {
+            cur - tol
+        } else {
+            lo
         }
-        _ => {
-            use rcad_kernel::geom::SurfaceEval;
-            let d = surf.default_domain();
-            let isuperiodic = surf.is_u_periodic();
-            let isvperiodic = surf.is_v_periodic();
-            // OCCT: enlarge for Bezier/BSpline/Extrusion/Revolution/Cylinder.
-            let enlarge = matches!(
-                surf,
-                Surface3::Cylinder(_)
-                    | Surface3::BSpline(_)
-                    | Surface3::Bezier(_)
-                    | Surface3::LinearExtrusion(_)
-                    | Surface3::Revolution(_)
-            );
-            let snap = |cur: f64, lo: f64, hi: f64| {
-                if cur.is_finite() && (cur - lo) > tol {
-                    cur - tol
-                } else {
-                    lo
-                }
-            };
-            let snap_hi = |cur: f64, lo: f64, hi: f64| {
-                if cur.is_finite() && (hi - cur) > tol {
-                    cur + tol
-                } else {
-                    hi
-                }
-            };
-            if !isuperiodic && enlarge {
-                out[0] = snap(out[0], d[0], d[1]);
-                out[1] = snap_hi(out[1], d[0], d[1]);
-            }
-            if !isvperiodic && enlarge {
-                out[2] = snap(out[2], d[2], d[3]);
-                out[3] = snap_hi(out[3], d[2], d[3]);
-            }
-            // Periodic directions are clamped to the natural domain.
-            if isuperiodic {
-                out[0] = d[0];
-                out[1] = d[1];
-            }
-            if isvperiodic {
-                out[2] = d[2];
-                out[3] = d[3];
-            }
+    };
+    let snap_hi = |cur: f64, lo: f64, hi: f64| {
+        if cur.is_finite() && (hi - cur) > tol {
+            cur + tol
+        } else {
+            hi
         }
+    };
+    if !isuperiodic && enlarge {
+        out[0] = snap(out[0], d[0], d[1]);
+        out[1] = snap_hi(out[1], d[0], d[1]);
+    }
+    if !isvperiodic && enlarge {
+        out[2] = snap(out[2], d[2], d[3]);
+        out[3] = snap_hi(out[3], d[2], d[3]);
+    }
+    if isuperiodic {
+        out[0] = d[0];
+        out[1] = d[1];
+    }
+    if isvperiodic {
+        out[2] = d[2];
+        out[3] = d[3];
     }
     out
 }
@@ -94,6 +89,72 @@ pub struct IntersectionCurve {
     pub pcurve2: Option<Curve2d>,
     pub tolerance: f64,
     pub tang_tolerance: f64,
+}
+
+/// OCCT IntTools_Tools::IsDirsCoinside (IntTools_Tools.cxx L164-173): two unit
+/// direction vectors are coinside when the spherical distance of their points
+/// is below 2e-4 (parallel or anti-parallel).
+fn is_dirs_coinside(d1: DVec3, d2: DVec3) -> bool {
+    let p1 = d1;
+    let p2 = d2;
+    let d_lim = 0.0002f64;
+    let d = p1.distance(p2);
+    d < d_lim || (2.0 - d).abs() < d_lim
+}
+
+/// OCCT IntTools_Tools::RejectLines (IntTools_Tools.cxx L106-160): keep the
+/// first curve and the first curve whose direction is not coinside with it;
+/// drop the rest.  If any curve is not a line, keep all input curves.
+fn reject_lines(curves: &[IntersectionCurve]) -> Vec<IntersectionCurve> {
+    let mut a_s_out: Vec<IntersectionCurve> = Vec::new();
+    let mut a_d1 = DVec3::ZERO;
+    for (i, ic) in curves.iter().enumerate() {
+        let a_c3d = &ic.curve;
+        let a_d2 = match a_c3d {
+            Curve3::Line(l) => l.direction,
+            _ => {
+                // Not a line: keep all input curves unchanged.
+                return curves.to_vec();
+            }
+        };
+        if i == 0 {
+            a_s_out.push(ic.clone());
+            a_d1 = a_d2;
+            continue;
+        }
+        let b_flag = is_dirs_coinside(a_d1, a_d2);
+        if !b_flag {
+            a_s_out.push(ic.clone());
+            return a_s_out;
+        }
+    }
+    a_s_out
+}
+
+/// OCCT IntTools_FaceFace::PrepareLines3D (IntTools_FaceFace.cxx L1932-2013):
+///   post-process the produced curves.  With bToSplit == false (the PaveFiller
+///   path) only step 2 applies: for a Plane/Cone pair with exactly 4 line
+///   curves, IntTools_Tools::RejectLines drops the duplicated parallel lines.
+pub fn prepare_lines_3d(
+    s1: &Surface3,
+    s2: &Surface3,
+    curves: Vec<IntersectionCurve>,
+) -> Vec<IntersectionCurve> {
+    let is_pln_cone = matches!(
+        (s1, s2),
+        (Surface3::Plane(_), Surface3::Cone(_)) | (Surface3::Cone(_), Surface3::Plane(_))
+    );
+    if !is_pln_cone {
+        return curves;
+    }
+    let a_nb_curves = curves.len();
+    if a_nb_curves != 4 {
+        return curves;
+    }
+    if !matches!(curves[0].curve, Curve3::Line(_)) {
+        return curves;
+    }
+    reject_lines(&curves)
 }
 
 /// OCCT IntAna_ResultType (IntAna_QuadQuadGeo.hxx L31-42).
@@ -607,18 +668,38 @@ impl FaceFace {
         let tol = tol_f1 + tol_f2;
         let tol_tang = tol;
 
-        // OCCT loads the surface adaptors with corrected UV bounds ONLY for the
-        // non-plane-plane branches (plane-plane keeps the raw UV rectangle):
-        //   plane x quadric / quadric x plane: CorrectPlaneBoundaries on the
-        //     plane (10% expansion), CorrectSurfaceBoundaries on the quadric.
-        //   quadric x quadric: CorrectSurfaceBoundaries on both.
-        let is_pln_pln = matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_)));
-        let (uv1, uv2) = if is_pln_pln {
+        // OCCT L395-473: the surface adaptors are loaded with corrected UV
+        // bounds following a four-way branch:
+        //   plane x plane: raw UV rectangle (no correction)
+        //   plane x quadric (Cylinder/Cone/Torus): CorrectPlaneBoundaries on
+        //     the plane, CorrectSurfaceBoundaries on the quadric
+        //   quadric x plane: CorrectSurfaceBoundaries on the quadric,
+        //     CorrectPlaneBoundaries on the plane
+        //   anything else (incl. plane x sphere): CorrectSurfaceBoundaries on
+        //     both (a no-op for the plane)
+        let is_pln1 = matches!(&s1, Surface3::Plane(_));
+        let is_pln2 = matches!(&s2, Surface3::Plane(_));
+        let is_quad1 =
+            matches!(&s1, Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_));
+        let is_quad2 =
+            matches!(&s2, Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_));
+        let (uv1, uv2) = if is_pln1 && is_pln2 {
             (self.uv1, self.uv2)
+        } else if is_pln1 && is_quad2 {
+            (
+                correct_plane_boundaries(self.uv1),
+                correct_surface_boundaries(&s2, self.uv2, tol * 2.0),
+            )
+        } else if is_quad1 && is_pln2 {
+            (
+                correct_surface_boundaries(&s1, self.uv1, tol * 2.0),
+                correct_plane_boundaries(self.uv2),
+            )
         } else {
-            let c1 = correct_ff_uv(&s1, self.uv1, tol * 2.0);
-            let c2 = correct_ff_uv(&s2, self.uv2, tol * 2.0);
-            (c1, c2)
+            (
+                correct_surface_boundaries(&s1, self.uv1, tol * 2.0),
+                correct_surface_boundaries(&s2, self.uv2, tol * 2.0),
+            )
         };
 
         match (&s1, &s2) {
@@ -651,6 +732,9 @@ impl FaceFace {
                     tol,
                     &self.lines,
                 );
+                // OCCT BOPAlgo_PaveFiller_6.cxx L558:
+                // aFaceFace.PrepareLines3D(bSplitCurve) with bSplitCurve=false.
+                self.curves = prepare_lines_3d(&s1, &s2, std::mem::take(&mut self.curves));
                 self.done = true;
             }
         }

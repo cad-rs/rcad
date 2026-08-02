@@ -913,46 +913,67 @@ impl DS {
         &mut self.face_info_pool[self.shapes[i].reference as usize]
     }
     /// OCCT BOPDS_DS::UpdateFaceInfoIn (BOPDS_DS.cxx L773-791) + FaceInfoIn
-    /// (L811-833): rebuild the face's PaveBlocksIn/VerticesIn from its boundary
-    /// sub-shapes — for each boundary edge, add its pave blocks and their
-    /// endpoint vertices; for each boundary vertex, add its same-domain index.
+    /// (BOPDS_DS.cxx L837-890): rebuild the face's PaveBlocksIn/VerticesIn.
+    ///   step 1: pure internal (direct VERTEX) sub-shapes -> VerticesIn (SD)
+    ///   step 2: VF interferences containing the face -> VerticesIn (SD vertex)
+    ///   step 3: EF interferences containing the face -> VerticesIn (SD new
+    ///           vertex) or, without a new vertex, the common-block PaveBlock1
+    ///           -> PaveBlocksIn
     pub fn update_face_info_in(&mut self, the_index: usize) {
         if self.shapes[the_index].reference < 0 {
             return;
         }
-        let sub_shapes = self.shapes[the_index].sub_shapes.clone();
-        let mut pool_idx_marks: Vec<usize> = Vec::new();
+        let mut pb_marks: Vec<usize> = Vec::new();
         let mut vertex_marks: Vec<usize> = Vec::new();
+        // FaceInfoIn step 1: pure internal vertices on the face.
+        let sub_shapes = self.shapes[the_index].sub_shapes.clone();
         for &si in &sub_shapes {
             if si >= self.nb_shapes() {
                 continue;
             }
-            match self.shapes[si].shape_type {
-                ShapeType::Edge => {
-                    let pbs = self.edge_pave_blocks(si).to_vec();
-                    if !pbs.is_empty() && self.shapes[si].reference >= 0 {
-                        pool_idx_marks.push(self.shapes[si].reference as usize);
-                    }
-                    for pb in &pbs {
-                        let pbr = self.real_pave_block(pb);
-                        let (n_v1, n_v2) = { let r = pbr.0.read().unwrap(); r.indices() };
-                        vertex_marks.push(n_v1);
-                        vertex_marks.push(n_v2);
-                    }
+            if self.shapes[si].shape_type == ShapeType::Vertex {
+                let sd = self.get_same_domain_index(si as isize);
+                if sd >= 0 {
+                    vertex_marks.push(sd as usize);
                 }
-                ShapeType::Vertex => {
-                    let sd = self.get_same_domain_index(si as isize);
+            }
+        }
+        // FaceInfoIn step 2: Vertex-Face interferences.
+        for vf in &self.interf_vf {
+            if vf.face == the_index {
+                let sd = self.get_same_domain_index(vf.vertex as isize);
+                if sd >= 0 {
+                    vertex_marks.push(sd as usize);
+                }
+            }
+        }
+        // FaceInfoIn step 3: Edge-Face interferences.
+        for ef in &self.interf_ef {
+            if ef.face == the_index {
+                if ef.new_vertex != usize::MAX {
+                    let sd = self.get_same_domain_index(ef.new_vertex as isize);
                     if sd >= 0 {
                         vertex_marks.push(sd as usize);
                     }
+                } else {
+                    for pb in self.edge_pave_blocks(ef.edge) {
+                        if let Some(cb_idx) = self.common_block(pb) {
+                            if let Some(cb) = self.common_blocks.get(cb_idx) {
+                                if cb.faces().contains(&the_index) {
+                                    if let Some(pb1) = cb.pave_block1() {
+                                        pb_marks.push(pb1);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                _ => {}
             }
         }
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_in.clear();
         pfi.vertices_in.clear();
-        for idx in pool_idx_marks {
+        for idx in pb_marks {
             pfi.pave_blocks_in.insert(idx);
         }
         for v in vertex_marks {

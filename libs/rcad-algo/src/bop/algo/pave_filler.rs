@@ -2060,6 +2060,35 @@ impl PaveFiller {
     // ====================================================================
     // FF — OCCT BOPAlgo_PaveFiller_6.cxx L285-end
     // ====================================================================
+
+    /// OCCT BOPAlgo_PaveFiller::CheckPlanes (BOPAlgo_PaveFiller_6.cxx L3639-3675):
+    ///   returns true when the two plane faces share more than one boundary
+    ///   vertex (VerticesIn/VerticesOn), i.e. the planes are really interfering.
+    fn check_planes(&self, n_f1: usize, n_f2: usize) -> bool {
+        let a_fi1 = self.ds.face_info(n_f1);
+        let a_fi2 = self.ds.face_info(n_f2);
+        let a_mv_in1 = &a_fi1.vertices_in;
+        let a_mv_on1 = &a_fi1.vertices_on;
+        let mut i_cnt = 0usize;
+        let mut b_to_intersect = false;
+        for i in 0..2 {
+            if b_to_intersect {
+                break;
+            }
+            let a_mv2 = if i == 0 { &a_fi2.vertices_in } else { &a_fi2.vertices_on };
+            for &n_v2 in a_mv2 {
+                if a_mv_in1.contains(&n_v2) || a_mv_on1.contains(&n_v2) {
+                    i_cnt += 1;
+                    if i_cnt > 1 {
+                        b_to_intersect = true;
+                        break;
+                    }
+                }
+            }
+        }
+        b_to_intersect
+    }
+
     fn perform_ff(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
         // OCCT L285-290: myIterator->Initialize(FACE, FACE)
@@ -2068,12 +2097,48 @@ impl PaveFiller {
         } else {
             return;
         };
+
+        // OCCT L294-313: collect faces from the intersection pairs and the rest
+        // of the touched faces, then refresh the FaceInfo for all of them.
+        let mut a_mi_fence: indexmap::IndexSet<usize> = indexmap::IndexSet::new();
+        for &(n_f1, n_f2) in &pairs {
+            a_mi_fence.insert(n_f1);
+            a_mi_fence.insert(n_f2);
+        }
+        for i in 0..self.ds.nb_source_shapes() {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type == ShapeType::Face && a_si.has_reference() {
+                a_mi_fence.insert(i);
+            }
+        }
+        // myDS->UpdateFaceInfoOn(aMIFence); myDS->UpdateFaceInfoIn(aMIFence);
+        for &f in &a_mi_fence {
+            let _ = self.ds.change_face_info(f);
+            self.ds.update_face_info_on(f);
+            self.ds.update_face_info_in(f);
+        }
         if pairs.is_empty() { return; }
 
         let mut new_ff: Vec<InterferenceFF> = Vec::new();
         for &(i, j) in &pairs {
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
+
+            // OCCT L373-391: check if the planes are really interfering (share
+            // more than one boundary vertex); otherwise skip the pair.
+            if self.my_glue == GlueEnum::GlueOff {
+                if matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_))) {
+                    if !self.check_planes(i, j) {
+                        new_ff.push(InterferenceFF {
+                            f1: i, f2: j,
+                            curves: Vec::new(),
+                            points: Vec::new(),
+                            tangent_faces: false,
+                        });
+                        continue;
+                    }
+                }
+            }
             let uv1 = self.ds.face_actual_uv_bounds(i);
             let uv2 = self.ds.face_actual_uv_bounds(j);
             let mut ff = int_tools::face_face::FaceFace::new();
