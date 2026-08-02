@@ -138,7 +138,12 @@ impl ImpImpIntersection {
 
         // OCCT L2567-2769: switch(iTT)
         match i_tt {
-            11 => self.int_pp(&q1, &q2, tol_tang),
+            // OCCT L2569-2574: case 11 Plane/Plane: if (!IntPP(...)) return;
+            11 => {
+                if !self.int_pp(&q1, &q2, tol_tang) {
+                    return;
+                }
+            }
             // OCCT L2577-2594: case 12/21 Plane/Cylinder: H from surface bounds
             12 | 21 => {
                 // OCCT L2579-2586: H = VMax - VMin of the cylinder surface V domain
@@ -152,25 +157,37 @@ impl ImpImpIntersection {
                 } else {
                     v_max - v_min
                 };
-                self.int_pcy(&q1, &q2, TOL_ANG, tol_tang, b_reverse, h);
+                // OCCT L2588-2591: if (!IntPCy(...)) return;
+                if !self.int_pcy(&q1, &q2, TOL_ANG, tol_tang, b_reverse, h) {
+                    return;
+                }
                 // OCCT L2592: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2596-2604: case 13/31 Plane/Cone
             13 | 31 => {
-                self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse);
+                // OCCT L2598-2601: if (!IntPCo(...)) return;
+                if !self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse, &mut multpoint) {
+                    return;
+                }
                 // OCCT L2602: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2606-2614: case 14/41 Plane/Sphere
             14 | 41 => {
-                self.int_psp(&q1, &q2, TOL_ANG, tol_tang, b_reverse);
+                // OCCT L2608-2611: if (!IntPSp(...)) return;
+                if !self.int_psp(&q1, &q2, TOL_ANG, tol_tang, b_reverse) {
+                    return;
+                }
                 // OCCT L2612: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2616-2624: case 15/51 Plane/Torus
             15 | 51 => {
-                self.int_pto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2618-2621: if (!IntPTo(...)) return;
+                if !self.int_pto(&q1, &q2, tol_tang, b_reverse) {
+                    return;
+                }
                 // OCCT L2622: bEmpty = empt
                 b_empty = self.empt;
             }
@@ -196,51 +213,80 @@ impl ImpImpIntersection {
             }
             // OCCT L2679-2687: case 23/32 Cylinder/Cone
             23 | 32 => {
-                self.int_cyco(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2681-2684: if (!IntCyCo(...)) return;
+                if !self.int_cyco(&q1, &q2, tol_tang, b_reverse, &mut multpoint) {
+                    return;
+                }
                 // OCCT L2685: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2689-2697: case 24/42 Cylinder/Sphere
             24 | 42 => {
-                self.int_cysp(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2691-2694: if (!IntCySp(...)) return;
+                if !self.int_cysp(&q1, &q2, tol_tang, b_reverse, &mut multpoint) {
+                    return;
+                }
                 // OCCT L2695: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2699-2707: case 25/52 Cylinder/Torus
             25 | 52 => {
-                self.int_cyto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2701-2704: if (!IntCyTo(...)) return;
+                if !self.int_cyto(&q1, &q2, tol_tang, b_reverse) {
+                    return;
+                }
                 // OCCT L2705: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2709-2716: case 33 Cone/Cone
             33 => {
-                self.int_coco(&q1, &q2, s1, s2, tol_tang);
+                // OCCT L2710-2713: if (!IntCoCo(...)) return;
+                if !self.int_coco(&q1, &q2, tol_tang, &mut multpoint) {
+                    return;
+                }
                 // OCCT L2714: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2718-2726: case 34/43 Cone/Sphere
             34 | 43 => {
-                self.int_cosp(&q1, &q2, s1, s2, tol_tang, b_reverse);
+                // OCCT L2720-2723: if (!IntCoSp(...)) return;
+                if !self.int_cosp(&q1, &q2, tol_tang, b_reverse, &mut multpoint) {
+                    return;
+                }
                 // OCCT L2724: bEmpty = empt
                 b_empty = self.empt;
             }
-            // OCCT L2728-2735: case 35/53 Cone/Torus
-            35 | 53 => self.int_coto(&q1, &q2, tol_tang, b_reverse),
+            // OCCT L2728-2735: case 35/53 Cone/Torus (no bEmpty)
+            35 | 53 => {
+                // OCCT L2730-2733: if (!IntCoTo(...)) return;
+                if !self.int_coto(&q1, &q2, tol_tang, b_reverse) {
+                    return;
+                }
+            }
             // OCCT L2737-2744: case 44 Sphere/Sphere
             44 => {
-                self.int_spsp(&q1, &q2, tol_tang);
+                // OCCT L2738-2741: if (!IntSpSp(...)) return;
+                if !self.int_spsp(&q1, &q2, tol_tang) {
+                    return;
+                }
                 // OCCT L2742: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2746-2754: case 45/54 Sphere/Torus
             45 | 54 => {
-                self.int_spto(&q1, &q2, tol_tang, b_reverse);
+                // OCCT L2748-2751: if (!IntSpTo(...)) return;
+                if !self.int_spto(&q1, &q2, tol_tang, b_reverse) {
+                    return;
+                }
                 // OCCT L2752: bEmpty = empt
                 b_empty = self.empt;
             }
             // OCCT L2756-2763: case 55 Torus/Torus
             55 => {
-                self.int_toto(&q1, &q2, tol_tang);
+                // OCCT L2757-2760: if (!IntToTo(...)) return;
+                if !self.int_toto(&q1, &q2, tol_tang) {
+                    return;
+                }
                 // OCCT L2761: bEmpty = empt
                 b_empty = self.empt;
             }
@@ -433,122 +479,10 @@ impl ImpImpIntersection {
     }
 
     // =====================================================================
-    // Helper: run QuadQuadGeo and convert results to IntPatchLine
-    // =====================================================================
-    fn run_geo(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
-        let mut geo = QuadQuadGeo::new();
-        // Determine which perform method to call based on surface types
-        match (
-            super::geom_abs_of_quadric(q1.surface_type()),
-            super::geom_abs_of_quadric(q2.surface_type()),
-        ) {
-            (GeomAbsSurfaceType::Plane, GeomAbsSurfaceType::Plane) => {
-                geo.perform_plane_plane(q1, q2, 1e-8, tol)
-            }
-            (GeomAbsSurfaceType::Plane, GeomAbsSurfaceType::Cylinder)
-            | (GeomAbsSurfaceType::Cylinder, GeomAbsSurfaceType::Plane) => {
-                geo.perform_plane_cylinder(q1, q2, 1e-8, tol, 0.0)
-            }
-            (GeomAbsSurfaceType::Plane, GeomAbsSurfaceType::Sphere)
-            | (GeomAbsSurfaceType::Sphere, GeomAbsSurfaceType::Plane) => {
-                geo.perform_plane_sphere(q1, q2)
-            }
-            (GeomAbsSurfaceType::Plane, GeomAbsSurfaceType::Cone)
-            | (GeomAbsSurfaceType::Cone, GeomAbsSurfaceType::Plane) => {
-                geo.perform_plane_cone(q1, q2, 1e-8, tol)
-            }
-            (GeomAbsSurfaceType::Plane, GeomAbsSurfaceType::Torus)
-            | (GeomAbsSurfaceType::Torus, GeomAbsSurfaceType::Plane) => {
-                geo.perform_plane_torus(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cylinder, GeomAbsSurfaceType::Cylinder) => {
-                geo.perform_cylinder_cylinder(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cylinder, GeomAbsSurfaceType::Sphere)
-            | (GeomAbsSurfaceType::Sphere, GeomAbsSurfaceType::Cylinder) => {
-                geo.perform_cylinder_sphere(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cylinder, GeomAbsSurfaceType::Cone)
-            | (GeomAbsSurfaceType::Cone, GeomAbsSurfaceType::Cylinder) => {
-                geo.perform_cylinder_cone(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cylinder, GeomAbsSurfaceType::Torus)
-            | (GeomAbsSurfaceType::Torus, GeomAbsSurfaceType::Cylinder) => {
-                geo.perform_cylinder_torus(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Sphere, GeomAbsSurfaceType::Sphere) => {
-                geo.perform_sphere_sphere(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Sphere, GeomAbsSurfaceType::Cone)
-            | (GeomAbsSurfaceType::Cone, GeomAbsSurfaceType::Sphere) => {
-                geo.perform_sphere_cone(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Sphere, GeomAbsSurfaceType::Torus)
-            | (GeomAbsSurfaceType::Torus, GeomAbsSurfaceType::Sphere) => {
-                geo.perform_sphere_torus(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cone, GeomAbsSurfaceType::Cone) => {
-                geo.perform_cone_cone(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Cone, GeomAbsSurfaceType::Torus)
-            | (GeomAbsSurfaceType::Torus, GeomAbsSurfaceType::Cone) => {
-                geo.perform_cone_torus(q1, q2, tol)
-            }
-            (GeomAbsSurfaceType::Torus, GeomAbsSurfaceType::Torus) => {
-                geo.perform_torus_torus(q1, q2, tol)
-            }
-            _ => {}
-        }
-        if !geo.is_done() {
-            return;
-        }
-        self.empt = geo.type_inter() == AnaResultType::Empty;
-        self.tgte = false;
-        self.oppo = false;
-        // Convert curves
-        for c in geo.to_curves() {
-            let line_type = match &c {
-                Curve3::Line(_) => IntPatchIType::Line,
-                Curve3::Circle(_) => IntPatchIType::Circle,
-                Curve3::Ellipse(_) => IntPatchIType::Ellipse,
-                Curve3::Parabola(_) => IntPatchIType::Parabola,
-                Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
-                _ => IntPatchIType::Unknown,
-            };
-            let t_range = match &c {
-                Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
-                Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
-                _ => c.default_domain(),
-            };
-            self.slin.push(IntPatchLine {
-                line_type,
-                curve: c,
-                t_range,
-                pcurve1: None,
-                pcurve2: None,
-                tolerance: 1e-7,
-                tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(),
-                is_purging_allowed: false,
-                wl_type: WLineType::Unknown,
-                vertices: Vec::new(),
-arc_on_s1: None,
-                arc_on_s2: None,
-                trans1: None,
-                trans2: None,
-                first_point: None,
-                last_point: None,
-                a_curve: None,
-            });
-        }
-        self.my_done = IntStatus::OK;
-    }
-
-    // =====================================================================
-    // 15 IntXX() functions — each calls QuadQuadGeo then post-processes
+    // 15 IntXX() functions — each delegates to the int_xx.rs 1:1 translation
     // =====================================================================
 
-    fn int_pp(&mut self, q1: &Quadric, q2: &Quadric, tol_tang: f64) {
+    fn int_pp(&mut self, q1: &Quadric, q2: &Quadric, tol_tang: f64) -> bool {
         // OCCT L2570: if (!IntPP(quad1, quad2, Tolang, TolTang, SameSurf, slin))
         // return;  IntPP has no Empty out-param (plane-plane) — empt keeps its
         // initial value and is refined by the SameSurf / SOnBounds blocks.
@@ -561,9 +495,10 @@ arc_on_s1: None,
             &mut self.slin,
         );
         if !done {
-            return;
+            return false;
         }
         self.my_done = IntStatus::OK;
+        true
     }
 
     // OCCT L3157-3345: IntPCy — Plane/Cylinder intersection.
@@ -578,7 +513,7 @@ arc_on_s1: None,
         tol: f64,
         b_reverse: bool,
         h: f64,
-    ) {
+    ) -> bool {
         // OCCT L2588: if (!IntPCy(quad1, quad2, Tolang, TolTang, bReverse,
         // empt, slin, H)) return;
         let done = super::int_xx::int_pcy(
@@ -592,278 +527,88 @@ arc_on_s1: None,
             h,
         );
         if !done {
-            return;
+            return false;
         }
         self.my_done = IntStatus::OK;
+        true
     }
 
-    // OCCT L3446-3706: IntPCo — Plane/Cone intersection
-    //       rcad IntPatchLine has no transition fields; transitions dropped.
-    fn int_pco(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (plane, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_plane_cone(plane, cone, tol_ang, tol);
-        if !geo.is_done() {
-            return;
+    // OCCT L3446-3706: IntPCo — Plane/Cone intersection.  Delegates to the 1:1
+    // translation (int_xx.rs) which handles the apex tangent line, the two-line
+    // transitions (Multpoint=true) and the Empty/OK flags exactly as OCCT.
+    fn int_pco(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol_ang: f64,
+        tol: f64,
+        b_reverse: bool,
+        multpoint: &mut bool,
+    ) -> bool {
+        // OCCT L2598: if (!IntPCo(...)) return;
+        let done = super::int_xx::int_pco(
+            q1,
+            q2,
+            tol_ang,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
         }
-        let typint = geo.type_inter();
-        let _nb_sol = geo.nb_solutions();
-        self.empt = false;
-
-        // OCCT L3489-3701: switch(typint)
-        match typint {
-            AnaResultType::Point => {
-                // OCCT L3491-3501: IntAna_Point → spnt
-                let psol = geo.point(1);
-                let ptsol = IntPatchPoint {
-                    p1: psol,
-                    p2: psol,
-                    u1: 0.0,
-                    v1: 0.0,
-                    u2: 0.0,
-                    v2: 0.0,
-                    tolerance: tol,
-                };
-                self.spnt.push(ptsol);
-                // OCCT L3499: spnt.Append(ptsol)
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Line => {
-                // OCCT L3503-3677: IntAna_Line
-                //       Falls back to post_process_geo for line conversion.
-                for c in geo.to_curves() {
-                    let line_type = IntPatchIType::Line;
-                    let t_range = [f64::NEG_INFINITY, f64::INFINITY];
-                    self.slin.push(IntPatchLine {
-                        line_type,
-                        curve: c,
-                        t_range,
-                        vertices: Vec::new(),
-arc_on_s1: None,
-                        arc_on_s2: None,
-                        trans1: None,
-                        trans2: None,
-                        first_point: None,
-                        last_point: None,
-                        a_curve: None,
-                        pcurve1: None,
-                        pcurve2: None,
-                        tolerance: 1e-7,
-                        tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(),
-                        is_purging_allowed: false,
-                        wl_type: WLineType::Unknown,
-                    });
-                }
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Circle => {
-                // OCCT L3680-3701: IntAna_Circle
-                let c = geo.circle();
-                self.slin.push(IntPatchLine {
-                    line_type: IntPatchIType::Circle,
-                    curve: Curve3::Circle(c),
-                    t_range: [0.0, std::f64::consts::TAU],
-                    vertices: Vec::new(),
-arc_on_s1: None,
-                    arc_on_s2: None,
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                    a_curve: None,
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: 1e-7,
-                    tang_tolerance: 1e-7,
-                    wline_pnts: Vec::new(),
-                    is_purging_allowed: false,
-                    wl_type: WLineType::Unknown,
-                });
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Ellipse => {
-                // OCCT L3704-3717: IntAna_Ellipse
-                let e = geo.ellipse();
-                self.slin.push(IntPatchLine {
-                    line_type: IntPatchIType::Ellipse,
-                    curve: Curve3::Ellipse(e),
-                    t_range: [0.0, std::f64::consts::TAU],
-                    vertices: Vec::new(),
-arc_on_s1: None,
-                    arc_on_s2: None,
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                    a_curve: None,
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: 1e-7,
-                    tang_tolerance: 1e-7,
-                    wline_pnts: Vec::new(),
-                    is_purging_allowed: false,
-                    wl_type: WLineType::Unknown,
-                });
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Empty => {
-                self.empt = true;
-            }
-            // OCCT L3340: default — Hyperbola, Parabola, etc.
-            _ => {
-                for c in geo.to_curves() {
-                    let line_type = match &c {
-                        Curve3::Line(_) => IntPatchIType::Line,
-                        Curve3::Circle(_) => IntPatchIType::Circle,
-                        Curve3::Ellipse(_) => IntPatchIType::Ellipse,
-                        Curve3::Parabola(_) => IntPatchIType::Parabola,
-                        Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
-                        _ => IntPatchIType::Unknown,
-                    };
-                    let t_range = match &c {
-                        Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
-                        Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
-                        _ => [0.0, 1.0],
-                    };
-                    self.slin.push(IntPatchLine {
-                        line_type,
-                        curve: c,
-                        t_range,
-                        vertices: Vec::new(),
-arc_on_s1: None,
-                        arc_on_s2: None,
-                        trans1: None,
-                        trans2: None,
-                        first_point: None,
-                        last_point: None,
-                        a_curve: None,
-                        pcurve1: None,
-                        pcurve2: None,
-                        tolerance: 1e-7,
-                        tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(),
-                        is_purging_allowed: false,
-                        wl_type: WLineType::Unknown,
-                    });
-                }
-                if !self.slin.is_empty() || !self.spnt.is_empty() {
-                    self.empt = false;
-                    self.my_done = IntStatus::OK;
-                }
-            }
-        }
+        self.my_done = IntStatus::OK;
+        true
     }
 
-    // OCCT L3352-3432: IntPSp — Plane/Sphere intersection
-    fn int_psp(&mut self, q1: &Quadric, q2: &Quadric, _tol_ang: f64, _tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (plane, sphere) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_plane_sphere(plane, sphere);
-        if !geo.is_done() {
-            return;
+    // OCCT L3352-3432: IntPSp — Plane/Sphere intersection.  Delegates to the
+    // 1:1 translation (int_xx.rs).
+    fn int_psp(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol_ang: f64,
+        tol: f64,
+        b_reverse: bool,
+    ) -> bool {
+        // OCCT L2608: if (!IntPSp(...)) return;
+        let done = super::int_xx::int_psp(
+            q1,
+            q2,
+            tol_ang,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
         }
-        let typint = geo.type_inter();
-        self.empt = false;
-
-        // OCCT L3391-3431: switch(typint)
-        match typint {
-            AnaResultType::Empty => {
-                self.empt = true;
-            }
-            AnaResultType::Point => {
-                // OCCT L3398-3407: IntAna_Point → spnt
-                let psol = geo.point(1);
-                let ptsol = IntPatchPoint {
-                    p1: psol,
-                    p2: psol,
-                    u1: 0.0,
-                    v1: 0.0,
-                    u2: 0.0,
-                    v2: 0.0,
-                    tolerance: _tol,
-                };
-                self.spnt.push(ptsol);
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Circle => {
-                // OCCT L3410-3431: IntAna_Circle → GLine
-                let c = geo.circle();
-                self.slin.push(IntPatchLine {
-                    line_type: IntPatchIType::Circle,
-                    curve: Curve3::Circle(c),
-                    t_range: [0.0, std::f64::consts::TAU],
-                    vertices: Vec::new(),
-arc_on_s1: None,
-                    arc_on_s2: None,
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                    a_curve: None,
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: 1e-7,
-                    tang_tolerance: 1e-7,
-                    wline_pnts: Vec::new(),
-                    is_purging_allowed: false,
-                    wl_type: WLineType::Unknown,
-                });
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            _ => {
-                for c in geo.to_curves() {
-                    let line_type = match &c {
-                        Curve3::Line(_) => IntPatchIType::Line,
-                        Curve3::Circle(_) => IntPatchIType::Circle,
-                        Curve3::Ellipse(_) => IntPatchIType::Ellipse,
-                        Curve3::Parabola(_) => IntPatchIType::Parabola,
-                        Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
-                        _ => IntPatchIType::Unknown,
-                    };
-                    let t_range = match &c {
-                        Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
-                        Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
-                        _ => [0.0, 1.0],
-                    };
-                    self.slin.push(IntPatchLine {
-                        line_type,
-                        curve: c,
-                        t_range,
-                        vertices: Vec::new(),
-arc_on_s1: None,
-                        arc_on_s2: None,
-                        trans1: None,
-                        trans2: None,
-                        first_point: None,
-                        last_point: None,
-                        a_curve: None,
-                        pcurve1: None,
-                        pcurve2: None,
-                        tolerance: 1e-7,
-                        tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(),
-                        is_purging_allowed: false,
-                        wl_type: WLineType::Unknown,
-                    });
-                }
-                if !self.slin.is_empty() || !self.spnt.is_empty() {
-                    self.empt = false;
-                    self.my_done = IntStatus::OK;
-                }
-            }
-        }
+        self.my_done = IntStatus::OK;
+        true
     }
 
-    fn int_pto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (plane, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_plane_torus(plane, torus, tol);
-        self.post_process_geo(&geo, tol);
+    // OCCT L3708-3800: IntPTo — Plane/Torus intersection.  Delegates to the 1:1
+    // translation (int_xx.rs).
+    fn int_pto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) -> bool {
+        // OCCT L2618: if (!IntPTo(...)) return;
+        let done = super::int_xx::int_pto(
+            q1,
+            q2,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            &mut self.slin,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
     }
 
     /// OCCT case 22 (L2626-2677): Cylinder/Cylinder.  Delegates to the 1:1
@@ -894,287 +639,198 @@ arc_on_s1: None,
         );
     }
 
-    fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (cyl, cone) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_cylinder_cone(cyl, cone, tol);
-        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
-            && self.int_quad_quad_fallback(s1, s2, b_reverse)
-        {
-            return;
-        }
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_cysp(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        // perform_cylinder_sphere expects (cylinder, sphere)
-        let (cyl, sph) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_cylinder_sphere(cyl, sph, tol);
-        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
-            && self.int_quad_quad_fallback(s1, s2, b_reverse)
-        {
-            return;
-        }
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_cyto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (cyl, torus) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        geo.perform_cylinder_torus(cyl, torus, tol);
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_coco(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_cone_cone(q1, q2, tol);
-        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
-            && self.int_quad_quad_fallback(s1, s2, false)
-        {
-            return;
-        }
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_cosp(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (sph, con) = if b_reverse { (q1, q2) } else { (q2, q1) };
-        geo.perform_sphere_cone(sph, con, tol);
-        if geo.is_done() && geo.type_inter() == AnaResultType::NoGeometricSolution
-            && self.int_quad_quad_fallback(s1, s2, b_reverse)
-        {
-            return;
-        }
-        self.post_process_geo(&geo, tol);
-    }
-
-    /// OCCT IntCySp/IntCyCo/IntCoCo/IntCoSp L8263/L8465/L9022/L9349: when
-    /// IntAna_QuadQuadGeo returns IntAna_NoGeometricSolution, fall back to
-    /// IntAna_IntQuadQuad (the general cylinder/cone-quadric intersection).
-    /// Returns true when the fallback ran (empty result is also a valid result).
-    fn int_quad_quad_fallback(&mut self, s1: &Surface3, s2: &Surface3, b_reverse: bool) -> bool {
-        // The explicit surface is the cylinder or cone.
-        let (explicit, other) = if b_reverse { (s2, s1) } else { (s1, s2) };
-        let Some(other_quad) = super::int_quad_quad::IntAnaQuadric::from_surface3(other) else {
-            return false;
-        };
-        let mut iqq = super::int_quad_quad::IntQuadQuad::new();
-        match explicit {
-            Surface3::Cylinder(cyl) => iqq.perform_cylinder(cyl, &other_quad),
-            Surface3::Cone(con) => iqq.perform_cone(con, &other_quad),
-            _ => return false,
-        }
-        if !iqq.is_done() || iqq.nb_curves() == 0 {
-            if iqq.is_done() && iqq.nb_curves() == 0 {
-                // No curves is a valid result (Empty).
-                self.empt = true;
-                self.my_done = IntStatus::OK;
-                return true;
-            }
+    // OCCT L8465-8610: IntCyCo — Cylinder/Cone intersection.  Delegates to the
+    // 1:1 translation (int_xx.rs) which handles the NoGeometricSolution
+    // IntAna_IntQuadQuad fallback internally.
+    fn int_cyco(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol: f64,
+        b_reverse: bool,
+        multpoint: &mut bool,
+    ) -> bool {
+        // OCCT L2681: if (!IntCyCo(...)) return;
+        let done = super::int_xx::int_cyco(
+            q1,
+            q2,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
             return false;
         }
-        // OCCT IntCySp/IntCyCo/IntCoCo/IntCoSp: wrap each IntAna_Curve result
-        // in an IntPatch_ALine (ArcType = IntPatch_Analytic), add the endpoint
-        // vertices via ProcessBounds, and append to slin.  The ALine is later
-        // converted to a WLine by IntPatch_ALineToWLine::MakeWLine inside
-        // IntPatch_Intersection::GeomGeomPerfom.
-        let Some(q1) = Quadric::from_surface3(s1) else { return false; };
-        let Some(q2) = Quadric::from_surface3(s2) else { return false; };
-        for i in 0..iqq.nb_curves() {
-            let Some(curve) = iqq.curve(i) else { continue };
-            let mut curve = curve.clone();
-            let d = curve.domain();
-            let first = d[0];
-            let last = d[1];
-            let ptf = curve.value(first).unwrap_or(DVec3::ZERO);
-            let ptl = curve.value(last).unwrap_or(DVec3::ZERO);
-            let tol = 1e-7;
-            // OCCT IntCySp ProcessBounds: add the endpoint vertices.
-            let mut procf = false;
-            let mut procl = false;
-            let mut multpoint = false;
-            process_bounds(
-                &mut curve,
-                &self.slin,
-                &q1,
-                &q2,
-                &mut procf,
-                ptf,
-                first,
-                &mut procl,
-                ptl,
-                last,
-                &mut multpoint,
-                tol,
-            );
-            self.slin.push(IntPatchLine {
-                line_type: IntPatchIType::Analytic,
-                curve: Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: ptf,
-                    direction: if ptl != ptf {
-                        (ptl - ptf).normalize_or_zero()
-                    } else {
-                        DVec3::X
-                    },
-                }),
-                t_range: [first, last],
-                pcurve1: None,
-                pcurve2: None,
-                tolerance: 1e-7,
-                tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(),
-                is_purging_allowed: false,
-                wl_type: WLineType::ImpImp,
-                vertices: Vec::new(),
-arc_on_s1: None,
-                arc_on_s2: None,
-                trans1: None,
-                trans2: None,
-                first_point: None,
-                last_point: None,
-                a_curve: Some(curve),
-            });
-        }
-        self.empt = false;
         self.my_done = IntStatus::OK;
         true
     }
 
-    fn int_coto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_cone_torus(q1, q2, tol);
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_spsp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_sphere_sphere(q1, q2, tol);
-        if !geo.is_done() {
-            return;
-        }
-        match geo.type_inter() {
-            AnaResultType::Same => {
-                                self.same_surf = true;
-self.empt = false;
-                self.tgte = true;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Circle => {
-                let c = geo.circle();
-                self.slin.push(IntPatchLine {
-                    line_type: IntPatchIType::Circle,
-                    curve: Curve3::Circle(c),
-                    t_range: [0.0, std::f64::consts::TAU],
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: 1e-7,
-                    tang_tolerance: 1e-7,
-                    wline_pnts: Vec::new(),
-                    is_purging_allowed: false,
-                    wl_type: WLineType::Unknown,
-                    vertices: Vec::new(),
-arc_on_s1: None,
-                    arc_on_s2: None,
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                    a_curve: None,
-                });
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            _ => {}
-        }
-    }
-
-    fn int_spto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, _b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_sphere_torus(q1, q2, tol);
-        self.post_process_geo(&geo, tol);
-    }
-
-    fn int_toto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_torus_torus(q1, q2, tol);
-        self.post_process_geo(&geo, tol);
-    }
-
-    // Post-process QuadQuadGeo results into self.slin / self.spnt.
-    // Used by IntXX functions where OCCT creates GLine with transitions
-    // (rcad IntPatchLine drops transitions).
-    fn post_process_geo(&mut self, geo: &QuadQuadGeo, tol: f64) {
-        if !geo.is_done() {
-            return;
-        }
-        let typ = geo.type_inter();
-        // OCCT: Same → tgte=true
-        if typ == AnaResultType::Same {
-            self.empt = false;
-            self.tgte = true;
-            self.my_done = IntStatus::OK;
-            return;
-        }
-        self.empt = typ == AnaResultType::Empty;
-        self.tgte = false;
-        self.oppo = false;
-        if self.empt && geo.nb_solutions() == 0 {
-            return;
-        }
-        // OCCT L678: Point → spnt
-        if typ == AnaResultType::Point {
-            let psol = geo.point(1);
-            self.spnt.push(IntPatchPoint {
-                p1: psol,
-                p2: psol,
-                u1: 0.0,
-                v1: 0.0,
-                u2: 0.0,
-                v2: 0.0,
-                tolerance: tol,
-            });
-            self.my_done = IntStatus::OK;
-            return;
-        }
-        for c in geo.to_curves() {
-            let line_type = match &c {
-                Curve3::Line(_) => IntPatchIType::Line,
-                Curve3::Circle(_) => IntPatchIType::Circle,
-                Curve3::Ellipse(_) => IntPatchIType::Ellipse,
-                Curve3::Parabola(_) => IntPatchIType::Parabola,
-                Curve3::Hyperbola(_) => IntPatchIType::Hyperbola,
-                _ => IntPatchIType::Unknown,
-            };
-            let t_range = match &c {
-                Curve3::Circle(_) | Curve3::Ellipse(_) => [0.0, std::f64::consts::TAU],
-                Curve3::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
-                _ => [0.0, 1.0],
-            };
-            // OCCT L362-370: line created by QuadQuadGeo; vertices are added
-            // later by PutPointsOnLine (intpatch_intersection post-process).
-            self.slin.push(IntPatchLine {
-                line_type,
-                curve: c,
-                t_range,
-                vertices: Vec::new(),
-arc_on_s1: None,
-                arc_on_s2: None,
-                trans1: None,
-                trans2: None,
-                first_point: None,
-                last_point: None,
-                a_curve: None,
-                pcurve1: None,
-                pcurve2: None,
-                tolerance: 1e-7,
-                tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(),
-                is_purging_allowed: false,
-                wl_type: WLineType::Unknown,
-            });
+    // OCCT L8263-8437: IntCySp — Cylinder/Sphere intersection.  Delegates to
+    // the 1:1 translation (int_xx.rs).
+    fn int_cysp(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol: f64,
+        b_reverse: bool,
+        multpoint: &mut bool,
+    ) -> bool {
+        // OCCT L2691: if (!IntCySp(...)) return;
+        let done = super::int_xx::int_cysp(
+            q1,
+            q2,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
         }
         self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT L8072-8240: IntCyTo — Cylinder/Torus intersection.  Delegates to the
+    // 1:1 translation (int_xx.rs).
+    fn int_cyto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) -> bool {
+        // OCCT L2701: if (!IntCyTo(...)) return;
+        let done = super::int_xx::int_cyto(
+            q1,
+            q2,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            &mut self.slin,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT L9022-9260: IntCoCo — Cone/Cone intersection.  Delegates to the 1:1
+    // translation (int_xx.rs).
+    fn int_coco(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol: f64,
+        multpoint: &mut bool,
+    ) -> bool {
+        // OCCT L2710: if (!IntCoCo(...)) return;
+        let done = super::int_xx::int_coco(
+            q1,
+            q2,
+            tol,
+            &mut self.empt,
+            &mut self.same_surf,
+            multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT L9349-9590: IntCoSp — Cone/Sphere intersection.  Delegates to the
+    // 1:1 translation (int_xx.rs).
+    fn int_cosp(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol: f64,
+        b_reverse: bool,
+        multpoint: &mut bool,
+    ) -> bool {
+        // OCCT L2720: if (!IntCoSp(...)) return;
+        let done = super::int_xx::int_cosp(
+            q1,
+            q2,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT IntCoTo — Cone/Torus intersection.  Delegates to the 1:1 translation
+    // (int_xx.rs).
+    fn int_coto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) -> bool {
+        // OCCT L2730: if (!IntCoTo(...)) return;
+        let done = super::int_xx::int_coto(q1, q2, tol, b_reverse, &mut self.empt, &mut self.slin);
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT IntSpSp — Sphere/Sphere intersection.  Delegates to the 1:1
+    // translation (int_xx.rs).
+    fn int_spsp(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) -> bool {
+        // OCCT L2738: if (!IntSpSp(...)) return;
+        let done = super::int_xx::int_spsp(
+            q1,
+            q2,
+            tol,
+            &mut self.empt,
+            &mut self.same_surf,
+            &mut self.slin,
+            &mut self.spnt,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT IntSpTo — Sphere/Torus intersection.  Delegates to the 1:1
+    // translation (int_xx.rs).
+    fn int_spto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64, b_reverse: bool) -> bool {
+        // OCCT L2748: if (!IntSpTo(...)) return;
+        let done = super::int_xx::int_spto(q1, q2, tol, b_reverse, &mut self.empt, &mut self.slin);
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
+    }
+
+    // OCCT IntToTo — Torus/Torus intersection.  Delegates to the 1:1
+    // translation (int_xx.rs).
+    fn int_toto(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) -> bool {
+        // OCCT L2757: if (!IntToTo(...)) return;
+        let done = super::int_xx::int_toto(
+            q1,
+            q2,
+            tol,
+            &mut self.same_surf,
+            &mut self.empt,
+            &mut self.slin,
+        );
+        if !done {
+            return false;
+        }
+        self.my_done = IntStatus::OK;
+        true
     }
 }
 
@@ -1303,31 +959,3 @@ pub(crate) fn process_bounds(
 }
 
 const TOL_ANG: f64 = 1e-8;
-
-/// Analytic UV inversion of a 3D point on a surface (ElSLib::Parameters).
-fn surf_uv(surf: &Surface3, p: DVec3) -> (f64, f64) {
-    use rcad_kernel::geom::SurfaceEval;
-    match surf {
-        Surface3::Plane(pl) => {
-            let d = p - pl.origin;
-            (d.dot(pl.u_dir), d.dot(pl.v_dir))
-        }
-        Surface3::Cylinder(c) => {
-            let uv = c.world_to_uv(p);
-            (uv.x, uv.y)
-        }
-        Surface3::Sphere(s) => {
-            let uv = s.world_to_uv(p);
-            (uv.x, uv.y)
-        }
-        Surface3::Cone(c) => {
-            let uv = c.world_to_uv(p);
-            (uv.x, uv.y)
-        }
-        Surface3::Torus(t) => {
-            let uv = t.world_to_uv(p);
-            (uv.x, uv.y)
-        }
-        _ => (0.0, 0.0),
-    }
-}
