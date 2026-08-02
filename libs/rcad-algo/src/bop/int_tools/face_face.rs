@@ -157,6 +157,26 @@ pub fn prepare_lines_3d(
     reject_lines(&curves)
 }
 
+/// OCCT IntTools_Tools::CheckCurve (IntTools_Tools.cxx L549-575): build the 3D
+/// curve bounding box (inflated by max(tolerance, tangential tolerance)) and
+/// reject the curve when the box is thin — all three extents below
+/// 3 * Precision::Confusion() (a degenerate point-like curve).  The box is
+/// computed over the curve's clipped parameter range [t_range].
+pub fn check_curve(c: &IntersectionCurve) -> bool {
+    let a_tol = c.tolerance.max(c.tang_tolerance);
+    let a_tol_cmp = 3.0 * rcad_kernel::CONFUSION;
+    match rcad_kernel::curve_bounding_box_range(&c.curve, c.t_range[0], c.t_range[1], a_tol) {
+        Some([mn, mx]) => {
+            // Bnd_Box::IsThin(tol): thin when ALL three extents < tol.
+            let thin = (mx.x - mn.x) < a_tol_cmp
+                && (mx.y - mn.y) < a_tol_cmp
+                && (mx.z - mn.z) < a_tol_cmp;
+            !thin
+        }
+        None => false,
+    }
+}
+
 /// OCCT IntAna_ResultType (IntAna_QuadQuadGeo.hxx L31-42).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IntAnaResultType {

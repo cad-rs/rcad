@@ -2162,6 +2162,11 @@ impl PaveFiller {
             let curves = ff.make_curves();
             let mut curve_ids: Vec<usize> = Vec::new();
             for c in curves {
+                // OCCT L597-607: IntTools_Tools::CheckCurve — reject degenerate
+                // point-like curves before adding them to the FF interference.
+                if !int_tools::face_face::check_curve(&c) {
+                    continue;
+                }
                 let cid = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(c);
                 curve_ids.push(cid);
