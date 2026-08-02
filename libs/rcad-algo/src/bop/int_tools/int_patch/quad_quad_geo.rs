@@ -160,13 +160,19 @@ impl QuadQuadGeo {
         }
     }
 
-    /// OCCT IntAna_QuadQuadGeo::Circle(1) — gp_Circ(DirToAx2(pt1, dir1), param1).
-    /// The circle normal is `dir1`; the X/Y frame is re-derived perpendicular to
-    /// it by OCCT's DirToAx2 (IntAna_QuadQuadGeo.cxx L237-257).  (Previously the
-    /// normal was mapped from `dir3`, which is wrong — dir3 is a plane-normal
-    /// scratch slot, not the conic normal.)
-    pub fn circle(&self) -> Circle3 {
-        let normal = self.dir1.normalize_or_zero();
+    /// OCCT IntAna_QuadQuadGeo::Circle(Index) — gp_Circ(DirToAx2(ptN, dirN),
+    /// paramN).  The circle normal is `dirN`; the X/Y frame is re-derived
+    /// perpendicular to it by OCCT's DirToAx2 (IntAna_QuadQuadGeo.cxx L237-257).
+    /// (Previously the normal was mapped from `dir3`, which is wrong — dir3 is a
+    /// plane-normal scratch slot, not the conic normal.)
+    pub fn circle_n(&self, num: i32) -> Circle3 {
+        let (pt, dir, param) = match num {
+            2 => (self.pt2, self.dir2, self.param2),
+            3 => (self.pt3, self.dir3, self.param3),
+            4 => (self.pt4, self.dir4, self.param4),
+            _ => (self.pt1, self.dir1, self.param1),
+        };
+        let normal = dir.normalize_or_zero();
         let x = normal.x;
         let y = normal.y;
         let z = normal.z;
@@ -183,12 +189,17 @@ impl QuadQuadGeo {
         let x_dir = v.normalize_or_zero();
         let y_dir = normal.cross(x_dir).normalize_or_zero();
         Circle3 {
-            center: self.pt1,
+            center: pt,
             normal,
             x_dir,
             y_dir,
-            radius: self.param1,
+            radius: param,
         }
+    }
+
+    /// OCCT IntAna_QuadQuadGeo::Circle(1) — single-solution shorthand.
+    pub fn circle(&self) -> Circle3 {
+        self.circle_n(1)
     }
 
     /// OCCT IntAna_QuadQuadGeo::Ellipse(1) — gp_Elips(gp_Ax2(pt1, dir1, dir2),
@@ -225,19 +236,29 @@ impl QuadQuadGeo {
         }
     }
 
-    /// OCCT IntAna_QuadQuadGeo::Hyperbola(1) — gp_Hypr(gp_Ax2(pt1, dir1, dir2),
-    /// param1, param1bis).
-    pub fn hyperbola(&self) -> Hyperbola3 {
+    /// OCCT IntAna_QuadQuadGeo::Hyperbola(Index) — gp_Hypr(gp_Ax2(ptN, dir1,
+    /// dir2), paramN, paramNbis).  The two branches use pt1/param1/param1bis and
+    /// pt2/param2/param2bis respectively.
+    pub fn hyperbola_n(&self, num: i32) -> Hyperbola3 {
+        let (pt, param, param_bis) = match num {
+            2 => (self.pt2, self.param2, self.param2bis),
+            _ => (self.pt1, self.param1, self.param1bis),
+        };
         let normal = self.dir1.normalize_or_zero();
         let raw = self.dir2 - normal * self.dir2.dot(normal);
         let major_dir = raw.normalize_or_zero();
         Hyperbola3 {
-            center: self.pt1,
+            center: pt,
             normal,
             major_dir,
-            semi_major: self.param1,
-            semi_minor: self.param1bis,
+            semi_major: param,
+            semi_minor: param_bis,
         }
+    }
+
+    /// OCCT IntAna_QuadQuadGeo::Hyperbola(1) — single-solution shorthand.
+    pub fn hyperbola(&self) -> Hyperbola3 {
+        self.hyperbola_n(1)
     }
 
     // ---- Convert result to Curve3 for rcad integration ----
@@ -257,7 +278,10 @@ impl QuadQuadGeo {
                 }
             }
             AnaResultType::Circle | AnaResultType::PointAndCircle => {
-                curves.push(Curve3::Circle(self.circle()));
+                // OCCT IntCoCo/IntCyCo/IntCySp/IntCoSp: one GLine per solution.
+                for i in 1..=self.nbint {
+                    curves.push(Curve3::Circle(self.circle_n(i)));
+                }
             }
             AnaResultType::Ellipse => {
                 curves.push(Curve3::Ellipse(self.ellipse()));
@@ -266,7 +290,10 @@ impl QuadQuadGeo {
                 curves.push(Curve3::Parabola(self.parabola()));
             }
             AnaResultType::Hyperbola => {
-                curves.push(Curve3::Hyperbola(self.hyperbola()));
+                // OCCT IntCoCo/IntCyCo/IntCoSp Hyperbola case: both branches.
+                for i in 1..=self.nbint {
+                    curves.push(Curve3::Hyperbola(self.hyperbola_n(i)));
+                }
             }
             _ => {}
         }
