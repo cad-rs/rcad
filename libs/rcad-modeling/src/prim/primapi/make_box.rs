@@ -93,12 +93,15 @@ impl MakeBox {
             t.add_twire(vec![e_bot[1].clone(), e_ver[2].clone(), rev(e_top[1].clone()), rev(e_ver[1].clone())]),
         ];
         let pln = |pt: DVec3, n: DVec3| Surface3::Plane(Plane::new(pt, n));
+        // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
+        // min faces (XMin/YMin/ZMin) are stored Reversed (BRepPrim_GWedge.cxx
+        // Face(): if (i % 2 == 0) ReverseFace).
         let f = [
-            t.add_tface(Some(pln(self.local(0.0,0.0,0.0), -self.z_axis)), w[0].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.z_axis)), w[0].clone(), vec![], None, None, vec![], true)),
             t.add_tface(Some(pln(self.local(0.0,0.0,self.dz), self.z_axis)), w[1].clone(), vec![], None, None, vec![], true),
-            t.add_tface(Some(pln(self.local(0.0,0.0,0.0), -self.y_axis)), w[2].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.y_axis)), w[2].clone(), vec![], None, None, vec![], true)),
             t.add_tface(Some(pln(self.local(0.0,self.dy,0.0), self.y_axis)), w[3].clone(), vec![], None, None, vec![], true),
-            t.add_tface(Some(pln(self.local(0.0,0.0,0.0), -self.x_axis)), w[4].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.x_axis)), w[4].clone(), vec![], None, None, vec![], true)),
             t.add_tface(Some(pln(self.local(self.dx,0.0,0.0), self.x_axis)), w[5].clone(), vec![], None, None, vec![], true),
         ];
         let shell = t.add_tshell(f.to_vec());
