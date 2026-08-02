@@ -22,7 +22,9 @@ use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WL
 use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval};
+use rcad_kernel::geom::{
+    Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval,
+};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 
 /// OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip each IntPatch line to
@@ -205,32 +207,72 @@ fn point_in_box(p: DVec2, b: [f64; 4]) -> bool {
     !(p.x < b[0] || p.x > b[1] || p.y < b[2] || p.y > b[3])
 }
 
-/// OCCT GeomInt_IntSS::IntersectCurveAndBoundary — parameters where the 2D
-/// pcurve crosses the 4 edges of the UV rectangle.
+/// OCCT GeomInt_IntSS::IntersectCurveAndBoundary (GeomInt_IntSS_1.cxx L1450+) —
+/// parameters where the 2D pcurve crosses the 4 edges of the UV rectangle.
 fn collect_boundary_crossings(pc: &Curve2d, uv: [f64; 4], params: &mut Vec<f64>) {
     let [u_min, u_max, v_min, v_max] = uv;
-    // Intersect the pcurve with each of the 4 boundary lines.
-    let boundaries = [
-        ([u_min, v_min], DVec2::new(0.0, 1.0)), // U=Umin, V varies
-        ([u_max, v_min], DVec2::new(0.0, 1.0)), // U=Umax, V varies
-        ([u_min, v_min], DVec2::new(1.0, 0.0)), // V=Vmin, U varies
-        ([u_min, v_max], DVec2::new(1.0, 0.0)), // V=Vmax, U varies
-    ];
-    if let Curve2d::Line(l) = pc {
-        for (o, d) in boundaries {
-            if let Some(t) = line_line2d_intersection(&l, &Line2d { origin: DVec2::new(o[0], o[1]), direction: d }) {
-                let p = l.point_at(t);
-                // ensure the intersection lies on the boundary segment
-                let on_seg = if d.y.abs() > 0.5 {
-                    p.y >= v_min - 1e-9 && p.y <= v_max + 1e-9
-                } else {
-                    p.x >= u_min - 1e-9 && p.x <= u_max + 1e-9
-                };
-                if on_seg {
-                    params.push(t);
+    match pc {
+        Curve2d::Line(l) => {
+            // Intersect the pcurve with each of the 4 boundary lines.
+            let boundaries = [
+                ([u_min, v_min], DVec2::new(0.0, 1.0)), // U=Umin, V varies
+                ([u_max, v_min], DVec2::new(0.0, 1.0)), // U=Umax, V varies
+                ([u_min, v_min], DVec2::new(1.0, 0.0)), // V=Vmin, U varies
+                ([u_min, v_max], DVec2::new(1.0, 0.0)), // V=Vmax, U varies
+            ];
+            for (o, d) in boundaries {
+                if let Some(t) =
+                    line_line2d_intersection(&l, &Line2d { origin: DVec2::new(o[0], o[1]), direction: d })
+                {
+                    let p = l.point_at(t);
+                    // ensure the intersection lies on the boundary segment
+                    let on_seg = if d.y.abs() > 0.5 {
+                        p.y >= v_min - 1e-9 && p.y <= v_max + 1e-9
+                    } else {
+                        p.x >= u_min - 1e-9 && p.x <= u_max + 1e-9
+                    };
+                    if on_seg {
+                        params.push(t);
+                    }
                 }
             }
         }
+        Curve2d::Circle(c) => {
+            let cx = c.center.x;
+            let cy = c.center.y;
+            let r = c.radius;
+            let a_tol = 10.0 * rcad_kernel::precision::CONFUSION;
+            // Vertical edges U = u_min / u_max.
+            for x0 in [u_min, u_max] {
+                let rr = r * r - (x0 - cx) * (x0 - cx);
+                if rr >= -a_tol {
+                    let dy = rr.max(0.0).sqrt();
+                    for y in [cy + dy, cy - dy] {
+                        if y >= v_min - 1e-9 && y <= v_max + 1e-9 {
+                            // Parameter on the circle (angle in its frame).
+                            let d = DVec2::new(x0 - cx, y - cy);
+                            let t = d.dot(c.y_dir).atan2(d.dot(c.x_dir));
+                            params.push(t);
+                        }
+                    }
+                }
+            }
+            // Horizontal edges V = v_min / v_max.
+            for y0 in [v_min, v_max] {
+                let rr = r * r - (y0 - cy) * (y0 - cy);
+                if rr >= -a_tol {
+                    let dx = rr.max(0.0).sqrt();
+                    for x in [cx + dx, cx - dx] {
+                        if x >= u_min - 1e-9 && x <= u_max + 1e-9 {
+                            let d = DVec2::new(x - cx, y0 - cy);
+                            let t = d.dot(c.y_dir).atan2(d.dot(c.x_dir));
+                            params.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -245,9 +287,12 @@ fn line_line2d_intersection(a: &Line2d, b: &Line2d) -> Option<f64> {
     Some(t)
 }
 
-/// OCCT GeomInt_IntSS::BuildPCurves (projection of the 3D curve onto the
-/// other quadric).  rcad: sample the 3D curve, invert each point on the
-/// quadric, and build a 2D line through the endpoint UVs.
+/// OCCT GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1172-1304):
+/// projects the 3D curve onto the other surface.  For a restriction arc that is
+/// a 3D circle lying on a plane (a cylinder/cone base circle on a box face),
+/// the exact 2D image on the plane is a circle with the same parameterization
+/// (the plane's orthonormal UV frame preserves the circle frame).  Other cases
+/// fall back to the small-range branch (a line through the endpoint UVs).
 fn build_projected_pcurve(
     other_surf: &Surface3,
     curve3: &Curve3,
@@ -255,6 +300,37 @@ fn build_projected_pcurve(
     tl: f64,
     _n: usize,
 ) -> Option<Curve2d> {
+    if let (Curve3::Circle(c), Surface3::Plane(pl)) = (curve3, other_surf) {
+        let d = c.center - pl.origin;
+        let c2 = DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir));
+        // Projected frame: vx/vy are the images of the circle x/y axes scaled by
+        // the radius, so P2d(t) = c2 + cos(t)*vx + sin(t)*vy matches the 3D
+        // circle's parameterization.
+        let vx = DVec2::new(
+            c.radius * c.x_dir.dot(pl.u_dir),
+            c.radius * c.x_dir.dot(pl.v_dir),
+        );
+        let vy = DVec2::new(
+            c.radius * c.y_dir.dot(pl.u_dir),
+            c.radius * c.y_dir.dot(pl.v_dir),
+        );
+        let lx = vx.length();
+        let ly = vy.length();
+        if lx > 1e-12
+            && ly > 1e-12
+            && vx.dot(vy).abs() < 1e-12 * lx * ly
+            && (lx - ly).abs() < 1e-9 * lx.max(1.0)
+        {
+            // Projected circle: same-parameter with the 3D circle.
+            return Some(Curve2d::Circle(Circle2d {
+                center: c2,
+                x_dir: vx / lx,
+                y_dir: vy / ly,
+                radius: (lx + ly) * 0.5,
+            }));
+        }
+    }
+    // OCCT BuildPCurves small-range branch: the pcurve is a line segment.
     let p0 = curve3.point_at(tf);
     let p1 = curve3.point_at(tl);
     let uv0 = quadric_uv_params(other_surf, p0)?;
@@ -262,7 +338,6 @@ fn build_projected_pcurve(
     if !uv0.is_finite() || !uv1.is_finite() {
         return None;
     }
-    // OCCT BuildPCurves: on a short domain the pcurve is a segment of a line.
     Some(Curve2d::Line(Line2d {
         origin: uv0,
         direction: (uv1 - uv0) / (tl - tf),
