@@ -1405,9 +1405,12 @@ pub fn curve_on_surface(
             let r = s.radius;
             let (u0, v0) = a.point_at(0.0).into();
             if arc_along_u {
-                // V = const -> parallel circle.
-                let center = s.center + r * v0.sin() * z;
-                let radius = (r * v0.cos()).abs();
+                // V = const -> parallel circle.  The sphere parameterization
+                // P(u,v) = center + r*(sin(v)*radial + cos(v)*axis), so the
+                // V=v0 circle is centered at center + r*cos(v0)*axis with
+                // radius r*sin(v0).
+                let center = s.center + r * v0.cos() * z;
+                let radius = (r * v0.sin()).abs();
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
@@ -1419,14 +1422,15 @@ pub fn curve_on_surface(
                     CurveType3d::Circle,
                 ))
             } else {
-                // U = const -> meridian circle in the plane spanned by (x,y) at U.
+                // U = const -> meridian circle through the poles: plane spanned
+                // by {axis, ux}, i.e. normal = z x ux, x_dir = z, y_dir = ux.
                 let ux = u0.cos() * x + u0.sin() * y;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center: s.center,
-                        normal: ux,
+                        normal: z.cross(ux).normalize_or_zero(),
                         x_dir: z,
-                        y_dir: ux.cross(z).normalize_or_zero(),
+                        y_dir: ux,
                         radius: r,
                     }),
                     CurveType3d::Circle,
@@ -1453,15 +1457,16 @@ pub fn curve_on_surface(
                     CurveType3d::Circle,
                 ))
             } else {
-                // U = const -> circle of radius r in the plane at U.
+                // U = const -> circle of radius r in the plane spanned by
+                // {axis, ux}, centered at center + R*ux (normal = z x ux).
                 let ux = u0.cos() * x + u0.sin() * y;
                 let center = t.center + t.major_radius * ux;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: ux,
+                        normal: z.cross(ux).normalize_or_zero(),
                         x_dir: z,
-                        y_dir: ux.cross(z).normalize_or_zero(),
+                        y_dir: ux,
                         radius: t.minor_radius,
                     }),
                     CurveType3d::Circle,
