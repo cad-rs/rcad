@@ -23,8 +23,8 @@ use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::geom::{
-    BSplineCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane,
-    Surface3, SurfaceEval,
+    BSplineCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Parabola3,
+    Plane, Surface3, SurfaceEval,
 };
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 
@@ -646,6 +646,37 @@ fn treat_circle_parts(
     result
 }
 
+/// OCCT IntTools_Tools::CurveTolerance (L430-464) + ParabolaTolerance
+/// (L470-561): the tolerance of a trimmed parabola.  The endpoints (at `tf`/`tl`)
+/// are projected onto the parabola X-axis (the line through the vertex along
+/// `axis_dir`); the tolerance grows with the axis distance of the farther end.
+fn parabola_curve_tolerance(p: &Parabola3, tf: f64, tl: f64, base_tol: f64) -> f64 {
+    let focal = p.focal_param * 0.5;
+    if focal == 0.0 {
+        return base_tol;
+    }
+    let axis = p.axis_dir.normalize_or_zero();
+    let vertex = p.vertex;
+    let proj_x = |t: f64| (p.point_at(t) - vertex).dot(axis);
+    let mut tol1 = base_tol;
+    let x1 = proj_x(tf);
+    if x1 >= 0.0 {
+        tol1 = base_tol * (0.5 * x1 / focal).sqrt();
+    }
+    if tol1 == 0.0 {
+        tol1 = base_tol;
+    }
+    let mut tol2 = base_tol;
+    let x2 = proj_x(tl);
+    if x2 >= 0.0 {
+        tol2 = base_tol * (0.5 * x2 / focal).sqrt();
+    }
+    if tol2 == 0.0 {
+        tol2 = base_tol;
+    }
+    tol1.max(tol2)
+}
+
 /// OCCT MakeCurve L776-1846: build one IntersectionCurve for a LineConstructor
 /// part.  The full analytic curve is kept; `t_range` holds the clipped part.
 fn make_part_curve(
@@ -691,12 +722,24 @@ fn make_part_curve(
             if lprm <= fprm + 1e-12 {
                 return None;
             }
+            // OCCT MakeCurve L816-820: a parabola's curve tolerance is not the
+            // base tolerance — IntTools_Tools::CurveTolerance grows with the
+            // distance of the trimmed endpoints from the vertex.
+            let tolerance = if line.line_type == IntPatchIType::Parabola && !b_fn && !b_lp {
+                if let Curve3::Parabola(p) = curve {
+                    parabola_curve_tolerance(p, fprm, lprm, tol)
+                } else {
+                    tol
+                }
+            } else {
+                tol
+            };
             Some(IntersectionCurve {
                 curve: curve.clone(),
                 t_range: [fprm, lprm],
                 pcurve1: None,
                 pcurve2: None,
-                tolerance: tol,
+                tolerance,
                 tang_tolerance: line.tang_tolerance,
             })
         }
