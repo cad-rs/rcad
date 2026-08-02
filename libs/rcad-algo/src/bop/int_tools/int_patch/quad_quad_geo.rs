@@ -205,16 +205,24 @@ impl QuadQuadGeo {
     /// OCCT IntAna_QuadQuadGeo::Ellipse(1) — gp_Elips(gp_Ax2(pt1, dir1, dir2),
     /// R1, R2) with R1 = max(param1, param1bis), R2 = min(param1, param1bis).
     pub fn ellipse(&self) -> Ellipse3 {
-        let normal = self.dir1.normalize_or_zero();
-        let raw = self.dir2 - normal * self.dir2.dot(normal);
-        let major_dir = raw.normalize_or_zero();
-        let (major, minor) = if self.param1 >= self.param1bis {
-            (self.param1, self.param1bis)
+        self.ellipse_n(1)
+    }
+
+    /// OCCT IntAna_QuadQuadGeo::Ellipse(Index) — the two ellipse solutions use
+    /// pt1/param1/param1bis (Index 1, frame (dir1, dir2)) and
+    /// pt2/param2/param2bis (Index 2, frame (dir2, dir1)) respectively.
+    pub fn ellipse_n(&self, num: i32) -> Ellipse3 {
+        let (center, dir_normal, dir_in_plane, p, p_bis) = if num == 2 {
+            (self.pt2, self.dir2, self.dir1, self.param2, self.param2bis)
         } else {
-            (self.param1bis, self.param1)
+            (self.pt1, self.dir1, self.dir2, self.param1, self.param1bis)
         };
+        let normal = dir_normal.normalize_or_zero();
+        let raw = dir_in_plane - normal * dir_in_plane.dot(normal);
+        let major_dir = raw.normalize_or_zero();
+        let (major, minor) = if p >= p_bis { (p, p_bis) } else { (p_bis, p) };
         Ellipse3 {
-            center: self.pt1,
+            center,
             normal,
             major_dir,
             major_radius: major,

@@ -27,6 +27,11 @@ pub mod so_on_bounds;
 pub mod restriction;
 pub mod elclib;
 pub mod int_xx;
+pub mod int_cycy;
+pub mod cycy_common;
+pub mod cycy_coeffs;
+pub mod cycy_boundaries;
+pub mod cycy_walking;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;

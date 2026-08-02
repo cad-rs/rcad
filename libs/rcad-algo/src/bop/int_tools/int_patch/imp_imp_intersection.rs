@@ -146,7 +146,14 @@ impl ImpImpIntersection {
             // OCCT L2616-2624: case 15/51 Plane/Torus
             15 | 51 => self.int_pto(&q1, &q2, tol_tang, b_reverse),
             // OCCT L2626-2677: case 22 Cylinder/Cylinder (aBox1,aBox2,a2DTol)
-            22 => self.int_cycy(&q1, &q2, tol_tang),
+            22 => {
+                // OCCT L2649-2652: a2DTol = min(1e-4, min(S1->UResolution(TolTang),
+                // S2->UResolution(TolTang))).
+                let a_2d_tol = 1.0e-4_f64
+                    .min(rcad_kernel::topo::topods::u_resolution_for_surface(s1, tol_tang))
+                    .min(rcad_kernel::topo::topods::u_resolution_for_surface(s2, tol_tang));
+                self.int_cycy(&q1, &q2, tol_tang, uv1, uv2, a_2d_tol);
+            }
             // OCCT L2679-2687: case 23/32 Cylinder/Cone
             23 | 32 => self.int_cyco(&q1, &q2, s1, s2, tol_tang, b_reverse),
             // OCCT L2689-2697: case 24/42 Cylinder/Sphere
@@ -827,73 +834,32 @@ arc_on_s1: None,
         self.post_process_geo(&geo, tol);
     }
 
-    fn int_cycy(&mut self, q1: &Quadric, q2: &Quadric, tol: f64) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_cylinder_cylinder(q1, q2, tol);
-        if !geo.is_done() {
-            return;
-        }
-        match geo.type_inter() {
-            AnaResultType::Same => {
-                                self.same_surf = true;
-self.empt = false;
-                self.tgte = true;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Line => {
-                for i in 1..=geo.nb_solutions() {
-                    let l = geo.line(i);
-                    self.slin.push(IntPatchLine {
-                        line_type: IntPatchIType::Line,
-                        curve: Curve3::Line(l),
-                        t_range: [-1e10, 1e10],
-                        pcurve1: None,
-                        pcurve2: None,
-                        tolerance: 1e-7,
-                        tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(),
-                        is_purging_allowed: false,
-                        wl_type: WLineType::Unknown,
-                        vertices: Vec::new(),
-arc_on_s1: None,
-                        arc_on_s2: None,
-                        trans1: None,
-                        trans2: None,
-                        first_point: None,
-                        last_point: None,
-                        a_curve: None,
-                    });
-                }
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Ellipse => {
-                let e = geo.ellipse();
-                self.slin.push(IntPatchLine {
-                    line_type: IntPatchIType::Ellipse,
-                    curve: Curve3::Ellipse(e),
-                    t_range: [0.0, std::f64::consts::TAU],
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: 1e-7,
-                    tang_tolerance: 1e-7,
-                    wline_pnts: Vec::new(),
-                    is_purging_allowed: false,
-                    wl_type: WLineType::Unknown,
-                    vertices: Vec::new(),
-arc_on_s1: None,
-                    arc_on_s2: None,
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                    a_curve: None,
-                });
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            _ => {}
-        }
+    /// OCCT case 22 (L2626-2677): Cylinder/Cylinder.  Delegates to the 1:1
+    /// IntCyCy translation (int_cycy.rs) which handles both the analytic
+    /// (CyCyAnalyticalIntersect) and the numeric (CyCyNoGeometric) paths.
+    fn int_cycy(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol: f64,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        tol_2d: f64,
+    ) {
+        let mut multpoint = false;
+        self.my_done = super::int_cycy::int_cycy(
+            q1,
+            q2,
+            tol,
+            tol_2d,
+            uv1,
+            uv2,
+            &mut self.empt,
+            &mut self.same_surf,
+            &mut multpoint,
+            &mut self.slin,
+            &mut self.spnt,
+        );
     }
 
     fn int_cyco(&mut self, q1: &Quadric, q2: &Quadric, s1: &Surface3, s2: &Surface3, tol: f64, b_reverse: bool) {
