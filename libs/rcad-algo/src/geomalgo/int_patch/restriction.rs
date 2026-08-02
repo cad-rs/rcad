@@ -419,9 +419,9 @@ fn elclib_ellipse_parameter(e: &rcad_kernel::geom::Ellipse3, p: DVec3) -> f64 {
 }
 
 /// OCCT ElCLib::ParabolaParameter (ElCLib.cxx L1269-1272):
-///   `t = (P - vertex) . YDirection`, where Y is the cross-axis direction.
+///   `t = (P - vertex) . YDirection`, where Y = N x X is the cross-axis direction.
 fn elclib_parabola_parameter(p: &rcad_kernel::geom::Parabola3, pt: DVec3) -> f64 {
-    let dir_perp = p.axis_dir.cross(p.normal).normalize_or_zero();
+    let dir_perp = p.normal.cross(p.axis_dir).normalize_or_zero();
     (pt - p.vertex).dot(dir_perp)
 }
 

@@ -305,17 +305,18 @@ impl CurveEval for Hyperbola3 {
 
 impl CurveEval for Parabola3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        // dir_perp forms a right-handed system: axis_dir × normal gives perpendicular direction
-        let dir_perp = self.axis_dir.cross(self.normal).normalize();
+        // OCCT Geom_Parabola (gp_Ax2 N, X): the cross-axis Y = N x X, so
+        // dir_perp = normal x axis_dir forms the right-handed frame.
+        let dir_perp = self.normal.cross(self.axis_dir).normalize();
         self.vertex + (t * t / (2.0 * self.focal_param)) * self.axis_dir + t * dir_perp
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        let dir_perp = self.axis_dir.cross(self.normal).normalize();
+        let dir_perp = self.normal.cross(self.axis_dir).normalize();
         let v = (t / self.focal_param) * self.axis_dir + dir_perp;
         v.normalize_or_zero()
     }
     fn derivative_at(&self, t: f64) -> DVec3 {
-        let dir_perp = self.axis_dir.cross(self.normal).normalize();
+        let dir_perp = self.normal.cross(self.axis_dir).normalize();
         (t / self.focal_param) * self.axis_dir + dir_perp
     }
     fn default_domain(&self) -> [f64; 2] {
