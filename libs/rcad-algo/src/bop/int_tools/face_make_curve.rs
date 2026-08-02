@@ -372,9 +372,11 @@ fn wline_point(line: &IntPatchLine, param: f64) -> WLinePnt {
 }
 
 /// Classify a WLine point on a surface using its precomputed UV.
+/// OCCT GeomInt_LineConstructor WLine path: classify with the constructor
+/// tolerance `Tol = Precision::PConfusion() * 35.0` (L118).
 fn in_uv_rect_adjusted(surf: &Surface3, rect: [f64; 4], _p3d: DVec3, u: f64, v: f64) -> bool {
     let adj = adjust_periodic_uv(surf, DVec2::new(u, v), rect);
-    in_uv_rect(adj, rect, 0.0)
+    in_uv_rect(adj, rect, PCONFUSION * 35.0)
 }
 
 /// OCCT GeomInt_LineConstructor::Perform (L333-386, GLine path).
