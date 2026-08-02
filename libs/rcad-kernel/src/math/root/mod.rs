@@ -1,11 +1,21 @@
 //! OCCT MathRoot: root-finding algorithms.
 //!
 //! Corresponds to OCCT `math_FunctionRoot`, `math_FunctionSetRoot`,
-//! `math_TrigonometricFunctionRoots`, `math_BissecNewton`.
+//! `math_TrigonometricFunctionRoots`, `math_BissecNewton`,
+//! `math_FunctionSample`, `math_FunctionRoots`, `math_FunctionAllRoots`,
+//! `math_BracketedRoot`.
 //!
 //! - `math_FunctionRoot` — newton_raphson, bisection, secant
 //! - `math_BissecNewton` — biss_newton
 //! - `math_TrigonometricFunctionRoots` — trig_roots, find_roots_in, bracket_root
+//! - `math_FunctionSample/Roots/AllRoots/BracketedRoot` — function_all_roots
+
+pub mod function_all_roots;
+
+pub use function_all_roots::{
+    BracketedRoot, FunctionAllRoots, FunctionRoots, FunctionSample, FunctionValue,
+    FunctionWithDerivative,
+};
 
 use std::f64::consts::TAU;
 

@@ -22,7 +22,6 @@ pub mod special_points;
 pub mod a_line_to_w_line;
 pub mod w_line_tool;
 pub mod transitions;
-pub mod math_roots;
 pub mod int_cs;
 pub mod so_on_bounds;
 pub mod restriction;

@@ -637,3 +637,212 @@ pub fn lm_solve(
     }
     if cost < tol { Some(x) } else { None }
 }
+
+// =============================================================================
+// math_BrentMinimum — OCCT 1:1 three-parameter Brent minimization
+// =============================================================================
+
+/// OCCT math_BrentMinimum (math_BrentMinimum.hxx/.cxx/.lxx) — Brent's method to
+/// find the minimum of a function of a single variable.  No knowledge of the
+/// derivative is required.
+///
+/// Unlike the simplified [`brent_minimize`] above (which always uses the
+/// bracket midpoint as the initial guess), `Perform(F, Ax, Bx, Cx)` takes the
+/// bracketing triplet (Ax, Bx, Cx) explicitly: Bx is the initial guess, not the
+/// midpoint.  Used by IntStart_SearchOnBoundaries tangent refinement.
+pub struct BrentMinimum {
+    a: f64,
+    b: f64,
+    x: f64,
+    fx: f64,
+    fv: f64,
+    fw: f64,
+    x_tol: f64,
+    eps_z: f64,
+    done: bool,
+    iter: i32,
+    iter_max: i32,
+    my_f: bool,
+}
+
+impl BrentMinimum {
+    /// OCCT math_BrentMinimum(TolX, NbIterations = 100, ZEPS = 1.0e-12).
+    pub fn new(tol_x: f64, nb_iterations: i32, zeps: f64) -> Self {
+        BrentMinimum {
+            a: 0.0,
+            b: 0.0,
+            x: 0.0,
+            fx: 0.0,
+            fv: 0.0,
+            fw: 0.0,
+            x_tol: tol_x,
+            eps_z: zeps,
+            done: false,
+            iter: 0,
+            iter_max: nb_iterations,
+            my_f: false,
+        }
+    }
+
+    /// OCCT math_BrentMinimum(TolX, Fbx, NbIterations = 100, ZEPS = 1.0e-12).
+    pub fn new_with_fbx(tol_x: f64, f_bx: f64, nb_iterations: i32, zeps: f64) -> Self {
+        BrentMinimum {
+            a: 0.0,
+            b: 0.0,
+            x: 0.0,
+            fx: f_bx,
+            fv: 0.0,
+            fw: 0.0,
+            x_tol: tol_x,
+            eps_z: zeps,
+            done: false,
+            iter: 0,
+            iter_max: nb_iterations,
+            my_f: true,
+        }
+    }
+
+    /// OCCT Perform(F, Ax, Bx, Cx) — Brent minimization on function F from a
+    /// bracketing triplet (Ax, Bx, Cx) with Bx between Ax and Cx.
+    /// F is a math_Function (Value only), like OCCT math_BrentMinimum::Perform.
+    pub fn perform(&mut self, f: &mut dyn crate::math::root::FunctionValue, ax: f64, bx: f64, cx: f64) {
+        let cgold = 0.3819660; // 0.5*(3 - sqrt(5))
+        let mut ok: bool;
+        let (mut etemp, mut fu, mut p, mut q, mut r): (f64, f64, f64, f64, f64) =
+            (0.0, 0.0, 0.0, 0.0, 0.0);
+        let (mut tol1, mut tol2, mut u, mut v, mut w, mut xm): (f64, f64, f64, f64, f64, f64) =
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        let mut e: f64 = 0.0;
+        let mut d: f64 = f64::MAX; // OCCT RealLast()
+
+        self.a = if ax < cx { ax } else { cx };
+        self.b = if ax > cx { ax } else { cx };
+        self.x = bx;
+        w = bx;
+        v = bx;
+        if !self.my_f {
+            ok = match f.value(self.x) {
+                Some(fv) => {
+                    self.fx = fv;
+                    true
+                }
+                None => false,
+            };
+            if !ok {
+                return;
+            }
+        }
+        self.fw = self.fx;
+        self.fv = self.fx;
+        self.iter = 1;
+        while self.iter <= self.iter_max {
+            xm = 0.5 * (self.a + self.b);
+            tol1 = self.x_tol * self.x.abs() + self.eps_z;
+            tol2 = 2.0 * tol1;
+            if self.is_solution_reached() {
+                self.done = true;
+                return;
+            }
+            if e.abs() > tol1 {
+                r = (self.x - w) * (self.fx - self.fv);
+                q = (self.x - v) * (self.fx - self.fw);
+                p = (self.x - v) * q - (self.x - w) * r;
+                q = 2.0 * (q - r);
+                if q > 0.0 {
+                    p = -p;
+                }
+                q = q.abs();
+                etemp = e;
+                e = d;
+                if p.abs() >= (0.5 * q * etemp).abs()
+                    || p <= q * (self.a - self.x)
+                    || p >= q * (self.b - self.x)
+                {
+                    e = if self.x >= xm { self.a - self.x } else { self.b - self.x };
+                    d = cgold * e;
+                } else {
+                    d = p / q;
+                    u = self.x + d;
+                    if u - self.a < tol2 || self.b - u < tol2 {
+                        d = tol1.copysign(xm - self.x);
+                    }
+                }
+            } else {
+                e = if self.x >= xm { self.a - self.x } else { self.b - self.x };
+                d = cgold * e;
+            }
+            u = if d.abs() >= tol1 {
+                self.x + d
+            } else {
+                self.x + tol1.copysign(d)
+            };
+            ok = match f.value(u) {
+                Some(fu2) => {
+                    fu = fu2;
+                    true
+                }
+                None => false,
+            };
+            if !ok {
+                return;
+            }
+            if fu <= self.fx {
+                if u >= self.x {
+                    self.a = self.x;
+                } else {
+                    self.b = self.x;
+                }
+                // SHFT(v, w, x, u); SHFT(fv, fw, fx, fu);
+                v = w;
+                w = self.x;
+                self.x = u;
+                self.fv = self.fw;
+                self.fw = self.fx;
+                self.fx = fu;
+            } else {
+                if u < self.x {
+                    self.a = u;
+                } else {
+                    self.b = u;
+                }
+                if fu <= self.fw || w == self.x {
+                    v = w;
+                    w = u;
+                    self.fv = self.fw;
+                    self.fw = fu;
+                } else if fu <= self.fv || v == self.x || v == w {
+                    v = u;
+                    self.fv = fu;
+                }
+            }
+            self.iter += 1;
+        }
+        self.done = false;
+    }
+
+    /// OCCT IsSolutionReached (math_BrentMinimum.lxx L17-21).
+    fn is_solution_reached(&self) -> bool {
+        let two_tol = 2.0 * (self.x_tol * self.x.abs() + self.eps_z);
+        (self.x <= two_tol + self.a) && (self.x >= self.b - two_tol)
+    }
+
+    /// OCCT IsDone().
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    /// OCCT Location().
+    pub fn location(&self) -> f64 {
+        assert!(self.done, "BrentMinimum::Location on not-done");
+        self.x
+    }
+    /// OCCT Minimum().
+    pub fn minimum(&self) -> f64 {
+        assert!(self.done, "BrentMinimum::Minimum on not-done");
+        self.fx
+    }
+    /// OCCT NbIterations().
+    pub fn nb_iterations(&self) -> i32 {
+        assert!(self.done, "BrentMinimum::NbIterations on not-done");
+        self.iter
+    }
+}

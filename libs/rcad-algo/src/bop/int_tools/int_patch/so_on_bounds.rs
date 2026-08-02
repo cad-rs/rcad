@@ -19,7 +19,10 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
 
-use super::math_roots::{BrentMinimum, FunctionAllRoots, FunctionSample, FunctionValue, FunctionWithDerivative};
+use rcad_kernel::math::root::{
+    BracketedRoot, FunctionAllRoots, FunctionSample, FunctionValue, FunctionWithDerivative,
+};
+use rcad_kernel::math::opt::BrentMinimum;
 use super::int_cs::{IntCurveSurface, TransitionOnCurve};
 use crate::topalgo::int_surf::quadric::Quadric;
 
