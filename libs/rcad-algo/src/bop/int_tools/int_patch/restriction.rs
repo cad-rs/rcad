@@ -1083,8 +1083,8 @@ pub fn process_segments(
                     }),
                     [paramf, paraml],
                 );
-                rline.trans1 = Some(trans1);
-                rline.trans2 = Some(trans2);
+                rline.trans1 = Some(Transition::new_in_out(false, trans1));
+                rline.trans2 = Some(Transition::new_in_out(false, trans2));
                 if on_first {
                     rline.set_arc_on_s1(arc_ref.clone());
                 } else {

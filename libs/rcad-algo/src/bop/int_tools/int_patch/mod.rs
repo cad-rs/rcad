@@ -25,6 +25,8 @@ pub mod transitions;
 pub mod int_cs;
 pub mod so_on_bounds;
 pub mod restriction;
+pub mod elclib;
+pub mod int_xx;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;
@@ -283,9 +285,12 @@ pub struct IntPatchLine {
     /// The 2D restriction arc on surface 1 / surface 2.
     pub arc_on_s1: Option<Curve2d>,
     pub arc_on_s2: Option<Curve2d>,
-    /// Transitions of the restriction line (IntSurf_TypeTrans trans1/trans2).
-    pub trans1: Option<transitions::TypeTrans>,
-    pub trans2: Option<transitions::TypeTrans>,
+    /// Transitions of the line on surface 1 / surface 2 (IntPatch_Line
+    /// TransitionOnS1/S2).  OCCT GLine/ALine store a TypeTrans (In/Out/
+    /// Undecided) or Situation (Touch) transition per surface; both map to the
+    /// IntSurf_Transition representation.
+    pub trans1: Option<transitions::Transition>,
+    pub trans2: Option<transitions::Transition>,
     /// Indices into `vertices` of the first/last point of the line.
     pub first_point: Option<usize>,
     pub last_point: Option<usize>,
