@@ -88,6 +88,8 @@ fn vertex_to_patch_point(v: &IntPatchVertex) -> super::special_points::PatchPoin
         arc_on_s2: v.arc_on_s2.clone(),
         param_on_arc1: v.param_on_arc1,
         param_on_arc2: v.param_on_arc2,
+        is_vertex_on_s1: v.is_vertex_on_s1,
+        is_vertex_on_s2: v.is_vertex_on_s2,
     }
 }
 
@@ -107,6 +109,8 @@ fn patch_point_to_vertex(pp: &super::special_points::PatchPoint) -> IntPatchVert
         arc_on_s2: pp.arc_on_s2.clone(),
         param_on_arc1: pp.param_on_arc1,
         param_on_arc2: pp.param_on_arc2,
+        is_vertex_on_s1: pp.is_vertex_on_s1,
+        is_vertex_on_s2: pp.is_vertex_on_s2,
     }
 }
 
@@ -731,6 +735,10 @@ fn multiple_point(
                     intpt.on_dom_s1 = on_first;
                     intpt.on_dom_s2 = !on_first;
                     let _ = (transline, transarc, goon);
+                    // OCCT L808-812: SetVertex when the point is a domain vertex.
+                    if !currentpointonrst.is_new() {
+                        intpt.set_vertex(on_first);
+                    }
                     intpt.set_arc(on_first, currentarc, currentparameter);
                     intpt.tolerance = the_toler;
 
@@ -770,6 +778,8 @@ fn multiple_point(
                                             );
                                         }
                                         let mut ointpt = intpt.clone();
+                                        // OCCT L859-864: SetVertex on the shared vertex.
+                                        ointpt.set_vertex(on_first);
                                         ointpt.set_arc(on_first, oarc, oparam);
                                         ointpt.tolerance = the_toler;
                                         let _ = (otransline, otransarc);
@@ -838,6 +848,10 @@ fn point_on_second_dom(
                 } else {
                     make_transition(v_tgt_int, v_tgrst, normale, &mut transline, &mut transarc);
                 }
+                // OCCT L978-982: SetVertex(false) when the point is a domain vertex.
+                if !currentpointonrst.is_new() {
+                    intpt.set_vertex(false);
+                }
                 intpt.set_arc(false, currentarc, currentparameter);
                 intpt.tolerance = the_toler;
                 let _ = (transline, transarc);
@@ -876,6 +890,9 @@ fn point_on_second_dom(
                                         );
                                     }
                                     let mut ointpt = intpt.clone();
+                                    // OCCT L1022-1027: SetVertex(false) on the
+                                    // shared domain vertex.
+                                    ointpt.set_vertex(false);
                                     ointpt.set_arc(false, oarc, oparam);
                                     ointpt.tolerance = the_toler;
                                     let _ = (otransline, otransarc);
@@ -1048,6 +1065,12 @@ pub fn put_points_on_line(
                                 solpnt.set_parameters(u2, v2, u1, v1);
                             }
 
+                            // OCCT L630-638: SetVertex when the point is a domain
+                            // vertex of the current surface.
+                            if !currentpointonrst.is_new() {
+                                solpnt.set_vertex(on_first);
+                            }
+
                             let mut transline = Transition::new();
                             let mut transarc = Transition::new();
                             if normale.length_squared() < 1e-16 {
@@ -1083,8 +1106,10 @@ pub fn put_points_on_line(
                                             {
                                                 // OCCT L681-698: reuse solpnt, only
                                                 // the arc changes (d1u/d1v from the
-                                                // current point).
+                                                // current point).  The shared
+                                                // domain vertex is kept.
                                                 solpnt.set_tolerance(tolarc);
+                                                solpnt.set_vertex(on_first);
                                                 let karc = otherpt.arc().clone();
                                                 let kparam = otherpt.parameter();
                                                 let kd2d = karc.derivative_at(kparam);
@@ -1411,8 +1436,10 @@ pub fn process_segments(
             let (u2, v2) = quad2.parameters(pstartf.value());
             ptvtx.set_parameters(u1, v1, u2, v2);
             ptvtx.set_parameter(paramf);
-            // OCCT L1853-1859: set the arc when the point is on a domain vertex.
+            // OCCT L1853-1859: SetVertex + set the arc when the point is on a
+            // domain vertex.
             if !pstartf.is_new() {
+                ptvtx.set_vertex(on_first);
                 ptvtx.set_arc(on_first, pstartf.arc().clone(), pstartf.parameter());
             }
             add_vertex(&mut rline, ptvtx.clone());
@@ -1426,8 +1453,10 @@ pub fn process_segments(
             let (u2, v2) = quad2.parameters(pstartl.value());
             ptvtx.set_parameters(u1, v1, u2, v2);
             ptvtx.set_parameter(paraml);
-            // OCCT L1871-1877: set the arc when the point is on a domain vertex.
+            // OCCT L1871-1877: SetVertex + set the arc when the point is on a
+            // domain vertex.
             if !pstartl.is_new() {
+                ptvtx.set_vertex(on_first);
                 ptvtx.set_arc(on_first, pstartl.arc().clone(), pstartl.parameter());
             }
             add_vertex(&mut rline, ptvtx.clone());

@@ -444,11 +444,10 @@ impl ImpImpIntersection {
         }
         }
 
-        // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine.
-        // Sorts the vertices by parameter on line and removes coincident
-        // duplicates (IntPatch_GLine::ComputeVertexParameters L421-).  RLine
-        // vertices keep their insertion order (the RLine method is a no-op);
-        // ALine lines are converted to WLine upstream.
+        // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine
+        // (IntPatch_GLine.cxx L421-1090: filter, sort, dedup).  RLine vertices
+        // keep their insertion order (the RLine method is a no-op); ALine lines
+        // are converted to WLine upstream.
         for line in self.slin.iter_mut() {
             let is_gline = matches!(
                 line.line_type,
@@ -461,18 +460,7 @@ impl ImpImpIntersection {
             if !is_gline {
                 continue;
             }
-            line.vertices
-                .sort_by(|a, b| a.param_on_line.partial_cmp(&b.param_on_line).unwrap_or(std::cmp::Ordering::Equal));
-            let a_tol_pc = 1000.0 * rcad_kernel::precision::PCONFUSION;
-            let mut dedup: Vec<IntPatchVertex> = Vec::with_capacity(line.vertices.len());
-            for v in std::mem::take(&mut line.vertices) {
-                if dedup.is_empty()
-                    || (v.param_on_line - dedup.last().unwrap().param_on_line).abs() > a_tol_pc
-                {
-                    dedup.push(v);
-                }
-            }
-            line.vertices = dedup;
+            line.compute_vertex_parameters_gline();
         }
 
         // OCCT L2997-3040+: additional vertex placement for circles without vertices
@@ -931,6 +919,8 @@ pub(crate) fn process_bounds(
             arc_on_s2: None,
             param_on_arc1: 0.0,
             param_on_arc2: 0.0,
+            is_vertex_on_s1: false,
+            is_vertex_on_s2: false,
         }
     };
 

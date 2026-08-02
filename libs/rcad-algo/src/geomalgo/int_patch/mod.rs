@@ -121,6 +121,10 @@ pub struct IntPatchVertex {
     pub arc_on_s2: Option<Curve2d>,
     pub param_on_arc1: f64,
     pub param_on_arc2: f64,
+    /// OCCT IntPatch_Point vtxonS1/vtxonS2 — the point is a vertex of the
+    /// initial restriction facet of surface 1/2 (set via SetVertex).
+    pub is_vertex_on_s1: bool,
+    pub is_vertex_on_s2: bool,
 }
 
 impl Default for IntPatchVertex {
@@ -140,6 +144,8 @@ impl Default for IntPatchVertex {
             arc_on_s2: None,
             param_on_arc1: 0.0,
             param_on_arc2: 0.0,
+            is_vertex_on_s1: false,
+            is_vertex_on_s2: false,
         }
     }
 }
@@ -180,6 +186,26 @@ impl IntPatchVertex {
     /// OCCT IntPatch_Point::IsOnDomS2().
     pub fn is_on_dom_s2(&self) -> bool {
         self.on_dom_s2
+    }
+    /// OCCT IntPatch_Point::SetVertex(OnFirst, V) — the point is a vertex of
+    /// the initial restriction facet of surface 1/2.  The vertex value itself
+    /// is not stored (only the flag is used by ComputeVertexParameters).
+    pub fn set_vertex(&mut self, on_first: bool) {
+        if on_first {
+            self.on_dom_s1 = true;
+            self.is_vertex_on_s1 = true;
+        } else {
+            self.on_dom_s2 = true;
+            self.is_vertex_on_s2 = true;
+        }
+    }
+    /// OCCT IntPatch_Point::IsVertexOnS1().
+    pub fn is_vertex_on_s1(&self) -> bool {
+        self.is_vertex_on_s1
+    }
+    /// OCCT IntPatch_Point::IsVertexOnS2().
+    pub fn is_vertex_on_s2(&self) -> bool {
+        self.is_vertex_on_s2
     }
     /// OCCT IntPatch_Point::SetArc(OnFirst, A, Param, TLine, TArc).
     /// Transitions are not stored on the rcad vertex (they are only used
@@ -429,5 +455,501 @@ impl IntPatchLine {
     /// OCCT RLine::LastPoint().
     pub fn last_point(&self) -> &IntPatchVertex {
         &self.vertices[self.last_point.unwrap() - 1]
+    }
+
+    /// OCCT IntPatch_GLine::ComputeVertexParameters (IntPatch_GLine.cxx
+    /// L421-1090): filter, sort and dedup the line vertices by parameter and
+    /// domain-arc flags.  `first_point`/`last_point` store 1-based indices.
+    pub fn compute_vertex_parameters_gline(&mut self) {
+        let pconfusion = rcad_kernel::precision::PCONFUSION;
+        let precision_p_confusion = pconfusion * 1000.0;
+        let pi_pi = std::f64::consts::TAU;
+        let real_last = f64::MAX;
+
+        let mut svtx = std::mem::take(&mut self.vertices);
+        let mut nbvtx = svtx.len();
+        // 1-based indices into `svtx`.
+        let mut indf = self.first_point;
+        let mut indl = self.last_point;
+        let fipt = indf.is_some();
+        let lapt = indl.is_some();
+
+        let param_min_on_line = if let Some(if_) = indf {
+            svtx[if_ - 1].param_on_line
+        } else {
+            -100000.0
+        };
+        let param_max_on_line = if let Some(il) = indl {
+            svtx[il - 1].param_on_line
+        } else {
+            100000.0
+        };
+
+        // OCCT: two vertices on the same restriction and only on that one must
+        // not have the same parameters (L436-487).
+        loop {
+            let mut a_point_deleted = false;
+            'p1: for i in 1..=nbvtx {
+                let vtx_i = &svtx[i - 1];
+                if vtx_i.is_on_dom_s1() || vtx_i.is_on_dom_s2() {
+                    for j in 1..=nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j - 1];
+                        if !vtx_j.is_on_dom_s1() && !vtx_j.is_on_dom_s2() {
+                            if (vtx_i.param_on_line - vtx_j.param_on_line).abs()
+                                <= precision_p_confusion
+                            {
+                                svtx.remove(j - 1);
+                                nbvtx -= 1;
+                                if lapt {
+                                    if let Some(il) = indl {
+                                        if il > j {
+                                            indl = Some(il - 1);
+                                        }
+                                    }
+                                }
+                                if fipt {
+                                    if let Some(if_) = indf {
+                                        if if_ > j {
+                                            indf = Some(if_ - 1);
+                                        }
+                                    }
+                                }
+                                a_point_deleted = true;
+                                break 'p1;
+                            }
+                        }
+                    }
+                }
+            }
+            if !(a_point_deleted && nbvtx > 2) {
+                break;
+            }
+        }
+
+        // OCCT L489-538: two vertices on the same arc of S1 must not have the
+        // same parameter on that arc.
+        loop {
+            let mut a_point_deleted = false;
+            'p2: for i in 1..=nbvtx {
+                let vtx_i = &svtx[i - 1];
+                if vtx_i.is_on_dom_s1() && !vtx_i.is_on_dom_s2() {
+                    for j in 1..=nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j - 1];
+                        if vtx_j.is_on_dom_s1() && !vtx_j.is_on_dom_s2() {
+                            if (vtx_i.parameter_on_arc1() - vtx_j.parameter_on_arc1()).abs()
+                                <= pconfusion
+                                && arc_eq(&vtx_i.arc_on_s1, &vtx_j.arc_on_s1)
+                            {
+                                if vtx_i.is_vertex_on_s1() {
+                                    svtx.remove(j - 1);
+                                    nbvtx -= 1;
+                                    if lapt {
+                                        if let Some(il) = indl {
+                                            if il > j {
+                                                indl = Some(il - 1);
+                                            }
+                                        }
+                                    }
+                                    if fipt {
+                                        if let Some(if_) = indf {
+                                            if if_ > j {
+                                                indf = Some(if_ - 1);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    svtx.remove(i - 1);
+                                    nbvtx -= 1;
+                                    if lapt {
+                                        if let Some(il) = indl {
+                                            if il > i {
+                                                indl = Some(il - 1);
+                                            }
+                                        }
+                                    }
+                                    if fipt {
+                                        if let Some(if_) = indf {
+                                            if if_ > i {
+                                                indf = Some(if_ - 1);
+                                            }
+                                        }
+                                    }
+                                }
+                                a_point_deleted = true;
+                                break 'p2;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L540-586: same for the S2 arc (the vertex flag test uses
+        // IsVertexOnS1, exactly as OCCT).
+        loop {
+            let mut a_point_deleted = false;
+            'p3: for i in 1..=nbvtx {
+                let vtx_i = &svtx[i - 1];
+                if vtx_i.is_on_dom_s2() && !vtx_i.is_on_dom_s1() {
+                    for j in 1..=nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j - 1];
+                        if vtx_j.is_on_dom_s2() && !vtx_j.is_on_dom_s1() {
+                            if (vtx_i.parameter_on_arc2() - vtx_j.parameter_on_arc2()).abs()
+                                <= pconfusion
+                                && arc_eq(&vtx_i.arc_on_s2, &vtx_j.arc_on_s2)
+                            {
+                                if vtx_i.is_vertex_on_s1() {
+                                    svtx.remove(j - 1);
+                                    nbvtx -= 1;
+                                    if lapt {
+                                        if let Some(il) = indl {
+                                            if il > j {
+                                                indl = Some(il - 1);
+                                            }
+                                        }
+                                    }
+                                    if fipt {
+                                        if let Some(if_) = indf {
+                                            if if_ > j {
+                                                indf = Some(if_ - 1);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    svtx.remove(i - 1);
+                                    nbvtx -= 1;
+                                    if lapt {
+                                        if let Some(il) = indl {
+                                            if il > i {
+                                                indl = Some(il - 1);
+                                            }
+                                        }
+                                    }
+                                    if fipt {
+                                        if let Some(if_) = indf {
+                                            if if_ > i {
+                                                indf = Some(if_ - 1);
+                                            }
+                                        }
+                                    }
+                                }
+                                a_point_deleted = true;
+                                break 'p3;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L588-1075: sort, remove superfluous vertices, and handle the
+        // Circle/Ellipse seam.
+        let mut sort_again = true;
+        let mut to_break = false;
+        let mut u1min = real_last;
+        let mut u1max = f64::MIN;
+        let mut u2min = real_last;
+        let mut u2max = f64::MIN;
+        let is_circle_ellipse =
+            matches!(self.line_type, IntPatchIType::Circle | IntPatchIType::Ellipse);
+
+        loop {
+            nbvtx = svtx.len();
+            if sort_again {
+                loop {
+                    let mut sort_is_ok = true;
+                    for i in 2..=nbvtx {
+                        if svtx[i - 2].param_on_line > svtx[i - 1].param_on_line {
+                            svtx.swap(i - 2, i - 1);
+                            sort_is_ok = false;
+                            if let Some(if_) = indf {
+                                if if_ == i {
+                                    indf = Some(i - 1);
+                                } else if if_ == i - 1 {
+                                    indf = Some(i);
+                                }
+                            }
+                            if let Some(il) = indl {
+                                if il == i {
+                                    indl = Some(i - 1);
+                                } else if il == i - 1 {
+                                    indl = Some(i);
+                                }
+                            }
+                        }
+                    }
+                    if sort_is_ok {
+                        break;
+                    }
+                }
+            }
+            if to_break {
+                break;
+            }
+            sort_again = false;
+            let mut sort_is_ok = true;
+            'scan: for i in 2..=nbvtx {
+                for j in 1..=nbvtx {
+                    if i == j {
+                        continue;
+                    }
+                    let vtx = svtx[i - 1].clone();
+                    let vtx_m1 = svtx[j - 1].clone();
+                    let mut kill = false;
+                    let mut killm1 = false;
+                    if (vtx_m1.param_on_line - vtx.param_on_line).abs() < pconfusion {
+                        if vtx_m1.is_on_dom_s1() && vtx.is_on_dom_s1() {
+                            if arc_eq(&vtx_m1.arc_on_s1, &vtx.arc_on_s1) {
+                                if vtx_m1.is_on_dom_s2() {
+                                    if !vtx.is_on_dom_s2() {
+                                        kill = true;
+                                    } else if arc_eq(&vtx_m1.arc_on_s2, &vtx.arc_on_s2) {
+                                        if vtx_m1.is_vertex_on_s2() {
+                                            kill = true;
+                                        } else {
+                                            killm1 = true;
+                                        }
+                                    }
+                                } else if vtx.is_on_dom_s2() {
+                                    killm1 = true;
+                                }
+                            }
+                        } else if !vtx_m1.is_on_dom_s2() && !vtx.is_on_dom_s2() {
+                            if vtx_m1.is_on_dom_s1() && !vtx.is_on_dom_s1() {
+                                kill = true;
+                            } else if vtx.is_on_dom_s1() && !vtx_m1.is_on_dom_s1() {
+                                killm1 = true;
+                            }
+                        }
+                        if !(kill || killm1) {
+                            if vtx_m1.is_on_dom_s2() && vtx.is_on_dom_s2() {
+                                if arc_eq(&vtx_m1.arc_on_s2, &vtx.arc_on_s2) {
+                                    if vtx_m1.is_on_dom_s1() {
+                                        if !vtx.is_on_dom_s1() {
+                                            kill = true;
+                                        } else if arc_eq(&vtx_m1.arc_on_s1, &vtx.arc_on_s1) {
+                                            if vtx_m1.is_vertex_on_s1() {
+                                                kill = true;
+                                            } else {
+                                                killm1 = true;
+                                            }
+                                        }
+                                    } else if vtx.is_on_dom_s1() {
+                                        killm1 = true;
+                                    }
+                                }
+                            } else if !vtx_m1.is_on_dom_s1() && !vtx.is_on_dom_s1() {
+                                if vtx_m1.is_on_dom_s2() && !vtx.is_on_dom_s2() {
+                                    kill = true;
+                                } else if vtx.is_on_dom_s2() && !vtx_m1.is_on_dom_s2() {
+                                    killm1 = true;
+                                }
+                            }
+                        }
+                        if kill {
+                            sort_is_ok = false;
+                            if let Some(il) = indl {
+                                if il > i {
+                                    indl = Some(il - 1);
+                                } else if il == i {
+                                    indl = Some(j);
+                                }
+                            }
+                            if let Some(if_) = indf {
+                                if if_ > i {
+                                    indf = Some(if_ - 1);
+                                } else if if_ == i {
+                                    indf = Some(j);
+                                }
+                            }
+                            svtx.remove(i - 1);
+                            nbvtx -= 1;
+                            break 'scan;
+                        } else if killm1 {
+                            sort_is_ok = false;
+                            if let Some(il) = indl {
+                                if il > j {
+                                    indl = Some(il - 1);
+                                } else if il == j {
+                                    indl = Some(i - 1);
+                                }
+                            }
+                            if let Some(if_) = indf {
+                                if if_ > j {
+                                    indf = Some(if_ - 1);
+                                } else if if_ == j {
+                                    indf = Some(i - 1);
+                                }
+                            }
+                            svtx.remove(j - 1);
+                            nbvtx -= 1;
+                            break 'scan;
+                        } else if is_circle_ellipse {
+                            // Two points with the same parameter that cannot be
+                            // merged — shift one by +/-2*PI (seam edge, L800-1075).
+                            let ponline = vtx.param_on_line;
+                            let mut new_param = ponline;
+                            let is2pi = (ponline - pi_pi).abs() <= pconfusion;
+                            if nbvtx > 2 && !is2pi {
+                                continue;
+                            }
+                            if is2pi {
+                                new_param = 0.0;
+                            } else if ponline.abs() <= pconfusion {
+                                new_param = pi_pi;
+                            } else {
+                                new_param -= pi_pi;
+                            }
+                            let (u1a, v1a, u2a, v2a) =
+                                (vtx_m1.u1, vtx_m1.v1, vtx_m1.u2, vtx_m1.v2);
+                            let (u1b, v1b, u2b, v2b) = (vtx.u1, vtx.v1, vtx.u2, vtx.v2);
+                            let mut flag = 0;
+                            if (u1a - u1b).abs() <= pconfusion {
+                                flag |= 1;
+                            }
+                            if (v1a - v1b).abs() <= pconfusion {
+                                flag |= 2;
+                            }
+                            if (u2a - u2b).abs() <= pconfusion {
+                                flag |= 4;
+                            }
+                            if (v2a - v2b).abs() <= pconfusion {
+                                flag |= 8;
+                            }
+                            let mut test_on1 = false;
+                            let mut test_on2 = false;
+                            match flag {
+                                3 | 7 | 12 | 13 | 10 => {}
+                                11 => {
+                                    test_on2 = true;
+                                }
+                                14 => {
+                                    test_on1 = true;
+                                }
+                                _ => {}
+                            }
+                            if test_on1 {
+                                let u1_a = u1a.min(u1b);
+                                let u1_b = u1a.max(u1b);
+                                if u1min == real_last {
+                                    u1min = u1_a;
+                                    u1max = u1_b;
+                                } else {
+                                    if (u1_a - u1min).abs() > pconfusion {
+                                        to_break = true;
+                                    }
+                                    if (u1_b - u1max).abs() > pconfusion {
+                                        to_break = true;
+                                    }
+                                }
+                                if new_param >= param_min_on_line
+                                    && new_param <= param_max_on_line
+                                {
+                                    sort_again = true;
+                                    sort_is_ok = false;
+                                    if new_param > ponline {
+                                        if u1a < u1b {
+                                            svtx[i - 1].param_on_line = new_param;
+                                        } else {
+                                            svtx[j - 1].param_on_line = new_param;
+                                        }
+                                    } else if u1a > u1b {
+                                        svtx[i - 1].param_on_line = new_param;
+                                    } else {
+                                        svtx[j - 1].param_on_line = new_param;
+                                    }
+                                }
+                            }
+                            if test_on2 {
+                                let u2_a = u2a.min(u2b);
+                                let u2_b = u2a.max(u2b);
+                                if u2min == real_last {
+                                    u2min = u2_a;
+                                    u2max = u2_b;
+                                } else {
+                                    if (u2_a - u2min).abs() > pconfusion {
+                                        to_break = true;
+                                    }
+                                    if (u2_b - u2max).abs() > pconfusion {
+                                        to_break = true;
+                                    }
+                                }
+                                if new_param >= param_min_on_line
+                                    && new_param <= param_max_on_line
+                                {
+                                    sort_again = true;
+                                    sort_is_ok = false;
+                                    if new_param > ponline {
+                                        if u2a < u2b {
+                                            svtx[i - 1].param_on_line = new_param;
+                                        } else {
+                                            svtx[j - 1].param_on_line = new_param;
+                                        }
+                                    } else if u2a > u2b {
+                                        svtx[i - 1].param_on_line = new_param;
+                                    } else {
+                                        svtx[j - 1].param_on_line = new_param;
+                                    }
+                                }
+                            }
+                            if !sort_is_ok {
+                                break 'scan;
+                            }
+                        }
+                    }
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        // OCCT L1077-1090: recompute the first/last point indices.
+        nbvtx = svtx.len();
+        if nbvtx > 0 {
+            loop {
+                let mut sort_is_ok = true;
+                for i in 2..=nbvtx {
+                    if svtx[i - 2].param_on_line > svtx[i - 1].param_on_line {
+                        svtx.swap(i - 2, i - 1);
+                        sort_is_ok = false;
+                    }
+                }
+                if sort_is_ok {
+                    break;
+                }
+            }
+            indl = Some(nbvtx);
+            indf = Some(1);
+        }
+
+        self.vertices = svtx;
+        self.first_point = indf;
+        self.last_point = indl;
+    }
+}
+
+/// OCCT `Handle(Adaptor2d_Curve2d)::operator==` — two arcs are equal when both
+/// are null or structurally identical.
+fn arc_eq(a: &Option<Curve2d>, b: &Option<Curve2d>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => so_on_bounds::curves_same(x, y),
+        (None, None) => true,
+        _ => false,
     }
 }

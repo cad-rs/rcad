@@ -618,18 +618,20 @@ fn make_part_curve(
     let curve = &line.curve;
     match line.line_type {
         IntPatchIType::Line | IntPatchIType::Parabola | IntPatchIType::Hyperbola => {
-            let b_fn = fprm.is_finite();
-            let b_lp = lprm.is_finite();
-            if !(b_fn && b_lp) {
+            // OCCT L829-833: bFNIt = Precision::IsNegativeInfinite(fprm),
+            // bLPIt = Precision::IsPositiveInfinite(lprm).
+            let b_fn = rcad_kernel::precision::is_negative_infinite_value(fprm);
+            let b_lp = rcad_kernel::precision::is_positive_infinite_value(lprm);
+            if !(!b_fn && !b_lp) {
                 // OCCT L850-898: test a reference point on both face domains.
                 let d_t = 100.0;
-                let test_t = if !b_fn && b_lp {
+                let test_t = if b_fn && !b_lp {
                     lprm - d_t
-                } else if b_fn && !b_lp {
+                } else if !b_fn && b_lp {
                     fprm + d_t
                 } else {
-                    // both infinite: OCCT IntTools_Tools::IntermediatePoint(-dT, dT)
-                    0.0
+                    // both infinite: OCCT IntTools_Tools::IntermediatePoint(-dT, dT).
+                    intermediate_point(-d_t, d_t)
                 };
                 let p3d = curve.point_at(test_t);
                 if !p3d.is_finite() {
@@ -833,6 +835,14 @@ fn quadric_uv_params(surf: &Surface3, p: DVec3) -> Option<DVec2> {
         Surface3::Torus(to) => Some(to.world_to_uv(p)),
         _ => None,
     }
+}
+
+/// OCCT IntTools_Tools::IntermediatePoint (IntTools_Tools.cxx L222-229):
+///   the parameter dividing the range [aFirst, aLast] at the ratio
+///   10 * e^(-PI) = 0.43213918.
+fn intermediate_point(a_first: f64, a_last: f64) -> f64 {
+    const PAR_T: f64 = 0.43213918;
+    (1.0 - PAR_T) * a_first + PAR_T * a_last
 }
 
 /// OCCT ElCLib::InPeriod(X, 0.0, 2*PI) (GeomInt_Vertex::SetVertex).

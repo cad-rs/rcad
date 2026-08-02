@@ -84,7 +84,11 @@ fn gline_ellipse(e: Ellipse3, tang: bool, t1: TypeTrans, t2: TypeTrans) -> IntPa
 
 /// OCCT IntPatch_GLine(Parab, Tang, Trans1, Trans2).
 fn gline_parabola(p: Parabola3, tang: bool, t1: TypeTrans, t2: TypeTrans) -> IntPatchLine {
-    let dom = p.default_domain();
+    // OCCT Geom_Parabola FirstParameter/LastParameter = -/+Precision::Infinite().
+    let dom = [
+        -rcad_kernel::precision::INFINITE_VALUE,
+        rcad_kernel::precision::INFINITE_VALUE,
+    ];
     let mut line = IntPatchLine::analytic(IntPatchIType::Parabola, Curve3::Parabola(p), dom);
     line.trans1 = Some(Transition::new_in_out(tang, t1));
     line.trans2 = Some(Transition::new_in_out(tang, t2));
@@ -93,7 +97,11 @@ fn gline_parabola(p: Parabola3, tang: bool, t1: TypeTrans, t2: TypeTrans) -> Int
 
 /// OCCT IntPatch_GLine(Hypr, Tang, Trans1, Trans2).
 fn gline_hyperbola(h: Hyperbola3, tang: bool, t1: TypeTrans, t2: TypeTrans) -> IntPatchLine {
-    let dom = h.default_domain();
+    // OCCT Geom_Hyperbola FirstParameter/LastParameter = -/+Precision::Infinite().
+    let dom = [
+        -rcad_kernel::precision::INFINITE_VALUE,
+        rcad_kernel::precision::INFINITE_VALUE,
+    ];
     let mut line = IntPatchLine::analytic(IntPatchIType::Hyperbola, Curve3::Hyperbola(h), dom);
     line.trans1 = Some(Transition::new_in_out(tang, t1));
     line.trans2 = Some(Transition::new_in_out(tang, t2));
@@ -115,6 +123,8 @@ fn make_point(p: DVec3, tol: f64, tangent: bool, q1: &Quadric, q2: &Quadric) -> 
         arc_on_s2: None,
         param_on_arc1: 0.0,
         param_on_arc2: 0.0,
+        is_vertex_on_s1: false,
+        is_vertex_on_s2: false,
     }
 }
 
@@ -296,6 +306,8 @@ pub fn int_psp(
                 arc_on_s2: None,
                 param_on_arc1: 0.0,
                 param_on_arc2: 0.0,
+                is_vertex_on_s1: false,
+                is_vertex_on_s2: false,
             };
             let _ = &mut ptsol;
             spnt.push(IntPatchPoint {
@@ -1619,6 +1631,8 @@ fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint)
             arc_on_s2: v.arc_on_s2,
             param_on_arc1: v.param_on_arc1,
             param_on_arc2: v.param_on_arc2,
+            is_vertex_on_s1: v.is_vertex_on_s1,
+            is_vertex_on_s2: v.is_vertex_on_s2,
         });
     }
 }

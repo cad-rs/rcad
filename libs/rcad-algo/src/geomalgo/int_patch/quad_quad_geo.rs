@@ -253,7 +253,10 @@ impl QuadQuadGeo {
             _ => (self.pt1, self.param1, self.param1bis),
         };
         let normal = self.dir1.normalize_or_zero();
-        let raw = self.dir2 - normal * self.dir2.dot(normal);
+        // OCCT IntAna_QuadQuadGeo.cxx L2847: the second hyperbola branch
+        // reverses dir2 (gp_Hypr(gp_Ax2(pt2, dir1, dir2.Reversed()), ...)).
+        let d2 = if num == 2 { -self.dir2 } else { self.dir2 };
+        let raw = d2 - normal * d2.dot(normal);
         let major_dir = raw.normalize_or_zero();
         Hyperbola3 {
             center: pt,

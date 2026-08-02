@@ -63,6 +63,10 @@ pub struct PatchPoint {
     pub arc_on_s2: Option<rcad_kernel::geom::Curve2d>,
     pub param_on_arc1: f64,
     pub param_on_arc2: f64,
+    /// OCCT IntPatch_Point vtxonS1/vtxonS2 — the point is a vertex of the
+    /// initial restriction facet of surface 1/2.
+    pub is_vertex_on_s1: bool,
+    pub is_vertex_on_s2: bool,
 }
 
 impl PatchPoint {
@@ -84,6 +88,8 @@ impl PatchPoint {
             arc_on_s2: None,
             param_on_arc1: 0.0,
             param_on_arc2: 0.0,
+            is_vertex_on_s1: false,
+            is_vertex_on_s2: false,
         }
     }
     pub fn set_value(&mut self, pnt: PntOn2S) {
