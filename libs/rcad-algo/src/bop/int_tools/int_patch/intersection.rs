@@ -15,7 +15,7 @@ use super::{
 };
 use crate::bop::ds::IntersectionCurve;
 use glam::DVec3;
-use rcad_kernel::geom::Surface3;
+use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 // ============================================================================
 // IntPatch_Intersection (IntPatch_Intersection.hxx)
@@ -486,24 +486,127 @@ impl IntPatchIntersection {
     }
 
     // =========================================================================
-    // OCCT L221-230: GeomGeomPerfom (private)
+    // OCCT L1778-1905: GeomGeomPerfom (private)
     // =========================================================================
     fn geom_geom_perform(
         &mut self,
         s1: &Surface3,
         s2: &Surface3,
-        _typs1: GeomAbsSurfaceType,
-        _typs2: GeomAbsSurfaceType,
+        typs1: GeomAbsSurfaceType,
+        typs2: GeomAbsSurfaceType,
     ) {
-        // IntPatch_ImpImpIntersection
+        // OCCT L1789-1797: IntPatch_ImpImpIntersection interii(...); if
+        // (!interii.IsDone()) { done = false; ParamParamPerfom(...); return; }
         let mut imp_imp = ImpImpIntersection::new();
         imp_imp.perform(s1, s2, self.my_tol_arc, self.my_tol_tang);
-        if imp_imp.is_done() {
-            self.slin = imp_imp.slin_ref().to_vec();
-            self.empt = imp_imp.is_empty();
-            self.tgte = imp_imp.tangent_faces();
+        if !imp_imp.is_done() {
+            self.done = false;
+            // OCCT L1795: ParamParamPerfom(...) — rcad: parametric-parametric
+            // marching is not ported (see param_param_perform).
+            self.param_param_perform(s1, s2, self.my_tol_arc, self.my_tol_tang, typs1, typs2);
+            return;
+        }
+
+        // OCCT L1799-1805: done = (GetStatus() == OK); empt = IsEmpty(); if (empt) return.
+        self.done = imp_imp.status() == super::imp_imp_intersection::IntStatus::OK;
+        self.empt = imp_imp.is_empty();
+        if self.empt {
+            return;
+        }
+
+        // OCCT L1807: const int aNbPointsInALine = 200;
+        let a_nb_points_in_a_line = 200;
+
+        // OCCT L1809-1813: tgte = interii.TangentFaces(); if (tgte) oppo = interii.OppositeFaces();
+        self.tgte = imp_imp.tangent_faces();
+        if self.tgte {
             self.oppo = imp_imp.opposite_faces();
-            self.done = imp_imp.is_done();
+        }
+
+        // OCCT L1815-1838: IntPatch_ALineToWLine AToW(S1, S2, aNbPointsInALine);
+        //   for each line: if (ArcType == IntPatch_Analytic) { isWLExist = true;
+        //   AToW.MakeWLine(down_cast<ALine>(line), slin); } else {
+        //   if (ArcType == IntPatch_Walking) WLine->EnablePurging(false);
+        //   if ((ArcType != IntPatch_Restriction) || keepRLine) slin.Append(line); }
+        let mut is_wl_exist = false;
+        let a_to_w = super::a_line_to_w_line::ALineToWLine::new(s1, s2, a_nb_points_in_a_line);
+        let keep_r_line = false;
+        self.slin.clear();
+        for i in 0..imp_imp.nb_lines() {
+            let line = imp_imp.line(i);
+            if line.line_type == super::IntPatchIType::Analytic {
+                if let Some(a_curve) = &line.a_curve {
+                    is_wl_exist = true;
+                    a_to_w.make_wline(a_curve, &mut self.slin);
+                }
+            } else {
+                let mut line = line.clone();
+                if line.line_type == super::IntPatchIType::Walking {
+                    line.is_purging_allowed = false;
+                }
+                if (line.line_type != super::IntPatchIType::Restriction) || keep_r_line {
+                    self.slin.push(line);
+                }
+            }
+        }
+
+        // OCCT L1840-1843: copy spnt from interii.
+        self.spnt.clear();
+        for i in 0..imp_imp.nb_points() {
+            self.spnt.push(imp_imp.point(i).clone());
+        }
+
+        // OCCT L1845-1848: if (typs1 == Cylinder && typs2 == Cylinder)
+        //   IntPatch_WLineTool::JoinWLines(slin, spnt, S1, S2, TolTang).
+        if typs1 == GeomAbsSurfaceType::Cylinder && typs2 == GeomAbsSurfaceType::Cylinder {
+            super::w_line_tool::join_w_lines(&mut self.slin, s1, s2, self.my_tol_tang);
+        }
+
+        // OCCT L1850-1904: if (isWLExist) { build boxes, periodic array,
+        //   critical points; IntPatch_WLineTool::ExtendTwoWLines(...); }
+        if is_wl_exist {
+            // OCCT L1852-1867: Bnd_Box2d aBx1/aBx2 from the surface UV domains.
+            let d1 = s1.default_domain();
+            let d2 = s2.default_domain();
+            let mut a_bx1 = [d1[0], d1[2], d1[1], d1[3]];
+            let mut a_bx2 = [d2[0], d2[2], d2[1], d2[3]];
+            a_bx1 = enlarge_box2d(a_bx1, rcad_kernel::precision::PCONFUSION);
+            a_bx2 = enlarge_box2d(a_bx2, rcad_kernel::precision::PCONFUSION);
+            // OCCT L1869-1872: anArrOfPeriod.
+            let an_arr_of_period = [
+                period_of(s1, true),
+                period_of(s1, false),
+                period_of(s2, true),
+                period_of(s2, false),
+            ];
+            // OCCT L1874-1894: aListOfCriticalPoints (cone apex / sphere poles).
+            let mut a_list_of_critical_points: Vec<glam::DVec3> = Vec::new();
+            match s1 {
+                Surface3::Cone(c) => a_list_of_critical_points.push(c.apex_point()),
+                Surface3::Sphere(sp) => {
+                    a_list_of_critical_points.push(sp.point_at(0.0, std::f64::consts::FRAC_PI_2));
+                    a_list_of_critical_points.push(sp.point_at(0.0, -std::f64::consts::FRAC_PI_2));
+                }
+                _ => {}
+            }
+            match s2 {
+                Surface3::Cone(c) => a_list_of_critical_points.push(c.apex_point()),
+                Surface3::Sphere(sp) => {
+                    a_list_of_critical_points.push(sp.point_at(0.0, std::f64::consts::FRAC_PI_2));
+                    a_list_of_critical_points.push(sp.point_at(0.0, -std::f64::consts::FRAC_PI_2));
+                }
+                _ => {}
+            }
+            super::w_line_tool::extend_two_w_lines(
+                &mut self.slin,
+                s1,
+                s2,
+                self.my_tol_tang,
+                &an_arr_of_period,
+                a_bx1,
+                a_bx2,
+                &a_list_of_critical_points,
+            );
         }
     }
 
@@ -524,5 +627,25 @@ impl IntPatchIntersection {
         // yet ported to rcad-algo. Same rationale as ParamParamPerform.
         let _ = (s1, s2, _is_not_analytical);
         self.done = false;
+    }
+}
+
+/// OCCT Bnd_Box2d::Enlarge(delta): grow the UV rectangle on all sides.
+fn enlarge_box2d(mut b: [f64; 4], delta: f64) -> [f64; 4] {
+    b[0] -= delta;
+    b[1] -= delta;
+    b[2] += delta;
+    b[3] += delta;
+    b
+}
+
+/// OCCT theS->UPeriod()/VPeriod() (0 when not periodic).
+fn period_of(s: &Surface3, is_u: bool) -> f64 {
+    if is_u {
+        if s.is_u_periodic() { std::f64::consts::TAU } else { 0.0 }
+    } else if s.is_v_periodic() {
+        std::f64::consts::TAU
+    } else {
+        0.0
     }
 }

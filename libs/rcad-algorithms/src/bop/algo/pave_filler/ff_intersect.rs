@@ -1162,11 +1162,10 @@ impl<'a> super::PaveFiller<'a> {
                     f1,
                     f2,
                     &line.curve,
-                    line.t_range,
+                    &parts,
                     typl,
                     line.tolerance,
                     line.tang_tolerance,
-                    &line.vertices,
                 ),
             crate::bop::int_tools::int_patch_type::IntPatchIType::Walking
             | crate::bop::int_tools::int_patch_type::IntPatchIType::Restriction => {
@@ -1409,22 +1408,13 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L886-892: Parameters + Classify on both face domains.
                 // OCCT: Tol = Precision::Confusion()
                 // OCCT: Parameters(myHS1, myHS2, ptref, u1, v1, u2, v2)
-                let uv1 = self.context.proj_ps(self.ds, f1, p3d);
-                let uv2 = self.context.proj_ps(self.ds, f2, p3d);
                 // OCCT L888: ok = (dom1->Classify(gp_Pnt2d(u1, v1), Tol) != TopAbs_OUT)
-                // rcad uses fclass2d with CONFUION tolerance for 1:1 match
-                let in1 = uv1.map_or(false, |(uv, _, _)| {
-                    let fc = self.context.fclass2d(self.ds, f1);
-                    fc.perform(uv, true) != crate::bop::int_tools::fclass2d::State::Out
-                });
+                let in1 = self.classify_line_constructor_point(f1, p3d, CONFUSION);
                 if !in1 {
                     continue;
                 }
                 // OCCT L890-891: if (ok) { ok = dom2->Classify(...) }
-                let in2 = uv2.map_or(false, |(uv, _, _)| {
-                    let fc = self.context.fclass2d(self.ds, f2);
-                    fc.perform(uv, true) != crate::bop::int_tools::fclass2d::State::Out
-                });
+                let in2 = self.classify_line_constructor_point(f2, p3d, CONFUSION);
                 if !in2 {
                     continue;
                 }
@@ -1451,38 +1441,36 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     /// OCCT L904-1095: MakeCurve for Circle, Ellipse.
-    /// - Creates analytic curve from IntPatch_GLine.
-    /// - Calls TreatCircle to sort vertices, split at 0, build candidate intervals.
+    /// - Analytic curve from IntPatch_GLine, clipped into valid intervals by
+    ///   TreatCircle (line_constructor_parts, OCCT L922-950).
     /// - For each candidate interval:
     ///     not full-period  -- trimmed curve + BuildPCurves(with UV bounds) + vertices
-    ///     full-period (aNbParts=1)  -- test 18 points around circle  -- keep/reject
-    /// - rcad: with 0 vertices, TreatCircle returns fallback full [0, 2闁挎粎顕?interval.
+    ///     full-period (aNbParts=1)  -- trimmed full circle + BuildPCurves + break
+    ///     full-period (aNbParts>1)  -- test 18 points around circle  -- keep/reject
+    /// - rcad: with 0 vertices, TreatCircle keeps the full [0, 2闁挎粎顕?interval.
     // OCCT L904-1095: MakeCurve for Circle/Ellipse
     fn make_analytic_periodic_curve(
         &mut self,
         f1: usize,
         f2: usize,
         curve: &Curve3,
-        orig_t_range: [f64; 2],
+        parts: &[[f64; 2]],
         typl: IntPatchIType,
         geom_tol: f64,
         tang_tolerance: f64,
-        vertices: &[crate::bop::int_tools::int_patch_line::IntPatchVertex],
     ) -> Vec<crate::bop::ds::IntersectionCurve> {
         if std::env::var("RCAD_DBG_MB").is_ok() {
             eprintln!(
-                "[DBG_IC] make_analytic_periodic_curve: geom_tol={:.6e} t_range={:.6} {:.6}",
-                geom_tol, orig_t_range[0], orig_t_range[1]
+                "[DBG_IC] make_analytic_periodic_curve: geom_tol={:.6e} nParts={}",
+                geom_tol,
+                parts.len()
             );
         }
-        use rcad_kernel::geom::Curve2dEval;
-        use std::f64::consts::{PI, TAU};
+        use std::f64::consts::TAU;
 
         // OCCT L906-920: create analytic 3D curve from GLine.
-
-        // OCCT L922-950: TreatCircle  -- split intervals with 0-crossing handling.
-        // Sorts vertices on the GLine, creates intervals, tests midpoints.
-        let parts = self.treat_circle_parts(curve, orig_t_range, typl, vertices, f1, f2);
+        // OCCT L922-950: TreatCircle has already split the line into intervals
+        // (done in line_constructor_parts, which delegates to treat_circle_parts).
 
         // OCCT L950-1095: aNbParts = seqp.Length() / 2.
         //   If aNbParts == 0  -- the for loop does not execute  -- no output curves.
@@ -1495,7 +1483,7 @@ impl<'a> super::PaveFiller<'a> {
         let aNbParts = parts.len();
         let mut result = Vec::with_capacity(parts.len());
 
-        for &[fprm, lprm] in &parts {
+        for &[fprm, lprm] in parts {
             // OCCT L953-956: if (|fprm|>eps || |lprm-2闁挎粎鐨?eps)  -- not full-period
             let is_full_period =
                 fprm.abs() <= aRealEpsilon && (lprm - aPeriod).abs() <= aRealEpsilon;
@@ -1541,7 +1529,7 @@ impl<'a> super::PaveFiller<'a> {
                     polyline: Vec::new(),
                     start_vertex: usize::MAX,
                     end_vertex: usize::MAX,
-                    t_range: orig_t_range,
+                    t_range: [fprm, lprm],
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                     geom_tol: geom_tol.max(TOLERANCE_ABS),
@@ -1559,32 +1547,29 @@ impl<'a> super::PaveFiller<'a> {
                     if !p3d.is_finite() {
                         continue;
                     }
-                    let uv1 = self.context.proj_ps(self.ds, f1, p3d).map(|(uv, _, _)| uv);
-                    let uv2 = self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv);
-                    let in1 = uv1.map_or(false, |uv| {
-                        self.context.is_point_in_on_face(self.ds, f1, uv)
-                    });
-                    let in2 = uv2.map_or(false, |uv| {
-                        self.context.is_point_in_on_face(self.ds, f2, uv)
-                    });
-                    if in1 && in2 {
-                        let pca = self.compute_pcurve_on_surface(curve, f1);
-                        let pcb = self.compute_pcurve_on_surface(curve, f2);
-                        let mut curve_extra = crate::bop::ds::CurveExtra::default();
-                        curve_extra.tangential_tol = tang_tolerance;
-                        result.push(crate::bop::ds::IntersectionCurve {
-                            curve: curve.clone(),
-                            polyline: Vec::new(),
-                            start_vertex: usize::MAX,
-                            end_vertex: usize::MAX,
-                            t_range: orig_t_range,
-                            pcurve_on_a: pca,
-                            pcurve_on_b: pcb,
-                            geom_tol: geom_tol.max(TOLERANCE_ABS),
-                            pave_blocks: Vec::new(),
-                            curve_extra,
-                        });
-                        break;
+                    // OCCT L1112-1119: Parameters + Classify with Tol = Precision::Confusion().
+                    let in1 = self.classify_line_constructor_point(f1, p3d, CONFUSION);
+                    if in1 {
+                        let in2 = self.classify_line_constructor_point(f2, p3d, CONFUSION);
+                        if in2 {
+                            let pca = self.compute_pcurve_on_surface(curve, f1);
+                            let pcb = self.compute_pcurve_on_surface(curve, f2);
+                            let mut curve_extra = crate::bop::ds::CurveExtra::default();
+                            curve_extra.tangential_tol = tang_tolerance;
+                            result.push(crate::bop::ds::IntersectionCurve {
+                                curve: curve.clone(),
+                                polyline: Vec::new(),
+                                start_vertex: usize::MAX,
+                                end_vertex: usize::MAX,
+                                t_range: [fprm, lprm],
+                                pcurve_on_a: pca,
+                                pcurve_on_b: pcb,
+                                geom_tol: geom_tol.max(TOLERANCE_ABS),
+                                pave_blocks: Vec::new(),
+                                curve_extra,
+                            });
+                            break;
+                        }
                     }
                 }
             }
@@ -1592,9 +1577,12 @@ impl<'a> super::PaveFiller<'a> {
         result
     }
 
-    /// LineConstructor (GeomInt_LineConstructor::Perform for GLine).
-    /// Iterates over IntPatch_Point vertices on the line, tests the midpoint of
-    /// each adjacent-vertex interval on both face domains, keeps valid intervals.
+    /// LineConstructor (GeomInt_LineConstructor.cxx L333-386, GLine path).
+    /// OCCT-aligned: iterates over the IntPatch_Point vertices in line order
+    /// (sorted upstream by ComputeVertexParameters / put_points_on_line), tests
+    /// the midpoint of each adjacent-vertex interval on both face domains,
+    /// keeps valid intervals.  Circle/Ellipse are delegated to TreatCircle
+    /// (OCCT L338-342).
     ///
     /// With 0 vertices (nbvtx=0): OCCT's intrvtested flag stays false, and the
     /// full parameter range [FirstParameter, LastParameter] is kept as one part.
@@ -1603,94 +1591,71 @@ impl<'a> super::PaveFiller<'a> {
         &mut self,
         curve: &Curve3,
         orig_t_range: [f64; 2],
-        _typl: IntPatchIType,
+        typl: IntPatchIType,
         vertices: &[crate::bop::int_tools::int_patch_line::IntPatchVertex],
         f1: usize,
         f2: usize,
     ) -> Vec<[f64; 2]> {
-        // OCCT GeomInt_LineConstructor: split line at vertex positions,
-        // test each interval's midpoint on both face domains.
-        if vertices.is_empty() {
-            return vec![orig_t_range];
+        // OCCT GeomInt_LineConstructor L338-342: Circle/Ellipse -> TreatCircle.
+        if typl == IntPatchIType::Circle || typl == IntPatchIType::Ellipse {
+            return self.treat_circle_parts(curve, orig_t_range, typl, vertices, f1, f2);
         }
-        let a_tol_pc: f64 = 1000.0 * 1e-12;
-        let mut sorted: Vec<f64> = vertices
-            .iter()
-            .map(|v| v.param_on_line)
-            .filter(|&t| t >= orig_t_range[0] - a_tol_pc && t <= orig_t_range[1] + a_tol_pc)
-            .collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        // Dedup
-        let mut deduped: Vec<f64> = Vec::new();
-        for &p in &sorted {
-            if deduped.is_empty() || (p - *deduped.last().unwrap()).abs() > a_tol_pc {
-                deduped.push(p);
+
+        // OCCT L118: constexpr double Tol = Precision::PConfusion() * 35.0;
+        let a_tol = rcad_kernel::tolerance::PCONFUSION * 35.0;
+
+        // OCCT L345-374: iterate adjacent vertex pairs, test interval midpoint.
+        let mut result: Vec<[f64; 2]> = Vec::new();
+        let nbvtx = vertices.len();
+        let mut intrvtested = false;
+        for i in 0..nbvtx.saturating_sub(1) {
+            let firstp = vertices[i].param_on_line;
+            let lastp = vertices[i + 1].param_on_line;
+            // OCCT L354: if (std::abs(firstp - lastp) > Precision::PConfusion())
+            if (firstp - lastp).abs() > rcad_kernel::tolerance::PCONFUSION {
+                intrvtested = true;
+                // OCCT L357-359: pmid, GLinePoint(typl, GLine, pmid, Pmid)
+                let pmid = (firstp + lastp) * 0.5;
+                let p3d = curve.point_at(pmid);
+                if !p3d.is_finite() {
+                    continue;
+                }
+                // OCCT L361-372: Parameters + AdjustPeriodic + Classify on both domains.
+                let in1 = self.classify_line_constructor_point(f1, p3d, a_tol);
+                if in1 {
+                    let in2 = self.classify_line_constructor_point(f2, p3d, a_tol);
+                    if in2 {
+                        result.push([firstp, lastp]);
+                    }
+                }
             }
         }
-        // Add range boundaries if needed
-        let t0 = if deduped.is_empty() || (deduped[0] - orig_t_range[0]).abs() > a_tol_pc {
-            orig_t_range[0]
-        } else {
-            deduped[0]
-        };
-        let t1 = if deduped.is_empty()
-            || (orig_t_range[1] - *deduped.last().unwrap()).abs() > a_tol_pc
-        {
-            orig_t_range[1]
-        } else {
-            *deduped.last().unwrap()
-        };
-        let mut all_breaks: Vec<f64> = Vec::new();
-        all_breaks.push(t0);
-        all_breaks.extend(
-            deduped
-                .iter()
-                .filter(|&&p| p > t0 + a_tol_pc && p < t1 - a_tol_pc),
-        );
-        if (t1 - *all_breaks.last().unwrap()).abs() > a_tol_pc {
-            all_breaks.push(t1);
-        }
-        // For each adjacent pair, test midpoint on both face domains
-        let mut result = Vec::new();
-        for i in 0..(all_breaks.len().saturating_sub(1)) {
-            let b1 = all_breaks[i];
-            let b2 = all_breaks[i + 1];
-            if (b2 - b1).abs() <= 1e-12 {
-                continue;
-            }
-            let t_mid = (b1 + b2) * 0.5;
-            let p3d = curve.point_at(t_mid);
-            if !p3d.is_finite() {
-                continue;
-            }
-            let uv1 = self.context.proj_ps(self.ds, f1, p3d).map(|(uv, _, _)| uv);
-            let uv2 = self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv);
-            let in1 = uv1.map_or(false, |uv| {
-                self.context.is_point_in_on_face(self.ds, f1, uv)
-            });
-            let in2 = uv2.map_or(false, |uv| {
-                self.context.is_point_in_on_face(self.ds, f2, uv)
-            });
-            if in1 && in2 {
-                result.push([b1, b2]);
-            }
-        }
-        if result.is_empty() {
-            // Fallback: no valid intervals found, try the full range
+        // OCCT L376-382: if no interval tested, keep the full range a priori.
+        if !intrvtested {
             result.push(orig_t_range);
         }
         result
     }
 
-    /// TreatCircle (GeomInt_LineConstructor.cxx L481-560).
-    /// For Circle/Ellipse with vertices: sorts vertices by parameter in [0, 2闁?,
-    /// creates intervals between sorted vertices, tests midpoints on both face
-    /// domains.  Handles 0-crossing via PeriodicReparam + SeqFprm/SeqLprm.
+    /// OCCT GeomInt_LineConstructor::Parameters (L820-862) + AdjustPeriodic
+    /// (L737-816) + Classify.  Computes the UV of a point on a face quadric
+    /// analytically (exact, matching the face surface parametrization), then
+    /// classifies the point on the face domain.  FClass2d's Perform handles the
+    /// periodic adjust internally (IntTools_FClass2d.cxx L666-678), mirroring
+    /// OCCT's AdjustPeriodic before the Classify call.
     ///
-    /// Without vertices (nbvtx=0): OCCT creates a zero-initialized array of size 1,
-    /// the sort and interval-building steps produce no valid intervals, and seqp
-    /// remains empty.  The caller sees aNbParts=0 and creates no output curves.
-    /// This function matches that behavior  -- returns empty.
+    /// rcad note: OCCT passes Tol = Precision::PConfusion() * 35.0 to the
+    /// Classify; the rcad FClass2d uses its construction-time tolerance.
+    fn classify_line_constructor_point(&mut self, f: usize, p3d: DVec3, _a_tol: f64) -> bool {
+        let surf = self.ds.face_surface(f).unwrap();
+        let uv = quadric_uv_params(surf, p3d)
+            .or_else(|| self.context.proj_ps(self.ds, f, p3d).map(|(uv, _, _)| uv));
+        let Some(uv) = uv else {
+            return false;
+        };
+        self.context.is_point_in_on_face(self.ds, f, uv)
+    }
+
     /// PutPointsOnLine (IntPatch_Intersection.cxx L268-312).
     /// OCCT-aligned: PutPointsOnLine equivalent (IntPatch_Intersection / GetEFPnts flow).
     ///
@@ -1768,16 +1733,24 @@ impl<'a> super::PaveFiller<'a> {
         });
     }
 
+    /// TreatCircle (GeomInt_LineConstructor.cxx L674-733).
+    /// Sorts the IntPatch_Point vertices wrapped into [0, 2*PI), creates an
+    /// interval per adjacent vertex pair (last vertex at first.param + 2*PI),
+    /// rejects duplicate parameters, and tests each interval's midpoint on both
+    /// face domains.
+    ///
+    /// A Circle/Ellipse line without vertices gets two vertices at parameter 0
+    /// and 2*PI (IntPatch_ImpImpIntersection L2997-3052); both wrap to 0, so the
+    /// single interval [0, 2*PI] is kept iff its midpoint PI is inside both faces.
     fn treat_circle_parts(
         &mut self,
         curve: &Curve3,
-        orig_t_range: [f64; 2],
+        _orig_t_range: [f64; 2],
         typl: IntPatchIType,
         vertices: &[crate::bop::int_tools::int_patch_line::IntPatchVertex],
         f1: usize,
         f2: usize,
     ) -> Vec<[f64; 2]> {
-        use crate::bop::int_tools::int_patch_line::IntPatchVertex;
         use std::f64::consts::TAU;
         if std::env::var("RCAD_DBG_FF").is_ok() {
             eprintln!(
@@ -1789,7 +1762,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT GeomInt_LineConstructor::TreatCircle (L674-733):
-        //   RejectMicroCircle, sort, RejectDuplicates, midpoint test
+        //   RejectMicroCircle, sort, RejectDuplicates, midpoint test.
 
         // OCCT L679-681: RejectMicroCircle -- skip circles/ellipses smaller than tolerance
         if typl == IntPatchIType::Circle || typl == IntPatchIType::Ellipse {
@@ -1804,80 +1777,87 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        let aNbVtx = vertices.len();
-        if aNbVtx == 0 {
-            // OCCT L3007-3016: GLine without vertices 鈥?place vertex at parameter 0.
-            // Return full-period [0, 2*PI] so the circle is accepted as one part.
-            return vec![[0.0, TAU]];
-        }
+        // OCCT IntPatch_ImpImpIntersection L2997-3052: a Circle/Ellipse GLine
+        // without vertices gets two vertices at parameter 0 and 2*PI.  Both wrap
+        // to 0 in [0, 2*PI), so below they collapse to a single interval [0, 2*PI]
+        // whose midpoint PI is classified on both face domains.
+        let a_tol_pc: f64 = 1000.0 * rcad_kernel::tolerance::PCONFUSION; // RejectDuplicates L931
 
-        // Build vertex array with parameters projected to [0, 2闁? (OCCT L492-495).
-        let mut sorted: Vec<(f64, &IntPatchVertex)> = vertices
-            .iter()
-            .map(|v| {
-                let par = if orig_t_range[1] - orig_t_range[0] >= TAU - 1e-12 {
-                    let p = v.param_on_line;
-                    if p < 0.0 {
-                        p + TAU * ((-p / TAU).ceil())
-                    } else if p >= TAU {
-                        p - TAU * ((p / TAU).floor())
-                    } else {
-                        p
-                    }
-                } else {
-                    v.param_on_line
-                };
-                (par, v)
-            })
-            .collect();
+        // Build vertex parameters wrapped into [0, 2*PI) (OCCT GeomInt_Vertex::SetVertex L60).
+        let mut params: Vec<f64> = if vertices.is_empty() {
+            vec![0.0, TAU]
+        } else {
+            vertices.iter().map(|v| wrap_to_2pi(v.param_on_line)).collect()
+        };
+        // OCCT L691: sort by parameter.
+        params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // OCCT L500-502: sort by parameter.
-        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // OCCT L684-695: array of size n+1; last vertex at first.param + 2*PI.
+        let mut arr: Vec<f64> = Vec::with_capacity(params.len() + 1);
+        arr.extend_from_slice(&params);
+        arr.push(params[0] + TAU);
 
-        // OCCT L504: create last vertex at first.param + 2闁?
-        let first_param = sorted[0].0;
-        let last_param = first_param + TAU;
-
-        // OCCT L506-515: reject duplicates (within aTolPC = 1000*Precision::PConfusion).
-        const aTolPC: f64 = 1000.0 * 1e-12;
-        let mut deduped: Vec<f64> = Vec::with_capacity(sorted.len() + 1);
-        for &(par, _) in &sorted {
-            if deduped.is_empty() || (par - *deduped.last().unwrap()).abs() > aTolPC {
-                deduped.push(par);
-            }
-        }
-        // Add the last vertex (first.param + 2闁?, skip if duplicate of last deduped.
-        let last_2pi = first_param + TAU;
-        if deduped.is_empty() || (last_2pi - *deduped.last().unwrap()).abs() > aTolPC {
-            deduped.push(last_2pi);
-        }
-
-        // OCCT L525-560: for each adjacent pair, test midpoint on both face domains.
-        let mut result = Vec::new();
-        for i in 0..(deduped.len().saturating_sub(1)) {
-            let t1 = deduped[i];
-            let t2 = deduped[i + 1];
-            if (t2 - t1).abs() <= 1e-12 {
+        // OCCT L697: RejectDuplicates -- mark coincident params with RealLast.
+        // The source array must be sorted in ascending order (L926-959).
+        for i in 0..arr.len().saturating_sub(2) {
+            let prm_i = arr[i];
+            if !prm_i.is_finite() {
                 continue;
             }
-            // Test midpoint (OCCT L539-548).
+            for j in (i + 1)..arr.len().saturating_sub(1) {
+                let prm_j = arr[j];
+                if prm_j - prm_i < a_tol_pc {
+                    arr[j] = f64::INFINITY; // RealLast
+                } else {
+                    break;
+                }
+            }
+        }
+        // OCCT L963-982: find duplicates with the last element.
+        let a_max_prm = *arr.last().unwrap();
+        for i in (1..arr.len().saturating_sub(1)).rev() {
+            let prm_i = arr[i];
+            if !prm_i.is_finite() {
+                continue;
+            }
+            if a_max_prm - prm_i < a_tol_pc {
+                arr[i] = f64::INFINITY;
+            } else {
+                break;
+            }
+        }
+        // OCCT L699: re-sort after RejectDuplicates.
+        arr.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // OCCT L704-732: test each adjacent pair's midpoint on both face domains.
+        let a_tol = rcad_kernel::tolerance::PCONFUSION * 35.0;
+        let mut result = Vec::new();
+        for i in 0..arr.len().saturating_sub(1) {
+            let t1 = arr[i];
+            let t2 = arr[i + 1];
+            // OCCT L709-712: if (aT2 == RealLast()) break;
+            if t2 == f64::INFINITY {
+                break;
+            }
+            // OCCT L714-715: aTmid, GLinePoint(aType, aGLine, aTmid, aPmid).
             let t_mid = (t1 + t2) * 0.5;
             let p3d = curve.point_at(t_mid);
             if !p3d.is_finite() {
                 continue;
             }
-            // OCCT: Parameters(myHS1, myHS2, Pmid, u1, v1, u2, v2)
-            // AdjustPeriodic for periodic surfaces, then Classify on both domains.
-            // Project midpoint to UV on both faces and classify on their domains.
-            let uv1 = self.context.proj_ps(self.ds, f1, p3d).map(|(uv, _, _)| uv);
-            let uv2 = self.context.proj_ps(self.ds, f2, p3d).map(|(uv, _, _)| uv);
-            let in1 = uv1.map_or(false, |uv| {
-                self.context.is_point_in_on_face(self.ds, f1, uv)
-            });
-            let in2 = uv2.map_or(false, |uv| {
-                self.context.is_point_in_on_face(self.ds, f2, uv)
-            });
-            if !(in1 && in2) {
+            // OCCT L717-731: Parameters + AdjustPeriodic + Classify on both domains.
+            let in1 = self.classify_line_constructor_point(f1, p3d, a_tol);
+            if !in1 {
+                if std::env::var("RCAD_DBG_FF").is_ok() {
+                    eprintln!(
+                        "[FF]   interval [{:.4},{:.4}] REJECTED: in1={} in2={}",
+                        t1, t2, in1, false
+                    );
+                }
+                continue;
+            }
+            let in2 = self.classify_line_constructor_point(f2, p3d, a_tol);
+            if !in2 {
                 if std::env::var("RCAD_DBG_FF").is_ok() {
                     eprintln!(
                         "[FF]   interval [{:.4},{:.4}] REJECTED: in1={} in2={}",
@@ -1894,6 +1874,7 @@ impl<'a> super::PaveFiller<'a> {
 
         result
     }
+
 
     /// BuildPCurves for all curve-surface type combinations.
     /// Matches OCCT GeomInt_IntSS::BuildPCurves (L822-846). Uses exact
@@ -1961,6 +1942,37 @@ impl<'a> super::PaveFiller<'a> {
             }
         };
         Some(pc)
+    }
+}
+
+/// OCCT ElCLib::InPeriod(X, 0.0, 2*PI) (GeomInt_Vertex::SetVertex, GeomInt_LineConstructor.cxx L60).
+/// Wraps a parameter into [0, 2*PI).
+fn wrap_to_2pi(t: f64) -> f64 {
+    let two_pi = std::f64::consts::TAU;
+    if t < 0.0 {
+        t + two_pi * (1.0 + ((0.0 - t) / two_pi).floor())
+    } else if t >= two_pi {
+        t - two_pi * (1.0 + ((t - two_pi) / two_pi).floor())
+    } else {
+        t
+    }
+}
+
+/// OCCT GeomInt_LineConstructor::Parameters (L820-862).
+/// Analytic UV inversion of a 3D point on a quadric surface, in the surface's
+/// own parametrization (matching the face surface used by FClass2d).
+/// Returns None for non-quadric surfaces (OCCT throws Standard_ConstructionError).
+fn quadric_uv_params(surf: &rcad_kernel::geom::Surface3, p: DVec3) -> Option<DVec2> {
+    match surf {
+        rcad_kernel::geom::Surface3::Plane(pl) => {
+            let d = p - pl.origin;
+            Some(DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir)))
+        }
+        rcad_kernel::geom::Surface3::Cylinder(cy) => Some(cy.world_to_uv(p)),
+        rcad_kernel::geom::Surface3::Sphere(sp) => Some(sp.world_to_uv(p)),
+        rcad_kernel::geom::Surface3::Cone(co) => Some(co.world_to_uv(p)),
+        rcad_kernel::geom::Surface3::Torus(to) => Some(to.world_to_uv(p)),
+        _ => None,
     }
 }
 

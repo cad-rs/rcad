@@ -617,6 +617,28 @@ impl SurfaceEval for CylindricalSurface {
     }
 }
 
+impl CylindricalSurface {
+    /// UV coordinates of world point `p` relative to this cylindrical surface.
+    ///
+    /// `u` = azimuth (−π, π], `v` = height along axis, matching
+    /// [`SurfaceEval::point_at`] (which uses the stored `ref_dir` for u=0).
+    /// Off-surface points are radially projected onto the cylinder.
+    pub fn world_to_uv(self, p: DVec3) -> DVec2 {
+        let axis = self.axis.normalize_or_zero();
+        let x_ax = self.ref_dir.normalize_or_zero();
+        let y_ax = axis.cross(x_ax).normalize();
+        let d = p - self.origin;
+        let v = d.dot(axis);
+        let radial = d - axis * v;
+        let r = radial.length();
+        if r < 1e-15 {
+            return DVec2::new(0.0, v);
+        }
+        let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
+        DVec2::new(u, v)
+    }
+}
+
 impl SphericalSurface {
     /// Construct a sphere with `ref_dir` derived from [`any_perpendicular(axis)`](any_perpendicular).
     pub fn new(center: Point3, axis: Vec3, radius: f64) -> Self {

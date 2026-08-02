@@ -281,6 +281,7 @@ impl ImpImpIntersection {
                 is_purging_allowed: false,
                 wl_type: WLineType::Unknown,
                 vertices: Vec::new(),
+                a_curve: None,
             });
         }
         self.my_done = IntStatus::OK;
@@ -316,6 +317,7 @@ impl ImpImpIntersection {
                         is_purging_allowed: false,
                         wl_type: WLineType::Unknown,
                         vertices: Vec::new(),
+                        a_curve: None,
                     });
                 }
                 self.empt = false;
@@ -438,6 +440,7 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+                        a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
                         tolerance: 1e-7,
@@ -458,6 +461,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+                    a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
                     tolerance: 1e-7,
@@ -477,6 +481,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Ellipse(e),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+                    a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
                     tolerance: 1e-7,
@@ -512,6 +517,7 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+                        a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
                         tolerance: 1e-7,
@@ -568,6 +574,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c),
                     t_range: [0.0, std::f64::consts::TAU],
                     vertices: Vec::new(),
+                    a_curve: None,
                     pcurve1: None,
                     pcurve2: None,
                     tolerance: 1e-7,
@@ -599,6 +606,7 @@ impl ImpImpIntersection {
                         curve: c,
                         t_range,
                         vertices: Vec::new(),
+                        a_curve: None,
                         pcurve1: None,
                         pcurve2: None,
                         tolerance: 1e-7,
@@ -650,6 +658,7 @@ impl ImpImpIntersection {
                         is_purging_allowed: false,
                         wl_type: WLineType::Unknown,
                         vertices: Vec::new(),
+                        a_curve: None,
                     });
                 }
                 self.empt = false;
@@ -669,6 +678,7 @@ impl ImpImpIntersection {
                     is_purging_allowed: false,
                     wl_type: WLineType::Unknown,
                     vertices: Vec::new(),
+                    a_curve: None,
                 });
                 self.empt = false;
                 self.my_done = IntStatus::OK;
@@ -757,40 +767,60 @@ impl ImpImpIntersection {
             }
             return false;
         }
-        // Convert each IntAnaCurve to an IntPatch WLine (sampled polyline).
-        // Each sample carries the UV on both surfaces (for the LineConstructor
-        // boundary-crossing detection downstream).
+        // OCCT IntCySp/IntCyCo/IntCoCo/IntCoSp: wrap each IntAna_Curve result
+        // in an IntPatch_ALine (ArcType = IntPatch_Analytic), add the endpoint
+        // vertices via ProcessBounds, and append to slin.  The ALine is later
+        // converted to a WLine by IntPatch_ALineToWLine::MakeWLine inside
+        // IntPatch_Intersection::GeomGeomPerfom.
+        let Some(q1) = Quadric::from_surface3(s1) else { return false; };
+        let Some(q2) = Quadric::from_surface3(s2) else { return false; };
         for i in 0..iqq.nb_curves() {
             let Some(curve) = iqq.curve(i) else { continue };
-            let pts = curve.sample(64);
-            if pts.is_empty() {
-                continue;
-            }
-            let wline_pnts = pts
-                .iter()
-                .map(|p| {
-                    let (u1, v1) = surf_uv(s1, *p);
-                    let (u2, v2) = surf_uv(s2, *p);
-                    crate::bop::int_tools::int_patch::WLinePnt {
-                        p3d: *p, u1, v1, u2, v2,
-                    }
-                })
-                .collect();
+            let mut curve = curve.clone();
+            let d = curve.domain();
+            let first = d[0];
+            let last = d[1];
+            let ptf = curve.value(first).unwrap_or(DVec3::ZERO);
+            let ptl = curve.value(last).unwrap_or(DVec3::ZERO);
+            let tol = 1e-7;
+            // OCCT IntCySp ProcessBounds: add the endpoint vertices.
+            let mut procf = false;
+            let mut procl = false;
+            let mut multpoint = false;
+            process_bounds(
+                &mut curve,
+                &self.slin,
+                &q1,
+                &q2,
+                &mut procf,
+                ptf,
+                first,
+                &mut procl,
+                ptl,
+                last,
+                &mut multpoint,
+                tol,
+            );
             self.slin.push(IntPatchLine {
-                line_type: IntPatchIType::Walking,
+                line_type: IntPatchIType::Analytic,
                 curve: Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: pts[0],
-                    direction: if pts.len() > 1 { (pts[1] - pts[0]).normalize_or_zero() } else { DVec3::X },
+                    origin: ptf,
+                    direction: if ptl != ptf {
+                        (ptl - ptf).normalize_or_zero()
+                    } else {
+                        DVec3::X
+                    },
                 }),
-                t_range: [0.0, 1.0],
+                t_range: [first, last],
                 pcurve1: None,
                 pcurve2: None,
                 tolerance: 1e-7,
                 tang_tolerance: 1e-7,
-                wline_pnts,
+                wline_pnts: Vec::new(),
                 is_purging_allowed: false,
                 wl_type: WLineType::ImpImp,
                 vertices: Vec::new(),
+                a_curve: Some(curve),
             });
         }
         self.empt = false;
@@ -830,6 +860,7 @@ impl ImpImpIntersection {
                     is_purging_allowed: false,
                     wl_type: WLineType::Unknown,
                     vertices: Vec::new(),
+                    a_curve: None,
                 });
                 self.empt = false;
                 self.my_done = IntStatus::OK;
@@ -907,6 +938,7 @@ impl ImpImpIntersection {
                 curve: c,
                 t_range,
                 vertices: Vec::new(),
+                a_curve: None,
                 pcurve1: None,
                 pcurve2: None,
                 tolerance: 1e-7,
@@ -933,6 +965,113 @@ fn quad_type_index(q: &Quadric) -> i32 {
 }
 
 /// Virtual tolerance angle used in Place/Cylinder dispatch
+/// OCCT ProcessBounds (IntPatch_ImpImpIntersection.cxx L4683-4838).
+///
+/// Adds the endpoints (theFPar/theLPar) of the current ALine as IntPatch_Point
+/// vertices.  When an endpoint coincides (within theTol) with a vertex of a
+/// previously stored ALine, that vertex is reused (marked multiple) instead of
+/// creating a new one.
+fn process_bounds(
+    alig: &mut super::int_quad_quad::IntAnaCurve,
+    slin: &[IntPatchLine],
+    quad1: &Quadric,
+    quad2: &Quadric,
+    procf: &mut bool,
+    ptf: DVec3,
+    first: f64,
+    procl: &mut bool,
+    ptl: DVec3,
+    last: f64,
+    multpoint: &mut bool,
+    tol: f64,
+) {
+    let mut j = if *procf && *procl { slin.len() } else { 0 };
+    while j < slin.len() {
+        if slin[j].line_type == IntPatchIType::Analytic {
+            let aligold_vertices = slin[j].a_curve.as_ref().map(|c| c.vertices.clone()).unwrap_or_default();
+            let mut k = 0usize;
+            while k < aligold_vertices.len() {
+                let mut ptsol = aligold_vertices[k];
+                if !*procf {
+                    let d = ptf.distance(ptsol.pnt.p);
+                    if d <= tol {
+                        ptsol.tolerance = tol;
+                        if !ptsol.multiple {
+                            *multpoint = true;
+                            ptsol.multiple = true;
+                        }
+                        ptsol.param_on_line = first;
+                        alig.vertices.push(ptsol);
+                        *procf = true;
+                    }
+                }
+                if !*procl {
+                    let d = ptl.distance(ptsol.pnt.p);
+                    if d <= tol {
+                        ptsol.tolerance = tol;
+                        if !ptsol.multiple {
+                            *multpoint = true;
+                            ptsol.multiple = true;
+                        }
+                        ptsol.param_on_line = last;
+                        alig.vertices.push(ptsol);
+                        *procl = true;
+                    }
+                }
+                if *procf && *procl {
+                    k = aligold_vertices.len();
+                } else {
+                    k += 1;
+                }
+            }
+            if *procf && *procl {
+                j = slin.len();
+            } else {
+                j += 1;
+            }
+        } else {
+            j += 1;
+        }
+    }
+
+    // Build a vertex for a 3D point on both surfaces.
+    let make_vertex = |p: DVec3, param: f64, tol: f64| -> super::special_points::PatchPoint {
+        let (u1, v1) = quad1.parameters(p);
+        let (u2, v2) = quad2.parameters(p);
+        super::special_points::PatchPoint {
+            pnt: super::special_points::PntOn2S { p, u1, v1, u2, v2 },
+            param_on_line: param,
+            tolerance: tol,
+            multiple: false,
+            on_dom_s1: true,
+            on_dom_s2: true,
+        }
+    };
+
+    let mut ptsol = make_vertex(ptf, 0.0, tol);
+    if !*procf && !*procl {
+        if ptf.distance(ptl) <= tol {
+            ptsol.multiple = true;
+            *multpoint = true;
+            ptsol.param_on_line = first;
+            alig.vertices.push(ptsol);
+            ptsol.param_on_line = last;
+            alig.vertices.push(ptsol);
+        } else {
+            ptsol.param_on_line = first;
+            alig.vertices.push(ptsol);
+            ptsol = make_vertex(ptl, last, tol);
+            alig.vertices.push(ptsol);
+        }
+    } else if !*procf {
+        ptsol.param_on_line = first;
+        alig.vertices.push(ptsol);
+    } else if !*procl {
+        ptsol = make_vertex(ptl, last, tol);
+        alig.vertices.push(ptsol);
+    }
+}
+
 const TOL_ANG: f64 = 1e-8;
 
 /// Analytic UV inversion of a 3D point on a surface (ElSLib::Parameters).

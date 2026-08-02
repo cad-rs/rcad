@@ -16,7 +16,11 @@
 pub mod imp_imp_intersection;
 pub mod int_quad_quad;
 pub mod intersection;
+pub mod point_line;
 pub mod quad_quad_geo;
+pub mod special_points;
+pub mod a_line_to_w_line;
+pub mod w_line_tool;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;
@@ -75,6 +79,10 @@ pub enum IntPatchIType {
     Ellipse,
     Parabola,
     Hyperbola,
+    /// OCCT IntPatch_ALine: an analytic line carrying an IntAna_Curve (the
+    /// result of IntAna_IntQuadQuad for cylinder/cone pairs).  Converted to a
+    /// WLine by IntPatch_ALineToWLine::MakeWLine inside GeomGeomPerfom.
+    Analytic,
     Walking,
     Restriction,
 }
@@ -150,6 +158,10 @@ pub struct IntPatchLine {
     pub wl_type: WLineType,
     /// Vertices on this line (IntPatch_Point / boundary crossings).
     pub vertices: Vec<IntPatchVertex>,
+    /// OCCT IntPatch_ALine: the analytic IntAna_Curve carried by an analytic
+    /// line (the result of IntAna_IntQuadQuad for cylinder/cone pairs).  It is
+    /// converted to a WLine by IntPatch_ALineToWLine::MakeWLine.
+    pub a_curve: Option<crate::bop::int_tools::int_patch::int_quad_quad::IntAnaCurve>,
 }
 
 impl IntPatchLine {
@@ -166,6 +178,7 @@ impl IntPatchLine {
             is_purging_allowed: false,
             wl_type: WLineType::Unknown,
             vertices: Vec::new(),
+            a_curve: None,
         }
     }
     pub fn walking(pnts: Vec<WLinePnt>, wt: WLineType) -> Self {
@@ -185,6 +198,7 @@ impl IntPatchLine {
             is_purging_allowed: true,
             wl_type: wt,
             vertices: Vec::new(),
+            a_curve: None,
         }
     }
     pub fn is_wline(&self) -> bool {

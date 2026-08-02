@@ -780,6 +780,7 @@ enum IntAnaCurveType {
 /// OCCT IntAna_Curve: a curve defined on [DomainInf, DomainSup] whose point at
 /// parameter Theta solves A(Theta) V^2 + B(Theta) V + C(Theta) = 0, where
 /// A/B/C are the quadric's coefficients restricted to the surface parametrization.
+#[derive(Debug, Clone)]
 pub struct IntAnaCurve {
     // Z0/Z1/Z2 trig-polynomial coefficients (A = Z2, B = Z1, C = Z0 in V).
     z0_cte: f64, z0_sin: f64, z0_cos: f64, z0_sin_sin: f64, z0_cos_cos: f64, z0_cos_sin: f64,
@@ -807,6 +808,10 @@ pub struct IntAnaCurve {
     con_y: DVec3,
     con_r: f64,
     con_angle: f64,
+    // OCCT IntPatch_ALine vertices (IntPatch_Point): boundary points on the
+    // line, added by ProcessBounds (IntCySp/IntCyCo/IntCoCo/IntCoSp).  They are
+    // consumed by IntPatch_ALineToWLine::MakeWLine.
+    pub vertices: Vec<crate::bop::int_tools::int_patch::special_points::PatchPoint>,
 }
 
 impl IntAnaCurve {
@@ -845,6 +850,7 @@ impl IntAnaCurve {
             cyl_origin: origin, cyl_axis: axis, cyl_x: x, cyl_y: y, cyl_r: r,
             con_apex: DVec3::ZERO, con_axis: DVec3::Z, con_x: DVec3::X, con_y: DVec3::Y,
             con_r: 0.0, con_angle: 0.0,
+            vertices: Vec::new(),
         }
     }
 
@@ -883,11 +889,24 @@ impl IntAnaCurve {
             surf_type: IntAnaCurveType::Cone,
             cyl_origin: DVec3::ZERO, cyl_axis: DVec3::Z, cyl_x: DVec3::X, cyl_y: DVec3::Y, cyl_r: 0.0,
             con_apex: apex, con_axis: axis, con_x: x, con_y: y, con_r: r, con_angle: angle,
+            vertices: Vec::new(),
         }
     }
 
     pub fn domain(&self) -> [f64; 2] {
         [self.my_first_parameter, self.my_last_parameter]
+    }
+
+    // OCCT IntPatch_ALine vertex access (the ALine wraps this IntAna_Curve and
+    // carries IntPatch_Point vertices added by ProcessBounds).
+    pub fn has_vertices(&self) -> bool {
+        !self.vertices.is_empty()
+    }
+    pub fn vertex_params(&self) -> Vec<f64> {
+        self.vertices.iter().map(|v| v.param_on_line).collect()
+    }
+    pub fn vertex_at(&self, i: usize) -> crate::bop::int_tools::int_patch::special_points::PatchPoint {
+        self.vertices[i]
     }
 
     /// OCCT IntAna_Curve::InternalUVValue (L279-374).
