@@ -629,7 +629,9 @@ impl QuadQuadGeo {
         self.typeres = AnaResultType::Empty;
         let (a, b, c_n, d) = p.plane_coeffs();
         let normp = DVec3::new(a, b, c_n).normalize_or_zero();
-        let apex = co.axis_loc();
+        // OCCT L769: gp_Pnt apex(Co.Apex()) — the apex point of the cone, not
+        // its axis location (the reference circle center).
+        let apex = co.cone().apex_point();
         let axis_dir = co.axis_dir();
         let dist = a * apex.x + b * apex.y + c_n * apex.z + d;
         let semi_angle = co.semi_angle();
