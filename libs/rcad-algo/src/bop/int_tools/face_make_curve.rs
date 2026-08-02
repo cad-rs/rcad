@@ -22,7 +22,7 @@ use crate::bop::int_tools::int_patch::{IntPatchIType, IntPatchLine, IntPatchVert
 use crate::topalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
-use rcad_kernel::geom::{Curve3, CurveEval, Line3, Plane, Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 
 /// OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip each IntPatch line to
@@ -47,6 +47,11 @@ pub fn make_curves(
     let mut out = Vec::new();
     for line in lines {
         let mut line = line.clone();
+        // OCCT IntTools_FaceFace::MakeCurve case IntPatch_Restriction (L1742-1842).
+        if line.line_type == IntPatchIType::Restriction {
+            out.extend(make_restriction_curves(surf1, uv1, surf2, uv2, tol, &line));
+            continue;
+        }
         // OCCT PutPointsOnLine: project the surface-boundary crossings onto the
         // line -> IntPatch_Point vertices.  The boundary is the TopolTool domain
         // (the CorrectPlaneBoundaries-enlarged UV rectangle for plane faces).
@@ -64,6 +69,200 @@ pub fn make_curves(
         }
     }
     out
+}
+
+/// OCCT IntTools_FaceFace::MakeCurve case IntPatch_Restriction (L1742-1842)
+/// + GeomInt_IntSS::TreatRLine (GeomInt_IntSS_1.cxx L1098-1168) +
+/// TrimILineOnSurfBoundaries (L1333-1448).
+///
+/// A restriction line is a boundary arc of one face lying on the other face.
+/// The 3D curve is the arc lifted to the arc's surface; the pcurve on the
+/// other surface is built by projecting the 3D curve.  The curve is then
+/// trimmed to the two faces' UV rectangles.
+fn make_restriction_curves(
+    surf1: &Surface3,
+    uv1: [f64; 4],
+    surf2: &Surface3,
+    uv2: [f64; 4],
+    tol: f64,
+    line: &IntPatchLine,
+) -> Vec<IntersectionCurve> {
+    let mut out = Vec::new();
+    // OCCT TreatRLine L1106-1133: the arc is on surface 1 or surface 2.
+    let (arc_surf, arc, other_surf, other_uv, arc_uv, is_on_s1) = if line.is_arc_on_s1() {
+        (surf1, line.arc_on_s1(), surf2, uv2, uv1, true)
+    } else if line.is_arc_on_s2() {
+        (surf2, line.arc_on_s2(), surf1, uv1, uv2, false)
+    } else {
+        return out;
+    };
+    let Some(arc) = arc else { return out };
+
+    // Parametric range of the restriction arc (OCCT TreatRLine ParamOnS1/S2,
+    // derived from the RLine's first/last points).
+    let mut tf = if line.has_first_point() {
+        line.first_point().parameter_on_line()
+    } else {
+        arc.default_domain()[0]
+    };
+    let mut tl = if line.has_last_point() {
+        line.last_point().parameter_on_line()
+    } else {
+        arc.default_domain()[1]
+    };
+    if !(tf.is_finite() && tl.is_finite() && tl > tf) {
+        return out;
+    }
+    tf = tf.max(arc.default_domain()[0]);
+    tl = tl.min(arc.default_domain()[1]);
+    if tl <= tf {
+        return out;
+    }
+
+    // OCCT: 3D curve = approximation of the curve on the arc surface
+    // (Approx_CurveOnSurface).  rcad: the 3D image of the UV-line arc on the
+    // analytic quadric is exact (line or circle), built with the same
+    // parameterization as the 2D arc.
+    let (curve3, _ctype) =
+        match crate::bop::int_tools::int_patch::so_on_bounds::curve_on_surface(arc, arc_surf) {
+            Some(c) => c,
+            None => return out,
+        };
+
+    // OCCT TreatRLine L1157-1166: pcurve on the other surface via
+    // GeomInt_IntSS::BuildPCurves.  rcad: build the other pcurve by sampling
+    // the 3D curve and inverting it on the other quadric.
+    let other_pcurve = build_projected_pcurve(other_surf, &curve3, tf, tl, 64);
+    let Some(other_pcurve) = other_pcurve else { return out };
+
+    // OCCT TrimILineOnSurfBoundaries: intersect the pcurves with the two UV
+    // rectangles, collect parameters along the arc.
+    let arc_pcurve = arc.clone();
+    let mut params: Vec<f64> = vec![tf, tl];
+    // The arc's own pcurve lives on its surface's UV rectangle.
+    collect_boundary_crossings(&arc_pcurve, arc_uv, &mut params);
+    collect_boundary_crossings(&other_pcurve, other_uv, &mut params);
+    params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    params.retain(|&p| p >= tf - PCONFUSION && p <= tl + PCONFUSION);
+    // dedup
+    let mut dedup: Vec<f64> = Vec::new();
+    for p in params {
+        if dedup.is_empty() || (p - dedup.last().unwrap()).abs() > PCONFUSION {
+            dedup.push(p);
+        }
+    }
+    let params = dedup;
+    let a_box1 = enlarge_box(uv1, tol);
+    let a_box2 = enlarge_box(uv2, tol);
+
+    for an_ind in 0..params.len().saturating_sub(1) {
+        let a_par_f = params[an_ind];
+        let mut a_par_l = params[an_ind + 1];
+        if a_par_l - a_par_f <= PCONFUSION {
+            if an_ind + 1 < params.len() - 1 {
+                a_par_l = a_par_f;
+            }
+            continue;
+        }
+        let a_par = 0.5 * (a_par_f + a_par_l);
+        // Midpoint of the arc pcurve must be inside its surface's UV box.
+        let a_pt1 = arc.point_at(a_par);
+        let arc_box = if is_on_s1 { a_box1 } else { a_box2 };
+        if !point_in_box(a_pt1, arc_box) {
+            continue;
+        }
+        // Midpoint of the other pcurve inside the other surface's UV box.
+        let a_pt2 = other_pcurve.point_at(a_par);
+        let other_box = if is_on_s1 { a_box2 } else { a_box1 };
+        if !point_in_box(a_pt2, other_box) {
+            continue;
+        }
+        // OCCT L1836-1839: trimmed 3D curve + pcurves.
+        let pcurve1 = if is_on_s1 { Some(arc.clone()) } else { Some(other_pcurve.clone()) };
+        let pcurve2 = if is_on_s1 { Some(other_pcurve.clone()) } else { Some(arc.clone()) };
+        out.push(IntersectionCurve {
+            curve: curve3.clone(),
+            t_range: [a_par_f, a_par_l],
+            pcurve1,
+            pcurve2,
+            tolerance: tol,
+            tang_tolerance: 0.0,
+        });
+    }
+    out
+}
+
+fn enlarge_box(uv: [f64; 4], delta: f64) -> [f64; 4] {
+    [uv[0] - delta, uv[1] + delta, uv[2] - delta, uv[3] + delta]
+}
+
+/// OCCT Bnd_Box2d::IsOut(Pnt) — point outside the enlarged UV rectangle.
+fn point_in_box(p: DVec2, b: [f64; 4]) -> bool {
+    !(p.x < b[0] || p.x > b[1] || p.y < b[2] || p.y > b[3])
+}
+
+/// OCCT GeomInt_IntSS::IntersectCurveAndBoundary — parameters where the 2D
+/// pcurve crosses the 4 edges of the UV rectangle.
+fn collect_boundary_crossings(pc: &Curve2d, uv: [f64; 4], params: &mut Vec<f64>) {
+    let [u_min, u_max, v_min, v_max] = uv;
+    // Intersect the pcurve with each of the 4 boundary lines.
+    let boundaries = [
+        ([u_min, v_min], DVec2::new(0.0, 1.0)), // U=Umin, V varies
+        ([u_max, v_min], DVec2::new(0.0, 1.0)), // U=Umax, V varies
+        ([u_min, v_min], DVec2::new(1.0, 0.0)), // V=Vmin, U varies
+        ([u_min, v_max], DVec2::new(1.0, 0.0)), // V=Vmax, U varies
+    ];
+    if let Curve2d::Line(l) = pc {
+        for (o, d) in boundaries {
+            if let Some(t) = line_line2d_intersection(&l, &Line2d { origin: DVec2::new(o[0], o[1]), direction: d }) {
+                let p = l.point_at(t);
+                // ensure the intersection lies on the boundary segment
+                let on_seg = if d.y.abs() > 0.5 {
+                    p.y >= v_min - 1e-9 && p.y <= v_max + 1e-9
+                } else {
+                    p.x >= u_min - 1e-9 && p.x <= u_max + 1e-9
+                };
+                if on_seg {
+                    params.push(t);
+                }
+            }
+        }
+    }
+}
+
+/// Intersection parameter of two 2D lines.  Returns the parameter on `a`.
+fn line_line2d_intersection(a: &Line2d, b: &Line2d) -> Option<f64> {
+    let det = a.direction.x * b.direction.y - a.direction.y * b.direction.x;
+    if det.abs() < 1e-30 {
+        return None;
+    }
+    let db = b.origin - a.origin;
+    let t = (db.x * b.direction.y - db.y * b.direction.x) / det;
+    Some(t)
+}
+
+/// OCCT GeomInt_IntSS::BuildPCurves (projection of the 3D curve onto the
+/// other quadric).  rcad: sample the 3D curve, invert each point on the
+/// quadric, and build a 2D line through the endpoint UVs.
+fn build_projected_pcurve(
+    other_surf: &Surface3,
+    curve3: &Curve3,
+    tf: f64,
+    tl: f64,
+    _n: usize,
+) -> Option<Curve2d> {
+    let p0 = curve3.point_at(tf);
+    let p1 = curve3.point_at(tl);
+    let uv0 = quadric_uv_params(other_surf, p0)?;
+    let uv1 = quadric_uv_params(other_surf, p1)?;
+    if !uv0.is_finite() || !uv1.is_finite() {
+        return None;
+    }
+    // OCCT BuildPCurves: on a short domain the pcurve is a segment of a line.
+    Some(Curve2d::Line(Line2d {
+        origin: uv0,
+        direction: (uv1 - uv0) / (tl - tf),
+    }))
 }
 
 /// OCCT IntPatch_ImpImpIntersection::Perform L439-660 (PutPointsOnLine).

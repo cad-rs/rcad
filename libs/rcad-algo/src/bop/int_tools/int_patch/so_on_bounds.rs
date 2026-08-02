@@ -1312,7 +1312,7 @@ fn is_degenerated_quadric(quadric: &Quadric) -> bool {
 /// Build the 3D curve (parameterized by the 2D arc parameter) of a boundary
 /// arc on a surface.  The boundary arcs of the FF domain are lines in UV
 /// space; on an analytic quadric their 3D image is a Line or a Circle.
-fn curve_on_surface(
+pub fn curve_on_surface(
     a: &Curve2d,
     surf: &Surface3,
 ) -> Option<(rcad_kernel::geom::Curve3, CurveType3d)> {
