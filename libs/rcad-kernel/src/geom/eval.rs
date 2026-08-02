@@ -768,6 +768,9 @@ impl SurfaceEval for ConicalSurface {
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, f64::INFINITY]
     }
+    fn is_u_periodic(&self) -> bool {
+        true
+    }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let axis = self.axis_dir();
         let x_ax = any_perpendicular(axis);
@@ -1036,6 +1039,48 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
+        }
+    }
+    fn is_u_periodic(&self) -> bool {
+        match self {
+            Surface3::Plane(s) => s.is_u_periodic(),
+            Surface3::Cylinder(s) => s.is_u_periodic(),
+            Surface3::Sphere(s) => s.is_u_periodic(),
+            Surface3::Cone(s) => s.is_u_periodic(),
+            Surface3::Torus(s) => s.is_u_periodic(),
+            Surface3::Ellipsoid(s) => s.is_u_periodic(),
+            Surface3::Helicoid(s) => s.is_u_periodic(),
+            Surface3::Pipe(s) => s.is_u_periodic(),
+            Surface3::BSpline(s) => s.is_u_periodic(),
+            Surface3::LinearExtrusion(s) => s.is_u_periodic(),
+            Surface3::Revolution(s) => s.is_u_periodic(),
+            Surface3::Ruled(s) => s.is_u_periodic(),
+            Surface3::Coons(s) => s.is_u_periodic(),
+            Surface3::Bezier(s) => s.is_u_periodic(),
+            Surface3::TriBezier(s) => s.is_u_periodic(),
+            Surface3::Offset(s) => s.is_u_periodic(),
+            Surface3::Trimmed(s) => s.is_u_periodic(),
+        }
+    }
+    fn is_v_periodic(&self) -> bool {
+        match self {
+            Surface3::Plane(s) => s.is_v_periodic(),
+            Surface3::Cylinder(s) => s.is_v_periodic(),
+            Surface3::Sphere(s) => s.is_v_periodic(),
+            Surface3::Cone(s) => s.is_v_periodic(),
+            Surface3::Torus(s) => s.is_v_periodic(),
+            Surface3::Ellipsoid(s) => s.is_v_periodic(),
+            Surface3::Helicoid(s) => s.is_v_periodic(),
+            Surface3::Pipe(s) => s.is_v_periodic(),
+            Surface3::BSpline(s) => s.is_v_periodic(),
+            Surface3::LinearExtrusion(s) => s.is_v_periodic(),
+            Surface3::Revolution(s) => s.is_v_periodic(),
+            Surface3::Ruled(s) => s.is_v_periodic(),
+            Surface3::Coons(s) => s.is_v_periodic(),
+            Surface3::Bezier(s) => s.is_v_periodic(),
+            Surface3::TriBezier(s) => s.is_v_periodic(),
+            Surface3::Offset(s) => s.is_v_periodic(),
+            Surface3::Trimmed(s) => s.is_v_periodic(),
         }
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
