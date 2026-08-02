@@ -60,10 +60,54 @@ pub fn make_curves(
         // as-is; no additional UV-crossing placement is done for a WLine.
         // OCCT GeomInt_LineConstructor::Perform -> valid parameter intervals.
         let parts = line_constructor_parts(surf1, uv1, surf2, uv2, tol, &line);
-        // OCCT MakeCurve L776-1846: one curve per part.
+        // OCCT MakeCurve L926-1000: a Circle/Ellipse interval crossing 0 is
+        // divided on two intervals [fprm, 2*PI] and [0, lprm].
+        let a_nul = 0.0;
+        let a_period = std::f64::consts::TAU;
+        let a_tol_pc = rcad_kernel::precision::APPROXIMATION; // myTolApprox
+        let mut a_parts: Vec<[f64; 2]> = Vec::new();
         for &[fprm, lprm] in &parts {
+            let is_circle_ellipse = matches!(
+                line.line_type,
+                IntPatchIType::Circle | IntPatchIType::Ellipse
+            );
+            if is_circle_ellipse && fprm < a_nul && lprm > a_nul {
+                let mut fprm = fprm;
+                let mut lprm = lprm;
+                while fprm < a_nul || fprm > a_period {
+                    fprm += a_period;
+                }
+                while lprm < a_nul || lprm > a_period {
+                    lprm += a_period;
+                }
+                // OCCT L955-975: the [fprm, 2*PI] sub-interval.
+                if (a_period - fprm) > a_tol_pc {
+                    a_parts.push([fprm, a_period]);
+                } else {
+                    let p1 = line.curve.point_at(fprm);
+                    let p2 = line.curve.point_at(a_period);
+                    if p1.distance(p2) > tol {
+                        a_parts.push([fprm, a_period]);
+                    }
+                }
+                // OCCT L976-996: the [0, lprm] sub-interval.
+                if (lprm - a_nul) > a_tol_pc {
+                    a_parts.push([a_nul, lprm]);
+                } else {
+                    let p1 = line.curve.point_at(a_nul);
+                    let p2 = line.curve.point_at(lprm);
+                    if p1.distance(p2) > tol {
+                        a_parts.push([a_nul, lprm]);
+                    }
+                }
+            } else {
+                a_parts.push([fprm, lprm]);
+            }
+        }
+        // OCCT MakeCurve L776-1846: one curve per part.
+        for &[fprm, lprm] in &a_parts {
             let ic = make_part_curve(
-                surf1, uv1, surf2, uv2, tol, &line, fprm, lprm, parts.len(),
+                surf1, uv1, surf2, uv2, tol, &line, fprm, lprm, a_parts.len(),
             );
             if let Some(ic) = ic {
                 out.push(ic);
@@ -532,13 +576,13 @@ fn treat_circle_parts(
     // OCCT IntPatch_ImpImpIntersection L2997-3052: a Circle/Ellipse GLine
     // without vertices gets two vertices at parameter 0 and 2*PI.
     let a_tol_pc = 1000.0 * PCONFUSION;
+    // OCCT GeomInt_LineConstructor::TreatCircle keeps the vertex parameters as
+    // they are (no wrapping); the MakeCurve circle branch splits the intervals
+    // crossing 0 into two.
     let mut params: Vec<f64> = if line.vertices.is_empty() {
         vec![0.0, two_pi]
     } else {
-        line.vertices
-            .iter()
-            .map(|v| wrap_to_2pi(v.param_on_line))
-            .collect()
+        line.vertices.iter().map(|v| v.param_on_line).collect()
     };
     params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
