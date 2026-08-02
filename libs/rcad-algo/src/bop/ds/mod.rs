@@ -925,13 +925,31 @@ impl DS {
         }
         let mut pb_marks: Vec<usize> = Vec::new();
         let mut vertex_marks: Vec<usize> = Vec::new();
-        // FaceInfoIn step 1: pure internal vertices on the face.
+        // FaceInfoIn step 1: pure internal (free) vertices on the face.  OCCT
+        // uses TopoDS_Iterator on the face BRep (direct children = wires + free
+        // vertices), so the edge-endpoint vertices are NOT included.  The DS
+        // face sub-shapes are flattened to edges + vertices (prepare_faces), so
+        // a vertex that is a sub-shape of one of the face's edges is a boundary
+        // vertex, not a free one.
         let sub_shapes = self.shapes[the_index].sub_shapes.clone();
+        let mut edge_vertex_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &si in &sub_shapes {
             if si >= self.nb_shapes() {
                 continue;
             }
-            if self.shapes[si].shape_type == ShapeType::Vertex {
+            if self.shapes[si].shape_type == ShapeType::Edge {
+                for &vi in &self.shapes[si].sub_shapes {
+                    if vi < self.nb_shapes() {
+                        edge_vertex_set.insert(vi);
+                    }
+                }
+            }
+        }
+        for &si in &sub_shapes {
+            if si >= self.nb_shapes() {
+                continue;
+            }
+            if self.shapes[si].shape_type == ShapeType::Vertex && !edge_vertex_set.contains(&si) {
                 let sd = self.get_same_domain_index(si as isize);
                 if sd >= 0 {
                     vertex_marks.push(sd as usize);
