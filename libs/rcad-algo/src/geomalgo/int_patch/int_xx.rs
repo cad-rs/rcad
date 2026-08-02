@@ -753,7 +753,7 @@ fn int_quad_quad_fallback(
                     Some((pv, tv)) => {
                         ptvalid = pv;
                         tgvalid = tv;
-                        tgfound = tv.length_squared() >= 1e-14;
+                        tgfound = true;
                     }
                     None => {
                         tgfound = false;
@@ -768,9 +768,9 @@ fn int_quad_quad_fallback(
             let mut kept = false;
             if kount <= 5 {
                 let qwe = tgvalid.dot(quad2.normale(ptvalid).cross(quad1.normale(ptvalid)));
-                (trans1, trans2) = if qwe > 1.0e-9 {
+                (trans1, trans2) = if qwe > 1.0e-8 {
                     (TypeTrans::Out, TypeTrans::In)
-                } else if qwe < -1.0e-9 {
+                } else if qwe < -1.0e-8 {
                     (TypeTrans::In, TypeTrans::Out)
                 } else {
                     (TypeTrans::Undecided, TypeTrans::Undecided)
