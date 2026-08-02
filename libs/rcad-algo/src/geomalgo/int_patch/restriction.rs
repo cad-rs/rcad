@@ -414,14 +414,19 @@ fn elclib_ellipse_parameter(e: &rcad_kernel::geom::Ellipse3, p: DVec3) -> f64 {
     y.atan2(x)
 }
 
-/// OCCT ElCLib::Parameter(gp_Parab, gp_Pnt) — approximate parameter.
-fn elclib_parabola_parameter(p: &rcad_kernel::geom::Parabola3, _pt: DVec3) -> f64 {
-    p.default_domain()[0]
+/// OCCT ElCLib::ParabolaParameter (ElCLib.cxx L1269-1272):
+///   `t = (P - vertex) . YDirection`, where Y is the cross-axis direction.
+fn elclib_parabola_parameter(p: &rcad_kernel::geom::Parabola3, pt: DVec3) -> f64 {
+    let dir_perp = p.axis_dir.cross(p.normal).normalize_or_zero();
+    (pt - p.vertex).dot(dir_perp)
 }
 
-/// OCCT ElCLib::Parameter(gp_Hypr, gp_Pnt) — approximate parameter.
-fn elclib_hyperbola_parameter(h: &rcad_kernel::geom::Hyperbola3, _pt: DVec3) -> f64 {
-    h.default_domain()[0]
+/// OCCT ElCLib::HyperbolaParameter (ElCLib.cxx L1253-1265):
+///   `sht = (P - center) . YDirection / MinorRadius;  t = asinh(sht)`.
+fn elclib_hyperbola_parameter(h: &rcad_kernel::geom::Hyperbola3, pt: DVec3) -> f64 {
+    let minor_dir = h.normal.cross(h.major_dir).normalize_or_zero();
+    let sht = (pt - h.center).dot(minor_dir) / h.semi_minor;
+    sht.asinh()
 }
 
 /// OCCT IntersectionWithAnArc (L127-314): coarse parameter search over the

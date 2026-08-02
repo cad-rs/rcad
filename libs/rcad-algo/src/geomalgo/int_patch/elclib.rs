@@ -70,8 +70,11 @@ pub fn ellipse_d1(e: &Ellipse3, t: f64) -> (DVec3, DVec3) {
 }
 
 /// OCCT ElCLib::Parameter(gp_Parab, gp_Pnt) — approximate parameter.
-pub fn parabola_parameter(p: &Parabola3, _pt: DVec3) -> f64 {
-    p.default_domain()[0]
+/// OCCT ElCLib::ParabolaParameter (ElCLib.cxx L1269-1272):
+///   `t = (P - vertex) . YDirection`, where Y is the cross-axis direction.
+pub fn parabola_parameter(p: &Parabola3, pt: DVec3) -> f64 {
+    let dir_perp = p.axis_dir.cross(p.normal).normalize_or_zero();
+    (pt - p.vertex).dot(dir_perp)
 }
 
 /// OCCT ElCLib::Value(para, gp_Parab).
@@ -84,9 +87,13 @@ pub fn parabola_d1(p: &Parabola3, t: f64) -> (DVec3, DVec3) {
     (p.point_at(t), p.derivative_at(t))
 }
 
-/// OCCT ElCLib::Parameter(gp_Hypr, gp_Pnt) — approximate parameter.
-pub fn hyperbola_parameter(h: &Hyperbola3, _pt: DVec3) -> f64 {
-    h.default_domain()[0]
+/// OCCT ElCLib::HyperbolaParameter (ElCLib.cxx L1253-1265):
+///   `sht = (P - center) . YDirection / MinorRadius;  t = asinh(sht)`,
+///   where Y is the conjugate (minor) axis direction.
+pub fn hyperbola_parameter(h: &Hyperbola3, pt: DVec3) -> f64 {
+    let minor_dir = h.normal.cross(h.major_dir).normalize_or_zero();
+    let sht = (pt - h.center).dot(minor_dir) / h.semi_minor;
+    sht.asinh()
 }
 
 /// OCCT ElCLib::Value(para, gp_Hypr).
