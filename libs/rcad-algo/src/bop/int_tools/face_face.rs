@@ -10,7 +10,7 @@ use rcad_kernel::geom::{
 use glam::{DVec2, DVec3};
 
 use super::face_make_curve;
-use crate::bop::int_tools::int_patch::IntPatchLine;
+use crate::geomalgo::int_patch::IntPatchLine;
 
 /// OCCT IntTools_FaceFace::CorrectPlaneBoundaries (L3126-3144) +
 /// CorrectSurfaceBoundaries (L2050-2150): the FF domain of a face is not its
@@ -690,7 +690,7 @@ impl FaceFace {
         tol: f64,
     ) {
         let mut inter =
-            crate::bop::int_tools::int_patch::IntPatchIntersection::new();
+            crate::geomalgo::int_patch::IntPatchIntersection::new();
         inter.perform(s1, s2, uv1, uv2, tol, tol);
         if inter.tangent_faces() {
             self.tangent_faces = true;
@@ -742,7 +742,7 @@ impl FaceFace {
         // Emit as a raw IntPatch Circle line; MakeCurve clips it to the two
         // faces' UV domains.
         self.lines.push(IntPatchLine::analytic(
-            crate::bop::int_tools::int_patch::IntPatchIType::Circle,
+            crate::geomalgo::int_patch::IntPatchIType::Circle,
             Curve3::Circle(circle),
             [0.0, std::f64::consts::TAU],
         ));

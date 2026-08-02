@@ -24,7 +24,7 @@ use rcad_kernel::math::root::{
 };
 use rcad_kernel::math::opt::BrentMinimum;
 use super::int_cs::{IntCurveSurface, TransitionOnCurve};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 // =====================================================================
 // IntPatch_ThePathPointOfTheSOnBounds
@@ -880,7 +880,7 @@ fn bounded_arc(
             maxdist = tol_boundary;
         }
 
-        if type_quad != crate::topalgo::int_surf::quadric::QuadricType::Other {
+        if type_quad != crate::geomalgo::int_surf::quadric::QuadricType::Other {
             // Build the 3D curve of the boundary arc on the surface.
             let surf = func.surface().clone();
             if let Some((curve3, ctype)) = curve_on_surface(&a, &surf) {
@@ -888,7 +888,7 @@ fn bounded_arc(
                 // Exact solution only for canonic curves, non-Torus quadrics,
                 // and non-degenerated entities.
                 if is_canonic(type_con_s)
-                    && type_quad != crate::topalgo::int_surf::quadric::QuadricType::Torus
+                    && type_quad != crate::geomalgo::int_surf::quadric::QuadricType::Torus
                     && !is_degenerated_curve(&curve3)
                     && !is_degenerated_quadric(&quadric)
                 {
@@ -1303,7 +1303,7 @@ fn is_degenerated_curve(curve: &rcad_kernel::geom::Curve3) -> bool {
 /// OCCT IsDegenerated(const IntSurf_Quadric&) (L178-189): a Cone with
 /// |SemiAngle| < 0.02 or > 1.55 is degenerated.
 fn is_degenerated_quadric(quadric: &Quadric) -> bool {
-    if quadric.type_quadric() == crate::topalgo::int_surf::quadric::QuadricType::Cone {
+    if quadric.type_quadric() == crate::geomalgo::int_surf::quadric::QuadricType::Cone {
         let a = quadric.semi_angle().abs();
         if a < 0.02 || a > 1.55 {
             return true;
@@ -1470,7 +1470,7 @@ pub fn curve_on_surface(
 
 /// Reconstruct a Surface3 from a Quadric.
 fn quadric_to_surface3(quad: &Quadric) -> Surface3 {
-    use crate::topalgo::int_surf::quadric::QuadricType;
+    use crate::geomalgo::int_surf::quadric::QuadricType;
     match quad.type_quadric() {
         QuadricType::Plane => Surface3::Plane(quad.plane()),
         QuadricType::Cylinder => Surface3::Cylinder(quad.cylinder()),

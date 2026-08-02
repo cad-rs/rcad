@@ -1729,7 +1729,7 @@ impl IntCurveSurfaceHInter {
 
         // ThePerformConic: exact analytic intersection per type pair
         // OCCT L119-137: Line/Circle/Ellipse/Parabola/Hyperbola use IntAna_IntConicQuad
-        let mkpt = |h: &crate::bop::int_tools::curve_surface::CurveSurfaceHit| {
+        let mkpt = |h: &crate::geomalgo::int_patch::curve_surface::CurveSurfaceHit| {
             // Surface (u, v) at the hit point, via projection (ElSLib::Parameters).
             IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
         };
@@ -1750,7 +1750,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cylinder) => {
                 let line3 = curve.line();
                 let cyl3 = surface.cylinder();
-                let hits = crate::bop::int_tools::curve_surface::intersect_line_cylinder_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_cylinder_with_tol(
                     &line3,
                     [first, last],
                     &cyl3,
@@ -1761,7 +1761,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Sphere) => {
                 let line3 = curve.line();
                 let sph3 = surface.sphere();
-                let hits = crate::bop::int_tools::curve_surface::intersect_line_sphere_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_sphere_with_tol(
                     &line3,
                     [first, last],
                     &sph3,
@@ -1772,7 +1772,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cone) => {
                 let line3 = curve.line();
                 let cone3 = surface.cone();
-                let hits = crate::bop::int_tools::curve_surface::intersect_line_cone_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_cone_with_tol(
                     &line3,
                     [first, last],
                     &cone3,
@@ -1783,7 +1783,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Plane) => {
                 let circ3 = curve.circle();
                 let plane3 = surface.plane();
-                let hits = crate::bop::int_tools::curve_surface::intersect_circle_plane_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_plane_with_tol(
                     &circ3,
                     [first, last],
                     &plane3,
@@ -1794,7 +1794,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Cylinder) => {
                 let circ3 = curve.circle();
                 let cyl3 = surface.cylinder();
-                let hits = crate::bop::int_tools::curve_surface::intersect_circle_cylinder_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_cylinder_with_tol(
                     &circ3,
                     [first, last],
                     &cyl3,
@@ -1805,7 +1805,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Sphere) => {
                 let circ3 = curve.circle();
                 let sph3 = surface.sphere();
-                let hits = crate::bop::int_tools::curve_surface::intersect_circle_sphere_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_sphere_with_tol(
                     &circ3,
                     [first, last],
                     &sph3,
@@ -1816,7 +1816,7 @@ impl IntCurveSurfaceHInter {
             (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Cone) => {
                 let circ3 = curve.circle();
                 let cone3 = surface.cone();
-                let hits = crate::bop::int_tools::curve_surface::intersect_circle_cone_with_tol(
+                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_cone_with_tol(
                     &circ3,
                     [first, last],
                     &cone3,

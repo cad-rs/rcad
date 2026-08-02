@@ -10,13 +10,13 @@
 use glam::DVec2;
 use rcad_kernel::geom::Line2d;
 
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 use crate::topalgo::brep_class::edge::ClassEdge;
 use crate::topalgo::brep_class::face_explorer::FaceExplorer;
 use crate::topalgo::brep_class::intersector::Intersector;
 use crate::topalgo::brep_top_adaptor::fclass2d::State;
-use crate::topalgo::int_res2d::{IntersectionPoint, Position, TypeTrans};
-use crate::topalgo::top_trans::CurveTransition;
+use crate::geomalgo::int_res2d::{IntersectionPoint, Position, TypeTrans};
+use crate::geomalgo::top_trans::CurveTransition;
 
 /// OCCT BRepClass_FClass2dOfFClassifier — the classifier used inside the
 /// TopClass_FaceClassifier loop. State machine over the closest edge crossing.
@@ -85,7 +85,7 @@ impl FClass2dOfFClassifier {
     }
 
     /// OCCT TopClass_Classifier2d::Compare (TopClass_Classifier2d.pxx L57-225).
-    pub fn compare(&mut self, edge: &ClassEdge, or_: rcad_kernel::topods::Orientation, ds: &DS) {
+    pub fn compare(&mut self, edge: &ClassEdge, or_: rcad_kernel::topods::Orientation, ds: &dyn ShapeSource) {
         // Intersect the edge and the segment.
         self.closest = 0;
         self.intersector.perform(&self.lin, self.param, self.tolerance, edge, ds);
@@ -188,21 +188,21 @@ impl FClass2dOfFClassifier {
             }
             TypeTrans::Touch => {
                 match a_t1.situation() {
-                    crate::topalgo::int_res2d::Situation::Inside => {
+                    crate::geomalgo::int_res2d::Situation::Inside => {
                         a_seg_trans = if or_ == rcad_kernel::topods::Orientation::Reversed {
                             rcad_kernel::topods::Orientation::External
                         } else {
                             rcad_kernel::topods::Orientation::Internal
                         };
                     }
-                    crate::topalgo::int_res2d::Situation::Outside => {
+                    crate::geomalgo::int_res2d::Situation::Outside => {
                         a_seg_trans = if or_ == rcad_kernel::topods::Orientation::Reversed {
                             rcad_kernel::topods::Orientation::Internal
                         } else {
                             rcad_kernel::topods::Orientation::External
                         };
                     }
-                    crate::topalgo::int_res2d::Situation::Unknown => return,
+                    crate::geomalgo::int_res2d::Situation::Unknown => return,
                 }
             }
             TypeTrans::Undecided => return,
@@ -263,7 +263,7 @@ impl FClassifier {
 
     /// OCCT BRepClass_FClassifier::Perform(F, P, Tol) — classify a 2D point
     /// against the face using a BRepClass_FaceExplorer.
-    pub fn perform(&mut self, ds: &DS, face: usize, p: DVec2, tol: f64) {
+    pub fn perform(&mut self, ds: &dyn ShapeSource, face: usize, p: DVec2, tol: f64) {
         let mut fexp = FaceExplorer::new(ds, face);
         fexp.set_max_tolerance(0.1);
         fexp.set_use_bnd_box(false);

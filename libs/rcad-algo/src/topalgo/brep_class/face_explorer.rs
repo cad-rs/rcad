@@ -9,7 +9,7 @@ use rcad_kernel::geom::{Curve2dEval, Line2d};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 use crate::topalgo::brep_class::edge::ClassEdge;
 
 // OCCT BRepClass_FaceExplorer.cxx L30-32.
@@ -42,7 +42,7 @@ pub struct FaceExplorer {
 
 impl FaceExplorer {
     /// OCCT BRepClass_FaceExplorer(F) — initialize from the face.
-    pub fn new(ds: &DS, face: usize) -> Self {
+    pub fn new(ds: &dyn ShapeSource, face: usize) -> Self {
         let mut fe = FaceExplorer {
             face,
             face_edges: Vec::new(),
@@ -64,27 +64,29 @@ impl FaceExplorer {
     }
 
     /// Build the ordered boundary edges from the face's wires.
-    fn build_edges(&mut self, ds: &DS) {
-        let face_data = match &*ds.shapes[self.face].shape.data {
+    fn build_edges(&mut self, ds: &dyn ShapeSource) {
+        let fshape = ds.shape_at(self.face);
+        let face_data = match &*fshape.data {
             TShape::Face(fd) => fd,
             _ => return,
         };
         let wires: Vec<&Shape> =
             std::iter::once(&face_data.outer_wire).chain(face_data.inner_wires.iter()).collect();
         for w in wires {
-            let Some(&wi) = ds.map_shape_index.get(&(w.ptr_id(), w.location)) else {
+            let Some(wi) = ds.map_shape_index(w.ptr_id(), w.location) else {
                 continue;
             };
             if wi >= ds.nb_shapes() {
                 continue;
             }
-            let wire_edges = match &*ds.shapes[wi].shape.data {
+            let wshape = ds.shape_at(wi);
+            let wire_edges = match &*wshape.data {
                 TShape::Wire(wd) => wd.edges.clone(),
                 _ => Vec::new(),
             };
             let mut wire_list: Vec<(usize, Orientation)> = Vec::new();
             for eshape in &wire_edges {
-                if let Some(&ei) = ds.map_shape_index.get(&(eshape.ptr_id(), eshape.location)) {
+                if let Some(ei) = ds.map_shape_index(eshape.ptr_id(), eshape.location) {
                     wire_list.push((ei, eshape.orientation));
                 }
             }
@@ -104,7 +106,7 @@ impl FaceExplorer {
     /// OCCT BRepClass_FaceExplorer::CheckPoint (L67-100) — adjust the point if
     /// it is too far from the face's UV bounding box. Returns the (possibly
     /// adjusted) point.
-    pub fn check_point(&mut self, ds: &DS, mut point: DVec2) -> DVec2 {
+    pub fn check_point(&mut self, ds: &dyn ShapeSource, mut point: DVec2) -> DVec2 {
         if !self.bounds_computed {
             self.compute_face_bounds(ds);
         }
@@ -134,13 +136,14 @@ impl FaceExplorer {
     }
 
     /// Compute the face's UV bounds from the boundary pcurves.
-    fn compute_face_bounds(&mut self, ds: &DS) {
+    fn compute_face_bounds(&mut self, ds: &dyn ShapeSource) {
         self.bounds_computed = true;
         for &(ei, _) in &self.face_edges {
             if ei >= ds.nb_shapes() {
                 continue;
             }
-            let edge_data = match &*ds.shapes[ei].shape.data {
+            let eshape = ds.shape_at(ei);
+            let edge_data = match &*eshape.data {
                 TShape::Edge(ed) => ed,
                 _ => continue,
             };
@@ -166,7 +169,7 @@ impl FaceExplorer {
 
     /// OCCT BRepClass_FaceExplorer::Segment (L111-117) — reset probing state
     /// and find a valid ray through `p`.
-    pub fn segment(&mut self, ds: &DS, p: DVec2) -> Option<(Line2d, f64)> {
+    pub fn segment(&mut self, ds: &dyn ShapeSource, p: DVec2) -> Option<(Line2d, f64)> {
         self.cur_edge_ind = 1;
         self.cur_edge_par = PROBING_START;
         self.other_segment(ds, p)
@@ -174,7 +177,7 @@ impl FaceExplorer {
 
     /// OCCT BRepClass_FaceExplorer::OtherSegment (L121-280) — find the next
     /// probing ray through `p` using a point on a boundary pcurve.
-    pub fn other_segment(&mut self, ds: &DS, p: DVec2) -> Option<(Line2d, f64)> {
+    pub fn other_segment(&mut self, ds: &dyn ShapeSource, p: DVec2) -> Option<(Line2d, f64)> {
         let a_tol_par_conf2 = rcad_kernel::PCONFUSION * rcad_kernel::PCONFUSION;
         let n_edges = self.face_edges.len();
         while self.cur_edge_ind <= n_edges {
@@ -189,7 +192,8 @@ impl FaceExplorer {
                 self.cur_edge_par = PROBING_START;
                 continue;
             }
-            let edge_data = match &*ds.shapes[ei].shape.data {
+            let eshape = ds.shape_at(ei);
+            let edge_data = match &*eshape.data {
                 TShape::Edge(ed) => ed,
                 _ => {
                     self.cur_edge_ind += 1;
@@ -353,7 +357,7 @@ impl FaceExplorer {
 
     /// OCCT BRepClass_FaceExplorer::CurrentEdge(E, Or) — the current edge and
     /// its orientation, with the next-edge and tolerance flags set.
-    pub fn current_edge(&self, ds: &DS) -> Option<ClassEdge> {
+    pub fn current_edge(&self, ds: &dyn ShapeSource) -> Option<ClassEdge> {
         if self.current_wire < self.wires.len()
             && self.current_edge < self.wires[self.current_wire].len()
         {

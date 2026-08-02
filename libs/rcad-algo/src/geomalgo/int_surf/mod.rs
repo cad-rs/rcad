@@ -4,7 +4,7 @@
 // IntSurf_Quadric: an implicit (analytic) surface in a unified form.
 // IntSurf_Transition / TypeTrans / Situation: transition of an intersection
 // line relative to a restriction arc on a surface (mirrors IntRes2d; rcad
-// reuses crate::topalgo::int_res2d::{Transition, TypeTrans, Situation}).
+// reuses crate::geomalgo::int_res2d::{Transition, TypeTrans, Situation}).
 
 pub mod line_on_2s;
 pub mod quadric;

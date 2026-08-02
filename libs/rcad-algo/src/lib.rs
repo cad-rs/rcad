@@ -1,8 +1,10 @@
-//! rcad-algo: OCCT TKBO (boolean ops) + TKTopAlgo (topological algorithms).
+//! rcad-algo: OCCT TKBO (boolean ops) + TKTopAlgo (topological algorithms)
+//! + TKGeomAlgo (geometric algorithms).
 //!
 //! Depends only on rcad-kernel (TKMath + TKGeomBase) and rcad-brep (TKBRep).
 
 pub mod bop;
+pub mod geomalgo;
 pub mod topalgo;
 
 // Re-export boolean operation API at top level

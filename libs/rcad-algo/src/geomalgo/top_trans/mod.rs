@@ -6,9 +6,7 @@
 // into a single IN/OUT state.
 
 use glam::DVec2;
-use rcad_kernel::topods::Orientation;
-
-use crate::topalgo::brep_top_adaptor::fclass2d::State;
+use rcad_kernel::topods::{Orientation, State};
 
 const GREATER: i32 = 1;
 const SAME: i32 = 0;

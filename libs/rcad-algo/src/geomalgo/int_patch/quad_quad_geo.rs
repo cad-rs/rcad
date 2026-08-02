@@ -8,7 +8,7 @@
 //! Results are classified as: Point, Line, Circle, Ellipse, Parabola, Hyperbola,
 //! Empty, Same, NoGeometricSolution.
 
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, Curve3, Ellipse3, Hyperbola3, Line3, Parabola3, Plane};
 
@@ -422,7 +422,8 @@ impl QuadQuadGeo {
         h: f64,
     ) {
         self.init_tolerances();
-        self.done = true;
+        // OCCT L549: done = false (set true at the end).
+        self.done = false;
         self.typeres = AnaResultType::Empty;
         self.nbint = 0;
         self.param2bis = 0.0;
@@ -461,9 +462,32 @@ impl QuadQuadGeo {
             }
         }
 
-        // OCCT L600-601: IntAna_IntConicQuad parallel check
-        let dot_nd = normp.dot(axis_dir);
-        let is_parallel = dot_nd.abs() / (n_len * d_len) <= tolang.sin();
+        // OCCT L600-601: IntAna_IntConicQuad inter(axec, P, tolang, toltang, H);
+        // OCCT IntAna_IntConicQuad::Perform(Line, Plane, Tolang, Tol, Len)
+        // (IntAna_IntConicQuad.cxx L436-492):
+        //   Direc = A*Al + B*Bl + C*Cl  (unit plane normal . unit line dir)
+        //   Dis   = A*Orig.X + B*Orig.Y + C*Orig.Z + D
+        //   parallel = (|Direc| < Tolang)
+        //   if (Len != 0 && Direc != 0) then the bounding point of the axis
+        //     (the axis origin projected onto the plane + Len*dir) must lie
+        //     within Tol of the plane, otherwise not parallel.
+        let direc = normp.dot(axis_dir);
+        let dis = dist;
+        let mut is_parallel = false;
+        if direc.abs() < tolang {
+            is_parallel = true;
+            if h != 0.0 && direc != 0.0 {
+                // aP1 = Orig - Dis*(A,B,C): projection of the axis origin onto the plane
+                let a_p1 = DVec3::new(ax - dis * a, ay - dis * b, az - dis * cc);
+                // aP2 = aP1 + Len*(Al,Bl,Cl)
+                let a_p2 = a_p1 + h * axis_dir;
+                // P.Distance(aP2) = |A*aP2.X + B*aP2.Y + C*aP2.Z + D|
+                let dist_p2 = (a * a_p2.x + b * a_p2.y + cc * a_p2.z + d).abs();
+                if dist_p2 > toltang {
+                    is_parallel = false;
+                }
+            }
+        }
 
         if is_parallel {
             // OCCT L603-683: parallel -> 0/1/2 lines
@@ -522,31 +546,24 @@ impl QuadQuadGeo {
             // OCCT L685-719: not parallel -> circle or ellipse
             self.nbint = 1;
 
-            // Piercing point of cylinder axis through plane
+            // Piercing point of cylinder axis through plane.
+            // OCCT inter.Point(1): paramonc[0] = -Dis/Direc; pnts[0] = Orig + paramonc[0]*dir.
+            // Direc (= denom) is non-zero in this branch (else the parallel branch is taken).
             let denom = normp.dot(axis_dir);
-            let t_param = if denom.abs() > 1e-15 {
-                -(normp.dot(axis_loc) + d) / denom
-            } else {
-                0.0
-            };
+            let t_param = -(normp.dot(axis_loc) + d) / denom;
             let pierce_pt = axis_loc + t_param * axis_dir;
             self.pt1 = pierce_pt;
 
+            // OCCT axey = normp.Crossed(axec.Direction().XYZ()); sint = axey.Modulus()
             let axey = normp.cross(axis_dir);
             let sint = axey.length() / (n_len * d_len);
 
-            if sint < tol / radius.max(1e-15) {
-                // OCCT L695-703: Circle
+            if sint < tol / radius {
+                // OCCT L695-703: Circle — dir1 = axec.Direction() (Z axis),
+                // dir2 = Cl.Position().XDirection() (cylinder X direction).
                 self.typeres = AnaResultType::Circle;
-                let up = if axis_dir.x.abs() > 0.1 || axis_dir.y.abs() > 0.1 {
-                    DVec3::Z
-                } else {
-                    DVec3::X
-                };
-                let x_dir = axis_dir.cross(up).cross(axis_dir).normalize_or_zero();
-                self.dir1 = axis_dir.normalize_or_zero(); // circle X = cylinder axis
-                self.dir2 = x_dir; // circle Y
-                self.dir3 = normp.normalize_or_zero(); // circle normal = plane normal
+                self.dir1 = axis_dir.normalize_or_zero();
+                self.dir2 = c.x_dir().normalize_or_zero();
                 self.param1 = radius;
             } else {
                 // OCCT L706-718: Ellipse

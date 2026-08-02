@@ -10,11 +10,11 @@ use rcad_kernel::topo::topods::{u_resolution_for_surface, v_resolution_for_surfa
 use rcad_kernel::topods::TShape;
 use rcad_kernel::PCONFUSION;
 
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 use crate::topalgo::brep_class::bnd_box2d::BndBox2d;
 use crate::topalgo::brep_class::edge::ClassEdge;
 use crate::topalgo::brep_class::g_inter::GInter;
-use crate::topalgo::int_res2d::{
+use crate::geomalgo::int_res2d::{
     Domain, IntersectionPoint, IntersectionSegment, Position, Transition,
 };
 
@@ -22,11 +22,11 @@ use crate::topalgo::int_res2d::{
 const P_INTERSECTION: f64 = 1.0e-10;
 
 /// OCCT BRepClass_Intersector.cxx L85-118: MaxTol2DCurEdge.
-fn max_tol_2d_cur_edge(edge: &ClassEdge, ds: &DS, the_tol: f64) -> f64 {
+fn max_tol_2d_cur_edge(edge: &ClassEdge, ds: &dyn ShapeSource, the_tol: f64) -> f64 {
     let mut a_tol_v3d: f64 = 0.0;
-    for &vi in &ds.shapes[edge.edge()].sub_shapes {
+    for &vi in ds.sub_shapes(edge.edge()) {
         if vi < ds.nb_shapes() {
-            a_tol_v3d = a_tol_v3d.max(ds.vertex_tolerance_by_idx(vi));
+            a_tol_v3d = a_tol_v3d.max(ds.vertex_tolerance(vi));
         }
     }
     let (an_ur, a_vr) = match ds.face_surface(edge.face()) {
@@ -181,14 +181,15 @@ impl Intersector {
     }
 
     /// OCCT BRepClass_Intersector::Perform (BRepClass_Intersector.cxx L329-441).
-    pub fn perform(&mut self, line: &Line2d, p: f64, tol: f64, edge: &ClassEdge, ds: &DS) {
+    pub fn perform(&mut self, line: &Line2d, p: f64, tol: f64, edge: &ClassEdge, ds: &dyn ShapeSource) {
         self.points.clear();
         self.segments.clear();
         self.done = false;
 
         let ee = edge.edge();
         let f = edge.face();
-        let edge_data = match &*ds.shapes[ee].shape.data {
+        let eshape = ds.shape_at(ee);
+        let edge_data = match &*eshape.data {
             TShape::Edge(ed) => ed,
             _ => {
                 self.done = false;
@@ -276,10 +277,11 @@ impl Intersector {
 
     /// OCCT BRepClass_Intersector::LocalGeometry (BRepClass_Intersector.cxx
     /// L445-474) — tangent, normal, and curvature of the edge at parameter U.
-    pub fn local_geometry(&self, edge: &ClassEdge, ds: &DS, u: f64) -> (DVec2, DVec2, f64) {
+    pub fn local_geometry(&self, edge: &ClassEdge, ds: &dyn ShapeSource, u: f64) -> (DVec2, DVec2, f64) {
         let ee = edge.edge();
         let f = edge.face();
-        let edge_data = match &*ds.shapes[ee].shape.data {
+        let eshape = ds.shape_at(ee);
+        let edge_data = match &*eshape.data {
             TShape::Edge(ed) => ed,
             _ => return (DVec2::ZERO, DVec2::ZERO, 0.0),
         };

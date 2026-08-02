@@ -26,7 +26,7 @@ use super::cycy_boundaries::{
 use super::imp_imp_intersection::IntStatus;
 use super::{IntPatchLine, IntPatchPoint, WLineType};
 use super::WLinePnt;
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 /// OCCT IntSurf_PntOn2S::IsSame(Other, Tol3D, Tol2D) (IntSurf_PntOn2S.cxx).
 fn is_same(p: &WLinePnt, other: &WLinePnt, tol_3d: f64, tol_2d: f64) -> bool {

@@ -2,7 +2,7 @@
 // A boundary edge of a face, with the face it belongs to and the next edge
 // sharing the last vertex (used by BRepClass_Intersector::CheckSkip).
 
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 
 /// OCCT BRepClass_Edge — edge + face references for 2D face classification.
 pub struct ClassEdge {
@@ -60,13 +60,13 @@ impl ClassEdge {
     /// OCCT BRepClass_Edge::SetNextEdge (BRepClass_Edge.cxx L34-61) — find the
     /// next edge that shares the edge's last vertex. Only set when exactly two
     /// edges share that vertex.
-    pub fn set_next_edge(&mut self, ds: &DS) {
+    pub fn set_next_edge(&mut self, ds: &dyn ShapeSource) {
         if self.next_edge.is_some() || self.edge >= ds.nb_shapes() {
             return;
         }
         // The edge's sub-shapes are its two vertices in DS index order
         // [first, last] (BOPDS_DS::sub_shapes_of on an edge).
-        let vsubs = &ds.shapes[self.edge].sub_shapes;
+        let vsubs = ds.sub_shapes(self.edge);
         if vsubs.len() < 2 {
             return;
         }
@@ -74,7 +74,7 @@ impl ClassEdge {
         if a_vl == vsubs[0] {
             return; // closed/degenerate edge: same vertex at both ends
         }
-        let edges_at_vl = ds.map_ve.get(&a_vl).cloned().unwrap_or_default();
+        let edges_at_vl = ds.map_ve(a_vl).cloned().unwrap_or_default();
         if edges_at_vl.len() == 2 {
             for &other in &edges_at_vl {
                 if other != self.edge {

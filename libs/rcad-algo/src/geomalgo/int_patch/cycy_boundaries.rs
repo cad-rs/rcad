@@ -27,7 +27,7 @@ use super::cycy_common::{
     exclude_near_elements, inscribe_point, precision_infinite, precision_is_infinite, real_last,
 };
 use super::WLinePnt;
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 /// OCCT MinMax (L4400-4410): replaces theParMIN = MIN, theParMAX = MAX.
 pub fn min_max(a: &mut f64, b: &mut f64) {

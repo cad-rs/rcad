@@ -101,7 +101,7 @@ impl IntCurveSurface {
         self.is_parallel = false;
         self.done = false;
 
-        let quad = crate::topalgo::int_surf::quadric::Quadric::from_surface3(surface);
+        let quad = crate::geomalgo::int_surf::quadric::Quadric::from_surface3(surface);
         let Some(quad) = quad else { return };
         let stype = quad.type_quadric();
 
@@ -180,7 +180,7 @@ impl IntCurveSurface {
 /// OCCT IntCurveSurface_InterUtils::ComputeParamsOnQuadric
 /// (IntCurveSurface_InterUtils.pxx L901-925).
 fn compute_params_on_quadric(
-    quad: &crate::topalgo::int_surf::quadric::Quadric,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
     p: DVec3,
 ) -> (f64, f64) {
     quad.parameters(p)
@@ -314,12 +314,12 @@ fn surface_period(surface: &Surface3, is_u: bool) -> f64 {
 /// (point, W) where W is the parameter on the curve.
 fn intersect_line_quadric(
     line: &rcad_kernel::geom::Line3,
-    quad: &crate::topalgo::int_surf::quadric::Quadric,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
 ) -> Option<Vec<(DVec3, f64)>> {
-    use crate::bop::int_tools::curve_surface as cs;
+    use super::curve_surface as cs;
     let tr = [f64::NEG_INFINITY, f64::INFINITY];
     let hits: Vec<(DVec3, f64)> = match quad.type_quadric() {
-        crate::topalgo::int_surf::quadric::QuadricType::Plane => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Plane => {
             // IntAna_IntConicQuad(Line, Plane) — direct analytic intersection.
             let pl = quad.plane();
             let d = pl.normal.dot(line.origin) - pl.normal.dot(pl.origin);
@@ -331,21 +331,21 @@ fn intersect_line_quadric(
                 vec![(line.origin + line.direction * t, t)]
             }
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Cylinder => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => {
             let cyl = quad.cylinder();
             cs::intersect_line_cylinder_with_tol(line, tr, &cyl, 1e-7)
                 .iter()
                 .map(|h| (h.point, h.curve_param))
                 .collect()
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
             let sph = quad.sphere();
             cs::intersect_line_sphere_with_tol(line, tr, &sph, 1e-7)
                 .iter()
                 .map(|h| (h.point, h.curve_param))
                 .collect()
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
             let con = quad.cone();
             cs::intersect_line_cone_with_tol(line, tr, &con, 1e-7)
                 .iter()
@@ -360,33 +360,33 @@ fn intersect_line_quadric(
 /// OCCT IntAna_IntConicQuad (circle vs quadric).
 fn intersect_circle_quadric(
     circle: &rcad_kernel::geom::Circle3,
-    quad: &crate::topalgo::int_surf::quadric::Quadric,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
 ) -> Option<Vec<(DVec3, f64)>> {
-    use crate::bop::int_tools::curve_surface as cs;
+    use super::curve_surface as cs;
     let tr = [0.0, std::f64::consts::TAU];
     let hits: Vec<(DVec3, f64)> = match quad.type_quadric() {
-        crate::topalgo::int_surf::quadric::QuadricType::Plane => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Plane => {
             let pl = quad.plane();
             cs::intersect_circle_plane_with_tol(circle, tr, &pl, 1e-7)
                 .iter()
                 .map(|h| (h.point, h.curve_param))
                 .collect()
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Cylinder => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => {
             let cyl = quad.cylinder();
             cs::intersect_circle_cylinder_with_tol(circle, tr, &cyl, 1e-7)
                 .iter()
                 .map(|h| (h.point, h.curve_param))
                 .collect()
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
             let sph = quad.sphere();
             cs::intersect_circle_sphere_with_tol(circle, tr, &sph, 1e-7)
                 .iter()
                 .map(|h| (h.point, h.curve_param))
                 .collect()
         }
-        crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+        crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
             let con = quad.cone();
             cs::intersect_circle_cone_with_tol(circle, tr, &con, 1e-7)
                 .iter()

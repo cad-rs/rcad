@@ -8,7 +8,7 @@
 //!     which is the OCCT ElSLib::Parameters equivalent for quadrics.
 //!   - IntSurf_PntOn2S -> WLinePnt { p3d, u1, v1, u2, v2 }.
 
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 

@@ -20,7 +20,7 @@ use super::quad_quad_geo::{AnaResultType, QuadQuadGeo};
 use super::transitions::{Situation, TypeTrans, Transition};
 use super::cycy_boundaries::{WorkWithBoundaries, boundaries_computing};
 use super::{IntPatchIType, IntPatchLine, IntPatchPoint, IntPatchVertex};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 /// OCCT IntPatch_GLine(Elips, Tang, Trans1, Trans2) helper — build an
 /// IntPatchLine carrying an ellipse (with transitions and vertices).

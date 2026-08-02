@@ -295,7 +295,7 @@ impl BndRange {
 /// 1-based `value`/`insert_before` semantics so the IntCyCy engine reads 1:1.
 #[derive(Debug, Clone, Default)]
 pub struct WLine {
-    points: Vec<crate::bop::int_tools::int_patch::WLinePnt>,
+    points: Vec<crate::geomalgo::int_patch::WLinePnt>,
 }
 
 impl WLine {
@@ -307,19 +307,19 @@ impl WLine {
         self.points.len()
     }
     /// OCCT IntSurf_LineOn2S::Value(Index) — 1-based.
-    pub fn value(&self, index: usize) -> &crate::bop::int_tools::int_patch::WLinePnt {
+    pub fn value(&self, index: usize) -> &crate::geomalgo::int_patch::WLinePnt {
         &self.points[index - 1]
     }
     /// OCCT IntSurf_LineOn2S::Value(Index, P) — 1-based setter.
-    pub fn set_value(&mut self, index: usize, p: crate::bop::int_tools::int_patch::WLinePnt) {
+    pub fn set_value(&mut self, index: usize, p: crate::geomalgo::int_patch::WLinePnt) {
         self.points[index - 1] = p;
     }
     /// OCCT IntSurf_LineOn2S::Append(P).
-    pub fn append(&mut self, p: crate::bop::int_tools::int_patch::WLinePnt) {
+    pub fn append(&mut self, p: crate::geomalgo::int_patch::WLinePnt) {
         self.points.push(p);
     }
     /// OCCT IntSurf_LineOn2S::InsertBefore(Index, P) — 1-based.
-    pub fn insert_before(&mut self, index: usize, p: crate::bop::int_tools::int_patch::WLinePnt) {
+    pub fn insert_before(&mut self, index: usize, p: crate::geomalgo::int_patch::WLinePnt) {
         if index > self.points.len() {
             self.points.push(p);
         } else {
@@ -331,11 +331,11 @@ impl WLine {
         self.points.remove(index - 1);
     }
     /// Consume the wrapped points as the final `IntPatchLine::wline_pnts`.
-    pub fn into_points(self) -> Vec<crate::bop::int_tools::int_patch::WLinePnt> {
+    pub fn into_points(self) -> Vec<crate::geomalgo::int_patch::WLinePnt> {
         self.points
     }
     /// Expose as a slice (for the WLine point count / iteration).
-    pub fn as_slice(&self) -> &[crate::bop::int_tools::int_patch::WLinePnt] {
+    pub fn as_slice(&self) -> &[crate::geomalgo::int_patch::WLinePnt] {
         &self.points
     }
 }

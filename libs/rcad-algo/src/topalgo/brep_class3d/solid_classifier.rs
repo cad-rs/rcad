@@ -123,7 +123,7 @@ impl SolidClassifier {
                 .explorer
                 .ds
                 .as_ref()
-                .map(|ds| ds.shape_info(fi).shape.orientation);
+                .map(|ds| ds.shape_at(fi).orientation);
             if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
                 let normal = if face_ori == Some(rcad_kernel::topods::Orientation::Reversed) {
                     -pl.normal

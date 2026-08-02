@@ -15,7 +15,7 @@ use super::special_points::{
     PntOn2S, SpecPntType,
 };
 use super::{IntPatchIType, IntPatchLine, WLinePnt, WLineType};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::DVec3;
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 use rcad_kernel::precision::CONFUSION;
@@ -699,13 +699,13 @@ impl ALineToWLine {
         for i in 0..2 {
             let quad = if i != 0 { &self.my_quad2 } else { &self.my_quad1 };
             match quad.type_quadric() {
-                crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
                     let a_r_vec = pnt3d - quad.axis_loc();
                     let a_dir = quad.axis_dir();
                     let a_r = a_r_vec.dot(a_dir) * quad.semi_angle().tan();
                     ret_val = ret_val.min(a_r.abs());
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
                     let a_r_vec = pnt3d - quad.location();
                     let a_dir = quad.z_dir();
                     let a_r = quad.radius();
@@ -739,13 +739,13 @@ impl ALineToWLine {
             let an_is_on_first = ii == 0;
             let quad = if ii == 0 { &self.my_quad1 } else { &self.my_quad2 };
             match quad.type_quadric() {
-                crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
                     let an_apex = quad.axis_loc();
                     if an_apex.distance_squared(a_pnt_on2s.p) > a_sq_tol {
                         continue;
                     }
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
                     let (a_u, a_v) = if an_is_on_first {
                         (a_pnt_on2s.u1, a_pnt_on2s.v1)
                     } else {

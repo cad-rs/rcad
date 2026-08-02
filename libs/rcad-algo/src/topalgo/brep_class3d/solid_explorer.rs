@@ -2,7 +2,7 @@
 // Exploration of a BRep Shape for classification.
 // Provides face iteration, bounding box rejection, and BVH tree.
 
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::TShape;
 use glam::DVec3;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// OCCT BRepClass3d_SolidExplorer — explores a solid's faces for point classification.
 pub struct SolidExplorer {
-    pub ds: Option<Arc<DS>>,
+    pub ds: Option<Arc<dyn ShapeSource>>,
     shape: Option<Shape>,
     face_indices: Vec<usize>,
     // BVH tree for fast rejection (OCCT: UBTree)
@@ -72,7 +72,7 @@ impl SolidExplorer {
                     Some(s) => s,
                     None => continue,
                 };
-                let face_ori = ds.shape_info(fi).shape.orientation;
+                let face_ori = ds.shape_at(fi).orientation;
                 if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
                     let normal = if face_ori == rcad_kernel::topods::Orientation::Reversed {
                         -pl.normal
@@ -94,8 +94,8 @@ impl SolidExplorer {
         }
     }
 
-    /// Set the DS reference for face index lookups.
-    pub fn set_ds(&mut self, ds: &Arc<DS>) {
-        self.ds = Some(ds.clone());
+    /// Set the shape-source reference for face index lookups.
+    pub fn set_ds<S: ShapeSource + 'static>(&mut self, ds: &Arc<S>) {
+        self.ds = Some(ds.clone() as Arc<dyn ShapeSource>);
     }
 }

@@ -18,8 +18,8 @@
 
 use crate::bop::ds::DS;
 use crate::bop::int_tools::face_face::IntersectionCurve;
-use crate::bop::int_tools::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WLinePnt};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WLinePnt};
+use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval};
@@ -124,7 +124,7 @@ fn make_restriction_curves(
     // analytic quadric is exact (line or circle), built with the same
     // parameterization as the 2D arc.
     let (curve3, _ctype) =
-        match crate::bop::int_tools::int_patch::so_on_bounds::curve_on_surface(arc, arc_surf) {
+        match crate::geomalgo::int_patch::so_on_bounds::curve_on_surface(arc, arc_surf) {
             Some(c) => c,
             None => return out,
         };

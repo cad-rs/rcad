@@ -21,7 +21,7 @@ use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface
 use super::so_on_bounds::PathPoint;
 use super::transitions::{make_transition, recadre, Transition, TypeTrans};
 use super::{IntPatchIType, IntPatchLine, IntPatchVertex};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 /// OCCT IntPatch_IType of a line (ArcType).
 fn arc_type_of(line: &IntPatchLine) -> IntPatchIType {

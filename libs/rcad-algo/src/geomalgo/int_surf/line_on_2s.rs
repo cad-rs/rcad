@@ -9,7 +9,7 @@
 
 use glam::{DVec2, DVec3};
 
-use crate::topalgo::int_surf::PntOn2S;
+use crate::geomalgo::int_surf::PntOn2S;
 
 /// A 2D box with void/whole states, translated from the Bnd_Box2d
 /// operations used by IntSurf_LineOn2S.

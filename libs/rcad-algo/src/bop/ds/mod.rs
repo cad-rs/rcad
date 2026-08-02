@@ -2074,6 +2074,39 @@ fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
     }
 }
 
+/// ShapeSource (topalgo) for the boolean DS — lets the BRepClass/BRepClass3d
+/// classifiers read shape data without depending on the DS type (OCCT:
+/// BRepClass uses BRepAdaptor, never BOPDS).
+impl crate::topalgo::shape_source::ShapeSource for DS {
+    fn nb_shapes(&self) -> usize {
+        self.shapes.len()
+    }
+    fn shape_at(&self, i: usize) -> Shape {
+        self.shapes[i].shape.clone()
+    }
+    fn shape_type(&self, i: usize) -> ShapeType {
+        self.shapes[i].shape_type
+    }
+    fn sub_shapes(&self, i: usize) -> &[usize] {
+        &self.shapes[i].sub_shapes
+    }
+    fn map_shape_index(&self, ptr_id: u64, location: u32) -> Option<usize> {
+        self.map_shape_index.get(&(ptr_id, location)).copied()
+    }
+    fn map_ve(&self, vertex: usize) -> Option<&Vec<usize>> {
+        self.map_ve.get(&vertex)
+    }
+    fn face_surface(&self, i: usize) -> Option<Surface3> {
+        DS::face_surface(self, i)
+    }
+    fn vertex_tolerance(&self, i: usize) -> f64 {
+        DS::vertex_tolerance_by_idx(self, i)
+    }
+    fn is_edge_degenerated(&self, i: usize) -> bool {
+        DS::is_edge_degenerated(self, i)
+    }
+}
+
 impl Default for DS { fn default() -> Self { Self::new() } }
 
 

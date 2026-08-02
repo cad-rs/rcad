@@ -11,7 +11,7 @@
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
 
-use crate::topalgo::int_res2d::{
+use crate::geomalgo::int_res2d::{
     Domain, IntersectionPoint, IntersectionSegment, Position, Situation, Transition, TypeTrans,
 };
 

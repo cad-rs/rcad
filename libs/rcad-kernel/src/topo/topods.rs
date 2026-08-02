@@ -38,6 +38,15 @@ impl Orientation {
     }
 }
 
+/// OCCT TopAbs_State — classification result (TopAbs_State.hxx L27-30).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum State {
+    In,
+    Out,
+    On,
+    Unknown,
+}
+
 // 鈹€鈹€ TopoDS_TShape::myState flags (OCCT: BitLayout enum) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // These mirror TopoDS_TShape.hxx L69-82. Bits 0-3 are the shape type;
 // bits 4-11 are boolean flags. Only the flag masks are exposed here.

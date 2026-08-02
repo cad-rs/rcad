@@ -13,7 +13,6 @@ use super::imp_imp_intersection::ImpImpIntersection;
 use super::{
     classify_surface_type, GeomAbsSurfaceType, IntPatchLine, IntPatchPoint,
 };
-use crate::bop::ds::IntersectionCurve;
 use glam::DVec3;
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 
@@ -444,31 +443,6 @@ impl IntPatchIntersection {
     }
     pub fn slin_mut(&mut self) -> &mut Vec<IntPatchLine> {
         &mut self.slin
-    }
-
-    // =========================================================================
-    // rcad helper: convert to IntersectionCurve for DS storage
-    // =========================================================================
-    pub fn to_intersection_curves(&self) -> Vec<IntersectionCurve> {
-        self.slin
-            .iter()
-            .map(|l| {
-                let mut curve_extra = crate::bop::ds::CurveExtra::default();
-                curve_extra.tangential_tol = l.tang_tolerance;
-                IntersectionCurve {
-                    curve: l.curve.clone(),
-                    polyline: Vec::new(),
-                    start_vertex: usize::MAX,
-                    end_vertex: usize::MAX,
-                    t_range: l.t_range,
-                    pcurve_on_a: l.pcurve1.clone(),
-                    pcurve_on_b: l.pcurve2.clone(),
-                    geom_tol: l.tolerance,
-                    pave_blocks: Vec::new(),
-                    curve_extra,
-                }
-            })
-            .collect()
     }
 
     // =========================================================================

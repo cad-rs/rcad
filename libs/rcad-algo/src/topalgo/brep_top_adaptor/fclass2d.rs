@@ -25,20 +25,13 @@ use rcad_kernel::topods::{Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::{CONFUSION, SQUARE_CONFUSION};
 
-use crate::bop::closest_point_on_surface;
-use crate::bop::ds::DS;
+use crate::topalgo::shape_source::ShapeSource;
 use crate::topalgo::brep_class::face_classifier::FClassifier;
 use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
 use crate::topalgo::gcpnts::QuasiUniformDeflection;
 
-/// OCCT TopAbs_State — classification result.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum State {
-    In,
-    Out,
-    On,
-    Unknown,
-}
+/// OCCT TopAbs_State — classification result (TKBRep/TopAbs layer).
+pub use rcad_kernel::topods::State;
 
 // ---------------------------------------------------------------------------
 // Small helpers (OCCT support functions)
@@ -155,7 +148,8 @@ impl EdgeEval {
             ),
             EdgeEval::Projected { c3d, surf, ori } => {
                 let p3d = c3d.point_at(u);
-                let (uv, _) = closest_point_on_surface(surf, p3d);
+                let proj = rcad_kernel::base::geom_api::project::closest_point_on_surface(surf, p3d, 64);
+                let uv = glam::DVec2::new(proj.params.0, proj.params.1);
                 // OCCT periodic seam (BRepPrim_OneAxis::LateralWire): the seam
                 // edge's End instance sits at the periodic image u=2*PI (the
                 // edge has a 2D Location), while Start sits at u=0. rcad's DS
@@ -229,7 +223,7 @@ pub struct FClass2d {
 
 impl FClass2d {
     /// OCCT constructor: IntTools_FClass2d(aFace, TolUV) → Init(Face, Toluv).
-    pub fn new(ds: &DS, face_idx: usize, tol_uv: f64) -> Self {
+    pub fn new(ds: &dyn ShapeSource, face_idx: usize, tol_uv: f64) -> Self {
         let mut f = FClass2d {
             tab_class: Vec::new(),
             tab_orien: Vec::new(),
@@ -256,7 +250,7 @@ impl FClass2d {
     }
 
     /// OCCT IntTools_FClass2d::PerformInfinitePoint.
-    pub fn perform_infinite_point(&self, ds: &DS) -> State {
+    pub fn perform_infinite_point(&self, ds: &dyn ShapeSource) -> State {
         if self.u_max == f64::NEG_INFINITY
             || self.v_max == f64::NEG_INFINITY
             || self.u_min == f64::INFINITY
@@ -272,7 +266,7 @@ impl FClass2d {
     }
 
     /// OCCT IntTools_FClass2d::Init (IntTools_FClass2d.cxx L77-621).
-    pub fn init(&mut self, ds: &DS, a_face: usize, tol_uv: f64) {
+    pub fn init(&mut self, ds: &dyn ShapeSource, a_face: usize, tol_uv: f64) {
         self.toluv = tol_uv;
         self.face = a_face;
         self.my_is_hole = true;
@@ -296,7 +290,8 @@ impl FClass2d {
         // The DS face's sub_shapes are flattened to edge+vertex indices by
         // prepare_faces (BOPDS_DS.cxx L1767-1773). The ordered boundary wires
         // live in the face TShape (outer_wire + inner_wires).
-        let face_data = match &*ds.shapes[a_face].shape.data {
+        let fshape = ds.shape_at(a_face);
+        let face_data = match &*fshape.data {
             TShape::Face(fd) => fd,
             _ => return,
         };
@@ -305,23 +300,21 @@ impl FClass2d {
             .collect();
 
         for (wire_idx, wire_shape) in face_wire_shapes.iter().enumerate() {
-            let Some(&wi) = ds
-                .map_shape_index
-                .get(&(wire_shape.ptr_id(), wire_shape.location))
-            else {
+            let Some(wi) = ds.map_shape_index(wire_shape.ptr_id(), wire_shape.location) else {
                 continue;
             };
-            if wi >= ds.nb_shapes() || ds.shapes[wi].shape_type != ShapeType::Wire {
+            if wi >= ds.nb_shapes() || ds.shape_type(wi) != ShapeType::Wire {
                 continue;
             }
-            let wire_edge_shapes = match &*ds.shapes[wi].shape.data {
+            let wshape = ds.shape_at(wi);
+            let wire_edge_shapes = match &*wshape.data {
                 TShape::Wire(w) => w.edges.clone(),
                 _ => Vec::new(),
             };
             // Edge DS indices (via the ptr_id → index map), in wire order.
             let mut wire_edge_idxs: Vec<usize> = Vec::with_capacity(wire_edge_shapes.len());
             for eshape in &wire_edge_shapes {
-                if let Some(&ei) = ds.map_shape_index.get(&(eshape.ptr_id(), eshape.location)) {
+                if let Some(ei) = ds.map_shape_index(eshape.ptr_id(), eshape.location) {
                     wire_edge_idxs.push(ei);
                 }
             }
@@ -352,7 +345,8 @@ impl FClass2d {
                 // OCCT BRep_Tool::CurveOnSurface(edge, Face, pfbid, plbid).
                 // rcad: pcurve may be absent (incremental DS). rcad falls back
                 // to projecting the edge 3D curve (see EdgeEval::Projected).
-                let edge_data = match &*ds.shapes[ei].shape.data {
+                let eshape = ds.shape_at(ei);
+                let edge_data = match &*eshape.data {
                     TShape::Edge(ed) => ed,
                     _ => continue,
                 };
@@ -602,7 +596,8 @@ impl FClass2d {
                             if ei2 >= ds.nb_shapes() {
                                 continue;
                             }
-                            let ed2 = match &*ds.shapes[ei2].shape.data {
+                            let eshape2 = ds.shape_at(ei2);
+                            let ed2 = match &*eshape2.data {
                                 TShape::Edge(ed) => ed,
                                 _ => continue,
                             };
@@ -766,7 +761,7 @@ impl FClass2d {
     }
 
     /// OCCT IntTools_FClass2d::Perform (IntTools_FClass2d.cxx L637-804).
-    pub fn perform(&self, ds: &DS, _puv: DVec2, recadre_on_periodic: bool) -> State {
+    pub fn perform(&self, ds: &dyn ShapeSource, _puv: DVec2, recadre_on_periodic: bool) -> State {
         let nbtabclass = self.tab_class.len();
         if nbtabclass == 0 {
             return State::In;
@@ -884,7 +879,7 @@ impl FClass2d {
     }
 
     /// OCCT IntTools_FClass2d::TestOnRestriction (IntTools_FClass2d.cxx L808-943).
-    pub fn test_on_restriction(&self, ds: &DS, _puv: DVec2, tol: f64, recadre_on_periodic: bool) -> State {
+    pub fn test_on_restriction(&self, ds: &dyn ShapeSource, _puv: DVec2, tol: f64, recadre_on_periodic: bool) -> State {
         let nbtabclass = self.tab_class.len();
         if nbtabclass == 0 {
             return State::In;
@@ -993,7 +988,7 @@ impl FClass2d {
     /// cylinder lateral collapses to a seam in UV, where the polygon
     /// classification is unavailable). The periodic u is wrapped into
     /// [u0, u1]; seam points are mapped to On.
-    fn classify_fallback(&self, ds: &DS, puv: DVec2) -> State {
+    fn classify_fallback(&self, ds: &dyn ShapeSource, puv: DVec2) -> State {
         let surf = ds.face_surface(self.face);
         let Some([u0, u1, v0, v1]) = surf.as_ref().map(|s| s.default_domain()) else {
             return State::Unknown;
@@ -1040,7 +1035,7 @@ impl FClass2d {
     /// OCCT IntTools_FClass2d.cxx L728-745 — the tolerance used by the
     /// BRepClass_FaceClassifier fallback, derived from the surface resolution
     /// and whether the point lies inside the face's UV bounds.
-    fn classifier_tol(&self, ds: &DS, u: f64, v: f64) -> f64 {
+    fn classifier_tol(&self, ds: &dyn ShapeSource, u: f64, v: f64) -> f64 {
         let (a_u_res, a_v_res) = match ds.face_surface(self.face) {
             Some(surf) => (
                 rcad_kernel::topo::topods::u_resolution_for_surface(&surf, self.toluv),

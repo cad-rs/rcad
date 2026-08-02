@@ -19,7 +19,7 @@ use super::transitions::{Situation, Transition, TypeTrans};
 use super::{IntPatchIType, IntPatchLine, IntPatchPoint};
 use super::quad_quad_geo::{AnaResultType, QuadQuadGeo};
 use super::special_points::{PatchPoint, PntOn2S};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 use rcad_kernel::geom::{Curve3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3};
 
 /// OCCT IntPatch_GLine(Lin, Tang, Trans1, Trans2) — line with In/Out transitions.
@@ -228,7 +228,9 @@ pub fn int_pcy(
             }
         }
         AnaResultType::Circle => {
-            let cirsol = inter.circle();
+            // OCCT L3298-3300: cirsol = inter.Circle(1); AdjustToSeam(Cy, cirsol).
+            let mut cirsol = inter.circle();
+            ecl::adjust_to_seam_quadric(&mut cirsol, cy.axis_loc(), cy.z_dir(), cy.x_dir());
             let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
             if tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref))) > 0.0 {
                 slin.push(gline_circle(cirsol, false, TypeTrans::Out, TypeTrans::In));
@@ -613,7 +615,7 @@ fn transition_from_scalar(qwe: f64) -> (TypeTrans, TypeTrans) {
 
 /// Reconstruct a Surface3 from a Quadric.
 fn quadric_to_surface3(quad: &Quadric) -> rcad_kernel::geom::Surface3 {
-    use crate::topalgo::int_surf::quadric::QuadricType;
+    use crate::geomalgo::int_surf::quadric::QuadricType;
     match quad.type_quadric() {
         QuadricType::Plane => rcad_kernel::geom::Surface3::Plane(quad.plane()),
         QuadricType::Cylinder => rcad_kernel::geom::Surface3::Cylinder(quad.cylinder()),

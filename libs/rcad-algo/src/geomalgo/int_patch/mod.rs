@@ -32,6 +32,7 @@ pub mod cycy_common;
 pub mod cycy_coeffs;
 pub mod cycy_boundaries;
 pub mod cycy_walking;
+pub mod curve_surface;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;
@@ -56,15 +57,15 @@ pub enum GeomAbsSurfaceType {
     OtherSurface,
 }
 
-/// Map rcad QuadricType (topalgo::int_surf) to OCCT GeomAbs_SurfaceType.
-pub fn geom_abs_of_quadric(typ: crate::topalgo::int_surf::quadric::QuadricType) -> GeomAbsSurfaceType {
+/// Map rcad QuadricType (geomalgo::int_surf) to OCCT GeomAbs_SurfaceType.
+pub fn geom_abs_of_quadric(typ: crate::geomalgo::int_surf::quadric::QuadricType) -> GeomAbsSurfaceType {
     match typ {
-        crate::topalgo::int_surf::quadric::QuadricType::Plane => GeomAbsSurfaceType::Plane,
-        crate::topalgo::int_surf::quadric::QuadricType::Cylinder => GeomAbsSurfaceType::Cylinder,
-        crate::topalgo::int_surf::quadric::QuadricType::Sphere => GeomAbsSurfaceType::Sphere,
-        crate::topalgo::int_surf::quadric::QuadricType::Cone => GeomAbsSurfaceType::Cone,
-        crate::topalgo::int_surf::quadric::QuadricType::Torus => GeomAbsSurfaceType::Torus,
-        crate::topalgo::int_surf::quadric::QuadricType::Other => GeomAbsSurfaceType::OtherSurface,
+        crate::geomalgo::int_surf::quadric::QuadricType::Plane => GeomAbsSurfaceType::Plane,
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => GeomAbsSurfaceType::Cylinder,
+        crate::geomalgo::int_surf::quadric::QuadricType::Sphere => GeomAbsSurfaceType::Sphere,
+        crate::geomalgo::int_surf::quadric::QuadricType::Cone => GeomAbsSurfaceType::Cone,
+        crate::geomalgo::int_surf::quadric::QuadricType::Torus => GeomAbsSurfaceType::Torus,
+        crate::geomalgo::int_surf::quadric::QuadricType::Other => GeomAbsSurfaceType::OtherSurface,
     }
 }
 
@@ -285,7 +286,7 @@ pub struct IntPatchLine {
     /// OCCT IntPatch_ALine: the analytic IntAna_Curve carried by an analytic
     /// line (the result of IntAna_IntQuadQuad for cylinder/cone pairs).  It is
     /// converted to a WLine by IntPatch_ALineToWLine::MakeWLine.
-    pub a_curve: Option<crate::bop::int_tools::int_patch::int_quad_quad::IntAnaCurve>,
+    pub a_curve: Option<crate::geomalgo::int_patch::int_quad_quad::IntAnaCurve>,
     // ---- OCCT IntPatch_RLine fields (restriction lines) ----
     /// The 2D restriction arc on surface 1 / surface 2.
     pub arc_on_s1: Option<Curve2d>,

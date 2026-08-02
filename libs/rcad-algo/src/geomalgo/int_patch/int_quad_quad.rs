@@ -811,7 +811,7 @@ pub struct IntAnaCurve {
     // OCCT IntPatch_ALine vertices (IntPatch_Point): boundary points on the
     // line, added by ProcessBounds (IntCySp/IntCyCo/IntCoCo/IntCoSp).  They are
     // consumed by IntPatch_ALineToWLine::MakeWLine.
-    pub vertices: Vec<crate::bop::int_tools::int_patch::special_points::PatchPoint>,
+    pub vertices: Vec<crate::geomalgo::int_patch::special_points::PatchPoint>,
 }
 
 impl IntAnaCurve {
@@ -923,7 +923,7 @@ impl IntAnaCurve {
     pub fn vertex_params(&self) -> Vec<f64> {
         self.vertices.iter().map(|v| v.param_on_line).collect()
     }
-    pub fn vertex_at(&self, i: usize) -> crate::bop::int_tools::int_patch::special_points::PatchPoint {
+    pub fn vertex_at(&self, i: usize) -> crate::geomalgo::int_patch::special_points::PatchPoint {
         self.vertices[i].clone()
     }
 

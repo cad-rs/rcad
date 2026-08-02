@@ -7,7 +7,7 @@
 
 use super::GeomAbsSurfaceType;
 use super::{AnaResultType, IntPatchLine, IntPatchPoint, IntPatchIType, QuadQuadGeo, WLineType};
-use crate::topalgo::int_surf::quadric::Quadric;
+use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3};
 
@@ -138,7 +138,22 @@ impl ImpImpIntersection {
         match i_tt {
             11 => self.int_pp(&q1, &q2, tol_tang),
             // OCCT L2577-2594: case 12/21 Plane/Cylinder: H from surface bounds
-            12 | 21 => self.int_pcy(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
+            12 | 21 => {
+                // OCCT L2579-2586: H = VMax - VMin of the cylinder surface V domain
+                let a_s_cyl_uv = if b_reverse { uv1 } else { uv2 };
+                let v_min = a_s_cyl_uv[2];
+                let v_max = a_s_cyl_uv[3];
+                let h = if rcad_kernel::precision::is_negative_infinite_value(v_min)
+                    || rcad_kernel::precision::is_positive_infinite_value(v_max)
+                {
+                    0.0
+                } else {
+                    v_max - v_min
+                };
+                self.int_pcy(&q1, &q2, TOL_ANG, tol_tang, b_reverse, h);
+                // OCCT L2592: bEmpty = empt
+                b_empty = self.empt;
+            }
             // OCCT L2596-2604: case 13/31 Plane/Cone
             13 | 31 => self.int_pco(&q1, &q2, TOL_ANG, tol_tang, b_reverse),
             // OCCT L2606-2614: case 14/41 Plane/Sphere
@@ -275,19 +290,19 @@ impl ImpImpIntersection {
 
             let ptreference;
             match typs1 {
-                crate::topalgo::int_surf::quadric::QuadricType::Plane => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Plane => {
                     ptreference = q1.location();
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Cylinder => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => {
                     ptreference = q1.value(0.0, 0.0);
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Sphere => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
                     ptreference = q1.value(std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_4);
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Cone => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
                     ptreference = q1.value(0.0, 10.0);
                 }
-                crate::topalgo::int_surf::quadric::QuadricType::Torus => {
+                crate::geomalgo::int_surf::quadric::QuadricType::Torus => {
                     ptreference = q1.value(0.0, 0.0);
                 }
                 _ => {
@@ -452,117 +467,52 @@ arc_on_s1: None,
     // =====================================================================
 
     fn int_pp(&mut self, q1: &Quadric, q2: &Quadric, tol_tang: f64) {
-        let mut geo = QuadQuadGeo::new();
-        geo.perform_plane_plane(q1, q2, 1e-8, tol_tang);
-        if !geo.is_done() {
+        // OCCT L2570: if (!IntPP(quad1, quad2, Tolang, TolTang, SameSurf, slin))
+        // return;  IntPP has no Empty out-param (plane-plane) — empt keeps its
+        // initial value and is refined by the SameSurf / SOnBounds blocks.
+        let done = super::int_xx::int_pp(
+            q1,
+            q2,
+            1e-8,
+            tol_tang,
+            &mut self.same_surf,
+            &mut self.slin,
+        );
+        if !done {
             return;
         }
-        match geo.type_inter() {
-            AnaResultType::Same => {
-                                self.same_surf = true;
-self.empt = false;
-                self.tgte = true;
-                self.my_done = IntStatus::OK;
-            }
-            AnaResultType::Line => {
-                for c in geo.to_curves() {
-                    self.slin.push(IntPatchLine {
-                        line_type: IntPatchIType::Line,
-                        curve: c,
-                        t_range: [f64::NEG_INFINITY, f64::INFINITY],
-                        pcurve1: None,
-                        pcurve2: None,
-                        tolerance: 1e-7,
-                        tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(),
-                        is_purging_allowed: false,
-                        wl_type: WLineType::Unknown,
-                        vertices: Vec::new(),
-arc_on_s1: None,
-                        arc_on_s2: None,
-                        trans1: None,
-                        trans2: None,
-                        first_point: None,
-                        last_point: None,
-                        a_curve: None,
-                    });
-                }
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            _ => {}
-        }
+        self.my_done = IntStatus::OK;
     }
 
-    // OCCT L3157-3345: IntPCy — Plane/Cylinder intersection
-    fn int_pcy(&mut self, q1: &Quadric, q2: &Quadric, tol_ang: f64, tol: f64, b_reverse: bool) {
-        let mut geo = QuadQuadGeo::new();
-        let (plane, cyl) = if b_reverse { (q2, q1) } else { (q1, q2) };
-        // OCCT L3184: inter.Perform(Pl, Cy, Tolang, TolTang, H)
-        geo.perform_plane_cylinder(plane, cyl, tol_ang, tol, 0.0);
-        // OCCT L3185-3188: if (!inter.IsDone()) return false
-        if !geo.is_done() {
+    // OCCT L3157-3345: IntPCy — Plane/Cylinder intersection.
+    // Delegates to the 1:1 translation (int_xx.rs) which handles the tangent
+    // line (NbSol==1), the two-line transitions, AdjustToSeam for the Circle,
+    // and the Empty/OK flags exactly as OCCT IntPCy.
+    fn int_pcy(
+        &mut self,
+        q1: &Quadric,
+        q2: &Quadric,
+        tol_ang: f64,
+        tol: f64,
+        b_reverse: bool,
+        h: f64,
+    ) {
+        // OCCT L2588: if (!IntPCy(quad1, quad2, Tolang, TolTang, bReverse,
+        // empt, slin, H)) return;
+        let done = super::int_xx::int_pcy(
+            q1,
+            q2,
+            tol_ang,
+            tol,
+            b_reverse,
+            &mut self.empt,
+            &mut self.slin,
+            h,
+        );
+        if !done {
             return;
         }
-        // OCCT L3189-3191: typint, NbSol, Empty=false
-        let typint = geo.type_inter();
-        let _nb_sol = geo.nb_solutions();
-        self.empt = false;
-
-        // OCCT L3193-3343: switch(typint)
-        match typint {
-            // OCCT L3195-3198: case IntAna_Empty
-            AnaResultType::Empty => {
-                self.empt = true;
-            }
-            // OCCT L3200-3290: case IntAna_Line — 1 or 2 lines
-            AnaResultType::Line => {
-                // OCCT L3201: linsol = inter.Line(1)
-                let linsol = geo.line(1);
-                // OCCT L3258-3289: 2 lines (NbSol==2 path, no transition drop)
-                self.slin.push(IntPatchLine::analytic(
-                    IntPatchIType::Line,
-                    Curve3::Line(linsol),
-                    [f64::NEG_INFINITY, f64::INFINITY],
-                ));
-                if _nb_sol >= 2 {
-                    let linsol2 = geo.line(2);
-                    self.slin.push(IntPatchLine::analytic(
-                        IntPatchIType::Line,
-                        Curve3::Line(linsol2),
-                        [f64::NEG_INFINITY, f64::INFINITY],
-                    ));
-                }
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            // OCCT L3293-3316: case IntAna_Circle
-            AnaResultType::Circle => {
-                // OCCT L3298: cirsol = inter.Circle(1)
-                let cirsol = geo.circle();
-                // GLine(cirsol, false, trans1, trans2) — transitions not in IntPatchLine
-                self.slin.push(IntPatchLine::analytic(
-                    IntPatchIType::Circle,
-                    Curve3::Circle(cirsol),
-                    [0.0, std::f64::consts::TAU],
-                ));
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            // OCCT L3319-3337: case IntAna_Ellipse
-            AnaResultType::Ellipse => {
-                let elipsol = geo.ellipse();
-                self.slin.push(IntPatchLine::analytic(
-                    IntPatchIType::Ellipse,
-                    Curve3::Ellipse(elipsol),
-                    [0.0, std::f64::consts::TAU],
-                ));
-                self.empt = false;
-                self.my_done = IntStatus::OK;
-            }
-            // OCCT L3340-3342: default
-            _ => {}
-        }
+        self.my_done = IntStatus::OK;
     }
 
     // OCCT L3446-3706: IntPCo — Plane/Cone intersection
