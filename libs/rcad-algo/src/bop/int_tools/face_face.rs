@@ -633,24 +633,6 @@ impl FaceFace {
                 self.curves = curves;
                 self.done = true;
             }
-            (Surface3::Plane(p), Surface3::Sphere(s))
-            | (Surface3::Sphere(s), Surface3::Plane(p)) => {
-                self.intersect_plane_sphere(p, s);
-                // OCCT IntTools_FaceFace::MakeCurve: clip the raw circle to the
-                // two faces' domains.
-                self.curves = face_make_curve::make_curves(
-                    ds,
-                    self.face1,
-                    self.face2,
-                    &s1,
-                    uv1,
-                    &s2,
-                    uv2,
-                    tol,
-                    &self.lines,
-                );
-                self.done = true;
-            }
             _ => {
                 // OCCT IntTools_FaceFace::Perform L441-474: for the remaining
                 // analytic pairs route through IntPatch_Intersection
@@ -706,46 +688,6 @@ impl FaceFace {
         // Keep the raw IntPatch lines; MakeCurve (face_make_curve::make_curves)
         // clips them to the face UV domains.
         self.lines = inter.sequence_of_line().to_vec();
-    }
-
-    /// OCCT: Plane-Sphere intersection — circle.
-    fn intersect_plane_sphere(&mut self, plane: &rcad_kernel::geom::Plane, sphere: &rcad_kernel::geom::SphericalSurface) {
-        let n = plane.normal;
-        let d = plane.origin.dot(n);
-        let c = sphere.center;
-        let r = sphere.radius;
-        let dist = (c.dot(n) - d).abs();
-        if dist > r + self.tol1.max(self.tol2) {
-            return; // No intersection
-        }
-        let h = (r * r - dist * dist).sqrt();
-        if h < 1e-15 {
-            return; // Tangent point, not a curve
-        }
-        // Circle center = projection of sphere center onto plane
-        let center = c - n * (c.dot(n) - d);
-        let radius = h;
-        // Build a coordinate system on the plane
-        let u_dir = if n.x.abs() > 0.1 || n.y.abs() > 0.1 {
-            n.cross(DVec3::Z).normalize()
-        } else {
-            n.cross(DVec3::X).normalize()
-        };
-        let v_dir = n.cross(u_dir).normalize();
-        let circle = rcad_kernel::geom::Circle3 {
-            center,
-            normal: n,
-            x_dir: u_dir,
-            y_dir: v_dir,
-            radius,
-        };
-        // Emit as a raw IntPatch Circle line; MakeCurve clips it to the two
-        // faces' UV domains.
-        self.lines.push(IntPatchLine::analytic(
-            crate::geomalgo::int_patch::IntPatchIType::Circle,
-            Curve3::Circle(circle),
-            [0.0, std::f64::consts::TAU],
-        ));
     }
 }
 
