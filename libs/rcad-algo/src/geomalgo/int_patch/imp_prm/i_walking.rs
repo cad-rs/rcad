@@ -1436,15 +1436,16 @@ impl IWalking {
                         let (vcttg, indextg) = line.tangent_vector();
                         if indextg > nbp as i32 {
                             if j > 3 && j <= nbp + 1 {
-                                let dir3d = func.direction_3d();
-                                let mut dir3d1 = line.value(j - 1).value() - line.value(j - 2).value();
+                                let mut dir3d = func.direction_3d();
+                                let dir3d1 = line.value(j - 1).value() - line.value(j - 2).value();
                                 let dot = dir3d.dot(dir3d1);
                                 if dot < 0.0 {
                                     // Normally this Function should not be used often!
-                                    dir3d1 = -dir3d1;
+                                    dir3d = -dir3d; // OCCT: Dir3d.Reverse() — local only.
                                 }
-                                let _ = (dir3d1, vcttg);
-                                line.set_tangent_vector(func.direction_3d(), j as i32 - 1);
+                                let _ = (dir3d, dir3d1, vcttg);
+                                // OCCT L1315: SetTangentVector(previousd3d, j-1).
+                                line.set_tangent_vector(self.previous_d3d, j as i32 - 1);
                             }
                         }
                         return;
@@ -1750,6 +1751,7 @@ impl IWalking {
     ) {
         let mut i: usize = 1;
         let mut n = 0i32;
+        let mut save_n = 0i32; // OCCT: SaveN — N captured right after TestArretAjout.
         let mut born_inf = [self.um, self.vm];
         let mut born_sup = [self.um_max, self.vm_max];
         let mut uvap = [0.0f64; 2];
@@ -1915,6 +1917,7 @@ impl IWalking {
                                 if *rajout {
                                     arret_ajout =
                                         self.test_arret_ajout(func, &mut uvap, &mut n, &mut psol);
+                                    save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
                                         tgtend = self.lines[n as usize].is_tangent_at_end();
                                         n = -n;
@@ -1980,10 +1983,10 @@ impl IWalking {
                                 arrive = true;
                                 cl.add_status_last(false);
                                 cl.add_point(&psol);
-                                // Remove <n> from <seq_alone>.
+                                // Remove <SaveN> from <seq_alone>.
                                 let mut iseq = 1;
                                 while iseq <= self.seq_alone.len() {
-                                    if self.seq_alone[iseq - 1] == n {
+                                    if self.seq_alone[iseq - 1] == save_n {
                                         self.seq_alone.remove(iseq - 1);
                                         break;
                                     }
@@ -2181,6 +2184,7 @@ impl IWalking {
     ) {
         let mut i: usize = 1;
         let mut n = 0i32;
+        let mut save_n = 0i32; // OCCT: SaveN — N captured after TestArretAjout / TestArretCadre.
         let mut born_inf = [self.um, self.vm];
         let mut born_sup = [self.um_max, self.vm_max];
         let mut uvap = [0.0f64; 2];
@@ -2410,8 +2414,9 @@ impl IWalking {
                                         // Avoid finite cycle which leads to stop
                                         // computing iline.
                                         if a_status != StatusDeflection::PasTropGrand {
+                                            // OCCT L2274: gp::Resolution() = RealSmall() = DBL_MIN.
                                             if (uv_l[a_coord_idx - 1] - uvprev[a_coord_idx - 1]).abs()
-                                                > f64::EPSILON
+                                                > f64::MIN_POSITIVE
                                             {
                                                 a_scale_coeff = ((uvap[a_coord_idx - 1]
                                                     - uv_l[a_coord_idx - 1])
@@ -2442,6 +2447,7 @@ impl IWalking {
                                 if *rajout {
                                     // Test on added points.
                                     arret_ajout = self.test_arret_ajout(func, &mut uvap, &mut n, &mut psol);
+                                    save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
                                         if n > 0 {
                                             tgtend = self.lines[n as usize].is_tangent_at_end();
@@ -2459,6 +2465,7 @@ impl IWalking {
                                         break; // cancel the line
                                     }
                                     self.test_arret_cadre(u_mult, v_mult, &mut cl, func, &mut uvap, &mut n);
+                                    save_n = n; // OCCT: SaveN = N.
                                     if n <= 0 {
                                         self.make_walking_point(2, uvap[0], uvap[1], func, &mut psol);
                                         tgtend = func.is_tangent();
@@ -2503,10 +2510,10 @@ impl IWalking {
 
                                     // Remove <SaveN> from <seq_alone> and, if it is
                                     // first found point, from <seq_ajout> too.
-                                    if self.is_valid_end_point(i as i32, n) {
+                                    if self.is_valid_end_point(i as i32, save_n) {
                                         let mut iseq = 1;
                                         while iseq <= self.seq_alone.len() {
-                                            if self.seq_alone[iseq - 1] == n {
+                                            if self.seq_alone[iseq - 1] == save_n {
                                                 self.seq_alone.remove(iseq - 1);
                                                 break;
                                             }
@@ -2515,7 +2522,7 @@ impl IWalking {
                                         if cl.nb_points() <= 3 {
                                             let mut iseq = 1;
                                             while iseq <= self.seq_ajout.len() {
-                                                if self.seq_ajout[iseq - 1] == n {
+                                                if self.seq_ajout[iseq - 1] == save_n {
                                                     self.seq_ajout.remove(iseq - 1);
                                                     break;
                                                 }
@@ -2546,7 +2553,7 @@ impl IWalking {
                                     status_precedent = StatusDeflection::OK;
                                     pas_c = pas_sav;
                                     // Check if <Psol> has been really updated.
-                                    if arrive || *rajout || (!arret_ajout && cadre && n <= 0) {
+                                    if arrive || *rajout || (!arret_ajout && cadre && save_n <= 0) {
                                         if a_status == StatusDeflection::ArretSurPointPrecedent {
                                             cl.add_point(&psol);
                                             self.open_line(0, &psol, pnts1, func, &mut cl);
@@ -2555,10 +2562,10 @@ impl IWalking {
                                         }
                                     }
                                     // Remove <SaveN> from <seq_alone>.
-                                    if self.is_valid_end_point(i as i32, n) {
+                                    if self.is_valid_end_point(i as i32, save_n) {
                                         let mut iseq = 1;
                                         while iseq <= self.seq_alone.len() {
-                                            if self.seq_alone[iseq - 1] == n {
+                                            if self.seq_alone[iseq - 1] == save_n {
                                                 self.seq_alone.remove(iseq - 1);
                                                 break;
                                             }
@@ -2567,7 +2574,7 @@ impl IWalking {
                                         if cl.nb_points() <= 2 {
                                             let mut iseq = 1;
                                             while iseq <= self.seq_ajout.len() {
-                                                if self.seq_ajout[iseq - 1] == n {
+                                                if self.seq_ajout[iseq - 1] == save_n {
                                                     self.seq_ajout.remove(iseq - 1);
                                                     break;
                                                 }
@@ -2859,7 +2866,7 @@ impl IWalking {
         solver: &mut FunctionSetRoot,
         func: &mut SurfFunction,
     ) -> bool {
-        let eps = 1.0;
+        let eps = f64::EPSILON; // OCCT: Epsilon(1.) = ULP of 1.0.
         let a_p3d = p_on_2s.value();
 
         for a_l_idx in 1..=self.lines.len() {
@@ -2882,7 +2889,8 @@ impl IWalking {
 
                 let a_sq12 = a_p1p2.length_squared();
 
-                if a_sq12 < f64::EPSILON {
+                // OCCT L3088: gp::Resolution() = RealSmall() = DBL_MIN.
+                if a_sq12 < f64::MIN_POSITIVE {
                     continue;
                 }
 

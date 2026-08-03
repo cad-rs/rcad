@@ -13,13 +13,15 @@
 use std::f64::consts::TAU;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Line2d, Surface3, SurfaceEval};
 
 use crate::geomalgo::int_surf::quadric::{Quadric, QuadricType};
 use crate::geomalgo::int_surf::PntOn2S;
 use crate::geomalgo::int_patch::so_on_bounds::{ArcFunction, Domain, SOnBounds};
 use crate::geomalgo::int_patch::transitions::{make_transition, Transition, TypeTrans};
 use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex};
+use crate::geomalgo::top_trans::CurveTransition;
+use rcad_kernel::topods::State;
 
 use super::i_walking::IWalking;
 use super::path_point::{InteriorPoint, PathPoint};
@@ -400,8 +402,9 @@ impl ImpPrmIntersection {
         let mut search_ins = true;
         if quad.type_quadric() == QuadricType::Plane && self.solrst.nb_segments() > 0 {
             search_ins = false;
-            // rcad: sample the parametric surface domain corners.
-            let p_dom = if !reversed { uv2 } else { uv1 };
+            // OCCT L788-810: the TopolTool's grid samples the parametric face
+            // in its natural UV domain (not the corrected FF bounds).
+            let p_dom = func.p_surface().default_domain();
             let pts = [
                 DVec2::new(p_dom[0], p_dom[2]),
                 DVec2::new(p_dom[1], p_dom[2]),
@@ -1285,73 +1288,125 @@ impl ImpPrmIntersection {
 
         // On traite les restrictions de la surface implicite: remove short
         // lines (<= 2 coincident points) and move Walking lines to the end.
+        // OCCT IntPatch_ImpPrmIntersection.cxx L1770-1808.
         let mut a_nb_lin = self.slin.len();
-        let mut i = 0usize;
-        while i < a_nb_lin {
-            let is_wline = self.slin[i].is_wline();
+        let mut i: isize = 0;
+        while (i as usize) < a_nb_lin {
+            let is_wline = self.slin[i as usize].is_wline();
             let a_cond = if is_wline {
-                let n = self.slin[i].wline_pnts.len();
+                let n = self.slin[i as usize].wline_pnts.len();
                 if n < 2 {
                     true
                 } else {
-                    let p1 = self.slin[i].wline_pnts[0].p3d;
-                    let p2 = self.slin[i].wline_pnts[1].p3d;
+                    let p1 = self.slin[i as usize].wline_pnts[0].p3d;
+                    let p2 = self.slin[i as usize].wline_pnts[1].p3d;
                     p1.distance_squared(p2) <= rcad_kernel::precision::SQUARE_CONFUSION
                 }
             } else {
-                self.slin[i].vertices.len() < 2
+                self.slin[i as usize].vertices.len() < 2
             };
             if a_cond {
-                self.slin.remove(i);
-                a_nb_lin = self.slin.len();
+                self.slin.remove(i as usize);
+                a_nb_lin -= 1; // OCCT: aNbLin--
                 continue;
             }
 
-            if self.slin[i].line_type == IntPatchIType::Walking {
-                let wl = self.slin.remove(i);
+            if self.slin[i as usize].line_type == IntPatchIType::Walking {
+                let wl = self.slin.remove(i as usize);
                 self.slin.push(wl);
-                i = i.saturating_sub(1);
-                a_nb_lin = self.slin.len();
+                i -= 1; // OCCT: i--
+                a_nb_lin -= 1; // OCCT: aNbLin-- (remove+push keeps len() unchanged)
             }
-            i += 1;
+            i += 1; // OCCT: i++
         }
 
-        // IsCoincide — remove coincident lines.
+        // OCCT L1817-1910: IsCoincide loop.
         let a_tol_3d = func.tolerance().max(tol_tang);
+        let an_other_surf = func.p_surface().clone();
         let mut i = 0usize;
         while i < self.slin.len() {
-            let is_rline1 = self.slin[i].line_type == IntPatchIType::Restriction;
-            if !is_rline1 {
+            // aL1 must be a Restriction line; Walking-Walking cases are not
+            // supported (OCCT L1822-1826).
+            if self.slin[i].line_type != IntPatchIType::Restriction {
                 break;
             }
+            let an_arc = self.slin[i]
+                .arc_on_s1
+                .as_ref()
+                .or(self.slin[i].arc_on_s2.as_ref())
+                .cloned();
+            let Some(an_arc) = an_arc else { break };
+            if !matches!(an_arc, Curve2d::Line(_)) {
+                break; // Restriction line must be isoline.
+            }
+            let is_arc_on_s1 = self.slin[i].arc_on_s1.is_some();
+            let a_arc_range = line_arc_range(&self.slin[i]);
+
             let mut is_first_deleted = false;
             let mut j = i + 1;
             while j < self.slin.len() {
-                let is_coincide = is_coincide_lines(&self.slin[i], &self.slin[j], a_tol_3d);
+                let is_rline2 = self.slin[j].line_type == IntPatchIType::Restriction;
+                if is_rline2 {
+                    let an_arc2 = self.slin[j]
+                        .arc_on_s1
+                        .as_ref()
+                        .or(self.slin[j].arc_on_s2.as_ref());
+                    let Some(an_arc2) = an_arc2 else { j += 1; continue };
+                    if !matches!(an_arc2, Curve2d::Line(_)) {
+                        j += 1;
+                        continue;
+                    }
+                }
+
+                // aDir can be one of following four values only (restriction
+                // line is boundary of rectangular surface).
+                let a_dir = match &an_arc {
+                    Curve2d::Line(l) => l.direction,
+                    _ => unreachable!(),
+                };
+                let mut a_tol_2d = u_res(&an_other_surf, a_tol_3d);
+                let mut a_period = if an_other_surf.is_v_periodic() { TAU } else { 0.0 };
+                if a_dir.x.abs() < 0.5 {
+                    // Restriction directs along V-direction.
+                    a_tol_2d = v_res(&an_other_surf, a_tol_3d);
+                    a_period = if an_other_surf.is_u_periodic() { TAU } else { 0.0 };
+                }
+
+                let is_coincide = is_coincide(
+                    &mut func,
+                    &self.slin[j],
+                    &an_arc,
+                    a_arc_range,
+                    is_arc_on_s1,
+                    a_tol_3d,
+                    a_tol_2d,
+                    a_period,
+                );
                 if is_coincide {
-                    let is_rline2 = self.slin[j].line_type == IntPatchIType::Restriction;
-                    if is_rline2 {
-                        let len1 = line_range(&self.slin[i]);
-                        let len2 = line_range(&self.slin[j]);
-                        if len2 > len1 {
-                            is_first_deleted = true;
-                            break;
-                        } else {
-                            self.slin.remove(j);
-                            continue;
-                        }
-                    } else {
+                    if !is_rline2 {
+                        // Delete Walking-line.
                         self.slin.remove(j);
                         continue;
                     }
+                    // Restriction-Restriction: keep the longer.
+                    let a_range2 = {
+                        let r2 = line_arc_range(&self.slin[j]);
+                        r2[1] - r2[0]
+                    };
+                    let a_range1 = a_arc_range[1] - a_arc_range[0];
+                    if a_range2 > a_range1 {
+                        is_first_deleted = true;
+                        break;
+                    }
+                    self.slin.remove(j);
+                    continue;
                 }
                 j += 1;
             }
             if is_first_deleted {
                 self.slin.remove(i);
-            } else {
-                i += 1;
             }
+            i += 1;
         }
 
         self.empt = self.slin.is_empty() && self.spnt.is_empty();
@@ -1430,7 +1485,10 @@ fn compute_tangency(
             let p_start = solrst.point(i).clone();
             let thearc = p_start.arc().clone();
             let theparam = p_start.parameter();
-            let ispassing = p_start.is_new() == false && arc_is_passing(&thearc);
+            // OCCT L256-259: arcorien + ispassing computed before the tangent check.
+            let mut arcorien = _dom.orientation_arc(&thearc);
+            let mut ispassing = arcorien == rcad_kernel::topods::Orientation::Internal
+                || arcorien == rcad_kernel::topods::Orientation::External;
 
             let p2d = thearc.point_at(theparam);
             let x = [p2d.x, p2d.y];
@@ -1451,6 +1509,11 @@ fn compute_tangency(
                                 if _dom.identical(vtx, vtxbis) {
                                     let thearc2 = p_start2.arc().clone();
                                     let theparam2 = p_start2.parameter();
+                                    let arcorien2 = _dom.orientation_arc(&thearc2);
+                                    ispassing = ispassing
+                                        && (arcorien2 == rcad_kernel::topods::Orientation::Internal
+                                            || arcorien2
+                                                == rcad_kernel::topods::Orientation::External);
                                     let p2d2 = thearc2.point_at(theparam2);
                                     p_point.add_uv(p2d2.x, p2d2.y);
                                     destination[k - 1] = (seqlength + 1) as i32;
@@ -1465,22 +1528,21 @@ fn compute_tangency(
                 seqlength += 1;
             } else {
                 // On a un point de depart potentiel.
-                let vectg = func.direction_3d();
-                let dirtg = func.direction_2d();
+                let mut vectg = func.direction_3d();
+                let mut dirtg = func.direction_2d();
 
                 let (_, d1u, d1v) = p_surf.derivatives(x[0], x[1]);
                 let d2d = thearc.derivative_at(theparam);
-                let v2 = d2d.x * d1u + d2d.y * d1v;
+                let mut v2 = d2d.x * d1u + d2d.y * d1v;
                 let v1 = d1u.cross(d1v);
 
                 let mut test = vectg.dot(v1.cross(v2));
-                let arcorien = _dom.orientation_arc(&thearc);
                 if p_start.is_new() {
                     // OCCT L316-321: reverse when (test<0 AND FORWARD) OR
                     // (test>0 AND REVERSED).
-                    let should_reverse =
-                        (test < 0.0) != (arcorien == rcad_kernel::topods::Orientation::Reversed);
-                    if should_reverse {
+                    if (test < 0.0 && arcorien == rcad_kernel::topods::Orientation::Forward)
+                        || (test > 0.0 && arcorien == rcad_kernel::topods::Orientation::Reversed)
+                    {
                         p_point.set_directions(-vectg, -dirtg);
                     } else {
                         p_point.set_directions(vectg, dirtg);
@@ -1490,12 +1552,43 @@ fn compute_tangency(
                     seqpdep.push(p_point);
                     seqlength += 1;
                 } else {
-                    // Traiter la transition complexe.
-                    let mut fairpt = true;
-                    // rcad: the face domain is a rectangle; the complex
-                    // TopTrans_CurveTransition state is approximated by the
-                    // sign of `test` against the arc orientation.
+                    // Traiter la transition complexe (OCCT L328-465).
+                    let bidnorm = DVec3::new(1.0, 1.0, 1.0).normalize(); // gp_Dir(1., 1., 1.)
+                    let tole = 1.0e-8;
+                    let mut comptrans = CurveTransition::<DVec3>::new();
+                    comptrans.reset_3d(vectg, bidnorm, 0.0);
                     let vtx = p_start.vertex();
+                    let mut vtxorien = _dom.orientation_vertex(vtx);
+                    let mut loc_trans; // OCCT L332: declared uninitialized.
+                    if arcorien == rcad_kernel::topods::Orientation::Forward
+                        || arcorien == rcad_kernel::topods::Orientation::Reversed
+                    {
+                        // Pour essai.
+                        if test.abs() <= tole {
+                            loc_trans = rcad_kernel::topods::Orientation::External;
+                        } else {
+                            if (test > 0.0
+                                && arcorien == rcad_kernel::topods::Orientation::Forward)
+                                || (test < 0.0
+                                    && arcorien == rcad_kernel::topods::Orientation::Reversed)
+                            {
+                                loc_trans = rcad_kernel::topods::Orientation::Forward;
+                            } else {
+                                loc_trans = rcad_kernel::topods::Orientation::Reversed;
+                            }
+                            if arcorien == rcad_kernel::topods::Orientation::Reversed {
+                                v2 = -v2; // v2.Reverse()
+                            }
+                        }
+                        comptrans.compare(
+                            tole,
+                            v2.normalize(),
+                            bidnorm,
+                            0.0,
+                            loc_trans,
+                            vtxorien,
+                        );
+                    }
                     destination[i - 1] = (seqlength + 1) as i32;
                     let mut k = i + 1;
                     while k <= nb_points {
@@ -1506,26 +1599,75 @@ fn compute_tangency(
                                 if _dom.identical(vtx, vtxbis) {
                                     let thearc2 = p_start2.arc().clone();
                                     let theparam2 = p_start2.parameter();
+                                    arcorien = _dom.orientation_arc(&thearc2);
                                     p_point.add_uv(x[0], x[1]);
                                     let p2d2 = thearc2.point_at(theparam2);
                                     p_point.add_uv(p2d2.x, p2d2.y);
-                                    let d2d2 = thearc2.derivative_at(theparam2);
-                                    let v2b = d2d2.x * d1u + d2d2.y * d1v;
-                                    test = vectg.dot(v1.cross(v2b));
+                                    if arcorien == rcad_kernel::topods::Orientation::Forward
+                                        || arcorien
+                                            == rcad_kernel::topods::Orientation::Reversed
+                                    {
+                                        ispassing = false;
+                                        let d2d2 = thearc2.derivative_at(theparam2);
+                                        v2 = d2d2.x * d1u + d2d2.y * d1v; // v2.SetLinearForm
+                                        test = vectg.dot(v1.cross(v2));
+                                        vtxorien = _dom.orientation_vertex(p_start2.vertex());
+                                        if test.abs() <= tole {
+                                            loc_trans = rcad_kernel::topods::Orientation::External;
+                                        } else {
+                                            if (test > 0.0
+                                                && arcorien
+                                                    == rcad_kernel::topods::Orientation::Forward)
+                                                || (test < 0.0
+                                                    && arcorien
+                                                        == rcad_kernel::topods::Orientation::Reversed)
+                                            {
+                                                loc_trans =
+                                                    rcad_kernel::topods::Orientation::Forward;
+                                            } else {
+                                                loc_trans =
+                                                    rcad_kernel::topods::Orientation::Reversed;
+                                            }
+                                            if arcorien
+                                                == rcad_kernel::topods::Orientation::Reversed
+                                            {
+                                                v2 = -v2;
+                                            }
+                                        }
+                                        comptrans.compare(
+                                            tole,
+                                            v2.normalize(),
+                                            bidnorm,
+                                            0.0,
+                                            loc_trans,
+                                            vtxorien,
+                                        );
+                                    }
                                     destination[k - 1] = (seqlength + 1) as i32;
                                 }
                             }
                         }
                         k += 1;
                     }
-                    if fairpt {
-                        let mut v = vectg;
-                        let mut d = dirtg;
-                        if test < 0.0 {
-                            v = -v;
-                            d = -d;
+                    let mut fairpt = true;
+                    if !ispassing {
+                        let before = comptrans.state_before();
+                        let after = comptrans.state_after();
+                        if before == State::Unknown || after == State::Unknown {
+                            fairpt = false;
+                        } else if before == State::In {
+                            if after == State::In {
+                                ispassing = true;
+                            } else {
+                                vectg = -vectg;
+                                dirtg = -dirtg;
+                            }
+                        } else if after != State::In {
+                            fairpt = false;
                         }
-                        p_point.set_directions(v, d);
+                    }
+                    if fairpt {
+                        p_point.set_directions(vectg, dirtg);
                         p_point.set_passing(ispassing);
                         seqpdep.push(p_point);
                         seqlength += 1;
@@ -1542,38 +1684,154 @@ fn compute_tangency(
     }
 }
 
-/// rcad: a boundary arc is "passing" when it is not a domain vertex arc.
-fn arc_is_passing(_arc: &Curve2d) -> bool {
-    false
+/// OCCT CheckSegmSegm (IntPatch_ImpPrmIntersection.cxx L3733-3753) — true when
+/// the segment [theParF, theParL] is included in [theRefParF, theRefParL].
+fn check_segm_segm(the_ref_par_f: f64, the_ref_par_l: f64, the_par_f: f64, the_par_l: f64) -> bool {
+    if (the_par_f < the_ref_par_f) || (the_par_f > the_ref_par_l) {
+        return false;
+    }
+    if (the_par_l < the_ref_par_f) || (the_par_l > the_ref_par_l) {
+        return false;
+    }
+    true
 }
 
-/// OCCT IsCoincide (IntPatch_ImpPrmIntersection.cxx L3763-3892) — rcad
-/// condensed form: two restriction lines coincide when their 2D arcs are the
-/// same up to tolerance.
-fn is_coincide_lines(l1: &IntPatchLine, l2: &IntPatchLine, _tol_3d: f64) -> bool {
-    let arc1 = l1.arc_on_s1.as_ref().or(l1.arc_on_s2.as_ref());
-    let arc2 = l2.arc_on_s1.as_ref().or(l2.arc_on_s2.as_ref());
-    match (arc1, arc2) {
-        (Some(a1), Some(a2)) => {
-            let p1 = a1.point_at(0.0);
-            let p2 = a2.point_at(0.0);
-            let d1 = a1.derivative_at(0.0);
-            let d2 = a2.derivative_at(0.0);
-            p1.distance(p2) < rcad_kernel::precision::PCONFUSION
-                && (d1.normalize_or_zero() - d2.normalize_or_zero()).length()
-                    < rcad_kernel::precision::ANGULAR
-        }
-        _ => false,
+/// OCCT ElCLib::Parameter(gp_Lin2d, gp_Pnt2d) — parameter of the orthogonal
+/// projection of a point onto a unit-direction 2D line.
+fn line2d_parameter(lin: &Line2d, p: DVec2) -> f64 {
+    (p - lin.origin).dot(lin.direction)
+}
+
+/// OCCT gp_Lin2d::Distance(gp_Lin2d) (gp_Lin2d.hxx L228-236) — perpendicular
+/// distance between two parallel lines (0 when not parallel).
+fn line2d_distance(l1: &Line2d, l2: &Line2d) -> f64 {
+    let a_d = l1.origin - l2.origin;
+    (a_d.x * l2.direction.y - a_d.y * l2.direction.x).abs()
+}
+
+/// OCCT gp_Dir2d::IsParallel (gp_Dir2d.hxx L422-430).
+fn dirs_parallel_2d(d1: DVec2, d2: DVec2, tol: f64) -> bool {
+    let an_ang = (d1.x * d2.y - d1.y * d2.x).atan2(d1.x * d2.x + d1.y * d2.y).abs();
+    an_ang <= tol || std::f64::consts::PI - an_ang <= tol
+}
+
+/// OCCT anArc->FirstParameter()/LastParameter() — the finite restriction-arc
+/// parameter range, carried by the RLine's first/last points.
+fn line_arc_range(line: &IntPatchLine) -> [f64; 2] {
+    if line.has_first_point() && line.has_last_point() {
+        [
+            line.first_point().parameter_on_line(),
+            line.last_point().parameter_on_line(),
+        ]
+    } else if let Some(a) = line.arc_on_s1.as_ref().or(line.arc_on_s2.as_ref()) {
+        a.default_domain()
+    } else {
+        [0.0, 0.0]
     }
 }
 
-/// Approximate line length (for the restriction-restriction coincide case).
-fn line_range(line: &IntPatchLine) -> f64 {
-    if let Some(a) = line.arc_on_s1.as_ref().or(line.arc_on_s2.as_ref()) {
-        let d = a.default_domain();
-        d[1] - d[0]
+/// OCCT IsCoincide (IntPatch_ImpPrmIntersection.cxx L3756-3892) — check if
+/// `line` coincides with the 2D restriction arc `arc` (of finite range
+/// `arc_range`) in 2D-space.
+fn is_coincide(
+    func: &mut SurfFunction,
+    line: &IntPatchLine,
+    arc: &Curve2d,
+    arc_range: [f64; 2],
+    is_surface1_using: bool,
+    tol_3d: f64,
+    tol_2d: f64,
+    period: f64,
+) -> bool {
+    const A_COEFFS: [f64; 7] = [
+        0.02447174185,
+        0.09549150281,
+        0.20610737385,
+        0.34549150281,
+        0.5,
+        0.65450849719,
+        0.79389262615,
+    ];
+
+    if line.line_type == IntPatchIType::Restriction {
+        // Restriction-restriction processing.
+        let Some(arc2) = line.arc_on_s1.as_ref().or(line.arc_on_s2.as_ref()) else {
+            return false;
+        };
+        let (Curve2d::Line(lin1), Curve2d::Line(lin2)) = (arc, arc2) else {
+            return false;
+        };
+        if !dirs_parallel_2d(lin1.direction, lin2.direction, rcad_kernel::precision::ANGULAR) {
+            return false;
+        }
+        let a_dist = line2d_distance(lin1, lin2);
+        if (a_dist < tol_2d) || ((a_dist - period).abs() < tol_2d) {
+            let (a_rf, a_rl) = (arc_range[0], arc_range[1]);
+            let (a_parf, a_parl) = {
+                let r2 = line_arc_range(line);
+                (r2[0], r2[1])
+            };
+            let a_p1 = lin2.point_at(a_parf);
+            let a_p2 = lin2.point_at(a_parl);
+            let a_param1 = line2d_parameter(lin1, a_p1);
+            let a_param2 = line2d_parameter(lin1, a_p2);
+            if check_segm_segm(a_rf, a_rl, a_param1, a_param2) {
+                return true;
+            }
+            return check_segm_segm(a_param1, a_param2, a_rf, a_rl);
+        }
+        false
     } else {
-        0.0
+        // Walking line vs restriction arc.
+        let Curve2d::Line(an_arc_lin) = arc else {
+            return false;
+        };
+        let (a_u_af, a_u_al) = (arc_range[0], arc_range[1]);
+        for wpt in &line.wline_pnts {
+            let (a_u_f, a_v_f) = if is_surface1_using {
+                (wpt.u1, wpt.v1)
+            } else {
+                (wpt.u2, wpt.v2)
+            };
+            let a_ploc = DVec2::new(a_u_f, a_v_f);
+            let a_r_param = line2d_parameter(an_arc_lin, a_ploc);
+            if (a_r_param < a_u_af) || (a_r_param > a_u_al) {
+                return false;
+            }
+            let a_pmin = an_arc_lin.point_at(a_r_param);
+            let a_dist = a_ploc.distance(a_pmin);
+            if (a_dist < tol_2d) || ((a_dist - period).abs() < tol_2d) {
+                // Considered point is in Restriction line.
+                continue;
+            }
+            // Check if intermediate points between aPloc and theArc are
+            // intersection point (i.e. if aPloc is in tangent zone between
+            // two intersected surfaces).
+            let (a_u_l, a_v_l) = (a_pmin.x, a_pmin.y);
+            let d_u = a_u_l - a_u_f;
+            let d_v = a_v_l - a_v_f;
+            let mut is_on_line = true;
+            for i in 0..7 {
+                let a_u = a_u_f + A_COEFFS[i] * d_u;
+                let a_v = a_v_f + A_COEFFS[i] * d_v;
+                match func.value(&[a_u, a_v]) {
+                    Some(a_val) => {
+                        if a_val.abs() > tol_3d {
+                            is_on_line = false;
+                            break;
+                        }
+                    }
+                    None => {
+                        is_on_line = false;
+                        break;
+                    }
+                }
+            }
+            if !is_on_line {
+                return false;
+            }
+        }
+        true
     }
 }
 

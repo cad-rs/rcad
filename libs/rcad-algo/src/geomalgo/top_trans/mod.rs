@@ -5,11 +5,39 @@
 // fallback) to combine the transitions at the head/end of a boundary edge
 // into a single IN/OUT state.
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use rcad_kernel::topods::{Orientation, State};
 
 const GREATER: i32 = 1;
 const SAME: i32 = 0;
+
+/// Minimal vector interface for the transition vectors (OCCT gp_Dir is 3D;
+/// the FClass2d face classifier uses the 2D specialization).
+pub trait TransitionVec: Copy {
+    const ZERO: Self;
+    fn dot_v(self, other: Self) -> f64;
+    fn neg_v(self) -> Self;
+}
+
+impl TransitionVec for DVec2 {
+    const ZERO: Self = DVec2::ZERO;
+    fn dot_v(self, other: Self) -> f64 {
+        self.dot(other)
+    }
+    fn neg_v(self) -> Self {
+        -self
+    }
+}
+
+impl TransitionVec for DVec3 {
+    const ZERO: Self = DVec3::ZERO;
+    fn dot_v(self, other: Self) -> f64 {
+        self.dot(other)
+    }
+    fn neg_v(self) -> Self {
+        -self
+    }
+}
 const LOWER: i32 = -1;
 
 /// OCCT TopAbs::Reverse — reverses an orientation.
@@ -25,46 +53,55 @@ fn reverse_orientation(or: Orientation) -> Orientation {
 /// OCCT TopTrans_CurveTransition — accumulates the transitions of several
 /// interference points on an intersected curve and gives the state before /
 /// after the complex interference.
-pub struct CurveTransition {
+pub struct CurveTransition<T: TransitionVec> {
     // Reference curve elements (the intersecting straight line).
-    my_tgt: DVec2,
-    my_norm: DVec2,
+    my_tgt: T,
+    my_norm: T,
     my_curv: f64,
     // Init = first comparison flag.
     init: bool,
     // First (last) interference elements.
-    tgt_first: DVec2,
-    norm_first: DVec2,
+    tgt_first: T,
+    norm_first: T,
     curv_first: f64,
     tran_first: Orientation,
-    tgt_last: DVec2,
-    norm_last: DVec2,
+    tgt_last: T,
+    norm_last: T,
     curv_last: f64,
     tran_last: Orientation,
 }
 
-impl CurveTransition {
+impl<T: TransitionVec> CurveTransition<T> {
     pub fn new() -> Self {
         CurveTransition {
-            my_tgt: DVec2::ZERO,
-            my_norm: DVec2::ZERO,
+            my_tgt: T::ZERO,
+            my_norm: T::ZERO,
             my_curv: 0.0,
             init: false,
-            tgt_first: DVec2::ZERO,
-            norm_first: DVec2::ZERO,
+            tgt_first: T::ZERO,
+            norm_first: T::ZERO,
             curv_first: 0.0,
             tran_first: Orientation::Forward,
-            tgt_last: DVec2::ZERO,
-            norm_last: DVec2::ZERO,
+            tgt_last: T::ZERO,
+            norm_last: T::ZERO,
             curv_last: 0.0,
             tran_last: Orientation::Forward,
         }
     }
 
     /// OCCT Reset(Tgt) — initializer with the intersecting straight line.
-    pub fn reset(&mut self, tgt: DVec2) {
+    pub fn reset(&mut self, tgt: T) {
         self.my_tgt = tgt;
         self.my_curv = 0.0;
+        self.init = true;
+    }
+
+    /// OCCT Reset(Tgt, Norm, Curv) (L42-48) — initializer with the elements of
+    /// the intersecting curve.
+    pub fn reset_3d(&mut self, tgt: T, norm: T, curv: f64) {
+        self.my_tgt = tgt;
+        self.my_norm = norm;
+        self.my_curv = curv;
         self.init = true;
     }
 
@@ -74,8 +111,8 @@ impl CurveTransition {
     pub fn compare(
         &mut self,
         tole: f64,
-        t: DVec2,
-        n: DVec2,
+        t: T,
+        n: T,
         c: f64,
         st: Orientation,
         or_: Orientation,
@@ -87,7 +124,7 @@ impl CurveTransition {
 
         // Adjustment for INTERNAL transition.
         if s == Orientation::Internal {
-            if t.dot(self.my_tgt) < 0.0 {
+            if t.dot_v(self.my_tgt) < 0.0 {
                 s = reverse_orientation(o);
             } else {
                 s = o;
@@ -108,16 +145,16 @@ impl CurveTransition {
             match o {
                 // Interference at the end of the edge: reverse the tangent.
                 Orientation::Reversed => {
-                    self.tgt_first = -self.tgt_first;
-                    self.tgt_last = -self.tgt_last;
+                    self.tgt_first = self.tgt_first.neg_v();
+                    self.tgt_last = self.tgt_last.neg_v();
                 }
                 // Interference in the middle of the edge: reverse depending on
                 // the position of the reference tangent.
                 Orientation::Internal => {
-                    if self.my_tgt.dot(t) > 0.0 {
-                        self.tgt_first = -self.tgt_first;
+                    if self.my_tgt.dot_v(t) > 0.0 {
+                        self.tgt_first = self.tgt_first.neg_v();
                     } else {
-                        self.tgt_last = -self.tgt_last;
+                        self.tgt_last = self.tgt_last.neg_v();
                     }
                 }
                 Orientation::Forward | Orientation::External => {}
@@ -125,7 +162,7 @@ impl CurveTransition {
         } else {
             // Compare with the existing first and last transition.
             let mut first_set = false;
-            let mut cos_ang_with_t = self.my_tgt.dot(t);
+            let mut cos_ang_with_t = self.my_tgt.dot_v(t);
             match o {
                 Orientation::Reversed => cos_ang_with_t = -cos_ang_with_t,
                 Orientation::Internal => {
@@ -135,7 +172,7 @@ impl CurveTransition {
                 }
                 Orientation::Forward | Orientation::External => {}
             }
-            let cos_ang_with_1 = self.my_tgt.dot(self.tgt_first);
+            let cos_ang_with_1 = self.my_tgt.dot_v(self.tgt_first);
 
             match Self::compare_angles(cos_ang_with_t, cos_ang_with_1, tole) {
                 LOWER => {
@@ -144,10 +181,12 @@ impl CurveTransition {
                     first_set = true;
                     self.tgt_first = t;
                     match o {
-                        Orientation::Reversed => self.tgt_first = -self.tgt_first,
+                        Orientation::Reversed => {
+                            self.tgt_first = self.tgt_first.neg_v()
+                        }
                         Orientation::Internal => {
-                            if self.my_tgt.dot(t) > 0.0 {
-                                self.tgt_first = -self.tgt_first;
+                            if self.my_tgt.dot_v(t) > 0.0 {
+                                self.tgt_first = self.tgt_first.neg_v();
                             }
                         }
                         Orientation::Forward | Orientation::External => {}
@@ -163,10 +202,12 @@ impl CurveTransition {
                         first_set = true;
                         self.tgt_first = t;
                         match o {
-                            Orientation::Reversed => self.tgt_first = -self.tgt_first,
+                            Orientation::Reversed => {
+                            self.tgt_first = self.tgt_first.neg_v()
+                        }
                             Orientation::Internal => {
-                                if self.my_tgt.dot(t) > 0.0 {
-                                    self.tgt_first = -self.tgt_first;
+                                if self.my_tgt.dot_v(t) > 0.0 {
+                                    self.tgt_first = self.tgt_first.neg_v();
                                 }
                             }
                             Orientation::Forward | Orientation::External => {}
@@ -185,7 +226,7 @@ impl CurveTransition {
                 if o == Orientation::Internal {
                     cos_ang_with_t = -cos_ang_with_t;
                 }
-                let cos_ang_with_2 = self.my_tgt.dot(self.tgt_last);
+                let cos_ang_with_2 = self.my_tgt.dot_v(self.tgt_last);
 
                 match Self::compare_angles(cos_ang_with_t, cos_ang_with_2, tole) {
                     GREATER => {
@@ -193,10 +234,12 @@ impl CurveTransition {
                         // the last.
                         self.tgt_last = t;
                         match o {
-                            Orientation::Reversed => self.tgt_last = -self.tgt_last,
+                            Orientation::Reversed => {
+                            self.tgt_last = self.tgt_last.neg_v()
+                        }
                             Orientation::Internal => {
-                                if self.my_tgt.dot(t) < 0.0 {
-                                    self.tgt_last = -self.tgt_last;
+                                if self.my_tgt.dot_v(t) < 0.0 {
+                                    self.tgt_last = self.tgt_last.neg_v();
                                 }
                             }
                             Orientation::Forward | Orientation::External => {}
@@ -217,10 +260,12 @@ impl CurveTransition {
                         ) {
                             self.tgt_last = t;
                             match o {
-                                Orientation::Reversed => self.tgt_last = -self.tgt_last,
+                                Orientation::Reversed => {
+                            self.tgt_last = self.tgt_last.neg_v()
+                        }
                                 Orientation::Internal => {
-                                    if self.my_tgt.dot(t) < 0.0 {
-                                        self.tgt_last = -self.tgt_last;
+                                    if self.my_tgt.dot_v(t) < 0.0 {
+                                        self.tgt_last = self.tgt_last.neg_v();
                                     }
                                 }
                                 Orientation::Forward | Orientation::External => {}
@@ -267,13 +312,13 @@ impl CurveTransition {
         &self,
         tole: f64,
         cos_angl: f64,
-        n1: DVec2,
+        n1: T,
         c1: f64,
-        n2: DVec2,
+        n2: T,
         c2: f64,
     ) -> bool {
-        let tn1 = self.my_tgt.dot(n1);
-        let tn2 = self.my_tgt.dot(n2);
+        let tn1 = self.my_tgt.dot_v(n1);
+        let tn2 = self.my_tgt.dot_v(n2);
         let mut one_before = false;
 
         if tn1.abs() <= tole || tn2.abs() <= tole {
@@ -293,12 +338,12 @@ impl CurveTransition {
                 let delta_c1 = if c1 == 0.0 || self.my_curv == 0.0 {
                     c1 - self.my_curv
                 } else {
-                    (c1 - self.my_curv) * (n1.dot(self.my_norm))
+                    (c1 - self.my_curv) * (n1.dot_v(self.my_norm))
                 };
                 let delta_c2 = if c2 == 0.0 || self.my_curv == 0.0 {
                     c2 - self.my_curv
                 } else {
-                    (c2 - self.my_curv) * (n2.dot(self.my_norm))
+                    (c2 - self.my_curv) * (n2.dot_v(self.my_norm))
                 };
                 if delta_c1 < delta_c2 {
                     one_before = true;

@@ -30,7 +30,7 @@ pub struct FClass2dOfFClassifier {
     closest: usize,
     is_set: bool,
     is_head_or_end: bool,
-    trans: CurveTransition,
+    trans: CurveTransition<DVec2>,
     intersector: Intersector,
 }
 
@@ -46,7 +46,7 @@ impl FClass2dOfFClassifier {
             closest: 0,
             is_set: false,
             is_head_or_end: false,
-            trans: CurveTransition::new(),
+            trans: CurveTransition::<DVec2>::new(),
             intersector: Intersector::new(),
         }
     }
