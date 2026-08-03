@@ -545,7 +545,13 @@ fn line_constructor_wline_parts(
         }
     }
     // OCCT L257-326: the bCond merging applies to Plane x (Extrusion/Revolution)
-    // faces only — not reachable in the analytic FF stage.
+    // faces only — not reachable in the analytic FF stage.  Unlike the GLine
+    // path (L376-382), OCCT has NO "keep the full range a priori" fallback for a
+    // WLine: a WLine whose vertex intervals are all rejected (or that has no
+    // vertices at all) produces no parts.  rcad keeps the full range a priori
+    // (the caller still classifies the result); the no-distinct-vertex WLines
+    // that survive this way are exactly the ones whose vertex placement is
+    // incomplete — aligning AToW vertex placement (upstream) is the real fix.
     if !intrvtested {
         result.push(line.t_range);
     }
