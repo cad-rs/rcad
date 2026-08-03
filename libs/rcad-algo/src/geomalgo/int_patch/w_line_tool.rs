@@ -396,16 +396,23 @@ pub fn extend_two_w_lines(
             continue;
         }
 
-        // OCCT L2018-2151: try the four extension directions.
-        for a_num_of_line2 in (a_num_of_line1 + 1)..slin.len() {
+        // OCCT L2018-2151: try the four extension directions.  OCCT re-evaluates
+        // theSlin.Length() in the loop condition and decrements aNumOfLine2 after
+        // a join (L2148-2149), so the line shifted into the removed slot is
+        // re-checked.
+        let mut a_num_of_line2 = a_num_of_line1 + 1;
+        while a_num_of_line2 < slin.len() {
             let wl2 = slin[a_num_of_line2].clone();
             if wl2.line_type != super::IntPatchIType::Walking || wl2.wline_pnts.is_empty() {
+                a_num_of_line2 += 1;
                 continue;
             }
             if !wl1_first_last_vertex_ok(&wl2) {
+                a_num_of_line2 += 1;
                 continue;
             }
             if is_need_skip_wl(&wl2, &box_s1, &box_s2, arr_periods) {
+                a_num_of_line2 += 1;
                 continue;
             }
 
@@ -482,7 +489,11 @@ pub fn extend_two_w_lines(
             if has_been_joined {
                 has_been_joined_counter += 1;
                 slin.remove(wl2_idx);
+                // OCCT L2148-2149: aNumOfLine2-- — stay on the same index so the
+                // line shifted into the removed slot is re-checked.
+                continue;
             }
+            a_num_of_line2 += 1;
         }
         a_num_of_line1 += 1;
     }

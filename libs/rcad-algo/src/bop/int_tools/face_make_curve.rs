@@ -384,37 +384,6 @@ fn build_projected_pcurve(
     }))
 }
 
-/// Interpolate a WLine polyline at a parameter in point-index space [0, n-1].
-fn wline_point_at(line: &IntPatchLine, param: f64) -> DVec3 {
-    wline_point(line, param).p3d
-}
-
-/// Interpolate a WLine polyline at a parameter in point-index space [0, n-1]
-/// and return the full point (3D + UV on both surfaces).
-fn wline_point(line: &IntPatchLine, param: f64) -> WLinePnt {
-    let wpts = &line.wline_pnts;
-    let n = wpts.len();
-    if n == 0 {
-        return WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 };
-    }
-    if n == 1 {
-        return wpts[0];
-    }
-    let x = param.clamp(0.0, (n - 1) as f64);
-    let i = x.floor() as usize;
-    let j = (i + 1).min(n - 1);
-    let f = x - i as f64;
-    let a = &wpts[i];
-    let b = &wpts[j];
-    WLinePnt {
-        p3d: a.p3d + (b.p3d - a.p3d) * f,
-        u1: a.u1 + (b.u1 - a.u1) * f,
-        v1: a.v1 + (b.v1 - a.v1) * f,
-        u2: a.u2 + (b.u2 - a.u2) * f,
-        v2: a.v2 + (b.v2 - a.v2) * f,
-    }
-}
-
 /// Classify a WLine point on a surface using its precomputed UV.
 /// OCCT GeomInt_LineConstructor WLine path: classify with the constructor
 /// tolerance `Tol = Precision::PConfusion() * 35.0` (L118).
@@ -486,7 +455,6 @@ fn line_constructor_wline_parts(
 ) -> Vec<[f64; 2]> {
     let mut result: Vec<[f64; 2]> = Vec::new();
     let nbvtx = line.vertices.len();
-    let mut intrvtested = false;
     for i in 0..nbvtx.saturating_sub(1) {
         let firstp = line.vertices[i].param_on_line;
         let lastp = line.vertices[i + 1].param_on_line;
@@ -494,10 +462,10 @@ fn line_constructor_wline_parts(
         if (firstp - lastp).abs() > PCONFUSION {
             if (lastp - firstp) > 1.0 {
                 // OCCT L164-179: non-adjacent vertices — classify the midpoint
-                // polyline point (same-parameter UV on both surfaces).
-                intrvtested = true;
-                let pmid = (firstp + lastp) * 0.5;
-                let p = wline_point(line, pmid);
+                // polyline point.  OCCT L166-167: pmid = (int)((firstp+lastp)/2),
+                // then WLine->Point(pmid) — the actual polyline point (1-based).
+                let pmid = ((firstp + lastp) / 2.0) as usize;
+                let p = line.wline_pnts[pmid - 1];
                 let in1 = in_uv_rect_adjusted(surf1, uv1, p.p3d, p.u1, p.v1);
                 if in1 {
                     let in2 = in_uv_rect_adjusted(surf2, uv2, p.p3d, p.u2, p.v2);
@@ -508,10 +476,10 @@ fn line_constructor_wline_parts(
             } else if line.wl_type == WLineType::ImpPrm {
                 // OCCT L183-225: the implicit-parametric intersector does not
                 // respect the quadric domain; classify the interpolated midpoint
-                // of the two endpoint points.
-                intrvtested = true;
-                let pf = wline_point(line, firstp);
-                let pl = wline_point(line, lastp);
+                // of the two endpoint points (OCCT L203-204: Point((int)firstp),
+                // Point((int)lastp) — the actual polyline points, 1-based).
+                let pf = line.wline_pnts[firstp as usize - 1];
+                let pl = line.wline_pnts[lastp as usize - 1];
                 let mu1 = 0.5 * (pf.u1 + pl.u1);
                 let mv1 = 0.5 * (pf.v1 + pl.v1);
                 let mu2 = 0.5 * (pf.u2 + pl.u2);
@@ -525,14 +493,14 @@ fn line_constructor_wline_parts(
                     }
                 }
             } else {
-                // OCCT L226-252: both endpoint points must be inside both domains.
-                intrvtested = true;
-                let pf = wline_point(line, firstp);
+                // OCCT L226-252: both endpoint points must be inside both domains
+                // (OCCT L228/237: Point((int)firstp), Point((int)lastp)).
+                let pf = line.wline_pnts[firstp as usize - 1];
                 let in1 = in_uv_rect_adjusted(surf1, uv1, pf.p3d, pf.u1, pf.v1);
                 if in1 {
                     let in2 = in_uv_rect_adjusted(surf2, uv2, pf.p3d, pf.u2, pf.v2);
                     if in2 {
-                        let pl = wline_point(line, lastp);
+                        let pl = line.wline_pnts[lastp as usize - 1];
                         let in3 = in_uv_rect_adjusted(surf1, uv1, pl.p3d, pl.u1, pl.v1);
                         if in3 {
                             let in4 = in_uv_rect_adjusted(surf2, uv2, pl.p3d, pl.u2, pl.v2);
@@ -550,16 +518,10 @@ fn line_constructor_wline_parts(
     // carry integer point indices; the bCond block rewrites overlapping
     // intervals for Plane/Extrusion|Revolution pairs only).
     //
-    // OCCT has NO "keep the full range a priori" fallback for a WLine: a WLine
-    // whose vertex intervals are all rejected produces no parts.  rcad keeps the
-    // full range a priori as a stopgap: a WLine with only the end vertex
-    // recorded (the start vertex is added by OCCT IntPatch_WLine::
-    // ComputeVertexParameters, which rcad has not ported yet) would otherwise
-    // produce no intervals at all.  Aligning ComputeVertexParameters (the
-    // start-vertex insertion) is what enables removing this fallback.
-    if !intrvtested {
-        result.push(line.t_range);
-    }
+    // OCCT L342-361: a WLine whose vertex intervals are all rejected produces no
+    // parts (there is no "keep the full range a priori" fallback).  The start
+    // vertex required for a non-empty interval is inserted by IntPatch_WLine::
+    // ComputeVertexParameters, which is ported (compute_vertex_parameters_wline).
     result
 }
 

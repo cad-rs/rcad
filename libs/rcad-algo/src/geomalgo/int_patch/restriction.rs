@@ -112,6 +112,8 @@ fn patch_point_to_vertex(pp: &super::special_points::PatchPoint) -> IntPatchVert
         param_on_arc2: pp.param_on_arc2,
         is_vertex_on_s1: pp.is_vertex_on_s1,
         is_vertex_on_s2: pp.is_vertex_on_s2,
+        transition_line_arc1: super::transitions::TypeTrans::Undecided,
+        transition_line_arc2: super::transitions::TypeTrans::Undecided,
     }
 }
 

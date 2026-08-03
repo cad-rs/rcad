@@ -526,6 +526,8 @@ impl ALineToWLine {
 
             // OCCT L939-947: add the vertices (aSeqVertex) to the WLine; a
             // vertex with parameter -1 (closed curve) is set to the last point.
+            // The full IntPatch_Point fields are preserved (tolerance, domain
+            // flags, arcs, vertex flags) — ComputeVertexParameters consumes them.
             let mut wline_verts: Vec<super::IntPatchVertex> = Vec::new();
             for v in a_seq_vertex.iter() {
                 let mut a_vtx = v.clone();
@@ -539,44 +541,68 @@ impl ALineToWLine {
                     v1: a_vtx.pnt.v1,
                     u2: a_vtx.pnt.u2,
                     v2: a_vtx.pnt.v2,
-                    ..Default::default()
+                    tolerance: a_vtx.tolerance,
+                    tangent: false,
+                    multiple: a_vtx.multiple,
+                    on_dom_s1: a_vtx.on_dom_s1,
+                    on_dom_s2: a_vtx.on_dom_s2,
+                    arc_on_s1: a_vtx.arc_on_s1,
+                    arc_on_s2: a_vtx.arc_on_s2,
+                    param_on_arc1: a_vtx.param_on_arc1,
+                    param_on_arc2: a_vtx.param_on_arc2,
+                    is_vertex_on_s1: a_vtx.is_vertex_on_s1,
+                    is_vertex_on_s2: a_vtx.is_vertex_on_s2,
+                    transition_line_arc1: super::transitions::TypeTrans::Undecided,
+                    transition_line_arc2: super::transitions::TypeTrans::Undecided,
                 });
             }
 
-            if wline_pnts.len() > 1 {
-                let line = IntPatchLine {
-                    line_type: IntPatchIType::Walking,
-                    curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                        origin: wline_pnts[0].p3d,
-                        direction: if wline_pnts.len() > 1 {
-                            (wline_pnts[1].p3d - wline_pnts[0].p3d).normalize_or_zero()
-                        } else {
-                            DVec3::X
-                        },
-                    }),
-                    t_range: [0.0, 1.0],
-                    pcurve1: None,
-                    pcurve2: None,
-                    tolerance: self.my_tol_3d,
-                    tang_tolerance: self.my_tol_3d,
-                    wline_pnts,
-                    is_purging_allowed: false,
-                    wl_type: WLineType::ImpImp,
-                    vertices: wline_verts,
-                    a_curve: None,
-                    arc_on_s1: None,
-                    arc_on_s2: None,
-                    // OCCT L896-937: the WLine transitions are set from
-                    // theALine->TransitionOnS1()/SituationS1()/SituationS2(), or
-                    // computed from the tangent/normal cross product (dotcross vs
-                    // myTolTransition).  rcad's IntAnaCurve does not carry the
-                    // ALine transition properties, so trans1/trans2 stay None
-                    // (architecture gap; does not affect the FF curve count).
-                    trans1: None,
-                    trans2: None,
-                    first_point: None,
-                    last_point: None,
-                };
+            let mut line = IntPatchLine {
+                line_type: IntPatchIType::Walking,
+                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin: wline_pnts[0].p3d,
+                    direction: if wline_pnts.len() > 1 {
+                        (wline_pnts[1].p3d - wline_pnts[0].p3d).normalize_or_zero()
+                    } else {
+                        DVec3::X
+                    },
+                }),
+                t_range: [0.0, 1.0],
+                pcurve1: None,
+                pcurve2: None,
+                tolerance: self.my_tol_3d,
+                tang_tolerance: self.my_tol_3d,
+                wline_pnts,
+                is_purging_allowed: false,
+                wl_type: WLineType::ImpImp,
+                vertices: wline_verts,
+                a_curve: None,
+                arc_on_s1: None,
+                arc_on_s2: None,
+                // OCCT L896-937: the WLine transitions are set from
+                // theALine->TransitionOnS1()/SituationS1()/SituationS2(), or
+                // computed from the tangent/normal cross product (dotcross vs
+                // myTolTransition).  rcad's IntAnaCurve does not carry the
+                // ALine transition properties, so trans1/trans2 stay None
+                // (architecture gap; does not affect the FF curve count).
+                trans1: None,
+                trans2: None,
+                first_point: None,
+                last_point: None,
+            };
+
+            // OCCT L949-952: SetPeriod(anArrPeriods...) then ComputeVertexParameters
+            // (which inserts the missing start/end vertices and can reduce the
+            // number of curve points).
+            line.compute_vertex_parameters_wline(self.my_tol_3d, arr_periods);
+
+            // OCCT L954-961: keep the line only when it has more than one point.
+            if line.wline_pnts.len() > 1 {
+                let wpts = &line.wline_pnts;
+                line.curve = rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
+                    origin: wpts[0].p3d,
+                    direction: (wpts[1].p3d - wpts[0].p3d).normalize_or_zero(),
+                });
                 the_lines.push(line);
             }
         } // while(aParameter < theLPar)

@@ -1651,6 +1651,8 @@ fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint)
             param_on_arc2: v.param_on_arc2,
             is_vertex_on_s1: v.is_vertex_on_s1,
             is_vertex_on_s2: v.is_vertex_on_s2,
+            transition_line_arc1: super::transitions::TypeTrans::Undecided,
+            transition_line_arc2: super::transitions::TypeTrans::Undecided,
         });
     }
 }
