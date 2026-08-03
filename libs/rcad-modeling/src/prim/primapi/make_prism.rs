@@ -2,13 +2,13 @@
 //
 // The OCCT reference prism (pavefiller_stage_dump.cpp "PRISM") is built as a
 // rectangular face in the XOY plane extruded by (0,0,h).  The 4 lateral faces
-// of the sweep carry Geom_SurfaceOfLinearExtrusion surfaces (BRepSweep_Prism),
-// so they are NOT planes: the FF classifies them as parametric and routes them
-// through IntPatch_ImpPrm (walking).  This builder reproduces that structure:
-// 2 planar caps + 4 linear-extrusion lateral faces.
+// of the sweep are Geom_Plane faces (BRepAdaptor_Surface reports Geom_Plane /
+// DynamicType Geom_Plane — the sweep of a line edge is a plane).  The FF
+// classifies them as planes and intersects them analytically (Plane x quadric).
+// This builder reproduces that structure: 2 planar caps + 4 planar lateral faces.
 
 use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Line3, LinearExtrusionSurface, Plane, Surface3};
+use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topods::{self, Orientation, Shape};
 use rcad_kernel::BRep;
 
@@ -68,19 +68,16 @@ pub fn make_prism_brep(
         t.add_twire(vec![b_ed[1].clone(), e_ver[2].clone(), rev(t_ed[1].clone()), rev(e_ver[1].clone())]),
     ];
 
-    // Surfaces.  The two caps are planes; each lateral face is the linear
-    // extrusion of its base edge along +Z (OCCT Geom_SurfaceOfLinearExtrusion).
-    // Profile directions are chosen so that tangent x direction gives the
-    // outward-pointing surface normal, matching the face orientation below.
+    // Surfaces.  The two caps are planes; each lateral face is the planar image
+    // of its base edge swept along +Z.  OCCT BRepPrimAPI_MakePrism represents
+    // these as Geom_Plane faces (the sweep of a line edge is a plane), so rcad
+    // builds them as Plane surfaces too — the FF pipeline then intersects them
+    // analytically (Plane x quadric) instead of walking an extrusion surface.
     let pln = |pt: DVec3, n: DVec3, u: DVec3| Surface3::Plane(Plane {
         origin: pt,
         normal: n,
         u_dir: u,
         v_dir: n.cross(u).normalize_or_zero(),
-    });
-    let lext = |a: DVec3, b: DVec3| Surface3::LinearExtrusion(LinearExtrusionSurface {
-        profile: Box::new(Curve3::Line(Line3::new(a, b - a))),
-        direction: DVec3::Z,
     });
     // y=0 face: profile -X -> normal +Y; reversed -> outward -Y.
     // x=w face: profile +Y -> normal +X; forward  -> outward +X.
@@ -93,10 +90,10 @@ pub fn make_prism_brep(
     let faces = [
         rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[0].clone(), vec![], None, Some(cap_uv), vec![], true)),
         t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[1].clone(), vec![], None, Some(cap_uv), vec![], true),
-        rev(t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(0.0, 0.0, 0.0))), wires[2].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true)),
-        t.add_tface(Some(lext(DVec3::new(w, d, 0.0), DVec3::new(0.0, d, 0.0))), wires[3].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true),
-        rev(t.add_tface(Some(lext(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, d, 0.0))), wires[4].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true)),
-        t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(w, d, 0.0))), wires[5].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, -DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, -DVec3::X)), wires[3].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, DVec3::Y)), wires[4].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, DVec3::Y)), wires[5].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
     t.add_tsolid(vec![shell]);
