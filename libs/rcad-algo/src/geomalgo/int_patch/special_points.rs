@@ -272,7 +272,7 @@ fn process_cone(
     // the cone with the plane tangent to the parametric surface.  Its direction
     // projected to the cone's X-Y plane gives (cos Uq, sin Uq).
     let axis = cone.axis_dir();
-    let x_dir = rcad_kernel::geom::any_perpendicular(axis).normalize_or_zero();
+    let x_dir = cone.ref_dir.normalize_or_zero();
     let y_dir = axis.cross(x_dir).normalize_or_zero();
     let _ = y_dir;
     // Normal of the tangent plane of the parametric surface.
@@ -448,7 +448,7 @@ fn quadric_frame(surf: &Surface3) -> [DVec3; 3] {
         Surface3::Cone(c) => [
             c.apex_point(),
             c.axis.normalize_or_zero(),
-            rcad_kernel::geom::any_perpendicular(c.axis.normalize_or_zero()).normalize_or_zero(),
+            c.ref_dir.normalize_or_zero(),
         ],
         _ => [DVec3::ZERO, DVec3::Z, DVec3::X],
     }

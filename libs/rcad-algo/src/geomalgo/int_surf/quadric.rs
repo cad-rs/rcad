@@ -142,10 +142,11 @@ impl Quadric {
         }
     }
 
-    /// OCCT IntSurf_Quadric(const gp_Cone&) (L84-96).
+    /// OCCT IntSurf_Quadric(const gp_Cone&) (L84-96) — the cone's gp_Ax3
+    /// (including its XDirection) is preserved, defining the u=0 generatrix.
     pub fn from_cone(c: &ConicalSurface) -> Self {
         let z = c.axis.normalize_or_zero();
-        let x = any_perpendicular(z).normalize_or_zero();
+        let x = c.ref_dir.normalize_or_zero();
         let y = z.cross(x).normalize_or_zero();
         let prm2 = c.half_angle_rad;
         Quadric {
@@ -311,6 +312,7 @@ impl Quadric {
             axis: self.z_dir,
             radius: self.prm1,
             half_angle_rad: self.prm2,
+            ref_dir: self.x_dir,
         }
     }
 
@@ -749,21 +751,27 @@ impl Quadric {
                 (u, v)
             }
             QuadricType::Cone => {
+                // OCCT ElSLib::ConeParameters (L1574-1611): the point is
+                // transformed into the cone's local frame (gp_Ax3) before
+                // U/V are computed.
                 let ploc = p - self.loc;
+                let px = ploc.dot(self.x_dir);
+                let py = ploc.dot(self.y_dir);
+                let pz = ploc.dot(self.z_dir);
                 let sang = self.prm2;
                 let (ss, cs) = sang.sin_cos();
                 let mut u;
-                if ploc.x.abs() < f64::MIN_POSITIVE && ploc.y.abs() < f64::MIN_POSITIVE {
+                if px.abs() < f64::MIN_POSITIVE && py.abs() < f64::MIN_POSITIVE {
                     u = 0.0;
-                } else if -self.prm1 > ploc.z * sang.tan() {
+                } else if -self.prm1 > pz * sang.tan() {
                     // the point is at the wrong side of the apex
-                    u = (-ploc.y).atan2(-ploc.x);
+                    u = (-py).atan2(-px);
                 } else {
-                    u = ploc.y.atan2(ploc.x);
+                    u = py.atan2(px);
                 }
                 normalize_angle(&mut u);
                 // V = sin(Sang) * (x cosU + y sinU - R) + z * cos(Sang)
-                let v = ss * (ploc.x * u.cos() + ploc.y * u.sin() - self.prm1) + cs * ploc.z;
+                let v = ss * (px * u.cos() + py * u.sin() - self.prm1) + cs * pz;
                 (u, v)
             }
             QuadricType::Torus => {
@@ -947,12 +955,7 @@ mod tests {
 
     #[test]
     fn cone_value_matches_surface() {
-        let co = ConicalSurface {
-            apex: DVec3::new(0.0, 0.0, 0.0),
-            axis: DVec3::Z,
-            radius: 1.0,
-            half_angle_rad: 0.4,
-        };
+        let co = ConicalSurface::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, 1.0, 0.4);
         let q = Quadric::from_cone(&co);
         for u in [0.0, 1.0, 3.0] {
             for v in [-1.0, 0.0, 2.0] {

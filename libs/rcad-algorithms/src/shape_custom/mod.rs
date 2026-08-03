@@ -1717,12 +1717,7 @@ fn try_detect_cone(surface: &BSplineSurface, tolerance: f64) -> Option<ConicalSu
         return None; // Degenerate cone
     }
 
-    Some(ConicalSurface {
-        apex: centroid,
-        axis,
-        radius,
-        half_angle_rad: half_angle,
-    })
+    Some(ConicalSurface::new(centroid, axis, radius, half_angle))
 }
 
 /// Try to detect if a BSpline surface represents a torus.

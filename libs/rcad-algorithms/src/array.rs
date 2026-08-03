@@ -1063,6 +1063,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
  axis: transform_direction(c.axis),
  radius: c.radius,
  half_angle_rad: c.half_angle_rad,
+ ref_dir: transform_direction(c.ref_dir),
  }),
  Surface3::Torus(t) => Surface3::Torus(ToroidalSurface {
  center: transform_point(t.center),

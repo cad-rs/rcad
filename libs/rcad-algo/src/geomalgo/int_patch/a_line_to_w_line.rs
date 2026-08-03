@@ -856,8 +856,7 @@ fn continue_after_special_point(
             let q_frame = [
                 co.apex_point(),
                 co.axis.normalize_or_zero(),
-                rcad_kernel::geom::any_perpendicular(co.axis.normalize_or_zero())
-                    .normalize_or_zero(),
+                co.ref_dir.normalize_or_zero(),
             ];
             let a_vec_du_t = transform_vec(a_vec_du, q_frame);
             let a_vec_dv_t = transform_vec(a_vec_dv, q_frame);

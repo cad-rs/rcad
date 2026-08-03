@@ -60,9 +60,15 @@ impl MakeCone {
         let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), bot_v.clone(), [0.0, std::f64::consts::TAU]);
         let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), top_v.clone(), [0.0, std::f64::consts::TAU]);
         let e_seam = t.add_tedge(Some(Curve3::Line(seam)), bot_v.clone(), top_v.clone(), [0.0, seam_len]);
+        // OCCT BRepPrim_Cone::LateralFace builds the lateral gp_Cone from the
+        // full Ax3 (Axes().XDirection defines u=0), so the ref_dir is threaded
+        // into the surface.  Without it, a cone rotated around its axis loses
+        // its seam reference and the FF UV mapping disagrees with the cap
+        // planes/circles (which carry x_axis as their reference).
         let lat_surf = Surface3::Cone(ConicalSurface {
             apex: self.origin, axis: self.z_axis, radius: self.r1,
             half_angle_rad: (self.r2 - self.r1).atan2(self.h),
+            ref_dir: self.x_axis,
         });
         // OCCT BottomFace/TopFace (BRepPrim_OneAxis.cxx L460/L501) build the
         // cap planes with gp_Pln(gp_Ax3(P, Axes.Direction(), Axes.XDirection()))

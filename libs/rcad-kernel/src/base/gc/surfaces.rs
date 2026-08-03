@@ -175,12 +175,7 @@ pub fn make_conical_surface(
     if axis.length_squared() < 0.5 {
         return Err(GceError::NullAxis);
     }
-    Ok(ConicalSurface {
-        apex,
-        axis,
-        radius,
-        half_angle_rad,
-    })
+    Ok(ConicalSurface::new(apex, axis, radius, half_angle_rad))
 }
 
 // ============================================================================
@@ -348,12 +343,7 @@ mod tests {
 
     #[test]
     fn test_make_trimmed_cone() {
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 0.0,
-            half_angle_rad: 0.25,
-        };
+        let cone = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 0.0, 0.25);
         let tc = make_trimmed_cone(&cone, 1.0, 5.0).unwrap();
         assert!((tc.v_min - 1.0).abs() < 1e-12);
         assert!((tc.v_max - 5.0).abs() < 1e-12);

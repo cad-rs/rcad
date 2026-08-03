@@ -1413,12 +1413,7 @@ mod tests {
     #[test]
     fn test_intersect_plane_cone_ellipse() {
         // A plane at 45 degrees cutting a 30-degree cone -> ellipse
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 2.0,
-            half_angle_rad: 30.0_f64.to_radians(),
-        };
+        let cone = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 2.0, 30.0_f64.to_radians());
         let plane = Plane::new(DVec3::new(0.0, 0.0, 3.0), DVec3::new(0.0, 1.0, 1.0).normalize());
         let result = intersect_plane_cone_intana(&plane, &cone);
         match result {

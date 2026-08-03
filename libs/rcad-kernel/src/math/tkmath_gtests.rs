@@ -535,23 +535,13 @@ mod cone_tests {
 
     #[test]
     fn constructor_with_half_angle() {
-        let c = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 0.0,
-            half_angle_rad: std::f64::consts::FRAC_PI_4,
-        };
+        let c = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 0.0, std::f64::consts::FRAC_PI_4);
         assert!((c.half_angle_rad - std::f64::consts::FRAC_PI_4).abs() < TOL);
     }
 
     #[test]
     fn point_at_v_zero_is_finite() {
-        let c = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 5.0,
-            half_angle_rad: 0.5,
-        };
+        let c = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 5.0, 0.5);
         assert!(c.point_at(0.0, 0.0).is_finite());
     }
 }

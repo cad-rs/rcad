@@ -1095,6 +1095,7 @@ fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
                 axis: c.axis,
                 radius: new_r,
                 half_angle_rad: c.half_angle_rad,
+                ref_dir: c.ref_dir,
             }))
         }
         Surface3::Torus(t) => {

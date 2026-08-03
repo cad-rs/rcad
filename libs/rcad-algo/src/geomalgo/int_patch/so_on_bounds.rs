@@ -1362,7 +1362,7 @@ pub fn curve_on_surface(
         }
         Surface3::Cone(c) => {
             let z = c.axis.normalize_or_zero();
-            let x = rcad_kernel::geom::any_perpendicular(z).normalize_or_zero();
+            let x = c.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
             // The rcad cone parameterization measures V from the reference
             // circle at `self.apex` (ConicalSurface::point_at), so the 3D image

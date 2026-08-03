@@ -112,12 +112,7 @@ pub fn make_conical_surface(
     if half_angle_rad.abs() < 1e-15 {
         return Err(MakeError::BadAngle);
     }
-    Ok(ConicalSurface {
-        apex,
-        axis,
-        radius,
-        half_angle_rad,
-    })
+    Ok(ConicalSurface::new(apex, axis, radius, half_angle_rad))
 }
 
 // =============================================================================
@@ -246,6 +241,7 @@ pub fn make_cone_offset(cone: &ConicalSurface, distance: f64) -> ConicalSurface 
         axis,
         radius: new_radius,
         half_angle_rad: cone.half_angle_rad,
+        ref_dir: cone.ref_dir,
     }
 }
 

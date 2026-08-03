@@ -327,10 +327,9 @@ mod tests {
 
     #[test]
     fn project_onto_cone_returns_theta_and_slant_params() {
-        let cone = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
-            half_angle_rad: 30.0_f64.to_radians(),
-        });
+        let cone = Surface3::Cone(ConicalSurface::new(
+            DVec3::ZERO, DVec3::Z, 2.0, 30.0_f64.to_radians(),
+        ));
         let expected_slant = 4.0;
         let on_surface = match &cone {
             Surface3::Cone(surface) => surface.point_at(0.0, expected_slant),
@@ -371,10 +370,9 @@ mod tests {
 
     #[test]
     fn project_onto_cone_surface() {
-        let cone = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0,
-            half_angle_rad: std::f64::consts::FRAC_PI_6,
-        });
+        let cone = Surface3::Cone(ConicalSurface::new(
+            DVec3::ZERO, DVec3::Z, 1.0, std::f64::consts::FRAC_PI_6,
+        ));
         let q = DVec3::new(1.0, 0.0, 1.0);
         let r = closest_point_on_surface(&cone, q, 16);
         assert!(r.distance < 0.5);

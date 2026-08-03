@@ -429,7 +429,7 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
         "3" => {
             let p = c.parse_point3()?;
             let dz = c.parse_dir3()?;
-            let _dx = c.parse_dir3()?;
+            let dx = c.parse_dir3()?;
             let _dy = c.parse_dir3()?;
             let r = c.parse_f64()?;
             let phi = c.parse_f64()?;
@@ -438,6 +438,7 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
                 axis: dz,
                 radius: r,
                 half_angle_rad: phi.abs(),
+                ref_dir: dx,
             }))
         }
         "4" => {

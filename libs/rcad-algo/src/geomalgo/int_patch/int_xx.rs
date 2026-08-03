@@ -563,7 +563,7 @@ pub fn int_pco(
         AnaResultType::Circle => {
             let mut cirsol = inter.circle();
             let co_frame_z = co.cone().axis_dir();
-            let co_frame_x = rcad_kernel::geom::any_perpendicular(co_frame_z).normalize_or_zero();
+            let co_frame_x = co.cone().ref_dir.normalize_or_zero();
             ecl::adjust_to_seam_quadric(&mut cirsol, co.cone().apex, co_frame_z, co_frame_x);
             let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
             if tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref))) > 0.0 {
@@ -676,6 +676,8 @@ fn int_quad_quad_fallback(
     slin: &mut Vec<IntPatchLine>,
     spnt: &mut Vec<IntPatchPoint>,
     use_explore_curve: bool,
+    qwe_tol: f64,
+    check_tangent_mag: bool,
 ) -> bool {
     let other_surf = quadric_to_surface3(other);
     let Some(other_quad) = super::int_quad_quad::IntAnaQuadric::from_surface3(&other_surf) else {
@@ -754,6 +756,12 @@ fn int_quad_quad_fallback(
                         ptvalid = pv;
                         tgvalid = tv;
                         tgfound = true;
+                        // OCCT IntCoCo NoGeometricSolution (L9080-9084): a
+                        // near-zero tangent means the normals are meaningless
+                        // there — retry with the next parameter.
+                        if check_tangent_mag && tgvalid.length_squared() < 1.0e-14 {
+                            tgfound = false;
+                        }
                     }
                     None => {
                         tgfound = false;
@@ -768,9 +776,9 @@ fn int_quad_quad_fallback(
             let mut kept = false;
             if kount <= 5 {
                 let qwe = tgvalid.dot(quad2.normale(ptvalid).cross(quad1.normale(ptvalid)));
-                (trans1, trans2) = if qwe > 1.0e-8 {
+                (trans1, trans2) = if qwe > qwe_tol {
                     (TypeTrans::Out, TypeTrans::In)
-                } else if qwe < -1.0e-8 {
+                } else if qwe < -qwe_tol {
                     (TypeTrans::In, TypeTrans::Out)
                 } else {
                     (TypeTrans::Undecided, TypeTrans::Undecided)
@@ -1071,6 +1079,8 @@ pub fn int_cysp(
                 slin,
                 spnt,
                 false,
+                1.0e-8,
+                false,
             );
         }
         _ => {
@@ -1195,6 +1205,8 @@ pub fn int_cosp(
                 multpoint,
                 slin,
                 spnt,
+                false,
+                1.0e-9,
                 false,
             );
         }
@@ -1433,6 +1445,8 @@ pub fn int_coco(
                 slin,
                 spnt,
                 false,
+                1.0e-9,
+                true,
             );
             if !ok {
                 return false;
@@ -1535,6 +1549,8 @@ pub fn int_cyco(
                 slin,
                 spnt,
                 true,
+                1.0e-8,
+                false,
             );
         }
         _ => {

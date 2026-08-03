@@ -267,14 +267,12 @@ pub fn construct_cylinder_from_axis(
 /// * `axis_dir` - Direction of the cone axis (will be normalized)
 /// * `angle` - Half-angle of the cone in radians (angle between axis and surface)
 pub fn construct_cone_from_axis(apex: DVec3, axis_dir: DVec3, angle: f64) -> ConicalSurface {
-    ConicalSurface {
+    ConicalSurface::new(
         apex,
-        axis: axis_dir.normalize_or(DVec3::Z),
-        radius: 0.0,
-        half_angle_rad: angle
-            .abs()
-            .clamp(TOLERANCE_ANG, std::f64::consts::FRAC_PI_2 - TOLERANCE_ANG),
-    }
+        axis_dir.normalize_or(DVec3::Z),
+        0.0,
+        angle.abs().clamp(TOLERANCE_ANG, std::f64::consts::FRAC_PI_2 - TOLERANCE_ANG),
+    )
 }
 
 /// Construct a spherical surface from center and radius.

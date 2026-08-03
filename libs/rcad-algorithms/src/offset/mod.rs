@@ -719,6 +719,7 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
                 axis: c.axis,
                 radius: 0.0,
                 half_angle_rad: c.half_angle_rad,
+                ref_dir: c.ref_dir,
             }))
         }
 
@@ -1172,6 +1173,7 @@ fn offset_conical_surface(c: &ConicalSurface, d: f64) -> Option<ConicalSurface> 
         axis: c.axis,
         radius: 0.0,
         half_angle_rad: c.half_angle_rad,
+        ref_dir: c.ref_dir,
     })
 }
 

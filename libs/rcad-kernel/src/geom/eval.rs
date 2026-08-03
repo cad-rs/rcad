@@ -752,7 +752,7 @@ impl SurfaceEval for ConicalSurface {
     /// reference circle at `self.apex`.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let axis = self.axis_dir();
-        let x_ax = any_perpendicular(axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = axis.cross(x_ax).normalize();
         let radial = self.radius_at_slant(v);
         let axial = self.axial_from_slant(v);
@@ -760,7 +760,7 @@ impl SurfaceEval for ConicalSurface {
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
         let axis = self.axis_dir();
-        let x_ax = any_perpendicular(axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = axis.cross(x_ax).normalize();
         let radial = u.cos() * x_ax + u.sin() * y_ax;
         let half = self.half_angle_rad;
@@ -774,7 +774,7 @@ impl SurfaceEval for ConicalSurface {
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let axis = self.axis_dir();
-        let x_ax = any_perpendicular(axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = axis.cross(x_ax).normalize();
         let (su, cu) = u.sin_cos();
         let radial = self.radius_at_slant(v);
@@ -1182,8 +1182,8 @@ impl ElementarySurfaceEval for SphericalSurface {
 impl ElementarySurfaceEval for ConicalSurface {
     fn position(&self) -> DVec3 { self.apex_point() }
     fn axis_dir(&self) -> DVec3 { self.axis_dir() }
-    fn x_axis(&self) -> DVec3 { any_perpendicular(self.axis_dir()) }
-    fn y_axis(&self) -> DVec3 { self.axis_dir().cross(any_perpendicular(self.axis_dir())).normalize_or_zero() }
+    fn x_axis(&self) -> DVec3 { self.ref_dir.normalize_or_zero() }
+    fn y_axis(&self) -> DVec3 { self.axis_dir().cross(self.ref_dir.normalize_or_zero()).normalize_or_zero() }
 }
 
 impl ElementarySurfaceEval for ToroidalSurface {

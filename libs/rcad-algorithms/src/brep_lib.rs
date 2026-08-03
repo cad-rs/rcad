@@ -260,12 +260,12 @@ pub fn find_surface_through_points(
     {
         best_error = cone.rms_error;
         best_fit = Some(FoundSurface {
-            surface: Surface3::Cone(rcad_kernel::geom::ConicalSurface {
-                apex: cone.apex,
-                axis: cone.axis,
-                radius: 0.0, // Reference radius at apex
-                half_angle_rad: cone.semi_angle,
-            }),
+            surface: Surface3::Cone(rcad_kernel::geom::ConicalSurface::new(
+                cone.apex,
+                cone.axis,
+                0.0, // Reference radius at apex
+                cone.semi_angle,
+            )),
             rms_error: cone.rms_error,
             surface_type: FittedSurfaceType::Cone,
         });

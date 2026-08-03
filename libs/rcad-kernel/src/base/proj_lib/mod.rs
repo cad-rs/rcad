@@ -652,12 +652,7 @@ impl ConeProjector {
     pub fn new() -> Self {
         ConeProjector {
             projector: Projector::new(),
-            cone: ConicalSurface {
-                apex: DVec3::ZERO,
-                axis: DVec3::Z,
-                radius: 1.0,
-                half_angle_rad: 0.25,
-            },
+            cone: ConicalSurface::new(DVec3::ZERO, DVec3::Z, 1.0, 0.25),
         }
     }
 

@@ -917,6 +917,7 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
                 axis: transform.transform_vector3(cone.axis).normalize(),
                 radius: cone.radius * scale,
                 half_angle_rad: cone.half_angle_rad,
+                ref_dir: transform.transform_vector3(cone.ref_dir).normalize(),
             })
         }
         Surface3::Torus(torus) => {

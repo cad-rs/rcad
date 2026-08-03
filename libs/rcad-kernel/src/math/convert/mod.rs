@@ -1255,12 +1255,9 @@ fn try_cylinder_cone(
 
         let half_angle = (dr / height).atan();
 
-        return Some(Surface3::Cone(crate::geom::ConicalSurface {
-            apex,
-            axis: axis_dir,
-            radius: r_min,
-            half_angle_rad: half_angle,
-        }));
+        return Some(Surface3::Cone(crate::geom::ConicalSurface::new(
+            apex, axis_dir, r_min, half_angle,
+        )));
     }
 
     None

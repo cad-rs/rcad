@@ -474,9 +474,46 @@ pub struct ConicalSurface {
     /// Radius of the reference circle at `apex`.
     pub radius: f64,
     pub half_angle_rad: f64,
+    /// Reference direction for u=0 (perpendicular to axis).
+    ///
+    /// OCCT `gp_Cone` carries a full `gp_Ax3` (Position + XDirection); the
+    /// XDirection defines the u=0 generatrix.  Preserved through rotation so UV
+    /// mapping stays consistent — same convention as [`CylindricalSurface`] and
+    /// [`SphericalSurface`].
+    #[serde(default = "default_cone_ref_dir")]
+    pub ref_dir: Vec3,
+}
+
+/// Serde fallback for the cone `ref_dir` field when reading legacy data that
+/// predates the field.  New data always carries the explicit reference.
+fn default_cone_ref_dir() -> DVec3 {
+    DVec3::X
 }
 
 impl ConicalSurface {
+    /// Create a cone with the default reference direction for u=0
+    /// (`any_perpendicular(axis)`, matching OCCT `gp_Ax2` default).
+    pub fn new(apex: Point3, axis: Vec3, radius: f64, half_angle_rad: f64) -> Self {
+        Self {
+            apex,
+            axis: axis.normalize_or_zero(),
+            radius: radius.abs(),
+            half_angle_rad,
+            ref_dir: any_perpendicular(axis),
+        }
+    }
+
+    /// Create a cone with an explicit reference direction for u=0.
+    pub fn new_with_ref_dir(apex: Point3, axis: Vec3, radius: f64, half_angle_rad: f64, ref_dir: Vec3) -> Self {
+        Self {
+            apex,
+            axis: axis.normalize_or_zero(),
+            radius: radius.abs(),
+            half_angle_rad,
+            ref_dir: ref_dir.normalize_or_zero(),
+        }
+    }
+
     pub fn axis_dir(&self) -> DVec3 {
         self.axis.normalize_or_zero()
     }
@@ -518,7 +555,7 @@ impl ConicalSurface {
     /// surface the returned `(u, v)` corresponds to the closest point on the cone.
     pub fn world_to_uv(self, p: DVec3) -> DVec2 {
         let axis = self.axis_dir();
-        let x_ax = any_perpendicular(axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = axis.cross(x_ax).normalize();
         let local = p - self.apex;
         let along = local.dot(axis);

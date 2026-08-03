@@ -982,12 +982,7 @@ mod tkg3d_surface_eval_tests {
 
     #[test]
     fn surface_eval_cone() {
-        let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            half_angle_rad: PI / 6.0,
-            radius: 5.0,
-        });
+        let s = Surface3::Cone(ConicalSurface::new(DVec3::ZERO, DVec3::Z, 5.0, PI / 6.0));
         let p = s.point_at(PI / 4.0, 2.0);
         assert!(p.is_finite());
     }
@@ -1167,12 +1162,7 @@ mod tkg3d_surface_properties_tests {
 
     #[test]
     fn cone_default_domain() {
-        let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            half_angle_rad: PI / 6.0,
-            radius: 5.0,
-        });
+        let s = Surface3::Cone(ConicalSurface::new(DVec3::ZERO, DVec3::Z, 5.0, PI / 6.0));
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
         assert!((u1 - TAU).abs() < TOL);
@@ -1375,12 +1365,7 @@ mod tkg3d_grid_eval_surface_tests {
 
     #[test]
     fn grid_eval_cone() {
-        let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            half_angle_rad: PI / 6.0,
-            radius: 5.0,
-        });
+        let s = Surface3::Cone(ConicalSurface::new(DVec3::ZERO, DVec3::Z, 5.0, PI / 6.0));
         for i in 0..4 {
             let u = i as f64 * TAU / 4.0;
             for j in 0..3 {

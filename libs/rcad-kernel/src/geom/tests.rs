@@ -476,12 +476,7 @@ mod eval_tests {
 
     #[test]
     fn conical_surface_uses_slant_distance_from_reference_circle() {
-        let surface = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 2.0,
-            half_angle_rad: 30.0_f64.to_radians(),
-        };
+        let surface = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 2.0, 30.0_f64.to_radians());
 
         let p0 = surface.point_at(0.0, 0.0);
         assert!(p0.dot(surface.axis_dir()).abs() < 1e-9);
@@ -496,12 +491,7 @@ mod eval_tests {
 
     #[test]
     fn conical_surface_derives_true_apex_from_reference_circle() {
-        let surface = ConicalSurface {
-            apex: DVec3::new(0.0, 0.0, 5.0),
-            axis: DVec3::Z,
-            radius: 2.0,
-            half_angle_rad: 45.0_f64.to_radians(),
-        };
+        let surface = ConicalSurface::new(DVec3::new(0.0, 0.0, 5.0), DVec3::Z, 2.0, 45.0_f64.to_radians());
 
         assert!((surface.apex_point() - DVec3::new(0.0, 0.0, 3.0)).length() < 1e-9);
     }
@@ -771,12 +761,7 @@ mod eval_tests {
 
     #[test]
     fn cone_eval_d0() {
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 2.0,
-            half_angle_rad: 45.0_f64.to_radians(),
-        };
+        let cone = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 2.0, 45.0_f64.to_radians());
         // At V=0, radius=2
         let p0 = cone.point_at(0.0, 0.0);
         assert!((p0.x - 2.0).abs() < 1e-9 || (p0.y - 2.0).abs() < 1e-9);
@@ -1510,12 +1495,7 @@ mod eval_tests {
     #[test]
     fn cone_derivatives() {
         let sa = 30.0_f64.to_radians(); // 30 degree half-angle
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 2.0,
-            half_angle_rad: sa,
-        };
+        let cone = ConicalSurface::new(DVec3::ZERO, DVec3::Z, 2.0, sa);
         let (_p, dpu, dpv) = cone.derivatives(0.0, 0.0);
         // At v=0: radial = 2, axial = 0
         // dP/du at u=0: radial * (-sin(0)*x_ax + cos(0)*y_ax)

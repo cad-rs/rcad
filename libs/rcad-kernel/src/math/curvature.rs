@@ -236,12 +236,7 @@ mod tests {
     #[test]
     fn cone_at_nonzero_slant() {
         let half_angle = std::f64::consts::FRAC_PI_4; // 45°
-        let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 0.0,
-            half_angle_rad: half_angle,
-        });
+        let s = Surface3::Cone(ConicalSurface::new(DVec3::ZERO, DVec3::Y, 0.0, half_angle));
         let v = 1.0_f64; // slant distance = 1
         let r_at = v * half_angle.sin();
         let (k1, k2) = principal_curvatures(&s, 0.0, v);
@@ -377,12 +372,9 @@ mod tests {
     #[test]
     fn cone_curvature_singular_at_apex() {
         // At apex, curvature is undefined/very large
-        let s = Surface3::Cone(ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 1.0,
-            half_angle_rad: std::f64::consts::FRAC_PI_6,
-        });
+        let s = Surface3::Cone(ConicalSurface::new(
+            DVec3::ZERO, DVec3::Z, 1.0, std::f64::consts::FRAC_PI_6,
+        ));
         // Near apex (small v)
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.001);
         // Curvature should be very large near apex
