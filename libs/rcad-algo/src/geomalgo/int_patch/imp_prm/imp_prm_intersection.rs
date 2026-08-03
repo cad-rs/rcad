@@ -2539,27 +2539,83 @@ fn from_sp_pnt(p: &crate::geomalgo::int_patch::special_points::PntOn2S) -> PntOn
     r
 }
 
-/// OCCT ContinueAfterSpecialPoint (IntPatch_SpecialPoints) — rcad condensed:
-/// a pole point is kept when it is inside the parametric domain.
+/// OCCT IntPatch_SpecialPoints::ContinueAfterSpecialPoint (IntPatch_SpecialPoints.cxx
+/// L990-1078): if the last point of the line is the pole/seam of the quadric
+/// then the line was broken there; the new line must start from this point with
+/// recomputed 2D-coordinates (U of the quadric changes by +/-PI at a pole).
+#[allow(clippy::too_many_arguments)]
 fn continue_after_special_point(
-    _q_surf: &Surface3,
+    q_surf: &Surface3,
     p_surf: &Surface3,
     ref_pt: &PntOn2S,
-    _pre_point_type: i32,
-    _tol_2d: f64,
+    pre_point_type: i32,
+    tol_2d: f64,
     pre_point: &mut PntOn2S,
-    _is_reversed: bool,
+    is_reversed: bool,
 ) -> bool {
-    let d = p_surf.default_domain();
-    let (u, v) = if _is_reversed {
-        ref_pt.parameters_on_surface(false)
-    } else {
-        ref_pt.parameters_on_surface(true)
-    };
-    if u >= d[0] && u <= d[1] && v >= d[2] && v <= d[3] {
-        *pre_point = ref_pt.clone();
-        true
-    } else {
-        false
+    if pre_point_type == 0 {
+        return false;
     }
+    if pre_point.is_same(ref_pt, rcad_kernel::precision::CONFUSION, tol_2d) {
+        return false;
+    }
+    if (pre_point_type == 1) && matches!(q_surf, Surface3::Cone(_)) {
+        // Check if the condition b) is satisfied.  Repeat the same steps as in
+        // IntPatch_SpecialPoints::AddSingularPole(...) (L1009-1045).
+        let (a_u0, a_v0, a_u_quad, a_v_quad) = if is_reversed {
+            let (u1, v1, u2, v2) = pre_point.parameters();
+            (u1, v1, u2, v2)
+        } else {
+            let (u1, v1, u2, v2) = pre_point.parameters();
+            (u2, v2, u1, v1)
+        };
+        let (_, du, dv) = p_surf.derivatives(a_u0, a_v0);
+        // Transforms the parametric surface in the coordinate-system of the cone.
+        let cone = match q_surf {
+            Surface3::Cone(c) => *c,
+            _ => unreachable!(),
+        };
+        let frame = crate::geomalgo::int_patch::special_points::quadric_frame(q_surf);
+        let du_t = crate::geomalgo::int_patch::special_points::transform_vec(du, frame);
+        let dv_t = crate::geomalgo::int_patch::special_points::transform_vec(dv, frame);
+        let mut u_quad = a_u_quad;
+        let mut is_iso_chosen = false;
+        crate::geomalgo::int_patch::special_points::process_cone(
+            &to_sp_pnt(pre_point),
+            du_t,
+            dv_t,
+            &cone,
+            is_reversed,
+            &mut u_quad,
+            &mut is_iso_chosen,
+        );
+        // OCCT L1044: theNewPoint.SetValue(!theIsReversed, aUquad, aVquad).
+        pre_point.set_value_uv(!is_reversed, u_quad, a_v_quad);
+    }
+    // Periods: PI/2 for a pole (to avoid "jumping" between neighbor points),
+    // 2PI for seams.
+    let a_period = if pre_point_type == 1 {
+        std::f64::consts::FRAC_PI_2
+    } else {
+        std::f64::consts::TAU
+    };
+    let a_up_period = if p_surf.is_u_periodic() { std::f64::consts::TAU } else { 0.0 };
+    let a_uq_period = if q_surf.is_u_periodic() { a_period } else { 0.0 };
+    let a_vp_period = if p_surf.is_v_periodic() { std::f64::consts::TAU } else { 0.0 };
+    let a_vq_period = if q_surf.is_v_periodic() { a_period } else { 0.0 };
+    let an_arr_of_period = [
+        if is_reversed { a_up_period } else { a_uq_period },
+        if is_reversed { a_vp_period } else { a_vq_period },
+        if is_reversed { a_uq_period } else { a_up_period },
+        if is_reversed { a_vq_period } else { a_vp_period },
+    ];
+    let mut sp_new = to_sp_pnt(pre_point);
+    crate::geomalgo::int_patch::special_points::adjust_point_and_vertex(
+        &to_sp_pnt(ref_pt),
+        &an_arr_of_period,
+        &mut sp_new,
+        None,
+    );
+    *pre_point = from_sp_pnt(&sp_new);
+    true
 }

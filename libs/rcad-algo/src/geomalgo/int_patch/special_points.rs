@@ -245,7 +245,7 @@ fn process_sphere(
 /// OCCT IntPatch_SpecialPoints::ProcessCone (L589-...): the tangent to the
 /// intersection line at the cone apex is computed from the tangent plane of the
 /// parametric surface; its X/Y coordinates give the U-quad of the apex.
-fn process_cone(
+pub fn process_cone(
     _pt_iso: &PntOn2S,
     du_of_p_surf: DVec3,
     dv_of_p_surf: DVec3,
@@ -442,7 +442,7 @@ pub fn add_cross_uv_iso_point(
 
 /// The coordinate frame of a quadric surface (location + basis), used to
 /// transform the parametric-surface derivatives into the quadric system.
-fn quadric_frame(surf: &Surface3) -> [DVec3; 3] {
+pub fn quadric_frame(surf: &Surface3) -> [DVec3; 3] {
     match surf {
         Surface3::Sphere(s) => [s.center, s.axis.normalize_or_zero(), s.ref_dir.normalize_or_zero()],
         Surface3::Cone(c) => [
@@ -455,7 +455,7 @@ fn quadric_frame(surf: &Surface3) -> [DVec3; 3] {
 }
 
 /// Transform a vector into a coordinate system (OCCT gp_Trsf::Transform).
-fn transform_vec(v: DVec3, frame: [DVec3; 3]) -> DVec3 {
+pub fn transform_vec(v: DVec3, frame: [DVec3; 3]) -> DVec3 {
     let [_loc, z, x] = frame;
     let y = z.cross(x).normalize_or_zero();
     DVec3::new(v.dot(x), v.dot(y), v.dot(z))
