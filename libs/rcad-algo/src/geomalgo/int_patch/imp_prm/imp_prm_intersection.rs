@@ -241,10 +241,6 @@ pub struct ImpPrmIntersection {
     my_is_start_pnt: bool,
     my_u_start: f64,
     my_v_start: f64,
-    // Test-support diagnostics (not part of the OCCT state).
-    dbg_seqpdep: usize,
-    dbg_seqpins: usize,
-    dbg_iwalk_lines: usize,
 }
 
 impl ImpPrmIntersection {
@@ -260,9 +256,6 @@ impl ImpPrmIntersection {
             my_is_start_pnt: false,
             my_u_start: 0.0,
             my_v_start: 0.0,
-            dbg_seqpdep: 0,
-            dbg_seqpins: 0,
-            dbg_iwalk_lines: 0,
         }
     }
 
@@ -292,14 +285,6 @@ impl ImpPrmIntersection {
     /// OCCT NbLines.
     pub fn nb_lines(&self) -> usize {
         self.slin.len()
-    }
-    /// Test-support accessor: SOnBounds point/segment counts.
-    pub fn dbg_sonbounds(&self) -> (usize, usize) {
-        (self.solrst.nb_points(), self.solrst.nb_segments())
-    }
-    /// Test-support accessor: departure/interior/walking-line counts.
-    pub fn dbg_walk(&self) -> (usize, usize, usize) {
-        (self.dbg_seqpdep, self.dbg_seqpins, self.dbg_iwalk_lines)
     }
     /// OCCT Line(Index) — 1-based.
     pub fn line(&self, index: usize) -> &IntPatchLine {
@@ -463,15 +448,12 @@ impl ImpPrmIntersection {
         }
 
         let nb_point_dep = seqpdep.len();
-        self.dbg_seqpdep = nb_point_dep;
-        self.dbg_seqpins = seqpins.len();
 
         if nb_point_dep > 0 || nb_point_ins > 0 {
             let param_surf = if reversed { s1 } else { s2 };
             let p_domain = if !reversed { uv2 } else { uv1 };
             let mut iwalk = IWalking::new(tol_tang, fleche, a_local_pas, false);
             iwalk.perform(&seqpdep, &seqpins, &mut func, param_surf, p_domain, reversed);
-            self.dbg_iwalk_lines = iwalk.nb_lines();
 
             if !iwalk.is_done() {
                 return;
