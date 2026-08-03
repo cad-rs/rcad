@@ -228,11 +228,35 @@ fn classify_alias(s: &Surface3) -> GeomAbsSurfaceTypeAlias {
     }
 }
 
-/// OCCT GetLocalStep (IntPatch_ImpPrmIntersection.cxx L545-613).  For the
-/// surfaces exercised by rcad (analytic + linear extrusion), the local step
-/// equals the input step.
-fn get_local_step(_surf: &Surface3, step: f64) -> f64 {
-    step
+/// OCCT GetLocalStep (IntPatch_ImpPrmIntersection.cxx L545-613).
+///
+/// rcad data-model note: the OCCT UContinuity/VContinuity and C1-interval
+/// branches (L567-609) need Adaptor3d_Surface continuity tables which the rcad
+/// Surface3 model does not expose.  The analytic and LinearExtrusion/Revolution
+/// surfaces exercised by the boolean pipeline are all C-infinity, so those
+/// branches never fire for them.  The Bezier/BSpline branch (L552-565, fired
+/// when both continuities > C0) is translated with the available degree and
+/// UResolution/VResolution API.
+fn get_local_step(surf: &Surface3, step: f64) -> f64 {
+    let mut a_local_step = step;
+    if let Surface3::BSpline(b) = surf {
+        let a_min_res = u_res(surf, rcad_kernel::precision::CONFUSION)
+            .min(v_res(surf, rcad_kernel::precision::CONFUSION));
+        let a_max_deg = b.degree_u.max(b.degree_v);
+        if a_min_res < 1e-10 && a_max_deg > 3 {
+            a_local_step = 0.0001;
+        }
+    } else if let Surface3::Bezier(b) = surf {
+        let a_min_res = u_res(surf, rcad_kernel::precision::CONFUSION)
+            .min(v_res(surf, rcad_kernel::precision::CONFUSION));
+        let a_max_deg = b.control_points.len().saturating_sub(1).max(
+            b.control_points.first().map_or(0, |row| row.len().saturating_sub(1)),
+        ) as f64;
+        if a_min_res < 1e-10 && a_max_deg > 3.0 {
+            a_local_step = 0.0001;
+        }
+    }
+    a_local_step.min(step)
 }
 
 /// OCCT IntPatch_ImpPrmIntersection (IntPatch_ImpPrmIntersection.hxx L32-90).
