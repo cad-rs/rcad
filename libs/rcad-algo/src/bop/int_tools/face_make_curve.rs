@@ -486,6 +486,7 @@ fn line_constructor_wline_parts(
 ) -> Vec<[f64; 2]> {
     let mut result: Vec<[f64; 2]> = Vec::new();
     let nbvtx = line.vertices.len();
+    let mut intrvtested = false;
     for i in 0..nbvtx.saturating_sub(1) {
         let firstp = line.vertices[i].param_on_line;
         let lastp = line.vertices[i + 1].param_on_line;
@@ -494,6 +495,7 @@ fn line_constructor_wline_parts(
             if (lastp - firstp) > 1.0 {
                 // OCCT L164-179: non-adjacent vertices — classify the midpoint
                 // polyline point (same-parameter UV on both surfaces).
+                intrvtested = true;
                 let pmid = (firstp + lastp) * 0.5;
                 let p = wline_point(line, pmid);
                 let in1 = in_uv_rect_adjusted(surf1, uv1, p.p3d, p.u1, p.v1);
@@ -507,6 +509,7 @@ fn line_constructor_wline_parts(
                 // OCCT L183-225: the implicit-parametric intersector does not
                 // respect the quadric domain; classify the interpolated midpoint
                 // of the two endpoint points.
+                intrvtested = true;
                 let pf = wline_point(line, firstp);
                 let pl = wline_point(line, lastp);
                 let mu1 = 0.5 * (pf.u1 + pl.u1);
@@ -523,6 +526,7 @@ fn line_constructor_wline_parts(
                 }
             } else {
                 // OCCT L226-252: both endpoint points must be inside both domains.
+                intrvtested = true;
                 let pf = wline_point(line, firstp);
                 let in1 = in_uv_rect_adjusted(surf1, uv1, pf.p3d, pf.u1, pf.v1);
                 if in1 {
@@ -545,9 +549,17 @@ fn line_constructor_wline_parts(
     // faces only — not reachable in the analytic FF stage (the WLine vertices
     // carry integer point indices; the bCond block rewrites overlapping
     // intervals for Plane/Extrusion|Revolution pairs only).
+    //
     // OCCT has NO "keep the full range a priori" fallback for a WLine: a WLine
-    // whose vertex intervals are all rejected (or that has no vertices at all)
-    // produces no parts.
+    // whose vertex intervals are all rejected produces no parts.  rcad keeps the
+    // full range a priori as a stopgap: a WLine with only the end vertex
+    // recorded (the start vertex is added by OCCT IntPatch_WLine::
+    // ComputeVertexParameters, which rcad has not ported yet) would otherwise
+    // produce no intervals at all.  Aligning ComputeVertexParameters (the
+    // start-vertex insertion) is what enables removing this fallback.
+    if !intrvtested {
+        result.push(line.t_range);
+    }
     result
 }
 
