@@ -16,7 +16,7 @@ use super::special_points::{
 };
 use super::{IntPatchIType, IntPatchLine, WLinePnt, WLineType};
 use crate::geomalgo::int_surf::quadric::Quadric;
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 use rcad_kernel::precision::CONFUSION;
 
@@ -101,6 +101,10 @@ impl ALineToWLine {
             u2: 0.0,
             v2: 0.0,
         };
+
+        // OCCT L439: the singular surface ID (1 = S1, 2 = S2), set by
+        // IsPoleOrSeam for each processed vertex and used in the Pole handling.
+        let mut a_singular_surface_id = 0usize;
 
         let mut a_parameter = f_par;
         while a_parameter < l_par {
@@ -230,6 +234,20 @@ impl ALineToWLine {
                         let (u1, v1) = self.my_quad1.parameters(a_pnt3d);
                         let (u2, v2) = self.my_quad2.parameters(a_pnt3d);
                         a_rpt.set_value(a_pnt3d, u1, v1, u2, v2);
+
+                        // OCCT L582-595: the current point coincides with the
+                        // previous one — set the U-parameter on the singular
+                        // surface to the precise value of the reference point.
+                        if a_p_on2s.is_same(
+                            &a_prev_l_point,
+                            rcad_kernel::precision::APPROXIMATION.max(a_tol),
+                        ) {
+                            if a_singular_surface_id == 1 {
+                                a_p_on2s.u1 = u1;
+                            } else {
+                                a_p_on2s.u2 = u2;
+                            }
+                        }
                     }
 
                     if continue_after_special_point(
@@ -245,26 +263,30 @@ impl ALineToWLine {
                     } else if a_parameter == l_par {
                         break;
                     } else if a_parameter + a_step < l_par {
-                        // Prediction of the next point.
-                        let next_p = a_line.value(a_parameter + a_step).unwrap_or(DVec3::ZERO);
-                        let (an_u1, a_v1) = self.my_quad1.parameters(next_p);
-                        let (an_u2, a_v2) = self.my_quad2.parameters(next_p);
-                        let mut a_p_on2s_next = PntOn2S {
-                            p: next_p,
+                        // Prediction of the next point (OCCT L614-633).
+                        let a_pnt3d_next = a_line.value(a_parameter + a_step).unwrap_or(DVec3::ZERO);
+                        let (an_u1, a_v1) = self.my_quad1.parameters(a_pnt3d_next);
+                        let (an_u2, a_v2) = self.my_quad2.parameters(a_pnt3d_next);
+                        let a_p_on2s_next = PntOn2S {
+                            p: a_pnt3d_next,
                             u1: an_u1,
                             v1: a_v1,
                             u2: an_u2,
                             v2: a_v2,
                         };
-                        let on2_next = a_p_on2s_next.p;
-                        let _ = on2_next;
-                        let sq1 = (next_p - a_rpt.p).length_squared();
-                        if sq1 > std::f64::consts::PI * std::f64::consts::PI {
+                        // OCCT L626-627: the UV distance on either surface must
+                        // not exceed PI.
+                        let sq2 = DVec2::new(a_p_on2s_next.u2, a_p_on2s_next.v2)
+                            .distance_squared(DVec2::new(a_rpt.u2, a_rpt.v2));
+                        let sq1 = DVec2::new(a_p_on2s_next.u1, a_p_on2s_next.v1)
+                            .distance_squared(DVec2::new(a_rpt.u1, a_rpt.v1));
+                        if sq2 > std::f64::consts::PI * std::f64::consts::PI
+                            || sq1 > std::f64::consts::PI * std::f64::consts::PI
+                        {
                             a_prev_l_point = a_rpt;
                             a_prev_param = a_parameter;
                             continue;
                         }
-                        let _ = a_p_on2s_next;
                     }
                 }
 
@@ -348,13 +370,15 @@ impl ALineToWLine {
                     a_pref_iso = *a_lin_on2s.last().unwrap();
                 }
 
-                a_pre_point_exist = self.is_pole_or_seam(
+                let (a_pre_point, a_singular) = self.is_pole_or_seam(
                     &a_pref_iso,
                     &mut a_lin_on2s,
                     &mut a_vtx,
                     &arr_periods,
                     a_tol,
                 );
+                a_pre_point_exist = a_pre_point;
+                a_singular_surface_id = a_singular;
 
                 if a_pre_point_exist == SpecPntType::Pole
                     || a_pre_point_exist == SpecPntType::PoleSeamU
@@ -542,6 +566,12 @@ impl ALineToWLine {
                     a_curve: None,
                     arc_on_s1: None,
                     arc_on_s2: None,
+                    // OCCT L896-937: the WLine transitions are set from
+                    // theALine->TransitionOnS1()/SituationS1()/SituationS2(), or
+                    // computed from the tangent/normal cross product (dotcross vs
+                    // myTolTransition).  rcad's IntAnaCurve does not carry the
+                    // ALine transition properties, so trans1/trans2 stay None
+                    // (architecture gap; does not affect the FF curve count).
                     trans1: None,
                     trans2: None,
                     first_point: None,
@@ -552,7 +582,8 @@ impl ALineToWLine {
         } // while(aParameter < theLPar)
     }
 
-    /// OCCT IsPoleOrSeam (L72-141).
+    /// OCCT IsPoleOrSeam (L72-141).  Returns the special-point type and the
+    /// singular surface ID (1 = theS1, 2 = theS2, 0 = none).
     fn is_pole_or_seam(
         &self,
         pt_iso_ref: &PntOn2S,
@@ -560,10 +591,15 @@ impl ALineToWLine {
         the_vertex: &mut PatchPoint,
         arr_periods: &[f64; 4],
         tol_3d: f64,
-    ) -> SpecPntType {
+    ) -> (SpecPntType, usize) {
         for i in 0..2 {
             let is_reversed = i > 0;
             let surf = if is_reversed { &self.my_s2 } else { &self.my_s1 };
+            let (q_surf, p_surf) = if is_reversed {
+                (&self.my_s2, &self.my_s1)
+            } else {
+                (&self.my_s1, &self.my_s2)
+            };
             let mut added_p_type = SpecPntType::None;
             let mut apex_point = PntOn2S {
                 p: DVec3::ZERO,
@@ -573,60 +609,48 @@ impl ALineToWLine {
                 v2: 0.0,
             };
 
-            let a_type = match surf {
-                Surface3::Sphere(_) => Some(0),
-                Surface3::Cone(_) => Some(0),
-                Surface3::Torus(_) => Some(1),
-                Surface3::Cylinder(_) => Some(2),
-                _ => None,
+            // OCCT switch (L91-130) with [[fallthrough]]: Sphere/Cone try the
+            // pole, then fall through to Torus (cross-UV-iso) and Cylinder
+            // (seam).  The Cylinder case is reached for Sphere/Cone/Torus/
+            // Cylinder whenever the type-specific handling found nothing.
+            let a_kind = match surf {
+                Surface3::Sphere(_) | Surface3::Cone(_) => 0,
+                Surface3::Torus(_) => 1,
+                Surface3::Cylinder(_) => 2,
+                _ => 3,
             };
 
-            match a_type {
-                Some(0) => {
-                    // Sphere or Cone.
-                    let (q_surf, p_surf) = if is_reversed {
-                        (&self.my_s2, &self.my_s1)
-                    } else {
-                        (&self.my_s1, &self.my_s2)
-                    };
+            match a_kind {
+                0 => {
+                    // case Sphere/Cone.
                     if add_singular_pole(q_surf, p_surf, pt_iso_ref, the_vertex, &mut apex_point, is_reversed) {
                         added_p_type = SpecPntType::Pole;
-                    } else {
-                        // Fall through to Cylinder seam handling.
-                        if let Surface3::Cylinder(_) = surf {
-                            add_vertex_point(the_line, the_vertex, arr_periods);
-                            return SpecPntType::SeamU;
-                        }
                     }
                 }
-                Some(1) => {
-                    // Torus.
-                    let (q_surf, p_surf) = if is_reversed {
-                        (&self.my_s2, &self.my_s1)
-                    } else {
-                        (&self.my_s1, &self.my_s2)
-                    };
-                    if add_cross_uv_iso_point(q_surf, p_surf, pt_iso_ref, tol_3d, &mut apex_point, is_reversed) {
-                        added_p_type = SpecPntType::SeamUV;
-                    } else if let Surface3::Cylinder(_) = surf {
-                        add_vertex_point(the_line, the_vertex, arr_periods);
-                        return SpecPntType::SeamU;
-                    }
-                }
-                Some(2) => {
-                    // Cylinder.
-                    add_vertex_point(the_line, the_vertex, arr_periods);
-                    return SpecPntType::SeamU;
-                }
+                1 => {}
                 _ => {}
+            }
+
+            // [[fallthrough]] case Torus: only for a Torus surface, and only
+            // when the pole check (if any) did not fire.
+            if a_kind == 1 && added_p_type == SpecPntType::None {
+                if add_cross_uv_iso_point(q_surf, p_surf, pt_iso_ref, tol_3d, &mut apex_point, is_reversed) {
+                    added_p_type = SpecPntType::SeamUV;
+                }
+            }
+
+            // [[fallthrough]] case Cylinder (L123-126).
+            if a_kind != 3 && added_p_type == SpecPntType::None {
+                add_vertex_point(the_line, the_vertex, arr_periods);
+                return (SpecPntType::SeamU, i + 1);
             }
 
             if added_p_type != SpecPntType::None {
                 add_point_into_line(the_line, arr_periods, &mut apex_point, Some(the_vertex));
-                return added_p_type;
+                return (added_p_type, i + 1);
             }
         }
-        SpecPntType::None
+        (SpecPntType::None, 0)
     }
 
     /// OCCT StepComputing (L998-1077).
