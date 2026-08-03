@@ -13,7 +13,7 @@
 use std::f64::consts::TAU;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Line2d, Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Surface3, SurfaceEval};
 
 use crate::geomalgo::int_surf::quadric::{Quadric, QuadricType};
 use crate::geomalgo::int_surf::PntOn2S;
@@ -1721,6 +1721,10 @@ fn dirs_parallel_2d(d1: DVec2, d2: DVec2, tol: f64) -> bool {
 
 /// OCCT anArc->FirstParameter()/LastParameter() — the finite restriction-arc
 /// parameter range, carried by the RLine's first/last points.
+/// OCCT IsCoincide uses theArc->FirstParameter()/LastParameter() (the trimmed
+/// 2D arc of the restriction line).  rcad's Curve2d::Line is untrimmed
+/// (default_domain = [-inf, inf]), so the bounded range is recovered from the
+/// line's first/last vertex parameters (which store the arc parameter).
 fn line_arc_range(line: &IntPatchLine) -> [f64; 2] {
     if line.has_first_point() && line.has_last_point() {
         [
@@ -2139,24 +2143,79 @@ fn decompose_result(
     has_been_decomposed
 }
 
-/// rcad: quadric U-resolution.
+/// OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1818-1896).
+/// Parametric resolution of the surface in the U direction for a 3D tolerance.
 fn u_res(s: &Surface3, tol3d: f64) -> f64 {
-    let d = s.default_domain();
-    let u_extent = (d[1] - d[0]).abs();
-    if u_extent > 1e-12 {
-        tol3d.max(1e-9) / u_extent
-    } else {
-        rcad_kernel::precision::PCONFUSION
+    match s {
+        Surface3::Plane(_) => tol3d,
+        Surface3::Cylinder(c) => resolution_quadric_angular(tol3d, c.radius),
+        Surface3::Sphere(sp) => resolution_quadric_angular(tol3d, sp.radius),
+        Surface3::Torus(t) => resolution_quadric_angular(tol3d, t.major_radius + t.minor_radius),
+        Surface3::Cone(co) => {
+            let d = s.default_domain();
+            if d[3] - d[2] > 1.0e10 {
+                // Not truly bounded => unknown resolution.
+                rcad_kernel::precision::parametric_default(tol3d)
+            } else {
+                // OCCT: R = max radius of the VIso circles at the V bounds.
+                let r1 = co.radius_at_slant(d[2]);
+                let r2 = co.radius_at_slant(d[3]);
+                let r = if r1 > r2 { r1 } else { r2 };
+                if r > rcad_kernel::precision::CONFUSION {
+                    tol3d / r
+                } else {
+                    0.0
+                }
+            }
+        }
+        Surface3::LinearExtrusion(le) => curve_resolution(&le.profile, tol3d),
+        _ => rcad_kernel::precision::parametric_default(tol3d),
     }
 }
 
+/// OCCT GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx L1900-1958).
 fn v_res(s: &Surface3, tol3d: f64) -> f64 {
-    let d = s.default_domain();
-    let v_extent = (d[3] - d[2]).abs();
-    if v_extent > 1e-12 {
-        tol3d.max(1e-9) / v_extent
+    match s {
+        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::LinearExtrusion(_) => {
+            tol3d
+        }
+        Surface3::Sphere(sp) => resolution_quadric_angular(tol3d, sp.radius),
+        Surface3::Torus(t) => resolution_quadric_angular(tol3d, t.minor_radius),
+        Surface3::Revolution(rv) => curve_resolution(&rv.profile, tol3d),
+        _ => rcad_kernel::precision::parametric_default(tol3d),
+    }
+}
+
+/// OCCT L1890-1895 / L1952-1957: Res = R3d/(2R) -> 2*asin(Res) when Res <= 1,
+/// else the period 2*PI; R <= Confusion -> 0.
+fn resolution_quadric_angular(tol3d: f64, radius: f64) -> f64 {
+    if radius > rcad_kernel::precision::CONFUSION {
+        let res = tol3d / (2.0 * radius);
+        if res <= 1.0 {
+            2.0 * res.asin()
+        } else {
+            std::f64::consts::TAU
+        }
     } else {
-        rcad_kernel::precision::PCONFUSION
+        0.0
+    }
+}
+
+/// OCCT GeomAdaptor_Curve::Resolution (GeomAdaptor_Curve.cxx L1116-1149) —
+/// parametric resolution of a curve for a 3D tolerance.
+fn curve_resolution(c: &Curve3, tol3d: f64) -> f64 {
+    match c {
+        Curve3::Line(_) => tol3d,
+        Curve3::Circle(cr) => {
+            let r = cr.radius;
+            if r > tol3d / 2.0 {
+                2.0 * (tol3d / (2.0 * r)).asin()
+            } else {
+                std::f64::consts::TAU
+            }
+        }
+        Curve3::Ellipse(e) => tol3d / e.major_radius,
+        _ => rcad_kernel::precision::parametric_default(tol3d),
     }
 }
 
