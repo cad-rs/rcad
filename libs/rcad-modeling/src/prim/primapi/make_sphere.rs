@@ -43,7 +43,11 @@ impl MakeSphere {
             [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
         let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
         let wire = t.add_twire(vec![e_top, e_seam.clone(), e_bot, rev(e_seam)]);
-        let surf = Surface3::Sphere(SphericalSurface::new(c, self.y_axis, r));
+        // OCCT BRepPrim_Sphere (L43-48, L63): the sphere surface uses
+        // Geom_SphericalSurface(Axes(), R) with the polar axis = Axes().ZDirection()
+        // (the north pole at +Z, PMIN=0/PMAX=PI/2 colatitude).  The meridian seam
+        // edge (above) lies in the XZ plane (normal -Y), but the surface axis is Z.
+        let surf = Surface3::Sphere(SphericalSurface::new(c, self.z_axis, r));
         let face = t.add_tface(Some(surf), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true);
         let shell = t.add_tshell(vec![face]);
         t.add_tsolid(vec![shell]);

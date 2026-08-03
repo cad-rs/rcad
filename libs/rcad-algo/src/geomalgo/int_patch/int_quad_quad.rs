@@ -1041,15 +1041,16 @@ impl IntAnaCurve {
             }
             _ => return Vec::new(),
         }
-        if !self.take_z_positive {
-            // OCCT: aTheta computed via ElSLib already accounts the frame; keep.
-        }
-
-        if !self.take_z_positive && (self.domain_inf > a_theta)
+        // OCCT L468-475: the domain-boundary snap uses firstbounded/lastbounded
+        // (SetCylinderQuadValues sets them false, so both conditions hold; the
+        // take_z_positive branch flag is NOT part of this test).  rcad's
+        // is_first_open/is_last_open (domain-parameter finiteness) mirrors the
+        // bounded flags for the IntXX flow.
+        if !self.is_first_open() && (self.domain_inf > a_theta)
             && ((self.domain_inf - a_theta) <= AN_EPS_ANG)
         {
             a_theta = self.domain_inf;
-        } else if self.take_z_positive && (a_theta > self.domain_sup)
+        } else if !self.is_last_open() && (a_theta > self.domain_sup)
             && ((a_theta - self.domain_sup) <= AN_EPS_ANG)
         {
             a_theta = self.domain_sup;
