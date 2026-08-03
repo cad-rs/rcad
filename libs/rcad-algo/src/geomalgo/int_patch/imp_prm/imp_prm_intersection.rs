@@ -1990,11 +1990,51 @@ fn decompose_result(
                     );
                     a_new_point = from_sp_pnt(&sp_new);
                 } else if a_pre_point_exist == 3 {
+                    // WLine goes through V-seam (OCCT L3332-3388).
                     a_pre_point_exist = 0;
                     a_last_type = 3;
-                    // WLine goes through V-seam.
-                    // rcad: no V-seam quadric is exercised (cylinder/cone/sphere
-                    // decompose only on U); keep the point unchanged.
+                    let a_ref_params = a_ref_pt.parameters();
+                    let (a_u0, a_v0, a_u_quad_ref, a_v_quad_ref) = if is_reversed {
+                        (a_ref_params.0, a_ref_params.1, a_ref_params.2, a_ref_params.3)
+                    } else {
+                        (a_ref_params.2, a_ref_params.3, a_ref_params.0, a_ref_params.1)
+                    };
+                    let a_next_params = a_ss_line[a_b_index - 1].parameters();
+                    let (a_up, a_vp, a_uq, a_vq) = if is_reversed {
+                        (a_next_params.0, a_next_params.1, a_next_params.2, a_next_params.3)
+                    } else {
+                        (a_next_params.2, a_next_params.3, a_next_params.0, a_next_params.1)
+                    };
+                    let a_tol = [
+                        u_res(the_p_surf, the_arc_tol),
+                        v_res(the_p_surf, the_arc_tol),
+                        u_res(the_q_surf, the_arc_tol),
+                    ];
+                    let a_start_point = [
+                        0.5 * (a_u0 + a_up),
+                        0.5 * (a_v0 + a_vp),
+                        0.5 * (a_u_quad_ref + a_uq),
+                    ];
+                    let p_dom = the_p_surf.default_domain();
+                    let q_dom = the_q_surf.default_domain();
+                    let an_inf_bound = [p_dom[0], p_dom[2], q_dom[0]];
+                    let a_sup_bound = [p_dom[1], p_dom[3], q_dom[1]];
+                    let mut sp_new = to_sp_pnt(&a_ref_pt);
+                    if crate::geomalgo::int_patch::special_points::add_point_on_u_or_v_iso(
+                        the_q_surf,
+                        the_p_surf,
+                        &to_sp_pnt(&a_ref_pt),
+                        false,
+                        0.0,
+                        &a_tol,
+                        &a_start_point,
+                        &an_inf_bound,
+                        &a_sup_bound,
+                        &mut sp_new,
+                        is_reversed,
+                    ) {
+                        a_new_point = from_sp_pnt(&sp_new);
+                    }
                 } else if a_pre_point_exist == 5 {
                     a_pre_point_exist = 0;
                     let mut a_vert = crate::geomalgo::int_patch::special_points::PatchPoint::new();
@@ -2022,15 +2062,51 @@ fn decompose_result(
                 }
 
                 if a_pre_point_exist == 2 {
+                    // WLine goes through U-seam (OCCT L3423-3479).
                     a_pre_point_exist = 0;
                     a_last_type = 2;
-                    // WLine goes through U-seam: clamp the quadric U parameter.
-                    let (a_u0, a_v0) = if is_reversed {
-                        (a_ref_pt.parameters().0, a_ref_pt.parameters().1)
+                    let a_ref_params = a_ref_pt.parameters();
+                    let (a_u0, a_v0, a_u_quad_ref, a_v_quad_ref) = if is_reversed {
+                        (a_ref_params.0, a_ref_params.1, a_ref_params.2, a_ref_params.3)
                     } else {
-                        (a_ref_pt.parameters().2, a_ref_pt.parameters().3)
+                        (a_ref_params.2, a_ref_params.3, a_ref_params.0, a_ref_params.1)
                     };
-                    let _ = (a_u0, a_v0);
+                    let a_next_params = a_ss_line[a_b_index - 1].parameters();
+                    let (a_up, a_vp, a_uq, a_vq) = if is_reversed {
+                        (a_next_params.0, a_next_params.1, a_next_params.2, a_next_params.3)
+                    } else {
+                        (a_next_params.2, a_next_params.3, a_next_params.0, a_next_params.1)
+                    };
+                    let a_tol = [
+                        u_res(the_p_surf, the_arc_tol),
+                        v_res(the_p_surf, the_arc_tol),
+                        v_res(the_q_surf, the_arc_tol),
+                    ];
+                    let a_start_point = [
+                        0.5 * (a_u0 + a_up),
+                        0.5 * (a_v0 + a_vp),
+                        0.5 * (a_v_quad_ref + a_vq),
+                    ];
+                    let p_dom = the_p_surf.default_domain();
+                    let q_dom = the_q_surf.default_domain();
+                    let an_inf_bound = [p_dom[0], p_dom[2], q_dom[2]];
+                    let a_sup_bound = [p_dom[1], p_dom[3], q_dom[3]];
+                    let mut sp_new = to_sp_pnt(&a_ref_pt);
+                    if crate::geomalgo::int_patch::special_points::add_point_on_u_or_v_iso(
+                        the_q_surf,
+                        the_p_surf,
+                        &to_sp_pnt(&a_ref_pt),
+                        true,
+                        0.0,
+                        &a_tol,
+                        &a_start_point,
+                        &an_inf_bound,
+                        &a_sup_bound,
+                        &mut sp_new,
+                        is_reversed,
+                    ) {
+                        a_new_point = from_sp_pnt(&sp_new);
+                    }
                 }
 
                 if !a_new_point.is_same(

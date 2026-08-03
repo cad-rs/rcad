@@ -460,3 +460,159 @@ fn transform_vec(v: DVec3, frame: [DVec3; 3]) -> DVec3 {
     let y = z.cross(x).normalize_or_zero();
     DVec3::new(v.dot(x), v.dot(y), v.dot(z))
 }
+
+/// OCCT IntPatch_SpecialPoints::FuncPreciseSeam (IntPatch_SpecialPoints.cxx
+/// L32-122) — the 3-equation function set F(X) = P1(X1,X2) - P2(X3), where P1
+/// is the parametric surface and P2 the quadric evaluated on the U- or V-seam
+/// (the other coordinate fixed to theIsoParameter).
+struct FuncPreciseSeam {
+    q_surf: Surface3,
+    p_surf: Surface3,
+    /// 1 for a U-seam (X3 is the quadric V), 0 for a V-seam (X3 is the quadric U).
+    seam_coord_ind: usize,
+    iso_parameter: f64,
+}
+
+impl FuncPreciseSeam {
+    fn value(&self, x: [f64; 3]) -> Option<[f64; 3]> {
+        let mut a_uv = [self.iso_parameter, self.iso_parameter];
+        a_uv[self.seam_coord_ind] = x[2];
+        let a_p1 = self.p_surf.point_at(x[0], x[1]);
+        let a_p2 = self.q_surf.point_at(a_uv[0], a_uv[1]);
+        Some([a_p1.x - a_p2.x, a_p1.y - a_p2.y, a_p1.z - a_p2.z])
+    }
+
+    /// OCCT Derivatives (L68-102): Jacobian columns are dP1/du, dP1/dv and
+    /// -dP2/d(seamCoord).
+    fn derivatives(&self, x: [f64; 3]) -> Option<[[f64; 3]; 3]> {
+        let mut a_uv = [self.iso_parameter, self.iso_parameter];
+        a_uv[self.seam_coord_ind] = x[2];
+        let (_, d1u1, d1v1) = self.p_surf.derivatives(x[0], x[1]);
+        let (_, d1u2, d1v2) = self.q_surf.derivatives(a_uv[0], a_uv[1]);
+        let d2 = if self.seam_coord_ind == 0 { d1u2 } else { d1v2 };
+        Some([
+            [d1u1.x, d1v1.x, -d2.x],
+            [d1u1.y, d1v1.y, -d2.y],
+            [d1u1.z, d1v1.z, -d2.z],
+        ])
+    }
+}
+
+/// Solve a 3x3 linear system A·x = b by Gaussian elimination (partial pivot).
+fn solve_3x3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
+    let mut m = [[a[0][0], a[0][1], a[0][2], b[0]], [a[1][0], a[1][1], a[1][2], b[1]], [a[2][0], a[2][1], a[2][2], b[2]]];
+    for col in 0..3 {
+        // Partial pivot.
+        let mut piv = col;
+        for r in (col + 1)..3 {
+            if m[r][col].abs() > m[piv][col].abs() {
+                piv = r;
+            }
+        }
+        if m[piv][col].abs() < 1e-30 {
+            return None;
+        }
+        m.swap(col, piv);
+        for r in (col + 1)..3 {
+            let f = m[r][col] / m[col][col];
+            for c in col..4 {
+                m[r][c] -= f * m[col][c];
+            }
+        }
+    }
+    let mut x = [0.0; 3];
+    for r in (0..3).rev() {
+        let mut s = m[r][3];
+        for c in (r + 1)..3 {
+            s -= m[r][c] * x[c];
+        }
+        x[r] = s / m[r][r];
+    }
+    Some(x)
+}
+
+/// OCCT math_FunctionSetRoot::Perform (damped Newton for the 3-var seam system).
+fn solve_func_precise_seam(f: &FuncPreciseSeam, init: [f64; 3], inf: [f64; 3], sup: [f64; 3], tol: [f64; 3]) -> Option<[f64; 3]> {
+    let mut x = init;
+    for _ in 0..60 {
+        let fx = f.value(x)?;
+        let j = f.derivatives(x)?;
+        let d = solve_3x3(&j, &[-fx[0], -fx[1], -fx[2]])?;
+        let mut lambda = 1.0;
+        let mut xn = x;
+        let f0 = fx[0] * fx[0] + fx[1] * fx[1] + fx[2] * fx[2];
+        loop {
+            xn = [x[0] + lambda * d[0], x[1] + lambda * d[1], x[2] + lambda * d[2]];
+            for i in 0..3 {
+                xn[i] = xn[i].clamp(inf[i], sup[i]);
+            }
+            let fxn = f.value(xn)?;
+            let fn_ = fxn[0] * fxn[0] + fxn[1] * fxn[1] + fxn[2] * fxn[2];
+            if fn_ < f0 || lambda < 1e-9 {
+                break;
+            }
+            lambda *= 0.5;
+        }
+        if lambda < 1e-9 {
+            return None;
+        }
+        let fxn = f.value(xn)?;
+        x = xn;
+        if fxn[0].abs() <= tol[0] && fxn[1].abs() <= tol[1] && fxn[2].abs() <= tol[2] {
+            return Some(x);
+        }
+    }
+    None
+}
+
+/// OCCT IntPatch_SpecialPoints::AddPointOnUorVIso (IntPatch_SpecialPoints.cxx
+/// L300-350) — find the precise point where the parametric surface crosses the
+/// U- or V-seam of the quadric, by solving FuncPreciseSeam.
+pub fn add_point_on_u_or_v_iso(
+    q_surf: &Surface3,
+    p_surf: &Surface3,
+    ref_pt: &PntOn2S,
+    is_u: bool,
+    iso_parameter: f64,
+    toler: &[f64; 3],
+    init_point: &[f64; 3],
+    inf_bound: &[f64; 3],
+    sup_bound: &[f64; 3],
+    added_point: &mut PntOn2S,
+    is_reversed: bool,
+) -> bool {
+    let mut an_arr_of_period = [0.0; 4];
+    set_period(
+        if is_reversed { p_surf } else { q_surf },
+        if is_reversed { q_surf } else { p_surf },
+        &mut an_arr_of_period,
+    );
+
+    let a_f = FuncPreciseSeam {
+        q_surf: q_surf.clone(),
+        p_surf: p_surf.clone(),
+        seam_coord_ind: if is_u { 1 } else { 0 },
+        iso_parameter,
+    };
+
+    let Some(a_roots) = solve_func_precise_seam(&a_f, *init_point, *inf_bound, *sup_bound, *toler) else {
+        return false;
+    };
+
+    // On the parametric surface.
+    let a_u0 = a_roots[0];
+    let a_v0 = a_roots[1];
+    // On the quadric.
+    let a_u_quad = if is_u { 0.0 } else { a_roots[2] };
+    let a_v_quad = if is_u { a_roots[2] } else { 0.0 };
+    let a_p_quad = q_surf.point_at(a_u_quad, a_v_quad);
+    let a_p0 = p_surf.point_at(a_u0, a_v0);
+    let a_mid = 0.5 * (a_p0 + a_p_quad);
+    if is_reversed {
+        added_point.set_value(a_mid, a_u0, a_v0, a_u_quad, a_v_quad);
+    } else {
+        added_point.set_value(a_mid, a_u_quad, a_v_quad, a_u0, a_v0);
+    }
+    adjust_point_and_vertex(ref_pt, &an_arr_of_period, added_point, None);
+    true
+}
