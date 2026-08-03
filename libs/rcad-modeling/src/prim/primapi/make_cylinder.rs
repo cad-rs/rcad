@@ -59,8 +59,24 @@ impl MakeCylinder {
         let lateral_surf = Surface3::Cylinder(CylindricalSurface {
             origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis,
         });
-        let bot_plane = Surface3::Plane(Plane::new(o, -self.z_axis));
-        let top_plane = Surface3::Plane(Plane::new(self.local(0.0, 0.0, h), self.z_axis));
+        // OCCT BRepPrim_OneAxis::BottomFace/TopFace build the cap planes with
+        // gp_Pln(gp_Ax3(P, Axes.Direction(), Axes.XDirection())) — the plane
+        // frame's X direction is the cylinder's reference direction, NOT the
+        // gp_Ax3(P, Direction) default frame.  Using Plane::new (default frame)
+        // misaligns the cap UV rectangle for rotated cylinders (ref_dir != X)
+        // and shifts the FF SOnBounds boundary crossings.
+        let bot_plane = Surface3::Plane(Plane {
+            origin: o,
+            normal: -self.z_axis,
+            u_dir: self.x_axis,
+            v_dir: -self.y_axis,
+        });
+        let top_plane = Surface3::Plane(Plane {
+            origin: self.local(0.0, 0.0, h),
+            normal: self.z_axis,
+            u_dir: self.x_axis,
+            v_dir: self.y_axis,
+        });
 
         // OCCT BRepPrim_OneAxis::LateralWire: [TopEdge(fwd), EndEdge(rev),
         // BottomEdge(rev), StartEdge(fwd)]. The seam (VEdge) appears twice —
