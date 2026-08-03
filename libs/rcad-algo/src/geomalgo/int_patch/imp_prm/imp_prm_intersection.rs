@@ -259,6 +259,108 @@ fn get_local_step(surf: &Surface3, step: f64) -> f64 {
     a_local_step.min(step)
 }
 
+/// OCCT IntTools_TopolTool::ComputeSamplePoints (IntTools_TopolTool.cxx L95-394):
+/// the number of U and V grid sample points of the face's TopolTool.
+///
+/// rcad note: the analytic quadric branches (Cylinder/Cone/Sphere/Torus) are
+/// unreachable in the ImpPrm SearchInside sampling — the sampled surface is
+/// always the parametric one (LinearExtrusion/Revolution/BSpline/Bezier/Other)
+/// — so they are not translated here.
+fn topol_tool_nb_samples(surf: &Surface3, dom: [f64; 4]) -> (usize, usize) {
+    const A_MAX_NB_SAMPLE: i32 = 50;
+    let (_uinf, _usup, vinf, vsup) = (dom[0], dom[1], dom[2], dom[3]);
+    let mut nbsu = 0i32;
+    let mut nbsv = 0i32;
+    match surf {
+        Surface3::Plane(_) => {
+            // OCCT GeomAbs_Plane (L140-144).
+            nbsu = 10;
+            nbsv = 10;
+        }
+        Surface3::LinearExtrusion(_) => {
+            // OCCT GeomAbs_SurfaceOfExtrusion (L361-373): U (profile) is fixed
+            // at 15; V (extrusion) grows with the parameter span.
+            nbsu = 15;
+            nbsv = ((vsup - vinf) as i32) / 10;
+            if nbsv < 15 {
+                nbsv = 15;
+            }
+            if nbsv > A_MAX_NB_SAMPLE {
+                nbsv = A_MAX_NB_SAMPLE;
+            }
+        }
+        Surface3::Revolution(_) => {
+            // OCCT GeomAbs_SurfaceOfRevolution (L375-378).
+            nbsu = 15;
+            nbsv = 15;
+        }
+        Surface3::BSpline(b) => {
+            // OCCT GeomAbs_BSplineSurface (L318-359): nbsv = NbVKnots * VDegree.
+            let n_u_knots = distinct_knot_count(&b.knots_u);
+            let n_v_knots = distinct_knot_count(&b.knots_v);
+            nbsv = (n_v_knots as i32).saturating_mul(b.degree_v as i32);
+            if nbsv < 4 {
+                nbsv = 4;
+            }
+            nbsu = (n_u_knots as i32).saturating_mul(b.degree_u as i32);
+            if nbsu < 4 {
+                nbsu = 4;
+            }
+            if nbsu < 10 {
+                nbsu = 10;
+            }
+            if nbsv < 10 {
+                nbsv = 10;
+            }
+            if nbsu > A_MAX_NB_SAMPLE {
+                nbsu = A_MAX_NB_SAMPLE;
+            }
+            if nbsv > A_MAX_NB_SAMPLE {
+                nbsv = A_MAX_NB_SAMPLE;
+            }
+        }
+        Surface3::Bezier(b) => {
+            // OCCT GeomAbs_BezierSurface (L298-316): nbsv = 3 + NbVPoles.
+            let n_u_poles = b.control_points.first().map_or(0, |row| row.len());
+            let n_v_poles = b.control_points.len();
+            nbsv = (3 + n_v_poles) as i32;
+            nbsu = (3 + n_u_poles) as i32;
+            if nbsu < 10 {
+                nbsu = 10;
+            }
+            if nbsv < 10 {
+                nbsv = 10;
+            }
+            if nbsu > A_MAX_NB_SAMPLE {
+                nbsu = A_MAX_NB_SAMPLE;
+            }
+            if nbsv > A_MAX_NB_SAMPLE {
+                nbsv = A_MAX_NB_SAMPLE;
+            }
+        }
+        _ => {
+            // OCCT default (L380-384).
+            nbsu = 10;
+            nbsv = 10;
+        }
+    }
+    (nbsu.max(1) as usize, nbsv.max(1) as usize)
+}
+
+/// Number of distinct knot values in a (multiplicity-expanded) knot vector.
+fn distinct_knot_count(knots: &[f64]) -> usize {
+    if knots.is_empty() {
+        return 0;
+    }
+    let mut count = 1usize;
+    for i in 1..knots.len() {
+        if (knots[i] - knots[i - 1]).abs() > 1e-12 {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// OCCT IntPatch_ImpPrmIntersection (IntPatch_ImpPrmIntersection.hxx L32-90).
 pub struct ImpPrmIntersection {
     done: bool,
@@ -428,27 +530,37 @@ impl ImpPrmIntersection {
         // Decide whether SearchInside is needed.
         let mut search_ins = true;
         if quad.type_quadric() == QuadricType::Plane && self.solrst.nb_segments() > 0 {
+            // OCCT L772-811: for a plane quadric with boundary segments the
+            // parametric surface may lie entirely on one side of the plane
+            // (only touching it), so no inner points exist.  The TopolTool grid
+            // (NbSamples()/SamplePoint) samples the parametric face UV
+            // rectangle to detect a sign change of F(u,v) — the grid covers the
+            // whole face, not just the 4 corners.
             search_ins = false;
-            // OCCT L788-810: the TopolTool's grid samples the parametric face
-            // in its natural UV domain (not the corrected FF bounds).
-            let p_dom = func.p_surface().default_domain();
-            let pts = [
-                DVec2::new(p_dom[0], p_dom[2]),
-                DVec2::new(p_dom[1], p_dom[2]),
-                DVec2::new(p_dom[0], p_dom[3]),
-                DVec2::new(p_dom[1], p_dom[3]),
-            ];
+            // OCCT: T = reversed ? D1 : D2, the TopolTool of the parametric
+            // face, whose UV domain is the corrected FF rectangle (uv1/uv2).
+            let p_surf = if !reversed { s2 } else { s1 };
+            let p_domain = if !reversed { uv2 } else { uv1 };
+            let (nbsu, nbsv) = topol_tool_nb_samples(p_surf, p_domain);
+            let du = (p_domain[1] - p_domain[0]) / (nbsu as f64 + 1.0);
+            let dv = (p_domain[3] - p_domain[2]) / (nbsv as f64 + 1.0);
             let mut rvalf = 0.0f64;
             let mut first = true;
-            for p2d in pts {
-                let x = [p2d.x, p2d.y];
-                if let Some(val) = func.value(&x) {
-                    if first {
-                        rvalf = val.copysign(1.0);
-                        first = false;
-                    } else if rvalf * val < 0.0 {
-                        search_ins = true;
-                        break;
+            // OCCT SamplePoint(Index): iv = 1 + Index/NbSamplesU, iu = 1 +
+            // Index - (iv-1)*NbSamplesU; u = U0 + iu*DU, v = V0 + iv*DV.
+            'outer: for iv in 1..=nbsv {
+                for iu in 1..=nbsu {
+                    let u = p_domain[0] + iu as f64 * du;
+                    let v = p_domain[2] + iv as f64 * dv;
+                    let x = [u, v];
+                    if let Some(val) = func.value(&x) {
+                        if first {
+                            rvalf = val.copysign(1.0);
+                            first = false;
+                        } else if rvalf * val < 0.0 {
+                            search_ins = true;
+                            break 'outer;
+                        }
                     }
                 }
             }
