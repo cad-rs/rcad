@@ -80,6 +80,7 @@ pub struct IntCurveSurface {
 /// OCCT IntCurveSurface_Inter.pxx constants.
 const THE_TOLTANGENCY: f64 = 0.00000001;
 const THE_TOLERANCE_ANGULAIRE: f64 = 1.0e-12;
+const THE_TOLERANCE: f64 = 0.00000001;
 
 impl IntCurveSurface {
     pub fn new() -> Self {
@@ -364,12 +365,19 @@ fn intersect_circle_quadric(
 ) -> Option<Vec<(DVec3, f64)>> {
     // OCCT IntCurveSurface_HInter -> IntAna_IntConicQuad(Circle, Quadric):
     // analytic conic-quadric intersection (no sampling/Newton).
+    // The Plane surface uses the (Circ, Pln, Tolang, Tol) overload with
+    // THE_TOLERANCE_ANGULAIRE / THE_TOLERANCE (IntCurveSurface_Inter.pxx
+    // L731-735); the Cylinder/Cone/Sphere quadrics use the (Circ, Quadric)
+    // overload which takes no tolerance (Eps is internal, 1.5e-12).
     let quad_type = quad.type_quadric();
-    let tol = 1e-7;
     let res = if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
         let pl = quad.plane();
-        let (_, in_quadric, pts) =
-            super::int_conic_quad::intersect_circle_plane(circle, &pl, 1e-8, tol);
+        let (_, in_quadric, pts) = super::int_conic_quad::intersect_circle_plane(
+            circle,
+            &pl,
+            THE_TOLERANCE_ANGULAIRE,
+            THE_TOLERANCE,
+        );
         if in_quadric {
             // The circle lies entirely on the plane: no isolated points
             // (BoundedArc treats it as an all-arc solution segment).
@@ -378,7 +386,7 @@ fn intersect_circle_quadric(
             Some((false, pts))
         }
     } else {
-        super::int_conic_quad::intersect_circle_quadric(circle, quad, tol)
+        super::int_conic_quad::intersect_circle_quadric(circle, quad)
     }?;
     let (in_quadric, pts) = res;
     let _ = in_quadric;

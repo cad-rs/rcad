@@ -114,6 +114,16 @@ fn quadratic_real_roots(a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 /// OCCT math_TrigonometricFunctionRoots — solutions of
 ///   a·cos²(x) + 2·b·cos(x)·sin(x) + c·cos(x) + d·sin(x) + e = 0
 /// within [InfBound, SupBound].
+///
+/// Documented divergences from OCCT (math_TrigonometricFunctionRoots.cxx):
+///   - L460-478: OCCT refines every candidate root with
+///     math_NewtonFunctionRoot on the trig equation.  rcad uses the raw
+///     polynomial roots; for the well-separated roots of the Circle x Quadric
+///     path the Newton step is a no-op to within Tol1=1e-15.
+///   - L363-434: OCCT solves the quartic with math_DirectPolynomialRoots and
+///     on near-double roots scales ko by 1e-4 and re-solves.  rcad uses a
+///     Ferrari quartic with the same real-root semantics; the 1e-9 dedup below
+///     plays the role of the double-root rejection.
 fn trig_function_roots(
     a: f64, b: f64, c: f64, d: f64, e: f64,
     inf_bound: f64, sup_bound: f64,
@@ -210,6 +220,15 @@ fn trig_function_roots(
                 zer.push(teta);
             }
         }
+    }
+
+    // OCCT math_TrigonometricFunctionRoots.cxx L505-550 "Cas particulier de
+    // PI": t = pi is a solution exactly when the trig polynomial vanishes
+    // there, i.e. ko(1) = A - C + E = 0 (at t=pi: cos=-1, sin=0).  The
+    // substitution u = tan(t/2) maps t=pi to u=infinity, so the quartic (and
+    // the quadratic when e-c=0) misses it; OCCT appends it explicitly.
+    if !infinite && (a - c + e).abs() <= EPS {
+        zer.push(std::f64::consts::PI);
     }
 
     if infinite {
@@ -315,7 +334,6 @@ fn new_coefficients(
 pub fn intersect_circle_quadric(
     circle: &Circle3,
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
-    tol: f64,
 ) -> Option<(bool, Vec<(DVec3, f64)>)> {
     use crate::geomalgo::int_surf::quadric::QuadricType;
     let r = circle.radius;
