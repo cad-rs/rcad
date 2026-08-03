@@ -2208,7 +2208,7 @@ fn decompose_result(
             wline.set_first_point(1);
 
             if has_internals {
-                put_int_vertices(&mut wline, is_reversed, &a_v_line, the_arc_tol);
+                put_int_vertices(&mut wline, &sline, is_reversed, &a_v_line, the_arc_tol);
             }
 
             let n = wline.nb_points();
@@ -2232,7 +2232,7 @@ fn decompose_result(
             a_r_line.vertices.clear();
             a_r_line.wline_pnts = wline_pnts;
             if has_internals {
-                put_int_vertices(&mut a_r_line, is_reversed, &a_v_line, the_arc_tol);
+                put_int_vertices(&mut a_r_line, &sline, is_reversed, &a_v_line, the_arc_tol);
             }
             the_lines.push(a_r_line);
         }
@@ -2831,20 +2831,50 @@ fn has_internals(line: &[PntOn2S], vertices: &[PntOn2S]) -> bool {
     false
 }
 
-/// OCCT PutIntVertices — put the internal vertices onto the line.
+/// OCCT PutIntVertices (IntPatch_ImpPrmIntersection.cxx L2856-2920): add the
+/// vertices that coincide with the internal line points (indices 2..nbp-1) to
+/// the line, with the parameter from the line index (or the RLine arc
+/// parameter when the line is a Restriction line).
 fn put_int_vertices(
     line: &mut IntPatchLine,
+    result: &[PntOn2S],
     is_reversed: bool,
     vertices: &[PntOn2S],
     the_arc_tol: f64,
 ) {
-    for v in vertices {
-        let mut p = IntPatchVertex::default();
-        p.set_value(v.value(), the_arc_tol, false);
-        let (u1, v1, u2, v2) = v.parameters();
-        p.set_parameters(u1, v1, u2, v2);
-        line.add_vertex(p);
-        let _ = is_reversed;
+    let nbp = result.len();
+    if nbp < 3 {
+        return;
+    }
+    let nbv = vertices.len();
+    let is_rline = line.line_type == IntPatchIType::Restriction;
+    for ip in 1..nbp - 1 {
+        let a_p = &result[ip];
+        for iv in 0..nbv {
+            let a_v = &vertices[iv];
+            if a_p.is_same(a_v, rcad_kernel::precision::CONFUSION, rcad_kernel::precision::PCONFUSION) {
+                let a_pnt = result[ip].value();
+                let (u1, v1) = result[ip].parameters_on_surface(true);
+                let (u2, v2) = result[ip].parameters_on_surface(false);
+                let mut the_pnt = IntPatchVertex::default();
+                the_pnt.set_value(a_pnt, the_arc_tol, false);
+                the_pnt.set_parameters(u1, v1, u2, v2);
+                let mut a_param = (ip + 1) as f64;
+                if is_rline {
+                    let an_arc = line.arc_on_s1.as_ref().or(line.arc_on_s2.as_ref());
+                    if let Some(Curve2d::Line(a_lin)) = an_arc {
+                        let a_p_surf = if is_reversed {
+                            DVec2::new(u1, v1)
+                        } else {
+                            DVec2::new(u2, v2)
+                        };
+                        a_param = line2d_parameter(a_lin, a_p_surf);
+                    }
+                }
+                the_pnt.set_parameter(a_param);
+                line.add_vertex(the_pnt);
+            }
+        }
     }
 }
 
