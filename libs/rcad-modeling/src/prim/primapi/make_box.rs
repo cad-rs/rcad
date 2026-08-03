@@ -92,17 +92,26 @@ impl MakeBox {
             t.add_twire(vec![rev(e_bot[3].clone()), e_ver[0].clone(), e_top[3].clone(), rev(e_ver[3].clone())]),
             t.add_twire(vec![e_bot[1].clone(), e_ver[2].clone(), rev(e_top[1].clone()), rev(e_ver[1].clone())]),
         ];
-        let pln = |pt: DVec3, n: DVec3| Surface3::Plane(Plane::new(pt, n));
         // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
         // min faces (XMin/YMin/ZMin) are stored Reversed (BRepPrim_GWedge.cxx
-        // Face(): if (i % 2 == 0) ReverseFace).
+        // Face(): if (i % 2 == 0) ReverseFace).  The plane frame (u/v) matches
+        // OCCT's gp_Ax3 default for each +axis normal on the axis-aligned box,
+        // i.e. the frame is built from the local axes (not Plane::new's
+        // arbitrary perpendicular, which diverges for rotated boxes):
+        //   +Z face: u=X, v=Y ; +Y face: u=Z, v=X ; +X face: u=Z, v=-Y.
+        let pln = |pt: DVec3, n: DVec3, u: DVec3| Surface3::Plane(Plane {
+            origin: pt,
+            normal: n,
+            u_dir: u,
+            v_dir: n.cross(u).normalize_or_zero(),
+        });
         let f = [
-            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.z_axis)), w[0].clone(), vec![], None, None, vec![], true)),
-            t.add_tface(Some(pln(self.local(0.0,0.0,self.dz), self.z_axis)), w[1].clone(), vec![], None, None, vec![], true),
-            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.y_axis)), w[2].clone(), vec![], None, None, vec![], true)),
-            t.add_tface(Some(pln(self.local(0.0,self.dy,0.0), self.y_axis)), w[3].clone(), vec![], None, None, vec![], true),
-            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.x_axis)), w[4].clone(), vec![], None, None, vec![], true)),
-            t.add_tface(Some(pln(self.local(self.dx,0.0,0.0), self.x_axis)), w[5].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.z_axis, self.x_axis)), w[0].clone(), vec![], None, None, vec![], true)),
+            t.add_tface(Some(pln(self.local(0.0,0.0,self.dz), self.z_axis, self.x_axis)), w[1].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.y_axis, self.z_axis)), w[2].clone(), vec![], None, None, vec![], true)),
+            t.add_tface(Some(pln(self.local(0.0,self.dy,0.0), self.y_axis, self.z_axis)), w[3].clone(), vec![], None, None, vec![], true),
+            rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.x_axis, self.z_axis)), w[4].clone(), vec![], None, None, vec![], true)),
+            t.add_tface(Some(pln(self.local(self.dx,0.0,0.0), self.x_axis, self.z_axis)), w[5].clone(), vec![], None, None, vec![], true),
         ];
         let shell = t.add_tshell(f.to_vec());
         t.add_tsolid(vec![shell]);
