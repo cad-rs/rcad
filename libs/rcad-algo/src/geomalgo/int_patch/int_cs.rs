@@ -362,38 +362,25 @@ fn intersect_circle_quadric(
     circle: &rcad_kernel::geom::Circle3,
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
 ) -> Option<Vec<(DVec3, f64)>> {
-    use super::curve_surface as cs;
-    let tr = [0.0, std::f64::consts::TAU];
-    let hits: Vec<(DVec3, f64)> = match quad.type_quadric() {
-        crate::geomalgo::int_surf::quadric::QuadricType::Plane => {
-            let pl = quad.plane();
-            cs::intersect_circle_plane_with_tol(circle, tr, &pl, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
+    // OCCT IntCurveSurface_HInter -> IntAna_IntConicQuad(Circle, Quadric):
+    // analytic conic-quadric intersection (no sampling/Newton).
+    let quad_type = quad.type_quadric();
+    let tol = 1e-7;
+    let res = if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
+        let pl = quad.plane();
+        let (_, in_quadric, pts) =
+            super::int_conic_quad::intersect_circle_plane(circle, &pl, 1e-8, tol);
+        if in_quadric {
+            // The circle lies entirely on the plane: no isolated points
+            // (BoundedArc treats it as an all-arc solution segment).
+            Some((true, Vec::new()))
+        } else {
+            Some((false, pts))
         }
-        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => {
-            let cyl = quad.cylinder();
-            cs::intersect_circle_cylinder_with_tol(circle, tr, &cyl, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
-            let sph = quad.sphere();
-            cs::intersect_circle_sphere_with_tol(circle, tr, &sph, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
-            let con = quad.cone();
-            cs::intersect_circle_cone_with_tol(circle, tr, &con, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        _ => return None,
-    };
-    Some(hits)
+    } else {
+        super::int_conic_quad::intersect_circle_quadric(circle, quad, tol)
+    }?;
+    let (in_quadric, pts) = res;
+    let _ = in_quadric;
+    Some(pts)
 }

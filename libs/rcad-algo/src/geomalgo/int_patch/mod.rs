@@ -23,6 +23,7 @@ pub mod a_line_to_w_line;
 pub mod w_line_tool;
 pub mod transitions;
 pub mod int_cs;
+pub mod int_conic_quad;
 pub mod so_on_bounds;
 pub mod restriction;
 pub mod elclib;
