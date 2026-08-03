@@ -1871,7 +1871,7 @@ fn decompose_result(
     }
 
     // Deletes repeated vertices.
-    let a_v_line = get_vertices(the_line);
+    let mut a_v_line = get_vertices(the_line);
 
     // The walking/restriction polygon, adjusted for the quadric periodicity.
     let mut a_ss_line: Vec<PntOn2S> = a_s_line
@@ -2153,10 +2153,34 @@ fn decompose_result(
         let mut a_v_l = PntOn2S::new();
         let mut add_v_f = false;
         let mut add_v_l = false;
-        verify_vertices(&sline, &a_v_line, &mut a_v_f, &mut add_v_f, &mut a_v_l, &mut add_v_l);
-        let _ = (a_v_f, a_v_l);
+        let p_dom = the_p_surf.default_domain();
+        verify_vertices(
+            &sline,
+            is_reversed,
+            &mut a_v_line,
+            rcad_kernel::precision::PCONFUSION,
+            the_arc_tol,
+            &p_dom,
+            &mut a_v_f,
+            &mut add_v_f,
+            &mut a_v_l,
+            &mut add_v_l,
+        );
 
         let has_internals = has_internals(&sline, &a_v_line);
+
+        let mut d3_f = 0.0;
+        let mut d3_l = 0.0;
+        to_smooth(&mut sline, is_reversed, the_quad, true, &mut d3_f);
+        to_smooth(&mut sline, is_reversed, the_quad, false, &mut d3_l);
+
+        if add_v_f || add_v_l {
+            let is_added = add_vertices(&mut sline, &a_v_f, add_v_f, &a_v_l, add_v_l, d3_f, d3_l);
+            if is_added {
+                to_smooth(&mut sline, is_reversed, the_quad, true, &mut d3_f);
+                to_smooth(&mut sline, is_reversed, the_quad, false, &mut d3_l);
+            }
+        }
 
         let mut wline_pnts: Vec<crate::geomalgo::int_patch::WLinePnt> = sline
             .iter()
@@ -2440,53 +2464,358 @@ fn detect_of_boundary_achievement(
     }
 }
 
-/// OCCT VerifyVertices (L2556-2825) — condensed: identify near/same first/last.
+/// OCCT TestMiddleOnPrm (IntPatch_ImpPrmIntersection.cxx L2527-2554): the
+/// midpoint between aP and aV (on the parametric surface) must be IN or ON the
+/// parametric domain.
+fn test_middle_on_prm(a_p: &PntOn2S, a_v: &PntOn2S, is_reversed: bool, arc_tol: f64, p_domain: &[f64; 4]) -> bool {
+    let (up, vp) = if is_reversed {
+        a_p.parameters_on_surface(true)
+    } else {
+        a_p.parameters_on_surface(false)
+    };
+    let (uv, vv) = if is_reversed {
+        a_v.parameters_on_surface(true)
+    } else {
+        a_v.parameters_on_surface(false)
+    };
+    let um = 0.5 * (up + uv);
+    let vm = 0.5 * (vp + vv);
+    // rcad: the parametric domain is a rectangle; Classify returns ON when the
+    // point is within ArcTol of a bound, IN when strictly inside.
+    classify_rect(um, vm, arc_tol, p_domain) != 3
+}
+
+/// rcad Adaptor3d_TopolTool::Classify for a rectangular domain:
+/// 1 = IN, 2 = ON, 3 = OUT.
+fn classify_rect(u: f64, v: f64, tol: f64, d: &[f64; 4]) -> i32 {
+    if u < d[0] - tol || u > d[1] + tol || v < d[2] - tol || v > d[3] + tol {
+        return 3;
+    }
+    if (u - d[0]).abs() <= tol || (u - d[1]).abs() <= tol || (v - d[2]).abs() <= tol || (v - d[3]).abs() <= tol {
+        return 2;
+    }
+    1
+}
+
+/// OCCT ToSmooth (IntPatch_ImpPrmIntersection.cxx L2399-2525): move the
+/// first/last point of the line off the seam by a small step so that the
+/// line's U-parameters do not "jump" across the seam.
+fn to_smooth(line: &mut [PntOn2S], is_reversed: bool, the_quad: &Quadric, is_first: bool, d3d: &mut f64) {
+    let nbp = line.len();
+    if nbp <= 10 {
+        return;
+    }
+    *d3d = 0.0;
+    let mut nb_test_pnts = nbp / 5;
+    if nb_test_pnts < 5 {
+        nb_test_pnts = 5;
+    }
+    let startp = if is_first { 2 } else { nbp - nb_test_pnts - 2 };
+    let mut ddu = 0.0;
+    for ip in startp..=nb_test_pnts {
+        let (uc, vc) = if is_reversed {
+            line[ip - 1].parameters_on_surface(false)
+        } else {
+            line[ip - 1].parameters_on_surface(true)
+        };
+        let (un, vn) = if is_reversed {
+            line[ip].parameters_on_surface(false)
+        } else {
+            line[ip].parameters_on_surface(true)
+        };
+        ddu += (uc.abs() - un.abs()).abs();
+        if ip > startp {
+            *d3d += line[ip - 1].value().distance(line[ip - 2].value());
+        }
+    }
+    ddu /= (nb_test_pnts + 1) as f64;
+    *d3d /= (nb_test_pnts + 1) as f64;
+
+    let (index1, index2, index3) = if is_first {
+        (0usize, 1usize, 2usize)
+    } else {
+        (nbp - 1, nbp - 2, nbp - 3)
+    };
+    let (u1, v1, u2, v2, u3, v3) = if is_reversed {
+        let (a, b) = line[index1].parameters_on_surface(false);
+        let (c, d) = line[index2].parameters_on_surface(false);
+        let (e, f) = line[index3].parameters_on_surface(false);
+        (a, b, c, d, e, f)
+    } else {
+        let (a, b) = line[index1].parameters_on_surface(true);
+        let (c, d) = line[index2].parameters_on_surface(true);
+        let (e, f) = line[index3].parameters_on_surface(true);
+        (a, b, c, d, e, f)
+    };
+    let mut do_u = false;
+    let _ = v1;
+    let _ = v2;
+    let _ = v3;
+    if the_quad.type_quadric() == QuadricType::Sphere {
+        if (u1.abs() - u2.abs()).abs() > (std::f64::consts::PI / 16.0) {
+            do_u = true;
+        }
+        if do_u && (u1.abs() <= 1e-9 || (u1 - TAU).abs() <= 1e-9) {
+            if (v1 - std::f64::consts::FRAC_PI_2).abs() <= 1e-9 || (v1 + std::f64::consts::FRAC_PI_2).abs() <= 1e-9 {
+            } else {
+                do_u = false;
+            }
+        }
+    }
+    if the_quad.type_quadric() == QuadricType::Cone {
+        let (u_apx, v_apx) = the_quad.parameters(the_quad.cone().apex_point());
+        if (u1.abs() - u2.abs()).abs() > (std::f64::consts::PI / 32.0) {
+            do_u = true;
+        }
+        if do_u && (u1.abs() <= 1e-9 || (u1 - TAU).abs() <= 1e-9) {
+            if (v1 - v_apx).abs() <= 1e-9 {
+            } else {
+                do_u = false;
+            }
+        }
+        let _ = (u_apx, v_apx);
+    }
+    if do_u {
+        let d_u = (ddu / 10.0).min(5e-8);
+        let u = if u2 > u3 { u2 + d_u } else { u2 - d_u };
+        if is_reversed {
+            line[index1].set_value_uv(false, u, v1);
+        } else {
+            line[index1].set_value_uv(true, u, v1);
+        }
+    }
+}
+
+/// OCCT AddVertices (L2826-2854): insert VrtF/VrtL before/after the line when
+/// the 3D distance condition is satisfied.
+fn add_vertices(
+    line: &mut Vec<PntOn2S>,
+    vrt_f: &PntOn2S,
+    add_first: bool,
+    vrt_l: &PntOn2S,
+    add_last: bool,
+    d3d_f: f64,
+    d3d_l: f64,
+) -> bool {
+    let mut result = false;
+    if add_first {
+        let df = line[0].value().distance(vrt_f.value());
+        if (d3d_f * 2.0) > df && df > 1.5e-7 {
+            line.insert(0, vrt_f.clone());
+            result = true;
+        }
+    }
+    if add_last {
+        let dl = line[line.len() - 1].value().distance(vrt_l.value());
+        if (d3d_l * 2.0) > dl && dl > 1.5e-7 {
+            line.push(vrt_l.clone());
+            result = true;
+        }
+    }
+    result
+}
+
+/// OCCT VerifyVertices (L2556-2824).
 #[allow(clippy::too_many_arguments)]
 fn verify_vertices(
     line: &[PntOn2S],
-    vertices: &[PntOn2S],
+    is_reversed: bool,
+    vertices: &mut [PntOn2S],
+    tol_2d: f64,
+    arc_tol: f64,
+    p_domain: &[f64; 4],
     vrt_f: &mut PntOn2S,
     add_first: &mut bool,
     vrt_l: &mut PntOn2S,
     add_last: &mut bool,
 ) {
-    *add_first = false;
-    *add_last = false;
     let nbp = line.len();
     let nbv = vertices.len();
+    let mut f_index_same = 0usize;
+    let mut f_index_near = 0usize;
+    let mut l_index_same = 0usize;
+    let mut l_index_near = 0usize;
     let a_pf = &line[0];
     let a_pl = &line[nbp - 1];
+    let (uf, vf) = if is_reversed {
+        a_pf.parameters_on_surface(false)
+    } else {
+        a_pf.parameters_on_surface(true)
+    };
+    let (ul, vl) = if is_reversed {
+        a_pl.parameters_on_surface(false)
+    } else {
+        a_pl.parameters_on_surface(true)
+    };
+    let a2d_pf = DVec2::new(uf, vf);
+    let a2d_pl = DVec2::new(ul, vl);
     let mut dist_min_f = 1e+100;
     let mut dist_min_l = 1e+100;
-    let mut f_index_same = 0;
-    let mut f_index_near = 0;
-    let mut l_index_same = 0;
-    let mut l_index_near = 0;
-    for iv in 1..=nbv {
-        let a_v = &vertices[iv - 1];
-        let d_f = a_pf.value().distance(a_v.value());
-        let d_l = a_pl.value().distance(a_v.value());
-        if d_f <= rcad_kernel::precision::CONFUSION {
-            f_index_same = iv;
-        } else if d_f < dist_min_f {
-            dist_min_f = d_f;
-            f_index_near = iv;
-        }
-        if d_l <= rcad_kernel::precision::CONFUSION {
-            l_index_same = iv;
-        } else if d_l < dist_min_l {
-            dist_min_l = d_l;
-            l_index_near = iv;
+    let mut f_conjugated = 0usize;
+    let mut l_conjugated = 0usize;
+
+    // AdjustU each vertex U and store it back.
+    for iv in 0..nbv {
+        let (uv, vv) = if is_reversed {
+            vertices[iv].parameters_on_surface(false)
+        } else {
+            vertices[iv].parameters_on_surface(true)
+        };
+        let uv = adjust_u(uv);
+        if is_reversed {
+            vertices[iv].set_value_uv(false, uv, vv);
+        } else {
+            vertices[iv].set_value_uv(true, uv, vv);
         }
     }
-    let _ = (f_index_near, l_index_near);
-    if f_index_same != 0 {
-        *vrt_f = vertices[f_index_same - 1].clone();
-        *add_first = true;
+
+    // Find the vertex matching the first point.
+    for iv in 0..nbv {
+        let a_v = &vertices[iv];
+        if a_pf.is_same(a_v, rcad_kernel::precision::CONFUSION, rcad_kernel::precision::PCONFUSION) {
+            f_index_same = iv + 1;
+            break;
+        } else {
+            let (uv, vv) = if is_reversed {
+                a_v.parameters_on_surface(false)
+            } else {
+                a_v.parameters_on_surface(true)
+            };
+            let a2d_v = DVec2::new(uv, vv);
+            let dist = a2d_v.distance(a2d_pf);
+            if dist < dist_min_f {
+                dist_min_f = dist;
+                f_index_near = iv + 1;
+                if f_conjugated != 0 {
+                    f_conjugated = 0;
+                }
+            }
+            if is_seam_parameter(uv, tol_2d) {
+                let ucv = if uv.abs() < (TAU - uv).abs() { TAU } else { 0.0 };
+                let a2d_cv = DVec2::new(ucv, vv);
+                let c_dist = a2d_cv.distance(a2d_pf);
+                if c_dist < dist_min_f {
+                    dist_min_f = c_dist;
+                    f_conjugated = iv + 1;
+                    f_index_near = iv + 1;
+                }
+            }
+        }
     }
-    if l_index_same != 0 {
-        *vrt_l = vertices[l_index_same - 1].clone();
-        *add_last = true;
+
+    // Find the vertex matching the last point.
+    for iv in 0..nbv {
+        let a_v = &vertices[iv];
+        if a_pl.is_same(a_v, rcad_kernel::precision::CONFUSION, rcad_kernel::precision::PCONFUSION) {
+            l_index_same = iv + 1;
+            break;
+        } else {
+            let (uv, vv) = if is_reversed {
+                a_v.parameters_on_surface(false)
+            } else {
+                a_v.parameters_on_surface(true)
+            };
+            let a2d_v = DVec2::new(uv, vv);
+            let dist = a2d_v.distance(a2d_pl);
+            if dist < dist_min_l {
+                dist_min_l = dist;
+                l_index_near = iv + 1;
+                if l_conjugated != 0 {
+                    l_conjugated = 0;
+                }
+            }
+            if is_seam_parameter(uv, tol_2d) {
+                let ucv = if uv.abs() < (TAU - uv).abs() { TAU } else { 0.0 };
+                let a2d_cv = DVec2::new(ucv, vv);
+                let c_dist = a2d_cv.distance(a2d_pl);
+                if c_dist < dist_min_l {
+                    dist_min_l = c_dist;
+                    l_conjugated = iv + 1;
+                    l_index_near = iv + 1;
+                }
+            }
+        }
+    }
+
+    *add_first = false;
+    *add_last = false;
+
+    if f_index_same == 0 {
+        if f_index_near != 0 {
+            let a_v = &vertices[f_index_near - 1];
+            let (uv, vv) = if is_reversed {
+                a_v.parameters_on_surface(false)
+            } else {
+                a_v.parameters_on_surface(true)
+            };
+            if is_seam_parameter(uv, tol_2d) {
+                let ucv = if uv.abs() < (TAU - uv).abs() { TAU } else { 0.0 };
+                let test = test_middle_on_prm(a_pf, a_v, is_reversed, arc_tol, p_domain);
+                if test {
+                    vrt_f.set_value_pt(a_v.value());
+                    if is_reversed {
+                        let (u2, v2) = a_v.parameters_on_surface(true);
+                        vrt_f.set_value_uv(true, u2, v2);
+                        if f_conjugated == 0 {
+                            vrt_f.set_value_uv(false, uv, vv);
+                        } else {
+                            vrt_f.set_value_uv(false, ucv, vv);
+                        }
+                    } else {
+                        let (u2, v2) = a_v.parameters_on_surface(false);
+                        vrt_f.set_value_uv(false, u2, v2);
+                        if f_conjugated == 0 {
+                            vrt_f.set_value_uv(true, uv, vv);
+                        } else {
+                            vrt_f.set_value_uv(true, ucv, vv);
+                        }
+                    }
+                    let dist_3d = vrt_f.value().distance(a_pf.value());
+                    if dist_3d > 1.5e-7 && dist_min_f > tol_2d {
+                        *add_first = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if l_index_same == 0 {
+        if l_index_near != 0 {
+            let a_v = &vertices[l_index_near - 1];
+            let (uv, vv) = if is_reversed {
+                a_v.parameters_on_surface(false)
+            } else {
+                a_v.parameters_on_surface(true)
+            };
+            if is_seam_parameter(uv, tol_2d) {
+                let ucv = if uv.abs() < (TAU - uv).abs() { TAU } else { 0.0 };
+                let test = test_middle_on_prm(a_pl, a_v, is_reversed, arc_tol, p_domain);
+                if test {
+                    vrt_l.set_value_pt(a_v.value());
+                    if is_reversed {
+                        let (u2, v2) = a_v.parameters_on_surface(true);
+                        vrt_l.set_value_uv(true, u2, v2);
+                        if l_conjugated == 0 {
+                            vrt_l.set_value_uv(false, uv, vv);
+                        } else {
+                            vrt_l.set_value_uv(false, ucv, vv);
+                        }
+                    } else {
+                        let (u2, v2) = a_v.parameters_on_surface(false);
+                        vrt_l.set_value_uv(false, u2, v2);
+                        if l_conjugated == 0 {
+                            vrt_l.set_value_uv(true, uv, vv);
+                        } else {
+                            vrt_l.set_value_uv(true, ucv, vv);
+                        }
+                    }
+                    let dist_3d = vrt_l.value().distance(a_pl.value());
+                    if dist_3d > 1.5e-7 && dist_min_l > tol_2d {
+                        *add_last = true;
+                    }
+                }
+            }
+        }
     }
 }
 
