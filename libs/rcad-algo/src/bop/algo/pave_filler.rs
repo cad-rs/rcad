@@ -23,6 +23,7 @@ use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools;
 use rcad_kernel::base::proj_lib::project_on_surface;
+use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use crate::bop::tools::algo_tools;
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::geom::Surface3;
@@ -2120,6 +2121,18 @@ impl PaveFiller {
         if pairs.is_empty() { return; }
 
         let mut new_ff: Vec<InterferenceFF> = Vec::new();
+
+        // OCCT L336-360: collect all pairs of Edge/Edge interferences to check
+        // if some faces have to be moved to obtain more precise intersection.
+        let mut a_ee_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for a_ee in &self.ds.interf_ee {
+            if a_ee.new_vertex != 0 {
+                // OCCT HasIndexNew() -> IndexNew().  BOPDS_Pair orders the pair.
+                let pair = if a_ee.e1 <= a_ee.e2 { (a_ee.e1, a_ee.e2) } else { (a_ee.e2, a_ee.e1) };
+                a_ee_map.entry(pair).or_default().push(a_ee.new_vertex);
+            }
+        }
+
         for &(i, j) in &pairs {
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
@@ -2139,10 +2152,67 @@ impl PaveFiller {
                     }
                 }
             }
+
+            // OCCT L400-486: check if there is an intersection between the edges
+            // of the faces; if the intersection point is at some distance from
+            // the edges, move one of the faces to the point of exact edge
+            // intersection (only closed/seam edges are considered).
+            let mut a_f_shifted1 = s1.clone();
+            let mut a_f_shifted2 = s2.clone();
+            let mut a_shift_value = 0.0;
+            if !is_plane_ff(&s1) || !is_plane_ff(&s2) {
+                let an_is_plane1 = is_plane_ff(&s1);
+                let an_is_plane2 = is_plane_ff(&s2);
+                let edges1 = face_edge_indices(&self.ds, i);
+                let edges2 = face_edge_indices(&self.ds, j);
+                'outer: for &n_e1 in &edges1 {
+                    let Some(an_edge1) = self.ds.shape(n_e1).as_edge() else { continue; };
+                    let an_is_closed1 = is_closed_ff(&self.ds, i, n_e1, an_is_plane1);
+                    for &n_e2 in &edges2 {
+                        let Some(an_edge2) = self.ds.shape(n_e2).as_edge() else { continue; };
+                        let an_is_closed2 = is_closed_ff(&self.ds, j, n_e2, an_is_plane2);
+                        if !an_is_closed1 && !an_is_closed2 {
+                            continue;
+                        }
+                        let pair = if n_e1 <= n_e2 { (n_e1, n_e2) } else { (n_e2, n_e1) };
+                        let Some(a_vertex_indices) = a_ee_map.get(&pair) else { continue; };
+                        for &a_vertex_index in a_vertex_indices {
+                            let Some(a_vertex) = self.ds.shape(a_vertex_index).as_vertex() else { continue; };
+                            let a_vertex_point = a_vertex.point;
+                            let Some(a_c1) = an_edge1.curve.clone() else { continue; };
+                            let Some(a_c2) = an_edge2.curve.clone() else { continue; };
+                            // OCCT L457-460: compute points exactly on the edges.
+                            let a_proj1 = closest_point_on_curve_range(
+                                &a_c1, a_vertex_point, an_edge1.range[0], an_edge1.range[1], 64);
+                            let a_proj2 = closest_point_on_curve_range(
+                                &a_c2, a_vertex_point, an_edge2.range[0], an_edge2.range[1], 64);
+                            let a_p1 = a_proj1.point;
+                            let a_p2 = a_proj2.point;
+                            let a_shift_dist = a_p1.distance(a_p2);
+                            if a_shift_dist > a_vertex.tolerance {
+                                // OCCT L474-478: move one of the faces to the
+                                // point of exact intersection of the edges.
+                                if an_is_closed1 {
+                                    a_f_shifted1 = translate_surface(&a_f_shifted1, a_p2 - a_p1);
+                                } else {
+                                    a_f_shifted2 = translate_surface(&a_f_shifted2, a_p1 - a_p2);
+                                }
+                                a_shift_value = a_shift_dist;
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+
             let uv1 = self.ds.face_actual_uv_bounds(i);
             let uv2 = self.ds.face_actual_uv_bounds(j);
+            // OCCT L495: aTolFF = max(aShiftValue, ToleranceFF(aBAS1, aBAS2)).
+            let a_tol_ff = a_shift_value
+                .max(tolerance_ff(&s1, &s2, self.ds.face_tolerance(i), self.ds.face_tolerance(j)));
             let mut ff = int_tools::face_face::FaceFace::new();
-            ff.set_surfaces(s1.clone(), s2.clone());
+            // OCCT L492: SetFaces(aFShifted1, aFShifted2).
+            ff.set_surfaces(a_f_shifted1, a_f_shifted2);
             ff.set_uv_bounds(uv1, uv2);
             ff.set_face_indices(i, j);
             ff.set_tolerances(self.ds.face_tolerance(i), self.ds.face_tolerance(j));
@@ -2161,7 +2231,11 @@ impl PaveFiller {
             }
             let curves = ff.make_curves();
             let mut curve_ids: Vec<usize> = Vec::new();
-            for c in curves {
+            for mut c in curves {
+                // OCCT L607: aNC.SetTolerance(max(aIC.Tolerance(), aTolFF)).
+                if c.tolerance < a_tol_ff {
+                    c.tolerance = a_tol_ff;
+                }
                 // OCCT L597-607: IntTools_Tools::CheckCurve — reject degenerate
                 // point-like curves before adding them to the FF interference.
                 if !int_tools::face_face::check_curve(&c) {
@@ -4463,4 +4537,88 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 fn is_based_on_plane(face: &Shape) -> bool {
     // OCCT L937-951: BRep_Tool::Surface(aF, aLoc) → downcast to Plane
     face.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, Surface3::Plane(_)))
+}
+
+// ====================================================================
+// OCCT BOPAlgo_PaveFiller_6.cxx static helpers used by PerformFF
+// ====================================================================
+
+/// OCCT IsPlaneFF (BOPAlgo_PaveFiller_6.cxx L84-102): true when the surface is
+/// a plane (including Offset/Trimmed surfaces with a plane basis).
+fn is_plane_ff(s: &Surface3) -> bool {
+    matches!(s, Surface3::Plane(_))
+}
+
+/// OCCT ToleranceFF (BOPAlgo_PaveFiller_6.cxx L3922-3942): the FF tolerance is
+/// the maximal face tolerance, raised to 5.e-6 when either face is not analytic.
+fn tolerance_ff(s1: &Surface3, s2: &Surface3, tol1: f64, tol2: f64) -> f64 {
+    let mut a_tol_ff = tol1.max(tol2);
+    let is_ana = |s: &Surface3| {
+        matches!(
+            s,
+            Surface3::Plane(_)
+                | Surface3::Cylinder(_)
+                | Surface3::Cone(_)
+                | Surface3::Sphere(_)
+                | Surface3::Torus(_)
+        )
+    };
+    if !is_ana(s1) || !is_ana(s2) {
+        a_tol_ff = a_tol_ff.max(5.0e-6);
+    }
+    a_tol_ff
+}
+
+/// Collect the DS indices of all edges of the face (OCCT: iterate the face's
+/// wires and their edges).
+fn face_edge_indices(ds: &DS, n_f: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let Some(fd) = ds.shape(n_f).as_face() else { return out; };
+    let wires = std::iter::once(fd.outer_wire.clone()).chain(fd.inner_wires.iter().cloned());
+    for ws in wires {
+        let Some(&wi) = ds.map_shape_index.get(&(ws.ptr_id(), ws.location)) else { continue };
+        if wi >= ds.nb_shapes() {
+            continue;
+        }
+        let Some(wd) = ds.shape(wi).as_wire() else { continue };
+        for eshape in &wd.edges {
+            if let Some(&ei) = ds.map_shape_index.get(&(eshape.ptr_id(), eshape.location)) {
+                out.push(ei);
+            }
+        }
+    }
+    out
+}
+
+/// OCCT IsClosedFF (BOPAlgo_PaveFiller_6.cxx L106-134): true when the edge is a
+/// seam edge on the (non-plane) surface.  rcad: a seam edge appears more than
+/// once in the face's boundary wires (the periodic image).
+fn is_closed_ff(ds: &DS, n_f: usize, n_e: usize, is_plane: bool) -> bool {
+    if is_plane {
+        return false;
+    }
+    let e_ptr = ds.shape(n_e).ptr_id();
+    let Some(fd) = ds.shape(n_f).as_face() else { return false; };
+    let wires = std::iter::once(fd.outer_wire.clone()).chain(fd.inner_wires.iter().cloned());
+    let mut count = 0usize;
+    for ws in wires {
+        let Some(&wi) = ds.map_shape_index.get(&(ws.ptr_id(), ws.location)) else { continue };
+        if wi >= ds.nb_shapes() {
+            continue;
+        }
+        let Some(wd) = ds.shape(wi).as_wire() else { continue };
+        for eshape in &wd.edges {
+            if eshape.ptr_id() == e_ptr {
+                count += 1;
+            }
+        }
+    }
+    count >= 2
+}
+
+/// OCCT TopoDS_Face::Move(aLoc) — translate a face surface by a vector.
+fn translate_surface(s: &Surface3, vec: DVec3) -> Surface3 {
+    use glam::DAffine3;
+    let loc = DAffine3::from_translation(vec);
+    rcad_kernel::geom::transform_surface(s, &loc)
 }

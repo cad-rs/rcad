@@ -1497,10 +1497,11 @@ pub fn int_cyco(
     spnt: &mut Vec<IntPatchPoint>,
 ) -> bool {
     let (cy, co) = if !reversed { (quad1, quad2) } else { (quad2, quad1) };
-    let _ = (cy, co);
 
     let mut inter = QuadQuadGeo::new();
-    inter.perform_cylinder_cone(quad1, quad2, tol);
+    // OCCT L8395-8405: IntAna_QuadQuadGeo inter(Cy, Co, Tol) with Cy the
+    // cylinder and Co the cone, in the reordered order.
+    inter.perform_cylinder_cone(cy, co, tol);
     if !inter.is_done() {
         return false;
     }

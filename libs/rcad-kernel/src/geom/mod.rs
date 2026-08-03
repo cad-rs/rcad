@@ -1775,6 +1775,19 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
             radius: s.radius * loc.transform_vector3(s.axis).length().max(1e-12),
             ref_dir: loc.transform_vector3(s.ref_dir).normalize_or_zero(),
         }),
+        Surface3::Cone(c) => Surface3::Cone(ConicalSurface {
+            apex: loc.transform_point3(c.apex),
+            axis: loc.transform_vector3(c.axis).normalize_or_zero(),
+            radius: c.radius * loc.transform_vector3(c.axis).length().max(1e-12),
+            half_angle_rad: c.half_angle_rad,
+            ref_dir: loc.transform_vector3(c.ref_dir).normalize_or_zero(),
+        }),
+        Surface3::Torus(t) => Surface3::Torus(ToroidalSurface {
+            center: loc.transform_point3(t.center),
+            axis: loc.transform_vector3(t.axis).normalize_or_zero(),
+            major_radius: t.major_radius * loc.transform_vector3(t.axis).length().max(1e-12),
+            minor_radius: t.minor_radius,
+        }),
         Surface3::BSpline(bs) => Surface3::BSpline(BSplineSurface {
             degree_u: bs.degree_u,
             degree_v: bs.degree_v,

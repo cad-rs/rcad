@@ -8,7 +8,7 @@ use rcad_algo::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{self, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
-use rcad_modeling::prim::primapi::{make_box_brep, make_sphere_brep, make_cylinder_brep, make_cone_brep};
+use rcad_modeling::prim::primapi::{make_box_brep, make_prism_brep, make_sphere_brep, make_cylinder_brep, make_cone_brep};
 use std::sync::Arc;
 
 /// Stage counts expected from OCCT reference.
@@ -6873,7 +6873,7 @@ fn pf_stage_box_x_cylinder_rotated() {
 #[test]
 fn pf_stage_prism_x_cylinder() {
     // Construct shape A (PRISM)
-    let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+    let a = make_prism_brep(1.0, 1.0, 1.0)
         .expect("prism a");
 
     // Construct shape B (CYLINDER) — at position OVERLAP
