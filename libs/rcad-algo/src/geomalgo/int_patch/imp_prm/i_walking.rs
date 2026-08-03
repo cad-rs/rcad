@@ -465,12 +465,16 @@ impl IWalking {
     }
 
     /// OCCT Perform(Pnts1, Pnts2, Func, Caro, Reversed) (gxx L153-311).
+    /// `domain` is the corrected face UV rectangle ([u_min, u_max, v_min,
+    /// v_max]) — the OCCT adaptor surface carries the restricted face domain,
+    /// while the rcad Surface3 exposes the natural (possibly infinite) domain.
     pub fn perform(
         &mut self,
         pnts1: &[PathPoint],
         pnts2: &[InteriorPoint],
         func: &mut SurfFunction,
         caro: &Surface3,
+        domain: [f64; 4],
         reversed: bool,
     ) {
         let nb_pnts1 = pnts1.len();
@@ -480,10 +484,10 @@ impl IWalking {
         self.clear();
         self.reversed = reversed;
 
-        self.um = caro.default_domain()[0];
-        self.vm = caro.default_domain()[2];
-        self.um_max = caro.default_domain()[1];
-        self.vm_max = caro.default_domain()[3];
+        self.um = domain[0];
+        self.vm = domain[2];
+        self.um_max = domain[1];
+        self.vm_max = domain[3];
 
         if self.um_max < self.um {
             let utemp = self.um_max;
@@ -567,8 +571,8 @@ impl IWalking {
         }
 
         self.tolerance = [
-            u_resolution(caro, rcad_kernel::precision::CONFUSION),
-            v_resolution(caro, rcad_kernel::precision::CONFUSION),
+            u_resolution(domain, rcad_kernel::precision::CONFUSION),
+            v_resolution(domain, rcad_kernel::precision::CONFUSION),
         ];
 
         func.set_surface(caro.clone());
@@ -641,6 +645,7 @@ impl IWalking {
         pnts1: &[PathPoint],
         func: &mut SurfFunction,
         caro: &Surface3,
+        domain: [f64; 4],
         reversed: bool,
     ) {
         let mut rajout = false;
@@ -681,14 +686,14 @@ impl IWalking {
         }
 
         self.tolerance = [
-            u_resolution(caro, rcad_kernel::precision::CONFUSION),
-            v_resolution(caro, rcad_kernel::precision::CONFUSION),
+            u_resolution(domain, rcad_kernel::precision::CONFUSION),
+            v_resolution(domain, rcad_kernel::precision::CONFUSION),
         ];
 
-        self.um = caro.default_domain()[0];
-        self.vm = caro.default_domain()[2];
-        self.um_max = caro.default_domain()[1];
-        self.vm_max = caro.default_domain()[3];
+        self.um = domain[0];
+        self.vm = domain[2];
+        self.um_max = domain[1];
+        self.vm_max = domain[3];
 
         if self.um_max < self.um {
             let utemp = self.um_max;
@@ -1534,7 +1539,9 @@ impl IWalking {
         let dv = uv[1] - paramv;
         let duv = du * du + dv * dv;
 
-        let corde = self.previous_point.value() - func.point();
+        // OCCT: Corde = gp_Vec(previousPoint.Value(), sp.Point()) = sp.Point() -
+        // previousPoint.Value() = current - previous.
+        let corde = func.point() - self.previous_point.value();
         let norme = corde.length_squared();
 
         if (norme <= 4.0 * rcad_kernel::precision::SQUARE_CONFUSION)
@@ -1852,10 +1859,9 @@ impl IWalking {
                         self.pas * (self.um_max - self.um)
                     };
                 } else {
+                    // OCCT: pas * min((UM-Um)/d2dx, (VM-Vm)/d2dy).
                     pas_c = self.pas
-                        * (self.um_max - self.um)
-                            .min(self.vm_max - self.vm)
-                        / (d2dx.max(d2dy));
+                        * ((self.um_max - self.um) / d2dx).min((self.vm_max - self.vm) / d2dy);
                 }
 
                 arrive = false;
@@ -3026,21 +3032,20 @@ fn cut_vector_by_tolerances(v: &mut DVec2, tolerance: &[f64; 2]) {
     }
 }
 
-/// rcad adaptation of Adaptor3d_HSurfaceTool::UResolution / VResolution.
-fn u_resolution(surf: &Surface3, tol3d: f64) -> f64 {
-    let d = surf.default_domain();
-    let u_extent = (d[1] - d[0]).abs();
-    if u_extent > 1e-12 {
+/// rcad adaptation of Adaptor3d_HSurfaceTool::UResolution / VResolution
+/// (the corrected face domain).
+fn u_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
+    let u_extent = (domain[1] - domain[0]).abs();
+    if u_extent.is_finite() && u_extent > 1e-12 {
         tol3d.max(1e-9) / u_extent
     } else {
         rcad_kernel::precision::PCONFUSION
     }
 }
 
-fn v_resolution(surf: &Surface3, tol3d: f64) -> f64 {
-    let d = surf.default_domain();
-    let v_extent = (d[3] - d[2]).abs();
-    if v_extent > 1e-12 {
+fn v_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
+    let v_extent = (domain[3] - domain[2]).abs();
+    if v_extent.is_finite() && v_extent > 1e-12 {
         tol3d.max(1e-9) / v_extent
     } else {
         rcad_kernel::precision::PCONFUSION

@@ -86,13 +86,17 @@ pub fn make_prism_brep(
     // x=w face: profile +Y -> normal +X; forward  -> outward +X.
     // y=d face: profile -X -> normal +Y; forward  -> outward +Y.
     // x=0 face: profile +Y -> normal +X; reversed -> outward -X.
+    // UV domains: the caps are [0,w]x[0,d]; each lateral face is the profile
+    // parameter (the edge length) x the extrusion height.  OCCT prism faces
+    // carry finite UV domains (BRepPrim_Build::MakeFace).
+    let cap_uv = [0.0, w, 0.0, d];
     let faces = [
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[0].clone(), vec![], None, None, vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[1].clone(), vec![], None, None, vec![], true),
-        rev(t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(0.0, 0.0, 0.0))), wires[2].clone(), vec![], None, None, vec![], true)),
-        t.add_tface(Some(lext(DVec3::new(w, d, 0.0), DVec3::new(0.0, d, 0.0))), wires[3].clone(), vec![], None, None, vec![], true),
-        rev(t.add_tface(Some(lext(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, d, 0.0))), wires[4].clone(), vec![], None, None, vec![], true)),
-        t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(w, d, 0.0))), wires[5].clone(), vec![], None, None, vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[0].clone(), vec![], None, Some(cap_uv), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[1].clone(), vec![], None, Some(cap_uv), vec![], true),
+        rev(t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(0.0, 0.0, 0.0))), wires[2].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true)),
+        t.add_tface(Some(lext(DVec3::new(w, d, 0.0), DVec3::new(0.0, d, 0.0))), wires[3].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true),
+        rev(t.add_tface(Some(lext(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, d, 0.0))), wires[4].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true)),
+        t.add_tface(Some(lext(DVec3::new(w, 0.0, 0.0), DVec3::new(w, d, 0.0))), wires[5].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
     t.add_tsolid(vec![shell]);

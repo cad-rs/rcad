@@ -468,6 +468,31 @@ impl Domain {
         (v1.u - v2.u).abs() <= rcad_kernel::precision::CONFUSION
             && (v1.v - v2.v).abs() <= rcad_kernel::precision::CONFUSION
     }
+    /// OCCT TopolTool::Orientation(A) — orientation of a boundary arc in the
+    /// face.  rcad's domain is a rectangular UV patch; the boundary walk is
+    /// counter-clockwise (bottom, right, top, left).
+    pub fn orientation_arc(&self, a: &Curve2d) -> rcad_kernel::topods::Orientation {
+        use rcad_kernel::topods::Orientation;
+        match self.arc_of(a) {
+            0 => Orientation::Forward,  // bottom: +U
+            1 => Orientation::Reversed, // top: -U in the CCW walk
+            2 => Orientation::Reversed, // left: -V in the CCW walk
+            _ => Orientation::Forward,  // right: +V
+        }
+    }
+
+    /// OCCT TopolTool::Orientation(V) — orientation of a boundary vertex.
+    pub fn orientation_vertex(&self, v: DomainVertex) -> rcad_kernel::topods::Orientation {
+        use rcad_kernel::topods::Orientation;
+        let u_max = (v.u - self.u_max).abs() <= rcad_kernel::precision::CONFUSION;
+        let v_max = (v.v - self.v_max).abs() <= rcad_kernel::precision::CONFUSION;
+        if u_max && v_max || !u_max && !v_max {
+            Orientation::Forward
+        } else {
+            Orientation::Reversed
+        }
+    }
+
     /// OCCT IntPatch_HInterTool::Parameter(V, A).
     pub fn parameter(&self, v: DomainVertex, a: &Curve2d) -> f64 {
         if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {

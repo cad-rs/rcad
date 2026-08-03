@@ -120,9 +120,10 @@ impl PathPoint {
         (self.sequv.len() - 1) as i32
     }
 
-    /// OCCT Parameters(Index, U, V) (lxx L82-85) — 1-based index.
+    /// OCCT Parameters(Index, U, V) (lxx L82-85) — OCCT `Value(Index+1)` is
+    /// 1-based, so the 0-based element is `sequv[Index]`.
     pub fn parameters(&self, index: i32, u: &mut f64, v: &mut f64) {
-        let uv = self.sequv[index as usize + 1];
+        let uv = self.sequv[index as usize];
         *u = uv.x;
         *v = uv.y;
     }

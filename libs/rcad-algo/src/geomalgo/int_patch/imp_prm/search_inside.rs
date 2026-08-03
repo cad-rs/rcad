@@ -27,18 +27,20 @@ impl SearchInside {
         }
     }
 
-    /// OCCT Perform(F, PS, T, Epsilon) (L42-266).  `samples_u` / `samples_v`
-    /// stand in for the TopolTool NbSamplesU/V.
+    /// OCCT Perform(F, PS, T, Epsilon) (L42-266).  `domain` is the corrected
+    /// face UV rectangle (the OCCT Adaptor3d_TopolTool / restricted surface
+    /// domain), which may be narrower than the surface's natural domain.
     pub fn perform(
         &mut self,
         func: &mut SurfFunction,
         surf: &Surface3,
+        domain: [f64; 4],
         epsilon: f64,
     ) {
         self.done = false;
         self.list.clear();
 
-        let d = surf.default_domain();
+        let d = domain;
         let umin0 = d[0];
         let umax0 = d[1];
         let vmin0 = d[2];
@@ -60,9 +62,9 @@ impl SearchInside {
         du /= (nbsample_u as f64) * 0.5;
         dv /= (nbsample_v as f64) * 0.5;
 
-        // Parametric resolutions.
-        let resol_u = u_resolution(surf, rcad_kernel::precision::CONFUSION);
-        let resol_v = v_resolution(surf, rcad_kernel::precision::CONFUSION);
+        // Parametric resolutions (from the corrected domain).
+        let resol_u = u_resolution(domain, rcad_kernel::precision::CONFUSION);
+        let resol_v = v_resolution(domain, rcad_kernel::precision::CONFUSION);
         let toler = [resol_u, resol_v];
         let mut maxtoler1toler2 = if toler[0] > toler[1] { toler[0] } else { toler[1] };
 
@@ -218,18 +220,19 @@ impl SearchInside {
         &mut self,
         func: &mut SurfFunction,
         surf: &Surface3,
+        domain: [f64; 4],
         u_start: f64,
         v_start: f64,
     ) {
         self.done = false;
         self.list.clear();
 
-        let d = surf.default_domain();
+        let d = domain;
         let binf = [d[0], d[2]];
         let bsup = [d[1], d[3]];
 
-        let resol_u = u_resolution(surf, rcad_kernel::precision::CONFUSION);
-        let resol_v = v_resolution(surf, rcad_kernel::precision::CONFUSION);
+        let resol_u = u_resolution(domain, rcad_kernel::precision::CONFUSION);
+        let resol_v = v_resolution(domain, rcad_kernel::precision::CONFUSION);
         let toler = [resol_u, resol_v];
 
         if u_start - binf[0] > -toler[0]
@@ -283,22 +286,19 @@ impl Default for SearchInside {
 }
 
 /// rcad adaptation of Adaptor3d_HSurfaceTool::UResolution — parametric
-/// resolution in the U direction for a 3D tolerance (default: the domain
-/// extent scaled by the tolerance ratio).
-fn u_resolution(surf: &Surface3, tol3d: f64) -> f64 {
-    let d = surf.default_domain();
-    let u_extent = (d[1] - d[0]).abs();
-    if u_extent > 1e-12 {
+/// resolution in the U direction for a 3D tolerance (the corrected face domain).
+fn u_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
+    let u_extent = (domain[1] - domain[0]).abs();
+    if u_extent.is_finite() && u_extent > 1e-12 {
         tol3d.max(1e-9) / u_extent
     } else {
         rcad_kernel::precision::PCONFUSION
     }
 }
 
-fn v_resolution(surf: &Surface3, tol3d: f64) -> f64 {
-    let d = surf.default_domain();
-    let v_extent = (d[3] - d[2]).abs();
-    if v_extent > 1e-12 {
+fn v_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
+    let v_extent = (domain[3] - domain[2]).abs();
+    if v_extent.is_finite() && v_extent > 1e-12 {
         tol3d.max(1e-9) / v_extent
     } else {
         rcad_kernel::precision::PCONFUSION

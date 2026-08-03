@@ -54,7 +54,9 @@ fn is_seam_or_pole(
     const SPNT_SEAM_UV: i32 = 4;
     const SPNT_POLE_SEAM_U: i32 = 5;
 
-    if ref_index == 0 || ref_index >= line.len() {
+    // OCCT: (theRefIndex < 1) || (theRefIndex >= NbPoints) — with 1-based
+    // NbPoints, theRefIndex+1 stays valid, so in 0-based: ref_index+1 < len.
+    if ref_index == 0 || ref_index + 1 >= line.len() {
         return SPNT_NONE;
     }
 
@@ -239,6 +241,10 @@ pub struct ImpPrmIntersection {
     my_is_start_pnt: bool,
     my_u_start: f64,
     my_v_start: f64,
+    // Test-support diagnostics (not part of the OCCT state).
+    dbg_seqpdep: usize,
+    dbg_seqpins: usize,
+    dbg_iwalk_lines: usize,
 }
 
 impl ImpPrmIntersection {
@@ -254,6 +260,9 @@ impl ImpPrmIntersection {
             my_is_start_pnt: false,
             my_u_start: 0.0,
             my_v_start: 0.0,
+            dbg_seqpdep: 0,
+            dbg_seqpins: 0,
+            dbg_iwalk_lines: 0,
         }
     }
 
@@ -283,6 +292,14 @@ impl ImpPrmIntersection {
     /// OCCT NbLines.
     pub fn nb_lines(&self) -> usize {
         self.slin.len()
+    }
+    /// Test-support accessor: SOnBounds point/segment counts.
+    pub fn dbg_sonbounds(&self) -> (usize, usize) {
+        (self.solrst.nb_points(), self.solrst.nb_segments())
+    }
+    /// Test-support accessor: departure/interior/walking-line counts.
+    pub fn dbg_walk(&self) -> (usize, usize, usize) {
+        (self.dbg_seqpdep, self.dbg_seqpins, self.dbg_iwalk_lines)
     }
     /// OCCT Line(Index) — 1-based.
     pub fn line(&self, index: usize) -> &IntPatchLine {
@@ -427,11 +444,17 @@ impl ImpPrmIntersection {
         let mut nb_point_ins = 0usize;
         if search_ins {
             let p_surf = if !reversed { s2 } else { s1 };
+            let p_domain = if !reversed { uv2 } else { uv1 };
             if self.my_is_start_pnt {
-                self.solins
-                    .perform_from_point(&mut func, p_surf, self.my_u_start, self.my_v_start);
+                self.solins.perform_from_point(
+                    &mut func,
+                    p_surf,
+                    p_domain,
+                    self.my_u_start,
+                    self.my_v_start,
+                );
             } else {
-                self.solins.perform(&mut func, p_surf, tol_tang);
+                self.solins.perform(&mut func, p_surf, p_domain, tol_tang);
             }
             nb_point_ins = self.solins.nb_points();
             for i in 1..=nb_point_ins {
@@ -440,11 +463,15 @@ impl ImpPrmIntersection {
         }
 
         let nb_point_dep = seqpdep.len();
+        self.dbg_seqpdep = nb_point_dep;
+        self.dbg_seqpins = seqpins.len();
 
         if nb_point_dep > 0 || nb_point_ins > 0 {
             let param_surf = if reversed { s1 } else { s2 };
+            let p_domain = if !reversed { uv2 } else { uv1 };
             let mut iwalk = IWalking::new(tol_tang, fleche, a_local_pas, false);
-            iwalk.perform(&seqpdep, &seqpins, &mut func, param_surf, reversed);
+            iwalk.perform(&seqpdep, &seqpins, &mut func, param_surf, p_domain, reversed);
+            self.dbg_iwalk_lines = iwalk.nb_lines();
 
             if !iwalk.is_done() {
                 return;
@@ -1465,8 +1492,13 @@ fn compute_tangency(
                 let v1 = d1u.cross(d1v);
 
                 let mut test = vectg.dot(v1.cross(v2));
+                let arcorien = _dom.orientation_arc(&thearc);
                 if p_start.is_new() {
-                    if (test < 0.0) {
+                    // OCCT L316-321: reverse when (test<0 AND FORWARD) OR
+                    // (test>0 AND REVERSED).
+                    let should_reverse =
+                        (test < 0.0) != (arcorien == rcad_kernel::topods::Orientation::Reversed);
+                    if should_reverse {
                         p_point.set_directions(-vectg, -dirtg);
                     } else {
                         p_point.set_directions(vectg, dirtg);
