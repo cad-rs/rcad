@@ -2460,8 +2460,20 @@ fn is_seam_parameter(u: f64, tol_2d: f64) -> bool {
     u.abs() <= tol_2d || (TAU - u).abs() <= tol_2d
 }
 
-/// OCCT DetectOfBoundaryAchievement — checks whether the current line point is
-/// on the quadric domain boundary (rcondensed).
+/// OCCT IsPointOnBoundary (IntPatch_ImpPrmIntersection.cxx L3043-3060) — TRUE
+/// when theParam matches theBoundary +/- thePeriod within theToler2D.
+fn is_point_on_boundary(tol_2d: f64, boundary: f64, period: f64, param: f64) -> bool {
+    let mut a_delta = (param - boundary).abs();
+    if period != 0.0 {
+        a_delta = a_delta % period;
+        return a_delta < tol_2d || (period - a_delta) < tol_2d;
+    }
+    a_delta < tol_2d
+}
+
+/// OCCT DetectOfBoundaryAchievement (L3067-3137): the WLine reaches the quadric
+/// domain boundary when the current point is on it and the previous is not;
+/// the boundary point is then adjusted to avoid U "jumping" across the seam.
 fn detect_of_boundary_achievement(
     q_surf: &Surface3,
     is_reversed: bool,
@@ -2470,21 +2482,52 @@ fn detect_of_boundary_achievement(
     sline: &mut Vec<PntOn2S>,
     is_on_boundary: &mut bool,
 ) {
+    let a_u_period = if q_surf.is_u_periodic() { TAU } else { 0.0 };
+    let a_v_period = if q_surf.is_v_periodic() { TAU } else { 0.0 };
     let d = q_surf.default_domain();
-    let (u_min, u_max, v_min, v_max) = (d[0], d[1], d[2], d[3]);
-    let tol = rcad_kernel::precision::PCONFUSION;
-    let (u, v) = if is_reversed {
-        line[k - 1].parameters_on_surface(false)
+    let (a_uf, a_ul, a_vf, a_vl) = (d[0], d[1], d[2], d[3]);
+    let a_p_prev = &line[k - 2];
+    let a_p_curr = &line[k - 1];
+    let (mut a_u_prev, a_v_prev, mut a_u_curr, mut a_v_curr) = if is_reversed {
+        let (u1, v1) = a_p_prev.parameters_on_surface(false);
+        let (u2, v2) = a_p_curr.parameters_on_surface(false);
+        (u1, v1, u2, v2)
     } else {
-        line[k - 1].parameters_on_surface(true)
+        let (u1, v1) = a_p_prev.parameters_on_surface(true);
+        let (u2, v2) = a_p_curr.parameters_on_surface(true);
+        (u1, v1, u2, v2)
     };
-    let on_u_min = (u - u_min).abs() <= tol;
-    let on_u_max = (u - u_max).abs() <= tol;
-    let on_v_min = (v - v_min).abs() <= tol;
-    let on_v_max = (v - v_max).abs() <= tol;
-    if on_u_min || on_u_max || on_v_min || on_v_max {
+    let tol = rcad_kernel::precision::PCONFUSION;
+    if is_point_on_boundary(tol, a_uf, a_u_period, a_u_curr)
+        && !is_point_on_boundary(tol, a_uf, a_u_period, a_u_prev)
+    {
         *is_on_boundary = true;
-        sline.push(line[k - 1].clone());
+    } else if is_point_on_boundary(tol, a_ul, a_u_period, a_u_curr)
+        && !is_point_on_boundary(tol, a_ul, a_u_period, a_u_prev)
+    {
+        *is_on_boundary = true;
+    } else if is_point_on_boundary(tol, a_vf, a_v_period, a_v_curr)
+        && !is_point_on_boundary(tol, a_vf, a_v_period, a_v_prev)
+    {
+        *is_on_boundary = true;
+    } else if is_point_on_boundary(tol, a_vl, a_v_period, a_v_curr)
+        && !is_point_on_boundary(tol, a_vl, a_v_period, a_v_prev)
+    {
+        *is_on_boundary = true;
+    }
+    if *is_on_boundary {
+        // Adjust, to avoid bad jumping of the WLine.
+        let a_du = a_u_prev - a_u_curr;
+        let a_dv = a_v_prev - a_v_curr;
+        if a_u_period > 0.0 && (2.0 * a_du.abs() > a_u_period) {
+            a_u_curr += a_u_period.copysign(a_du);
+        }
+        if a_v_period > 0.0 && (2.0 * a_dv.abs() > a_v_period) {
+            a_v_curr += a_v_period.copysign(a_dv);
+        }
+        let mut a_point = a_p_curr.clone();
+        a_point.set_value_uv(!is_reversed, a_u_curr, a_v_curr);
+        sline.push(a_point);
     }
 }
 
