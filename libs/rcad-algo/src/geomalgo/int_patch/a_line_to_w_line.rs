@@ -54,8 +54,19 @@ impl ALineToWLine {
     /// not included, then MakeWLine(f, l, theLines).
     pub fn make_wline(&self, a_line: &IntAnaCurve, the_lines: &mut Vec<IntPatchLine>) {
         let d = a_line.domain();
-        let f = d[0] + self.my_tol_open_domain;
-        let l = d[1] - self.my_tol_open_domain;
+        // OCCT L366-374: FirstParameter/LastParameter return IsIncluded =
+        // !IsFirstOpen()/!IsLastOpen(); the open-domain tolerance is added only
+        // when the endpoint is not included (open domain).
+        let f = if a_line.is_first_open() {
+            d[0] + self.my_tol_open_domain
+        } else {
+            d[0]
+        };
+        let l = if a_line.is_last_open() {
+            d[1] - self.my_tol_open_domain
+        } else {
+            d[1]
+        };
         self.make_wline_range(a_line, f, l, the_lines);
     }
 
@@ -268,6 +279,8 @@ impl ALineToWLine {
                     let a_param = a_vert_params[i];
                     if ((a_prev_param < a_param) && (a_param <= a_parameter))
                         || ((a_prev_param == a_parameter) && (a_param == a_parameter))
+                        || (a_p_on2s.is_same(&a_vp.pnt, a_vp.tolerance)
+                            && (a_vp.param_on_line - a_parameter).abs() < a_prm_tol)
                     {
                         a_vertex_number = i as isize;
                         break;
@@ -437,6 +450,10 @@ impl ALineToWLine {
                     a_step_min = 0.1 * a_step;
                     a_step_max = 10.0 * a_step;
                 }
+
+                // OCCT for-loop increment: aParameter += aStep applies at the end
+                // of every iteration that does not `break`/`continue`.
+                a_parameter += a_step;
             } // for(; !isLast; aParameter += aStep)
 
             if a_lin_on2s.len() < 2 {
