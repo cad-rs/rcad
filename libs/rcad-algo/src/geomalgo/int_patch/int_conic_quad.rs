@@ -17,246 +17,373 @@ use rcad_kernel::geom::{Circle3, Plane};
 
 use super::quad_quad_geo::{AnaResultType, QuadQuadGeo};
 
-/// OCCT math_DirectPolynomialRoots — real roots of a degree-4 polynomial
-/// a4·x⁴ + a3·x³ + a2·x² + a1·x + a0 = 0 (Ferrari's method).
-fn quartic_real_roots(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    const EPS: f64 = 1e-14;
-    // Degenerate lower degrees.
-    if a4.abs() < EPS {
-        return cubic_real_roots(a3, a2, a1, a0);
-    }
-    // Depress: x = u - a3/(4 a4).
-    let a = a3 / a4;
-    let b = a2 / a4;
-    let c = a1 / a4;
-    let d = a0 / a4;
-    let p = b - 3.0 * a * a / 8.0;
-    let q = a * a * a / 8.0 - a * b / 2.0 + c;
-    let r = -3.0 * a * a * a * a / 256.0 + a * a * b / 16.0 - a * c / 4.0 + d;
-
-    // Resolvent cubic: 8 m³ - 4 p m² - 8 r m + (4 p r - q²) = 0.
-    let m_roots = cubic_real_roots(8.0, -4.0 * p, -8.0 * r, 4.0 * p * r - q * q);
-    let m = m_roots.into_iter().find(|&m| 2.0 * m - p >= 0.0).unwrap_or(0.0);
-
-    // (u² + m)² = (A u + B)² with A² = 2m - p, B = -q/(2A).
-    let a2m = 2.0 * m - p;
-    if a2m < 0.0 {
-        return Vec::new();
-    }
-    let aa = a2m.sqrt();
-    let bb = if aa.abs() < EPS { 0.0 } else { -q / (2.0 * aa) };
-
-    // u² - aa u + (m - bb) = 0  and  u² + aa u + (m + bb) = 0.
-    let mut roots = Vec::new();
-    roots.extend(quadratic_real_roots(1.0, -aa, m - bb));
-    roots.extend(quadratic_real_roots(1.0, aa, m + bb));
-    // Back-substitute the depression.
-    let shift = a / 4.0;
-    roots.iter_mut().for_each(|x| *x -= shift);
-    roots
+/// OCCT math_TrigonometricEquationFunction.hxx — the trigonometric equation
+/// a·cos²(x) + 2·b·cos(x)·sin(x) + c·cos(x) + d·sin(x) + e = 0, used as the
+/// Newton target in math_TrigonometricFunctionRoots L460-478.
+struct TrigEquation {
+    aa: f64,
+    bb: f64,
+    cc: f64,
+    dd: f64,
+    ee: f64,
 }
 
-/// Real roots of a cubic a3·x³ + a2·x² + a1·x + a0 = 0 (Cardano).
-fn cubic_real_roots(a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    const EPS: f64 = 1e-14;
-    if a3.abs() < EPS {
-        return quadratic_real_roots(a2, a1, a0);
+impl rcad_kernel::math::root::FunctionValue for TrigEquation {
+    fn value(&mut self, x: f64) -> Option<f64> {
+        let cn = x.cos();
+        let sn = x.sin();
+        Some(cn * (self.aa * cn + (self.bb + self.bb) * sn + self.cc) + self.dd * sn + self.ee)
     }
-    // Depress: x = u - a2/(3 a3).
-    let p = (3.0 * a3 * a1 - a2 * a2) / (3.0 * a3 * a3);
-    let q = (2.0 * a2 * a2 * a2 - 9.0 * a3 * a2 * a1 + 27.0 * a3 * a3 * a0)
-        / (27.0 * a3 * a3 * a3);
-    let disc = q * q / 4.0 + p * p * p / 27.0;
-    let mut roots = Vec::new();
-    if disc > 0.0 {
-        let sd = disc.sqrt();
-        let u1 = (-q / 2.0 + sd).cbrt() + (-q / 2.0 - sd).cbrt();
-        roots.push(u1);
-    } else if disc.abs() <= EPS {
-        let u1 = 3.0 * q / p;
-        let u2 = -3.0 * q / (2.0 * p);
-        roots.push(u1);
-        roots.push(u2);
-    } else {
-        // Three real roots via the trigonometric form.
-        let rho = (-p * p * p / 27.0).sqrt();
-        let phi = (-q / (2.0 * rho)).acos();
-        for k in 0..3 {
-            let u = 2.0 * rho.cbrt() * ((phi + 2.0 * std::f64::consts::PI * k as f64) / 3.0).cos();
-            roots.push(u);
-        }
-    }
-    let shift = a2 / (3.0 * a3);
-    roots.iter_mut().for_each(|x| *x -= shift);
-    roots
 }
 
-/// Real roots of a quadratic a2·x² + a1·x + a0 = 0.
-fn quadratic_real_roots(a2: f64, a1: f64, a0: f64) -> Vec<f64> {
-    const EPS: f64 = 1e-14;
-    if a2.abs() < EPS {
-        if a1.abs() < EPS {
-            return Vec::new();
-        }
-        return vec![-a0 / a1];
+impl rcad_kernel::math::root::FunctionWithDerivative for TrigEquation {
+    fn derivative(&mut self, x: f64) -> Option<f64> {
+        let cn = x.cos();
+        let sn = x.sin();
+        let mut d = -self.aa * cn * sn + self.bb * (cn * cn - sn * sn);
+        d += d;
+        d += -self.cc * sn + self.dd * cn;
+        Some(d)
     }
-    let disc = a1 * a1 - 4.0 * a2 * a0;
-    if disc < 0.0 {
-        return Vec::new();
+    fn values(&mut self, x: f64) -> Option<(f64, f64)> {
+        let cn = x.cos();
+        let sn = x.sin();
+        let aacn = self.aa * cn;
+        let bbsn = self.bb * sn;
+        let f = aacn * cn + bbsn * (cn + cn) + self.cc * cn + self.dd * sn + self.ee;
+        let mut d = -aacn * sn + self.bb * (cn * cn - sn * sn);
+        d += d;
+        d += -self.cc * sn + self.dd * cn;
+        Some((f, d))
     }
-    let sd = disc.sqrt();
-    if sd < EPS {
-        return vec![-a1 / (2.0 * a2)];
-    }
-    vec![(-a1 + sd) / (2.0 * a2), (-a1 - sd) / (2.0 * a2)]
 }
 
-/// OCCT math_TrigonometricFunctionRoots — solutions of
+/// OCCT math_TrigonometricFunctionRoots::Perform (math_TrigonometricFunctionRoots.cxx
+/// L75-551) — solutions of
 ///   a·cos²(x) + 2·b·cos(x)·sin(x) + c·cos(x) + d·sin(x) + e = 0
-/// within [InfBound, SupBound].
-///
-/// Documented divergences from OCCT (math_TrigonometricFunctionRoots.cxx):
-///   - L460-478: OCCT refines every candidate root with
-///     math_NewtonFunctionRoot on the trig equation.  rcad uses the raw
-///     polynomial roots; for the well-separated roots of the Circle x Quadric
-///     path the Newton step is a no-op to within Tol1=1e-15.
-///   - L363-434: OCCT solves the quartic with math_DirectPolynomialRoots and
-///     on near-double roots scales ko by 1e-4 and re-solves.  rcad uses a
-///     Ferrari quartic with the same real-root semantics; the 1e-9 dedup below
-///     plays the role of the double-root rejection.
+/// within [InfBound, SupBound].  Returns None when the solver reports
+/// NotDone, Some((infinite, roots)) otherwise (infinite = InfiniteStatus).
 fn trig_function_roots(
     a: f64, b: f64, c: f64, d: f64, e: f64,
     inf_bound: f64, sup_bound: f64,
-) -> Vec<f64> {
-    const EPS: f64 = 1.5e-12;
-    let depi = 2.0 * std::f64::consts::PI;
+) -> Option<(bool, Vec<f64>)> {
+    use rcad_kernel::math::direct_polynomial_roots::{epsilon, DirectPolynomialRoots};
+    use rcad_kernel::math::newton_function_root::NewtonFunctionRoot;
+    use rcad_kernel::precision::PCONFUSION;
 
-    let mut zer: Vec<f64> = Vec::new();
-    let mut infinite = false;
+    const EPS: f64 = 1.5e-12;
+    const TOL1: f64 = 1.0e-15;
+    const NIT: i32 = 10;
+    const DEPI: f64 = 2.0 * std::f64::consts::PI;
+    const REAL_FIRST: f64 = -f64::MAX;
+    const REAL_LAST: f64 = f64::MAX;
+
+    // OCCT L95-123: bound setup (MyBorneInf / Delta / Mod).
+    let (my_borne_inf, delta, mod_) = if inf_bound <= REAL_FIRST && sup_bound >= REAL_LAST {
+        (0.0, DEPI, 0.0)
+    } else if sup_bound >= REAL_LAST {
+        (inf_bound, DEPI, inf_bound / DEPI)
+    } else if inf_bound <= REAL_FIRST {
+        (sup_bound - DEPI, DEPI, (sup_bound - DEPI) / DEPI)
+    } else {
+        let mut delta = sup_bound - inf_bound;
+        let mod_ = inf_bound / DEPI;
+        if (sup_bound - inf_bound) > DEPI {
+            delta = DEPI;
+        }
+        (inf_bound, delta, mod_)
+    };
+
+    let mut zer: [f64; 4] = [0.0; 4];
+    let mut n_zer: usize = 0;
+    let mut sol: Vec<f64> = Vec::new();
 
     if a.abs() <= EPS && b.abs() <= EPS {
         if c.abs() <= EPS {
             if d.abs() <= EPS {
                 if e.abs() <= EPS {
-                    infinite = true;
+                    // OCCT L133-135: infinite number of solutions.
+                    return Some((true, Vec::new()));
+                } else {
+                    // OCCT L137-140: no solution.
+                    return Some((false, Vec::new()));
                 }
-                // else: no solution.
             } else {
-                // d·sin + e = 0
+                // OCCT L142-173: d·sin(x) + e = 0.
                 let aa = -e / d;
                 if aa.abs() > 1.0 {
-                    return Vec::new();
+                    return Some((false, Vec::new()));
                 }
-                zer.push(aa.asin());
-                zer.push(std::f64::consts::PI - aa.asin());
+                zer[0] = aa.asin();
+                zer[1] = std::f64::consts::PI - zer[0];
+                n_zer = 2;
+                for i in 0..n_zer {
+                    if zer[i] <= -EPS {
+                        zer[i] = DEPI - zer[i].abs();
+                    }
+                    zer[i] += mod_.trunc() * DEPI;
+                    let x = zer[i] - my_borne_inf;
+                    if x > -epsilon(delta) && x < delta + epsilon(delta) {
+                        sol.push(zer[i]);
+                    }
+                }
             }
+            return Some((false, sol));
         } else if d.abs() <= EPS {
-            // c·cos + e = 0
+            // OCCT L175-207: c·cos(x) + e = 0.
             let aa = -e / c;
             if aa.abs() > 1.0 {
-                return Vec::new();
+                return Some((false, Vec::new()));
             }
-            zer.push(aa.acos());
-            zer.push(-aa.acos());
+            zer[0] = aa.acos();
+            zer[1] = -zer[0];
+            n_zer = 2;
+            for i in 0..n_zer {
+                if zer[i] <= -EPS {
+                    zer[i] = DEPI - zer[i].abs();
+                }
+                zer[i] += mod_.trunc() * DEPI;
+                let x = zer[i] - my_borne_inf;
+                if x >= -epsilon(delta) && x <= delta + epsilon(delta) {
+                    sol.push(zer[i]);
+                }
+            }
+            return Some((false, sol));
         } else {
-            // Quadratic in u = tan(x/2): (e-c)u² + 2d u + (e+c) = 0.
-            zer.extend(quadratic_real_roots(e - c, 2.0 * d, e + c));
+            // OCCT L208-236: quadratic in u = tan(x/2).
+            let aa = e - c;
+            let bb = 2.0 * d;
+            let cc = e + c;
+            let resol = DirectPolynomialRoots::new_quadratic(aa, bb, cc);
+            if !resol.is_done() {
+                return None;
+            } else if !resol.infinite_roots() {
+                n_zer = resol.nb_solutions();
+                for i in 0..n_zer {
+                    zer[i] = resol.value(i + 1);
+                }
+            } else {
+                return Some((true, Vec::new()));
+            }
         }
     } else {
+        // OCCT L240-354: two additional analytical cases.
         if a.abs() <= EPS && e.abs() <= EPS {
             if c.abs() <= EPS {
-                // 2·b·sin·cos + d·sin = 0  →  sin·(2b cos + d) = 0
-                zer.push(0.0);
-                zer.push(std::f64::consts::PI);
+                // OCCT L243-296: 2·B·sin·cos + D·sin = 0.
+                n_zer = 2;
+                zer[0] = 0.0;
+                zer[1] = std::f64::consts::PI;
                 let aa = -d / (2.0 * b);
-                if aa.abs() <= 1.0 + 1e-9 {
+                if aa.abs() <= 1.0 + PCONFUSION {
+                    n_zer = 4;
                     if aa >= 1.0 {
-                        zer.push(0.0);
-                        zer.push(0.0);
+                        zer[2] = 0.0;
+                        zer[3] = 0.0;
                     } else if aa <= -1.0 {
-                        zer.push(std::f64::consts::PI);
-                        zer.push(std::f64::consts::PI);
+                        zer[2] = std::f64::consts::PI;
+                        zer[3] = std::f64::consts::PI;
                     } else {
-                        zer.push(aa.acos());
-                        zer.push(depi - aa.acos());
+                        zer[2] = aa.acos();
+                        zer[3] = DEPI - zer[2];
                     }
                 }
-            } else if d.abs() <= EPS {
-                // 2·b·sin·cos + c·cos = 0  →  cos·(2b sin + c) = 0
-                zer.push(std::f64::consts::FRAC_PI_2);
-                zer.push(std::f64::consts::PI * 1.5);
+                for i in 0..n_zer {
+                    if zer[i] <= my_borne_inf - EPS {
+                        zer[i] += DEPI;
+                    }
+                    zer[i] += mod_.trunc() * DEPI;
+                    let x = zer[i] - my_borne_inf;
+                    if x >= -PCONFUSION && x <= delta + PCONFUSION {
+                        if zer[i] < inf_bound {
+                            zer[i] = inf_bound;
+                        }
+                        if zer[i] > sup_bound {
+                            zer[i] = sup_bound;
+                        }
+                        sol.push(zer[i]);
+                    }
+                }
+                return Some((false, sol));
+            }
+            if d.abs() <= EPS {
+                // OCCT L298-352: 2·B·sin·cos + C·cos = 0.
+                n_zer = 2;
+                zer[0] = std::f64::consts::FRAC_PI_2;
+                zer[1] = std::f64::consts::PI * 1.5;
                 let aa = -c / (2.0 * b);
-                if aa.abs() <= 1.0 + 1e-9 {
+                if aa.abs() <= 1.0 + PCONFUSION {
+                    n_zer = 4;
                     if aa >= 1.0 {
-                        zer.push(std::f64::consts::FRAC_PI_2);
-                        zer.push(std::f64::consts::FRAC_PI_2);
+                        zer[2] = std::f64::consts::FRAC_PI_2;
+                        zer[3] = std::f64::consts::FRAC_PI_2;
                     } else if aa <= -1.0 {
-                        zer.push(std::f64::consts::PI * 1.5);
-                        zer.push(std::f64::consts::PI * 1.5);
+                        zer[2] = std::f64::consts::PI * 1.5;
+                        zer[3] = std::f64::consts::PI * 1.5;
                     } else {
-                        zer.push(aa.asin());
-                        zer.push(std::f64::consts::PI - aa.asin());
+                        zer[2] = aa.asin();
+                        zer[3] = std::f64::consts::PI - zer[2];
+                    }
+                }
+                for i in 0..n_zer {
+                    if zer[i] <= my_borne_inf - EPS {
+                        zer[i] += DEPI;
+                    }
+                    zer[i] += mod_.trunc() * DEPI;
+                    let x = zer[i] - my_borne_inf;
+                    if x >= -PCONFUSION && x <= delta + PCONFUSION {
+                        if zer[i] < inf_bound {
+                            zer[i] = inf_bound;
+                        }
+                        if zer[i] > sup_bound {
+                            zer[i] = sup_bound;
+                        }
+                        sol.push(zer[i]);
+                    }
+                }
+                return Some((false, sol));
+            }
+        }
+
+        // OCCT L356-434: the general quartic.
+        let mut ko = [
+            a - c + e,
+            2.0 * d - 4.0 * b,
+            2.0 * e - 2.0 * a,
+            4.0 * b + 2.0 * d,
+            a + c + e,
+        ];
+        loop {
+            let mut bko = false;
+            let resol4 = DirectPolynomialRoots::new_quartic(ko[0], ko[1], ko[2], ko[3], ko[4]);
+            if !resol4.is_done() {
+                return None;
+            } else if !resol4.infinite_roots() {
+                n_zer = resol4.nb_solutions();
+                for i in 0..n_zer {
+                    zer[i] = resol4.value(i + 1);
+                }
+            } else {
+                return Some((true, Vec::new()));
+            }
+
+            // OCCT L386-400: bubble sort Zer.
+            let mut triok;
+            loop {
+                triok = true;
+                for i in 0..n_zer.saturating_sub(1) {
+                    if zer[i] > zer[i + 1] {
+                        zer.swap(i, i + 1);
+                        triok = false;
+                    }
+                }
+                if triok {
+                    break;
+                }
+            }
+
+            // OCCT L402-422: double-root check; on a numerical double root
+            // scale ko by 1e-4 and re-solve.
+            for i in 0..n_zer.saturating_sub(1) {
+                if (zer[i + 1] - zer[i]).abs() < EPS {
+                    let qw = zer[i + 1];
+                    let va = ko[3] + qw * (2.0 * ko[2] + qw * (3.0 * ko[1] + qw * (4.0 * ko[0])));
+                    if va.abs() > EPS {
+                        bko = true;
+                        break;
+                    }
+                }
+            }
+            if bko {
+                for k in 0..5 {
+                    ko[k] *= 0.0001;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    // OCCT L437-504: verification of the solutions against the bounds.
+    let supm_infs100 = (sup_bound - inf_bound) * 0.01;
+    for i in 0..n_zer {
+        let mut teta = zer[i].atan() * 2.0;
+        if zer[i] <= -EPS {
+            teta = DEPI - teta.abs();
+        }
+        teta += mod_.trunc() * DEPI;
+        if teta - my_borne_inf < 0.0 {
+            teta += DEPI;
+        }
+        let x = teta - my_borne_inf;
+        if x >= -epsilon(delta) && x <= delta + epsilon(delta) {
+            // OCCT L460-478: Newton refinement.
+            let mut teta_newton = teta;
+            let mut my_f = TrigEquation {
+                aa: a,
+                bb: b,
+                cc: c,
+                dd: d,
+                ee: e,
+            };
+            let resol = NewtonFunctionRoot::new_full_range(&mut my_f, x, TOL1, EPS, NIT);
+            if resol.is_done() {
+                teta_newton = resol.root();
+            }
+            let delta_newton = teta_newton - teta;
+            if delta_newton.abs() <= supm_infs100 {
+                teta = teta_newton;
+            }
+
+            // OCCT L480-502: insert Teta into the sorted Sol.
+            let mut flag4 = false;
+            for k in 0..sol.len() {
+                if teta < sol[k] {
+                    sol.insert(k, teta);
+                    flag4 = true;
+                    break;
+                }
+            }
+            if !flag4 {
+                sol.push(teta);
+            }
+        }
+    }
+
+    // OCCT L505-550: "Cas particulier de PI" — t = pi is a solution exactly
+    // when the trig polynomial vanishes there, i.e. ko(1) = A - C + E = 0
+    // (at t=pi: cos=-1, sin=0).  The substitution u = tan(t/2) maps t=pi to
+    // u=infinity, so the quartic (and the quadratic when e-c=0) misses it.
+    if sol.len() < 4 {
+        let start_index = sol.len() + 1;
+        for sol_it in start_index..=4 {
+            let mut teta = std::f64::consts::PI + mod_.trunc() * DEPI;
+            let x = teta - my_borne_inf;
+            if x >= -epsilon(delta) && x <= delta + epsilon(delta) {
+                if (a - c + e).abs() <= EPS {
+                    let mut flag4 = false;
+                    let mut j = 0usize;
+                    for k in 0..sol.len() {
+                        j = k;
+                        if teta < sol[k] {
+                            flag4 = true;
+                            break;
+                        }
+                        if sol_it == start_index && (teta - sol[k]).abs() <= EPS {
+                            return Some((false, sol));
+                        }
+                    }
+                    if !flag4 {
+                        sol.push(teta);
+                    } else {
+                        sol.insert(j, teta);
                     }
                 }
             }
         }
-
-        // General quartic in u = tan(x/2).
-        if !infinite {
-            let ko = [
-                a - c + e,
-                2.0 * d - 4.0 * b,
-                2.0 * e - 2.0 * a,
-                4.0 * b + 2.0 * d,
-                a + c + e,
-            ];
-            let mut u_roots = quartic_real_roots(ko[0], ko[1], ko[2], ko[3], ko[4]);
-            u_roots.sort_by(|x, y| x.partial_cmp(y).unwrap());
-            for &u in &u_roots {
-                let mut teta = u.atan() * 2.0;
-                if u <= -EPS {
-                    teta = depi - teta.abs();
-                }
-                zer.push(teta);
-            }
-        }
     }
 
-    // OCCT math_TrigonometricFunctionRoots.cxx L505-550 "Cas particulier de
-    // PI": t = pi is a solution exactly when the trig polynomial vanishes
-    // there, i.e. ko(1) = A - C + E = 0 (at t=pi: cos=-1, sin=0).  The
-    // substitution u = tan(t/2) maps t=pi to u=infinity, so the quartic (and
-    // the quadratic when e-c=0) misses it; OCCT appends it explicitly.
-    if !infinite && (a - c + e).abs() <= EPS {
-        zer.push(std::f64::consts::PI);
-    }
-
-    if infinite {
-        return Vec::new();
-    }
-
-    // Clamp the solutions into [InfBound, SupBound].
-    let mut sol: Vec<f64> = Vec::new();
-    for &t in &zer {
-        let mut t = t;
-        if t <= -EPS {
-            t = depi - t.abs();
-        }
-        let period = depi;
-        t += (inf_bound / period).floor() * period;
-        if t < inf_bound - 1e-7 {
-            t += period;
-        }
-        if t >= inf_bound - 1e-7 && t <= sup_bound + 1e-7 {
-            let t = t.max(inf_bound).min(sup_bound);
-            // Keep sorted, dedup.
-            let pos = sol.partition_point(|&x| x < t);
-            if pos == 0 || (t - sol[pos - 1]).abs() > 1e-9 {
-                sol.insert(pos, t);
-            }
-        }
-    }
-    sol
+    Some((false, sol))
 }
 
 /// OCCT IntAna_Quadric::NewCoefficients — transform the quadric coefficients
@@ -264,9 +391,12 @@ fn trig_function_roots(
 /// Cxx·x² + Cyy·y² + Czz·z² + 2·Cxy·xy + 2·Cxz·xz + 2·Cyz·yz
 ///   + Cx·x + Cy·y + Cz·z + Ccte = 0
 /// is expressed in coordinates of `frame` (origin + orthonormal axes).
-struct FrameCoefs {
-    xx: f64, yy: f64, zz: f64, xy: f64, xz: f64, yz: f64,
-    x: f64, y: f64, z: f64, cte: f64,
+/// The linear terms follow the OCCT "2·C1·x" convention (stored halved).
+pub(crate) struct FrameCoefs {
+    pub(crate) xx: f64, pub(crate) yy: f64, pub(crate) zz: f64,
+    pub(crate) xy: f64, pub(crate) xz: f64, pub(crate) yz: f64,
+    pub(crate) x: f64, pub(crate) y: f64, pub(crate) z: f64,
+    pub(crate) cte: f64,
 }
 
 fn new_coefficients(
@@ -328,34 +458,26 @@ fn new_coefficients(
     FrameCoefs { xx: cxx, yy: cyy, zz: czz, xy: cxy, xz: cxz, yz: cyz, x: cx, y: cy, z: cz, cte: ccte }
 }
 
-/// OCCT IntAna_IntConicQuad::Perform(const gp_Circ&, const IntAna_Quadric&)
-/// — returns (in_quadric, points) where each point is (3D point, t param).
-/// A circle lying entirely on the quadric reports `in_quadric = true`.
-pub fn intersect_circle_quadric(
-    circle: &Circle3,
+/// OCCT IntAna_Quadric::Coefficients (IntAna_Quadric.cxx L122-143) — the
+/// absolute-frame coefficients of the quadric, in the "2·C1·x" convention.
+/// Matches gp_Cylinder/Cone/Sphere::Coefficients (verified by implicit
+/// expansion).  None for a non-canonic quadric.
+pub(crate) fn quadric_frame_coefs(
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
-) -> Option<(bool, Vec<(DVec3, f64)>)> {
+) -> Option<FrameCoefs> {
     use crate::geomalgo::int_surf::quadric::QuadricType;
-    let r = circle.radius;
-    let rr = r * r;
-
-    // Coarse epsilon for the trig solver (OCCT Eps = 1.5e-12).
-    let (co, inf, sup) = match quad.type_quadric() {
+    let co = match quad.type_quadric() {
         QuadricType::Plane => {
+            // Plane: pn·x + d = 0  ->  Qx = pn.x/2, Qy = pn.y/2, Qz = pn.z/2.
             let pl = quad.plane();
-            // Express the plane in the circle's frame.
-            let pn = pl.normal;
-            let d = -pn.dot(pl.origin);
-            // Plane: pn·x + d = 0.  In the circle's frame: pn·(O + X u + Y v + Z w) + d = 0.
-            let px = pn.dot(circle.x_dir);
-            let py = pn.dot(circle.y_dir);
-            let pz = pn.dot(circle.normal);
-            let pc = pn.dot(circle.center) + d;
-            let co = FrameCoefs {
+            let d = -pl.normal.dot(pl.origin);
+            FrameCoefs {
                 xx: 0.0, yy: 0.0, zz: 0.0, xy: 0.0, xz: 0.0, yz: 0.0,
-                x: px, y: py, z: pz, cte: pc,
-            };
-            (co, 0.0, 2.0 * std::f64::consts::PI)
+                x: 0.5 * pl.normal.x,
+                y: 0.5 * pl.normal.y,
+                z: 0.5 * pl.normal.z,
+                cte: d,
+            }
         }
         QuadricType::Cylinder => {
             // gp_Cylinder implicit: X² + Y² - R² = 0 in the local frame, i.e.
@@ -365,7 +487,7 @@ pub fn intersect_circle_quadric(
             let a = quad.axis_dir();
             let r = quad.radius();
             let oa = o.dot(a);
-            let co = FrameCoefs {
+            FrameCoefs {
                 xx: 1.0 - a.x * a.x,
                 yy: 1.0 - a.y * a.y,
                 zz: 1.0 - a.z * a.z,
@@ -376,8 +498,7 @@ pub fn intersect_circle_quadric(
                 y: -(o.y - a.y * oa),
                 z: -(o.z - a.z * oa),
                 cte: o.length_squared() - oa * oa - r * r,
-            };
-            (co, 0.0, 2.0 * std::f64::consts::PI)
+            }
         }
         QuadricType::Cone => {
             // gp_Cone implicit: X² + Y² - (R + Z·tan)² = 0 in the local frame
@@ -389,7 +510,7 @@ pub fn intersect_circle_quadric(
             let tg = quad.semi_angle().tan();
             let sec2 = 1.0 + tg * tg;
             let oa = o.dot(a);
-            let co = FrameCoefs {
+            FrameCoefs {
                 xx: 1.0 - sec2 * a.x * a.x,
                 yy: 1.0 - sec2 * a.y * a.y,
                 zz: 1.0 - sec2 * a.z * a.z,
@@ -400,22 +521,38 @@ pub fn intersect_circle_quadric(
                 y: -o.y + sec2 * a.y * oa - r * tg * a.y,
                 z: -o.z + sec2 * a.z * oa - r * tg * a.z,
                 cte: o.length_squared() - sec2 * oa * oa + 2.0 * r * tg * oa - r * r,
-            };
-            (co, 0.0, 2.0 * std::f64::consts::PI)
+            }
         }
         QuadricType::Sphere => {
             let sph = quad.sphere();
             let center = sph.center;
             let rad = sph.radius;
-            let co = FrameCoefs {
+            FrameCoefs {
                 xx: 1.0, yy: 1.0, zz: 1.0, xy: 0.0, xz: 0.0, yz: 0.0,
                 x: -center.x, y: -center.y, z: -center.z,
                 cte: center.length_squared() - rad * rad,
-            };
-            (co, 0.0, 2.0 * std::f64::consts::PI)
+            }
         }
         _ => return None,
     };
+    Some(co)
+}
+
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Circ&, const IntAna_Quadric&)
+/// — returns (in_quadric, points) where each point is (3D point, t param).
+/// A circle lying entirely on the quadric reports `in_quadric = true`.
+pub fn intersect_circle_quadric(
+    circle: &Circle3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    let r = circle.radius;
+    let rr = r * r;
+
+    // OCCT Quad.Coefficients(...) — absolute-frame coefficients.  The trig
+    // solver's Eps is internal (1.5e-12).
+    let co = quadric_frame_coefs(quad)?;
+    let inf = 0.0;
+    let sup = 2.0 * std::f64::consts::PI;
 
     // NewCoefficients into the circle's frame (the circle's position).
     let nco = new_coefficients(&co, circle.center, circle.x_dir, circle.y_dir, circle.normal);
@@ -429,7 +566,9 @@ pub fn intersect_circle_quadric(
     let p_cte = nco.cte;
 
     // a·cos² + 2b·cos·sin + c·cos + d·sin + e = 0
-    let ts = trig_function_roots(
+    // OCCT IntAna_IntConicQuad.cxx L176-194: IsDone -> inquadric (infinite) or
+    // the NbSolutions points.
+    let (in_quadric, ts) = match trig_function_roots(
         p_cos_cos - p_sin_sin,
         p_cos_sin,
         2.0 * p_cos,
@@ -437,7 +576,14 @@ pub fn intersect_circle_quadric(
         p_cte + p_sin_sin,
         inf,
         sup,
-    );
+    ) {
+        None => return None,
+        Some(r) => r,
+    };
+
+    if in_quadric {
+        return Some((true, Vec::new()));
+    }
 
     let pts: Vec<(DVec3, f64)> = ts
         .into_iter()
@@ -487,27 +633,52 @@ pub fn intersect_circle_plane(
         }
         AnaResultType::Same => (false, true, Vec::new()),
         AnaResultType::Line => {
+            // OCCT IntAna_IntConicQuad::Perform(Circ, Pln) L522-559: project
+            // the intersection line into the circle's plane and intersect the
+            // 2D line with the 2D circle via IntAna2d_AnaIntersection
+            // (IntAna2d_AnaIntersection_3.cxx L24-108).
             let line_origin = gg.line(1).origin;
             let line_dir = gg.line(1).direction;
-            // Project the 3D line into the circle's plane: u = (P-O)·u, v = (P-O)·v.
+            // 2D line in the circle's frame: X = (P-O)·x_dir, Y = (P-O)·y_dir.
             let o2 = DVec2::new(
                 (line_origin - circle.center).dot(circle.x_dir),
                 (line_origin - circle.center).dot(circle.y_dir),
             );
             let d2 = DVec2::new(line_dir.dot(circle.x_dir), line_dir.dot(circle.y_dir));
-            // Intersect the 2D line with the circle (radius r) in the plane.
-            // |o2 + s·d2| = r  →  |d2|² s² + 2 o2·d2 s + |o2|² - r² = 0.
-            let a = d2.length_squared();
-            let b = 2.0 * o2.dot(d2);
-            let c = o2.length_squared() - circle.radius * circle.radius;
+            // OCCT gp_Lin2d::Coefficients(A, B, C0): the unit normal of the
+            // line, so the signed distance d = A·cx + B·cy + C0.
+            let len = d2.length();
+            let (a, b) = (d2.y / len, -d2.x / len);
+            let c0 = -(a * o2.x + b * o2.y);
+            let (cx, cy) = (0.0, 0.0); // the circle's center in its own frame
+            let r = circle.radius;
+            let eps_r = rcad_kernel::math::direct_polynomial_roots::epsilon(r);
+            let d = a * cx + b * cy + c0;
+
             let mut pts = Vec::new();
-            for s in quadratic_real_roots(a, b, c) {
-                let p3 = line_origin + line_dir * s;
-                // Parameter on the circle: t where p3 = O + R(cos t u + sin t v).
-                let ut = (p3 - circle.center).dot(circle.x_dir);
-                let vt = (p3 - circle.center).dot(circle.y_dir);
-                let tt = vt.atan2(ut);
-                pts.push((p3, tt));
+            if d.abs() - r > eps_r {
+                // OCCT L38-42: no solution.
+            } else if (d.abs() - r).abs() <= eps_r {
+                // OCCT L52-78: tangency — one point.
+                let xs = cx - d * a;
+                let ys = cy - d * b;
+                let p3 = circle.center + circle.x_dir * xs + circle.y_dir * ys;
+                pts.push((p3, ys.atan2(xs)));
+            } else {
+                // OCCT L80-105: two intersection points.
+                let h = (r * r - d * d).sqrt();
+                let xs1 = cx - d * a - h * b;
+                let ys1 = cy - d * b + h * a;
+                let xs2 = cx - d * a + h * b;
+                let ys2 = cy - d * b - h * a;
+                pts.push((
+                    circle.center + circle.x_dir * xs1 + circle.y_dir * ys1,
+                    ys1.atan2(xs1),
+                ));
+                pts.push((
+                    circle.center + circle.x_dir * xs2 + circle.y_dir * ys2,
+                    ys2.atan2(xs2),
+                ));
             }
             (false, false, pts)
         }

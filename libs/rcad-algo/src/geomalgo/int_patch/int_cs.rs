@@ -106,28 +106,40 @@ impl IntCurveSurface {
         let Some(quad) = quad else { return };
         let stype = quad.type_quadric();
 
-        // OCCT: if the conic lies IN the quadric (coincident) or is parallel,
-        // IntAna_IntConicQuad reports IsInQuadric/IsParallel; AppendIntAna sets
+        // OCCT ProcessIntAna (IntCurveSurface_InterUtils.pxx L1188-1228): if
+        // the conic lies IN the quadric (coincident) or is parallel,
+        // IntAna_IntConicQuad reports IsInQuadric/IsParallel; the caller sets
         // myIsParallel and appends nothing.  No points -> Nbp=0 -> the caller
         // falls back to math_FunctionAllRoots (which detects the whole-arc
         // null interval as a restriction segment).
         let mut ana_points: Vec<(DVec3, f64)> = Vec::new(); // (3D point, W)
+        self.is_parallel = false;
         match curve {
             Curve3::Line(l) => {
-                let pts = intersect_line_quadric(l, &quad);
-                if pts.is_none() {
-                    self.done = false;
-                    return;
+                let (in_quadric, pts) = match intersect_line_quadric(l, &quad) {
+                    None => {
+                        self.done = false;
+                        return;
+                    }
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    self.is_parallel = true;
                 }
-                ana_points = pts.unwrap();
+                ana_points = pts;
             }
             Curve3::Circle(c) => {
-                let pts = intersect_circle_quadric(c, &quad);
-                if pts.is_none() {
-                    self.done = false;
-                    return;
+                let (in_quadric, pts) = match intersect_circle_quadric(c, &quad) {
+                    None => {
+                        self.done = false;
+                        return;
+                    }
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    self.is_parallel = true;
                 }
-                ana_points = pts.unwrap();
+                ana_points = pts;
             }
             _ => {
                 // Non-canonic curve: the generic polygon path in OCCT would be
@@ -309,60 +321,65 @@ fn surface_period(surface: &Surface3, is_u: bool) -> f64 {
     }
 }
 
-/// OCCT IntAna_IntConicQuad (line vs quadric) — the exact analytic
-/// intersection.  Returns None when the conic is parallel/coincident (the
-/// isAnaProcessed=false path in OCCT also falls back); otherwise the list of
-/// (point, W) where W is the parameter on the curve.
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Lin&, const IntAna_Quadric&)
+/// (IntAna_IntConicQuad.cxx L67-127) — the exact analytic line-quadric
+/// intersection.  The line direction/location are substituted into the
+/// absolute-frame quadric coefficients, giving a quadratic in t solved by
+/// math_DirectPolynomialRoots.  Returns None when not done, otherwise
+/// (in_quadric, (point, W) pairs) where W is the line parameter.
 fn intersect_line_quadric(
     line: &rcad_kernel::geom::Line3,
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
-) -> Option<Vec<(DVec3, f64)>> {
-    use super::curve_surface as cs;
-    let tr = [f64::NEG_INFINITY, f64::INFINITY];
-    let hits: Vec<(DVec3, f64)> = match quad.type_quadric() {
-        crate::geomalgo::int_surf::quadric::QuadricType::Plane => {
-            // IntAna_IntConicQuad(Line, Plane) — direct analytic intersection.
-            let pl = quad.plane();
-            let d = pl.normal.dot(line.origin) - pl.normal.dot(pl.origin);
-            let dn = pl.normal.dot(line.direction);
-            if dn.abs() < 1e-12 {
-                Vec::new() // parallel
-            } else {
-                let t = -d / dn;
-                vec![(line.origin + line.direction * t, t)]
-            }
-        }
-        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder => {
-            let cyl = quad.cylinder();
-            cs::intersect_line_cylinder_with_tol(line, tr, &cyl, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        crate::geomalgo::int_surf::quadric::QuadricType::Sphere => {
-            let sph = quad.sphere();
-            cs::intersect_line_sphere_with_tol(line, tr, &sph, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        crate::geomalgo::int_surf::quadric::QuadricType::Cone => {
-            let con = quad.cone();
-            cs::intersect_line_cone_with_tol(line, tr, &con, 1e-7)
-                .iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
-        }
-        _ => return None,
-    };
-    Some(hits)
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    use rcad_kernel::math::direct_polynomial_roots::DirectPolynomialRoots;
+
+    let co = super::int_conic_quad::quadric_frame_coefs(quad)?;
+    let (qxx, qyy, qzz, qxy, qxz, qyz, qx, qy, qz, qcte) = (
+        co.xx, co.yy, co.zz, co.xy, co.xz, co.yz, co.x, co.y, co.z, co.cte,
+    );
+    let (lx0, ly0, lz0) = (line.origin.x, line.origin.y, line.origin.z);
+    let (lx, ly, lz) = (line.direction.x, line.direction.y, line.direction.z);
+
+    // OCCT L95-96: A0.
+    let a0 = qcte + qxx * lx0 * lx0 + qyy * ly0 * ly0 + qzz * lz0 * lz0
+        + 2.0 * (lx0 * (qx + qxy * ly0 + qxz * lz0) + ly0 * (qy + qyz * lz0) + qz * lz0);
+
+    // OCCT L98-101: A1.
+    let a1 = 2.0
+        * (lx * (qx + qxx * lx0 + qxy * ly0 + qxz * lz0)
+            + ly * (qy + qxy * lx0 + qyy * ly0 + qyz * lz0)
+            + lz * (qz + qxz * lx0 + qyz * ly0 + qzz * lz0));
+
+    // OCCT L103-104: A2.
+    let a2 = qxx * lx * lx + qyy * ly * ly + qzz * lz * lz
+        + 2.0 * (lx * (qxy * ly + qxz * lz) + qyz * ly * lz);
+
+    let lin_quad_pol = DirectPolynomialRoots::new_quadratic(a2, a1, a0);
+    if !lin_quad_pol.is_done() {
+        return None;
+    }
+    if lin_quad_pol.infinite_roots() {
+        // OCCT L111-115: the line lies in the quadric (inquadric = true) — no
+        // isolated points; the caller falls back to the function-root path.
+        return Some((true, Vec::new()));
+    }
+
+    let mut pts = Vec::new();
+    for i in 1..=lin_quad_pol.nb_solutions() {
+        let t = lin_quad_pol.value(i);
+        pts.push((line.origin + line.direction * t, t));
+    }
+    Some((false, pts))
 }
 
-/// OCCT IntAna_IntConicQuad (circle vs quadric).
+/// OCCT IntAna_IntConicQuad (circle vs quadric).  Returns
+/// (in_quadric, points): the Plane surface uses the (Circ, Pln, Tolang, Tol)
+/// overload; the Cylinder/Cone/Sphere quadrics use the (Circ, Quadric)
+/// overload.
 fn intersect_circle_quadric(
     circle: &rcad_kernel::geom::Circle3,
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
-) -> Option<Vec<(DVec3, f64)>> {
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
     // OCCT IntCurveSurface_HInter -> IntAna_IntConicQuad(Circle, Quadric):
     // analytic conic-quadric intersection (no sampling/Newton).
     // The Plane surface uses the (Circ, Pln, Tolang, Tol) overload with
@@ -370,25 +387,23 @@ fn intersect_circle_quadric(
     // L731-735); the Cylinder/Cone/Sphere quadrics use the (Circ, Quadric)
     // overload which takes no tolerance (Eps is internal, 1.5e-12).
     let quad_type = quad.type_quadric();
-    let res = if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
+    if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
         let pl = quad.plane();
-        let (_, in_quadric, pts) = super::int_conic_quad::intersect_circle_plane(
+        let (parallel, in_quadric, pts) = super::int_conic_quad::intersect_circle_plane(
             circle,
             &pl,
             THE_TOLERANCE_ANGULAIRE,
             THE_TOLERANCE,
         );
-        if in_quadric {
-            // The circle lies entirely on the plane: no isolated points
-            // (BoundedArc treats it as an all-arc solution segment).
+        if parallel || in_quadric {
+            // The circle lies entirely on the plane or is parallel to it: no
+            // isolated points (BoundedArc treats it as an all-arc solution
+            // segment).
             Some((true, Vec::new()))
         } else {
             Some((false, pts))
         }
     } else {
         super::int_conic_quad::intersect_circle_quadric(circle, quad)
-    }?;
-    let (in_quadric, pts) = res;
-    let _ = in_quadric;
-    Some(pts)
+    }
 }

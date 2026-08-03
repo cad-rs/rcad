@@ -64,10 +64,25 @@ impl MakeCone {
             apex: self.origin, axis: self.z_axis, radius: self.r1,
             half_angle_rad: (self.r2 - self.r1).atan2(self.h),
         });
-        // OCCT BottomFace/TopFace planes carry the +Z normal (the face
-        // orientation flag carries the direction, not the plane normal).
-        let bot_plane = Surface3::Plane(Plane::new(self.origin, self.z_axis));
-        let top_plane = Surface3::Plane(Plane::new(self.local(0.0, 0.0, self.h), self.z_axis));
+        // OCCT BottomFace/TopFace (BRepPrim_OneAxis.cxx L460/L501) build the
+        // cap planes with gp_Pln(gp_Ax3(P, Axes.Direction(), Axes.XDirection()))
+        // — the plane frame's X direction is the cone's reference direction,
+        // NOT the gp_Ax3(P, Direction) default frame of Plane::new.  Using
+        // Plane::new misaligns the cap UV rectangle for rotated cones.
+        // The +Z normal is carried by the plane; the face orientation flag
+        // carries the direction (BottomFace is reversed).
+        let bot_plane = Surface3::Plane(Plane {
+            origin: self.origin,
+            normal: self.z_axis,
+            u_dir: self.x_axis,
+            v_dir: self.y_axis,
+        });
+        let top_plane = Surface3::Plane(Plane {
+            origin: self.local(0.0, 0.0, self.h),
+            normal: self.z_axis,
+            u_dir: self.x_axis,
+            v_dir: self.y_axis,
+        });
         // OCCT LateralWire (BRepPrim_OneAxis.cxx L660-684):
         //   [TopEdge(fwd), EndEdge(rev), BottomEdge(rev), StartEdge(fwd)].
         // The seam (VEdge) appears twice — the End instance at the periodic

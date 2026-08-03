@@ -2,8 +2,10 @@
 pub mod bnd;
 pub mod bspl;
 pub mod bvh;
+pub mod direct_polynomial_roots;
 pub mod el;
 pub mod math_poly;
+pub mod newton_function_root;
 pub mod plib;
 pub mod root;
 pub mod poly;
