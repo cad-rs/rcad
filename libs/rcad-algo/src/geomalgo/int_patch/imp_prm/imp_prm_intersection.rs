@@ -142,6 +142,9 @@ fn recadre_impprm(
     mut u2: f64,
     mut v2: f64,
 ) {
+    // `iwline` is the 0-based point list of the walking line; OCCT reads
+    // Value(Param) with 1-based indexing, so the callers pass param 0 for the
+    // first vertex and Nbpts-2 (0-based) for the last (OCCT Param = Nbpts-1).
     let (u1p, v1p, u2p, v2p) = iwline[param].parameters();
     let half3 = 1.5 * std::f64::consts::PI;
     match type_s1 {
@@ -687,7 +690,7 @@ impl ImpPrmIntersection {
                                         type_s2,
                                         &mut ptdeb,
                                         &thelin_points(&thelin),
-                                        1,
+                                        0,
                                         u1,
                                         v1q,
                                         u2,
@@ -738,7 +741,7 @@ impl ImpPrmIntersection {
                                         type_s2,
                                         &mut ptdeb,
                                         &thelin_points(&thelin),
-                                        1,
+                                        0,
                                         u1,
                                         v1,
                                         u2,
@@ -832,7 +835,7 @@ impl ImpPrmIntersection {
                                         type_s2,
                                         &mut ptfin,
                                         &thelin_points(&thelin),
-                                        nbpts - 1,
+                                        nbpts - 2,
                                         u1,
                                         v1q,
                                         u2,
@@ -883,7 +886,7 @@ impl ImpPrmIntersection {
                                         type_s2,
                                         &mut ptfin,
                                         &thelin_points(&thelin),
-                                        nbpts - 1,
+                                        nbpts - 2,
                                         u1,
                                         v1,
                                         u2,
@@ -979,14 +982,13 @@ impl ImpPrmIntersection {
                 if dofirst || dolast {
                     let mut k = j + 1;
                     while k <= nblines {
-                        let (has_fp2, fp2, has_lp2, lp2) = {
+                        let (fp_idx, fp2, lp_idx, lp2) = {
                             let slink = &self.slin[k - 1];
                             let fp2 = slink.has_first_point().then(|| slink.first_point().clone());
                             let lp2 = slink.has_last_point().then(|| slink.last_point().clone());
-                            (slink.has_first_point(), fp2, slink.has_last_point(), lp2)
+                            (slink.first_point, fp2, slink.last_point, lp2)
                         };
-                        if has_fp2 {
-                            let ptbis = fp2.unwrap();
+                        if let Some(ptbis) = fp2 {
                             if ptbis.is_tangency_point() {
                                 if dofirst {
                                     if ptdeb.p3d.distance(ptbis.p3d) <= tol_arc {
@@ -994,7 +996,7 @@ impl ImpPrmIntersection {
                                         if !ptbis.is_multiple() {
                                             let mut ptbis_m = ptbis.clone();
                                             ptbis_m.set_multiple(true);
-                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                            self.slin[k - 1].replace_vertex(fp_idx.unwrap(), ptbis_m);
                                         }
                                     }
                                 }
@@ -1004,14 +1006,13 @@ impl ImpPrmIntersection {
                                         if !ptbis.is_multiple() {
                                             let mut ptbis_m = ptbis.clone();
                                             ptbis_m.set_multiple(true);
-                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                            self.slin[k - 1].replace_vertex(fp_idx.unwrap(), ptbis_m);
                                         }
                                     }
                                 }
                             }
                         }
-                        if has_lp2 {
-                            let ptbis = lp2.unwrap();
+                        if let Some(ptbis) = lp2 {
                             if ptbis.is_tangency_point() {
                                 if dofirst {
                                     if ptdeb.p3d.distance(ptbis.p3d) <= tol_arc {
@@ -1019,7 +1020,7 @@ impl ImpPrmIntersection {
                                         if !ptbis.is_multiple() {
                                             let mut ptbis_m = ptbis.clone();
                                             ptbis_m.set_multiple(true);
-                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                            self.slin[k - 1].replace_vertex(lp_idx.unwrap(), ptbis_m);
                                         }
                                     }
                                 }
@@ -1029,7 +1030,7 @@ impl ImpPrmIntersection {
                                         if !ptbis.is_multiple() {
                                             let mut ptbis_m = ptbis.clone();
                                             ptbis_m.set_multiple(true);
-                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                            self.slin[k - 1].replace_vertex(lp_idx.unwrap(), ptbis_m);
                                         }
                                     }
                                 }
@@ -1193,7 +1194,13 @@ impl ImpPrmIntersection {
                 // Create the RLine.
                 let mut rline = IntPatchLine::analytic(IntPatchIType::Restriction, rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }), [0.0, 1.0]);
                 rline.line_type = IntPatchIType::Restriction;
-                let _ = transition_ok;
+                // OCCT L1599-1623: the RLine carries the transitions when
+                // TransitionOK (IntPatch_RLine(false, trans1, trans2)); otherwise
+                // the bare RLine constructor is used and no transitions are set.
+                if transition_ok {
+                    rline.trans1 = Some(Transition::from_type(trans1));
+                    rline.trans2 = Some(Transition::from_type(trans2));
+                }
                 if reversed {
                     rline.set_arc_on_s1(thesegm.curve().clone());
                 } else {
@@ -1217,14 +1224,6 @@ impl ImpPrmIntersection {
                         let p2d = thesegm.curve().point_at(prm);
                         let ptpoly = if reversed { s1.point_at(p2d.x, p2d.y) } else { s2.point_at(p2d.x, p2d.y) };
                         let (u, v) = quad.parameters(ptpoly);
-                        let mut p2s = PntOn2S::new();
-                        if reversed {
-                            p2s.set_value(ptpoly, false, u, v);
-                            p2s.set_value_uv(true, p2d.x, p2d.y);
-                        } else {
-                            p2s.set_value(ptpoly, true, p2d.x, p2d.y);
-                            p2s.set_value_uv(false, u, v);
-                        }
                         rline.wline_pnts.push(crate::geomalgo::int_patch::WLinePnt {
                             p3d: ptpoly,
                             u1: if reversed { p2d.x } else { u },
