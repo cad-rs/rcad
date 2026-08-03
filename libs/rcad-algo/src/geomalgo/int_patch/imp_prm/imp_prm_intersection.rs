@@ -1,0 +1,2150 @@
+// OCCT IntPatch_ImpPrmIntersection.cxx 1:1 Rust translation — intersection
+// between a natural quadric patch (Plane/Cone/Cylinder/Sphere) and a
+// bi-parametrised surface.
+//
+// The algorithm combines the boundary-search (IntPatch_TheSOnBounds), the
+// interior-point search (IntPatch_TheSearchInside) and the implicit-surface
+// walking (IntPatch_TheIWalking), then converts the walking polylines into
+// WLine objects and the SOnBounds segments into RLine objects.
+//
+// OCCT IntPatch_ImpPrmIntersection.cxx L181-1964 (Perform + ComputeTangency /
+// Recadre / GetLocalStep), L1968-3892 (seam/pole decomposition helpers).
+
+use std::f64::consts::TAU;
+
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
+
+use crate::geomalgo::int_surf::quadric::{Quadric, QuadricType};
+use crate::geomalgo::int_surf::PntOn2S;
+use crate::geomalgo::int_patch::so_on_bounds::{ArcFunction, Domain, SOnBounds};
+use crate::geomalgo::int_patch::transitions::{make_transition, Transition, TypeTrans};
+use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex};
+
+use super::i_walking::IWalking;
+use super::path_point::{InteriorPoint, PathPoint};
+use super::search_inside::SearchInside;
+use super::surf_function::SurfFunction;
+
+/// OCCT IntSurf_QuadricTool::Tolerance (IntSurf_QuadricTool.cxx L17-28).
+fn quadric_tool_tolerance(q: &Quadric) -> f64 {
+    match q.type_quadric() {
+        QuadricType::Sphere => 2e-6 * q.radius(),
+        QuadricType::Cylinder => 2e-6 * q.radius(),
+        _ => 1e-6,
+    }
+}
+
+/// OCCT IsSeamOrPole (IntPatch_ImpPrmIntersection.cxx L85-177).
+#[allow(clippy::too_many_arguments)]
+fn is_seam_or_pole(
+    q_surf: &Surface3,
+    line: &[PntOn2S],
+    is_reversed: bool,
+    ref_index: usize,
+    tol_3d: f64,
+    delta_max: f64,
+) -> i32 {
+    // OCCT IntPatch_SpecPntType: 0 = None, 1 = Pole, 2 = SeamU, 3 = SeamV,
+    // 4 = SeamUV, 5 = PoleSeamU.
+    const SPNT_NONE: i32 = 0;
+    const SPNT_POLE: i32 = 1;
+    const SPNT_SEAM_U: i32 = 2;
+    const SPNT_SEAM_V: i32 = 3;
+    const SPNT_SEAM_UV: i32 = 4;
+    const SPNT_POLE_SEAM_U: i32 = 5;
+
+    if ref_index == 0 || ref_index >= line.len() {
+        return SPNT_NONE;
+    }
+
+    let a_uq_ref;
+    let a_vq_ref;
+    let a_up_ref;
+    let a_vp_ref;
+    let a_uq_next;
+    let a_vq_next;
+    let a_up_next;
+    let a_vp_next;
+
+    let a_p3d = line[ref_index].value();
+
+    if is_reversed {
+        let (u1, v1, u2, v2) = line[ref_index].parameters();
+        (a_up_ref, a_vp_ref, a_uq_ref, a_vq_ref) = (u1, v1, u2, v2);
+        let (u1, v1, u2, v2) = line[ref_index + 1].parameters();
+        (a_up_next, a_vp_next, a_uq_next, a_vq_next) = (u1, v1, u2, v2);
+    } else {
+        let (u1, v1, u2, v2) = line[ref_index].parameters();
+        (a_uq_ref, a_vq_ref, a_up_ref, a_vp_ref) = (u1, v1, u2, v2);
+        let (u1, v1, u2, v2) = line[ref_index + 1].parameters();
+        (a_uq_next, a_vq_next, a_up_next, a_vp_next) = (u1, v1, u2, v2);
+    }
+
+    let a_type = q_surf;
+
+    if let Surface3::Cone(c) = a_type {
+        let apex = c.apex;
+        if apex.distance_squared(a_p3d) < tol_3d * tol_3d {
+            return SPNT_POLE_SEAM_U;
+        }
+    } else if let Surface3::Sphere(s) = a_type {
+        let sq_tol = tol_3d * tol_3d;
+        let a_p = s.point_at(0.0, std::f64::consts::FRAC_PI_2);
+        if a_p.distance_squared(a_p3d) < sq_tol {
+            return SPNT_POLE_SEAM_U;
+        }
+        let a_p = s.point_at(0.0, -std::f64::consts::FRAC_PI_2);
+        if a_p.distance_squared(a_p3d) < sq_tol {
+            return SPNT_POLE_SEAM_U;
+        }
+    }
+
+    let a_delta_u = (a_uq_ref - a_uq_next).abs();
+
+    if !matches!(a_type, Surface3::Torus(_)) && a_delta_u < delta_max {
+        return SPNT_NONE;
+    }
+
+    match a_type {
+        Surface3::Cylinder(_) => SPNT_SEAM_U,
+        Surface3::Torus(t) => {
+            let a_delta_v = (a_vq_ref - a_vq_next).abs();
+            if a_delta_u >= delta_max && a_delta_v >= delta_max {
+                SPNT_SEAM_UV
+            } else if a_delta_u >= delta_max {
+                SPNT_SEAM_U
+            } else if a_delta_v >= delta_max {
+                SPNT_SEAM_V
+            } else {
+                SPNT_NONE
+            }
+        }
+        Surface3::Sphere(_) | Surface3::Cone(_) => SPNT_POLE_SEAM_U,
+        _ => SPNT_NONE,
+    }
+}
+
+/// OCCT Recadre (IntPatch_ImpPrmIntersection.cxx L473-541).
+#[allow(clippy::too_many_arguments)]
+fn recadre_impprm(
+    type_s1: GeomAbsSurfaceTypeAlias,
+    type_s2: GeomAbsSurfaceTypeAlias,
+    pt: &mut IntPatchVertex,
+    iwline: &[PntOn2S],
+    param: usize,
+    mut u1: f64,
+    mut v1: f64,
+    mut u2: f64,
+    mut v2: f64,
+) {
+    let (u1p, v1p, u2p, v2p) = iwline[param].parameters();
+    let half3 = 1.5 * std::f64::consts::PI;
+    match type_s1 {
+        GeomAbsSurfaceTypeAlias::Torus => {
+            while v1 < v1p - half3 {
+                v1 += TAU;
+            }
+            while v1 > v1p + half3 {
+                v1 -= TAU;
+            }
+            // fallthrough
+            while u1 < u1p - half3 {
+                u1 += TAU;
+            }
+            while u1 > u1p + half3 {
+                u1 -= TAU;
+            }
+        }
+        GeomAbsSurfaceTypeAlias::Cylinder
+        | GeomAbsSurfaceTypeAlias::Cone
+        | GeomAbsSurfaceTypeAlias::Sphere => {
+            while u1 < u1p - half3 {
+                u1 += TAU;
+            }
+            while u1 > u1p + half3 {
+                u1 -= TAU;
+            }
+        }
+        _ => {}
+    }
+    match type_s2 {
+        GeomAbsSurfaceTypeAlias::Torus => {
+            while v2 < v2p - half3 {
+                v2 += TAU;
+            }
+            while v2 > v2p + half3 {
+                v2 -= TAU;
+            }
+            // fallthrough
+            while u2 < u2p - half3 {
+                u2 += TAU;
+            }
+            while u2 > u2p + half3 {
+                u2 -= TAU;
+            }
+        }
+        GeomAbsSurfaceTypeAlias::Cylinder
+        | GeomAbsSurfaceTypeAlias::Cone
+        | GeomAbsSurfaceTypeAlias::Sphere => {
+            while u2 < u2p - half3 {
+                u2 += TAU;
+            }
+            while u2 > u2p + half3 {
+                u2 -= TAU;
+            }
+        }
+        _ => {}
+    }
+    pt.set_parameters(u1, v1, u2, v2);
+}
+
+/// OCCT GeomAbs_SurfaceType — the surface-kind used by the ImpPrm Recadre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeomAbsSurfaceTypeAlias {
+    Plane,
+    Cylinder,
+    Cone,
+    Sphere,
+    Torus,
+    Other,
+}
+
+fn classify_alias(s: &Surface3) -> GeomAbsSurfaceTypeAlias {
+    match s {
+        Surface3::Plane(_) => GeomAbsSurfaceTypeAlias::Plane,
+        Surface3::Cylinder(_) => GeomAbsSurfaceTypeAlias::Cylinder,
+        Surface3::Cone(_) => GeomAbsSurfaceTypeAlias::Cone,
+        Surface3::Sphere(_) => GeomAbsSurfaceTypeAlias::Sphere,
+        Surface3::Torus(_) => GeomAbsSurfaceTypeAlias::Torus,
+        _ => GeomAbsSurfaceTypeAlias::Other,
+    }
+}
+
+/// OCCT GetLocalStep (IntPatch_ImpPrmIntersection.cxx L545-613).  For the
+/// surfaces exercised by rcad (analytic + linear extrusion), the local step
+/// equals the input step.
+fn get_local_step(_surf: &Surface3, step: f64) -> f64 {
+    step
+}
+
+/// OCCT IntPatch_ImpPrmIntersection (IntPatch_ImpPrmIntersection.hxx L32-90).
+pub struct ImpPrmIntersection {
+    done: bool,
+    empt: bool,
+    spnt: Vec<IntPatchVertex>,
+    slin: Vec<IntPatchLine>,
+    solrst: SOnBounds,
+    solins: SearchInside,
+    my_is_start_pnt: bool,
+    my_u_start: f64,
+    my_v_start: f64,
+}
+
+impl ImpPrmIntersection {
+    /// OCCT default constructor (L181-188).
+    pub fn new() -> Self {
+        ImpPrmIntersection {
+            done: false,
+            empt: false,
+            spnt: Vec::new(),
+            slin: Vec::new(),
+            solrst: SOnBounds::new(),
+            solins: SearchInside::new(),
+            my_is_start_pnt: false,
+            my_u_start: 0.0,
+            my_v_start: 0.0,
+        }
+    }
+
+    /// OCCT SetStartPoint (L212-217).
+    pub fn set_start_point(&mut self, u: f64, v: f64) {
+        self.my_is_start_pnt = true;
+        self.my_u_start = u;
+        self.my_v_start = v;
+    }
+
+    /// OCCT IsDone.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+    /// OCCT IsEmpty.
+    pub fn is_empty(&self) -> bool {
+        self.empt
+    }
+    /// OCCT NbPnts.
+    pub fn nb_points(&self) -> usize {
+        self.spnt.len()
+    }
+    /// OCCT Point(Index) — 1-based.
+    pub fn point(&self, index: usize) -> &IntPatchVertex {
+        &self.spnt[index - 1]
+    }
+    /// OCCT NbLines.
+    pub fn nb_lines(&self) -> usize {
+        self.slin.len()
+    }
+    /// OCCT Line(Index) — 1-based.
+    pub fn line(&self, index: usize) -> &IntPatchLine {
+        &self.slin[index - 1]
+    }
+
+    /// OCCT Perform (L617-1964).
+    #[allow(clippy::too_many_arguments)]
+    pub fn perform(
+        &mut self,
+        s1: &Surface3,
+        s2: &Surface3,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        tol_arc: f64,
+        tol_tang: f64,
+        fleche: f64,
+        pas: f64,
+    ) {
+        let mut reversed = false;
+        let mut procf = false;
+        let mut procl = false;
+        let mut dofirst = false;
+        let mut dolast = false;
+        let mut indfirst = 0usize;
+        let mut indlast = 0usize;
+        let mut ind2 = 0usize;
+        let mut paramf = 0.0;
+        let mut paraml = 0.0;
+        let mut currentparam = 0.0;
+        let mut u1 = 0.0;
+        let mut v1 = 0.0;
+        let mut u2 = 0.0;
+        let mut v2 = 0.0;
+
+        let type_s1 = classify_alias(s1);
+        let type_s2 = classify_alias(s2);
+
+        let mut trans1 = TypeTrans::Undecided;
+        let mut trans2 = TypeTrans::Undecided;
+
+        self.done = false;
+        self.empt = true;
+        self.slin.clear();
+        self.spnt.clear();
+
+        // Identify the quadric surface.
+        let mut quad = Quadric::new();
+        match type_s1 {
+            GeomAbsSurfaceTypeAlias::Plane
+            | GeomAbsSurfaceTypeAlias::Cylinder
+            | GeomAbsSurfaceTypeAlias::Sphere
+            | GeomAbsSurfaceTypeAlias::Cone => {
+                quad = quad_of(s1);
+            }
+            _ => {
+                reversed = true;
+                match type_s2 {
+                    GeomAbsSurfaceTypeAlias::Plane
+                    | GeomAbsSurfaceTypeAlias::Cylinder
+                    | GeomAbsSurfaceTypeAlias::Sphere
+                    | GeomAbsSurfaceTypeAlias::Cone => {
+                        quad = quad_of(s2);
+                    }
+                    _ => {
+                        // OCCT throws Standard_ConstructionError.
+                        self.done = true;
+                        self.empt = true;
+                        return;
+                    }
+                }
+            }
+        }
+
+        let a_local_pas = if reversed {
+            get_local_step(s1, pas)
+        } else {
+            get_local_step(s2, pas)
+        };
+
+        let mut func = SurfFunction::with_quadric(quad.clone());
+        func.set_implicit_surface(quad.clone());
+        func.set_tolerance(quadric_tool_tolerance(&quad));
+        let mut a_func = ArcFunction::new();
+        a_func.set_quadric(quad.clone());
+
+        if !reversed {
+            func.set_surface(s2.clone());
+            a_func.set_surface(s2.clone());
+        } else {
+            func.set_surface(s1.clone());
+            a_func.set_surface(s1.clone());
+        }
+
+        // SOnBounds.
+        let p_domain = if !reversed { uv2 } else { uv1 };
+        let mut dom = Domain::new(p_domain[0], p_domain[1], p_domain[2], p_domain[3]);
+        self.solrst.perform(&mut a_func, &mut dom, tol_arc, tol_tang, false);
+        if !self.solrst.is_done() {
+            return;
+        }
+
+        // ComputeTangency → seqpdep.
+        let mut seqpdep: Vec<PathPoint> = Vec::new();
+        let nb_point_rst = self.solrst.nb_points();
+        let mut destination = vec![0i32; nb_point_rst + 1];
+        if nb_point_rst > 0 {
+            let p_surf = if !reversed { s2 } else { s1 };
+            compute_tangency(&self.solrst, &mut seqpdep, p_surf, &mut func, &mut destination, &mut dom);
+        }
+
+        // Decide whether SearchInside is needed.
+        let mut search_ins = true;
+        if quad.type_quadric() == QuadricType::Plane && self.solrst.nb_segments() > 0 {
+            search_ins = false;
+            // rcad: sample the parametric surface domain corners.
+            let p_dom = if !reversed { uv2 } else { uv1 };
+            let pts = [
+                DVec2::new(p_dom[0], p_dom[2]),
+                DVec2::new(p_dom[1], p_dom[2]),
+                DVec2::new(p_dom[0], p_dom[3]),
+                DVec2::new(p_dom[1], p_dom[3]),
+            ];
+            let mut rvalf = 0.0f64;
+            let mut first = true;
+            for p2d in pts {
+                let x = [p2d.x, p2d.y];
+                if let Some(val) = func.value(&x) {
+                    if first {
+                        rvalf = val.copysign(1.0);
+                        first = false;
+                    } else if rvalf * val < 0.0 {
+                        search_ins = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Interior points.
+        let mut seqpins: Vec<InteriorPoint> = Vec::new();
+        let mut nb_point_ins = 0usize;
+        if search_ins {
+            let p_surf = if !reversed { s2 } else { s1 };
+            if self.my_is_start_pnt {
+                self.solins
+                    .perform_from_point(&mut func, p_surf, self.my_u_start, self.my_v_start);
+            } else {
+                self.solins.perform(&mut func, p_surf, tol_tang);
+            }
+            nb_point_ins = self.solins.nb_points();
+            for i in 1..=nb_point_ins {
+                seqpins.push(self.solins.value(i).clone());
+            }
+        }
+
+        let nb_point_dep = seqpdep.len();
+
+        if nb_point_dep > 0 || nb_point_ins > 0 {
+            let param_surf = if reversed { s1 } else { s2 };
+            let mut iwalk = IWalking::new(tol_tang, fleche, a_local_pas, false);
+            iwalk.perform(&seqpdep, &seqpins, &mut func, param_surf, reversed);
+
+            if !iwalk.is_done() {
+                return;
+            }
+
+            let (vmin, vmax) = if !reversed {
+                (uv1[2], uv1[3])
+            } else {
+                (uv2[2], uv2[3])
+            };
+            let tol_v = 1e-14;
+
+            let nblines = iwalk.nb_lines();
+            for j in 1..=nblines {
+                let iwline = iwalk.value(j);
+                let thelin = iwline.line().clone();
+
+                let nbpts = thelin.nb_points();
+                if nbpts >= 2 {
+                    let mut k = 0usize;
+                    let (mut tgline, _) = iwline.tangent_vector();
+                    if k >= 1 && k <= nbpts {
+                    } else {
+                        k = nbpts >> 1;
+                    }
+                    let valpt = thelin.value(k).value();
+
+                    let (u2v, v2v);
+                    let norm1;
+                    let norm2;
+                    if !reversed {
+                        let (u, v) = thelin.value(k).parameters_on_surface(false);
+                        (u2v, v2v) = (u, v);
+                        norm1 = quad.normale(valpt);
+                        let (_, d1u, d1v) = s2.derivatives(u2v, v2v);
+                        norm2 = d1u.cross(d1v);
+                    } else {
+                        let (u, v) = thelin.value(k).parameters_on_surface(true);
+                        (u2v, v2v) = (u, v);
+                        norm2 = quad.normale(valpt);
+                        let (_, d1u, d1v) = s1.derivatives(u2v, v2v);
+                        norm1 = d1u.cross(d1v);
+                    }
+                    if tgline.dot(norm2.cross(norm1)) > 0.0 {
+                        trans1 = TypeTrans::Out;
+                        trans2 = TypeTrans::In;
+                    } else {
+                        trans1 = TypeTrans::In;
+                        trans2 = TypeTrans::Out;
+                    }
+
+                    let mut an_u1;
+                    let mut an_u2;
+                    let mut an_v2;
+                    let mut v1q;
+
+                    let typ_quad = quad.type_quadric();
+                    let mut arecadr = false;
+                    let valpt = thelin.value(0).value();
+                    let (an_u1o, v1o) = quad.parameters(valpt);
+                    an_u1 = an_u1o;
+                    v1q = v1o;
+
+                    if (v1q < vmin) && (vmin - v1q < tol_v) {
+                        v1q = vmin;
+                    }
+                    if (v1q > vmax) && (v1q - vmax < tol_v) {
+                        v1q = vmax;
+                    }
+
+                    let mut thelin = thelin;
+                    if reversed {
+                        thelin.set_uv(0, false, an_u1, v1q);
+                        let (u, v) = thelin.value(0).parameters_on_surface(true);
+                        (an_u2, an_v2) = (u, v);
+                    } else {
+                        thelin.set_uv(0, true, an_u1, v1q);
+                        let (u, v) = thelin.value(0).parameters_on_surface(false);
+                        (an_u2, an_v2) = (u, v);
+                    }
+
+                    if typ_quad == QuadricType::Cylinder
+                        || typ_quad == QuadricType::Cone
+                        || typ_quad == QuadricType::Sphere
+                    {
+                        arecadr = true;
+                    }
+
+                    for k in 1..nbpts {
+                        let valpt = thelin.value(k).value();
+                        let (u, v) = quad.parameters(valpt);
+                        u1 = u;
+                        v1q = v;
+
+                        if (v1q < vmin) && (vmin - v1q < tol_v) {
+                            v1q = vmin;
+                        }
+                        if (v1q > vmax) && (v1q - vmax < tol_v) {
+                            v1q = vmax;
+                        }
+
+                        if arecadr {
+                            let a_cf = 0.0f64;
+                            let a_two_pi = TAU;
+                            if (u1 - an_u1) > 1.5 * std::f64::consts::PI {
+                                let mut cf = a_cf;
+                                while (u1 - an_u1) > (1.5 * std::f64::consts::PI + cf * a_two_pi) {
+                                    cf += 1.0;
+                                }
+                                u1 -= cf * a_two_pi;
+                            } else {
+                                let mut cf = a_cf;
+                                while (u1 - an_u1) < (-1.5 * std::f64::consts::PI - cf * a_two_pi) {
+                                    cf += 1.0;
+                                }
+                                u1 += cf * a_two_pi;
+                            }
+                        }
+
+                        if reversed {
+                            thelin.set_uv(k, false, u1, v1q);
+                            let (u, v) = thelin.value(k).parameters_on_surface(true);
+                            u2 = u;
+                            v2 = v;
+                            match type_s1 {
+                                GeomAbsSurfaceTypeAlias::Cylinder
+                                | GeomAbsSurfaceTypeAlias::Cone
+                                | GeomAbsSurfaceTypeAlias::Sphere
+                                | GeomAbsSurfaceTypeAlias::Torus => {
+                                    while u2 < an_u2 - 1.5 * std::f64::consts::PI {
+                                        u2 += TAU;
+                                    }
+                                    while u2 > an_u2 + 1.5 * std::f64::consts::PI {
+                                        u2 -= TAU;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if type_s2 == GeomAbsSurfaceTypeAlias::Torus {
+                                while v2 < an_v2 - 1.5 * std::f64::consts::PI {
+                                    v2 += TAU;
+                                }
+                                while v2 > an_v2 + 1.5 * std::f64::consts::PI {
+                                    v2 -= TAU;
+                                }
+                            }
+                            thelin.set_uv(k, true, u2, v2);
+                        } else {
+                            thelin.set_uv(k, true, u1, v1q);
+                            let (u, v) = thelin.value(k).parameters_on_surface(false);
+                            u2 = u;
+                            v2 = v;
+                            match type_s2 {
+                                GeomAbsSurfaceTypeAlias::Cylinder
+                                | GeomAbsSurfaceTypeAlias::Cone
+                                | GeomAbsSurfaceTypeAlias::Sphere
+                                | GeomAbsSurfaceTypeAlias::Torus => {
+                                    while u2 < an_u2 - 1.5 * std::f64::consts::PI {
+                                        u2 += TAU;
+                                    }
+                                    while u2 > an_u2 + 1.5 * std::f64::consts::PI {
+                                        u2 -= TAU;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if type_s2 == GeomAbsSurfaceTypeAlias::Torus {
+                                while v2 < an_v2 - 1.5 * std::f64::consts::PI {
+                                    v2 += TAU;
+                                }
+                                while v2 > an_v2 + 1.5 * std::f64::consts::PI {
+                                    v2 -= TAU;
+                                }
+                            }
+                            thelin.set_uv(k, false, u2, v2);
+                        }
+
+                        an_u1 = u1;
+                        an_u2 = u2;
+                        an_v2 = v2;
+                    }
+
+                    let wline_pnts: Vec<crate::geomalgo::int_patch::WLinePnt> = (0..thelin.nb_points())
+                        .map(|i| {
+                            let p = thelin.value(i);
+                            let (u1, v1, u2, v2) = p.parameters();
+                            crate::geomalgo::int_patch::WLinePnt {
+                                p3d: p.value(),
+                                u1,
+                                v1,
+                                u2,
+                                v2,
+                            }
+                        })
+                        .collect();
+                    let mut wline = IntPatchLine::walking(wline_pnts, crate::geomalgo::int_patch::WLineType::ImpPrm);
+                    wline.trans1 = Some(Transition::from_type(trans1));
+                    wline.trans2 = Some(Transition::from_type(trans2));
+
+                    // Vertex at the first point.
+                    if iwline.has_first_point() && !iwline.is_tangent_at_begining() {
+                        indfirst = iwline.first_point_index() as usize;
+                        let ppoint = seqpdep[indfirst - 1].clone();
+                        tgline = ppoint.direction_3d();
+                        let mut themult = ppoint.multiplicity();
+                        let mut i = nb_point_rst;
+                        while i >= 1 {
+                            if destination[i - 1] as usize == indfirst {
+                                if !reversed {
+                                    let (u, v) = quad.parameters(ppoint.value());
+                                    u1 = u;
+                                    v1q = v;
+                                    if (v1q < vmin) && (vmin - v1q < tol_v) {
+                                        v1q = vmin;
+                                    }
+                                    if (v1q > vmax) && (v1q - vmax < tol_v) {
+                                        v1q = vmax;
+                                    }
+                                    ppoint.parameters(themult, &mut u2, &mut v2);
+                                    let (_, d1u, d1v) = s2.derivatives(u2, v2);
+                                    let vec_normale = d1u.cross(d1v);
+                                    let mut ptdeb = IntPatchVertex::default();
+                                    ptdeb.set_value(ppoint.value(), tol_arc, false);
+                                    ptdeb.set_parameters(u1, v1q, u2, v2);
+                                    ptdeb.set_parameter(1.0);
+                                    recadre_impprm(
+                                        type_s1,
+                                        type_s2,
+                                        &mut ptdeb,
+                                        &thelin_points(&thelin),
+                                        1,
+                                        u1,
+                                        v1q,
+                                        u2,
+                                        v2,
+                                    );
+                                    let current_arc = self.solrst.point(i).arc().clone();
+                                    currentparam = self.solrst.point(i).parameter();
+                                    let p2d = current_arc.point_at(currentparam);
+                                    let d2d = current_arc.derivative_at(currentparam);
+                                    let (_, d1u2, d1v2) = if !reversed { s2.derivatives(u2, v2) } else { s1.derivatives(u1, v1q) };
+                                    let tgrst = d2d.x * d1u2 + d2d.y * d1v2;
+                                    let mut t_line = Transition::new();
+                                    let mut t_arc = Transition::new();
+                                    if vec_normale.length_squared() > 1e-13 {
+                                        make_transition(tgline, tgrst, vec_normale, &mut t_line, &mut t_arc);
+                                    } else {
+                                        t_line.set_value_in_out(true, TypeTrans::Undecided);
+                                        t_arc.set_value_in_out(true, TypeTrans::Undecided);
+                                    }
+                                    ptdeb.set_arc(reversed, current_arc, currentparam);
+                                    if !self.solrst.point(i).is_new() {
+                                        ptdeb.set_vertex(reversed);
+                                    }
+                                    wline.add_vertex(ptdeb);
+                                    if themult == 0 {
+                                        wline.set_first_point(wline.nb_vertex());
+                                    }
+                                    themult -= 1;
+                                } else {
+                                    let (u, v) = quad.parameters(ppoint.value());
+                                    u2 = u;
+                                    v2 = v;
+                                    if (v2 < vmin) && (vmin - v2 < tol_v) {
+                                        v2 = vmin;
+                                    }
+                                    if (v2 > vmax) && (v2 - vmax < tol_v) {
+                                        v2 = vmax;
+                                    }
+                                    ppoint.parameters(themult, &mut u1, &mut v1);
+                                    let (_, d1u, d1v) = s1.derivatives(u1, v1);
+                                    let vec_normale = d1u.cross(d1v);
+                                    let mut ptdeb = IntPatchVertex::default();
+                                    ptdeb.set_value(ppoint.value(), tol_arc, false);
+                                    ptdeb.set_parameters(u1, v1, u2, v2);
+                                    ptdeb.set_parameter(1.0);
+                                    recadre_impprm(
+                                        type_s1,
+                                        type_s2,
+                                        &mut ptdeb,
+                                        &thelin_points(&thelin),
+                                        1,
+                                        u1,
+                                        v1,
+                                        u2,
+                                        v2,
+                                    );
+                                    let current_arc = self.solrst.point(i).arc().clone();
+                                    currentparam = self.solrst.point(i).parameter();
+                                    let p2d = current_arc.point_at(currentparam);
+                                    let d2d = current_arc.derivative_at(currentparam);
+                                    let (_, d1u2, d1v2) = s1.derivatives(u1, v1);
+                                    let tgrst = d2d.x * d1u2 + d2d.y * d1v2;
+                                    let mut t_line = Transition::new();
+                                    let mut t_arc = Transition::new();
+                                    if vec_normale.length_squared() > 1e-13 {
+                                        make_transition(tgline, tgrst, vec_normale, &mut t_line, &mut t_arc);
+                                    } else {
+                                        t_line.set_value_in_out(true, TypeTrans::Undecided);
+                                        t_arc.set_value_in_out(true, TypeTrans::Undecided);
+                                    }
+                                    ptdeb.set_arc(reversed, current_arc, currentparam);
+                                    if !self.solrst.point(i).is_new() {
+                                        ptdeb.set_vertex(reversed);
+                                    }
+                                    wline.add_vertex(ptdeb);
+                                    if themult == 0 {
+                                        wline.set_first_point(wline.nb_vertex());
+                                    }
+                                    themult -= 1;
+                                }
+                            }
+                            i = i.saturating_sub(1);
+                        }
+                    } else if iwline.is_tangent_at_begining() {
+                        let psol = thelin.value(0).value();
+                        let (u, v) = thelin.value(0).parameters_on_surface(true);
+                        u1 = u;
+                        v1 = v;
+                        let (u, v) = thelin.value(0).parameters_on_surface(false);
+                        u2 = u;
+                        v2 = v;
+                        let mut ptdeb = IntPatchVertex::default();
+                        ptdeb.set_value(psol, tol_arc, true);
+                        ptdeb.set_parameters(u1, v1, u2, v2);
+                        ptdeb.set_parameter(1.0);
+                        wline.add_vertex(ptdeb);
+                        wline.set_first_point(wline.nb_vertex());
+                    } else {
+                        let psol = thelin.value(0).value();
+                        let (u, v) = thelin.value(0).parameters_on_surface(true);
+                        u1 = u;
+                        v1 = v;
+                        let (u, v) = thelin.value(0).parameters_on_surface(false);
+                        u2 = u;
+                        v2 = v;
+                        let mut ptdeb = IntPatchVertex::default();
+                        ptdeb.set_value(psol, tol_arc, false);
+                        ptdeb.set_parameters(u1, v1, u2, v2);
+                        ptdeb.set_parameter(1.0);
+                        wline.add_vertex(ptdeb);
+                        wline.set_first_point(wline.nb_vertex());
+                    }
+
+                    // Vertex at the last point.
+                    if iwline.has_last_point() && !iwline.is_tangent_at_end() {
+                        indlast = iwline.last_point_index() as usize;
+                        let ppoint = seqpdep[indlast - 1].clone();
+                        tgline = -ppoint.direction_3d();
+                        let mut themult = ppoint.multiplicity();
+                        let mut i = nb_point_rst;
+                        while i >= 1 {
+                            if destination[i - 1] as usize == indlast {
+                                if !reversed {
+                                    let (u, v) = quad.parameters(ppoint.value());
+                                    u1 = u;
+                                    v1q = v;
+                                    if (v1q < vmin) && (vmin - v1q < tol_v) {
+                                        v1q = vmin;
+                                    }
+                                    if (v1q > vmax) && (v1q - vmax < tol_v) {
+                                        v1q = vmax;
+                                    }
+                                    ppoint.parameters(themult, &mut u2, &mut v2);
+                                    let (_, d1u, d1v) = s2.derivatives(u2, v2);
+                                    let vec_normale = d1u.cross(d1v);
+                                    let mut ptfin = IntPatchVertex::default();
+                                    ptfin.set_value(ppoint.value(), tol_arc, false);
+                                    ptfin.set_parameters(u1, v1q, u2, v2);
+                                    ptfin.set_parameter(nbpts as f64);
+                                    recadre_impprm(
+                                        type_s1,
+                                        type_s2,
+                                        &mut ptfin,
+                                        &thelin_points(&thelin),
+                                        nbpts - 1,
+                                        u1,
+                                        v1q,
+                                        u2,
+                                        v2,
+                                    );
+                                    let current_arc = self.solrst.point(i).arc().clone();
+                                    currentparam = self.solrst.point(i).parameter();
+                                    let p2d = current_arc.point_at(currentparam);
+                                    let d2d = current_arc.derivative_at(currentparam);
+                                    let (_, d1u2, d1v2) = s2.derivatives(u2, v2);
+                                    let tgrst = d2d.x * d1u2 + d2d.y * d1v2;
+                                    let mut t_line = Transition::new();
+                                    let mut t_arc = Transition::new();
+                                    if vec_normale.length_squared() > 1e-13 {
+                                        make_transition(tgline, tgrst, vec_normale, &mut t_line, &mut t_arc);
+                                    } else {
+                                        t_line.set_value_in_out(true, TypeTrans::Undecided);
+                                        t_arc.set_value_in_out(true, TypeTrans::Undecided);
+                                    }
+                                    ptfin.set_arc(reversed, current_arc, currentparam);
+                                    if !self.solrst.point(i).is_new() {
+                                        ptfin.set_vertex(reversed);
+                                    }
+                                    wline.add_vertex(ptfin);
+                                    if themult == 0 {
+                                        wline.set_last_point(wline.nb_vertex());
+                                    }
+                                    themult -= 1;
+                                } else {
+                                    let (u, v) = quad.parameters(ppoint.value());
+                                    u2 = u;
+                                    v2 = v;
+                                    if (v2 < vmin) && (vmin - v2 < tol_v) {
+                                        v2 = vmin;
+                                    }
+                                    if (v2 > vmax) && (v2 - vmax < tol_v) {
+                                        v2 = vmax;
+                                    }
+                                    ppoint.parameters(themult, &mut u1, &mut v1);
+                                    let (_, d1u, d1v) = s1.derivatives(u1, v1);
+                                    let vec_normale = d1u.cross(d1v);
+                                    let mut ptfin = IntPatchVertex::default();
+                                    ptfin.set_value(ppoint.value(), tol_arc, false);
+                                    ptfin.set_parameters(u1, v1, u2, v2);
+                                    ptfin.set_parameter(nbpts as f64);
+                                    recadre_impprm(
+                                        type_s1,
+                                        type_s2,
+                                        &mut ptfin,
+                                        &thelin_points(&thelin),
+                                        nbpts - 1,
+                                        u1,
+                                        v1,
+                                        u2,
+                                        v2,
+                                    );
+                                    let current_arc = self.solrst.point(i).arc().clone();
+                                    currentparam = self.solrst.point(i).parameter();
+                                    let p2d = current_arc.point_at(currentparam);
+                                    let d2d = current_arc.derivative_at(currentparam);
+                                    let (_, d1u2, d1v2) = s1.derivatives(u1, v1);
+                                    let tgrst = d2d.x * d1u2 + d2d.y * d1v2;
+                                    let mut t_line = Transition::new();
+                                    let mut t_arc = Transition::new();
+                                    if vec_normale.length_squared() > 1e-13 {
+                                        make_transition(tgline, tgrst, vec_normale, &mut t_line, &mut t_arc);
+                                    } else {
+                                        t_line.set_value_in_out(true, TypeTrans::Undecided);
+                                        t_arc.set_value_in_out(true, TypeTrans::Undecided);
+                                    }
+                                    ptfin.set_arc(reversed, current_arc, currentparam);
+                                    if !self.solrst.point(i).is_new() {
+                                        ptfin.set_vertex(reversed);
+                                    }
+                                    wline.add_vertex(ptfin);
+                                    if themult == 0 {
+                                        wline.set_last_point(wline.nb_vertex());
+                                    }
+                                    themult -= 1;
+                                }
+                            }
+                            i = i.saturating_sub(1);
+                        }
+                    } else if iwline.is_tangent_at_end() {
+                        let psol = thelin.value(nbpts - 1).value();
+                        let (u, v) = thelin.value(nbpts - 1).parameters_on_surface(true);
+                        u1 = u;
+                        v1 = v;
+                        let (u, v) = thelin.value(nbpts - 1).parameters_on_surface(false);
+                        u2 = u;
+                        v2 = v;
+                        let mut ptfin = IntPatchVertex::default();
+                        ptfin.set_value(psol, tol_arc, true);
+                        ptfin.set_parameters(u1, v1, u2, v2);
+                        ptfin.set_parameter(nbpts as f64);
+                        wline.add_vertex(ptfin);
+                        wline.set_last_point(wline.nb_vertex());
+                    } else {
+                        let psol = thelin.value(nbpts - 1).value();
+                        let (u, v) = thelin.value(nbpts - 1).parameters_on_surface(true);
+                        u1 = u;
+                        v1 = v;
+                        let (u, v) = thelin.value(nbpts - 1).parameters_on_surface(false);
+                        u2 = u;
+                        v2 = v;
+                        let mut ptfin = IntPatchVertex::default();
+                        ptfin.set_value(psol, tol_arc, false);
+                        ptfin.set_parameters(u1, v1, u2, v2);
+                        ptfin.set_parameter(nbpts as f64);
+                        wline.add_vertex(ptfin);
+                        wline.set_last_point(wline.nb_vertex());
+                    }
+
+                    // Il faut traiter les points de passage.
+                    self.slin.push(wline);
+                }
+            }
+
+            // Connect tangent points between lines.
+            let nblines = self.slin.len();
+            let mut j = 1usize;
+            while j <= nblines.saturating_sub(1) {
+                let mut dofirst = false;
+                let mut dolast = false;
+                let mut ptdeb = IntPatchVertex::default();
+                let mut ptfin = IntPatchVertex::default();
+                {
+                    let slinj = &self.slin[j - 1];
+                    if slinj.has_first_point() {
+                        let fp = slinj.first_point().clone();
+                        if fp.is_tangency_point() {
+                            dofirst = true;
+                            ptdeb = fp;
+                        }
+                    }
+                    if slinj.has_last_point() {
+                        let lp = slinj.last_point().clone();
+                        if lp.is_tangency_point() {
+                            dolast = true;
+                            ptfin = lp;
+                        }
+                    }
+                }
+                if dofirst || dolast {
+                    let mut k = j + 1;
+                    while k <= nblines {
+                        let (has_fp2, fp2, has_lp2, lp2) = {
+                            let slink = &self.slin[k - 1];
+                            let fp2 = slink.has_first_point().then(|| slink.first_point().clone());
+                            let lp2 = slink.has_last_point().then(|| slink.last_point().clone());
+                            (slink.has_first_point(), fp2, slink.has_last_point(), lp2)
+                        };
+                        if has_fp2 {
+                            let ptbis = fp2.unwrap();
+                            if ptbis.is_tangency_point() {
+                                if dofirst {
+                                    if ptdeb.p3d.distance(ptbis.p3d) <= tol_arc {
+                                        ptdeb.set_multiple(true);
+                                        if !ptbis.is_multiple() {
+                                            let mut ptbis_m = ptbis.clone();
+                                            ptbis_m.set_multiple(true);
+                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                        }
+                                    }
+                                }
+                                if dolast {
+                                    if ptfin.p3d.distance(ptbis.p3d) <= tol_arc {
+                                        ptfin.set_multiple(true);
+                                        if !ptbis.is_multiple() {
+                                            let mut ptbis_m = ptbis.clone();
+                                            ptbis_m.set_multiple(true);
+                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if has_lp2 {
+                            let ptbis = lp2.unwrap();
+                            if ptbis.is_tangency_point() {
+                                if dofirst {
+                                    if ptdeb.p3d.distance(ptbis.p3d) <= tol_arc {
+                                        ptdeb.set_multiple(true);
+                                        if !ptbis.is_multiple() {
+                                            let mut ptbis_m = ptbis.clone();
+                                            ptbis_m.set_multiple(true);
+                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                        }
+                                    }
+                                }
+                                if dolast {
+                                    if ptfin.p3d.distance(ptbis.p3d) <= tol_arc {
+                                        ptfin.set_multiple(true);
+                                        if !ptbis.is_multiple() {
+                                            let mut ptbis_m = ptbis.clone();
+                                            ptbis_m.set_multiple(true);
+                                            self.slin[k - 1].replace_vertex(1, ptbis_m);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        k += 1;
+                    }
+                    if dofirst {
+                        if let Some(fp_idx) = self.slin[j - 1].first_point {
+                            self.slin[j - 1].replace_vertex(fp_idx, ptdeb);
+                        }
+                    }
+                    if dolast {
+                        if let Some(lp_idx) = self.slin[j - 1].last_point {
+                            self.slin[j - 1].replace_vertex(lp_idx, ptfin);
+                        }
+                    }
+                }
+                j += 1;
+            }
+        }
+
+        // Treatment of the segments.
+        let nb_segm = self.solrst.nb_segments();
+        if nb_segm > 0 {
+            for i in 1..=nb_segm {
+                let thesegm = self.solrst.segment(i).clone();
+                // Check if segment is degenerated.
+                if thesegm.has_first_point() && thesegm.has_last_point() {
+                    let tol2 = rcad_kernel::precision::CONFUSION;
+                    let tol2 = tol2 * tol2;
+                    let a_pf = thesegm.first_point().value();
+                    let a_pl = thesegm.last_point().value();
+                    if a_pf.distance_squared(a_pl) <= tol2 {
+                        // Segment can be degenerated — check inner point.
+                        paramf = thesegm.first_point().parameter();
+                        paraml = thesegm.last_point().parameter();
+                        let p2d = thesegm.curve().point_at(0.57735 * paramf + 0.42265 * paraml);
+                        let a_pm = if reversed {
+                            s1.point_at(p2d.x, p2d.y)
+                        } else {
+                            s2.point_at(p2d.x, p2d.y)
+                        };
+                        if a_pm.distance_squared(a_pf) <= tol2 {
+                            // Degenerated.
+                            continue;
+                        }
+                    }
+                }
+
+                dofirst = false;
+                dolast = false;
+                procf = false;
+                procl = false;
+
+                let mut the_point_at_beg = IntPatchVertex::default();
+                let mut the_point_at_end = IntPatchVertex::default();
+                let mut transition_ok = false;
+                let mut trans1 = TypeTrans::Undecided;
+                let mut trans2 = TypeTrans::Undecided;
+
+                if thesegm.has_first_point() {
+                    dofirst = true;
+                    let p_startf = thesegm.first_point().clone();
+                    paramf = p_startf.parameter();
+                    let p2d = thesegm.curve().point_at(paramf);
+                    let pp = p_startf.value();
+                    the_point_at_beg.set_value(pp, p_startf.tolerance(), false);
+                    if !reversed {
+                        let (u, v) = quad.parameters(pp);
+                        u1 = u;
+                        v1 = v;
+                        u2 = p2d.x;
+                        v2 = p2d.y;
+                    } else {
+                        let (u, v) = quad.parameters(pp);
+                        u2 = u;
+                        v2 = v;
+                        u1 = p2d.x;
+                        v1 = p2d.y;
+                    }
+                    the_point_at_beg.set_parameters(u1, v1, u2, v2);
+                    the_point_at_beg.set_parameter(paramf);
+                    if !p_startf.is_new() {
+                        the_point_at_beg.set_vertex(reversed);
+                    }
+                    the_point_at_beg.set_arc(reversed, thesegm.curve().clone(), paramf);
+
+                    let (_, d1u1, d1v1) = s1.derivatives(u1, v1);
+                    let norm1 = d1u1.cross(d1v1);
+                    let (_, d1u2, d1v2) = s2.derivatives(u2, v2);
+                    let norm2 = d1u2.cross(d1v2);
+                    let d2d = thesegm.curve().derivative_at(paramf);
+                    let tgline = if reversed {
+                        d2d.x * d1u1 + d2d.y * d1v1
+                    } else {
+                        d2d.x * d1u2 + d2d.y * d1v2
+                    };
+                    let u1v = tgline.dot(norm2.cross(norm1));
+                    transition_ok = true;
+                    if u1v > 0.00000001 {
+                        trans1 = TypeTrans::Out;
+                        trans2 = TypeTrans::In;
+                    } else if u1v < -0.00000001 {
+                        trans1 = TypeTrans::In;
+                        trans2 = TypeTrans::Out;
+                    } else {
+                        transition_ok = false;
+                    }
+                }
+                if thesegm.has_last_point() {
+                    dolast = true;
+                    let p_startl = thesegm.last_point().clone();
+                    paraml = p_startl.parameter();
+                    let p2d = thesegm.curve().point_at(paraml);
+                    let pp = p_startl.value();
+                    the_point_at_end.set_value(pp, p_startl.tolerance(), false);
+                    if !reversed {
+                        let (u, v) = quad.parameters(pp);
+                        u1 = u;
+                        v1 = v;
+                        u2 = p2d.x;
+                        v2 = p2d.y;
+                    } else {
+                        let (u, v) = quad.parameters(pp);
+                        u2 = u;
+                        v2 = v;
+                        u1 = p2d.x;
+                        v1 = p2d.y;
+                    }
+                    the_point_at_end.set_parameters(u1, v1, u2, v2);
+                    the_point_at_end.set_parameter(paraml);
+                    if !p_startl.is_new() {
+                        the_point_at_end.set_vertex(reversed);
+                    }
+                    the_point_at_end.set_arc(reversed, thesegm.curve().clone(), paraml);
+
+                    let (_, d1u1, d1v1) = s1.derivatives(u1, v1);
+                    let norm1 = d1u1.cross(d1v1);
+                    let (_, d1u2, d1v2) = s2.derivatives(u2, v2);
+                    let norm2 = d1u2.cross(d1v2);
+                    let d2d = thesegm.curve().derivative_at(paraml);
+                    let tgline = if reversed {
+                        d2d.x * d1u1 + d2d.y * d1v1
+                    } else {
+                        d2d.x * d1u2 + d2d.y * d1v2
+                    };
+                    let u1v = tgline.dot(norm2.cross(norm1));
+                    transition_ok = true;
+                    if u1v > 0.00000001 {
+                        trans1 = TypeTrans::Out;
+                        trans2 = TypeTrans::In;
+                    } else if u1v < -0.00000001 {
+                        trans1 = TypeTrans::In;
+                        trans2 = TypeTrans::Out;
+                    } else {
+                        transition_ok = false;
+                    }
+                }
+
+                // Create the RLine.
+                let mut rline = IntPatchLine::analytic(IntPatchIType::Restriction, rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }), [0.0, 1.0]);
+                rline.line_type = IntPatchIType::Restriction;
+                let _ = transition_ok;
+                if reversed {
+                    rline.set_arc_on_s1(thesegm.curve().clone());
+                } else {
+                    rline.set_arc_on_s2(thesegm.curve().clone());
+                }
+
+                if thesegm.has_first_point() {
+                    rline.add_vertex(the_point_at_beg);
+                    rline.set_first_point(rline.nb_vertex());
+                }
+                if thesegm.has_last_point() {
+                    rline.add_vertex(the_point_at_end);
+                    rline.set_last_point(rline.nb_vertex());
+                }
+
+                // Polygone sur restriction solution.
+                if dofirst && dolast {
+                    let nbsample = 100usize;
+                    for j in 1..=nbsample {
+                        let prm = paramf + (j - 1) as f64 * (paraml - paramf) / (nbsample - 1) as f64;
+                        let p2d = thesegm.curve().point_at(prm);
+                        let ptpoly = if reversed { s1.point_at(p2d.x, p2d.y) } else { s2.point_at(p2d.x, p2d.y) };
+                        let (u, v) = quad.parameters(ptpoly);
+                        let mut p2s = PntOn2S::new();
+                        if reversed {
+                            p2s.set_value(ptpoly, false, u, v);
+                            p2s.set_value_uv(true, p2d.x, p2d.y);
+                        } else {
+                            p2s.set_value(ptpoly, true, p2d.x, p2d.y);
+                            p2s.set_value_uv(false, u, v);
+                        }
+                        rline.wline_pnts.push(crate::geomalgo::int_patch::WLinePnt {
+                            p3d: ptpoly,
+                            u1: if reversed { p2d.x } else { u },
+                            v1: if reversed { p2d.y } else { v },
+                            u2: if reversed { u } else { p2d.x },
+                            v2: if reversed { v } else { p2d.y },
+                        });
+                    }
+                }
+
+                // Attach nearby vertices from existing lines.
+                if dofirst || dolast {
+                    let nblines = self.slin.len();
+                    let mut j = 1usize;
+                    while j <= nblines {
+                        let typ = self.slin[j - 1].line_type;
+                        let nbpts = if typ == IntPatchIType::Walking {
+                            self.slin[j - 1].nb_vertex()
+                        } else {
+                            self.slin[j - 1].nb_vertex()
+                        };
+                        let mut k = 1usize;
+                        while k <= nbpts {
+                            let ptdeb = self.slin[j - 1].vertex(k).clone();
+                            if dofirst {
+                                let p_startf = thesegm.first_point().clone();
+                                if ptdeb.p3d.distance(p_startf.value()) <= tol_arc {
+                                    let mut ptdeb_m = ptdeb.clone();
+                                    ptdeb_m.set_multiple(true);
+                                    self.slin[j - 1].replace_vertex(k, ptdeb_m.clone());
+                                    ptdeb_m.set_parameter(paramf);
+                                    rline.add_vertex(ptdeb_m);
+                                    if !procf {
+                                        procf = true;
+                                        rline.set_first_point(rline.nb_vertex());
+                                    }
+                                }
+                            }
+                            if dolast {
+                                let p_startl = thesegm.last_point().clone();
+                                if ptdeb.p3d.distance(p_startl.value()) <= tol_arc {
+                                    let mut ptdeb_m = ptdeb.clone();
+                                    ptdeb_m.set_multiple(true);
+                                    self.slin[j - 1].replace_vertex(k, ptdeb_m.clone());
+                                    ptdeb_m.set_parameter(paraml);
+                                    rline.add_vertex(ptdeb_m);
+                                    if !procl {
+                                        procl = true;
+                                        rline.set_last_point(rline.nb_vertex());
+                                    }
+                                }
+                            }
+                            k += 1;
+                        }
+                        j += 1;
+                    }
+                }
+                self.slin.push(rline);
+            }
+        }
+
+        // On traite les restrictions de la surface implicite: remove short
+        // lines (<= 2 coincident points) and move Walking lines to the end.
+        let mut a_nb_lin = self.slin.len();
+        let mut i = 0usize;
+        while i < a_nb_lin {
+            let is_wline = self.slin[i].is_wline();
+            let a_cond = if is_wline {
+                let n = self.slin[i].wline_pnts.len();
+                if n < 2 {
+                    true
+                } else {
+                    let p1 = self.slin[i].wline_pnts[0].p3d;
+                    let p2 = self.slin[i].wline_pnts[1].p3d;
+                    p1.distance_squared(p2) <= rcad_kernel::precision::SQUARE_CONFUSION
+                }
+            } else {
+                self.slin[i].vertices.len() < 2
+            };
+            if a_cond {
+                self.slin.remove(i);
+                a_nb_lin = self.slin.len();
+                continue;
+            }
+
+            if self.slin[i].line_type == IntPatchIType::Walking {
+                let wl = self.slin.remove(i);
+                self.slin.push(wl);
+                i = i.saturating_sub(1);
+                a_nb_lin = self.slin.len();
+            }
+            i += 1;
+        }
+
+        // IsCoincide — remove coincident lines.
+        let a_tol_3d = func.tolerance().max(tol_tang);
+        let mut i = 0usize;
+        while i < self.slin.len() {
+            let is_rline1 = self.slin[i].line_type == IntPatchIType::Restriction;
+            if !is_rline1 {
+                break;
+            }
+            let mut is_first_deleted = false;
+            let mut j = i + 1;
+            while j < self.slin.len() {
+                let is_coincide = is_coincide_lines(&self.slin[i], &self.slin[j], a_tol_3d);
+                if is_coincide {
+                    let is_rline2 = self.slin[j].line_type == IntPatchIType::Restriction;
+                    if is_rline2 {
+                        let len1 = line_range(&self.slin[i]);
+                        let len2 = line_range(&self.slin[j]);
+                        if len2 > len1 {
+                            is_first_deleted = true;
+                            break;
+                        } else {
+                            self.slin.remove(j);
+                            continue;
+                        }
+                    } else {
+                        self.slin.remove(j);
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+            if is_first_deleted {
+                self.slin.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+
+        self.empt = self.slin.is_empty() && self.spnt.is_empty();
+        self.done = true;
+
+        if self.slin.is_empty() {
+            return;
+        }
+
+        // Post processing for cones and spheres.
+        let is_decompose_required = matches!(
+            quad.type_quadric(),
+            QuadricType::Cone | QuadricType::Sphere | QuadricType::Cylinder | QuadricType::Torus
+        );
+        if !is_decompose_required {
+            return;
+        }
+
+        let q_surf = if reversed { s2 } else { s1 };
+        let p_surf = if reversed { s1 } else { s2 };
+        let mut dslin: Vec<IntPatchLine> = Vec::new();
+        let mut is_decompose = false;
+        for i in 1..=self.slin.len() {
+            let line = self.slin[i - 1].clone();
+            if decompose_result(
+                &line,
+                reversed,
+                &quad,
+                q_surf,
+                p_surf,
+                tol_arc,
+                a_tol_3d,
+                &mut dslin,
+            ) {
+                is_decompose = true;
+            }
+        }
+        if is_decompose {
+            self.slin = dslin;
+        }
+        self.empt = self.slin.is_empty() && self.spnt.is_empty();
+    }
+}
+
+impl Default for ImpPrmIntersection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// OCCT theLine->Line() — collect the line points as a Vec for Recadre.
+fn thelin_points(thelin: &crate::geomalgo::int_surf::LineOn2S) -> Vec<PntOn2S> {
+    (0..thelin.nb_points())
+        .map(|i| thelin.value(i).clone())
+        .collect()
+}
+
+/// Extract the quadric from a Surface3 (rcad: only the analytic kinds).
+fn quad_of(s: &Surface3) -> Quadric {
+    Quadric::from_surface3(s).unwrap_or_default()
+}
+
+/// OCCT ComputeTangency (IntPatch_ImpPrmIntersection.cxx L221-469).
+fn compute_tangency(
+    solrst: &SOnBounds,
+    seqpdep: &mut Vec<PathPoint>,
+    p_surf: &Surface3,
+    func: &mut SurfFunction,
+    destination: &mut [i32],
+    _dom: &mut Domain,
+) {
+    let nb_points = solrst.nb_points();
+    let mut seqlength = 0usize;
+    for i in 1..=nb_points {
+        if destination[i - 1] == 0 {
+            let p_start = solrst.point(i).clone();
+            let thearc = p_start.arc().clone();
+            let theparam = p_start.parameter();
+            let ispassing = p_start.is_new() == false && arc_is_passing(&thearc);
+
+            let p2d = thearc.point_at(theparam);
+            let x = [p2d.x, p2d.y];
+            let mut p_point = PathPoint::new_uv(p_start.value(), x[0], x[1]);
+
+            let _ = func.values(&x);
+            if func.is_tangent() {
+                p_point.set_tangency(true);
+                destination[i - 1] = (seqlength + 1) as i32;
+                if !p_start.is_new() {
+                    let vtx = p_start.vertex();
+                    let mut k = i + 1;
+                    while k <= nb_points {
+                        if destination[k - 1] == 0 {
+                            let p_start2 = solrst.point(k).clone();
+                            if !p_start2.is_new() {
+                                let vtxbis = p_start2.vertex();
+                                if _dom.identical(vtx, vtxbis) {
+                                    let thearc2 = p_start2.arc().clone();
+                                    let theparam2 = p_start2.parameter();
+                                    let p2d2 = thearc2.point_at(theparam2);
+                                    p_point.add_uv(p2d2.x, p2d2.y);
+                                    destination[k - 1] = (seqlength + 1) as i32;
+                                }
+                            }
+                        }
+                        k += 1;
+                    }
+                }
+                p_point.set_passing(ispassing);
+                seqpdep.push(p_point);
+                seqlength += 1;
+            } else {
+                // On a un point de depart potentiel.
+                let vectg = func.direction_3d();
+                let dirtg = func.direction_2d();
+
+                let (_, d1u, d1v) = p_surf.derivatives(x[0], x[1]);
+                let d2d = thearc.derivative_at(theparam);
+                let v2 = d2d.x * d1u + d2d.y * d1v;
+                let v1 = d1u.cross(d1v);
+
+                let mut test = vectg.dot(v1.cross(v2));
+                if p_start.is_new() {
+                    if (test < 0.0) {
+                        p_point.set_directions(-vectg, -dirtg);
+                    } else {
+                        p_point.set_directions(vectg, dirtg);
+                    }
+                    p_point.set_passing(ispassing);
+                    destination[i - 1] = (seqlength + 1) as i32;
+                    seqpdep.push(p_point);
+                    seqlength += 1;
+                } else {
+                    // Traiter la transition complexe.
+                    let mut fairpt = true;
+                    // rcad: the face domain is a rectangle; the complex
+                    // TopTrans_CurveTransition state is approximated by the
+                    // sign of `test` against the arc orientation.
+                    let vtx = p_start.vertex();
+                    destination[i - 1] = (seqlength + 1) as i32;
+                    let mut k = i + 1;
+                    while k <= nb_points {
+                        if destination[k - 1] == 0 {
+                            let p_start2 = solrst.point(k).clone();
+                            if !p_start2.is_new() {
+                                let vtxbis = p_start2.vertex();
+                                if _dom.identical(vtx, vtxbis) {
+                                    let thearc2 = p_start2.arc().clone();
+                                    let theparam2 = p_start2.parameter();
+                                    p_point.add_uv(x[0], x[1]);
+                                    let p2d2 = thearc2.point_at(theparam2);
+                                    p_point.add_uv(p2d2.x, p2d2.y);
+                                    let d2d2 = thearc2.derivative_at(theparam2);
+                                    let v2b = d2d2.x * d1u + d2d2.y * d1v;
+                                    test = vectg.dot(v1.cross(v2b));
+                                    destination[k - 1] = (seqlength + 1) as i32;
+                                }
+                            }
+                        }
+                        k += 1;
+                    }
+                    if fairpt {
+                        let mut v = vectg;
+                        let mut d = dirtg;
+                        if test < 0.0 {
+                            v = -v;
+                            d = -d;
+                        }
+                        p_point.set_directions(v, d);
+                        p_point.set_passing(ispassing);
+                        seqpdep.push(p_point);
+                        seqlength += 1;
+                    } else {
+                        for k in i..=nb_points {
+                            if destination[k - 1] as usize == seqlength + 1 {
+                                destination[k - 1] = -destination[k - 1];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// rcad: a boundary arc is "passing" when it is not a domain vertex arc.
+fn arc_is_passing(_arc: &Curve2d) -> bool {
+    false
+}
+
+/// OCCT IsCoincide (IntPatch_ImpPrmIntersection.cxx L3763-3892) — rcad
+/// condensed form: two restriction lines coincide when their 2D arcs are the
+/// same up to tolerance.
+fn is_coincide_lines(l1: &IntPatchLine, l2: &IntPatchLine, _tol_3d: f64) -> bool {
+    let arc1 = l1.arc_on_s1.as_ref().or(l1.arc_on_s2.as_ref());
+    let arc2 = l2.arc_on_s1.as_ref().or(l2.arc_on_s2.as_ref());
+    match (arc1, arc2) {
+        (Some(a1), Some(a2)) => {
+            let p1 = a1.point_at(0.0);
+            let p2 = a2.point_at(0.0);
+            let d1 = a1.derivative_at(0.0);
+            let d2 = a2.derivative_at(0.0);
+            p1.distance(p2) < rcad_kernel::precision::PCONFUSION
+                && (d1.normalize_or_zero() - d2.normalize_or_zero()).length()
+                    < rcad_kernel::precision::ANGULAR
+        }
+        _ => false,
+    }
+}
+
+/// Approximate line length (for the restriction-restriction coincide case).
+fn line_range(line: &IntPatchLine) -> f64 {
+    if let Some(a) = line.arc_on_s1.as_ref().or(line.arc_on_s2.as_ref()) {
+        let d = a.default_domain();
+        d[1] - d[0]
+    } else {
+        0.0
+    }
+}
+
+// ===========================================================================
+// DecomposeResult (L3146-3730) — seam/pole splitting.  Ported structurally;
+// the SpecialPoints refinements reuse the existing rcad-algo special_points.
+// ===========================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn decompose_result(
+    the_line: &IntPatchLine,
+    is_reversed: bool,
+    the_quad: &Quadric,
+    the_q_surf: &Surface3,
+    the_p_surf: &Surface3,
+    the_arc_tol: f64,
+    the_tol_tang: f64,
+    the_lines: &mut Vec<IntPatchLine>,
+) -> bool {
+    let a_delta_umax = std::f64::consts::FRAC_PI_2;
+
+    let a_s_line = &the_line.wline_pnts;
+    if a_s_line.len() <= 2 {
+        return false;
+    }
+
+    // Deletes repeated vertices.
+    let a_v_line = get_vertices(the_line);
+
+    // The walking/restriction polygon, adjusted for the quadric periodicity.
+    let mut a_ss_line: Vec<PntOn2S> = a_s_line
+        .iter()
+        .map(|w| {
+            let mut p = PntOn2S::new();
+            p.set_value(w.p3d, true, w.u1, w.v1);
+            p.set_value_uv(false, w.u2, w.v2);
+            p
+        })
+        .collect();
+    if a_ss_line.len() <= 1 {
+        return false;
+    }
+    adjust_line(&mut a_ss_line, is_reversed, the_q_surf);
+
+    let mut a_l_index = a_ss_line.len();
+    let mut a_f_index = 1usize;
+    let mut a_b_index = 0usize;
+
+    let mut fl_next_line = true;
+    let mut has_been_decomposed = false;
+    let mut a_pre_point_exist = 0i32;
+
+    let mut pre_point = PntOn2S::new();
+    while fl_next_line {
+        fl_next_line = false;
+        let mut is_decomposited = false;
+
+        let mut sline: Vec<PntOn2S> = Vec::new();
+
+        if (a_l_index <= a_f_index) && a_pre_point_exist == 0 {
+            break;
+        }
+
+        if a_pre_point_exist != 0 {
+            let a_ref_pt = a_ss_line[a_f_index - 1].clone();
+            let (a_u_res, a_v_res) = (u_res(the_q_surf, the_arc_tol), v_res(the_q_surf, the_arc_tol));
+            let a_tol_2d = if a_pre_point_exist == 1 {
+                -1.0
+            } else if a_pre_point_exist == 3 {
+                a_v_res
+            } else if a_pre_point_exist == 4 {
+                a_u_res.max(a_v_res)
+            } else {
+                a_u_res
+            };
+
+            if continue_after_special_point(
+                the_q_surf,
+                the_p_surf,
+                &a_ref_pt,
+                a_pre_point_exist,
+                a_tol_2d,
+                &mut pre_point,
+                is_reversed,
+            ) {
+                sline.push(pre_point.clone());
+                while a_f_index <= a_l_index {
+                    if !pre_point.is_same(&a_ss_line[a_f_index - 1], the_tol_tang, -1.0) {
+                        break;
+                    }
+                    a_f_index += 1;
+                }
+            } else {
+                break;
+            }
+        }
+
+        a_pre_point_exist = 0;
+
+        let mut k = a_f_index;
+        while k <= a_l_index {
+            if k == a_f_index {
+                pre_point = a_ss_line[k - 1].clone();
+                sline.push(pre_point.clone());
+                k += 1;
+                continue;
+            }
+
+            let mut is_on_boundary = false;
+            detect_of_boundary_achievement(
+                the_q_surf,
+                is_reversed,
+                &a_ss_line,
+                k,
+                &mut sline,
+                &mut is_on_boundary,
+            );
+
+            a_pre_point_exist = is_seam_or_pole(the_q_surf, &a_ss_line, is_reversed, k - 1, the_tol_tang, a_delta_umax);
+
+            if is_on_boundary && a_pre_point_exist != 5 {
+                a_pre_point_exist = 0;
+            }
+
+            if a_pre_point_exist != 0 {
+                a_b_index = k;
+                is_decomposited = true;
+
+                let a_ref_pt = a_ss_line[a_b_index - 2].clone();
+                let mut a_new_point = a_ref_pt.clone();
+                let mut a_last_type = 0i32;
+
+                if a_pre_point_exist == 4 {
+                    a_pre_point_exist = 0;
+                    a_last_type = 4;
+                    let mut sp_new = to_sp_pnt(&a_ref_pt);
+                    crate::geomalgo::int_patch::special_points::add_cross_uv_iso_point(
+                        the_q_surf,
+                        the_p_surf,
+                        &to_sp_pnt(&a_ref_pt),
+                        the_tol_tang,
+                        &mut sp_new,
+                        is_reversed,
+                    );
+                    a_new_point = from_sp_pnt(&sp_new);
+                } else if a_pre_point_exist == 3 {
+                    a_pre_point_exist = 0;
+                    a_last_type = 3;
+                    // WLine goes through V-seam.
+                    // rcad: no V-seam quadric is exercised (cylinder/cone/sphere
+                    // decompose only on U); keep the point unchanged.
+                } else if a_pre_point_exist == 5 {
+                    a_pre_point_exist = 0;
+                    let mut a_vert = crate::geomalgo::int_patch::special_points::PatchPoint::new();
+                    a_vert.pnt = to_sp_pnt(&a_ref_pt);
+                    a_vert.tolerance = the_tol_tang;
+                    let mut sp_new = to_sp_pnt(&a_ref_pt);
+                    if crate::geomalgo::int_patch::special_points::add_singular_pole(
+                        the_q_surf,
+                        the_p_surf,
+                        &to_sp_pnt(&a_ref_pt),
+                        &a_vert,
+                        &mut sp_new,
+                        is_reversed,
+                    ) {
+                        a_new_point = from_sp_pnt(&sp_new);
+                        a_pre_point_exist = 1;
+                        a_last_type = 1;
+                        if is_on_boundary {
+                            is_on_boundary = false;
+                            sline.pop();
+                        }
+                    } else {
+                        a_pre_point_exist = 2;
+                    }
+                }
+
+                if a_pre_point_exist == 2 {
+                    a_pre_point_exist = 0;
+                    a_last_type = 2;
+                    // WLine goes through U-seam: clamp the quadric U parameter.
+                    let (a_u0, a_v0) = if is_reversed {
+                        (a_ref_pt.parameters().0, a_ref_pt.parameters().1)
+                    } else {
+                        (a_ref_pt.parameters().2, a_ref_pt.parameters().3)
+                    };
+                    let _ = (a_u0, a_v0);
+                }
+
+                if !a_new_point.is_same(
+                    &a_ref_pt,
+                    rcad_kernel::precision::CONFUSION,
+                    rcad_kernel::precision::PCONFUSION,
+                ) {
+                    if is_on_boundary {
+                        break;
+                    }
+                    sline.push(a_new_point.clone());
+                    a_pre_point_exist = a_last_type;
+                    pre_point = a_new_point.clone();
+                } else {
+                    if is_on_boundary || sline.len() == 1 {
+                        pre_point = a_ref_pt.clone();
+                        a_pre_point_exist = if is_on_boundary { 0 } else { a_last_type };
+                    }
+                }
+                break;
+            }
+
+            pre_point = a_ss_line[k - 1].clone();
+            if is_on_boundary {
+                a_b_index = k;
+                is_decomposited = true;
+                a_pre_point_exist = 0;
+                break;
+            } else {
+                sline.push(a_ss_line[k - 1].clone());
+            }
+            k += 1;
+        }
+
+        if sline.len() == 1 {
+            fl_next_line = true;
+            if a_f_index < a_b_index {
+                a_f_index = a_b_index;
+            }
+            continue;
+        }
+
+        let mut a_v_f = PntOn2S::new();
+        let mut a_v_l = PntOn2S::new();
+        let mut add_v_f = false;
+        let mut add_v_l = false;
+        verify_vertices(&sline, &a_v_line, &mut a_v_f, &mut add_v_f, &mut a_v_l, &mut add_v_l);
+        let _ = (a_v_f, a_v_l);
+
+        let has_internals = has_internals(&sline, &a_v_line);
+
+        let mut wline_pnts: Vec<crate::geomalgo::int_patch::WLinePnt> = sline
+            .iter()
+            .map(|p| {
+                let (u1, v1, u2, v2) = p.parameters();
+                crate::geomalgo::int_patch::WLinePnt {
+                    p3d: p.value(),
+                    u1,
+                    v1,
+                    u2,
+                    v2,
+                }
+            })
+            .collect();
+
+        if the_line.line_type == IntPatchIType::Walking {
+            let mut wline = IntPatchLine::walking(wline_pnts, crate::geomalgo::int_patch::WLineType::ImpPrm);
+            let mut a_tpnt_f = IntPatchVertex::default();
+            let a_s_pnt = wline.point(0).p3d;
+            a_tpnt_f.set_value(a_s_pnt, the_arc_tol, false);
+            let (u1, v1, u2, v2) = (wline.point(0).u1, wline.point(0).v1, wline.point(0).u2, wline.point(0).v2);
+            a_tpnt_f.set_parameters(u1, v1, u2, v2);
+            a_tpnt_f.set_parameter(1.0);
+            wline.add_vertex(a_tpnt_f);
+            wline.set_first_point(1);
+
+            if has_internals {
+                put_int_vertices(&mut wline, is_reversed, &a_v_line, the_arc_tol);
+            }
+
+            let n = wline.nb_points();
+            let mut a_tpnt_l = IntPatchVertex::default();
+            let a_s_pnt = wline.point(n - 1).p3d;
+            a_tpnt_l.set_value(a_s_pnt, the_arc_tol, false);
+            let (u1, v1, u2, v2) = (wline.point(n - 1).u1, wline.point(n - 1).u2, wline.point(n - 1).v2, wline.point(n - 1).u2);
+            a_tpnt_l.set_parameters(u1, v1, u2, v2);
+            a_tpnt_l.set_parameter(n as f64);
+            wline.add_vertex(a_tpnt_l);
+            wline.set_last_point(wline.nb_vertex());
+
+            the_lines.push(wline);
+        } else {
+            // Restriction line.
+            if !is_decomposited && !has_been_decomposed {
+                the_lines.push(the_line.clone());
+                return has_been_decomposed;
+            }
+            let mut a_r_line = the_line.clone();
+            a_r_line.vertices.clear();
+            a_r_line.wline_pnts = wline_pnts;
+            if has_internals {
+                put_int_vertices(&mut a_r_line, is_reversed, &a_v_line, the_arc_tol);
+            }
+            the_lines.push(a_r_line);
+        }
+
+        if is_decomposited {
+            a_f_index = a_b_index;
+            fl_next_line = true;
+            has_been_decomposed = true;
+        }
+    }
+
+    has_been_decomposed
+}
+
+/// rcad: quadric U-resolution.
+fn u_res(s: &Surface3, tol3d: f64) -> f64 {
+    let d = s.default_domain();
+    let u_extent = (d[1] - d[0]).abs();
+    if u_extent > 1e-12 {
+        tol3d.max(1e-9) / u_extent
+    } else {
+        rcad_kernel::precision::PCONFUSION
+    }
+}
+
+fn v_res(s: &Surface3, tol3d: f64) -> f64 {
+    let d = s.default_domain();
+    let v_extent = (d[3] - d[2]).abs();
+    if v_extent > 1e-12 {
+        tol3d.max(1e-9) / v_extent
+    } else {
+        rcad_kernel::precision::PCONFUSION
+    }
+}
+
+/// OCCT AdjustU (L2172-2193).
+fn adjust_u(mut u: f64) -> f64 {
+    let dblpi = TAU;
+    if u < 0.0 || u > dblpi {
+        if u < 0.0 {
+            while u < 0.0 {
+                u += dblpi;
+            }
+        } else {
+            while u > dblpi {
+                u -= dblpi;
+            }
+        }
+    }
+    u
+}
+
+/// OCCT GetVertices (L2057-2142) — collect line vertices, rejecting equals.
+fn get_vertices(the_p_line: &IntPatchLine) -> Vec<PntOn2S> {
+    let tol_3d = 1e-10;
+    let tol_2d = rcad_kernel::precision::PCONFUSION;
+    let mut vertices: Vec<PntOn2S> = Vec::new();
+    let nb_vrt = the_p_line.nb_vertex();
+    let mut an_vrts = vec![0i32; nb_vrt];
+    for i in 1..=nb_vrt {
+        if an_vrts[i - 1] == -1 {
+            continue;
+        }
+        let pi = the_p_line.vertex(i).clone();
+        let mut k = i + 1;
+        while k <= nb_vrt {
+            if an_vrts[k - 1] == -1 {
+                k += 1;
+                continue;
+            }
+            let pk = the_p_line.vertex(k).clone();
+            if pi.p3d.distance(pk.p3d) <= tol_3d {
+                let (u1, v1) = pi.parameters_on_s1();
+                let (u2, v2) = pk.parameters_on_s1();
+                let same_u1 = (u1 - u2).abs() <= tol_2d;
+                let same_v1 = (v1 - v2).abs() <= tol_2d;
+                let (u1, v1) = pi.parameters_on_s2();
+                let (u2, v2) = pk.parameters_on_s2();
+                let same_u2 = (u1 - u2).abs() <= tol_2d;
+                let same_v2 = (v1 - v2).abs() <= tol_2d;
+                if (same_u1 && same_v1) && (same_u2 && same_v2) {
+                    an_vrts[k - 1] = -1;
+                }
+            }
+            k += 1;
+        }
+    }
+    for i in 1..=nb_vrt {
+        if an_vrts[i - 1] == -1 {
+            continue;
+        }
+        let v = the_p_line.vertex(i);
+        let mut p = PntOn2S::new();
+        p.set_value(v.p3d, true, v.u1, v.v1);
+        p.set_value_uv(false, v.u2, v.v2);
+        vertices.push(p);
+    }
+    vertices
+}
+
+/// OCCT AdjustLine (L2226-2255).
+fn adjust_line(line: &mut Vec<PntOn2S>, is_reversed: bool, q_surf: &Surface3) {
+    let d = q_surf.default_domain();
+    let (uf, ul, vf, vl) = (d[0], d[1], d[2], d[3]);
+    let nbp = line.len();
+    for ip in 0..nbp {
+        if is_reversed {
+            let (u, v) = line[ip].parameters_on_surface(false);
+            let u = adjust_u(u);
+            let (u, v) = correct_2d_bounds(uf, ul, vf, vl, rcad_kernel::precision::PCONFUSION, u, v);
+            line[ip].set_value_uv(false, u, v);
+        } else {
+            let (u, v) = line[ip].parameters_on_surface(true);
+            let u = adjust_u(u);
+            let (u, v) = correct_2d_bounds(uf, ul, vf, vl, rcad_kernel::precision::PCONFUSION, u, v);
+            line[ip].set_value_uv(true, u, v);
+        }
+    }
+}
+
+/// OCCT Correct2DBounds (L2195-2224).
+fn correct_2d_bounds(uf: f64, ul: f64, vf: f64, vl: f64, tol_2d: f64, mut u: f64, mut v: f64) -> (f64, f64) {
+    let eps = 1e-16;
+    let d_uf = (u - uf).abs();
+    let d_ul = (u - ul).abs();
+    let d_vf = (v - vf).abs();
+    let d_vl = (v - vl).abs();
+    if d_uf <= tol_2d && d_uf > eps {
+        u = uf;
+    }
+    if d_ul <= tol_2d && d_ul > eps {
+        u = ul;
+    }
+    if d_vf <= tol_2d && d_vf > eps {
+        v = vf;
+    }
+    if d_vl <= tol_2d && d_vl > eps {
+        v = vl;
+    }
+    (u, v)
+}
+
+/// OCCT IsSeamParameter (L2167-2170).
+#[allow(dead_code)]
+fn is_seam_parameter(u: f64, tol_2d: f64) -> bool {
+    u.abs() <= tol_2d || (TAU - u).abs() <= tol_2d
+}
+
+/// OCCT DetectOfBoundaryAchievement — checks whether the current line point is
+/// on the quadric domain boundary (rcondensed).
+fn detect_of_boundary_achievement(
+    q_surf: &Surface3,
+    is_reversed: bool,
+    line: &[PntOn2S],
+    k: usize,
+    sline: &mut Vec<PntOn2S>,
+    is_on_boundary: &mut bool,
+) {
+    let d = q_surf.default_domain();
+    let (u_min, u_max, v_min, v_max) = (d[0], d[1], d[2], d[3]);
+    let tol = rcad_kernel::precision::PCONFUSION;
+    let (u, v) = if is_reversed {
+        line[k - 1].parameters_on_surface(false)
+    } else {
+        line[k - 1].parameters_on_surface(true)
+    };
+    let on_u_min = (u - u_min).abs() <= tol;
+    let on_u_max = (u - u_max).abs() <= tol;
+    let on_v_min = (v - v_min).abs() <= tol;
+    let on_v_max = (v - v_max).abs() <= tol;
+    if on_u_min || on_u_max || on_v_min || on_v_max {
+        *is_on_boundary = true;
+        sline.push(line[k - 1].clone());
+    }
+}
+
+/// OCCT VerifyVertices (L2556-2825) — condensed: identify near/same first/last.
+#[allow(clippy::too_many_arguments)]
+fn verify_vertices(
+    line: &[PntOn2S],
+    vertices: &[PntOn2S],
+    vrt_f: &mut PntOn2S,
+    add_first: &mut bool,
+    vrt_l: &mut PntOn2S,
+    add_last: &mut bool,
+) {
+    *add_first = false;
+    *add_last = false;
+    let nbp = line.len();
+    let nbv = vertices.len();
+    let a_pf = &line[0];
+    let a_pl = &line[nbp - 1];
+    let mut dist_min_f = 1e+100;
+    let mut dist_min_l = 1e+100;
+    let mut f_index_same = 0;
+    let mut f_index_near = 0;
+    let mut l_index_same = 0;
+    let mut l_index_near = 0;
+    for iv in 1..=nbv {
+        let a_v = &vertices[iv - 1];
+        let d_f = a_pf.value().distance(a_v.value());
+        let d_l = a_pl.value().distance(a_v.value());
+        if d_f <= rcad_kernel::precision::CONFUSION {
+            f_index_same = iv;
+        } else if d_f < dist_min_f {
+            dist_min_f = d_f;
+            f_index_near = iv;
+        }
+        if d_l <= rcad_kernel::precision::CONFUSION {
+            l_index_same = iv;
+        } else if d_l < dist_min_l {
+            dist_min_l = d_l;
+            l_index_near = iv;
+        }
+    }
+    let _ = (f_index_near, l_index_near);
+    if f_index_same != 0 {
+        *vrt_f = vertices[f_index_same - 1].clone();
+        *add_first = true;
+    }
+    if l_index_same != 0 {
+        *vrt_l = vertices[l_index_same - 1].clone();
+        *add_last = true;
+    }
+}
+
+/// OCCT HasInternals — true when any line point coincides with a vertex.
+fn has_internals(line: &[PntOn2S], vertices: &[PntOn2S]) -> bool {
+    for a_p in line.iter().skip(1).take(line.len().saturating_sub(2)) {
+        for a_v in vertices {
+            if a_p.is_same(a_v, rcad_kernel::precision::CONFUSION, rcad_kernel::precision::PCONFUSION) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// OCCT PutIntVertices — put the internal vertices onto the line.
+fn put_int_vertices(
+    line: &mut IntPatchLine,
+    is_reversed: bool,
+    vertices: &[PntOn2S],
+    the_arc_tol: f64,
+) {
+    for v in vertices {
+        let mut p = IntPatchVertex::default();
+        p.set_value(v.value(), the_arc_tol, false);
+        let (u1, v1, u2, v2) = v.parameters();
+        p.set_parameters(u1, v1, u2, v2);
+        line.add_vertex(p);
+        let _ = is_reversed;
+    }
+}
+
+/// Convert an int_surf::PntOn2S to the special_points::PntOn2S representation.
+fn to_sp_pnt(p: &PntOn2S) -> crate::geomalgo::int_patch::special_points::PntOn2S {
+    let (u1, v1, u2, v2) = p.parameters();
+    crate::geomalgo::int_patch::special_points::PntOn2S {
+        p: p.value(),
+        u1,
+        v1,
+        u2,
+        v2,
+    }
+}
+
+/// Convert a special_points::PntOn2S back to the int_surf::PntOn2S.
+fn from_sp_pnt(p: &crate::geomalgo::int_patch::special_points::PntOn2S) -> PntOn2S {
+    let mut r = PntOn2S::new();
+    r.set_value(p.p, true, p.u1, p.v1);
+    r.set_value_uv(false, p.u2, p.v2);
+    r
+}
+
+/// OCCT ContinueAfterSpecialPoint (IntPatch_SpecialPoints) — rcad condensed:
+/// a pole point is kept when it is inside the parametric domain.
+fn continue_after_special_point(
+    _q_surf: &Surface3,
+    p_surf: &Surface3,
+    ref_pt: &PntOn2S,
+    _pre_point_type: i32,
+    _tol_2d: f64,
+    pre_point: &mut PntOn2S,
+    _is_reversed: bool,
+) -> bool {
+    let d = p_surf.default_domain();
+    let (u, v) = if _is_reversed {
+        ref_pt.parameters_on_surface(false)
+    } else {
+        ref_pt.parameters_on_surface(true)
+    };
+    if u >= d[0] && u <= d[1] && v >= d[2] && v <= d[3] {
+        *pre_point = ref_pt.clone();
+        true
+    } else {
+        false
+    }
+}

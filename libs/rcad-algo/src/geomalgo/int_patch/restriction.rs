@@ -102,6 +102,7 @@ fn patch_point_to_vertex(pp: &super::special_points::PatchPoint) -> IntPatchVert
         u2: pp.pnt.u2,
         v2: pp.pnt.v2,
         tolerance: pp.tolerance,
+        tangent: false,
         multiple: pp.multiple,
         on_dom_s1: pp.on_dom_s1,
         on_dom_s2: pp.on_dom_s2,

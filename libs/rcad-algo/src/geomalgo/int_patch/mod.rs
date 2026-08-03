@@ -34,6 +34,7 @@ pub mod cycy_coeffs;
 pub mod cycy_boundaries;
 pub mod cycy_walking;
 pub mod curve_surface;
+pub mod imp_prm;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;
@@ -114,6 +115,9 @@ pub struct IntPatchVertex {
     // ---- OCCT IntPatch_Point fields (used by PutPointsOnLine / ProcessSegments /
     // ProcessRLine in the SOnBounds post-processing) ----
     pub tolerance: f64,
+    /// OCCT IntPatch_Point tangency flag (SetValue(P, Tol, Tangent) /
+    /// IsTangencyPoint).  Used by the ImpPrm walking line connection.
+    pub tangent: bool,
     pub multiple: bool,
     pub on_dom_s1: bool,
     pub on_dom_s2: bool,
@@ -138,6 +142,7 @@ impl Default for IntPatchVertex {
             u2: 0.0,
             v2: 0.0,
             tolerance: 1e-7,
+            tangent: false,
             multiple: false,
             on_dom_s1: false,
             on_dom_s2: false,
@@ -153,9 +158,14 @@ impl Default for IntPatchVertex {
 
 impl IntPatchVertex {
     /// OCCT IntPatch_Point::SetValue(Pt, Tol, Tangent).
-    pub fn set_value(&mut self, pt: DVec3, tol: f64, _tangent: bool) {
+    pub fn set_value(&mut self, pt: DVec3, tol: f64, tangent: bool) {
         self.p3d = pt;
         self.tolerance = tol;
+        self.tangent = tangent;
+    }
+    /// OCCT IntPatch_Point::IsTangencyPoint().
+    pub fn is_tangency_point(&self) -> bool {
+        self.tangent
     }
     /// OCCT IntPatch_Point::SetParameters(U1, V1, U2, V2).
     pub fn set_parameters(&mut self, u1: f64, v1: f64, u2: f64, v2: f64) {

@@ -1641,6 +1641,7 @@ fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint)
             u2: v.pnt.u2,
             v2: v.pnt.v2,
             tolerance: v.tolerance,
+            tangent: false,
             multiple: v.multiple,
             on_dom_s1: v.on_dom_s1,
             on_dom_s2: v.on_dom_s2,

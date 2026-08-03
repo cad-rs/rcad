@@ -385,11 +385,11 @@ impl IntPatchIntersection {
         }
         // OCCT L1326-1330: Geom-Param (ts1 != ts2)
         if ts1 != ts2 {
-            self.geom_param_perform(s1, s2, ts1 == 0, typs1, typs2);
+            self.geom_param_perform(s1, s2, uv1, uv2, ts1 == 0, typs1, typs2);
         }
         // OCCT L1332-1339: Param-Param (ts1 == ts2 == 0)
         if ts1 == ts2 && ts1 == 0 {
-            self.param_param_perform(s1, s2, tol_arc, tol_tang, typs1, typs2);
+            self.param_param_perform(s1, s2, uv1, uv2, tol_arc, tol_tang, typs1, typs2);
         }
 
         // ===== OCCT L1346-1371: Post-process WLines
@@ -446,24 +446,25 @@ impl IntPatchIntersection {
     }
 
     // =========================================================================
-    // OCCT L204-213: ParamParamPerfom (private)
+    // OCCT L1659-1774: ParamParamPerfom (private)
     // =========================================================================
     fn param_param_perform(
         &mut self,
-        s1: &Surface3,
-        s2: &Surface3,
+        _s1: &Surface3,
+        _s2: &Surface3,
+        _uv1: [f64; 4],
+        _uv2: [f64; 4],
         _tol_arc: f64,
         _tol_tang: f64,
         _typs1: GeomAbsSurfaceType,
         _typs2: GeomAbsSurfaceType,
     ) {
-        // OCCT L204-213: IntPatch_PrmPrmIntersection interpp;
+        // OCCT L1669: IntPatch_PrmPrmIntersection interpp;
         // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);
         // rcad: IntPatch_PrmPrmIntersection (parametric-parametric walking) is
-        // not yet ported to rcad-algo. The analytic pairs (Geom-Geom) are the
-        // active path for the PaveFiller FF stage; parametric surfaces are not
-        // exercised by the current stage tests.
-        let _ = (s1, s2, _tol_arc, _tol_tang);
+        // not yet ported to rcad-algo.  The analytic pairs (Geom-Geom) and the
+        // analytic-parametric pairs (Geom-Param, ImpPrm) are the active paths
+        // for the PaveFiller FF stage.
         self.done = false;
     }
 
@@ -487,7 +488,7 @@ impl IntPatchIntersection {
             self.done = false;
             // OCCT L1795: ParamParamPerfom(...) — rcad: parametric-parametric
             // marching is not ported (see param_param_perform).
-            self.param_param_perform(s1, s2, self.my_tol_arc, self.my_tol_tang, typs1, typs2);
+            self.param_param_perform(s1, s2, uv1, uv2, self.my_tol_arc, self.my_tol_tang, typs1, typs2);
             return;
         }
 
@@ -595,22 +596,73 @@ impl IntPatchIntersection {
     }
 
     // =========================================================================
-    // OCCT L232-238: GeomParamPerfom (private)
+    // OCCT L1909-2000: GeomParamPerfom (private)
     // =========================================================================
     fn geom_param_perform(
         &mut self,
         s1: &Surface3,
         s2: &Surface3,
-        _is_not_analytical: bool,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        is_not_analytical: bool,
         _typs1: GeomAbsSurfaceType,
         _typs2: GeomAbsSurfaceType,
     ) {
-        // OCCT L232-238: IntPatch_ImpPrmIntersection inter;
-        // inter.Perform(S1, D1, S2, D2, TolArc, TolTang, myFleche, myUVMaxStep);
-        // rcad: IntPatch_ImpPrmIntersection (analytic-parametric walking) is not
-        // yet ported to rcad-algo. Same rationale as ParamParamPerform.
-        let _ = (s1, s2, _is_not_analytical);
-        self.done = false;
+        // OCCT L1917: IntPatch_ImpPrmIntersection interip.
+        let mut interip = super::imp_prm::ImpPrmIntersection::new();
+        // OCCT L1918-1928: if (myIsStartPnt) SetStartPoint.
+        if self.my_is_start_pnt {
+            if is_not_analytical {
+                interip.set_start_point(self.my_u1_start, self.my_v1_start);
+            } else {
+                interip.set_start_point(self.my_u2_start, self.my_v2_start);
+            }
+        }
+        // OCCT L1930-1964: domains are always finite in the rcad FF path
+        // (the corrected UV rectangles), so the else branch applies.
+        interip.perform(
+            s1,
+            s2,
+            uv1,
+            uv2,
+            self.my_tol_arc,
+            self.my_tol_tang,
+            self.my_fleche,
+            self.my_uv_max_step,
+        );
+
+        // OCCT L1970-1999: copy the lines and points back.
+        if interip.is_done() {
+            self.done = true;
+            self.empt = interip.is_empty();
+            if !self.empt {
+                let a_nb_lines = interip.nb_lines();
+                for i in 1..=a_nb_lines {
+                    let line = interip.line(i).clone();
+                    if line.line_type != super::IntPatchIType::Walking {
+                        self.slin.push(line);
+                    }
+                }
+                for i in 1..=a_nb_lines {
+                    let line = interip.line(i).clone();
+                    if line.line_type == super::IntPatchIType::Walking {
+                        self.slin.push(line);
+                    }
+                }
+                for i in 1..=interip.nb_points() {
+                    let p = interip.point(i);
+                    self.spnt.push(super::IntPatchPoint {
+                        p1: p.p3d,
+                        p2: p.p3d,
+                        u1: p.u1,
+                        v1: p.v1,
+                        u2: p.u2,
+                        v2: p.v2,
+                        tolerance: p.tolerance,
+                    });
+                }
+            }
+        }
     }
 }
 

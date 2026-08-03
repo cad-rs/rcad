@@ -74,6 +74,16 @@ impl Transition {
         self.typetra = typ;
     }
 
+    /// rcad helper — build a transition from an IntSurf_TypeTrans alone.
+    pub fn from_type(typ: TypeTrans) -> Self {
+        Transition {
+            tangent: false,
+            typetra: typ,
+            situat: Situation::Unknown,
+            oppos: false,
+        }
+    }
+
     /// OCCT SetValue(Tangent, Situ, Oppos).
     pub fn set_value_touch(&mut self, tangent: bool, situ: Situation, oppos: bool) {
         self.tangent = tangent;
