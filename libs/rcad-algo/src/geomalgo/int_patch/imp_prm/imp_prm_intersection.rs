@@ -1408,9 +1408,13 @@ impl ImpPrmIntersection {
                 j += 1;
             }
             if is_first_deleted {
+                // OCCT L1909-1911: slin.Remove(i--) then the for-loop i++ —
+                // net i unchanged, so the element shifted into position i is
+                // processed next.
                 self.slin.remove(i);
+            } else {
+                i += 1;
             }
-            i += 1;
         }
 
         self.empt = self.slin.is_empty() && self.spnt.is_empty();
