@@ -479,25 +479,30 @@ impl ImpPrmIntersection {
 
                 let nbpts = thelin.nb_points();
                 if nbpts >= 2 {
+                    // OCCT L878-886: TangentVector(k) sets k = indextg (1-based);
+                    // the point at the 1-based index k is used for the normal /
+                    // transition computation.  rcad's thelin is 0-based, so read
+                    // thelin.value(k - 1).
                     let mut k = 0usize;
-                    let (mut tgline, _) = iwline.tangent_vector();
+                    let (mut tgline, k_tg) = iwline.tangent_vector();
+                    k = k_tg.max(0) as usize;
                     if k >= 1 && k <= nbpts {
                     } else {
                         k = nbpts >> 1;
                     }
-                    let valpt = thelin.value(k).value();
+                    let valpt = thelin.value(k - 1).value();
 
                     let (u2v, v2v);
                     let norm1;
                     let norm2;
                     if !reversed {
-                        let (u, v) = thelin.value(k).parameters_on_surface(false);
+                        let (u, v) = thelin.value(k - 1).parameters_on_surface(false);
                         (u2v, v2v) = (u, v);
                         norm1 = quad.normale(valpt);
                         let (_, d1u, d1v) = s2.derivatives(u2v, v2v);
                         norm2 = d1u.cross(d1v);
                     } else {
-                        let (u, v) = thelin.value(k).parameters_on_surface(true);
+                        let (u, v) = thelin.value(k - 1).parameters_on_surface(true);
                         (u2v, v2v) = (u, v);
                         norm2 = quad.normale(valpt);
                         let (_, d1u, d1v) = s1.derivatives(u2v, v2v);
