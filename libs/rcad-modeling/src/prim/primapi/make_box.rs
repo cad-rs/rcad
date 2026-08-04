@@ -86,10 +86,10 @@ impl MakeBox {
         ];
         let w = [
             t.add_twire(vec![e_bot[0].clone(), e_bot[1].clone(), e_bot[2].clone(), e_bot[3].clone()]),
-            t.add_twire(vec![e_top[0].clone(), rev(e_top[3].clone()), rev(e_top[2].clone()), rev(e_top[1].clone())]),
+            t.add_twire(vec![e_top[0].clone(), e_top[1].clone(), e_top[2].clone(), e_top[3].clone()]),
             t.add_twire(vec![e_bot[0].clone(), e_ver[1].clone(), rev(e_top[0].clone()), rev(e_ver[0].clone())]),
             t.add_twire(vec![rev(e_bot[2].clone()), e_ver[2].clone(), e_top[2].clone(), rev(e_ver[3].clone())]),
-            t.add_twire(vec![rev(e_bot[3].clone()), e_ver[0].clone(), e_top[3].clone(), rev(e_ver[3].clone())]),
+            t.add_twire(vec![rev(e_bot[3].clone()), e_ver[3].clone(), e_top[3].clone(), rev(e_ver[0].clone())]),
             t.add_twire(vec![e_bot[1].clone(), e_ver[2].clone(), rev(e_top[1].clone()), rev(e_ver[1].clone())]),
         ];
         // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
