@@ -906,12 +906,6 @@ impl PaveFiller {
         };
         // OCCT L2386-2392: Put EF vertices first.
         let mv_ef_list: Vec<usize> = the_mv_ef.iter().copied().collect();
-        if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
-            for &n_v in &mv_ef_list {
-                let pv = self.ds.vertex_point_by_idx(n_v);
-                eprintln!("[MBR]   PPOC-EF v={} p=({:.1},{:.1},{:.1})", n_v, pv.x, pv.y, pv.z);
-            }
-        }
         for n_v in mv_ef_list {
             self.put_pave_on_curve(n_v, a_tol_r3d, cid, the_mi, the_mv_tol, the_dm_vlv, 2);
         }
@@ -923,12 +917,6 @@ impl PaveFiller {
                 if n_v >= self.ds.nb_shapes() { continue; }
                 let a_si_v = self.ds.shape_info(n_v);
                 let a_box_v = a_si_v.bbox.clone();
-                if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
-                    let pv = self.ds.vertex_point_by_idx(n_v);
-                    eprintln!("[MBR]   PPOC v={} p=({:.1},{:.1},{:.1}) common={} boxOut={} isNew={}",
-                              n_v, pv.x, pv.y, pv.z, the_mv_common.contains(&n_v),
-                              a_box_c.is_out_box(&a_box_v), self.ds.is_new_shape(n_v));
-                }
                 if a_box_c.is_out_box(&a_box_v) { continue; }
                 if !self.ds.is_new_shape(n_v) { continue; }
             }

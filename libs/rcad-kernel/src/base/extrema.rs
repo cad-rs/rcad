@@ -11,6 +11,7 @@
 //! base::geom_api.
 
 use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval};
+use crate::math::direct_polynomial_roots::DirectPolynomialRoots;
 use glam::DVec2;
 use glam::DVec3;
 
@@ -819,86 +820,6 @@ fn newton_refine_pc(
     }
 }
 
-/// Solve cubic x³ + a·x² + b·x + c = 0, returning real roots.
-fn solve_cubic(a: f64, b: f64, c: f64) -> Vec<f64> {
-    let a2 = a * a;
-    let p = b - a2 / 3.0;
-    let q = c + (2.0 * a2 * a - 9.0 * a * b) / 27.0;
-    let disc = q * q / 4.0 + p * p * p / 27.0;
-    let shift = -a / 3.0;
-    if disc >= 0.0 {
-        let s = disc.sqrt();
-        let u = (-q / 2.0 + s).cbrt();
-        let v = (-q / 2.0 - s).cbrt();
-        vec![u + v + shift]
-    } else {
-        let r = (-p * p * p / 27.0).sqrt();
-        let phi = (-q / (2.0 * r)).acos();
-        let r_rt = 2.0 * r.cbrt();
-        vec![
-            r_rt * (phi / 3.0).cos() + shift,
-            r_rt * ((phi + 2.0 * std::f64::consts::PI) / 3.0).cos() + shift,
-            r_rt * ((phi + 4.0 * std::f64::consts::PI) / 3.0).cos() + shift,
-        ]
-    }
-}
-
-/// Solve quartic a·x⁴ + b·x³ + c·x² + d·x + e = 0.
-fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
-    if a.abs() < 1e-30 {
-        return vec![];
-    }
-    let inv_a = 1.0 / a;
-    let ba = b * inv_a;
-    let ca = c * inv_a;
-    let da = d * inv_a;
-    let ea = e * inv_a;
-    let p = ca - 3.0 * ba * ba / 8.0;
-    let q = da - ba * ca / 2.0 + ba * ba * ba / 8.0;
-    let r = ea - ba * da / 4.0 + ba * ba * ca / 16.0 - 3.0 * ba * ba * ba * ba / 256.0;
-    if q.abs() < 1e-30 {
-        let disc = p * p - 4.0 * r;
-        if disc < 0.0 {
-            return vec![];
-        }
-        let sd = disc.sqrt();
-        let mut roots = Vec::new();
-        for &t in &[(-p + sd) / 2.0, (-p - sd) / 2.0] {
-            if t >= 0.0 {
-                roots.push(t.sqrt());
-            }
-            if t > 0.0 {
-                roots.push(-t.sqrt());
-            }
-        }
-        let shift = -ba / 4.0;
-        return roots.into_iter().map(|x| x + shift).collect();
-    }
-    let rc = solve_cubic(2.0 * p, p * p - 4.0 * r, -q * q);
-    let m = rc.into_iter().find(|&m| m > 0.0).unwrap_or(0.0);
-    if m <= 0.0 {
-        return vec![];
-    }
-    let sq = (m * 2.0).sqrt();
-    let t1 = -p - m;
-    let t2 = q / sq;
-    let disc1 = -t1 - 2.0 * t2;
-    let disc2 = -t1 + 2.0 * t2;
-    let shift = -ba / 4.0;
-    let mut roots = Vec::new();
-    if disc1 >= 0.0 {
-        let s = disc1.sqrt();
-        roots.push((sq + s) / 2.0 + shift);
-        roots.push((-sq + s) / 2.0 + shift);
-    }
-    if disc2 >= 0.0 {
-        let s = disc2.sqrt();
-        roots.push((s - sq) / 2.0 + shift);
-        roots.push((-sq - s) / 2.0 + shift);
-    }
-    roots
-}
-
 /// Project the point `query` onto `curve`, returning the nearest point on the
 /// curve, its parameter value, and the Euclidean distance.
 ///
@@ -1039,7 +960,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
         }
 
-        // OCCT-aligned: Extrema_ExtPElC::Perform(Hyperbola)
+        // OCCT-aligned: Extrema_ExtPElC::Perform(Hyperbola) (Extrema_ExtPElC.cxx L327-389)
         Curve3::Hyperbola(hyp) => {
             let o = hyp.center;
             let axis = hyp.normal.normalize_or_zero();
@@ -1051,20 +972,24 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let y = opp.dot(hy);
             let r = hyp.semi_major;
             let r2 = hyp.semi_minor;
+            // OCCT L347-348: C1 = (R*R + r*r)/4; Sol(C1, -(X*R+Y*r)/2, 0, (X*R-Y*r)/2, -C1)
             let c1 = (r * r + r2 * r2) / 4.0;
-            let c2 = -(x * r + y * r2) / 2.0;
-            let c3 = (x * r - y * r2) / 2.0;
-            let roots = solve_quartic(c1, c2, 0.0, c3, -c1);
+            let sol = DirectPolynomialRoots::new_quartic(
+                c1, -(x * r + y * r2) / 2.0, 0.0, (x * r - y * r2) / 2.0, -c1);
             let [t0, t1] = curve.default_domain();
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
-            for v in roots {
-                if v > 0.0 {
-                    let u = v.ln();
-                    if u >= t0 && u <= t1 {
-                        let pt = hyp.point_at(u);
-                        let d = (pt - query).length();
-                        if d < d_best { d_best = d; u_best = u; }
+            if sol.is_done() {
+                // OCCT L355-387: for (NoSol=1..NbSol) { Vs=Value(NoSol); if (Vs>0) { Us=log(Vs); if Uinf<=Us<=Usup ... } }
+                for no_sol in 1..=sol.nb_solutions() {
+                    let v_s = sol.value(no_sol);
+                    if v_s > 0.0 {
+                        let u_s = v_s.ln();
+                        if u_s >= t0 && u_s <= t1 {
+                            let pt = hyp.point_at(u_s);
+                            let d = (pt - query).length();
+                            if d < d_best { d_best = d; u_best = u_s; }
+                        }
                     }
                 }
             }
@@ -1076,7 +1001,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
         }
 
-        // OCCT-aligned: Extrema_ExtPElC::Perform(Parabola)
+        // OCCT-aligned: Extrema_ExtPElC::Perform(Parabola) (Extrema_ExtPElC.cxx L427-480)
         Curve3::Parabola(par) => {
             let o = par.vertex;
             let axis = par.normal.normalize_or_zero();
@@ -1087,16 +1012,21 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let x = opp.dot(px);
             let y = opp.dot(py);
             let f = par.focal_param;
-            let coeff = 1.0 / (4.0 * f);
-            let roots = solve_cubic(0.0, (2.0 * f - x) / coeff, -2.0 * f * y / coeff);
+            // OCCT L443: Sol(1/(4*F), 0., 2*F - X, -2*F*Y)
+            let sol = DirectPolynomialRoots::new_cubic(
+                1.0 / (4.0 * f), 0.0, 2.0 * f - x, -2.0 * f * y);
             let [t0, t1] = curve.default_domain();
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
-            for u in roots {
-                if u >= t0 && u <= t1 {
-                    let pt = par.point_at(u);
-                    let d = (pt - query).length();
-                    if d < d_best { d_best = d; u_best = u; }
+            if sol.is_done() {
+                // OCCT L454-478: for (NoSol=1..NbSol) { Us=Value(NoSol); if Uinf<=Us<=Usup ... }
+                for no_sol in 1..=sol.nb_solutions() {
+                    let u_s = sol.value(no_sol);
+                    if u_s >= t0 && u_s <= t1 {
+                        let pt = par.point_at(u_s);
+                        let d = (pt - query).length();
+                        if d < d_best { d_best = d; u_best = u_s; }
+                    }
                 }
             }
             for &u in &[t0, t1] {
