@@ -2878,11 +2878,11 @@ impl PaveFiller {
         };
         let n_sp = self.ds.push_edge(curve, [a_t1, a_t2], n_v1, n_v2);
         let a_tol = self.ds.edge_tolerance(n_e);
-        let si = self.ds.change_shape_info(n_sp);
-        let ts = Arc::make_mut(&mut si.shape.data);
-        if let topods::TShape::Edge(ref mut ed) = *ts {
-            ed.tolerance = a_tol;
-        }
+        self.ds.mutate_shape_data(n_sp, |ts| {
+            if let topods::TShape::Edge(ed) = ts {
+                ed.tolerance = a_tol;
+            }
+        });
         self.ds.remap_shape_idx(n_sp);
         self.rebuild_edge_box(n_sp);
         n_sp

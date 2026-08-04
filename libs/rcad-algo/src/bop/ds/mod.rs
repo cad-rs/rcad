@@ -792,6 +792,33 @@ impl DS {
     /// so the map key would no longer match the shape's current pointer. This
     /// re-maps the current pointer to the same index, restoring the OCCT
     /// invariant that Index(shape) finds a shape by its current TShape.
+    /// Mutate a shape's TShape in place, preserving its Arc identity.
+    ///
+    /// OCCT mutates TShapes in place (BRep_Builder::UpdateEdge / UpdateVertex /
+    /// BRep_TVertex::Pnt), so the DS shape entry and the face wire edges that
+    /// reference the same TShape stay identical — the identity that
+    /// BOPAlgo_Builder::FillImagesEdges keys myImages by and BuildSplitFaces
+    /// looks up (BOPAlgo_Builder_1.cxx L97, Builder_2.cxx L369). Arc::make_mut
+    /// would clone-on-write a shared TShape, splitting that identity (the DS
+    /// entry points to the clone while the face wires keep the original).
+    pub fn mutate_shape_data(&mut self, idx: usize, f: impl FnOnce(&mut TShape)) {
+        if idx >= self.shapes.len() {
+            return;
+        }
+        let data = &mut self.shapes[idx].shape.data;
+        if let Some(ts) = Arc::get_mut(data) {
+            f(ts);
+        } else {
+            let ptr = Arc::as_ptr(data) as *mut TShape;
+            // SAFETY: the caller holds &mut ShapeInfo (exclusive borrow of the
+            // DS entry) and the pipeline is single-threaded, so no other &TShape
+            // for this Arc is alive inside f. Mutating through the shared pointer
+            // matches OCCT's in-place edit: every reference (DS entry + face wire
+            // edges) observes the change.
+            unsafe { f(&mut *ptr) }
+        }
+    }
+
     pub fn remap_shape_idx(&mut self, idx: usize) {
         if idx < self.shapes.len() {
             let (pk, loc) = {

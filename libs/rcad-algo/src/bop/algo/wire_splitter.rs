@@ -181,7 +181,7 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
 
 /// OCCT BOPAlgo_WireSplitter::Perform (L91-118) + MakeWires (L164-226).
 /// Returns the loops as edge sequences.
-pub(crate) fn split_into_wires(face: &Shape, edges: &[Shape]) -> Vec<Vec<Shape>> {
+pub(crate) fn split_into_wires(face: &Shape, face_index: usize, edges: &[Shape]) -> Vec<Vec<Shape>> {
     if edges.is_empty() {
         return Vec::new();
     }
@@ -198,7 +198,7 @@ pub(crate) fn split_into_wires(face: &Shape, edges: &[Shape]) -> Vec<Vec<Shape>>
     }
     let a_context = IntToolsContext::new();
     for mut cb in a_vcb {
-        split_block(face, &mut cb, &a_context);
+        split_block(face, face_index, &mut cb, &a_context);
         for l in &cb.loops {
             result.push(l.clone());
         }
@@ -213,7 +213,7 @@ fn make_wire(a_le: &[Shape]) -> Vec<Shape> {
 }
 
 /// OCCT BOPAlgo_WireSplitter::SplitBlock (BOPAlgo_WireSplitter_1.cxx L113-355).
-fn split_block(face: &Shape, cb: &mut ConnexityBlock, the_context: &IntToolsContext) {
+fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_context: &IntToolsContext) {
     let my_edges = cb.shapes.clone();
     // mySmartMap: vertex ptr -> (vertex shape, list of EdgeInfo).
     let mut my_smart_map: IndexMap<u64, (Shape, Vec<EdgeInfo>)> = IndexMap::new();
@@ -225,7 +225,7 @@ fn split_block(face: &Shape, cb: &mut ConnexityBlock, the_context: &IntToolsCont
 
     // 1. Fill mySmartMap.
     for a_e in &my_edges {
-        if !has_curve_on_surface(a_e, face) {
+        if !has_curve_on_surface(a_e, face_index) {
             continue;
         }
         let mut b_is_closed = is_degenerated(a_e) || is_closed_on_face(a_e, face);
@@ -828,9 +828,13 @@ fn edge_pcurve(e: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
     }
 }
 
-fn has_curve_on_surface(e: &Shape, face: &Shape) -> bool {
+fn has_curve_on_surface(e: &Shape, face_index: usize) -> bool {
     match &*e.data {
-        TShape::Edge(ed) => ed.pcurves.contains_key(&face.index),
+        // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
+        // rcad keys the edge pcurve map by the DS face index (make_pcurves uses
+        // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
+        // is the matching key.
+        TShape::Edge(ed) => ed.pcurves.contains_key(&face_index),
         _ => false,
     }
 }

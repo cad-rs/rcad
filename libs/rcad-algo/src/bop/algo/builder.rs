@@ -919,9 +919,23 @@ impl<'a> Builder<'a> {
     /// OCCT: myImages is keyed by TopTools_ShapeMapHasher which hashes only
     /// TShape* + Location, so IsBound(aE) matches regardless of orientation.
     fn images_of(&self, key: &Shape) -> Option<Vec<Shape>> {
+        // OCCT myImages.Find(aE) keys by TopoDS_Shape (stable because OCCT mutates
+        // TShapes in place). rcad's Arc::make_mut clones a shared TShape on write,
+        // so the face wire edge (original) and the DS edge entry (clone) become two
+        // TShape objects for the same logical edge. Both still map to the same DS
+        // index — init keeps the original (ptr→idx) mapping and remap_shape_idx
+        // adds the clone's — so resolve the lookup by DS index.
+        let key_idx = self.ds.map_shape_index.get(&(key.ptr_id(), key.location)).copied();
         for (k, v) in &self.my_images {
             if k.ptr_id() == key.ptr_id() && k.location == key.location {
                 return Some(v.clone());
+            }
+        }
+        if let Some(ki) = key_idx {
+            for (k, v) in &self.my_images {
+                if self.ds.map_shape_index.get(&(k.ptr_id(), k.location)).copied() == Some(ki) {
+                    return Some(v.clone());
+                }
             }
         }
         None
