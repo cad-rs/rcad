@@ -930,8 +930,12 @@ pub(crate) fn process_bounds(
             param_on_line: param,
             tolerance: tol,
             multiple: false,
-            on_dom_s1: true,
-            on_dom_s2: true,
+            // OCCT IntPatch_Point::SetValue(Pt, Tol, Tangent) creates a point
+            // "on no domain" (onS1 = onS2 = false); the ComputeVertexParameters
+            // "remove first/last vertex not on any domain" step then drops the
+            // endpoint vertex when it is not a surface-boundary crossing.
+            on_dom_s1: false,
+            on_dom_s2: false,
             arc_on_s1: None,
             arc_on_s2: None,
             param_on_arc1: 0.0,
