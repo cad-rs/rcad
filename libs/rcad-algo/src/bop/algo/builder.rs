@@ -208,21 +208,6 @@ impl<'a> Builder<'a> {
         // OCCT L438-443: Prepare
         let _result = self.prepare();
 
-        eprintln!("[BUILDER] DS: {} shapes ({} src, {}V/{}E/{}F)",
-            self.ds.nb_shapes(), self.ds.nb_source_shapes(),
-            self.ds.vertex_count(), self.ds.edge_count(), self.ds.face_count());
-        let (nsh, nso) = {
-            let mut a = 0usize; let mut b = 0usize;
-            for i in 0..self.ds.nb_shapes() {
-                match self.ds.shape_info(i).shape_type {
-                    topods::ShapeType::Shell => a += 1,
-                    topods::ShapeType::Solid => b += 1,
-                    _ => {}
-                }
-            } (a, b)
-        };
-        eprintln!("[BUILDER] DS: {} Shell, {} Solid", nsh, nso);
-
         // OCCT L459-471: FillImagesVertices + BuildResult(VERTEX)
         self.fill_images_vertices();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
