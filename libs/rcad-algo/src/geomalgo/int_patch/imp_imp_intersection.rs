@@ -454,9 +454,9 @@ impl ImpImpIntersection {
         }
 
         // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine
-        // (IntPatch_GLine.cxx L421-1090: filter, sort, dedup) and for each
-        // ALine (IntPatch_ALine.cxx L77-679: filter, sort, dedup).  RLine
-        // vertices keep their insertion order (the RLine method is a no-op).
+        // (IntPatch_GLine.cxx L421-1090: filter, sort, dedup), for each ALine
+        // (IntPatch_ALine.cxx L77-679: filter, sort, dedup) and for each RLine
+        // (IntPatch_RLine.cxx L143-434: filter, sort, dedup).
         for line in self.slin.iter_mut() {
             let is_gline = matches!(
                 line.line_type,
@@ -477,6 +477,9 @@ impl ImpImpIntersection {
                 if let Some(ac) = line.a_curve.as_mut() {
                     ac.compute_vertex_parameters_aline(tol_arc);
                 }
+            } else if line.line_type == IntPatchIType::Restriction {
+                // OCCT L2990-2994: IntPatch_RLine::ComputeVertexParameters.
+                line.compute_vertex_parameters_rline();
             }
         }
 

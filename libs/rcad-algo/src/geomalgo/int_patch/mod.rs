@@ -976,6 +976,242 @@ impl IntPatchLine {
         self.last_point = indl;
     }
 
+    /// OCCT IntPatch_RLine::ComputeVertexParameters (IntPatch_RLine.cxx
+    /// L143-434): filter, sort and dedup the restriction-line vertices.
+    pub fn compute_vertex_parameters_rline(&mut self) {
+        let mut svtx = std::mem::take(&mut self.vertices);
+        let mut nbvtx = svtx.len();
+        // 1-based indices into `svtx`.
+        let mut indf = self.first_point;
+        let mut indl = self.last_point;
+        let fipt = indf.is_some();
+        let lapt = indl.is_some();
+
+        // OCCT L156-202: two vertices on the S1-only restriction with the same
+        // parameters are deduplicated (the second one is removed).
+        loop {
+            let mut a_point_deleted = false;
+            'p1: for i in 1..=nbvtx {
+                let vtx_i = &svtx[i - 1];
+                if vtx_i.is_on_dom_s1() && !vtx_i.is_on_dom_s2() {
+                    for j in 1..=nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j - 1];
+                        if vtx_j.is_on_dom_s1() && !vtx_j.is_on_dom_s2() {
+                            if vtx_i.param_on_line == vtx_j.param_on_line
+                                && arc_eq(&vtx_i.arc_on_s1, &vtx_j.arc_on_s1)
+                                && vtx_i.param_on_arc1 == vtx_j.param_on_arc1
+                            {
+                                svtx.remove(j - 1);
+                                nbvtx -= 1;
+                                if lapt {
+                                    if let Some(il) = indl {
+                                        if il >= j {
+                                            indl = Some(il - 1);
+                                        }
+                                    }
+                                }
+                                if fipt {
+                                    if let Some(if_) = indf {
+                                        if if_ >= j {
+                                            indf = Some(if_ - 1);
+                                        }
+                                    }
+                                }
+                                a_point_deleted = true;
+                                break 'p1;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L204-250: same for the S2-only restriction.
+        loop {
+            let mut a_point_deleted = false;
+            'p2: for i in 1..=nbvtx {
+                let vtx_i = &svtx[i - 1];
+                if vtx_i.is_on_dom_s2() && !vtx_i.is_on_dom_s1() {
+                    for j in 1..=nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j - 1];
+                        if vtx_j.is_on_dom_s2() && !vtx_j.is_on_dom_s1() {
+                            if vtx_i.param_on_line == vtx_j.param_on_line
+                                && arc_eq(&vtx_i.arc_on_s2, &vtx_j.arc_on_s2)
+                                && vtx_i.param_on_arc2 == vtx_j.param_on_arc2
+                            {
+                                svtx.remove(j - 1);
+                                nbvtx -= 1;
+                                if lapt {
+                                    if let Some(il) = indl {
+                                        if il >= j {
+                                            indl = Some(il - 1);
+                                        }
+                                    }
+                                }
+                                if fipt {
+                                    if let Some(if_) = indf {
+                                        if if_ >= j {
+                                            indf = Some(if_ - 1);
+                                        }
+                                    }
+                                }
+                                a_point_deleted = true;
+                                break 'p2;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L257-268: sort by parameter on line.
+        loop {
+            let mut sort_is_ok = true;
+            for i in 2..=nbvtx {
+                if svtx[i - 2].param_on_line > svtx[i - 1].param_on_line {
+                    svtx.swap(i - 2, i - 1);
+                    sort_is_ok = false;
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        // OCCT L270-386: remove superfluous vertices sharing a parameter.
+        loop {
+            let mut a_point_deleted = false;
+            'p3: for i in 1..=nbvtx {
+                let vtx = svtx[i - 1].clone();
+                for j in 1..=nbvtx {
+                    if i == j {
+                        continue;
+                    }
+                    let vtx_m1 = svtx[j - 1].clone();
+                    let mut kill = false;
+                    let mut killm1 = false;
+                    if vtx_m1.param_on_line == vtx.param_on_line {
+                        let mut restrdiff = false;
+                        if vtx_m1.is_on_dom_s1() && vtx.is_on_dom_s1() {
+                            if arc_eq(&vtx_m1.arc_on_s1, &vtx.arc_on_s1) {
+                                if vtx.param_on_arc1 == vtx_m1.param_on_arc1 {
+                                    if vtx_m1.is_on_dom_s2() {
+                                        if !vtx.is_on_dom_s2() {
+                                            kill = true;
+                                        } else if arc_eq(&vtx_m1.arc_on_s2, &vtx.arc_on_s2) {
+                                            if vtx.param_on_arc2 == vtx_m1.param_on_arc2 {
+                                                kill = true;
+                                            }
+                                        }
+                                    } else if vtx.is_on_dom_s2() {
+                                        killm1 = true;
+                                    }
+                                }
+                            } else {
+                                restrdiff = true;
+                            }
+                        }
+                        if !restrdiff && !(kill || killm1) {
+                            if vtx_m1.is_on_dom_s2() && vtx.is_on_dom_s2() {
+                                if arc_eq(&vtx_m1.arc_on_s2, &vtx.arc_on_s2) {
+                                    if vtx.param_on_arc2 == vtx_m1.param_on_arc2 {
+                                        if vtx_m1.is_on_dom_s1() {
+                                            if !vtx.is_on_dom_s1() {
+                                                kill = true;
+                                            } else if arc_eq(&vtx_m1.arc_on_s1, &vtx.arc_on_s1) {
+                                                if vtx.param_on_arc1 == vtx_m1.param_on_arc1 {
+                                                    kill = true;
+                                                }
+                                            }
+                                        } else if vtx.is_on_dom_s1() {
+                                            killm1 = true;
+                                        }
+                                    }
+                                } else {
+                                    restrdiff = true;
+                                }
+                            }
+                        }
+                        if !restrdiff {
+                            if kill {
+                                a_point_deleted = true;
+                                svtx.remove(i - 1);
+                                nbvtx -= 1;
+                            } else if killm1 {
+                                a_point_deleted = true;
+                                svtx.remove(j - 1);
+                                nbvtx -= 1;
+                            }
+                        }
+                    }
+                    if a_point_deleted {
+                        break 'p3;
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L388-414: adjacent vertices sharing a parameter — remove the one
+        // that is not on any domain.
+        loop {
+            let mut sort_is_ok = true;
+            for i in 2..=nbvtx {
+                let pim1 = svtx[i - 2].clone();
+                let pii = svtx[i - 1].clone();
+                if pim1.param_on_line == pii.param_on_line {
+                    if !pii.is_on_dom_s1() && !pii.is_on_dom_s2() {
+                        sort_is_ok = false;
+                        svtx.remove(i - 1);
+                        nbvtx -= 1;
+                        break;
+                    } else if !pim1.is_on_dom_s1() && !pim1.is_on_dom_s2() {
+                        sort_is_ok = false;
+                        svtx.remove(i - 2);
+                        nbvtx -= 1;
+                        break;
+                    }
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        // OCCT L418-430: final sort ("Cas Bizarre").
+        nbvtx = svtx.len();
+        loop {
+            let mut sort_is_ok = true;
+            for i in 2..=nbvtx {
+                if svtx[i - 2].param_on_line > svtx[i - 1].param_on_line {
+                    svtx.swap(i - 2, i - 1);
+                    sort_is_ok = false;
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        self.vertices = svtx;
+        self.first_point = Some(1);
+        self.last_point = Some(nbvtx);
+    }
+
     /// OCCT IntPatch_WLine::ComputeVertexParameters (IntPatch_WLine.cxx
     /// L323-1198): filter, sort, dedup and re-parameterize the walking-line
     /// vertices, inserting/removing points on the curve so that every vertex
