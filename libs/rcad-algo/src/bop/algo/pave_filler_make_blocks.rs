@@ -231,6 +231,9 @@ impl PaveFiller {
                 let a_p = np.pnt;
                 let b_exist = self.is_existing_vertex(a_p, a_tol_ff, &a_mv_on_in);
                 if !b_exist {
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        eprintln!("[MBR] NEWV TreatPoints FF={} j={} p=({:.6},{:.6},{:.6})", a_cur_ind, j, a_p.x, a_p.y, a_p.z);
+                    }
                     // BOPTools_AlgoTools::MakeNewVertex(aP, aTolFF, aV)
                     let n_v = self.append_vertex(a_p, a_tol_ff);
                     let mut a_cpb = CoupleOfPBs::new(a_cur_ind, j);
@@ -321,12 +324,32 @@ impl PaveFiller {
                 }
 
                 let n_lpb = a_lpb.len();
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    println!("  [MBR] FF={} F({},{}) curve={} cid={} nSub={} tolR3D={} nSharedEdge={} nPBOnIn={}",
+                             a_cur_ind, n_f1, n_f2, j, cid, n_lpb, a_tol_r3d, a_lse.len(),
+                             a_mpb_on_in.len());
+                    if cid == 0 {
+                        for (i_pb, a_pb2) in a_mpb_on_in.iter().enumerate() {
+                            let r = a_pb2.0.read().unwrap();
+                            let (v1, v2) = r.indices();
+                            let (t1, t2) = r.range();
+                            let e = r.edge;
+                            let oe = r.original_edge;
+                            println!("    [MBR]   PBOnIn[{}] e={} origE={} V({},{}) t({:.6},{:.6})",
+                                     i_pb, e, oe, v1, v2, t1, t2);
+                        }
+                    }
+                }
                 for k in 0..n_lpb {
                     let a_pb = a_lpb[k].clone();
                     let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
                     let (a_t1, a_t2) = { let r = a_pb.0.read().unwrap(); r.range() };
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        print!("    [MBR] sub V({},{}) t({},{})", n_v1, n_v2, a_t1, a_t2);
+                    }
                     // OCCT L906-909: skip degenerate (zero-range) blocks.
                     if (a_t1 - a_t2).abs() < rcad_kernel::PCONFUSION {
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() { println!(" -> DEG"); }
                         continue;
                     }
                     // OCCT L914-918: IsValidBlockForFaces
@@ -336,6 +359,7 @@ impl PaveFiller {
                             a_t1, a_t2, &ic, n_f1, n_f2, &self.ds, a_tol_r3d)
                     };
                     if !b_valid_2d {
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() { println!(" -> INVALID2D"); }
                         continue;
                     }
                     // OCCT L920-930: IsExistingPaveBlock (with shared edges).
@@ -344,6 +368,7 @@ impl PaveFiller {
                     let b_exist = self.is_existing_pave_block_lse(
                         &a_pb, cid, &a_lse, &mut n_e_out, &mut a_tol_new);
                     if b_exist {
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() { println!(" -> EXIST_LSE e={}", n_e_out); }
                         // OCCT L925-929: update edge + saved tolerances.
                         self.update_edge_tolerance(n_e_out, a_tol_new);
                         self.update_saved_tolerance(n_e_out, a_tol_new, &mut a_mv_tol);
@@ -367,6 +392,7 @@ impl PaveFiller {
                         }
                     };
                     if a_first.is_nan() {
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() { println!(" -> MICRO"); }
                         // OCCT L952-958: micro block — keep for post treatment.
                         if !a_mv_bounds.contains(&n_v1) && !a_mv_bounds.contains(&n_v2) {
                             a_micro_pb.push(a_pb.clone());
@@ -384,6 +410,10 @@ impl PaveFiller {
                     if b_exist2 {
                         let a_pb_out = a_pb_out.unwrap();
                         let pb_out_key = pb_ptr(&a_pb_out);
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                            let n_e_out2 = { let r = a_pb_out.0.read().unwrap(); r.edge };
+                            println!(" -> EXIST_TREE e={}", n_e_out2);
+                        }
                         // OCCT L966-969
                         let b_in_f1 = self.pb_in_face(n_f1, &a_pb_out);
                         let b_in_f2 = self.pb_in_face(n_f2, &a_pb_out);
@@ -425,6 +455,9 @@ impl PaveFiller {
                         continue;
                     }
                     // OCCT L1023-1024: Make Edge
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        println!(" -> NEW e(t={},{})", a_t1, a_t2);
+                    }
                     let ic_curve = self.ds.intersection_curves[cid].curve.clone();
                     let n_e = {
                         self.append_edge(&ic_curve, a_t1, a_t2, n_v1, n_v2, a_tol_r3d)
@@ -461,6 +494,10 @@ impl PaveFiller {
                 if let Some(pbs) = self.ds.intersection_curves.get_mut(cid) {
                     if !pbs.pave_blocks.is_empty() {
                         pbs.pave_blocks.remove(0);
+                    }
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        println!("  [MBR] FF={} curve={} cid={} final nSection={}",
+                                 a_cur_ind, j, cid, pbs.pave_blocks.len());
                     }
                 }
             }
@@ -540,6 +577,7 @@ impl PaveFiller {
         if let topods::TShape::Edge(ref mut ed) = *ts {
             ed.tolerance = tol_r3d;
         }
+        self.ds.remap_shape_idx(n_e);
         n_e
     }
 
@@ -550,6 +588,7 @@ impl PaveFiller {
             if let topods::TShape::Vertex(ref mut vd) = *ts {
                 vd.tolerance = tol;
             }
+            self.ds.remap_shape_idx(idx);
         }
     }
 
@@ -867,6 +906,12 @@ impl PaveFiller {
         };
         // OCCT L2386-2392: Put EF vertices first.
         let mv_ef_list: Vec<usize> = the_mv_ef.iter().copied().collect();
+        if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+            for &n_v in &mv_ef_list {
+                let pv = self.ds.vertex_point_by_idx(n_v);
+                eprintln!("[MBR]   PPOC-EF v={} p=({:.1},{:.1},{:.1})", n_v, pv.x, pv.y, pv.z);
+            }
+        }
         for n_v in mv_ef_list {
             self.put_pave_on_curve(n_v, a_tol_r3d, cid, the_mi, the_mv_tol, the_dm_vlv, 2);
         }
@@ -878,6 +923,12 @@ impl PaveFiller {
                 if n_v >= self.ds.nb_shapes() { continue; }
                 let a_si_v = self.ds.shape_info(n_v);
                 let a_box_v = a_si_v.bbox.clone();
+                if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    let pv = self.ds.vertex_point_by_idx(n_v);
+                    eprintln!("[MBR]   PPOC v={} p=({:.1},{:.1},{:.1}) common={} boxOut={} isNew={}",
+                              n_v, pv.x, pv.y, pv.z, the_mv_common.contains(&n_v),
+                              a_box_c.is_out_box(&a_box_v), self.ds.is_new_shape(n_v));
+                }
                 if a_box_c.is_out_box(&a_box_v) { continue; }
                 if !self.ds.is_new_shape(n_v) { continue; }
             }
@@ -910,13 +961,13 @@ impl PaveFiller {
         // OCCT L2976: IsVertexOnLine
         let mut a_t = 0.0;
         let mut b_is_vertex_on_line = self.my_context.is_vertex_on_line(
-            a_v_pt, a_tol_v, &a_ic.curve, a_tol_r3d + self.my_fuzzy_value, &mut a_t);
+            a_v_pt, a_tol_v, &a_ic.curve, a_tol_r3d + self.my_fuzzy_value, &mut a_t, a_ic.t_range);
         // OCCT L2977-2990: extended tolerance check.
         if !b_is_vertex_on_line && i_check_extend != 0 && !self.my_verts_to_avoid_extension.contains(&n_v) {
             let mut an_extra_tol = a_tol_v;
             if self.extended_tolerance(n_v, a_mi, &mut an_extra_tol, i_check_extend) {
                 b_is_vertex_on_line = self.my_context.is_vertex_on_line(
-                    a_v_pt, an_extra_tol, &a_ic.curve, a_tol_r3d + self.my_fuzzy_value, &mut a_t);
+                    a_v_pt, an_extra_tol, &a_ic.curve, a_tol_r3d + self.my_fuzzy_value, &mut a_t, a_ic.t_range);
                 if b_is_vertex_on_line {
                     let a_p_on_c = a_ic.curve.point_at(a_t);
                     a_tol_v = a_p_on_c.distance(a_v_pt);
@@ -924,6 +975,9 @@ impl PaveFiller {
             }
         }
         if b_is_vertex_on_line {
+            if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+                eprintln!("[MBR]   PPOC-VOL v={} aT={:.4} tolV={:.3e} icheck={}", n_v, a_t, a_tol_v, i_check_extend);
+            }
             // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
             let a_dtol = crate::bop::tools::algo_tools::d_tolerance();
             let a_ptol = crate::bop::algo::pave_filler::shrunk_range_resolution(
@@ -1222,6 +1276,17 @@ impl PaveFiller {
             None => return the_nv,
         };
         let a_lp: Vec<Pave> = { let r = a_pb.0.read().unwrap(); r.ext_paves.clone() };
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let p0 = a_ic.curve.point_at(a_ic.t_range[0]);
+            let p1 = a_ic.curve.point_at(a_ic.t_range[1]);
+            eprintln!("[MBR] getBoundPaves cid={} nExt={} ext={:?} t_range={:?} ends=({:.3},{:.3},{:.3})-({:.3},{:.3},{:.3})",
+                      cid, a_lp.len(),
+                      a_lp.iter().map(|p| {
+                          let pp = self.ds.vertex_point_by_idx(p.vertex_idx);
+                          (p.vertex_idx, p.param, format!("({:.1},{:.1},{:.1})", pp.x, pp.y, pp.z))
+                      }).collect::<Vec<_>>(),
+                      a_ic.t_range, p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+        }
         if a_lp.is_empty() { return the_nv; }
         // OCCT L2267-2285: extreme paves.
         let mut a_t_min = f64::INFINITY;
@@ -1280,6 +1345,9 @@ impl PaveFiller {
                 if j == 1 && is_closed { continue; }
                 let b_vf = self.my_context.is_valid_point_for_faces(a_p[j], n_f1, n_f2, &self.ds, a_tol_r3d);
                 if !b_vf { continue; }
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    eprintln!("[MBR] NEWV BoundPave cid={} j={} p=({:.6},{:.6},{:.6})", cid, j, a_p[j].x, a_p[j].y, a_p[j].z);
+                }
                 // OCCT L2345-2347: MakeNewVertex + UpdateVertex (move to curve point).
                 let n_vn = self.append_vertex(a_p[j], a_tol_r3d);
                 // OCCT L2348: aTolVnew = Tolerance(aVn) — used by the closure test.
@@ -1366,6 +1434,7 @@ impl PaveFiller {
                 ed.tolerance = the_tol;
             }
         }
+        self.ds.remap_shape_idx(n_e);
         self.rebuild_edge_box(n_e);
         // OCCT L94-100: update sub-vertices.
         let sub_shapes: Vec<usize> = self.ds.shape_info(n_e).sub_shapes.clone();
@@ -1375,7 +1444,7 @@ impl PaveFiller {
     }
 
     /// Rebuild an edge's bounding box (OCCT BRepBndLib::Add(aE, aBoxE)).
-    fn rebuild_edge_box(&mut self, n_e: usize) {
+    pub(crate) fn rebuild_edge_box(&mut self, n_e: usize) {
         let curve = match self.ds.edge_curve(n_e) { Some(c) => c.clone(), None => return };
         let range = self.ds.edge_range(n_e);
         let tol = self.ds.edge_tolerance(n_e);
@@ -1473,11 +1542,21 @@ impl PaveFiller {
             let a_pb2 = &the_mpb_on_in[i_pb];
             let n_e2 = { let r = a_pb2.0.read().unwrap(); r.edge };
             let a_box_sp = self.ds.shape_info(n_e2).bbox.clone();
+            if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("    [MBR]   IEXPB sel e={} box={:?} p1box={:?} out={}",
+                         n_e2, a_box_sp, a_box_p1, a_box_sp.is_out_box(&a_box_p1));
+            }
             if !a_box_sp.is_out_box(&a_box_p1) {
                 a_candidates.push(i_pb);
             }
         }
-        if a_candidates.is_empty() { return false; }
+        if a_candidates.is_empty() {
+            if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("    [MBR]   IEXPB: sub V({},{}) t({},{}) -> NO CANDIDATES (pbCand={}, pbOnIn={})",
+                         n_v11, n_v12, a_t1, a_t2, pb_candidates.len(), the_mpb_on_in.len());
+            }
+            return false;
+        }
         // OCCT L2082-2094: intermediate point.
         let a_tm = crate::bop::int_tools::face_make_curve::intermediate_point(a_t1, a_t2);
         let a_pm = a_ic.curve.point_at(a_tm);
@@ -1516,6 +1595,9 @@ impl PaveFiller {
             } else {
                 0
             };
+            if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("    [MBR]   IEXPB cand e={} V({},{}) f1={} f2={}", n_e_sp, n_v21, n_v22, i_flag1, i_flag2);
+            }
             if i_flag2 == 0 { continue; }
             let mut a_dist = 0.0;
             let mut a_coeff = 1.0;
@@ -1595,6 +1677,10 @@ impl PaveFiller {
                     b_found = true;
                 }
             }
+        }
+        if cid == 0 && std::env::var("RCAD_MB_DEBUG").is_ok() {
+            println!("    [MBR]   IEXPB sub V({},{}) -> found={} tolNew={}",
+                     n_v11, n_v12, b_found, *the_tol_new);
         }
         b_found
     }
@@ -1897,6 +1983,9 @@ impl PaveFiller {
             self.set_vertex_point(n_sd, a_vn);
             (n_sd, a_vsd)
         } else {
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                eprintln!("[MBR] NEWV MakeSD n_verts={}", the_vert_indices.len());
+            }
             let n_v = self.append_vertex(a_vn, a_vn_tol);
             (n_v, self.ds.shape(n_v).clone())
         };
@@ -1935,6 +2024,7 @@ impl PaveFiller {
             if let topods::TShape::Vertex(ref mut vd) = *ts {
                 vd.point = pt;
             }
+            self.ds.remap_shape_idx(idx);
         }
     }
 
@@ -2812,6 +2902,7 @@ impl PaveFiller {
         if let topods::TShape::Edge(ref mut ed) = *ts {
             ed.tolerance = a_tol;
         }
+        self.ds.remap_shape_idx(n_sp);
         self.rebuild_edge_box(n_sp);
         n_sp
     }
@@ -2896,6 +2987,7 @@ impl PaveFiller {
                             if let topods::TShape::Edge(ref mut ed) = *ts {
                                 ed.tolerance = a_tol_c;
                             }
+                            self.ds.remap_shape_idx(n_e);
                             b_is_reduced = true;
                         }
                     }

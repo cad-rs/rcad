@@ -762,6 +762,7 @@ impl PaveFiller {
                 vd.point = centroid;
                 vd.tolerance = max_tol;
             }
+            self.ds.remap_shape_idx(n_sd);
             n_v = n_sd;
         } else {
             // OCCT L175-180: Append new vertex to DS
@@ -2502,6 +2503,7 @@ impl PaveFiller {
                     if let topods::TShape::Edge(ref mut ed) = *ts {
                         ed.pcurves.insert(fi, (pc, range[0], range[1]));
                     }
+                    self.ds.remap_shape_idx(ei);
                 }
             }
         }
@@ -3014,6 +3016,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 si.bbox = BndBox::from_point(vd.point);
                 si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
             }
+            self.ds.remap_shape_idx(n_vnew);
             self.my_increased_ss.insert(n_v);
         }
         n_vnew
@@ -4185,9 +4188,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // OCCT L465-515: create new split edge
                 if let Some(curve) = self.ds.edge_curve(n_e) {
                     let new_ei = self.ds.push_edge(curve.clone(), [a_t1, a_t2], n_v1, n_v2);
-                    let mut pbw = a_pb.0.write().unwrap();
-                    pbw.edge = new_ei;
+                    {
+                        let mut pbw = a_pb.0.write().unwrap();
+                        pbw.edge = new_ei;
+                    }
                     if ms_debug { eprintln!("[RCADMS] NEWEDGE nSp={} origEdge={} p1={} p2={}", new_ei, n_e, n_v1, n_v2); }
+                    // OCCT BOPAlgo_SplitEdge::Perform (_7.cxx L137-138):
+                    //   BRepBndLib::Add(myESp, myBox); myBox.SetGap(gap + Confusion())
+                    self.rebuild_edge_box(new_ei);
                 }
             }
         }
@@ -4286,6 +4294,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                             ed.pcurves.insert(n_f1, (pc, range[0], range[1]));
                         }
+                        self.ds.remap_shape_idx(n_e);
                     }
                 }
             }

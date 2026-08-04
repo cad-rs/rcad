@@ -664,9 +664,12 @@ impl IntToolsContext {
         a_curve: &Curve3,
         a_tol_c: f64,
         a_t: &mut f64,
+        a_domain: [f64; 2],
     ) -> bool {
         // OCCT L788-809: tolerance sum depending on the curve type.
-        let [a_first, a_last] = a_curve.default_domain();
+        // OCCT L811-812: aFirst = aC3D->FirstParameter(); aLast = aC3D->LastParameter();
+        // — the bounded (trimmed) curve domain, NOT the natural curve domain.
+        let [a_first, a_last] = a_domain;
         let mut a_tol_sum = a_tol_v + a_tol_c;
         let is_spline = matches!(a_curve, Curve3::BSpline(_) | Curve3::Bezier(_));
         a_tol_sum = 2.0 * a_tol_sum;

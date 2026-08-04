@@ -785,6 +785,23 @@ impl DS {
         }
     }
 
+    /// OCCT mutates TShapes in place (e.g. BRep_Builder::UpdateVertex), so the
+    /// shape-index map keyed by TShape pointer never goes stale. rcad uses
+    /// Arc::make_mut (clone-on-write) when the shape's TShape Arc is shared
+    /// (referenced by multiple shapes): the clone changes the TShape pointer,
+    /// so the map key would no longer match the shape's current pointer. This
+    /// re-maps the current pointer to the same index, restoring the OCCT
+    /// invariant that Index(shape) finds a shape by its current TShape.
+    pub fn remap_shape_idx(&mut self, idx: usize) {
+        if idx < self.shapes.len() {
+            let (pk, loc) = {
+                let si = &self.shapes[idx];
+                (si.shape.ptr_id(), si.shape.location)
+            };
+            self.map_shape_index.insert((pk, loc), idx);
+        }
+    }
+
     // Pave blocks pool
     pub fn pave_blocks_pool(&self) -> &[Vec<SharedPB>] { &self.pave_blocks_pool }
     pub fn change_pave_blocks_pool(&mut self) -> &mut Vec<Vec<SharedPB>> { &mut self.pave_blocks_pool }
