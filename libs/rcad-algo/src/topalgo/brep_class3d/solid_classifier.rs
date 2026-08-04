@@ -69,6 +69,12 @@ impl SolidClassifier {
                 self.my_state = 4; // OUT
                 return;
             }
+            // OCCT BRepClass3d_SClassifier::Perform — a point within the
+            // tolerance of a face of the solid is ON the boundary.
+            if self.explorer.point_on_face(p, tol) {
+                self.my_state = 2; // ON
+                return;
+            }
             // OCCT L190: BRepClass3d_SClassifier::Perform(explorer, P, Tol)
             self.perform_classify(p, tol);
         } else {

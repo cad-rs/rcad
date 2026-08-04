@@ -12,7 +12,6 @@ pub(crate) mod bvh_tree;
 
 use crate::bop::ds::DS;
 use crate::bop::ds::Classification;
-use crate::bop::algo::shell_splitter;
 
 /// Determine if a face set forms a growth shell (non-hole).
 pub fn is_growth_shell(_face_count: usize) -> bool { true }
@@ -28,9 +27,4 @@ pub fn compute_int_range(bean_tol: f64, face_tol: f64, angle: f64) -> f64 {
     let a_ang = if angle < a_eps { a_eps } else { angle };
     let a_tol = if bean_tol < face_tol { bean_tol } else { face_tol };
     a_tol / a_ang
-}
-
-/// Build connexity blocks from connected faces.
-pub fn make_connexity_blocks(faces: &[usize], ds: &DS, out: &mut Vec<Vec<usize>>) {
-    shell_splitter::make_connexity_blocks(faces, ds, out);
 }

@@ -115,6 +115,20 @@ impl SolidExplorer {
         false
     }
 
+    /// OCCT BRepClass3d_SClassifier::Perform — a point within the tolerance of
+    /// a face of the solid is ON the boundary (state ON), not IN.
+    pub fn point_on_face(&self, p: DVec3, tol: f64) -> bool {
+        for f in &self.face_surfaces {
+            if let Surface3::Plane(pl) = &f.surf {
+                let d = (p - pl.origin).dot(pl.normal).abs();
+                if d <= tol && in_face_uv(f.uv_bounds, pl, p) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Get face indices for classification.
     pub fn get_face_indices(&self) -> &[usize] {
         &self.face_indices
