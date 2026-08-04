@@ -118,15 +118,16 @@ impl<'a> BuilderFace<'a> {
     fn perform_loops(&mut self) {
         // OCCT L256: aWES.SetFace(myFace)
         // OCCT L258-266: add edges to wire edge set (excluding shapes to avoid)
-        let edges: Vec<&Shape> = self.my_edges.iter()
+        let edges: Vec<Shape> = self.my_edges.iter()
             .filter(|e| !self.my_shapes_to_avoid.contains(&e.ptr_id()))
+            .cloned()
             .collect();
 
-        // Build vertex->edge adjacency map for edge connection
-        // OCCT: uses BOPAlgo_WireSplitter internally
-        let wires = build_wires_from_edges(&edges, 1e-7);
+        // OCCT L268-271: BOPAlgo_WireSplitter(aWSp) with the wire edge set.
+        let a_face = self.my_face.clone().unwrap_or_else(Shape::null);
+        let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, &edges);
 
-        // OCCT L278-283: store result wires into myLoops
+        // OCCT L277-283: store result wires into myLoops
         self.my_loops = wires;
 
         // OCCT L284-321: Post-treatment — find unprocessed edges
@@ -285,115 +286,4 @@ impl<'a> BuilderFace<'a> {
         // OCCT: adds internal wires from unconnected vertices
         // rcad: internal vertices handled by FillInternalVertices in Builder.
     }
-}
-
-/// Build closed wires from a set of edges by matching shared vertices.
-/// OCCT BOPAlgo_WireSplitter equivalent.
-fn build_wires_from_edges(edges: &[&Shape], tol: f64) -> Vec<Vec<Shape>> {
-    if edges.is_empty() {
-        return Vec::new();
-    }
-
-    // Build vertex->edge index adjacency
-    // Each edge has two endpoints (first, last). Match by position within tolerance.
-    let mut vert_edges: Vec<(usize, usize)> = Vec::new(); // (edge_idx, vertex_pos_in_edge)
-    let mut vert_positions: Vec<glam::DVec3> = Vec::new();
-    let mut edge_ends: Vec<(usize, usize)> = Vec::new(); // (start_vert_idx, end_vert_idx)
-
-    for (ei, e) in edges.iter().enumerate() {
-        let (sv, ev) = get_edge_endpoints(e);
-        let mut si = usize::MAX;
-        let mut ei2 = usize::MAX;
-        for (vi, &vp) in vert_positions.iter().enumerate() {
-            if (vp - sv).length() < tol { si = vi; }
-            if (vp - ev).length() < tol { ei2 = vi; }
-        }
-        if si == usize::MAX {
-            si = vert_positions.len();
-            vert_positions.push(sv);
-        }
-        if ei2 == usize::MAX {
-            ei2 = vert_positions.len();
-            vert_positions.push(ev);
-        }
-        edge_ends.push((si, ei2));
-    }
-
-    // Build adjacency: for each vertex, list of edges connected to it
-    let mut vert_to_edges: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (ei, &(s, e)) in edge_ends.iter().enumerate() {
-        vert_to_edges.entry(s).or_default().push(ei);
-        if s != e {
-            vert_to_edges.entry(e).or_default().push(ei);
-        }
-    }
-
-    // Walk edges to form closed wires
-    let n = edges.len();
-    let mut used = vec![false; n];
-    let mut wires: Vec<Vec<Shape>> = Vec::new();
-
-    for start in 0..n {
-        if used[start] { continue; }
-        let mut wire_edges: Vec<Shape> = Vec::new();
-        let mut current_ei = start;
-        let mut current_vert = edge_ends[start].0;
-        loop {
-            if used[current_ei] { break; }
-            used[current_ei] = true;
-            wire_edges.push(edges[current_ei].clone());
-
-            // Find next edge: from the end vertex, pick an unused edge
-            let end_vert = if edge_ends[current_ei].0 == current_vert {
-                edge_ends[current_ei].1
-            } else {
-                edge_ends[current_ei].0
-            };
-            current_vert = end_vert;
-
-            // Find next unused edge connected to end_vert
-            let mut found = false;
-            if let Some(adj) = vert_to_edges.get(&end_vert) {
-                for &next_ei in adj {
-                    if !used[next_ei] {
-                        current_ei = next_ei;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if !found { break; }
-            // Check if we're back to start (closed wire)
-            if end_vert == edge_ends[start].0 { break; }
-        }
-        if !wire_edges.is_empty() {
-            wires.push(wire_edges);
-        }
-    }
-    wires
-}
-
-/// Get edge endpoint vertex positions from a Shape.
-fn get_edge_endpoints(e: &Shape) -> (glam::DVec3, glam::DVec3) {
-    match &*e.data {
-        TShape::Edge(ed) => {
-            let p1 = vertex_position(&ed.first);
-            let p2 = vertex_position(&ed.last);
-            (p1, p2)
-        }
-        _ => (glam::DVec3::ZERO, glam::DVec3::ZERO),
-    }
-}
-
-/// Get vertex position from a Vertex Shape.
-fn vertex_position(v: &Shape) -> glam::DVec3 {
-    match &*v.data {
-        TShape::Vertex(vd) => vd.point,
-        _ => glam::DVec3::ZERO,
-    }
-}
-
-/// Check if a wire is a hole (contains edges from existing hole faces).
-fn is_hole_wire(edges: &[Shape], hole_edge_ptrs: &HashSet<u64>) -> bool {
-    edges.iter().any(|e| hole_edge_ptrs.contains(&e.ptr_id()))
 }

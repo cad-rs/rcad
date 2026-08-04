@@ -22,6 +22,7 @@ pub mod builder_area;
 pub mod builder_face;
 pub mod builder_solid;
 pub mod shell_splitter;
+pub mod wire_splitter;
 pub mod check_result;
 pub mod checker_si;
 pub mod section_attribute;
