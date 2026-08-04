@@ -3045,14 +3045,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // OCCT L985-990: aTolCB = aCB->Tolerance(); UpdateVertex(Pave1, Tol); UpdateVertex(Pave2, Tol);
                 let a_tol_cb = a_cb.tolerance();
                 if a_tol_cb > 0. {
-                    if let Some(pb1_idx) = a_cb.pave_block1() {
-                        if pb1_idx < self.ds.pave_blocks_pool.len() {
-                            if let Some(pb1) = self.ds.pave_blocks_pool[pb1_idx].first() {
-                                let (nv1, nv2) = { let r = pb1.0.read().unwrap(); r.indices() };
-                                self.update_vertex(nv1, a_tol_cb);
-                                self.update_vertex(nv2, a_tol_cb);
-                            }
-                        }
+                    if let Some(pb1) = a_cb.pave_block1() {
+                        let (nv1, nv2) = pb1.0.read().unwrap().indices();
+                        self.update_vertex(nv1, a_tol_cb);
+                        self.update_vertex(nv2, a_tol_cb);
                     }
                 }
             }
@@ -3464,14 +3460,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     let cb_idx = pb.0.read().unwrap().common_block_idx;
                     if let Some(cb_idx) = cb_idx {
                         if cb_idx < self.ds.common_blocks.len() {
-                            for &(pool_idx, _face_idx) in self.ds.common_blocks[cb_idx].pave_blocks() {
-                                if pool_idx < self.ds.pave_blocks_pool.len() {
-                                    for pool_pb in &self.ds.pave_blocks_pool[pool_idx] {
-                                        let other_ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
-                                        if other_ptr != ptr {
-                                            add_edge(ptr, other_ptr);
-                                        }
-                                    }
+                            for (pool_pb, _face_idx) in self.ds.common_blocks[cb_idx].pave_blocks() {
+                                let other_ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
+                                if other_ptr != ptr {
+                                    add_edge(ptr, other_ptr);
                                 }
                             }
                         }
@@ -3503,13 +3495,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     let cb_idx = pb.0.read().unwrap().common_block_idx;
                     if let Some(cb_idx) = cb_idx {
                         if cb_idx < self.ds.common_blocks.len() {
-                            for &(pool_idx, _) in self.ds.common_blocks[cb_idx].pave_blocks() {
-                                if pool_idx < self.ds.pave_blocks_pool.len() {
-                                    for pool_pb in &self.ds.pave_blocks_pool[pool_idx] {
-                                        let ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
-                                        ptr_to_pb.entry(ptr).or_insert(pool_pb.clone());
-                                    }
-                                }
+                            for (pool_pb, _) in self.ds.common_blocks[cb_idx].pave_blocks() {
+                                let ptr = std::sync::Arc::as_ptr(&pool_pb.0) as u64;
+                                ptr_to_pb.entry(ptr).or_insert(pool_pb.clone());
                             }
                         }
                     }
@@ -3914,20 +3902,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     }
                 } else {
                     // Create new CommonBlock with PB and set faces (OCCT L211-214, 238)
-                    // add_common_block creates CB with pool_idx, need to set faces
-                    let pi = self.ds.pave_blocks_pool.iter().position(|pool| {
-                        pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == *ptr)
-                    }).unwrap_or(usize::MAX);
-                    if pi != usize::MAX {
-                        let mut a_cb = crate::bop::ds::common_block::CommonBlock::new();
-                        a_cb.add_pave_block(pi, 0); // OCCT: AddPaveBlock(aPB), face_idx is 0 placeholder
-                        for &f in faces {
-                            a_cb.add_face(f);
-                        }
-                        // Set common_block_idx on the PB
-                        pb.0.write().unwrap().common_block_idx = Some(self.ds.common_blocks.len());
-                        self.ds.common_blocks.push(a_cb);
+                    let mut a_cb = crate::bop::ds::common_block::CommonBlock::new();
+                    a_cb.add_pave_block(pb.clone(), 0); // OCCT: AddPaveBlock(aPB), face_idx is 0 placeholder
+                    for &f in faces {
+                        a_cb.add_face(f);
                     }
+                    let cb_idx = self.ds.common_blocks.len();
+                    self.ds.common_blocks.push(a_cb);
+                    self.ds.set_common_block(&pb, cb_idx);
                 }
             }
         }
@@ -4014,16 +3996,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             if a_cb_fence.insert(cb_idx) {
                                 if let Some(cb) = self.ds.common_blocks.get(cb_idx) {
                                     let mut a_le: Vec<usize> = Vec::new();
-                                    for &(pb_gi, _) in cb.pave_blocks() {
-                                        if pb_gi < self.ds.pave_blocks_pool.len() {
-                                            for pool_pb in &self.ds.pave_blocks_pool[pb_gi] {
-                                                let n_e_or = pool_pb.0.read().unwrap().original_edge;
-                                                // L125: if (aR.Contains(nEOr))
-                                                let in_range = n_e_or >= a_r.first && n_e_or <= a_r.last;
-                                                if in_range {
-                                                    a_le.push(n_e_or);
-                                                }
-                                            }
+                                    for (pool_pb, _) in cb.pave_blocks() {
+                                        let n_e_or = pool_pb.0.read().unwrap().original_edge;
+                                        // L125: if (aR.Contains(nEOr))
+                                        let in_range = n_e_or >= a_r.first && n_e_or <= a_r.last;
+                                        if in_range {
+                                            a_le.push(n_e_or);
                                         }
                                     }
                                     // L131-146: if more than 1 edge from same argument in CB
@@ -4126,6 +4104,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let cb_f = pb.common_block_idx;
                 let a_t1 = pb.pave1.param;
                 let a_t2 = pb.pave2.param;
+                // Release the read lock on a_pb before any CB SetEdge may write
+                // the same PB (OCCT has no locks; aCB->SetEdge writes all CB PBs).
+                drop(pb);
                 if ms_debug {
                     eprintln!("[RCADMS] CAND edge={} v1={} v2={} newV1={} newV2={} CB={} lpbExtent={}",
                         n_e, n_v1, n_v2, b_v1, b_v2, cb_f.is_some(), a_lpb.len());
@@ -4143,13 +4124,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             //   common block whose PaveBlocks extent == 1
                             let cb_pbs: Vec<SharedPB> = {
                                 let cb = &self.ds.common_blocks[cb_idx];
-                                let mut v = Vec::new();
-                                for &(pool_idx, _) in cb.pave_blocks() {
-                                    if pool_idx < self.ds.pave_blocks_pool.len() {
-                                        v.extend(self.ds.pave_blocks_pool[pool_idx].iter().cloned());
-                                    }
-                                }
-                                v
+                                cb.pave_blocks().iter().map(|(pb, _)| pb.clone()).collect()
                             };
                             for pbx in &cb_pbs {
                                 let e = pbx.0.read().unwrap().original_edge;
@@ -4175,7 +4150,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         }
                     }
                 }
-                drop(pb);
                 if !b_to_split {
                     if set_edge_n != usize::MAX {
                         // OCCT L460: aPB->SetEdge(nE)
@@ -4185,14 +4159,31 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     continue;
                 }
                 if ms_debug { eprintln!("[RCADMS] SPLIT edge={} v1={} v2={}", n_e, n_v1, n_v2); }
+                // OCCT L484-490: when the PB is in a common block, split
+                //   aCB->PaveBlock1() instead of the current PB.
+                let (sp_e, sp_v1, sp_v2, sp_t1, sp_t2) = if let Some(cb_idx) = cb_f {
+                    if let Some(pb1) = self.ds.common_blocks[cb_idx].pave_block1() {
+                        let r = pb1.0.read().unwrap();
+                        (r.original_edge, r.pave1.vertex_idx, r.pave2.vertex_idx,
+                         r.pave1.param, r.pave2.param)
+                    } else {
+                        (n_e, n_v1, n_v2, a_t1, a_t2)
+                    }
+                } else {
+                    (n_e, n_v1, n_v2, a_t1, a_t2)
+                };
                 // OCCT L465-515: create new split edge
-                if let Some(curve) = self.ds.edge_curve(n_e) {
-                    let new_ei = self.ds.push_edge(curve.clone(), [a_t1, a_t2], n_v1, n_v2);
-                    {
+                if let Some(curve) = self.ds.edge_curve(sp_e) {
+                    let new_ei = self.ds.push_edge(curve.clone(), [sp_t1, sp_t2], sp_v1, sp_v2);
+                    if let Some(cb_idx) = cb_f {
+                        // OCCT L536-545: aCBk->SetEdge(nSp) — sets the edge of all
+                        //   PaveBlocks in the common block.
+                        self.ds.common_blocks[cb_idx].set_edge(new_ei);
+                    } else {
                         let mut pbw = a_pb.0.write().unwrap();
                         pbw.edge = new_ei;
                     }
-                    if ms_debug { eprintln!("[RCADMS] NEWEDGE nSp={} origEdge={} p1={} p2={}", new_ei, n_e, n_v1, n_v2); }
+                    if ms_debug { eprintln!("[RCADMS] NEWEDGE nSp={} origEdge={} p1={} p2={}", new_ei, sp_e, sp_v1, sp_v2); }
                     // OCCT BOPAlgo_SplitEdge::Perform (_7.cxx L137-138):
                     //   BRepBndLib::Add(myESp, myBox); myBox.SetGap(gap + Confusion())
                     self.rebuild_edge_box(new_ei);

@@ -1,4 +1,4 @@
-use crate::bop::ds::DS;
+use crate::bop::ds::pave::SharedPB;
 /// OCCT BOPDS_CommonBlock: groups geometrically coincident PaveBlocks
 /// (edges that lie on the same geometry but belong to different faces).
 ///
@@ -12,12 +12,12 @@ use crate::bop::ds::DS;
 #[allow(non_snake_case)]
 #[derive(Debug, Clone)]
 pub struct CommonBlock {
-    /// PaveBlock indices paired with their face indices.
-    /// Each entry stores `(pave_block_index, face_index)`.
-    /// OCCT: `myPaveBlocks` (`BOPDS_ListOfPaveBlock`) ?stores handles to PaveBlock
-    /// objects that lie on the same geometry. The rcad equivalent uses flat indices
-    /// referencing the DS edge's `pave_blocks` array.
-    myPaveBlocks: Vec<(usize, usize)>,
+    /// PaveBlock handles paired with their face indices.
+    /// Each entry stores `(pave_block, face_index)`, matching OCCT's
+    /// `myPaveBlocks` list of `Handle(BOPDS_PaveBlock)`. A pool index alone
+    /// cannot identify the PaveBlock when an edge is split into several
+    /// blocks, so the specific handle is stored (OCCT BOPDS_CommonBlock.hxx).
+    myPaveBlocks: Vec<(SharedPB, usize)>,
     /// Face indices that share this common block.
     /// OCCT: `myFaces` (`TColStd_ListOfInteger`).
     myFaces: Vec<usize>,
@@ -43,21 +43,21 @@ impl CommonBlock {
     /// Add a `PaveBlock` with its associated face index.
     /// `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
     ///
-    /// `pb_idx` ?flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
+    /// `pb` ?the specific PaveBlock handle.
     /// `face_idx` ?face index in the DS that this PaveBlock belongs to.
     ///
     /// OCCT BOPDS_CommonBlock::AddPaveBlock inserts at the front of the list so
     /// that `PaveBlock1()` returns the first-added block (the one on the real edge).
     /// rcad: defers ordering to `sort_by_edge()` which is called after all blocks
     /// are added, ensuring the real-edge PaveBlock comes first.
-    pub fn add_pave_block(&mut self, pb_idx: usize, face_idx: usize) {
-        self.myPaveBlocks.push((pb_idx, face_idx));
+    pub fn add_pave_block(&mut self, pb: SharedPB, face_idx: usize) {
+        self.myPaveBlocks.push((pb, face_idx));
     }
     /// Replace all `PaveBlock`/face pairs at once.
     /// `SetPaveBlocks(const BOPDS_ListOfPaveBlock&)`.
     ///
-    /// Each entry is `(pave_block_index, face_index)`.
-    pub fn set_pave_blocks(&mut self, blocks: Vec<(usize, usize)>) {
+    /// Each entry is `(pave_block, face_index)`.
+    pub fn set_pave_blocks(&mut self, blocks: Vec<(SharedPB, usize)>) {
         self.myPaveBlocks = blocks;
     }
     /// Add a face index to this common block.
@@ -83,7 +83,7 @@ impl CommonBlock {
     }
     /// Get the `PaveBlock`/face pair list.
     /// `PaveBlocks()`.
-    pub fn pave_blocks(&self) -> &[(usize, usize)] {
+    pub fn pave_blocks(&self) -> &[(SharedPB, usize)] {
         &self.myPaveBlocks
     }
     /// Get the face indices.
@@ -91,27 +91,26 @@ impl CommonBlock {
     pub fn faces(&self) -> &[usize] {
         &self.myFaces
     }
-    /// Get the first `PaveBlock` index, if any.
+    /// Get the first `PaveBlock` handle, if any.
     /// `PaveBlock1()`.
-    pub fn pave_block1(&self) -> Option<usize> {
-        self.myPaveBlocks.first().map(|&(pb, _)| pb)
+    pub fn pave_block1(&self) -> Option<SharedPB> {
+        self.myPaveBlocks.first().map(|(pb, _)| pb.clone())
     }
     /// sort PaveBlocks so that the block on the real edge
     ///   (original_edge == myEdge) is first, matching OCCT's insertion order
     ///   invariant where `AddPaveBlock` inserts the real-edge block first.
-    ///   `is_real_edge` is a closure `(pb_idx) -> bool` that returns true when
-    ///   the PaveBlock at index `pb_idx` has `original_edge == self.myEdge`.
+    ///   `is_real_edge` is a closure `(&SharedPB) -> bool` that returns true when
+    ///   the PaveBlock has `original_edge == self.myEdge`.
     ///   Call this after all PaveBlocks have been added, before using `PaveBlock1()`.
-    pub fn sort_by_edge(&mut self, is_real_edge: impl Fn(usize) -> bool) {
+    pub fn sort_by_edge(&mut self, is_real_edge: impl Fn(&SharedPB) -> bool) {
         if self.myEdge.is_none() || self.myPaveBlocks.len() < 2 {
             return;
         }
-        let edge = self.myEdge.unwrap();
         // Find the first PaveBlock on the real edge and swap it to front
         if let Some(pos) = self
             .myPaveBlocks
             .iter()
-            .position(|&(pb, _)| is_real_edge(pb))
+            .position(|(pb, _)| is_real_edge(pb))
         {
             if pos != 0 {
                 self.myPaveBlocks.swap(0, pos);
@@ -121,19 +120,15 @@ impl CommonBlock {
     /// Get the `PaveBlock` on the real edge.
     /// `PaveBlockOnEdge()`.
     ///
-    /// Returns the first `PaveBlock` whose original edge matches `myEdge`.
-    /// Since the `CommonBlock` does not directly store the original edge per
-    /// `PaveBlock`, this returns the first `PaveBlock` as a proxy. OCCT makes
-    /// this distinction by checking whether the PaveBlock's original edge is
-    /// the real edge. In practice, the first PaveBlock is usually the one on
-    /// the real edge.
-    pub fn pave_block_on_edge(&self) -> Option<usize> {
-        self.myPaveBlocks.first().map(|&(pb, _)| pb)
+    /// Returns the first `PaveBlock` handle as a proxy (the first PaveBlock is
+    /// usually the one on the real edge).
+    pub fn pave_block_on_edge(&self) -> Option<SharedPB> {
+        self.myPaveBlocks.first().map(|(pb, _)| pb.clone())
     }
     /// Check if the given face index has a `PaveBlock` in this common block.
     /// `IsPaveBlockOnFace(const int)`.
     pub fn is_pave_block_on_face(&self, face_idx: usize) -> bool {
-        self.myPaveBlocks.iter().any(|&(_, fi)| fi == face_idx)
+        self.myPaveBlocks.iter().any(|(_, fi)| *fi == face_idx)
     }
     /// Check if this common block has a `PaveBlock` on a real edge
     /// (i.e., `myEdge` is set).
@@ -141,15 +136,22 @@ impl CommonBlock {
     pub fn is_pave_block_on_edge(&self) -> bool {
         self.myEdge.is_some()
     }
-    /// Check if the given `PaveBlock` index is contained in this common block.
+    /// Check if the given `PaveBlock` is contained in this common block.
     /// `Contains(const Handle(BOPDS_PaveBlock)&)`.
-    pub fn contains(&self, pb_idx: usize) -> bool {
-        self.myPaveBlocks.iter().any(|&(pb, _)| pb == pb_idx)
+    pub fn contains(&self, pb: &SharedPB) -> bool {
+        let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+        self.myPaveBlocks
+            .iter()
+            .any(|(p, _)| std::sync::Arc::as_ptr(&p.0) as u64 == ptr)
     }
-    /// Set the real edge index.
-    /// `SetEdge(const int)`.
+    /// Set the edge of all PaveBlocks in the common block.
+    /// `SetEdge(const int)` (BOPDS_CommonBlock.cxx L195-207): OCCT propagates
+    /// the edge to every PaveBlock in `myPaveBlocks`.
     pub fn set_edge(&mut self, edge_idx: usize) {
         self.myEdge = Some(edge_idx);
+        for (pb, _) in &self.myPaveBlocks {
+            pb.write().edge = edge_idx;
+        }
     }
     /// Get the real edge index, if set.
     /// `Edge()`.

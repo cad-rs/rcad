@@ -853,12 +853,8 @@ impl DS {
     pub fn real_pave_block(&self, pb: &SharedPB) -> SharedPB {
         if let Some(cb_idx) = self.common_block(pb) {
             if let Some(cb) = self.common_blocks.get(cb_idx) {
-                if let Some(pool_idx) = cb.pave_block1() {
-                    if let Some(pool) = self.pave_blocks_pool.get(pool_idx) {
-                        if let Some(fpb) = pool.first() {
-                            return fpb.clone();
-                        }
-                    }
+                if let Some(fpb) = cb.pave_block1() {
+                    return fpb;
                 }
             }
         }
@@ -866,19 +862,30 @@ impl DS {
     }
     pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool { self.common_block(pb).is_some() }
 
+    /// Pool index of a SharedPB (OCCT: PaveBlock handle → pool position).
+    /// Returns `(pool_index, position_within_pool)`.
+    pub fn pb_pool_index(&self, pb: &SharedPB) -> Option<(usize, usize)> {
+        let ptr = std::sync::Arc::as_ptr(&pb.0);
+        for (pi, pool) in self.pave_blocks_pool.iter().enumerate() {
+            for (li, spb) in pool.iter().enumerate() {
+                if std::sync::Arc::as_ptr(&spb.0) == ptr {
+                    return Some((pi, li));
+                }
+            }
+        }
+        None
+    }
+
     /// OCCT BOPDS_DS::AddCommonBlock.
     /// Creates a new CommonBlock containing `the_pbs` and associates all PBs with it.
+    /// The specific PaveBlock handles are stored so `PaveBlock1()` returns the
+    /// exact block (an edge split into several blocks cannot be identified by a
+    /// pool index alone).
     pub fn add_common_block(&mut self, the_pbs: &[SharedPB]) -> usize {
         let mut a_cb = CommonBlock::new();
         for pb in the_pbs {
-            let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
-            let pool_idx = self.pave_blocks_pool.iter().position(|pool| {
-                pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == ptr)
-            }).unwrap_or(usize::MAX);
-            if pool_idx != usize::MAX {
-                a_cb.add_pave_block(pool_idx, 0); // face_idx = 0 placeholder
-                pb.0.write().unwrap().common_block_idx = Some(self.common_blocks.len());
-            }
+            a_cb.add_pave_block(pb.clone(), 0); // face_idx = 0 placeholder
+            pb.0.write().unwrap().common_block_idx = Some(self.common_blocks.len());
         }
         let cb_idx = self.common_blocks.len();
         self.common_blocks.push(a_cb);
@@ -996,7 +1003,9 @@ impl DS {
                             if let Some(cb) = self.common_blocks.get(cb_idx) {
                                 if cb.faces().contains(&the_index) {
                                     if let Some(pb1) = cb.pave_block1() {
-                                        pb_marks.push(pb1);
+                                        if let Some((pi, _)) = self.pb_pool_index(&pb1) {
+                                            pb_marks.push(pi);
+                                        }
                                     }
                                 }
                             }

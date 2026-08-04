@@ -225,6 +225,13 @@ impl PaveFiller {
             self.sub_shapes_on_in(n_f1, n_f2, &mut a_mv_on_in, &mut a_mv_common,
                                   &mut a_mpb_on_in, &mut a_mpb_common);
             self.shared_edges(n_f1, n_f2, &mut a_lse);
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                let mv: Vec<String> = a_mv_on_in.iter().map(|&v| {
+                    let p = self.ds.vertex_point_by_idx(v);
+                    format!("{}@({:.2},{:.2},{:.2})", v, p.x, p.y, p.z)
+                }).collect();
+                eprintln!("[MBR] FF={} mvOnIn=[{}]", a_cur_ind, mv.join(","));
+            }
 
             // 1. Treat Points (OCCT L773-791)
             for (j, np) in a_vp.iter().enumerate() {
@@ -2528,13 +2535,9 @@ impl PaveFiller {
                 if self.ds.is_common_block(&a_pb) {
                     let pbcb_idx = self.ds.common_block(&a_pb).unwrap();
                     let a_pbcb = self.ds.common_blocks[pbcb_idx].clone();
-                    for &(pb_idx, _) in a_pbcb.pave_blocks() {
-                        if let Some(pool) = self.ds.pave_blocks_pool.get(pb_idx) {
-                            for p in pool {
-                                if !a_mpave_blocks.iter().any(|q| pb_ptr(q) == pb_ptr(p)) {
-                                    a_mpave_blocks.push(p.clone());
-                                }
-                            }
+                    for (p, _) in a_pbcb.pave_blocks() {
+                        if !a_mpave_blocks.iter().any(|q| pb_ptr(q) == pb_ptr(p)) {
+                            a_mpave_blocks.push(p.clone());
                         }
                     }
                     for &f in a_pbcb.faces() {
@@ -2547,11 +2550,7 @@ impl PaveFiller {
             }
             if a_cb_idx.is_none() {
                 // OCCT L1821-1833: none of the PBs is a common block — create a new one.
-                let a_pbs_ref: Vec<SharedPB> = a_mpave_blocks.iter()
-                    .filter_map(|p| self.pb_pool_index(p).map(|(pi, _)| pi))
-                    .map(|pi| self.ds.pave_blocks_pool[pi].first().cloned())
-                    .flatten()
-                    .collect();
+                let a_pbs_ref: Vec<SharedPB> = a_mpave_blocks.clone();
                 let cb_idx = self.ds.add_common_block(&a_pbs_ref);
                 for a_pb in &a_pbs_ref {
                     self.ds.set_common_block(a_pb, cb_idx);
@@ -2562,9 +2561,8 @@ impl PaveFiller {
                 for a_pb in &a_mpave_blocks {
                     self.ds.set_common_block(a_pb, cb_idx);
                 }
-                let a_lpb_new: Vec<(usize, usize)> = a_mpave_blocks.iter().filter_map(|p| {
-                    self.pb_pool_index(p).map(|(pi, _)| (pi, 0))
-                }).collect();
+                let a_lpb_new: Vec<(SharedPB, usize)> =
+                    a_mpave_blocks.iter().map(|p| (p.clone(), 0)).collect();
                 self.ds.common_blocks[cb_idx].set_pave_blocks(a_lpb_new);
                 let a_l_faces: Vec<usize> = a_m_faces.iter().copied().collect();
                 self.ds.common_blocks[cb_idx].set_faces(a_l_faces);
@@ -2662,10 +2660,8 @@ impl PaveFiller {
         let mut a_lpb1: Vec<SharedPB> = Vec::new();
         if let Some(cb_idx) = a_cb1 {
             let cb = self.ds.common_blocks[cb_idx].clone();
-            for &(pool_idx, _) in cb.pave_blocks() {
-                if let Some(pool) = self.ds.pave_blocks_pool.get(pool_idx) {
-                    a_lpb1.extend(pool.iter().cloned());
-                }
+            for (p, _) in cb.pave_blocks() {
+                a_lpb1.push(p.clone());
             }
         } else {
             a_lpb1.push(a_pbf.clone());
@@ -2826,11 +2822,8 @@ impl PaveFiller {
             let a_cb = self.ds.common_block(&a_pb);
             let b_cb = a_cb.is_some();
             if let Some(cb_idx) = a_cb {
-                if let Some(fpb) = self.ds.common_blocks[cb_idx].pave_block1()
-                    .and_then(|pi| self.ds.pave_blocks_pool.get(pi))
-                    .and_then(|pool| pool.first())
-                {
-                    a_pb = fpb.clone();
+                if let Some(fpb) = self.ds.common_blocks[cb_idx].pave_block1() {
+                    a_pb = fpb;
                 }
             }
             if !a_mpb.insert(pb_ptr(&a_pb)) { continue; }

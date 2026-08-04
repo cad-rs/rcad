@@ -55,7 +55,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
             let oe = pb.0.read().unwrap().original_edge;
             for &fi in &faces_seen {
                 if oe < ds.nb_shapes() {
-                    cb.add_pave_block(oe, fi);
+                    cb.add_pave_block(pb.clone(), fi);
                     cb.add_face(fi);
                 }
             }
@@ -68,9 +68,10 @@ pub fn perform_common_blocks(ds: &mut DS) {
     }
 }
 /// BOPAlgo_Tools::ComputeToleranceOfCB ?compute combined tolerance for a CommonBlock.
-fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(usize, usize)]) -> f64 {
+fn compute_tolerance_of_cb(ds: &DS, pb_list: &[(SharedPB, usize)]) -> f64 {
     let mut tol_max = rcad_kernel::CONFUSION;
-    for &(pb_idx, _) in pb_list {
+    for (pb, _) in pb_list {
+        let pb_idx = pb.0.read().unwrap().original_edge;
         if pb_idx >= ds.common_blocks.len() { continue; }
         // Use PaveBlock data to estimate tolerance from edge geometry.
         if let Some(curve) = ds.edge_curve(pb_idx) {
