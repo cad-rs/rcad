@@ -44,6 +44,7 @@ fn check_builder_stages(
     filler.perform(&a_ps);
     let mut builder = Builder::new(filler.ds(), op, 0.0);
     builder.set_arguments(filler.ds().arguments.clone());
+    builder.set_tools(vec![root_shape(b, 1)]);
     let (_brep, snaps) = builder.build_with_history_stage_by_stage()
         .expect("builder stage pipeline");
     assert_eq!(snaps.len(), stages.len(),

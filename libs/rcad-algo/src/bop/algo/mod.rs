@@ -111,4 +111,6 @@ pub enum Alert {
     BadPositioning(Vec<usize>),
     /// BOPAlgo_AlertPostTreatFF — error in the MakeBlocks post-treatment.
     PostTreatFF,
+    /// BOPAlgo_AlertSolidBuilderFailed — solid builder failed to build solids.
+    SolidBuilderFailed,
 }
