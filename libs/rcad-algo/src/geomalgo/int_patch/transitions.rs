@@ -110,6 +110,12 @@ impl Transition {
         self.tangent
     }
 
+    /// OCCT IsTangent() — non-throwing variant used when the transition type
+    /// may be Undecided (the ALine-level transition in MakeWLine).
+    pub fn tangent(&self) -> bool {
+        self.tangent
+    }
+
     /// OCCT Situation().
     pub fn situation(&self) -> Situation {
         if self.typetra != TypeTrans::Touch {

@@ -52,29 +52,39 @@ impl ALineToWLine {
     /// OCCT MakeWLine(aline, theLines) (L361-378): the first/last parameter of
     /// the ALine, adjusted by the open-domain tolerance when the endpoint is
     /// not included, then MakeWLine(f, l, theLines).
-    pub fn make_wline(&self, a_line: &IntAnaCurve, the_lines: &mut Vec<IntPatchLine>) {
-        let d = a_line.domain();
+    pub fn make_wline(&self, a_line: &mut IntPatchLine, the_lines: &mut Vec<IntPatchLine>) {
+        // OCCT MakeWLine takes the ALine (IntPatch_ALine): the curve plus its
+        // transition properties (TransitionOnS1/S2, IsTangent, Situations).
+        let aline_trans1 = a_line.trans1;
+        let aline_trans2 = a_line.trans2;
+        let a_curve = match a_line.a_curve.as_mut() {
+            Some(c) => c,
+            None => return,
+        };
+        let d = a_curve.domain();
         // OCCT L366-374: FirstParameter/LastParameter return IsIncluded =
         // !IsFirstOpen()/!IsLastOpen(); the open-domain tolerance is added only
         // when the endpoint is not included (open domain).
-        let f = if a_line.is_first_open() {
+        let f = if a_curve.is_first_open() {
             d[0] + self.my_tol_open_domain
         } else {
             d[0]
         };
-        let l = if a_line.is_last_open() {
+        let l = if a_curve.is_last_open() {
             d[1] - self.my_tol_open_domain
         } else {
             d[1]
         };
-        self.make_wline_range(a_line, f, l, the_lines);
+        self.make_wline_range(a_curve, aline_trans1, aline_trans2, f, l, the_lines);
     }
 
     /// OCCT MakeWLine(aline, theFPar, theLPar, theLines) (L382-963).
     #[allow(clippy::too_many_lines)]
     pub fn make_wline_range(
         &self,
-        a_line: &IntAnaCurve,
+        a_line: &mut IntAnaCurve,
+        aline_trans1: Option<super::transitions::Transition>,
+        aline_trans2: Option<super::transitions::Transition>,
         f_par: f64,
         l_par: f64,
         the_lines: &mut Vec<IntPatchLine>,
@@ -82,6 +92,23 @@ impl ALineToWLine {
         // OCCT L388-392: if no vertices, return.
         if !a_line.has_vertices() {
             return;
+        }
+
+        // OCCT L394-415: the same points can be marked by different vertices;
+        // unify the tolerances of all vertices marking the same point.
+        {
+            let a_nb_vert = a_line.vertices.len();
+            for i in 0..a_nb_vert {
+                let a_cur_toler = a_line.vertices[i].tolerance;
+                for j in (i + 1)..a_nb_vert {
+                    let a_toler = a_line.vertices[j].tolerance;
+                    let a_sum_tol = a_cur_toler + a_toler;
+                    if a_line.vertices[i].pnt.is_same(&a_line.vertices[j].pnt, a_sum_tol) {
+                        a_line.vertices[i].tolerance = a_sum_tol;
+                        a_line.vertices[j].tolerance = a_sum_tol;
+                    }
+                }
+            }
         }
 
         let a_tol = 2.0 * self.my_tol_3d + CONFUSION;
@@ -105,6 +132,11 @@ impl ALineToWLine {
         // OCCT L439: the singular surface ID (1 = S1, 2 = S2), set by
         // IsPoleOrSeam for each processed vertex and used in the Pole handling.
         let mut a_singular_surface_id = 0usize;
+
+        // OCCT L420: aPrePointExist persists across the while-loop iterations
+        // (a while-iteration that breaks on a special point hands it to the
+        // next iteration's special-point handling).
+        let mut a_pre_point_exist = SpecPntType::None;
 
         let mut a_parameter = f_par;
         while a_parameter < l_par {
@@ -142,7 +174,6 @@ impl ALineToWLine {
 
             let mut is_last = false;
             let mut a_prev_param = a_parameter;
-            let mut a_pre_point_exist = SpecPntType::None;
             let mut a_seq_vertex: Vec<PatchPoint> = Vec::new();
 
             while !is_last {
@@ -285,6 +316,9 @@ impl ALineToWLine {
                         {
                             a_prev_l_point = a_rpt;
                             a_prev_param = a_parameter;
+                            // OCCT for-loop increment: aParameter += aStep runs
+                            // on `continue`.
+                            a_parameter += a_step;
                             continue;
                         }
                     }
@@ -559,6 +593,60 @@ impl ALineToWLine {
                 });
             }
 
+            // OCCT L896-937: the WLine transitions come from the ALine's
+            // TransitionOnS1 (Touch -> situations; Undecided -> none), or are
+            // computed from the tangent/normal cross product (dotcross vs
+            // myTolTransition) when the ALine transition is In/Out.
+            let aline_trans1_type = aline_trans1.map(|t| t.transition_type());
+            let aline_is_tangent = aline_trans1.map(|t| t.tangent()).unwrap_or(false);
+            let (wl_trans1, wl_trans2) = match aline_trans1_type {
+                Some(super::transitions::TypeTrans::Touch) => {
+                    let situ1 = aline_trans1
+                        .map(|t| t.situation())
+                        .unwrap_or(super::transitions::Situation::Unknown);
+                    let situ2 = aline_trans2
+                        .map(|t| t.situation())
+                        .unwrap_or(super::transitions::Situation::Unknown);
+                    (
+                        Some(super::transitions::Transition::new_touch(
+                            aline_is_tangent,
+                            situ1,
+                            false,
+                        )),
+                        Some(super::transitions::Transition::new_touch(
+                            aline_is_tangent,
+                            situ2,
+                            false,
+                        )),
+                    )
+                }
+                Some(super::transitions::TypeTrans::Undecided) | None => (None, None),
+                _ => {
+                    // OCCT L914-934: compute the transitions from the line
+                    // tangent and the two surface normals.
+                    let indice1 = (a_lin_on2s.len() / 3).max(2);
+                    let a_pp0 = a_lin_on2s[indice1 - 2].p;
+                    let a_pp1 = a_lin_on2s[indice1 - 1].p;
+                    let tgvalid = a_pp1 - a_pp0;
+                    let a_nq1 = self.my_quad1.normale(a_pp0);
+                    let a_nq2 = self.my_quad2.normale(a_pp0);
+                    let dotcross = tgvalid.dot(a_nq2.cross(a_nq1));
+                    let mut trans1 = super::transitions::TypeTrans::Undecided;
+                    let mut trans2 = super::transitions::TypeTrans::Undecided;
+                    if dotcross > self.my_tol_transition {
+                        trans1 = super::transitions::TypeTrans::Out;
+                        trans2 = super::transitions::TypeTrans::In;
+                    } else if dotcross < -self.my_tol_transition {
+                        trans1 = super::transitions::TypeTrans::In;
+                        trans2 = super::transitions::TypeTrans::Out;
+                    }
+                    (
+                        Some(super::transitions::Transition::new_in_out(aline_is_tangent, trans1)),
+                        Some(super::transitions::Transition::new_in_out(aline_is_tangent, trans2)),
+                    )
+                }
+            };
+
             let mut line = IntPatchLine {
                 line_type: IntPatchIType::Walking,
                 curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
@@ -581,14 +669,8 @@ impl ALineToWLine {
                 a_curve: None,
                 arc_on_s1: None,
                 arc_on_s2: None,
-                // OCCT L896-937: the WLine transitions are set from
-                // theALine->TransitionOnS1()/SituationS1()/SituationS2(), or
-                // computed from the tangent/normal cross product (dotcross vs
-                // myTolTransition).  rcad's IntAnaCurve does not carry the
-                // ALine transition properties, so trans1/trans2 stay None
-                // (architecture gap; does not affect the FF curve count).
-                trans1: None,
-                trans2: None,
+                trans1: wl_trans1,
+                trans2: wl_trans2,
                 first_point: None,
                 last_point: None,
             };
@@ -852,7 +934,7 @@ impl ALineToWLine {
                 (a_pnt_on2s.u2, a_pnt_on2s.v2)
             };
 
-            if a_dir_y.abs() < 1e-15 {
+            if a_dir_y.abs() < f64::MIN_POSITIVE {
                 continue;
             }
 

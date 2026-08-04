@@ -74,6 +74,9 @@ impl ImpImpIntersection {
     pub fn line(&self, i: usize) -> &IntPatchLine {
         &self.slin[i]
     }
+    pub fn line_mut(&mut self, i: usize) -> &mut IntPatchLine {
+        &mut self.slin[i]
+    }
     pub fn slin_ref(&self) -> &[IntPatchLine] {
         &self.slin
     }

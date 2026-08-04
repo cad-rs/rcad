@@ -518,14 +518,14 @@ impl IntPatchIntersection {
         let keep_r_line = false;
         self.slin.clear();
         for i in 0..imp_imp.nb_lines() {
-            let line = imp_imp.line(i);
-            if line.line_type == super::IntPatchIType::Analytic {
-                if let Some(a_curve) = &line.a_curve {
-                    is_wl_exist = true;
-                    a_to_w.make_wline(a_curve, &mut self.slin);
-                }
+            if imp_imp.line(i).line_type == super::IntPatchIType::Analytic
+                && imp_imp.line(i).a_curve.is_some()
+            {
+                is_wl_exist = true;
+                a_to_w.make_wline(imp_imp.line_mut(i), &mut self.slin);
             } else {
-                let mut line = line.clone();
+                let line = imp_imp.line(i).clone();
+                let mut line = line;
                 if line.line_type == super::IntPatchIType::Walking {
                     line.is_purging_allowed = false;
                 }
