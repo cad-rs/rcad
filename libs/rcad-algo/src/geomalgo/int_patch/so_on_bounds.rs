@@ -380,6 +380,37 @@ impl Domain {
         }
     }
 
+    /// OCCT TopolTool::Classify(P, Tol) (BRepTopAdaptor_TopolTool.cxx
+    /// L174-187) via BRepTopAdaptor_FClass2d::Perform (L525-684): classify a
+    /// 2D point against the face domain, returning IN/ON/OUT.  For the rcad
+    /// UV-rectangle domain this is rectangle inclusion with a tolerance band
+    /// around the boundary (IN strictly inside by more than Tol, OUT beyond
+    /// Tol, ON within Tol).
+    ///
+    /// OCCT additionally re-frames the point periodically before classifying
+    /// (RecadreOnPeriodic=true, L550-588); the rcad Domain is a plain UV
+    /// rectangle without surface periodicity, and FF special-point parameters
+    /// are already in the surface's natural range, so the periodic re-framing
+    /// is not represented here.
+    pub fn classify(&self, u: f64, v: f64, tol: f64) -> rcad_kernel::topods::State {
+        use rcad_kernel::topods::State;
+        if u > self.u_min + tol
+            && u < self.u_max - tol
+            && v > self.v_min + tol
+            && v < self.v_max - tol
+        {
+            State::In
+        } else if u < self.u_min - tol
+            || u > self.u_max + tol
+            || v < self.v_min - tol
+            || v > self.v_max + tol
+        {
+            State::Out
+        } else {
+            State::On
+        }
+    }
+
     /// OCCT TopolTool::Init().
     pub fn init(&mut self) {
         self.arc_idx = 0;

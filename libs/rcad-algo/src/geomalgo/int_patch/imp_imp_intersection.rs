@@ -307,6 +307,14 @@ impl ImpImpIntersection {
             return;
         }
 
+        // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles.
+        // OCCT passes the topol tools as function parameters (always valid);
+        // rcad creates the UV-rectangle domains up front.  They are used by
+        // PutPointsOnLine below and by the spnt classification after the
+        // isPostProcessingRequired block.
+        let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
+        let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
+
         // OCCT L2782-2934: isPostProcessingRequired block
         if is_post_processing_required {
         let same_surf = self.same_surf;
@@ -321,18 +329,13 @@ impl ImpImpIntersection {
 
         let mut a_func = super::so_on_bounds::ArcFunction::new();
         let mut solrst = super::so_on_bounds::SOnBounds::new();
-        // OCCT D1/D2 (Adaptor3d_TopolTool) — created here for the UV-rectangle
-        // domain; kept alive for the PutPointsOnLine call below.
-        let mut d1: Option<super::so_on_bounds::Domain> = None;
-        let mut d2: Option<super::so_on_bounds::Domain> = None;
 
         if !same_surf {
             // OCCT L2786-2787: AFunc.SetQuadric(quad2); AFunc.Set(S1);
             a_func.set_quadric(q2.clone());
             a_func.set_surface(s1.clone());
             // OCCT L2789: solrst.Perform(AFunc, D1, TolArc, TolTang);
-            d1 = Some(super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]));
-            solrst.perform(&mut a_func, d1.as_mut().unwrap(), tol_arc, tol_tang, false);
+            solrst.perform(&mut a_func, &mut d1, tol_arc, tol_tang, false);
             if !solrst.is_done() {
                 return;
             }
@@ -364,8 +367,7 @@ impl ImpImpIntersection {
             a_func.set_quadric(q1.clone());
             a_func.set_surface(s2.clone());
             // OCCT L2828: solrst.Perform(AFunc, D2, TolArc, TolTang);
-            d2 = Some(super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]));
-            solrst.perform(&mut a_func, d2.as_mut().unwrap(), tol_arc, tol_tang, false);
+            solrst.perform(&mut a_func, &mut d2, tol_arc, tol_tang, false);
             if !solrst.is_done() {
                 return;
             }
@@ -429,12 +431,12 @@ impl ImpImpIntersection {
             self.empt = false;
             // OCCT L2910: PutPointsOnLine(S1, S2, pnt1, slin, true, D1, quad1, quad2, multpoint, TolArc);
             super::restriction::put_points_on_line(
-                s1, s2, &pnt1, &mut self.slin, true, d1.as_ref().unwrap(), &q1, &q2, multpoint,
+                s1, s2, &pnt1, &mut self.slin, true, &d1, &q1, &q2, multpoint,
                 tol_arc,
             );
             // OCCT L2912: PutPointsOnLine(S1, S2, pnt2, slin, false, D2, quad2, quad1, multpoint, TolArc);
             super::restriction::put_points_on_line(
-                s1, s2, &pnt2, &mut self.slin, false, d2.as_ref().unwrap(), &q2, &q1, multpoint,
+                s1, s2, &pnt2, &mut self.slin, false, &d2, &q2, &q1, multpoint,
                 tol_arc,
             );
 
@@ -451,6 +453,29 @@ impl ImpImpIntersection {
         } else {
             self.empt = self.slin.is_empty() && self.spnt.is_empty();
         }
+        }
+
+        // OCCT L2934-2983 (modified by NIZNHY-PKV): classify each special
+        // point and keep only those that are not OUT of either domain.
+        let mut a_nb_pnt = self.spnt.len();
+        if a_nb_pnt > 0 {
+            let mut a_sip: Vec<IntPatchPoint> = Vec::new();
+            for i in 0..a_nb_pnt {
+                let a_ip = &self.spnt[i];
+                let (a_u1, a_v1, a_u2, a_v2) = (a_ip.u1, a_ip.v1, a_ip.u2, a_ip.v2);
+                let a_state1 = d1.classify(a_u1, a_v1, tol_arc);
+                let a_state2 = d2.classify(a_u2, a_v2, tol_arc);
+                if a_state1 != rcad_kernel::topods::State::Out
+                    && a_state2 != rcad_kernel::topods::State::Out
+                {
+                    a_sip.push(a_ip.clone());
+                }
+            }
+            self.spnt.clear();
+            a_nb_pnt = a_sip.len();
+            for a_ip in a_sip {
+                self.spnt.push(a_ip);
+            }
         }
 
         // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine
