@@ -1700,7 +1700,7 @@ pub fn process_r_line(
                                     } else {
                                         quad2.value(p2d_proj.x, p2d_proj.y)
                                     };
-                                    if toproj.distance(ptproj) <= 100.0 * _tol_arc
+                                    if toproj.distance(ptproj) <= 100.0 * tol_arc
                                         && paramproj >= paramf
                                         && paramproj <= paraml
                                     {
