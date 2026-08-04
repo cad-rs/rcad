@@ -480,7 +480,50 @@ impl ImpImpIntersection {
             }
         }
 
-        // OCCT L2997-3040+: additional vertex placement for circles without vertices
+        // OCCT L2997-3052: place 2 vertices on the GLine curves (Circle/
+        // Ellipse) that have none (ElCLib::Value at param 0 and 2π; the 3D
+        // point is the same for both — only the line parameter differs).
+        for line in self.slin.iter_mut() {
+            match line.line_type {
+                IntPatchIType::Circle => {
+                    if line.nb_vertex() == 0 {
+                        if let Curve3::Circle(circ) = &line.curve {
+                            let p = super::elclib::circle_value(circ, 0.0);
+                            let (u1, v1) = q1.parameters(p);
+                            let (u2, v2) = q2.parameters(p);
+                            let mut point = IntPatchVertex::default();
+                            point.set_value(p, tol_arc, false);
+                            point.set_parameters(u1, v1, u2, v2);
+                            point.set_parameter(0.0);
+                            line.add_vertex(point.clone());
+                            point.set_value(p, tol_arc, false);
+                            point.set_parameters(u1, v1, u2, v2);
+                            point.set_parameter(std::f64::consts::TAU);
+                            line.add_vertex(point);
+                        }
+                    }
+                }
+                IntPatchIType::Ellipse => {
+                    if line.nb_vertex() == 0 {
+                        if let Curve3::Ellipse(e) = &line.curve {
+                            let p = super::elclib::ellipse_value(e, 0.0);
+                            let (u1, v1) = q1.parameters(p);
+                            let (u2, v2) = q2.parameters(p);
+                            let mut point = IntPatchVertex::default();
+                            point.set_value(p, tol_arc, false);
+                            point.set_parameters(u1, v1, u2, v2);
+                            point.set_parameter(0.0);
+                            line.add_vertex(point.clone());
+                            point.set_value(p, tol_arc, false);
+                            point.set_parameters(u1, v1, u2, v2);
+                            point.set_parameter(std::f64::consts::TAU);
+                            line.add_vertex(point);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     // =====================================================================

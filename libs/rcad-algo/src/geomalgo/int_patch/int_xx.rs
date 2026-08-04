@@ -329,7 +329,16 @@ pub fn int_psp(
             });
         }
         AnaResultType::Circle => {
-            let cirsol = inter.circle();
+            // OCCT L3410-3413: cirsol = inter.Circle(1);
+            // AdjustToSeam(Sp, cirsol, Tolang).
+            let mut cirsol = inter.circle();
+            ecl::adjust_to_seam_sphere(
+                &mut cirsol,
+                sp.axis_loc(),
+                sp.z_dir(),
+                sp.x_dir(),
+                tol_ang,
+            );
             let (ptref, tgt) = ecl::circle_d1(&cirsol, 0.0);
             if tgt.dot(quad2.normale(ptref).cross(quad1.normale(ptref))) > 0.0 {
                 slin.push(gline_circle(cirsol, false, TypeTrans::Out, TypeTrans::In));

@@ -941,7 +941,8 @@ impl IntAnaCurve {
     ///   - The ALine first/last point indices (svtx indf/indl) are not stored on
     ///     IntAnaCurve; the index bookkeeping is a no-op.
     pub fn compute_vertex_parameters_aline(&mut self, tol: f64) {
-        let pconfusion = rcad_kernel::precision::PCONFUSION;
+        // OCCT IntPatch_ALine.cxx L70: #define PCONFUSION 0.00001 (file-local).
+        let pconfusion = 0.00001;
         let pi_pi = std::f64::consts::TAU;
 
         // OCCT L85-87: ParamMinOnLine = FirstParameter(OpenFirst);

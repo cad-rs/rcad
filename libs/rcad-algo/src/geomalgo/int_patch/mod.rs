@@ -494,8 +494,8 @@ impl IntPatchLine {
     /// L421-1090): filter, sort and dedup the line vertices by parameter and
     /// domain-arc flags.  `first_point`/`last_point` store 1-based indices.
     pub fn compute_vertex_parameters_gline(&mut self) {
-        let pconfusion = rcad_kernel::precision::PCONFUSION;
-        let precision_p_confusion = pconfusion * 1000.0;
+        // OCCT IntPatch_GLine.cxx L440: PrecisionPConfusion = PConfusion()*1000.
+        let precision_p_confusion = rcad_kernel::precision::PCONFUSION * 1000.0;
         let pi_pi = std::f64::consts::TAU;
         let real_last = f64::MAX;
 
@@ -576,7 +576,7 @@ impl IntPatchLine {
                         let vtx_j = &svtx[j - 1];
                         if vtx_j.is_on_dom_s1() && !vtx_j.is_on_dom_s2() {
                             if (vtx_i.parameter_on_arc1() - vtx_j.parameter_on_arc1()).abs()
-                                <= pconfusion
+                                <= precision_p_confusion
                                 && arc_eq(&vtx_i.arc_on_s1, &vtx_j.arc_on_s1)
                             {
                                 if vtx_i.is_vertex_on_s1() {
@@ -640,7 +640,7 @@ impl IntPatchLine {
                         let vtx_j = &svtx[j - 1];
                         if vtx_j.is_on_dom_s2() && !vtx_j.is_on_dom_s1() {
                             if (vtx_i.parameter_on_arc2() - vtx_j.parameter_on_arc2()).abs()
-                                <= pconfusion
+                                <= precision_p_confusion
                                 && arc_eq(&vtx_i.arc_on_s2, &vtx_j.arc_on_s2)
                             {
                                 if vtx_i.is_vertex_on_s1() {
@@ -745,7 +745,7 @@ impl IntPatchLine {
                     let vtx_m1 = svtx[j - 1].clone();
                     let mut kill = false;
                     let mut killm1 = false;
-                    if (vtx_m1.param_on_line - vtx.param_on_line).abs() < pconfusion {
+                    if (vtx_m1.param_on_line - vtx.param_on_line).abs() < precision_p_confusion {
                         if vtx_m1.is_on_dom_s1() && vtx.is_on_dom_s1() {
                             if arc_eq(&vtx_m1.arc_on_s1, &vtx.arc_on_s1) {
                                 if vtx_m1.is_on_dom_s2() {
@@ -837,13 +837,13 @@ impl IntPatchLine {
                             // merged — shift one by +/-2*PI (seam edge, L800-1075).
                             let ponline = vtx.param_on_line;
                             let mut new_param = ponline;
-                            let is2pi = (ponline - pi_pi).abs() <= pconfusion;
+                            let is2pi = (ponline - pi_pi).abs() <= precision_p_confusion;
                             if nbvtx > 2 && !is2pi {
                                 continue;
                             }
                             if is2pi {
                                 new_param = 0.0;
-                            } else if ponline.abs() <= pconfusion {
+                            } else if ponline.abs() <= precision_p_confusion {
                                 new_param = pi_pi;
                             } else {
                                 new_param -= pi_pi;
@@ -852,16 +852,16 @@ impl IntPatchLine {
                                 (vtx_m1.u1, vtx_m1.v1, vtx_m1.u2, vtx_m1.v2);
                             let (u1b, v1b, u2b, v2b) = (vtx.u1, vtx.v1, vtx.u2, vtx.v2);
                             let mut flag = 0;
-                            if (u1a - u1b).abs() <= pconfusion {
+                            if (u1a - u1b).abs() <= precision_p_confusion {
                                 flag |= 1;
                             }
-                            if (v1a - v1b).abs() <= pconfusion {
+                            if (v1a - v1b).abs() <= precision_p_confusion {
                                 flag |= 2;
                             }
-                            if (u2a - u2b).abs() <= pconfusion {
+                            if (u2a - u2b).abs() <= precision_p_confusion {
                                 flag |= 4;
                             }
-                            if (v2a - v2b).abs() <= pconfusion {
+                            if (v2a - v2b).abs() <= precision_p_confusion {
                                 flag |= 8;
                             }
                             let mut test_on1 = false;
@@ -883,10 +883,10 @@ impl IntPatchLine {
                                     u1min = u1_a;
                                     u1max = u1_b;
                                 } else {
-                                    if (u1_a - u1min).abs() > pconfusion {
+                                    if (u1_a - u1min).abs() > precision_p_confusion {
                                         to_break = true;
                                     }
-                                    if (u1_b - u1max).abs() > pconfusion {
+                                    if (u1_b - u1max).abs() > precision_p_confusion {
                                         to_break = true;
                                     }
                                 }
@@ -915,10 +915,10 @@ impl IntPatchLine {
                                     u2min = u2_a;
                                     u2max = u2_b;
                                 } else {
-                                    if (u2_a - u2min).abs() > pconfusion {
+                                    if (u2_a - u2min).abs() > precision_p_confusion {
                                         to_break = true;
                                     }
-                                    if (u2_b - u2max).abs() > pconfusion {
+                                    if (u2_b - u2max).abs() > precision_p_confusion {
                                         to_break = true;
                                     }
                                 }
