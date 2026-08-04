@@ -851,7 +851,7 @@ impl ImpPrmIntersection {
                                         t_line.set_value_in_out(true, TypeTrans::Undecided);
                                         t_arc.set_value_in_out(true, TypeTrans::Undecided);
                                     }
-                                    ptdeb.set_arc(reversed, current_arc, currentparam);
+                                    ptdeb.set_arc(reversed, current_arc, currentparam, t_line, t_arc);
                                     if !self.solrst.point(i).is_new() {
                                         ptdeb.set_vertex(reversed);
                                     }
@@ -902,7 +902,7 @@ impl ImpPrmIntersection {
                                         t_line.set_value_in_out(true, TypeTrans::Undecided);
                                         t_arc.set_value_in_out(true, TypeTrans::Undecided);
                                     }
-                                    ptdeb.set_arc(reversed, current_arc, currentparam);
+                                    ptdeb.set_arc(reversed, current_arc, currentparam, t_line, t_arc);
                                     if !self.solrst.point(i).is_new() {
                                         ptdeb.set_vertex(reversed);
                                     }
@@ -996,7 +996,7 @@ impl ImpPrmIntersection {
                                         t_line.set_value_in_out(true, TypeTrans::Undecided);
                                         t_arc.set_value_in_out(true, TypeTrans::Undecided);
                                     }
-                                    ptfin.set_arc(reversed, current_arc, currentparam);
+                                    ptfin.set_arc(reversed, current_arc, currentparam, t_line, t_arc);
                                     if !self.solrst.point(i).is_new() {
                                         ptfin.set_vertex(reversed);
                                     }
@@ -1047,7 +1047,7 @@ impl ImpPrmIntersection {
                                         t_line.set_value_in_out(true, TypeTrans::Undecided);
                                         t_arc.set_value_in_out(true, TypeTrans::Undecided);
                                     }
-                                    ptfin.set_arc(reversed, current_arc, currentparam);
+                                    ptfin.set_arc(reversed, current_arc, currentparam, t_line, t_arc);
                                     if !self.solrst.point(i).is_new() {
                                         ptfin.set_vertex(reversed);
                                     }
@@ -1258,7 +1258,13 @@ impl ImpPrmIntersection {
                     if !p_startf.is_new() {
                         the_point_at_beg.set_vertex(reversed);
                     }
-                    the_point_at_beg.set_arc(reversed, thesegm.curve().clone(), paramf);
+                    the_point_at_beg.set_arc(
+                        reversed,
+                        thesegm.curve().clone(),
+                        paramf,
+                        Transition::new(),
+                        Transition::new(),
+                    );
 
                     let (_, d1u1, d1v1) = s1.derivatives(u1, v1);
                     let norm1 = d1u1.cross(d1v1);
@@ -1307,7 +1313,13 @@ impl ImpPrmIntersection {
                     if !p_startl.is_new() {
                         the_point_at_end.set_vertex(reversed);
                     }
-                    the_point_at_end.set_arc(reversed, thesegm.curve().clone(), paraml);
+                    the_point_at_end.set_arc(
+                        reversed,
+                        thesegm.curve().clone(),
+                        paraml,
+                        Transition::new(),
+                        Transition::new(),
+                    );
 
                     let (_, d1u1, d1v1) = s1.derivatives(u1, v1);
                     let norm1 = d1u1.cross(d1v1);

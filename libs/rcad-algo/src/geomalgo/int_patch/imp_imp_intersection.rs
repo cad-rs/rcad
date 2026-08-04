@@ -318,14 +318,18 @@ impl ImpImpIntersection {
 
         let mut a_func = super::so_on_bounds::ArcFunction::new();
         let mut solrst = super::so_on_bounds::SOnBounds::new();
+        // OCCT D1/D2 (Adaptor3d_TopolTool) — created here for the UV-rectangle
+        // domain; kept alive for the PutPointsOnLine call below.
+        let mut d1: Option<super::so_on_bounds::Domain> = None;
+        let mut d2: Option<super::so_on_bounds::Domain> = None;
 
         if !same_surf {
             // OCCT L2786-2787: AFunc.SetQuadric(quad2); AFunc.Set(S1);
             a_func.set_quadric(q2.clone());
             a_func.set_surface(s1.clone());
             // OCCT L2789: solrst.Perform(AFunc, D1, TolArc, TolTang);
-            let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
-            solrst.perform(&mut a_func, &mut d1, tol_arc, tol_tang, false);
+            d1 = Some(super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]));
+            solrst.perform(&mut a_func, d1.as_mut().unwrap(), tol_arc, tol_tang, false);
             if !solrst.is_done() {
                 return;
             }
@@ -357,8 +361,8 @@ impl ImpImpIntersection {
             a_func.set_quadric(q1.clone());
             a_func.set_surface(s2.clone());
             // OCCT L2828: solrst.Perform(AFunc, D2, TolArc, TolTang);
-            let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
-            solrst.perform(&mut a_func, &mut d2, tol_arc, tol_tang, false);
+            d2 = Some(super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]));
+            solrst.perform(&mut a_func, d2.as_mut().unwrap(), tol_arc, tol_tang, false);
             if !solrst.is_done() {
                 return;
             }
@@ -422,11 +426,13 @@ impl ImpImpIntersection {
             self.empt = false;
             // OCCT L2910: PutPointsOnLine(S1, S2, pnt1, slin, true, D1, quad1, quad2, multpoint, TolArc);
             super::restriction::put_points_on_line(
-                s1, s2, &pnt1, &mut self.slin, true, &q1, &q2, multpoint, tol_arc,
+                s1, s2, &pnt1, &mut self.slin, true, d1.as_ref().unwrap(), &q1, &q2, multpoint,
+                tol_arc,
             );
             // OCCT L2912: PutPointsOnLine(S1, S2, pnt2, slin, false, D2, quad2, quad1, multpoint, TolArc);
             super::restriction::put_points_on_line(
-                s1, s2, &pnt2, &mut self.slin, false, &q2, &q1, multpoint, tol_arc,
+                s1, s2, &pnt2, &mut self.slin, false, d2.as_ref().unwrap(), &q2, &q1, multpoint,
+                tol_arc,
             );
 
             if !edg1.is_empty() {
@@ -445,9 +451,9 @@ impl ImpImpIntersection {
         }
 
         // OCCT L2976-2995: ComputeVertexParameters(TolArc) for each GLine
-        // (IntPatch_GLine.cxx L421-1090: filter, sort, dedup).  RLine vertices
-        // keep their insertion order (the RLine method is a no-op); ALine lines
-        // are converted to WLine upstream.
+        // (IntPatch_GLine.cxx L421-1090: filter, sort, dedup) and for each
+        // ALine (IntPatch_ALine.cxx L77-679: filter, sort, dedup).  RLine
+        // vertices keep their insertion order (the RLine method is a no-op).
         for line in self.slin.iter_mut() {
             let is_gline = matches!(
                 line.line_type,
@@ -457,10 +463,18 @@ impl ImpImpIntersection {
                     | IntPatchIType::Parabola
                     | IntPatchIType::Hyperbola
             );
-            if !is_gline {
-                continue;
+            if is_gline {
+                line.compute_vertex_parameters_gline();
+            } else if line.line_type == IntPatchIType::Analytic {
+                // OCCT L2985-2989: IntPatch_ALine::ComputeVertexParameters
+                // (IntPatch_ALine.cxx L77-679) sorts the ALine vertices by
+                // parameter so that IntPatch_ALineToWLine::MakeWLine walks them
+                // in order.  The ALine's vertices live on the wrapped
+                // IntAnaCurve.
+                if let Some(ac) = line.a_curve.as_mut() {
+                    ac.compute_vertex_parameters_aline(tol_arc);
+                }
             }
-            line.compute_vertex_parameters_gline();
         }
 
         // OCCT L2997-3040+: additional vertex placement for circles without vertices
@@ -921,6 +935,10 @@ pub(crate) fn process_bounds(
             param_on_arc2: 0.0,
             is_vertex_on_s1: false,
             is_vertex_on_s2: false,
+            transition_line_arc1: super::transitions::TypeTrans::Undecided,
+            transition_line_arc2: super::transitions::TypeTrans::Undecided,
+            transition_on_s1: super::transitions::TypeTrans::Undecided,
+            transition_on_s2: super::transitions::TypeTrans::Undecided,
         }
     };
 

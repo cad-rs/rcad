@@ -8,6 +8,7 @@
 //!     which is the OCCT ElSLib::Parameters equivalent for quadrics.
 //!   - IntSurf_PntOn2S -> WLinePnt { p3d, u1, v1, u2, v2 }.
 
+use super::transitions::{Transition, TypeTrans};
 use crate::geomalgo::int_surf::quadric::Quadric;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
@@ -67,6 +68,14 @@ pub struct PatchPoint {
     /// initial restriction facet of surface 1/2.
     pub is_vertex_on_s1: bool,
     pub is_vertex_on_s2: bool,
+    /// OCCT IntPatch_Point TransitionLineArc1/2 (traline1/2) — transition type
+    /// on the 2D arc of surface 1/2 (set by SetArc).
+    pub transition_line_arc1: TypeTrans,
+    pub transition_line_arc2: TypeTrans,
+    /// OCCT IntPatch_Point TransitionOnS1/S2 (tra1/tra2) — transition between
+    /// the intersection line and the arc on surface 1/2 (set by SetArc).
+    pub transition_on_s1: TypeTrans,
+    pub transition_on_s2: TypeTrans,
 }
 
 impl PatchPoint {
@@ -90,6 +99,10 @@ impl PatchPoint {
             param_on_arc2: 0.0,
             is_vertex_on_s1: false,
             is_vertex_on_s2: false,
+            transition_line_arc1: TypeTrans::Undecided,
+            transition_line_arc2: TypeTrans::Undecided,
+            transition_on_s1: TypeTrans::Undecided,
+            transition_on_s2: TypeTrans::Undecided,
         }
     }
     pub fn set_value(&mut self, pnt: PntOn2S) {
@@ -100,15 +113,49 @@ impl PatchPoint {
 /// OCCT IntPatch_Point::SetArc(OnFirst, A, Param, TLine, TArc) — set the arc
 /// reference of the point on one of the two surfaces.
 impl PatchPoint {
-    pub fn set_arc(&mut self, on_first: bool, arc: rcad_kernel::geom::Curve2d, param: f64) {
+    pub fn set_arc(
+        &mut self,
+        on_first: bool,
+        arc: rcad_kernel::geom::Curve2d,
+        param: f64,
+        t_line: Transition,
+        t_arc: Transition,
+    ) {
         if on_first {
             self.arc_on_s1 = Some(arc);
             self.param_on_arc1 = param;
             self.on_dom_s1 = true;
+            self.transition_line_arc1 = t_line.transition_type();
+            self.transition_on_s1 = t_arc.transition_type();
         } else {
             self.arc_on_s2 = Some(arc);
             self.param_on_arc2 = param;
             self.on_dom_s2 = true;
+            self.transition_line_arc2 = t_line.transition_type();
+            self.transition_on_s2 = t_arc.transition_type();
+        }
+    }
+
+    /// Same as `set_arc`, but accepts an `Option` arc reference.  When the arc
+    /// is `None` only the on-domain flag is set (OCCT SetArc sets the on-domain
+    /// flag regardless of whether the arc handle is null).
+    pub fn set_arc_opt(
+        &mut self,
+        on_first: bool,
+        arc: Option<rcad_kernel::geom::Curve2d>,
+        param: f64,
+        t_line: Transition,
+        t_arc: Transition,
+    ) {
+        match arc {
+            Some(a) => self.set_arc(on_first, a, param, t_line, t_arc),
+            None => {
+                if on_first {
+                    self.on_dom_s1 = true;
+                } else {
+                    self.on_dom_s2 = true;
+                }
+            }
         }
     }
 }

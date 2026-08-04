@@ -502,8 +502,13 @@ impl Domain {
         }
     }
     /// OCCT IntPatch_HInterTool::Tolerance(V, A) — vertex resolution on the arc.
+    ///
+    /// In the FF path the domain is a BRepTopAdaptor_TopolTool, so
+    /// V->Resolution(C) is BRepTopAdaptor_HVertex::Resolution (BRepTopAdaptor_
+    /// HVertex.cxx L47-...): a parametric resolution built from the BRep vertex
+    /// tolerance (~ Precision::Confusion).  The rcad UV-rectangle model has no
+    /// BRep vertex, so the point-confusion tolerance is used as its resolution.
     pub fn vertex_tolerance(&self, _v: DomainVertex, _a: &Curve2d) -> f64 {
-        // rcad: no BRep vertex resolution; use the point-confusion tolerance.
         rcad_kernel::precision::CONFUSION
     }
     /// The index of the arc matching `a`.

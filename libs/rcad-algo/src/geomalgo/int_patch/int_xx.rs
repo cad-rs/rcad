@@ -125,6 +125,10 @@ fn make_point(p: DVec3, tol: f64, tangent: bool, q1: &Quadric, q2: &Quadric) -> 
         param_on_arc2: 0.0,
         is_vertex_on_s1: false,
         is_vertex_on_s2: false,
+        transition_line_arc1: super::transitions::TypeTrans::Undecided,
+        transition_line_arc2: super::transitions::TypeTrans::Undecided,
+        transition_on_s1: super::transitions::TypeTrans::Undecided,
+        transition_on_s2: super::transitions::TypeTrans::Undecided,
     }
 }
 
@@ -308,6 +312,10 @@ pub fn int_psp(
                 param_on_arc2: 0.0,
                 is_vertex_on_s1: false,
                 is_vertex_on_s2: false,
+                transition_line_arc1: super::transitions::TypeTrans::Undecided,
+                transition_line_arc2: super::transitions::TypeTrans::Undecided,
+                transition_on_s1: super::transitions::TypeTrans::Undecided,
+                transition_on_s2: super::transitions::TypeTrans::Undecided,
             };
             let _ = &mut ptsol;
             spnt.push(IntPatchPoint {
@@ -1651,8 +1659,10 @@ fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint)
             param_on_arc2: v.param_on_arc2,
             is_vertex_on_s1: v.is_vertex_on_s1,
             is_vertex_on_s2: v.is_vertex_on_s2,
-            transition_line_arc1: super::transitions::TypeTrans::Undecided,
-            transition_line_arc2: super::transitions::TypeTrans::Undecided,
+            transition_line_arc1: v.transition_line_arc1,
+            transition_line_arc2: v.transition_line_arc2,
+            transition_on_s1: v.transition_on_s1,
+            transition_on_s2: v.transition_on_s2,
         });
     }
 }

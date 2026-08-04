@@ -130,10 +130,15 @@ pub struct IntPatchVertex {
     /// initial restriction facet of surface 1/2 (set via SetVertex).
     pub is_vertex_on_s1: bool,
     pub is_vertex_on_s2: bool,
-    /// OCCT IntPatch_Point TransitionLineArc1/2 — the transition type on the
-    /// 2D arc of surface 1/2 (set by SetArc; used by ComputeVertexParameters).
+    /// OCCT IntPatch_Point TransitionLineArc1/2 (traline1/2) — the transition
+    /// type on the 2D arc of surface 1/2 (set by SetArc; used by
+    /// ComputeVertexParameters).
     pub transition_line_arc1: transitions::TypeTrans,
     pub transition_line_arc2: transitions::TypeTrans,
+    /// OCCT IntPatch_Point TransitionOnS1/S2 (tra1/tra2) — the transition
+    /// between the intersection line and the arc on surface 1/2 (set by SetArc).
+    pub transition_on_s1: transitions::TypeTrans,
+    pub transition_on_s2: transitions::TypeTrans,
 }
 
 impl Default for IntPatchVertex {
@@ -158,6 +163,8 @@ impl Default for IntPatchVertex {
             is_vertex_on_s2: false,
             transition_line_arc1: transitions::TypeTrans::Undecided,
             transition_line_arc2: transitions::TypeTrans::Undecided,
+            transition_on_s1: transitions::TypeTrans::Undecided,
+            transition_on_s2: transitions::TypeTrans::Undecided,
         }
     }
 }
@@ -225,17 +232,26 @@ impl IntPatchVertex {
         self.is_vertex_on_s2
     }
     /// OCCT IntPatch_Point::SetArc(OnFirst, A, Param, TLine, TArc).
-    /// Transitions are not stored on the rcad vertex (they are only used
-    /// transiently in the restriction processing).
-    pub fn set_arc(&mut self, on_first: bool, arc: Curve2d, param: f64) {
+    pub fn set_arc(
+        &mut self,
+        on_first: bool,
+        arc: Curve2d,
+        param: f64,
+        t_line: transitions::Transition,
+        t_arc: transitions::Transition,
+    ) {
         if on_first {
             self.arc_on_s1 = Some(arc);
             self.param_on_arc1 = param;
             self.on_dom_s1 = true;
+            self.transition_line_arc1 = t_line.transition_type();
+            self.transition_on_s1 = t_arc.transition_type();
         } else {
             self.arc_on_s2 = Some(arc);
             self.param_on_arc2 = param;
             self.on_dom_s2 = true;
+            self.transition_line_arc2 = t_line.transition_type();
+            self.transition_on_s2 = t_arc.transition_type();
         }
     }
     /// OCCT IntPatch_Point::ArcOnS1().
@@ -1053,6 +1069,7 @@ impl IntPatchLine {
                                 vtx.arc_on_s1 = vtx_i.arc_on_s1.clone();
                                 vtx.param_on_arc1 = vtx_i.param_on_arc1;
                                 vtx.transition_line_arc1 = vtx_i.transition_line_arc1;
+                                vtx.transition_on_s1 = vtx_i.transition_on_s1;
                                 let mut k = 1usize;
                                 while !encoreunefois && k <= nbvtx {
                                     if same_vtx_rst(&svtx[k - 1], &vtx) {
@@ -1087,6 +1104,7 @@ impl IntPatchLine {
                                 vtx.arc_on_s2 = vtx_i.arc_on_s2.clone();
                                 vtx.param_on_arc2 = vtx_i.param_on_arc2;
                                 vtx.transition_line_arc2 = vtx_i.transition_line_arc2;
+                                vtx.transition_on_s2 = vtx_i.transition_on_s2;
                                 let mut k = 1usize;
                                 while !encoreunefois && k <= nbvtx {
                                     if same_vtx_rst(&svtx[k - 1], &vtx) {

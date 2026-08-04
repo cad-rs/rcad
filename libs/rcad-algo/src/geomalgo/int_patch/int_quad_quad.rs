@@ -927,6 +927,444 @@ impl IntAnaCurve {
         self.vertices[i].clone()
     }
 
+    /// OCCT IntPatch_ALine::ComputeVertexParameters (IntPatch_ALine.cxx L77-679):
+    /// filter, sort and dedup the ALine vertices by parameter and domain-arc
+    /// flags.  Called from IntPatch_ImpImpIntersection::Perform (L2987-2988) so
+    /// that IntPatch_ALineToWLine::MakeWLine walks the vertices in parameter
+    /// order.
+    ///
+    /// rcad gaps (documented, do not affect the vertex count):
+    ///   - IntPatch_Point transition fields (TransitionLineArc1/2,
+    ///     TransitionOnS1/S2) and the vertex references (VertexOnS1/S2) do not
+    ///     exist on PatchPoint; the SetArc/SetVertex calls only propagate the
+    ///     arc reference and the on-domain flag.
+    ///   - The ALine first/last point indices (svtx indf/indl) are not stored on
+    ///     IntAnaCurve; the index bookkeeping is a no-op.
+    pub fn compute_vertex_parameters_aline(&mut self, tol: f64) {
+        let pconfusion = rcad_kernel::precision::PCONFUSION;
+        let pi_pi = std::f64::consts::TAU;
+
+        // OCCT L85-87: ParamMinOnLine = FirstParameter(OpenFirst);
+        // ParamMaxOnLine = LastParameter(OpenLast).
+        let open_first = self.is_first_open();
+        let open_last = self.is_last_open();
+        let param_min_on_line = self.my_first_parameter;
+        let param_max_on_line = self.my_last_parameter;
+
+        // OCCT L96-98: nbvtx = NbVertex().
+        let mut svtx = std::mem::take(&mut self.vertices);
+        let mut nbvtx = svtx.len();
+
+        // OCCT L103-131: vertices within 2*PI of the line domain get shifted
+        // copies appended (periodic curves).
+        if nbvtx > 0 {
+            for i in 0..nbvtx {
+                let vtx = svtx[i].clone();
+                let p = vtx.param_on_line;
+                let pmpimpi = p - pi_pi;
+                if pmpimpi >= param_min_on_line {
+                    if let Some(p1) = self.value(pmpimpi) {
+                        let d1 = p1.distance(vtx.pnt.p);
+                        if d1 < tol {
+                            let mut ovtx = vtx.clone();
+                            ovtx.param_on_line = pmpimpi;
+                            svtx.push(ovtx);
+                        }
+                    }
+                }
+                let pmpimpi = p + pi_pi;
+                if pmpimpi <= param_max_on_line {
+                    if let Some(p1) = self.value(pmpimpi) {
+                        let d1 = p1.distance(vtx.pnt.p);
+                        if d1 < tol {
+                            let mut ovtx = vtx.clone();
+                            ovtx.param_on_line = pmpimpi;
+                            svtx.push(ovtx);
+                        }
+                    }
+                }
+            }
+        }
+
+        nbvtx = svtx.len();
+        if nbvtx <= 0 {
+            self.vertices = svtx;
+            return;
+        }
+
+        // OCCT L139-172: bubble sort by ParameterOnLine.
+        loop {
+            let mut sort_is_ok = true;
+            for i in 1..nbvtx {
+                if svtx[i - 1].param_on_line > svtx[i].param_on_line {
+                    svtx.swap(i - 1, i);
+                    sort_is_ok = false;
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        // OCCT L174-220: two vertices on the same arc of S1 and only on that
+        // arc must not have the same parameter.
+        loop {
+            let mut a_point_deleted = false;
+            'p1: for i in 0..nbvtx {
+                let vtx_i = &svtx[i];
+                if vtx_i.on_dom_s1 && !vtx_i.on_dom_s2 {
+                    for j in 0..nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j];
+                        if vtx_j.on_dom_s1 && !vtx_j.on_dom_s2 {
+                            if (vtx_i.param_on_arc1 - vtx_j.param_on_arc1).abs() <= pconfusion
+                                && (vtx_i.param_on_line - vtx_j.param_on_line).abs() <= pconfusion
+                                && arc_eq(&vtx_i.arc_on_s1, &vtx_j.arc_on_s1)
+                            {
+                                svtx.remove(j);
+                                nbvtx -= 1;
+                                a_point_deleted = true;
+                                break 'p1;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L222-268: same for the S2 arc.
+        loop {
+            let mut a_point_deleted = false;
+            'p2: for i in 0..nbvtx {
+                let vtx_i = &svtx[i];
+                if vtx_i.on_dom_s2 && !vtx_i.on_dom_s1 {
+                    for j in 0..nbvtx {
+                        if i == j {
+                            continue;
+                        }
+                        let vtx_j = &svtx[j];
+                        if vtx_j.on_dom_s2 && !vtx_j.on_dom_s1 {
+                            if (vtx_i.param_on_arc2 - vtx_j.param_on_arc2).abs() <= pconfusion
+                                && (vtx_i.param_on_line - vtx_j.param_on_line).abs() <= pconfusion
+                                && arc_eq(&vtx_i.arc_on_s2, &vtx_j.arc_on_s2)
+                            {
+                                svtx.remove(j);
+                                nbvtx -= 1;
+                                a_point_deleted = true;
+                                break 'p2;
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_point_deleted {
+                break;
+            }
+        }
+
+        // OCCT L270-471: sort, remove superfluous vertices (the kill logic).
+        let mut sort_again = true;
+        loop {
+            nbvtx = svtx.len();
+            if sort_again {
+                loop {
+                    let mut sort_is_ok = true;
+                    for i in 1..nbvtx {
+                        if svtx[i - 1].param_on_line > svtx[i].param_on_line {
+                            svtx.swap(i - 1, i);
+                            sort_is_ok = false;
+                        }
+                    }
+                    if sort_is_ok {
+                        break;
+                    }
+                }
+            }
+            sort_again = false;
+            let mut sort_is_ok = true;
+            'scan: for i in 1..nbvtx {
+                for j in 0..i {
+                    let mut kill = false;
+                    let mut killm1 = false;
+                    let par_i = svtx[i].param_on_line;
+                    let par_j = svtx[j].param_on_line;
+                    if (par_j - par_i).abs() < pconfusion {
+                        // OCCT L325-351: OnS1/OnS1.
+                        if svtx[j].on_dom_s1 && svtx[i].on_dom_s1 {
+                            if arc_eq(&svtx[j].arc_on_s1, &svtx[i].arc_on_s1) {
+                                if svtx[j].on_dom_s2 {
+                                    if !svtx[i].on_dom_s2 {
+                                        kill = true;
+                                    } else if arc_eq(&svtx[j].arc_on_s2, &svtx[i].arc_on_s2) {
+                                        kill = true;
+                                    }
+                                } else if svtx[i].on_dom_s2 {
+                                    killm1 = true;
+                                }
+                            }
+                        } else if !svtx[j].on_dom_s2 && !svtx[i].on_dom_s2 {
+                            // OCCT L352-365: not (OnS1 and OnS1).
+                            if svtx[j].on_dom_s1 && !svtx[i].on_dom_s1 {
+                                kill = true;
+                            } else if svtx[i].on_dom_s1 && !svtx[j].on_dom_s1 {
+                                killm1 = true;
+                            }
+                        }
+                        if !(kill || killm1) {
+                            // OCCT L367-410: OnS2/OnS2.
+                            if svtx[j].on_dom_s2 && svtx[i].on_dom_s2 {
+                                if arc_eq(&svtx[j].arc_on_s2, &svtx[i].arc_on_s2) {
+                                    if svtx[j].on_dom_s1 {
+                                        if !svtx[i].on_dom_s1 {
+                                            kill = true;
+                                        } else if arc_eq(&svtx[j].arc_on_s1, &svtx[i].arc_on_s1) {
+                                            kill = true;
+                                        }
+                                    } else if svtx[i].on_dom_s1 {
+                                        killm1 = true;
+                                    }
+                                }
+                            } else if !svtx[j].on_dom_s1 && !svtx[i].on_dom_s1 {
+                                if svtx[j].on_dom_s2 && !svtx[i].on_dom_s2 {
+                                    kill = true;
+                                } else if svtx[i].on_dom_s2 && !svtx[j].on_dom_s2 {
+                                    killm1 = true;
+                                }
+                            }
+                        }
+                        if kill {
+                            sort_is_ok = false;
+                            svtx.remove(i);
+                            nbvtx -= 1;
+                            break 'scan;
+                        } else if killm1 {
+                            sort_is_ok = false;
+                            svtx.remove(j);
+                            nbvtx -= 1;
+                            break 'scan;
+                        }
+                    }
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        // OCCT L473-513: periodic lines — ensure first/last vertex params match
+        // the domain bounds.
+        if !open_first && !open_last {
+            nbvtx = svtx.len();
+            if nbvtx >= 1 {
+                let vtx0 = svtx[0].clone();
+                let vtxn = svtx[nbvtx - 1].clone();
+                if (vtx0.param_on_line - param_min_on_line).abs() < pconfusion {
+                    if (vtxn.param_on_line - param_max_on_line).abs() >= pconfusion {
+                        if let Some(pn) = self.value(param_max_on_line) {
+                            let d = pn.distance(vtx0.pnt.p);
+                            if d <= tol {
+                                let mut ovtx = vtx0.clone();
+                                ovtx.param_on_line = param_max_on_line;
+                                svtx.push(ovtx);
+                            }
+                        }
+                    } else if (vtx0.param_on_line - param_min_on_line).abs() >= pconfusion {
+                        if let Some(p0) = self.value(param_min_on_line) {
+                            let d = p0.distance(vtx0.pnt.p);
+                            if d <= tol {
+                                let mut ovtx = vtxn.clone();
+                                ovtx.param_on_line = param_min_on_line;
+                                svtx.insert(0, ovtx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L514-542: remove first/last vertices not on any domain.
+        nbvtx = svtx.len();
+        if nbvtx > 1 {
+            if !svtx[0].on_dom_s1 && !svtx[0].on_dom_s2 {
+                svtx.remove(0);
+                nbvtx -= 1;
+            }
+        }
+        if nbvtx > 1 {
+            if !svtx[nbvtx - 1].on_dom_s1 && !svtx[nbvtx - 1].on_dom_s2 {
+                svtx.remove(nbvtx - 1);
+                nbvtx -= 1;
+            }
+        }
+
+        // OCCT L544-673: two vertices with the same parameter — unify the 3D
+        // point and the arc/vertex information.
+        nbvtx = svtx.len();
+        loop {
+            let mut sort_is_ok = true;
+            for i in 1..nbvtx {
+                let par_i = svtx[i].param_on_line;
+                let par_m1 = svtx[i - 1].param_on_line;
+                if (par_i - par_m1).abs() < pconfusion {
+                    // OCCT L555-623: propagate the on-domain/arc/vertex info
+                    // between the two coincident vertices.
+                    if svtx[i].on_dom_s1 && !svtx[i - 1].on_dom_s1 {
+                        let arc = svtx[i].arc_on_s1.clone();
+                        let par = svtx[i].param_on_arc1;
+                        let t_line =
+                            super::transitions::Transition::from_type(svtx[i].transition_line_arc1);
+                        let t_arc =
+                            super::transitions::Transition::from_type(svtx[i].transition_on_s1);
+                        svtx[i - 1].set_arc_opt(true, arc, par, t_line, t_arc);
+                    } else if svtx[i - 1].on_dom_s1 && !svtx[i].on_dom_s1 {
+                        let arc = svtx[i - 1].arc_on_s1.clone();
+                        let par = svtx[i - 1].param_on_arc1;
+                        let t_line = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_line_arc1,
+                        );
+                        let t_arc = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_on_s1,
+                        );
+                        svtx[i].set_arc_opt(true, arc, par, t_line, t_arc);
+                    }
+                    if svtx[i].is_vertex_on_s1 && !svtx[i - 1].is_vertex_on_s1 {
+                        svtx[i - 1].is_vertex_on_s1 = true;
+                        let arc = svtx[i].arc_on_s1.clone();
+                        let par = svtx[i].param_on_arc1;
+                        let t_line =
+                            super::transitions::Transition::from_type(svtx[i].transition_line_arc1);
+                        let t_arc =
+                            super::transitions::Transition::from_type(svtx[i].transition_on_s1);
+                        svtx[i - 1].set_arc_opt(true, arc, par, t_line, t_arc);
+                    } else if svtx[i - 1].is_vertex_on_s1 && !svtx[i].is_vertex_on_s1 {
+                        svtx[i].is_vertex_on_s1 = true;
+                        let arc = svtx[i - 1].arc_on_s1.clone();
+                        let par = svtx[i - 1].param_on_arc1;
+                        let t_line = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_line_arc1,
+                        );
+                        let t_arc = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_on_s1,
+                        );
+                        svtx[i].set_arc_opt(true, arc, par, t_line, t_arc);
+                    }
+                    if svtx[i].on_dom_s2 && !svtx[i - 1].on_dom_s2 {
+                        let arc = svtx[i].arc_on_s2.clone();
+                        let par = svtx[i].param_on_arc2;
+                        let t_line =
+                            super::transitions::Transition::from_type(svtx[i].transition_line_arc2);
+                        let t_arc =
+                            super::transitions::Transition::from_type(svtx[i].transition_on_s2);
+                        svtx[i - 1].set_arc_opt(false, arc, par, t_line, t_arc);
+                    } else if svtx[i - 1].on_dom_s2 && !svtx[i].on_dom_s2 {
+                        let arc = svtx[i - 1].arc_on_s2.clone();
+                        let par = svtx[i - 1].param_on_arc2;
+                        let t_line = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_line_arc2,
+                        );
+                        let t_arc = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_on_s2,
+                        );
+                        svtx[i].set_arc_opt(false, arc, par, t_line, t_arc);
+                    }
+                    if svtx[i].is_vertex_on_s2 && !svtx[i - 1].is_vertex_on_s2 {
+                        svtx[i - 1].is_vertex_on_s2 = true;
+                        let arc = svtx[i].arc_on_s2.clone();
+                        let par = svtx[i].param_on_arc2;
+                        let t_line =
+                            super::transitions::Transition::from_type(svtx[i].transition_line_arc2);
+                        let t_arc =
+                            super::transitions::Transition::from_type(svtx[i].transition_on_s2);
+                        svtx[i - 1].set_arc_opt(false, arc, par, t_line, t_arc);
+                    } else if svtx[i - 1].is_vertex_on_s2 && !svtx[i].is_vertex_on_s2 {
+                        svtx[i].is_vertex_on_s2 = true;
+                        let arc = svtx[i - 1].arc_on_s2.clone();
+                        let par = svtx[i - 1].param_on_arc2;
+                        let t_line = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_line_arc2,
+                        );
+                        let t_arc = super::transitions::Transition::from_type(
+                            svtx[i - 1].transition_on_s2,
+                        );
+                        svtx[i].set_arc_opt(false, arc, par, t_line, t_arc);
+                    }
+                    // OCCT L625-670: if the 3D points differ, unify p3d/params.
+                    if svtx[i].pnt.p.distance_squared(svtx[i - 1].pnt.p) > 1e-12 {
+                        let copy_vtx = svtx[i - 1].clone();
+                        svtx[i - 1].param_on_line = svtx[i].param_on_line;
+                        svtx[i - 1].pnt = svtx[i].pnt;
+                        svtx[i - 1].tolerance = svtx[i].tolerance;
+                        if copy_vtx.on_dom_s1 {
+                            let arc = copy_vtx.arc_on_s1.clone();
+                            let par = copy_vtx.param_on_arc1;
+                            svtx[i - 1].set_arc_opt(
+                                true,
+                                arc,
+                                par,
+                                super::transitions::Transition::from_type(
+                                    copy_vtx.transition_line_arc1,
+                                ),
+                                super::transitions::Transition::from_type(copy_vtx.transition_on_s1),
+                            );
+                        }
+                        if copy_vtx.on_dom_s2 {
+                            let arc = copy_vtx.arc_on_s2.clone();
+                            let par = copy_vtx.param_on_arc2;
+                            svtx[i - 1].set_arc_opt(
+                                false,
+                                arc,
+                                par,
+                                super::transitions::Transition::from_type(
+                                    copy_vtx.transition_line_arc2,
+                                ),
+                                super::transitions::Transition::from_type(copy_vtx.transition_on_s2),
+                            );
+                        }
+                        if copy_vtx.is_vertex_on_s1 {
+                            svtx[i - 1].is_vertex_on_s1 = true;
+                            let arc = copy_vtx.arc_on_s1.clone();
+                            let par = copy_vtx.param_on_arc1;
+                            svtx[i - 1].set_arc_opt(
+                                true,
+                                arc,
+                                par,
+                                super::transitions::Transition::from_type(
+                                    copy_vtx.transition_line_arc1,
+                                ),
+                                super::transitions::Transition::from_type(copy_vtx.transition_on_s1),
+                            );
+                        }
+                        if copy_vtx.is_vertex_on_s2 {
+                            svtx[i - 1].is_vertex_on_s2 = true;
+                            let arc = copy_vtx.arc_on_s2.clone();
+                            let par = copy_vtx.param_on_arc2;
+                            svtx[i - 1].set_arc_opt(
+                                false,
+                                arc,
+                                par,
+                                super::transitions::Transition::from_type(
+                                    copy_vtx.transition_line_arc2,
+                                ),
+                                super::transitions::Transition::from_type(copy_vtx.transition_on_s2),
+                            );
+                        }
+                        sort_is_ok = false;
+                    }
+                }
+            }
+            if sort_is_ok {
+                break;
+            }
+        }
+
+        self.vertices = svtx;
+    }
+
     /// OCCT IntAna_Curve::InternalUVValue (L279-374).
     fn internal_uv_value(&self, mut theta: f64) -> Option<(f64, f64, f64, f64, f64, f64)> {
         let rel_tolp = 1.0 + f64::EPSILON;
@@ -1519,4 +1957,14 @@ impl Default for IntQuadQuad {
 /// primitives.
 pub fn quadric_from_surface3(surf: &rcad_kernel::geom::Surface3) -> Option<IntAnaQuadric> {
     IntAnaQuadric::from_surface3(surf)
+}
+
+/// OCCT IntPatch_GLine::ArcOnS1() == ArcOnS1() comparison (the two arc
+/// references are the same 2D curve; two null arcs are considered equal).
+fn arc_eq(a: &Option<rcad_kernel::geom::Curve2d>, b: &Option<rcad_kernel::geom::Curve2d>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => super::so_on_bounds::curves_same(x, y),
+        (None, None) => true,
+        _ => false,
+    }
 }

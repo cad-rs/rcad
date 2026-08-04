@@ -18,10 +18,35 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3};
 
-use super::so_on_bounds::PathPoint;
+use super::so_on_bounds::{Domain, PathPoint};
 use super::transitions::{make_transition, recadre, Transition, TypeTrans};
 use super::{IntPatchIType, IntPatchLine, IntPatchVertex};
 use crate::geomalgo::int_surf::quadric::Quadric;
+
+/// OCCT gp_Vec::Angle(gp_Vec) — the angular value between two vectors in
+/// [0, PI], computed exactly as gp_Dir::Angle (gp_Dir.cxx L27-54).
+fn gp_vec_angle(a: DVec3, b: DVec3) -> f64 {
+    let a = a.normalize_or_zero();
+    let b = b.normalize_or_zero();
+    let cosinus = a.dot(b);
+    if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+        cosinus.acos()
+    } else {
+        let sinus = a.cross(b).length();
+        if cosinus < 0.0 {
+            std::f64::consts::PI - sinus.asin()
+        } else {
+            sinus.asin()
+        }
+    }
+}
+
+/// OCCT gp_Vec::IsParallel (gp_Vec.hxx L142-146) — angle-based definition
+/// (opposite directions count as parallel).
+fn gp_vec_is_parallel(a: DVec3, b: DVec3, ang_tol: f64) -> bool {
+    let an_ang = gp_vec_angle(a, b);
+    an_ang <= ang_tol || std::f64::consts::PI - an_ang <= ang_tol
+}
 
 /// OCCT IntPatch_IType of a line (ArcType).
 fn arc_type_of(line: &IntPatchLine) -> IntPatchIType {
@@ -90,6 +115,10 @@ fn vertex_to_patch_point(v: &IntPatchVertex) -> super::special_points::PatchPoin
         param_on_arc2: v.param_on_arc2,
         is_vertex_on_s1: v.is_vertex_on_s1,
         is_vertex_on_s2: v.is_vertex_on_s2,
+        transition_line_arc1: v.transition_line_arc1,
+        transition_line_arc2: v.transition_line_arc2,
+        transition_on_s1: v.transition_on_s1,
+        transition_on_s2: v.transition_on_s2,
     }
 }
 
@@ -112,8 +141,10 @@ fn patch_point_to_vertex(pp: &super::special_points::PatchPoint) -> IntPatchVert
         param_on_arc2: pp.param_on_arc2,
         is_vertex_on_s1: pp.is_vertex_on_s1,
         is_vertex_on_s2: pp.is_vertex_on_s2,
-        transition_line_arc1: super::transitions::TypeTrans::Undecided,
-        transition_line_arc2: super::transitions::TypeTrans::Undecided,
+        transition_line_arc1: pp.transition_line_arc1,
+        transition_line_arc2: pp.transition_line_arc2,
+        transition_on_s1: pp.transition_on_s1,
+        transition_on_s2: pp.transition_on_s2,
     }
 }
 
@@ -678,6 +709,7 @@ fn single_line(
 #[allow(clippy::too_many_arguments)]
 fn multiple_point(
     listpnt: &[PathPoint],
+    domain: &Domain,
     quad_surf: &Quadric,
     normale: DVec3,
     slin: &mut [IntPatchLine],
@@ -712,9 +744,11 @@ fn multiple_point(
                     {
                         return false;
                     }
-                    let mut goon = false;
+                    let goon;
+                    // OCCT L808-814: SetVertex when the point is a domain vertex.
                     if !currentpointonrst.is_new() {
                         goon = true;
+                        intpt.set_vertex(on_first);
                     } else {
                         goon = false;
                     }
@@ -735,30 +769,18 @@ fn multiple_point(
                     }
 
                     intpt.p3d = point;
-                    intpt.on_dom_s1 = on_first;
-                    intpt.on_dom_s2 = !on_first;
-                    let _ = (transline, transarc, goon);
-                    // OCCT L808-812: SetVertex when the point is a domain vertex.
-                    if !currentpointonrst.is_new() {
-                        intpt.set_vertex(on_first);
-                    }
-                    intpt.set_arc(on_first, currentarc, currentparameter);
+                    intpt.set_arc(on_first, currentarc, currentparameter, transline, transarc);
                     intpt.tolerance = the_toler;
 
                     replace_vertex(&mut slin[ii], jj, intpt.clone());
                     localdone[index - 1] = 1;
-                    let _ = currentpointonrst;
                     if goon {
                         for k in index..nbpnt {
                             if done[k] != 1 {
                                 let otherpt = &listpnt[k];
                                 if !otherpt.is_new() {
                                     let vtxbis = otherpt.vertex();
-                                    if (vtxbis.u - currentpointonrst.vertex().u).abs()
-                                        <= rcad_kernel::precision::CONFUSION
-                                        && (vtxbis.v - currentpointonrst.vertex().v).abs()
-                                            <= rcad_kernel::precision::CONFUSION
-                                    {
+                                    if domain.identical(currentpointonrst.vertex(), vtxbis) {
                                         let oarc = otherpt.arc().clone();
                                         let oparam = otherpt.parameter();
                                         // OCCT L868-869: Vtgrst uses the outer
@@ -783,9 +805,8 @@ fn multiple_point(
                                         let mut ointpt = intpt.clone();
                                         // OCCT L859-864: SetVertex on the shared vertex.
                                         ointpt.set_vertex(on_first);
-                                        ointpt.set_arc(on_first, oarc, oparam);
+                                        ointpt.set_arc(on_first, oarc, oparam, otransline, otransarc);
                                         ointpt.tolerance = the_toler;
-                                        let _ = (otransline, otransarc);
                                         add_vertex(&mut slin[ii], ointpt);
                                         used_line[ii] = 1;
                                         retvalue = true;
@@ -813,6 +834,7 @@ fn multiple_point(
 #[allow(clippy::too_many_arguments)]
 fn point_on_second_dom(
     listpnt: &[PathPoint],
+    domain: &Domain,
     quad_surf: &Quadric,
     normale: DVec3,
     v_tgt_int: DVec3,
@@ -855,9 +877,8 @@ fn point_on_second_dom(
                 if !currentpointonrst.is_new() {
                     intpt.set_vertex(false);
                 }
-                intpt.set_arc(false, currentarc, currentparameter);
+                intpt.set_arc(false, currentarc, currentparameter, transline, transarc);
                 intpt.tolerance = the_toler;
-                let _ = (transline, transarc);
                 replace_vertex(lin, jj, intpt.clone());
                 done[index - 1] = 1;
 
@@ -867,11 +888,7 @@ fn point_on_second_dom(
                             let otherpt = &listpnt[k];
                             if !otherpt.is_new() {
                                 let vtxbis = otherpt.vertex();
-                                if (vtxbis.u - currentpointonrst.vertex().u).abs()
-                                    <= rcad_kernel::precision::CONFUSION
-                                    && (vtxbis.v - currentpointonrst.vertex().v).abs()
-                                        <= rcad_kernel::precision::CONFUSION
-                                {
+                                if domain.identical(currentpointonrst.vertex(), vtxbis) {
                                     let oarc = otherpt.arc().clone();
                                     let oparam = otherpt.parameter();
                                     // OCCT L1030-1031: Vtgrst uses the outer
@@ -896,9 +913,8 @@ fn point_on_second_dom(
                                     // OCCT L1022-1027: SetVertex(false) on the
                                     // shared domain vertex.
                                     ointpt.set_vertex(false);
-                                    ointpt.set_arc(false, oarc, oparam);
+                                    ointpt.set_arc(false, oarc, oparam, otransline, otransarc);
                                     ointpt.tolerance = the_toler;
-                                    let _ = (otransline, otransarc);
                                     add_vertex(lin, ointpt);
                                     done[k] = 1;
                                 }
@@ -925,6 +941,7 @@ pub fn put_points_on_line(
     listpnt: &[PathPoint],
     slin: &mut Vec<IntPatchLine>,
     on_first: bool,
+    domain: &Domain,
     quad_surf: &Quadric,
     other_quad: &Quadric,
     multpoint: bool,
@@ -962,6 +979,7 @@ pub fn put_points_on_line(
                 let _ = v_tgrst;
                 goon = multiple_point(
                     listpnt,
+                    domain,
                     quad_surf,
                     normale,
                     slin,
@@ -990,15 +1008,15 @@ pub fn put_points_on_line(
 
                     // OCC4455: enlarge tolerance from the vertex resolution.
                     if !currentpointonrst.is_new() {
-                        let a_vtx_tol = currentpointonrst.tolerance();
+                        let a_vtx_tol =
+                            domain.vertex_tolerance(currentpointonrst.vertex(), &currentarc);
                         let a_tol_ang = 0.01 * tolerance;
                         tolerance = tolerance.max(a_vtx_tol);
                         let a_norm1 = quad_surf.normale(psurf);
                         let a_norm2 = other_quad.normale(psurf);
-                        if a_norm1.length() > 1e-300 && a_norm2.length() > 1e-300 {
-                            let par = a_norm1.dot(a_norm2)
-                                / (a_norm1.length() * a_norm2.length());
-                            if par.abs() > 1.0 - a_tol_ang {
+                        if a_norm1.length() > f64::MIN_POSITIVE && a_norm2.length() > f64::MIN_POSITIVE
+                        {
+                            if gp_vec_is_parallel(a_norm1, a_norm2, a_tol_ang) {
                                 tolerance = tolerance.sqrt();
                             }
                         }
@@ -1040,6 +1058,7 @@ pub fn put_points_on_line(
                             // the point on the second domain.
                             goon = point_on_second_dom(
                                 listpnt,
+                                domain,
                                 quad_surf,
                                 normale,
                                 v_tgt_int,
@@ -1082,8 +1101,7 @@ pub fn put_points_on_line(
                             } else {
                                 make_transition(v_tgt_int, v_tgrst, normale, &mut transline, &mut transarc);
                             }
-                            solpnt.set_arc(on_first, currentarc, currentparameter);
-                            let _ = (transline, transarc);
+                            solpnt.set_arc(on_first, currentarc, currentparameter, transline, transarc);
 
                             for &par in &a_l_params {
                                 solpnt.set_parameter(par);
@@ -1102,11 +1120,7 @@ pub fn put_points_on_line(
                                         let otherpt = &listpnt[k];
                                         if !otherpt.is_new() {
                                             let vtxbis = otherpt.vertex();
-                                            if (vtxbis.u - vtx.u).abs()
-                                                <= rcad_kernel::precision::CONFUSION
-                                                && (vtxbis.v - vtx.v).abs()
-                                                    <= rcad_kernel::precision::CONFUSION
-                                            {
+                                            if domain.identical(vtx, vtxbis) {
                                                 // OCCT L681-698: reuse solpnt, only
                                                 // the arc changes (d1u/d1v from the
                                                 // current point).  The shared
@@ -1133,8 +1147,13 @@ pub fn put_points_on_line(
                                                         &mut ktransarc,
                                                     );
                                                 }
-                                                let _ = (ktransline, ktransarc);
-                                                solpnt.set_arc(on_first, karc, kparam);
+                                                solpnt.set_arc(
+                                                    on_first,
+                                                    karc,
+                                                    kparam,
+                                                    ktransline,
+                                                    ktransarc,
+                                                );
                                                 add_vertex(&mut slin[linenumber], solpnt.clone());
                                                 done[k] = 1;
                                             }
@@ -1329,7 +1348,7 @@ pub fn process_segments(
                                     } else {
                                         make_transition(tgline, tgarc, norm1, &mut trest, &mut tarc);
                                     }
-                                    newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1());
+                                    newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1(), trest, tarc);
                                 }
                             }
                             if ptvtx.on_dom_s2 {
@@ -1347,7 +1366,7 @@ pub fn process_segments(
                                     } else {
                                         make_transition(tgline, tgarc, norm2, &mut trest, &mut tarc);
                                     }
-                                    newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2());
+                                    newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2(), trest, tarc);
                                 }
                             }
 
@@ -1390,7 +1409,7 @@ pub fn process_segments(
                                     } else {
                                         make_transition(tgline, tgarc, norm1, &mut trest, &mut tarc);
                                     }
-                                    newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1());
+                                    newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1(), trest, tarc);
                                 }
                             }
                             if ptvtx.on_dom_s2 {
@@ -1408,7 +1427,7 @@ pub fn process_segments(
                                     } else {
                                         make_transition(tgline, tgarc, norm2, &mut trest, &mut tarc);
                                     }
-                                    newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2());
+                                    newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2(), trest, tarc);
                                 }
                             }
 
@@ -1443,7 +1462,13 @@ pub fn process_segments(
             // domain vertex.
             if !pstartf.is_new() {
                 ptvtx.set_vertex(on_first);
-                ptvtx.set_arc(on_first, pstartf.arc().clone(), pstartf.parameter());
+                ptvtx.set_arc(
+                    on_first,
+                    pstartf.arc().clone(),
+                    pstartf.parameter(),
+                    Transition::new(),
+                    Transition::new(),
+                );
             }
             add_vertex(&mut rline, ptvtx.clone());
             rline.set_first_point(rline.vertices.len());
@@ -1460,7 +1485,13 @@ pub fn process_segments(
             // domain vertex.
             if !pstartl.is_new() {
                 ptvtx.set_vertex(on_first);
-                ptvtx.set_arc(on_first, pstartl.arc().clone(), pstartl.parameter());
+                ptvtx.set_arc(
+                    on_first,
+                    pstartl.arc().clone(),
+                    pstartl.parameter(),
+                    Transition::new(),
+                    Transition::new(),
+                );
             }
             add_vertex(&mut rline, ptvtx.clone());
             rline.set_last_point(rline.vertices.len());
@@ -1731,7 +1762,7 @@ pub fn process_r_line(
                                             } else {
                                                 make_transition(tgrest, tgarc, norm, &mut trest, &mut tarc);
                                             }
-                                            newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2());
+                                            newptvtx.set_arc(false, thearc, ptvtx.parameter_on_arc2(), trest, tarc);
                                         }
                                     } else {
                                         // donc OnDomS1
@@ -1751,7 +1782,7 @@ pub fn process_r_line(
                                             } else {
                                                 make_transition(tgrest, tgarc, norm, &mut trest, &mut tarc);
                                             }
-                                            newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1());
+                                            newptvtx.set_arc(true, thearc, ptvtx.parameter_on_arc1(), trest, tarc);
                                         }
                                     }
                                 }
