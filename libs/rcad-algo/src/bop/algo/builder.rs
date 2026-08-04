@@ -70,6 +70,45 @@ pub struct Builder<'a> {
     pub(crate) shape_remap: HashMap<u64, usize>,
 }
 
+/// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
+/// Mirrors OCCT BOPAlgo_BOP::PerformInternal1 DUMP_STAGE points (10 stages).
+#[derive(Debug, Clone)]
+pub struct StageSnapshot {
+    pub stage: u32,
+    pub stage_name: &'static str,
+    pub n_ds_vertices: usize,
+    pub n_ds_edges: usize,
+    pub n_ds_faces: usize,
+    pub n_ds_pave_blocks: usize,
+    pub n_ds_intersection_curves: usize,
+    pub n_ds_interf_ff: usize,
+    pub n_brep_vertices: usize,
+    pub n_brep_edges: usize,
+    pub n_brep_faces: usize,
+    pub n_brep_shells: usize,
+    pub n_brep_solids: usize,
+}
+
+/// Count result BRep entities by type from the flat tshape list.
+fn count_brep_entities(b: &topods::BRep) -> (usize, usize, usize, usize, usize) {
+    let mut v = 0usize;
+    let mut e = 0usize;
+    let mut f = 0usize;
+    let mut sh = 0usize;
+    let mut so = 0usize;
+    for ts in &b.tshapes {
+        match &**ts {
+            topods::TShape::Vertex(_) => v += 1,
+            topods::TShape::Edge(_) => e += 1,
+            topods::TShape::Face(_) => f += 1,
+            topods::TShape::Shell(_) => sh += 1,
+            topods::TShape::Solid(_) => so += 1,
+            _ => {}
+        }
+    }
+    (v, e, f, sh, so)
+}
+
 impl<'a> Builder<'a> {
     /// Create a new Builder borrowing a DS from PaveFiller.
     ///
@@ -102,6 +141,11 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// OCCT BOPAlgo_Algo::SetArguments.
+    pub fn set_arguments(&mut self, args: Vec<Shape>) {
+        self.my_arguments = args;
+    }
+
     /// Shape backed by shared Arc in ds.shapes — OCCT myDS->Shape(n).
     fn brep_sr(&self, flat_idx: usize) -> Shape {
         self.ds.shape(flat_idx).clone()
@@ -125,13 +169,37 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_Builder::Build — full pipeline with history.
+    /// Run the Builder pipeline stage by stage, capturing a snapshot after each
+    /// of the 10 OCCT-aligned stages. Single source of truth for the pipeline:
+    /// `build_with_history_topods` and `build` delegate here.
     ///
-    /// Mirrors OCCT BOPAlgo_Builder::PerformInternal1 (BOPAlgo_Builder_3.cxx).
-    pub fn build_with_history_topods(
+    /// On `has_errors` mid-pipeline, returns Ok with the partial result and the
+    /// snapshots captured so far, so tests can localize the failure stage.
+    pub fn build_with_history_stage_by_stage(
         &mut self,
-    ) -> Result<(topods::BRep, ()), BooleanError> {
-        // OCCT L425-429: setup from PaveFiller (rcad: done in constructor)
+    ) -> Result<(topods::BRep, Vec<StageSnapshot>), BooleanError> {
+        let mut snapshots: Vec<StageSnapshot> = Vec::with_capacity(10);
+        macro_rules! snap {
+            ($stage:expr, $name:expr) => {{
+                let (v, e, f, sh, so) = count_brep_entities(self.my_shape.as_ref().unwrap());
+                snapshots.push(StageSnapshot {
+                    stage: $stage,
+                    stage_name: $name,
+                    n_ds_vertices: self.ds.vertex_count(),
+                    n_ds_edges: self.ds.edge_count(),
+                    n_ds_faces: self.ds.face_count(),
+                    n_ds_pave_blocks: self.ds.pave_blocks_pool.iter().map(|pb| pb.len()).sum(),
+                    n_ds_intersection_curves: self.ds.intersection_curves.len(),
+                    n_ds_interf_ff: self.ds.interf_ff.len(),
+                    n_brep_vertices: v,
+                    n_brep_edges: e,
+                    n_brep_faces: f,
+                    n_brep_shells: sh,
+                    n_brep_solids: so,
+                });
+            }};
+        }
+        let partial = |s: &Option<topods::BRep>| s.clone().unwrap_or_default();
 
         // OCCT L431-436: CheckData
         self.check_data()?;
@@ -155,71 +223,85 @@ impl<'a> Builder<'a> {
         };
         eprintln!("[BUILDER] DS: {} Shell, {} Solid", nsh, nso);
 
-        // OCCT L445-453: TreatEmptyShape
-        // (skipped — rcad handles in boolean_op_with_retry)
-
         // OCCT L459-471: FillImagesVertices + BuildResult(VERTEX)
         self.fill_images_vertices();
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Vertex);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(1, "after_FillImagesVertices");
 
         // OCCT L472-483: FillImagesEdges + BuildResult(EDGE)
         self.fill_images_edges();
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Edge);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(2, "after_FillImagesEdges");
 
         // OCCT L484-494: FillImagesContainers(WIRE) + BuildResult(WIRE)
         self.fill_images_containers(topods::ShapeType::Wire);
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Wire);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(3, "after_BuildResultWire");
 
         // OCCT L496-505: FillImagesFaces + BuildResult(FACE)
         self.fill_images_faces();
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Face);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(4, "after_FillImagesFaces");
 
         // OCCT L507-516: FillImagesContainers(SHELL) + BuildResult(SHELL)
         self.fill_images_containers(topods::ShapeType::Shell);
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Shell);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(5, "after_BuildResultShell");
 
         // OCCT L518-528: FillImagesSolids + BuildResult(SOLID)
         self.fill_images_solids();
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Solid);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(6, "after_FillImagesSolids");
 
         // OCCT L530-539: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
         self.fill_images_containers(topods::ShapeType::CompSolid);
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::CompSolid);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(7, "after_BuildResultCompSolid");
 
         // OCCT L541-550: FillImagesCompounds + BuildResult(COMPOUND)
         self.fill_images_compounds();
-        if self.has_errors() {
-            return Err(BooleanError::DegenerateResult);
-        }
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         self.build_result(topods::ShapeType::Compound);
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        snap!(8, "after_FillImagesCompounds");
 
         // OCCT L552-570: PrepareHistory + PostTreat
         self.prepare_history();
+        snap!(9, "after_PrepareHistory");
         self.post_treat();
+        snap!(10, "after_PostTreat");
 
         let result = self.my_shape.clone().unwrap_or_default();
-        Ok((result, ()))
+        Ok((result, snapshots))
+    }
+
+    /// OCCT BOPAlgo_Builder::Build — full pipeline with history.
+    ///
+    /// Delegates to `build_with_history_stage_by_stage` (single source of
+    /// truth); converts an early pipeline stop (has_errors) back to Err to
+    /// preserve the production contract.
+    pub fn build_with_history_topods(
+        &mut self,
+    ) -> Result<(topods::BRep, ()), BooleanError> {
+        let (brep, snaps) = self.build_with_history_stage_by_stage()?;
+        if snaps.len() != 10 {
+            return Err(BooleanError::DegenerateResult);
+        }
+        Ok((brep, ()))
     }
 
     // --- Pipeline stage stubs ---
