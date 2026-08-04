@@ -97,6 +97,19 @@ impl BndBox {
     /// Set the gap.  OCCT: SetGap(Tol).
     pub fn set_gap(&mut self, tol: f64) { self.gap = tol.abs(); }
 
+    /// Enlarge the box by a tolerance in all six directions.
+    /// OCCT: Bnd_Box::Enlarge(const Standard_Real Tol).
+    /// A void box is left untouched (OCCT: void box stays void).
+    pub fn enlarge(&mut self, tol: f64) {
+        if self.is_void() || !tol.is_finite() { return; }
+        self.x_min -= tol;
+        self.x_max += tol;
+        self.y_min -= tol;
+        self.y_max += tol;
+        self.z_min -= tol;
+        self.z_max += tol;
+    }
+
     // ── Get corners (including gap) — OCCT: Get() ───────────────────────
 
     /// Retrieve the finite box corners including gap.

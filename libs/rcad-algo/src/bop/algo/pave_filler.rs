@@ -48,10 +48,10 @@ use crate::bop::algo::section_attribute::SectionAttribute;
 
 /// OCCT BOPAlgo_PaveFiller::EdgeRangeDistance — distance from an edge range to a face.
 #[derive(Debug, Clone)]
-struct EdgeRangeDistance {
-    first: f64,
-    last: f64,
-    distance: f64,
+pub(crate) struct EdgeRangeDistance {
+    pub(crate) first: f64,
+    pub(crate) last: f64,
+    pub(crate) distance: f64,
 }
 impl EdgeRangeDistance {
     fn new(first: f64, last: f64, distance: f64) -> Self { Self { first, last, distance } }
@@ -94,7 +94,7 @@ impl BOPAlgo_BPC {
 }
 
 /// OCCT IntTools_ShrunkRange (IntTools_ShrunkRange.cxx L25-191).
-struct ShrunkRange {
+pub(crate) struct ShrunkRange {
     pb: SharedPB,
     n_v1: usize,
     n_v2: usize,
@@ -109,7 +109,7 @@ struct ShrunkRange {
 }
 
 impl ShrunkRange {
-    fn new(pb: &SharedPB, n_v1: usize, n_v2: usize, a_t1: f64, a_t2: f64) -> Self {
+    pub(crate) fn new(pb: &SharedPB, n_v1: usize, n_v2: usize, a_t1: f64, a_t2: f64) -> Self {
         ShrunkRange {
             pb: pb.clone(), n_v1, n_v2, a_t1, a_t2,
             done: false, my_ts1: a_t1, my_ts2: a_t2, is_splittable: false,
@@ -118,7 +118,7 @@ impl ShrunkRange {
     }
     fn is_done(&self) -> bool { self.done }
     fn is_splittable(&self) -> bool { self.is_splittable }
-    fn shrunk_range(&self) -> (f64, f64) { (self.my_ts1, self.my_ts2) }
+    pub(crate) fn shrunk_range(&self) -> (f64, f64) { (self.my_ts1, self.my_ts2) }
     fn pave_block(&self) -> &SharedPB { &self.pb }
     fn bnd_box(&self) -> &BndBox { &self.my_bnd_box }
 
@@ -183,7 +183,7 @@ impl ShrunkRange {
 
     // OCCT BRepLib::FindValidRange (BRepLib_1.cxx L173-258).
     // Returns theFirst = self.my_ts1, theLast = self.my_ts2.
-    fn find_valid_range(
+    pub(crate) fn find_valid_range(
         &mut self,
         curve: &Curve3,
         a_tol_e: f64,
@@ -257,7 +257,7 @@ fn epsilon(par: f64) -> f64 {
 
 // OCCT theCurve.Resolution(theTol) — parametric step for given 3D tolerance.
 // Approximated by sampling derivative magnitude on the sub-range [t1, t2].
-fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
+pub(crate) fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     let n_samples = 100;
     let dt = (t2 - t1) / n_samples as f64;
     if dt <= 0.0 { return 1e-3; }
@@ -443,26 +443,26 @@ fn find_nearest_valid_point(
 
 pub struct PaveFiller {
     // ── BOPAlgo_Algo base (inherited) ──────────────────────────────
-    my_report: Report,                 // BOPAlgo_Algo::myReport
-    my_run_parallel: bool,             // BOPAlgo_Algo::myRunParallel
-    my_fuzzy_value: f64,               // BOPAlgo_Algo::myFuzzyValue
+    pub(crate) my_report: Report,                 // BOPAlgo_Algo::myReport
+    pub(crate) my_run_parallel: bool,             // BOPAlgo_Algo::myRunParallel
+    pub(crate) my_fuzzy_value: f64,               // BOPAlgo_Algo::myFuzzyValue
     // ── BOPAlgo_PaveFiller members ────────────────────────────────
     // OCCT BOPAlgo_PaveFiller.hxx L639-652:
-    ds: DS,                            // L640: myDS (owned, OCCT: heap-allocated)
-    my_iterator: Option<Box<BOPDS_Iterator>>, // L641: myIterator
-    my_context: IntToolsContext,        // BOPAlgo_PaveFiller::myContext (L642)
-    my_glue: GlueEnum,                 // BOPAlgo_PaveFiller::myGlue (L647)
-    my_section_attribute: SectionAttribute, // BOPAlgo_PaveFiller::mySectionAttribute (L643)
-    my_non_destructive: bool,          // BOPAlgo_PaveFiller::myNonDestructive (L644)
-    my_is_primary: bool,               // BOPAlgo_PaveFiller::myIsPrimary (L645)
-    my_avoid_build_pcurve: bool,       // BOPAlgo_PaveFiller::myAvoidBuildPCurve (L646)
-    my_arguments: Vec<topo_shape::Shape>, // BOPAlgo_PaveFiller::myArguments (L639)
-    my_fpb_done: HashMap<usize, HashSet<u64>>, // BOPAlgo_PaveFiller::myFPBDone (L650)
-    my_increased_ss: HashSet<usize>,   // BOPAlgo_PaveFiller::myIncreasedSS (L651)
-    my_verts_to_avoid_extension: HashSet<usize>, // BOPAlgo_PaveFiller::myVertsToAvoidExtension (L652)
+    pub(crate) ds: DS,                            // L640: myDS (owned, OCCT: heap-allocated)
+    pub(crate) my_iterator: Option<Box<BOPDS_Iterator>>, // L641: myIterator
+    pub(crate) my_context: IntToolsContext,        // BOPAlgo_PaveFiller::myContext (L642)
+    pub(crate) my_glue: GlueEnum,                 // BOPAlgo_PaveFiller::myGlue (L647)
+    pub(crate) my_section_attribute: SectionAttribute, // BOPAlgo_PaveFiller::mySectionAttribute (L643)
+    pub(crate) my_non_destructive: bool,          // BOPAlgo_PaveFiller::myNonDestructive (L644)
+    pub(crate) my_is_primary: bool,               // BOPAlgo_PaveFiller::myIsPrimary (L645)
+    pub(crate) my_avoid_build_pcurve: bool,       // BOPAlgo_PaveFiller::myAvoidBuildPCurve (L646)
+    pub(crate) my_arguments: Vec<topo_shape::Shape>, // BOPAlgo_PaveFiller::myArguments (L639)
+    pub(crate) my_fpb_done: HashMap<usize, HashSet<u64>>, // BOPAlgo_PaveFiller::myFPBDone (L650)
+    pub(crate) my_increased_ss: HashSet<usize>,   // BOPAlgo_PaveFiller::myIncreasedSS (L651)
+    pub(crate) my_verts_to_avoid_extension: HashSet<usize>, // BOPAlgo_PaveFiller::myVertsToAvoidExtension (L652)
     // OCCT L657-659: NCollection_DataMap<BOPDS_Pair, List<EdgeRangeDistance>> myDistances
     // rcad: HashMap keyed by (edge1, edge2) pair
-    my_distances: HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
+    pub(crate) my_distances: HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
     pub stop_after: Option<&'static str>,
 }
 
@@ -2680,7 +2680,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // OCCT BOPAlgo_PaveFiller::FillShrunkData(handle<PaveBlock>&) (PaveFiller_3.cxx L727-762).
-    fn fill_shrunk_data_pb(&mut self, the_pb: &SharedPB) {
+    pub(crate) fn fill_shrunk_data_pb(&mut self, the_pb: &SharedPB) {
         let (n_v1, n_v2) = {
             let pbr = the_pb.0.read().unwrap();
             (pbr.pave1.vertex_idx, pbr.pave2.vertex_idx)
@@ -3000,7 +3000,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::UpdateVertex (PaveFiller_10.cxx L105-125).
     /// Returns the vertex index after SD resolution.
-    fn update_vertex(&mut self, n_v: usize, tol_new: f64) -> usize {
+    pub(crate) fn update_vertex(&mut self, n_v: usize, tol_new: f64) -> usize {
         let mut n_vnew = n_v;
         self.ds.has_shape_sd(n_v, &mut n_vnew);
         // OCCT L112: if (IsNewShape(nVNew) || HasShapeSD(nV, nVNew) || !myNonDestructive)
@@ -3590,7 +3590,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEF (overload, PaveFiller_5.cxx L831-1199).
     /// Worker function — processes collected pave blocks against all faces.
-    fn force_interf_ef_work(
+    pub(crate) fn force_interf_ef_work(
         &mut self,
         the_mpb: &std::collections::HashSet<(usize, usize)>,
         the_add_interf: bool,
@@ -3663,7 +3663,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
             // L947-1107: iterate all PBs and check for EF common blocks
             for &(n_e, local_i) in the_mpb {
-                // L952-955: skip if PB already on the face
+                // L952-955: skip if PB already on the face.
+                // Section edges (MakeBlocks) keep their PBs in the curve with an
+                // orphan pool entry and no ShapeInfo reference, so edge_pave_blocks
+                // is empty for them.
+                if self.ds.edge_pave_blocks(n_e).len() <= local_i {
+                    continue;
+                }
                 let a_pb = self.ds.edge_pave_blocks(n_e)[local_i].clone();
                 // Find pool index for this PB (rcad-specific — OCCT uses pointer identity)
                 let pb_key = {
@@ -4187,87 +4193,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
         // OCCT L534-550: FillShrunkData for new PBs
         // rcad: shrunk data computed in FillShrunkData step.
-    }
-
-    /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-1020).
-    fn make_blocks(&mut self, the_range: &ProgressScope) {
-        if the_range.user_break() { return; }
-        // OCCT L652-655: glue off check
-        if self.my_glue != GlueEnum::GlueOff { return; }
-        // OCCT L657-663: get FF interferences
-        if self.ds.interf_ff.is_empty() { return; }
-
-        // OCCT L670-724: NCollection allocators + per-iteration maps
-        // OCCT L725-749: iterate FF interferences
-        let ff_indices: Vec<usize> = (0..self.ds.interf_ff.len()).collect();
-        for &i in &ff_indices {
-            let (n_f1, n_f2, a_vp, a_vc_indices) = {
-                let ff = &self.ds.interf_ff[i];
-                (ff.f1, ff.f2, ff.points.clone(), ff.curves.clone())
-            };
-            let a_nb_p = a_vp.len();
-            let a_nb_c = a_vc_indices.len();
-            if a_nb_p == 0 && a_nb_c == 0 { continue; }
-
-            // OCCT L750: aTolFF
-            // OCCT L752-753: FaceInfo
-            // OCCT L770: SubShapesOnIn — collect ON/IN vertices
-            // OCCT L771: SharedEdges
-
-            // OCCT L773-791: 1. Treat Points — create new vertices
-            // rcad: FFPoint handling — create CPB entries for new vertices
-
-            // OCCT L793-851: 2. Treat Curves — put paves on section curves
-            // rcad: iterate curves, create PBs from curve ranges
-            for &cid in &a_vc_indices {
-                if cid >= self.ds.intersection_curves.len() { continue; }
-                let ic = self.ds.intersection_curves[cid].clone();
-                let (v1, v2) = self.curve_vertices_mut(&ic.curve, ic.t_range);
-                let ei = self.ds.push_edge(ic.curve.clone(), ic.t_range, v1, v2);
-                let p1 = Pave { vertex_idx: v1, param: ic.t_range[0] };
-                let p2 = Pave { vertex_idx: v2, param: ic.t_range[1] };
-                let pbx = PaveBlock::new(ei, p1, p2);
-                let spb = SharedPB::new(pbx);
-                let idx = self.ds.pave_blocks_pool.len();
-                self.ds.pave_blocks_pool.push(vec![spb]);
-                if let Some(last) = self.ds.pave_blocks_pool.last_mut() {
-                    for pb2 in last.iter() { pb2.0.write().unwrap().edge = ei; }
-                }
-                // OCCT L900-950: validate block for both faces
-                // OCCT L960-980: add PB to face info
-                self.ds.change_face_info(n_f1).pave_blocks_sc.insert(idx);
-                self.ds.change_face_info(n_f2).pave_blocks_sc.insert(idx);
-                self.ds.change_face_info(n_f1).vertices_sc.insert(v1);
-                self.ds.change_face_info(n_f1).vertices_sc.insert(v2);
-                self.ds.change_face_info(n_f2).vertices_sc.insert(v1);
-                self.ds.change_face_info(n_f2).vertices_sc.insert(v2);
-            }
-
-            // OCCT L854-875: BOPTools_BoxTree check
-            // OCCT L882-990: 3. Make section edges with IsValidBlockForFaces check
-            // OCCT L990-1020: post-processing
-        }
-    }
-
-    fn curve_vertices_mut(&mut self, curve: &rcad_kernel::geom::Curve3, range: [f64; 2]) -> (usize, usize) {
-        let p1 = curve.point_at(range[0]);
-        let p2 = curve.point_at(range[1]);
-        let mut v1 = usize::MAX; let mut v2 = usize::MAX;
-        for i in 0..self.ds.nb_shapes() {
-            if self.ds.shapes[i].shape_type != ShapeType::Vertex { continue; }
-            let vp = self.ds.vertex_point_by_idx(i);
-            if (vp - p1).length() < 1e-7 { v1 = i; }
-            if (vp - p2).length() < 1e-7 { v2 = i; }
-        }
-        if v1 == usize::MAX {
-            let _ = self.ds.push_vertex(p1, 1e-7);
-            v1 = self.ds.nb_shapes() - 1;
-        }
-        if v2 == usize::MAX {
-            let _ = self.ds.push_vertex(p2, 1e-7);
-            v2 = self.ds.nb_shapes() - 1;
-        }
-        (v1, v2)
     }
 
     /// OCCT BOPAlgo_PaveFiller::RemoveMicroEdges (_6.cxx L4388-4435).

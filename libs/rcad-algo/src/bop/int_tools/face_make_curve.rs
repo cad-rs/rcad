@@ -233,6 +233,7 @@ fn make_restriction_curves(
             pcurve2,
             tolerance: tol,
             tang_tolerance: 0.0,
+            pave_blocks: Vec::new(),
         });
     }
     out
@@ -716,6 +717,7 @@ fn make_part_curve(
                 pcurve2: None,
                 tolerance,
                 tang_tolerance: line.tang_tolerance,
+                pave_blocks: Vec::new(),
             })
         }
         IntPatchIType::Circle | IntPatchIType::Ellipse => {
@@ -733,6 +735,7 @@ fn make_part_curve(
                     pcurve2: None,
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
+                    pave_blocks: Vec::new(),
                 })
             } else if a_nb_parts == 1 {
                 // OCCT L1074-1103: accept the full circle.
@@ -743,6 +746,7 @@ fn make_part_curve(
                     pcurve2: None,
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
+                    pave_blocks: Vec::new(),
                 })
             } else {
                 // OCCT L1109-1165: test 18 points around the circle.
@@ -764,6 +768,7 @@ fn make_part_curve(
                             pcurve2: None,
                             tolerance: tol,
                             tang_tolerance: line.tang_tolerance,
+                            pave_blocks: Vec::new(),
                         });
                     }
                 }
@@ -786,6 +791,7 @@ fn make_part_curve(
                 pcurve2: None,
                 tolerance: tol,
                 tang_tolerance: line.tang_tolerance,
+                pave_blocks: Vec::new(),
             })
         }
         _ => None,
@@ -902,7 +908,7 @@ fn quadric_uv_params(surf: &Surface3, p: DVec3) -> Option<DVec2> {
 /// OCCT IntTools_Tools::IntermediatePoint (IntTools_Tools.cxx L222-229):
 ///   the parameter dividing the range [aFirst, aLast] at the ratio
 ///   10 * e^(-PI) = 0.43213918.
-fn intermediate_point(a_first: f64, a_last: f64) -> f64 {
+pub(crate) fn intermediate_point(a_first: f64, a_last: f64) -> f64 {
     const PAR_T: f64 = 0.43213918;
     (1.0 - PAR_T) * a_first + PAR_T * a_last
 }

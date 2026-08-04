@@ -12,6 +12,7 @@ use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
 use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval, Curve2dEval};
+use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::topods::{ShapeType, TShape};
 use glam::{DVec2, DVec3};
 
@@ -607,6 +608,231 @@ impl IntToolsContext {
             return (-3, a_u, a_v, the_tol);
         }
         (0, a_u, a_v, the_tol)
+    }
+
+    // ====================================================================
+    // ComputePE — OCCT IntTools_Context::ComputePE (IntTools_Context.cxx L437-495)
+    // ====================================================================
+
+    /// OCCT IntTools_Context::ComputePE (IntTools_Context.cxx L437-495):
+    ///   project a point onto an edge; returns 0 (ok), -2 (not geometric),
+    ///   -4 (distance exceeds tolerance), -3 (no projection).
+    ///   rcad: `closest_point_on_curve_range` always returns a clamped
+    ///   projection, so the OCCT "point falls out of the curve" branch
+    ///   (distance to the edge vertices) is covered by the clamp.
+    pub fn compute_pe(
+        &mut self,
+        a_p1: DVec3,
+        a_tol_p1: f64,
+        n_e: usize,
+        ds: &DS,
+        a_t: &mut f64,
+        a_dist: &mut f64,
+    ) -> i32 {
+        // OCCT L443-446: if (!BRep_Tool::IsGeometric(aE2)) return -2;
+        let curve = match ds.edge_curve(n_e) { Some(c) => c.clone(), None => return -2 };
+        // OCCT ProjPC (IntTools_Context.cxx L276-281): projection limited to the
+        // edge's parameter range.
+        let a_range = ds.edge_range(n_e);
+        let a_proj = closest_point_on_curve_range(&curve, a_p1, a_range[0], a_range[1], 128);
+        // OCCT L457-467: point falls on the curve.
+        let a_dist_v = a_proj.distance;
+        let a_tol_e = ds.edge_tolerance(n_e);
+        let a_tol_sum = a_tol_p1 + a_tol_e + rcad_kernel::CONFUSION;
+        if a_dist_v > a_tol_sum {
+            return -4;
+        }
+        *a_t = a_proj.param;
+        *a_dist = a_dist_v;
+        0
+    }
+
+    // ====================================================================
+    // IsVertexOnLine — OCCT IntTools_Context::IsVertexOnLine
+    // (IntTools_Context.cxx L776-983)
+    // ====================================================================
+
+    /// OCCT IntTools_Context::IsVertexOnLine (IntTools_Context.cxx L776-983).
+    /// Returns true when the vertex (point aPV, tolerance aTolV) lies on the
+    /// section curve aCurve within aTolC; the parameter is returned in aT.
+    /// The Extrema_LocateExtPC / Extrema_ExtPC projections are mapped to
+    /// rcad's closest_point_on_curve_range.
+    pub fn is_vertex_on_line(
+        &mut self,
+        a_pv: DVec3,
+        a_tol_v: f64,
+        a_curve: &Curve3,
+        a_tol_c: f64,
+        a_t: &mut f64,
+    ) -> bool {
+        // OCCT L788-809: tolerance sum depending on the curve type.
+        let [a_first, a_last] = a_curve.default_domain();
+        let mut a_tol_sum = a_tol_v + a_tol_c;
+        let is_spline = matches!(a_curve, Curve3::BSpline(_) | Curve3::Bezier(_));
+        a_tol_sum = 2.0 * a_tol_sum;
+        if a_tol_sum < if is_spline { 1.0e-5 } else { 1.0e-6 } {
+            a_tol_sum = if is_spline { 1.0e-5 } else { 1.0e-6 };
+        }
+        let is_inf = |v: f64| v.is_infinite();
+        // OCCT L814-874: checking extremities first.
+        let mut b_first_valid = false;
+        let mut a_first_dist = f64::INFINITY;
+        if !is_inf(a_first) {
+            let a_pc_first = a_curve.point_at(a_first);
+            a_first_dist = a_pv.distance(a_pc_first);
+            if a_first_dist < a_tol_sum {
+                b_first_valid = true;
+                *a_t = a_first;
+                if a_first_dist > a_tol_v {
+                    // Extrema_LocateExtPC — local extremum near aFirst.
+                    let proj = closest_point_on_curve_range(a_curve, a_pv, a_first, a_last, 64);
+                    let a_t_proj = proj.param;
+                    let a_p_on_curve = proj.point;
+                    if (a_t_proj > (a_last + a_first) * 0.5)
+                        || (a_pv.distance(a_p_on_curve) > a_tol_sum)
+                        || (a_pc_first.distance(a_p_on_curve) < rcad_kernel::CONFUSION)
+                    {
+                        *a_t = a_first;
+                    } else {
+                        *a_t = a_t_proj;
+                    }
+                }
+            }
+        }
+        // OCCT L876-941: last extremity.
+        if !is_inf(a_last) {
+            let a_pc_last = a_curve.point_at(a_last);
+            let a_dist = a_pv.distance(a_pc_last);
+            if b_first_valid && (a_first_dist < a_dist) {
+                return true;
+            }
+            if a_dist < a_tol_sum {
+                *a_t = a_last;
+                if a_dist > a_tol_v {
+                    let proj = closest_point_on_curve_range(a_curve, a_pv, a_first, a_last, 64);
+                    let a_t_proj = proj.param;
+                    let a_p_on_curve = proj.point;
+                    if (a_t_proj < (a_last + a_first) * 0.5)
+                        || (a_pv.distance(a_p_on_curve) > a_tol_sum)
+                        || (a_pc_last.distance(a_p_on_curve) < rcad_kernel::CONFUSION)
+                    {
+                        *a_t = a_last;
+                    } else {
+                        *a_t = a_t_proj;
+                    }
+                }
+                return true;
+            }
+        } else if b_first_valid {
+            return true;
+        }
+        // OCCT L943-982: projection onto the full curve (ProjPT).
+        let proj = closest_point_on_curve_range(a_curve, a_pv, a_first, a_last, 64);
+        let a_dist = proj.distance;
+        if a_dist > a_tol_sum {
+            return false;
+        }
+        *a_t = proj.param;
+        true
+    }
+
+    // ====================================================================
+    // IsValidPointForFace(s) — OCCT IntTools_Context::IsValidPointForFace
+    // (IntTools_Context.cxx L648-674, L678-692)
+    // ====================================================================
+
+    /// OCCT IntTools_Context::IsValidPointForFace (IntTools_Context.cxx L648-674).
+    pub fn is_valid_point_for_face(&mut self, a_p: DVec3, n_f: usize, ds: &DS, a_tol: f64) -> bool {
+        // OCCT L655-657: GeomAPI_ProjectPointOnSurf& aProjector = ProjPS(aF); Perform(aP).
+        let (done, umin, uv) = {
+            let proj = self.proj_ps(ds, n_f);
+            proj.perform(a_p);
+            (
+                proj.nb_points() > 0,
+                proj.lower_distance(),
+                proj.lower_distance_parameters(),
+            )
+        };
+        if !done {
+            return false;
+        }
+        // OCCT L662-667: if (Umin > aTol) return !bFlag; (false)
+        if umin > a_tol {
+            return false;
+        }
+        // OCCT L669-671: IsPointInOnFace(aF, aP2D(U, V)).
+        self.is_point_in_on_face(ds, n_f, DVec2::new(uv.0, uv.1))
+    }
+
+    /// OCCT IntTools_Context::IsValidPointForFaces (IntTools_Context.cxx L678-692).
+    pub fn is_valid_point_for_faces(
+        &mut self,
+        a_p: DVec3,
+        n_f1: usize,
+        n_f2: usize,
+        ds: &DS,
+        a_tol: f64,
+    ) -> bool {
+        let b_flag1 = self.is_valid_point_for_face(a_p, n_f1, ds, a_tol);
+        if !b_flag1 {
+            return b_flag1;
+        }
+        self.is_valid_point_for_face(a_p, n_f2, ds, a_tol)
+    }
+
+    // ====================================================================
+    // IsValidBlockForFace(s) — OCCT IntTools_Context::IsValidBlockForFaces
+    // (IntTools_Context.cxx L696-756)
+    // ====================================================================
+
+    /// OCCT IntTools_Context::IsValidBlockForFace (IntTools_Context.cxx L696-714).
+    pub fn is_valid_block_for_face(
+        &mut self,
+        a_t1: f64,
+        a_t2: f64,
+        a_c: &crate::bop::int_tools::face_face::IntersectionCurve,
+        n_f: usize,
+        ds: &DS,
+        a_tol: f64,
+    ) -> bool {
+        // OCCT L706-712: aTInterm = IntermediatePoint; aPInterm = aC3D->D0(aTInterm).
+        let a_t_interm = crate::bop::int_tools::face_make_curve::intermediate_point(a_t1, a_t2);
+        let a_p_interm = a_c.curve.point_at(a_t_interm);
+        self.is_valid_point_for_face(a_p_interm, n_f, ds, a_tol)
+    }
+
+    /// OCCT IntTools_Context::IsValidBlockForFaces (IntTools_Context.cxx L718-756).
+    pub fn is_valid_block_for_faces(
+        &mut self,
+        the_t1: f64,
+        the_t2: f64,
+        the_c: &crate::bop::int_tools::face_face::IntersectionCurve,
+        the_f1: usize,
+        the_f2: usize,
+        ds: &DS,
+        the_tol: f64,
+    ) -> bool {
+        let a_pc1 = the_c.pcurve1.clone();
+        let a_pc2 = the_c.pcurve2.clone();
+        let a_c3d = &the_c.curve;
+        let a_mid_par = crate::bop::int_tools::face_make_curve::intermediate_point(the_t1, the_t2);
+        let a_p = a_c3d.point_at(a_mid_par);
+        // OCCT L739-753: check both faces.
+        let mut b_flag = true;
+        for i in 0..2 {
+            let a_pc = if i == 0 { &a_pc1 } else { &a_pc2 };
+            let a_f = if i == 0 { the_f1 } else { the_f2 };
+            if let Some(pc) = a_pc {
+                let a_pnt_2d = pc.point_at(a_mid_par);
+                b_flag = self.is_point_in_on_face(ds, a_f, a_pnt_2d);
+            } else {
+                b_flag = self.is_valid_point_for_face(a_p, a_f, ds, the_tol);
+            }
+            if !b_flag {
+                break;
+            }
+        }
+        b_flag
     }
 
     /// OCCT IntTools_Context::ProjPS (IntTools_Context.cxx L247-265).

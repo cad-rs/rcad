@@ -16,6 +16,7 @@
 //! | section_attribute    | BOPAlgo_SectionAttribute    | Section parameters              |
 
 pub mod pave_filler;
+pub mod pave_filler_make_blocks;
 pub mod builder;
 pub mod builder_area;
 pub mod builder_face;
@@ -108,4 +109,6 @@ pub enum Alert {
     NotSplittableEdge(usize),
     /// BOPAlgo_AlertBadPositioning (stub).
     BadPositioning(Vec<usize>),
+    /// BOPAlgo_AlertPostTreatFF — error in the MakeBlocks post-treatment.
+    PostTreatFF,
 }

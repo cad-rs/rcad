@@ -10,6 +10,7 @@ use rcad_kernel::geom::{
 use glam::{DVec2, DVec3};
 
 use super::face_make_curve;
+use crate::bop::ds::pave::SharedPB;
 use crate::geomalgo::int_patch::IntPatchLine;
 
 /// OCCT IntTools_FaceFace::CorrectPlaneBoundaries (IntTools_FaceFace.cxx L3093-3111):
@@ -89,6 +90,8 @@ pub struct IntersectionCurve {
     pub pcurve2: Option<Curve2d>,
     pub tolerance: f64,
     pub tang_tolerance: f64,
+    /// BOPDS_Curve::myPaveBlocks — sub-blocks created by MakeBlocks section-edge split.
+    pub pave_blocks: Vec<SharedPB>,
 }
 
 /// OCCT IntTools_Tools::IsDirsCoinside (IntTools_Tools.cxx L164-173): two unit
@@ -574,6 +577,7 @@ fn perform_planes(
         pcurve2: Some(Curve2d::Line(lin2d2)),
         tolerance: tol_f1.max(tol_f2),
         tang_tolerance: 0.0,
+        pave_blocks: Vec::new(),
     };
 
     // Computation of the tangential tolerance
