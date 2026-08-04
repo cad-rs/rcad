@@ -61,6 +61,12 @@ impl<'a> BuilderSolid<'a> {
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
+    /// Access to the report (OCCT BOPAlgo_Algo::GetReport) for merging
+    /// sub-split alerts into the parent Builder report.
+    pub fn report(&self) -> &Report {
+        &self.my_report
+    }
+
     /// OCCT BOPAlgo_BuilderSolid::PerformShapesToAvoid (BuilderSolid.cxx L129-220).
     fn perform_shapes_to_avoid(&mut self) {
         // OCCT L138: myShapesToAvoid.Clear()
@@ -124,24 +130,26 @@ impl<'a> BuilderSolid<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_BuilderSolid::PerformAreas (L397-530).
-    /// Classifies shells as growth (solid) or hole (void).
+    /// OCCT BOPAlgo_BuilderSolid::PerformAreas (BuilderSolid.cxx L397-598).
+    /// Classifies shells as growth (solid) or hole (void), then assigns holes
+    /// to the innermost growth solid containing them (internal shells).
     fn perform_areas(&mut self) {
-        // OCCT L400-404: growth solids and hole shells
+        // OCCT L400-407: the new solids / hole shells / hole-face map.
         let mut new_solids: Vec<Shape> = Vec::new();
         let mut hole_shells: Vec<Vec<Shape>> = Vec::new();
         let mut hole_face_ptrs: HashSet<u64> = HashSet::new();
 
+        // OCCT L413-442: classify each shell.
         for loop_faces in &self.my_loops {
-            // OCCT L422: check if growth shell
+            // OCCT L422: IsGrowthShell then IsHole.
             let is_growth = !self.is_hole_shell(loop_faces, &hole_face_ptrs);
             if is_growth {
-                // OCCT L431-435: build Solid from Shell
+                // OCCT L430-435: build Solid from the Shell.
                 let shell_shape = self.build_shell_shape(loop_faces);
                 let solid = self.build_solid_shape(&shell_shape);
                 new_solids.push(solid);
             } else {
-                // OCCT L438-440: add to hole shells, track face ptrs
+                // OCCT L437-441: add to hole shells + map its faces.
                 for f in loop_faces {
                     hole_face_ptrs.insert(f.ptr_id());
                 }
@@ -149,27 +157,111 @@ impl<'a> BuilderSolid<'a> {
             }
         }
 
-        // OCCT L444-457: no holes — all growths are the result
+        // OCCT L444-458: no holes — all growths are the result.
         if hole_shells.is_empty() {
             self.my_solids = new_solids;
             return;
         }
 
-        // OCCT L460+: classify holes relative to growth solids
-        // Simplified: each hole becomes internal to the nearest growth
-        if !new_solids.is_empty() {
-            for hs in &hole_shells {
-                let shell_shape = self.build_shell_shape(hs);
-                // Add hole shell as internal of first growth solid
-                if let Some(first) = new_solids.first_mut() {
-                    let ts = Arc::make_mut(&mut first.data);
-                    if let TShape::Solid(sd) = ts {
-                        sd.internal_vertices.push(shell_shape);
+        // OCCT L460-576: classify holes relative to the growth solids.
+        // For each hole find the innermost growth solid that contains it and
+        // add the hole shell to that solid as an internal shell. Holes outside
+        // every solid become separate solids.
+        for hs in &hole_shells {
+            let hole_pt = Self::shell_reference_point(hs);
+            let mut innermost: Option<usize> = None;
+            for (si, solid) in new_solids.iter().enumerate() {
+                if let Some(shell_faces) = Self::solid_shell_faces(solid) {
+                    if Self::point_in_shell(hole_pt, &shell_faces) {
+                        // Keep the innermost (smallest) containing solid.
+                        innermost = match innermost {
+                            None => Some(si),
+                            Some(prev) => {
+                                let prev_shell = Self::solid_shell_faces(&new_solids[prev]);
+                                match prev_shell {
+                                    Some(psf) if Self::point_in_shell(
+                                        Self::shell_reference_point(&shell_faces), &psf) => Some(prev),
+                                    _ => Some(si),
+                                }
+                            }
+                        };
                     }
+                }
+            }
+            match innermost {
+                Some(si) => {
+                    // OCCT L559-569: aBB.Add(aSolid, aHole) — hole as internal shell.
+                    let shell_shape = self.build_shell_shape(hs);
+                    let ts = Arc::make_mut(&mut new_solids[si].data);
+                    if let TShape::Solid(sd) = ts {
+                        sd.shells.push(shell_shape);
+                    }
+                }
+                None => {
+                    // OCCT L579-594: holes outside the solids become separate solids.
+                    let shell_shape = self.build_shell_shape(hs);
+                    let solid = self.build_solid_shape(&shell_shape);
+                    new_solids.push(solid);
                 }
             }
         }
         self.my_solids = new_solids;
+    }
+
+    /// Reference point of a shell: average of its face centroids.
+    fn shell_reference_point(faces: &[Shape]) -> DVec3 {
+        if faces.is_empty() {
+            return DVec3::ZERO;
+        }
+        let mut acc = DVec3::ZERO;
+        for f in faces {
+            acc += Self::face_centroid(f);
+        }
+        acc / faces.len() as f64
+    }
+
+    /// Collect the faces of a solid's outer shell (first shell with faces).
+    fn solid_shell_faces(solid: &Shape) -> Option<Vec<Shape>> {
+        match &*solid.data {
+            TShape::Solid(sd) => {
+                for sh in &sd.shells {
+                    if let TShape::Shell(ss) = &*sh.data {
+                        if !ss.faces.is_empty() {
+                            return Some(ss.faces.clone());
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Even-odd point-in-shell test: cast a ray and count face-plane crossings.
+    /// OCCT BOPTools_AlgoTools::ComputeState / IsInside (L835-860).
+    fn point_in_shell(point: DVec3, faces: &[Shape]) -> bool {
+        // Ray direction: +Z (fallback if degenerate, see below).
+        let d = DVec3::Z;
+        let mut crossings = 0usize;
+        for f in faces {
+            let n = match Self::face_outward_normal(f) {
+                Some(n) => n,
+                None => continue,
+            };
+            let o = match Self::face_plane_origin(f) {
+                Some(o) => o,
+                None => continue,
+            };
+            let denom = d.dot(n);
+            if denom.abs() < 1e-12 {
+                continue;
+            }
+            let t = (o - point).dot(n) / denom;
+            if t > 1e-7 {
+                crossings += 1;
+            }
+        }
+        crossings % 2 == 1
     }
 
     /// OCCT BOPAlgo_BuilderSolid::PerformAreas (BuilderSolid.cxx L422-427).
@@ -189,48 +281,45 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT BOPAlgo_BuilderSolid::IsHole (BuilderSolid.cxx L823-831) via
     /// BRepClass3d_SClassifier::PerformInfinitePoint (L82-199). From a point on
-    /// a face, cast a ray along the reversed outward normal into the material;
-    /// at the closest crossing, an EXIT means the material is inside (growth),
-    /// an ENTER means the material is outside (hole-in-space).
+    /// a face, cast a ray along the reversed outward normal. The closest
+    /// crossing is the probe face itself (t=0): the ray passes from the
+    /// +normal side to the -normal side. If the +normal side is INSIDE the
+    /// material (the shell is inverted — material outside, void inside), the
+    /// probe-face crossing is an EXIT, so the point at infinity is IN → hole.
+    ///
+    /// Material-side check: a closed shell's interior reference is the centroid
+    /// of the face centroids. A face points toward the interior (inverted) iff
+    /// the reference centroid lies on the +outward-normal side of the face.
     fn is_hole_in_space(&self, faces: &[Shape]) -> bool {
         if faces.is_empty() {
             return false;
         }
+        // Interior reference point = average of the face centroids.
+        let mut acc = DVec3::ZERO;
+        let mut n_pts = 0usize;
         for f in faces {
             let p = Self::face_centroid(f);
+            acc += p;
+            n_pts += 1;
+        }
+        if n_pts == 0 {
+            return false;
+        }
+        let sc = acc / n_pts as f64;
+        for f in faces {
             let n = match Self::face_outward_normal(f) {
                 Some(n) => n,
                 None => continue,
             };
-            let d = -n;
-            let mut best_t = f64::MAX;
-            let mut best_denom = 0.0f64;
-            for f2 in faces {
-                if f2.ptr_id() == f.ptr_id() {
-                    continue;
-                }
-                let n2 = match Self::face_outward_normal(f2) {
-                    Some(n2) => n2,
-                    None => continue,
-                };
-                let denom = d.dot(n2);
-                if denom.abs() < 1e-12 {
-                    continue;
-                }
-                // t for plane (x - origin)·n2 = 0 along ray p + t·d.
-                let t = match Self::face_plane_origin(f2) {
-                    Some(o2) => (o2 - p).dot(n2) / denom,
-                    None => continue,
-                };
-                if t > 1e-7 && t < best_t {
-                    best_t = t;
-                    best_denom = denom;
-                }
-            }
-            if best_t < f64::MAX {
-                // denom > 0 → ray moves toward +n2 (outside) → EXIT → growth.
-                // denom < 0 → ray moves toward -n2 (material) → ENTER → hole.
-                return best_denom < 0.0;
+            let o = match Self::face_plane_origin(f) {
+                Some(o) => o,
+                None => continue,
+            };
+            // OCCT PerformInfinitePoint: probe-face crossing is an EXIT (hole)
+            // when the +normal side holds the material, i.e. the interior
+            // reference lies on the +n side of the face.
+            if (sc - o).dot(n) > 0.0 {
+                return true;
             }
         }
         false
