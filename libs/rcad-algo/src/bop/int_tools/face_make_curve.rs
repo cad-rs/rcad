@@ -460,7 +460,9 @@ fn line_constructor_wline_parts(
         let lastp = line.vertices[i + 1].param_on_line;
         // OCCT L162: if (firstp != lastp).
         if (firstp - lastp).abs() > PCONFUSION {
-            if (lastp - firstp) > 1.0 {
+            // OCCT L163: if (lastp != firstp + 1) — any non-adjacent pair (incl.
+            // fractional parameter gaps) uses the midpoint-classification branch.
+            if (lastp - firstp) != 1.0 {
                 // OCCT L164-179: non-adjacent vertices — classify the midpoint
                 // polyline point.  OCCT L166-167: pmid = (int)((firstp+lastp)/2),
                 // then WLine->Point(pmid) — the actual polyline point (1-based).
